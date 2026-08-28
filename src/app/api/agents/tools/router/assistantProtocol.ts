@@ -1,17 +1,17 @@
 /**
- * `tool_lookup` — generic tool router (MCP-style)
+ * `tools` — generic tool router (MCP-style)
  *
  * Mirrors the `skill_lookup` pattern but for tools. Instead of exposing 40+
  * tool schemas to the model (which floods the context and makes Gemini loop
- * on exploration), we expose a single `tool_lookup` and list/describe/call
+ * on exploration), we expose a single `tools` and list/describe/call
  * the actual tools on demand.
  *
  * Flow:
- *   1. Model calls `tool_lookup({ action: "list" })`
+ *   1. Model calls `tools({ action: "list" })`
  *      → gets [{ name, description (short), category }] for every routed tool.
- *   2. Model calls `tool_lookup({ action: "describe", name: "generate_image" })`
+ *   2. Model calls `tools({ action: "describe", name: "generate_image" })`
  *      → gets full description + parameters (JSON schema) + expected_use hint.
- *   3. Model calls `tool_lookup({ action: "call", name: "generate_image", args: {...} })`
+ *   3. Model calls `tools({ action: "call", name: "generate_image", args: {...} })`
  *      → we execute the underlying tool and return its result.
  *
  * Errors on `call` include the tool's `parameters` schema so the model can
@@ -25,7 +25,7 @@ export type RoutedTool = {
   execute: (args: any) => Promise<any> | any;
 };
 
-export type ToolLookupCategory =
+export type ToolCategory =
   | 'media'
   | 'messaging'
   | 'crm'
@@ -40,7 +40,7 @@ export type ToolLookupCategory =
 // Category assignment is best-effort metadata for the `list` action so the
 // model can filter/narrow (e.g. "show me all media tools"). Unknown names
 // fall back to "other".
-export const TOOL_CATEGORIES: Record<string, ToolLookupCategory> = {
+export const TOOL_CATEGORIES: Record<string, ToolCategory> = {
   // media
   generate_image: 'media',
   generate_video: 'media',
@@ -124,7 +124,7 @@ export const TOOL_CATEGORIES: Record<string, ToolLookupCategory> = {
   show_artifact: 'ui',
 };
 
-function categoryOf(name: string): ToolLookupCategory {
+function categoryOf(name: string): ToolCategory {
   return TOOL_CATEGORIES[name] ?? 'other';
 }
 
@@ -148,13 +148,13 @@ function isValidationErrorMessage(msg: string | undefined): boolean {
 }
 
 /**
- * Builds the single `tool_lookup` tool that proxies to a set of routed tools.
+ * Builds the single `tools` tool that proxies to a set of routed tools.
  *
  * @param routedTools Array of tools (same `{name, description, parameters,
  *                    execute}` shape as every other assistant tool) that
  *                    should be hidden behind the router.
  */
-export function toolLookupTool(routedTools: RoutedTool[]) {
+export function toolsRouterTool(routedTools: RoutedTool[]) {
   const byName = new Map<string, RoutedTool>(routedTools.map((t) => [t.name, t]));
 
   const toolIndex = routedTools.map((t) => ({
@@ -178,7 +178,7 @@ export function toolLookupTool(routedTools: RoutedTool[]) {
   ].join('\n');
 
   return {
-    name: 'tool_lookup',
+    name: 'tools',
     description,
     parameters: {
       type: 'object',
@@ -257,7 +257,7 @@ export function toolLookupTool(routedTools: RoutedTool[]) {
         if (!tool) {
           return {
             success: false,
-            error: `Tool "${args.name}" is not routed through tool_lookup. Call action="list" to see available tools.`,
+            error: `Tool "${args.name}" is not routed through tools. Call action="list" to see available tools.`,
           };
         }
         return {
@@ -267,7 +267,7 @@ export function toolLookupTool(routedTools: RoutedTool[]) {
           description: tool.description,
           parameters: tool.parameters,
           expected_use:
-            'Pass the returned "parameters" schema when calling `tool_lookup action="call" name="' +
+            'Pass the returned "parameters" schema when calling `tools action="call" name="' +
             tool.name +
             '" args={...}`. Required fields are listed in parameters.required (if any).',
         };
@@ -281,7 +281,7 @@ export function toolLookupTool(routedTools: RoutedTool[]) {
         if (!tool) {
           return {
             success: false,
-            error: `Tool "${args.name}" is not routed through tool_lookup. Call action="list" to see available tools.`,
+            error: `Tool "${args.name}" is not routed through tools. Call action="list" to see available tools.`,
           };
         }
         const parsed = parseCallArgs(args.args);
@@ -350,12 +350,12 @@ function injectThoughtProcess(tool: RoutedTool): RoutedTool {
 
 /**
  * Partition helper: given the full tools array and a set of always-on tool
- * names, returns `[...alwaysOn, tool_lookup(rest)]`.
+ * names, returns `[...alwaysOn, tools(rest)]`.
  *
  * Use this from the orchestrator and from `inline-step-executor.ts` so both
  * code paths share the same routing policy.
  */
-export function withToolLookup(allTools: RoutedTool[], alwaysOnNames: ReadonlySet<string>): RoutedTool[] {
+export function withToolsRouter(allTools: RoutedTool[], alwaysOnNames: ReadonlySet<string>): RoutedTool[] {
   const alwaysOn: RoutedTool[] = [];
   const routed: RoutedTool[] = [];
   
@@ -368,8 +368,8 @@ export function withToolLookup(allTools: RoutedTool[], alwaysOnNames: ReadonlySe
   }
   if (routed.length === 0) return alwaysOn;
   
-  const lookupTool = injectThoughtProcess(toolLookupTool(routed) as RoutedTool);
-  return [...alwaysOn, lookupTool];
+  const routerTool = injectThoughtProcess(toolsRouterTool(routed) as RoutedTool);
+  return [...alwaysOn, routerTool];
 }
 
 /**
@@ -414,7 +414,7 @@ export function isAlwaysOnToolName(name: string): boolean {
 }
 
 /**
- * Convenience: same as `withToolLookup` but uses the default always-on policy
+ * Convenience: same as `withToolsRouter` but uses the default always-on policy
  * (explicit set + the "sandbox_" and "qa_" name prefixes).
  */
 export function routeTools(allTools: RoutedTool[]): RoutedTool[] {
@@ -432,6 +432,6 @@ export function routeTools(allTools: RoutedTool[]): RoutedTool[] {
   
   if (routed.length === 0) return alwaysOn;
   
-  const lookupTool = injectThoughtProcess(toolLookupTool(routed) as RoutedTool);
-  return [...alwaysOn, lookupTool];
+  const routerTool = injectThoughtProcess(toolsRouterTool(routed) as RoutedTool);
+  return [...alwaysOn, routerTool];
 }

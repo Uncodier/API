@@ -125,8 +125,8 @@ export function collectToolOutputs(steps: any[]): NodeToolOutput[] {
 
       let actualToolName = tr.toolName;
       
-      // Unwrap tool_lookup results
-      if (actualToolName === 'tool_lookup' && raw.success === true && raw.name && raw.result) {
+      // Unwrap tools results
+      if (actualToolName === 'tools' && raw.success === true && raw.name && raw.result) {
         actualToolName = raw.name;
         raw = raw.result;
       }

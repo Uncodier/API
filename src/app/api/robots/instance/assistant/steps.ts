@@ -358,7 +358,7 @@ export async function prepareAssistantContext(
           
         extraContextInstruction += `\n\n🎯 AUDIENCE GENERATION TASK:
 CRITICAL: Your primary task is to CREATE a persistent audience.
-1. You MUST use the \`audience\` tool via \`tool_lookup\` with action='create'.
+1. You MUST use the \`audience\` tool via \`tools\` with action='create'.
 2. Do NOT use the \`leads\` tool to simply list or display leads. You must CREATE the audience.
 3. You MUST return the resulting \`audience_id\` in your final response.${channelsStr}`;
       }
@@ -371,7 +371,7 @@ CRITICAL: Your primary task is to CREATE a persistent audience.
     ? `\n\n⚠️ VISUAL NODE MODE (IMPRENTA): You are executing inside a visual node graph. Users expect IMMEDIATE media/asset generation results. DO NOT update or create \`instance_plan\` or \`requirements\`.${
         isTextNodeOnly
           ? `\nCRITICAL: This is a TEXT-ONLY node (output_type: text). Your goal is ONLY to generate, brainstorm, or write text. DO NOT call any generation, publishing, or messaging tools (like sendBulkMessages, publish, or whatsappTemplate). Just return the requested text directly.`
-          : `\nCRITICAL: Even if the user asks you to "improve the prompt", "write a script", or "rewrite", you MUST NOT stop at just returning text. You MUST take that improved text and IMMEDIATELY pass it into the appropriate generation tool (via \`tool_lookup\`) within this exact same response. Your final output MUST include calling the tool to generate the actual asset (video, image, audio, etc).`
+          : `\nCRITICAL: Even if the user asks you to "improve the prompt", "write a script", or "rewrite", you MUST NOT stop at just returning text. You MUST take that improved text and IMMEDIATELY pass it into the appropriate generation tool (via \`tools\`) within this exact same response. Your final output MUST include calling the tool to generate the actual asset (video, image, audio, etc).`
       }${extraContextInstruction}`
     : extraContextInstruction;
 
@@ -398,39 +398,39 @@ EXECUTION:
 
   const whatsappInstruction = `
 📱 WHATSAPP TOOLS (sendWhatsApp and whatsappTemplate):
-- To send a WhatsApp message: use tool_lookup to call sendWhatsApp with phone_number (international format, e.g. +34912345678, no spaces) and message. Optionally pass conversation_id, lead_id for tracking, and media_urls (array of strings) if you want to attach images, videos, audio, or PDFs.
-- If sendWhatsApp returns template_required: true (conversation is outside the 24h reply window), you MUST use whatsappTemplate next via tool_lookup:
-  1) Call tool_lookup with action "call", name "whatsappTemplate", and args { action: "create_template", phone_number, message } (and conversation_id if available). The message MAY contain merge tokens (e.g. {{lead.name}}, {{site.name}}); they will be rewritten to numeric placeholders ({{1}}, {{2}}, ...) automatically and returned as \`placeholder_map\`. If the result includes template_id, then
-  2) Call tool_lookup with action "call", name "whatsappTemplate", and args { action: "send_template", template_id, phone_number, original_message }. When \`has_variables\` is true (i.e. \`placeholder_map\` is non-empty), you MUST also pass either \`lead_id\` (preferred — variables are resolved automatically from the lead row + site name) or \`variables\` as a map like { "1": "Jane", "2": "Acme" }. Do NOT call send_template without variables when placeholder_map is non-empty.
+- To send a WhatsApp message: use tools to call sendWhatsApp with phone_number (international format, e.g. +34912345678, no spaces) and message. Optionally pass conversation_id, lead_id for tracking, and media_urls (array of strings) if you want to attach images, videos, audio, or PDFs.
+- If sendWhatsApp returns template_required: true (conversation is outside the 24h reply window), you MUST use whatsappTemplate next via tools:
+  1) Call tools with action "call", name "whatsappTemplate", and args { action: "create_template", phone_number, message } (and conversation_id if available). The message MAY contain merge tokens (e.g. {{lead.name}}, {{site.name}}); they will be rewritten to numeric placeholders ({{1}}, {{2}}, ...) automatically and returned as \`placeholder_map\`. If the result includes template_id, then
+  2) Call tools with action "call", name "whatsappTemplate", and args { action: "send_template", template_id, phone_number, original_message }. When \`has_variables\` is true (i.e. \`placeholder_map\` is non-empty), you MUST also pass either \`lead_id\` (preferred — variables are resolved automatically from the lead row + site name) or \`variables\` as a map like { "1": "Jane", "2": "Acme" }. Do NOT call send_template without variables when placeholder_map is non-empty.
 - If create_template returns template_required: false, the conversation is within 24h—use sendWhatsApp instead; do not use send_template.
-- For bulk/campaign sends, prefer \`publish\` (with audience_id + channel "whatsapp") or \`sendBulkMessages\` via tool_lookup: they create a SINGLE template for the campaign and queue per-lead variables automatically. Do NOT create a new template per recipient.
+- For bulk/campaign sends, prefer \`publish\` (with audience_id + channel "whatsapp") or \`sendBulkMessages\` via tools: they create a SINGLE template for the campaign and queue per-lead variables automatically. Do NOT create a new template per recipient.
 - Always use international phone format (country code + number, e.g. +1..., +34..., +52...).`;
 
   const generationInstruction = `
 🎙️ MULTIMEDIA GENERATION:
-- When the user asks to generate AUDIO, a song, a rap, or a voiceover, you MUST call the \`generate_audio\` tool via tool_lookup to fulfill the request. If you are asked to write the lyrics/script, write them and immediately pass them into the \`generate_audio\` tool within the same response. Do NOT just output the text without calling the tool.
-- When generating IMAGES, you MUST use the \`generate_image\` tool via tool_lookup.
-- When generating VIDEO, you MUST use the \`generate_video\` tool via tool_lookup. If there are Image URLs for reference in the context or user messages, you MUST pass them to the \`reference_images\` parameter array.
+- When the user asks to generate AUDIO, a song, a rap, or a voiceover, you MUST call the \`generate_audio\` tool via tools to fulfill the request. If you are asked to write the lyrics/script, write them and immediately pass them into the \`generate_audio\` tool within the same response. Do NOT just output the text without calling the tool.
+- When generating IMAGES, you MUST use the \`generate_image\` tool via tools.
+- When generating VIDEO, you MUST use the \`generate_video\` tool via tools. If there are Image URLs for reference in the context or user messages, you MUST pass them to the \`reference_images\` parameter array.
 - CRITICAL: Never reply with just the lyrics or script if the user requested a song or audio. You MUST use the \`generate_audio\` tool and return the resulting URL.`;
 
-  const toolLookupInstruction = `
-🧰 TOOL DISCOVERY & EXECUTION (tool_lookup):
-Most capabilities (media, messaging, CRM, commerce, social, content, infra, research, ui) are hidden behind the \`tool_lookup\` router to save context.
-- Use \`tool_lookup({ action: "list" })\` to see every routed tool grouped by category.
-- Use \`tool_lookup({ action: "describe", name: "<tool>" })\` to get the exact parameters schema + expected_use for a specific tool before calling it.
-- Use \`tool_lookup({ action: "call", name: "<tool>", args: { ... } })\` to execute it. If args are invalid the error includes the parameters schema so you can auto-correct and retry.
-- Examples: calendars, catalog_commerce, checkout, quotations, generate_image, sendEmail, leads, sales, socialMediaPublish, content, webSearch — ALL live behind tool_lookup. The router is the only way to reach them.
-- To find people, working hours, team calendars, or reservable services: \`tool_lookup\` → \`calendars\` \`action="list"\`. Do not guess tool names for horarios.
+  const toolsRouterInstruction = `
+🧰 TOOL DISCOVERY & EXECUTION (tools):
+Most capabilities (media, messaging, CRM, commerce, social, content, infra, research, ui) are hidden behind the \`tools\` router to save context.
+- Use \`tools({ action: "list" })\` to see every routed tool grouped by category.
+- Use \`tools({ action: "describe", name: "<tool>" })\` to get the exact parameters schema + expected_use for a specific tool before calling it.
+- Use \`tools({ action: "call", name: "<tool>", args: { ... } })\` to execute it. If args are invalid the error includes the parameters schema so you can auto-correct and retry.
+- Examples: calendars, catalog_commerce, checkout, quotations, generate_image, sendEmail, leads, sales, socialMediaPublish, content, webSearch — ALL live behind tools. The router is the only way to reach them.
+- To find people, working hours, team calendars, or reservable services: \`tools\` → \`calendars\` \`action="list"\`. Do not guess tool names for horarios.
 - Core tools like instance_plan, requirement_status, requirements, and skill_lookup are directly available and NOT routed.`;
 
   const skillLookupInstruction = `
 🧠 SKILL DISCOVERY (skill_lookup):
 For any non-trivial request (especially catalog, commerce, products, quotes, checkout, reservations, slots), you MUST call \`skill_lookup\` with \`action="search"\` using English keywords (e.g. "catalog products marketplace commerce reservations slots checkout"), then \`action="get"\` for matches such as "makinari-commerce".
-Follow the loaded SKILL.md playbooks before calling tools via \`tool_lookup\`. \`skill_lookup\` is directly available (not routed).`;
+Follow the loaded SKILL.md playbooks before calling tools via \`tools\`. \`skill_lookup\` is directly available (not routed).`;
 
   const commerceInstruction = `
 🛒 COMMERCE & CATALOG:
-- Create/update catalog items via \`tool_lookup\` → \`catalog_commerce\` (not free-text product lists).
+- Create/update catalog items via \`tools\` → \`catalog_commerce\` (not free-text product lists).
 - Prefer skill \`makinari-commerce\` for the full protocol, including catalog capacity slots (reservations).
 - Purchasable flows use \`checkout\`, not legacy \`sales\` / \`sales_order\`.
 - When an uploaded image is attached, use the HTTP URLs from the CRITICAL list as product image fields / references.`;
@@ -441,7 +441,7 @@ Follow the loaded SKILL.md playbooks before calling tools via \`tool_lookup\`. \
     ? [
         systemPrompt || '',
         instanceContext,
-        toolLookupInstruction,
+        toolsRouterInstruction,
         skillLookupInstruction,
       ].filter(Boolean).join('\n')
     : [
@@ -451,7 +451,7 @@ Follow the loaded SKILL.md playbooks before calling tools via \`tool_lookup\`. \
     baseSystemPrompt,
     toolsContext,
     systemPrompt || '',
-    toolLookupInstruction,
+    toolsRouterInstruction,
     skillLookupInstruction,
     commerceInstruction,
     planModeInstruction,

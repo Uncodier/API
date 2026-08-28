@@ -13,7 +13,7 @@ import { generateAudioTool } from '@/app/api/agents/tools/generateAudio/assistan
 import { instanceTool } from '@/app/api/agents/tools/instance/assistantProtocol';
 import { updateSiteSettingsTool } from '@/app/api/agents/tools/updateSiteSettings/assistantProtocol';
 import { webSearchTool } from '@/app/api/agents/tools/webSearch/assistantProtocol';
-import { routeTools } from '@/app/api/agents/tools/tool_lookup/assistantProtocol';
+import { routeTools } from '@/app/api/agents/tools/router/assistantProtocol';
 import { skillLookupTool } from '@/app/api/agents/tools/sandbox/skill-lookup-tool';
 import { memoriesTool } from '@/app/api/agents/tools/memories/assistantProtocol';
 import { tasksTool } from '@/app/api/agents/tools/tasks/assistantProtocol';
@@ -165,14 +165,14 @@ export async function generateAgentBackground(siteId: string, userId?: string): 
  * Must call getFinderCategoryIds BEFORE analyzeICPTotalCount or createIcpMining.
  */
 export const ICP_CATEGORY_IDS_INSTRUCTION = `
-🔑 ICP/Finder category IDs: For analyzeICPTotalCount and createIcpMining, industries, locations, person_skills, organizations, organization_keywords, and web_technologies require IDs—NOT free text. You MUST call getFinderCategoryIds (via tool_lookup) first with the category and search term (q) to obtain the correct IDs, then pass those IDs in the query object. Example: user says "technology industry" → call tool_lookup(action: "call", name: "getFinderCategoryIds", args: {category: "industries", q: "technology"}) → use returned id in the query.`;
+🔑 ICP/Finder category IDs: For analyzeICPTotalCount and createIcpMining, industries, locations, person_skills, organizations, organization_keywords, and web_technologies require IDs—NOT free text. You MUST call getFinderCategoryIds (via tools) first with the category and search term (q) to obtain the correct IDs, then pass those IDs in the query object. Example: user says "technology industry" → call tools(action: "call", name: "getFinderCategoryIds", args: {category: "industries", q: "technology"}) → use returned id in the query.`;
 
 /**
  * Instruction for Calendar and Meeting structure in Market Fit.
  */
 export const BOOKING_ROUTING_INSTRUCTION = `
 📅 BOOKINGS, CALENDARS & RESERVATIONS (STRICT ROUTING):
-Start with \`tool_lookup\` → \`calendars\` \`action="list"\` (optional \`query\` like "Mauricio"). That single call returns team members + personal working hours, round-robin team calendars, company business_hours, and reservable catalog services. Use it BEFORE scheduling or reservation_schedules.
+Start with \`tools\` → \`calendars\` \`action="list"\` (optional \`query\` like "Mauricio"). That single call returns team members + personal working hours, round-robin team calendars, company business_hours, and reservable catalog services. Use it BEFORE scheduling or reservation_schedules.
 
 There are TWO completely separate booking stacks. You MUST use the correct one:
 
@@ -240,10 +240,10 @@ Whenever the user asks for a web app, site, landing page, presentation or deck (
 
 export const GEAR_PROJECT_SWITCH_INSTRUCTION = `
 🔄 PROJECT SWITCHING (GEAR ONLY):
-If the user asks to change or switch their active project (e.g. "cambia mi proyecto", "quiero usar otro proyecto"), you MUST follow these steps strictly using \`tool_lookup\`:
-1. First, call \`tool_lookup({ action: "call", name: "instance_project", args: { action: "list" } })\` to get the list of their available projects.
+If the user asks to change or switch their active project (e.g. "cambia mi proyecto", "quiero usar otro proyecto"), you MUST follow these steps strictly using \`tools\`:
+1. First, call \`tools({ action: "call", name: "instance_project", args: { action: "list" } })\` to get the list of their available projects.
 2. Show them the list and ask which one they want to manage.
-3. Once they reply with their choice, call \`tool_lookup({ action: "call", name: "instance_project", args: { action: "set", site_id: "<selected_id>" } })\` to change the active project.
+3. Once they reply with their choice, call \`tools({ action: "call", name: "instance_project", args: { action: "set", site_id: "<selected_id>" } })\` to change the active project.
 Do not perform any other actions or guess the project ID until they confirm.`;
 
 /**

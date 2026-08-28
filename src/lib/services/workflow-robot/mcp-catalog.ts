@@ -1,4 +1,4 @@
-import { TOOL_CATEGORIES, type ToolLookupCategory } from '@/app/api/agents/tools/tool_lookup/assistantProtocol';
+import { TOOL_CATEGORIES, type ToolCategory } from '@/app/api/agents/tools/router/assistantProtocol';
 
 const ACTION_HINTS: Record<string, string[]> = {
   leads: ['create', 'update', 'list', 'get', 'qualify'],
@@ -24,7 +24,7 @@ const ACTION_HINTS: Record<string, string[]> = {
 
 export function listMcpCatalog(): Array<{
   name: string;
-  category: ToolLookupCategory | 'other';
+  category: ToolCategory | 'other';
   actions: string[];
   description: string;
 }> {

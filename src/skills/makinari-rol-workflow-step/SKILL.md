@@ -13,7 +13,7 @@ You execute a single predefined workflow step. The graph already decided the ord
 ## Rules
 
 1. Do **not** call `instance_plan` with `create` or `update` of the plan body. Report progress only via the runner.
-2. Discover tools with `tool_lookup` (`list` → `describe` → `call`). Prefer the MCP actions listed on the step.
+2. Discover tools with `tools` (`list` → `describe` → `call`). Prefer the MCP actions listed on the step.
 3. Interpolated trigger payload and previous step outputs are in the prompt. Use them instead of guessing IDs.
 4. `sandbox_*` is available **only** when the step flag `requires_sandbox` is true. If the flag is off, do not call sandbox tools.
 5. Stop when `expected_output` is satisfied and any `success_criteria` / `validation_rules` in the prompt hold. Return a short factual result (JSON when the expected output is structured). There is no separate judge: honor those fields as instructions.

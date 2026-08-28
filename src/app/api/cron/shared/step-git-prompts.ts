@@ -12,19 +12,19 @@ export const ORCHESTRATOR_SKILL_LOOKUP_HINT =
   'SKILLS: As the first step, use skill_lookup to find complementary playbooks for the current task — action=search with 3-10 English keywords from requirement title/instructions/objective/domain/tech stack. Prioritize categories (types) that match the requirement: develop, automation, content, design, task, integration, planning, research, marketing_campaign, optimization, strategy. Then action=get for each relevant skill_name (use action=list only if discovery is unclear or search returns no matches). Align plan steps (roles, deliverables) with those playbooks before delegating.';
 
 /**
- * Shared hint about `tool_lookup` for orchestrator + executor prompts.
+ * Shared hint about `tools` for orchestrator + executor prompts.
  *
  * Only the always-on tools (sandbox_*, skill_lookup, instance_plan,
- * requirement_status, requirements, tool_lookup itself) are loaded into the
+ * requirement_status, requirements, tools itself) are loaded into the
  * model's schema window. Everything else (media, messaging, CRM, social,
- * content, infra, research) is discoverable and invocable via `tool_lookup`.
+ * content, infra, research) is discoverable and invocable via `tools`.
  */
 export const TOOL_LOOKUP_HINT = [
   'TOOLS (beyond sandbox_*, instance_plan, requirement_status, requirements, skill_lookup):',
-  '- Use `tool_lookup({ action: "list" })` to see every routed tool grouped by category (media, messaging, crm, social, content, infra, research).',
-  '- Use `tool_lookup({ action: "describe", name: "<tool>" })` to get the exact parameters schema + expected_use for a specific tool before calling it.',
-  '- Use `tool_lookup({ action: "call", name: "<tool>", args: "{ ... }" })` to execute it (args must be a JSON string). If args are invalid the error includes the parameters schema so you can auto-correct and retry.',
-  '- Examples: generate_image, sendEmail, leads, sales, socialMediaPublish, content, webSearch — ALL live behind tool_lookup. The router is the only way to reach them.',
+  '- Use `tools({ action: "list" })` to see every routed tool grouped by category (media, messaging, crm, social, content, infra, research).',
+  '- Use `tools({ action: "describe", name: "<tool>" })` to get the exact parameters schema + expected_use for a specific tool before calling it.',
+  '- Use `tools({ action: "call", name: "<tool>", args: "{ ... }" })` to execute it (args must be a JSON string). If args are invalid the error includes the parameters schema so you can auto-correct and retry.',
+  '- Examples: generate_image, sendEmail, leads, sales, socialMediaPublish, content, webSearch — ALL live behind tools. The router is the only way to reach them.',
 ].join('\n');
 
 export const LANGUAGE_REQUIREMENT_PROMPT = `

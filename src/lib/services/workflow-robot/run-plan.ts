@@ -55,11 +55,11 @@ function buildWorkflowStepPrompt(params: {
     ? `EXECUTION MODE: DRY RUN (test)
 This is a simulation. Read with tools if needed, but do NOT persist CRM/data writes or send messages. Simulate those side effects. Prefix the final text with [DRY RUN]. If you return JSON, include "execution_mode": "dry_run".`
     : `EXECUTION MODE: LIVE (real)
-This is a real production run, not a test. Call tools via tool_lookup and apply real side effects when the step instructions require them (CRM writes, notifications, messages). Do NOT simulate, mock, skip tools, or treat this as a dry run.`;
+This is a real production run, not a test. Call tools via tools and apply real side effects when the step instructions require them (CRM writes, notifications, messages). Do NOT simulate, mock, skip tools, or treat this as a dry run.`;
 
   const toolInstruction = params.dryRun
-    ? 'Use tool_lookup for reads. For writes/sends, describe the simulated outcome instead of executing them.'
-    : 'You MUST call tools via tool_lookup to fulfill the step. Do not only describe what you would do. After tools succeed, report the factual result in plain text.';
+    ? 'Use tools for reads. For writes/sends, describe the simulated outcome instead of executing them.'
+    : 'You MUST call tools via tools to fulfill the step. Do not only describe what you would do. After tools succeed, report the factual result in plain text.';
 
   return `⚠️ WORKFLOW MODE: You are executing ONE predefined workflow step. Do NOT create or update instance_plan or requirements. Do NOT plan new work.
 

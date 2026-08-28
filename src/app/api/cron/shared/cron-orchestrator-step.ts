@@ -13,7 +13,7 @@ import { CronInfraEvent, logCronInfrastructureEvent, type CronAuditContext } fro
 import { ensureInProgressItem, escalateStaleInProgressItems } from '@/lib/services/requirement-backlog';
 
 /**
- * Tool set for the cron orchestrator — routed through `tool_lookup`.
+ * Tool set for the cron orchestrator — routed through `tools`.
  *
  * Rationale: the full `getAssistantTools()` exposes 40+ marketing/messaging
  * tools. With Gemini that catalogue distracts the planner — in practice it
@@ -23,8 +23,8 @@ import { ensureInProgressItem, escalateStaleInProgressItems } from '@/lib/servic
  *
  * Solution (MCP-style routing, mirrors `skill_lookup`): expose only the
  * "always-on" minimal surface and put every other tool behind a single
- * `tool_lookup` router. The model discovers tools via
- *   tool_lookup({ action: "list" })  →  ({ action: "describe", name })
+ * `tools` router. The model discovers tools via
+ *   tools({ action: "list" })  →  ({ action: "describe", name })
  *   → ({ action: "call", name, args }).
  *
  * Always-on (visible schemas):
@@ -32,9 +32,9 @@ import { ensureInProgressItem, escalateStaleInProgressItems } from '@/lib/servic
  *     sandbox_list_files, sandbox_write_file, sandbox_push/restore_checkpoint,
  *     sandbox_read_logs, plus any tool whose name starts with "sandbox_" or "qa_".
  *   - Plan + status contract: instance_plan, requirement_status, requirements.
- *   - The router itself: tool_lookup.
+ *   - The router itself: tools.
  *
- * Behind `tool_lookup` (schema NOT loaded until requested):
+ * Behind `tools` (schema NOT loaded until requested):
  *   media, messaging, CRM/growth, social, content, infra, research — every
  *   other tool from getAssistantTools().
  *
@@ -214,9 +214,9 @@ export async function runOrchestratorStep(params: {
   });
 
   const fullTools = getCronOrchestratorTools(sandboxTools, site_id, instanceId, user_id);
-  const routedCount = fullTools.find((t: any) => t?.name === 'tool_lookup') ? 1 : 0;
+  const routedCount = fullTools.find((t: any) => t?.name === 'tools') ? 1 : 0;
   console.log(
-    `[CronStep|orchestrator] Orchestrator tools visible to LLM: ${fullTools.length} (always-on + tool_lookup=${routedCount}). Routed tools are discoverable via tool_lookup.`,
+    `[CronStep|orchestrator] Orchestrator tools visible to LLM: ${fullTools.length} (always-on + tools=${routedCount}). Routed tools are discoverable via tools.`,
   );
 
   // Gemini tends to explore the sandbox first; 15 turns isn't enough once you

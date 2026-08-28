@@ -168,7 +168,7 @@ HARD RULE: Your turn is NOT done until \`instance_plan action='create'\` has suc
   const hasActivePlan = !!(existingPlan && actionableSteps.length > 0);
 
   // Step 2b: Recent-plan guard — same rationale as requirements-apps: after
-  // switching to Gemini + tool_lookup the orchestrator was re-planning every
+  // switching to Gemini + tools the orchestrator was re-planning every
   // cycle because previous plans closed as `completed` while the requirement
   // stayed in-progress. Break the loop by skipping (or blocking) instead of
   // creating duplicate plans.
