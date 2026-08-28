@@ -19,7 +19,7 @@ export async function POST(
       from_step_id: body.from_step_id,
     });
     const result = await runWorkflowPlan(materialized.run_plan_id);
-    return NextResponse.json({ success: true, ...materialized, ...result });
+    return NextResponse.json({ success: true, dry_run: false, ...materialized, ...result });
   } catch (error: any) {
     console.error('[WorkflowRun]', error);
     return NextResponse.json({ success: false, error: error.message || 'Run failed' }, { status: 500 });

@@ -21,6 +21,7 @@ function buildWorkflowStepPrompt(params: {
   instanceId: string;
   siteId: string;
   retryContext?: string;
+  sandboxTools?: any[];
 }): string {
   const skillName = params.step.skill || 'makinari-rol-workflow-step';
   const matched = SkillsService.getSkillBySlugOrName(skillName);
@@ -42,7 +43,29 @@ function buildWorkflowStepPrompt(params: {
     interpolateWorkflowText(text, ctx),
   );
 
-  return `⚠️ WORKFLOW MODE: You are executing ONE predefined workflow step. Do NOT create or update instance_plan or requirements. Do NOT plan new work. Execute this step using MCP tools (tool_lookup) and report the result in plain text.
+  const sandboxInstruction = params.step.requires_sandbox || params.step.metadata?.requires_sandbox
+    ? `This step has requires_sandbox=true. sandbox_* tools are available. Do not call sandbox_* on steps without this flag.${
+        params.sandboxTools && params.sandboxTools.length > 0
+          ? `\nAvailable sandbox tools for this step:\n${params.sandboxTools.map((t: any) => `- ${t.name}`).join('\n')}`
+          : ''
+      }`
+    : 'This step has NO sandbox. Do not call sandbox_* tools.';
+
+  const executionModeBlock = params.dryRun
+    ? `EXECUTION MODE: DRY RUN (test)
+This is a simulation. Read with tools if needed, but do NOT persist CRM/data writes or send messages. Simulate those side effects. Prefix the final text with [DRY RUN]. If you return JSON, include "execution_mode": "dry_run".`
+    : `EXECUTION MODE: LIVE (real)
+This is a real production run, not a test. Call tools via tool_lookup and apply real side effects when the step instructions require them (CRM writes, notifications, messages). Do NOT simulate, mock, skip tools, or treat this as a dry run.`;
+
+  const toolInstruction = params.dryRun
+    ? 'Use tool_lookup for reads. For writes/sends, describe the simulated outcome instead of executing them.'
+    : 'You MUST call tools via tool_lookup to fulfill the step. Do not only describe what you would do. After tools succeed, report the factual result in plain text.';
+
+  return `⚠️ WORKFLOW MODE: You are executing ONE predefined workflow step. Do NOT create or update instance_plan or requirements. Do NOT plan new work.
+
+${executionModeBlock}
+
+${toolInstruction}
 
 Instance ID: ${params.instanceId}
 Site ID: ${params.siteId}
@@ -62,10 +85,7 @@ ${JSON.stringify(params.triggerPayload || {}, null, 2)}
 Previous step outputs:
 ${JSON.stringify(params.previousOutputs || {}, null, 2)}
 
-${params.dryRun ? 'DRY RUN: Do not mutate CRM/data or send messages. Read and simulate only.\n' : ''}
-${params.step.requires_sandbox || params.step.metadata?.requires_sandbox
-    ? 'This step has requires_sandbox=true. sandbox_* tools are available. Do not call sandbox_* on steps without this flag.'
-    : 'This step has NO sandbox. Do not call sandbox_* tools.'}
+${sandboxInstruction}
 ${skillBlock}${params.retryContext || ''}`;
 }
 
@@ -191,6 +211,7 @@ export async function runWorkflowPlan(runPlanId: string): Promise<{
           instanceId: plan.instance_id,
           siteId: plan.site_id,
           retryContext,
+          sandboxTools: needsSandbox ? sandboxTools : undefined,
         });
 
         const context = await prepareAssistantContext(
@@ -205,9 +226,10 @@ export async function runWorkflowPlan(runPlanId: string): Promise<{
         context.executionOptions.plan_id = plan.id;
         context.executionOptions.step_id = step.id;
 
+        const modeLabel = dryRun ? 'DRY RUN' : 'LIVE';
         const userContent = isRetry
-          ? `Execute step ${step.order}: ${step.title}. This is retry ${step.retry_count}; follow the recovery plan if provided.`
-          : `Execute step ${step.order}: ${step.title}. ${step.instructions}`;
+          ? `[${modeLabel}] Execute step ${step.order}: ${step.title}. This is retry ${step.retry_count}; follow the recovery plan if provided.`
+          : `[${modeLabel}] Execute step ${step.order}: ${step.title}. ${step.instructions}`;
 
         try {
           const lastText = await runStepTurns(context, userContent);
