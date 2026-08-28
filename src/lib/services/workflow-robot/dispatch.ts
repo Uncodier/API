@@ -35,15 +35,31 @@ export async function dispatchWorkflowEvent(event: DispatchEvent): Promise<{ sta
   let skipped = 0;
 
   for (const trigger of triggers) {
-    const cfg = (trigger.config || {}) as { table?: string; op?: string; filter?: Record<string, unknown> };
-    if (cfg.table && cfg.table !== event.table) {
+    const cfg = (trigger.config || {}) as { 
+      table?: string; 
+      op?: string | string[]; 
+      filter?: Record<string, unknown>;
+      db_events?: { table: string; op: string[] }[];
+    };
+    
+    let matchesTableEvent = false;
+    
+    if (cfg.db_events && cfg.db_events.length > 0) {
+      matchesTableEvent = cfg.db_events.some(
+        (ev) => ev.table === event.table && ev.op.includes(event.op)
+      );
+    } else {
+      const ops = Array.isArray(cfg.op) ? cfg.op : cfg.op ? [cfg.op] : [];
+      const matchesTable = !cfg.table || cfg.table === event.table;
+      const matchesOp = ops.length === 0 || ops.includes(event.op);
+      matchesTableEvent = matchesTable && matchesOp;
+    }
+    
+    if (!matchesTableEvent) {
       skipped++;
       continue;
     }
-    if (cfg.op && cfg.op !== event.op) {
-      skipped++;
-      continue;
-    }
+    
     if (!matchesFilter(event.row, cfg.filter)) {
       skipped++;
       continue;

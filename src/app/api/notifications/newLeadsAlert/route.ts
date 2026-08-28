@@ -147,7 +147,7 @@ function generateNewLeadsAlertHtml(data: {
   autoProspectDate.setHours(autoProspectDate.getHours() + data.hoursUntilAutoProspect);
   
   const formatDate = (date: Date) => {
-    return date.toLocaleDateString((data as any).locale === 'es' ? 'es-ES' : (data as any).locale === 'fr' ? 'fr-FR' : (data as any).locale === 'de' ? 'de-DE' : (data as any).locale === 'ja' ? 'ja-JP' : 'en-US', {
+    return date.toLocaleDateString(data.locale === 'es' ? 'es-ES' : data.locale === 'fr' ? 'fr-FR' : data.locale === 'de' ? 'de-DE' : data.locale === 'ja' ? 'ja-JP' : 'en-US', {
       weekday: 'long',
       year: 'numeric',
       month: 'long',

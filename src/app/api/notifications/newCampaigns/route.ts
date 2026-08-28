@@ -382,7 +382,7 @@ function generateNewCampaignsAlertHtml(data: {
                     ` : ''}
                     ${campaign.due_date ? `
                     <div class="email-muted" style="color: #52525b; font-size: 14px; margin-bottom: 8px;">
-                      📅 Due: ${new Date(campaign.due_date).toLocaleDateString((campaign as any).locale === 'es' ? 'es-ES' : (campaign as any).locale === 'fr' ? 'fr-FR' : (campaign as any).locale === 'de' ? 'de-DE' : (campaign as any).locale === 'ja' ? 'ja-JP' : 'en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                      📅 Due: ${new Date(campaign.due_date).toLocaleDateString(data.locale === 'es' ? 'es-ES' : data.locale === 'fr' ? 'fr-FR' : data.locale === 'de' ? 'de-DE' : data.locale === 'ja' ? 'ja-JP' : 'en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                     </div>
                     ` : ''}
                     <div style="display: inline-block; background-color: ${statusColor.bg}; color: ${statusColor.color}; padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: 500;">

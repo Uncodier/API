@@ -3,6 +3,8 @@
 import { prepareAssistantContext, processAssistantTurn } from './steps';
 import { getActiveInstancePlan, executePlanStep } from './plan-steps';
 import { persistUserMessageStep, markAssistantFailedStep } from './persist-and-fail-steps';
+import { isIncompleteTurn, MAX_RESPAWNS } from '@/lib/services/robot-instance/assistant-respawn';
+import { countRecentRespawnsStep, spawnSilentContinueStep } from './assistant-respawn-steps';
 
 // Define the workflow step
 export async function runAssistantWorkflow(
@@ -17,14 +19,17 @@ export async function runAssistantWorkflow(
   userPhone?: string,
   instanceNodeId?: string,
   expectedResultsAmount?: number,
-  contextString?: string
+  contextString?: string,
+  options?: { silentContinue?: boolean }
 ) {
   'use workflow';
 
   try {
-    await persistUserMessageStep(instanceId, message, siteId, userId, {
-      prompt_source: 'assistant_workflow',
-    });
+    if (!options?.silentContinue) {
+      await persistUserMessageStep(instanceId, message, siteId, userId, {
+        prompt_source: 'assistant_workflow',
+      });
+    }
 
   // Step 1: Prepare context
   const context = await prepareAssistantContext(
@@ -101,6 +106,38 @@ export async function runAssistantWorkflow(
     
     // Update final result
     finalResult = stepResult;
+  }
+
+  // Check for stall/exhaustion before plan execution
+  if (isIncompleteTurn(finalResult)) {
+    const respawnCount = await countRecentRespawnsStep(instanceId);
+    if (respawnCount < MAX_RESPAWNS) {
+      console.log(`[Workflow] Incomplete turn detected (turns: ${turns}), respawning... (count: ${respawnCount})`);
+      await spawnSilentContinueStep({
+        instanceId,
+        siteId,
+        userId,
+        customTools,
+        useSdkTools,
+        systemPrompt,
+        agentType,
+        userPhone,
+        instanceNodeId,
+        expectedResultsAmount,
+        contextString,
+      });
+      return {
+        instance_id: instanceId,
+        status: context.instance.status,
+        message: 'Execution respawned due to incomplete turn',
+        assistant_response: finalResult.text,
+        output: finalResult.output,
+        usage: finalResult.usage,
+        instance_node_id: instanceNodeId,
+      };
+    } else {
+      console.log(`[Workflow] Incomplete turn detected but max respawns reached (${respawnCount})`);
+    }
   }
 
   // Step 3: Check for active instance plan AFTER the agent conversation

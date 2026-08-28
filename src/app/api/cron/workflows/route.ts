@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { materializeRunFromGraph } from '@/lib/services/workflow-robot/materialize';
 import { runWorkflowPlan } from '@/lib/services/workflow-robot/run-plan';
-import { isCronDueInWindow } from '@/lib/services/workflow-robot/cron-window';
+import { isCronDueInWindow, WORKFLOW_CRON_WINDOW_MS } from '@/lib/services/workflow-robot/cron-window';
+import { DEFAULT_TIMEZONE, normalizeTimezone, resolveClientTimezone } from '@/lib/timezone';
 
 export const maxDuration = 800;
 export const dynamic = 'force-dynamic';
@@ -26,15 +27,26 @@ export async function GET(req: Request) {
 
   const results: Array<{ trigger_id: string; started?: boolean; skipped?: string }> = [];
   const now = Date.now();
+  const siteTimezones = new Map<string, string>();
 
   for (const trigger of triggers || []) {
-    const cron = (trigger.config as { cron?: string })?.cron;
+    const cfg = (trigger.config || {}) as { cron?: string; timezone?: string };
+    const cron = cfg.cron;
     if (!cron) {
       results.push({ trigger_id: trigger.id, skipped: 'missing_cron' });
       continue;
     }
+
     try {
-      if (!isCronDueInWindow(cron, now)) {
+      let tz = normalizeTimezone(cfg.timezone);
+      if (!cfg.timezone && trigger.site_id) {
+        if (!siteTimezones.has(trigger.site_id)) {
+          siteTimezones.set(trigger.site_id, await resolveClientTimezone({ siteId: trigger.site_id }));
+        }
+        tz = siteTimezones.get(trigger.site_id) || DEFAULT_TIMEZONE;
+      }
+
+      if (!isCronDueInWindow(cron, now, WORKFLOW_CRON_WINDOW_MS, tz)) {
         results.push({ trigger_id: trigger.id, skipped: 'not_due' });
         continue;
       }

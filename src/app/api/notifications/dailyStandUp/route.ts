@@ -187,8 +187,9 @@ function generateDailyStandUpHtml(data: {
   siteUrl?: string;
   logoUrl?: string;
   businessAssessment?: string;
+  locale?: string;
 }): string {
-  const currentDate = new Date().toLocaleDateString((options as any)?.locale === 'es' ? 'es-ES' : (options as any)?.locale === 'fr' ? 'fr-FR' : (options as any)?.locale === 'de' ? 'de-DE' : (options as any)?.locale === 'ja' ? 'ja-JP' : 'en-US', {
+  const currentDate = new Date().toLocaleDateString(data.locale === 'es' ? 'es-ES' : data.locale === 'fr' ? 'fr-FR' : data.locale === 'de' ? 'de-DE' : data.locale === 'ja' ? 'ja-JP' : 'en-US', {
     weekday: 'long', 
     year: 'numeric', 
     month: 'long', 
@@ -203,7 +204,7 @@ function generateDailyStandUpHtml(data: {
   const safeMessageHtml = EmailSendService.renderMessageWithLists(data.message);
   return `
     <!DOCTYPE html>
-    <html lang="${options.locale || 'en'}">
+    <html lang="${data.locale || 'en'}">
     <head>
   <meta name="color-scheme" content="light only" />
   <meta name="supported-color-schemes" content="light" />

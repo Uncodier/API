@@ -86,33 +86,37 @@ export async function syncWorkflowTriggersFromGraph(params: {
   const triggers = params.nodes.filter((n) => n.type === 'wf-trigger');
   const { data: existing } = await supabaseAdmin
     .from('workflow_triggers')
-    .select('id, node_id')
+    .select('id, node_id, kind')
     .eq('instance_id', params.instance_id);
 
-  const byNode = new Map((existing || []).map((r) => [r.node_id, r.id]));
+  const byNode = new Map((existing || []).map((r) => [`${r.node_id}:${r.kind}`, r.id]));
   const keep = new Set<string>();
 
   for (const node of triggers) {
-    const cfg = ((node.settings?.trigger || node.settings || {}) as WorkflowTriggerConfig);
-    const kind = cfg.kind || 'manual';
-    const row = {
-      instance_id: params.instance_id,
-      template_plan_id: params.template_plan_id,
-      node_id: node.id,
-      kind,
-      config: cfg,
-      enabled: Boolean(node.settings?.enabled ?? cfg.kind !== 'manual'),
-      site_id: params.site_id,
-      user_id: params.user_id,
-      updated_at: new Date().toISOString(),
-    };
-    const existingId = byNode.get(node.id);
-    if (existingId) {
-      await supabaseAdmin.from('workflow_triggers').update(row).eq('id', existingId);
-      keep.add(existingId);
-    } else {
-      const { data } = await supabaseAdmin.from('workflow_triggers').insert(row).select('id').single();
-      if (data?.id) keep.add(data.id);
+    const cfg = ((node.settings?.trigger || node.settings || {}) as WorkflowTriggerConfig & { active_kinds?: string[] });
+    const activeKindsArray = cfg.active_kinds || (cfg.kind ? [cfg.kind] : ['manual']);
+    const activeKinds = Array.from(new Set(activeKindsArray));
+
+    for (const kind of activeKinds) {
+      const row = {
+        instance_id: params.instance_id,
+        template_plan_id: params.template_plan_id,
+        node_id: node.id,
+        kind,
+        config: cfg,
+        enabled: Boolean(node.settings?.enabled ?? kind !== 'manual'),
+        site_id: params.site_id,
+        user_id: params.user_id,
+        updated_at: new Date().toISOString(),
+      };
+      const existingId = byNode.get(`${node.id}:${kind}`);
+      if (existingId) {
+        await supabaseAdmin.from('workflow_triggers').update(row).eq('id', existingId);
+        keep.add(existingId);
+      } else {
+        const { data } = await supabaseAdmin.from('workflow_triggers').insert(row).select('id').single();
+        if (data?.id) keep.add(data.id);
+      }
     }
   }
 
