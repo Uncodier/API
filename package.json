@@ -90,7 +90,7 @@
     "langium": "4.2.1",
     "yargs-parser": "^21.0.0",
     "devalue": "^5.6.2",
-    "undici": "^6.23.0"
+    "undici": "7.28.0"
   },
   "devDependencies": {
     "@types/jest": "^29.5.14",
