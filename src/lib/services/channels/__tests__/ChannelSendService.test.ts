@@ -1,4 +1,4 @@
-import { ChannelSendService } from '../ChannelSendService';
+import { ChannelSendService, sanitizeZavuRecipient } from '../ChannelSendService';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import * as zavuClient from '@/lib/services/zavu/client';
 
@@ -229,5 +229,19 @@ describe('ChannelSendService', () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toBe('Zavu API failed');
+  });
+});
+
+describe('sanitizeZavuRecipient', () => {
+  it('strips +52 so a 10-digit Telegram id that was stored as MX phone is restored', () => {
+    expect(sanitizeZavuRecipient('+521888278689')).toBe('1888278689');
+  });
+
+  it('strips a generic + prefix', () => {
+    expect(sanitizeZavuRecipient('+1888278689')).toBe('1888278689');
+  });
+
+  it('leaves a raw chat id unchanged', () => {
+    expect(sanitizeZavuRecipient('1888278689')).toBe('1888278689');
   });
 });

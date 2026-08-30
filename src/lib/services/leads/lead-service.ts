@@ -123,10 +123,17 @@ export async function createLead(name: string, email?: string, phone?: string, s
     // Agregar campos opcionales si están presentes
     if (email) leadData.email = email;
     if (phone) {
-      // Normalizar el teléfono para almacenamiento consistente
-      const normalizedPhone = normalizePhoneForStorage(phone);
-      leadData.phone = normalizedPhone;
-      console.log(`📞 Teléfono normalizado para almacenamiento: "${phone}" -> "${normalizedPhone}"`);
+      const zavuChannels = ['telegram', 'messenger', 'zavu'];
+      if (origin && zavuChannels.includes(origin)) {
+        // No normalizar IDs de Zavu
+        leadData.phone = phone;
+        console.log(`📞 Teléfono (ID de Zavu) guardado sin normalizar: "${phone}"`);
+      } else {
+        // Normalizar el teléfono para almacenamiento consistente
+        const normalizedPhone = normalizePhoneForStorage(phone);
+        leadData.phone = normalizedPhone;
+        console.log(`📞 Teléfono normalizado para almacenamiento: "${phone}" -> "${normalizedPhone}"`);
+      }
     }
     
     // Primero obtenemos los datos completos del sitio para usar site.id y site.user_id

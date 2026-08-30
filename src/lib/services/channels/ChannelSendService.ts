@@ -19,6 +19,21 @@ export interface SendChannelMessageResult {
   error?: string;
 }
 
+/**
+ * Reverses Mexican phone normalization accidentally applied to Zavu chat IDs.
+ * A 10-digit Telegram id like 1888278689 was stored as +521888278689.
+ * Strip +52 first (not +521) so the leading 1 of the chat id is kept.
+ */
+export function sanitizeZavuRecipient(recipient: string): string {
+  if (recipient.startsWith('+52')) {
+    return recipient.substring(3);
+  }
+  if (recipient.startsWith('+')) {
+    return recipient.substring(1);
+  }
+  return recipient;
+}
+
 export class ChannelSendService {
   /**
    * Send a generic channel message (e.g. Telegram, Messenger)

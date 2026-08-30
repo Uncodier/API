@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { WorkflowService } from '@/lib/services/workflow-service';
+import { sanitizeZavuRecipient } from '@/lib/services/channels/ChannelSendService';
 
 function isValidUUID(uuid: string): boolean {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -171,10 +172,14 @@ export async function sendMessageByChannel(
       channel === 'messenger';
 
     if (useChannelDelivery) {
-      const recipient =
+      let recipient =
         channel === 'email'
           ? contactInfo.leadEmail
           : contactInfo.visitorPhone || contactInfo.leadPhone;
+
+      if (recipient && (channel === 'telegram' || channel === 'messenger' || channel === 'zavu')) {
+        recipient = sanitizeZavuRecipient(recipient);
+      }
 
       if (!recipient) {
         return {

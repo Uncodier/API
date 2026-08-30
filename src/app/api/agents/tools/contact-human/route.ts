@@ -4,6 +4,7 @@ import { NotificationType, NotificationCategory, NotificationPriority } from '@/
 import { TeamNotificationService } from '@/lib/services/team-notification-service';
 import { VisitorNotificationService } from '@/lib/services/visitor-notification-service';
 import { WhatsAppSendService } from '@/lib/services/whatsapp/WhatsAppSendService';
+import { ChannelSendService, sanitizeZavuRecipient } from '@/lib/services/channels/ChannelSendService';
 import { v4 as uuidv4 } from 'uuid';
 import { createHash } from 'crypto';
 
@@ -252,6 +253,73 @@ async function sendEmailAutoResponse(
     
   } catch (error) {
     console.error('❌ Error inesperado al enviar respuesta automática por email:', error);
+    return false;
+  }
+}
+
+/**
+ * Función para enviar respuesta automática vía Zavu channels (Telegram, Messenger)
+ */
+async function sendChannelAutoResponse(
+  conversationData: any,
+  channel: string,
+  message: string,
+  contactName?: string
+): Promise<boolean> {
+  try {
+    console.log(`📺 Enviando respuesta automática vía ${channel} para conversación ${conversationData.id}`);
+    
+    // Obtener el ID desde custom_data o usar el teléfono del lead
+    let recipientId: string | null = null;
+    
+    if (conversationData.custom_data?.phone) {
+      recipientId = conversationData.custom_data.phone;
+    }
+    
+    // Si no se encuentra, intentar obtenerlo del lead
+    if (!recipientId && conversationData.lead_id) {
+      const { data: lead } = await supabaseAdmin
+        .from('leads')
+        .select('phone')
+        .eq('id', conversationData.lead_id)
+        .single();
+      
+      if (lead?.phone) {
+        recipientId = lead.phone;
+      }
+    }
+    
+    if (!recipientId) {
+      console.error(`❌ No se encontró ID (teléfono) en la conversación o lead para enviar respuesta automática de ${channel}`);
+      return false;
+    }
+
+    recipientId = sanitizeZavuRecipient(recipientId);
+    
+    const autoMessage = `Hola ${contactName || 'estimado/a cliente'}, ` +
+      `hemos recibido tu solicitud de ayuda: "${message}". ` +
+      `Un miembro de nuestro equipo se pondrá en contacto contigo pronto. ` +
+      `Gracias por tu paciencia. 🙏`;
+    
+    const result = await ChannelSendService.sendMessage({
+      channel: channel,
+      to: recipientId,
+      message: autoMessage,
+      site_id: conversationData.site_id,
+      conversation_id: conversationData.id,
+      lead_id: conversationData.lead_id
+    });
+    
+    if (result.success) {
+      console.log(`✅ Respuesta automática de ${channel} enviada: ${result.messageId}`);
+      return true;
+    } else {
+      console.error(`❌ Error al enviar respuesta automática de ${channel}:`, result.error);
+      return false;
+    }
+    
+  } catch (error) {
+    console.error(`❌ Error inesperado al enviar respuesta automática de ${channel}:`, error);
     return false;
   }
 }
@@ -527,6 +595,10 @@ export async function POST(request: NextRequest) {
         console.log(`📧 Conversación de email detectada - enviando respuesta automática`);
         channelResponseSent = await sendEmailAutoResponse(conversationData, message, email, name);
         channelResponseType = 'email';
+      } else if (['telegram', 'messenger', 'zavu'].includes(conversationOrigin)) {
+        console.log(`📺 Conversación de Zavu (${conversationOrigin}) detectada - enviando respuesta automática`);
+        channelResponseSent = await sendChannelAutoResponse(conversationData, conversationOrigin, message, name);
+        channelResponseType = conversationOrigin;
       } else {
         console.log(`🌐 Conversación web detectada - solo notificación al equipo`);
         
