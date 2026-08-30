@@ -63,6 +63,7 @@ export async function POST(request: NextRequest) {
       metadata: {
         bot_username: telegram?.botUsername,
         bot_id: telegram?.botId,
+        zavu_webhook_secret: sender.webhookSecret,
       },
     });
 

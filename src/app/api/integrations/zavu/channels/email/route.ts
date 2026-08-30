@@ -60,6 +60,7 @@ export async function POST(request: NextRequest) {
         email_domain_id: emailDomainId,
         emailReceivingEnabled: false,
         mx_verified: false,
+        zavu_webhook_secret: sender.webhookSecret,
       },
     });
 

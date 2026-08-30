@@ -11,14 +11,35 @@ export async function POST(request: NextRequest) {
   try {
     const signature = request.headers.get("x-zavu-signature");
     const rawBody = await request.text();
-    const secret = process.env.ZAVUDEV_WEBHOOK_SECRET;
+    let secret = process.env.ZAVUDEV_WEBHOOK_SECRET;
+
+    // Parse early only to inspect senderId (this doesn't affect signature checking against rawBody)
+    let event: any = {};
+    try {
+      event = JSON.parse(rawBody);
+    } catch (e) {
+      console.error("[Zavu Webhook] Failed to parse body", e);
+    }
+
+    // Since every created sender has its own webhook secret, we look it up from the DB
+    const senderId = event.senderId || event.data?.senderId || event.sender?.id;
+    if (senderId) {
+      const sites = await findSettingsForSender(senderId);
+      if (sites.length > 0) {
+        const site = sites[0];
+        const connections = (site.channels as any)?.connections || [];
+        const conn = connections.find((c: any) => c.zavu_sender_id === senderId);
+        if (conn?.metadata?.zavu_webhook_secret) {
+          secret = conn.metadata.zavu_webhook_secret;
+        }
+      }
+    }
 
     if (!verifyZavuSignature(signature, rawBody, secret)) {
       console.warn("[Zavu Webhook] Invalid signature");
       return new NextResponse("Invalid signature", { status: 401 });
     }
 
-    const event = JSON.parse(rawBody);
     console.log(`[Zavu Webhook] Received event: ${event.type}`);
 
     processEventAsync(event).catch((error) => {
@@ -125,6 +146,22 @@ async function findSettingsForInvitation(invitationId: string) {
 
   if (error) {
     console.error("[Zavu Webhook] DB error finding invitation:", error);
+    return [];
+  }
+
+  return data || [];
+}
+
+async function findSettingsForSender(senderId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("settings")
+    .select("id, site_id, channels")
+    .contains("channels", {
+      connections: [{ zavu_sender_id: senderId }],
+    });
+
+  if (error) {
+    console.error("[Zavu Webhook] DB error finding sender:", error);
     return [];
   }
 
