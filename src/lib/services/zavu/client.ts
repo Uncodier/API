@@ -11,6 +11,28 @@ export interface ZavuInvitation {
   connectedAccount?: unknown;
 }
 
+export const ZAVU_SENDER_WEBHOOK_EVENTS = [
+  "message.inbound",
+  "conversation.new",
+  "message.unsupported",
+  "message.queued",
+  "message.sent",
+  "message.delivered",
+  "message.read",
+  "message.failed",
+  "template.status_changed",
+  "domain.verified",
+  "domain.failed"
+];
+
+export const ZAVU_PROJECT_WEBHOOK_EVENTS = [
+  "invitation.status_changed"
+];
+
+export function getZavuWebhookUrl(): string {
+  return `${process.env.API_SERVER_URL || process.env.NEXT_PUBLIC_API_SERVER_URL}/api/integrations/zavu/webhook`;
+}
+
 function getApiKey(): string {
   const apiKey = process.env.ZAVUDEV_API_KEY;
   if (!apiKey) {
@@ -96,16 +118,79 @@ export async function cancelInvitation(id: string): Promise<void> {
   await zavuFetch(`/invitations/${id}/cancel`, { method: "POST" });
 }
 
-export async function updateSenderWebhook(senderId: string, webhookUrl: string) {
-  return zavuFetch(`/senders/${senderId}`, {
+export function mapInvitationStatus(status: string | undefined): string {
+  if (status === "completed") return "connected";
+  return status || "pending";
+}
+
+function hasWebhookEvents(sender: any): boolean {
+  return Array.isArray(sender?.webhook?.events) && sender.webhook.events.length > 0;
+}
+
+export function mergeSenderWebhook(created: any, patched: any) {
+  const next = { ...created, ...patched };
+  next.webhook = {
+    ...(created?.webhook || {}),
+    ...(patched?.webhook || {}),
+    secret: patched?.webhook?.secret || created?.webhook?.secret,
+    events: patched?.webhook?.events?.length
+      ? patched.webhook.events
+      : created?.webhook?.events || [],
+  };
+  return next;
+}
+
+export async function ensureSenderWebhook(senderId: string) {
+  const webhookUrl = getZavuWebhookUrl();
+  const payload = await zavuFetch(`/senders/${senderId}`, {
     method: "PATCH",
     body: JSON.stringify({
       webhookUrl,
-      webhookEvents: ["message.inbound", "invitation.status_changed"],
+      webhookEvents: ZAVU_SENDER_WEBHOOK_EVENTS,
       webhookActive: true,
       webhookSignatureVersion: "v1+v2",
     }),
   });
+  return unwrapSender(payload);
+}
+
+export async function ensureProjectWebhook() {
+  const webhookUrl = getZavuWebhookUrl();
+  const body = {
+    url: webhookUrl,
+    events: ZAVU_PROJECT_WEBHOOK_EVENTS,
+    active: true,
+  };
+
+  try {
+    const current = await zavuFetch<any>("/invitations/webhook");
+    const webhook = current?.webhook || current;
+    const events = webhook?.events || [];
+    const alreadyConfigured =
+      webhook?.url === webhookUrl &&
+      webhook?.active !== false &&
+      ZAVU_PROJECT_WEBHOOK_EVENTS.every((event) => events.includes(event));
+
+    if (alreadyConfigured) {
+      return current;
+    }
+
+    return zavuFetch("/invitations/webhook", {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+  } catch (error: any) {
+    if (error?.status && error.status !== 404) {
+      console.warn("[Zavu] GET project webhook failed, trying POST:", error.message);
+    }
+    return zavuFetch("/invitations/webhook", {
+      method: "POST",
+      body: JSON.stringify({
+        url: webhookUrl,
+        events: ZAVU_PROJECT_WEBHOOK_EVENTS,
+      }),
+    });
+  }
 }
 
 export async function attachSenderToAgent(senderId: string) {
@@ -129,28 +214,33 @@ export async function createSender(params: {
   emailFromName?: string;
   emailDomainId?: string;
   emailReceivingEnabled?: boolean;
-  webhookUrl?: string;
-  webhookEvents?: string[];
   setAsDefault?: boolean;
 }): Promise<any> {
-  return unwrapSender(
-    await zavuFetch("/senders", {
-      method: "POST",
-      body: JSON.stringify({
-        ...params,
-        ...(params.webhookUrl ? { webhookSignatureVersion: "v1+v2" } : {}),
-      }),
-    })
-  );
+  const payload = await zavuFetch("/senders", {
+    method: "POST",
+    body: JSON.stringify({
+      ...params,
+      webhookUrl: getZavuWebhookUrl(),
+      webhookEvents: ZAVU_SENDER_WEBHOOK_EVENTS,
+      webhookSignatureVersion: "v1+v2",
+    }),
+  });
+  
+  const created = unwrapSender(payload);
+  const patched = await ensureSenderWebhook(created.id);
+  const sender = mergeSenderWebhook(created, patched);
+
+  if (!hasWebhookEvents(sender)) {
+    throw new Error("Zavu sender webhook events were not persisted");
+  }
+
+  return sender;
 }
 
 export async function updateSender(senderId: string, params: {
   emailAddress?: string;
   emailFromName?: string;
   emailReceivingEnabled?: boolean;
-  webhookUrl?: string;
-  webhookEvents?: string[];
-  webhookActive?: boolean;
 }): Promise<any> {
   return zavuFetch(`/senders/${senderId}`, {
     method: "PATCH",

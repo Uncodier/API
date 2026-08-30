@@ -1,6 +1,24 @@
 import { supabaseAdmin } from "@/lib/database/supabase-server";
 import { v4 as uuidv4 } from "uuid";
 
+export async function getChannelConnection(siteId: string, channelId: string | undefined) {
+  if (!channelId) return null;
+
+  const { data: settingsRow, error } = await supabaseAdmin
+    .from("settings")
+    .select("channels")
+    .eq("site_id", siteId)
+    .maybeSingle();
+
+  if (error) {
+    console.error("[Zavu] Error fetching channel connection:", error);
+    return null;
+  }
+
+  const connections = (settingsRow?.channels as any)?.connections || [];
+  return connections.find((c: any) => c.id === channelId) || null;
+}
+
 export async function upsertChannelConnection(
   siteId: string,
   existingChannelId: string | undefined,

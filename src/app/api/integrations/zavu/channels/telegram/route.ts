@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createSender, connectTelegram, attachSenderToAgent, upsertChannelConnection } from "@/lib/services/zavu";
-
+import { createSender, connectTelegram, attachSenderToAgent, upsertChannelConnection, ensureSenderWebhook, getChannelConnection } from "@/lib/services/zavu";
 import { encryptToken } from "@/lib/utils/token-encryption";
 
 export async function POST(request: NextRequest) {
@@ -16,22 +15,30 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "botToken is required" }, { status: 400 });
     }
 
-    const webhookUrl = `${process.env.API_SERVER_URL || process.env.NEXT_PUBLIC_API_SERVER_URL}/api/integrations/zavu/webhook`;
-
     let sender;
-    try {
-      sender = await createSender({
-        name: name || `Telegram ${siteId}`,
-        enableSmsOneway: true,
-        webhookUrl,
-        webhookEvents: ["message.inbound"],
-      });
-    } catch (zavuError: any) {
-      console.error("[Zavu] Error creating sender for Telegram:", zavuError);
-      return NextResponse.json(
-        { error: `Zavu API Error (create sender): ${zavuError.message || "Unknown error"}` },
-        { status: zavuError.status || 502 }
-      );
+    const existingConnection = await getChannelConnection(siteId, existingChannelId);
+    if (existingConnection?.zavu_sender_id) {
+      sender = { id: existingConnection.zavu_sender_id };
+      try {
+        sender = await ensureSenderWebhook(existingConnection.zavu_sender_id);
+      } catch (err) {
+        console.warn("[Zavu] Error ensuring webhook on reused sender:", err);
+      }
+    }
+
+    if (!sender) {
+      try {
+        sender = await createSender({
+          name: name || `Telegram ${siteId}`,
+          enableSmsOneway: true,
+        });
+      } catch (zavuError: any) {
+        console.error("[Zavu] Error creating sender for Telegram:", zavuError);
+        return NextResponse.json(
+          { error: `Zavu API Error (create sender): ${zavuError.message || "Unknown error"}` },
+          { status: zavuError.status || 502 }
+        );
+      }
     }
 
     let telegramConn;
@@ -66,6 +73,7 @@ export async function POST(request: NextRequest) {
         bot_username: telegram?.botUsername,
         bot_id: telegram?.botId,
         ...(sender.webhook?.secret ? { zavu_webhook_secret: encryptToken(sender.webhook.secret) } : {}),
+        zavu_webhook_events: sender.webhook?.events || [],
       },
     });
 
@@ -74,6 +82,11 @@ export async function POST(request: NextRequest) {
       channelId,
       senderId: sender.id,
       telegram,
+      webhook: sender.webhook ? {
+        url: sender.webhook.url,
+        events: sender.webhook.events,
+        active: sender.webhook.active,
+      } : null,
     });
   } catch (error: any) {
     console.error("[Zavu] Unhandled error in telegram connect:", error);

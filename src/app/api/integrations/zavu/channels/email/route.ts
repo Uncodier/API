@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createSender, updateSender, attachSenderToAgent, upsertChannelConnection } from "@/lib/services/zavu";
+import { createSender, updateSender, attachSenderToAgent, upsertChannelConnection, ensureSenderWebhook, getChannelConnection } from "@/lib/services/zavu";
 import { encryptToken } from "@/lib/utils/token-encryption";
 
 export async function POST(request: NextRequest) {
@@ -22,26 +22,38 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "emailAddress is required" }, { status: 400 });
     }
 
-    const webhookUrl = `${process.env.API_SERVER_URL || process.env.NEXT_PUBLIC_API_SERVER_URL}/api/integrations/zavu/webhook`;
-
     let sender;
-    try {
-      sender = await createSender({
-        name: name || `Email ${siteId}`,
-        emailAddress,
-        emailFromName,
-        emailDomainId,
-        emailReceivingEnabled: false,
-        webhookUrl,
-        webhookEvents: ["message.inbound"],
-      });
-    } catch (zavuError: any) {
-      console.error("[Zavu] Error creating sender for Email:", zavuError);
-      const errorMessage = `Zavu API Error: ${zavuError.message || "Unknown error"}`;
-      return NextResponse.json(
-        { error: errorMessage },
-        { status: zavuError.status || 502 }
-      );
+    const existingConnection = await getChannelConnection(siteId, existingChannelId);
+    if (existingConnection?.zavu_sender_id) {
+      sender = { id: existingConnection.zavu_sender_id };
+      try {
+        await updateSender(existingConnection.zavu_sender_id, {
+          emailAddress,
+          emailFromName,
+        });
+        sender = await ensureSenderWebhook(existingConnection.zavu_sender_id);
+      } catch (err) {
+        console.warn("[Zavu] Error ensuring webhook on reused sender:", err);
+      }
+    }
+
+    if (!sender) {
+      try {
+        sender = await createSender({
+          name: name || `Email ${siteId}`,
+          emailAddress,
+          emailFromName,
+          emailDomainId,
+          emailReceivingEnabled: false,
+        });
+      } catch (zavuError: any) {
+        console.error("[Zavu] Error creating sender for Email:", zavuError);
+        const errorMessage = `Zavu API Error: ${zavuError.message || "Unknown error"}`;
+        return NextResponse.json(
+          { error: errorMessage },
+          { status: zavuError.status || 502 }
+        );
+      }
     }
 
     try {
@@ -62,6 +74,7 @@ export async function POST(request: NextRequest) {
         emailReceivingEnabled: false,
         mx_verified: false,
         ...(sender.webhook?.secret ? { zavu_webhook_secret: encryptToken(sender.webhook.secret) } : {}),
+        zavu_webhook_events: sender.webhook?.events || [],
       },
     });
 
@@ -69,6 +82,11 @@ export async function POST(request: NextRequest) {
       success: true,
       channelId,
       senderId: sender.id,
+      webhook: sender.webhook ? {
+        url: sender.webhook.url,
+        events: sender.webhook.events,
+        active: sender.webhook.active,
+      } : null,
     });
   } catch (error: any) {
     console.error("[Zavu] Unhandled error in email connect:", error);

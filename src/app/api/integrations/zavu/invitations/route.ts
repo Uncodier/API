@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createPartnerInvitation, ConnectionType } from "@/lib/services/zavu";
+import { createPartnerInvitation, ConnectionType, ensureProjectWebhook } from "@/lib/services/zavu";
 import { supabaseAdmin } from "@/lib/database/supabase-server";
 import { v4 as uuidv4 } from "uuid";
 
@@ -21,6 +21,13 @@ export async function POST(request: NextRequest) {
         { error: "Valid connectionType is required (whatsapp_waba or messenger)" },
         { status: 400 }
       );
+    }
+    
+    // Ensure project webhook is registered for invitation updates
+    try {
+      await ensureProjectWebhook();
+    } catch (whError) {
+      console.warn("[Zavu] Failed to ensure project webhook:", whError);
     }
 
     let invitation;

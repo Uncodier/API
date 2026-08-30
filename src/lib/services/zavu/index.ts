@@ -2,6 +2,7 @@ import crypto from "crypto";
 
 export * from "./client";
 export * from "./persist";
+export * from "./webhook-handlers";
 
 const MAX_AGE_SECONDS = 300;
 
@@ -73,8 +74,3 @@ export const verifyZavuSignature = (
     return false;
   }
 };
-
-export function mapInvitationStatus(status: string | undefined): string {
-  if (status === "completed") return "connected";
-  return status || "pending";
-}
