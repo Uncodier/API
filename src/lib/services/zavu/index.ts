@@ -52,6 +52,9 @@ export const verifyZavuSignature = (
       return false;
     }
 
+    // Usar rawBody para firmar, ya que el header se firma con el payload original,
+    // que idealmente debería ser JSON plano, pero al hacer JSON.parse(await request.text()) a veces hay desajustes.
+    // Zavu requiere firmar EXACTAMENTE con request.text().
     const signedPayload = parts.v2 ? `${timestamp}.${rawBody}` : rawBody;
     const expected = crypto.createHmac("sha256", secret).update(signedPayload).digest("hex");
     if (expected.length !== received.length) {

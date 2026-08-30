@@ -33,6 +33,7 @@ export async function POST(request: NextRequest) {
         const connections = (site.channels as any)?.connections || [];
         const conn = connections.find((c: any) => c.zavu_sender_id === senderId);
         if (conn?.metadata?.zavu_webhook_secret) {
+          console.log(`[Zavu Webhook] Secret stored in DB: ${conn.metadata.zavu_webhook_secret.substring(0, 10)}...`);
           const decrypted = decryptToken(conn.metadata.zavu_webhook_secret);
           secret = decrypted || conn.metadata.zavu_webhook_secret;
           console.log(`[Zavu Webhook] Found specific secret for sender ${senderId} (decrypted: ${!!decrypted})`);

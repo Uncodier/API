@@ -133,7 +133,9 @@ const nextraConfig = withNextra({
   env: {
     COMPOSIO_PROJECT_API_KEY: process.env.COMPOSIO_PROJECT_API_KEY || 'du48sq2qy07vkyhm8v9v8g',
     TEMPORAL_SERVER_URL: process.env.TEMPORAL_SERVER_URL,
-    TEMPORAL_CLOUD_API_KEY: process.env.TEMPORAL_CLOUD_API_KEY
+    TEMPORAL_CLOUD_API_KEY: process.env.TEMPORAL_CLOUD_API_KEY,
+    // Workflow queue fetch + Next.js Proxy crash (undici private field #k).
+    WORKFLOW_NODE_HTTP: process.env.WORKFLOW_NODE_HTTP || '1',
   },
   async headers() {
     console.log('[NEXT-CONFIG] Generando headers para Next.js');
