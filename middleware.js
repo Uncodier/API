@@ -46,6 +46,10 @@ export default async function middleware(request) {
   const isOutstandWebhook =
     request.nextUrl.pathname === '/api/integrations/outstand/webhooks';
 
+  // Zavu webhook: HMAC signature validated in route (ZAVUDEV_WEBHOOK_SECRET)
+  const isZavuWebhook =
+    request.nextUrl.pathname === '/api/integrations/zavu/webhook';
+
   // Vercel webhook: secret validated in route (VERCEL_WEBHOOK_SECRET)
   const isVercelWebhook =
     request.nextUrl.pathname === '/api/integrations/vercel/webhook';
@@ -101,6 +105,7 @@ export default async function middleware(request) {
     isStripeWebhook,
     isAgentMailWebhook,
     isOutstandWebhook,
+    isZavuWebhook,
     isVercelWebhook,
     isStatusWebhook,
     isSupabaseAuthEmailHook,
@@ -144,6 +149,15 @@ export default async function middleware(request) {
     const response = safeNext();
     response.headers.set('X-Middleware-Executed', 'true');
     response.headers.set('X-Outstand-Webhook', 'true');
+    return response;
+  }
+
+  // Para Zavu webhooks, permitir sin API key (firma HMAC en la ruta)
+  if (isZavuWebhook) {
+    console.log('[Middleware] Zavu webhook detected - skipping origin/API validation');
+    const response = safeNext();
+    response.headers.set('X-Middleware-Executed', 'true');
+    response.headers.set('X-Zavu-Webhook', 'true');
     return response;
   }
 
