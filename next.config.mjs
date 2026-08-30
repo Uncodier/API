@@ -83,6 +83,16 @@ const nextraConfig = withNextra({
       };
     }
     
+    if (isServer) {
+      config.module = config.module || {};
+      config.module.rules = config.module.rules || [];
+      config.module.rules.unshift({
+        test: /[/\\]node_modules[/\\]@workflow[/\\].+\.js$/,
+        enforce: 'pre',
+        loader: require.resolve('./src/lib/workflow-runtime/strip-dispatcher-loader.cjs'),
+      });
+    }
+
     // Exclude test files and problematic modules from node_modules
     config.resolve = config.resolve || {};
     config.resolve.alias = config.resolve.alias || {};

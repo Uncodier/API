@@ -558,9 +558,18 @@ export class BusinessWorkflowService extends BaseWorkflowService {
       console.log(`📝 Mensaje: ${args.message.substring(0, 50)}...`);
       console.log(`🏢 Site ID: ${args.site_id || 'N/A'}`);
 
+      const workflowArgs = [
+        args,
+        {
+          origin: args.origin,
+          origin_message_id: args.origin_message_id,
+          agentId: args.agentId,
+        },
+      ];
+
       if (options?.async !== false) {
         const handle = await client.workflow.start('customerSupportMessageWorkflow', {
-          args: [args],
+          args: workflowArgs,
           taskQueue,
           workflowId,
         });
@@ -577,7 +586,7 @@ export class BusinessWorkflowService extends BaseWorkflowService {
       }
 
       const result = await client.workflow.execute('customerSupportMessageWorkflow', {
-        args: [args],
+        args: workflowArgs,
         taskQueue,
         workflowId,
       });
