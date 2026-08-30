@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import {
   attachSenderToAgent,
   mapInvitationStatus,
@@ -7,8 +7,8 @@ import {
 } from "@/lib/services/zavu";
 import { supabaseAdmin } from "@/lib/database/supabase-server";
 import { decryptToken } from "@/lib/utils/token-decryption";
-
-import { encryptToken } from "@/app/api/secure-tokens/encrypt/route";
+import { encryptToken } from "@/lib/utils/token-encryption";
+import { WorkflowService } from "@/lib/services/workflow-service";
 
 export async function POST(request: NextRequest) {
   try {
@@ -33,21 +33,35 @@ export async function POST(request: NextRequest) {
         const connections = (site.channels as any)?.connections || [];
         const conn = connections.find((c: any) => c.zavu_sender_id === senderId);
         if (conn?.metadata?.zavu_webhook_secret) {
-          secret = decryptToken(conn.metadata.zavu_webhook_secret) || conn.metadata.zavu_webhook_secret;
+          const decrypted = decryptToken(conn.metadata.zavu_webhook_secret);
+          secret = decrypted || conn.metadata.zavu_webhook_secret;
+          console.log(`[Zavu Webhook] Found specific secret for sender ${senderId} (decrypted: ${!!decrypted})`);
+        } else {
+          console.log(`[Zavu Webhook] No secret stored for sender ${senderId}, falling back to env var`);
         }
+      } else {
+        console.log(`[Zavu Webhook] Site not found for sender ${senderId}`);
       }
+    } else {
+      console.log(`[Zavu Webhook] No senderId in event payload`);
     }
 
+    // Acknowledge immediately before slow verifications or processing, to keep it async like Vercel needs
+    // But we need to verify signature first before trusting the payload
     if (!verifyZavuSignature(signature, rawBody, secret)) {
       console.warn("[Zavu Webhook] Invalid signature");
       return new NextResponse("Invalid signature", { status: 401 });
     }
 
-    console.log(`[Zavu Webhook] Received event: ${event.type}`);
+    const eventType = event.type || (event.data?.text && event.data?.from ? "message.inbound" : undefined);
+    event.type = eventType;
+    console.log(`[Zavu Webhook] Received event: ${eventType || "unknown"}`);
 
-    processEventAsync(event).catch((error) => {
-      console.error("[Zavu Webhook] Async processing error:", error);
-    });
+    after(() =>
+      processEventAsync(event).catch((error) => {
+        console.error("[Zavu Webhook] Async processing error:", error);
+      })
+    );
 
     return new NextResponse("OK", { status: 200 });
   } catch (error) {
@@ -67,6 +81,7 @@ async function processEventAsync(event: any) {
       break;
     case "message.inbound":
       console.log(`[Zavu Webhook] Inbound message on ${event.data?.channel || "unknown"}`);
+      await handleInboundMessage(event);
       break;
     default:
       console.log(`[Zavu Webhook] Unhandled event type: ${event.type}`);
@@ -171,6 +186,74 @@ async function findSettingsForSender(senderId: string) {
   return data || [];
 }
 
+async function getUserIdFromSite(siteId: string): Promise<string | undefined> {
+  const { data } = await supabaseAdmin.from("sites").select("user_id").eq("id", siteId).maybeSingle();
+  return data?.user_id || undefined;
+}
+
+async function handleInboundMessage(event: any) {
+  const data = event.data;
+  if (!data || !data.from) {
+    console.warn("[Zavu Webhook] Inbound event missing data.from");
+    return;
+  }
+
+  const messageText = data.text || data.body || data.caption;
+  if (!messageText) {
+    console.warn("[Zavu Webhook] Inbound event missing message text");
+    return;
+  }
+
+  const senderId = event.senderId || data.senderId || event.sender?.id;
+  if (!senderId) {
+    console.warn("[Zavu Webhook] No senderId found for inbound message");
+    return;
+  }
+
+  const sites = await findSettingsForSender(senderId);
+  if (sites.length === 0) {
+    console.warn(`[Zavu Webhook] No site found for sender ${senderId}`);
+    return;
+  }
+
+  const siteId = sites[0].site_id;
+  const channel = data.channel || "zavu";
+  const rawFrom = String(data.from);
+  const identity = rawFrom.includes(":") ? rawFrom.split(":").slice(1).join(":") : rawFrom;
+  const isEmail = channel === "email" || identity.includes("@");
+  const userId = await getUserIdFromSite(siteId);
+
+  console.log(`[Zavu Webhook] Starting customerSupport workflow for ${channel} on site ${siteId}`);
+
+  const workflowService = WorkflowService.getInstance();
+  const workflowResult = await workflowService.customerSupportMessage(
+    {
+      userId,
+      message: messageText,
+      site_id: siteId,
+      name: data.profileName,
+      email: isEmail ? identity : undefined,
+      phone: isEmail ? undefined : identity,
+      origin: channel,
+      origin_message_id: data.messageId || event.id,
+      website_chat_origin: false,
+    },
+    {
+      priority: "high",
+      async: false,
+      retryAttempts: 3,
+      taskQueue: "high",
+      workflowId: `customer-support-${channel}-${siteId}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+    }
+  );
+
+  if (workflowResult.success) {
+    console.log(`[Zavu Webhook] customerSupport workflow started: ${workflowResult.workflowId}`);
+  } else {
+    console.error("[Zavu Webhook] customerSupport workflow failed:", workflowResult.error);
+  }
+}
+
 async function handleInvitationStatusChanged(data: any) {
   const invitationId = data.invitationId || data.id;
   const currentStatus = data.currentStatus || data.status;
@@ -228,7 +311,7 @@ async function handleInvitationStatusChanged(data: any) {
     const webhookUrl = `${process.env.API_SERVER_URL || process.env.NEXT_PUBLIC_API_SERVER_URL}/api/integrations/zavu/webhook`;
     try {
       const updatedSender = await updateSenderWebhook(senderId, webhookUrl);
-      if (updatedSender?.webhook?.secret) {
+      if (updatedSender && (updatedSender as any).webhook?.secret) {
         // Find the channel again to get its current state and update metadata
         const channelConn = connections.find((c: any) => c.zavu_sender_id === senderId || c.zavu_invitation_id === invitationId);
         if (channelConn) {
@@ -243,7 +326,7 @@ async function handleInvitationStatusChanged(data: any) {
                         ...conn,
                         metadata: {
                           ...(conn.metadata || {}),
-                          zavu_webhook_secret: encryptToken(updatedSender.webhook.secret),
+                          zavu_webhook_secret: encryptToken((updatedSender as any).webhook.secret),
                         },
                       }
                     : conn

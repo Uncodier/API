@@ -27,6 +27,7 @@ export const verifyZavuSignature = (
   secret: string | undefined
 ): boolean => {
   if (!signature || !secret || !payload) {
+    console.warn("[Zavu Webhook] Missing signature, secret, or payload", { hasSignature: !!signature, hasSecret: !!secret, hasPayload: !!payload });
     return false;
   }
 
@@ -35,26 +36,35 @@ export const verifyZavuSignature = (
     const parts = parseSignatureHeader(signature);
     const timestamp = Number(parts.t);
     if (!Number.isFinite(timestamp)) {
+      console.warn("[Zavu Webhook] Invalid timestamp in signature:", parts.t);
       return false;
     }
 
     const age = Math.floor(Date.now() / 1000) - timestamp;
     if (age > MAX_AGE_SECONDS || age < -60) {
+      console.warn(`[Zavu Webhook] Signature expired. Age: ${age}s (t=${timestamp}, now=${Math.floor(Date.now() / 1000)})`);
       return false;
     }
 
     const received = parts.v2 ?? parts.v1;
     if (!received) {
+      console.warn("[Zavu Webhook] Missing v1 or v2 in signature header");
       return false;
     }
 
     const signedPayload = parts.v2 ? `${timestamp}.${rawBody}` : rawBody;
     const expected = crypto.createHmac("sha256", secret).update(signedPayload).digest("hex");
     if (expected.length !== received.length) {
+      console.warn(`[Zavu Webhook] Length mismatch. Expected: ${expected.length}, Received: ${received.length}`);
       return false;
     }
 
-    return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(received));
+    const isValid = crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(received));
+    if (!isValid) {
+      console.warn(`[Zavu Webhook] Signature mismatch. Version: ${parts.v2 ? 'v2' : 'v1'}`);
+      console.warn(`[Zavu Webhook] Expected: ${expected.substring(0, 10)}... Received: ${received.substring(0, 10)}...`);
+    }
+    return isValid;
   } catch (error) {
     console.error("Error verifying Zavu signature:", error);
     return false;

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createSender, updateSender, attachSenderToAgent, upsertChannelConnection } from "@/lib/services/zavu";
-import { encryptToken } from "@/app/api/secure-tokens/encrypt/route";
+import { encryptToken } from "@/lib/utils/token-encryption";
 
 export async function POST(request: NextRequest) {
   try {

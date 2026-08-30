@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import * as crypto from 'crypto';
 import { z } from 'zod';
+import { encryptToken } from '@/lib/utils/token-encryption';
 
 // Validation schema
 const EncryptTokenSchema = z.object({
@@ -31,37 +31,6 @@ function getSupabaseClient() {
   }
   
   return createClient(supabaseUrl, supabaseServiceKey);
-}
-
-// Token encryption utility
-export function encryptToken(value: string): string {
-  try {
-    const encryptionKey = process.env.ENCRYPTION_KEY;
-    
-    if (!encryptionKey) {
-      throw new Error("Missing ENCRYPTION_KEY environment variable");
-    }
-    
-    // Generate a random IV
-    const iv = crypto.randomBytes(16);
-    
-    // Create key from the encryption key
-    // Use SHA-256 to ensure key is the right length for AES-256
-    const key = crypto.createHash('sha256').update(String(encryptionKey)).digest();
-    
-    // Create cipher
-    const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
-    
-    // Encrypt
-    let encrypted = cipher.update(Buffer.from(value, 'utf8'));
-    encrypted = Buffer.concat([encrypted, cipher.final()]);
-    
-    // Format as iv:encryptedContent in hex
-    return `${iv.toString('hex')}:${encrypted.toString('hex')}`;
-  } catch (error) {
-    console.error("Error encrypting token:", error);
-    throw new Error(`Failed to encrypt token: ${error instanceof Error ? error.message : 'Unknown error'}`);
-  }
 }
 
 export async function POST(request: NextRequest) {

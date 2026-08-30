@@ -478,6 +478,24 @@ export class BusinessWorkflowService extends BaseWorkflowService {
       console.log(`📝 Mensaje: ${args.message.substring(0, 50)}...`);
       console.log(`🏢 Site ID: ${args.site_id || 'N/A'}`);
 
+      if (options?.async !== false) {
+        const handle = await client.workflow.start('customerSupportMessageWorkflow', {
+          args: [args],
+          taskQueue,
+          workflowId,
+        });
+
+        console.log(`✅ Workflow de mensaje customer support iniciado: ${handle.workflowId}`);
+
+        return {
+          success: true,
+          executionId: handle.firstExecutionRunId,
+          workflowId: handle.workflowId,
+          runId: handle.firstExecutionRunId,
+          status: 'running'
+        };
+      }
+
       const result = await client.workflow.execute('customerSupportMessageWorkflow', {
         args: [args],
         taskQueue,

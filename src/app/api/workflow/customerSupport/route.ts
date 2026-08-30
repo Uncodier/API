@@ -109,7 +109,7 @@ export async function POST(request: NextRequest) {
     // Opciones de ejecución del workflow
     const workflowOptions: WorkflowExecutionOptions = {
       priority: 'high', // Customer support tiene alta prioridad
-      async: false, // Esperamos el resultado
+      async: false,
       retryAttempts: 3,
       taskQueue: 'high',
       workflowId: `customer-support-message-${site_id || 'nosid'}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
