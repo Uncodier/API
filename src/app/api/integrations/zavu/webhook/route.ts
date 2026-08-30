@@ -6,6 +6,9 @@ import {
   verifyZavuSignature,
 } from "@/lib/services/zavu";
 import { supabaseAdmin } from "@/lib/database/supabase-server";
+import { decryptToken } from "@/lib/utils/token-decryption";
+
+import { encryptToken } from "@/app/api/secure-tokens/encrypt/route";
 
 export async function POST(request: NextRequest) {
   try {
@@ -30,7 +33,7 @@ export async function POST(request: NextRequest) {
         const connections = (site.channels as any)?.connections || [];
         const conn = connections.find((c: any) => c.zavu_sender_id === senderId);
         if (conn?.metadata?.zavu_webhook_secret) {
-          secret = conn.metadata.zavu_webhook_secret;
+          secret = decryptToken(conn.metadata.zavu_webhook_secret) || conn.metadata.zavu_webhook_secret;
         }
       }
     }
@@ -224,7 +227,32 @@ async function handleInvitationStatusChanged(data: any) {
   if (currentStatus === "completed" && senderId) {
     const webhookUrl = `${process.env.API_SERVER_URL || process.env.NEXT_PUBLIC_API_SERVER_URL}/api/integrations/zavu/webhook`;
     try {
-      await updateSenderWebhook(senderId, webhookUrl);
+      const updatedSender = await updateSenderWebhook(senderId, webhookUrl);
+      if (updatedSender?.webhook?.secret) {
+        // Find the channel again to get its current state and update metadata
+        const channelConn = connections.find((c: any) => c.zavu_sender_id === senderId || c.zavu_invitation_id === invitationId);
+        if (channelConn) {
+          await supabaseAdmin
+            .from("settings")
+            .update({
+              channels: {
+                ...currentChannels,
+                connections: connections.map((conn: any) =>
+                  conn.id === channelConn.id
+                    ? {
+                        ...conn,
+                        metadata: {
+                          ...(conn.metadata || {}),
+                          zavu_webhook_secret: encryptToken(updatedSender.webhook.secret),
+                        },
+                      }
+                    : conn
+                ),
+              },
+            })
+            .eq("site_id", site.site_id);
+        }
+      }
     } catch (senderError) {
       console.error(`[Zavu Webhook] Failed to configure webhook for sender ${senderId}:`, senderError);
     }

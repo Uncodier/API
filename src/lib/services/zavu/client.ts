@@ -103,6 +103,7 @@ export async function updateSenderWebhook(senderId: string, webhookUrl: string) 
       webhookUrl,
       webhookEvents: ["message.inbound", "invitation.status_changed"],
       webhookActive: true,
+      webhookSignatureVersion: "v1+v2",
     }),
   });
 }
@@ -135,7 +136,10 @@ export async function createSender(params: {
   return unwrapSender(
     await zavuFetch("/senders", {
       method: "POST",
-      body: JSON.stringify(params),
+      body: JSON.stringify({
+        ...params,
+        ...(params.webhookUrl ? { webhookSignatureVersion: "v1+v2" } : {}),
+      }),
     })
   );
 }

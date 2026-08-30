@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createSender, updateSender, attachSenderToAgent, upsertChannelConnection } from "@/lib/services/zavu";
+import { encryptToken } from "@/app/api/secure-tokens/encrypt/route";
 
 export async function POST(request: NextRequest) {
   try {
@@ -60,7 +61,7 @@ export async function POST(request: NextRequest) {
         email_domain_id: emailDomainId,
         emailReceivingEnabled: false,
         mx_verified: false,
-        zavu_webhook_secret: sender.webhookSecret,
+        ...(sender.webhook?.secret ? { zavu_webhook_secret: encryptToken(sender.webhook.secret) } : {}),
       },
     });
 

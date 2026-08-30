@@ -34,7 +34,7 @@ function getSupabaseClient() {
 }
 
 // Token encryption utility
-function encryptToken(value: string): string {
+export function encryptToken(value: string): string {
   try {
     const encryptionKey = process.env.ENCRYPTION_KEY;
     

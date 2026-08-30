@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createSender, connectTelegram, attachSenderToAgent, upsertChannelConnection } from "@/lib/services/zavu";
 
+import { encryptToken } from "@/app/api/secure-tokens/encrypt/route";
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -63,7 +65,7 @@ export async function POST(request: NextRequest) {
       metadata: {
         bot_username: telegram?.botUsername,
         bot_id: telegram?.botId,
-        zavu_webhook_secret: sender.webhookSecret,
+        ...(sender.webhook?.secret ? { zavu_webhook_secret: encryptToken(sender.webhook.secret) } : {}),
       },
     });
 
