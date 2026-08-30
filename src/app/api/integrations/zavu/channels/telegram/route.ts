@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
       console.error("[Zavu] Error creating sender for Telegram:", zavuError);
       return NextResponse.json(
         { error: `Zavu API Error (create sender): ${zavuError.message || "Unknown error"}` },
-        { status: 502 }
+        { status: zavuError.status || 502 }
       );
     }
 
@@ -37,9 +37,14 @@ export async function POST(request: NextRequest) {
       telegramConn = await connectTelegram(sender.id, botToken);
     } catch (zavuError: any) {
       console.error("[Zavu] Error connecting Telegram:", zavuError);
+      
+      const errorMessage = zavuError.message === "Not Found" 
+        ? "Invalid Telegram Bot Token. Please verify the token." 
+        : `Zavu API Error: ${zavuError.message || "Unknown error"}`;
+        
       return NextResponse.json(
-        { error: `Zavu API Error (connect telegram): ${zavuError.message || "Unknown error"}` },
-        { status: 502 }
+        { error: errorMessage },
+        { status: zavuError.status === 400 ? 400 : 502 }
       );
     }
 

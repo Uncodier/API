@@ -36,9 +36,10 @@ export async function POST(request: NextRequest) {
       });
     } catch (zavuError: any) {
       console.error("[Zavu] Error creating sender for Email:", zavuError);
+      const errorMessage = `Zavu API Error: ${zavuError.message || "Unknown error"}`;
       return NextResponse.json(
-        { error: `Zavu API Error (create sender): ${zavuError.message || "Unknown error"}` },
-        { status: 502 }
+        { error: errorMessage },
+        { status: zavuError.status || 502 }
       );
     }
 
@@ -93,7 +94,7 @@ export async function PATCH(request: NextRequest) {
       console.error("[Zavu] Error updating sender for Email:", zavuError);
       return NextResponse.json(
         { error: `Zavu API Error: ${zavuError.message || "Unknown error"}` },
-        { status: 502 }
+        { status: zavuError.status || 502 }
       );
     }
 
