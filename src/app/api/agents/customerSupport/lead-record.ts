@@ -61,7 +61,9 @@ async function safeQuery<T>(label: string, run: () => Promise<T[]>, fallback: T[
 }
 
 async function loadAppointments(leadId: string, siteId?: string | null): Promise<LeadAppointmentRow[]> {
+  const schema = process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public';
   let query = supabaseAdmin
+    .schema(schema)
     .from('appointments')
     .select('id, title, start_datetime, end_datetime, status, timezone, participants')
     .eq('context_id', leadId)
@@ -79,7 +81,9 @@ async function loadAppointments(leadId: string, siteId?: string | null): Promise
 }
 
 async function loadReservations(leadId: string, siteId?: string | null): Promise<LeadReservationRow[]> {
+  const schema = process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public';
   let query = supabaseAdmin
+    .schema(schema)
     .from('reservations')
     .select('id, start_time, end_time, status, catalog_item_id, catalog_item:catalog_items(name, site_id)')
     .eq('lead_id', leadId)
@@ -101,7 +105,9 @@ async function loadReservations(leadId: string, siteId?: string | null): Promise
 }
 
 async function loadMeetingTasks(leadId: string, siteId?: string | null): Promise<LeadMeetingTaskRow[]> {
+  const schema = process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public';
   let query = supabaseAdmin
+    .schema(schema)
     .from('tasks')
     .select('id, title, scheduled_date, status, type')
     .eq('lead_id', leadId)
@@ -120,7 +126,9 @@ async function loadMeetingTasks(leadId: string, siteId?: string | null): Promise
 }
 
 async function loadOrders(leadId: string, siteId?: string | null): Promise<LeadOrderRow[]> {
+  const schema = process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public';
   let query = supabaseAdmin
+    .schema(schema)
     .from('sales')
     .select('id, title, status, amount, currency')
     .eq('lead_id', leadId)

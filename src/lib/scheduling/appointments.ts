@@ -78,7 +78,9 @@ export async function checkAppointmentAvailability(
   participants: string[],
   excludeId?: string
 ): Promise<boolean> {
+  const schema = process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public';
   let query = supabaseAdmin
+    .schema(schema)
     .from('appointments')
     .select('id, start_datetime, end_datetime, participants')
     .eq('site_id', site_id)
@@ -117,7 +119,9 @@ export async function checkAppointmentAvailability(
 export async function listAppointments(params: ListAppointmentsParams): Promise<AppointmentRow[]> {
   const limit = Math.min(Math.max(params.limit ?? 50, 1), 100);
 
+  const schema = process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public';
   let query = supabaseAdmin
+    .schema(schema)
     .from('appointments')
     .select(
       'id, title, start_datetime, end_datetime, duration, timezone, context_id, site_id, participants, location, status, calendar_link'
@@ -193,7 +197,9 @@ export async function createAppointment(params: CreateAppointmentParams): Promis
     updated_at: new Date().toISOString(),
   };
 
+  const schema = process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public';
   const { data: appointment, error } = await supabaseAdmin
+    .schema(schema)
     .from('appointments')
     .insert([appointmentData])
     .select()
@@ -207,7 +213,9 @@ export async function createAppointment(params: CreateAppointmentParams): Promis
 }
 
 export async function updateAppointment(params: UpdateAppointmentParams): Promise<AppointmentRow> {
+  const schema = process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public';
   const { data: existing, error: getError } = await supabaseAdmin
+    .schema(schema)
     .from('appointments')
     .select('*')
     .eq('id', params.appointment_id)
@@ -277,6 +285,7 @@ export async function updateAppointment(params: UpdateAppointmentParams): Promis
   }
 
   const { data: appointment, error } = await supabaseAdmin
+    .schema(schema)
     .from('appointments')
     .update(payload)
     .eq('id', params.appointment_id)

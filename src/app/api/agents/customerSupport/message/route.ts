@@ -42,6 +42,7 @@ async function findActiveAgentByRole(siteId: string, role: string): Promise<{age
     
     // Solo buscamos por site_id, role y status
     const { data, error } = await supabaseAdmin
+      .schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')
       .from('agents')
       .select('id, user_id')
       .eq('site_id', siteId)
@@ -86,6 +87,7 @@ async function getAgentInfo(agentId: string): Promise<{ user_id: string, site_id
     console.log(`🔍 Obteniendo información del agente: ${agentId}`);
     
     const { data, error } = await supabaseAdmin
+      .schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')
       .from('agents')
       .select('id, user_id, site_id')
       .eq('id', agentId)
@@ -125,6 +127,7 @@ async function getLeadInfo(leadId: string): Promise<any | null> {
     
     // Consultar el lead en la base de datos
     const { data, error } = await supabaseAdmin
+      .schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')
       .from('leads')
       .select('*')
       .eq('id', leadId)
@@ -200,6 +203,7 @@ async function getCommandDbUuid(internalId: string): Promise<string | null> {
     // Buscar en la base de datos directamente por algún campo que pueda relacionarse
     if (command) {
       const { data, error } = await supabaseAdmin
+        .schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')
         .from('commands')
         .select('id')
         .eq('task', command.task)
@@ -296,6 +300,7 @@ async function validateLeadExists(leadId: string): Promise<boolean> {
     }
     
     const { data, error } = await supabaseAdmin
+      .schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')
       .from('leads')
       .select('id')
       .eq('id', leadId)
@@ -333,6 +338,7 @@ async function checkDuplicateOriginMessage(
 
     // Build query to find messages with matching origin_message_id
     let query = supabaseAdmin
+      .schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')
       .from('messages')
       .select('id, conversation_id, role, created_at')
       .filter('custom_data->>origin_message_id', 'eq', originMessageId)
@@ -379,6 +385,7 @@ async function checkDuplicateOriginMessage(
       // If we have siteId, verify the conversation belongs to that site
       if (siteId) {
         const { data: conv, error: convError } = await supabaseAdmin
+          .schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')
           .from('conversations')
           .select('site_id')
           .eq('id', convId)
@@ -395,7 +402,8 @@ async function checkDuplicateOriginMessage(
 
       // Check if there's an assistant message after the user message
       const { data: assistantMessages, error: assistantError } = await supabaseAdmin
-        .from('messages')
+        .schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')
+      .from('messages')
         .select('id, created_at')
         .eq('conversation_id', convId)
         .eq('role', 'assistant')
@@ -464,7 +472,8 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
       // Verificamos primero que la conversación realmente existe en la base de datos
       console.log(`🔍 Verificando existencia de conversación: ${conversationId}`);
       const { data: existingConversation, error: checkError } = await supabaseAdmin
-        .from('conversations')
+        .schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')
+          .from('conversations')
         .select('id, user_id, lead_id, visitor_id, agent_id, site_id, custom_data')
         .eq('id', conversationId)
         .single();
@@ -544,7 +553,8 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
       console.log(`🗣️ Creando nueva conversación con datos:`, JSON.stringify(conversationData));
       
       const { data: conversation, error: convError } = await supabaseAdmin
-        .from('conversations')
+        .schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')
+          .from('conversations')
         .insert([conversationData])
         .select()
         .single();
@@ -567,6 +577,7 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
       if (origin || channelDelivery) {
         // Primero obtenemos el custom_data existente
         const { data: existingConv, error: fetchError } = await supabaseAdmin
+          .schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')
           .from('conversations')
           .select('custom_data')
           .eq('id', effectiveConversationId)
@@ -589,7 +600,8 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
       console.log(`✏️ Actualizando conversación: ${effectiveConversationId} con:`, JSON.stringify(updateData));
       
       const { error: updateError } = await supabaseAdmin
-        .from('conversations')
+        .schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')
+          .from('conversations')
         .update(updateData)
         .eq('id', effectiveConversationId);
       
@@ -637,6 +649,7 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
     if (commandId && isValidUUID(commandId)) {
       // Verify command exists in database before adding to message
       const { data: commandExists, error: commandCheckError } = await supabaseAdmin
+        .schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')
         .from('commands')
         .select('id')
         .eq('id', commandId)
@@ -669,6 +682,7 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
     console.log(`💬 Guardando mensaje de usuario para conversación: ${effectiveConversationId}`);
     
     const { data: savedUserMessage, error: userMsgError } = await supabaseAdmin
+      .schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')
       .from('messages')
       .insert([userMessageObj])
       .select()
@@ -705,6 +719,7 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
     if (commandId && isValidUUID(commandId)) {
       // Verify command exists in database before adding to message
       const { data: commandExists, error: commandCheckError } = await supabaseAdmin
+        .schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')
         .from('commands')
         .select('id')
         .eq('id', commandId)
@@ -729,6 +744,7 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
     console.log(`💬 Guardando mensaje de asistente para conversación: ${effectiveConversationId}`);
     
     const { data: savedAssistantMessage, error: assistantMsgError } = await supabaseAdmin
+      .schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')
       .from('messages')
       .insert([assistantMessageObj])
       .select()
@@ -743,7 +759,8 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
     
     // Verificamos que la conversación esté asociada correctamente
     const { data: finalConversation, error: finalCheckError } = await supabaseAdmin
-      .from('conversations')
+      .schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')
+          .from('conversations')
       .select('id, user_id, lead_id, visitor_id, agent_id, site_id, title')
       .eq('id', effectiveConversationId)
       .single();
@@ -782,7 +799,8 @@ async function findLeadByInfo(email?: string, phone?: string, name?: string, sit
       return null;
     }
     
-    let query = supabaseAdmin.from('leads').select('id');
+    let query = supabaseAdmin.schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')
+      .from('leads').select('id');
     
     // Siempre filtrar por site_id si está disponible
     if (siteId) {
@@ -864,6 +882,7 @@ async function createTaskForLead(leadId: string, siteId?: string, userId?: strin
     
     // Obtener información del lead para usar en la tarea
     const { data: lead, error: leadError } = await supabaseAdmin
+      .schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')
       .from('leads')
       .select('id, name, user_id, site_id')
       .eq('id', leadId)
@@ -903,6 +922,7 @@ async function createTaskForLead(leadId: string, siteId?: string, userId?: strin
     
     // Insertar la tarea en la base de datos
     const { data: task, error: taskError } = await supabaseAdmin
+      .schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')
       .from('tasks')
       .insert([taskData])
       .select()
@@ -954,6 +974,7 @@ async function createLead(name: string, email?: string, phone?: string, siteId?:
     if (siteId && isValidUUID(siteId)) {
       try {
         const { data: site, error: siteError } = await supabaseAdmin
+          .schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')
           .from('sites')
           .select('id, user_id')
           .eq('id', siteId)
@@ -982,6 +1003,7 @@ async function createLead(name: string, email?: string, phone?: string, siteId?:
     
     // Intentar insertar el lead directamente
     const { data, error } = await supabaseAdmin
+      .schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')
       .from('leads')
       .insert([leadData])
       .select()
