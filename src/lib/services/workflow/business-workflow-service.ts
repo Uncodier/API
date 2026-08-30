@@ -23,6 +23,18 @@ interface WhatsAppWorkflowArgs {
   message_id?: string;      // 🔸 OPCIONAL - ID del mensaje original
 }
 
+interface ChannelMessageWorkflowArgs {
+  channel: string;          // ✅ REQUERIDO - Canal de envío (telegram, messenger)
+  to: string;               // ✅ REQUERIDO - Destinatario (Chat ID o número)
+  message: string;          // ✅ REQUERIDO - Mensaje a enviar
+  site_id: string;          // ✅ REQUERIDO - ID del sitio
+  subject?: string;         // 🔸 OPCIONAL - Asunto (si aplica)
+  agent_id?: string;        // 🔸 OPCIONAL - ID del agente
+  conversation_id?: string; // 🔸 OPCIONAL - ID de la conversación
+  lead_id?: string;         // 🔸 OPCIONAL - ID del lead
+  message_id?: string;      // 🔸 OPCIONAL - ID del mensaje original
+}
+
 interface AnalysisData {
   summary: string;
   insights: string[];
@@ -89,6 +101,7 @@ interface CustomerSupportMessageWorkflowArgs {
   lead_notification?: string;
   origin?: string;
   origin_message_id?: string;
+  channel_delivery?: boolean;
 }
 
 interface AgentMessageWorkflowArgs {
@@ -268,6 +281,73 @@ export class BusinessWorkflowService extends BaseWorkflowService {
         error: {
           code: 'WORKFLOW_EXECUTION_ERROR',
           message: error instanceof Error ? error.message : 'Error desconocido al ejecutar workflow de envío de WhatsApp'
+        }
+      };
+    }
+  }
+
+  /**
+   * Ejecuta el workflow para enviar un mensaje por un canal genérico (Telegram, Messenger)
+   */
+  public async sendChannelMessageFromAgent(args: ChannelMessageWorkflowArgs, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
+    try {
+      if (!args.channel || !args.to || !args.message || !args.site_id) {
+        return {
+          success: false,
+          error: {
+            code: 'INVALID_ARGUMENTS',
+            message: 'Se requieren channel, to, message y site_id para enviar mensaje por canal'
+          }
+        };
+      }
+
+      const client = await this.initializeClient();
+      
+      const workflowId = options?.workflowId || `send-${args.channel}-${args.site_id}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const taskQueue = options?.taskQueue || process.env.WORKFLOW_TASK_QUEUE || 'default';
+
+      console.log(`📤 Iniciando workflow de envío de canal (${args.channel}): ${workflowId}`);
+
+      if (options?.async !== false) {
+        const handle = await client.workflow.start('sendChannelMessageFromAgentWorkflow', {
+          args: [args],
+          taskQueue,
+          workflowId,
+        });
+
+        console.log(`✅ Workflow de envío de canal iniciado: ${handle.workflowId}, runId: ${handle.firstExecutionRunId}`);
+
+        return {
+          success: true,
+          executionId: handle.firstExecutionRunId,
+          workflowId: handle.workflowId,
+          runId: handle.firstExecutionRunId,
+          status: 'running'
+        };
+      }
+
+      const result = await client.workflow.execute('sendChannelMessageFromAgentWorkflow', {
+        args: [args],
+        taskQueue,
+        workflowId
+      });
+
+      console.log(`✅ Workflow de envío de canal completado: ${workflowId}`);
+
+      return {
+        success: true,
+        workflowId,
+        status: 'completed',
+        data: result
+      };
+
+    } catch (error) {
+      console.error(`❌ Error al ejecutar workflow de envío de canal (${args.channel}):`, error);
+      return {
+        success: false,
+        error: {
+          code: 'WORKFLOW_EXECUTION_ERROR',
+          message: error instanceof Error ? error.message : `Error desconocido al ejecutar workflow de envío de canal (${args.channel})`
         }
       };
     }
@@ -742,6 +822,7 @@ export type {
   WhatsAppMessageWorkflowArgs, 
   EmailWorkflowArgs,
   WhatsAppWorkflowArgs,
+  ChannelMessageWorkflowArgs,
   CustomerSupportMessageWorkflowArgs,
   AgentMessageWorkflowArgs,
   StartRobotWorkflowArgs,

@@ -210,12 +210,12 @@ export async function POST(request: Request) {
       const conversationInfo = await getConversationChannel(savedMessages.conversationId);
 
       if (conversationInfo && conversationInfo.channel) {
-        const { channel, leadPhone, leadEmail, visitorPhone } = conversationInfo;
+        const { channel, leadPhone, leadEmail, visitorPhone, channelDelivery } = conversationInfo;
 
         channelSendResult = await sendMessageByChannel(
           channel,
           message,
-          { leadPhone, leadEmail, visitorPhone },
+          { leadPhone, leadEmail, visitorPhone, channelDelivery },
           site_id,
           agentId,
           savedMessages.conversationId,
@@ -223,7 +223,12 @@ export async function POST(request: Request) {
           savedMessages.interventionMessageId
         );
 
-        const needsWorkflow = channel === 'whatsapp' || channel === 'email';
+        const needsWorkflow =
+          channel === 'whatsapp' ||
+          channel === 'email' ||
+          channel === 'telegram' ||
+          channel === 'messenger' ||
+          channelDelivery === true;
         if (needsWorkflow && channelSendResult.reason === 'workflow_start_failed') {
           return NextResponse.json(
             interventionPostSaveErrorBody(

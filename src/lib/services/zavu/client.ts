@@ -193,3 +193,29 @@ export async function verifyEmailDomain(domainId: string): Promise<any> {
     return getEmailDomain(domainId);
   }
 }
+
+// MESSAGING
+export async function sendChannelMessage(params: {
+  to: string;
+  text: string;
+  channel?: string;
+  senderId?: string;
+  subject?: string;
+  htmlBody?: string;
+}): Promise<any> {
+  const { senderId, to, text, channel, subject, htmlBody } = params;
+
+  return zavuFetch("/messages", {
+    method: "POST",
+    headers: {
+      ...(senderId ? { "Zavu-Sender": senderId } : {}),
+    },
+    body: JSON.stringify({
+      to,
+      text,
+      ...(channel ? { channel } : {}),
+      ...(subject ? { subject } : {}),
+      ...(htmlBody ? { htmlBody } : {}),
+    }),
+  });
+}

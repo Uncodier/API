@@ -218,7 +218,11 @@ async function handleInboundMessage(event: any) {
   }
 
   const siteId = sites[0].site_id;
-  const channel = data.channel || "zavu";
+  const channel = data.channel;
+  if (!channel || channel === "zavu") {
+    console.warn("[Zavu Webhook] Inbound event missing a valid channel");
+    return;
+  }
   const rawFrom = String(data.from);
   const identity = rawFrom.includes(":") ? rawFrom.split(":").slice(1).join(":") : rawFrom;
   const isEmail = channel === "email" || identity.includes("@");
@@ -237,6 +241,7 @@ async function handleInboundMessage(event: any) {
       phone: isEmail ? undefined : identity,
       origin: channel,
       origin_message_id: data.messageId || event.id,
+      channel_delivery: true,
       website_chat_origin: false,
     },
     {

@@ -8,6 +8,7 @@ function isValidUUID(uuid: string): boolean {
 
 export type ChannelContactInfo = {
   channel?: string;
+  channelDelivery?: boolean;
   leadPhone?: string;
   leadEmail?: string;
   visitorPhone?: string;
@@ -94,6 +95,7 @@ export async function getConversationChannel(
 
     return {
       channel,
+      channelDelivery: conversation.custom_data?.channel_delivery === true,
       leadPhone,
       leadEmail,
       visitorPhone
@@ -145,7 +147,7 @@ async function getRelevantMessageId(conversationId: string): Promise<string | nu
 export async function sendMessageByChannel(
   channel: string,
   message: string,
-  contactInfo: { leadPhone?: string; leadEmail?: string; visitorPhone?: string },
+  contactInfo: { leadPhone?: string; leadEmail?: string; visitorPhone?: string; channelDelivery?: boolean },
   siteId: string,
   agentId: string | null | undefined,
   conversationId: string,
@@ -161,6 +163,48 @@ export async function sendMessageByChannel(
     if (!effectiveMessageId) {
       const dbMessageId = await getRelevantMessageId(conversationId);
       effectiveMessageId = dbMessageId || undefined;
+    }
+
+    const useChannelDelivery =
+      contactInfo.channelDelivery === true ||
+      channel === 'telegram' ||
+      channel === 'messenger';
+
+    if (useChannelDelivery) {
+      const recipient =
+        channel === 'email'
+          ? contactInfo.leadEmail
+          : contactInfo.visitorPhone || contactInfo.leadPhone;
+
+      if (!recipient) {
+        return {
+          success: false,
+          workflowStarted: false,
+          reason: 'missing_contact',
+          error: `No se encontró destinatario para envío por ${channel}`,
+        };
+      }
+
+      const result = await workflowService.sendChannelMessageFromAgent({
+        channel,
+        to: recipient,
+        message,
+        site_id: siteId,
+        subject: channel === 'email' ? 'Respuesta de nuestro equipo' : undefined,
+        agent_id: agentId || undefined,
+        conversation_id: conversationId,
+        lead_id: leadId,
+        message_id: effectiveMessageId,
+      });
+
+      return {
+        success: result.success,
+        method: channel,
+        workflowId: result.workflowId,
+        workflowStarted: result.success === true && !!result.workflowId,
+        reason: result.success ? undefined : 'workflow_start_failed',
+        error: result.error?.message,
+      };
     }
 
     if (channel === 'whatsapp') {

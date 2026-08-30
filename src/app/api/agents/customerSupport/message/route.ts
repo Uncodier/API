@@ -426,7 +426,7 @@ async function checkDuplicateOriginMessage(
 }
 
 // Función para guardar mensajes en la base de datos
-async function saveMessages(userId: string, userMessage: string, assistantMessage: string, conversationId?: string, conversationTitle?: string, leadId?: string, visitorId?: string, agentId?: string, siteId?: string, commandId?: string, origin?: string, isRobot?: boolean, isTransactionalMessage?: boolean, isErratic?: boolean, originMessageId?: string) {
+async function saveMessages(userId: string, userMessage: string, assistantMessage: string, conversationId?: string, conversationTitle?: string, leadId?: string, visitorId?: string, agentId?: string, siteId?: string, commandId?: string, origin?: string, isRobot?: boolean, isTransactionalMessage?: boolean, isErratic?: boolean, originMessageId?: string, channelDelivery?: boolean) {
   try {
     console.log(`💾 Guardando mensajes con: user_id=${userId}, agent_id=${agentId || 'N/A'}, site_id=${siteId || 'N/A'}, lead_id=${leadId || 'N/A'}, visitor_id=${visitorId || 'N/A'}, command_id=${commandId || 'N/A'}, origin=${origin || 'N/A'}, is_robot=${isRobot || false}, is_transactional_message=${isTransactionalMessage || false}, is_erratic=${isErratic || false}`);
     
@@ -532,12 +532,13 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
       if (conversationTitle) conversationData.title = conversationTitle;
       
       // Añadir custom_data con channel si origin está presente
-      if (origin) {
+      if (origin || channelDelivery) {
         conversationData.custom_data = {
-          channel: origin
+          ...(origin ? { channel: origin } : {}),
+          ...(channelDelivery ? { channel_delivery: true } : {}),
         };
-        conversationData.channel = origin; // También guardar como propiedad directa
-        console.log(`📺 Estableciendo channel="${origin}" en custom_data y como propiedad directa de la conversación`);
+        if (origin) conversationData.channel = origin;
+        console.log(`📺 Estableciendo channel="${origin}" channel_delivery=${!!channelDelivery} en custom_data`);
       }
       
       console.log(`🗣️ Creando nueva conversación con datos:`, JSON.stringify(conversationData));
@@ -556,15 +557,14 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
       effectiveConversationId = conversation.id;
       console.log(`🗣️ Nueva conversación creada con ID: ${effectiveConversationId}`);
       }
-    } else if (conversationTitle || siteId || validatedLeadId || origin) {
+    } else if (conversationTitle || siteId || validatedLeadId || origin || channelDelivery) {
       // Actualizar la conversación existente si se proporciona un nuevo título, site_id, lead_id o origin
       const updateData: any = {};
       if (conversationTitle) updateData.title = conversationTitle;
       if (siteId) updateData.site_id = siteId;
       if (validatedLeadId) updateData.lead_id = validatedLeadId;
       
-      // Actualizar custom_data con channel si origin está presente
-      if (origin) {
+      if (origin || channelDelivery) {
         // Primero obtenemos el custom_data existente
         const { data: existingConv, error: fetchError } = await supabaseAdmin
           .from('conversations')
@@ -579,10 +579,11 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
         
         updateData.custom_data = {
           ...existingCustomData,
-          channel: origin
+          ...(origin ? { channel: origin } : {}),
+          ...(channelDelivery ? { channel_delivery: true } : {}),
         };
-        updateData.channel = origin; // También actualizar como propiedad directa
-        console.log(`📺 Actualizando channel="${origin}" en custom_data y como propiedad directa de la conversación`);
+        if (origin) updateData.channel = origin;
+        console.log(`📺 Actualizando channel="${origin}" channel_delivery=${!!channelDelivery} en custom_data`);
       }
       
       console.log(`✏️ Actualizando conversación: ${effectiveConversationId} con:`, JSON.stringify(updateData));
@@ -1073,7 +1074,8 @@ export async function POST(request: Request) {
       website_chat_origin, // Nuevo parámetro para indicar si el origen es "website_chat"
       lead_notification, // Nuevo parámetro para indicar si se debe enviar una notificación por email
       origin, // Nuevo parámetro para indicar el canal de origen: 'website', 'email', 'whatsapp'
-      origin_message_id // Parámetro opcional que se agrega como metadata al message del user
+      origin_message_id, // Parámetro opcional que se agrega como metadata al message del user
+      channel_delivery
     } = body;
     
     /**
@@ -1164,7 +1166,7 @@ export async function POST(request: Request) {
     }
     
     // Validar el parámetro origin si está presente
-    const validOrigins = ['website', 'email', 'whatsapp', 'chat', 'website_chat', 'none', 'api'];
+    const validOrigins = ['website', 'email', 'whatsapp', 'chat', 'website_chat', 'none', 'api', 'telegram', 'messenger'];
     
     // Si no se proporciona origin pero hay header origin, usar 'website' automáticamente
     let effectiveOrigin = origin;
@@ -2201,7 +2203,8 @@ export async function POST(request: Request) {
         isRobot,
         isTransactionalMessage,
         isErratic,
-        origin_message_id
+        origin_message_id,
+        channel_delivery === true
       );
     } catch (error: any) {
       // Si el error es SKIP_DATABASE, retornar respuesta sin crear objetos en DB
