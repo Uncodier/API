@@ -74,7 +74,7 @@ const nextraConfig = withNextra({
   ],
   
   // Configuración adicional para CSS Modules
-  webpack: (config, { dev, isServer }) => {
+  webpack: (config, { dev, isServer, webpack }) => {
     // Solución para suprimir las advertencias de binarios precompilados
     if (dev) {
       // Configurar Webpack para mostrar solo errores, no advertencias
@@ -95,7 +95,7 @@ const nextraConfig = withNextra({
     
     // Ignore test files in thread-stream package
     // webpack is available in the webpack config context
-    const { IgnorePlugin } = require('webpack');
+    const { IgnorePlugin } = webpack;
     config.plugins.push(
       new IgnorePlugin({
         resourceRegExp: /^\.\/test\//,
