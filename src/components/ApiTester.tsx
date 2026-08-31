@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import styles from './ApiTester.module.css';
 
 // Interfaz para las props del ApiTester
 export interface ApiTesterProps {
@@ -82,20 +83,20 @@ export const ApiTester: React.FC<ApiTesterProps> = ({
   
   const renderRequestForm = () => {
     return (
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="mb-4">
-          <label className="block text-sm font-medium mb-1">
-            API Key (Bearer Token) <span className="text-gray-400 font-normal">(required for server-to-server)</span>
+      <form onSubmit={handleSubmit} className={styles.formInCard}>
+        <div className={styles.formGroup} style={{ marginTop: '24px' }}>
+          <label>
+            API Key (Bearer Token) <span style={{ opacity: 0.6, fontWeight: 'normal', fontSize: '0.9em' }}>(required for server-to-server)</span>
           </label>
           <input
             type="password"
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
-            className="w-full p-2 border rounded-md font-mono text-sm"
+            className={styles.formControl}
             placeholder="sk_prod_..."
+            style={{ fontFamily: 'monospace' }}
           />
         </div>
-        <hr className="my-4" />
         {Object.keys(formState).map((field) => {
           // Determinar si es requerido y otros metadatos
           const isRequired = String(description).includes('[required]');
@@ -104,12 +105,12 @@ export const ApiTester: React.FC<ApiTesterProps> = ({
           if (isObject) {
             // Manejar objetos anidados
             return (
-              <div key={field} className="border p-4 rounded-md">
-                <h4 className="font-medium mb-2">{field}</h4>
+              <div key={field} className={styles.requestSection}>
+                <h4>{field}</h4>
                 {Object.entries(description as Record<string, any>).map(([subField, subDesc]) => (
-                  <div key={`${field}.${subField}`} className="mb-2">
-                    <label className="block text-sm font-medium mb-1">
-                      {subField} {String(subDesc).includes('[required]') && <span className="text-red-500">*</span>}
+                  <div key={`${field}.${subField}`} className={styles.formGroup}>
+                    <label>
+                      {subField} {String(subDesc).includes('[required]') && <span className={styles.required}>*</span>}
                     </label>
                     <input
                       type="text"
@@ -119,7 +120,7 @@ export const ApiTester: React.FC<ApiTesterProps> = ({
                         newValue[subField] = e.target.value;
                         handleInputChange(field, newValue);
                       }}
-                      className="w-full p-2 border rounded-md"
+                      className={styles.formControl}
                       placeholder={String(subDesc).replace(/\[.*?\]/g, '').trim()}
                     />
                   </div>
@@ -130,15 +131,15 @@ export const ApiTester: React.FC<ApiTesterProps> = ({
           
           // Campos básicos
           return (
-            <div key={field} className="mb-2">
-              <label className="block text-sm font-medium mb-1">
-                {field} {isRequired && <span className="text-red-500">*</span>}
+            <div key={field} className={styles.formGroup}>
+              <label>
+                {field} {isRequired && <span className={styles.required}>*</span>}
               </label>
               <input
                 type="text"
                 value={formState[field] || ''}
                 onChange={(e) => handleInputChange(field, e.target.value)}
-                className="w-full p-2 border rounded-md"
+                className={styles.formControl}
                 placeholder={String(description).replace(/\[.*?\]/g, '').trim()}
                 required={isRequired}
               />
@@ -146,13 +147,20 @@ export const ApiTester: React.FC<ApiTesterProps> = ({
           );
         })}
         
-        <button
-          type="submit"
-          className="bg-blue-500 text-white py-2 px-4 rounded-md hover:bg-blue-600"
-          disabled={loading}
-        >
-          {loading ? 'Sending...' : 'Send Request'}
-        </button>
+        <div className={styles.formActions} style={{ justifyContent: 'flex-start' }}>
+          <button
+            type="submit"
+            className={styles.submitButton}
+            disabled={loading}
+          >
+            {loading ? (
+              <>
+                <span className={styles.loadingSpinner}></span>
+                Sending...
+              </>
+            ) : 'Send Request'}
+          </button>
+        </div>
       </form>
     );
   };
@@ -160,24 +168,26 @@ export const ApiTester: React.FC<ApiTesterProps> = ({
   const renderResponse = () => {
     if (error) {
       return (
-        <div className="bg-red-50 border border-red-200 p-4 rounded-md">
-          <h4 className="text-red-700 font-medium">Error</h4>
-          <p className="text-red-600">{error}</p>
+        <div className={styles.errorMessage}>
+          <h4 style={{ margin: '0 0 8px 0', fontSize: '1rem', fontWeight: 600 }}>Error</h4>
+          <p style={{ margin: 0 }}>{error}</p>
         </div>
       );
     }
     
     if (!response) {
       return (
-        <div className="bg-gray-50 border p-4 rounded-md">
-          <p className="text-gray-600">No response available. Send a request first.</p>
+        <div className={styles.callout}>
+          <div className={styles.calloutContent}>
+            <p>No response available. Send a request first.</p>
+          </div>
         </div>
       );
     }
     
     return (
-      <div className="bg-gray-50 border p-4 rounded-md overflow-auto">
-        <pre className="text-sm whitespace-pre-wrap break-all">
+      <div className={styles.responseContainer}>
+        <pre className={styles.pre}>
           {JSON.stringify(response, null, 2)}
         </pre>
       </div>
@@ -190,11 +200,11 @@ export const ApiTester: React.FC<ApiTesterProps> = ({
       : '';
       
     return (
-      <div className="bg-gray-50 border p-4 rounded-md overflow-auto">
-        <div className="mb-4">
-          <h4 className="font-medium mb-2">JavaScript / TypeScript</h4>
-          <pre className="text-sm bg-gray-800 text-white p-4 rounded-md overflow-auto">
-            {`// Fetch Example
+      <div className={styles.requestDetails}>
+        <div className={styles.requestSection}>
+          <h4>JavaScript / TypeScript</h4>
+          <pre className={styles.pre}>
+{`// Fetch Example
 const response = await fetch('${endpoint}', {
   method: '${method}',
   headers: {
@@ -207,10 +217,10 @@ console.log(data);`}
           </pre>
         </div>
         
-        <div className="mb-4">
-          <h4 className="font-medium mb-2">Python</h4>
-          <pre className="text-sm bg-gray-800 text-white p-4 rounded-md overflow-auto">
-            {`# Requests Example
+        <div className={styles.requestSection}>
+          <h4>Python</h4>
+          <pre className={styles.pre}>
+{`# Requests Example
 import requests
 import json
 
@@ -231,35 +241,37 @@ print(response.json())`}
   };
   
   return (
-    <div className="border rounded-md overflow-hidden">
+    <div className={styles.requestPreview}>
       {description && (
-        <div className="p-4 border-b bg-gray-50">
-          <p>{description}</p>
+        <div className={styles.callout} style={{ marginBottom: '0' }}>
+          <div className={styles.calloutContent}>
+            <p>{description}</p>
+          </div>
         </div>
       )}
       
-      <div className="flex border-b">
+      <div className={styles.tabs}>
         <button
-          className={`px-4 py-2 ${activeTab === 'request' ? 'bg-blue-50 border-b-2 border-blue-500' : ''}`}
+          className={`${styles.tabButton} ${activeTab === 'request' ? styles.activeTab : ''}`}
           onClick={() => setActiveTab('request')}
         >
           Request
         </button>
         <button
-          className={`px-4 py-2 ${activeTab === 'response' ? 'bg-blue-50 border-b-2 border-blue-500' : ''}`}
+          className={`${styles.tabButton} ${activeTab === 'response' ? styles.activeTab : ''}`}
           onClick={() => setActiveTab('response')}
         >
           Response
         </button>
         <button
-          className={`px-4 py-2 ${activeTab === 'code' ? 'bg-blue-50 border-b-2 border-blue-500' : ''}`}
+          className={`${styles.tabButton} ${activeTab === 'code' ? styles.activeTab : ''}`}
           onClick={() => setActiveTab('code')}
         >
           Code
         </button>
       </div>
       
-      <div className="p-4">
+      <div className={styles.tabContent}>
         {activeTab === 'request' && renderRequestForm()}
         {activeTab === 'response' && renderResponse()}
         {activeTab === 'code' && renderCodeExample()}
@@ -313,20 +325,33 @@ const DefaultApiTester: React.FC = () => {
   };
 
   return (
-    <form onSubmit={handleSubmit}>
-      {/* ... existing form fields ... */}
-      <div>
-        <label>Properties (JSON):</label>
-        <textarea
-          value={properties}
-          onChange={(e) => setProperties(e.target.value)}
-          placeholder='{"events": [], "activity": []}'
-        />
-      </div>
-      <button type="submit">Send Request</button>
-      {response && <pre>{JSON.stringify(response, null, 2)}</pre>}
-    </form>
+    <div className={styles.requestPreview}>
+      <form onSubmit={handleSubmit} className={styles.formInCard}>
+        <div className={styles.formGroup}>
+          <label>Properties (JSON):</label>
+          <textarea
+            className={styles.textarea}
+            value={properties}
+            onChange={(e) => setProperties(e.target.value)}
+            placeholder='{"events": [], "activity": []}'
+            rows={4}
+          />
+        </div>
+        <div className={styles.formActions} style={{ justifyContent: 'flex-start' }}>
+          <button type="submit" className={styles.submitButton}>
+            Send Request
+          </button>
+        </div>
+      </form>
+      {response && (
+        <div className={styles.responseContainer} style={{ marginTop: '20px' }}>
+          <pre className={styles.pre}>
+            {JSON.stringify(response, null, 2)}
+          </pre>
+        </div>
+      )}
+    </div>
   );
 };
 
-export default DefaultApiTester; 
+export default DefaultApiTester;

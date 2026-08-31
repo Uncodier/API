@@ -309,14 +309,14 @@
 .formControl {
   display: block;
   width: 100%;
-  padding: 10px 12px;
-  font-size: 1rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.95rem;
   line-height: 1.5;
   color: var(--nextra-primary-text-color, #212529);
   background-color: var(--nextra-input-bg, #fff);
   background-clip: padding-box;
-  border: 1px solid var(--nextra-border-color, #ced4da);
-  border-radius: 4px;
+  border: 1px solid var(--nextra-border-color, #eaeaea);
+  border-radius: 0.375rem;
   transition: border-color 0.15s ease-in-out;
 }
 
@@ -549,28 +549,24 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 10px 20px;
-  font-size: 1rem;
-  font-weight: 500;
-  border-radius: 4px;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  border-radius: 0.375rem;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: background-color 0.2s ease;
   border: none;
   background-color: var(--nextra-primary-color, #0d6efd);
   color: white;
-  margin-top: 16px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  margin-top: 0.5rem;
 }
 
 .submitButton:hover {
-  background-color: var(--nextra-primary-color-dark, #0b5ed7);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
-  transform: translateY(-1px);
+  background-color: var(--nextra-primary-hover, #0b5ed7);
 }
 
 .submitButton:active {
-  transform: translateY(0);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  transform: translateY(1px);
 }
 
 .submitButton:disabled {
@@ -586,7 +582,7 @@
 }
 
 :global(.dark) .submitButton:hover {
-  background-color: var(--nextra-primary-color-dark, #0b5ed7);
+  background-color: var(--nextra-primary-hover, #0b5ed7);
 }
 
 :global(.dark) .submitButton:disabled {
@@ -599,33 +595,24 @@
 }
 
 .responseContainer {
-  background-color: var(--nextra-card-background, #f8f9fa);
-  border-radius: 8px;
-  padding: 16px;
-  border: 1px solid var(--nextra-border-color, #eaeaea);
-  transition: all 0.2s ease;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  margin-top: 16px;
 }
 
-.responseContainer:hover {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-  transform: translateY(-2px);
-}
 
 .pre {
-  background-color: var(--nextra-inline-code-bg, rgba(0, 0, 0, 0.05));
-  border-radius: 4px;
-  padding: 16px;
-  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
-  font-size: 0.9em;
+  background-color: var(--nextra-code-bg, #f5f5f5);
+  border-radius: 0.5rem;
+  padding: 1rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.875rem;
   overflow-x: auto;
   white-space: pre-wrap;
   word-wrap: break-word;
   margin: 0;
   overflow-y: auto;
-  border: 1px solid var(--nextra-border-color, #eaeaea);
 }
 
 .required {
@@ -741,9 +728,9 @@
 /* Estilos para las pestañas */
 .tabs {
   display: flex;
-  border-bottom: 1px solid var(--nextra-border-color, #ddd);
+  border-bottom: 1px solid var(--nextra-border-color, #eaeaea);
   margin-bottom: 0;
-  margin-top: 20px;
+  margin-top: 24px;
   position: relative;
   z-index: 1;
 }
@@ -773,7 +760,7 @@
 }
 
 .tabContent {
-  padding: 20px 0;
+  padding: 24px 0 0 0;
   width: 100%;
   display: flex;
   flex-direction: column;
@@ -802,7 +789,7 @@
 
 :global(.dark) .tabs {
   background-color: transparent;
-  border-bottom-color: #404040;
+  border-bottom-color: var(--nextra-border-color, #404040);
 }
 
 :global(.dark) .formControl {
@@ -812,8 +799,7 @@
 }
 
 :global(.dark) .pre {
-  background-color: var(--nextra-inline-code-bg, rgba(255, 255, 255, 0.05));
-  border-color: var(--nextra-border-color, #333);
+  background-color: var(--nextra-code-bg, #1e1e1e);
 }
 
 :global(.dark) .checkboxLabel:before {
@@ -844,15 +830,7 @@
   color: var(--nextra-primary-color, #0d6efd);
 }
 
-:global(.dark) .responseContainer {
-  background-color: var(--nextra-card-background, #1a1a1a);
-  border-color: var(--nextra-border-color, #333);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-}
 
-:global(.dark) .responseContainer:hover {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
-}
 
 :global(.dark) .requestTime {
   background-color: var(--nextra-callout-bg, rgba(13, 110, 253, 0.1));
@@ -909,11 +887,8 @@
 }
 
 .requestPreview {
-  background-color: var(--nextra-card-background, #f8f9fa);
-  border-radius: 8px;
-  padding: 16px;
-  margin-top: 0;
-  border: 1px solid var(--nextra-border-color, #eaeaea);
+  margin-top: 24px;
+  margin-bottom: 24px;
   overflow: visible;
   display: flex;
   flex-direction: column;
@@ -945,14 +920,9 @@
 }
 
 .requestSection {
-  background-color: var(--nextra-card-background, #fff);
-  border: 1px solid var(--nextra-border-color, #eaeaea);
-  border-radius: 4px;
-  padding: 16px;
-  transition: all 0.3s ease;
   display: flex;
   flex-direction: column;
-  margin-bottom: 16px;
+  margin-bottom: 24px;
   width: 100%;
 }
 
@@ -965,9 +935,6 @@
   min-height: 50px;
 }
 
-.requestSection:hover {
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
-}
 
 .requestSection h4 {
   margin-top: 0;
@@ -977,10 +944,6 @@
   color: var(--nextra-primary-text-color, #212529);
 }
 
-:global(.dark) .requestSection {
-  background-color: var(--nextra-card-background, #1a1a1a);
-  border-color: var(--nextra-border-color, #333);
-}
 
 :global(.dark) .requestSection h4 {
   color: var(--nextra-primary-text-color, #e6e6e6);
@@ -1007,12 +970,6 @@
   color: var(--nextra-primary-text-color, #212529);
 }
 
-.tabs {
-  display: flex;
-  border-bottom: 1px solid var(--nextra-border-color, #ddd);
-  margin-bottom: 0;
-  margin-top: 20px;
-}
 
 .tabButton {
   padding: 0.75rem 1.25rem;
@@ -1027,7 +984,7 @@
 }
 
 .tabButton:hover {
-  color: var(--nextra-primary-color, #4a90e2);
+  color: var(--nextra-primary-color, #0d6efd);
 }
 
 .tabButton::after {
@@ -1042,26 +999,14 @@
 }
 
 .activeTab {
-  color: var(--nextra-primary-color, #4a90e2);
+  color: var(--nextra-primary-color, #0d6efd);
 }
 
 .activeTab::after {
-  background-color: var(--nextra-primary-color, #4a90e2);
+  background-color: var(--nextra-primary-color, #0d6efd);
 }
 
-.tabContent {
-  padding: 20px 0;
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  overflow: visible;
-  height: auto;
-}
 
-:global(.dark) .requestPreview {
-  background-color: var(--nextra-card-background, #252525);
-  border-color: var(--nextra-border-color, #444);
-}
 
 :global(.dark) .requestMethod {
   background-color: var(--nextra-code-bg, #2d2d2d);
@@ -1094,9 +1039,6 @@
   box-shadow: inset 0 -2px 0 var(--nextra-primary-color, #5a9ae2);
 }
 
-.requestSection {
-  margin-bottom: 1.5rem;
-}
 
 .requestSection h4 {
   font-size: 1rem;
@@ -1199,13 +1141,7 @@
   border-color: rgba(23, 162, 184, 0.3);
 }
 
-:global(.dark) .tabContent {
-  background-color: transparent;
-}
 
-:global(.dark) .requestSection:hover {
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-}
 
 .responseActions {
   display: flex;
@@ -1685,16 +1621,17 @@
 
 /* Estilos específicos para textarea que hereda de formControl */
 .textarea {
-  padding: 12px 16px;
-  border: 1px solid var(--nextra-border-color, #ddd);
-  border-radius: 6px;
-  font-size: 1rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--nextra-border-color, #eaeaea);
+  border-radius: 0.375rem;
+  font-size: 0.95rem;
   line-height: 1.5;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  transition: border-color 0.15s ease-in-out;
   background-color: var(--nextra-input-bg, #fff);
-  color: var(--nextra-primary-text-color, #333);
+  color: var(--nextra-primary-text-color, #212529);
   resize: vertical;
   min-height: 100px;
+  width: 100%;
 }
 
 .textarea:hover:not(:disabled) {
