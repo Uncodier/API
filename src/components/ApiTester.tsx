@@ -177,10 +177,8 @@ export const ApiTester: React.FC<ApiTesterProps> = ({
     
     if (!response) {
       return (
-        <div className={styles.callout}>
-          <div className={styles.calloutContent}>
-            <p>No response available. Send a request first.</p>
-          </div>
+        <div style={{ color: 'var(--nextra-secondary-text-color, #6c757d)', fontSize: '0.9rem' }}>
+          No response available. Send a request first.
         </div>
       );
     }
@@ -243,10 +241,8 @@ print(response.json())`}
   return (
     <div className={styles.requestPreview}>
       {description && (
-        <div className={styles.callout} style={{ marginBottom: '0' }}>
-          <div className={styles.calloutContent}>
-            <p>{description}</p>
-          </div>
+        <div style={{ marginBottom: '16px', color: 'var(--nextra-secondary-text-color, #6c757d)' }}>
+          <p style={{ margin: 0 }}>{description}</p>
         </div>
       )}
       
