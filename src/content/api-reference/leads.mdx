@@ -1,0 +1,58 @@
+import { ApiTester } from '../../components/ApiTester';
+import { MethodChip } from '../../components/MethodChip';
+
+# Leads
+
+Same contract as the MCP `leads` tool. Actions map to sub-routes.
+
+<div className="endpoint-block">
+  <MethodChip method="POST" />
+  <code>/api/agents/tools/leads/create · /get · /update · /qualify · /identify</code>
+</div>
+
+Auth: `Authorization: Bearer YOUR_API_KEY` or `x-api-key`. Always send `site_id`.
+
+## Actions
+
+| Action | Route | Required body |
+| :--- | :--- | :--- |
+| create | `POST /api/agents/tools/leads/create` | `site_id`, `name`, `email` |
+| list | `POST /api/agents/tools/leads/get` | `site_id` |
+| update | `POST /api/agents/tools/leads/update` | `site_id`, `lead_id` |
+| qualify | `POST /api/agents/tools/leads/qualify` | `site_id`, `lead_id`, `status` |
+| identify | `POST /api/agents/tools/leads/identify` | `site_id`, `visitor_id` |
+
+`status`: `new`, `contacted`, `qualified`, `converted`, `lost`.
+
+Optional on create/update: `phone`, `position`, `company`, `notes`, `origin`, `segment_id`, `campaign_id`, `assignee_id`, `lead_score`. List filters: `search`, `limit` (default 50), `offset`, `sort_by`, `sort_order`.
+
+## Create
+
+```bash
+curl -X POST "https://backend.makinari.com/api/agents/tools/leads/create" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "site_id": "YOUR_SITE_ID",
+    "name": "Jane Smith",
+    "email": "jane@example.com",
+    "company": "Acme Corp",
+    "status": "new"
+  }'
+```
+
+```json
+{ "success": true, "lead": { "id": "...", "name": "Jane Smith", "email": "jane@example.com" } }
+```
+
+## List
+
+<ApiTester
+  method="POST"
+  endpoint="/api/agents/tools/leads/get"
+  defaultBody={{ site_id: "YOUR_SITE_ID", action: "list", limit: 50 }}
+/>
+
+Typical errors: `400` missing email/name, `401` no key / no Origin, `403` missing `write` scope.
+
+MCP schema: [CRM tools](/mcp-server/crm).

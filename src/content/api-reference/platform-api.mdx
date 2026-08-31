@@ -1,0 +1,33 @@
+import { MethodChip } from '../../components/MethodChip';
+
+# Platform API
+
+The Platform API (`/api/platform/*`) is a specialized subset of the Makinari API designed specifically for **Generated Apps**. 
+
+When Makinari generates a custom application for you, that app is provisioned with an isolated Apps Tenant schema. The Platform API acts as the bridge between your custom app and the core Makinari services.
+
+## Base URL
+
+<div className="endpoint-block">
+  <MethodChip method="GET/POST" />
+  <code>/api/platform/*</code>
+</div>
+
+## Authentication
+
+The Platform API requires a Platform API Key, which is automatically injected into your generated app's environment variables (`API_KEY` and `NEXT_API_URL`). 
+
+Platform keys have specialized capability scopes (like `leads.read`, `email.send.test-only`, `db.migrate`) rather than raw `read/write` access to the whole Site.
+
+## Endpoints
+
+- `GET /api/platform/me`: Introspection endpoint to verify your token and tenant schema.
+- `GET /api/platform/leads`: Fetch leads scoped to your tenant.
+- `POST /api/platform/leads`: Create new leads.
+- `POST /api/platform/tracking/event`: Log custom tracking events.
+- `POST /api/platform/email/send`: Send transactional emails (requires `email.send` scope).
+- `POST /api/platform/db/migrations`: Apply linted RLS SQL migrations to your isolated schema.
+
+## The Uncodie SDK
+
+Generated apps come pre-installed with the Uncodie Platform SDK in `src/lib/uncodie/`. You do not need to call `/api/platform/*` directly using `fetch`; use the SDK methods instead.

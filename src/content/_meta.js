@@ -3,32 +3,28 @@ export default {
     type: "page",
     display: "hidden"
   },
-  "first-steps": {
-    title: "First Steps",
+  "get-started": {
+    title: "Get started",
     type: "page"
   },
-  channels: {
-    title: "Channels",
+  concepts: {
+    title: "Concepts",
     type: "page"
   },
-  agents: {
-    title: "Agents",
+  guides: {
+    title: "Guides",
     type: "page"
   },
-  "rest-api": {
-    title: "REST API",
+  "api-reference": {
+    title: "API reference",
     type: "page"
   },
   "mcp-server": {
-    title: "MCP Server",
+    title: "MCP",
     type: "page"
   },
-  "workflows": {
-    title: "Workflows",
-    type: "page"
-  },
-  "content-api": {
-    title: "Content API",
+  "changelog": {
+    title: "Changelog",
     type: "page"
   },
   "open-source": {

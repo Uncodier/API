@@ -129,6 +129,25 @@ const nextraConfig = withNextra({
       },
     ]
   },
+  async redirects() {
+    return [
+      { source: '/first-steps', destination: '/get-started', permanent: true },
+      { source: '/first-steps/:path*', destination: '/get-started', permanent: true },
+      { source: '/rest-api', destination: '/api-reference', permanent: true },
+      { source: '/rest-api/:path*', destination: '/api-reference', permanent: true },
+      { source: '/channels', destination: '/guides', permanent: true },
+      { source: '/channels/:path*', destination: '/guides', permanent: true },
+      { source: '/agents', destination: '/guides', permanent: true },
+      { source: '/agents/:path*', destination: '/guides', permanent: true },
+      { source: '/content-api', destination: '/api-reference/content-api', permanent: true },
+      { source: '/content-api/:path*', destination: '/api-reference/content-api', permanent: true },
+      { source: '/workflows', destination: '/api-reference/workflows', permanent: true },
+      { source: '/workflows/:path*', destination: '/api-reference/workflows', permanent: true },
+      { source: '/mcp-server/tools', destination: '/mcp-server/tools-catalog', permanent: true },
+      { source: '/mcp-server/tools/:path*', destination: '/mcp-server/tools-catalog', permanent: true },
+      { source: '/api-reference/system-status', destination: '/api-reference/status', permanent: true }
+    ]
+  },
   // Ensure environment variables are available
   env: {
     COMPOSIO_PROJECT_API_KEY: process.env.COMPOSIO_PROJECT_API_KEY || 'du48sq2qy07vkyhm8v9v8g',

@@ -1,0 +1,26 @@
+# Requirements vs Workflows
+
+Makinari uses two different engines to execute automation: **Requirements** and **Workflows**. Understanding the difference is key to using the platform effectively.
+
+## Requirements (AI Goals)
+
+A **Requirement** is a non-deterministic, objective-based goal handled by AI Agents.
+
+- **How it works:** You write instructions in plain text (the "Brain"). The CMO agent analyzes it, plans the necessary steps, and delegates Commands to specialized agents.
+- **Execution:** Agents use reasoning to decide which tools to call. If a tool fails, the agent can adapt and try a different approach.
+- **Use case:** Complex tasks requiring creativity, research, or adaptation (e.g., "Research these 50 leads and write personalized outreach emails").
+- **Cost:** Bounded by a Token Budget.
+
+## Workflows (Temporal)
+
+A **Workflow** is a deterministic, code-based orchestration powered by the Temporal engine.
+
+- **How it works:** Workflows execute predefined code paths. They are triggered by API calls (e.g., `POST /api/workflow/leadGeneration`).
+- **Execution:** Workflows follow exact steps. They are highly reliable, can run for days, and can survive server restarts. They often call AI Agents for specific sub-tasks, but the overarching flow is rigid.
+- **Use case:** System processes, syncing large amounts of data, or standard operating procedures (e.g., "Every morning at 8 AM, pull new emails and run the Daily Standup").
+- **Cost:** Bounded by server execution time.
+
+## Summary
+
+- Use **Requirements** when you want the AI to figure out *how* to solve a problem.
+- Use **Workflows** when you have a strict, repeatable process that must execute perfectly every time.

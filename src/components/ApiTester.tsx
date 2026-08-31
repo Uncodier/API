@@ -1,10 +1,6 @@
 'use client';
 
 import React, { useState } from 'react';
-import { UnifiedApiTester } from './ApiTester/UnifiedApiTester';
-
-// Re-export UnifiedApiTester
-export { UnifiedApiTester };
 
 // Interfaz para las props del ApiTester
 export interface ApiTesterProps {
@@ -12,6 +8,7 @@ export interface ApiTesterProps {
   endpoint: string;
   description?: string;
   requestFormat?: Record<string, any>;
+  defaultParams?: Record<string, any>;
   defaultBody?: Record<string, any>;
 }
 
@@ -21,9 +18,11 @@ export const ApiTester: React.FC<ApiTesterProps> = ({
   endpoint, 
   description = '', 
   requestFormat = {}, 
+  defaultParams = {},
   defaultBody = {} 
 }) => {
-  const [formState, setFormState] = useState<Record<string, any>>(defaultBody);
+  const [formState, setFormState] = useState<Record<string, any>>({...defaultParams, ...defaultBody});
+  const [apiKey, setApiKey] = useState<string>('');
   const [response, setResponse] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -38,7 +37,8 @@ export const ApiTester: React.FC<ApiTesterProps> = ({
       const requestOptions: RequestInit = {
         method,
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          ...(apiKey ? { 'Authorization': `Bearer ${apiKey}` } : {})
         }
       };
       
@@ -47,8 +47,10 @@ export const ApiTester: React.FC<ApiTesterProps> = ({
         requestOptions.body = JSON.stringify(formState);
       }
       
-      // Construir URL con query params para GET
-      let url = endpoint;
+      // Construir URL absoluta si es relativa y añadir query params
+      const baseUrl = 'https://backend.makinari.com';
+      let url = endpoint.startsWith('http') ? endpoint : `${baseUrl}${endpoint}`;
+      
       if (method === 'GET' && Object.keys(formState).length > 0) {
         const queryParams = new URLSearchParams();
         Object.entries(formState).forEach(([key, value]) => {
@@ -56,7 +58,7 @@ export const ApiTester: React.FC<ApiTesterProps> = ({
             queryParams.append(key, String(value));
           }
         });
-        url = `${endpoint}?${queryParams.toString()}`;
+        url = `${url.split('?')[0]}?${queryParams.toString()}`;
       }
       
       const res = await fetch(url, requestOptions);
@@ -65,7 +67,7 @@ export const ApiTester: React.FC<ApiTesterProps> = ({
       setResponse(data);
       setActiveTab('response');
     } catch (err: any) {
-      setError(err.message || 'Error al realizar la petición');
+      setError(err.message || 'Request failed');
     } finally {
       setLoading(false);
     }
@@ -81,7 +83,20 @@ export const ApiTester: React.FC<ApiTesterProps> = ({
   const renderRequestForm = () => {
     return (
       <form onSubmit={handleSubmit} className="space-y-4">
-        {Object.entries(requestFormat).map(([field, description]) => {
+        <div className="mb-4">
+          <label className="block text-sm font-medium mb-1">
+            API Key (Bearer Token) <span className="text-gray-400 font-normal">(required for server-to-server)</span>
+          </label>
+          <input
+            type="password"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            className="w-full p-2 border rounded-md font-mono text-sm"
+            placeholder="sk_prod_..."
+          />
+        </div>
+        <hr className="my-4" />
+        {Object.keys(formState).map((field) => {
           // Determinar si es requerido y otros metadatos
           const isRequired = String(description).includes('[required]');
           const isObject = typeof description === 'object';
@@ -136,7 +151,7 @@ export const ApiTester: React.FC<ApiTesterProps> = ({
           className="bg-blue-500 text-white py-2 px-4 rounded-md hover:bg-blue-600"
           disabled={loading}
         >
-          {loading ? 'Enviando...' : 'Enviar solicitud'}
+          {loading ? 'Sending...' : 'Send Request'}
         </button>
       </form>
     );
@@ -155,7 +170,7 @@ export const ApiTester: React.FC<ApiTesterProps> = ({
     if (!response) {
       return (
         <div className="bg-gray-50 border p-4 rounded-md">
-          <p className="text-gray-600">No hay respuesta disponible. Envía una solicitud primero.</p>
+          <p className="text-gray-600">No response available. Send a request first.</p>
         </div>
       );
     }
@@ -179,7 +194,7 @@ export const ApiTester: React.FC<ApiTesterProps> = ({
         <div className="mb-4">
           <h4 className="font-medium mb-2">JavaScript / TypeScript</h4>
           <pre className="text-sm bg-gray-800 text-white p-4 rounded-md overflow-auto">
-            {`// Ejemplo de uso con fetch
+            {`// Fetch Example
 const response = await fetch('${endpoint}', {
   method: '${method}',
   headers: {
@@ -195,7 +210,7 @@ console.log(data);`}
         <div className="mb-4">
           <h4 className="font-medium mb-2">Python</h4>
           <pre className="text-sm bg-gray-800 text-white p-4 rounded-md overflow-auto">
-            {`# Ejemplo de uso con requests
+            {`# Requests Example
 import requests
 import json
 
@@ -228,19 +243,19 @@ print(response.json())`}
           className={`px-4 py-2 ${activeTab === 'request' ? 'bg-blue-50 border-b-2 border-blue-500' : ''}`}
           onClick={() => setActiveTab('request')}
         >
-          Solicitud
+          Request
         </button>
         <button
           className={`px-4 py-2 ${activeTab === 'response' ? 'bg-blue-50 border-b-2 border-blue-500' : ''}`}
           onClick={() => setActiveTab('response')}
         >
-          Respuesta
+          Response
         </button>
         <button
           className={`px-4 py-2 ${activeTab === 'code' ? 'bg-blue-50 border-b-2 border-blue-500' : ''}`}
           onClick={() => setActiveTab('code')}
         >
-          Código
+          Code
         </button>
       </div>
       

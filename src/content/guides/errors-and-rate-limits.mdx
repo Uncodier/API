@@ -1,0 +1,55 @@
+# Errors & Rate Limits
+
+Understanding how Makinari handles errors and rate limits is crucial for building resilient API integrations.
+
+## HTTP Status Codes
+
+Makinari uses standard HTTP status codes to indicate the success or failure of a request.
+
+- `200 OK`: The request was successful.
+- `201 Created`: The request was successful and a new resource was created.
+- `400 Bad Request`: The request was malformed or missing required parameters. The response body will contain a validation error.
+- `401 Unauthorized`: Authentication failed. You are missing an API key, or your browser request lacks an Allowed Origin. See the [Auth Model](/concepts/auth-model).
+- `403 Forbidden`: Your API key is valid, but it lacks the required scope (e.g., trying to write with a read-only key).
+- `404 Not Found`: The requested resource (e.g., Lead ID, Requirement ID) does not exist.
+- `429 Too Many Requests`: You have exceeded the rate limit.
+- `500 Internal Server Error`: An unexpected error occurred on Makinari's end.
+
+## Error Response Format
+
+When an error occurs, the API returns a JSON response with a standard structure:
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "validation_error",
+    "message": "Invalid email address format",
+    "details": [
+      {
+        "field": "email",
+        "issue": "must be a valid email"
+      }
+    ]
+  }
+}
+```
+
+## Rate Limits
+
+To protect the platform and ensure fair usage, Makinari enforces rate limits on API requests.
+
+- **Standard API Requests:** Limited to 100 requests per minute per IP/API Key.
+- **AI Agent Invocation:** Directly triggering agents or complex workflows may have lower limits (e.g., 20 requests per minute) depending on your billing plan.
+
+When you exceed the limit, you will receive a `429 Too Many Requests` response.
+
+### Handling 429 Errors
+
+If you receive a 429 error, you should implement an **Exponential Backoff** strategy in your code:
+
+1. Wait 1 second and retry.
+2. If it fails again, wait 2 seconds and retry.
+3. If it fails again, wait 4 seconds and retry, and so on.
+
+The response headers may include a `Retry-After` header indicating how many seconds you must wait before making another request.

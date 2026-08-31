@@ -1,0 +1,25 @@
+import { ApiTester } from '../../components/ApiTester';
+import { MethodChip } from '../../components/MethodChip';
+
+# Robot instances
+
+Scrapybara / assistant VMs. MCP tool: `instance` (`create` | `read` | `update`).
+
+<div className="endpoint-block">
+  <MethodChip method="POST" />
+  <code>/api/agents/tools/instance</code>
+</div>
+
+| Field | Notes |
+| :--- | :--- |
+| action | `create`, `read`, `update` |
+| site_id | Required for create / read |
+| instance_id | Optional; defaults to the current session |
+
+Call `update` if the name is still generic (“Assistant Session”). Related HTTP: `GET/POST /api/instances`, `/api/instances/{id}/logs`, `/api/instances/{id}/plans`. Workflows: `startRobot`, `stopRobot`, `promptRobot`.
+
+<ApiTester
+  method="POST"
+  endpoint="/api/agents/tools/instance"
+  defaultBody={{ site_id: "YOUR_SITE_ID", action: "read" }}
+/>

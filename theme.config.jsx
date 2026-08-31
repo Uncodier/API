@@ -1,7 +1,7 @@
 import React from 'react'
 
 export default {
-  logo: <span>Makinari API</span>,
+  logo: <span>Makinari Docs</span>,
   project: {
     link: 'https://github.com/makinari/api',
   },
@@ -19,7 +19,7 @@ export default {
   },
   toc: {
     float: true,
-    title: "En esta página",
+    title: "On this page",
   },
   darkMode: true,
   nextThemes: {
@@ -27,14 +27,14 @@ export default {
   },
   useNextSeoProps() {
     return {
-      titleTemplate: '%s – Makinari API'
+      titleTemplate: '%s – Makinari Docs'
     }
   },
   head: (
     <>
       <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-      <meta property="og:title" content="Makinari API Documentation" />
-      <meta property="og:description" content="Complete API documentation for Makinari platform" />
+      <meta property="og:title" content="Makinari Docs" />
+      <meta property="og:description" content="Complete documentation for the Makinari platform" />
     </>
   )
 } 

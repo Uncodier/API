@@ -1,0 +1,27 @@
+# MCP Tools Catalog
+
+These are the **real tool names** the MCP server advertises (`tools/list`). Call them with `tools/call` and `{ "name": "<tool>", "arguments": { ... } }`. Every REST call also needs `site_id`.
+
+Cursor already sees the live JSON schema. Use these pages when you need params, actions, and the matching HTTP route.
+
+## By domain
+
+| Domain | Tools |
+| :--- | :--- |
+| [CRM & sales](/mcp-server/crm) | `leads`, `deals`, `tasks` |
+| [Messaging](/mcp-server/messaging) | `messages`, `conversations`, `sendEmail`, `sendWhatsApp`, `sendBulkMessages`, `whatsappTemplate` |
+| [Marketing & content](/mcp-server/marketing) | `campaigns`, `segments`, `content`, `publish`, `copywriting` |
+| [Commerce](/mcp-server/commerce) | `checkout`, `reservations`, `quotations`, `sales`, `purchases`, `catalog_commerce` |
+| [Platform ops](/mcp-server/platform) | `requirements`, `requirementStatus`, `instance`, `webhooks`, `updateSiteSettings`, `workflows` |
+| [Media & research](/mcp-server/media) | `generateImage`, `generateVideo`, `generateAudio`, `webSearch`, `urlToMarkdown`, `urlToSitemap` |
+
+Also on the server (same `action` pattern): `assets`, `memories`, `report`, `audience`, `configureEmail`, `configureWhatsApp`, `createSecret`, `scheduling`, `calendars`, `analyzeICPTotalCount`, `createIcpMining`, `getFinderCategoryIds`.
+
+## Auth
+
+```http
+Authorization: Bearer YOUR_API_KEY
+x-mcp-site-id: YOUR_SITE_ID
+```
+
+Most tools take `action` (`create` | `list` | `update` | …). REST maps `list` → `/get`.

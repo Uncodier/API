@@ -1,0 +1,26 @@
+import { ApiTester } from '../../components/ApiTester';
+import { MethodChip } from '../../components/MethodChip';
+
+# Finder
+
+Contact and ICP search (Forager). MCP: `getFinderCategoryIds`, `analyzeICPTotalCount`, `createIcpMining`, `searchRegionVenues`.
+
+<div className="endpoint-block">
+  <MethodChip method="POST" />
+  <code>/api/agents/tools/getFinderCategoryIds</code>
+</div>
+
+Also under `/api/finder/`: `autocomplete/{category}`, `icp`, `person_contacts_lookup`, `person_role_search`.
+
+```bash
+curl -X POST "https://backend.makinari.com/api/agents/tools/getFinderCategoryIds" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"site_id":"YOUR_SITE_ID","query":"software"}'
+```
+
+<ApiTester
+  method="POST"
+  endpoint="/api/agents/tools/getFinderCategoryIds"
+  defaultBody={{ site_id: "YOUR_SITE_ID", query: "software" }}
+/>

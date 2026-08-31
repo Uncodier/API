@@ -24,9 +24,7 @@ The MCP server requires the following environment variables:
 - `MCP_SITE_ID` (required): The ID of your site.
 - `MCP_USER_ID` (optional): The ID of the user.
 - `MCP_INSTANCE_ID` (optional): The ID of the instance (default: 'default').
-- `API_URL` (optional): The URL of the API server. Defaults to `http://localhost:3000`.
-  - You can use the Makinari API (if you have access) or run the API locally from this repository.
-  - If running locally, ensure the API server is started (e.g., `npm run dev`) and reachable at this URL.
+- `API_URL` (optional): API base URL. Local default is `http://localhost:3001` (`npm run dev` in this repo). Hosted: `https://backend.makinari.com`.
 - `REST_API_KEY` (optional): Required if using a remote API (e.g., Makinari API).
 - `SERVICE_API_KEY` (optional): Required if running the API locally. This should be set in the `.env` file of the API project.
 

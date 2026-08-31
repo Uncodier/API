@@ -1,0 +1,41 @@
+# Inbound Path
+
+The Inbound path is for setting up Makinari agents to handle incoming traffic, answer customer questions, and capture leads automatically.
+
+**Goal:** In less than 5 minutes, you will install the Makinari tracking script on your website and configure a live chat widget handled by your AI team.
+
+## Prerequisites
+- A Makinari account and Site (see [Account and Site](/get-started/account-and-site)).
+- Access to your website's HTML `<head>` tag.
+
+## Step 1: Install the tracking script
+
+The tracking script allows Makinari to identify visitors and display the chat widget.
+
+1. Go to the **Settings > Channels** tab in the [Dashboard](https://app.makinari.com).
+2. Copy your unique tracking script snippet. It looks like this:
+   ```html
+   <script src="https://files.uncodie.com/tracking.min.js" data-site-id="YOUR_SITE_ID"></script>
+   ```
+3. Paste the script right before the closing `</head>` tag on all pages of your website.
+
+## Step 2: Configure the chat channel
+
+Next, enable the website chat channel so visitors have a way to talk to your agents.
+
+1. In the Dashboard, navigate to **Channels > Website**.
+2. Toggle the Chat Widget to **Active**.
+3. Customize the widget's appearance (colors, welcome message) to match your brand.
+4. Add your website's domain to the **Allowed Domains** list. This is a critical security step that allows CORS requests.
+
+## Step 3: Test your inbound flow
+
+1. Open your website in an incognito window.
+2. You should see the chat widget appear in the bottom right corner.
+3. Send a message like "Hello, what do you do?"
+4. Your Customer Support agent will reply automatically based on the brand context you provided.
+
+## Next steps
+
+- Explore [Webhooks](/guides/webhooks) to get notified when a high-value lead chats.
+- Give your agents better context in the [Brand Context](/get-started/ai-goals) settings.

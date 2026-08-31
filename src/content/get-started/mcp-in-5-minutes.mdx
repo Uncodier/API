@@ -1,0 +1,50 @@
+# MCP in 5 Minutes
+
+The Model Context Protocol (MCP) path is for developers who want to expose Makinari's Agent tools to their local AI assistants (like Cursor, Claude Desktop, or a custom agent).
+
+**Goal:** Connect your Cursor IDE to the Makinari MCP Server to allow your local AI to interact with your Makinari Site.
+
+## Prerequisites
+- A Makinari account and Site ID.
+- An API Key (see [First API Request](/get-started/first-api-request)).
+- Cursor IDE installed.
+
+## Step 1: Configure Cursor
+
+Cursor natively supports adding remote MCP servers. 
+
+1. Open Cursor Settings (gear icon).
+2. Navigate to **Features > MCP Servers**.
+3. Click **+ Add New MCP Server**.
+4. Configure the server:
+   - **Type:** `sse`
+   - **Name:** `Makinari`
+   - **URL:** `https://backend.makinari.com/api/mcp`
+
+## Step 2: Add Authentication Headers
+
+The Makinari MCP server requires your API key and Site ID. Cursor allows you to pass these as custom headers.
+
+Add the following to the Headers JSON configuration in Cursor:
+
+```json
+{
+  "Authorization": "Bearer YOUR_API_KEY",
+  "x-mcp-site-id": "YOUR_SITE_ID"
+}
+```
+
+Replace `YOUR_API_KEY` and `YOUR_SITE_ID` with your actual values.
+
+## Step 3: Test the integration
+
+1. Save the MCP server configuration. Cursor should display a green indicator showing it successfully connected and loaded the tools.
+2. Open the Cursor AI Chat (Cmd/Ctrl + L).
+3. Type a prompt that requires Makinari context, for example:
+   > *"Use the Makinari tools to list the latest 5 leads from my site."*
+4. Cursor will automatically call the `list_leads` tool via the MCP server and summarize the results for you.
+
+## Next steps
+
+- Explore the [MCP Catalog](/mcp-server) to see all the available tools your AI can now access.
+- Learn more about the [Agents and Commands](/concepts/agents-and-commands) that power these tools.

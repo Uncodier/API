@@ -95,7 +95,7 @@ Frequently asked questions about Uncodie's AI team communication and system even
 **Answer:** Use fetch() or your HTTP client to communicate with AI team members. Example: `fetch('/api/agents/sales/command/leadGeneration', { method: 'POST', headers: {'X-API-Key': 'your-key'}, body: JSON.stringify({site_id: 'site_123', parameters: {...}}) })`
 
 **Question:** Is there interactive documentation for AI team operations?
-**Answer:** Yes, visit `/api/docs` to access interactive documentation where you can test AI team endpoints, see workflow examples, monitor system events, and execute team coordination requests in real time.
+**Answer:** Yes, visit `https://docs.makinari.com` to access documentation where you can learn about AI team endpoints, see workflow examples, monitor system events, and execute team coordination requests.
 
 ## AI Team Communication Errors & System Events
 
@@ -120,7 +120,7 @@ Frequently asked questions about Uncodie's AI team communication and system even
 **Answer:** Offers Free plan (1000 requests/month), Pro (10000 requests/month), and Enterprise (custom volume). Visit /pricing for updated details.
 
 **Question:** How do I monitor my API usage?
-**Answer:** Access your dashboard at https://uncodie.com/dashboard to see usage statistics, limits, and manage your API keys.
+**Answer:** Access your dashboard at https://app.makinari.com to see usage statistics, limits, and manage your API keys.
 
 **Question:** Can I increase my limits?
 **Answer:** Yes, contact support to increase limits or consider upgrading to a higher plan based on your needs.
@@ -128,10 +128,10 @@ Frequently asked questions about Uncodie's AI team communication and system even
 ## AI Team Support & System Resources
 
 **Question:** Where can I get help with AI team operations?
-**Answer:** Use the dashboard (https://uncodie.com/dashboard) for team management, documentation (/docs) for workflows, check system status (https://status.uncodie.com) for AI team availability, or consult the GitHub repository for integration examples.
+**Answer:** Use the dashboard (https://app.makinari.com) for team management, documentation (https://docs.makinari.com) for workflows, check system status (https://status.uncodie.com) for AI team availability, or consult the GitHub repository for integration examples.
 
 **Question:** Is there a playground to test AI team communication?
-**Answer:** Yes, visit the interactive documentation at `/api/docs` which includes a complete playground to test team coordination endpoints, execute workflows, monitor system events, and simulate multi-agent operations in real-time.
+**Answer:** Yes, visit the documentation at `https://docs.makinari.com` which includes examples to test team coordination endpoints, execute workflows, monitor system events, and simulate multi-agent operations in real-time.
 
 **Question:** Are AI team members available 24/7?
 **Answer:** Yes, we continuously monitor AI team availability and system status. You can check current team member status and system events at https://status.uncodie.com for real-time operational information.

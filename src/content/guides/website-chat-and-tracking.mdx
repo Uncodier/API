@@ -1,0 +1,53 @@
+# Website: Chat & Tracking
+
+Integrating Makinari into your website allows you to track visitor behavior, identify leads, and provide automated customer support via a live chat widget.
+
+## When to use
+
+- You want to see which pages leads are visiting before they buy.
+- You want an AI support agent to answer customer questions 24/7.
+- You want to trigger outbound campaigns based on website behavior.
+
+## Step 1: Install the Tracking Script
+
+The Makinari tracking script is a lightweight JavaScript snippet served from our CDN.
+
+1. Locate your Site ID in the Makinari dashboard.
+2. Add the following snippet just before the closing `</head>` tag on all pages of your website:
+
+```html
+<script src="https://files.uncodie.com/tracking.min.js" data-site-id="YOUR_SITE_ID"></script>
+```
+
+Once installed, the script will automatically track page views and session duration. You can view this data in the Dashboard or via the [Visitors API](/api-reference/visitors).
+
+## Step 2: Configure Allowed Domains (Important)
+
+For security, Makinari's APIs use strict CORS validation for browser requests. The chat widget and tracking script will fail with a `401 Unauthorized` or `CORS Error` if your domain is not authorized.
+
+1. Go to **Settings > Channels > Website** in the Makinari dashboard.
+2. Add your website's domain (e.g., `https://www.yourcompany.com`) to the **Allowed Domains** list.
+3. Do not include trailing slashes or subpaths.
+
+## Step 3: Enable the Chat Widget
+
+1. In the same **Website** settings panel, toggle the Chat Widget to **Active**.
+2. Customize the primary color, welcome message, and agent avatar to match your brand.
+3. The tracking script you installed in Step 1 will now automatically render the chat bubble in the bottom right corner of your site.
+
+When a visitor interacts with the chat, the messages are routed to your Customer Support agent, who uses your Brand Context to answer questions.
+
+## Identifying Users Programmatically
+
+If your website has a login system, you can attach the Makinari session to your known user data.
+
+```javascript
+// Call this after the user logs in
+window.MarketFit.identify({
+  email: 'user@example.com',
+  firstName: 'Jane',
+  lastName: 'Doe'
+});
+```
+
+See the [Visitors API Reference](/api-reference) for more details.

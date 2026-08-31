@@ -1,0 +1,31 @@
+# Agents and Commands
+
+Makinari does not use static chatbots. It uses a fleet of reasoning AI **Agents** that execute work through **Commands**.
+
+## What is an Agent?
+
+An Agent is a specialized AI worker with a specific role, system prompt, and set of tools. 
+
+- **CMO:** The orchestrator. It plans strategy and delegates tasks.
+- **Sales:** Focused on finding, enriching, and contacting leads.
+- **Copywriter:** Focused on creating and editing content.
+- **Data Analyst:** Focused on querying data and segmenting audiences.
+- **Support:** Focused on answering incoming questions.
+
+Agents share the same underlying LLM capabilities, but their rigid roles ensure they stay focused on their specific domains.
+
+## What is a Command?
+
+A **Command** is a discrete unit of work assigned to an Agent. 
+
+When you create a Requirement (a high-level goal), the CMO agent breaks it down into multiple Commands. For example, if the goal is to "Launch a newsletter", the CMO might generate:
+1. A Command for the Data Analyst to build the audience segment.
+2. A Command for the Copywriter to draft the email.
+3. A Command for the Sales agent to configure the outbound campaign.
+
+### The Token Budget
+
+Every Command consumes tokens (API costs from the underlying AI providers). To prevent runaway costs, Commands operate under a **Token Budget**. 
+
+- The Agent will execute tools, analyze results, and iterate until the task is complete OR the token budget is exhausted.
+- If the budget runs out, the Command pauses and asks for human intervention or a budget increase.

@@ -1,6 +1,14 @@
-# Uncodie API Server
+# Makinari API Server
 
-A comprehensive Next.js-based API server for Uncodie's AI team communication platform. This server provides REST endpoints and WebSocket support for managing AI agents, workflows, lead generation, email automation, and team coordination.
+A comprehensive Next.js-based API server for Makinari's AI team communication platform. This server provides REST endpoints and WebSocket support for managing AI agents, workflows, lead generation, email automation, and team coordination.
+
+> **Note:** The underlying infrastructure is sometimes referred to as Uncodie, but the public product and API are branded as Makinari.
+
+## Documentation
+
+The official public documentation is hosted via Nextra in the `src/content` folder. You can view it live at [docs.makinari.com](https://docs.makinari.com).
+
+To contribute to the documentation, please read [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Features
 

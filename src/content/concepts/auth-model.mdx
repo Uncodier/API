@@ -1,0 +1,34 @@
+# Auth Model
+
+Makinari uses a strict dual-authentication system. How you authenticate depends entirely on *where* your request originates.
+
+## 1. Browser Requests (CORS)
+
+If your request includes an `Origin` header (like a fetch request from a web browser), Makinari uses **CORS Validation**.
+
+- **How it works:** The server checks the `Origin` against a list of allowed domains configured for your Site.
+- **Requirement:** You **do not** need to pass an API key. 
+- **Use case:** Integrating the Makinari chat widget, tracking script, or making client-side calls from an approved frontend.
+
+## 2. Server-to-Server Requests (API Key)
+
+If your request does **NOT** include an `Origin` header (like a request from Node.js, Python, cURL, or Postman), Makinari uses **API Key Validation**.
+
+- **How it works:** The server expects an API key in the request.
+- **Requirement:** You **must** include the `Authorization: Bearer YOUR_API_KEY` header (or `x-api-key: YOUR_API_KEY`).
+- **Use case:** Backend integrations, webhooks processing, MCP server requests, or data syncing scripts.
+
+> **Crucial Warning:** Direct browser navigation (typing an API URL in the address bar) does not send an `Origin` header, but you also aren't sending an API key. This will always result in a `401 Unauthorized` error. 
+
+## 3. Webhooks and Exceptions
+
+Certain endpoints bypass both mechanisms because they receive traffic from third parties that use their own signature validation:
+- Stripe webhooks
+- WhatsApp/Twilio webhooks
+- AgentMail webhooks
+- Internal Cron jobs (authenticated via `CRON_SECRET`)
+
+## Common 401 Errors
+
+- **"API key is required for server-to-server requests"**: You are making a request without an `Origin` header and didn't provide an API key. This commonly happens when testing API routes in Vercel preview environments or Postman without setting the header.
+- **"Origin not allowed"**: You are making a browser request from a domain that hasn't been added to your Site's allowed domains in the dashboard.

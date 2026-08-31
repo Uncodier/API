@@ -1,28 +1,30 @@
-# Makinari API
+# Makinari Docs
 
-Welcome to the Makinari API documentation. This platform lets you deploy autonomous AI agents across multiple channels.
+Welcome to the Makinari documentation. This platform lets you deploy autonomous AI agents across multiple channels, driven by your business requirements.
 
-## What is Makinari?
+## Choose your path
 
-Makinari gives you a fleet of specialized AI agents that work autonomously toward your business goals. Instead of building one-off automations, you define high-level objectives and let agents plan, execute, and iterate on their own.
+Getting started depends on how you plan to use Makinari. Select the path that matches your goal:
 
-Agents operate across channels (WhatsApp, email, website chat, social), use tools exposed via the MCP server, and can be orchestrated programmatically through the REST API.
+### For Business Operators
+If you want to use the Makinari dashboard to set up agents and automate tasks:
+1. **[Inbound Path](/get-started/inbound)**: Add a tracking script, connect a chat widget or WhatsApp, and let agents handle incoming visitors.
+2. **[Outbound Path](/get-started/outbound)**: Import leads, build segments, and launch your first AI outbound campaign.
+3. **[AI Goals](/get-started/ai-goals)**: Give your agents brand context and assign them high-level Requirements to execute autonomously.
 
-## How it fits together
+### For Developers & Integrators
+If you want to integrate Makinari into your own application or workflows:
+1. **[First API Request](/get-started/first-api-request)**: Create an API key, understand our dual authentication model, and make your first authenticated call.
+2. **[MCP in 5 Minutes](/get-started/mcp-in-5-minutes)**: Connect Cursor or Claude to Makinari's Model Context Protocol server to give your local AI access to your project.
+3. **[Webhooks & Events](/guides/webhooks)**: React to Makinari events (like new leads or messages) in your own systems.
 
-- **Channels** are the surfaces where your agents talk to customers. Each channel has its own setup and configuration.
-- **Agents** are the workers. Each one is specialized for a role: sales, support, copywriting, analytics, and more.
-- **AI Goals (Requirements)** are the objectives you assign. Agents consume a token budget to pursue them autonomously.
-- **REST API** lets your own systems read and write data: visitors, contacts, robot instances, and more.
-- **MCP Server** exposes Makinari tools directly to AI models like Claude or GPT, enabling model-driven workflows.
+## Core Concepts
 
-## Where to start
+Before diving deep, we recommend understanding the core concepts that power the platform:
 
-- [First Steps](/first-steps) - Everything you need to get started.
-- [Channels](/channels) - Connect with your audience where they are.
-- [Agents](/agents) - Deploy specialized workforce agents.
-- [REST API](/rest-api) - Deep integration with your systems.
-- [MCP Server](/mcp-server) - Extend capabilities with the Model Context Protocol.
-- [Open Source Repos](https://makinari.org) - Explore our open source ecosystem.
-
-New here? Start with [First Steps](/first-steps) to create your account, configure your project, and get your API key.
+- **[How Makinari fits together](/concepts/how-it-fits)**: Site → channels → agents → requirements → tools.
+- **[Site and Members](/concepts/site-and-members)**: The top-level workspace that owns all data.
+- **[Agents and Commands](/concepts/agents-and-commands)**: How our AI team operates under a token budget.
+- **[Auth Model](/concepts/auth-model)**: When to use CORS vs. API keys.
+- **[Environments and URLs](/concepts/environments-and-urls)**: The canonical URLs for the dashboard, API, and legacy systems.
+- **[Glossary](/concepts/glossary)**: Standard terminology used across Makinari.

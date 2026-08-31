@@ -1,0 +1,42 @@
+import { ApiTester } from '../../components/ApiTester';
+import { MethodChip } from '../../components/MethodChip';
+
+# Campaigns
+
+<div className="endpoint-block">
+  <MethodChip method="POST" />
+  <code>/api/agents/tools/campaigns/create · /get · /update</code>
+</div>
+
+| Action | Route | Required |
+| :--- | :--- | :--- |
+| create | `POST /api/agents/tools/campaigns/create` | `site_id`, `title` |
+| list | `POST /api/agents/tools/campaigns/get` | `site_id` |
+| update | `POST /api/agents/tools/campaigns/update` | `site_id`, `campaign_id` |
+
+Optional: `description`, `status` (`pending`, `active`, `completed`), `type` (`email`, `social`, `ad`), `priority`, `budget`, `revenue`, `due_date`.
+
+```bash
+curl -X POST "https://backend.makinari.com/api/agents/tools/campaigns/create" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "site_id": "YOUR_SITE_ID",
+    "title": "Q1 Outreach Campaign",
+    "type": "email",
+    "status": "active",
+    "priority": "high"
+  }'
+```
+
+```json
+{ "success": true, "campaign": { "id": "...", "title": "Q1 Outreach Campaign" } }
+```
+
+<ApiTester
+  method="POST"
+  endpoint="/api/agents/tools/campaigns/get"
+  defaultBody={{ site_id: "YOUR_SITE_ID" }}
+/>
+
+MCP: [Marketing tools](/mcp-server/marketing).

@@ -1,0 +1,108 @@
+import { ApiTester } from '../../components/ApiTester';
+import { MethodChip } from '../../components/MethodChip';
+
+# System status
+
+Public health of Makinari: last probe run, overall state, and per-system cards. This is the same payload the status page consumes.
+
+Public GETs are allowed (CORS or no key). `verbose=1` and `run=1` need extra secrets.
+
+## Summary
+
+<div className="endpoint-block">
+  <MethodChip method="GET" />
+  <code>/api/status</code>
+</div>
+
+```bash
+curl -X GET "https://backend.makinari.com/api/status"
+```
+
+HTTP: `200` if `overall` is `operational` or `degraded`, `503` if `down`. `Cache-Control: no-store`.
+
+```json
+{
+  "overall": "operational",
+  "overallSla24h": 99.2,
+  "lastRunAt": "2026-08-31T20:00:00.000Z",
+  "lastTrigger": "cron_hourly",
+  "systems": [
+    {
+      "systemKey": "database_main",
+      "label": "Main Database",
+      "status": "up",
+      "summary": "Connected",
+      "latencyMs": 12,
+      "checkedAt": "2026-08-31T20:00:00.000Z",
+      "checks": {},
+      "sla": { "uptime24h": 100, "uptime7d": 99.8, "uptime30d": 99.5 }
+    }
+  ],
+  "slaBySystem": {}
+}
+```
+
+`overall`: `operational` | `degraded` | `down`. Per-system `status`: `up` | `degraded` | `down` | `skipped`.
+
+<ApiTester method="GET" endpoint="/api/status" />
+
+### Query params
+
+| Param | Auth | Effect |
+| :--- | :--- | :--- |
+| (none) | Public | Latest stored summary |
+| `verbose=1` | `x-api-key: SERVICE_API_KEY` | Adds env / Vercel URL. `401` without the service key |
+| `run=1` | `Authorization: Bearer CRON_SECRET` | Runs probes now and returns the sanitized result |
+
+## List systems
+
+<div className="endpoint-block">
+  <MethodChip method="GET" />
+  <code>/api/status/systems</code>
+</div>
+
+```bash
+curl -X GET "https://backend.makinari.com/api/status/systems"
+```
+
+Returns `{ systems, lastRunAt, lastTrigger }`. Each system: `systemKey`, `label`, `status`, `summary`, `latencyMs`, `checkedAt`.
+
+## One system
+
+<div className="endpoint-block">
+  <MethodChip method="GET" />
+  <code>/api/status/systems/{systemKey}</code>
+</div>
+
+```bash
+curl -X GET "https://backend.makinari.com/api/status/systems/database_main"
+curl -X GET "https://backend.makinari.com/api/status/systems/agents?live=1"
+```
+
+`live=1` runs that handler now instead of the last stored check.
+
+| systemKey | Label |
+| :--- | :--- |
+| `database_main` | Main Database |
+| `database_apps` | Apps Database |
+| `env_core` | Core Environment |
+| `api_auth` | API Authentication |
+| `public_api` | Public API |
+| `agents` | Agents API |
+| `workflow` | Workflow API |
+| `integrations` | Integrations |
+| `site` | Site API |
+| `visitors` | Visitors API |
+| `finder` | Finder API |
+| `robots` | Robots API |
+| `cron` | Cron Jobs |
+| `platform` | Platform API |
+| `notifications` | Notifications |
+| `ai_portkey` | AI Portkey |
+| `ai_text` | AI Text |
+| `ai_text_continuation` | AI Text Continuation |
+| `ai_image` | AI Image |
+| `ai_video` | AI Video |
+| `ai_audio` | AI Audio |
+
+Inbound probe webhook: `POST /api/status/webhook` (platform secret, not your Site API key).

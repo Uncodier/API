@@ -1,0 +1,38 @@
+# WhatsApp Business
+
+Connecting WhatsApp allows your Makinari agents to send outbound marketing campaigns and handle inbound customer inquiries on the world's most popular messaging app.
+
+## When to use
+
+- You want to run targeted outbound campaigns with high open rates.
+- You want to offer automated customer support via WhatsApp.
+
+## Step 1: Connect your Business Account
+
+Makinari integrates with the official WhatsApp Business Cloud API (via Twilio or Meta directly).
+
+1. Go to **Settings > Channels > WhatsApp** in the dashboard.
+2. Follow the authorization flow to connect your Meta Business account.
+3. Select the phone number you want Makinari to manage.
+
+## Step 2: The 24-Hour Window Rule
+
+WhatsApp enforces strict rules on business messaging. **You must understand this rule before launching campaigns.**
+
+- **Inbound (User-initiated):** When a user sends a message to your number, a 24-hour window opens. Your AI agents can reply freely with any type of message during this window.
+- **Outbound (Business-initiated):** If the 24-hour window is closed, or you are reaching out for the first time, you **must** use a pre-approved Message Template.
+
+## Step 3: Create and Approve Templates
+
+To send outbound campaigns, you need approved templates.
+
+1. Go to the **Templates** section in the WhatsApp channel settings.
+2. Create a new template. You can include variables like `{{1}}` for names.
+3. Submit the template for approval by Meta. Approval usually takes a few minutes to a few hours.
+4. Once approved, you can select this template when launching an outbound Campaign.
+
+## Troubleshooting: Error 63016 (Twilio)
+
+If you are using the Twilio backend and receive `Error 63016 (Failed to send freeform message)`, it means your agent tried to send a standard message outside the 24-hour window.
+
+**Solution:** You must use an approved WhatsApp Template for this conversation, or wait for the user to reply to open a new 24-hour window.

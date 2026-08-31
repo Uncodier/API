@@ -1,0 +1,59 @@
+import { MethodChip } from '../../components/MethodChip';
+
+# Workflows
+
+Temporal jobs. `POST /api/workflow/{name}` starts a run and returns immediately (`async: true`). Poll or use a [webhook](/guides/webhooks) for completion.
+
+<div className="endpoint-block">
+  <MethodChip method="POST" />
+  <code>/api/workflow/leadGeneration</code>
+</div>
+
+Auth: Bearer or `x-api-key`. Body always includes `site_id` (string UUID). Missing `site_id` → `400` `{ "code": "INVALID_SITE_ID" }`.
+
+```bash
+curl -X POST "https://backend.makinari.com/api/workflow/leadGeneration" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"site_id":"YOUR_SITE_ID"}'
+```
+
+Success: `{ "success": true, ... }` plus a Temporal `workflowId` such as `lead-generation-{site_id}-{timestamp}`. Failure: `500` `WORKFLOW_EXECUTION_ERROR`.
+
+## Catalog
+
+All of these are `POST /api/workflow/<name>` with at least `site_id`. Extra fields are workflow-specific (do not invent `maxLeads` unless that route documents it).
+
+### CRM
+| Name | What it does |
+| :--- | :--- |
+| `leadGeneration` | Mine new leads for the site ICP |
+| `leadFollowUp` | Sales follow-up on cold leads |
+| `leadResearch` | Enrich / research a lead set |
+| `enrichLead` | Fill missing contact fields |
+| `leadInvalidation` | Mark bad leads |
+| `assignLeads` | CMO assignment pass |
+| `analyzeSite` | Scrape a URL against the ICP |
+| `idealClientProfileMining` | Build / refresh ICP |
+| `keyAccountGeneration` | Key-account list |
+
+### Marketing
+| Name | What it does |
+| :--- | :--- |
+| `buildSegments` | Cluster leads into segments |
+| `buildSegmentsICP` | Segments from ICP |
+| `buildCampaigns` | Generate campaigns for a segment |
+| `buildContent` | Copywriter draft + publish |
+
+### Ops
+| Name | What it does |
+| :--- | :--- |
+| `customerSupport` | Analyze a ticket and draft a reply |
+| `syncEmails` | Pull AgentMail and route |
+| `dailyStandUp` | CMO daily summary |
+| `humanIntervention` | Pause for a human |
+| `startRobot` / `stopRobot` / `promptRobot` | Scrapybara robots |
+| `webhook` | Inbound workflow webhook |
+| `agentMessage` | Push a message into an agent |
+
+Not the same as [Requirements](/api-reference/requirements) (agents reason; workflows are fixed code). See [Requirements vs workflows](/concepts/requirements-vs-workflows).

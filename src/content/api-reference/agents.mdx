@@ -1,0 +1,39 @@
+import { ApiTester } from '../../components/ApiTester';
+import { MethodChip } from '../../components/MethodChip';
+
+# Agents
+
+Talk to a role agent or hit the same tools the MCP server uses (`/api/agents/tools/*`).
+
+## Message the CMO
+
+<div className="endpoint-block">
+  <MethodChip method="POST" />
+  <code>/api/agents/cmo/message</code>
+</div>
+
+```bash
+curl -X POST "https://backend.makinari.com/api/agents/cmo/message" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "site_id": "YOUR_SITE_ID",
+    "message": "Give me a status update on our campaigns."
+  }'
+```
+
+<ApiTester
+  method="POST"
+  endpoint="/api/agents/cmo/message"
+  defaultBody={{ site_id: "YOUR_SITE_ID", message: "Give me a status update on our campaigns." }}
+/>
+
+Other role prefixes follow the same pattern: `/api/agents/sales/...`, `/api/agents/customerSupport/message`, `/api/agents/email/reply`, `/api/agents/copywriter/content-editor`.
+
+## Tools (preferred for CRUD)
+
+Do not guess `GET /list` paths. CRM and marketing use **POST + action**:
+
+- Leads → [Leads](/api-reference/leads)
+- Campaigns / segments → [Campaigns](/api-reference/campaigns), [Segments](/api-reference/segments)
+- Full MCP names → [Tools catalog](/mcp-server/tools-catalog)

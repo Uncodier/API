@@ -1,0 +1,38 @@
+import { ApiTester } from '../../components/ApiTester';
+import { MethodChip } from '../../components/MethodChip';
+
+# Segments
+
+<div className="endpoint-block">
+  <MethodChip method="POST" />
+  <code>/api/agents/tools/segments/create · /get · /update</code>
+</div>
+
+| Action | Route | Required |
+| :--- | :--- | :--- |
+| create | `POST /api/agents/tools/segments/create` | `site_id`, `name` |
+| list | `POST /api/agents/tools/segments/get` | `site_id` |
+| update | `POST /api/agents/tools/segments/update` | `site_id`, `segment_id` |
+
+Optional: `description`, `audience`, `size`, `estimated_value`, `language`, `is_active`, `attributes`.
+
+```bash
+curl -X POST "https://backend.makinari.com/api/agents/tools/segments/create" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "site_id": "YOUR_SITE_ID",
+    "name": "SaaS Decision Makers",
+    "audience": "professional",
+    "language": "en",
+    "is_active": true
+  }'
+```
+
+<ApiTester
+  method="POST"
+  endpoint="/api/agents/tools/segments/get"
+  defaultBody={{ site_id: "YOUR_SITE_ID" }}
+/>
+
+MCP: [Marketing tools](/mcp-server/marketing).

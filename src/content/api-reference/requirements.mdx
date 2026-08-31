@@ -1,0 +1,52 @@
+import { ApiTester } from '../../components/ApiTester';
+import { MethodChip } from '../../components/MethodChip';
+
+# Requirements
+
+AI Goals. Tools: `requirements` (CRUD) and HTTP `GET /api/requirements` for a site-scoped list.
+
+<div className="endpoint-block">
+  <MethodChip method="POST" />
+  <code>/api/agents/tools/requirements/create · /get · /update</code>
+</div>
+
+| Action | Route | Required |
+| :--- | :--- | :--- |
+| create | `POST /api/agents/tools/requirements/create` | `site_id`, `title` |
+| list | `POST /api/agents/tools/requirements/get` | `site_id` |
+| update | `POST /api/agents/tools/requirements/update` | `site_id`, `requirement_id` |
+
+`status`: `backlog`, `validated`, `in-progress`, `on-review`, `done`, `canceled`.  
+`completion_status`: `pending`, `completed`, `rejected`.  
+`priority`: `high`, `medium`, `low`.
+
+`instructions` should say whether work is an external deliverable or uses Makinari tools. `budget` is the token cap.
+
+```bash
+curl -X POST "https://backend.makinari.com/api/agents/tools/requirements/create" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "site_id": "YOUR_SITE_ID",
+    "title": "Publish a sales blog post",
+    "type": "content",
+    "priority": "high",
+    "status": "backlog",
+    "instructions": "Write and publish using Makinari tools. Target VP Sales."
+  }'
+```
+
+Status list (dashboard-style):
+
+```bash
+curl -X GET "https://backend.makinari.com/api/requirements?site_id=YOUR_SITE_ID" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+<ApiTester
+  method="GET"
+  endpoint="/api/requirements"
+  defaultParams={{ site_id: "YOUR_SITE_ID" }}
+/>
+
+MCP: [Platform ops](/mcp-server/platform). Concepts: [Requirements vs workflows](/concepts/requirements-vs-workflows).

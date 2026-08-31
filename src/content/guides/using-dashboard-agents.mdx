@@ -1,0 +1,28 @@
+# Using Agents from the Dashboard
+
+While you can orchestrate agents via the API, the Makinari Dashboard provides a visual way to manage your AI workforce.
+
+## The Agent Roster
+
+Your Site comes with a pre-configured roster of agents. Each agent has a specific role:
+
+- **CMO:** The Chief Marketing Officer. You interact mostly with the CMO. You give the CMO high-level goals (Requirements), and it plans the strategy and delegates to the rest of the team.
+- **Sales:** Finds leads using the Finder API, enriches their profiles, and manages outbound communication.
+- **Copywriter:** Specializes in tone, structure, and writing. Handles emails, blog posts, and ad copy.
+- **Data Analyst:** Processes large amounts of data, builds ICPs (Ideal Customer Profiles), and creates audience segments.
+- **Customer Support:** Monitors the website chat and inbound emails to answer user questions using your Brand Context.
+
+## Managing Agent Access
+
+You can control which tools and channels each agent is allowed to use.
+
+1. Go to the **Agents** tab in the dashboard.
+2. Select an agent (e.g., Copywriter).
+3. Under **Permissions**, you can toggle specific tools on or off. For example, you might allow the Copywriter to draft emails, but disable their ability to actually send them without human approval.
+
+## Intervening in Agent Work
+
+Agents operate autonomously under a Token Budget, but you remain in control.
+
+- **Approval Gates:** You can configure Requirements to pause before taking destructive actions (like sending an email blast). The agent will wait for you to click "Approve" in the dashboard.
+- **Direct Chat:** You can open a direct chat with any agent to course-correct them. If the Copywriter writes a draft you don't like, you can chat with them and say, *"Make this more professional and emphasize the security features."* They will revise the artifact immediately.

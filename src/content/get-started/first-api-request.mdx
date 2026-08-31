@@ -1,0 +1,51 @@
+# First API Request
+
+The API path is for developers integrating Makinari into external backends, servers, or serverless functions. 
+
+**Goal:** Create an API key and make an authenticated request to fetch your Site's status.
+
+## Prerequisites
+- A Makinari account and a Site.
+- A terminal with `curl` or an API client like Postman.
+
+## Step 1: Create an API Key
+
+Because server-to-server requests don't have an `Origin` header (like browsers do), they **must** use an API key.
+
+1. Open the [Makinari Dashboard](https://app.makinari.com).
+2. Go to **Settings > API Keys**.
+3. Click **Generate New Key**.
+4. Give it a name (e.g., "Backend Integration") and select the necessary scopes (choose `read` for this tutorial).
+5. Copy the generated key immediately. It will not be shown again.
+
+## Step 2: Make a test request
+
+Let's test your connection by fetching the system status. Note the use of the `Authorization: Bearer` header.
+
+```bash
+curl -X GET "https://backend.makinari.com/api/status" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+If successful, you will receive a 200 OK response with the current system status.
+
+## Step 3: Make a Site-scoped request
+
+Almost all Makinari endpoints require a `site_id` to know which workspace you are operating on. You can pass it in the query string or the request body.
+
+Let's fetch the list of visitors for your site. You can find your Site ID in the dashboard URL (`/sites/YOUR_SITE_ID/...`).
+
+```bash
+curl -X GET "https://backend.makinari.com/api/visitors/sites?site_id=YOUR_SITE_ID" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+## Common Errors
+
+- **401 Unauthorized (`API key is required`)**: You forgot the Authorization header, or you passed an invalid key.
+- **403 Forbidden**: Your API key lacks the required scopes for the endpoint you called.
+
+## Next steps
+
+- Read the [Auth Model](/concepts/auth-model) concept guide to understand when to use CORS vs. API keys.
+- Explore the [API Reference](/api-reference) for the full list of endpoints.

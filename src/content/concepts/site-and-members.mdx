@@ -1,0 +1,29 @@
+# Site and Members
+
+The **Site** is the foundational entity in Makinari. It represents a single business, brand, or project workspace.
+
+## Why the Site matters
+
+Almost all data in Makinari is scoped to a Site. When you use the REST API, the `site_id` is a required parameter for nearly every endpoint. This ensures strict data isolation between different projects.
+
+A Site contains:
+- **Brand Context:** Tone, industry, and descriptions that guide the AI agents.
+- **CRM Data:** Leads, Segments, and Campaigns.
+- **Configurations:** Connected channels, API keys, and allowed domains.
+- **AI Entities:** Agents, Requirements, and Commands.
+
+## Ownership and Members
+
+A Site is created by a user, who becomes the Owner. 
+
+You can invite other users to your Site as **Members**. Members can have different roles (like Admin or Viewer) that control their permissions within the dashboard and API. 
+
+- Use the dashboard to manage team members under **Settings > Team**.
+- The API uses the `site_members` and `site_ownership` tables to enforce access controls.
+
+## Sites vs. Apps
+
+In some legacy or internal documentation, you might see references to "Apps" or "App Tenants." 
+
+- A **Site** is the Makinari platform workspace.
+- An **App Tenant** is a separate, isolated database schema generated *by* Makinari when it builds a custom software application for a customer. Unless you are using Makinari to generate software, you only need to worry about Sites.

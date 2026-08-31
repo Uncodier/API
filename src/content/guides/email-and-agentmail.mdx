@@ -1,0 +1,39 @@
+# Email & AgentMail
+
+Makinari agents can manage email inboxes, reply to customer inquiries, and send outbound campaigns. 
+
+## When to use
+
+- You want the Sales agent to run cold email outreach.
+- You want the Support agent to monitor a `support@yourcompany.com` inbox.
+
+## Integration Options
+
+Makinari supports two ways to handle email:
+
+1. **AgentMail (Recommended):** A managed infrastructure where Makinari provides dedicated inboxes and webhooks for your agents.
+2. **Personal/SMTP Integration (Zavu):** Connecting your existing Google Workspace or Office 365 inboxes.
+
+## Setting up AgentMail
+
+1. Go to **Settings > Channels > Email** in the dashboard.
+2. Select **AgentMail**.
+3. Choose a domain or subdomain for your agents to use (e.g., `agents.yourcompany.com`).
+4. Update your DNS records (TXT, CNAME) as instructed in the dashboard to verify domain ownership and ensure high deliverability (SPF/DKIM/DMARC).
+5. Once verified, Makinari will provision inboxes for your agents (e.g., `sales@agents.yourcompany.com`).
+
+## Outbound Campaigns
+
+When launching an outbound campaign via Email:
+
+1. The CMO assigns leads to the Sales agent.
+2. The Copywriter agent drafts personalized emails based on lead data.
+3. The emails are sent via your configured AgentMail domain.
+4. Makinari tracks opens, clicks, and replies.
+5. If a lead replies, the inbound message is routed back to the Sales agent to continue the conversation.
+
+## Sync and Deliverability
+
+The Email channel relies on background synchronization. Delivery status (Sent, Delivered, Opened, Bounced) is updated asynchronously via webhooks. 
+
+If an email bounces, Makinari automatically flags the lead and halts further automated outreach to protect your domain reputation.

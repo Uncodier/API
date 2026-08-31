@@ -1,0 +1,24 @@
+# Environments and URLs
+
+Makinari operates across several services. Use this guide to ensure you are pointing to the correct environment for your integration.
+
+## Canonical URLs
+
+These are the official and current URLs for interacting with Makinari:
+
+- **Dashboard:** `https://app.makinari.com`
+- **Public Website:** `https://www.makinari.com`
+- **Documentation:** `https://docs.makinari.com`
+- **REST API & MCP:** `https://backend.makinari.com`
+
+All new integrations should use `https://backend.makinari.com` as the base URL for API requests.
+
+## Legacy and Infrastructure Aliases (Uncodie)
+
+You may encounter the name **Uncodie** in some legacy documentation, infrastructure configurations, or HTTP headers. Uncodie is the underlying platform and company name, while Makinari is the go-to-market product.
+
+The following URLs are maintained for backward compatibility but should not be used for new integrations:
+- `https://api.uncodie.com` (Alias for backend.makinari.com)
+- `https://backend.uncodie.com` (Alias for backend.makinari.com)
+- `https://docs.uncodie.com` (Alias for docs.makinari.com)
+- `https://files.uncodie.com` (Used for serving the tracking script and assets)

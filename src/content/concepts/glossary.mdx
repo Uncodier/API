@@ -1,0 +1,11 @@
+# Glossary
+
+Standard terminology used across the Makinari platform.
+
+- **Agent**: A specialized AI team member (e.g., Sales, CMO, Copywriter) equipped with prompts and tools to execute tasks autonomously.
+- **Command**: A unit of work assigned to an Agent. It tracks the task, status, token budget, and results.
+- **Requirement**: A high-level AI Goal defined by the user. The CMO agent breaks Requirements down into Commands for specialized agents to execute.
+- **Site**: The top-level workspace or tenant in Makinari. Almost all data (Leads, Campaigns, Agents) is scoped to a specific `site_id`.
+- **Workflow**: A deterministic, long-running orchestration (powered by Temporal) that coordinates multiple steps, APIs, and Agent commands (e.g., Lead Generation, Content Publishing).
+- **Platform API Key**: A scoped authentication key for server-to-server communication, bound to a specific `site_id`.
+- **Apps Tenant**: An isolated database schema generated for a specific customer application built by Makinari.
