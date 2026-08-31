@@ -59,15 +59,15 @@ function buildChatCompletionBody(model: string): Record<string, unknown> {
     stream: false,
   };
   if (usesMaxCompletionTokens(model)) {
-    body.max_completion_tokens = 1;
+    body.max_completion_tokens = 100;
   } else {
-    body.max_tokens = 1;
+    body.max_tokens = 10;
   }
   return body;
 }
 
 function getGeminiProbeModel(): string {
-  return getEnv('GEMINI_STATUS_PROBE_MODEL') || 'gemini-2.0-flash';
+  return getEnv('GEMINI_STATUS_PROBE_MODEL') || 'gemini-1.5-flash';
 }
 
 async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -264,7 +264,7 @@ export async function probeGeminiText(): Promise<ProviderProbeResult> {
           const m = genAI.getGenerativeModel({ model });
           await m.generateContent({
             contents: [{ role: 'user', parts: [{ text: PROBE_MESSAGE }] }],
-            generationConfig: { maxOutputTokens: 1 },
+            generationConfig: { maxOutputTokens: 10 },
           });
         })(),
         PROBE_TIMEOUT_MS,
