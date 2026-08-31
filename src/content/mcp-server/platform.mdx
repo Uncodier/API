@@ -1,0 +1,71 @@
+# Platform ops tools
+
+MCP names: `requirements`, `requirementStatus`, `instance`, `webhooks`, `updateSiteSettings`, `workflows`.
+
+## `requirements`
+
+Actions: `create` (needs `title`) · `list` · `update` (needs `requirement_id`).
+
+| Parameter | Type | Notes |
+| :--- | :--- | :--- |
+| action | string | `create`, `list`, `update` |
+| title | string | Required for create |
+| instructions | string | How to execute: external deliverable vs Makinari tools |
+| priority | string | `high`, `medium`, `low` |
+| status | string | `backlog`, `validated`, `in-progress`, `on-review`, `done`, `canceled` |
+| completion_status | string | `pending`, `completed`, `rejected` |
+| type | string | e.g. `content`, `develop`, `task` |
+| budget | number | Token / spend cap |
+| cron, cycle | string | Recurrence |
+| campaign_id | string | Optional link |
+
+```
+POST /api/agents/tools/requirements/create
+POST /api/agents/tools/requirements/get
+POST /api/agents/tools/requirements/update
+```
+
+`requirementStatus` writes progress artifacts (preview URL, repo, stage) for a requirement.
+
+## `instance`
+
+Actions: `create` · `read` · `update`. `site_id` required for create/read.
+
+Call `update` if the instance is still named “Assistant Session” / “New Instance”, or the objective changed.
+
+```
+POST /api/agents/tools/instance
+```
+
+Related: `instancePlan`, `instanceLogs`.
+
+## `webhooks`
+
+Actions: `list` · `create` (needs `url`, `events[]`).
+
+```
+POST /api/agents/tools/webhooks
+```
+
+```http
+POST https://backend.makinari.com/api/agents/tools/webhooks
+Authorization: Bearer YOUR_API_KEY
+Content-Type: application/json
+
+{
+  "action": "create",
+  "site_id": "YOUR_SITE_ID",
+  "url": "https://yourapp.com/webhooks/makinari",
+  "events": ["lead.created", "conversation.started"]
+}
+```
+
+Outbound product events vs inbound provider signatures: [Webhooks guide](/guides/webhooks).
+
+## `updateSiteSettings`
+
+Patch brand context, allowed domains, and site metadata. Needs `site_id`.
+
+## `workflows`
+
+Trigger or inspect Temporal workflows from the agent. HTTP catalog: [API workflows](/api-reference/workflows).

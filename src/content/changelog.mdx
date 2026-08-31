@@ -2,17 +2,109 @@
 
 All notable changes to the Makinari platform, API, and documentation will be documented in this file.
 
-## [2026-08-31]
-### Added
+## Q3 2026 (July - September)
+
+### [2026-08-31]
+
+**Platform & API**
+- **Purchases and Transactions Tools:** Upgraded the `purchases` and `transactions` tools (used via MCP or `/api/agents/tools/*`) with better handling of vendor bills, payment registration (`register_payment` action), and expense categorization.
+- **Workflow Scheduling:** Enhanced Temporal workflow ID generation and reuse policies for scheduling activities, improving deterministic execution.
+- **Gemini AI Integration:** Adjusted token limits and default models for the Gemini probe in system status.
+- **Support & Scheduling:** Added schema handling for Supabase queries in customer support and scheduling endpoints, improving reliability for custom schemas.
+
+**Integrations**
+- **Zavu Integration Upgrades:** 
+  - Centralized token encryption and enhanced webhook processing for the Zavu integration.
+  - Added recipient sanitization and automatic response handling.
+  - Expanded endpoints for managing Telegram (`/api/integrations/zavu/channels/telegram`) and Email channels natively.
+
+**Documentation**
 - **Makinari Docs:** Complete restructuring of the documentation. 
   - Introduced unified paths for Inbound, Outbound, AI Goals, API, and MCP onboarding.
   - Added new Concept and Guides sections.
   - Unified API Reference with interactive `ApiTester`.
-  - Grouped all MCP tools under a single Tools Catalog.
+  - Grouped all MCP tools under a single Tools Catalog mapping to domains like CRM, Commerce, and Media.
+- **Changed:** Clarified the Dual Auth Model (CORS vs API Key). Updated documentation base URL to `docs.makinari.com` and backend URL to `backend.makinari.com`.
+- **Removed:** Legacy `/first-steps`, `/rest-api`, `/agents`, `/channels`, `/workflows`, and `/content-api` structures (redirected to their respective new locations).
 
-### Changed
-- Clarified the Dual Auth Model (CORS vs API Key).
-- Updated documentation base URL to `docs.makinari.com` and backend URL to `backend.makinari.com`.
+### [2026-08-28]
 
-### Removed
-- Legacy `/first-steps`, `/rest-api`, `/agents`, `/channels`, `/workflows`, and `/content-api` structures (redirected to their respective new locations).
+**Platform & API**
+- **Cron Engine:** Added a new cron endpoint for AI assistant respawn and enhanced cron window handling for more reliable temporal triggers.
+- **Assistant Protocol:** Refined text-only node handling during context preparation for better LLM processing.
+- **Reservations (Beta):** Integrated round-robin assignment and enhanced availability checks, catalog item handling, promotion handling, and order creation logic.
+- **Audience / CRM:** Optimized lead ID collection and database insertion for better scale.
+
+**Integrations**
+- **WhatsApp Business API:** 
+  - Implemented audio transcription and media processing enhancements.
+  - Improved webhook data validation.
+  - Enhanced template handling, template approval flow (moved to 'accepted' status), and variable resolution.
+
+**Dashboard & App (`market-fit`)**
+- **Commerce & POS:** Enhanced USB printer request handling for POS receipts (added serial number support), and improved POS synchronization features.
+- **Quotations:** Implemented PDF text sanitization and enhanced quotation PDF generation with custom notes.
+- **UI / UX:** Refactored SVG rendering for better Safari and Chrome compatibility, and enhanced editor styles for bulk actions.
+
+### [2026-08-24]
+
+**Workflows (Temporal)**
+- **Deployment:** Transitioned Azure worker deployment to AKS (Azure Kubernetes Service) with a new validation queue.
+- **Task Activities:** Enhanced task activities and added comment functionality directly from workflows.
+
+**Integrations**
+- **Email Validation:** Refactored email validation to use a direct internal `validateEmail` function instead of relying on external API calls, significantly reducing latency and cost.
+
+**Commercial Site & Auth**
+- **Routing & Authentication:** Refactored authentication route rewrites and UI components for an improved user experience, directing users more cleanly to the buyer portal.
+- **Security:** Updated Content Security Policy (CSP) and middleware for enhanced security.
+- **Media:** Refactored VideoHero components and improved Next.js rewrites for marketplace routes.
+
+---
+
+## Q2 2026 (April - June)
+
+### Platform & API
+- **AI Core:** Integrated a new skill lookup tool into agent workflows and implemented anti-loop guards for empty instance plans.
+- **Requirements Handling:** Added auto-sanitization for on-review requirements and enhanced argument coercion in the tool-executor.
+- **Cron & Orchestration:** Improved cron parsing and error handling for temporal triggers and requirements reactivation. 
+
+### Workflows (Temporal)
+- **Billing Infrastructure:** Refactored Supabase services and billing activities for automated credit renewal calculation.
+- **Production Builds:** Repaired build steps (Turbopack, Next 16 binaries resolution) and enforced API key safeguards directly at the worker connection level.
+- **Lead Generation:** Injected `sequence_stage` into lead follow-up messages for better tracking.
+
+### Dashboard & App (`market-fit`)
+- **Real-time UX:** Integrated SWR (Stale-While-Revalidate) across the dashboard for real-time requirement statuses, message refreshes, and artifact updates.
+- **Requirement Management:** Enhanced subscription handling and data fetching for the `RobotsPageContent` and `SettingsPage`.
+- **System Layout:** Updated `MessagesSkeleton` and file upload handling, creating a smoother UI experience.
+
+### Commercial Site
+- **Localization:** Enhanced localization support, dynamically merging default translations with the target language.
+- **Pricing:** Updated pricing plans to reflect the new 3-month proof of concept (PoC) model.
+- **UI Adjustments:** Improved `AuthLandingClient` fallback loading delay (to 20s), updated `100svh` viewports for mobile compatibility, and added the `CommercialFlashes` component.
+
+---
+
+## Q1 2026 (January - March)
+
+### Platform & API
+- **Multi-Tenant API:** Introduced Tenant ID support across external APIs (e.g., Outstand) and implemented inclusion/exclusion filters for Requirements.
+- **MCP Server Expansion:** Added a `createSecret` tool for external developers.
+- **Audio & Multimodal:** Rolled out the first multimodal message support logic, including OpenAI audio transcription and virtual key fallback.
+- **Instance Logs:** Built strict token deduction logic (`createInstanceLogCore`) to ensure accurate usage tracking and billing.
+
+### Workflows (Temporal)
+- **Billing Activities:** Introduced daily credit renewal activities and workflows to automate site initialization and billing lifecycle.
+- **Message Reliability:** Implemented atomic message claiming (`markMessageAsSendingActivity`) and recovery mechanisms (`resetStuckSendingMessagesActivity`) to prevent duplicate deliveries.
+- **Lead Activities:** Enriched CRM records by capturing and validating `person_id` and person creation dates within temporal lead generation activities.
+
+### Dashboard & App (`market-fit`)
+- **Security:** Added a dedicated Security Page component (`SecurityPage`) to manage workspace and site security levels.
+- **Content Management:** Shipped improvements to `ContentDetailPage`, `ZoomableCanvas`, and conversation UI components.
+- **Data Layers:** Rebuilt the site refresh logic to improve parallel site loading behavior.
+
+### Commercial Site
+- **SEO & Structure:** Implemented heavy SEO enhancements, including structured data across the `HomePage`, a rebuilt sitemap, and localized robots text.
+- **Animation UX:** Expanded the `TypingAnimation` library with new scenarios for video campaigns and presentations.
+- **Globalization:** Fixed welcome back messaging clarity across all supported languages.

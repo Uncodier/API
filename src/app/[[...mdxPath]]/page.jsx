@@ -3,15 +3,28 @@ import { useMDXComponents as getMDXComponents } from '../../../mdx-components'
 import { notFound } from 'next/navigation'
 
 export const generateStaticParams = generateStaticParamsFor('mdxPath')
+export const dynamicParams = false
+
+let staticParamsCache = null;
+async function isPageValid(mdxPath) {
+  if (!staticParamsCache || process.env.NODE_ENV === 'development') {
+    staticParamsCache = await generateStaticParams()
+  }
+  const pathStr = (mdxPath || []).join('/')
+  return staticParamsCache.some(p => (p.mdxPath || []).join('/') === pathStr)
+}
 
 export async function generateMetadata(props) {
   const paramsObj = await props.params
   // Normalize mdxPath: undefined means root route, should map to index.mdx
-  // For root route (/), mdxPath is undefined, which should become [] for Nextra
   const mdxPath = paramsObj.mdxPath === undefined 
     ? [] 
     : (paramsObj.mdxPath && paramsObj.mdxPath.length > 0 ? paramsObj.mdxPath : [])
   
+  if (!(await isPageValid(mdxPath))) {
+    return {}
+  }
+
   try {
     const { metadata } = await importPage(mdxPath)
     return metadata
@@ -31,6 +44,10 @@ export default async function Page(props) {
     ? [] 
     : (paramsObj.mdxPath && paramsObj.mdxPath.length > 0 ? paramsObj.mdxPath : [])
   
+  if (!(await isPageValid(mdxPath))) {
+    notFound()
+  }
+
   let result;
   try {
     result = await importPage(mdxPath)

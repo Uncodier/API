@@ -1,0 +1,91 @@
+# Marketing & content tools
+
+MCP names: `campaigns`, `segments`, `content`, `publish`, `copywriting`.
+
+## `campaigns`
+
+Actions: `create` (needs `title`) · `list` · `update` (needs `campaign_id`).
+
+| Parameter | Type | Notes |
+| :--- | :--- | :--- |
+| action | string | `create`, `list`, `update` |
+| campaign_id | string | Required for update |
+| title, description | string | |
+| status | string | `pending`, `active`, `completed` |
+| type | string | `email`, `social`, `ad` |
+| priority | string | `low`, `medium`, `high` |
+| budget, revenue | object | |
+| due_date | string | ISO |
+
+```
+POST /api/agents/tools/campaigns/create
+POST /api/agents/tools/campaigns/get
+POST /api/agents/tools/campaigns/update
+```
+
+```http
+POST https://backend.makinari.com/api/agents/tools/campaigns/create
+Authorization: Bearer YOUR_API_KEY
+Content-Type: application/json
+
+{
+  "site_id": "YOUR_SITE_ID",
+  "title": "Q1 Outreach Campaign",
+  "type": "email",
+  "status": "active",
+  "priority": "high"
+}
+```
+
+```json
+{ "success": true, "campaign": { "id": "...", "title": "Q1 Outreach Campaign" } }
+```
+
+## `segments`
+
+Actions: `create` (needs `name`) · `list` · `update` (needs `segment_id`).
+
+Optional: `description`, `audience`, `size`, `estimated_value`, `language`, `is_active`, `attributes`.
+
+```
+POST /api/agents/tools/segments/create
+POST /api/agents/tools/segments/get
+POST /api/agents/tools/segments/update
+```
+
+```http
+POST https://backend.makinari.com/api/agents/tools/segments/create
+Authorization: Bearer YOUR_API_KEY
+Content-Type: application/json
+
+{
+  "site_id": "YOUR_SITE_ID",
+  "name": "SaaS Decision Makers",
+  "audience": "professional",
+  "language": "en",
+  "is_active": true
+}
+```
+
+## `content`
+
+Actions: `create` (needs `title`, `type`) · `list` · `update` (needs `content_id`).
+
+`type`: `blog_post`, `video`, `podcast`, `social_post`, `newsletter`, `case_study`, `whitepaper`, `infographic`, `webinar`, `ebook`, `ad`, `landing_page`.  
+`status`: `draft`, `review`, `approved`, `published`, `archived`.
+
+Body lives in `text`. For audience sends, use the same `{{lead.*}}` tokens as email. Policy: `metadata.placeholders.when_unresolved`.
+
+```
+POST /api/agents/tools/content/create
+POST /api/agents/tools/content/get
+POST /api/agents/tools/content/update
+```
+
+## `publish`
+
+Pushes drafted content to CMS or social (Outstand / Webflow). Pair with `content` + channel setup in [Social & CMS](/guides/social-and-cms).
+
+## `copywriting`
+
+Draft or rewrite copy for a campaign or content item. Same `site_id` + action pattern as the other CRM tools.

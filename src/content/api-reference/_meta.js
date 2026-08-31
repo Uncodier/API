@@ -1,6 +1,6 @@
 export default {
   "index": "Overview & Authentication",
-  "status": "System Status",
+  "system-status": "System Status",
   "keys": "API Keys",
   "visitors": "Visitors",
   "leads": "Leads",

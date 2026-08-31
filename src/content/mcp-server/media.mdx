@@ -1,0 +1,61 @@
+# Media & research tools
+
+MCP names: `generateImage`, `generateVideo`, `generateAudio`, `webSearch`, `urlToMarkdown`, `urlToSitemap`.
+
+## `generateImage`
+
+`POST /api/agents/tools/generateImage`. Images are stored and returned as URLs.
+
+| Parameter | Type | Notes |
+| :--- | :--- | :--- |
+| prompt | string | Required. Style, color, composition |
+| size | string | `256x256`, `512x512`, `1024x1024` (default) |
+| quality | string | `standard`, `hd` |
+| ratio | string | `1:1`, `4:3`, `3:4`, `16:9`, `9:16`, `3:2`, `2:3` |
+| n | number | Count (default 1) |
+| reference_images | array | Image URLs used as context |
+| provider | string | Gemini only today |
+
+```http
+POST https://backend.makinari.com/api/agents/tools/generateImage
+Authorization: Bearer YOUR_API_KEY
+Content-Type: application/json
+
+{
+  "prompt": "A minimalist logo for a tech startup, flat design, blue and white",
+  "size": "1024x1024",
+  "ratio": "1:1"
+}
+```
+
+```json
+{ "success": true, "images": [{ "url": "https://...", "width": 1024, "height": 1024 }] }
+```
+
+`generateVideo` and `generateAudio` follow the same auth; audio is TTS from a text prompt.
+
+## `webSearch`
+
+Tavily. Returns an AI answer plus snippets.
+
+| Parameter | Type | Notes |
+| :--- | :--- | :--- |
+| query | string | Required |
+| search_depth | string | `basic` (default), `advanced` |
+| max_results | number | 1–20, default 5 |
+| include_answer | boolean | Default true |
+| include_images | boolean | Default false |
+| include_domains, exclude_domains | array | Host filters |
+
+```
+POST /api/agents/tools/webSearch
+```
+
+## `urlToMarkdown` / `urlToSitemap`
+
+```
+POST /api/agents/tools/urlToMarkdown
+POST /api/agents/tools/urlToSitemap
+```
+
+`urlToMarkdown` fetches a URL and returns clean markdown for the model. `urlToSitemap` walks the site and returns discovered paths.

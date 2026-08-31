@@ -4,6 +4,12 @@
 @tailwind utilities;
 
 /* Global styles */
+:root {
+  /* Nextra por defecto usa 90rem (1440px) como max-width. 
+     Si quieres que ocupe toda la pantalla, descomenta la siguiente línea: */
+  /* --nextra-content-width: 100%; */
+}
+
 html, body {
   padding: 0;
   margin: 0;

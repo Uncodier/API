@@ -1,0 +1,70 @@
+# Commerce tools
+
+MCP names: `checkout`, `reservations`, `quotations`, `sales`, `purchases`, `catalog_commerce`.
+
+## `checkout`
+
+Actions: `create_order` · `create_payment_link` · `get_order`.
+
+Creates a **pending** `sale_order`. Stripe completion is handled by the commerce webhook (`metadata.type = sale_order`). Do not also call `create_order` for a slot you already booked with `reservations.create`.
+
+| Parameter | Type | Notes |
+| :--- | :--- | :--- |
+| action | string | `create_order`, `create_payment_link`, `get_order` |
+| customer_email | string | Resolves / creates a lead |
+| lead_id | string | Attach to the sale |
+| source | string | `quote`, `marketplace`, `shop`, `sales` |
+| lines | string | JSON string of lines: `catalogItemId`, `quantity`, optional `modifiers`, `reservationStart` / `reservationEnd` |
+| order_id | string | Required for payment link / get |
+| return_url | string | After Stripe; default `/buyer/orders` |
+
+```json
+{
+  "action": "create_order",
+  "site_id": "YOUR_SITE_ID",
+  "customer_email": "buyer@example.com",
+  "lines": "[{\"catalogItemId\":\"HOST_ID\",\"quantity\":1}]"
+}
+```
+
+```json
+{ "action": "create_payment_link", "order_id": "ORDER_ID" }
+```
+
+## `reservations`
+
+Actions: `list` · `get` · `get_available_slots` · `create` · `update`.
+
+`create` books the slot **and** inserts a pending sale order (`order_id`, `sale_id` in the response). Charge with `checkout.create_payment_link`. Pass `entitlement_id` for a $0 line.
+
+| Parameter | Type | Notes |
+| :--- | :--- | :--- |
+| catalog_item_id | string | Required for create and slot query |
+| lead_id | string | Required for create |
+| from_date, to_date | string | ISO date for slot query |
+| start_time, end_time | string | ISO datetime for create / reschedule |
+| quantity | number | Seats (default 1) |
+| id / reservation_id | string | Required for get / update |
+| status | string | `pending`, `confirmed`, `cancelled` |
+
+```json
+{
+  "action": "get_available_slots",
+  "catalog_item_id": "CAT_ITEM_ID",
+  "from_date": "2026-07-27",
+  "to_date": "2026-07-31",
+  "quantity": 2
+}
+```
+
+`update` with `status=cancelled` frees capacity. Capacity checks exclude the reservation being updated.
+
+## Related tools
+
+- `quotations` / `quotation_items` — commercial quotes before checkout.
+- `sales` / `salesOrder` — closed deals and order records.
+- `purchases` / `purchase_items` / `transactions` — vendor bills and expenses.
+- `catalog_commerce` — listing and catalog settings.
+- `promotions`, `entitlements`, `subscription_plan_items` — discounts and digital access.
+
+Same auth and `site_id` rules as [CRM](/mcp-server/crm).

@@ -1,0 +1,100 @@
+# CRM & sales tools
+
+MCP names: `leads`, `deals`, `tasks`. Same contracts as `POST /api/agents/tools/<tool>/<action>`.
+
+Auth: `Authorization: Bearer YOUR_API_KEY`. Always send `site_id` on REST.
+
+## `leads`
+
+Actions: `create` (needs `name`, `email`) · `list` · `update` (needs `lead_id`) · `qualify` (needs `status`) · `identify` (needs `visitor_id`).
+
+| Parameter | Type | Notes |
+| :--- | :--- | :--- |
+| action | string | `create`, `list`, `update`, `qualify`, `identify` |
+| lead_id | string | Required for update / qualify |
+| name, email | string | Required for create |
+| phone, position, company, notes | string | |
+| status | string | `new`, `contacted`, `qualified`, `converted`, `lost` |
+| origin, source | string | How the lead arrived |
+| segment_id, campaign_id, assignee_id | string | UUIDs |
+| search | string | Name, email, notes |
+| limit, offset | number | Default limit 50 |
+| sort_by, sort_order | string | `asc` / `desc` |
+| visitor_id | string | For `identify` |
+| lead_score | number | 1–100 |
+
+```
+POST /api/agents/tools/leads/create
+POST /api/agents/tools/leads/get
+POST /api/agents/tools/leads/update
+POST /api/agents/tools/leads/qualify
+POST /api/agents/tools/leads/identify
+```
+
+```http
+POST https://backend.makinari.com/api/agents/tools/leads/create
+Authorization: Bearer YOUR_API_KEY
+Content-Type: application/json
+
+{
+  "site_id": "YOUR_SITE_ID",
+  "name": "Jane Smith",
+  "email": "jane@example.com",
+  "company": "Acme Corp",
+  "status": "new"
+}
+```
+
+```json
+{ "success": true, "lead": { "id": "...", "name": "Jane Smith", "email": "jane@example.com" } }
+```
+
+## `deals`
+
+Actions: `create` (needs `name`) · `list` · `update` / `delete` (need `deal_id`).
+
+| Parameter | Type | Notes |
+| :--- | :--- | :--- |
+| action | string | `create`, `list`, `update`, `delete` |
+| deal_id | string | Required for update / delete |
+| name, amount, currency | | Currency e.g. `USD` |
+| stage | string | `prospecting`, `proposal`, `negotiation`, `closed_won` |
+| status | string | `open`, `won`, `lost` |
+| company_id, sales_order_id | string | |
+| lead_ids, owner_ids | array | UUIDs |
+| expected_close_date | string | `YYYY-MM-DD` |
+
+```
+POST /api/agents/tools/deals/create
+GET  /api/agents/tools/deals/get
+POST /api/agents/tools/deals/update
+POST /api/agents/tools/deals/delete
+```
+
+## `tasks`
+
+Actions: `create` (needs `title`, `type`, `lead_id`) · `list` · `update` (needs `task_id`).
+
+`type`: `website_visit`, `demo`, `meeting`, `email`, `call`, `quote`, `contract`, `payment`, `referral`, `feedback`.  
+`status`: `pending`, `in_progress`, `completed`, `failed`.
+
+```
+POST /api/agents/tools/tasks/create
+POST /api/agents/tools/tasks/get
+POST /api/agents/tools/tasks/update
+```
+
+```http
+POST https://backend.makinari.com/api/agents/tools/tasks/create
+Authorization: Bearer YOUR_API_KEY
+Content-Type: application/json
+
+{
+  "site_id": "YOUR_SITE_ID",
+  "title": "Schedule product demo",
+  "type": "demo",
+  "lead_id": "LEAD_UUID",
+  "status": "pending",
+  "scheduled_date": "2026-03-15T10:00:00Z"
+}
+```

@@ -1,0 +1,99 @@
+# Messaging tools
+
+MCP names: `messages`, `conversations`, `sendEmail`, `sendWhatsApp`, `sendBulkMessages`, `whatsappTemplate`.
+
+## `messages`
+
+List only (`action=list`). Prefer `conversation_id` — site-wide queries are slower. Default `limit` 50 (max 100). Stop when `pagination.has_more` is false. On error, narrow the filter; do not raise `offset`.
+
+| Parameter | Type | Notes |
+| :--- | :--- | :--- |
+| action | string | `list` only |
+| conversation_id | string | Preferred |
+| lead_id | string | |
+| role | string | `user`, `assistant`, `system`, `team_member` |
+| interaction | string | e.g. `opened`, `clicked` |
+| limit, offset | number | Only increment offset if `has_more` |
+
+```
+GET /api/agents/customerSupport/conversations/messages
+```
+
+Query string; `site_id` required.
+
+```http
+GET https://backend.makinari.com/api/agents/customerSupport/conversations/messages?site_id=YOUR_SITE_ID&conversation_id=CONVERSATION_UUID&limit=50
+Authorization: Bearer YOUR_API_KEY
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "messages": [],
+    "pagination": { "total": 120, "page": 1, "limit": 50, "pages": 3 }
+  }
+}
+```
+
+## `conversations`
+
+`action=list`. Filters: `lead_id`, `visitor_id`, `user_id`, `agent_id`, `status` (`active`, `closed`), `channel` (`whatsapp`, `email`, `chat`).
+
+```
+GET /api/agents/customerSupport/conversations?site_id=YOUR_SITE_ID&channel=whatsapp&status=active&limit=20
+```
+
+## `sendEmail`
+
+Required: `email`, `subject`, `message`. Optional: `from`, `lead_id`, `conversation_id`, `agent_id`, `placeholder_policy`.
+
+Merge fields (with `lead_id`): `{{lead.name}}`, `{{lead.first_name}}`, `{{lead.email}}`, `{{lead.phone}}`, `{{lead.position}}`, `{{lead.company}}`, `{{lead.notes}}`, `{{lead.metadata.<path>}}`, `{{site.name}}`. Unknown tokens: `strip_tokens` (default) or `skip_recipient`.
+
+```
+POST /api/agents/tools/sendEmail
+```
+
+```http
+POST https://backend.makinari.com/api/agents/tools/sendEmail
+Authorization: Bearer YOUR_API_KEY
+Content-Type: application/json
+
+{
+  "site_id": "YOUR_SITE_ID",
+  "email": "recipient@example.com",
+  "subject": "Hello {{lead.first_name}}",
+  "message": "<p>Hi!</p>",
+  "lead_id": "LEAD_UUID"
+}
+```
+
+## `sendWhatsApp`
+
+Required: `phone_number` (E.164, no spaces), `message`. Optional: `from`, `lead_id`, `conversation_id`, `agent_id`, `placeholder_policy`, `responseWindowEnabled`.
+
+Outside the 24-hour window the API returns `template_required: true`. Use `whatsappTemplate` instead.
+
+```
+POST /api/agents/tools/sendWhatsApp
+```
+
+## `sendBulkMessages`
+
+Required: `audience_id`, `channel` (`whatsapp` | `email`), `message`. Email also needs `subject`. Safe to retry: already-sent leads are skipped.
+
+WhatsApp builds **one** Twilio content template with `{{1}}`, `{{2}}` mapped from your merge tokens. Response includes `template_sid`, `template_status`, `placeholder_map`.
+
+```json
+{
+  "name": "sendBulkMessages",
+  "arguments": {
+    "audience_id": "AUDIENCE_UUID",
+    "channel": "email",
+    "subject": "Hi {{lead.first_name}}",
+    "message": "Quick update from {{site.name}}."
+  }
+}
+```
+
+See the [WhatsApp guide](/guides/whatsapp-business) for the 24h window.
