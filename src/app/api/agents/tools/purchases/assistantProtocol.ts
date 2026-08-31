@@ -30,7 +30,7 @@ export function purchasesTool(current_site_id?: string) {
   return {
     name: 'purchases',
     description:
-      'Manage vendor bills / purchase orders (accounts payable). Use for money owed or paid to suppliers — NOT buyer checkout. Use action="create" for a draft header (requires title). Use purchase_items to add lines. Use action="register_payment" to record a supplier payment. Use list/get/update/delete for CRUD.',
+      'Manage vendor bills / purchase orders (accounts payable). Use for money owed or paid to suppliers — NOT buyer checkout, and NOT general expenses, salaries, or gastos. For expenses/salaries use the `transactions` tool instead. Use action="create" for a draft header (requires title). Use purchase_items to add lines. Use action="register_payment" to record a supplier payment. Use list/get/update/delete for CRUD.',
     parameters: {
       type: 'object',
       properties: {

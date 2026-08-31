@@ -1,6 +1,6 @@
 ---
 name: makinari-purchases
-description: Manage vendor bills, purchase orders (PO), and accounts payable line items. Use when recording supplier invoices, PO headers, purchase_items, or payments owed to vendors — not buyer checkout or customer sales.
+description: Manage vendor bills, purchase orders (PO), and accounts payable line items. Use when recording supplier invoices, PO headers, purchase_items, or payments owed to vendors — not buyer checkout, customer sales, general expenses, salaries, or gastos.
 types: ['automation', 'task', 'integration']
 ---
 
@@ -14,6 +14,7 @@ Equip the agent to create and manage site-owned accounts payable: vendor bill he
 
 1. **Do not confuse “purchase” domains**
    - **Vendor purchase (this skill):** money the site owes or paid to a supplier (`purchases` AP / PO).
+   - **Expense / salary / gasto:** operating costs with no supplier bill. Use `makinari-expenses` (`transactions`) — never these tools.
    - **Buyer purchase (commerce):** a customer buying from us via `checkout` / entitlements `source_type=purchase`. Use `makinari-commerce` for that — never these tools.
 
 2. **When to create `purchases` vs `purchase_items`**
@@ -34,6 +35,7 @@ Equip the agent to create and manage site-owned accounts payable: vendor bill he
 
 5. **Anti-patterns**
    - Do NOT use `checkout`, `sales`, or `sales_order` for supplier bills.
+   - Do NOT use these tools for salaries, payroll, rent, utilities, or general expenses (gastos). Use `transactions` via `makinari-expenses`.
    - Do NOT use these tools to set up catalog products — use `catalog_commerce`.
    - Do NOT invent journal posting, stock receipt, or accounting publish from these tools.
 
@@ -43,6 +45,7 @@ Equip the agent to create and manage site-owned accounts payable: vendor bill he
 | --- | --- |
 | `purchases` | Create/list/get/update/delete a vendor bill header, or `register_payment` for a supplier payment. Use first when starting a new PO / AP bill. |
 | `purchase_items` | Add, list, update, or delete lines on an existing `purchase_id`. Use only after the header exists. |
+| `transactions` | For salaries, payroll, rent, or general expenses (gastos) — use `makinari-expenses` instead of this skill. |
 | `catalog_commerce` | Look up or create catalog items before linking `catalog_item_id` on a purchase line. |
 | `skill_lookup` | Load this skill (`makinari-purchases`) when the task involves vendor bills, PO, or accounts payable. |
 

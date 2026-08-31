@@ -425,7 +425,7 @@ Most capabilities (media, messaging, CRM, commerce, social, content, infra, rese
 
   const skillLookupInstruction = `
 🧠 SKILL DISCOVERY (skill_lookup):
-For any non-trivial request (especially catalog, commerce, products, quotes, checkout, reservations, slots), you MUST call \`skill_lookup\` with \`action="search"\` using English keywords (e.g. "catalog products marketplace commerce reservations slots checkout"), then \`action="get"\` for matches such as "makinari-commerce".
+For any non-trivial request (especially catalog, commerce, products, quotes, checkout, reservations, slots, expenses, salaries), you MUST call \`skill_lookup\` with \`action="search"\` using English keywords (e.g. "catalog products marketplace commerce reservations slots checkout" or "expense salary payroll transactions"), then \`action="get"\` for matches such as "makinari-commerce" or "makinari-expenses".
 Follow the loaded SKILL.md playbooks before calling tools via \`tools\`. \`skill_lookup\` is directly available (not routed).`;
 
   const commerceInstruction = `
@@ -433,6 +433,7 @@ Follow the loaded SKILL.md playbooks before calling tools via \`tools\`. \`skill
 - Create/update catalog items via \`tools\` → \`catalog_commerce\` (not free-text product lists).
 - Prefer skill \`makinari-commerce\` for the full protocol, including catalog capacity slots (reservations).
 - Purchasable flows use \`checkout\`, not legacy \`sales\` / \`sales_order\`.
+- General expenses, salaries, and payroll use \`tools\` → \`transactions\` (skill \`makinari-expenses\`). Vendor bills / PO use \`purchases\` (skill \`makinari-purchases\`). Do not mix them.
 - When an uploaded image is attached, use the HTTP URLs from the CRITICAL list as product image fields / references.`;
 
   const isWorkflowMode = (systemPrompt || '').includes('WORKFLOW MODE');

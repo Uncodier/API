@@ -60,6 +60,7 @@ Equip the agent with operational protocols to manage the entire commercial lifec
    - The order stays `pending` until the commerce Stripe webhook confirms payment. Do not invent grants or orders.
    - **Avoid legacy sales tools:** Do NOT use the `sales` or `sales-order` tools for creating purchasable checkouts. Use `checkout`.
    - **Vendor bills / PO are not commerce:** For supplier invoices, purchase orders, or accounts payable, use the `makinari-purchases` skill (`purchases` + `purchase_items`). Do NOT use `checkout` for money owed to vendors.
+   - **Expenses / salaries are not commerce:** For general expenses, salarios, payroll, or operating costs, use the `makinari-expenses` skill (`transactions`). Do NOT use `checkout` or `purchases`.
 
 7. **Entitlements (Digital Rights)**
    - Entitlements represent access to digital assets. They are granted automatically by webhooks upon purchase or active subscription.

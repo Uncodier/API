@@ -1,0 +1,37 @@
+---
+title: Transactions
+description: Manage general expenses, salaries, and financial transactions.
+---
+
+# Transactions
+
+Manage general expenses, salaries, and financial transactions. Use this tool when the user asks to register an expense (gasto) or salary. DO NOT use purchases for this. Use action="create" to record a new expense. Use list/get/update/delete for CRUD.
+
+## Input Schema
+
+| Parameter | Type | Description |
+| :--- | :--- | :--- |
+| action | string | Action to perform: create, list, get, update, delete |
+| id | string | Transaction UUID (required for get, update, delete) |
+| site_id | string | Site UUID |
+| type | string | Type of expense: fixed or variable (required for create) |
+| amount | number | Amount of the transaction (required for create) |
+| description | string | Description of the expense |
+| date | string | Transaction date (YYYY-MM-DD) |
+| currency | string | Currency code (e.g. USD, MXN) |
+| category | string | Category of the expense (e.g. Salaries & Benefits) |
+| limit | number | Limit results for list |
+| offset | number | Offset results for list |
+
+## Example
+
+```json
+{
+  "action": "create",
+  "type": "fixed",
+  "amount": 1500,
+  "description": "Salary - August",
+  "category": "Salaries & Benefits",
+  "currency": "USD"
+}
+```

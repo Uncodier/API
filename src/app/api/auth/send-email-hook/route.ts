@@ -102,6 +102,7 @@ export async function POST(request: NextRequest) {
       confirmUrl,
       token: opts.token,
       siteName: typeof metadata.site_name === 'string' ? metadata.site_name : undefined,
+      userEmail: opts.to,
     });
 
     return sendGridService.sendEmail({

@@ -68,6 +68,7 @@ import { requirementStatusTool } from '@/app/api/agents/tools/requirement_status
 import { requirementBacklogTool } from '@/app/api/agents/tools/requirement_backlog/assistantProtocol';
 import { instanceLogsTool } from '@/app/api/agents/tools/instance_logs/assistantProtocol';
 import { audioToTextTool } from '@/app/api/agents/tools/audioToText/assistantProtocol';
+import { transactionsTool } from '@/app/api/agents/tools/transactions/assistantProtocol';
 import { createSecretTool } from '@/app/api/agents/tools/createSecret/assistantProtocol';
 import { socialMediaAccountsTool } from '@/app/api/agents/tools/socialMediaAccounts/assistantProtocol';
 import { socialMediaPublishTool } from '@/app/api/agents/tools/socialMediaPublish/assistantProtocol';
@@ -193,10 +194,11 @@ Ambiguous "book a service" / "set hours" requests: If it names a person/team, us
 
 export const EXPENSES_VS_PURCHASES_INSTRUCTION = `
 💵 EXPENSES VS PURCHASES:
-When the user asks to register a salary ("salario") or a general expense, you MUST treat it as an expense, not a purchase of goods.
+When the user asks to register a salary ("salario") or a general expense, you MUST use the \`transactions\` tool via tools. DO NOT use the \`purchases\` tool for general expenses or salaries.
 To differentiate:
-- Clearly mark the title or notes indicating it is an expense (e.g., "Salary - [Month]").
-- Use the appropriate category or name ("Salaries & Benefits") rather than linking to physical catalog items.`;
+- Use the \`transactions\` tool with \`type: "fixed"\` or \`type: "variable"\`.
+- Include an appropriate \`description\` and \`category\`.
+- Only use \`purchases\` for vendor bills, purchase orders, or buying goods.`;
 
 /**
  * Primes the assistant to tie sandbox-backed deliverables to requirements + status,
@@ -353,6 +355,7 @@ export const getAssistantTools = (
     requirementBacklogTool(siteId),
     companiesTool(),
     instanceLogsTool(siteId, userId ?? '', instanceId),
+    transactionsTool(siteId, userId ?? ''),
     createProjectTool(userId ?? ''),
     audioToTextTool(siteId),
     createSecretTool(siteId),
