@@ -343,7 +343,7 @@ function generateLeadNotificationHtml(data: {
     }
         
 </style>
-      <meta charset="UTF-8">
+      <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>Status Update - ${data.siteName}</title>
     </head>
@@ -501,7 +501,7 @@ function generateTeamNotificationHtml(data: {
     <!DOCTYPE html>
     <html lang="${data.locale || 'en'}">
     <head>
-      <meta charset="UTF-8">
+      <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>Task Status Update - ${data.siteName}</title>
     </head>

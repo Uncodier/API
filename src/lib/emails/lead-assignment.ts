@@ -179,7 +179,7 @@ export function generateAssigneeNotificationHtml(data: {
     }
         
 </style>
-      <meta charset="UTF-8">
+      <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>New Lead Assignment - ${data.siteName}</title>
     </head>
@@ -324,7 +324,7 @@ export function generateTeamNotificationHtml(data: {
     <!DOCTYPE html>
     <html lang="${data.locale || 'en'}">
     <head>
-      <meta charset="UTF-8">
+      <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>Lead Assignment Notification - ${data.siteName}</title>
     </head>

@@ -150,11 +150,13 @@ export interface InstancePlanToolParams {
   expected_output?: string;
   success_criteria?: any[];
   validation_rules?: any[];
-  status?: 'pending' | 'in_progress' | 'completed' | 'failed' | 'cancelled' | 'paused';
+  status?: 'pending' | 'in_progress' | 'completed' | 'failed' | 'cancelled' | 'paused' | 'blocked';
   steps?: any[];
   site_id?: string;
   user_id?: string;
   agent_id?: string;
+  is_template?: boolean;
+  triggers?: any[];
   
   // List params
   limit?: number;
@@ -170,7 +172,7 @@ export function instancePlanTool(site_id: string, instance_id: string, user_id?:
   return {
     name: 'instance_plan',
     description:
-      'Manage instance plans. Plans are strict execution paths composed of steps that the system delegates to specialized sub-agents. Use action="create" to define a new plan — each step SHOULD set "skill" (preferred, any SKILL.md slug such as makinari-rol-frontend, makinari-rol-qa, makinari-obj-template-selection) and/or "role" (legacy slug such as frontend/backend/devops/content/investigate/plan/validate/report/qa/template_selection/orchestrator) so the system injects the right skill. Use action="list" to get current plans. Use action="update" to add steps or modify an existing plan. The system auto-executes pending steps as sub-agents after you finish planning.',
+      'Manage instance plans. Plans are strict execution paths composed of steps that the system delegates to specialized sub-agents. Use action="create" to define a new plan — each step SHOULD set "skill" (preferred, any SKILL.md slug such as makinari-rol-frontend, makinari-rol-qa, makinari-obj-template-selection) and/or "role" (legacy slug such as frontend/backend/devops/content/investigate/plan/validate/report/qa/template_selection/orchestrator) so the system injects the right skill. Use action="list" to get current plans. Use action="update" to add steps or modify an existing plan. The system auto-executes pending steps as sub-agents after you finish planning. Note: You can create a workflow template (repeatable process) instead of a one-off plan by passing is_template: true and an array of triggers.',
     parameters: {
       type: 'object',
       properties: {
@@ -193,8 +195,24 @@ export function instancePlanTool(site_id: string, instance_id: string, user_id?:
         validation_rules: { type: 'array', items: { type: 'string' }, description: 'Rules for validating the plan execution' },
         status: { 
           type: 'string', 
-          enum: ['pending', 'in_progress', 'completed', 'failed', 'cancelled', 'paused'],
+          enum: ['pending', 'in_progress', 'completed', 'failed', 'cancelled', 'paused', 'blocked'],
           description: 'Plan status. For create, use "pending" or leave empty for default.' 
+        },
+        is_template: { type: 'boolean', description: 'If true, creates a workflow template (repeatable process) instead of a one-off execution. Saves as blocked status.' },
+        triggers: { 
+          type: 'array', 
+          items: {
+            type: 'object',
+            properties: {
+              kind: { type: 'string', enum: ['cron', 'db_event', 'webhook', 'manual'], description: 'Trigger type' },
+              cron: { type: 'string', description: 'Cron expression if kind is cron (e.g. "0 9 * * *")' },
+              table: { type: 'string', description: 'Table name if kind is db_event (e.g. "records")' },
+              op: { type: 'string', enum: ['insert', 'update', 'delete'], description: 'Database operation if kind is db_event' },
+              filter: { type: 'object', description: 'Filter payload for db_event' }
+            },
+            required: ['kind']
+          },
+          description: 'Optional array of triggers when creating a workflow template'
         },
           steps: { 
             type: 'array', 
@@ -261,7 +279,8 @@ export function instancePlanTool(site_id: string, instance_id: string, user_id?:
           .contains('metadata', { workflow_run: true })
           .limit(1)
           .maybeSingle();
-        if (workflowRun) {
+        // Templates can be created even if a workflow run is active
+        if (workflowRun && !params.is_template) {
           throw new Error('WORKFLOW MODE: do not create instance_plans. Execute the current step only.');
         }
         const body = {

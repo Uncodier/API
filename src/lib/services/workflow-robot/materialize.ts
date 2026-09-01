@@ -189,28 +189,75 @@ export async function materializeRunFromGraph(
     .single();
   if (instErr || !instance) throw new Error('Instance not found');
 
-  const nodes = await loadGraph(input.instance_id);
-  const steps = buildRunSteps(nodes);
-  if (steps.length === 0) {
-    throw new Error('Workflow graph has no steps. Add a wf-step node first.');
+  let nodes = await loadGraph(input.instance_id);
+  let steps: any[] = [];
+  let templateId: string;
+  let title = `Workflow: ${instance.name || input.instance_id.slice(0, 8)}`;
+
+  // If no visual graph nodes exist, check if there's an agent-created template
+  if (nodes.length === 0) {
+    let agentTemplate = null;
+    
+    if (input.trigger_id) {
+      // Look up template by trigger_id if provided
+      const { data: triggerData } = await supabaseAdmin
+        .from('workflow_triggers')
+        .select('template_plan_id')
+        .eq('id', input.trigger_id)
+        .single();
+        
+      if (triggerData?.template_plan_id) {
+        const { data: tmpl } = await supabaseAdmin
+          .from('instance_plans')
+          .select('id, steps, title')
+          .eq('id', triggerData.template_plan_id)
+          .single();
+        if (tmpl) agentTemplate = tmpl;
+      }
+    } else {
+      // Fallback: get the most recent template for this instance
+      const { data: latestTmpl } = await supabaseAdmin
+        .from('instance_plans')
+        .select('id, steps, title')
+        .eq('instance_id', input.instance_id)
+        .contains('metadata', { workflow_template: true })
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (latestTmpl) agentTemplate = latestTmpl;
+    }
+
+    if (agentTemplate && Array.isArray(agentTemplate.steps) && agentTemplate.steps.length > 0) {
+      steps = agentTemplate.steps;
+      templateId = agentTemplate.id;
+      title = agentTemplate.title || title;
+    } else {
+      throw new Error('Workflow graph has no steps and no agent-created template found. Add a wf-step node or use instance_plan tool first.');
+    }
+  } else {
+    // We have visual nodes, use them
+    steps = buildRunSteps(nodes);
+    if (steps.length === 0) {
+      throw new Error('Workflow graph has no executable steps.');
+    }
+    
+    const template = await upsertTemplatePlan({
+      instance_id: input.instance_id,
+      site_id: instance.site_id,
+      user_id: instance.user_id,
+      steps,
+      title,
+    });
+    templateId = template.id;
+
+    await syncWorkflowTriggersFromGraph({
+      instance_id: input.instance_id,
+      site_id: instance.site_id,
+      user_id: instance.user_id,
+      template_plan_id: templateId,
+      nodes,
+    });
   }
-
-  const title = `Workflow: ${instance.name || input.instance_id.slice(0, 8)}`;
-  const template = await upsertTemplatePlan({
-    instance_id: input.instance_id,
-    site_id: instance.site_id,
-    user_id: instance.user_id,
-    steps,
-    title,
-  });
-
-  await syncWorkflowTriggersFromGraph({
-    instance_id: input.instance_id,
-    site_id: instance.site_id,
-    user_id: instance.user_id,
-    template_plan_id: template.id,
-    nodes,
-  });
 
   const resetSteps = steps.map((s) => ({
     ...s,
@@ -227,7 +274,7 @@ export async function materializeRunFromGraph(
       description: 'Workflow run',
       plan_type: 'task',
       status: 'pending',
-      parent_plan_id: template.id,
+      parent_plan_id: templateId,
       steps: resetSteps,
       steps_total: resetSteps.length,
       steps_completed: 0,
@@ -247,7 +294,7 @@ export async function materializeRunFromGraph(
     .from('workflow_runs')
     .insert({
       instance_id: input.instance_id,
-      template_plan_id: template.id,
+      template_plan_id: templateId,
       run_plan_id: runPlan.id,
       trigger_id: input.trigger_id || null,
       payload: input.trigger_payload || {},
@@ -263,7 +310,7 @@ export async function materializeRunFromGraph(
   if (wfErr || !wfRun) throw new Error(`Failed to create workflow run: ${wfErr?.message}`);
 
   return {
-    template_plan_id: template.id,
+    template_plan_id: templateId,
     run_plan_id: runPlan.id,
     workflow_run_id: wfRun.id,
     dry_run: Boolean(input.dry_run),

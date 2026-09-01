@@ -166,6 +166,7 @@ export const EMAIL_BRAND_STYLE = `
 
 export function emailBrandHeadTags(): string {
   return `
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
   <meta name="color-scheme" content="light only" />
   <meta name="supported-color-schemes" content="light" />
   <style type="text/css">${EMAIL_BRAND_STYLE}</style>`;

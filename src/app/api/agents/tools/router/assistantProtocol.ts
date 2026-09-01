@@ -98,6 +98,8 @@ export const TOOL_CATEGORIES: Record<string, ToolCategory> = {
   copywriting: 'content',
   assets: 'content',
   site_settings: 'content',
+  record_category: 'content',
+  record: 'content',
 
   // infra / ops
   create_project: 'infra',

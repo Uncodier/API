@@ -54,7 +54,7 @@ The `types` frontmatter filters which skills are surfaced for a given requiremen
 | Type | Meaning | Example skills |
 | --- | --- | --- |
 | `develop` | Write or modify application code (frontend, backend, infra). | `makinari-rol-frontend`, `makinari-rol-backend`, `makinari-rol-devops` |
-| `automation` | Build backend automations, webhooks, or scripts with test/prod modes. | `makinari-obj-automatizacion`, `automation-runner` |
+| `automation` | Build backend automations, webhooks, or scripts with test/prod modes. | `makinari-obj-automatizacion`, `automation-runner`, `makinari-obj-workflow-designer` |
 | `content` | Author copy, articles, emails, marketing material. | `makinari-rol-content`, `frontend-blog-seo` |
 | `design` | Produce visual assets or design-led deliverables (decks, galleries). | `pitch-deck-visuals`, `makinari-obj-vitrinas` |
 | `task` | One-off tasks: data extraction, reports, scripted research. | `makinari-obj-tarea` |
@@ -86,7 +86,7 @@ Each skill MUST list the tools it relies on as a table, naming tools exactly as 
 | `sandbox_read_file` | Read existing files before editing them. |
 | `sandbox_list_files` | Enumerate directory contents before deciding changes. |
 | `requirements` | CRUD on the requirement record (read/update `instructions`). |
-| `instance_plan` | Create plans and report step execution. |
+| `instance_plan` | Create plans, templates, and report step execution. |
 | `requirement_status` | Publish progress and final delivery URLs. |
 ```
 
@@ -118,7 +118,7 @@ Each skill documents the artifacts it reads from or writes to. This lets the orc
 | `qa_results.json` (repo root) | `makinari-rol-qa` | QA journey coverage, scenarios, and known gaps. Separate from `test_results.json`. |
 | `.qa/scenarios/*.json` (repo) | `makinari-rol-qa` | Declarative E2E scenarios executed by `sandbox_run_scenario`. |
 | `INVESTIGATION.md` (repo root, optional) | `makinari-fase-investigacion` | Findings handed off to planning. |
-| `instance_plan` (DB record) | `makinari-fase-planeacion` / `makinari-rol-orchestrator` | Ordered execution steps with assigned skills. |
+| `instance_plan` (DB record) | `makinari-fase-planeacion` / `makinari-rol-orchestrator` / `makinari-obj-workflow-designer` | Ordered execution steps with assigned skills, or a repeatable workflow template. |
 | `requirement_status` (DB record) | `makinari-fase-reporteado` | Client-facing delivery report with URLs. |
 
 **Rules**

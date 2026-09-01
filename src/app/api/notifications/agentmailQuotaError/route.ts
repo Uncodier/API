@@ -109,7 +109,7 @@ function generateQuotaErrorHtml(data: {
 <!DOCTYPE html>
 <html lang="${data.locale || 'en'}">
 <head>
-    <meta charset="UTF-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <meta name="format-detection" content="telephone=no, date=no, email=no, address=no">
     <title>AgentMail Quota Error - ${data.siteName}</title>

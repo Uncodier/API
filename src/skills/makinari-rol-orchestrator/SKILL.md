@@ -54,6 +54,7 @@ Each step MUST set **`skill`** (preferred) or **`role`** so the executor loads t
 | `makinari-obj-vitrinas` | Inject content into a selected Vitrina. |
 | `makinari-obj-automatizacion` | Deliver runner UI + endpoint for automations. |
 | `makinari-obj-tarea` | One-off script + Markdown Vitrina. |
+| `makinari-obj-workflow-designer` | Design repeatable automated routines and data schemas. |
 | `makinari-rol-maintenance-orchestrator` | Maintenance orchestration role. Runs in parallel to the main orchestrator. Owns the refactoring, technical debt cleanup, and QA regression of ALREADY COMPLETED backlog items. |
 
 Use `skill_lookup action="list"` if you need to confirm what is available.

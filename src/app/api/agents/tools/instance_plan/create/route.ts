@@ -46,6 +46,8 @@ const CreateInstancePlanSchema = z.object({
     metadata: z.preprocess(parseIfString, z.record(z.any())).optional(),
     backlog_item_id: z.string().optional(),
   })))).optional(),
+  is_template: z.boolean().optional().default(false),
+  triggers: z.preprocess(parseIfString, z.array(z.any())).optional().default([]),
 });
 
 /**
@@ -94,8 +96,10 @@ export async function createInstancePlanCore(params: any) {
     throw new Error('La instancia no pertenece a este sitio');
   }
 
-  // Complete active plans before creating a new one
-  await completeInProgressPlans(validatedData.instance_id, 'New plan created via agent tool');
+  // Complete active plans before creating a new one (unless it's a template, they don't block the instance)
+  if (!validatedData.is_template) {
+    await completeInProgressPlans(validatedData.instance_id, 'New plan created via agent tool');
+  }
 
   // Prepare steps if provided
   let planSteps: any[] = [];
@@ -204,14 +208,15 @@ export async function createInstancePlanCore(params: any) {
     expected_output: validatedData.expected_output,
     success_criteria: validatedData.success_criteria,
     validation_rules: validatedData.validation_rules,
-    status: 'pending',
+    status: validatedData.is_template ? 'blocked' : 'pending',
     site_id: validatedData.site_id,
     user_id: validatedData.user_id,
     agent_id: validatedData.agent_id,
     steps_total: planSteps.length,
     steps_completed: 0,
     progress_percentage: 0,
-    steps: planSteps
+    steps: planSteps,
+    metadata: validatedData.is_template ? { workflow_template: true } : {}
   };
 
   const { data: newPlan, error } = await supabaseAdmin
@@ -222,6 +227,31 @@ export async function createInstancePlanCore(params: any) {
 
   if (error) {
     throw new Error(`Failed to create plan: ${error.message}`);
+  }
+
+  // Si es un template y tiene triggers, insertarlos
+  if (validatedData.is_template && validatedData.triggers && validatedData.triggers.length > 0) {
+    const triggersToInsert = validatedData.triggers.map((t: any) => ({
+      instance_id: validatedData.instance_id,
+      template_plan_id: newPlan.id,
+      kind: t.kind,
+      config: t,
+      enabled: true,
+      site_id: validatedData.site_id,
+      user_id: validatedData.user_id
+    }));
+    
+    const { error: triggerError } = await supabaseAdmin
+      .from('workflow_triggers')
+      .insert(triggersToInsert);
+      
+    if (triggerError) {
+      console.error(`[CreateInstancePlan] Error creating triggers for template ${newPlan.id}:`, triggerError);
+      // Fallamos toda la creación para que el agente sepa que los triggers no se crearon.
+      // Primero limpiamos el plan que se insertó incompleto.
+      await supabaseAdmin.from('instance_plans').delete().eq('id', newPlan.id);
+      throw new Error(`Failed to create workflow triggers: ${triggerError.message}`);
+    }
   }
 
   return {

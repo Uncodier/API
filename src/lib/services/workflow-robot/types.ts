@@ -59,4 +59,5 @@ export const DB_EVENT_TABLES = [
   'reservations',
   'content',
   'sales',
+  'records',
 ] as const;

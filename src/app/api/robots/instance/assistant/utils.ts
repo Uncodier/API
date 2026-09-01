@@ -52,6 +52,8 @@ import { campaignsTool } from '@/app/api/agents/tools/campaigns/assistantProtoco
 import { promotionsTool } from '@/app/api/agents/tools/promotions/assistantProtocol';
 import { assetsTool } from '@/app/api/agents/tools/assets/assistantProtocol';
 import { instancePlanTool } from '@/app/api/agents/tools/instance_plan/assistantProtocol';
+import { recordCategoryTool } from '@/app/api/agents/tools/record_category/assistantProtocol';
+import { recordTool } from '@/app/api/agents/tools/record/assistantProtocol';
 import { workflowsTool } from '@/app/api/agents/tools/workflows/assistantProtocol';
 import { copywritingTool } from '@/app/api/agents/tools/copywriting/assistantProtocol';
 import { sendWhatsAppTool } from '@/app/api/agents/tools/sendWhatsApp/assistantProtocol';
@@ -343,6 +345,8 @@ export const getAssistantTools = (
     assetsTool(siteId, userId),
     categoriesTool(siteId, userId),
     instancePlanTool(siteId, instanceId, userId),
+    recordCategoryTool(siteId),
+    recordTool(siteId),
     workflowsTool(siteId, userId),
     copywritingTool(siteId, userId),
     sendWhatsAppTool(siteId),
