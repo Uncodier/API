@@ -1,6 +1,5 @@
 import { Portkey } from 'portkey-ai';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { getRequestOptions } from '@/lib/config/analyzer-config';
 import type { ProviderProbeResult } from '@/lib/status/types';
 import { isAiProbeEnabled } from '@/lib/status/types';
 
@@ -174,11 +173,7 @@ export async function probePortkeyProvider(
       virtualKey,
       baseURL: 'https://api.portkey.ai/v1',
     });
-    const requestOptions = getRequestOptions(modelType);
-    const model =
-      modelType === 'openai'
-        ? requestOptions.openai.model
-        : requestOptions.gemini.model;
+    const model = defaultModels[modelType];
 
     const completionBody: Record<string, unknown> = {
       messages: [{ role: 'user', content: PROBE_MESSAGE }],

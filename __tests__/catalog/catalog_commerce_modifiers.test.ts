@@ -182,7 +182,13 @@ describe('catalog_commerce modifiers', () => {
   });
 
   it('gets an item with include_modifiers', async () => {
-    const item = { id: 'cat-host', site_id: siteId, name: 'Cold Brew' };
+    const item = {
+      id: 'cat-host',
+      site_id: siteId,
+      name: 'Cold Brew',
+      status: 'active',
+      availability_status: 'available',
+    };
     const itemChain = chainBase({ data: item });
     const attachChain = {
       ...chainBase({

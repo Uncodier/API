@@ -126,16 +126,39 @@ async function loadItemModifiers(siteId: string, catalogItemId: string) {
   });
 }
 
+async function loadItemSpecs(catalogItemId: string) {
+  const { data, error } = await supabaseAdmin
+    .from('catalog_item_specs')
+    .select('sort_order, item_spec:item_specs(*)')
+    .eq('catalog_item_id', catalogItemId)
+    .order('sort_order', { ascending: true });
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+async function loadItemTaxes(siteId: string, catalogItemId: string) {
+  const { data, error } = await supabaseAdmin
+    .from('catalog_item_taxes')
+    .select('id, tax_id, tax:taxes(*)')
+    .eq('site_id', siteId)
+    .eq('catalog_item_id', catalogItemId);
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
 export async function handleItemAction(body: Record<string, unknown>) {
-  const { action, id, site_id, limit = 50, offset = 0, include_modifiers, ...updates } = body as {
-    action: string;
-    id?: string;
-    site_id?: string;
-    limit?: number;
-    offset?: number;
-    include_modifiers?: boolean;
-    [key: string]: unknown;
-  };
+  const { action, id, site_id, limit = 50, offset = 0, include_modifiers, include_specs, include_taxes, ...updates } =
+    body as {
+      action: string;
+      id?: string;
+      site_id?: string;
+      limit?: number;
+      offset?: number;
+      include_modifiers?: boolean;
+      include_specs?: boolean;
+      include_taxes?: boolean;
+      [key: string]: unknown;
+    };
 
   if (action === 'create') {
     if (!site_id) {
@@ -211,12 +234,12 @@ export async function handleItemAction(body: Record<string, unknown>) {
       }
     }
 
-    if (include_modifiers) {
-      const modifiers = await loadItemModifiers(data.site_id, data.id);
-      return NextResponse.json({ success: true, item: data, modifiers });
-    }
+    const extras: Record<string, unknown> = {};
+    if (include_modifiers) extras.modifiers = await loadItemModifiers(data.site_id, data.id);
+    if (include_specs) extras.specs = await loadItemSpecs(data.id);
+    if (include_taxes) extras.taxes = await loadItemTaxes(data.site_id, data.id);
 
-    return NextResponse.json({ success: true, item: data });
+    return NextResponse.json({ success: true, item: data, ...extras });
   }
 
   if (action === 'list') {

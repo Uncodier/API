@@ -59,12 +59,79 @@ Actions: `list` · `get` · `get_available_slots` · `create` · `update`.
 
 `update` with `status=cancelled` frees capacity. Capacity checks exclude the reservation being updated.
 
+## `catalog_commerce`
+
+Actions: `create` · `list` · `get` · `update` · `delete`.
+
+Default `resource` is `item`. Other resources cover the same structures the catalog UI can set: modifiers, tech specs, and taxes.
+
+| resource | Notes |
+| :--- | :--- |
+| `item` | Products / services. `delete` is not supported — archive with `status=archived`. `get` accepts `include_modifiers`, `include_specs`, `include_taxes`. |
+| `modifier_group` | Selection rules (`min_select`, `max_select`) |
+| `modifier_group_item` | Option = a catalog item inside a group |
+| `item_modifier_group` | Attach a group to a host product |
+| `item_spec_category` | Tech-spec group. `slug` is required in DB and is auto-generated from `name` if omitted. |
+| `item_spec` | Spec row. `category_id` here is an `item_spec_category` UUID, not a catalog category. |
+| `catalog_item_spec` | Attach a spec to a product. Identify rows with `catalog_item_id` + `item_spec_id`. |
+| `tax` | Site tax. `rate` is 0–100. |
+| `catalog_item_tax` | Attach a tax to a product. `update` is not supported. |
+
+```json
+{
+  "action": "create",
+  "resource": "item_spec_category",
+  "site_id": "YOUR_SITE_ID",
+  "name": "Dimensions"
+}
+```
+
+```json
+{
+  "action": "create",
+  "resource": "item_spec",
+  "site_id": "YOUR_SITE_ID",
+  "category_id": "SPEC_CATEGORY_ID",
+  "name": "120 x 60 cm"
+}
+```
+
+```json
+{
+  "action": "create",
+  "resource": "catalog_item_spec",
+  "site_id": "YOUR_SITE_ID",
+  "catalog_item_id": "ITEM_ID",
+  "item_spec_id": "SPEC_ID"
+}
+```
+
+```json
+{
+  "action": "create",
+  "resource": "tax",
+  "site_id": "YOUR_SITE_ID",
+  "name": "IVA",
+  "rate": 16
+}
+```
+
+```json
+{
+  "action": "create",
+  "resource": "catalog_item_tax",
+  "site_id": "YOUR_SITE_ID",
+  "catalog_item_id": "ITEM_ID",
+  "tax_id": "TAX_ID"
+}
+```
+
 ## Related tools
 
 - `quotations` / `quotation_items` — commercial quotes before checkout.
 - `sales` / `salesOrder` — closed deals and order records.
 - `purchases` / `purchase_items` / `transactions` — vendor bills and expenses.
-- `catalog_commerce` — listing and catalog settings.
+- `catalog_commerce` — listing, modifiers, tech specs, taxes, and catalog settings.
 - `promotions`, `entitlements`, `subscription_plan_items` — discounts and digital access.
 
 Same auth and `site_id` rules as [CRM](/mcp-server/crm).
