@@ -1,4 +1,4 @@
-import Portkey from 'portkey-ai';
+import { Portkey } from 'portkey-ai';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { getRequestOptions } from '@/lib/config/analyzer-config';
 import type { ProviderProbeResult } from '@/lib/status/types';
@@ -34,16 +34,21 @@ function getAzureConfig(): {
   apiVersion: string;
 } | null {
   const endpoint =
-    getEnv('AZURE_OPENAI_ENDPOINT') || getEnv('MICROSOFT_AZURE_OPENAI_ENDPOINT');
-  const apiKey =
-    getEnv('AZURE_OPENAI_API_KEY') || getEnv('MICROSOFT_AZURE_OPENAI_API_KEY');
+    getEnv('MICROSOFT_AZURE_OPENAI_ENDPOINT') || getEnv('AZURE_OPENAI_ENDPOINT');
+  let apiKey =
+    getEnv('MICROSOFT_AZURE_OPENAI_API_KEY') || getEnv('AZURE_OPENAI_API_KEY');
+    
+  if (apiKey?.startsWith('azure-') && getEnv('MICROSOFT_AZURE_OPENAI_API_KEY')) {
+    apiKey = getEnv('MICROSOFT_AZURE_OPENAI_API_KEY');
+  }
+
   const deployment =
-    getEnv('AZURE_OPENAI_CHAT_DEPLOYMENT') ||
     getEnv('MICROSOFT_AZURE_OPENAI_DEPLOYMENT') ||
+    getEnv('AZURE_OPENAI_CHAT_DEPLOYMENT') ||
     'gpt-4o-mini';
   const apiVersion =
-    getEnv('AZURE_OPENAI_API_VERSION') ||
     getEnv('MICROSOFT_AZURE_OPENAI_API_VERSION') ||
+    getEnv('AZURE_OPENAI_API_VERSION') ||
     '2024-09-01-preview';
   if (!endpoint || !apiKey) return null;
   return { endpoint, apiKey, deployment, apiVersion };
@@ -67,7 +72,7 @@ function buildChatCompletionBody(model: string): Record<string, unknown> {
 }
 
 function getGeminiProbeModel(): string {
-  return getEnv('GEMINI_STATUS_PROBE_MODEL') || 'gemini-1.5-flash';
+  return getEnv('GEMINI_STATUS_PROBE_MODEL') || getEnv('AI_MODEL') || 'gemini-3.1-pro-preview';
 }
 
 async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -147,9 +152,17 @@ export async function probePortkeyProvider(
 
   const virtualKey = virtualKeyMap[modelType];
   const portkeyKey = getEnv('PORTKEY_API_KEY');
+  
   if (!portkeyKey || !virtualKey) {
     return skippedResult(defaultModels[modelType]);
   }
+  
+  // Skip Portkey probe if a raw Google API key (AIza) is passed as virtual key, 
+  // as Portkey will reject it with "Following keys are not valid"
+  if (modelType === 'gemini' && virtualKey.startsWith('AIza')) {
+    return skippedResult(defaultModels[modelType]);
+  }
+
   if (!isAiProbeEnabled()) {
     return notProbedResult(defaultModels[modelType], 'Live probes disabled locally');
   }
