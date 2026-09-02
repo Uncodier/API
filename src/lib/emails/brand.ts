@@ -239,6 +239,17 @@ export function emailCodeBlock(labelHtml: string, codeHtml: string): string {
       </div>`;
 }
 
+/** Shop OTP hero: contiguous digits + caption so iOS can parse one sentence. */
+export function emailOtpHero(codeHtml: string, captionHtml: string): string {
+  return `
+      <div class="email-code-box" style="margin:28px 0 0;border:1px solid ${EMAIL_BRAND.surfaceBorder};border-radius:14px;overflow:hidden;text-align:center;background-color:${EMAIL_BRAND.cardBg};background-image:linear-gradient(${EMAIL_BRAND.cardBg},${EMAIL_BRAND.cardBg});">
+        <div style="padding:28px 24px 24px;background-color:${EMAIL_BRAND.surface};background-image:linear-gradient(${EMAIL_BRAND.surface},${EMAIL_BRAND.surface});">
+          <p class="email-code-value" style="margin:0;font-size:36px;letter-spacing:0.12em;font-weight:700;color:${EMAIL_BRAND.surfaceText};font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;">${codeHtml}</p>
+          <p class="email-code-label" style="margin:10px 0 0;color:${EMAIL_BRAND.muted};font-size:13px;line-height:1.4;letter-spacing:0;">${captionHtml}</p>
+        </div>
+      </div>`;
+}
+
 export function emailCtaInlineStyle(extra = ''): string {
   return `class="email-cta" style="display:inline-block;padding:14px 28px;background-color:${EMAIL_BRAND.black};background-image:linear-gradient(${EMAIL_BRAND.black},${EMAIL_BRAND.black});box-shadow:inset 0 0 0 999px ${EMAIL_BRAND.black};color:${EMAIL_BRAND.white};border:0;text-decoration:none;font-weight:600;border-radius:8px;${extra}"`;
 }

@@ -18,6 +18,7 @@ import { CommandStore } from './CommandStore';
 import { AgentBackgroundService } from '../agent/AgentBackgroundService';
 import { CreditService } from '../../../services/billing/CreditService';
 import { runToolCompletionLoop } from './tool-completion-loop';
+import { initializeAgentCommand } from './initialize-agent';
 
 // Importar utilidades de Composio
 import { ComposioConfiguration, enrichWithComposioTools, isComposioEnabled } from '../../utils/composioIntegration';
@@ -195,83 +196,12 @@ export class CommandProcessor {
    * Este paso es EXPLÍCITO y CRÍTICO para el procesamiento correcto
    */
   private async initializeAgent(command: DbCommand): Promise<DbCommand> {
-    // Si ya tiene agent_background, verificar que sea válido
-    if (command.agent_background) {
-      if (command.agent_background.length < 50) {
-        console.warn(`⚠️ [CommandProcessor] agent_background demasiado corto (${command.agent_background.length} caracteres)`);
-      } else {
-        return command;
-      }
-    }
-    
-    // Si no tiene agent_background pero tiene agent_id, intentar generarlo
-    if (command.agent_id) {
-      // Decidir qué procesador usar para generar el background
-      let processor: Base | null = null;
-      
-      // Si existe un procesador predefinido para este agent_id, usarlo
-      if (this.processors[command.agent_id]) {
-        processor = this.processors[command.agent_id];
-      } 
-      // Si es un UUID, probablemente sea un agente en la base de datos
-      else if (DatabaseAdapter.isValidUUID(command.agent_id)) {
-        // Usar ToolEvaluator como procesador base porque siempre debería estar disponible
-        processor = this.processors['tool_evaluator'];
-      } else {
-        const errorMsg = `[CommandProcessor] agent_id inválido o no reconocido: ${command.agent_id}`;
-        console.error(errorMsg);
-        throw new Error(errorMsg);
-      }
-      
-      if (!processor) {
-        const errorMsg = `[CommandProcessor] No se pudo obtener un procesador para el agent_id: ${command.agent_id}`;
-        console.error(errorMsg);
-        throw new Error(errorMsg);
-      }
-      
-      try {
-        // Generar agent_background usando el servicio dedicado
-        const agentBackground = await this.agentBackgroundService.generateEnhancedAgentBackground(processor, command.agent_id, command.site_id, command.id);
-        
-        // Actualizar el comando con el background generado
-        command = {
-          ...command,
-          agent_background: agentBackground
-        };
-        
-        // Guardar en la base de datos (esto es crucial)
-        try {
-          await DatabaseAdapter.updateCommand(command.id, {
-            agent_background: agentBackground
-          });
-        } catch (dbError) {
-          console.error(`❌ [CommandProcessor] Error al guardar agent_background en BD:`, dbError);
-          
-          // Intentar con CommandService como fallback
-          try {
-            await this.commandService.updateCommand(command.id, {
-              agent_background: agentBackground
-            });
-          } catch (cmdError: unknown) {
-            console.error(`❌ [CommandProcessor] Error crítico al guardar agent_background:`, cmdError);
-            // No fail fatal aquí, seguimos con el agent_background en memoria
-          }
-        }
-        
-        // SIEMPRE guardar en caché para este flujo
-        CommandCache.setAgentBackground(command.id, agentBackground);
-      } catch (error: unknown) {
-        console.error(`❌ [CommandProcessor] Error generando agent_background:`, error);
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        throw new Error(`Error generando agent_background: ${errorMessage}`);
-      }
-    } else {
-      const errorMsg = `[CommandProcessor] El comando ${command.id} no tiene agent_id ni agent_background`;
-      console.error(errorMsg);
-      throw new Error(errorMsg);
-    }
-    
-    return command;
+    return initializeAgentCommand(command, {
+      processors: this.processors,
+      generateEnhancedAgentBackground: (processor, agentId, siteId, commandId) =>
+        this.agentBackgroundService.generateEnhancedAgentBackground(processor, agentId, siteId, commandId),
+      updateCommand: (id, updates) => this.commandService.updateCommand(id, updates),
+    });
   }
   
   /**

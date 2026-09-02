@@ -485,6 +485,7 @@ Original content to edit:
       task: 'edit content',
       userId: effectiveUserId,
       agentId: effectiveAgentId,
+      agentRole: 'Content Creator & Copywriter',
       site_id: siteId,
       description: 'Edit the content according to the specified quick action and style controls, while considering the user preferences.',
       targets: [

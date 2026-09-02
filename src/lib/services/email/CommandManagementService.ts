@@ -214,6 +214,7 @@ export class CommandManagementService {
       task: 'reply to emails',
       userId: userId || teamMemberId || defaultUserId,
       agentId: agentId,
+      agentRole: 'Customer Support',
       site_id: siteId,
       description: 'Identify potential leads, commercial opportunities and clients inqueries to reply. Focus ONLY on emails from prospects showing genuine interest in our products/services. IGNORE: transactional emails, vendor outreach, spam, and cold sales pitches from other companies unless they demonstrate clear interest in becoming customers.',
       targets: [

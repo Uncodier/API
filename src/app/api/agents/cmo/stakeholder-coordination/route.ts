@@ -222,6 +222,7 @@ After the meeting, be prepared to generate a comprehensive summary with key poin
       task: 'stakeholder meeting',
       userId: effectiveUserId,
       agentId: effectiveAgentId,
+      agentRole: 'Growth Lead/Manager',
       site_id: effectiveSiteId,
       description: 'Create comprehensive guidance for a CMO agent navigating high-stakes marketing strategy discussions.',
       targets: [

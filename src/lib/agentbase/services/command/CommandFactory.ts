@@ -16,6 +16,7 @@ export class CommandFactory {
     context?: string;
     supervisor?: any[];
     agentId?: string;
+    agentRole?: string;
     model?: string;
     modelType?: 'anthropic' | 'openai' | 'gemini';
     modelId?: string;
@@ -66,7 +67,9 @@ export class CommandFactory {
       response_format: params.responseFormat,
       system_prompt: params.systemPrompt,
       agent_id: params.agentId,
+      agent_role: params.agentRole,
       user_id: params.userId,
+      metadata: params.agentRole ? { agent_role: params.agentRole } : undefined,
       priority: params.priority || 5,
       execution_order: params.executionOrder,
       supervision_params: params.supervisionParams,

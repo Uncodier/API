@@ -312,6 +312,7 @@ IMPORTANT: Return the emails in strict order of probability considering both uni
       userId: dataAnalystAgent.userId,
       description: `Company Generic Contact Email Generation for ${domain}`,
       agentId: dataAnalystAgent.agentId,
+      agentRole: 'Data Analyst',
       site_id: site_id,
       context: emailGenerationContext.trim(),
       targets: [

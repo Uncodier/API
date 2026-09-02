@@ -168,6 +168,11 @@ export async function waitForCommandCompletion(commandId: string, maxAttempts = 
           
           resolve({command: executedCommand, dbUuid, completed: isEffectivelyCompleted});
           return;
+        } else if (executedCommand.status === 'failed') {
+          console.log(`❌ Command ${commandId} failed without results`);
+          clearInterval(checkInterval);
+          resolve({command: executedCommand, dbUuid, completed: false});
+          return;
         }
         
         console.log(`⏳ Command ${commandId} still running (status: ${executedCommand.status}), attempt ${attempts}/${maxAttempts}`);
@@ -305,6 +310,7 @@ export async function executeCopywriterRefinement(
       task: 'lead nurture copywriting',
       userId: userId,
       agentId: agentId,
+      agentRole: 'Content Creator & Copywriter',
       site_id: siteId,
       description: 'Refine and optimize lead follow-up content to maximize response rates. Act as a strategic writing coach, adjusting the tone based on the lead\'s position in the follow-up sequence and strictly adhering to any established copy strategies. Enhance clarity, flow, and persuasion while preserving the sales team\'s core intent and channel selection.',
       targets: [

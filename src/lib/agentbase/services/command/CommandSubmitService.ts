@@ -105,6 +105,16 @@ export class CommandSubmitService {
         console.log(`🔥 [CommandSubmitService] Preserving tools_model in memory: ${command.tools_model}`);
       }
       
+      if (command.agent_role && !memoryCommand.agent_role) {
+        memoryCommand.agent_role = command.agent_role;
+      }
+      if (command.agent_role) {
+        memoryCommand.metadata = {
+          ...(memoryCommand.metadata || {}),
+          agent_role: command.agent_role,
+        };
+      }
+
       // Verificar si el agent_background se mantiene
       if (command.agent_background) {
         console.log(`🔍 [CommandSubmitService] Verificando si agent_background permanece en memoryCommand: ${memoryCommand.agent_background ? 'SÍ' : 'NO'}`);
@@ -138,7 +148,11 @@ export class CommandSubmitService {
         ...command,
         id: commandId,
         created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+        updated_at: new Date().toISOString(),
+        metadata: {
+          ...(command.metadata || {}),
+          ...(command.agent_role ? { agent_role: command.agent_role } : {}),
+        },
       };
       
       // Asegurarse de que agent_background se preserva en el fallback

@@ -117,7 +117,7 @@ describe('platform and auth catalogs', () => {
 
 describe('auth email template', () => {
   it('includes both magic link and visible OTP code for old tests but correctly formats link', () => {
-    const { subject, html } = generateAuthEmailContent({
+    const { subject, html, text } = generateAuthEmailContent({
       locale: 'es',
       actionType: 'magiclink',
       channel: 'link',
@@ -129,6 +129,7 @@ describe('auth email template', () => {
     // As per new rules, link channel doesn't have the code
     expect(html).not.toContain('305805');
     expect(html).toContain('auth/confirm');
+    expect(text).toContain('auth/confirm');
     expect(html).toContain('class="email-cta"');
     expect(html).not.toContain('class="email-code-box"');
     expect(html).toContain('class="email-header"');
@@ -141,7 +142,7 @@ describe('auth email template', () => {
   });
 
   it('includes only code block for OTP channel', () => {
-    const { subject, html } = generateAuthEmailContent({
+    const { subject, html, text } = generateAuthEmailContent({
       locale: 'es',
       actionType: 'magiclink',
       channel: 'otp',
@@ -151,9 +152,14 @@ describe('auth email template', () => {
 
     expect(subject).toMatch(/código|code|Code|コード/i);
     expect(html).toContain('305805');
+    expect(html).toContain('es tu código de verificación.');
+    expect(html).not.toMatch(/305805 es tu código[\s\S]*305805 es tu código/);
+    expect(text).toContain('305805');
+    expect(text).toContain('305805 es tu código de verificación.');
     expect(html).not.toContain('auth/confirm');
     expect(html).not.toContain('class="email-cta"');
     expect(html).toContain('class="email-code-box"');
+    expect(html).not.toContain('letter-spacing:0.35em');
   });
 
   it('builds supabase confirm URL', () => {

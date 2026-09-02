@@ -844,6 +844,7 @@ IMPORTANT: Return the emails in strict order of probability considering both uni
       userId: dataAnalystAgent.userId,
       description: `Lead Contact Email Generation for ${name} at ${domain}`,
       agentId: dataAnalystAgent.agentId,
+      agentRole: 'Data Analyst',
       site_id: site_id,
       context: emailGenerationContext.trim(),
       targets: [

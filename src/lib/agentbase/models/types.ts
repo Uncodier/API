@@ -22,6 +22,7 @@ export interface CreateCommandParams {
   response_format?: 'json' | 'text';
   system_prompt?: string;
   agent_id?: string;
+  agent_role?: string;
   agent_background?: string;
   user_id: string;
   priority?: number;
@@ -31,6 +32,13 @@ export interface CreateCommandParams {
   input_tokens?: number;
   output_tokens?: number;
   site_id?: string;
+  metadata?: {
+    dbUuid?: string;
+    createTime?: string;
+    lastUpdated?: string;
+    agent_role?: string;
+    [key: string]: any;
+  };
   reasoning_effort?: 'low' | 'medium' | 'high' | 'minimal';
   tools_model?: string;
   tools_model_type?: 'anthropic' | 'openai' | 'gemini';
@@ -54,6 +62,7 @@ export interface DbCommand {
   response_format?: 'json' | 'text';
   system_prompt?: string;
   agent_id?: string;
+  agent_role?: string;
   agent_background?: string;
   user_id: string;
   priority?: number;

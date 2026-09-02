@@ -302,6 +302,7 @@ Please analyze these support aspects and provide a comprehensive summary focusin
       task: 'daily standup support analysis',
       userId: agent.userId,
       agentId: agent.agentId,
+      agentRole: 'Customer Support',
       site_id: site_id,
       description: 'Analyze support performance, tasks, conversations, and requirements for daily standup report',
       targets: [

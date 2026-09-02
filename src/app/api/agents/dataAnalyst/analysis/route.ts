@@ -448,6 +448,7 @@ export async function POST(request: Request) {
       userId: dataAnalystAgent.userId ?? '',
       description: `Analyze consolidated research data from ${consolidatedData ? consolidatedData.total_searches : 0} searches${data ? ' and additional data' : ''}`,
       agentId: dataAnalystAgent.agentId,
+      agentRole: 'Data Analyst',
       site_id: site_id,
       context: finalContext,
       targets: [

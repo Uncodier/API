@@ -265,6 +265,7 @@ Please analyze the lead information against all available segments and determine
       userId: dataAnalystAgent.userId,
       description: `Lead Segmentation Analysis for lead ${lead_id} against ${segments.length} available segments`,
       agentId: dataAnalystAgent.agentId,
+      agentRole: 'Data Analyst',
       site_id: site_id,
       context: segmentationContext.trim(),
       targets: [

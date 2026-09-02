@@ -329,6 +329,7 @@ Additionally, include a brief summary of the newly added leads (status = new) an
       task: 'daily standup sales analysis',
       userId: agent.userId,
       agentId: agent.agentId,
+      agentRole: 'Sales/CRM Specialist',
       site_id: site_id,
       description: 'Analyze sales performance, leads, and coordinate with sales team for daily standup report',
       targets: [

@@ -147,6 +147,8 @@ export class CommandConverter {
       created_at: dbCommand.created_at || new Date().toISOString(),
       updated_at: dbCommand.updated_at || new Date().toISOString(),
       agent_id: originalAgentId || dbCommand.agent_id || undefined,
+      agent_role: (dbCommand as any).agent_role || (dbCommand as any).metadata?.agent_role,
+      metadata: (dbCommand as any).metadata,
       model: dbCommand.model || undefined,
       model_type: (dbCommand as any).model_type || undefined,
       model_id: (dbCommand as any).model_id || dbCommand.model || undefined,

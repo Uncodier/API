@@ -232,6 +232,7 @@ export class RegionLeadsCommandService {
       const command = CommandFactory.createCommand({
         task: "generate and contact leads in region",
         userId: userId,
+        agentRole: 'Sales/CRM Specialist',
         site_id: siteId,
         description: `Identify and contact ${maxLeads} potential leads in ${region} for ${productInfo.name || 'our products/services'}.`,
         targets,

@@ -953,6 +953,7 @@ export async function POST(request: Request) {
       task: 'lead selection analysis',
       userId: effectiveUserId,
       agentId: effectiveAgentId,
+      agentRole: 'Sales/CRM Specialist',
       site_id: siteId,
       description: `Analyze ${leadsData.length} leads across ${companiesMap.size} companies to determine contact priority and team assignments. Focus on identifying the most strategic leads to contact first within each company and which accounts warrant dedicated team member assignment.`,
       targets: [

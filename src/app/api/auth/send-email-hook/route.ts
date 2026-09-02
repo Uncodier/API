@@ -102,7 +102,7 @@ export async function POST(request: NextRequest) {
           })
         : undefined;
 
-    const { subject, html } = generateAuthEmailContent({
+    const { subject, html, text } = generateAuthEmailContent({
       locale,
       actionType,
       channel,
@@ -116,6 +116,7 @@ export async function POST(request: NextRequest) {
       to: opts.to,
       subject,
       html,
+      text,
       categories: ['auth', 'supabase-auth-hook', actionType],
       customArgs: {
         authAction: actionType,

@@ -658,6 +658,7 @@ export async function POST(request: Request) {
       task: 'create message',
       userId: effectiveUserId,
       agentId: effectiveAgentId,
+      agentRole: 'Sales/CRM Specialist',
       // Add site_id as a basic property if it exists
       ...(effectiveSiteId ? { site_id: effectiveSiteId } : {}),
       description: 'Engage with potential customers to understand their needs, suggest appropriate products/services, handle objections, and facilitate the sales process.',

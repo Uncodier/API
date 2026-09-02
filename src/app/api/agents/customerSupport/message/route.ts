@@ -1528,6 +1528,7 @@ export async function POST(request: Request) {
       task: 'create message',
       userId: effectiveUserId,
       agentId: effectiveAgentId,
+      agentRole: 'Customer Support',
       // Add site_id as a basic property if it exists
       ...(effectiveSiteId ? { site_id: effectiveSiteId } : {}),
       // Add lead_id as a basic property if it exists

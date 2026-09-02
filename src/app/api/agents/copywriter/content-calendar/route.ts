@@ -585,6 +585,7 @@ ${additionalContext.length > 0 ? `\nAdditional Parameters:\n${additionalContext.
       task: 'create strategic content calendar plan',
       userId: userId,
       agentId: agentId,
+      agentRole: 'Growth Marketer',
       site_id: siteId,
       description: 'Generate strategic content planning and marketing strategy for content calendar',
       targets: [
@@ -900,6 +901,7 @@ ${context}`;
       task: 'create content copywriting',
       userId: effectiveUserId,
       agentId: effectiveAgentId,
+      agentRole: 'Content Creator & Copywriter',
       // Add site_id as a basic property if it exists
       ...(siteId ? { site_id: siteId } : {}),
       // Add campaign_id if it exists

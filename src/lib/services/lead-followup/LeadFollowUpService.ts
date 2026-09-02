@@ -126,9 +126,8 @@ export class LeadFollowUpService {
       }
     }
     
-    // If we still don't have a userId, error
     if (!effectiveUserId) {
-      throw { code: 'INVALID_REQUEST', message: 'userId is required and no active agent found for the site', status: 400 };
+      throw { code: 'INVALID_REQUEST', message: 'userId is required', status: 400 };
     }
     
     // Get lead information from database if not provided
@@ -247,6 +246,7 @@ export class LeadFollowUpService {
       task: 'lead follow-up strategy',
       userId: effectiveUserId,
       agentId: effectiveAgentId,
+      agentRole: 'Sales/CRM Specialist',
       site_id: siteId,
       description: `Generate a personalized follow-up message for a qualified lead, focusing on addressing their pain points and interests, with appropriate timing between touchpoints. You want to delight and nurture the lead. 
 

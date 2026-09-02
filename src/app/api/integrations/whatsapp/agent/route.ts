@@ -154,6 +154,7 @@ async function processMessageWithAgent(
       task: 'create message for whatsapp',
       userId: 'system', // Since this is automated, use system user
       agentId,
+      agentRole: 'Customer Support',
       site_id: siteId,
       description: 'Respond to a WhatsApp message from a user',
       targets: [

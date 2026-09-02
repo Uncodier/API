@@ -315,6 +315,7 @@ export async function POST(request: Request) {
       task: 'daily standup executive summary',
       userId: agent.userId,
       agentId: agent.agentId,
+      agentRole: 'Growth Lead/Manager',
       site_id: site_id,
       description: 'Consolidate all daily standup analyses into executive summary and actionable recommendations',
       modelType: 'openai',

@@ -772,6 +772,7 @@ ${context}`;
       task: 'bulk improve content',
       userId: effectiveUserId,
       agentId: effectiveAgentId,
+      agentRole: 'Content Creator & Copywriter',
       site_id: siteId,
       description: `Bulk improve and optimize ${draftContent.length} draft content items for site ${siteId} to enhance effectiveness, readability, and business impact while maintaining brand voice and optimizing for target keywords.`,
       // Set targets for all content items to be updated

@@ -356,6 +356,7 @@ export async function POST(request: Request) {
       task: 'conduct comprehensive lead research',
       userId: effectiveUserId,
       agentId: agent_id,
+      agentRole: 'Sales/CRM Specialist',
       site_id: site_id,
       description: 'Conduct comprehensive research on a lead to gather valuable insights for sales and marketing strategies. Include company background, key personnel, recent news, competitive landscape, and potential pain points.',
       targets: [

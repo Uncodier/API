@@ -293,6 +293,7 @@ export class SupervisorService {
         userId: command.user_id,
         description: `Supervisor analysis for command ${command.id}`,
         agentId: command.agent_id,
+        agentRole: command.agent_role,
         site_id: command.site_id,
         targets: supervisorTargets,
         tools: command.tools || [],

@@ -103,6 +103,7 @@ ${campaignsContext}`;
       task: 'create campaign requirements',
       userId: userId,
       agentId: agentId,
+      agentRole: 'Growth Marketer',
       site_id: siteId,
       description: 'Generate detailed requirements and tasks for marketing campaigns',
       targets: [

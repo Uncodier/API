@@ -428,6 +428,7 @@ ${JSON.stringify({
       task: 'daily standup system analysis',
       userId: agent.userId,
       agentId: agent.agentId,
+      agentRole: 'Growth Lead/Manager',
       site_id: site_id,
       description: 'Analyze system settings, billing status, and basic system metrics for daily standup report',
       targets: [

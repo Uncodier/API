@@ -389,6 +389,7 @@ export async function executeDataAnalysis(
       userId: dataAnalystAgent.userId,
       description: `Analyze research data for ${siteId} with type: ${analysisType}`,
       agentId: dataAnalystAgent.agentId,
+      agentRole: 'Data Analyst',
       site_id: siteId,
       context: finalContext,
       targets: [{

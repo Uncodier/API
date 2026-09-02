@@ -337,6 +337,7 @@ Please analyze these growth aspects and provide a comprehensive summary focusing
       task: 'daily standup growth analysis',
       userId: agent.userId,
       agentId: agent.agentId,
+      agentRole: 'Growth Marketer',
       site_id: site_id,
       description: 'Analyze growth performance, content, experiments, and campaigns for daily standup report',
       targets: [

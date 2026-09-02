@@ -83,6 +83,7 @@ ${context}`;
       task: 'analyze audience segments',
       userId: userId,
       agentId: agentId,
+      agentRole: 'Growth Marketer',
       site_id: siteId,
       description: 'Analyze website and identify the most profitable audience segments',
       targets: [
@@ -257,6 +258,7 @@ ${context}`;
       task: 'enhance segments with ICP analysis',
       userId: userId,
       agentId: agentId,
+      agentRole: 'Growth Marketer',
       site_id: siteId,
       description: 'Perform detailed ICP analysis for existing audience segments',
       targets: [

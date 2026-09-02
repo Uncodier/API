@@ -56,6 +56,7 @@ ${context}`;
       task: 'create strategic campaign planning',
       userId: userId,
       agentId: agentId,
+      agentRole: 'Growth Marketer',
       site_id: siteId,
       description: 'Generate strategic marketing campaign planning for business growth',
       targets: [
@@ -199,6 +200,7 @@ ${campaignsContext}`;
       task: 'create campaign requirements',
       userId: userId,
       agentId: agentId,
+      agentRole: 'Growth Marketer',
       site_id: siteId,
       description: 'Generate detailed requirements and tasks for marketing campaigns',
       targets: [
@@ -742,6 +744,7 @@ Previous Authentication Sessions: ${JSON.stringify(previousSessions, null, 2)}
       task: 'create browser execution plan',
       userId: userId,
       agentId: agentId,
+      agentRole: 'Growth Marketer',
       site_id: siteId,
       description: `Generate browser automation steps for: ${activity}`,
       targets: [

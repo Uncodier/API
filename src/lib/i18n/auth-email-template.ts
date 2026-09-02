@@ -1,6 +1,6 @@
 import type { EmailLocale } from '@/lib/i18n/email-locale';
 import { authActionKeys, authT } from '@/lib/i18n/email-messages/auth';
-import { EMAIL_BRAND, emailBrandHeadTags, emailCodeBlock, emailCtaButton } from '@/lib/emails/brand';
+import { EMAIL_BRAND, emailBrandHeadTags, emailCodeBlock, emailCtaButton, emailOtpHero } from '@/lib/emails/brand';
 
 function escapeHtml(text: string): string {
   return String(text)
@@ -28,7 +28,7 @@ export interface AuthEmailTemplateInput {
 /**
  * Auth email: B/W only on CTA + links; header/OTP use lime/gray surfaces.
  */
-export function generateAuthEmailContent(input: AuthEmailTemplateInput): { subject: string; html: string } {
+export function generateAuthEmailContent(input: AuthEmailTemplateInput): { subject: string; html: string; text: string } {
   const { locale, actionType, confirmUrl, token, siteName, userEmail } = input;
   
   if (actionType === 'recovery') {
@@ -121,7 +121,32 @@ export function generateAuthEmailContent(input: AuthEmailTemplateInput): { subje
 </body>
 </html>`;
 
-    return { subject, html };
+    const text = [
+      title,
+      subtitle,
+      '',
+      bodyTitle,
+      body,
+      '',
+      panelTitle,
+      `${emailLabel} ${userEmail || ''}`,
+      `${timeLabel} ${timeValue}`,
+      `${actionLabel} ${actionValue}`,
+      '',
+      instructionsTitle,
+      `1. ${i1}`,
+      `2. ${i2}`,
+      `3. ${i3}`,
+      `4. ${i4}`,
+      '',
+      confirmUrl ? `${cta}: ${confirmUrl}` : '',
+      token && input.channel === 'otp' ? `${authT(locale, 'auth.or_enter_code')} ${token}` : '',
+      '',
+      '🛡️ ' + securityNoticeTitle,
+      securityNotice
+    ].filter(Boolean).join('\n');
+
+    return { subject, html, text };
   }
 
   const keys = authActionKeys(actionType);
@@ -155,6 +180,11 @@ export function generateAuthEmailContent(input: AuthEmailTemplateInput): { subje
   const safeToken = token ? escapeHtml(token) : '';
   const safeUrl = confirmUrl ? escapeAttr(confirmUrl) : '';
 
+  const autofillLine = (token && input.channel === 'otp') ? authT(locale, 'auth.otp.autofill_line', { code: token }) : '';
+  const autofillCaption = (token && input.channel === 'otp')
+    ? escapeHtml(authT(locale, 'auth.otp.autofill_caption'))
+    : '';
+
   const linkBlock = confirmUrl && input.channel === 'link'
     ? `
       ${emailCtaButton(safeUrl, safeCta)}
@@ -162,7 +192,8 @@ export function generateAuthEmailContent(input: AuthEmailTemplateInput): { subje
     `
     : '';
 
-  const codeBlock = token && input.channel === 'otp' ? emailCodeBlock(safeOrCode, safeToken) : '';
+  const codeBlock = token && input.channel === 'otp' ? emailOtpHero(safeToken, autofillCaption) : '';
+  const headerAlign = input.channel === 'otp' ? 'center' : 'left';
 
   const html = `
 <!DOCTYPE html>
@@ -174,21 +205,35 @@ export function generateAuthEmailContent(input: AuthEmailTemplateInput): { subje
 </head>
 <body style="margin:0;padding:0;background:${EMAIL_BRAND.bodyBg};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
   <div class="email-card" style="max-width:560px;margin:40px auto;background:${EMAIL_BRAND.cardBg};border-radius:12px;overflow:hidden;box-shadow:0 4px 6px rgba(30,30,45,0.08);">
-    <div class="email-header" style="background:${EMAIL_BRAND.headerBg};padding:28px 32px;color:${EMAIL_BRAND.headerText};">
+    <div class="email-header" style="background:${EMAIL_BRAND.headerBg};padding:28px 32px;color:${EMAIL_BRAND.headerText};text-align:${headerAlign};">
       <h1 class="email-header-title" style="margin:0;font-size:22px;color:${EMAIL_BRAND.headerText};">${safeTitle}</h1>
       ${safeSite ? `<p class="email-header-sub" style="margin:8px 0 0;font-size:14px;color:${EMAIL_BRAND.headerMuted};">${safeSite}</p>` : ''}
     </div>
     <div style="padding:32px;">
-      <p class="email-text" style="margin:0 0 16px;color:${EMAIL_BRAND.text};font-size:16px;line-height:1.5;">${safeBody}</p>
+      <p class="email-text" style="margin:0;color:${EMAIL_BRAND.text};font-size:15px;line-height:1.6;text-align:${headerAlign};">${safeBody}</p>
       ${linkBlock}
       ${codeBlock}
-      <p class="email-subtle" style="margin:24px 0 0;color:${EMAIL_BRAND.subtle};font-size:13px;">${safeExpires}</p>
+      <p class="email-subtle" style="margin:24px 0 0;color:${EMAIL_BRAND.subtle};font-size:13px;line-height:1.5;text-align:${headerAlign};">${safeExpires}</p>
     </div>
   </div>
 </body>
 </html>`;
 
-  return { subject, html };
+  const text = [
+    siteName,
+    title,
+    '',
+    body,
+    '',
+    autofillLine,
+    confirmUrl && input.channel === 'link' ? `${cta}: ${confirmUrl}` : '',
+    token && input.channel === 'otp' ? `${safeOrCode} ${token}` : '',
+    '',
+    expires,
+    confirmUrl && input.channel === 'link' ? footer : ''
+  ].filter(Boolean).join('\n');
+
+  return { subject, html, text };
 }
 
 export function buildSupabaseConfirmUrl(params: {

@@ -652,6 +652,7 @@ export async function POST(request: Request) {
       task: 'create message',
       userId: effectiveUserId,
       agentId: effectiveAgentId,
+      agentRole: 'Growth Lead/Manager',
       // Add site_id as a basic property if it exists
       ...(effectiveSiteId ? { site_id: effectiveSiteId } : {}),
       description: 'Engage with the marketing team, understand their strategic needs, provide relevant marketing insights, address campaign performance questions, and guide them toward developing effective marketing strategies.',

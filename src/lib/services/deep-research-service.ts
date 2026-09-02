@@ -314,6 +314,7 @@ export class DeepResearchService {
         userId: dataAnalystAgent.userId,
         description: `Generate a comprehensive research plan for topic: ${researchTopic}, by separating different deliverables into search different operations`,
         agentId: dataAnalystAgent.agentId,
+        agentRole: 'Data Analyst',
         site_id: siteId,
         context: commandContext,
         targets: [baseTarget],
