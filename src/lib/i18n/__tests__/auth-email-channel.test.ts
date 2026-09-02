@@ -32,6 +32,21 @@ describe('resolveAuthEmailChannel', () => {
     expect(resolveAuthEmailChannel({ email_action_type: 'reauthentication' })).toBe('otp');
   });
 
+  it('treats magiclink with only the Site URL as OTP (GoTrue dropped shop redirect)', () => {
+    expect(
+      resolveAuthEmailChannel({
+        email_action_type: 'magiclink',
+        redirect_to: 'https://app.makinari.com',
+      })
+    ).toBe('otp');
+    expect(
+      resolveAuthEmailChannel({
+        email_action_type: 'magiclink',
+        redirect_to: 'https://app.makinari.com/',
+      })
+    ).toBe('otp');
+  });
+
   it('falls back to OTP when redirect_to is a shop path', () => {
     expect(
       resolveAuthEmailChannel({
