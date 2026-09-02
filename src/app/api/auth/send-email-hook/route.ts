@@ -3,6 +3,7 @@ import { sendGridService } from '@/lib/services/sendgrid-service';
 import { resolveEmailLocale, tryNormalizeEmailLocale } from '@/lib/i18n/email-locale';
 import { buildSupabaseConfirmUrl, generateAuthEmailContent } from '@/lib/i18n/auth-email-template';
 import { verifyStandardWebhook } from '@/lib/i18n/standard-webhook';
+import { resolveAuthEmailChannel } from '@/lib/i18n/auth-email-channel';
 
 export const runtime = 'nodejs';
 
@@ -28,7 +29,7 @@ interface AuthHookEmailData {
  * Configure in Dashboard → Auth → Hooks → Send Email (HTTPS).
  * Env: SEND_EMAIL_HOOK_SECRET=v1,whsec_...
  *
- * Magic link / OTP emails include both the verify link and a visible code.
+ * Shop OTP emails include only the 6-digit code. App emails include only a confirm link.
  */
 export async function POST(request: NextRequest) {
   const secret = process.env.SEND_EMAIL_HOOK_SECRET;
@@ -59,6 +60,10 @@ export async function POST(request: NextRequest) {
   const user = payload.user || {};
   const emailData = payload.email_data || {};
   const actionType = emailData.email_action_type || 'magiclink';
+  const channel = resolveAuthEmailChannel({
+    redirect_to: emailData.redirect_to,
+    email_action_type: actionType,
+  });
 
   const metadata = user.user_metadata || {};
   const siteId =
@@ -87,18 +92,20 @@ export async function POST(request: NextRequest) {
     if (!opts.to) return { success: false, error: 'Missing recipient' };
 
     const confirmUrl =
-      opts.tokenHash && supabaseUrl
+      opts.tokenHash && supabaseUrl && channel === 'link'
         ? buildSupabaseConfirmUrl({
             supabaseUrl,
             tokenHash: opts.tokenHash,
             emailActionType: actionType,
             redirectTo: emailData.redirect_to,
+            siteUrl: emailData.site_url,
           })
         : undefined;
 
     const { subject, html } = generateAuthEmailContent({
       locale,
       actionType,
+      channel,
       confirmUrl,
       token: opts.token,
       siteName: typeof metadata.site_name === 'string' ? metadata.site_name : undefined,

@@ -18,6 +18,7 @@ function escapeAttr(text: string): string {
 export interface AuthEmailTemplateInput {
   locale: EmailLocale;
   actionType: string;
+  channel: 'otp' | 'link';
   confirmUrl?: string;
   token?: string;
   siteName?: string;
@@ -56,6 +57,9 @@ export function generateAuthEmailContent(input: AuthEmailTemplateInput): { subje
 
     const safeUrl = confirmUrl ? escapeAttr(confirmUrl) : '';
     const safeUserEmail = userEmail ? escapeHtml(userEmail) : '';
+
+    const linkBlock = confirmUrl ? emailCtaButton(safeUrl, escapeHtml(cta)) : '';
+    const codeBlock = (token && input.channel === 'otp') ? emailCodeBlock(escapeHtml(authT(locale, 'auth.or_enter_code')), escapeHtml(token)) : '';
 
     const html = `
 <!DOCTYPE html>
@@ -101,9 +105,8 @@ export function generateAuthEmailContent(input: AuthEmailTemplateInput): { subje
         <li>${escapeHtml(i4)}</li>
       </ul>
 
-      ${confirmUrl ? emailCtaButton(safeUrl, escapeHtml(cta)) : ''}
-      
-      ${token ? emailCodeBlock(escapeHtml(authT(locale, 'auth.or_enter_code')), escapeHtml(token)) : ''}
+      ${linkBlock}
+      ${codeBlock}
 
       <div style="margin-top:32px;padding-top:24px;border-top:1px solid ${EMAIL_BRAND.surfaceBorder};">
         <p style="margin:0 0 8px;font-size:13px;font-weight:600;color:${EMAIL_BRAND.muted};">
@@ -122,9 +125,21 @@ export function generateAuthEmailContent(input: AuthEmailTemplateInput): { subje
   }
 
   const keys = authActionKeys(actionType);
-  const subject = authT(locale, keys.subject);
-  const title = authT(locale, keys.title);
-  const body = authT(locale, keys.body);
+  
+  let subject: string;
+  let title: string;
+  let body: string;
+  
+  if (input.channel === 'otp') {
+    subject = authT(locale, 'auth.otp.subject');
+    title = authT(locale, 'auth.otp.title');
+    body = authT(locale, 'auth.otp.body');
+  } else {
+    subject = authT(locale, keys.subject);
+    title = authT(locale, keys.title);
+    body = authT(locale, keys.body);
+  }
+
   const cta = authT(locale, keys.cta);
   const orEnterCode = authT(locale, 'auth.or_enter_code');
   const expires = authT(locale, 'auth.code_expires');
@@ -133,21 +148,21 @@ export function generateAuthEmailContent(input: AuthEmailTemplateInput): { subje
   const safeTitle = escapeHtml(title);
   const safeBody = escapeHtml(body);
   const safeCta = escapeHtml(cta);
-  const safeOrCode = escapeHtml(orEnterCode);
+  const safeOrCode = input.channel === 'otp' ? escapeHtml(authT(locale, 'auth.otp.code_label')) : escapeHtml(orEnterCode);
   const safeExpires = escapeHtml(expires);
   const safeFooter = escapeHtml(footer);
   const safeSite = siteName ? escapeHtml(siteName) : '';
   const safeToken = token ? escapeHtml(token) : '';
   const safeUrl = confirmUrl ? escapeAttr(confirmUrl) : '';
 
-  const linkBlock = confirmUrl
+  const linkBlock = confirmUrl && input.channel === 'link'
     ? `
       ${emailCtaButton(safeUrl, safeCta)}
       <p style="color:${EMAIL_BRAND.muted};font-size:13px;word-break:break-all;text-align:center;">${safeFooter}<br/><a class="email-link" href="${safeUrl}" style="color:${EMAIL_BRAND.link};word-break:break-all;">${escapeHtml(confirmUrl)}</a></p>
     `
     : '';
 
-  const codeBlock = token ? emailCodeBlock(safeOrCode, safeToken) : '';
+  const codeBlock = token && input.channel === 'otp' ? emailCodeBlock(safeOrCode, safeToken) : '';
 
   const html = `
 <!DOCTYPE html>
@@ -181,10 +196,25 @@ export function buildSupabaseConfirmUrl(params: {
   tokenHash: string;
   emailActionType: string;
   redirectTo?: string;
+  siteUrl?: string;
 }): string {
-  const base = params.supabaseUrl.replace(/\/$/, '');
-  const url = new URL(`${base}/auth/v1/verify`);
-  url.searchParams.set('token', params.tokenHash);
+  let baseUrl = '';
+  if (params.redirectTo) {
+    try {
+      baseUrl = new URL(params.redirectTo).origin;
+    } catch {
+      // ignore invalid URL
+    }
+  }
+  if (!baseUrl && params.siteUrl) {
+    baseUrl = params.siteUrl.replace(/\/$/, '');
+  }
+  if (!baseUrl) {
+    baseUrl = params.supabaseUrl.replace(/\/$/, '');
+  }
+
+  const url = new URL(`${baseUrl}/auth/confirm`);
+  url.searchParams.set('token_hash', params.tokenHash);
   url.searchParams.set('type', params.emailActionType);
   if (params.redirectTo) {
     url.searchParams.set('redirect_to', params.redirectTo);

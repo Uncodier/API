@@ -116,21 +116,22 @@ describe('platform and auth catalogs', () => {
 });
 
 describe('auth email template', () => {
-  it('includes both magic link and visible OTP code', () => {
+  it('includes both magic link and visible OTP code for old tests but correctly formats link', () => {
     const { subject, html } = generateAuthEmailContent({
       locale: 'es',
       actionType: 'magiclink',
-      confirmUrl: 'https://example.supabase.co/auth/v1/verify?token=abc&type=magiclink',
+      channel: 'link',
+      confirmUrl: 'https://example.supabase.co/auth/confirm?token_hash=abc&type=magiclink',
       token: '305805',
     });
 
     expect(subject).toMatch(/acceso|sign-in|connexion|Anmelde|サインイン/i);
-    expect(html).toContain('305805');
-    expect(html).toContain('auth/v1/verify');
-    expect(html).toMatch(/código|code|Code|コード/i);
-    expect(html).toContain('email-cta');
-    expect(html).toContain('email-code-box');
-    expect(html).toContain('email-header');
+    // As per new rules, link channel doesn't have the code
+    expect(html).not.toContain('305805');
+    expect(html).toContain('auth/confirm');
+    expect(html).toContain('class="email-cta"');
+    expect(html).not.toContain('class="email-code-box"');
+    expect(html).toContain('class="email-header"');
     expect(html).toContain('#1e1e2d');
     expect(html).toContain('#f0f0f5');
     expect(html).toContain('linear-gradient');
@@ -139,16 +140,34 @@ describe('auth email template', () => {
     expect(html).toContain('-webkit-text-fill-color');
   });
 
+  it('includes only code block for OTP channel', () => {
+    const { subject, html } = generateAuthEmailContent({
+      locale: 'es',
+      actionType: 'magiclink',
+      channel: 'otp',
+      confirmUrl: 'https://example.supabase.co/auth/confirm?token_hash=abc&type=magiclink',
+      token: '305805',
+    });
+
+    expect(subject).toMatch(/código|code|Code|コード/i);
+    expect(html).toContain('305805');
+    expect(html).not.toContain('auth/confirm');
+    expect(html).not.toContain('class="email-cta"');
+    expect(html).toContain('class="email-code-box"');
+  });
+
   it('builds supabase confirm URL', () => {
     const url = buildSupabaseConfirmUrl({
       supabaseUrl: 'https://proj.supabase.co',
       tokenHash: 'hash123',
       emailActionType: 'magiclink',
       redirectTo: 'https://app.example.com',
+      siteUrl: 'https://app.example.com',
     });
-    expect(url).toContain('token=hash123');
+    expect(url).toContain('token_hash=hash123');
     expect(url).toContain('type=magiclink');
     expect(url).toContain('redirect_to=');
+    expect(url).toContain('https://app.example.com/auth/confirm');
   });
 });
 
