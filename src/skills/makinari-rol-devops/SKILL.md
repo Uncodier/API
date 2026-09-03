@@ -26,6 +26,7 @@ You are the last quality gate before delivery. Verify the build compiles, the de
 - It is obtained automatically via the GitHub Deployments API after `git push`.
 - Do NOT construct or guess URLs (e.g. `https://<project>-git-<branch>-<team>.vercel.app`).
 - Validate: `sandbox_run_command curl -s <preview_url>` and confirm a non-error response.
+- **Iframe requirements:** Preview apps are embedded in `https://app.makinari.com` (and `*.uncodie.com`). NEVER set `X-Frame-Options: DENY` in `next.config.*` or `vercel.json`. A permissive CSP `frame-ancestors` is injected automatically by the platform; do not restrict it.
 
 ### 3. Commit SHA verification
 - After the system pushes, capture the SHA: `sandbox_run_command git rev-parse HEAD`.

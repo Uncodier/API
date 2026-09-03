@@ -2,6 +2,7 @@ import { Sandbox } from '@vercel/sandbox';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import { assertPlatformGitLayout } from '@/lib/services/sandbox-git-layout';
 import { validateNpmRepoForVercelDeploy } from '../vercel-npm-repo-guard';
+import { ensurePreviewFrameAncestors } from '../ensure-preview-frame-ancestors';
 import {
   CronInfraEvent,
   logCronInfrastructureEvent,
@@ -113,6 +114,14 @@ fi`,
     const vercelLayoutErr = await validateNpmRepoForVercelDeploy(sandbox, gitKind);
     if (vercelLayoutErr) {
       throw new Error(`[vercel] ${vercelLayoutErr}`);
+    }
+
+    if (gitKind === 'applications') {
+      try {
+        await ensurePreviewFrameAncestors(sandbox, cwd);
+      } catch (e) {
+        console.warn('[PreCommit] ensurePreviewFrameAncestors failed:', e);
+      }
     }
 
     const msg = message ?? `Implement ${title} (${reqId})`;

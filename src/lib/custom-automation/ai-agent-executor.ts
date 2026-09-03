@@ -33,6 +33,7 @@
  */
 
 import OpenAI from 'openai';
+import { GoogleAuth } from 'google-auth-library';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import {
@@ -201,7 +202,7 @@ export interface ActResponse {
   };
 }
 
-export type AIProvider = 'gemini' | 'azure' | 'openai';
+export type AIProvider = 'gemini' | 'azure' | 'openai' | 'xai';
 
 export interface AIAgentExecutorConfig {
   /** Provider to use. Defaults to process.env.AI_PROVIDER ?? 'gemini'. */
@@ -391,6 +392,7 @@ const DEFAULT_MODEL_BY_PROVIDER: Record<AIProvider, string> = {
   gemini: 'gemini-3.1-pro-preview',
   azure: 'gpt-4o',
   openai: 'gpt-4o',
+  xai: 'grok-4.6',
 };
 
 /**
@@ -514,6 +516,42 @@ export class AIAgentExecutor {
 
       this.client = new OpenAI({ apiKey, baseURL });
       this.model = config?.model || process.env.AI_MODEL || DEFAULT_MODEL_BY_PROVIDER.openai;
+    } else if (provider === 'xai') {
+      const apiKey = config?.apiKey || process.env.XAI_API_KEY;
+      const isVertex = !!process.env.GOOGLE_CLOUD_PROJECT_ID && !apiKey; // Use Vertex AI if XAI API key is missing but GCP project is set
+
+      let baseURL = config?.baseURL || process.env.XAI_BASE_URL || 'https://api.x.ai/v1';
+      let fetchFn: typeof fetch | undefined;
+
+      if (isVertex) {
+        baseURL = `https://aiplatform.googleapis.com/v1/projects/${process.env.GOOGLE_CLOUD_PROJECT_ID}/locations/global/endpoints/openapi/`;
+        
+        const auth = new GoogleAuth({
+          scopes: 'https://www.googleapis.com/auth/cloud-platform',
+        });
+        
+        fetchFn = async (url, init) => {
+          const authClient = await auth.getClient();
+          const token = await authClient.getAccessToken();
+          init = init || {};
+          init.headers = {
+            ...init.headers,
+            Authorization: `Bearer ${token.token}`
+          };
+          return fetch(url, init);
+        };
+      }
+
+      if (!apiKey && !isVertex) {
+        throw new Error('xAI API key is required, or GCP configuration for Vertex AI.');
+      }
+
+      this.client = new OpenAI({ 
+        apiKey: apiKey || 'dummy-for-vertex', 
+        baseURL,
+        fetch: fetchFn 
+      });
+      this.model = config?.model || process.env.AI_MODEL || (isVertex ? 'xai/grok-4.6' : 'grok-4.6');
     } else {
       // Gemini via OpenAI-compatible endpoint (default).
       const apiKey = config?.apiKey || process.env.GEMINI_API_KEY;
@@ -532,8 +570,8 @@ export class AIAgentExecutor {
 
   private resolveProvider(explicit?: AIProvider): AIProvider {
     const raw = (explicit || process.env.AI_PROVIDER || 'gemini').toLowerCase();
-    if (raw === 'azure' || raw === 'openai' || raw === 'gemini') {
-      return raw;
+    if (raw === 'azure' || raw === 'openai' || raw === 'gemini' || raw === 'xai') {
+      return raw as AIProvider;
     }
     console.warn(`₍ᐢ•(ܫ)•ᐢ₎ [AI EXECUTOR] Unknown AI_PROVIDER="${raw}", falling back to 'gemini'`);
     return 'gemini';

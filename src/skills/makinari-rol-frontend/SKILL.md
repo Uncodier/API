@@ -127,9 +127,10 @@ Copy/paste this and verify every box before marking the step completed:
 - [ ] Design avoids generic corporate SaaS look (uses Modern Elite Design constraints)
 ```
 
-### 7. Git and delivery
+### 7. Git, delivery and iframes
 - The system auto-commits and pushes. Do NOT run `git commit` or `git push` manually.
 - The permanent preview URL is extracted from the GitHub Deployments API after push. Do NOT guess URLs like `https://<project>-git-<branch>-<team>.vercel.app`.
+- **Iframe requirements:** These preview apps are embedded in `https://app.makinari.com` (and `*.uncodie.com`). NEVER set `X-Frame-Options: DENY`. A permissive CSP `frame-ancestors` is automatically injected into `vercel.json` by the platform. Do not remove or restrict it.
 
 ### 9. Component kit contract (Phase 6)
 
