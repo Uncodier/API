@@ -19,6 +19,8 @@ Equip the agent with operational protocols to manage the entire commercial lifec
    - For recurring plans, ensure `is_recurring = true`.
    - **Pricing:** Before using default `target_sale_price`, check if the lead/deal has an applicable price list via `price_lists`.
    - Do NOT seed catalog rows via `update_repo` or raw SQL — always use `catalog_commerce`.
+   - **Features (Simple List):** For a simple list of features or highlights for a product, pass an array to `metadata: { features: ["High Quality", "In Person"] }` when creating or updating an item, rather than creating full technical specs.
+   - **Technical Specs:** When detailed specs are needed, **reuse the built-in system tech spec categories** whenever possible before inventing new ones. The system categories (`is_system = true`) include: `Venue`, `Instructor`, `Brand`, `Artist`, `Event`, `Organizer`, `Host`, `Author`, `Publisher`, `Collection`. Find them via `action="list" resource="item_spec_category"` or create your specs directly under them.
    - **Modifiers (extras):** Create options as normal catalog items (priced via `target_sale_price`). Then:
      1. `resource="modifier_group"` `action="create"` — selection rules (`min_select` / `max_select`).
      2. `resource="modifier_group_item"` `action="create"` — add option `catalog_item_id` to the group.
