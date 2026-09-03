@@ -200,7 +200,7 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
     name: 'publish',
     description: `Consolidated tool to publish content. Can perform one or more of the following actions simultaneously:
 1. Create/Update Content in DB: Requires 'title' and 'type' (to create) OR 'content_id' (to update).
-2. Publish to Social Media: Requires 'social_accounts' array (e.g. ['linkedin', 'twitter']).
+2. Publish to Social Media: Requires 'social_accounts' array (e.g. ['linkedin', 'x', 'facebook', 'instagram', 'tiktok', 'youtube', 'threads', 'pinterest', 'bluesky']).
 3. Send to Audience: Requires 'audience_id' and 'channel' ('whatsapp' or 'email').
 
 You MUST provide at least valid 'text', 'assets' (array of media IDs), or 'urls'.
@@ -227,7 +227,7 @@ The tool will return an object detailing the success/failure of each attempted a
         urls: { type: 'array', items: { type: 'string' }, description: 'Array of URLs to include.' },
 
         // Social
-        social_accounts: { type: 'array', items: { type: 'string' }, description: 'Social account identifiers to publish to.' },
+        social_accounts: { type: 'array', items: { type: 'string' }, description: 'Social account identifiers to publish to (e.g. ["linkedin", "x", "facebook", "instagram", "tiktok", "youtube", "threads", "pinterest", "bluesky"]).' },
         scheduledAt: { type: 'string', description: 'ISO 8601 date to schedule social post (optional).' },
 
         // Audience

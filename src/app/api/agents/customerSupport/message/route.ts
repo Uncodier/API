@@ -434,7 +434,7 @@ async function checkDuplicateOriginMessage(
 }
 
 // Función para guardar mensajes en la base de datos
-async function saveMessages(userId: string, userMessage: string, assistantMessage: string, conversationId?: string, conversationTitle?: string, leadId?: string, visitorId?: string, agentId?: string, siteId?: string, commandId?: string, origin?: string, isRobot?: boolean, isTransactionalMessage?: boolean, isErratic?: boolean, originMessageId?: string, channelDelivery?: boolean) {
+async function saveMessages(userId: string, userMessage: string, assistantMessage: string, conversationId?: string, conversationTitle?: string, leadId?: string, visitorId?: string, agentId?: string, siteId?: string, commandId?: string, origin?: string, isRobot?: boolean, isTransactionalMessage?: boolean, isErratic?: boolean, originMessageId?: string, channelDelivery?: boolean, requireApproval?: boolean, inboundCustomData?: Record<string, unknown>) {
   try {
     console.log(`💾 Guardando mensajes con: user_id=${userId}, agent_id=${agentId || 'N/A'}, site_id=${siteId || 'N/A'}, lead_id=${leadId || 'N/A'}, visitor_id=${visitorId || 'N/A'}, command_id=${commandId || 'N/A'}, origin=${origin || 'N/A'}, is_robot=${isRobot || false}, is_transactional_message=${isTransactionalMessage || false}, is_erratic=${isErratic || false}`);
     
@@ -671,11 +671,11 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
       }
     }
     
-    // Agregar origin_message_id a custom_data si está presente
-    if (originMessageId) {
+    if (originMessageId || inboundCustomData) {
       userMessageObj.custom_data = {
         ...(userMessageObj.custom_data || {}),
-        origin_message_id: originMessageId
+        ...(inboundCustomData || {}),
+        ...(originMessageId ? { origin_message_id: originMessageId } : {}),
       };
     }
     
@@ -702,6 +702,15 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
       content: assistantMessage,
       role: 'assistant'
     };
+    
+    if (requireApproval) {
+      assistantMessageObj.custom_data = {
+        ...(assistantMessageObj.custom_data || {}),
+        status: 'pending',
+        ...(origin ? { channel: origin } : {}),
+      };
+      console.log(`⏳ Marcando mensaje del asistente como pending debido a requireApproval=true`);
+    }
     
     // Agregar visitor_id si está presente
     if (visitorId) assistantMessageObj.visitor_id = visitorId;
@@ -1097,7 +1106,9 @@ export async function POST(request: Request) {
       lead_notification, // Nuevo parámetro para indicar si se debe enviar una notificación por email
       origin, // Nuevo parámetro para indicar el canal de origen: 'website', 'email', 'whatsapp'
       origin_message_id, // Parámetro opcional que se agrega como metadata al message del user
-      channel_delivery
+      channel_delivery,
+      require_approval,
+      custom_data: inboundCustomData
     } = body;
     
     /**
@@ -1188,7 +1199,7 @@ export async function POST(request: Request) {
     }
     
     // Validar el parámetro origin si está presente
-    const validOrigins = ['website', 'email', 'whatsapp', 'chat', 'website_chat', 'none', 'api', 'telegram', 'messenger'];
+    const validOrigins = ['website', 'email', 'whatsapp', 'chat', 'website_chat', 'none', 'api', 'telegram', 'messenger', 'instagram', 'facebook', 'threads', 'linkedin', 'x', 'youtube'];
     
     // Si no se proporciona origin pero hay header origin, usar 'website' automáticamente
     let effectiveOrigin = origin;
@@ -1286,16 +1297,19 @@ export async function POST(request: Request) {
       }
     } else {
       // Gestionar lead_id utilizando el servicio estándar para otros orígenes
-      const leadManagementResult = await manageLeadCreation({
-        leadId: lead_id,
-        name,
-        email,
-        phone,
-        siteId: effectiveSiteId,
-        visitorId: visitor_id,
-        origin: leadOrigin,
-        createTask: website_chat_origin === true
-      });
+        const leadManagementResult = await manageLeadCreation({
+          leadId: lead_id,
+          name,
+          email,
+          phone,
+          siteId: effectiveSiteId,
+          visitorId: visitor_id,
+          origin: leadOrigin,
+          createTask: website_chat_origin === true,
+          socialHandle: typeof inboundCustomData?.account_username === 'string'
+            ? inboundCustomData.account_username
+            : (typeof inboundCustomData?.social_handle === 'string' ? inboundCustomData.social_handle : undefined)
+        });
       
       effectiveLeadId = leadManagementResult.leadId;
       isNewLead = leadManagementResult.isNewLead;
@@ -2227,7 +2241,9 @@ export async function POST(request: Request) {
         isTransactionalMessage,
         isErratic,
         origin_message_id,
-        channel_delivery === true
+        channel_delivery === true,
+        require_approval === true,
+        inboundCustomData && typeof inboundCustomData === 'object' ? inboundCustomData : undefined
       );
     } catch (error: any) {
       // Si el error es SKIP_DATABASE, retornar respuesta sin crear objetos en DB

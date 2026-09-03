@@ -166,10 +166,13 @@ export async function sendMessageByChannel(
       effectiveMessageId = dbMessageId || undefined;
     }
 
+    const OUTSTAND_CHANNELS = ['facebook', 'instagram', 'threads', 'linkedin', 'x', 'twitter', 'youtube'];
+
     const useChannelDelivery =
       contactInfo.channelDelivery === true ||
       channel === 'telegram' ||
-      channel === 'messenger';
+      channel === 'messenger' ||
+      OUTSTAND_CHANNELS.includes(channel);
 
     if (useChannelDelivery) {
       let recipient =
@@ -179,6 +182,11 @@ export async function sendMessageByChannel(
 
       if (recipient && (channel === 'telegram' || channel === 'messenger' || channel === 'zavu')) {
         recipient = sanitizeZavuRecipient(recipient);
+      }
+
+      // For outstand channels we don't need a phone/email, just pass leadId or dummy value
+      if (!recipient && OUTSTAND_CHANNELS.includes(channel)) {
+        recipient = leadId || 'social-comment-user';
       }
 
       if (!recipient) {

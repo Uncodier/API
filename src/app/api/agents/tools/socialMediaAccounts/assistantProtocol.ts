@@ -7,7 +7,7 @@ export interface SocialMediaAccountsParams {
 export function socialMediaAccountsTool(site_id: string) {
   return {
     name: 'social_media_accounts',
-    description: 'Lista todas las cuentas de redes sociales (ej. Twitter, LinkedIn, Facebook) que tienes conectadas. Llama a esto para saber en qué cuentas puedes publicar o leer posts.',
+    description: 'Lista todas las cuentas de redes sociales (ej. X, LinkedIn, Facebook, Instagram, TikTok, YouTube, Threads, Pinterest, Bluesky) que tienes conectadas. Llama a esto para saber en qué cuentas puedes publicar o leer posts.',
     parameters: {
       type: 'object',
       properties: {

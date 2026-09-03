@@ -118,15 +118,68 @@ export class OutstandClient {
 
   // --- Accounts ---
 
-  async listAccounts(tenantId?: string): Promise<any> {
+  async listAccounts(
+    tenantId?: string,
+    params: { network?: string; tenantId?: string; limit?: number } = {}
+  ): Promise<any> {
+    const query = new URLSearchParams();
+    const resolvedTenant = params.tenantId || tenantId;
+    if (resolvedTenant) query.append('tenantId', resolvedTenant);
+    if (params.network) query.append('network', params.network);
+    if (params.limit) query.append('limit', String(params.limit));
+
     const headers: Record<string, string> = {};
     if (tenantId) {
       headers['X-Tenant-ID'] = tenantId;
     }
 
-    return this.request('/social-accounts', {
+    const qs = query.toString();
+    return this.request(`/social-accounts${qs ? `?${qs}` : ''}`, {
       method: 'GET',
       headers,
+    });
+  }
+
+  async getSocialAuthUrl(
+    network: string,
+    params: { redirect_uri?: string; tenant_id?: string } = {}
+  ): Promise<{ success: boolean; data?: { auth_url?: string } }> {
+    const body: Record<string, unknown> = {};
+    if (params.redirect_uri) body.redirect_uri = params.redirect_uri;
+    if (params.tenant_id) body.tenant_id = params.tenant_id;
+
+    return this.request(`/social-networks/${network}/auth-url`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  }
+
+  async getPendingSocialAccounts(sessionToken: string): Promise<any> {
+    return this.request(`/social-accounts/pending/${sessionToken}`, {
+      method: 'GET',
+    });
+  }
+
+  async finalizePendingSocialAccounts(sessionToken: string, accountIds: string[]): Promise<any> {
+    return this.request(`/social-accounts/pending/${sessionToken}/finalize`, {
+      method: 'POST',
+      body: JSON.stringify({ accountIds }),
+    });
+  }
+
+  async connectBlueskyAccount(
+    params: { handle: string; app_password: string },
+    tenantId?: string
+  ): Promise<any> {
+    const headers: Record<string, string> = {};
+    if (tenantId) {
+      headers['X-Tenant-ID'] = tenantId;
+    }
+
+    return this.request('/social-accounts/bluesky', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(params),
     });
   }
 

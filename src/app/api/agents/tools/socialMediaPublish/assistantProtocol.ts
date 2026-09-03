@@ -9,7 +9,7 @@ export interface SocialMediaPublishParams {
 export function socialMediaPublishTool(site_id: string) {
   return {
     name: 'social_media_publish',
-    description: 'Publica un post en redes sociales o lo programa. Requiere el texto del contenido y las cuentas sociales (ej. "twitter", "linkedin"). Llama antes a social_media_accounts si no estás seguro de las cuentas.',
+    description: 'Publica un post en redes sociales o lo programa. Requiere el texto del contenido y las cuentas sociales (ej. "x", "linkedin", "facebook", "instagram", "tiktok", "youtube", "threads", "pinterest", "bluesky"). Llama antes a social_media_accounts si no estás seguro de las cuentas.',
     parameters: {
       type: 'object',
       properties: {
@@ -22,7 +22,7 @@ export function socialMediaPublishTool(site_id: string) {
           items: {
             type: 'string',
           },
-          description: 'Identificadores de las cuentas o redes donde publicar (ej. ["linkedin", "twitter"]). Si está vacío, fallará.',
+          description: 'Identificadores de las cuentas o redes donde publicar (ej. ["x", "linkedin", "facebook", "instagram", "tiktok", "youtube", "threads", "pinterest", "bluesky"]). Si está vacío, fallará.',
         },
         scheduledAt: {
           type: 'string',

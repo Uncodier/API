@@ -98,6 +98,7 @@ export interface CreateCommentParams {
   content: string;
   platform_post_id?: string;
   account_username?: string;
+  parent_comment_id?: string;
 }
 
 export interface CommentResponse {

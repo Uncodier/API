@@ -1,9 +1,10 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { sendChannelMessage } from '@/lib/services/zavu/client';
+import { getOutstandClient } from '@/lib/integrations/outstand/client';
 
 export interface SendChannelMessageParams {
   site_id: string;
-  channel: string; // e.g. "telegram", "messenger"
+  channel: string; // e.g. "telegram", "messenger", "facebook", "instagram", "threads", "linkedin", "x", "youtube"
   to: string; // chat ID
   message: string;
   subject?: string;
@@ -34,10 +35,12 @@ export function sanitizeZavuRecipient(recipient: string): string {
   return recipient;
 }
 
+const OUTSTAND_CHANNELS = ['facebook', 'instagram', 'threads', 'linkedin', 'x', 'twitter', 'youtube'];
+
 export class ChannelSendService {
   /**
-   * Send a generic channel message (e.g. Telegram, Messenger)
-   * Resolves the correct zavu_sender_id from the site settings.
+   * Send a generic channel message (e.g. Telegram, Messenger, or Outstand comments)
+   * Resolves the correct sender or metadata from the site settings or DB.
    */
   static async sendMessage(params: SendChannelMessageParams): Promise<SendChannelMessageResult> {
     try {
@@ -46,6 +49,57 @@ export class ChannelSendService {
       }
 
       console.log(`[ChannelSendService] Sending ${params.channel} message to ${params.to} for site ${params.site_id}`);
+
+      // Handle Outstand Comments channels
+      if (OUTSTAND_CHANNELS.includes(params.channel)) {
+        if (!params.message_id && !params.conversation_id) {
+          throw new Error(`Outstand replies require message_id or conversation_id to find the parent comment`);
+        }
+        
+        let customData: any = {};
+        
+        // We need to fetch the original inbound message to get outstand metadata
+        if (params.conversation_id) {
+          // Find the last user message in this conversation
+          const { data: messages } = await supabaseAdmin
+            .from('messages')
+            .select('custom_data')
+            .eq('conversation_id', params.conversation_id)
+            .eq('role', 'user')
+            .order('created_at', { ascending: false })
+            .limit(1);
+            
+          if (messages && messages.length > 0 && messages[0].custom_data) {
+            customData = messages[0].custom_data;
+          }
+        }
+        
+        const outstandPostId = customData.outstand_post_id;
+        const platformPostId = customData.platform_post_id;
+        // Reply to the inbound comment itself, not that comment's parent
+        const parentCommentId =
+          customData.origin_message_id ||
+          customData.platform_comment_id ||
+          customData.parent_comment_id;
+        const accountUsername = customData.account_username;
+        
+        if (!outstandPostId) {
+          throw new Error(`No outstand_post_id found for conversation ${params.conversation_id}`);
+        }
+        
+        const outstandClient = getOutstandClient();
+        const result = await outstandClient.publishComment(outstandPostId, {
+          content: params.message,
+          platform_post_id: platformPostId,
+          parent_comment_id: parentCommentId,
+          account_username: accountUsername
+        }, params.site_id);
+        
+        return {
+          success: result.success !== false, // Some APIs might not return explicit success=true
+          messageId: result.reply_id || `outstand-${Date.now()}`
+        };
+      }
 
       // 1. Get site channels connections to find the zavu_sender_id for this channel type
       const { data: siteSettings, error: settingsError } = await supabaseAdmin

@@ -102,6 +102,7 @@ interface CustomerSupportMessageWorkflowArgs {
   origin?: string;
   origin_message_id?: string;
   channel_delivery?: boolean;
+  require_approval?: boolean;
 }
 
 interface AgentMessageWorkflowArgs {

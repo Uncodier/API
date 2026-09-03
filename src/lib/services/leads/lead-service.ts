@@ -282,6 +282,61 @@ export async function createTaskForLead(leadId: string, siteId?: string, userId?
  * @param params - Parámetros para la gestión del lead
  * @returns Objeto con información del lead gestionado
  */
+async function findLeadBySocialHandle(siteId: string, handle: string, network: string): Promise<string | null> {
+  try {
+    const networkKey = network === "x" ? "twitter" : network;
+    
+    // Create query parameters safely bound via the SDK methods where possible
+    const query = supabaseAdmin
+      .from('leads')
+      .select('id')
+      .eq('site_id', siteId)
+      .eq('origin', network)
+      
+    // Use proper escaping to avoid syntax errors with PostgREST
+    // This safely escapes double quotes in the handle if they exist
+    const safeHandle = handle.replace(/"/g, '\\"');
+    const filterStr = `custom_data->>social_handle.eq."${safeHandle}",social_networks->>${networkKey}.eq."${safeHandle}"`;
+    
+    const { data, error } = await query
+      .or(filterStr)
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      console.error('Error finding lead by social handle:', error);
+      return null;
+    }
+
+    return data?.id || null;
+  } catch (error) {
+    console.error('Error finding lead by social handle:', error);
+    return null;
+  }
+}
+
+async function mergeSocialHandleIfMissing(leadId: string, socialHandle: string, origin: string): Promise<void> {
+  const networkKey = origin === "x" ? "twitter" : origin;
+  const { data: currentLead } = await supabaseAdmin
+    .from('leads')
+    .select('social_networks')
+    .eq('id', leadId)
+    .single();
+
+  const currentNetworks = currentLead?.social_networks || {};
+  if (currentNetworks[networkKey]) return;
+
+  await supabaseAdmin
+    .from('leads')
+    .update({
+      social_networks: {
+        ...currentNetworks,
+        [networkKey]: socialHandle
+      }
+    })
+    .eq('id', leadId);
+}
+
 export async function manageLeadCreation({
   leadId,
   name,
@@ -290,7 +345,8 @@ export async function manageLeadCreation({
   siteId,
   visitorId,
   origin = 'chat',
-  createTask = false
+  createTask = false,
+  socialHandle
 }: {
   leadId?: string,
   name?: string,
@@ -299,7 +355,8 @@ export async function manageLeadCreation({
   siteId?: string,
   visitorId?: string,
   origin?: string,
-  createTask?: boolean
+  createTask?: boolean,
+  socialHandle?: string
 }): Promise<{
   leadId: string | null,
   isNewLead: boolean,
@@ -310,9 +367,18 @@ export async function manageLeadCreation({
     console.log(`👤 Usando lead_id existente: ${leadId}`);
     return { leadId, isNewLead: false, taskId: null };
   }
+
+  if (!leadId && socialHandle && siteId && origin) {
+    const socialLeadId = await findLeadBySocialHandle(siteId, socialHandle, origin);
+    if (socialLeadId) {
+      console.log(`✅ Lead existente encontrado por handle ${socialHandle} (${origin}): ${socialLeadId}`);
+      await mergeSocialHandleIfMissing(socialLeadId, socialHandle, origin);
+      return { leadId: socialLeadId, isNewLead: false, taskId: null };
+    }
+  }
   
   // Si no tenemos lead_id pero tenemos información para crear/buscar uno
-  if (!leadId && (name || email || phone)) {
+  if (!leadId && (name || email || phone || socialHandle)) {
     console.log(`🔍 Buscando o creando lead con: name=${name || 'N/A'}, email=${email || 'N/A'}, phone=${phone || 'N/A'}, site_id=${siteId || 'N/A'}`);
     
     // Primero intentar buscar un lead existente si tenemos email o phone
@@ -324,17 +390,37 @@ export async function manageLeadCreation({
     
     if (foundLeadId) {
       console.log(`✅ Lead existente encontrado con ID: ${foundLeadId}`);
-      return { leadId: foundLeadId, isNewLead: false, taskId: null };
-    } else if (name) {
-      // Si no se encuentra lead, crear uno nuevo
-      console.log(`🆕 No se encontró lead existente. Creando nuevo lead con nombre: ${name} para el sitio: ${siteId || 'sin sitio'}`);
       
-      // Verificar email y phone para diagnóstico
+      if (socialHandle && origin) {
+        await mergeSocialHandleIfMissing(foundLeadId, socialHandle, origin);
+      }
+      
+      return { leadId: foundLeadId, isNewLead: false, taskId: null };
+    } else if (name || socialHandle) {
+      const leadName = name || socialHandle || 'Social User';
+      console.log(`🆕 No se encontró lead existente. Creando nuevo lead con nombre: ${leadName} para el sitio: ${siteId || 'sin sitio'}`);
+      
       if (!email) console.log(`⚠️ Creando lead sin email`);
       if (!phone) console.log(`⚠️ Creando lead sin teléfono`);
       if (!siteId) console.log(`⚠️ Creando lead sin sitio asociado`);
       
-      const newLeadId = await createLead(name, email, phone, siteId, visitorId, origin);
+      const newLeadId = await createLead(leadName, email, phone, siteId, visitorId, origin);
+
+      if (newLeadId && socialHandle) {
+        const networkKey = origin === "x" ? "twitter" : origin;
+        await supabaseAdmin
+          .from('leads')
+          .update({
+            custom_data: {
+              social_handle: socialHandle,
+              social_network: origin,
+            },
+            social_networks: {
+              [networkKey]: socialHandle
+            }
+          })
+          .eq('id', newLeadId);
+      }
       
       if (newLeadId) {
         console.log(`✅ Nuevo lead creado exitosamente con ID: ${newLeadId}`);
