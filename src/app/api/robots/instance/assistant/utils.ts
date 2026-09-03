@@ -75,6 +75,7 @@ import { createSecretTool } from '@/app/api/agents/tools/createSecret/assistantP
 import { socialMediaAccountsTool } from '@/app/api/agents/tools/socialMediaAccounts/assistantProtocol';
 import { socialMediaPublishTool } from '@/app/api/agents/tools/socialMediaPublish/assistantProtocol';
 import { socialMediaPostsTool } from '@/app/api/agents/tools/socialMediaPosts/assistantProtocol';
+import { socialMediaAnalyticsTool } from '@/app/api/agents/tools/socialMediaAnalytics/assistantProtocol';
 import { audienceTool } from '@/app/api/agents/tools/audience/assistantProtocol';
 import { sendBulkMessagesTool } from '@/app/api/agents/tools/sendBulkMessages/assistantProtocol';
 import { publishTool } from '@/app/api/agents/tools/publish/assistantProtocol';
@@ -366,6 +367,7 @@ export const getAssistantTools = (
     socialMediaAccountsTool(siteId),
     socialMediaPublishTool(siteId),
     socialMediaPostsTool(siteId),
+    socialMediaAnalyticsTool(siteId),
     audienceTool(siteId, userId ?? '', instanceId),
     sendBulkMessagesTool(siteId),
     publishTool(siteId, userId ?? '', instanceId),

@@ -91,6 +91,7 @@ export const TOOL_CATEGORIES: Record<string, ToolCategory> = {
   social_media_accounts: 'social',
   social_media_publish: 'social',
   social_media_posts: 'social',
+  social_media_analytics: 'social',
   publish: 'social',
 
   // content / assets
