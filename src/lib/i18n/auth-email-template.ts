@@ -59,7 +59,7 @@ export function generateAuthEmailContent(input: AuthEmailTemplateInput): { subje
     const safeUserEmail = userEmail ? escapeHtml(userEmail) : '';
 
     const linkBlock = confirmUrl ? emailCtaButton(safeUrl, escapeHtml(cta)) : '';
-    const codeBlock = (token && input.channel === 'otp') ? emailCodeBlock(escapeHtml(authT(locale, 'auth.or_enter_code')), escapeHtml(token)) : '';
+    const codeBlock = (token && input.channel === 'otp') ? emailCodeBlock(escapeHtml(authT(locale, 'auth.otp.code_label')), escapeHtml(token)) : '';
 
     const html = `
 <!DOCTYPE html>
@@ -140,7 +140,7 @@ export function generateAuthEmailContent(input: AuthEmailTemplateInput): { subje
       `4. ${i4}`,
       '',
       confirmUrl ? `${cta}: ${confirmUrl}` : '',
-      token && input.channel === 'otp' ? `${authT(locale, 'auth.or_enter_code')} ${token}` : '',
+      token && input.channel === 'otp' ? `${authT(locale, 'auth.otp.code_label')} ${token}` : '',
       '',
       '🛡️ ' + securityNoticeTitle,
       securityNotice

@@ -9,6 +9,7 @@ export interface ZavuInvitation {
   status?: string;
   senderId?: string | null;
   connectedAccount?: unknown;
+  failureReason?: string | null;
 }
 
 export const ZAVU_SENDER_WEBHOOK_EVENTS = [

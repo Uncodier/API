@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { cancelInvitation, getInvitation } from "@/lib/services/zavu";
+import { cancelInvitation, getInvitation, handleInvitationStatusChanged } from "@/lib/services/zavu";
 
 export async function GET(
   _request: NextRequest,
@@ -12,6 +12,20 @@ export async function GET(
     }
 
     const invitation = await getInvitation(id);
+
+    if (invitation.status === "completed") {
+      try {
+        await handleInvitationStatusChanged({
+          invitationId: invitation.id,
+          currentStatus: invitation.status,
+          senderId: invitation.senderId,
+          connectedAccount: invitation.connectedAccount,
+        });
+      } catch (finalizeError) {
+        console.error("[Zavu] Error finalizing completed invitation:", finalizeError);
+      }
+    }
+
     return NextResponse.json({ success: true, invitation });
   } catch (error: any) {
     console.error("[Zavu] Error fetching invitation:", error);
