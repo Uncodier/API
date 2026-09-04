@@ -4,6 +4,7 @@ import {
   ensureSenderWebhook,
   ZAVU_PROJECT_WEBHOOK_EVENTS,
   ZAVU_SENDER_WEBHOOK_EVENTS,
+  sendChannelMessage
 } from "../client";
 
 function mockJson(status: number, body: unknown) {
@@ -116,4 +117,57 @@ describe("Zavu client webhook contract", () => {
     const body = JSON.parse((global.fetch as jest.Mock).mock.calls[1][1].body);
     expect(body.events).toEqual(ZAVU_PROJECT_WEBHOOK_EVENTS);
   });
+
+  describe("sendChannelMessage", () => {
+    it("sends text message correctly", async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce(
+        mockJson(200, { message: { id: "msg_123" } })
+      );
+
+      await sendChannelMessage({
+        to: "12345",
+        text: "Hello",
+        channel: "telegram"
+      });
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        "https://api.zavu.dev/v1/messages",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            to: "12345",
+            text: "Hello",
+            channel: "telegram"
+          })
+        })
+      );
+    });
+
+    it("sends media message correctly", async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce(
+        mockJson(200, { message: { id: "msg_124" } })
+      );
+
+      await sendChannelMessage({
+        to: "12345",
+        channel: "whatsapp",
+        messageType: "audio",
+        content: { mediaUrl: "https://audio.mp3" }
+      });
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        "https://api.zavu.dev/v1/messages",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            to: "12345",
+            channel: "whatsapp",
+            messageType: "audio",
+            content: { mediaUrl: "https://audio.mp3" }
+          })
+        })
+      );
+    });
+  });
+
 });

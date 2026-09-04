@@ -17,7 +17,8 @@ export async function POST(request: Request) {
     const result = await client.getUploadUrl(body.filename, body.content_type, tenantId || undefined);
     return NextResponse.json(result);
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    const status = error.status || 500;
+    return NextResponse.json({ error: error.message }, { status });
   }
 }
 
@@ -32,6 +33,7 @@ export async function GET(request: Request) {
     const result = await client.listMedia(limit, offset, tenantId || undefined);
     return NextResponse.json(result);
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    const status = error.status || 500;
+    return NextResponse.json({ error: error.message }, { status });
   }
 }

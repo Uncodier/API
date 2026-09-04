@@ -1,6 +1,7 @@
 import { ChannelSendService, sanitizeZavuRecipient } from '../ChannelSendService';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import * as zavuClient from '@/lib/services/zavu/client';
+import * as longReplyAudio from '../long-reply-audio';
 
 // Mock dependencias
 jest.mock('@/lib/database/supabase-client', () => ({
@@ -14,6 +15,10 @@ jest.mock('@/lib/database/supabase-client', () => ({
 
 jest.mock('@/lib/services/zavu/client', () => ({
   sendChannelMessage: jest.fn()
+}));
+
+jest.mock('../long-reply-audio', () => ({
+  tryPrepareLongReplyAudio: jest.fn().mockResolvedValue(null)
 }));
 
 describe('ChannelSendService', () => {
@@ -65,6 +70,48 @@ describe('ChannelSendService', () => {
       text: mockMessage,
       channel: 'telegram',
       senderId: mockSenderId,
+      subject: undefined
+    });
+  });
+
+  it('should successfully send a long message as audio if tryPrepareLongReplyAudio returns an audio URL', async () => {
+    (supabaseAdmin.single as jest.Mock).mockResolvedValue({
+      data: {
+        channels: {
+          connections: [
+            { type: 'telegram', zavu_sender_id: mockSenderId }
+          ]
+        }
+      },
+      error: null
+    });
+
+    (zavuClient.sendChannelMessage as jest.Mock).mockResolvedValue({
+      message: { id: 'msg_123' }
+    });
+
+    jest.spyOn(longReplyAudio, 'tryPrepareLongReplyAudio').mockResolvedValueOnce({
+      audioUrl: 'https://example.com/audio.mp3',
+      mimeType: 'audio/mpeg'
+    });
+
+    const result = await ChannelSendService.sendMessage({
+      site_id: mockSiteId,
+      channel: 'telegram',
+      to: mockTo,
+      message: 'a'.repeat(500)
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.messageId).toBe('msg_123');
+    
+    // Verify Zavu call with correct senderId and audio payload
+    expect(zavuClient.sendChannelMessage).toHaveBeenCalledWith({
+      to: mockTo,
+      channel: 'telegram',
+      senderId: mockSenderId,
+      messageType: 'audio',
+      content: { mediaUrl: 'https://example.com/audio.mp3', mimeType: 'audio/mpeg' },
       subject: undefined
     });
   });

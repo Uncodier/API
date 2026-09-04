@@ -8,6 +8,7 @@ import {
   UploadUrlResponse, 
   ConfirmUploadResponse 
 } from './types';
+import { mergeCommentResults, networksFromPost } from './comments';
 
 const BASE_URL = 'https://api.outstand.so/v1';
 
@@ -30,14 +31,15 @@ export class OutstandClient {
     
     if (!response.ok) {
       const errorBody = await response.json().catch(() => ({}));
-      // Si el error es una validación simple que regresa texto:
-      if (typeof errorBody === 'string') {
-        throw new Error(`Outstand API Error: ${response.status} ${response.statusText} - ${errorBody}`);
-      }
-      throw new Error(`Outstand API Error: ${response.status} ${response.statusText} - ${JSON.stringify(errorBody)}`);
+      const errorMessage = typeof errorBody === 'string' 
+        ? `Outstand API Error: ${response.status} ${response.statusText} - ${errorBody}`
+        : `Outstand API Error: ${response.status} ${response.statusText} - ${JSON.stringify(errorBody)}`;
+        
+      const error = new Error(errorMessage) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
     }
 
-    // Manejar casos donde la respuesta no es JSON o está vacía
     const text = await response.text();
     if (!text) return {} as T;
     
@@ -74,7 +76,10 @@ export class OutstandClient {
       headers['X-Tenant-ID'] = tenantId;
     }
 
-    return this.request(`/posts?${query.toString()}`, {
+    const qs = query.toString();
+    const endpoint = qs ? `/posts?${qs}` : '/posts';
+
+    return this.request(endpoint, {
       method: 'GET',
       headers,
     });
@@ -198,9 +203,36 @@ export class OutstandClient {
     });
   }
 
-  async getComments(postId: string, params: { network?: string; username?: string } = {}, tenantId?: string): Promise<any> { 
+  async getComments(postId: string, params: { network?: string; username?: string } = {}, tenantId?: string): Promise<any> {
+    const networks = params.network
+      ? [params.network]
+      : await this.resolvePostNetworks(postId, tenantId);
+
+    if (networks.length === 0) {
+      const error = new Error('Unable to resolve network for this post. Pass ?network=') as Error & { status?: number };
+      error.status = 400;
+      throw error;
+    }
+
+    const results = await Promise.all(
+      networks.map((network) => this.fetchComments(postId, { network, username: params.username }, tenantId))
+    );
+
+    return results.length === 1 ? results[0] : mergeCommentResults(results);
+  }
+
+  private async resolvePostNetworks(postId: string, tenantId?: string): Promise<string[]> {
+    const result = await this.getPost(postId, tenantId);
+    return networksFromPost(result?.post);
+  }
+
+  private async fetchComments(
+    postId: string,
+    params: { network: string; username?: string },
+    tenantId?: string
+  ): Promise<any> {
     const query = new URLSearchParams();
-    if (params.network) query.append('network', params.network);
+    query.append('network', params.network);
     if (params.username) query.append('username', params.username);
 
     const headers: Record<string, string> = {};

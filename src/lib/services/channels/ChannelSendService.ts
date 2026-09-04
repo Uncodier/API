@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { sendChannelMessage } from '@/lib/services/zavu/client';
 import { getOutstandClient } from '@/lib/integrations/outstand/client';
+import { tryPrepareLongReplyAudio } from './long-reply-audio';
 
 export interface SendChannelMessageParams {
   site_id: string;
@@ -119,13 +120,32 @@ export class ChannelSendService {
         throw new Error(`No sender configured for channel ${params.channel} on site ${params.site_id}`);
       }
 
-      const result = await sendChannelMessage({
-        to: params.to,
-        text: params.message,
+      // Check if we should send this long reply as audio
+      const audioReply = await tryPrepareLongReplyAudio({
+        siteId: params.site_id,
         channel: params.channel,
-        senderId: connection.zavu_sender_id,
-        subject: params.subject
+        text: params.message
       });
+
+      let result;
+      if (audioReply) {
+        result = await sendChannelMessage({
+          to: params.to,
+          channel: params.channel,
+          senderId: connection.zavu_sender_id,
+          messageType: 'audio',
+          content: { mediaUrl: audioReply.audioUrl, mimeType: audioReply.mimeType },
+          subject: params.subject
+        });
+      } else {
+        result = await sendChannelMessage({
+          to: params.to,
+          text: params.message,
+          channel: params.channel,
+          senderId: connection.zavu_sender_id,
+          subject: params.subject
+        });
+      }
 
       console.log(`[ChannelSendService] Message sent successfully. ID: ${result?.message?.id || 'unknown'}`);
 

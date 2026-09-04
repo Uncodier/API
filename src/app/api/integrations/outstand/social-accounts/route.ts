@@ -19,9 +19,10 @@ export async function GET(request: Request) {
     return NextResponse.json({ success: true, data: accounts, accounts });
   } catch (error: any) {
     console.error('[Outstand social-accounts] error:', error);
+    const status = error.status || 500;
     return NextResponse.json(
       { success: false, error: error instanceof Error ? error.message : 'Failed to list accounts' },
-      { status: 500 }
+      { status }
     );
   }
 }

@@ -5,6 +5,7 @@ import { attemptPhoneRescue } from '@/lib/utils/phone-normalizer';
 import { decryptToken } from '@/lib/utils/token-decryption';
 import { formatMarkdownForWhatsApp } from '@/lib/utils/whatsapp-formatter';
 import { sendTwilioWhatsAppMessage } from './twilio-whatsapp-transport';
+import { tryPrepareLongReplyAudio } from '@/lib/services/channels/long-reply-audio';
 
 export interface SendWhatsAppParams {
   phone_number: string;
@@ -173,13 +174,30 @@ export class WhatsAppSendService {
       } else {
         // Dentro de ventana de respuesta - enviar mensaje regular
         console.log('✅ [WhatsAppSendService] Dentro de ventana de respuesta, enviando mensaje regular...');
+        
+        // Verificar si es un mensaje largo que se debe enviar como audio
+        let finalMessage = formattedMessage;
+        let finalMediaUrls = params.media_urls;
+        
+        const audioReply = await tryPrepareLongReplyAudio({
+          siteId: site_id,
+          channel: 'whatsapp',
+          text: message,
+          existingMediaUrls: params.media_urls
+        });
+        
+        if (audioReply) {
+          finalMessage = ''; // Solo enviamos el audio sin texto, como indica el plan
+          finalMediaUrls = [audioReply.audioUrl];
+        }
+
         const regularResult = await sendTwilioWhatsAppMessage({
           phoneNumber: normalizedPhone,
-          message: formattedMessage,
+          message: finalMessage,
           accountSid: whatsappConfig.phoneNumberId,
           authToken: whatsappConfig.accessToken,
           fromNumber: whatsappConfig.fromNumber,
-          mediaUrls: params.media_urls,
+          mediaUrls: finalMediaUrls,
           messagingServiceSid: whatsappConfig.messagingServiceSid,
         });
         

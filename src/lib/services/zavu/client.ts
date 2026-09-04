@@ -288,13 +288,15 @@ export async function verifyEmailDomain(domainId: string): Promise<any> {
 // MESSAGING
 export async function sendChannelMessage(params: {
   to: string;
-  text: string;
+  text?: string;
   channel?: string;
   senderId?: string;
   subject?: string;
   htmlBody?: string;
+  messageType?: "text" | "image" | "video" | "audio" | "document";
+  content?: { mediaUrl: string; mimeType?: string };
 }): Promise<any> {
-  const { senderId, to, text, channel, subject, htmlBody } = params;
+  const { senderId, to, text, channel, subject, htmlBody, messageType, content } = params;
 
   return zavuFetch("/messages", {
     method: "POST",
@@ -303,10 +305,12 @@ export async function sendChannelMessage(params: {
     },
     body: JSON.stringify({
       to,
-      text,
+      ...(text !== undefined ? { text } : {}),
       ...(channel ? { channel } : {}),
       ...(subject ? { subject } : {}),
       ...(htmlBody ? { htmlBody } : {}),
+      ...(messageType ? { messageType } : {}),
+      ...(content ? { content } : {}),
     }),
   });
 }

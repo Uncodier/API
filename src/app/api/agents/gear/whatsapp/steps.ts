@@ -2,6 +2,7 @@
 
 import { WhatsAppSendService } from '@/lib/services/whatsapp/WhatsAppSendService';
 import { formatMarkdownForWhatsApp } from '@/lib/utils/whatsapp-formatter';
+import { tryPrepareLongReplyAudio } from '@/lib/services/channels/long-reply-audio';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { executeAssistant } from '@/lib/services/robot-instance/assistant-executor';
 import { createAccountTool, verifyAccountTool } from './tools';
@@ -344,8 +345,28 @@ export async function sendWhatsAppResponse(
 ) {
   'use step';
   
-  const formattedMessage = formatMarkdownForWhatsApp(message);
+  let formattedMessage = formatMarkdownForWhatsApp(message);
+  let finalMediaUrls = mediaUrls;
+  
+  const audioReply = await tryPrepareLongReplyAudio({
+    siteId,
+    channel: 'whatsapp',
+    text: message,
+    existingMediaUrls: mediaUrls
+  });
+  
+  if (audioReply) {
+    formattedMessage = ''; // Solo enviamos el audio sin texto, como indica el plan
+    finalMediaUrls = [audioReply.audioUrl];
+  }
+  
   const chunks = chunkMessage(formattedMessage, 1500);
+  
+  // if formattedMessage is empty (because of audio), chunkMessage might return an empty array if we don't pass anything, wait.
+  // chunkMessage for empty string will return []. We need to ensure at least 1 iteration if there are media URLs.
+  if (chunks.length === 0 && finalMediaUrls && finalMediaUrls.length > 0) {
+    chunks.push('');
+  }
   
   let allSuccess = true;
   
@@ -392,8 +413,8 @@ export async function sendWhatsAppResponse(
         formData.append('Body', chunk);
         
         // Add media URLs if present (only on the first chunk)
-        if (i === 0 && mediaUrls && mediaUrls.length > 0) {
-          const urlsToAttach = mediaUrls.slice(0, 10);
+        if (i === 0 && finalMediaUrls && finalMediaUrls.length > 0) {
+          const urlsToAttach = finalMediaUrls.slice(0, 10);
           urlsToAttach.forEach(url => {
             formData.append('MediaUrl', url);
           });
@@ -431,7 +452,7 @@ export async function sendWhatsAppResponse(
           message: chunk,
           site_id: siteId,
           responseWindowEnabled: true,
-          media_urls: i === 0 ? mediaUrls : undefined // Add media only to the first chunk
+          media_urls: i === 0 ? finalMediaUrls : undefined // Add media only to the first chunk
         });
 
         console.log(`[GearAgent] Chunk ${i + 1} sent successfully via platform WhatsAppSendService`);

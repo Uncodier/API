@@ -10,7 +10,8 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     const result = await client.getPost(params.id, tenantId || undefined);
     return NextResponse.json(result);
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    const status = error.status || 500;
+    return NextResponse.json({ error: error.message }, { status });
   }
 }
 
@@ -23,6 +24,7 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
     const result = await client.deletePost(params.id, tenantId || undefined);
     return NextResponse.json(result);
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    const status = error.status || 500;
+    return NextResponse.json({ error: error.message }, { status });
   }
 }
