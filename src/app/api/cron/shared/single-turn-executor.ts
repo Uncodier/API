@@ -148,6 +148,8 @@ export async function executeSingleTurnStep(params: {
       retryContext = `\n\n🚨 PREVIOUS ATTEMPT FAILED 🚨\nThe previous execution of this step failed with the following error:\n\n${step.error_message}\n\nYou MUST fix this error during this execution attempt. Pay close attention to this validation failure.`;
     }
 
+    const { loadConstraintSourceBlocks } = await import('@/lib/services/requirement-constraints-persist');
+    const constraintSources = requirementId ? await loadConstraintSourceBlocks(requirementId) : [];
     const systemPrompt = buildSingleTurnSystemPrompt({
       instanceId,
       siteId,
@@ -162,6 +164,7 @@ export async function executeSingleTurnStep(params: {
       memoriesContext,
       historyContext,
       retryContext,
+      constraintSources,
     });
 
     // 4. Fetch History
@@ -188,7 +191,7 @@ export async function executeSingleTurnStep(params: {
       cycle_baseline_at: cycleBaselineAt,
     });
     
-    const fullTools = getAssistantTools(siteId, userId, instanceId, sandboxTools);
+    const fullTools = withExecuteStepNoop(getAssistantTools(siteId, userId, instanceId, sandboxTools));
     
     const result = await executeAssistantStep(messages, { id: instanceId, site_id: siteId, user_id: userId, requirement_id: requirementId }, {
       instance_id: instanceId,
@@ -374,12 +377,13 @@ export async function executeSingleTurnStep(params: {
                    const errorMsg = gateRes.error || '';
                    const { deriveCategoriesFailed } = await import('@/app/api/cron/shared/step-iteration-signals');
                    const categories = gateRes.richSignals ? deriveCategoriesFailed(gateRes.richSignals as any) : [];
-                   const classified = classifyFailure(errorMsg, categories);
+                   const classified = classifyFailure(errorMsg, categories, {
+                     flow: requirementType,
+                     signals: gateRes.signals,
+                   });
                    
                    if (classified.failureClass === 'plumbing') {
-                     // Plumbing failure (e.g. tool crashed, sandbox lost, API schema mismatch)
-                     // Does NOT consume product attempt budget
-                     const toolName = classified.toolName || 'unknown';
+                     const toolName = classified.toolName || `gate:${requirementType || 'task'}`;
                      console.log(`[SingleTurn] Plumbing failure detected for tool ${toolName}, logging without attempt bump.`);
                      await recordToolFailure({
                        requirementId,
@@ -436,4 +440,27 @@ export async function executeSingleTurnStep(params: {
     const transient = isSandboxGoneError(e.message);
     return { ok: false, isDone: false, transient, error: e.message, effectiveSandboxId };
   }
+}
+
+/** Cron runner owns step status — execute_step from the model is a documented no-op. */
+function withExecuteStepNoop<T extends { name?: string; execute?: (args: Record<string, unknown>) => Promise<unknown> }>(
+  tools: T[],
+): T[] {
+  return tools.map((tool) => {
+    if (tool?.name !== 'instance_plan' || typeof tool.execute !== 'function') return tool;
+    const original = tool.execute.bind(tool);
+    return {
+      ...tool,
+      execute: async (args: Record<string, unknown>) => {
+        if (args?.action === 'execute_step') {
+          return {
+            success: true,
+            noop: true,
+            message: 'execute_step is owned by the cron runner; step status was not changed.',
+          };
+        }
+        return original(args);
+      },
+    };
+  });
 }

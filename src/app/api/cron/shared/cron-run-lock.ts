@@ -26,7 +26,7 @@
  *  - Cron routes (regular Next.js runtime) import these helpers directly.
  *  - Workflow modules (`'use workflow'`) must NOT call these directly — Supabase
  *    uses `fetch` which is not available in the workflow VM. Instead, call
- *    `releaseRunLockStep` / `extendRunLockStep` from `./cron-steps.ts`.
+ *    `releaseRunLockStep` / `extendRunLockStep` from `./cron-sandbox-lifecycle-steps.ts`.
  *
  * Columns and indexes come from
  * `src/scripts/add_requirements_cron_run_lock.sql`; run that migration before

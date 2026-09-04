@@ -166,6 +166,9 @@ export interface InstancePlanToolParams {
   step_id?: string;
   step_output?: string;
   step_status?: 'pending' | 'in_progress' | 'completed' | 'failed';
+  /** Alias when the model passes the step title instead of the UUID. */
+  step_title?: string;
+  step_order?: number;
 }
 
 export function instancePlanTool(site_id: string, instance_id: string, user_id?: string) {
@@ -183,7 +186,9 @@ export function instancePlanTool(site_id: string, instance_id: string, user_id?:
         },
         instance_id: { type: 'string', description: 'Instance UUID (required for create/list if not running in instance context)' },
         plan_id: { type: 'string', description: 'Plan UUID (required for update, and execute_step)' },
-        step_id: { type: 'string', description: 'Step UUID (required for execute_step)' },
+        step_id: { type: 'string', description: 'Step UUID (preferred). Title or order also resolve against the active plan.' },
+        step_title: { type: 'string', description: 'Fallback when step_id is unknown: match the step title on the active plan.' },
+        step_order: { type: 'number', description: 'Fallback: 1-based or stored step.order on the active plan.' },
         step_output: { type: 'string', description: 'Output of the executed step (required for execute_step)' },
         step_status: { type: 'string', enum: ['pending', 'in_progress', 'completed', 'failed'], description: 'Status of the executed step (required for execute_step)' },
         title: { type: 'string', description: 'Plan title' },
@@ -295,22 +300,42 @@ export function instancePlanTool(site_id: string, instance_id: string, user_id?:
       if (action === 'execute_step') {
         console.log('[InstancePlanTool] Executing step with plan_id:', params.plan_id, 'and step_id:', params.step_id);
         if (!params.plan_id) {
-          throw new Error('Missing required field for execute_step: plan_id');
-        }
-        if (!params.step_id) {
-          throw new Error('Missing required field for execute_step: step_id');
+          return {
+            success: false,
+            error: 'Missing plan_id for execute_step. Use the instance_plan_id from CONTEXT.',
+          };
         }
         if (!params.step_status) {
-          throw new Error('Missing required field for execute_step: step_status');
+          return {
+            success: false,
+            error: 'Missing step_status for execute_step (pending | in_progress | completed | failed).',
+          };
         }
 
         try {
+          const { resolveExecuteStepId } = await import('./resolve-execute-step');
+          const { data: planRow } = await supabaseAdmin
+            .from('instance_plans')
+            .select('steps')
+            .eq('id', params.plan_id)
+            .maybeSingle();
+          const resolved = resolveExecuteStepId({
+            step_id: params.step_id,
+            title: params.step_title || params.title,
+            order: params.step_order,
+            steps: (planRow?.steps as any[]) || [],
+          });
+          if (!resolved.stepId) {
+            return { success: false, error: resolved.error };
+          }
+          params.step_id = resolved.stepId;
+
           const body = {
             plan_id: params.plan_id,
             site_id: params.site_id || site_id,
             instance_id: params.instance_id || instance_id,
             steps: [{
-              id: params.step_id,
+              id: resolved.stepId,
               actual_output: params.step_output,
               status: params.step_status,
             }],

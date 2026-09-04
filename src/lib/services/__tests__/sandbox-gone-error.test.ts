@@ -23,4 +23,10 @@ describe('isSandboxGoneError', () => {
   it('returns false for normal git errors', () => {
     expect(isSandboxGoneError('fatal: refusing to merge unrelated histories')).toBe(false);
   });
+
+  it('detects SDK APIError-shaped objects and Retry-After copy', () => {
+    expect(isSandboxGoneError({ status: 410, message: 'Gone' })).toBe(true);
+    expect(isSandboxGoneError({ statusCode: 404, message: 'not found' })).toBe(true);
+    expect(isSandboxGoneError('APIError: sandbox unavailable (Retry-After: 2) 410')).toBe(true);
+  });
 });

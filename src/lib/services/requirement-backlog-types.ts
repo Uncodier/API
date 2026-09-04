@@ -48,6 +48,8 @@ export interface BacklogItem {
   kind: BacklogItemKind;
   phase_id: string;
   acceptance: string[];
+  /** MUST NOT / hard rules extracted from the spec (negative acceptance). */
+  constraints?: string[];
   touches?: string[];
   status: BacklogItemStatus;
   /** Number of product verification / judge failures. */

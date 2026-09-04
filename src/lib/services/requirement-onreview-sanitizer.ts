@@ -20,6 +20,15 @@ export interface SanitizationPlan {
   itemsToReopen: SanitizationItem[];
 }
 
+export function requirementStatusAfterSaneo(
+  items: Array<{ status?: string | null }>,
+): { status: 'in-progress' | 'on-review'; stage: 'in-progress' | 'needs_review' } {
+  const runnable = items.some((i) => i.status === 'pending' || i.status === 'in_progress');
+  return runnable
+    ? { status: 'in-progress', stage: 'in-progress' }
+    : { status: 'on-review', stage: 'needs_review' };
+}
+
 export interface SanitizationSummary {
   requirementsChecked: number;
   requirementsSanitized: number;
@@ -42,23 +51,35 @@ export function detectUnhealthyOnReview(req: any): SanitizationPlan {
 
   for (const item of req.backlog.items as BacklogItem[]) {
     const isCore = (item.tier ?? 'core') === 'core';
-    const hasToolFailures = item.tool_failures && Object.keys(item.tool_failures).length > 0;
+    const failureKeys = Object.keys(item.tool_failures || {});
+    const ignorableKeys = failureKeys.filter((k) =>
+      /^(unknown|instance_plan|execute_step)$/i.test(k),
+    );
+    const realToolFailures = failureKeys.filter((k) => !/^(unknown|instance_plan|execute_step)$/i.test(k));
+    const hasToolFailures = realToolFailures.length > 0;
     
-    // Check recent assumptions for plumbing and infra keywords
     const recentAssumptions = (item.assumptions || []).slice(-5).join(' ').toLowerCase();
     
     const hasInfraAssumption = recentAssumptions.includes('insufficient credits') ||
                                recentAssumptions.includes('sandbox vm crashed') ||
                                recentAssumptions.includes('vm has crashed') ||
-                               recentAssumptions.includes('http 422') ||
                                recentAssumptions.includes('410 gone');
 
-    const hasPlumbingAssumption = recentAssumptions.includes('[plumbing]') || 
-                                 recentAssumptions.includes('serialization') ||
-                                 recentAssumptions.includes('empty plan') ||
-                                 recentAssumptions.includes('reverting');
+    const hasSchemaNoise = recentAssumptions.includes('execute_step') ||
+      recentAssumptions.includes('missing required field') ||
+      ignorableKeys.length > 0;
 
-    const hasPlumbingSignal = hasToolFailures || hasPlumbingAssumption || hasInfraAssumption;
+    const hasPlumbingAssumption = !hasSchemaNoise && (
+      recentAssumptions.includes('[plumbing]') ||
+      recentAssumptions.includes('serialization') ||
+      recentAssumptions.includes('empty plan')
+    );
+
+    const productAdvancing = (item.touches || []).some((t) => /^docs\//.test(t)) ||
+      recentAssumptions.includes('[rotate]') ||
+      recentAssumptions.includes('docs/');
+
+    const hasPlumbingSignal = !productAdvancing && (hasToolFailures || hasPlumbingAssumption || hasInfraAssumption);
     
     // Count previous sanitizations
     const reopenCount = (item.assumptions || []).filter(a => a.includes('[auto-saneo]')).length;
@@ -145,14 +166,18 @@ export async function applyOnReviewSanitization(reqId: string, plan: Sanitizatio
       };
       itemsChanged++;
 
-      // Cancel any garbage plans connected to this item
-      try {
-        await cancelPlanStepsForBacklogItem({
-          itemId: item.id,
-          reason: `[auto-saneo] Cancelling plans for unhealthy item ${item.id} (transitioning to ${sanitization.targetStatus})`
-        });
-      } catch (e) {
-        console.warn(`[AutoSaneo] Failed to cancel plans for item ${item.id}`, e);
+      // Keep in_progress plans alive so finalize does not see "plan not completed"
+      // and the instance is not left pending with no active plan. Only cancel when
+      // we escalate to needs_review (human takeover).
+      if (sanitization.targetStatus === 'needs_review') {
+        try {
+          await cancelPlanStepsForBacklogItem({
+            itemId: item.id,
+            reason: `[auto-saneo] Cancelling plans for unhealthy item ${item.id} (transitioning to ${sanitization.targetStatus})`
+          });
+        } catch (e) {
+          console.warn(`[AutoSaneo] Failed to cancel plans for item ${item.id}`, e);
+        }
       }
     }
   }
@@ -170,8 +195,9 @@ export async function applyOnReviewSanitization(reqId: string, plan: Sanitizatio
 
     await writeBacklog(reqId, backlog);
 
+    const next = requirementStatusAfterSaneo(backlog.items);
     await supabaseAdmin.from('requirements').update({
-      status: 'in-progress',
+      status: next.status,
       metadata: updatedMetadata,
       updated_at: new Date().toISOString()
     }).eq('id', reqId);
@@ -182,14 +208,31 @@ export async function applyOnReviewSanitization(reqId: string, plan: Sanitizatio
         requirement_id: reqId,
         site_id: req.site_id || null,
         instance_id: req.metadata?.runner_instance_id || null,
-        stage: 'in-progress',
-        message: `[auto-saneo] Reverted requirement to in-progress. Sanitized ${itemsChanged} unhealthy items (fake-done or plumbing-stalled).`
+        stage: next.stage,
+        message: next.status === 'on-review'
+          ? `[auto-saneo] Escalated to on-review (needs_review). Sanitized ${itemsChanged} item(s); nothing left runnable.`
+          : `[auto-saneo] Reverted requirement to in-progress. Sanitized ${itemsChanged} unhealthy items (fake-done or plumbing-stalled).`
       });
     } catch (err) {
       console.error(`[AutoSaneo] Failed to record requirement_status for ${reqId}:`, err);
     }
 
     console.log(`[AutoSaneo] Successfully sanitized requirement ${reqId}, reopened ${itemsChanged} items.`);
+
+    const pendingItems = plan.itemsToReopen.filter((i) => i.targetStatus === 'pending');
+    if (pendingItems.length > 0) {
+      try {
+        const { ensureActivePlanAfterSaneo } = await import('@/lib/services/saneo-recovery-plan');
+        await ensureActivePlanAfterSaneo({
+          requirementId: reqId,
+          instanceId: req.metadata?.runner_instance_id,
+          siteId: req.site_id,
+          reopenedItemIds: pendingItems.map((i) => i.id),
+        });
+      } catch (e) {
+        console.warn('[AutoSaneo] Failed to ensure recovery plan:', e);
+      }
+    }
   }
 }
 

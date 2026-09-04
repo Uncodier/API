@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { Sandbox } from '@vercel/sandbox';
 import { deleteSnapshotQuiet } from '@/lib/services/sandbox-persisted-snapshot';
+import { getSandboxHandle } from '@/lib/services/sandbox-sdk';
 
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
@@ -67,48 +68,45 @@ export async function GET(request: Request) {
     console.log(`[SandboxHousekeeping] Fetched ${activeSandboxIds.size} active sandbox IDs and ${activeSnapshotIds.size} active snapshot IDs from DB.`);
     
     const thirtyMinutesAgo = Date.now() - 30 * 60 * 1000;
-    let until: number | undefined;
-    let sandboxPages = 0;
 
-    while (sandboxPages < 100) {
-      sandboxPages++;
-      let list: Awaited<ReturnType<typeof Sandbox.list>>;
+    const listed = await listHousekeepingSandboxes(credentials);
+    for (const sb of listed) {
+      const id = sb.id || sb.name;
+      if (!id) continue;
+      const isActive = activeSandboxIds.has(sb.id) || (sb.name ? activeSandboxIds.has(sb.name) : false);
+      if (isActive) continue;
+      const createdAt = sb.createdAt ? new Date(sb.createdAt).getTime() : 0;
+      if (createdAt && createdAt >= thirtyMinutesAgo) continue;
+      console.log(`[SandboxHousekeeping] Stopping orphaned sandbox ${id} (created ${createdAt ? new Date(createdAt).toISOString() : 'unknown'})`);
       try {
-        list = await Sandbox.list({ ...credentials, ...(until ? { until } : {}) });
-      } catch (e: unknown) {
-        console.error('[SandboxHousekeeping] Failed to list sandboxes:', e);
-        break;
+        const sandboxInstance = await getSandboxHandle(id);
+        await Promise.race([
+          sandboxInstance.stop({ blocking: false }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+        ]);
+        results.sandboxesStopped++;
+      } catch (stopErr: unknown) {
+        console.warn(`[SandboxHousekeeping] Failed to stop sandbox ${id}:`, stopErr instanceof Error ? stopErr.message : stopErr);
+        results.sandboxErrors++;
       }
-
-      const sandboxesArray = list.json?.sandboxes ?? [];
-      for (const sb of sandboxesArray) {
-        if (!activeSandboxIds.has(sb.id)) {
-          const createdAt = sb.createdAt ? new Date(sb.createdAt).getTime() : 0;
-          if (createdAt < thirtyMinutesAgo) {
-            console.log(`[SandboxHousekeeping] Stopping orphaned sandbox ${sb.id} (created ${new Date(createdAt).toISOString()})`);
-            try {
-              const sandboxInstance = await Sandbox.get({ sandboxId: sb.id, ...credentials });
-              await Promise.race([
-                sandboxInstance.stop({ blocking: false }),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
-              ]);
-              results.sandboxesStopped++;
-            } catch (stopErr: unknown) {
-              console.warn(`[SandboxHousekeeping] Failed to stop sandbox ${sb.id}:`, stopErr instanceof Error ? stopErr.message : stopErr);
-              results.sandboxErrors++;
-            }
-          }
-        }
-      }
-
-      const next = list.json?.pagination?.next;
-      if (!next || sandboxesArray.length === 0) break;
-      until = next;
     }
 
-    // 3. Clean up orphaned snapshots
-    // Since Sandbox.listSnapshots() doesn't exist in the SDK, we use the Vercel API directly
+    // 3. Clean up orphaned snapshots (SDK Snapshot.list when present, else REST)
     const twentyFourHoursAgo = Date.now() - 24 * 60 * 60 * 1000;
+    const sdkSnaps = await listSnapshotsViaSdk(credentials);
+    if (sdkSnaps.length) {
+      for (const snap of sdkSnaps) {
+        if (!snap.id || activeSnapshotIds.has(snap.id)) continue;
+        const createdAt = snap.createdAt ? new Date(snap.createdAt).getTime() : 0;
+        if (createdAt && createdAt >= twentyFourHoursAgo) continue;
+        try {
+          await deleteSnapshotQuiet(snap.id);
+          results.snapshotsDeleted++;
+        } catch {
+          results.snapshotErrors++;
+        }
+      }
+    } else {
     
     try {
       let next: string | undefined = undefined;
@@ -167,11 +165,84 @@ export async function GET(request: Request) {
     } catch (e: unknown) {
       console.error('[SandboxHousekeeping] Error processing snapshots:', e);
     }
+    }
 
     console.log('[SandboxHousekeeping] Cleanup complete.', results);
     return NextResponse.json({ success: true, results });
   } catch (error: any) {
     console.error('[SandboxHousekeeping] Unhandled error:', error);
     return new NextResponse(`Internal Error: ${error.message}`, { status: 500 });
+  }
+}
+
+type ListedSandbox = { id: string; name?: string; createdAt?: string | number };
+
+async function listHousekeepingSandboxes(
+  credentials: { token: string; projectId: string; teamId: string },
+): Promise<ListedSandbox[]> {
+  const out: ListedSandbox[] = [];
+  const listFn = Sandbox.list.bind(Sandbox) as (opts: Record<string, unknown>) => Promise<unknown>;
+
+  let tagged: ListedSandbox[] = [];
+  try {
+    const taggedList = await listFn({ ...credentials, tags: { kind: 'requirement' } });
+    tagged = collectListedSandboxes(taggedList);
+  } catch {
+    /* v1 list does not accept tags */
+  }
+
+  let until: number | undefined;
+  for (let page = 0; page < 100; page++) {
+    let list: unknown;
+    try {
+      list = await listFn({ ...credentials, ...(until ? { until } : {}) });
+    } catch (e: unknown) {
+      console.error('[SandboxHousekeeping] Failed to list sandboxes:', e);
+      break;
+    }
+    const pageItems = collectListedSandboxes(list);
+    out.push(...pageItems);
+    const next = paginationNext(list);
+    if (!next || pageItems.length === 0) break;
+    until = next;
+  }
+
+  const seen = new Map<string, ListedSandbox>();
+  for (const row of out) seen.set(row.id, row);
+  for (const row of tagged) {
+    if (!seen.has(row.id)) seen.set(row.id, row);
+  }
+  return Array.from(seen.values());
+}
+
+function collectListedSandboxes(list: unknown): ListedSandbox[] {
+  if (!list) return [];
+  const rec = list as {
+    json?: { sandboxes?: Array<{ id?: string; name?: string; createdAt?: string | number }> };
+    sandboxes?: Array<{ id?: string; name?: string; createdAt?: string | number }>;
+  };
+  const rows = rec.json?.sandboxes ?? rec.sandboxes ?? [];
+  return rows
+    .filter((sb): sb is { id: string; name?: string; createdAt?: string | number } => !!sb.id)
+    .map((sb) => ({ id: sb.id, name: sb.name, createdAt: sb.createdAt }));
+}
+
+function paginationNext(list: unknown): number | undefined {
+  const rec = list as { json?: { pagination?: { next?: number } }; pagination?: { next?: number } };
+  return rec.json?.pagination?.next ?? rec.pagination?.next;
+}
+
+async function listSnapshotsViaSdk(
+  credentials: { token: string; projectId: string; teamId: string },
+): Promise<Array<{ id: string; createdAt?: string }>> {
+  const snapApi = (Sandbox as unknown as {
+    listSnapshots?: (opts: Record<string, unknown>) => Promise<{ snapshots?: Array<{ id?: string; createdAt?: string }> }>;
+  }).listSnapshots;
+  if (typeof snapApi !== 'function') return [];
+  try {
+    const res = await snapApi({ ...credentials });
+    return (res.snapshots || []).filter((s): s is { id: string; createdAt?: string } => !!s.id);
+  } catch {
+    return [];
   }
 }

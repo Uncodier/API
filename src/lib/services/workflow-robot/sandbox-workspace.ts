@@ -1,4 +1,6 @@
 import { Sandbox } from '@vercel/sandbox';
+import { getSandboxHandle, sandboxIdentity } from '@/lib/services/sandbox-sdk';
+import { buildSandboxCreateParams } from '@/lib/services/sandbox-create-params';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { getSandboxTools } from '@/app/api/agents/tools/sandbox/assistantProtocol';
 
@@ -28,7 +30,7 @@ export async function ensureWorkflowSandbox(params: {
   const storedId = (template?.metadata as { active_sandbox_id?: string } | null)?.active_sandbox_id;
   if (storedId) {
     try {
-      const sandbox = await Sandbox.get({ sandboxId: storedId });
+      const sandbox = await getSandboxHandle(storedId);
       return {
         sandbox,
         sandboxId: storedId,
@@ -41,16 +43,17 @@ export async function ensureWorkflowSandbox(params: {
     }
   }
 
-  const sandbox = await Sandbox.create({
-    runtime: 'node24',
-    timeout: 7 * 60 * 1000,
-    resources: { vcpus: Number(process.env.SANDBOX_VCPUS) || 1 },
-  } as any);
+  const sandbox = await Sandbox.create(buildSandboxCreateParams({
+    name: `wf-${String(params.templatePlanId).replace(/[^a-f0-9-]/gi, '').slice(0, 8)}`,
+    exposePreviewPort: false,
+    persistent: true,
+    tags: { kind: 'workflow-robot' },
+  }) as Record<string, unknown>);
 
-  await persistTemplateSandboxId(params.templatePlanId, sandbox.sandboxId);
+  await persistTemplateSandboxId(params.templatePlanId, sandboxIdentity(sandbox));
   return {
     sandbox,
-    sandboxId: sandbox.sandboxId,
+    sandboxId: sandboxIdentity(sandbox),
     tools: getSandboxTools(sandbox, params.templatePlanId, {} as any),
   };
 }
@@ -58,7 +61,7 @@ export async function ensureWorkflowSandbox(params: {
 export async function stopWorkflowSandbox(sandboxId: string | null | undefined): Promise<void> {
   if (!sandboxId) return;
   try {
-    const sandbox = await Sandbox.get({ sandboxId });
+    const sandbox = await getSandboxHandle(sandboxId);
     await sandbox.stop();
   } catch (e) {
     console.warn('[WorkflowSandbox] stop skipped:', e instanceof Error ? e.message : e);

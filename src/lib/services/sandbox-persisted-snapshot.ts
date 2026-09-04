@@ -12,13 +12,16 @@ import { persistedSnapshotMatchesBinding } from '@/lib/services/sandbox-persiste
 import type { SandboxResult } from '@/lib/services/sandbox-service';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import { persistActiveSandboxId } from '@/lib/tools/requirement-status-core';
+import { SANDBOX_EXTEND_AFTER_CREATE_MS, requirementSandboxName } from '@/lib/services/sandbox-constants';
+import { sandboxIdentity } from '@/lib/services/sandbox-sdk';
+import { stopSandboxQuiet } from '@/lib/services/sandbox-stop';
+import { ensureNpmDeps } from '@/lib/services/sandbox-npm';
+import { fetchOriginBranch, installGitIdentity } from '@/lib/services/sandbox-git-identity';
+import { buildSandboxCreateParams, requirementSandboxTags } from '@/lib/services/sandbox-create-params';
 
 export { persistedSnapshotMatchesBinding } from '@/lib/services/sandbox-persisted-snapshot-policy';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-const SANDBOX_CREATE_TIMEOUT_MS = 7 * 60 * 1000;
-const EXTEND_AFTER_CREATE_MS = 4 * 60 * 1000;
 
 export type PersistedSnapshotRow = {
   snapshot_id: string;
@@ -66,53 +69,6 @@ export async function fetchLatestRequirementSnapshotRow(
   return { snapshot_id: anyRow.snapshot_id.trim(), repo_url: anyRow.repo_url ?? null };
 }
 
-async function installGitIdentity(sandbox: Sandbox, authRepoUrl: string): Promise<void> {
-  const workDir = SandboxService.WORK_DIR;
-  await sandbox.runCommand({
-    cmd: 'git',
-    args: ['config', '--global', 'user.name', process.env.GIT_AUTHOR_NAME || 'Assistant Runner'],
-  });
-  await sandbox.runCommand({
-    cmd: 'git',
-    args: ['config', '--global', 'user.email', process.env.GIT_AUTHOR_EMAIL || 'assistant@makinari.com'],
-  });
-  const setRemote = await sandbox.runCommand({
-    cmd: 'git',
-    args: ['remote', 'set-url', 'origin', authRepoUrl],
-    cwd: workDir,
-  });
-  if (setRemote.exitCode !== 0) {
-    const addRemote = await sandbox.runCommand({
-      cmd: 'git',
-      args: ['remote', 'add', 'origin', authRepoUrl],
-      cwd: workDir,
-    });
-    if (addRemote.exitCode !== 0) {
-      throw new Error(`Failed to configure git remote after snapshot: ${await addRemote.stderr()}`);
-    }
-  }
-}
-
-async function stopSandboxQuiet(sandbox: Sandbox): Promise<void> {
-  let delayMs = 1000;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      await Promise.race([
-        sandbox.stop({ blocking: false }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000))
-      ]);
-      return;
-    } catch (e: unknown) {
-      if (attempt < 2) {
-        console.warn(`[Sandbox] 🧹 CLEANUP: stopSandboxQuiet attempt ${attempt + 1} failed for ${sandbox.sandboxId}. Retrying in ${delayMs}ms...`);
-        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
-        delayMs *= 2;
-      } else {
-        console.error(`[Sandbox] 🚨 ZOMBIE ALERT: Failed to stop sandbox ${sandbox.sandboxId} after 3 attempts. It may be orphaned.`);
-      }
-    }
-  }
-}
 
 /**
  * Fetches all previous snapshots for a requirement/instance so we can clean them up.
@@ -214,16 +170,15 @@ export async function tryStartFromPersistedSnapshot(params: {
 
   let sandbox: Sandbox;
   try {
-    sandbox = await Sandbox.create({
-      runtime: 'node24',
-      timeout: SANDBOX_CREATE_TIMEOUT_MS,
-      ports: [SandboxService.VISUAL_PROBE_PORT],
-      resources: { vcpus: Number(process.env.SANDBOX_VCPUS) || 1 },
-      source: { type: 'snapshot', snapshotId: row.snapshot_id },
-    } as any); // We cast to any because the type definition for snapshot doesn't allow runtime or other fields
+    sandbox = await Sandbox.create(buildSandboxCreateParams({
+      name: requirementSandboxName(requirementId, auditCtx?.instanceId),
+      snapshotId: row.snapshot_id,
+      tags: requirementSandboxTags(requirementId, auditCtx?.instanceId),
+      coldCreate: false,
+    }) as any);
     
     if (auditCtx?.instanceId) {
-      await persistActiveSandboxId(requirementId, auditCtx.instanceId, sandbox.sandboxId, auditCtx.siteId)
+      await persistActiveSandboxId(requirementId, auditCtx.instanceId, sandboxIdentity(sandbox), auditCtx.siteId)
         .catch(e => console.error('[Sandbox] Failed to persist active_sandbox_id from snapshot:', e));
     }
   } catch (e: unknown) {
@@ -236,7 +191,7 @@ export async function tryStartFromPersistedSnapshot(params: {
 
   try {
     try {
-      await sandbox.extendTimeout(EXTEND_AFTER_CREATE_MS);
+      await sandbox.extendTimeout(SANDBOX_EXTEND_AFTER_CREATE_MS);
     } catch {
       /* may be at limit */
     }
@@ -255,14 +210,14 @@ export async function tryStartFromPersistedSnapshot(params: {
     await installGitIdentity(sandbox, authRepoUrl);
 
     const workDir = SandboxService.WORK_DIR;
-    const fetchRes = await SandboxService.runCommandInSandbox(sandbox, 'git', ['fetch', '--all'], workDir);
+    const fromUrl = row.repo_url ? SandboxService.extractBranchFromRepoUrl(row.repo_url) : null;
+    const fetchRes = await fetchOriginBranch(sandbox, fromUrl, workDir);
     if (fetchRes.exitCode !== 0) {
       throw new Error(`fetch after snapshot VM failed: ${fetchRes.stderr}`);
     }
 
     const knownBranches = await SandboxService.getKnownBranches(requirementId);
     const candidates: string[] = [];
-    const fromUrl = row.repo_url ? SandboxService.extractBranchFromRepoUrl(row.repo_url) : null;
     if (fromUrl && branchBelongsToRequirement(fromUrl, requirementId)) {
       candidates.push(fromUrl);
     }
@@ -298,11 +253,7 @@ export async function tryStartFromPersistedSnapshot(params: {
         }
       }
       await SandboxService.syncTrackedBranchToRemoteTip(sandbox, branch);
-      await sandbox.runCommand({
-        cmd: 'npm',
-        args: ['install', '--prefer-offline', '--no-audit', '--no-fund'],
-        cwd: workDir,
-      });
+      await ensureNpmDeps(sandbox, workDir, { preferOffline: true });
       await assertPlatformGitLayout(sandbox);
       await logCronInfrastructureEvent(auditCtx, {
         event: CronInfraEvent.GIT_WORKSPACE_READY,
@@ -392,24 +343,23 @@ export async function snapshotAfterSuccessfulPushAndRecreate(params: {
       ),
     );
 
-    next = await Sandbox.create({
-      runtime: 'node24',
-      timeout: SANDBOX_CREATE_TIMEOUT_MS,
-      ports: [SandboxService.VISUAL_PROBE_PORT],
-      resources: { vcpus: Number(process.env.SANDBOX_VCPUS) || 1 },
-      source: { type: 'snapshot', snapshotId },
-    } as any);
+    next = await Sandbox.create(buildSandboxCreateParams({
+      name: requirementSandboxName(requirementId, auditCtx?.instanceId),
+      snapshotId,
+      tags: requirementSandboxTags(requirementId, auditCtx?.instanceId),
+      coldCreate: false,
+    }) as any);
     
     // Inmediatamente después de crear el nuevo, intentamos detener el viejo
     // sin importar si el resto del setup del nuevo falla o tiene éxito.
     // Esto previene que el viejo quede huérfano si el setup del nuevo lanza una excepción.
-    if (params.sandbox.sandboxId !== next.sandboxId) {
-      console.warn(`[Sandbox] 🧹 CLEANUP: Stopping old sandbox ${params.sandbox.sandboxId} after successful recreate into ${next.sandboxId}`);
+    if (sandboxIdentity(params.sandbox) !== sandboxIdentity(next)) {
+      console.warn(`[Sandbox] 🧹 CLEANUP: Stopping old sandbox ${sandboxIdentity(params.sandbox)} after successful recreate into ${sandboxIdentity(next)}`);
       
       if (auditCtx?.instanceId) {
         // Update the DB to point to the new sandbox immediately
-        await persistActiveSandboxId(requirementId, auditCtx.instanceId, next.sandboxId, auditCtx.siteId)
-          .catch(e => console.error(`[Sandbox] Failed to update active_sandbox_id to ${next!.sandboxId}:`, e));
+        await persistActiveSandboxId(requirementId, auditCtx.instanceId, sandboxIdentity(next), auditCtx.siteId)
+          .catch(e => console.error(`[Sandbox] Failed to update active_sandbox_id to ${sandboxIdentity(next)}:`, e));
       }
 
       // Detenemos el sandbox de forma determinística (con timeout) en lugar de
@@ -418,7 +368,7 @@ export async function snapshotAfterSuccessfulPushAndRecreate(params: {
       try {
         await stopSandboxQuiet(params.sandbox);
       } catch (e) {
-        console.error(`[Sandbox] 🚨 ZOMBIE ALERT: Background stop for ${params.sandbox.sandboxId} failed:`, e);
+        console.error(`[Sandbox] 🚨 ZOMBIE ALERT: Background stop for ${sandboxIdentity(params.sandbox)} failed:`, e);
       }
       
       // Fire-and-forget snapshot cleanup. We do NOT await: awaiting tied us to
@@ -437,7 +387,7 @@ export async function snapshotAfterSuccessfulPushAndRecreate(params: {
     }
 
     try {
-      await next.extendTimeout(EXTEND_AFTER_CREATE_MS);
+      await next.extendTimeout(SANDBOX_EXTEND_AFTER_CREATE_MS);
     } catch {
       /* ignore */
     }
@@ -449,7 +399,7 @@ export async function snapshotAfterSuccessfulPushAndRecreate(params: {
     
     await installGitIdentity(next, authRepoUrl);
     const workDir = SandboxService.WORK_DIR;
-    const fetchRes = await SandboxService.runCommandInSandbox(next, 'git', ['fetch', '--all'], workDir);
+    const fetchRes = await fetchOriginBranch(next, branch, workDir);
     if (fetchRes.exitCode !== 0) {
       throw new Error(`fetch after snapshot recreate failed: ${fetchRes.stderr}`);
     }
@@ -473,11 +423,7 @@ export async function snapshotAfterSuccessfulPushAndRecreate(params: {
     } else {
       console.log(`[Sandbox] Skipping git checkout/sync because this is a push recovery snapshot.`);
     }
-    await next.runCommand({
-      cmd: 'npm',
-      args: ['install', '--prefer-offline', '--no-audit', '--no-fund'],
-      cwd: workDir,
-    });
+    await ensureNpmDeps(next, workDir, { preferOffline: true });
     await assertPlatformGitLayout(next);
     return { sandbox: next, snapshotId };
   } catch (e: unknown) {

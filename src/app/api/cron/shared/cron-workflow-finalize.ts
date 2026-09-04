@@ -5,7 +5,8 @@
  */
 
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { Sandbox } from '@vercel/sandbox';
+import { getSandboxHandle } from '@/lib/services/sandbox-sdk';
+import { deleteRequirementSandboxes, shouldTakeManualEndOfWorkflowSnapshot } from '@/lib/services/sandbox-lifecycle';
 // NOTE: Import from `@/lib/tools/...` (not the sibling route folder) so the
 // Vercel Workflow bundler doesn't co-bundle `requirement_status/route.ts`
 // (which imports `next/server` and crashes with `__dirname is not defined`).
@@ -152,6 +153,8 @@ export async function createFinalStatusStep(params: {
   sourceCodeUrl?: string;
   didPush: boolean;
   planCompleted?: boolean;
+  /** When set, preview/smoke are not required to mark the cycle complete. */
+  flowKind?: string;
   repoOk?: boolean;
   previewOk?: boolean;
   smokeError?: string;
@@ -168,6 +171,7 @@ export async function createFinalStatusStep(params: {
     sourceCodeUrl,
     didPush,
     planCompleted,
+    flowKind,
     repoOk,
     previewOk,
     smokeError,
@@ -212,7 +216,7 @@ export async function createFinalStatusStep(params: {
   const BLOCKED_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
   const existingFreshMs = Date.parse(row?.updated_at || row?.created_at || '');
   const existingIsFreshBlocked =
-    row?.stage === 'blocked' &&
+    (row?.stage === 'blocked' || row?.stage === 'needs_review') &&
     Number.isFinite(existingFreshMs) &&
     Date.now() - existingFreshMs < BLOCKED_WINDOW_MS;
 
@@ -230,7 +234,7 @@ export async function createFinalStatusStep(params: {
         existing_message: row!.message ?? null,
       },
     });
-    return { effectiveStatus: 'blocked' };
+    return { effectiveStatus: row!.stage === 'needs_review' ? 'on-review' : 'blocked' };
   }
   const incomingPreview = previewUrl?.trim() || '';
   const incomingSource = sourceCodeUrl?.trim() || '';
@@ -248,21 +252,37 @@ export async function createFinalStatusStep(params: {
   }
 
   const hasSourceArchive = !!mergedSourceCode;
+  const lightFlow = flowKind === 'doc' || flowKind === 'task' || flowKind === 'makinari' || flowKind === 'contract' || flowKind === 'presentation';
+  let planCounts = !!planCompleted;
+  if (!planCounts && instanceId) {
+    const { data: latestPlan } = await supabaseAdmin
+      .from('instance_plans')
+      .select('status, metadata, updated_at')
+      .eq('instance_id', instanceId)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const cancelledBySaneo = latestPlan?.status === 'cancelled' &&
+      JSON.stringify(latestPlan.metadata || {}).includes('auto-saneo');
+    if (cancelledBySaneo) {
+      planCounts = true;
+    }
+  }
+
   let isComplete =
-    !!planCompleted &&
+    planCounts &&
     didPush &&
-    !!mergedPreviewUrl &&
-    effectivePreviewOk &&
+    (lightFlow || (!!mergedPreviewUrl && effectivePreviewOk)) &&
     !!repoOk &&
-    smokeOk &&
+    (lightFlow || smokeOk) &&
     !postFinallyBuildError &&
     hasSourceArchive;
 
   const missingParts: string[] = [];
-  if (!planCompleted) missingParts.push('plan not completed');
+  if (!planCounts) missingParts.push('plan not completed');
   if (!didPush) missingParts.push('no push this cycle');
-  if (!mergedPreviewUrl) missingParts.push('no preview_url');
-  if (mergedPreviewUrl && !effectivePreviewOk) missingParts.push('preview_url returns error/404');
+  if (!lightFlow && !mergedPreviewUrl) missingParts.push('no preview_url');
+  if (!lightFlow && mergedPreviewUrl && !effectivePreviewOk) missingParts.push('preview_url returns error/404');
   if (repoUrl && !repoOk) missingParts.push('repo_url returns error/404');
   if (!hasSourceArchive) missingParts.push('no source_code archive in storage');
   if (smokeError) missingParts.push(`smoke test: ${smokeError}`);
@@ -301,10 +321,12 @@ export async function createFinalStatusStep(params: {
   const mergedRepoUrl = didPush ? (repoUrl || null) : row?.repo_url ?? null;
 
   let newSnapshotId: string | undefined;
-  if (!isComplete && params.sandboxId) {
+  if (isComplete && (params.sandboxId || reqId)) {
+    await deleteRequirementSandboxes(reqId, instanceId, [params.sandboxId]);
+  } else if (!isComplete && params.sandboxId && shouldTakeManualEndOfWorkflowSnapshot()) {
     try {
-      const liveSandbox = await Sandbox.get({ sandboxId: params.sandboxId });
-      // Keep it alive for max 48h until the next cron run resumes it.
+      const liveSandbox = await getSandboxHandle(params.sandboxId);
+      // v1 only: keep a 48h snapshot until the next cron. v3 stop() snapshots.
       const snap = await liveSandbox.snapshot({ expiration: 48 * 60 * 60 * 1000 });
       newSnapshotId = snap.snapshotId;
       console.log(`[CronStep] Took single end-of-workflow snapshot: ${newSnapshotId}`);

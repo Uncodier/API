@@ -1,6 +1,7 @@
 'use step';
 
-import { Sandbox } from '@vercel/sandbox';
+import type { Sandbox } from '@vercel/sandbox';
+import { getSandboxHandle } from '@/lib/services/sandbox-sdk';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import { ensurePlatformKeyForRequirement } from '@/lib/services/platform-api/ensure-platform-key';
 import { ensureTenant, type AppsAuthProvider } from '@/lib/services/apps-platform/tenant-provisioner';
@@ -117,7 +118,7 @@ export async function provisionPlatformKeyStep(
   let sandboxForProbe: Sandbox | undefined;
   let needsFreshKey = false;
   try {
-    sandboxForProbe = await Sandbox.get({ sandboxId });
+    sandboxForProbe = await getSandboxHandle(sandboxId);
     needsFreshKey = !(await sandboxHasApiKeyEnv(sandboxForProbe, SandboxService.WORK_DIR));
   } catch (e: unknown) {
     console.warn(
@@ -198,7 +199,7 @@ export async function provisionPlatformKeyStep(
 
   if (Object.keys(sandboxEnvBag).length > 0) {
     try {
-      const sandbox = sandboxForProbe ?? (await Sandbox.get({ sandboxId }));
+      const sandbox = sandboxForProbe ?? (await getSandboxHandle(sandboxId));
       await mergeDotEnvLocal(sandbox, SandboxService.WORK_DIR, sandboxEnvBag);
     } catch (e: unknown) {
       console.warn(

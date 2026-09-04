@@ -13,7 +13,8 @@
  * `supabase-client`, etc.
  */
 
-import { Sandbox } from '@vercel/sandbox';
+import type { Sandbox } from '@vercel/sandbox';
+import { getSandboxHandle } from '@/lib/services/sandbox-sdk';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import {
@@ -55,7 +56,7 @@ export async function bootstrapRequirementSpecStep(params: {
 
   let sandbox: Sandbox;
   try {
-    sandbox = await Sandbox.get({ sandboxId });
+    sandbox = await getSandboxHandle(sandboxId);
   } catch (e: unknown) {
     console.warn(
       `[BootstrapSpec] Sandbox ${sandboxId} unavailable (${e instanceof Error ? e.message : e}); skipping.`,
@@ -73,6 +74,13 @@ export async function bootstrapRequirementSpecStep(params: {
   });
   const existsOut = (await existsRes.stdout()).toString().trim();
   if (existsOut === 'EXISTS') {
+    const { data: existingReq } = await supabaseAdmin
+      .from('requirements')
+      .select('instructions, title')
+      .eq('id', requirementId)
+      .maybeSingle();
+    const { persistExtractedConstraints } = await import('@/lib/services/requirement-constraints-persist');
+    await persistExtractedConstraints(requirementId, existingReq?.instructions, existingReq?.title);
     return { wrote: false, reason: 'spec already present', effectiveSandboxId };
   }
 
@@ -95,11 +103,15 @@ export async function bootstrapRequirementSpecStep(params: {
     (req.instructions ?? '').toString().trim() ||
     '(no instructions provided — derive scope from title)';
 
+  const { persistExtractedConstraints } = await import('@/lib/services/requirement-constraints-persist');
+  const constraintLines = await persistExtractedConstraints(requirementId, instructions, title);
+
   const body = renderBootstrapSpec({
     title,
     kind,
     requirementId,
     instructions,
+    constraints: constraintLines,
   });
 
   const b64 = Buffer.from(body, 'utf8').toString('base64');
@@ -143,8 +155,9 @@ function renderBootstrapSpec(params: {
   kind: string;
   requirementId: string;
   instructions: string;
+  constraints?: string[];
 }): string {
-  const { title, kind, requirementId, instructions } = params;
+  const { title, kind, requirementId, instructions, constraints } = params;
   const ts = new Date().toISOString();
   return [
     `# ${title}`,
@@ -166,6 +179,11 @@ function renderBootstrapSpec(params: {
     '',
     '## 4. Non-goals',
     '_To be refined by the coordinator in the FIRST cycle. List explicitly excluded scope to prevent drift._',
+    '',
+    '## Constraints',
+    ...(constraints && constraints.length
+      ? constraints.map((c) => `- ${c}`)
+      : ['_None extracted from instructions. Add MUST NOT rules here._']),
     '',
     '## 5. Guidelines',
     '- Next.js App Router under `src/app/`. No nested project directories.',

@@ -14,7 +14,10 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     return NextResponse.json(result);
   } catch (error: any) {
     const status = error.status || 500;
-    return NextResponse.json({ error: error.message }, { status });
+    return NextResponse.json({
+      error: error.message,
+      upstream_status: error.upstreamStatus,
+    }, { status });
   }
 }
 
@@ -34,6 +37,9 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     return NextResponse.json(result);
   } catch (error: any) {
     const status = error.status || 500;
-    return NextResponse.json({ error: error.message }, { status });
+    return NextResponse.json({
+      error: error.message,
+      upstream_status: error.upstreamStatus,
+    }, { status });
   }
 }

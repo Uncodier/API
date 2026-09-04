@@ -39,4 +39,36 @@ describe('Failure Classification', () => {
     expect(res.countsTowardAttempts).toBe(false);
     expect(res.toolName).toBe('sandbox_run_command');
   });
+
+  it('classifies gate signals as product and never unknown', () => {
+    const res = classifyFailure('Gate step 1 failed', undefined, {
+      flow: 'doc',
+      signals: [{ name: 'has-markdown', ok: false }],
+    });
+    expect(res.failureClass).toBe('product');
+    expect(res.toolName).toBe('has-markdown');
+    expect(res.toolName?.toLowerCase()).not.toBe('unknown');
+  });
+
+  it('classifies origin-only gate signals as origin', () => {
+    const res = classifyFailure('rebase conflict', undefined, {
+      flow: 'task',
+      signals: [{ name: 'origin', ok: false }],
+    });
+    expect(res.failureClass).toBe('product');
+    expect(res.toolName).toBe('origin');
+  });
+
+  it('never persists tool=unknown for a generic execute_step error', () => {
+    const res = classifyFailure('Tool unknown failed: missing step_id');
+    expect(res.toolName).toBe('instance_plan');
+    expect(res.toolName?.toLowerCase()).not.toBe('unknown');
+  });
+
+  it('labels generic plumbing as sandbox, not instance_plan', () => {
+    const res = classifyFailure('Command failed: ETIMEDOUT connecting to host');
+    expect(res.failureClass).toBe('plumbing');
+    expect(res.toolName).toBe('sandbox');
+    expect(res.toolName).not.toBe('instance_plan');
+  });
 });

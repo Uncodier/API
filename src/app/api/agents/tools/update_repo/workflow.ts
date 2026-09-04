@@ -1,11 +1,10 @@
 'use workflow';
 
 import {
-  createSandboxStep,
   cleanupNestedProjectsStep,
   commitAndPushStep,
-  stopSandboxStep,
 } from '@/app/api/cron/shared/cron-steps';
+import { createSandboxStep, stopSandboxStep } from '@/app/api/cron/shared/cron-sandbox-lifecycle-steps';
 import { runUpdateRepoAgentStep } from './agent-step';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
 

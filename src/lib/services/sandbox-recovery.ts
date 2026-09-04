@@ -1,6 +1,9 @@
-import { Sandbox } from '@vercel/sandbox';
+import type { Sandbox } from '@vercel/sandbox';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import { persistActiveSandboxId } from '@/lib/tools/requirement-status-core';
+import { getSandboxHandle, sandboxIdentity } from '@/lib/services/sandbox-sdk';
+import { deleteRequirementSandboxes } from '@/lib/services/sandbox-lifecycle';
+import { warmStartNamedSandbox } from '@/lib/services/sandbox-on-resume';
 import { verifyPlatformGitLayout } from '@/lib/services/sandbox-git-layout';
 import {
   CronInfraEvent,
@@ -14,7 +17,7 @@ async function tryGetSandbox(sandboxId: string): Promise<Sandbox | null> {
   let delayMs = 1000;
   for (let attempt = 0; attempt < GET_SANDBOX_ATTEMPTS; attempt++) {
     try {
-      return await Sandbox.get({ sandboxId });
+      return await getSandboxHandle(sandboxId);
     } catch (e: unknown) {
       if (attempt < GET_SANDBOX_ATTEMPTS - 1) {
         console.warn(`[Sandbox] tryGetSandbox attempt ${attempt + 1} failed for ${sandboxId}. Retrying in ${delayMs}ms...`);
@@ -35,35 +38,6 @@ export async function getSandboxWithRetriesOrThrow(sandboxId: string): Promise<S
     throw new Error(`Sandbox.get failed after ${GET_SANDBOX_ATTEMPTS} attempts (${sandboxId})`);
   }
   return s;
-}
-
-/**
- * Best-effort stop by id (handles flaky `get` on first try: a second get may
- * still attach to a Running VM that would otherwise be orphaned when we
- * `Sandbox.create` a replacement).
- */
-async function stopSandboxByIdQuiet(sandboxId: string): Promise<void> {
-  const s = await tryGetSandbox(sandboxId);
-  if (!s) return;
-  
-  let delayMs = 1000;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      await Promise.race([
-        s.stop({ blocking: false }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000))
-      ]);
-      return;
-    } catch (e: unknown) {
-      if (attempt < 2) {
-        console.warn(`[Sandbox] 🧹 CLEANUP: stopSandboxByIdQuiet attempt ${attempt + 1} failed for ${sandboxId}. Retrying in ${delayMs}ms...`);
-        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
-        delayMs *= 2;
-      } else {
-        console.error(`[Sandbox] 🚨 ZOMBIE ALERT: Failed to stop sandbox ${sandboxId} after 3 attempts. It may be orphaned.`);
-      }
-    }
-  }
 }
 
 /** True if the microVM responds, git is installed, and the repo layout matches platform rules (root = WORK_DIR, not nested under app/). */
@@ -99,6 +73,9 @@ export async function connectOrRecreateRequirementSandbox(params: {
 
   let sandbox = await tryGetSandbox(sandboxId);
   if (sandbox && (await pingSandboxWorkspace(sandbox))) {
+    await warmStartNamedSandbox(sandbox, requirementId, instanceType, { syncToOrigin: false }).catch((e) => {
+      console.warn('[Sandbox] connect warm-start skipped:', e instanceof Error ? e.message : e);
+    });
     const branchName = await SandboxService.getCurrentBranch(sandbox);
     return { sandbox, sandboxId, recovered: false, branchName };
   }
@@ -120,49 +97,24 @@ export async function connectOrRecreateRequirementSandbox(params: {
       console.warn(`[Sandbox] Provided sandboxId ${sandboxId} failed, but DB has newer active_sandbox_id ${reqStatus.active_sandbox_id}. Trying that...`);
       const dbSandbox = await tryGetSandbox(reqStatus.active_sandbox_id);
       if (dbSandbox && (await pingSandboxWorkspace(dbSandbox))) {
+        await warmStartNamedSandbox(dbSandbox, requirementId, instanceType, { syncToOrigin: false }).catch((e) => {
+          console.warn('[Sandbox] connect warm-start skipped:', e instanceof Error ? e.message : e);
+        });
         const branchName = await SandboxService.getCurrentBranch(dbSandbox);
         return { sandbox: dbSandbox, sandboxId: reqStatus.active_sandbox_id, recovered: true, branchName };
       }
     }
   }
 
-  if (sandbox) {
-    // Layout ping failed — stop this VM before creating another, otherwise
-    // every connectOrRecreate leaves a billing zombie (dashboard full of Running).
-    let delayMs = 1000;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        await Promise.race([
-          sandbox.stop({ blocking: false }),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000))
-        ]);
-        console.warn(`[Sandbox] 🧹 CLEANUP: Stopped sandbox after failed layout ping, before reprovision (${sandboxId})`);
-        break;
-      } catch (e: unknown) {
-        if (attempt < 2) {
-          console.warn(`[Sandbox] 🧹 CLEANUP: stop() before reprovision attempt ${attempt + 1} failed (${sandboxId}). Retrying in ${delayMs}ms...`);
-          await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
-          delayMs *= 2;
-        } else {
-          console.error(`[Sandbox] 🚨 ZOMBIE ALERT: stop() before reprovision failed after 3 attempts (${sandboxId}):`, e instanceof Error ? e.message : e);
-        }
-      }
-    }
-  } else {
-    console.warn(
-      `[Sandbox] Sandbox.get failed for id=${sandboxId} after retries — will stop by id if still reachable, then reprovision`,
-    );
-  }
-
   console.warn(
-    `[Sandbox] Reprovisioning VM and syncing to origin (replaced id=${sandboxId})`,
+    `[Sandbox] Layout/get failed for ${sandboxId} — deleting named sandbox so the next create is a fresh onCreate, not a bad snapshot resume`,
   );
-  await stopSandboxByIdQuiet(sandboxId);
+  await deleteRequirementSandboxes(requirementId, audit?.instanceId, [sandboxId]);
   const created = await SandboxService.createRequirementSandbox(requirementId, instanceType, title, audit);
 
   if (audit?.instanceId) {
-    await persistActiveSandboxId(requirementId, audit.instanceId, created.sandbox.sandboxId, audit.siteId)
-      .catch(e => console.error(`[Sandbox] Failed to update active_sandbox_id to ${created.sandbox.sandboxId}:`, e));
+    await persistActiveSandboxId(requirementId, audit.instanceId, sandboxIdentity(created.sandbox), audit.siteId)
+      .catch(e => console.error(`[Sandbox] Failed to update active_sandbox_id to ${sandboxIdentity(created.sandbox)}:`, e));
   }
 
   const auditCtx: CronAuditContext | undefined = audit?.siteId
@@ -174,14 +126,14 @@ export async function connectOrRecreateRequirementSandbox(params: {
     details: {
       requirementId,
       previousSandboxId: sandboxId,
-      newSandboxId: created.sandbox.sandboxId,
+      newSandboxId: sandboxIdentity(created.sandbox),
       branchName: created.branchName,
     },
   });
 
   return {
     sandbox: created.sandbox,
-    sandboxId: created.sandbox.sandboxId,
+    sandboxId: sandboxIdentity(created.sandbox),
     recovered: true,
     branchName: created.branchName,
   };

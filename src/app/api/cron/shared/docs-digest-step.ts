@@ -1,6 +1,6 @@
 'use step';
 
-import { Sandbox } from '@vercel/sandbox';
+import { getSandboxHandle } from '@/lib/services/sandbox-sdk';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import {
   logCronInfrastructureEvent,
@@ -35,7 +35,7 @@ export async function emitDocsDigestStep(params: {
   const cwd = SandboxService.WORK_DIR;
 
   try {
-    const liveSandbox = await Sandbox.get({ sandboxId });
+    const liveSandbox = await getSandboxHandle(sandboxId);
 
     // Newest-first so we keep the latest deliverables when docs/ has many files.
     const findScript = `

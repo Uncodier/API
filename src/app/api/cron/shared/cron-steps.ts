@@ -10,129 +10,23 @@
  * The workflow only passes serializable data between steps.
  */
 
-import { Sandbox } from '@vercel/sandbox';
+import type { Sandbox } from '@vercel/sandbox';
+import { getSandboxHandle } from '@/lib/services/sandbox-sdk';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import {
   connectOrRecreateRequirementSandbox,
   getSandboxWithRetriesOrThrow,
-  pingSandboxWorkspace,
 } from '@/lib/services/sandbox-recovery';
 import { getActiveInstancePlan as _getActiveInstancePlan } from '@/app/api/robots/instance/assistant/plan-steps';
 import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/route';
 import { commitWorkspaceToOrigin, type GitRepoKind } from './cron-commit-helpers';
-import {
-  releaseRunLock as _releaseRunLockImpl,
-  extendRunLock as _extendRunLockImpl,
-  CRON_RUN_LOCK_TTL_MS,
-} from './cron-run-lock';
 import { validateBuildForStep } from './step-git-gate';
 import {
   CronInfraEvent,
   logCronInfrastructureEvent,
   type CronAuditContext,
 } from '@/lib/services/cron-audit-log';
-
-// ─── Step: Check Background Command ─────────────────────────────────
-
-export async function checkBackgroundCommandStep(
-  sandboxId: string,
-  pid: string,
-  logFile: string,
-  audit?: CronAuditContext
-): Promise<{ isRunning: boolean; output: string }> {
-  'use step';
-  const sandbox = await Sandbox.get({ sandboxId });
-  const checkResult = await SandboxService.runCommandInSandbox(sandbox, 'sh', ['-c', `kill -0 ${pid} 2>/dev/null && echo "RUNNING" || echo "STOPPED"`]);
-  const status = checkResult.stdout.trim();
-  const isRunning = status === 'RUNNING';
-  
-  // Always get the latest output to show progress or final result
-  const logResult = await SandboxService.runCommandInSandbox(sandbox, 'tail', ['-n', '200', logFile]);
-  
-  return { isRunning, output: logResult.stdout };
-}
-
-// Re-exports live in sibling modules — this file is 'use step' and may only export async step fns here.
-
-// ─── Serializable return types ───────────────────────────────────────
-
-export interface SandboxInfo {
-  sandboxId: string;
-  branchName: string;
-  workDir: string;
-  isNewBranch: boolean;
-  instanceType: string;
-}
-
-// ─── Step: Create sandbox ────────────────────────────────────────────
-
-export async function createSandboxStep(
-  reqId: string,
-  instanceType: string,
-  title: string,
-  audit?: CronAuditContext,
-): Promise<SandboxInfo> {
-  'use step';
-
-  if (audit?.instanceId) {
-    const { data: reqStatus, error } = await supabaseAdmin
-      .from('requirement_status')
-      .select('active_sandbox_id')
-      .eq('requirement_id', reqId)
-      .eq('instance_id', audit.instanceId)
-      .not('active_sandbox_id', 'is', null)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (error) {
-      console.error(`[CronStep] Error fetching active_sandbox_id:`, error);
-    }
-
-    if (reqStatus?.active_sandbox_id) {
-      try {
-        const sandbox = await Sandbox.get({ sandboxId: reqStatus.active_sandbox_id });
-        if (await pingSandboxWorkspace(sandbox)) {
-          console.log(`[CronStep] Reusing existing active sandbox ${reqStatus.active_sandbox_id} from DB`);
-          const branchName = await SandboxService.getCurrentBranch(sandbox);
-          return {
-            sandboxId: sandbox.sandboxId,
-            branchName,
-            workDir: SandboxService.WORK_DIR,
-            isNewBranch: false,
-            instanceType,
-          };
-        }
-      } catch (e) {
-        console.warn(`[CronStep] Existing active sandbox ${reqStatus.active_sandbox_id} is dead. Provisioning new one.`);
-      }
-    }
-  }
-
-  const result = await SandboxService.createRequirementSandbox(reqId, instanceType, title, audit);
-
-  await logCronInfrastructureEvent(audit, {
-    event: CronInfraEvent.WORKFLOW_SANDBOX_READY,
-    message: `Sandbox ready for cron (VM + git + npm): ${result.sandbox.sandboxId} @ ${result.branchName}`,
-    details: {
-      sandboxId: result.sandbox.sandboxId,
-      branchName: result.branchName,
-      workDir: result.workDir,
-      isNewBranch: result.isNewBranch,
-      instanceType: result.instanceType,
-      requirementId: reqId,
-    },
-  });
-
-  return {
-    sandboxId: result.sandbox.sandboxId,
-    branchName: result.branchName,
-    workDir: result.workDir,
-    isNewBranch: result.isNewBranch,
-    instanceType: result.instanceType,
-  };
-}
 
 // ─── Step: Clean up nested project directories ──────────────────────
 
@@ -498,7 +392,7 @@ export async function postFinallyBuildStep(
     sandbox = conn.sandbox;
     effectiveSandboxId = conn.sandboxId;
   } else {
-    sandbox = await Sandbox.get({ sandboxId });
+    sandbox = await getSandboxHandle(sandboxId);
   }
   const err = await validateBuildForStep(sandbox);
   if (err) {
@@ -586,102 +480,3 @@ export async function getPreviewUrlStep(
   return SandboxService.getPreviewUrl(owner, repo, branch, 3, 2000);
 }
 
-// ─── Step: Check source code in storage ──────────────────────────────
-
-export async function checkSourceCodeStep(reqId: string): Promise<string | null> {
-  'use step';
-  const { createClient } = await import('@supabase/supabase-js');
-  const repoUrl = process.env.REPOSITORY_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const repoKey = process.env.REPOSITORY_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!repoUrl || !repoKey) return null;
-
-  const storageClient = createClient(repoUrl, repoKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
-  const bucket = process.env.SUPABASE_BUCKET || 'workspaces';
-  const names = [`req-${reqId}_source_code.tar.gz`, `req-${reqId}_source_code.zip`];
-  for (const name of names) {
-    const { data } = await storageClient.storage.from(bucket).list('', { search: name, limit: 1 });
-    if (data?.length) {
-      return storageClient.storage.from(bucket).getPublicUrl(name).data.publicUrl;
-    }
-  }
-  return null;
-}
-
-// ─── Step: Stop sandbox ──────────────────────────────────────────────
-
-export async function stopSandboxStep(sandboxId: string, audit?: CronAuditContext) {
-  'use step';
-
-  if (audit?.instanceId && audit?.requirementId) {
-    // Clear the active_sandbox_id from DB so next run doesn't try to use it
-    await supabaseAdmin
-      .from('requirement_status')
-      .update({ active_sandbox_id: null })
-      .eq('requirement_id', audit.requirementId)
-      .eq('instance_id', audit.instanceId)
-      .eq('active_sandbox_id', sandboxId); // Only clear if it hasn't been overwritten
-  }
-
-  let delayMs = 1000;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      const sandbox = await Sandbox.get({ sandboxId });
-      await sandbox.stop();
-      console.log(`[CronStep] 🧹 CLEANUP: Sandbox ${sandboxId} stopped`);
-      await logCronInfrastructureEvent(audit, {
-        event: CronInfraEvent.SANDBOX_STOP,
-        message: `Sandbox stopped (${sandboxId})`,
-        details: { sandboxId },
-      });
-      return;
-    } catch (e: unknown) {
-      if (attempt < 2) {
-        console.warn(`[CronStep] 🧹 CLEANUP: Sandbox stop attempt ${attempt + 1} failed (${sandboxId}). Retrying in ${delayMs}ms...`);
-        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
-        delayMs *= 2;
-      } else {
-        /* sandbox may have auto-stopped or failed permanently */
-        console.warn(`[CronStep] 🚨 ZOMBIE ALERT: Sandbox stop skipped or failed (${sandboxId}) after 3 attempts`, e);
-        await logCronInfrastructureEvent(audit, {
-          event: CronInfraEvent.SANDBOX_STOP,
-          level: 'warn',
-          message: `🚨 ZOMBIE ALERT: Sandbox stop skipped or failed (${sandboxId}) after 3 attempts`,
-          details: { sandboxId, error: e instanceof Error ? e.message : String(e) },
-        });
-      }
-    }
-  }
-}
-
-// ─── Step: Extend cron run lock ─────────────────────────────────────
-//
-// Refreshes `cron_lock_expires_at` while a long durable workflow is still
-// running. Call after heavy phases so runs beyond the initial TTL cannot
-// overlap with a new cron tick (parallel sandboxes on the same requirement).
-
-export async function extendRunLockStep(
-  requirementId: string,
-  runId: string | undefined,
-  ttlMs: number = CRON_RUN_LOCK_TTL_MS,
-): Promise<void> {
-  'use step';
-  if (!runId) return;
-  await _extendRunLockImpl(requirementId, runId, ttlMs);
-}
-
-// ─── Step: Release cron run lock ────────────────────────────────────
-//
-// Thin step wrapper over `releaseRunLock` (from cron-run-lock.ts) so the
-// workflow's finally block can call it without hitting the workflow VM's
-// `fetch` restriction. Safe to call even when `runId` is absent (no-op).
-
-export async function releaseRunLockStep(
-  requirementId: string,
-  runId: string | undefined,
-): Promise<void> {
-  'use step';
-  if (!runId) return;
-  await _releaseRunLockImpl(requirementId, runId);
-}

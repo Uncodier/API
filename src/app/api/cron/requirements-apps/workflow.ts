@@ -1,7 +1,6 @@
 'use workflow';
 
 import {
-  createSandboxStep,
   cleanupNestedProjectsStep,
   getActiveInstancePlanStep,
   checkRecentPlansGuardStep,
@@ -10,16 +9,20 @@ import {
   postFinallyBuildStep,
   recordPostFinallyBuildFailureStep,
   getPreviewUrlStep,
-  checkSourceCodeStep,
+} from '../shared/cron-steps';
+import {
+  createSandboxStep,
   stopSandboxStep,
+  checkBackgroundCommandStep,
   extendRunLockStep,
   releaseRunLockStep,
-  checkBackgroundCommandStep,
-} from '../shared/cron-steps';
+} from '../shared/cron-sandbox-lifecycle-steps';
 import { applyDatabaseMigrationsStep } from '../shared/step-db-migrations';
 // Import directly — the 'use step' plugin forbids re-exports, so the step
 // lives in its own module.
 import { bootstrapRequirementSpecStep } from '../shared/bootstrap-spec-step';
+import { ensureSourceArchiveStep } from '../shared/ensure-source-archive-step';
+import { classifyRequirementType } from '@/lib/services/requirement-flows';
 import { 
   getPlanExecutionGateStep,
   updatePlanStepStatusStep,
@@ -629,7 +632,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   const previewUrl = await getPreviewUrlStep(owner, repoName, effectiveBranch, reqId);
 
   // Step 7: Check source code
-  const sourceCodeUrl = await checkSourceCodeStep(reqId);
+  const sourceCodeUrl = await ensureSourceArchiveStep(reqId, sandboxId);
 
   // Step 8: HTTP validation — also checks repo_url / branch consistency vs
   // the requirement's metadata.git (advisory unless REQUIREMENT_GIT_STRICT=true).
@@ -685,6 +688,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     previewOk,
     smokeError: smokeError || undefined,
     postFinallyBuildError,
+    flowKind: classifyRequirementType(type),
     audit: cronAudit,
   });
 

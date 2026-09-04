@@ -1,6 +1,6 @@
 'use step';
 
-import { Sandbox } from '@vercel/sandbox';
+import { getSandboxHandle } from '@/lib/services/sandbox-sdk';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import { detectAdminLoop, type CycleGitChange, type LoopDetectorVerdict } from './loop-detectors';
 
@@ -22,7 +22,7 @@ export async function detectAdminLoopStep(input: DetectAdminLoopStepInput): Prom
   let history: CycleGitChange[] = [];
 
   try {
-    const sandbox = await Sandbox.get({ sandboxId: input.sandboxId });
+    const sandbox = await getSandboxHandle(input.sandboxId);
     const cwd = SandboxService.WORK_DIR;
     const result = await sandbox.runCommand({
       cmd: 'sh',

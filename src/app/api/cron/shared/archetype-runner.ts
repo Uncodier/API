@@ -19,6 +19,7 @@ import type { BacklogItem, BacklogItemKind } from '@/lib/services/requirement-ba
 import type { RequirementKind } from '@/lib/services/requirement-flows';
 import type { EvidenceRecord } from '@/lib/services/requirement-ground-truth';
 import { validateAcceptance } from '@/lib/services/requirement-acceptance';
+import { extractRequirementConstraints, findConstraintViolations } from '@/lib/services/requirement-constraints';
 
 export type CriticSeverity = 'blocker' | 'major' | 'minor';
 
@@ -440,7 +441,30 @@ function judgeApp(item: BacklogItem, evidence: EvidenceRecord): JudgeResult {
   return matchOrEscalate(item, evidence);
 }
 
+function rejectUnmatchedConstraints(item: BacklogItem, evidence: EvidenceRecord): JudgeResult | null {
+  const constraints = extractRequirementConstraints(
+    ...(item.constraints || []),
+    ...(item.acceptance || []),
+    item.title,
+  );
+  if (!constraints.length) return null;
+  const hay = [
+    ...evidenceHaystack(evidence),
+    (evidence.changed_files || []).join('\n'),
+    JSON.stringify(evidence),
+  ].join('\n');
+  const hits = findConstraintViolations(hay, constraints);
+  if (!hits.length) return null;
+  const q = hits[0];
+  return rejected(
+    item,
+    `unmatched_constraints: "${q.constraint}" violated by "${q.term}" — ${q.quote}`,
+  );
+}
+
 function judgeDoc(item: BacklogItem, evidence: EvidenceRecord): JudgeResult {
+  const constraintHit = rejectUnmatchedConstraints(item, evidence);
+  if (constraintHit) return constraintHit;
   const calls = toolCalls(evidence);
   if (!calls.some((c) => /lint|markdown|remark/i.test(c.name))) {
     return rejected(item, 'doc judge requires a lint/markdown tool call in evidence. Next: run a markdown/lint tool and keep the call in evidence.');
@@ -505,6 +529,8 @@ function judgeBackend(item: BacklogItem, evidence: EvidenceRecord): JudgeResult 
 }
 
 function judgeTask(item: BacklogItem, evidence: EvidenceRecord): JudgeResult {
+  const constraintHit = rejectUnmatchedConstraints(item, evidence);
+  if (constraintHit) return constraintHit;
   if (toolCalls(evidence).length === 0) {
     return rejected(item, 'task judge requires at least one tool-call. Next: invoke at least one relevant tool and leave it in evidence.');
   }
@@ -577,6 +603,8 @@ function judgeOverrideForKind(kind: BacklogItemKind | undefined): ((item: Backlo
 }
 
 export function runJudge(ctx: ArchetypeContext): JudgeResult {
+  const constraintHit = rejectUnmatchedConstraints(ctx.item, ctx.evidence);
+  if (constraintHit) return constraintHit;
   const override = judgeOverrideForKind(ctx.item.kind);
   const fn = override ?? JUDGE_BY_FLOW[ctx.flow] ?? judgeTask;
   return fn(ctx.item, ctx.evidence);

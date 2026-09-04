@@ -195,10 +195,33 @@ export function sandboxStartBackgroundCommandTool(sandbox: Sandbox, toolsCtx?: S
        
        const s0 = liveSandbox(sandbox, toolsCtx);
        const logFile = `/tmp/bg_cmd_${Date.now()}.log`;
-       
-       // Run the command in the background via sh
+       const cwd = resolvePath(args.cwd, WORK_DIR);
+
+       try {
+         const detached = await (s0 as Sandbox & {
+           runCommand: (opts: Record<string, unknown>) => Promise<{ id?: string; cmdId?: string }>;
+         }).runCommand({
+           cmd: 'sh',
+           args: ['-c', `${args.command} > ${logFile} 2>&1`],
+           cwd,
+           detached: true,
+         });
+         const commandId = String(detached?.id || detached?.cmdId || '').trim();
+         if (commandId) {
+           return {
+             success: true,
+             pid: commandId,
+             command_id: commandId,
+             log_file: logFile,
+             message: `Command started detached (${commandId}). Use sandbox_check_background_command to check status and read logs.`,
+           };
+         }
+       } catch {
+         /* SDK < 3 or detached unsupported — fall back to nohup */
+       }
+
        const cmdStr = `nohup ${args.command} > ${logFile} 2>&1 & echo $!`;
-       const result = await SandboxService.runCommandInSandbox(s0, 'sh', ['-c', cmdStr], resolvePath(args.cwd, WORK_DIR));
+       const result = await SandboxService.runCommandInSandbox(s0, 'sh', ['-c', cmdStr], cwd);
        
        const pid = result.stdout.trim();
        return {
@@ -219,13 +242,33 @@ export function sandboxCheckBackgroundCommandTool(sandbox: Sandbox, toolsCtx?: S
       type: 'object',
       properties: {
         pid: { type: 'string', description: 'The PID returned by sandbox_start_background_command' },
+        command_id: { type: 'string', description: 'Optional detached command id from the SDK (same value as pid when started detached)' },
         log_file: { type: 'string', description: 'The log file path returned by sandbox_start_background_command' }
       },
       required: ['pid', 'log_file']
     },
-    execute: async (args: { pid: string, log_file: string }) => {
+    execute: async (args: { pid: string, log_file: string; command_id?: string }) => {
       const s0 = liveSandbox(sandbox, toolsCtx);
-      
+      const commandId = String(args.command_id || args.pid || '').trim();
+      const getCommand = (s0 as Sandbox & { getCommand?: (id: string) => Promise<{ exitCode?: number | null }> }).getCommand;
+      if (typeof getCommand === 'function' && commandId) {
+        try {
+          const cmd = await getCommand.call(s0, commandId);
+          const running = cmd?.exitCode == null;
+          const logResult = await SandboxService.runCommandInSandbox(s0, 'tail', ['-n', '200', args.log_file]);
+          return {
+            status: running ? 'RUNNING' : 'STOPPED',
+            is_running: running,
+            recent_output: logResult.stdout,
+            message: running
+              ? `Detached command ${commandId} is still running. You can check again later.`
+              : `Detached command ${commandId} has stopped. Check recent_output for errors or success.`,
+          };
+        } catch {
+          /* fall through to PID check */
+        }
+      }
+
       // Check if process is running
       const checkResult = await SandboxService.runCommandInSandbox(s0, 'sh', ['-c', `kill -0 ${args.pid} 2>/dev/null && echo "RUNNING" || echo "STOPPED"`]);
       const status = checkResult.stdout.trim();

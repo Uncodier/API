@@ -29,6 +29,7 @@ import {
   getFlow,
   type FlowDefinition,
 } from '@/lib/services/requirement-flows';
+import { extractRequirementConstraints, formatConstraintsPromptBlock } from '@/lib/services/requirement-constraints';
 import type { BacklogItem, RequirementBacklog } from '@/lib/services/requirement-backlog';
 
 export interface CoordinatorPromptInput {
@@ -90,6 +91,10 @@ export function buildCoordinatorPromptForFlow(p: CoordinatorPromptInput): string
   const flow = getFlow(kind);
   const snapshot = renderBacklogSnapshot(flow, p.backlog ?? null);
   const instructionsBlock = renderInstructionsBlock(p.instructions);
+  const constraintBlock = formatConstraintsPromptBlock(extractRequirementConstraints(
+    p.instructions,
+    ...(p.backlog?.items || []).flatMap((i) => [...(i.constraints || []), ...(i.acceptance || [])]),
+  ));
   const progress = p.recentProgress?.length
     ? `\nRECENT PROGRESS (last 3 entries of progress.md, newest first):\n${p.recentProgress.slice(-3).reverse().map((l) => `  - ${l}`).join('\n')}`
     : '';
@@ -145,6 +150,7 @@ REQUIREMENT:
 - Title: ${p.title}
 - Flow kind: ${kind} (gate strategy: ${flow.gate_strategy}${flow.standard_library ? `, standard library: ${flow.standard_library.name}` : ''})
 ${instructionsBlock}
+${constraintBlock}
 INSTANCE:
 - instance_id: ${p.instanceId}
 - site_id: ${p.site_id}

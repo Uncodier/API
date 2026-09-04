@@ -1,4 +1,4 @@
-import { mergeCommentResults, networksFromPost } from '../comments';
+import { mergeCommentResults, networksFromPost, usernameFromPost } from '../comments';
 
 describe('networksFromPost', () => {
   it('returns unique networks from social accounts', () => {
@@ -17,6 +17,22 @@ describe('networksFromPost', () => {
   it('returns an empty list when the post has no accounts', () => {
     expect(networksFromPost(undefined)).toEqual([]);
     expect(networksFromPost({ socialAccounts: [] })).toEqual([]);
+  });
+});
+
+describe('usernameFromPost', () => {
+  it('returns the username for the requested network', () => {
+    expect(
+      usernameFromPost(
+        {
+          socialAccounts: [
+            { network: 'x', username: 'makinari_com' },
+            { network: 'facebook', username: 'Uncodie' },
+          ],
+        },
+        'facebook'
+      )
+    ).toBe('Uncodie');
   });
 });
 

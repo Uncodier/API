@@ -46,7 +46,7 @@
     "@types/crypto-js": "^4.2.2",
     "@types/ws": "^8.18.1",
     "@vapi-ai/server-sdk": "^0.6.4",
-    "@vercel/sandbox": "1.10.0",
+    "@vercel/sandbox": "3.2.1",
     "ai": "7.0.31",
     "axios": "^1.8.1",
     "cheerio": "^1.0.0",

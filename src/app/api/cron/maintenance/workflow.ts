@@ -1,13 +1,15 @@
 'use workflow';
 
 import {
-  createSandboxStep,
   cleanupNestedProjectsStep,
   commitAndPushStep,
+} from '../shared/cron-steps';
+import {
+  createSandboxStep,
   stopSandboxStep,
   extendRunLockStep,
   releaseRunLockStep,
-} from '../shared/cron-steps';
+} from '../shared/cron-sandbox-lifecycle-steps';
 import { runMaintenanceAgentStep } from './agent-step';
 import { getRequirementFullContextStep, unblockRequirementStep, checkInstanceAndPlanStatusStep, incrementQaSuccessfulRunsStep, updateInstanceStatusStep } from '../shared/workflow-db-steps';
 import { buildMaintenancePromptForFlow } from './prompt';

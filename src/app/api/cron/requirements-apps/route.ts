@@ -114,6 +114,10 @@ export async function GET(req: Request) {
             .eq('site_id', req.site_id)
             .like('name', `%req-%${req.id.substring(0, 8)}%`)
             .in('status', ['running', 'starting', 'paused']);
+          if (req.status === 'done' || req.status === 'cancelled') {
+            const { deleteRequirementSandboxes } = await import('@/lib/services/sandbox-lifecycle');
+            await deleteRequirementSandboxes(req.id, req.metadata?.runner_instance_id);
+          }
         }
       }
     }

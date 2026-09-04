@@ -9,7 +9,6 @@ import {
   TEMPLATE_CUSTOMIZATION_PROMPT,
 } from '../shared/step-git-prompts';
 import {
-  createSandboxStep,
   cleanupNestedProjectsStep,
   getActiveInstancePlanStep,
   checkRecentPlansGuardStep,
@@ -18,14 +17,17 @@ import {
   postFinallyBuildStep,
   recordPostFinallyBuildFailureStep,
   getPreviewUrlStep,
-  checkSourceCodeStep,
+} from '../shared/cron-steps';
+import {
+  createSandboxStep,
   stopSandboxStep,
   extendRunLockStep,
   releaseRunLockStep,
-} from '../shared/cron-steps';
+} from '../shared/cron-sandbox-lifecycle-steps';
 import { executeStepsPhaseStep, type ExecuteStepsPhaseResult } from '../shared/cron-execute-steps-phase';
 import { runOrchestratorStep } from '../shared/cron-orchestrator-step';
 import { validateDeliverablesStep, createFinalStatusStep } from '../shared/cron-workflow-finalize';
+import { ensureSourceArchiveStep } from '../shared/ensure-source-archive-step';
 import { recordRequirementBlockedStep, createFallbackInstancePlanStep, getRequirementFullContextStep, updateInstanceStatusStep } from '../shared/workflow-db-steps';
 import { provisionPlatformKeyStep } from '../shared/platform-key-step';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
@@ -377,7 +379,7 @@ HARD RULE: Your turn is NOT done until \`instance_plan action='create'\` has suc
   const gitOrg = binding.org;
   const autoRepo = binding.repo;
   const previewUrl = await getPreviewUrlStep(gitOrg, autoRepo, effectiveBranch, reqId);
-  const sourceCodeUrl = await checkSourceCodeStep(reqId);
+  const sourceCodeUrl = await ensureSourceArchiveStep(reqId, sandboxId);
 
   // Step 7: HTTP validation — also checks repo_url / branch consistency vs
   // the requirement's metadata.git (advisory unless REQUIREMENT_GIT_STRICT=true).
@@ -433,6 +435,7 @@ HARD RULE: Your turn is NOT done until \`instance_plan action='create'\` has suc
     previewOk,
     smokeError: smokeError || undefined,
     postFinallyBuildError,
+    flowKind: 'automation',
     audit: cronAudit,
   });
 

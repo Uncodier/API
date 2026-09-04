@@ -155,10 +155,13 @@ export async function runGateStep(params: {
                  const errorMsg = gateRes.error || '';
                  const { deriveCategoriesFailed } = await import('@/app/api/cron/shared/step-iteration-signals');
                  const categories = gateRes.richSignals ? deriveCategoriesFailed(gateRes.richSignals as any) : [];
-                 const classified = classifyFailure(errorMsg, categories);
+                 const classified = classifyFailure(errorMsg, categories, {
+                   flow: requirementType,
+                   signals: gateRes.signals,
+                 });
                  
                  if (classified.failureClass === 'plumbing') {
-                   const toolName = classified.toolName || 'unknown';
+                   const toolName = classified.toolName || `gate:${requirementType || 'task'}`;
                    console.log(`[GateStep] Plumbing failure detected for tool ${toolName}, logging without attempt bump.`);
                    await recordToolFailure({
                      requirementId,

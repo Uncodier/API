@@ -11,6 +11,7 @@ import {
   LANGUAGE_REQUIREMENT_PROMPT,
   TEMPLATE_CUSTOMIZATION_PROMPT,
 } from './step-git-prompts';
+import { extractRequirementConstraints, formatConstraintsPromptBlock } from '@/lib/services/requirement-constraints';
 
 export function inferRoleFromStep(step: any): string | null {
   const text = `${step.title || ''} ${step.instructions || ''}`.toLowerCase();
@@ -59,13 +60,23 @@ export interface SingleTurnPromptParams {
   memoriesContext: string;
   historyContext: string;
   retryContext: string;
+  constraintSources?: Array<string | null | undefined>;
 }
 
 export function buildSingleTurnSystemPrompt(p: SingleTurnPromptParams): string {
   const {
     instanceId, siteId, plan, step, requirementId, effectiveRole, cycleBaselineAt,
     skillContext, progressContext, agentBackground, memoriesContext, historyContext, retryContext,
+    constraintSources,
   } = p;
+
+  const constraintBlock = formatConstraintsPromptBlock(extractRequirementConstraints(
+    ...(constraintSources || []),
+    step?.instructions,
+    step?.expected_output,
+    plan?.instructions,
+    plan?.expected_output,
+  ));
 
   return `You are an AI coding assistant and EXECUTOR agent running inside a Vercel Sandbox.
 Your job is to complete ONE specific step by writing code, running commands, and making real changes.
@@ -75,6 +86,7 @@ Wait for the environment to execute the tool and return the result before you de
 DO NOT output multiple tool calls in a single response.
 
 ${SANDBOX_REPO_ROOT_INVARIANT}
+${constraintBlock}
 ${LANGUAGE_REQUIREMENT_PROMPT}
 ${TEMPLATE_CUSTOMIZATION_PROMPT}
 
@@ -100,6 +112,7 @@ CONTEXT:
 - instance_id: ${instanceId}
 - site_id: ${siteId}
 ${plan.id ? `- instance_plan_id: ${plan.id}` : ''}
+${step?.id ? `- current_step_id: ${step.id}` : ''}
 ${requirementId ? `- requirement_id: ${requirementId}` : ''}
 ${progressContext}
 

@@ -1,5 +1,6 @@
 import type { FlowGateInput, FlowGateResult, FlowGateSignal } from './types';
 import { verifyOriginAndRecover } from '../step-git-gate';
+import { runConstraintSignals } from './gate-constraints';
 
 /**
  * Gate for `task` and `makinari` flows. Tasks ship artefacts: a script that
@@ -13,7 +14,7 @@ export async function runTaskGate(input: FlowGateInput): Promise<FlowGateResult>
 
   const list = await runShell(
     input,
-    `git status --porcelain 2>/dev/null | awk '{print $2}' | head -20; find ./artifacts ./reports ./outputs -type f 2>/dev/null | head -20`,
+    `git status --porcelain 2>/dev/null | awk '{print $2}' | head -20; find ./artifacts ./reports ./outputs ./docs -type f 2>/dev/null | head -40`,
   );
   const files = list.stdout.split('\n').filter(Boolean);
   
@@ -34,10 +35,18 @@ export async function runTaskGate(input: FlowGateInput): Promise<FlowGateResult>
     signals.push({ name: 'run.sh-syntax', ok, detail: ok ? 'parsed' : 'syntax error' });
   }
 
+  const constraint = await runConstraintSignals(input);
+  signals.push(...constraint.signals);
+
   const ok = signals.every((s) => s.ok);
   
   if (!ok) {
-    return { ok, flow: input.flow, signals, reason: 'task gate failed' };
+    const reason = !signals.find((s) => s.name === 'has-artifacts')?.ok
+      ? 'task gate failed: no artifacts (expected files under docs/, artifacts/, reports/, or outputs/)'
+      : constraint.violations[0]
+        ? `constraint violated (${constraint.violations[0].file}: ${constraint.violations[0].constraint})`
+        : 'task gate failed';
+    return { ok, flow: input.flow, signals, reason };
   }
 
   if (input.appContext) {
