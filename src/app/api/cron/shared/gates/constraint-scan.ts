@@ -36,7 +36,35 @@ export function isSafeArtifactPath(file: string): boolean {
   return SAFE_PREFIX.test(name);
 }
 
-/** Hunks for this-step files; full-file scan for leftovers (stale git-rm path). */
+const INVESTIGATIONS_PREFIX = 'docs/investigations/';
+
+function normalizeArtifactPath(file: string): string {
+  return String(file || '').trim().replace(/^\.\//, '');
+}
+
+/** Living deliverables the constraint gate must never delete. */
+export function isProtectedDeliverablePath(
+  file: string,
+  opts?: { touches?: Iterable<string>; namedInStep?: Iterable<string> },
+): boolean {
+  const name = normalizeArtifactPath(file);
+  if (!name || name.includes('..') || name.startsWith('/')) return false;
+  if (name.startsWith(INVESTIGATIONS_PREFIX)) return true;
+  for (const raw of opts?.touches || []) {
+    if (normalizeArtifactPath(raw) === name) return true;
+  }
+  for (const raw of opts?.namedInStep || []) {
+    if (normalizeArtifactPath(raw) === name) return true;
+  }
+  return false;
+}
+
+/** Stale leftover hits are inherited — never a delete list. */
+export function inheritStaleHits(hits: ConstraintHit[]): ConstraintHit[] {
+  return hits.map((h) => ({ ...h, stale: true }));
+}
+
+/** Hunks for this-step files; full-file scan for leftovers (inherited, not deleted). */
 export function splitScanTargets(
   allFiles: string[],
   touchedFiles: Iterable<string>,
@@ -96,7 +124,7 @@ export function formatConstraintRetryHint(hits: ConstraintHit[]): string {
   });
   return [
     'Constraint gate failed on files you changed this step.',
-    'Remove or rewrite the forbidden terms in those files (do not leave leftover outbound copy).',
+    'Fix only the violating lines (do not delete or rewrite the whole named deliverable).',
     ...lines,
   ].join('\n');
 }

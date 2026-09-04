@@ -40,7 +40,8 @@ export const RESEARCH_WEBSEARCH_HINT = [
   'RESEARCH / INVESTIGATE STEPS:',
   '- Call webSearch directly (name=webSearch, query=...). Do not spend turns on tools() or skill_lookup first.',
   '- Each result includes results: [{title,url,snippet}]. If you will write a research doc, paste the url fields.',
-  '- Append new verticals to the existing docs/investigations/*.md (sandbox_write_file mode=append). Do not rewrite the file from scratch.',
+  '- Append new verticals to the existing docs/investigations/*.md (sandbox_write_file mode=append). Do not rewrite the file from scratch. A one-line append is enough to mark updated_this_cycle.',
+  '- Never delete the named research markdown. Never strip https:// from existing URLs.',
   '- A list of names without URLs will fail the research-citations gate.',
 ].join('\n');
 

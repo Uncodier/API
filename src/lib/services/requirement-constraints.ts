@@ -39,8 +39,41 @@ function isCommunityOnly(line: string): boolean {
   return hasOnly && hasCommunity;
 }
 
+const MENTION_PROHIBITION_RE = /\b(must\s+not\s+mention|do\s+not\s+mention|no\s+mencionar)\b/i;
+const COPY_STANDARD_RE = /\bsin copy(\s+comercial)?\b/i;
+
+/** Built per-call: ts-jest ESM has emptied module-level lexicon arrays before. */
+function forbiddenTermDenylist(): Set<string> {
+  return new Set([
+    'http',
+    'https',
+    'www',
+    'url',
+    'urls',
+    'vertical',
+    'verticales',
+    'link',
+    'links',
+    'enlace',
+    'enlaces',
+    'markdown',
+    'docs',
+    'file',
+    'files',
+  ]);
+}
+
+function isCopyQualityStandard(line: string): boolean {
+  return COPY_STANDARD_RE.test(line);
+}
+
+function isMentionProhibition(line: string): boolean {
+  return MENTION_PROHIBITION_RE.test(line);
+}
+
 function isNegativeConstraint(line: string): boolean {
   const l = line.toLowerCase();
+  if (isCopyQualityStandard(l) && !isMentionProhibition(l)) return false;
   return (
     l.includes('must not') ||
     l.includes('do not') ||
@@ -56,8 +89,12 @@ function expandForbidden(line: string): string[] {
   const raw = String(line || '').trim();
   const lower = raw.toLowerCase();
   const terms: string[] = [];
+  const deny = forbiddenTermDenylist();
   const add = (term: string) => {
-    if (term && !terms.includes(term)) terms.push(term);
+    const cleaned = String(term || '').trim();
+    if (!cleaned) return;
+    if (deny.has(cleaned.toLowerCase())) return;
+    if (!terms.includes(cleaned)) terms.push(cleaned);
   };
   const lexicon = outboundLexicon();
 
@@ -74,9 +111,13 @@ function expandForbidden(line: string): string[] {
     for (let i = 0; i < quotes.length; i++) {
       add(quotes[i].replace(/["']/g, '').trim());
     }
+  }
+
+  if (isMentionProhibition(raw)) {
     const stripped = raw
       .replace(BULLET_RE, '')
-      .replace(/^(must not|do not|nunca|sin|no incluy\w*|forbidden|prohibid[oa])\s+/i, '')
+      .replace(/^(must not|do not|nunca|sin|no incluy\w*|forbidden|prohibid[oa]|no mencionar)\s+/i, '')
+      .replace(/^mention\s+/i, '')
       .trim();
     const words = stripped.split(/[^a-zA-Z0-9_+-]+/);
     for (let i = 0; i < words.length; i++) {

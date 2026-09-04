@@ -5,7 +5,9 @@ import {
   extractNamedMarkdownPaths,
   formatConstraintRetryHint,
   formatResearchCitationHint,
+  inheritStaleHits,
   isHarnessCycleCommit,
+  isProtectedDeliverablePath,
   isSafeArtifactPath,
   parseFileNameList,
   partitionConstraintHits,
@@ -30,13 +32,30 @@ describe('constraint-scan', () => {
     expect(isSafeArtifactPath('src/app/layout.tsx')).toBe(false);
   });
 
-  it('scans hunks on this-step files and the full leftover file for stale git-rm', () => {
+  it('scans hunks on this-step files and leftover files as inherited, not a delete list', () => {
     const { hunkFiles, staleFiles } = splitScanTargets(
       ['docs/investigations/channels-research.md', 'docs/gtm-channels-blueprint.md'],
       ['docs/investigations/channels-research.md'],
     );
     expect(hunkFiles).toEqual(['docs/investigations/channels-research.md']);
     expect(staleFiles).toEqual(['docs/gtm-channels-blueprint.md']);
+    const inherited = inheritStaleHits([
+      { constraint: 'no outbound', term: 'outbound', quote: 'outbound', file: 'docs/gtm-channels-blueprint.md' },
+    ]);
+    expect(inherited.every((h) => h.stale === true)).toBe(true);
+    expect(inherited.map((h) => h.file)).toEqual(['docs/gtm-channels-blueprint.md']);
+  });
+
+  it('protects investigations, named, and touched deliverable paths', () => {
+    expect(isProtectedDeliverablePath('docs/investigations/channels-research.md')).toBe(true);
+    expect(isProtectedDeliverablePath('docs/gtm-channels-blueprint.md')).toBe(false);
+    expect(isProtectedDeliverablePath('docs/gtm-channels-blueprint.md', {
+      touches: ['docs/gtm-channels-blueprint.md'],
+    })).toBe(true);
+    expect(isProtectedDeliverablePath('docs/notes.md', {
+      namedInStep: ['docs/notes.md'],
+    })).toBe(true);
+    expect(isProtectedDeliverablePath('../docs/investigations/x.md')).toBe(false);
   });
 
   it('treats leftover docs as stale when this step only touched the new file', () => {
@@ -73,6 +92,7 @@ describe('constraint-scan', () => {
       },
     ]);
     expect(hint).toContain('Rewrite docs/gtm.md');
+    expect(hint).toContain('do not delete or rewrite the whole named deliverable');
     expect(hint).toContain('outbound');
     expect(hint).toContain('use outbound sequences');
   });

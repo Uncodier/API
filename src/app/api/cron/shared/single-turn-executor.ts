@@ -145,7 +145,7 @@ export async function executeSingleTurnStep(params: {
 
     let retryContext = '';
     if (step.error_message) {
-      retryContext = `\n\n🚨 PREVIOUS ATTEMPT FAILED 🚨\nThe previous execution of this step failed with the following error:\n\n${step.error_message}\n\nIf the error names a leftover file, delete or rewrite that file. If it asks for https:// citations, add real URLs from webSearch. You MUST fix this during this attempt.`;
+      retryContext = `\n\n🚨 PREVIOUS ATTEMPT FAILED 🚨\nThe previous execution of this step failed with the following error:\n\n${step.error_message}\n\nFix only the violating lines. For investigations, append to the existing docs/investigations/*.md — never delete the named deliverable or rewrite it from scratch. If it asks for https:// citations, add real URLs from webSearch. You MUST fix this during this attempt.`;
     }
 
     const { loadConstraintSourceBlocks } = await import('@/lib/services/requirement-constraints-persist');

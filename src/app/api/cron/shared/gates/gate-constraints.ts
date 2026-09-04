@@ -11,14 +11,13 @@ import {
   formatConstraintRetryHint,
   formatResearchCitationHint,
   isHarnessCycleCommit,
-  isSafeArtifactPath,
+  inheritStaleHits,
   MIN_RESEARCH_HTTPS,
   parseFileNameList,
   partitionConstraintHits,
   resolveResearchCitationTargets,
   shouldRequireResearchCitations,
   splitScanTargets,
-  uniqueHitFiles,
   type ConstraintHit,
 } from './constraint-scan';
 
@@ -100,19 +99,6 @@ async function scanFiles(
   return violations;
 }
 
-async function removeStaleFiles(input: FlowGateInput, files: string[]): Promise<string[]> {
-  const removed: string[] = [];
-  for (const file of files) {
-    if (!isSafeArtifactPath(file)) continue;
-    await runInWorkDir(
-      input,
-      `git rm -f --ignore-unmatch -- "${file}" >/dev/null 2>&1 || rm -f -- "${file}"; echo done`,
-    );
-    removed.push(file);
-  }
-  return removed;
-}
-
 export async function runConstraintSignals(input: FlowGateInput): Promise<{
   signals: FlowGateSignal[];
   violations: ConstraintHit[];
@@ -136,32 +122,26 @@ export async function runConstraintSignals(input: FlowGateInput): Promise<{
   const allFiles = await listAllArtifactFiles(input);
   const touched = await listTouchedThisStep(input);
   const { hunkFiles, staleFiles } = splitScanTargets(allFiles, touched);
-  const firstHunkHits = await scanFiles(input, hunkFiles, constraints, { hunksOnly: true });
-  const firstStaleHits = await scanFiles(input, staleFiles, constraints, { hunksOnly: false });
-
-  const staleRemoved = await removeStaleFiles(input, uniqueHitFiles(firstStaleHits));
-
-  const remainingHunk = hunkFiles.filter((f) => !staleRemoved.includes(f));
-  const hunkHits = staleRemoved.length
-    ? await scanFiles(input, remainingHunk, constraints, { hunksOnly: true })
-    : firstHunkHits;
+  const hunkHits = await scanFiles(input, hunkFiles, constraints, { hunksOnly: true });
+  const staleHits = inheritStaleHits(
+    await scanFiles(input, staleFiles, constraints, { hunksOnly: false }),
+  );
   const after = partitionConstraintHits(hunkHits, touched);
 
-  const fullScan = await scanFiles(input, remainingHunk, constraints, { hunksOnly: false });
-  const inheritedHits = fullScan.filter((hit) => {
+  const fullScan = await scanFiles(input, hunkFiles, constraints, { hunksOnly: false });
+  const inheritedFromHunks = fullScan.filter((hit) => {
     return !after.touchedHits.some(
       (t) => t.file === hit.file && t.term === hit.term && t.quote === hit.quote,
     );
   });
+  const inheritedHits = [...inheritedFromHunks, ...staleHits];
 
   const ok = after.touchedHits.length === 0;
   const skipAttemptBump = after.touchedHits.length === 0 && inheritedHits.length > 0;
   const detail = ok
-    ? staleRemoved.length
-      ? `${constraints.length} constraints checked (removed ${staleRemoved.length} stale)`
-      : inheritedHits.length
-        ? `${constraints.length} constraints checked (ignored ${inheritedHits.length} inherited)`
-        : `${constraints.length} constraints checked`
+    ? inheritedHits.length
+      ? `${constraints.length} constraints checked (ignored ${inheritedHits.length} inherited)`
+      : `${constraints.length} constraints checked`
     : after.touchedHits.slice(0, 3).map((v) => `${v.file}: "${v.term}"`).join('; ');
   const retryHint = formatConstraintRetryHint(after.touchedHits);
 
@@ -169,7 +149,7 @@ export async function runConstraintSignals(input: FlowGateInput): Promise<{
     signals: [{ name: 'constraints', ok, detail }],
     violations: after.touchedHits,
     retryHint,
-    staleRemoved,
+    staleRemoved: [],
     inheritedHits,
     skipAttemptBump,
   };

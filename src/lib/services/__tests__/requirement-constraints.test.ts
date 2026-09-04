@@ -67,6 +67,34 @@ describe('requirement constraints', () => {
     expect(hits.some((h) => /outbound|cold email/i.test(h.term))).toBe(true);
   });
 
+  it('does not harvest Vertical or https from a sin-copy quality standard', () => {
+    const constraints = extractRequirementConstraints(
+      'El usuario validó la Vertical 10 (Educación) como el estándar de calidad (incluyó URLs reales y comunidades específicas sin copy comercial).',
+    );
+    const terms = constraints.flatMap((c) => c.forbiddenTerms);
+    expect(terms.some((t) => /vertical/i.test(t))).toBe(false);
+    expect(terms.some((t) => /https?/i.test(t))).toBe(false);
+    expect(terms.some((t) => /url/i.test(t))).toBe(false);
+    const hits = findConstraintViolations(
+      '## Vertical 1: Barberías\n- AMPI — https://ampi.org.mx\n- CANIETI — https://canieti.org',
+      constraints,
+    );
+    expect(hits).toHaveLength(0);
+  });
+
+  it('does not forbid real https citations when constraints mention LINKS HTTPS', () => {
+    const constraints = extractRequirementConstraints(
+      'ESTRICTAMENTE PROHIBIDO incluir tácticas de entrada, campañas de email, cold outreach o mensajes de prospección.\nEL ENFOQUE ES EXCLUSIVAMENTE: documentar COMUNIDADES REALES y LINKS HTTPS REALES.',
+    );
+    const terms = constraints.flatMap((c) => c.forbiddenTerms);
+    expect(terms.some((t) => /https?/i.test(t))).toBe(false);
+    const hits = findConstraintViolations(
+      '- r/BienesRaicesMexico — https://www.reddit.com/r/BienesRaicesMexico',
+      constraints,
+    );
+    expect(hits.every((h) => !/https?/i.test(h.term))).toBe(true);
+  });
+
   it('formats a CRITICAL CONSTRAINTS prompt block', () => {
     const block = formatConstraintsPromptBlock(
       extractRequirementConstraints('MUST NOT do outbound'),
