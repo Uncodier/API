@@ -60,7 +60,7 @@ const evaluator = new ToolEvaluator(
   ['tool_evaluation'],
   { // Opciones del modelo
     modelType: 'openai',
-    modelId: 'gpt-5-nano'
+    modelId: 'gpt-5-mini'
   },
   'Descripción opcional',
   undefined, // systemPrompt

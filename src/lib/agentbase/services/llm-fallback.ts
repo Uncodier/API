@@ -156,11 +156,11 @@ export async function tryStreamingGpt55Fallback(params: {
     (error?.message?.includes('Stream hung after role-only first chunk') ||
       error?.message?.includes('Chunk timeout') ||
       error?.message?.includes('timeout'));
-  if (!isStreamingError || provider !== 'openai' || modelOptions.model !== 'gpt-5.5') {
+  if (!isStreamingError || provider !== 'openai' || modelOptions.model !== 'gpt-5.6-sol') {
     return null;
   }
 
-  console.warn('[PortkeyConnector] GPT-5.5 streaming failed, trying fallback to GPT-4o...');
+  console.warn('[PortkeyConnector] GPT-5.6 Sol streaming failed, trying fallback to GPT-4o...');
   try {
     const fallbackModelOptions = buildGpt4oFallbackModelOptions({ ...modelOptions, stream: true });
     const fallbackResponse = await portkey.chat.completions.create(
@@ -177,7 +177,7 @@ export async function tryStreamingGpt55Fallback(params: {
     return {
       stream: fallbackResponse,
       isStream: true,
-      modelInfo: { model: 'gpt-4o', provider, fallbackFrom: 'gpt-5.5' },
+      modelInfo: { model: 'gpt-4o', provider, fallbackFrom: 'gpt-5.6-sol' },
     };
   } catch (fallbackError: any) {
     console.error('[PortkeyConnector] GPT-4o streaming fallback failed:', fallbackError?.message || fallbackError);

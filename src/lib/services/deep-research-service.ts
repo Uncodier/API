@@ -325,7 +325,7 @@ export class DeepResearchService {
             status: 'not_initialized'
           }
         ],
-        model: "gpt-5-nano",
+        model: "gpt-5-mini",
         modelType: "openai"
       });
       

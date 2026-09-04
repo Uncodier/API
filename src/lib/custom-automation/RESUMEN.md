@@ -263,7 +263,7 @@ await testBasicCommands();
 ## 💡 Tips Importantes
 
 ### Optimización de Costos
-- Usa `gpt-4o-mini` para tareas simples (90% más barato)
+- Usa `gpt-5-mini` para tareas simples (90% más barato)
 - Usa `gpt-4o` solo para tareas complejas
 - Monitorea uso en Azure Portal
 
@@ -272,11 +272,11 @@ await testBasicCommands();
 const executor = new OpenAIAgentExecutor({
   endpoint: process.env.MICROSOFT_AZURE_OPENAI_ENDPOINT,
   apiKey: process.env.MICROSOFT_AZURE_OPENAI_API_KEY,
-  deployment: 'gpt-4o-mini', // Empieza con mini (o 'o1' para modelos de razonamiento)
+  deployment: 'gpt-5-mini', // Empieza con mini (o 'o1' para modelos de razonamiento)
   apiVersion: '2024-08-01-preview',
 });
 
-// Para modelos o-series (o1, o3, GPT-5.5), usa reasoning_effort y verbosity
+// Para modelos o-series (o1, o3, GPT-5.6 Sol), usa reasoning_effort y verbosity
 const result = await executor.act({
   tools,
   system: SYSTEM_PROMPT,

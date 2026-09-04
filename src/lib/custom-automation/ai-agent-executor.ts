@@ -856,7 +856,7 @@ export class AIAgentExecutor {
     // verbosity, no temperature override). Gemini does NOT — skip all that.
     const supportsReasoningParams = provider === 'azure' || provider === 'openai';
     const isReasoningModel = supportsReasoningParams && (
-      modelName.includes('o1') || modelName.includes('o3') || modelName.includes('gpt-5.5')
+      modelName.includes('o1') || modelName.includes('o3') || modelName.includes('gpt-5.6-sol')
     );
 
     const uniqueTools: any[] = [];

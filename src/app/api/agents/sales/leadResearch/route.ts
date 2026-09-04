@@ -402,7 +402,7 @@ export async function POST(request: Request) {
           status: 'not_initialized'
         }
       ],
-      model: 'gpt-5.5',
+      model: 'gpt-5.6-sol',
       modelType: 'openai'
     });
     

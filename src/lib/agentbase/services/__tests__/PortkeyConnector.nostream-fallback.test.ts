@@ -42,7 +42,7 @@ describe('PortkeyConnector non-stream fallback', () => {
         { role: 'system', content: 'You are a support agent with enough context.' },
         { role: 'user', content: 'hi' },
       ],
-      { modelType: 'openai', modelId: 'gpt-5.5', stream: false }
+      { modelType: 'openai', modelId: 'gpt-5.6-sol', stream: false }
     );
 
     expect(createMock).toHaveBeenCalledTimes(2);

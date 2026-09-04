@@ -94,7 +94,7 @@ executionResult = await client.act({
 const executor = new OpenAIAgentExecutor(process.env.OPENAI_API_KEY);
 
 executionResult = await executor.act({
-  model: 'gpt-4o', // or 'gpt-4o-mini', 'gpt-4-turbo', etc.
+  model: 'gpt-4o', // or 'gpt-5-mini', 'gpt-4-turbo', etc.
   tools,
   schema: AgentResponseSchema,
   system: systemPromptWithContext,
@@ -257,7 +257,7 @@ With the custom implementation, you can use any OpenAI model:
 ```typescript
 // Recommended options:
 model: 'gpt-4o'           // Latest, most capable
-model: 'gpt-4o-mini'      // Faster, cheaper, still very capable
+model: 'gpt-5-mini'      // Faster, cheaper, still very capable
 model: 'gpt-4-turbo'      // Previous generation
 model: 'gpt-4'            // Original GPT-4
 
@@ -278,7 +278,7 @@ model: anthropic()        // Claude Sonnet (no choice)
 1. Test with a simple task first:
 ```typescript
 const result = await executor.act({
-  model: 'gpt-4o-mini', // Start with cheaper model for testing
+  model: 'gpt-5-mini', // Start with cheaper model for testing
   tools: createScrapybaraTools(instance),
   prompt: 'Take a screenshot',
   onStep: (step) => console.log(step),
@@ -309,7 +309,7 @@ Keep both implementations available during migration for safety.
 **Solution**: Verify your Zod schema is correct. OpenAI's structured outputs require strict schemas.
 
 ### Issue: High costs
-**Solution**: Start with `gpt-4o-mini` for testing, then upgrade to `gpt-4o` for production.
+**Solution**: Start with `gpt-5-mini` for testing, then upgrade to `gpt-4o` for production.
 
 ### Issue: Different behavior than Anthropic
 **Solution**: Adjust temperature and system prompt. OpenAI models may need different prompting strategies.

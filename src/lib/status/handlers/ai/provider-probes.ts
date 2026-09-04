@@ -44,7 +44,7 @@ function getAzureConfig(): {
   const deployment =
     getEnv('MICROSOFT_AZURE_OPENAI_DEPLOYMENT') ||
     getEnv('AZURE_OPENAI_CHAT_DEPLOYMENT') ||
-    'gpt-4o-mini';
+    'gpt-5-mini';
   const apiVersion =
     getEnv('MICROSOFT_AZURE_OPENAI_API_VERSION') ||
     getEnv('AZURE_OPENAI_API_VERSION') ||
@@ -145,7 +145,7 @@ export async function probePortkeyProvider(
     gemini: getEnv('GEMINI_API_KEY'),
   };
   const defaultModels: Record<string, string> = {
-    openai: 'gpt-5-nano',
+    openai: 'gpt-5-mini',
     gemini: getGeminiProbeModel(),
   };
 
@@ -212,7 +212,7 @@ export async function probePortkeyProvider(
 
 export async function probeAzureText(): Promise<ProviderProbeResult> {
   const azure = getAzureConfig();
-  const model = azure?.deployment || 'gpt-4o-mini';
+  const model = azure?.deployment || 'gpt-5-mini';
   if (!azure) {
     return skippedResult(model);
   }
@@ -293,7 +293,7 @@ export async function probeGeminiText(): Promise<ProviderProbeResult> {
 }
 
 export async function probeVercelGateway(): Promise<ProviderProbeResult> {
-  const model = 'gpt-4o-mini';
+  const model = 'gpt-5-mini';
   const baseURL = getEnv('VERCEL_AI_GATEWAY_OPENAI');
   const apiKey = getEnv('VERCEL_AI_GATEWAY_API_KEY');
   if (!baseURL || !apiKey) {

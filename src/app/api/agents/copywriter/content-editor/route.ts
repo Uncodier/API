@@ -511,8 +511,8 @@ Original content to edit:
           status: 'not_initialized'
         }
       ],
-      // Use GPT-5.5 with automatic fallback to non-streaming if streaming fails
-      model: 'gpt-5.5',
+      // Use GPT-5.6 Sol with automatic fallback to non-streaming if streaming fails
+      model: 'gpt-5.6-sol',
       modelType: 'openai'
     });
     

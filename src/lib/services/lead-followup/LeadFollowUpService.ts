@@ -278,7 +278,7 @@ VALIDATION CHECKLIST:
         }
       ],
       context: contextMessage,
-      model: 'openai:gpt-5.5',
+      model: 'openai:gpt-5.6-sol',
       supervisor: [
         {
           agent_role: 'sales_manager',

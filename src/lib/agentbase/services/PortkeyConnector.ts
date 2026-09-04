@@ -87,14 +87,14 @@ export class PortkeyConnector {
         
         // Handle gpt-5 models specific parameters - check the final model name
         const finalModelId = modelOptions.model;
-        const isGpt55Family = finalModelId === 'gpt-5-mini' || finalModelId === 'gpt-5.5' || finalModelId === 'gpt-5-nano';
+        const isGpt55Family = finalModelId === 'gpt-5-mini' || finalModelId === 'gpt-5.6-sol';
         if (hasExplicitMaxTokens) {
           if (isGpt55Family) {
             // Apply upper cap per model family but only when explicitly provided
             let maxCompletionTokens: number = maxTokens as number;
-            if (finalModelId === 'gpt-5.5') {
+            if (finalModelId === 'gpt-5.6-sol') {
               maxCompletionTokens = Math.min(maxCompletionTokens, 32768);
-            } else if (finalModelId === 'gpt-5-nano' || finalModelId === 'gpt-5-mini') {
+            } else if (finalModelId === 'gpt-5-mini') {
               maxCompletionTokens = Math.min(maxCompletionTokens, 32768);
             } else {
               maxCompletionTokens = Math.min(maxCompletionTokens, 16384);
@@ -130,7 +130,7 @@ export class PortkeyConnector {
       // Set temperature if provided (but skip for gpt-5 models which only support default value of 1)
       if (temperature !== undefined) {
         const finalModelId = modelOptions.model;
-        const isGpt55Model = modelType === 'openai' && (finalModelId === 'gpt-5.5' || finalModelId === 'gpt-5-mini' || finalModelId === 'gpt-5-nano');
+        const isGpt55Model = modelType === 'openai' && (finalModelId === 'gpt-5.6-sol' || finalModelId === 'gpt-5-mini');
         if (!isGpt55Model) {
           modelOptions.temperature = temperature;
         } else {
@@ -143,12 +143,11 @@ export class PortkeyConnector {
         modelOptions.top_p = topP;
       }
       
-      // Add reasoning and verbosity for GPT-5.5 family models at the same level as max_completion_tokens
+      // Add reasoning and verbosity for GPT-5.6 Sol family models at the same level as max_completion_tokens
       const finalModelId = modelOptions.model;
       const isGpt55Family = modelType === 'openai' && (
-        finalModelId === 'gpt-5.5' || 
-        finalModelId === 'gpt-5-mini' || 
-        finalModelId === 'gpt-5-nano'
+        finalModelId === 'gpt-5.6-sol' || 
+        finalModelId === 'gpt-5-mini'
       );
       
       if (isGpt55Family) {
@@ -156,12 +155,12 @@ export class PortkeyConnector {
           modelOptions.reasoning = {
             effort: reasoningEffort
           };
-          console.log(`[PortkeyConnector] Using reasoning.effort=${reasoningEffort} for GPT-5.5 model: ${finalModelId}`);
+          console.log(`[PortkeyConnector] Using reasoning.effort=${reasoningEffort} for GPT-5.6 Sol model: ${finalModelId}`);
         }
         // Note: OpenAI does not support a 'verbosity' parameter. Passing it may cause errors on some providers.
         // if (verbosity !== undefined) {
         //   modelOptions.verbosity = verbosity;
-        //   console.log(`[PortkeyConnector] Using verbosity=${verbosity} for GPT-5.5 model: ${finalModelId}`);
+        //   console.log(`[PortkeyConnector] Using verbosity=${verbosity} for GPT-5.6 Sol model: ${finalModelId}`);
         // }
       }
       

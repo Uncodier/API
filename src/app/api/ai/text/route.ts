@@ -39,7 +39,7 @@ async function generateWithAzure(options: {
 }) {
   const endpoint = getEnv('AZURE_OPENAI_ENDPOINT');
   const apiKey = getEnv('AZURE_OPENAI_API_KEY');
-  const deployment = getEnv('AZURE_OPENAI_CHAT_DEPLOYMENT'); // e.g. "gpt-4o-mini"
+  const deployment = getEnv('AZURE_OPENAI_CHAT_DEPLOYMENT'); // e.g. "gpt-5-mini"
   const apiVersion = getEnv('AZURE_OPENAI_API_VERSION') || '2024-09-01-preview';
 
   if (!endpoint || !apiKey || !deployment) {
@@ -47,7 +47,7 @@ async function generateWithAzure(options: {
   }
 
   const url = `${endpoint.replace(/\/$/, '')}/openai/deployments/${encodeURIComponent(deployment)}/chat/completions?api-version=${encodeURIComponent(apiVersion)}`;
-  const isReasoningModel = deployment && (deployment.includes('gpt-5.5') || deployment.includes('o1') || deployment.includes('o3') || deployment.includes('gpt-5'));
+  const isReasoningModel = deployment && (deployment.includes('gpt-5.6-sol') || deployment.includes('o1') || deployment.includes('o3') || deployment.includes('gpt-5'));
 
   const bodyOptions: any = {
     messages: toAzureMessages(options.messages),
@@ -129,7 +129,7 @@ async function generateWithVercelGateway(options: {
       'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: options.model || 'gpt-4o-mini',
+      model: options.model || 'gpt-5-mini',
       messages: options.messages,
       temperature: options.temperature,
       max_tokens: options.maxTokens,

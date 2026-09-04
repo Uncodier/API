@@ -300,7 +300,7 @@ export class RegionLeadsCommandService {
           }
         ],
         // Set model
-        model: "gpt-5.5",
+        model: "gpt-5.6-sol",
         modelType: "openai",
         // Add metadata
         metadata: webhook ? { 

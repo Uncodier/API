@@ -11,12 +11,11 @@ export const AVAILABLE_MODELS = {
     { id: 'claude-instant-1.2', name: 'Claude Instant' }
   ],
   openai: [
-    { id: 'gpt-5.5', name: 'GPT-5.5' },
-    { id: 'gpt-5-nano', name: 'GPT-5 Nano' },
+    { id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol' },
+    { id: 'gpt-5-mini', name: 'GPT-5 Mini' },
     { id: 'gpt-4-vision-preview', name: 'GPT-4 Vision' },
     { id: 'gpt-4-turbo', name: 'GPT-4 Turbo' },
     { id: 'gpt-4', name: 'GPT-4' },
-    { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo' }
   ],
   gemini: [
     { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro' },
@@ -102,7 +101,7 @@ export function getRequestOptions(provider = 'openai', modelId?: string) {
   
   // Opciones para OpenAI (Azure OpenAI)
   const openaiOptions = {
-    model: modelId || 'gpt-5-nano'
+    model: modelId || 'gpt-5-mini'
   };
   
   // Opciones para Gemini

@@ -86,7 +86,7 @@ Return exactly the target structure with real values filled in:
         status: "not_initialized"
       }
     ],
-    model: "gpt-5-nano",
+    model: "gpt-5-mini",
     modelType: "openai",
     metadata: webhook ? { 
       webhook_url: webhook.url,
@@ -233,7 +233,7 @@ export async function createBusinessTypeResearchCommand(
         status: "not_initialized"
       }
     ],
-    model: "gpt-5-nano",
+    model: "gpt-5-mini",
     modelType: "openai",
     metadata: webhook ? { 
       webhook_url: webhook.url,
