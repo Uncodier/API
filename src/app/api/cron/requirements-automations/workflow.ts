@@ -28,6 +28,7 @@ import { executeStepsPhaseStep, type ExecuteStepsPhaseResult } from '../shared/c
 import { runOrchestratorStep } from '../shared/cron-orchestrator-step';
 import { validateDeliverablesStep, createFinalStatusStep } from '../shared/cron-workflow-finalize';
 import { ensureSourceArchiveStep } from '../shared/ensure-source-archive-step';
+import { countPendingPlanSteps } from '@/lib/services/cycle-wrapup-prompt';
 import { recordRequirementBlockedStep, createFallbackInstancePlanStep, getRequirementFullContextStep, updateInstanceStatusStep } from '../shared/workflow-db-steps';
 import { provisionPlatformKeyStep } from '../shared/platform-key-step';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
@@ -269,6 +270,7 @@ HARD RULE: Your turn is NOT done until \`instance_plan action='create'\` has suc
   // Step 4: Execute plan steps (always re-fetch so pause/delete in the same cycle is respected)
   const activePlan = await getActiveInstancePlanStep(instanceId, site_id);
   let planCompleted = false;
+  let latestPlanSteps: any[] | undefined = activePlan?.steps;
 
   let smokeError: string | null = null;
   let pushResult: { branch: string; pushed: boolean; commitCount: number } | null = null;
@@ -298,6 +300,7 @@ HARD RULE: Your turn is NOT done until \`instance_plan action='create'\` has suc
       planCompleted = reconciledStatus === 'completed';
       
       const finalPlan = await getActiveInstancePlanStep(instanceId, site_id);
+      if (Array.isArray(finalPlan?.steps)) latestPlanSteps = finalPlan.steps;
       if (planCompleted && finalPlan) {
         const { syncBacklogAfterPlanCompleted } = await import('../shared/plan-backlog-sync');
         const { connectOrRecreateRequirementSandbox } = await import('@/lib/services/sandbox-recovery');
@@ -416,6 +419,7 @@ HARD RULE: Your turn is NOT done until \`instance_plan action='create'\` has suc
       instructions,
       digest,
       planCompleted,
+      pendingPlanSteps: countPendingPlanSteps(latestPlanSteps),
       previewUrl,
       repoUrl,
       audit: cronAudit,

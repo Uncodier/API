@@ -19,6 +19,7 @@ import {
 import { parseGithubTreeUrl, branchBelongsToRequirement } from '@/lib/services/requirement-branch';
 import { getRequirementGitBinding } from '@/lib/services/requirement-git-binding';
 import { canCloseRequirement } from '@/lib/services/requirement-flow-engine';
+import { isLightRequirementFlow } from '@/lib/services/requirement-flows';
 import { deleteSnapshotQuiet } from '@/lib/services/sandbox-persisted-snapshot';
 
 const REQUIREMENT_GIT_STRICT = () => process.env.REQUIREMENT_GIT_STRICT === 'true';
@@ -252,18 +253,19 @@ export async function createFinalStatusStep(params: {
   }
 
   const hasSourceArchive = !!mergedSourceCode;
-  const lightFlow = flowKind === 'doc' || flowKind === 'task' || flowKind === 'makinari' || flowKind === 'contract' || flowKind === 'presentation';
+  const lightFlow = isLightRequirementFlow(flowKind);
+  const buildBlocksComplete = !lightFlow && !!postFinallyBuildError;
   let planCounts = !!planCompleted;
   if (!planCounts && instanceId) {
     const { data: latestPlan } = await supabaseAdmin
       .from('instance_plans')
-      .select('status, metadata, updated_at')
+      .select('status, metadata, completion_reason, updated_at')
       .eq('instance_id', instanceId)
       .order('updated_at', { ascending: false })
       .limit(1)
       .maybeSingle();
-    const cancelledBySaneo = latestPlan?.status === 'cancelled' &&
-      JSON.stringify(latestPlan.metadata || {}).includes('auto-saneo');
+    const { planCancelledBySaneo } = await import('@/lib/helpers/plan-lifecycle');
+    const cancelledBySaneo = planCancelledBySaneo(latestPlan);
     if (cancelledBySaneo) {
       planCounts = true;
     }
@@ -275,7 +277,7 @@ export async function createFinalStatusStep(params: {
     (lightFlow || (!!mergedPreviewUrl && effectivePreviewOk)) &&
     !!repoOk &&
     (lightFlow || smokeOk) &&
-    !postFinallyBuildError &&
+    !buildBlocksComplete &&
     hasSourceArchive;
 
   const missingParts: string[] = [];
@@ -286,7 +288,9 @@ export async function createFinalStatusStep(params: {
   if (repoUrl && !repoOk) missingParts.push('repo_url returns error/404');
   if (!hasSourceArchive) missingParts.push('no source_code archive in storage');
   if (smokeError) missingParts.push(`smoke test: ${smokeError}`);
-  if (postFinallyBuildError) missingParts.push(`post-finally build: ${postFinallyBuildError.slice(0, 200)}`);
+  if (buildBlocksComplete && postFinallyBuildError) {
+    missingParts.push(`post-finally build: ${postFinallyBuildError.slice(0, 200)}`);
+  }
 
   if (isComplete) {
     const closeCheck = await canCloseRequirement(reqId);

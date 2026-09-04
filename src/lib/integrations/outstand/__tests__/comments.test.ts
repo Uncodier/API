@@ -1,4 +1,4 @@
-import { mergeCommentResults, networksFromPost, usernameFromPost } from '../comments';
+import { mergeCommentResults, networksFromPost, usernameFromPost, emptyDegradedCommentsResult } from '../comments';
 
 describe('networksFromPost', () => {
   it('returns unique networks from social accounts', () => {
@@ -47,6 +47,34 @@ describe('mergeCommentResults', () => {
       success: true,
       replies: [{ id: '1' }, { id: '2' }],
       data: [{ id: '1' }, { id: '2' }],
+    });
+  });
+
+  it('merges degraded status and warnings when present', () => {
+    expect(
+      mergeCommentResults([
+        { success: true, replies: [{ id: '1' }] },
+        emptyDegradedCommentsResult(502, 'Facebook failed'),
+      ])
+    ).toEqual({
+      success: true,
+      replies: [{ id: '1' }],
+      data: [{ id: '1' }],
+      degraded: true,
+      warning: 'Facebook failed',
+    });
+  });
+});
+
+describe('emptyDegradedCommentsResult', () => {
+  it('returns a successful empty list with degraded flag', () => {
+    expect(emptyDegradedCommentsResult(500)).toEqual({
+      success: true,
+      replies: [],
+      data: [],
+      degraded: true,
+      warning: 'Outstand failed to load comments',
+      upstream_status: 500,
     });
   });
 });

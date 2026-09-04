@@ -1,5 +1,5 @@
 import type { FlowGateInput, FlowGateResult, FlowGateSignal } from './types';
-import { runConstraintSignals } from './gate-constraints';
+import { runConstraintSignals, runResearchCitationSignals } from './gate-constraints';
 
 /**
  * Lightweight gate for `doc` flow. Validates:
@@ -44,19 +44,18 @@ export async function runDocGate(input: FlowGateInput): Promise<FlowGateResult> 
 
   const constraint = await runConstraintSignals(input);
   signals.push(...constraint.signals);
+  const citations = await runResearchCitationSignals(input);
+  signals.push(...citations.signals);
 
   const ok = signals.every((s) => s.ok);
-  const constraintReason = constraint.violations[0]
-    ? `constraint violated (${constraint.violations[0].file}: ${constraint.violations[0].constraint})`
-    : '';
-  return {
-    ok,
-    flow: input.flow,
-    signals,
-    reason: ok
-      ? undefined
-      : constraintReason || `doc gate failed (${issues} structural issues)`,
-  };
+  const reason = ok
+    ? undefined
+    : constraint.retryHint
+      || citations.retryHint
+      || (constraint.violations[0]
+        ? `constraint violated (${constraint.violations[0].file}: ${constraint.violations[0].constraint})`
+        : `doc gate failed (${issues} structural issues)`);
+  return { ok, flow: input.flow, signals, reason, error: reason };
 }
 
 async function runShell(input: FlowGateInput, command: string): Promise<{ stdout: string; exit: number }> {

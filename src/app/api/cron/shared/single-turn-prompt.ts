@@ -8,6 +8,7 @@ import {
   getFileFreshnessPromptFragment,
   SANDBOX_REPO_ROOT_INVARIANT,
   TOOL_LOOKUP_HINT,
+  RESEARCH_WEBSEARCH_HINT,
   LANGUAGE_REQUIREMENT_PROMPT,
   TEMPLATE_CUSTOMIZATION_PROMPT,
 } from './step-git-prompts';
@@ -140,6 +141,7 @@ SHELL LIMITATIONS:
 - FOR LONG COMMANDS (like npm run build, tests, or servers), ALWAYS use sandbox_start_background_command. Never use sandbox_run_command for them.
 
 ${TOOL_LOOKUP_HINT}
+${effectiveRole === 'investigate' ? RESEARCH_WEBSEARCH_HINT : ''}
 ${getFileFreshnessPromptFragment(cycleBaselineAt)}
 ${getStepCheckpointPromptFragment(requirementId, instanceId)}`;
 }

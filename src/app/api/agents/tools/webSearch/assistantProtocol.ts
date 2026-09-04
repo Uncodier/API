@@ -9,19 +9,10 @@ import { tool } from 'scrapybara/tools';
 import { z } from 'zod';
 import type { UbuntuInstance } from 'scrapybara';
 import { searchWithTavily } from '@/lib/services/search/data-analyst-search';
+import { formatWebSearchPayload } from './webSearch-format';
 
 export interface WebSearchToolParams {
   query: string;
-}
-
-function buildSearchResult(data: { answer?: string; results?: Array<{ content?: string; title?: string; url?: string }> }): string {
-  if (data.answer && data.answer.trim()) {
-    return data.answer;
-  }
-  const parts = (data.results || [])
-    .map((r) => r.content || `${r.title || ''} ${r.url || ''}`.trim())
-    .filter(Boolean);
-  return parts.join('\n\n') || 'No results found.';
 }
 
 /**
@@ -31,7 +22,7 @@ function buildSearchResult(data: { answer?: string; results?: Array<{ content?: 
 export function webSearchTool(site_id?: string) {
   return {
     name: 'webSearch',
-    description: 'Perform a web search to get real-time information.',
+    description: 'Search the live web. Returns titled results with https:// URLs — paste those URLs into research docs.',
     parameters: {
       type: 'object',
       properties: {
@@ -65,10 +56,12 @@ export function webSearchTool(site_id?: string) {
           throw new Error(searchResult.error || 'Web search failed');
         }
 
-        const result = buildSearchResult(searchResult.data);
+        const payload = formatWebSearchPayload(searchResult.data);
         return {
           success: true,
-          result,
+          result: payload.text,
+          results: payload.results,
+          answer: payload.answer,
           message: `Successfully performed web search for "${args.query}".`,
         };
       } catch (error: any) {
@@ -88,7 +81,7 @@ export function webSearchTool(site_id?: string) {
 export function webSearchToolScrapybara(instance: UbuntuInstance, site_id?: string) {
   return tool({
     name: 'webSearch',
-    description: 'Perform a web search to get real-time information.',
+    description: 'Search the live web. Returns titled results with https:// URLs — paste those URLs into research docs.',
     parameters: z.object({
       query: z.string().describe('The search query to perform.'),
     }),
@@ -115,10 +108,12 @@ export function webSearchToolScrapybara(instance: UbuntuInstance, site_id?: stri
           throw new Error(searchResult.error || 'Web search failed');
         }
 
-        const result = buildSearchResult(searchResult.data);
+        const payload = formatWebSearchPayload(searchResult.data);
         return {
           success: true,
-          result,
+          result: payload.text,
+          results: payload.results,
+          answer: payload.answer,
           message: `Successfully performed web search for "${args.query}".`,
         };
       } catch (error: any) {

@@ -7,7 +7,12 @@ export function stripGitHubTokenFromRemote(url: string): string {
 
 export function buildFetchOriginArgs(branch?: string | null, shallow = false): string[] {
   const args = ['fetch', 'origin'];
-  if (branch?.trim()) args.push(branch.trim());
+  const b = branch?.trim();
+  if (b) {
+    // Update the remote-tracking ref. `git fetch origin <branch>` only
+    // writes FETCH_HEAD, so `origin/<branch>` stays missing and checkout fails.
+    args.push(`+refs/heads/${b}:refs/remotes/origin/${b}`);
+  }
   if (shallow) args.push('--depth=1');
   args.push('--prune');
   return args;

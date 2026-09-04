@@ -1,5 +1,23 @@
 import type { Sandbox } from '@vercel/sandbox';
 import { SANDBOX_WORK_DIR } from '@/lib/services/sandbox-constants';
+import { fetchOriginBranch } from '@/lib/services/sandbox-git-identity';
+
+export type FeatureAttachAction = 'noop' | 'checkout-B-head';
+
+/**
+ * Attach to the requirement feature branch from current HEAD.
+ * Never reset onto origin/<feature> — that wipes just-written work.
+ */
+export function decideFeatureBranchAttach(input: {
+  detached: boolean;
+  currentBranch: string;
+}): FeatureAttachAction {
+  const current = String(input.currentBranch || '').trim();
+  if (!input.detached && current !== 'main' && current !== 'master') {
+    return 'noop';
+  }
+  return 'checkout-B-head';
+}
 
 export function isInvalidOriginBranchName(name: string): boolean {
   const b = String(name).trim();
@@ -60,9 +78,14 @@ export async function pushWithRebaseRetry(
 
   console.warn(`[Sandbox] push rejected (non-fast-forward) on ${b} — fetching + rebasing onto origin and retrying once`);
 
-  const fetchRes = await runGit(sandbox, ['fetch', 'origin', b], cwd);
+  const fetchRes = await fetchOriginBranch(sandbox, b, cwd);
   if (fetchRes.exitCode !== 0) {
-    return { ok: false, stderr: `Initial push rejected and fetch origin ${b} failed: ${await fetchRes.stderr()}\n---\n${firstStderr}` };
+    const isReqBranch = /^feature\/req-|^req-/.test(b);
+    if (isReqBranch) {
+      const lease = await runGit(sandbox, ['push', '--force-with-lease', '-u', 'origin', refspec], cwd);
+      if (lease.exitCode === 0) return { ok: true, rebased: true };
+    }
+    return { ok: false, stderr: `Initial push rejected and fetch origin ${b} failed: ${fetchRes.stderr}\n---\n${firstStderr}` };
   }
 
   await clearStuckGitOperationState(sandbox, cwd);

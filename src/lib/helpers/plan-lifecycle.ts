@@ -278,6 +278,16 @@ export async function markRunningPlansAsFailed(
   }
 }
 
+export function planCancelledBySaneo(plan: {
+  status?: string | null;
+  metadata?: unknown;
+  completion_reason?: string | null;
+} | null | undefined): boolean {
+  if (!plan || !/^(cancelled|failed)$/.test(String(plan.status || ''))) return false;
+  const blob = `${JSON.stringify(plan.metadata || {})} ${plan.completion_reason || ''}`.toLowerCase();
+  return blob.includes('auto-saneo');
+}
+
 export interface CancelPlanStepsForItemResult {
   /** Number of plans whose JSON was rewritten (steps for the item cancelled). */
   plansTouched: number;
@@ -291,9 +301,10 @@ export interface CancelPlanStepsForItemResult {
 }
 
 /**
- * Cancel every pending/in_progress plan step bound (via
+ * Cancel in_progress/failed plan steps bound (via
  * `metadata.backlog_item_id` or root `backlog_item_id`) to a backlog item that
  * just transitioned to a terminal-non-done status (needs_review / rejected).
+ * Pending (unstarted) steps stay runnable.
  *
  * Why: when the backlog watchdog (or self-heal policy) escalates an item, the
  * `instance_plans.steps` array still has the per-step subgoals that were
@@ -304,8 +315,9 @@ export interface CancelPlanStepsForItemResult {
  * in_progress).
  *
  * Behavior:
- *  - If a plan has at least one pending/in_progress step bound to `itemId`,
- *    those steps are flipped to `status='cancelled'` with a `cancellation_reason`.
+ *  - in_progress and failed steps bound to `itemId` are cancelled so the
+ *    same step does not retry after the item is exhausted.
+ *  - Unstarted (pending) steps stay runnable so later work continues.
  *  - If, after that rewrite, the plan has no remaining pending/in_progress
  *    steps and is not already terminal, the plan itself is marked
  *    `status='cancelled'` so the cron skips it on the next tick.
@@ -316,6 +328,33 @@ export interface CancelPlanStepsForItemResult {
  * `instanceId`; otherwise scans all plans (we still pre-filter by
  * `requirementId` from the caller so this is safe in practice).
  */
+export function applyItemExhaustionToSteps(
+  steps: any[],
+  itemId: string,
+  reason: string,
+  nowIso: string,
+): { nextSteps: any[]; stepsCancelled: number; stillRunnable: boolean } {
+  const cancelStatuses = new Set(['in_progress', 'failed']);
+  const terminalStatuses = new Set(['completed', 'failed', 'cancelled', 'skipped']);
+  let stepsCancelled = 0;
+  const nextSteps = steps.map((s) => {
+    const boundId: string | undefined = s?.metadata?.backlog_item_id || s?.backlog_item_id;
+    if (boundId !== itemId) return s;
+    if (!cancelStatuses.has(s?.status)) return s;
+    stepsCancelled++;
+    return {
+      ...s,
+      status: 'cancelled',
+      cancellation_reason: reason,
+      cancelled_at: nowIso,
+    };
+  });
+  const stillRunnable = nextSteps.some(
+    (s) => !terminalStatuses.has(s?.status) && s?.status !== 'paused',
+  );
+  return { nextSteps, stepsCancelled, stillRunnable };
+}
+
 export async function cancelPlanStepsForBacklogItem(params: {
   itemId: string;
   reason: string;
@@ -331,8 +370,6 @@ export async function cancelPlanStepsForBacklogItem(params: {
   if (!params.itemId) return result;
 
   const ACTIVE_PLAN_STATUSES = ['in_progress', 'active', 'pending', 'paused'];
-  const ACTIVE_STEP_STATUSES = new Set(['pending', 'in_progress']);
-  const TERMINAL_STEP_STATUSES = new Set(['completed', 'failed', 'cancelled', 'skipped']);
 
   let query = supabaseAdmin
     .from('instance_plans')
@@ -353,30 +390,14 @@ export async function cancelPlanStepsForBacklogItem(params: {
     const steps = Array.isArray(plan.steps) ? (plan.steps as any[]) : [];
     if (steps.length === 0) continue;
 
-    let stepsCancelledHere = 0;
-    const nextSteps = steps.map((s) => {
-      const meta = s?.metadata || {};
-      const boundId: string | undefined = meta.backlog_item_id || s?.backlog_item_id;
-      if (boundId !== params.itemId) return s;
-      if (!ACTIVE_STEP_STATUSES.has(s?.status)) return s;
-      stepsCancelledHere++;
-      return {
-        ...s,
-        status: 'cancelled',
-        cancellation_reason: params.reason,
-        cancelled_at: nowIso,
-      };
-    });
-    if (stepsCancelledHere === 0) continue;
+    const rewritten = applyItemExhaustionToSteps(steps, params.itemId, params.reason, nowIso);
+    if (rewritten.stepsCancelled === 0) continue;
 
-    const stillRunnable = nextSteps.some(
-      (s) => !TERMINAL_STEP_STATUSES.has(s?.status) && s?.status !== 'paused',
-    );
     const updates: Record<string, any> = {
-      steps: nextSteps,
+      steps: rewritten.nextSteps,
       updated_at: nowIso,
     };
-    if (!stillRunnable) {
+    if (!rewritten.stillRunnable) {
       updates.status = 'cancelled';
       updates.completion_reason = `Backlog item ${params.itemId} reached terminal state — ${params.reason}`;
       updates.completed_at = nowIso;
@@ -391,7 +412,7 @@ export async function cancelPlanStepsForBacklogItem(params: {
       continue;
     }
     result.plansTouched++;
-    result.stepsCancelled += stepsCancelledHere;
+    result.stepsCancelled += rewritten.stepsCancelled;
     result.planIds.push(plan.id);
     if (updates.status === 'cancelled') result.plansCancelled++;
   }

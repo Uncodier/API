@@ -28,9 +28,27 @@ export function mergeCommentResults(results: Array<Record<string, unknown>>): Re
     return [];
   });
 
+  const someDegraded = results.some((result) => result.degraded === true);
+  const degradedWarnings = results
+    .filter((result) => result.warning && typeof result.warning === 'string')
+    .map((result) => result.warning);
+
   return {
     success: results.every((result) => result.success !== false),
     replies,
     data: replies,
+    ...(someDegraded ? { degraded: true } : {}),
+    ...(degradedWarnings.length > 0 ? { warning: degradedWarnings.join('; ') } : {}),
+  };
+}
+
+export function emptyDegradedCommentsResult(upstreamStatus?: number, message?: string): Record<string, unknown> {
+  return {
+    success: true,
+    replies: [],
+    data: [],
+    degraded: true,
+    warning: message || 'Outstand failed to load comments',
+    upstream_status: upstreamStatus || 500,
   };
 }

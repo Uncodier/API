@@ -1,6 +1,6 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { createInstancePlanCore } from '@/app/api/agents/tools/instance_plan/create/route';
-import { getActivePlans, resumePlan } from '@/lib/helpers/plan-lifecycle';
+import { getActivePlans, planCancelledBySaneo, resumePlan } from '@/lib/helpers/plan-lifecycle';
 
 /**
  * After auto-saneo, the instance must not stay pending with no executable plan.
@@ -25,7 +25,7 @@ export async function ensureActivePlanAfterSaneo(params: {
 
   const { data: recent } = await supabaseAdmin
     .from('instance_plans')
-    .select('id, status, metadata, user_id')
+    .select('id, status, metadata, completion_reason, user_id')
     .eq('instance_id', instanceId)
     .order('updated_at', { ascending: false })
     .limit(8);
@@ -37,11 +37,7 @@ export async function ensureActivePlanAfterSaneo(params: {
     return;
   }
 
-  const saneoCancelled = (recent || []).find((p) => {
-    if (!/^(cancelled|failed)$/.test(String(p.status || ''))) return false;
-    const blob = JSON.stringify(p.metadata || {}).toLowerCase();
-    return blob.includes('auto-saneo');
-  });
+  const saneoCancelled = (recent || []).find((p) => planCancelledBySaneo(p));
   if (saneoCancelled?.id) {
     await resumePlan(saneoCancelled.id);
     console.log(`[AutoSaneo] Reactivated plan ${saneoCancelled.id} (was ${saneoCancelled.status})`);

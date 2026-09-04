@@ -8,7 +8,7 @@ import {
   UploadUrlResponse, 
   ConfirmUploadResponse 
 } from './types';
-import { mergeCommentResults, networksFromPost, usernameFromPost } from './comments';
+import { mergeCommentResults, networksFromPost, usernameFromPost, emptyDegradedCommentsResult } from './comments';
 
 const BASE_URL = 'https://api.outstand.so/v1';
 
@@ -218,12 +218,28 @@ export class OutstandClient {
     }
 
     const username = params.username || usernameFromPost(post, networks[0]);
-    const results = await Promise.all(
+    
+    const outcomes = await Promise.allSettled(
       networks.map((network) => this.fetchComments(postId, {
         network,
         username: usernameFromPost(post, network) || username,
       }, tenantId))
     );
+
+    const results = outcomes.map((outcome, i) => {
+      if (outcome.status === 'fulfilled') {
+        return outcome.value;
+      }
+      
+      const error = outcome.reason;
+      if (error?.status >= 500) {
+        console.warn(`[OutstandClient] Degraded comments for post ${postId} on network ${networks[i]}:`, error.message);
+        return emptyDegradedCommentsResult(error.upstreamStatus, `Failed to load comments for ${networks[i]}`);
+      }
+      
+      // Propagate non-5xx errors (e.g., 400 Bad Request, 404 Not Found)
+      throw error;
+    });
 
     return results.length === 1 ? results[0] : mergeCommentResults(results);
   }

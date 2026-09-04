@@ -24,7 +24,15 @@ export const TOOL_LOOKUP_HINT = [
   '- Use `tools({ action: "list" })` to see every routed tool grouped by category (media, messaging, crm, social, content, infra, research).',
   '- Use `tools({ action: "describe", name: "<tool>" })` to get the exact parameters schema + expected_use for a specific tool before calling it.',
   '- Use `tools({ action: "call", name: "<tool>", args: "{ ... }" })` to execute it (args must be a JSON string). If args are invalid the error includes the parameters schema so you can auto-correct and retry.',
-  '- Examples: generate_image, sendEmail, leads, sales, socialMediaPublish, content, webSearch — ALL live behind tools. The router is the only way to reach them.',
+  '- Examples: generate_image, sendEmail, leads, sales, socialMediaPublish, content — those live behind tools.',
+  '- RESEARCH EXCEPTION: `webSearch` is a first-class tool. Call it directly (name=webSearch, query=...). Do not discover it via tools() — that wastes a turn.',
+].join('\n');
+
+export const RESEARCH_WEBSEARCH_HINT = [
+  'RESEARCH / INVESTIGATE STEPS:',
+  '- Call webSearch directly for each vertical or community query.',
+  '- Paste the https:// URLs from the results next to every named forum, association, group, or subreddit.',
+  '- A list of names without URLs will fail the research-citations gate.',
 ].join('\n');
 
 export const LANGUAGE_REQUIREMENT_PROMPT = `

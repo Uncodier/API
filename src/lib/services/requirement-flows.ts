@@ -239,7 +239,19 @@ export function classifyRequirementType(raw: string | null | undefined): Require
   if (t.includes('contract') || t.includes('legal')) return 'contract';
   if (t === 'integration' || t.includes('automat')) return 'automation';
   if (t === 'task' || t === 'planning') return 'task';
+  if (t === 'research' || t.includes('research') || t.includes('investig')) return 'makinari';
   return 'makinari';
+}
+
+const LIGHT_KINDS = new Set<RequirementKind>(['doc', 'task', 'makinari', 'contract', 'presentation']);
+
+/** Doc/research/task flows must not pay `next build` or preview/smoke. */
+export function isLightRequirementFlow(kind: RequirementKind | string | null | undefined): boolean {
+  if (!kind) return false;
+  const resolved = LIGHT_KINDS.has(kind as RequirementKind)
+    ? (kind as RequirementKind)
+    : classifyRequirementType(String(kind));
+  return LIGHT_KINDS.has(resolved);
 }
 
 export function getFlow(kind: RequirementKind): FlowDefinition {

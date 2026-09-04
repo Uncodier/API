@@ -1,6 +1,8 @@
 import {
   buildCycleWrapUpSystemPrompt,
+  countPendingPlanSteps,
   shouldRunCycleWrapUp,
+  shouldSkipWrapUpForPendingSteps,
 } from '../cycle-wrapup-prompt';
 
 describe('cycle-wrapup-prompt', () => {
@@ -35,6 +37,30 @@ describe('cycle-wrapup-prompt', () => {
     expect(prompt).toContain('User history mode: full');
     expect(prompt).toContain('req-123');
     expect(prompt).toContain('SAME language');
+  });
+
+  it('forbids asking the user when later plan steps remain', () => {
+    const prompt = buildCycleWrapUpSystemPrompt({
+      title: 'Research',
+      requirementId: 'req-1',
+      instructions: 'Map channels',
+      historyPromptText: '',
+      historyMode: 'empty',
+      digestFiles: [],
+      planCompleted: false,
+      pendingPlanSteps: 2,
+    });
+    expect(prompt).toContain('Pending plan steps remaining: 2');
+    expect(prompt).toContain('Do NOT ask the user for permission');
+    expect(prompt).not.toContain('NEEDS USER ITERATION');
+    expect(shouldSkipWrapUpForPendingSteps({ planCompleted: false, pendingPlanSteps: 2 })).toBe(true);
+    expect(shouldSkipWrapUpForPendingSteps({ planCompleted: true, pendingPlanSteps: 2 })).toBe(false);
+    expect(countPendingPlanSteps([
+      { status: 'completed' },
+      { status: 'failed' },
+      { status: 'pending' },
+      { status: 'in_progress' },
+    ])).toBe(2);
   });
 
   it('shouldRunCycleWrapUp skips only when both empty', () => {

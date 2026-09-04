@@ -22,7 +22,12 @@ describe('v3 git layout invariant', () => {
   });
 
   it('does not shallow-fetch on resume (depth=1 is clone-only)', () => {
-    expect(buildFetchOriginArgs('feature/req-abc')).toEqual(['fetch', 'origin', 'feature/req-abc', '--prune']);
+    expect(buildFetchOriginArgs('feature/req-abc')).toEqual([
+      'fetch',
+      'origin',
+      '+refs/heads/feature/req-abc:refs/remotes/origin/feature/req-abc',
+      '--prune',
+    ]);
     expect(buildFetchOriginArgs('feature/req-abc', true)).toContain('--depth=1');
   });
 });

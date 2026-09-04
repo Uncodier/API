@@ -145,7 +145,7 @@ export async function executeSingleTurnStep(params: {
 
     let retryContext = '';
     if (step.error_message) {
-      retryContext = `\n\n🚨 PREVIOUS ATTEMPT FAILED 🚨\nThe previous execution of this step failed with the following error:\n\n${step.error_message}\n\nYou MUST fix this error during this execution attempt. Pay close attention to this validation failure.`;
+      retryContext = `\n\n🚨 PREVIOUS ATTEMPT FAILED 🚨\nThe previous execution of this step failed with the following error:\n\n${step.error_message}\n\nIf the error names a leftover file, delete or rewrite that file. If it asks for https:// citations, add real URLs from webSearch. You MUST fix this during this attempt.`;
     }
 
     const { loadConstraintSourceBlocks } = await import('@/lib/services/requirement-constraints-persist');
@@ -295,7 +295,12 @@ export async function executeSingleTurnStep(params: {
          sandbox,
          workDir: SandboxService.WORK_DIR,
          requirementId,
-         item: { id: step.id, title: step.title, order: step.order } as any,
+         item: {
+           id: step.id,
+           title: step.title,
+           order: step.order,
+           acceptance: step.instructions ? [String(step.instructions)] : [],
+         } as any,
          appContext,
          audit
       });
@@ -359,7 +364,7 @@ export async function executeSingleTurnStep(params: {
            details: { 
               step_id: step.id, 
               plan_id: plan.id,
-              error_excerpt: gateRes.error?.slice(0, 500) || '',
+              error_excerpt: (gateRes.error || gateRes.reason || '').slice(0, 500),
               gate_signals: gateRes.signals,
            }
          });
@@ -374,7 +379,7 @@ export async function executeSingleTurnStep(params: {
             try {
                const { item } = await getBacklogItem(requirementId, backlogItemId);
                if (item) {
-                   const errorMsg = gateRes.error || '';
+                   const errorMsg = gateRes.error || gateRes.reason || '';
                    const { deriveCategoriesFailed } = await import('@/app/api/cron/shared/step-iteration-signals');
                    const categories = gateRes.richSignals ? deriveCategoriesFailed(gateRes.richSignals as any) : [];
                    const classified = classifyFailure(errorMsg, categories, {
@@ -428,7 +433,7 @@ export async function executeSingleTurnStep(params: {
          isDone: true, 
          effectiveSandboxId, 
          gatePassed: gateRes.ok, 
-         gateErrorExcerpt: gateRes.error,
+         gateErrorExcerpt: gateRes.error || gateRes.reason,
          sleepRequested,
          backgroundTask
       };

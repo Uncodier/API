@@ -15,7 +15,7 @@ import {
 } from '@/lib/services/sandbox-constants';
 import { stopSandboxQuiet } from '@/lib/services/sandbox-stop';
 import { fetchOriginBranch } from '@/lib/services/sandbox-git-identity';
-import { clearStuckGitOperationState, isInvalidOriginBranchName, pushWithRebaseRetry } from '@/lib/services/sandbox-git-push';
+import { clearStuckGitOperationState, decideFeatureBranchAttach, isInvalidOriginBranchName, pushWithRebaseRetry } from '@/lib/services/sandbox-git-push';
 import { deleteSandboxAndOrphans } from '@/lib/services/sandbox-lifecycle';
 
 export interface SandboxResult {
@@ -269,13 +269,7 @@ export class SandboxService {
     return ((await r.stdout()).trim().length > 0);
   }
 
-  /**
-   * Cron must not leave work on main/master or detached HEAD: push is blocked from the
-   * default branches and `git push origin HEAD` fails when the remote can't resolve a
-   * target ref (common when agents run `git checkout <sha>` inside the sandbox).
-   * When requirementId is set, move HEAD to feature/{shortId}-{slug} (create or checkout),
-   * preserving the working tree and any commits made while detached.
-   */
+  /** Attach HEAD to feature/{reqId} when on main/master or detached. */
   static async ensureFeatureBranchForCron(
     sandbox: Sandbox,
     requirementId: string,
@@ -297,46 +291,20 @@ export class SandboxService {
       `[Sandbox] HEAD is ${head} — switching to "${featureBranch}" before persisting changes (cron)`,
     );
 
-    if (detached) {
-      // `git checkout -B` creates the branch or resets it to the current commit, so any
-      // commits produced while detached are preserved on the feature branch. We intentionally
-      // do NOT fetch/rebase here: the detached state usually means the agent restored a
-      // specific sha, and we want to push exactly that state.
-      const co = await SandboxService.runWithCwd(sandbox, 'git', ['checkout', '-B', featureBranch], cwd);
-      if (co.exitCode !== 0) {
-        throw new Error(`Failed to attach detached HEAD to ${featureBranch}: ${await co.stderr()}`);
-      }
-      return;
+    if (!detached) {
+      await fetchOriginBranch(sandbox, featureBranch, cwd);
     }
 
-    await SandboxService.runWithCwd(sandbox, 'git', ['fetch', 'origin'], cwd);
+    const action = decideFeatureBranchAttach({
+      detached,
+      currentBranch: detached ? 'HEAD' : head,
+    });
 
-    const localOk = await SandboxService.runWithCwd(sandbox, 'git', ['rev-parse', '--verify', featureBranch], cwd);
-    if (localOk.exitCode === 0) {
-      const co = await SandboxService.runWithCwd(sandbox, 'git', ['checkout', featureBranch], cwd);
-      if (co.exitCode !== 0) {
-        throw new Error(`Failed to checkout local branch ${featureBranch}: ${await co.stderr()}`);
-      }
-      return;
-    }
+    if (action === 'noop') return;
 
-    const ls = await SandboxService.runWithCwd(sandbox, 'git', ['ls-remote', '--heads', 'origin', featureBranch], cwd);
-    if ((await ls.stdout()).trim()) {
-      const co = await SandboxService.runWithCwd(
-        sandbox,
-        'git',
-        ['checkout', '-b', featureBranch, `origin/${featureBranch}`],
-        cwd,
-      );
-      if (co.exitCode !== 0) {
-        throw new Error(`Failed to checkout origin/${featureBranch}: ${await co.stderr()}`);
-      }
-      return;
-    }
-
-    const co = await SandboxService.runWithCwd(sandbox, 'git', ['checkout', '-b', featureBranch], cwd);
+    const co = await SandboxService.runWithCwd(sandbox, 'git', ['checkout', '-B', featureBranch], cwd);
     if (co.exitCode !== 0) {
-      throw new Error(`Failed to create branch ${featureBranch}: ${await co.stderr()}`);
+      throw new Error(`Failed to attach HEAD to ${featureBranch}: ${await co.stderr()}`);
     }
   }
 

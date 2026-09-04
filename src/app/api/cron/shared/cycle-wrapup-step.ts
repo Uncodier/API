@@ -5,6 +5,7 @@ import { loadUserActionHistory } from '@/lib/services/instance-user-history';
 import {
   buildCycleWrapUpSystemPrompt,
   shouldRunCycleWrapUp,
+  shouldSkipWrapUpForPendingSteps,
 } from '@/lib/services/cycle-wrapup-prompt';
 import { loadLatestDocsDigestFromLogs } from '@/lib/services/docs-cycle-digest';
 // Import from lib/tools via assistantProtocol that only pulls requirement-status-core
@@ -25,6 +26,7 @@ export interface CycleWrapUpParams {
   /** Slim digest marker from emitDocsDigestStep — full bodies are reloaded from logs. */
   digest: DocsDigestResult | null;
   planCompleted: boolean;
+  pendingPlanSteps?: number;
   previewUrl?: string | null;
   repoUrl?: string | null;
   audit?: CronAuditContext;
@@ -41,6 +43,7 @@ export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<{ 
     instructions,
     digest,
     planCompleted,
+    pendingPlanSteps,
     previewUrl,
     repoUrl,
   } = params;
@@ -56,6 +59,13 @@ export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<{ 
     if (!digestFiles && digest?.emitted) {
       // Fallback: try without requirement filter
       digestFiles = await loadLatestDocsDigestFromLogs(instanceId);
+    }
+
+    if (shouldSkipWrapUpForPendingSteps({ planCompleted, pendingPlanSteps })) {
+      console.log(
+        `[CycleWrapUpStep] Skipping wrap-up for ${requirementId} — ${pendingPlanSteps} plan step(s) still pending`,
+      );
+      return { ran: false };
     }
 
     if (
@@ -78,6 +88,7 @@ export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<{ 
       historyMode: history.mode,
       digestFiles,
       planCompleted,
+      pendingPlanSteps,
       previewUrl,
       repoUrl,
     });

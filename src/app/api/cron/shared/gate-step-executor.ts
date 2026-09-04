@@ -60,7 +60,12 @@ export async function runGateStep(params: {
       sandbox,
       workDir: SandboxService.WORK_DIR,
       requirementId,
-      item: { id: step.id, title: step.title, order: step.order } as any,
+      item: {
+        id: step.id,
+        title: step.title,
+        order: step.order,
+        acceptance: step.instructions ? [String(step.instructions)] : [],
+      } as any,
       audit,
     });
 
@@ -134,7 +139,7 @@ export async function runGateStep(params: {
          details: { 
             step_id: step.id, 
             plan_id: plan.id,
-            error_excerpt: gateRes.error?.slice(0, 500) || '',
+            error_excerpt: (gateRes.error || gateRes.reason || '').slice(0, 500),
             gate_signals: gateRes.signals,
          }
        });
@@ -152,7 +157,7 @@ export async function runGateStep(params: {
           try {
              const { item } = await getBacklogItem(requirementId, backlogItemId);
              if (item) {
-                 const errorMsg = gateRes.error || '';
+                 const errorMsg = gateRes.error || gateRes.reason || '';
                  const { deriveCategoriesFailed } = await import('@/app/api/cron/shared/step-iteration-signals');
                  const categories = gateRes.richSignals ? deriveCategoriesFailed(gateRes.richSignals as any) : [];
                  const classified = classifyFailure(errorMsg, categories, {
@@ -221,7 +226,7 @@ export async function runGateStep(params: {
           }
        }
        
-       return { ok: true, passed: false, gateErrorExcerpt: gateRes.error, effectiveSandboxId };
+       return { ok: true, passed: false, gateErrorExcerpt: gateRes.error || gateRes.reason, effectiveSandboxId };
     }
   } catch (e: any) {
     console.error(`[GateStep] Exception running gate:`, e);

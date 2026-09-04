@@ -22,7 +22,8 @@ import { applyDatabaseMigrationsStep } from '../shared/step-db-migrations';
 // lives in its own module.
 import { bootstrapRequirementSpecStep } from '../shared/bootstrap-spec-step';
 import { ensureSourceArchiveStep } from '../shared/ensure-source-archive-step';
-import { classifyRequirementType } from '@/lib/services/requirement-flows';
+import { classifyRequirementType, isLightRequirementFlow } from '@/lib/services/requirement-flows';
+import { countPendingPlanSteps } from '@/lib/services/cycle-wrapup-prompt';
 import { 
   getPlanExecutionGateStep,
   updatePlanStepStatusStep,
@@ -325,6 +326,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   // Step 5: Execute plan steps (always re-fetch so pause/delete in the same cycle is respected)
   const activePlan = await getActiveInstancePlanStep(instanceId, site_id);
   let planCompleted = false;
+  let latestPlanSteps: any[] | undefined = activePlan?.steps;
 
   let smokeError: string | null = null;
   let pushResult: { branch: string; pushed: boolean; commitCount: number } | null = null;
@@ -486,6 +488,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
 
       // Re-fetch the final plan to count completed steps
       const finalPlan = await getActiveInstancePlanStep(instanceId, site_id);
+      if (Array.isArray(finalPlan?.steps)) latestPlanSteps = finalPlan.steps;
 
       if (planCompleted && finalPlan) {
         const { syncBacklogAfterPlanCompleted } = await import('../shared/plan-backlog-sync');
@@ -594,7 +597,8 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   await extendRunLockStep(reqId, cronLockRunId);
 
   let postFinallyBuildError: string | undefined;
-  if (pushResult && !(stepsPhase?.anyStepFailed)) {
+  const lightFlow = isLightRequirementFlow(classifyRequirementType(type));
+  if (pushResult && !(stepsPhase?.anyStepFailed) && !lightFlow) {
     const pf = await postFinallyBuildStep(sandboxId!, cronAudit, {
       requirementId: reqId,
       title,
@@ -669,6 +673,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       instructions,
       digest,
       planCompleted,
+      pendingPlanSteps: countPendingPlanSteps(latestPlanSteps),
       previewUrl,
       repoUrl,
       audit: cronAudit,
