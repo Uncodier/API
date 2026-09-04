@@ -307,6 +307,7 @@ export function toolsRouterTool(routedTools: RoutedTool[]) {
             success: true,
             name: tool.name,
             result,
+            ...hoistRoutedToolResult(result),
           };
         } catch (err: any) {
           const message: string = err?.message || String(err);
@@ -383,8 +384,26 @@ export function withToolsRouter(allTools: RoutedTool[], alwaysOnNames: ReadonlyS
  *
  * Shared by orchestrator and executors so behaviour is consistent.
  */
+/** Hoist webSearch-style `{ results, answer }` so `tools` does not return only the Tavily answer. */
+export function hoistRoutedToolResult(result: unknown): { results?: unknown; answer?: unknown } {
+  if (!result || typeof result !== 'object') return {};
+  const outer = result as { results?: unknown; answer?: unknown; result?: unknown };
+  if (Array.isArray(outer.results)) {
+    return { results: outer.results, answer: outer.answer };
+  }
+  const inner = outer.result;
+  if (inner && typeof inner === 'object') {
+    const nested = inner as { results?: unknown; answer?: unknown };
+    if (Array.isArray(nested.results)) {
+      return { results: nested.results, answer: nested.answer };
+    }
+  }
+  return {};
+}
+
 export const DEFAULT_ALWAYS_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
   // sandbox surface — every agent uses these every turn
+  'webSearch',
   'skill_lookup',
   'sandbox_run_command',
   'sandbox_read_file',
@@ -414,6 +433,7 @@ export const DEFAULT_ALWAYS_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
  */
 export function isAlwaysOnToolName(name: string): boolean {
   if (DEFAULT_ALWAYS_ON_TOOL_NAMES.has(name)) return true;
+  if (name === 'webSearch') return true;
   if (name.startsWith('sandbox_')) return true;
   if (name.startsWith('qa_')) return true;
   return false;

@@ -3,11 +3,18 @@ import { SANDBOX_VISUAL_PROBE_PORT, SANDBOX_WORK_DIR } from '@/lib/services/sand
 import { fetchOriginBranch, installGitIdentity } from '@/lib/services/sandbox-git-identity';
 import { ensureNpmDeps } from '@/lib/services/sandbox-npm';
 import { getRequirementGitBinding, resolveDefaultGitBinding } from '@/lib/services/requirement-git-binding';
+import {
+  isDefaultGitBranch,
+  pickResumeFeatureBranch,
+  shouldResetResumeToOrigin,
+} from '@/lib/services/sandbox-resume-branch';
 
 export type ResumeWorkspaceOpts = {
   authRepoUrl?: string | null;
   /** When true (default), reset --hard to origin if the tree is clean. */
   syncToOrigin?: boolean;
+  /** Used to attach to feature/req-<id>* instead of resetting origin/main. */
+  requirementId?: string | null;
 };
 
 /**
@@ -29,9 +36,17 @@ export async function resumeRequirementWorkspace(
     cwd,
   });
   const branch = ((await branchRes.stdout()) || '').trim();
-  const usableBranch = branch && branch !== 'HEAD' ? branch : null;
+  let usableBranch = branch && branch !== 'HEAD' ? branch : null;
 
   await fetchOriginBranch(sandbox, usableBranch, cwd);
+
+  const featureBranch = await resolveResumeFeatureBranch(sandbox, cwd, opts?.requirementId);
+  if (featureBranch && isDefaultGitBranch(usableBranch)) {
+    const attached = await checkoutResumeFeatureBranch(sandbox, cwd, featureBranch);
+    if (attached) usableBranch = attached;
+  } else if (featureBranch) {
+    await fetchOriginBranch(sandbox, featureBranch, cwd);
+  }
 
   const dirty = await sandbox.runCommand({
     cmd: 'git',
@@ -39,7 +54,16 @@ export async function resumeRequirementWorkspace(
     cwd,
   });
   const porcelain = ((await dirty.stdout()) || '').trim();
-  if (opts?.syncToOrigin !== false && !porcelain && usableBranch) {
+  const syncToOrigin = opts?.syncToOrigin !== false;
+  if (
+    shouldResetResumeToOrigin({
+      syncToOrigin,
+      porcelain,
+      currentBranch: usableBranch,
+      featureBranch,
+    }) &&
+    usableBranch
+  ) {
     const reset = await sandbox.runCommand({
       cmd: 'git',
       args: ['reset', '--hard', `origin/${usableBranch}`],
@@ -50,6 +74,8 @@ export async function resumeRequirementWorkspace(
     }
   } else if (porcelain) {
     console.log('[Sandbox] onResume: local changes present — not resetting to origin');
+  } else if (isDefaultGitBranch(usableBranch) && featureBranch) {
+    console.log(`[Sandbox] onResume: skipped reset --hard origin/main (feature ${featureBranch} exists)`);
   }
 
   try {
@@ -115,7 +141,66 @@ export async function warmStartNamedSandbox(
   await resumeRequirementWorkspace(sandbox, cwd, {
     authRepoUrl,
     syncToOrigin: opts?.syncToOrigin !== false,
+    requirementId,
   });
+}
+
+async function resolveResumeFeatureBranch(
+  sandbox: Sandbox,
+  cwd: string,
+  requirementId?: string | null,
+): Promise<string | null> {
+  const id = String(requirementId || '').trim();
+  if (!id) return null;
+
+  const ls = await sandbox.runCommand({
+    cmd: 'git',
+    args: ['ls-remote', '--heads', 'origin'],
+    cwd,
+  });
+  const lsRemoteStdout = ((await ls.stdout()) || '').trim();
+
+  let knownBranches: string[] = [];
+  try {
+    const { SandboxService } = await import('@/lib/services/sandbox-service');
+    knownBranches = await SandboxService.getKnownBranches(id);
+  } catch (e: unknown) {
+    console.warn(
+      '[Sandbox] onResume known-branches lookup skipped:',
+      e instanceof Error ? e.message : e,
+    );
+  }
+
+  return pickResumeFeatureBranch({ requirementId: id, lsRemoteStdout, knownBranches });
+}
+
+async function checkoutResumeFeatureBranch(
+  sandbox: Sandbox,
+  cwd: string,
+  featureBranch: string,
+): Promise<string | null> {
+  await fetchOriginBranch(sandbox, featureBranch, cwd);
+  const track = await sandbox.runCommand({
+    cmd: 'git',
+    args: ['checkout', '--track', `origin/${featureBranch}`],
+    cwd,
+  });
+  if (track.exitCode !== 0) {
+    const fallback = await sandbox.runCommand({
+      cmd: 'git',
+      args: ['checkout', '-B', featureBranch, `origin/${featureBranch}`],
+      cwd,
+    });
+    if (fallback.exitCode !== 0) {
+      console.warn(
+        `[Sandbox] onResume checkout ${featureBranch} failed:`,
+        await fallback.stderr(),
+      );
+      return null;
+    }
+  }
+  console.log(`[Sandbox] onResume: attached to feature branch ${featureBranch}`);
+  return featureBranch;
 }
 
 async function restartNextIfBuilt(sandbox: Sandbox, cwd: string): Promise<void> {

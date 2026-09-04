@@ -48,6 +48,25 @@ describe('requirement constraints', () => {
     expect(communityHits.every((h) => !/comunidad|community/i.test(h.term))).toBe(true);
   });
 
+  it('does not flag útil para prospección in a community list', () => {
+    const constraints = extractRequirementConstraints('MUST NOT include outbound or cold email');
+    const hits = findConstraintViolations(
+      'CANACAR (https://canacar.mx) — útil para prospección en comunidades de transporte.',
+      constraints,
+    );
+    expect(hits).toHaveLength(0);
+  });
+
+  it('flags secuencia de cold email / outbound as a violation', () => {
+    const constraints = extractRequirementConstraints('MUST NOT include outbound tactics');
+    const hits = findConstraintViolations(
+      'Siguiente: secuencia de cold email y outbound hacia dueños de flota.',
+      constraints,
+    );
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits.some((h) => /outbound|cold email/i.test(h.term))).toBe(true);
+  });
+
   it('formats a CRITICAL CONSTRAINTS prompt block', () => {
     const block = formatConstraintsPromptBlock(
       extractRequirementConstraints('MUST NOT do outbound'),

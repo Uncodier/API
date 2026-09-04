@@ -28,10 +28,19 @@ export const TOOL_LOOKUP_HINT = [
   '- RESEARCH EXCEPTION: `webSearch` is a first-class tool. Call it directly (name=webSearch, query=...). Do not discover it via tools() — that wastes a turn.',
 ].join('\n');
 
+/** Investigate/append steps must search and write, not burn turns on skill_lookup. */
+export function firstActionsPromptLine(role: string): string {
+  if (role === 'investigate') {
+    return '- FIRST ACTIONS: Call webSearch directly, then sandbox_list_files. Do not call skill_lookup first. Append to the existing docs/investigations/*.md (mode=append) — do not rewrite it from scratch.';
+  }
+  return '- FIRST ACTIONS (MANDATORY ORDER): (1) skill_lookup action=search to find complementary skills for this exact step using keywords from the objective, title, instructions, and tech stack; then skill_lookup action=get for each relevant playbook before any coding. (2) sandbox_list_files path="." to see the current project structure before writing code.';
+}
+
 export const RESEARCH_WEBSEARCH_HINT = [
   'RESEARCH / INVESTIGATE STEPS:',
-  '- Call webSearch directly for each vertical or community query.',
-  '- Paste the https:// URLs from the results next to every named forum, association, group, or subreddit.',
+  '- Call webSearch directly (name=webSearch, query=...). Do not spend turns on tools() or skill_lookup first.',
+  '- Each result includes results: [{title,url,snippet}]. If you will write a research doc, paste the url fields.',
+  '- Append new verticals to the existing docs/investigations/*.md (sandbox_write_file mode=append). Do not rewrite the file from scratch.',
   '- A list of names without URLs will fail the research-citations gate.',
 ].join('\n');
 

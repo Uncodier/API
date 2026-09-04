@@ -1,6 +1,16 @@
 import { classifyFailure } from '@/lib/services/failure-classification';
 
 describe('Failure Classification', () => {
+  it('does not consume attempts for inherited-line constraint hits', () => {
+    const res = classifyFailure('inherited constraint on a pre-existing line', undefined, {
+      flow: 'makinari',
+      signals: [{ name: 'constraints', ok: false }],
+      skipAttemptBump: true,
+    });
+    expect(res.failureClass).toBe('plumbing');
+    expect(res.countsTowardAttempts).toBe(false);
+  });
+
   it('classifies judge verdicts as judge', () => {
     const res = classifyFailure('judge_verdict=rejected: Missing evidence');
     expect(res.failureClass).toBe('judge');

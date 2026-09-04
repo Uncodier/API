@@ -36,6 +36,25 @@ export function isSafeArtifactPath(file: string): boolean {
   return SAFE_PREFIX.test(name);
 }
 
+/** Hunks for this-step files; full-file scan for leftovers (stale git-rm path). */
+export function splitScanTargets(
+  allFiles: string[],
+  touchedFiles: Iterable<string>,
+): { hunkFiles: string[]; staleFiles: string[] } {
+  const touched = new Set(
+    Array.from(touchedFiles, (f) => String(f || '').trim().replace(/^\.\//, '')).filter(Boolean),
+  );
+  const hunkFiles: string[] = [];
+  const staleFiles: string[] = [];
+  for (let i = 0; i < allFiles.length; i++) {
+    const file = String(allFiles[i] || '').trim().replace(/^\.\//, '');
+    if (!file) continue;
+    if (touched.has(file)) hunkFiles.push(file);
+    else staleFiles.push(file);
+  }
+  return { hunkFiles, staleFiles };
+}
+
 export function partitionConstraintHits(
   hits: ConstraintHit[],
   touchedFiles: Iterable<string>,
@@ -87,8 +106,86 @@ export function shouldRequireResearchCitations(...blocks: Array<string | null | 
 }
 
 export function countHttpsCitations(text: string): number {
-  const matches = String(text || '').match(/https:\/\/[^\s"'`)>\]]+/gi);
-  return matches ? matches.length : 0;
+  return countResearchCitations(text);
+}
+
+/** Counts unique http(s) URLs, including markdown `[text](url)` links. */
+export function countResearchCitations(text: string): number {
+  const urls = new Set<string>();
+  const hay = String(text || '');
+  const bare = hay.match(/https?:\/\/[^\s"'`)>\]]+/gi) || [];
+  for (let i = 0; i < bare.length; i++) {
+    urls.add(bare[i].replace(/[.,;:]+$/, ''));
+  }
+  const md = hay.match(/\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/gi) || [];
+  for (let i = 0; i < md.length; i++) {
+    const inner = md[i].match(/\((https?:\/\/[^)\s]+)\)/i);
+    if (inner) urls.add(inner[1]);
+  }
+  return urls.size;
+}
+
+export function extractNamedMarkdownPaths(...blocks: Array<string | null | undefined>): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const re = /(?:docs|artifacts|reports|outputs)\/[\w./-]+\.mdx?/gi;
+  for (let i = 0; i < blocks.length; i++) {
+    const raw = blocks[i];
+    if (!raw) continue;
+    const matches = String(raw).match(re) || [];
+    for (let j = 0; j < matches.length; j++) {
+      const name = matches[j].replace(/^\.\//, '');
+      if (seen.has(name)) continue;
+      seen.add(name);
+      out.push(name);
+    }
+  }
+  return out;
+}
+
+export function resolveResearchCitationTargets(opts: {
+  existingMarkdown: string[];
+  namedInStep: string[];
+  touchedThisStep?: Iterable<string>;
+}): { files: string[]; missing: boolean } {
+  const existing = new Set(
+    opts.existingMarkdown.map((f) => String(f || '').trim().replace(/^\.\//, '')).filter(Boolean),
+  );
+  const named = opts.namedInStep.filter((f) => existing.has(f));
+  const investigations = Array.from(existing).filter(
+    (f) => f.startsWith('docs/investigations/') && /\.mdx?$/i.test(f),
+  );
+  const touched: string[] = [];
+  if (opts.touchedThisStep) {
+    for (const raw of opts.touchedThisStep) {
+      const f = String(raw || '').trim().replace(/^\.\//, '');
+      if (f && /\.mdx?$/i.test(f) && existing.has(f)) touched.push(f);
+    }
+  }
+  const files = uniqueHitFiles(
+    [...named, ...investigations, ...touched].map((file) => ({ constraint: '', term: '', quote: '', file })),
+  );
+  if (files.length) return { files, missing: false };
+  return { files: [], missing: true };
+}
+
+/** Added lines from a unified diff (ignores `+++` headers). */
+export function extractAddedDiffLines(diff: string): string {
+  const added: string[] = [];
+  const lines = String(diff || '').split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.startsWith('+') && !line.startsWith('+++')) {
+      added.push(line.slice(1));
+    }
+  }
+  return added.join('\n');
+}
+
+export function formatInheritedConstraintHint(hits: ConstraintHit[]): string {
+  if (!hits.length) return '';
+  const files = uniqueHitFiles(hits).slice(0, 6).join(', ');
+  return `Inherited constraint text in ${files} (pre-existing line, not in this-step diff). Rewrite that line or leave it — this does not consume an attempt.`;
 }
 
 export function formatResearchCitationHint(found: number, required: number = MIN_RESEARCH_HTTPS): string {

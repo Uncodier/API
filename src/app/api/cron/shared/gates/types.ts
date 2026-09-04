@@ -112,4 +112,9 @@ export interface FlowGateResult {
    * returns the new Sandbox instance here so the caller can use it.
    */
   sandboxReplacement?: Sandbox;
+  /**
+   * Constraint hit was on a pre-existing line (not in this-step diff).
+   * Callers must not bump backlog attempts.
+   */
+  skipAttemptBump?: boolean;
 }

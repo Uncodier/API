@@ -385,9 +385,10 @@ export async function executeSingleTurnStep(params: {
                    const classified = classifyFailure(errorMsg, categories, {
                      flow: requirementType,
                      signals: gateRes.signals,
+                     skipAttemptBump: gateRes.skipAttemptBump,
                    });
                    
-                   if (classified.failureClass === 'plumbing') {
+                   if (gateRes.skipAttemptBump || classified.failureClass === 'plumbing' || !classified.countsTowardAttempts) {
                      const toolName = classified.toolName || `gate:${requirementType || 'task'}`;
                      console.log(`[SingleTurn] Plumbing failure detected for tool ${toolName}, logging without attempt bump.`);
                      await recordToolFailure({

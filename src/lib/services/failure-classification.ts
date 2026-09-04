@@ -12,6 +12,7 @@ export interface ClassifiedFailure {
 export type ClassifyFailureContext = {
   flow?: string;
   signals?: Array<{ name: string; ok: boolean }>;
+  skipAttemptBump?: boolean;
 };
 
 function namedTool(preferred: string | undefined, fallback: string): string {
@@ -31,6 +32,18 @@ export function classifyFailure(
 ): ClassifiedFailure {
   const error = errorText.toLowerCase();
   const flowLabel = ctx?.flow ? `gate:${ctx.flow}` : 'gate:task';
+
+  if (
+    ctx?.skipAttemptBump
+    || error.includes('inherited constraint')
+    || error.includes('pre-existing line')
+  ) {
+    return {
+      failureClass: 'plumbing',
+      toolName: 'constraints',
+      countsTowardAttempts: false,
+    };
+  }
 
   if (error.includes('judge_verdict') || error.includes('unmatched_constraint')) {
     return {

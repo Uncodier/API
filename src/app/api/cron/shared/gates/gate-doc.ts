@@ -55,7 +55,17 @@ export async function runDocGate(input: FlowGateInput): Promise<FlowGateResult> 
       || (constraint.violations[0]
         ? `constraint violated (${constraint.violations[0].file}: ${constraint.violations[0].constraint})`
         : `doc gate failed (${issues} structural issues)`);
-  return { ok, flow: input.flow, signals, reason, error: reason };
+  return {
+    ok,
+    flow: input.flow,
+    signals,
+    reason,
+    error: reason,
+    skipAttemptBump:
+      constraint.skipAttemptBump
+      && constraint.signals.some((s) => !s.ok)
+      && !citations.signals.some((s) => !s.ok),
+  };
 }
 
 async function runShell(input: FlowGateInput, command: string): Promise<{ stdout: string; exit: number }> {

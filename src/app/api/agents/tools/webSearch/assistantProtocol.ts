@@ -22,7 +22,7 @@ export interface WebSearchToolParams {
 export function webSearchTool(site_id?: string) {
   return {
     name: 'webSearch',
-    description: 'Search the live web. Returns titled results with https:// URLs — paste those URLs into research docs.',
+    description: 'Search the live web. Returns results: [{title,url,snippet}]. If you will write a research doc, paste the url fields next to every name.',
     parameters: {
       type: 'object',
       properties: {
@@ -81,7 +81,7 @@ export function webSearchTool(site_id?: string) {
 export function webSearchToolScrapybara(instance: UbuntuInstance, site_id?: string) {
   return tool({
     name: 'webSearch',
-    description: 'Search the live web. Returns titled results with https:// URLs — paste those URLs into research docs.',
+    description: 'Search the live web. Returns results: [{title,url,snippet}]. If you will write a research doc, paste the url fields next to every name.',
     parameters: z.object({
       query: z.string().describe('The search query to perform.'),
     }),

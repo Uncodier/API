@@ -50,7 +50,17 @@ export async function runTaskGate(input: FlowGateInput): Promise<FlowGateResult>
         || (constraint.violations[0]
           ? `constraint violated (${constraint.violations[0].file}: ${constraint.violations[0].constraint})`
           : 'task gate failed');
-    return { ok, flow: input.flow, signals, reason, error: reason };
+    return {
+      ok,
+      flow: input.flow,
+      signals,
+      reason,
+      error: reason,
+      skipAttemptBump:
+        constraint.skipAttemptBump
+        && constraint.signals.some((s) => !s.ok)
+        && !citations.signals.some((s) => !s.ok),
+    };
   }
 
   if (input.appContext) {

@@ -19,15 +19,17 @@ import {
 } from './sandbox-file-freshness';
 
 import { isMissingPathError } from './sandbox-fs-errors';
+import { mergeWriteContent } from './sandbox-fs-write';
 
 const WORK_DIR = SandboxService.WORK_DIR;
 
 export { isMissingPathError } from './sandbox-fs-errors';
+export { mergeWriteContent } from './sandbox-fs-write';
 
 export function sandboxWriteFileTool(sandbox: Sandbox, toolsCtx?: SandboxToolsContext) {
   return {
     name: 'sandbox_write_file',
-    description: 'Write or overwrite a file in the Vercel Sandbox filesystem.',
+    description: 'Write a file in the Vercel Sandbox filesystem. Use mode=append to add to an existing research doc instead of overwriting it.',
     parameters: {
       type: 'object',
       properties: {
@@ -35,11 +37,16 @@ export function sandboxWriteFileTool(sandbox: Sandbox, toolsCtx?: SandboxToolsCo
           type: 'string',
           description: `File path relative to ${WORK_DIR} (e.g. "src/app/foo/page.tsx") or absolute. Use src/app/ for routes — do NOT use a top-level app/ folder; the tool will remap mistaken app/ paths to src/app/.`,
         },
-        content: { type: 'string', description: 'Content to write to the file' }
+        content: { type: 'string', description: 'Content to write to the file' },
+        mode: {
+          type: 'string',
+          enum: ['overwrite', 'append'],
+          description: 'overwrite (default) replaces the file. append concatenates content onto the existing file — use this for research verticals.',
+        },
       },
       required: ['path', 'content']
     },
-    execute: async (args: { path: string, content: string }) => {
+    execute: async (args: { path: string, content: string, mode?: string }) => {
       const creditCheck = await deductSandboxToolCredits(toolsCtx, 'sandbox_write_file', { path: args.path });
       if (!creditCheck.success) {
         return { success: false, error: creditCheck.error };
@@ -55,8 +62,21 @@ export function sandboxWriteFileTool(sandbox: Sandbox, toolsCtx?: SandboxToolsCo
       if (parentDir) {
         await s0.fs.mkdir(parentDir, { recursive: true });
       }
-      await s0.writeFiles([{ path: resolved, content: args.content }]);
-      return { success: true, path: resolved };
+      let existing: string | null = null;
+      if (String(args.mode || '').toLowerCase() === 'append') {
+        try {
+          existing = await s0.fs.readFile(resolved, 'utf8');
+        } catch {
+          existing = null;
+        }
+      }
+      const content = mergeWriteContent(existing, args.content, args.mode);
+      await s0.writeFiles([{ path: resolved, content }]);
+      return {
+        success: true,
+        path: resolved,
+        mode: String(args.mode || '').toLowerCase() === 'append' ? 'append' : 'overwrite',
+      };
     }
   };
 }

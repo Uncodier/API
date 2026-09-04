@@ -67,6 +67,7 @@ export async function createRequirementSandbox(
     name: sandboxName,
     tags,
     authRepoUrl,
+    requirementId,
   });
   if (named) {
     sandbox = named.sandbox;

@@ -16,7 +16,7 @@ const MUST_NOT_RE = /\b(must\s+not|mustn'?t|do\s+not|don't|nunca|sin\s+|solo\s+|
 function outboundLexicon(): string[] {
   return [
     'outbound',
-    'prospecci',
+    'prospección en frío',
     'prospecting',
     'cold email',
     'cold-email',

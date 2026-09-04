@@ -19,6 +19,7 @@ export async function getOrCreateRequirementSandbox(params: {
   name: string;
   tags: Record<string, string>;
   authRepoUrl: string;
+  requirementId?: string;
 }): Promise<GetOrCreateResult | null> {
   if (sandboxSdkMajor() < 3) return null;
   const getOrCreate = (Sandbox as unknown as {
@@ -43,7 +44,10 @@ export async function getOrCreateRequirementSandbox(params: {
       },
       onResume: async (sbx: Sandbox) => {
         try {
-          await resumeRequirementWorkspace(sbx, undefined, { authRepoUrl: params.authRepoUrl });
+          await resumeRequirementWorkspace(sbx, undefined, {
+            authRepoUrl: params.authRepoUrl,
+            requirementId: params.requirementId,
+          });
         } catch (e: unknown) {
           console.warn(
             '[Sandbox] onResume failed (keeping existing VM):',

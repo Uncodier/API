@@ -9,10 +9,13 @@ import {
   SANDBOX_REPO_ROOT_INVARIANT,
   TOOL_LOOKUP_HINT,
   RESEARCH_WEBSEARCH_HINT,
+  firstActionsPromptLine,
   LANGUAGE_REQUIREMENT_PROMPT,
   TEMPLATE_CUSTOMIZATION_PROMPT,
 } from './step-git-prompts';
 import { extractRequirementConstraints, formatConstraintsPromptBlock } from '@/lib/services/requirement-constraints';
+
+export { firstActionsPromptLine } from './step-git-prompts';
 
 export function inferRoleFromStep(step: any): string | null {
   const text = `${step.title || ''} ${step.instructions || ''}`.toLowerCase();
@@ -101,7 +104,7 @@ WORKSPACE — READ THIS CAREFULLY:
 - To add a new page, write files under src/app/<route>/page.tsx only.
 - To add components, write under src/components/.
 - All relative paths in sandbox tools resolve from ${SandboxService.WORK_DIR}.
-- FIRST ACTIONS (MANDATORY ORDER): (1) skill_lookup action=search to find complementary skills for this exact step using keywords from the objective, title, instructions, and tech stack; then skill_lookup action=get for each relevant playbook before any coding. (2) sandbox_list_files path="." to see the current project structure before writing code.
+${firstActionsPromptLine(effectiveRole)}
 - LAST ACTION BEFORE STOPPING: Call sandbox_push_checkpoint (title_hint = this step's title) after your work builds — mandatory if you modified files; see CHECKPOINTS section below.
 
 COMPANY BACKGROUND & MEMORIES:
@@ -127,7 +130,11 @@ Expected Output: ${step.expected_output || 'Complete the step successfully.'}${r
 Cycle baseline: ${cycleBaselineAt || 'unknown'}
 File freshness: sandbox_list_files / sandbox_read_file report updated_this_cycle vs this baseline.
 
-${skillContext ? skillContext : `\n🚨 MISSING SKILL INSTRUCTIONS: No specific skill or role was assigned to this step.
+${skillContext
+  ? skillContext
+  : effectiveRole === 'investigate'
+    ? ''
+    : `\n🚨 MISSING SKILL INSTRUCTIONS: No specific skill or role was assigned to this step.
 BEFORE starting to code or execute any commands, you MUST:
 1. Call \`skill_lookup\` tool with \`action="list"\` to see all available skills.
 2. Choose the appropriate skill based on this step's objective, instructions, and the current backlog item.

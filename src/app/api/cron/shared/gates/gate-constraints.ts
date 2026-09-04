@@ -5,7 +5,9 @@ import {
   type RequirementConstraint,
 } from '@/lib/services/requirement-constraints';
 import {
-  countHttpsCitations,
+  countResearchCitations,
+  extractAddedDiffLines,
+  extractNamedMarkdownPaths,
   formatConstraintRetryHint,
   formatResearchCitationHint,
   isHarnessCycleCommit,
@@ -13,7 +15,9 @@ import {
   MIN_RESEARCH_HTTPS,
   parseFileNameList,
   partitionConstraintHits,
+  resolveResearchCitationTargets,
   shouldRequireResearchCitations,
+  splitScanTargets,
   uniqueHitFiles,
   type ConstraintHit,
 } from './constraint-scan';
@@ -57,14 +61,38 @@ async function listTouchedThisStep(input: FlowGateInput): Promise<Set<string>> {
   return new Set(parseFileNameList(stdout));
 }
 
+async function isUntrackedFile(input: FlowGateInput, file: string): Promise<boolean> {
+  const status = (await runInWorkDir(input, `git status --porcelain -- "${file}" 2>/dev/null`)).trim();
+  return status.startsWith('??') || status.startsWith('A ');
+}
+
+async function addedHunksForFile(input: FlowGateInput, file: string): Promise<string> {
+  if (await isUntrackedFile(input, file)) {
+    return runInWorkDir(input, `cat "${file}" 2>/dev/null | head -c 80000`);
+  }
+  const subject = (await runInWorkDir(input, `git log -1 --pretty=%s 2>/dev/null`)).trim();
+  const parts = [
+    await runInWorkDir(input, `git diff -U0 HEAD -- "${file}" 2>/dev/null`),
+    await runInWorkDir(input, `git diff -U0 --cached -- "${file}" 2>/dev/null`),
+  ];
+  if (!isHarnessCycleCommit(subject)) {
+    parts.push(await runInWorkDir(input, `git diff -U0 HEAD~1 HEAD -- "${file}" 2>/dev/null`));
+  }
+  return extractAddedDiffLines(parts.join('\n'));
+}
+
 async function scanFiles(
   input: FlowGateInput,
   files: string[],
   constraints: RequirementConstraint[],
+  opts?: { hunksOnly?: boolean },
 ): Promise<ConstraintHit[]> {
   const violations: ConstraintHit[] = [];
+  const hunksOnly = opts?.hunksOnly !== false;
   for (const file of files.slice(0, 20)) {
-    const text = await runInWorkDir(input, `cat "${file}" 2>/dev/null | head -c 80000`);
+    const text = hunksOnly
+      ? await addedHunksForFile(input, file)
+      : await runInWorkDir(input, `cat "${file}" 2>/dev/null | head -c 80000`);
     for (const hit of findConstraintViolations(text, constraints)) {
       violations.push({ ...hit, file });
     }
@@ -90,6 +118,8 @@ export async function runConstraintSignals(input: FlowGateInput): Promise<{
   violations: ConstraintHit[];
   retryHint: string;
   staleRemoved: string[];
+  inheritedHits: ConstraintHit[];
+  skipAttemptBump: boolean;
 }> {
   const constraints = await loadConstraints(input);
   if (!constraints.length) {
@@ -98,27 +128,40 @@ export async function runConstraintSignals(input: FlowGateInput): Promise<{
       violations: [],
       retryHint: '',
       staleRemoved: [],
+      inheritedHits: [],
+      skipAttemptBump: false,
     };
   }
 
   const allFiles = await listAllArtifactFiles(input);
   const touched = await listTouchedThisStep(input);
-  const firstScan = await scanFiles(input, allFiles, constraints);
-  const { touchedHits, staleHits } = partitionConstraintHits(firstScan, touched);
+  const { hunkFiles, staleFiles } = splitScanTargets(allFiles, touched);
+  const firstHunkHits = await scanFiles(input, hunkFiles, constraints, { hunksOnly: true });
+  const firstStaleHits = await scanFiles(input, staleFiles, constraints, { hunksOnly: false });
 
-  const staleRemoved = await removeStaleFiles(input, uniqueHitFiles(staleHits));
+  const staleRemoved = await removeStaleFiles(input, uniqueHitFiles(firstStaleHits));
 
-  const remaining = allFiles.filter((f) => !staleRemoved.includes(f));
-  const secondScan = staleRemoved.length
-    ? await scanFiles(input, remaining, constraints)
-    : firstScan;
-  const after = partitionConstraintHits(secondScan, touched);
+  const remainingHunk = hunkFiles.filter((f) => !staleRemoved.includes(f));
+  const hunkHits = staleRemoved.length
+    ? await scanFiles(input, remainingHunk, constraints, { hunksOnly: true })
+    : firstHunkHits;
+  const after = partitionConstraintHits(hunkHits, touched);
+
+  const fullScan = await scanFiles(input, remainingHunk, constraints, { hunksOnly: false });
+  const inheritedHits = fullScan.filter((hit) => {
+    return !after.touchedHits.some(
+      (t) => t.file === hit.file && t.term === hit.term && t.quote === hit.quote,
+    );
+  });
 
   const ok = after.touchedHits.length === 0;
+  const skipAttemptBump = after.touchedHits.length === 0 && inheritedHits.length > 0;
   const detail = ok
     ? staleRemoved.length
       ? `${constraints.length} constraints checked (removed ${staleRemoved.length} stale)`
-      : `${constraints.length} constraints checked`
+      : inheritedHits.length
+        ? `${constraints.length} constraints checked (ignored ${inheritedHits.length} inherited)`
+        : `${constraints.length} constraints checked`
     : after.touchedHits.slice(0, 3).map((v) => `${v.file}: "${v.term}"`).join('; ');
   const retryHint = formatConstraintRetryHint(after.touchedHits);
 
@@ -127,6 +170,8 @@ export async function runConstraintSignals(input: FlowGateInput): Promise<{
     violations: after.touchedHits,
     retryHint,
     staleRemoved,
+    inheritedHits,
+    skipAttemptBump,
   };
 }
 
@@ -142,18 +187,37 @@ export async function runResearchCitationSignals(input: FlowGateInput): Promise<
     return { signals: [], retryHint: '' };
   }
 
+  const existing = await listAllArtifactFiles(input);
+  const existingMd = existing.filter((f) => /\.mdx?$/i.test(f));
+  const namedInStep = extractNamedMarkdownPaths(
+    input.item?.title,
+    ...(input.item?.acceptance || []),
+    ...(input.item?.constraints || []),
+    input.appContext?.stepContext?.title,
+    input.appContext?.stepContext?.instructions,
+    input.appContext?.stepContext?.expected_output,
+    input.appContext?.stepPrompt,
+  );
   const touched = await listTouchedThisStep(input);
-  const mdFiles = [...touched].filter((f) => /\.mdx?$/i.test(f));
-  if (!mdFiles.length) {
+  const targets = resolveResearchCitationTargets({
+    existingMarkdown: existingMd,
+    namedInStep,
+    touchedThisStep: touched,
+  });
+  if (targets.missing) {
     return {
-      signals: [{ name: 'research-citations', ok: false, detail: '0 https urls (no markdown written this step)' }],
+      signals: [{
+        name: 'research-citations',
+        ok: false,
+        detail: '0 https urls (research markdown does not exist)',
+      }],
       retryHint: formatResearchCitationHint(0),
     };
   }
   let found = 0;
-  for (const file of mdFiles.slice(0, 12)) {
+  for (const file of targets.files.slice(0, 12)) {
     const text = await runInWorkDir(input, `cat "${file}" 2>/dev/null | head -c 80000`);
-    found += countHttpsCitations(text);
+    found += countResearchCitations(text);
   }
   const ok = found >= MIN_RESEARCH_HTTPS;
   const retryHint = ok ? '' : formatResearchCitationHint(found);
