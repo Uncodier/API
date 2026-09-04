@@ -9,6 +9,7 @@ export interface RecordToolParams {
   category_id?: string;
   title?: string;
   description?: string;
+  summary?: string;
   data?: Record<string, any>;
   relations?: Record<string, any>;
   status?: string;
@@ -39,6 +40,7 @@ export function recordTool(site_id: string) {
         },
         title: { type: "string", description: "Title of the record" },
         description: { type: "string", description: "Optional description" },
+        summary: { type: "string", description: "Optional 1-3 sentence factual summary of the record" },
         data: {
           type: "object",
           description:

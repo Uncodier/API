@@ -1,5 +1,6 @@
 import {
   createSender,
+  deleteSender,
   ensureProjectWebhook,
   ensureSenderWebhook,
   ZAVU_PROJECT_WEBHOOK_EVENTS,
@@ -168,6 +169,17 @@ describe("Zavu client webhook contract", () => {
         })
       );
     });
+  });
+
+  it("deleteSender sends DELETE /senders/:id", async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce(mockJson(204, {}));
+
+    await deleteSender("snd_1");
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "https://api.zavu.dev/v1/senders/snd_1",
+      expect.objectContaining({ method: "DELETE" })
+    );
   });
 
 });

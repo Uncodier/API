@@ -217,11 +217,12 @@ export default async function middleware(request) {
     else {
       const pathname = request.nextUrl.pathname;
       const isPromptImage = pathname.startsWith('/api/public/image/prompt/');
-      if (isPromptImage && request.method === 'GET') {
-        console.log('[Middleware] Prompt image GET without origin - allowing for <img> compat');
+      const isPromptSummary = pathname.startsWith('/api/public/summary/prompt/');
+      if ((isPromptImage || isPromptSummary) && request.method === 'GET') {
+        console.log(`[Middleware] Prompt ${isPromptImage ? 'image' : 'summary'} GET without origin - allowing`);
         const response = safeNext();
         response.headers.set('X-Middleware-Executed', 'true');
-        response.headers.set('X-Public-Image-Prompt', 'true');
+        response.headers.set(isPromptImage ? 'X-Public-Image-Prompt' : 'X-Public-Summary-Prompt', 'true');
         return response;
       }
       
@@ -285,11 +286,12 @@ export default async function middleware(request) {
   if (!origin) {
     const pathname = request.nextUrl.pathname;
     const isPromptImage = pathname.startsWith('/api/public/image/prompt/');
-    if (isPromptImage && request.method === 'GET') {
-      console.log('[Middleware] Prompt image GET without origin - allowing for <img> compat');
+    const isPromptSummary = pathname.startsWith('/api/public/summary/prompt/');
+    if ((isPromptImage || isPromptSummary) && request.method === 'GET') {
+      console.log(`[Middleware] Prompt ${isPromptImage ? 'image' : 'summary'} GET without origin - allowing`);
       const response = safeNext();
       response.headers.set('X-Middleware-Executed', 'true');
-      response.headers.set('X-Public-Image-Prompt', 'true');
+      response.headers.set(isPromptImage ? 'X-Public-Image-Prompt' : 'X-Public-Summary-Prompt', 'true');
       return response;
     }
 

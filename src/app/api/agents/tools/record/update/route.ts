@@ -7,6 +7,7 @@ const UpdateRecordSchema = z.object({
   category_id: z.string().uuid().optional().nullable(),
   title: z.string().optional(),
   description: z.string().optional(),
+  summary: z.string().optional(),
   data: z.record(z.any()).optional(),
   relations: z.record(z.any()).optional(),
   status: z.string().optional(),

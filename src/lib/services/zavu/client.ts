@@ -207,6 +207,20 @@ export async function attachSenderToAgent(senderId: string) {
   });
 }
 
+export async function detachSenderFromAgent(senderId: string) {
+  const agentId = process.env.ZAVUDEV_AGENT_ID;
+  if (!agentId) return null;
+
+  try {
+    return await zavuFetch(`/agents/${agentId}/senders/${senderId}`, {
+      method: "DELETE",
+    });
+  } catch (error: any) {
+    if (error?.status === 404 || error?.status === 400) return null;
+    throw error;
+  }
+}
+
 // SENDER & CHANNELS
 export async function createSender(params: {
   name: string;
@@ -247,6 +261,10 @@ export async function updateSender(senderId: string, params: {
     method: "PATCH",
     body: JSON.stringify(params),
   });
+}
+
+export async function deleteSender(senderId: string): Promise<void> {
+  await zavuFetch(`/senders/${senderId}`, { method: "DELETE" });
 }
 
 export async function connectTelegram(senderId: string, botToken: string): Promise<any> {

@@ -174,6 +174,18 @@ export class OutstandClient {
     });
   }
 
+  async deleteSocialAccount(id: string, tenantId?: string): Promise<{ success: boolean }> {
+    const headers: Record<string, string> = {};
+    if (tenantId) {
+      headers['X-Tenant-ID'] = tenantId;
+    }
+
+    return this.request(`/social-accounts/${id}`, {
+      method: 'DELETE',
+      headers,
+    });
+  }
+
   async connectBlueskyAccount(
     params: { handle: string; app_password: string },
     tenantId?: string

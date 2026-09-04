@@ -6,6 +6,7 @@ const CreateRecordSchema = z.object({
   category_id: z.string().uuid().optional().nullable(),
   title: z.string(),
   description: z.string().optional(),
+  summary: z.string().optional(),
   data: z.record(z.any()).optional().default({}),
   relations: z.record(z.any()).optional().default({}),
   status: z.string().optional().default('draft'),
