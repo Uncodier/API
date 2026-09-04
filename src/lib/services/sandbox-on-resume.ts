@@ -52,7 +52,14 @@ export async function resumeRequirementWorkspace(
     console.log('[Sandbox] onResume: local changes present — not resetting to origin');
   }
 
-  await ensureNpmDeps(sandbox, cwd, { preferOffline: true });
+  try {
+    await ensureNpmDeps(sandbox, cwd, { preferOffline: true });
+  } catch (e: unknown) {
+    console.warn(
+      '[Sandbox] ensureNpmDeps failed (continuing without reinstall):',
+      e instanceof Error ? e.message : e,
+    );
+  }
 
   const update = (sandbox as Sandbox & { update?: (opts: { ports?: number[] }) => Promise<void> }).update;
   if (typeof update === 'function') {

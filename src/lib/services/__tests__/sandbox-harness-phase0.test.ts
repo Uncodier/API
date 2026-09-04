@@ -3,6 +3,7 @@ import { interpretNpmProbeOutput } from '@/lib/services/sandbox-npm';
 import { buildSandboxCreateParams, requirementSandboxTags } from '@/lib/services/sandbox-create-params';
 import { requirementSandboxName, sandboxVcpus } from '@/lib/services/sandbox-constants';
 import { isInvalidOriginBranchName } from '@/lib/services/sandbox-git-push';
+import { isFatalGitLayoutReason } from '@/lib/services/sandbox-git-layout';
 
 describe('sandbox harness phase 0 / create params', () => {
   it('skips npm when the lockfile hash matches', () => {
@@ -47,6 +48,12 @@ describe('sandbox harness phase 0 / create params', () => {
     expect(sandboxVcpus()).toBe(2);
     if (prev === undefined) delete process.env.SANDBOX_VCPUS;
     else process.env.SANDBOX_VCPUS = prev;
+  });
+
+  it('treats nested app/.git as fatal and a missing work tree as transient', () => {
+    expect(isFatalGitLayoutReason('Git directory lives under app/ — the repository must stay at /vercel/sandbox')).toBe(true);
+    expect(isFatalGitLayoutReason('not a git work tree: fatal: not a git repository')).toBe(false);
+    expect(isFatalGitLayoutReason('git CLI missing or not executable')).toBe(false);
   });
 
   it('rejects HEAD as a push dest', () => {

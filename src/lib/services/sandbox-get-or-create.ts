@@ -42,7 +42,14 @@ export async function getOrCreateRequirementSandbox(params: {
         await assertPlatformGitLayout(sbx);
       },
       onResume: async (sbx: Sandbox) => {
-        await resumeRequirementWorkspace(sbx, undefined, { authRepoUrl: params.authRepoUrl });
+        try {
+          await resumeRequirementWorkspace(sbx, undefined, { authRepoUrl: params.authRepoUrl });
+        } catch (e: unknown) {
+          console.warn(
+            '[Sandbox] onResume failed (keeping existing VM):',
+            e instanceof Error ? e.message : e,
+          );
+        }
       },
     });
     return { sandbox, created };

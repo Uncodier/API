@@ -17,7 +17,7 @@ import {
   SANDBOX_WORK_DIR,
   requirementSandboxName,
 } from '@/lib/services/sandbox-constants';
-import { deleteSandboxAndOrphans } from '@/lib/services/sandbox-lifecycle';
+import { stopSandboxQuiet } from '@/lib/services/sandbox-stop';
 import { ensureNpmDeps } from '@/lib/services/sandbox-npm';
 import { fetchOriginBranch, installGitIdentity } from '@/lib/services/sandbox-git-identity';
 import { buildSandboxCreateParams, requirementSandboxTags } from '@/lib/services/sandbox-create-params';
@@ -259,12 +259,10 @@ export async function createRequirementSandbox(
     return { sandbox, branchName: newBranch, workDir, isNewBranch: true, instanceType };
   } catch (setupErr: unknown) {
     console.warn(
-      '[Sandbox] Workspace setup failed after VM create; deleting sandbox so the next cron does not resume a bad snapshot:',
+      '[Sandbox] Workspace setup failed after VM create; stopping sandbox (not deleting — next cron can resume):',
       setupErr instanceof Error ? setupErr.message : setupErr,
     );
-    if (sandbox) {
-      await deleteSandboxAndOrphans(sandboxIdentity(sandbox) || requirementSandboxName(requirementId, auditCtx?.instanceId));
-    }
+    if (sandbox) await stopSandboxQuiet(sandbox);
     throw setupErr;
   }
 }

@@ -4,7 +4,7 @@ import { persistActiveSandboxId } from '@/lib/tools/requirement-status-core';
 import { getSandboxHandle, sandboxIdentity } from '@/lib/services/sandbox-sdk';
 import { deleteRequirementSandboxes } from '@/lib/services/sandbox-lifecycle';
 import { warmStartNamedSandbox } from '@/lib/services/sandbox-on-resume';
-import { verifyPlatformGitLayout } from '@/lib/services/sandbox-git-layout';
+import { isFatalGitLayoutReason, verifyPlatformGitLayout } from '@/lib/services/sandbox-git-layout';
 import {
   CronInfraEvent,
   logCronInfrastructureEvent,
@@ -40,17 +40,23 @@ export async function getSandboxWithRetriesOrThrow(sandboxId: string): Promise<S
   return s;
 }
 
-/** True if the microVM responds, git is installed, and the repo layout matches platform rules (root = WORK_DIR, not nested under app/). */
-export async function pingSandboxWorkspace(sandbox: Sandbox): Promise<boolean> {
+export type SandboxPing = { ok: boolean; reason?: string; fatal: boolean };
+
+/** True if the microVM responds and the repo layout matches platform rules. */
+export async function inspectSandboxWorkspace(sandbox: Sandbox): Promise<SandboxPing> {
   try {
     const v = await verifyPlatformGitLayout(sandbox);
-    if (!v.ok) {
-      console.warn(`[Sandbox] ping failed layout check: ${v.reason}`);
-    }
-    return v.ok;
-  } catch {
-    return false;
+    if (v.ok) return { ok: true, fatal: false };
+    console.warn(`[Sandbox] ping failed layout check: ${v.reason}`);
+    return { ok: false, reason: v.reason, fatal: isFatalGitLayoutReason(v.reason) };
+  } catch (e: unknown) {
+    const reason = e instanceof Error ? e.message : String(e);
+    return { ok: false, reason, fatal: false };
   }
+}
+
+export async function pingSandboxWorkspace(sandbox: Sandbox): Promise<boolean> {
+  return (await inspectSandboxWorkspace(sandbox)).ok;
 }
 
 /**
@@ -72,12 +78,16 @@ export async function connectOrRecreateRequirementSandbox(params: {
   const { sandboxId, requirementId, instanceType, title, audit } = params;
 
   let sandbox = await tryGetSandbox(sandboxId);
-  if (sandbox && (await pingSandboxWorkspace(sandbox))) {
-    await warmStartNamedSandbox(sandbox, requirementId, instanceType, { syncToOrigin: false }).catch((e) => {
-      console.warn('[Sandbox] connect warm-start skipped:', e instanceof Error ? e.message : e);
-    });
-    const branchName = await SandboxService.getCurrentBranch(sandbox);
-    return { sandbox, sandboxId, recovered: false, branchName };
+  if (sandbox) {
+    const ping = await inspectSandboxWorkspace(sandbox);
+    if (!ping.fatal) {
+      await warmStartNamedSandbox(sandbox, requirementId, instanceType, { syncToOrigin: false }).catch((e) => {
+        console.warn('[Sandbox] connect warm-start skipped:', e instanceof Error ? e.message : e);
+      });
+      const branchName = await SandboxService.getCurrentBranch(sandbox);
+      return { sandbox, sandboxId, recovered: false, branchName };
+    }
+    console.warn(`[Sandbox] Fatal nested layout on ${sandboxId}: ${ping.reason}`);
   }
 
   // If the provided sandboxId failed, check if the DB has a newer active_sandbox_id
@@ -96,20 +106,29 @@ export async function connectOrRecreateRequirementSandbox(params: {
     if (reqStatus?.active_sandbox_id && reqStatus.active_sandbox_id !== sandboxId) {
       console.warn(`[Sandbox] Provided sandboxId ${sandboxId} failed, but DB has newer active_sandbox_id ${reqStatus.active_sandbox_id}. Trying that...`);
       const dbSandbox = await tryGetSandbox(reqStatus.active_sandbox_id);
-      if (dbSandbox && (await pingSandboxWorkspace(dbSandbox))) {
-        await warmStartNamedSandbox(dbSandbox, requirementId, instanceType, { syncToOrigin: false }).catch((e) => {
-          console.warn('[Sandbox] connect warm-start skipped:', e instanceof Error ? e.message : e);
-        });
-        const branchName = await SandboxService.getCurrentBranch(dbSandbox);
-        return { sandbox: dbSandbox, sandboxId: reqStatus.active_sandbox_id, recovered: true, branchName };
+      if (dbSandbox) {
+        const dbPing = await inspectSandboxWorkspace(dbSandbox);
+        if (!dbPing.fatal) {
+          await warmStartNamedSandbox(dbSandbox, requirementId, instanceType, { syncToOrigin: false }).catch((e) => {
+            console.warn('[Sandbox] connect warm-start skipped:', e instanceof Error ? e.message : e);
+          });
+          const branchName = await SandboxService.getCurrentBranch(dbSandbox);
+          return { sandbox: dbSandbox, sandboxId: reqStatus.active_sandbox_id, recovered: true, branchName };
+        }
       }
     }
   }
 
-  console.warn(
-    `[Sandbox] Layout/get failed for ${sandboxId} — deleting named sandbox so the next create is a fresh onCreate, not a bad snapshot resume`,
-  );
-  await deleteRequirementSandboxes(requirementId, audit?.instanceId, [sandboxId]);
+  if (sandbox) {
+    console.warn(
+      `[Sandbox] Deleting ${sandboxId} after fatal layout (nested app/) before reprovision`,
+    );
+    await deleteRequirementSandboxes(requirementId, audit?.instanceId, [sandboxId]);
+  } else {
+    console.warn(
+      `[Sandbox] Sandbox.get failed for id=${sandboxId} — will getOrCreate by name (no delete)`,
+    );
+  }
   const created = await SandboxService.createRequirementSandbox(requirementId, instanceType, title, audit);
 
   if (audit?.instanceId) {

@@ -4,7 +4,7 @@ import { getSandboxHandle, sandboxIdentity } from '@/lib/services/sandbox-sdk';
 import { requirementSandboxName } from '@/lib/services/sandbox-constants';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { SandboxService } from '@/lib/services/sandbox-service';
-import { pingSandboxWorkspace } from '@/lib/services/sandbox-recovery';
+import { inspectSandboxWorkspace } from '@/lib/services/sandbox-recovery';
 import { warmStartNamedSandbox } from '@/lib/services/sandbox-on-resume';
 import {
   CronInfraEvent,
@@ -48,23 +48,8 @@ export async function createSandboxStep(
   'use step';
 
   const namedId = requirementSandboxName(reqId, audit?.instanceId);
-  try {
-    const named = await getSandboxHandle(namedId);
-    if (await pingSandboxWorkspace(named)) {
-      console.log(`[CronStep] Reusing named sandbox ${namedId} (getOrCreate circuit breaker)`);
-      await warmStartNamedSandbox(named, reqId, instanceType);
-      const branchName = await SandboxService.getCurrentBranch(named);
-      return {
-        sandboxId: sandboxIdentity(named) || namedId,
-        branchName,
-        workDir: SandboxService.WORK_DIR,
-        isNewBranch: false,
-        instanceType,
-      };
-    }
-  } catch {
-    /* name not provisioned yet */
-  }
+  const reusedNamed = await tryReuseExistingSandbox(namedId, reqId, instanceType);
+  if (reusedNamed) return reusedNamed;
 
   if (audit?.instanceId) {
     const { data: reqStatus, error } = await supabaseAdmin
@@ -82,23 +67,9 @@ export async function createSandboxStep(
     }
 
     if (reqStatus?.active_sandbox_id) {
-      try {
-        const sandbox = await getSandboxHandle(reqStatus.active_sandbox_id);
-        if (await pingSandboxWorkspace(sandbox)) {
-          console.log(`[CronStep] Reusing existing active sandbox ${reqStatus.active_sandbox_id} from DB`);
-          await warmStartNamedSandbox(sandbox, reqId, instanceType);
-          const branchName = await SandboxService.getCurrentBranch(sandbox);
-          return {
-            sandboxId: sandboxIdentity(sandbox),
-            branchName,
-            workDir: SandboxService.WORK_DIR,
-            isNewBranch: false,
-            instanceType,
-          };
-        }
-      } catch {
-        console.warn(`[CronStep] Existing active sandbox ${reqStatus.active_sandbox_id} is dead. Provisioning new one.`);
-      }
+      const reusedDb = await tryReuseExistingSandbox(reqStatus.active_sandbox_id, reqId, instanceType);
+      if (reusedDb) return reusedDb;
+      console.warn(`[CronStep] Existing active sandbox ${reqStatus.active_sandbox_id} is gone or fatal. Provisioning new one.`);
     }
   }
 
@@ -123,6 +94,39 @@ export async function createSandboxStep(
     workDir: result.workDir,
     isNewBranch: result.isNewBranch,
     instanceType: result.instanceType,
+  };
+}
+
+async function tryReuseExistingSandbox(
+  idOrName: string,
+  reqId: string,
+  instanceType: string,
+): Promise<SandboxInfo | null> {
+  let sandbox;
+  try {
+    sandbox = await getSandboxHandle(idOrName);
+  } catch {
+    return null;
+  }
+  const ping = await inspectSandboxWorkspace(sandbox);
+  if (ping.fatal) {
+    console.warn(`[CronStep] Not reusing ${idOrName}: fatal layout ${ping.reason}`);
+    return null;
+  }
+  await warmStartNamedSandbox(sandbox, reqId, instanceType).catch((e: unknown) => {
+    console.warn(
+      `[CronStep] warmStart on ${idOrName} failed — keeping existing VM:`,
+      e instanceof Error ? e.message : e,
+    );
+  });
+  const branchName = await SandboxService.getCurrentBranch(sandbox);
+  console.log(`[CronStep] Reusing sandbox ${idOrName} (ping=${ping.ok ? 'ok' : ping.reason || 'fail'})`);
+  return {
+    sandboxId: sandboxIdentity(sandbox) || idOrName,
+    branchName,
+    workDir: SandboxService.WORK_DIR,
+    isNewBranch: false,
+    instanceType,
   };
 }
 
