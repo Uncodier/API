@@ -1,4 +1,5 @@
 import { classifyFreshness, formatListLine, getGitPorcelainMap, StructuredListEntry } from '../sandbox-file-freshness';
+import { isMissingPathError } from '../sandbox-fs-errors';
 
 const mockRunCommandInSandbox = jest.fn();
 
@@ -144,5 +145,13 @@ describe('sandbox-file-freshness', () => {
       const map = await getGitPorcelainMap(fakeSandbox, '/vercel/sandbox');
       expect(map).toEqual({});
     });
+  });
+});
+
+describe('isMissingPathError', () => {
+  it('treats ENOENT / cannot access as missing, not as a tool crash', () => {
+    expect(isMissingPathError(new Error("ENOENT: no such file or directory, open '/vercel/sandbox/docs/x.md'"))).toBe(true);
+    expect(isMissingPathError("ls: cannot access '/vercel/sandbox/docs/investigations': No such file or directory")).toBe(true);
+    expect(isMissingPathError(new Error('EACCES: permission denied'))).toBe(false);
   });
 });

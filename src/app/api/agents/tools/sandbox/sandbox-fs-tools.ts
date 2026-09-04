@@ -18,7 +18,11 @@ import {
   type StructuredListEntry,
 } from './sandbox-file-freshness';
 
+import { isMissingPathError } from './sandbox-fs-errors';
+
 const WORK_DIR = SandboxService.WORK_DIR;
+
+export { isMissingPathError } from './sandbox-fs-errors';
 
 export function sandboxWriteFileTool(sandbox: Sandbox, toolsCtx?: SandboxToolsContext) {
   return {
@@ -99,6 +103,14 @@ export function sandboxReadLargeFileTool(sandbox: Sandbox, toolsCtx?: SandboxToo
           content: paginatedContent 
         };
       } catch (e: unknown) {
+        if (isMissingPathError(e)) {
+          return {
+            exists: false,
+            file_path: resolved,
+            content: '',
+            hint: 'File does not exist yet. Create it with sandbox_write_file.',
+          };
+        }
         const msg = e instanceof Error ? e.message : String(e);
         throw new Error(`Failed to read large file: ${msg}`);
       }
@@ -109,7 +121,7 @@ export function sandboxReadLargeFileTool(sandbox: Sandbox, toolsCtx?: SandboxToo
 export function sandboxReadFileTool(sandbox: Sandbox, toolsCtx?: SandboxToolsContext) {
   return {
     name: 'sandbox_read_file',
-    description: 'Read the contents of a file from the Vercel Sandbox filesystem. If updated_this_cycle is false, it means the file was not modified since this step started — reading it is not evidence the step objective is done.',
+    description: 'Read a file from the Vercel Sandbox. Missing files return exists=false (not an error) — create them with sandbox_write_file. If updated_this_cycle is false, the file was not modified since this step started.',
     parameters: {
       type: 'object',
       properties: {
@@ -150,10 +162,19 @@ export function sandboxReadFileTool(sandbox: Sandbox, toolsCtx?: SandboxToolsCon
           // ignore porcelain errors
         }
         
-        return { content, path: resolved, mtime, updated_this_cycle, git_status };
+        return { success: true, exists: true, content, path: resolved, mtime, updated_this_cycle, git_status };
       } catch (e: unknown) {
+        if (isMissingPathError(e)) {
+          return {
+            success: true,
+            exists: false,
+            content: '',
+            path: resolved,
+            hint: 'File does not exist yet. Create parent dirs automatically via sandbox_write_file.',
+          };
+        }
         const msg = e instanceof Error ? e.message : String(e);
-        throw new Error(`Failed to read file: ${msg}`);
+        return { success: false, error: `Failed to read file: ${msg}` };
       }
     }
   };
@@ -311,7 +332,7 @@ export function sandboxReadLintsTool(sandbox: Sandbox, toolsCtx?: SandboxToolsCo
 export function sandboxListFilesTool(sandbox: Sandbox, toolsCtx?: SandboxToolsContext) {
   return {
     name: 'sandbox_list_files',
-    description: 'List files and directories in the Vercel Sandbox filesystem. Files are tagged with updated_this_cycle based on this step\'s baseline.',
+    description: 'List files in a sandbox directory. A missing directory returns exists=false and an empty list (not an error). Files are tagged with updated_this_cycle.',
     parameters: {
       type: 'object',
       properties: {
@@ -369,15 +390,35 @@ export function sandboxListFilesTool(sandbox: Sandbox, toolsCtx?: SandboxToolsCo
         
         filesString = entries.map(formatListLine).join('\n');
       } catch (e) {
-        // Fallback to ls if readdir fails
+        if (isMissingPathError(e)) {
+          return {
+            success: true,
+            exists: false,
+            files: '',
+            entries: [],
+            path: dir,
+            hint: 'Directory does not exist yet. sandbox_write_file creates parent folders.',
+          };
+        }
         const result = await s0.runCommand('ls', ['-la', dir]);
+        const stderr = await result.stderr();
         if (result.exitCode !== 0) {
-          throw new Error(`Failed to list files: ${await result.stderr()}`);
+          if (isMissingPathError(stderr)) {
+            return {
+              success: true,
+              exists: false,
+              files: '',
+              entries: [],
+              path: dir,
+              hint: 'Directory does not exist yet. sandbox_write_file creates parent folders.',
+            };
+          }
+          return { success: false, error: `Failed to list files: ${stderr}`, path: dir };
         }
         filesString = await result.stdout();
       }
       
-      return { files: filesString, entries: entries.length > 0 ? entries : undefined };
+      return { success: true, exists: true, files: filesString, entries: entries.length > 0 ? entries : undefined, path: dir };
     }
   };
 }
