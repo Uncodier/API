@@ -167,10 +167,10 @@ export class OutstandClient {
     });
   }
 
-  async finalizePendingSocialAccounts(sessionToken: string, accountIds: string[]): Promise<any> {
+  async finalizePendingSocialAccounts(sessionToken: string, selectedPageIds: string[]): Promise<any> {
     return this.request(`/social-accounts/pending/${sessionToken}/finalize`, {
       method: 'POST',
-      body: JSON.stringify({ accountIds }),
+      body: JSON.stringify({ selectedPageIds }),
     });
   }
 

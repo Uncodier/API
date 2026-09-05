@@ -8,17 +8,17 @@ export async function POST(
   try {
     const { sessionToken } = await context.params;
     const body = await request.json().catch(() => ({}));
-    const accountIds = body.accountIds;
+    const selectedPageIds = body.selectedPageIds || body.accountIds;
 
     if (!sessionToken) {
       return NextResponse.json({ success: false, error: 'Missing session token' }, { status: 400 });
     }
-    if (!Array.isArray(accountIds) || accountIds.length === 0) {
+    if (!Array.isArray(selectedPageIds) || selectedPageIds.length === 0) {
       return NextResponse.json({ success: false, error: 'At least one account ID must be provided' }, { status: 400 });
     }
 
     const client = getOutstandClient();
-    const result = await client.finalizePendingSocialAccounts(sessionToken, accountIds);
+    const result = await client.finalizePendingSocialAccounts(sessionToken, selectedPageIds);
     return NextResponse.json({
       success: true,
       data: result?.data || result,
