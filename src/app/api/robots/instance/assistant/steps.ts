@@ -67,13 +67,15 @@ export async function prepareAssistantContext(
   // Fetch historical logs
   const { data: rawHistoricalLogs } = await supabaseAdmin
     .from('instance_logs')
-    .select('log_type, message, created_at, tool_name, tool_result')
+    .select('log_type, message, created_at, tool_name, tool_result, details')
     .eq('instance_id', instanceId)
     .in('log_type', ['user_action', 'agent_action', 'execution_summary', 'tool_call'])
     .order('created_at', { ascending: false })
     .limit(50);
 
-  const historicalLogs = rawHistoricalLogs ? [...rawHistoricalLogs].reverse() : [];
+  const historicalLogs = (rawHistoricalLogs ? [...rawHistoricalLogs].reverse() : []).filter(
+    (log) => !(log.log_type === 'user_action' && log.details?.status === 'queued')
+  );
 
   // Build history context
   let historyContext = '';

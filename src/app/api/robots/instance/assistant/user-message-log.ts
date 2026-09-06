@@ -8,23 +8,26 @@ export async function insertUserActionLog(params: {
   userId?: string | null;
   message: string;
   details?: Record<string, unknown>;
+  skipDuplicateCheck?: boolean;
 }): Promise<{ id: string }> {
-  const since = new Date(Date.now() - DUPLICATE_WINDOW_MS).toISOString();
+  if (!params.skipDuplicateCheck) {
+    const since = new Date(Date.now() - DUPLICATE_WINDOW_MS).toISOString();
 
-  const { data: existing, error: lookupError } = await supabaseAdmin
-    .from('instance_logs')
-    .select('id')
-    .eq('instance_id', params.instanceId)
-    .eq('log_type', 'user_action')
-    .eq('message', params.message)
-    .gte('created_at', since)
-    .limit(1);
+    const { data: existing, error: lookupError } = await supabaseAdmin
+      .from('instance_logs')
+      .select('id')
+      .eq('instance_id', params.instanceId)
+      .eq('log_type', 'user_action')
+      .eq('message', params.message)
+      .gte('created_at', since)
+      .limit(1);
 
-  if (lookupError) {
-    throw new Error(`Failed to check existing user message: ${lookupError.message}`);
-  }
-  if (existing?.[0]?.id) {
-    return { id: existing[0].id };
+    if (lookupError) {
+      throw new Error(`Failed to check existing user message: ${lookupError.message}`);
+    }
+    if (existing?.[0]?.id) {
+      return { id: existing[0].id };
+    }
   }
 
   const { data, error } = await supabaseAdmin
