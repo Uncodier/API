@@ -76,9 +76,15 @@ export async function GET(req: NextRequest) {
       data: apps
     });
   } catch (error: any) {
-    console.error('[API] Error fetching Composio apps:', error);
-    console.error('[API] Error details:', error.message);
-    console.error('[API] Stack trace:', error.stack);
+    const isUnauthorized = error.message && error.message.includes('401 Unauthorized');
+    
+    if (isUnauthorized) {
+      console.warn('[API] Composio API Key is invalid or expired (401 Unauthorized)');
+    } else {
+      console.error('[API] Error fetching Composio apps:', error);
+      console.error('[API] Error details:', error.message);
+      console.error('[API] Stack trace:', error.stack);
+    }
     
     // Return mock data in development mode for certain errors
     if (process.env.NODE_ENV === 'development' && error.message.includes('API key')) {
@@ -115,6 +121,19 @@ export async function GET(req: NextRequest) {
     }
     
     // Return error response
+    if (isUnauthorized) {
+      console.log('[API] Returning 401 error response');
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Composio API Key is invalid or expired. Please update it in your environment settings.',
+          timestamp: new Date().toISOString(),
+          apiKeyAvailable: !!process.env.COMPOSIO_PROJECT_API_KEY,
+        },
+        { status: 401 }
+      );
+    }
+    
     console.log('[API] Returning error response');
     return NextResponse.json(
       {

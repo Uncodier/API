@@ -4,6 +4,7 @@ import { EmailConfigService } from '@/lib/services/email/EmailConfigService';
 import { EmailService } from '@/lib/services/email/EmailService';
 import { EmailProcessingService } from '@/lib/services/email/EmailProcessingService';
 import { EmailRoutingService } from '@/lib/services/email/EmailRoutingService';
+import { EmailSyncErrorService } from '@/lib/services/email/EmailSyncErrorService';
 import { CaseConverterService, getFlexibleProperty } from '@/lib/utils/case-converter';
 import { SiteEmailGuardService } from '@/lib/services/email/SiteEmailGuardService';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
@@ -230,6 +231,8 @@ export async function POST(request: NextRequest) {
     emailToEnvelopeMap,
     siteId
   );
+
+  await EmailSyncErrorService.clearEmailSyncError(siteId);
 
   return NextResponse.json({
     success: true,

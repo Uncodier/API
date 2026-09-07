@@ -2389,6 +2389,9 @@ export async function POST(request: NextRequest) {
       console.log(`[EMAIL_SYNC] - Emails adicionales sincronizados de hilos: ${threadEmailsSyncedCount}`);
       console.log(`[EMAIL_SYNC] - Mensajes no creados por falta de contenido: ${messagesNotCreatedCount}`);
       
+      // Limpiar errores si el flujo completo funcionó exitosamente
+      await EmailSyncErrorService.clearEmailSyncError(siteId);
+
       return NextResponse.json({
         success: true,
         message: "Sincronización de emails enviados completada exitosamente",
@@ -2423,6 +2426,34 @@ export async function POST(request: NextRequest) {
       const errorCode = errorType === 'configuration' ? ERROR_CODES.EMAIL_CONFIG_NOT_FOUND : ERROR_CODES.EMAIL_FETCH_ERROR;
       const errorMessage = error instanceof Error ? error.message : "Error procesando emails enviados";
       
+      const isAuthError = errorMessage.toLowerCase().includes('authentication') || 
+                          errorMessage.toLowerCase().includes('credentials');
+
+      if (isAuthError) {
+        console.warn(`[EMAIL_SYNC] ⚠️ Fallo de autenticación IMAP detectado para sitio ${siteId}: ${errorMessage}`);
+      } else {
+        console.error(`[EMAIL_SYNC] 💥 Error en el flujo principal:`, error);
+        console.error(`[EMAIL_SYNC] 📋 Detalles del error:`, {
+          name: error instanceof Error ? error.name : 'Unknown',
+          message: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : 'No stack trace'
+        });
+      }
+      
+      // Handle failures via EmailSyncErrorService with retry counting
+      if (EmailSyncErrorService.shouldHandleAsFailure(errorType)) {
+        try {
+          await EmailSyncErrorService.handleEmailSyncFailure({
+            siteId,
+            errorMessage,
+            errorType,
+            errorCode
+          });
+        } catch (failureHandlingError) {
+          console.error(`[EMAIL_SYNC] ❌ Error handling sync failure:`, failureHandlingError);
+        }
+      }
+      
       // Skip failure handler here to avoid duplicate notifications; handled by /api/agents/email
       console.log(`[EMAIL_SYNC] ℹ️ Skipping failure handler (handled by /api/agents/email)`);
       
@@ -2436,7 +2467,7 @@ export async function POST(request: NextRequest) {
             message: errorMessage,
           },
         },
-        { status: errorType === 'configuration' ? 404 : 500 }
+        { status: isAuthError ? 401 : (errorType === 'configuration' ? 404 : 500) }
       );
     }
   } catch (error: unknown) {

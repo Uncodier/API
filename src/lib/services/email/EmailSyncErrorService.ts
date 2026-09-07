@@ -71,18 +71,29 @@ export class EmailSyncErrorService {
         return false;
       }
 
+      // Conteo de errores
+      const errorCount = (currentChannels?.email?.sync_error_count || 0) + 1;
+      const MAX_ERRORS = 5;
+
       // Update email channel status
       const updatedChannels = {
         ...currentChannels,
         email: {
           ...currentChannels.email,
-          synced: 'failed',
-          enabled: false,
           last_sync_error: errorMessage,
           last_sync_attempt: new Date().toISOString(),
-          sync_status: 'error'
+          sync_error_count: errorCount
         }
       };
+
+      if (errorCount >= MAX_ERRORS) {
+        updatedChannels.email.synced = 'failed';
+        updatedChannels.email.enabled = false;
+        updatedChannels.email.sync_status = 'error';
+        console.log(`[EmailSyncErrorService] 🚨 Alcanzado límite de errores (${errorCount}/${MAX_ERRORS}). Deshabilitando canal de email.`);
+      } else {
+        console.log(`[EmailSyncErrorService] ⚠️ Incrementando contador de errores (${errorCount}/${MAX_ERRORS}).`);
+      }
       
       // Update the settings
       const { error: updateError } = await supabaseAdmin
@@ -95,8 +106,10 @@ export class EmailSyncErrorService {
         return false;
       }
       
-      console.log(`[EmailSyncErrorService] ✅ Settings.channels updated: email marked as failed and disabled`);
-      return true;
+      console.log(`[EmailSyncErrorService] ✅ Settings.channels updated`);
+      
+      // Solo notificar/retornar true si cruzamos el umbral (i.e. acaba de ser deshabilitado)
+      return errorCount >= MAX_ERRORS;
     } catch (error) {
       console.error('[EmailSyncErrorService] Error in updateChannelStatus:', error);
       throw error;
@@ -147,6 +160,49 @@ export class EmailSyncErrorService {
     } catch (error) {
       console.error('[EmailSyncErrorService] Error sending failure notification:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Clear email sync errors after a successful sync
+   */
+  static async clearEmailSyncError(siteId: string): Promise<void> {
+    try {
+      // Get current settings to check if we need to clear
+      const { data: settings, error: getError } = await supabaseAdmin
+        .from('settings')
+        .select('channels')
+        .eq('site_id', siteId)
+        .single();
+      
+      if (getError || !settings?.channels?.email) {
+        return;
+      }
+      
+      const emailChannel = settings.channels.email;
+      
+      // Only update if there are errors to clear
+      if (emailChannel.sync_error_count > 0 || emailChannel.sync_status === 'error' || emailChannel.synced === 'failed') {
+        console.log(`[EmailSyncErrorService] 🧹 Clearing email sync errors for site ${siteId}`);
+        
+        const updatedChannels = {
+          ...settings.channels,
+          email: {
+            ...emailChannel,
+            sync_error_count: 0,
+            sync_status: 'active',
+            synced: 'success',
+            last_sync_error: null
+          }
+        };
+        
+        await supabaseAdmin
+          .from('settings')
+          .update({ channels: updatedChannels })
+          .eq('site_id', siteId);
+      }
+    } catch (error) {
+      console.error('[EmailSyncErrorService] Error clearing sync error:', error);
     }
   }
 

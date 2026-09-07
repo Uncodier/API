@@ -246,6 +246,7 @@ export async function POST(request: NextRequest) {
       const { emailsToAliases, emailsFromAILeads, emailsToAgent, directResponseEmails } = separationResult;
       
       if (emailsToAgent.length === 0 && emailsToAliases.length === 0 && emailsFromAILeads.length === 0) {
+        await EmailSyncErrorService.clearEmailSyncError(siteId);
         return NextResponse.json({
           success: true,
           data: {
@@ -275,6 +276,8 @@ export async function POST(request: NextRequest) {
         
         const stats = EmailProcessingService.calculateProcessingStats(directResponseEmails);
         
+        await EmailSyncErrorService.clearEmailSyncError(siteId);
+
         return NextResponse.json({
           success: true,
           data: {
@@ -376,6 +379,9 @@ export async function POST(request: NextRequest) {
       
       const totalDuration = Date.now() - startTime;
       
+      // Limpiar errores si el flujo funcionó exitosamente
+      await EmailSyncErrorService.clearEmailSyncError(siteId);
+
       return NextResponse.json({
         success: true,
         data: {
@@ -411,7 +417,16 @@ export async function POST(request: NextRequest) {
       
     } catch (error: unknown) {
       const totalDuration = Date.now() - startTime;
-      console.error(`[EMAIL_API] Error en el flujo principal después de ${totalDuration}ms:`, error);
+      
+      const errorMessage = error instanceof Error ? error.message : "Error procesando emails";
+      const isAuthError = errorMessage.toLowerCase().includes('authentication') || 
+                          errorMessage.toLowerCase().includes('credentials');
+
+      if (isAuthError) {
+        console.warn(`[EMAIL_API] ⚠️ Fallo de autenticación IMAP detectado después de ${totalDuration}ms: ${errorMessage}`);
+      } else {
+        console.error(`[EMAIL_API] Error en el flujo principal después de ${totalDuration}ms:`, error);
+      }
       
       const isConfigError = error instanceof Error && (
         error.message.includes('settings') || 
@@ -425,8 +440,6 @@ export async function POST(request: NextRequest) {
                        isAgentError ? ERROR_CODES.AGENT_NOT_FOUND :
                        ERROR_CODES.EMAIL_FETCH_ERROR;
       
-      const errorMessage = error instanceof Error ? error.message : "Error procesando emails";
-
       // Trigger failure handler here (single source) with idempotency in service
       const errorType = error instanceof Error ? EmailSyncErrorService.determineErrorType(error) : 'fetch';
       if (EmailSyncErrorService.shouldHandleAsFailure(errorType)) {
@@ -451,7 +464,7 @@ export async function POST(request: NextRequest) {
             duration: totalDuration
           },
         },
-        { status: isConfigError || isAgentError ? 404 : 500 }
+        { status: isAuthError ? 401 : (isConfigError || isAgentError ? 404 : 500) }
       );
     }
   } catch (error: unknown) {

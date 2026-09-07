@@ -4,6 +4,7 @@ import { EmailConfigService } from '@/lib/services/email/EmailConfigService';
 import { EmailService } from '@/lib/services/email/EmailService';
 import { EmailProcessingService } from '@/lib/services/email/EmailProcessingService';
 import { EmailRoutingService } from '@/lib/services/email/EmailRoutingService';
+import { EmailSyncErrorService } from '@/lib/services/email/EmailSyncErrorService';
 import { CaseConverterService, getFlexibleProperty } from '@/lib/utils/case-converter';
 import { SiteEmailGuardService } from '@/lib/services/email/SiteEmailGuardService';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
@@ -43,13 +44,44 @@ export async function POST(request: NextRequest) {
 
   const endRange = new Date();
   const startRange = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  // Fetch from INBOX + All Mail/Important variants and merge (excluding Sent in extra mailboxes)
-  const inboxEmails = await EmailService.fetchEmailsInRange(
-    emailConfig,
-    startRange.toISOString(),
-    endRange.toISOString(),
-    500
-  );
+  
+  let inboxEmails: any[] = [];
+  try {
+    inboxEmails = await EmailService.fetchEmailsInRange(
+      emailConfig,
+      startRange.toISOString(),
+      endRange.toISOString(),
+      500
+    );
+  } catch (error: unknown) {
+    const totalDuration = Date.now() - startRange.getTime(); // Not exactly start time but for logging
+    
+    const errorMessage = error instanceof Error ? error.message : "Error procesando repuestas de email";
+    const isAuthError = errorMessage.toLowerCase().includes('authentication') || 
+                        errorMessage.toLowerCase().includes('credentials');
+
+    if (isAuthError) {
+      console.warn(`[REPLY] ⚠️ Fallo de autenticación IMAP detectado: ${errorMessage}`);
+    } else {
+      console.error(`[REPLY] Error en el flujo principal:`, error);
+    }
+    
+    // Si la bandeja principal falla por auth, cortamos rápido
+    if (isAuthError) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'EMAIL_FETCH_ERROR',
+            message: errorMessage
+          },
+        },
+        { status: 401 }
+      );
+    }
+    // Si no es auth error, dejamos que el error se loggee como 500 abajo
+  }
+  
   const extraMailboxes = [
     '[Gmail]/Todos',
     '[Gmail]/Importantes',
@@ -66,8 +98,12 @@ export async function POST(request: NextRequest) {
         200
       );
       extraResults.push(...boxEmails);
-    } catch (e) {
+    } catch (e: unknown) {
       console.log(`[REPLY] Skipping mailbox '${box}' due to error or absence`);
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      if (errorMessage.toLowerCase().includes('authentication') || errorMessage.toLowerCase().includes('credentials')) {
+        console.warn(`[REPLY] ⚠️ Fallo de autenticación IMAP en '${box}': ${errorMessage}`);
+      }
     }
   }
   const seenKeys = new Set<string>();
@@ -124,6 +160,8 @@ export async function POST(request: NextRequest) {
     emailToEnvelopeMap,
     siteId
   );
+
+  await EmailSyncErrorService.clearEmailSyncError(siteId);
 
   return NextResponse.json({
     success: true,

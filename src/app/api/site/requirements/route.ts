@@ -508,7 +508,7 @@ export async function POST(request: NextRequest) {
     const validationResult = RequestSchema.safeParse(body);
     
     if (!validationResult.success) {
-      console.error('[Requirements API] Error de validación:', validationResult.error);
+      console.warn('[Requirements API] Advertencia de validación:', validationResult.error);
       
       return NextResponse.json(
         {
@@ -603,7 +603,7 @@ export async function GET(request: NextRequest) {
     const validationResult = RequestSchema.safeParse(params);
     
     if (!validationResult.success) {
-      console.error('[Requirements API] Error de validación:', validationResult.error);
+      console.warn('[Requirements API] Advertencia de validación GET:', validationResult.error);
       
       return NextResponse.json(
         {

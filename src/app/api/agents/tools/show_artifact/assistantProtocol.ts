@@ -5,6 +5,7 @@ export function showArtifactTool(site_id: string, instance_id: string, user_id?:
     name: 'show_artifact',
     description: `Focus the user UI on a specific curated screen and persist the event so the front-end can reactively display the artifact. 
 Use this when you want to show a report, open a specific settings panel, or navigate the user to a relevant section of the app as a result of their request.
+Siempre que el CRUD haya sido 1 solo elemento vaya a collection/id mediante extra_params, mientras que si afectó a varios vaya a collection con extra_params conteniendo { sort: 'updated_at' } o { sort: 'created_at' }.
 
 Available screens and their primary front-end actions (TopBar/Toolbar):
 ### Marketing

@@ -441,6 +441,9 @@ export async function POST(request: NextRequest) {
       
       console.log(`[DELIVERY_STATUS] ✅ Procesamiento completado. Workflows: ${workflowsTriggered}, Emails eliminados: ${emailsDeleted}`);
       
+      // Limpiar errores si el flujo funcionó exitosamente
+      await EmailSyncErrorService.clearEmailSyncError(siteId);
+
       return NextResponse.json({
         success: true,
         message: "Procesamiento de delivery status completado",
