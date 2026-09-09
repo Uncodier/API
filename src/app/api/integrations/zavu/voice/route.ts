@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createSender, attachSenderToAgent, ensureProjectWebhook } from "@/lib/services/zavu";
+import { createSender, attachSenderToAgent, ensureProjectWebhook, purchaseNumber, assignNumberToSender } from "@/lib/services/zavu";
 import { supabaseAdmin } from "@/lib/database/supabase-server";
 import { v4 as uuidv4 } from "uuid";
 
@@ -110,6 +110,16 @@ export async function POST(request: NextRequest) {
         name: name || `Voice Agent for Site ${siteId}`,
       });
       // Optionally attach it directly to the agent so it can be autonomous
+            // Comprar el número y asignarlo al sender
+      if (phoneNumber) {
+        try {
+          await purchaseNumber(phoneNumber);
+        } catch (e: any) {
+          console.warn("[Zavu Voice] Number might already be purchased or error buying:", e.message);
+        }
+        await assignNumberToSender(sender.id, phoneNumber);
+      }
+      
       await attachSenderToAgent(sender.id);
     } catch (zavuError: any) {
       console.error("[Zavu Voice] Error creating sender:", zavuError);

@@ -267,6 +267,38 @@ export async function deleteSender(senderId: string): Promise<void> {
   await zavuFetch(`/senders/${senderId}`, { method: "DELETE" });
 }
 
+
+export async function searchAvailableNumbers(params: { countryCode: string, areaCode?: string }): Promise<any> {
+  const query = new URLSearchParams({ countryCode: params.countryCode });
+  if (params.areaCode) query.append("areaCode", params.areaCode);
+  return zavuFetch(`/phone-numbers/available?${query.toString()}`);
+}
+
+
+export async function getOwnedNumbers(): Promise<any> {
+  return zavuFetch("/phone-numbers");
+}
+
+export async function purchaseNumber(phoneNumber: string): Promise<any> {
+  return zavuFetch("/phone-numbers", {
+    method: "POST",
+    body: JSON.stringify({ phoneNumber }),
+  });
+}
+
+export async function releaseNumber(phoneNumber: string): Promise<any> {
+  return zavuFetch(`/phone-numbers/${encodeURIComponent(phoneNumber)}`, {
+    method: "DELETE"
+  });
+}
+
+export async function assignNumberToSender(senderId: string, phoneNumber: string): Promise<any> {
+  return zavuFetch(`/senders/${senderId}/phone-numbers`, {
+    method: "POST",
+    body: JSON.stringify({ phoneNumber }),
+  });
+}
+
 export async function connectTelegram(senderId: string, botToken: string): Promise<any> {
   return zavuFetch(`/senders/${senderId}/telegram`, {
     method: "POST",
