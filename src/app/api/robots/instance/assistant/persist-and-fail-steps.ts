@@ -33,3 +33,14 @@ export async function markAssistantFailedStep(
     errorMessage,
   });
 }
+
+export async function completeUserMessageStep(logId: string): Promise<void> {
+  'use step';
+  const { supabaseAdmin } = await import('@/lib/database/supabase-client');
+  const { data: log } = await supabaseAdmin.from('instance_logs').select('details').eq('id', logId).single();
+  if (log) {
+    await supabaseAdmin.from('instance_logs').update({
+      details: { ...(log.details || {}), status: 'completed' }
+    }).eq('id', logId);
+  }
+}

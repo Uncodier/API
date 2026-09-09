@@ -2,7 +2,7 @@
 
 import { prepareAssistantContext, processAssistantTurn } from './steps';
 import { getActiveInstancePlan, executePlanStep } from './plan-steps';
-import { persistUserMessageStep, markAssistantFailedStep } from './persist-and-fail-steps';
+import { persistUserMessageStep, markAssistantFailedStep, completeUserMessageStep } from './persist-and-fail-steps';
 import { isIncompleteTurn, MAX_RESPAWNS } from '@/lib/services/robot-instance/assistant-respawn';
 import { countRecentRespawnsStep, spawnSilentContinueStep } from './assistant-respawn-steps';
 
@@ -24,11 +24,13 @@ export async function runAssistantWorkflow(
 ) {
   'use workflow';
 
+  let userMessageLogId: string | null = null;
   try {
     if (!options?.silentContinue) {
-      await persistUserMessageStep(instanceId, message, siteId, userId, {
+      const logResult = await persistUserMessageStep(instanceId, message, siteId, userId, {
         prompt_source: 'assistant_workflow',
       });
+      userMessageLogId = logResult.id;
     }
 
   // Step 1: Prepare context
@@ -166,6 +168,9 @@ export async function runAssistantWorkflow(
         finalResult = stepResult;
       }
       
+      if (userMessageLogId) {
+        await completeUserMessageStep(userMessageLogId);
+      }
       return {
         instance_id: instanceId,
         status: context.instance.status,
@@ -183,6 +188,9 @@ export async function runAssistantWorkflow(
     console.log(`[Workflow] Active plan found but skipping auto-execution because there is a requirement_status linked.`);
   }
 
+    if (userMessageLogId) {
+      await completeUserMessageStep(userMessageLogId);
+    }
   return {
     instance_id: instanceId,
     status: context.instance.status,
