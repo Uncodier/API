@@ -332,8 +332,32 @@ export function createNodeStreamingCallbacks(
           updated_at: new Date().toISOString(),
         })
         .eq('id', nodeId);
-      if (error) console.error('[Node Executor] Final update error:', error);
-      else console.log(`[Node Executor] Completed response node ${nodeId}, text: ${result.text?.length || 0}, outputs: ${result.outputs?.length || 0}`);
+      if (error) {
+        console.error('[Node Executor] Final update error:', error);
+      } else {
+        console.log(`[Node Executor] Completed response node ${nodeId}, text: ${result.text?.length || 0}, outputs: ${result.outputs?.length || 0}`);
+        
+        // Update parent instance log to completed
+        if (promptNode.parent_instance_log_id) {
+          const { data: parentLog } = await supabaseAdmin
+            .from('instance_logs')
+            .select('details')
+            .eq('id', promptNode.parent_instance_log_id)
+            .single();
+            
+          if (parentLog) {
+            await supabaseAdmin
+              .from('instance_logs')
+              .update({
+                details: {
+                  ...(parentLog.details as any || {}),
+                  status: 'completed'
+                }
+              })
+              .eq('id', promptNode.parent_instance_log_id);
+          }
+        }
+      }
     },
     onNodeStreamError: async (nodeId: string | null, errorMessage: string) => {
       if (!nodeId) return;
@@ -346,6 +370,27 @@ export function createNodeStreamingCallbacks(
         })
         .eq('id', nodeId);
       console.error(`[Node Executor] Node ${nodeId} failed: ${errorMessage}`);
+      
+      // Update parent instance log to failed
+      if (promptNode.parent_instance_log_id) {
+        const { data: parentLog } = await supabaseAdmin
+          .from('instance_logs')
+          .select('details')
+          .eq('id', promptNode.parent_instance_log_id)
+          .single();
+          
+        if (parentLog) {
+          await supabaseAdmin
+            .from('instance_logs')
+            .update({
+              details: {
+                ...(parentLog.details as any || {}),
+                status: 'failed'
+              }
+            })
+            .eq('id', promptNode.parent_instance_log_id);
+        }
+      }
     },
   };
 }
@@ -454,7 +499,36 @@ export async function updateNodeResult(nodeId: string, result: NodeResult) {
       updated_at: new Date().toISOString(),
     })
     .eq('id', nodeId);
-  if (error) console.error(`[Node Executor] Update error for node ${nodeId}:`, error);
+  if (error) {
+    console.error(`[Node Executor] Update error for node ${nodeId}:`, error);
+  } else if (result.status === 'done') {
+    // If completed, update parent instance log if applicable
+    const { data: node } = await supabaseAdmin
+      .from('instance_nodes')
+      .select('parent_instance_log_id')
+      .eq('id', nodeId)
+      .single();
+      
+    if (node?.parent_instance_log_id) {
+      const { data: parentLog } = await supabaseAdmin
+        .from('instance_logs')
+        .select('details')
+        .eq('id', node.parent_instance_log_id)
+        .single();
+        
+      if (parentLog) {
+        await supabaseAdmin
+          .from('instance_logs')
+          .update({
+            details: {
+              ...(parentLog.details as any || {}),
+              status: 'completed'
+            }
+          })
+          .eq('id', node.parent_instance_log_id);
+      }
+    }
+  }
 }
 
 /**
@@ -469,6 +543,33 @@ export async function failNode(nodeId: string, errorMessage: string) {
       updated_at: new Date().toISOString(),
     })
     .eq('id', nodeId);
+    
+  // Update parent instance log to failed
+  const { data: node } = await supabaseAdmin
+    .from('instance_nodes')
+    .select('parent_instance_log_id')
+    .eq('id', nodeId)
+    .single();
+    
+  if (node?.parent_instance_log_id) {
+    const { data: parentLog } = await supabaseAdmin
+      .from('instance_logs')
+      .select('details')
+      .eq('id', node.parent_instance_log_id)
+      .single();
+      
+    if (parentLog) {
+      await supabaseAdmin
+        .from('instance_logs')
+        .update({
+          details: {
+            ...(parentLog.details as any || {}),
+            status: 'failed'
+          }
+        })
+        .eq('id', node.parent_instance_log_id);
+    }
+  }
 }
 
 /**

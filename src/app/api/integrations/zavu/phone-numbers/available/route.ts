@@ -6,8 +6,7 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const countryCode = searchParams.get("countryCode");
     const areaCode = searchParams.get("areaCode");
-    const smsEnabled = searchParams.get("smsEnabled") === "true";
-    const voiceEnabled = searchParams.get("voiceEnabled") === "true";
+    const capabilities = searchParams.getAll("capabilities");
 
     if (!countryCode) {
       return NextResponse.json({ error: "countryCode is required" }, { status: 400 });
@@ -16,11 +15,25 @@ export async function GET(request: NextRequest) {
     const data = await searchAvailableNumbers({ 
       countryCode, 
       areaCode: areaCode || undefined,
-      smsEnabled,
-      voiceEnabled
+      capabilities: capabilities.length > 0 ? capabilities : undefined
     });
 
-    return NextResponse.json(data.items || data.results || data);
+    let results = data.items || data.results || data;
+
+    // Fallback in-memory strict filtering in case Zavu API ignores the capabilities parameter
+    if (capabilities.length > 0 && Array.isArray(results)) {
+      results = results.filter((num: any) => {
+        const numCaps = num.capabilities || [];
+        return capabilities.every((cap) => {
+          if (Array.isArray(numCaps)) {
+            return numCaps.includes(cap);
+          }
+          return typeof numCaps === "object" && numCaps !== null && numCaps[cap] === true;
+        });
+      });
+    }
+
+    return NextResponse.json(results);
   } catch (error: any) {
     console.error("[Zavu PhoneNumbers] Error searching available numbers:", error);
     return NextResponse.json(

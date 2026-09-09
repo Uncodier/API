@@ -3,8 +3,46 @@ import { createSender, attachSenderToAgent, ensureProjectWebhook, purchaseNumber
 import { supabaseAdmin } from "@/lib/database/supabase-server";
 import { v4 as uuidv4 } from "uuid";
 
-// Re-use logic to sync tools to Zavu Voice since it's the backend
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { siteId, name, phoneNumber } = body;
 
+    if (!siteId) {
+      return NextResponse.json({ error: "siteId is required" }, { status: 400 });
+    }
+
+    try {
+      await ensureProjectWebhook();
+    } catch (whError) {
+      console.warn("[Zavu SMS] Failed to ensure project webhook:", whError);
+    }
+
+    // Create a generic sender for SMS
+    let sender;
+    try {
+      sender = await createSender({
+        name: name || `SMS Agent for Site ${siteId}`,
+      });
+
+      // Comprar el número y asignarlo al sender
+      if (phoneNumber) {
+        try {
+          await purchaseNumber(phoneNumber);
+        } catch (e: any) {
+          console.warn("[Zavu SMS] Number might already be purchased or error buying:", e.message);
+        }
+        await assignNumberToSender(sender.id, phoneNumber);
+      }
+      
+      await attachSenderToAgent(sender.id);
+    } catch (zavuError: any) {
+      console.error("[Zavu SMS] Error creating sender:", zavuError);
+      return NextResponse.json(
+        { error: `Zavu API Error: ${zavuError.message || "Unknown error"}` },
+        { status: 502 }
+      );
+    }
 
     // Save connection to DB
     const { data: settingsRow, error: settingsError } = await supabaseAdmin

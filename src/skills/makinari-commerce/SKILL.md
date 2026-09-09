@@ -50,7 +50,7 @@ Equip the agent with operational protocols to manage the entire commercial lifec
 
 5. **Passes & Subscriptions**
    - **Passes:** A catalog item with `digital_subtype="pass"` grants uses. Map what it can book using `pass_redeemable_items`. When a buyer books using a pass, provide the `entitlement_id` to `reservations` `create` to consume a use.
-   - **Subscriptions:** Managed by the backend. Use `subscriptions` to list/read them. Use `subscription_plan_items` to map a recurring plan to the digital assets it unlocks.
+   - **Subscriptions:** Mostly managed by the backend via webhooks. However, if a user paid outside of Stripe, you CAN manually create/update a subscription. Use `subscriptions` to list/read/create/update them. Use `subscription_plan_items` to map a recurring plan to the digital assets it unlocks.
 
 6. **Checkout & Payment Links (Stripe)**
    - When charging a client:
@@ -82,7 +82,7 @@ Equip the agent with operational protocols to manage the entire commercial lifec
 | `pass_redeemable_items` | Map which reservable items a pass can be used for. |
 | `quotations` & `quotation_items` | Create quotes (`draft` -> `sent`). |
 | `checkout` | Create pending orders (from lines or `quotation_id`), then generate payment links. |
-| `subscriptions` | Read active subscriptions for a buyer. |
+| `subscriptions` | Read, list, create, or update active subscriptions for a buyer. |
 | `subscription_plan_items` | Map a subscription plan to digital assets. |
 | `entitlements` | View digital rights and pass uses remaining. |
 | `show_artifact` | Navigate UI to `buyer_library`, `quotations`, `buyer_quotes`, `buyer_orders`, `catalog`, `reservations`. |

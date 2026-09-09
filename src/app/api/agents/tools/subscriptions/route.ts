@@ -41,6 +41,40 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, subscriptions: data, count });
     }
 
+    if (action === 'create') {
+      const payload: any = {
+        site_id,
+        catalog_item_id: updates.catalog_item_id,
+        status: updates.status || 'active',
+      };
+      
+      if (updates.buyer_user_id) payload.buyer_user_id = updates.buyer_user_id;
+      if (updates.lead_id) payload.lead_id = updates.lead_id;
+      if (updates.current_period_start) payload.current_period_start = updates.current_period_start;
+      if (updates.current_period_end) payload.current_period_end = updates.current_period_end;
+
+      const { data, error } = await supabaseAdmin
+        .from('subscriptions')
+        .insert(payload)
+        .select()
+        .single();
+
+      if (error) throw new Error(error.message);
+      return NextResponse.json({ success: true, subscription: data });
+    }
+
+    if (action === 'update') {
+      const { data, error } = await supabaseAdmin
+        .from('subscriptions')
+        .update(updates)
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) throw new Error(error.message);
+      return NextResponse.json({ success: true, subscription: data });
+    }
+
     return NextResponse.json({ success: false, error: 'Invalid action' }, { status: 400 });
   } catch (error: any) {
     console.error('Subscriptions tool error:', error);
