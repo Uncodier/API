@@ -4,7 +4,7 @@ import { decryptToken } from "@/lib/utils/token-decryption";
 import { findSettingsForSender } from "@/lib/services/zavu/webhook-handlers";
 
 // Use the existing supabase clients to interact with database
-import { createSupabaseServerAdmin } from "@/lib/supabase/supabase-server-admin";
+import { getSupabaseAdmin } from "@/lib/database/supabase-server";
 
 export async function POST(request: NextRequest) {
   try {
@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
 
     // Try to get the webhook secret from the database using siteId to verify signature
     let secret = process.env.ZAVUDEV_WEBHOOK_SECRET;
-    const supabase = createSupabaseServerAdmin();
+    const supabase = getSupabaseAdmin();
     const { data: site } = await supabase.from('sites_settings').select('*').eq('id', siteId).single();
     
     if (site) {
