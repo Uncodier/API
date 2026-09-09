@@ -1,7 +1,7 @@
 import { supabaseAdmin } from "@/lib/database/supabase-server";
 import { encryptToken } from "@/lib/utils/token-encryption";
 import { WorkflowService } from "@/lib/services/workflow-service";
-import { attachSenderToAgent, ensureSenderWebhook, mapInvitationStatus } from "./client";
+import { ensureProjectWebhook, ensureSenderWebhook, mapInvitationStatus } from "./client";
 
 async function findSettingsForDomain(domainId: string) {
   const { data, error } = await supabaseAdmin
@@ -265,7 +265,8 @@ export async function handleInvitationStatusChanged(data: any) {
     }
 
     try {
-      await attachSenderToAgent(senderId);
+      // For Voice we no longer automatically attach text agents since it's autonomous voice
+      // await attachSenderToAgent(senderId);
     } catch (agentError) {
       console.error(`[Zavu Webhook] Failed to attach sender ${senderId} to agent:`, agentError);
     }

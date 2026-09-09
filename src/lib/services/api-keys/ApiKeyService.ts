@@ -3,7 +3,7 @@ import { supabase, supabaseAdmin } from '@/lib/database/supabase-client';
 export interface ApiKeyData {
   name: string;
   scopes: string[];
-  site_id: string;
+  site_id?: string | null;
   expirationDays?: number;
   prefix?: string;
   metadata?: Record<string, any>;

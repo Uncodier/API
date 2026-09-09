@@ -7,7 +7,7 @@ import { createSupabaseClient } from '@/lib/database/supabase-server';
 const CreateApiKeySchema = z.object({
   name: z.string().min(1, 'Name is required'),
   scopes: z.array(z.string()).min(1, 'At least one scope is required'),
-  site_id: z.string().uuid('Invalid site ID'),
+  site_id: z.string().uuid('Invalid site ID').optional().nullable(),
   user_id: z.string().uuid('Invalid user ID'),
   expirationDays: z.number().optional().default(90),
   prefix: z.string().optional(),
@@ -57,36 +57,38 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Verificar que el usuario tiene acceso al sitio
-    console.log('[Keys API] Checking site access:', {
-      site_id: validationResult.data.site_id,
-      user_id: validationResult.data.user_id,
-    });
+    // Verificar que el usuario tiene acceso al sitio (si se proporciona)
+    if (validationResult.data.site_id) {
+      console.log('[Keys API] Checking site access:', {
+        site_id: validationResult.data.site_id,
+        user_id: validationResult.data.user_id,
+      });
 
-    const { data: siteAccess, error: siteError } = await supabase
-      .from('sites')
-      .select('id')
-      .eq('id', validationResult.data.site_id)
-      .eq('user_id', validationResult.data.user_id)
-      .single();
+      const { data: siteAccess, error: siteError } = await supabase
+        .from('sites')
+        .select('id')
+        .eq('id', validationResult.data.site_id)
+        .eq('user_id', validationResult.data.user_id)
+        .single();
 
-    console.log('[Keys API] Site access check result:', {
-      hasAccess: !!siteAccess,
-      error: siteError?.message || null
-    });
+      console.log('[Keys API] Site access check result:', {
+        hasAccess: !!siteAccess,
+        error: siteError?.message || null
+      });
 
-    if (siteError || !siteAccess) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: 'FORBIDDEN',
-            message: 'You do not have access to this site',
-            details: process.env.NODE_ENV === 'development' ? siteError?.message : undefined
-          }
-        },
-        { status: 403 }
-      );
+      if (siteError || !siteAccess) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: {
+              code: 'FORBIDDEN',
+              message: 'You do not have access to this site',
+              details: process.env.NODE_ENV === 'development' ? siteError?.message : undefined
+            }
+          },
+          { status: 403 }
+        );
+      }
     }
 
     try {
