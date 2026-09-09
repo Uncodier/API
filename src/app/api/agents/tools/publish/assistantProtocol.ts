@@ -20,7 +20,7 @@ export interface PublishToolParams {
 
   // Audience Params
   audience_id?: string;
-  channel?: 'whatsapp' | 'email';
+  channel?: 'whatsapp' | 'email' | 'telegram' | 'sms' | 'voice';
   /** When channel is email: `mail` (default) queues via conversations; `newsletter` sends immediately with open/click tracking and no conversations. */
   audience_email_mode?: 'mail' | 'newsletter';
   subject?: string;
@@ -175,7 +175,7 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
         
         const audienceResult = await bulkSender.execute({
           audience_id,
-          channel: channel as 'whatsapp' | 'email',
+          channel: channel as 'whatsapp' | 'email' | 'telegram' | 'sms' | 'voice',
           message: publishText, // We send the combined text + urls
           ...(subject ? { subject } : {}),
           ...(from ? { from } : {}),
@@ -201,7 +201,7 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
     description: `Consolidated tool to publish content. Can perform one or more of the following actions simultaneously:
 1. Create/Update Content in DB: Requires 'title' and 'type' (to create) OR 'content_id' (to update).
 2. Publish to Social Media: Requires 'social_accounts' array (e.g. ['linkedin', 'x', 'facebook', 'instagram', 'tiktok', 'youtube', 'threads', 'pinterest', 'bluesky']).
-3. Send to Audience: Requires 'audience_id' and 'channel' ('whatsapp' or 'email').
+3. Send to Audience: Requires 'audience_id' and 'channel' ('whatsapp', 'telegram', 'sms', 'voice', or 'email').
 
 You MUST provide at least valid 'text', 'assets' (array of media IDs), or 'urls'.
 If sending email to audience, 'subject' is required.
@@ -232,7 +232,7 @@ The tool will return an object detailing the success/failure of each attempted a
 
         // Audience
         audience_id: { type: 'string', description: 'Audience UUID to send to.' },
-        channel: { type: 'string', enum: ['whatsapp', 'email'], description: 'Channel for audience send.' },
+        channel: { type: 'string', enum: ['whatsapp', 'email', 'telegram', 'sms', 'voice'], description: 'Channel for audience send.' },
         audience_email_mode: {
           type: 'string',
           enum: ['mail', 'newsletter'],

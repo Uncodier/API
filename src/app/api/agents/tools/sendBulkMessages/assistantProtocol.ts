@@ -67,7 +67,7 @@ async function findActiveSalesAgent(siteId: string): Promise<{agentId: string, u
 
 export interface SendBulkMessagesToolParams {
   audience_id: string;
-  channel: 'whatsapp' | 'email';
+  channel: 'whatsapp' | 'email' | 'telegram' | 'sms' | 'voice';
   message: string;
   subject?: string;
   from?: string;
@@ -154,7 +154,7 @@ export function sendBulkMessagesTool(siteId: string) {
             const result = await sendEmailCore({
               site_id: siteId,
               email: lead.email,
-              subject: subject!,
+              subject: subject || '',
               message,
               from,
               lead_id: leadId,
@@ -223,52 +223,56 @@ export function sendBulkMessagesTool(siteId: string) {
     const userId = agent?.userId || null;
 
     // -------------------------------------------------------------------------
-    // WhatsApp path: create/reuse ONE template with numeric placeholders and
+    // WhatsApp/Telegram/SMS/Voice path: create/reuse ONE template with numeric placeholders and
     // queue per-lead ContentVariables. The template body is kept abstract
     // (e.g. "Hi {{1}}, ..."); personalization happens via Twilio variables at
-    // delivery time, so a single approved template serves the whole campaign.
+    // delivery time (for whatsapp), so a single approved template serves the whole campaign.
     // -------------------------------------------------------------------------
-    if (channel === 'whatsapp') {
+    if (channel === 'whatsapp' || channel === 'telegram' || channel === 'sms' || channel === 'voice') {
       const { templated: abstractBody, tokens: campaignTokens } = extractMergeTokens(message);
 
       let templateSid: string | undefined;
       let placeholderMap: string[] = campaignTokens;
       let templateStatus: 'approved' | 'pending' = 'approved';
 
-      try {
-        const config = await WhatsAppSendService.getWhatsAppConfig(siteId);
-        const existing = await WhatsAppTemplateService.findExistingTemplate(
-          message,
-          siteId,
-          config.phoneNumberId,
-        );
-        if (existing?.templateSid) {
-          templateSid = existing.templateSid;
-          placeholderMap = existing.placeholderMap ?? campaignTokens;
-        } else {
-          const created = await WhatsAppTemplateService.createTemplate(
+      // Template logic is only required for WhatsApp, but we keep the structure
+      // for other channels that might use standard template engines if needed.
+      if (channel === 'whatsapp') {
+        try {
+          const config = await WhatsAppSendService.getWhatsAppConfig(siteId);
+          const existing = await WhatsAppTemplateService.findExistingTemplate(
             message,
-            config.phoneNumberId,
-            config.accessToken,
             siteId,
+            config.phoneNumberId,
           );
-          if (!created.success || !created.templateSid) {
-            return {
-              success: false,
-              error: `Failed to create WhatsApp template: ${created.error ?? 'unknown error'}`,
-            };
+          if (existing?.templateSid) {
+            templateSid = existing.templateSid;
+            placeholderMap = existing.placeholderMap ?? campaignTokens;
+          } else {
+            const created = await WhatsAppTemplateService.createTemplate(
+              message,
+              config.phoneNumberId,
+              config.accessToken,
+              siteId,
+            );
+            if (!created.success || !created.templateSid) {
+              return {
+                success: false,
+                error: `Failed to create WhatsApp template: ${created.error ?? 'unknown error'}`,
+              };
+            }
+            templateSid = created.templateSid;
+            placeholderMap = created.placeholderMap ?? campaignTokens;
+            // A freshly created template may still be pending WhatsApp approval;
+            // delivery worker should re-check before sending.
+            templateStatus = 'pending';
           }
-          templateSid = created.templateSid;
-          placeholderMap = created.placeholderMap ?? campaignTokens;
-          // A freshly created template may still be pending WhatsApp approval;
-          // delivery worker should re-check before sending.
-          templateStatus = 'pending';
+        } catch (err: any) {
+          return {
+            success: false,
+            error: `Failed to prepare WhatsApp template: ${err?.message ?? 'unknown error'}`,
+          };
         }
-      } catch (err: any) {
-        return {
-          success: false,
-          error: `Failed to prepare WhatsApp template: ${err?.message ?? 'unknown error'}`,
-        };
       }
 
       for (let page = 1; page <= totalPages; page++) {
@@ -279,13 +283,14 @@ export function sendBulkMessagesTool(siteId: string) {
           const leadId = lead.id as string;
 
           try {
-            if (!lead.phone) {
+            // For whatsapp/sms/voice we need a phone number
+            if (['whatsapp', 'sms', 'voice'].includes(channel) && !lead.phone) {
               await updateAudienceLeadStatus(audience_id, leadId, 'skipped', 'No phone number');
               totalSkipped++;
               continue;
             }
 
-            const leadRow = lead as DbLead;
+            const leadRow = lead as unknown as DbLead;
             const built = buildContentVariablesForLead(placeholderMap, leadRow, siteName, mergePolicy);
             if (built.aborted) {
               await updateAudienceLeadStatus(
@@ -301,8 +306,8 @@ export function sendBulkMessagesTool(siteId: string) {
             const conversationData: any = {
               site_id: siteId,
               lead_id: leadId,
-              title: subject || `Bulk Message: whatsapp`,
-              channel: 'whatsapp',
+              title: subject || `Bulk Message: ${channel}`,
+              channel: channel,
               custom_data: {
                 source: 'sendBulkMessages',
                 audience_id,
@@ -337,10 +342,10 @@ export function sendBulkMessagesTool(siteId: string) {
               lead_id: leadId,
               custom_data: {
                 status: 'accepted',
-                channel: 'whatsapp',
+                channel: channel,
                 audience_id,
-                template_sid: templateSid,
-                template_status: templateStatus,
+                ...(templateSid ? { template_sid: templateSid } : {}),
+                ...(templateStatus ? { template_status: templateStatus } : {}),
                 templated_body: abstractBody,
                 placeholder_map: placeholderMap,
                 content_variables: built.variables,
@@ -405,7 +410,7 @@ export function sendBulkMessagesTool(siteId: string) {
             continue;
           }
 
-          const leadRow = lead as DbLead;
+          const leadRow = lead as unknown as DbLead;
           const merged = personalizeMergeSubjectAndMessage(
             subject,
             message,
@@ -507,9 +512,9 @@ export function sendBulkMessagesTool(siteId: string) {
 
   return {
     name: 'sendBulkMessages',
-    description: `Send a message to all leads in an audience via WhatsApp or email.
+    description: `Send a message to all leads in an audience via WhatsApp, email, telegram, sms or voice.
 
-Required: audience_id, channel ("whatsapp" or "email"), message.
+Required: audience_id, channel ("whatsapp", "email", "telegram", "sms", or "voice"), message.
 For email: subject is also required.
 Optional: from, content_id (content UUID whose metadata.placeholders.when_unresolved controls unknown merge tokens), placeholder_policy (override), audience_email_mode.
 
@@ -518,8 +523,9 @@ Merge fields — use only double braces: {{lead.name}}, {{lead.first_name}}, {{l
 For email only: audience_email_mode — "mail" (default) or "newsletter".
 
 The tool iterates through every lead in the audience:
-- WhatsApp: requires lead.phone (international format). Leads without phone are skipped.
+- WhatsApp/SMS/Voice: requires lead.phone (international format). Leads without phone are skipped.
 - Email: requires lead.email. Leads without email are skipped.
+- Telegram: requires lead.phone or telegram ID (currently uses phone logic).
 
 WhatsApp delivery:
 - Creates (or reuses) ONE Twilio Content Template per campaign whose body uses numeric placeholders ({{1}}, {{2}}, ...). Merge tokens in the message are mapped to those placeholders.
@@ -544,7 +550,7 @@ IMPORTANT:
         audience_id: { type: 'string', description: 'Audience UUID to send messages to.' },
         channel: {
           type: 'string',
-          enum: ['whatsapp', 'email'],
+          enum: ['whatsapp', 'email', 'telegram', 'sms', 'voice'],
           description: 'Delivery channel.',
         },
         message: { type: 'string', description: 'Message text (plain text or HTML for email).' },
