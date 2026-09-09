@@ -268,9 +268,11 @@ export async function deleteSender(senderId: string): Promise<void> {
 }
 
 
-export async function searchAvailableNumbers(params: { countryCode: string, areaCode?: string }): Promise<any> {
+export async function searchAvailableNumbers(params: { countryCode: string, areaCode?: string, smsEnabled?: boolean, voiceEnabled?: boolean }): Promise<any> {
   const query = new URLSearchParams({ countryCode: params.countryCode });
   if (params.areaCode) query.append("areaCode", params.areaCode);
+  if (params.smsEnabled) query.append("smsEnabled", "true");
+  if (params.voiceEnabled) query.append("voiceEnabled", "true");
   return zavuFetch(`/phone-numbers/available?${query.toString()}`);
 }
 

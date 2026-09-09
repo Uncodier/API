@@ -31,6 +31,7 @@ import { quotationsTool } from '@/app/api/agents/tools/quotations/assistantProto
 import { purchasesTool } from '@/app/api/agents/tools/purchases/assistantProtocol';
 import { purchaseItemsTool } from '@/app/api/agents/tools/purchase_items/assistantProtocol';
 import { subscriptionPlanItemsTool } from '@/app/api/agents/tools/subscription_plan_items/assistantProtocol';
+import { subscriptionsTool } from '@/app/api/agents/tools/subscriptions/assistantProtocol';
 import { contentTool } from '@/app/api/agents/tools/content/assistantProtocol';
 import { sendEmailTool } from '@/app/api/agents/tools/sendEmail/assistantProtocol';
 import { configureEmailTool } from '@/app/api/agents/tools/configureEmail/assistantProtocol';
@@ -333,6 +334,7 @@ export const getAssistantTools = (
     purchasesTool(siteId),
     purchaseItemsTool(siteId),
     subscriptionPlanItemsTool(siteId),
+    subscriptionsTool(siteId),
     schedulingTool(siteId, instanceId),
     getFinderCategoryIdsTool(siteId),
     analyzeICPTotalCountTool(siteId),

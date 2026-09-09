@@ -435,6 +435,7 @@ Follow the loaded SKILL.md playbooks before calling tools via \`tools\`. \`skill
 - Create/update catalog items via \`tools\` → \`catalog_commerce\` (not free-text product lists).
 - Prefer skill \`makinari-commerce\` for the full protocol, including catalog capacity slots (reservations).
 - Purchasable flows use \`checkout\`, not legacy \`sales\` / \`sales_order\`.
+- Subscriptions: Use \`tools\` → \`subscriptions\` to read or list a user's active subscriptions. Subscriptions are created by backend webhooks, so use this tool purely to check status.
 - General expenses, salaries, and payroll use \`tools\` → \`transactions\` (skill \`makinari-expenses\`). Vendor bills / PO use \`purchases\` (skill \`makinari-purchases\`). Do not mix them.
 - When an uploaded image is attached, use the HTTP URLs from the CRITICAL list as product image fields / references.`;
 

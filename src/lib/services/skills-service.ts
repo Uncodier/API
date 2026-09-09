@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { EmbeddingsService } from './embeddings-service';
 
 export interface SkillMetadata {
   /** Directory name under src/skills (e.g. makinari-rol-frontend). */
@@ -12,6 +13,8 @@ export interface SkillMetadata {
 
 export class SkillsService {
   private static cachedSkills: SkillMetadata[] | null = null;
+  private static cachedSkillEmbeddings: Map<string, number[]> | null = null;
+  private static embeddingsInitPromise: Promise<void> | null = null;
 
   static listSkills(): SkillMetadata[] {
     if (this.cachedSkills) return this.cachedSkills;
@@ -112,6 +115,84 @@ export class SkillsService {
       .filter((x) => x.score > 0)
       .sort((a, b) => b.score - a.score)
       .map((x) => x.skill);
+  }
+
+  /**
+   * Initializes skill embeddings in the background if they don't exist.
+   */
+  private static async initSkillEmbeddings(): Promise<void> {
+    if (this.cachedSkillEmbeddings) return;
+    if (this.embeddingsInitPromise) return this.embeddingsInitPromise;
+
+    this.embeddingsInitPromise = (async () => {
+      try {
+        const skills = this.listSkills();
+        if (skills.length === 0) {
+          this.cachedSkillEmbeddings = new Map();
+          return;
+        }
+
+        const inputs = skills.map(
+          (skill) => `${skill.name}\n${skill.description}\n${(skill.types || []).join(' ')}`
+        );
+
+        const { embeddings } = await EmbeddingsService.generateEmbeddings(inputs);
+
+        const map = new Map<string, number[]>();
+        for (let i = 0; i < skills.length; i++) {
+          if (embeddings[i]) {
+            map.set(skills[i].slug, embeddings[i]);
+          }
+        }
+        this.cachedSkillEmbeddings = map;
+        console.log(`[SkillsService] Cached vector embeddings for ${map.size} skills.`);
+      } catch (e) {
+        console.error('[SkillsService] Failed to initialize skill embeddings:', e);
+        // Reset promise so it can be retried on next call
+        this.embeddingsInitPromise = null;
+        throw e;
+      }
+    })();
+
+    return this.embeddingsInitPromise;
+  }
+
+  /**
+   * Semantic vector search over skills. Falls back to keyword search on failure.
+   */
+  static async searchSkillsVector(query: string, requirementType?: string): Promise<SkillMetadata[]> {
+    const q = query.trim();
+    if (!q) return this.matchSkillsForRequirement(requirementType);
+
+    try {
+      await this.initSkillEmbeddings();
+
+      const { embeddings: [queryEmbedding] } = await EmbeddingsService.generateEmbeddings(q);
+      if (!queryEmbedding) {
+        throw new Error('No embedding returned for query');
+      }
+
+      const pool = this.matchSkillsForRequirement(requirementType);
+      if (!this.cachedSkillEmbeddings) {
+        throw new Error('Skill embeddings not initialized properly');
+      }
+
+      const scored = pool.map((skill) => {
+        const skillVec = this.cachedSkillEmbeddings!.get(skill.slug);
+        const score = skillVec ? EmbeddingsService.cosineSimilarity(queryEmbedding, skillVec) : 0;
+        return { skill, score };
+      });
+
+      // Filter out low similarity matches and sort by score
+      return scored
+        .filter((x) => x.score > 0.3) // threshold
+        .sort((a, b) => b.score - a.score)
+        .map((x) => x.skill);
+
+    } catch (e) {
+      console.warn('[SkillsService] Vector search failed, falling back to keyword search:', e);
+      return this.searchSkills(q, requirementType);
+    }
   }
 
   /** Resolve by frontmatter name or folder slug (case-insensitive). */

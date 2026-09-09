@@ -18,6 +18,8 @@
  * auto-correct without needing a separate `describe` round-trip when it fails.
  */
 
+import { EmbeddingsService } from '@/lib/services/embeddings-service';
+
 export type RoutedTool = {
   name: string;
   description: string;
@@ -153,6 +155,9 @@ function isValidationErrorMessage(msg: string | undefined): boolean {
   );
 }
 
+let cachedToolEmbeddings: Map<string, number[]> | null = null;
+let toolsEmbeddingsInitPromise: Promise<void> | null = null;
+
 /**
  * Builds the single `tools` tool that proxies to a set of routed tools.
  *
@@ -176,8 +181,9 @@ export function toolsRouterTool(routedTools: RoutedTool[]) {
     '',
     'USAGE (strict order):',
     '  1. action="list" [+ optional category filter] → returns [{ name, description, category }] for every routed tool.',
-    '  2. action="describe" with name=<tool_name> → returns the full description, parameters JSON schema, and expected_use hint.',
-    '  3. action="call" with name=<tool_name> and args=<string> → executes the underlying tool and returns its result. If args are invalid the error payload includes the parameters schema so you can correct and retry.',
+    '  2. action="search" with query="<your intent>" → returns the top tools matching your natural language query using semantic vector search.',
+    '  3. action="describe" with name=<tool_name> → returns the full description, parameters JSON schema, and expected_use hint.',
+    '  4. action="call" with name=<tool_name> and args=<string> → executes the underlying tool and returns its result. If args are invalid the error payload includes the parameters schema so you can correct and retry.',
     '',
     `Categories available: ${categoriesAvailable.join(', ')}.`,
     'Core planning/sandbox/requirement tools (instance_plan, requirement_status, requirements, sandbox_*, skill_lookup) are NOT routed here — they are always directly available.',
@@ -191,12 +197,16 @@ export function toolsRouterTool(routedTools: RoutedTool[]) {
       properties: {
         action: {
           type: 'string',
-          enum: ['list', 'describe', 'call'],
-          description: 'What to do. Use "list" first to discover tools, "describe" to inspect a specific tool, "call" to execute it.',
+          enum: ['list', 'search', 'describe', 'call'],
+          description: 'What to do. Use "list" or "search" first to discover tools, "describe" to inspect a specific tool, "call" to execute it.',
         },
         name: {
           type: 'string',
           description: 'Tool name (required for "describe" and "call").',
+        },
+        query: {
+          type: 'string',
+          description: 'Natural language query (required for "search"). Describe what you want to achieve.',
         },
         // NOTE: Typed as a JSON-encoded string instead of `type: "object"`.
         // Reason: Gemini's OpenAI-compat function declarations reject objects
@@ -217,7 +227,7 @@ export function toolsRouterTool(routedTools: RoutedTool[]) {
       },
       required: ['action'],
     },
-    execute: async (args: { action: 'list' | 'describe' | 'call'; name?: string; args?: any; category?: string }) => {
+    execute: async (args: { action: 'list' | 'search' | 'describe' | 'call'; name?: string; args?: any; category?: string; query?: string }) => {
       const { action } = args;
 
       // `args.args` is declared as a JSON-encoded string (see schema note).
@@ -253,6 +263,94 @@ export function toolsRouterTool(routedTools: RoutedTool[]) {
           categories: categoriesAvailable,
           hint: 'Call action="describe" with a name to get the parameters schema, then action="call" with name+args to execute.',
         };
+      }
+
+      if (action === 'search') {
+        const q = (args.query ?? '').trim();
+        if (!q) {
+          return { success: false, error: 'Missing "query" — provide a natural language description for the search.' };
+        }
+
+        try {
+          if (!cachedToolEmbeddings) {
+            if (!toolsEmbeddingsInitPromise) {
+              toolsEmbeddingsInitPromise = (async () => {
+                try {
+                  if (toolIndex.length === 0) {
+                    cachedToolEmbeddings = new Map();
+                    return;
+                  }
+                  const inputs = toolIndex.map(
+                    (t) => `${t.name}\n${t.description}\n${t.category}`
+                  );
+                  const { embeddings } = await EmbeddingsService.generateEmbeddings(inputs);
+                  const map = new Map<string, number[]>();
+                  for (let i = 0; i < toolIndex.length; i++) {
+                    if (embeddings[i]) {
+                      map.set(toolIndex[i].name, embeddings[i]);
+                    }
+                  }
+                  cachedToolEmbeddings = map;
+                  console.log(`[ToolsRouter] Cached vector embeddings for ${map.size} tools.`);
+                } catch (e) {
+                  console.error('[ToolsRouter] Failed to initialize tool embeddings:', e);
+                  toolsEmbeddingsInitPromise = null;
+                  throw e;
+                }
+              })();
+            }
+            await toolsEmbeddingsInitPromise;
+          }
+
+          const { embeddings: [queryEmbedding] } = await EmbeddingsService.generateEmbeddings(q);
+          if (!queryEmbedding) {
+            throw new Error('No embedding returned for query');
+          }
+
+          if (!cachedToolEmbeddings) {
+            throw new Error('Tool embeddings not initialized properly');
+          }
+
+          const scored = toolIndex.map((tool) => {
+            const toolVec = cachedToolEmbeddings!.get(tool.name);
+            const score = toolVec ? EmbeddingsService.cosineSimilarity(queryEmbedding, toolVec) : 0;
+            return { tool, score };
+          });
+
+          const matches = scored
+            .filter((x) => x.score > 0.3)
+            .sort((a, b) => b.score - a.score)
+            .map((x) => x.tool)
+            .slice(0, 10);
+
+          return {
+            success: true,
+            query: q,
+            count: matches.length,
+            tools: matches,
+            hint: matches.length > 0
+              ? 'Call action="describe" with a name to get the parameters schema, then action="call" with name+args to execute.'
+              : 'No matches found. Try a different query or use action="list" to see all tools.',
+          };
+        } catch (e: any) {
+          console.warn('[ToolsRouter] Vector search failed, falling back to keyword search:', e);
+          const lowerQ = q.toLowerCase();
+          const words = lowerQ.split(/\s+/).filter(Boolean);
+          const keywordMatches = toolIndex.filter(t => {
+            const hay = `${t.name} ${t.description} ${t.category}`.toLowerCase();
+            return words.some(w => hay.includes(w));
+          }).slice(0, 10);
+          
+          return {
+            success: true,
+            query: q,
+            count: keywordMatches.length,
+            tools: keywordMatches,
+            hint: keywordMatches.length > 0
+              ? 'Call action="describe" with a name to get the parameters schema, then action="call" with name+args to execute.'
+              : 'No matches found. Try a different query or use action="list" to see all tools.',
+          };
+        }
       }
 
       if (action === 'describe') {

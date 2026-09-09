@@ -29,7 +29,7 @@ export function skillLookupTool(ctx?: SkillLookupToolContext) {
   return {
     name: 'skill_lookup',
     description:
-      'Browse and load Agent Skills (SKILL.md procedures) on demand. Recommended flow: (1) action=search with 3-10 concise English keywords from objective, stack, domain, and deliverable. (2) action=get for top skill_name candidates. (3) action=list only when discovery is unclear. Current categories (frontmatter types): develop, automation, content, design, task, integration, planning, research, marketing_campaign, optimization, strategy. When requirement_type is known, list/search are automatically scoped to that type.',
+      'Browse and load Agent Skills (SKILL.md procedures) on demand. Recommended flow: (1) action=search with a natural language description of what you want to achieve or 3-10 concise English keywords from objective, stack, domain, and deliverable. (2) action=get for top skill_name candidates. (3) action=list only when discovery is unclear. Current categories (frontmatter types): develop, automation, content, design, task, integration, planning, research, marketing_campaign, optimization, strategy. When requirement_type is known, list/search are automatically scoped to that type.',
     parameters: {
       type: 'object',
       properties: {
@@ -37,12 +37,12 @@ export function skillLookupTool(ctx?: SkillLookupToolContext) {
           type: 'string',
           enum: ['list', 'search', 'get'],
           description:
-            'list: compact catalog (metadata only). search: filter by keywords. get: full SKILL.md content for one skill.',
+            'list: compact catalog (metadata only). search: find by intent/keywords (semantic vector search). get: full SKILL.md content for one skill.',
         },
         query: {
           type: 'string',
           description:
-            'Required for search. Space-separated keywords only (no full sentences), 3-10 terms recommended. Use English keywords from objective + tech stack + domain + expected output (e.g. "nextjs seo landing webhook conversion").',
+            'Required for search. Describe what you want to achieve or provide English keywords from objective + tech stack + domain + expected output (e.g. "I need to generate a nextjs seo landing page").',
         },
         skill_name: {
           type: 'string',
@@ -85,7 +85,7 @@ export function skillLookupTool(ctx?: SkillLookupToolContext) {
         if (!q) {
           return { ok: false, error: 'query is required for search (e.g. your objective or tech stack).' };
         }
-        const matches = SkillsService.searchSkills(q, requirementType);
+        const matches = await SkillsService.searchSkillsVector(q, requirementType);
         return {
           ok: true,
           query: q,
@@ -95,7 +95,7 @@ export function skillLookupTool(ctx?: SkillLookupToolContext) {
           hint:
             matches.length > 0
               ? 'Call action=get with skill_name set to name or slug from skills[].'
-              : 'No matches found. Retry action=search with broader English keywords, or call action=list to inspect available categories/types before selecting a skill.',
+              : 'No matches found. Retry action=search with different terms, or call action=list to inspect available categories/types before selecting a skill.',
         };
       }
 
