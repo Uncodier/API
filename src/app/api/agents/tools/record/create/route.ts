@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { z } from 'zod';
+import { EmbeddingsService } from '@/lib/services/embeddings-service';
 
 const CreateRecordSchema = z.object({
   site_id: z.string().uuid(),
@@ -14,6 +15,24 @@ const CreateRecordSchema = z.object({
 
 export async function createRecordCore(params: any) {
   const validated = CreateRecordSchema.parse(params);
+
+  try {
+    const textToEmbed = [
+      validated.title,
+      validated.description,
+      validated.summary,
+      validated.data && Object.keys(validated.data).length > 0 ? JSON.stringify(validated.data) : ''
+    ].filter(Boolean).join('\n');
+    
+    if (textToEmbed) {
+      const { embeddings } = await EmbeddingsService.generateEmbeddings(textToEmbed);
+      if (embeddings && embeddings.length > 0) {
+        (validated as any).embedding = embeddings[0];
+      }
+    }
+  } catch (embedErr) {
+    console.warn('[CreateRecord] Failed to generate embedding:', embedErr);
+  }
 
   const { data, error } = await supabaseAdmin
     .from('records')

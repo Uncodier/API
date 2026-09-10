@@ -5,6 +5,7 @@
 
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { v4 as uuidv4 } from 'uuid';
+import { EmbeddingsService } from './embeddings-service';
 
 export interface MemoryScope {
   client_id?: string;
@@ -30,6 +31,7 @@ export interface GetAgentMemoriesOptions {
   client_id?: string;
   project_id?: string;
   task_id?: string;
+  site_id?: string;
 }
 
 export interface AgentMemoryResult {
@@ -363,7 +365,7 @@ export async function getAgentMemories(
       rows = rows.slice(0, limit);
     }
 
-    const memories = rows.map((row) => {
+    let memories = rows.map((row) => {
       const d = (row.data as Record<string, unknown>) || {};
       return {
         id: row.id,
@@ -375,6 +377,42 @@ export async function getAgentMemories(
         metadata: row.metadata as Record<string, unknown> | undefined,
       };
     });
+
+    // Vector search on records
+    if (searchQuery && options?.site_id) {
+      try {
+        const { embeddings } = await EmbeddingsService.generateEmbeddings(searchQuery);
+        if (embeddings && embeddings.length > 0) {
+          const queryEmbedding = embeddings[0];
+          const { data: recordHits, error: recordError } = await supabaseAdmin.rpc('match_records', {
+            query_embedding: `[${queryEmbedding.join(',')}]`,
+            match_threshold: 0.5,
+            match_count: limit,
+            p_site_id: options.site_id
+          });
+
+          if (!recordError && recordHits) {
+            const recordMemories = recordHits.map((hit: any) => ({
+              id: hit.id,
+              content: `Record Data: ${hit.data ? JSON.stringify(hit.data) : ''}\nSummary: ${hit.summary || ''}\nDescription: ${hit.description || ''}`,
+              summary: hit.summary || hit.title,
+              key: `record_${hit.category_id || 'untyped'}`,
+              type: 'record',
+              created_at: hit.created_at,
+              metadata: { similarity: hit.similarity, category_id: hit.category_id, relations: hit.relations }
+            }));
+            // Sort combined results by created_at descending, then slice
+            memories = [...memories, ...recordMemories]
+              .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+              .slice(0, limit);
+          } else if (recordError) {
+            console.error('[AgentMemoryTools] match_records error:', recordError);
+          }
+        }
+      } catch (err) {
+        console.error('[AgentMemoryTools] Vector search on records failed:', err);
+      }
+    }
 
     return { success: true, memories };
   } catch (err) {

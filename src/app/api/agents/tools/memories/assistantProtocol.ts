@@ -326,6 +326,7 @@ export function getMemoriesToolScrapybara(
           client_id: args.client_id,
           project_id: args.project_id,
           task_id: args.task_id,
+          site_id,
         });
 
         if (!result.success) {

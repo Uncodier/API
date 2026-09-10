@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createSender, attachSenderToAgent, ensureProjectWebhook, purchaseNumber } from "@/lib/services/zavu";
+import { createSender, attachSenderToAgent, ensureProjectWebhook, purchaseNumber, assignNumberToSender } from "@/lib/services/zavu";
 import { supabaseAdmin } from "@/lib/database/supabase-server";
 import { v4 as uuidv4 } from "uuid";
 
@@ -31,9 +31,12 @@ export async function POST(request: NextRequest) {
 
       sender = await createSender({
         name: name || `SMS Agent for Site ${siteId}`,
-        phoneNumber: phoneNumber || undefined,
         enableSmsOneway: phoneNumber ? undefined : true
       });
+      
+      if (phoneNumber) {
+        await assignNumberToSender(sender.id, phoneNumber);
+      }
       
       await attachSenderToAgent(sender.id);
     } catch (zavuError: any) {

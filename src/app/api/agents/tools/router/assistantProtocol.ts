@@ -181,8 +181,8 @@ export function toolsRouterTool(routedTools: RoutedTool[]) {
     '',
     'USAGE (strict order):',
     '  1. action="list" [+ optional category filter] → returns [{ name, description, category }] for every routed tool.',
-    '  2. action="search" with query="<your intent>" → returns the top tools matching your natural language query using semantic vector search.',
-    '  3. action="describe" with name=<tool_name> → returns the full description, parameters JSON schema, and expected_use hint.',
+    '  2. action="search" with query="<your intent>" → returns the top tools matching your natural language query using semantic vector search. Includes parameters schema so you can call directly.',
+    '  3. action="describe" with name=<tool_name> → returns the full description, parameters JSON schema, and expected_use hint. Use this if you only used action="list".',
     '  4. action="call" with name=<tool_name> and args=<string> → executes the underlying tool and returns its result. If args are invalid the error payload includes the parameters schema so you can correct and retry.',
     '',
     `Categories available: ${categoriesAvailable.join(', ')}.`,
@@ -281,7 +281,10 @@ export function toolsRouterTool(routedTools: RoutedTool[]) {
                     return;
                   }
                   const inputs = toolIndex.map(
-                    (t) => `${t.name}\n${t.description}\n${t.category}`
+                    (t) => {
+                      const fullTool = byName.get(t.name);
+                      return `${t.name}\n${fullTool?.description || t.description}\n${t.category}`;
+                    }
                   );
                   const { embeddings } = await EmbeddingsService.generateEmbeddings(inputs);
                   const map = new Map<string, number[]>();
@@ -318,9 +321,16 @@ export function toolsRouterTool(routedTools: RoutedTool[]) {
           });
 
           const matches = scored
-            .filter((x) => x.score > 0.3)
+            .filter((x) => x.score > 0.7)
             .sort((a, b) => b.score - a.score)
-            .map((x) => x.tool)
+            .map((x) => {
+              const fullTool = byName.get(x.tool.name);
+              return {
+                ...x.tool,
+                description: fullTool?.description || x.tool.description,
+                parameters: fullTool?.parameters,
+              };
+            })
             .slice(0, 10);
 
           return {
@@ -329,7 +339,7 @@ export function toolsRouterTool(routedTools: RoutedTool[]) {
             count: matches.length,
             tools: matches,
             hint: matches.length > 0
-              ? 'Call action="describe" with a name to get the parameters schema, then action="call" with name+args to execute.'
+              ? 'You can call action="call" directly with name+args using the parameters schema provided in the results.'
               : 'No matches found. Try a different query or use action="list" to see all tools.',
           };
         } catch (e: any) {
@@ -337,8 +347,16 @@ export function toolsRouterTool(routedTools: RoutedTool[]) {
           const lowerQ = q.toLowerCase();
           const words = lowerQ.split(/\s+/).filter(Boolean);
           const keywordMatches = toolIndex.filter(t => {
-            const hay = `${t.name} ${t.description} ${t.category}`.toLowerCase();
+            const fullTool = byName.get(t.name);
+            const hay = `${t.name} ${fullTool?.description || t.description} ${t.category}`.toLowerCase();
             return words.some(w => hay.includes(w));
+          }).map(t => {
+            const fullTool = byName.get(t.name);
+            return {
+              ...t,
+              description: fullTool?.description || t.description,
+              parameters: fullTool?.parameters,
+            };
           }).slice(0, 10);
           
           return {
@@ -347,7 +365,7 @@ export function toolsRouterTool(routedTools: RoutedTool[]) {
             count: keywordMatches.length,
             tools: keywordMatches,
             hint: keywordMatches.length > 0
-              ? 'Call action="describe" with a name to get the parameters schema, then action="call" with name+args to execute.'
+              ? 'You can call action="call" directly with name+args using the parameters schema provided in the results.'
               : 'No matches found. Try a different query or use action="list" to see all tools.',
           };
         }

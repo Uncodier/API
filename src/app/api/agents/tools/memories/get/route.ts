@@ -41,6 +41,7 @@ export async function getMemoriesCore(filters: any) {
     client_id: validatedFilters.client_id,
     project_id: validatedFilters.project_id,
     task_id: validatedFilters.task_id,
+    site_id: validatedFilters.site_id,
   });
 
   if (!result.success) {
