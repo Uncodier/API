@@ -203,24 +203,6 @@ const errorEventSchema = baseEventSchema.extend({
   })
 });
 
-const sessionRecordingEventSchema = baseEventSchema.extend({
-  event_type: z.literal('session_recording'),
-  properties: z.object({
-    recording_id: z.string(),
-    start_time: z.number(),
-    end_time: z.number(),
-    duration: z.number(),
-    events: z.array(z.any()),
-    metadata: z.object({
-      screen_size: z.string(),
-      browser: z.string(),
-      browser_version: z.string(),
-      os: z.string(),
-      device_type: z.string()
-    })
-  })
-});
-
 // Union of all event schemas
 const requestSchema = z.discriminatedUnion('event_type', [
   baseEventSchema.extend({ event_type: z.literal('pageview') }),
@@ -235,8 +217,7 @@ const requestSchema = z.discriminatedUnion('event_type', [
   focusEventSchema,
   formEventSchema,
   performanceEventSchema,
-  errorEventSchema,
-  sessionRecordingEventSchema
+  errorEventSchema
 ]);
 
 // Función para validar y preparar datos para la base de datos
