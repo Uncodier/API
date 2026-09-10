@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createSender, attachSenderToAgent, ensureProjectWebhook, purchaseNumber, assignNumberToSender } from "@/lib/services/zavu";
+import { createSender, attachSenderToAgent, ensureProjectWebhook, purchaseNumber } from "@/lib/services/zavu";
 import { supabaseAdmin } from "@/lib/database/supabase-server";
 import { v4 as uuidv4 } from "uuid";
 
@@ -21,19 +21,19 @@ export async function POST(request: NextRequest) {
     // Create a generic sender for SMS
     let sender;
     try {
-      sender = await createSender({
-        name: name || `SMS Agent for Site ${siteId}`,
-      });
-
-      // Comprar el número y asignarlo al sender
       if (phoneNumber) {
         try {
           await purchaseNumber(phoneNumber);
         } catch (e: any) {
           console.warn("[Zavu SMS] Number might already be purchased or error buying:", e.message);
         }
-        await assignNumberToSender(sender.id, phoneNumber);
       }
+
+      sender = await createSender({
+        name: name || `SMS Agent for Site ${siteId}`,
+        phoneNumber: phoneNumber || undefined,
+        enableSmsOneway: phoneNumber ? undefined : true
+      });
       
       await attachSenderToAgent(sender.id);
     } catch (zavuError: any) {

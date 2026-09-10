@@ -226,6 +226,7 @@ export async function detachSenderFromAgent(senderId: string) {
 // SENDER & CHANNELS
 export async function createSender(params: {
   name: string;
+  phoneNumber?: string;
   enableSmsOneway?: boolean;
   emailAddress?: string;
   emailFromName?: string;
