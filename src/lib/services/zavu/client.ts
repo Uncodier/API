@@ -61,7 +61,9 @@ async function zavuFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
 
   if (!response.ok) {
-    const error = new Error(payload.message || payload.error || `Zavu API ${response.status}`);
+    const errorMsg = payload.message || payload.error || `Zavu API ${response.status}`;
+    console.error(`[Zavu API Error] ${init.method || "GET"} ${path} failed with status ${response.status}: ${errorMsg}`);
+    const error = new Error(errorMsg);
     (error as any).status = response.status;
     throw error;
   }
@@ -292,16 +294,38 @@ export async function purchaseNumber(phoneNumber: string): Promise<any> {
 }
 
 export async function releaseNumber(phoneNumber: string): Promise<any> {
-  return zavuFetch(`/phone-numbers/${encodeURIComponent(phoneNumber)}`, {
+  const allNumbers = await getOwnedNumbers();
+  const list = allNumbers?.items || allNumbers?.results || (Array.isArray(allNumbers) ? allNumbers : []);
+  const phoneObj = list.find((n: any) => n.phoneNumber === phoneNumber);
+  
+  if (!phoneObj || !phoneObj.id) {
+    throw new Error(`Phone number ${phoneNumber} not found in owned numbers`);
+  }
+
+  return zavuFetch(`/phone-numbers/${phoneObj.id}`, {
     method: "DELETE"
   });
 }
 
-export async function assignNumberToSender(senderId: string, phoneNumber: string): Promise<any> {
-  return zavuFetch(`/senders/${senderId}/phone-numbers`, {
-    method: "POST",
-    body: JSON.stringify({ phoneNumber }),
-  });
+export async function assignNumberToSender(senderId: string, phoneNumber: string, retries = 3): Promise<any> {
+  for (let i = 0; i < retries; i++) {
+    const allNumbers = await getOwnedNumbers();
+    const list = allNumbers?.items || allNumbers?.results || (Array.isArray(allNumbers) ? allNumbers : []);
+    const phoneObj = list.find((n: any) => n.phoneNumber === phoneNumber);
+    
+    if (phoneObj && phoneObj.id) {
+      return zavuFetch(`/phone-numbers/${phoneObj.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ senderId }),
+      });
+    }
+    // Wait 1 second before retrying to account for potential API replication delay
+    if (i < retries - 1) {
+      await new Promise(res => setTimeout(res, 1000));
+    }
+  }
+
+  throw new Error(`Phone number ${phoneNumber} not found in owned numbers to assign`);
 }
 
 export async function connectTelegram(senderId: string, botToken: string): Promise<any> {
