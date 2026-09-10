@@ -124,14 +124,18 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   let isAllBacklogDone = false;
   let isOrnamentalOnly = false;
   const relevantDecisions: string[] = [];
+  let hasAttemptedActiveItems = false;
+  let activeItems: any[] = [];
   if (reqContext.backlog?.items) {
     const { isBacklogComplete, isOrnamentalOnlyOutstanding } = require('@/lib/services/requirement-backlog');
     isAllBacklogDone = isBacklogComplete(reqContext.backlog.items);
     isOrnamentalOnly = isOrnamentalOnlyOutstanding(reqContext.backlog.items);
 
-    const activeItems = reqContext.backlog.items.filter((i: any) => 
+    activeItems = reqContext.backlog.items.filter((i: any) => 
       i.status === 'in_progress' || i.status === 'needs_review' || i.status === 'pending'
     );
+    hasAttemptedActiveItems = activeItems.some((i: any) => (i.attempts || 0) > 0);
+    
     activeItems.forEach((item: any) => {
       if (item.assumptions && item.assumptions.length > 0) {
         relevantDecisions.push(...item.assumptions.map((a: string) => `[${item.title}] ${a}`));
@@ -149,13 +153,13 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   
   if (!hasActivePlan) {
     const guardParams: Parameters<typeof checkRecentPlansGuardStep>[0] = { instanceId, siteId: site_id };
-    if (isOrnamentalOnly) {
+    if (isOrnamentalOnly && hasAttemptedActiveItems) {
       guardParams.blockAfter = parseInt(process.env.CRON_ORNAMENTAL_REPLAN_BLOCK_AFTER || '1', 10);
       guardParams.skipAfterMinutes = parseInt(process.env.CRON_ORNAMENTAL_REPLAN_SKIP_MIN || '30', 10);
     }
     recentPlansGuard = await checkRecentPlansGuardStep(guardParams);
     if (recentPlansGuard.reason) {
-      console.log(`[CronAppsWorkflow] Recent-plans guard: ${recentPlansGuard.reason} (ornamentalOnly: ${isOrnamentalOnly})`);
+      console.log(`[CronAppsWorkflow] Recent-plans guard: ${recentPlansGuard.reason} (ornamentalOnly: ${isOrnamentalOnly}, hasAttemptedActiveItems: ${hasAttemptedActiveItems})`);
     }
   }
 
@@ -173,7 +177,8 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     return { reqId, branch: null, previewUrl: null, status: 'blocked' as const };
   }
 
-  const skipOrchestrator = hasActivePlan || recentPlansGuard.shouldSkipOrchestrator;
+  const isFreshWork = !hasAttemptedActiveItems && activeItems.length > 0;
+  const skipOrchestrator = hasActivePlan || (recentPlansGuard.shouldSkipOrchestrator && !isFreshWork);
 
   // If the backlog is empty or fully done we still want the orchestrator to
   // run so it can either seed the initial items or finalize the requirement.
