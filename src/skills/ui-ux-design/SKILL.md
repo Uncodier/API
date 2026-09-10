@@ -1,29 +1,28 @@
 ---
 name: ui-ux-design
-description: Applies Modern Elite Design (Linear/Stripe style), anti-generic constraints, accessibility (WCAG 2.1 AA), and responsive mobile-first layouts to user interfaces.
+description: Applies Brand Guidelines (Design Tokens), accessibility (WCAG 2.1 AA), and responsive mobile-first layouts to user interfaces, avoiding generic aesthetics.
 types: ['design', 'develop']
 ---
 
 # SKILL: ui-ux-design
 
 ## Objective
-Apply expert UI/UX design principles to prevent "generic, sterile, 2020-era corporate UI" when creating software. Enforce a "Modern Elite Design" aesthetic (inspired by Linear, Vercel, and Stripe) using strict texture constraints, animations, semantic accessibility (WCAG 2.1 AA), and modern component libraries (shadcn/ui, Magic UI, Aceternity UI).
+Apply expert UI/UX design principles to prevent "generic, sterile, 2020-era corporate UI". Enforce the brand's unique identity by strictly following the **Brand Guidelines and Design System Tokens** provided by the orchestrator (or found in `memories` / context). Use semantic accessibility (WCAG 2.1 AA), and modern component libraries (shadcn/ui, Magic UI, Aceternity UI).
 
 ## Instructions
 
-### 1. Anti-Generic Design Constraints
-- **NO Default Colors:** Never use default, flat Tailwind colors (e.g., `bg-blue-500`, flat hex codes). Use the designated design system tokens or CSS variables.
-- **NO Flat Backgrounds:** Avoid sterile, hyper-corporate "SaaS-template" aesthetics. Instead, use subtle gradients, grid patterns, or dark-mode-first glow effects.
-- **Bento Grid Layouts:** Prefer modular, bento-box style layouts (1x1, 2x1, 1x2, 2x2 cards) for dashboards and features.
+### 1. Brand Guidelines & Design Tokens First
+- **NO Default Colors:** Never use default, flat Tailwind colors (e.g., `bg-blue-500`, flat hex codes) unless they exactly match the brand. Use the designated design system tokens (CSS variables) derived from the Brand Guidelines.
+- **Extract the Tokens:** Read the `instructions` provided by the Orchestrator. Look for explicit requirements regarding:
+  - **Color Tokens:** Primary, Secondary, Accent, Surface.
+  - **Typography:** Brand-specific font families (e.g., headings vs body).
+  - **Spacing & Border Radius:** The required scale (e.g., sharp corners vs rounded).
+- **Configuration over Hardcoding:** When implementing designs, configure these tokens in `globals.css` or `tailwind.config.ts` so they can be consumed via standard utility classes (e.g., `bg-primary`, `rounded-brand`).
 
-### 2. Modern Elite Design System (Linear / Stripe Style)
-- **Aesthetic:** Default to dark-mode-first with a hyper-polished, engineered feel. Light is treated as part of the interface (subtle glows).
-- **Borders & Glassmorphism:** Use frosted glass borders, e.g., `border border-white/10` or `1px solid rgba(255,255,255,0.08)`.
-- **Typography:** Use Inter Variable for primary text and Berkeley Mono (or similar monospace) for technical data. Large, tight headings (e.g., `tracking-tight`).
-- **Color Palette (Dark Mode Base):**
-  - Background: `bg-[#08090a]` or Tailwind `bg-zinc-950`
-  - Main Text: `text-[#f7f8f8]` or Tailwind `text-zinc-50`
-  - Muted Text: `text-[#8a8f98]` or Tailwind `text-zinc-400`
+### 2. Layout & Aesthetic Guidelines
+- **Avoid Sterile Layouts:** Avoid sterile, hyper-corporate "SaaS-template" aesthetics. Based on the brand guidelines, use appropriate subtle gradients, grid patterns, or glows.
+- **Bento Grid Layouts:** Prefer modular, bento-box style layouts (1x1, 2x1, 1x2, 2x2 cards) for dashboards and features, if appropriate for the brand.
+- **Thematic Consistency:** Ensure the contrast mode (Light vs Dark) respects the brand's primary identity. Do not force "Dark Mode Stripe style" if the brand is light and airy.
 
 ### 3. Motion & Micro-interactions
 - **Engineered Animations:** Small, meaningful animations. Do not overuse bouncy effects.

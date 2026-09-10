@@ -33,8 +33,12 @@ If you notice that the instance is paused (`status="paused"`) and the user is re
 ### 3. Backlog Item Iterations (Changes & Improvements)
 When a backlog item is already completed (marked as `done` or `ready`), and the client requests changes, fixes, or improvements to it, you MUST NOT reopen or modify the existing completed backlog item. Instead, you MUST always create a NEW backlog item specifically for these changes. This ensures a clean history and better control over iterations and versions.
 
-### 4. CRITICAL: Company Context First
-Before designing ANY requirements, backlog items, or instance plans, you MUST always search for the company's background, context, and brand identity. Use the `memories` tool and `instance_logs`, or `tools(action="call", name="instance")` to understand the business. Your requirements, backlog items, and plans MUST align with the company's core objectives, tone, and target audience. Never create generic features without tying them to the specific company context.
+### 4. CRITICAL: Company Context & Brand Guidelines First
+Before designing ANY requirements, backlog items, or instance plans, you MUST always search for the company's background, context, and brand identity. Use the `memories` tool and `instance_logs`, or `tools(action="call", name="instance")` to understand the business. 
+
+**Brand Guidelines (Design Tokens):** You are responsible for extracting the visual identity (Voice, Primary/Secondary/Accent Colors, Typography, Spacing, Border Radius) from `memories` or existing context. 
+Your requirements, backlog items, and plans MUST align with the company's core objectives, tone, and target audience. 
+**Delegation:** You MUST inject a summary of these Brand Guidelines/Design Tokens directly into the `instructions` field of the plan steps delegated to `makinari-rol-frontend` and `ui-ux-design`. Never assume the sub-agents know the brand colors; you provide them.
 
 ### 5. Use sibling skills for the heavy lifting
 Each step MUST set **`skill`** (preferred) or **`role`** so the executor loads the right playbook. Available skills:
@@ -55,7 +59,6 @@ Each step MUST set **`skill`** (preferred) or **`role`** so the executor loads t
 | `makinari-obj-automatizacion` | Deliver runner UI + endpoint for automations. |
 | `makinari-obj-tarea` | One-off script + Markdown Vitrina. |
 | `makinari-obj-workflow-designer` | Design repeatable automated routines and data schemas. |
-| `makinari-rol-maintenance-orchestrator` | Maintenance orchestration role. Runs in parallel to the main orchestrator. Owns the refactoring, technical debt cleanup, and QA regression of ALREADY COMPLETED backlog items. |
 
 Use `skill_lookup action="list"` if you need to confirm what is available.
 
@@ -106,8 +109,10 @@ Your `instance_plan` should break this down into execution steps for specialized
 ### 6. Empty Sandbox Rule (Base Selection)
 If the branch is new and the sandbox is empty (only contains `.env.local` or `requirement.spec.md`), you MUST NOT start writing code, creating DB migrations, or running QA. The **very first step** of your plan MUST be `makinari-obj-template-selection` to clone the base repository (e.g., Next.js template).
 
-### 7. Sequential execution — no race conditions
-Steps execute one after another. Frontend MUST finish before DevOps starts. The system enforces this via `plan-steps.ts`. Do not try to parallelize across steps; parallelize within a step (e.g. multiple files in one frontend step).
+### 7. Sequential execution & Reflection (Self-Correction)
+Steps execute strictly one after another. Frontend MUST finish before DevOps starts. The system enforces this via `plan-steps.ts`. Do not try to parallelize across steps; parallelize within a step (e.g. multiple files in one frontend step).
+
+**Reflection / Self-Correction:** There are no parallel maintenance agents. If a downstream step (like QA or Validation) fails, the failure signal returns to your loop. You MUST evaluate the error and schedule a new sequential step (e.g. a Refactor or Fix step via `makinari-rol-frontend` or `makinari-rol-backend`) to correct the issue on the current branch before proceeding.
 
 ### 8. Preview URL rule
 The preview URL is the permanent Vercel deployment URL from the branch push (via GitHub Deployments API). Do NOT construct or guess URLs. Validation curls target this permanent URL.
@@ -127,8 +132,8 @@ Sub-agents (Frontend, Backend, QA) are instructed to prioritize functionality ov
 - Do NOT treat these proactive additions as errors, hallucinations, or contract drift.
 - **Action required:** Immediately update the master `requirement.instructions` (via `requirements action="update"`) to incorporate these new elements so downstream agents (like QA) are aware of the updated contract. See `makinari-contract-adequation` for details.
 
-### 12. Do not rely on Maintenance
-You are responsible for delivering a working, high-quality feature. Do NOT write messy code or skip tests assuming the `makinari-rol-maintenance-orchestrator` will clean it up later. The maintenance agent runs in parallel to clean up technical debt and perform regression testing on already completed items, but it is NOT a crutch for poor initial implementation. You must deliver production-ready code.
+### 12. Do not rely on external Maintenance
+You are responsible for delivering a working, high-quality feature. Do NOT write messy code or skip tests assuming another agent will clean it up later. Maintenance and refactoring must happen sequentially within the current feature's lifecycle (either by the executor during the step, or via a new reflection step if issues are found). You must deliver production-ready code.
 
 ## Standard plan template (applications repo)
 

@@ -23,7 +23,13 @@ Implement UI pages and components in Next.js (App Router) that satisfy the requi
 - If `package.json` is missing at the root, initialize Next.js there. Do not create a nested project.
 - Respect the base branch chosen by `makinari-obj-template-selection`. Do not `git checkout` a different branch once development has started.
 
-### 2. Data-testid contract (mandatory when requirement defines one)
+### 2. Phase 0.5: Tailwind Config & Style Guide Reading (Mandatory)
+Before writing any UI components, you MUST execute an initial evaluation of the styling configuration:
+- Read the **Brand Guidelines / Design Tokens** injected by the Orchestrator in your step's `instructions`.
+- Check `tailwind.config.ts`, `globals.css` (or equivalent).
+- If the project's current tokens (Colors, Typography, Radius) do not match the Brand Guidelines, you MUST update the configuration files first. This ensures utility classes (e.g., `text-primary`, `bg-brand-surface`) work correctly and prevents hardcoding hex colors inside JSX.
+
+### 3. Data-testid contract (mandatory when requirement defines one)
 The requirement's section 6.4 lists `data-testid` attributes the frontend must expose. Treat this list as **immutable**:
 
 - Add every declared test-id to the correct element.
@@ -80,12 +86,13 @@ The recurring failure mode is interpreting a backlog item title (e.g. *"Resume t
 
 If the backlog item title is the only context you have, derive copy from `requirement.spec.md` sections 1 (vision), 2 (audience) and 4 (value prop). Never paraphrase the item title and never print the item id.
 
-### 4. The Boy Scout Rule (Refactor before you feature)
+### 5. The Boy Scout Rule (Refactor before you feature)
 When you open an existing file to add a new feature, you MUST evaluate its current health before adding your code:
 1. If the file is over 500 lines, you MUST extract parts of it into smaller components/modules BEFORE adding your new logic.
 2. If the file contains mock data or fake authentication, you MUST replace it with real integrations if possible.
 3. If the code is messy or lacks ES Modules structure, clean it up.
-Always leave the code cleaner than you found it. Do this refactoring as part of your current step. Do NOT leave technical debt assuming a maintenance agent will clean it up later. You are responsible for the quality of the code you write.
+
+**Sequential Execution ONLY:** Always leave the code cleaner than you found it. Do this refactoring as part of your current step. There are NO parallel maintenance agents watching you; if you leave tech debt, it stays broken. You are fully responsible for the quality of the code you write.
 
 ### 5. Shift-left build
 Before reporting completion:
@@ -110,8 +117,8 @@ To clear the gate, your UI must:
 - Wire real event handlers with loading and error states.
 - Prefer semantic HTML (`<header>`, `<main>`, `<section>`, `<button>`).
 - Add every `data-testid` listed in section 6.4 of the requirement.
-- Apply Modern Elite Design (Linear/Stripe style) principles: avoid flat generic colors, use dark-mode-first or high-contrast styling with glassmorphism (`border-white/10`), implement bento grids where applicable, and add subtle motion (150ms ease-out transitions, active scale-down).
-- Use `shadcn/ui` for application UI, and consider `Magic UI` or `Aceternity UI` for high-polish marketing pages, avoiding "safe, flat 2020-era corporate UI".
+- Apply Brand Guidelines / Design Tokens provided by the Orchestrator: configure proper Tailwind classes in `globals.css` and use them instead of hardcoding default Tailwind colors (e.g., `bg-blue-500`).
+- Use `shadcn/ui` for application UI, and consider `Magic UI` or `Aceternity UI` for high-polish marketing pages, avoiding "safe, flat 2020-era corporate UI" unless the brand dictates it.
 
 ### 6. Pre-completion checklist
 Copy/paste this and verify every box before marking the step completed:
@@ -182,4 +189,4 @@ exception in `progress.md`.
 - Shipping a demo with empty buttons under the cover of "wireframe".
 - Creating a second Next.js project under a nested folder.
 - Catching and silencing hydration errors instead of fixing them.
-- Delivering generic, flat, "2020 corporate SaaS" UI with default Tailwind colors (e.g., `bg-blue-500`) instead of engineered, Modern Elite styles with proper tokens.
+- Delivering generic, flat, "2020 corporate SaaS" UI with default Tailwind colors (e.g., `bg-blue-500`) instead of adapting to the Brand Guidelines / Design Tokens provided.

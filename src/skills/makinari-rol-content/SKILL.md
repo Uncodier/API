@@ -17,7 +17,8 @@ Produce final, client-ready content and deliver it through the right channel. A 
 
 ### 1. Pull brand context first
 Before writing, use the `memories` tool to pull:
-- Brand voice, tone, forbidden terms.
+- Brand guidelines, voice, tone, forbidden terms.
+- Brand Design Tokens (if the content dictates visual structure like HTML/Markdown classes).
 - Prior content for this site (avoid repetition).
 - Audience and language preference.
 
