@@ -235,12 +235,7 @@ export async function createSender(params: {
 }): Promise<any> {
   const payload = await zavuFetch("/senders", {
     method: "POST",
-    body: JSON.stringify({
-      ...params,
-      webhookUrl: getZavuWebhookUrl(),
-      webhookEvents: ZAVU_SENDER_WEBHOOK_EVENTS,
-      webhookSignatureVersion: "v1+v2",
-    }),
+    body: JSON.stringify(params),
   });
   
   const created = unwrapSender(payload);
