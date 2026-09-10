@@ -206,6 +206,13 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
 You MUST provide at least valid 'text', 'assets' (array of media IDs), or 'urls'.
 If sending email to audience, 'subject' is required.
 
+CRITICAL USAGE EXAMPLES (AVOID DUPLICATE RECORDS):
+- Scenario A (Same text across channels): If publishing the exact SAME text to a blog and social media, make ONE SINGLE tool call providing 'title', 'type', 'text', and 'social_accounts'.
+- Scenario B (Different texts for different channels): If the content differs (e.g. long text for blog, short teaser for LinkedIn), make MULTIPLE sequential tool calls:
+  - Call 1 (Blog): Provide 'title', 'type: "blog_post"', and the long 'text'.
+  - Call 2 (LinkedIn): Provide ONLY 'social_accounts: ["linkedin"]' and the short 'text'. DO NOT provide 'title' and 'type' again unless you explicitly intend to create a brand new separate database record for the teaser. Never reuse 'type: "blog_post"' for a social teaser.
+  - Alternatively, if you want both to share the same DB record, pass the 'content_id' returned from Call 1 into Call 2 instead of 'title' and 'type'.
+
 For email audience sends, optional 'audience_email_mode': 'mail' (default) queues one conversation + approved message per lead for background delivery; 'newsletter' sends immediately with open/click tracking (same as sendEmail), **without** appending an email signature, and does not create conversations. Only valid when channel is 'email'.
 
 For WhatsApp audience sends, a SINGLE Twilio Content Template is created (or reused) for the whole campaign: merge tokens in the body become numeric placeholders ({{1}}, {{2}}, ...) and each lead is queued with its own ContentVariables. You do NOT need a separate template per recipient — per-lead personalization happens at delivery time via variables.

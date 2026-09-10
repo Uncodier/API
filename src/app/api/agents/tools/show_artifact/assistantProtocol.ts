@@ -22,7 +22,7 @@ Available screens and their primary front-end actions (TopBar/Toolbar):
 - deals: ➕ Create Deal, 🔍 Search, Sort, View (Table/Kanban).
 - quotations: seller quotes list/detail
 - chat: 🔍 Search conversations/contacts.
-- people: 🔍 Search, ➕ Enrich Leads, ➕ Enrich & prospect selected.
+- people: (new potential leads or providers) 🔍 Search, ➕ Enrich Leads, ➕ Enrich & prospect selected.
 
 ### Buyer & Commerce
 - buyer_quotes: portal buyer quotes
