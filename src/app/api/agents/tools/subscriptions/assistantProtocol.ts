@@ -10,6 +10,7 @@ export interface SubscriptionsToolParams {
   status?: string;
   current_period_start?: string;
   current_period_end?: string;
+  amount?: number;
   limit?: number;
   offset?: number;
 }
@@ -33,8 +34,9 @@ export function subscriptionsTool(current_site_id?: string) {
         buyer_user_id: { type: 'string', description: 'Buyer user UUID' },
         catalog_item_id: { type: 'string', description: 'Catalog item UUID of the plan (required for create)' },
         status: { type: 'string', enum: ['active', 'canceled', 'past_due', 'trialing'], description: 'Subscription status (defaults to active on create)' },
-        current_period_start: { type: 'string', description: 'ISO date string for start of billing period' },
-        current_period_end: { type: 'string', description: 'ISO date string for end of billing period' },
+        current_period_start: { type: 'string', description: 'ISO date string for start of billing period. (Also mapped to start_date)' },
+        current_period_end: { type: 'string', description: 'ISO date string for end of billing period. (Also mapped to end_date)' },
+        amount: { type: 'number', description: 'The recurring amount or price for the subscription' },
         limit: { type: 'number', description: 'Limit results for list' },
         offset: { type: 'number', description: 'Offset results for list' },
       },

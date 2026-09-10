@@ -1,13 +1,18 @@
-'use step';
+"use step";
 
-import type { Sandbox } from '@vercel/sandbox';
-import { getSandboxHandle } from '@/lib/services/sandbox-sdk';
-import { SandboxService } from '@/lib/services/sandbox-service';
-import { ensurePlatformKeyForRequirement } from '@/lib/services/platform-api/ensure-platform-key';
-import { ensureTenant, type AppsAuthProvider } from '@/lib/services/apps-platform/tenant-provisioner';
-import { getAppsPublicConfig } from '@/lib/database/apps-supabase';
-import { pushVercelBranchEnv } from '@/lib/services/vercel-env';
-import type { CronAuditContext } from '@/lib/services/cron-audit-log';
+import type { Sandbox } from "@vercel/sandbox";
+import { getSandboxHandle } from "@/lib/services/sandbox-sdk";
+import { SandboxService } from "@/lib/services/sandbox-service";
+import { ensurePlatformKeyForRequirement } from "@/lib/services/platform-api/ensure-platform-key";
+import {
+  ensureTenant,
+  type AppsAuthProvider,
+} from "@/lib/services/apps-platform/tenant-provisioner";
+import { getAppsPublicConfig } from "@/lib/database/apps-supabase";
+import { supabaseAdmin } from "@/lib/database/supabase-client";
+import { pushVercelBranchEnv } from "@/lib/services/vercel-env";
+import type { CronAuditContext } from "@/lib/services/cron-audit-log";
+import { decryptToken } from "@/lib/utils/token-decryption";
 
 export interface ProvisionPlatformKeyStepInput {
   sandboxId: string;
@@ -20,7 +25,7 @@ export interface ProvisionPlatformKeyStepInput {
   /** Defaults to 'supabase'. Skips tenant provisioning when set to null. */
   authProvider?: AppsAuthProvider | null;
   /** Git repo kind for Vercel env provisioning. Defaults to 'applications'. */
-  gitRepoKind?: 'applications' | 'automation';
+  gitRepoKind?: "applications" | "automation";
   audit?: CronAuditContext;
 }
 
@@ -44,8 +49,8 @@ function defaultApiBase(): string {
   const base =
     process.env.UNCODIE_API_PUBLIC_BASE_URL ||
     process.env.NEXT_PUBLIC_APP_URL ||
-    'https://api.uncodie.com';
-  return base.replace(/\/$/, '');
+    "https://api.uncodie.com";
+  return base.replace(/\/$/, "");
 }
 
 /**
@@ -55,44 +60,51 @@ function defaultApiBase(): string {
  * (still works since we only persist its id on remote_instances) or force a
  * rotation so we can re-inject plaintext into a fresh sandbox.
  */
-async function sandboxHasApiKeyEnv(sandbox: Sandbox, cwd: string): Promise<boolean> {
+async function sandboxHasApiKeyEnv(
+  sandbox: Sandbox,
+  cwd: string,
+): Promise<boolean> {
   try {
     const res = await sandbox.runCommand({
-      cmd: 'sh',
+      cmd: "sh",
       args: [
-        '-c',
+        "-c",
         `[ -f "${cwd}/.env.local" ] && grep -E '^API_KEY=.+' "${cwd}/.env.local" >/dev/null 2>&1 && echo YES || echo NO`,
       ],
     });
     const out = (await res.stdout()).toString().trim();
-    return out === 'YES';
+    return out === "YES";
   } catch (e: unknown) {
     console.warn(
-      '[provisionPlatformKeyStep] .env.local probe failed (assuming missing):',
+      "[provisionPlatformKeyStep] .env.local probe failed (assuming missing):",
       e instanceof Error ? e.message : e,
     );
     return false;
   }
 }
 
-async function mergeDotEnvLocal(sandbox: Sandbox, cwd: string, entries: Record<string, string>): Promise<void> {
+async function mergeDotEnvLocal(
+  sandbox: Sandbox,
+  cwd: string,
+  entries: Record<string, string>,
+): Promise<void> {
   const lines = Object.entries(entries)
-    .filter(([, v]) => typeof v === 'string' && v.length > 0)
+    .filter(([, v]) => typeof v === "string" && v.length > 0)
     .map(([k, v]) => `${k}=${v}`)
-    .join('\n');
+    .join("\n");
   if (!lines) return;
-  const b64 = Buffer.from(lines + '\n', 'utf8').toString('base64');
+  const b64 = Buffer.from(lines + "\n", "utf8").toString("base64");
   // Append-or-create, de-duplicating keys: prepend new values, strip prior
   // occurrences of the same keys from the existing file. This way rotating
   // the key later overwrites cleanly.
   const keysSed = Object.keys(entries)
     .filter((k) => entries[k])
-    .map((k) => `/^${k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}=/d`)
-    .join(';');
+    .map((k) => `/^${k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}=/d`)
+    .join(";");
   await sandbox.runCommand({
-    cmd: 'sh',
+    cmd: "sh",
     args: [
-      '-c',
+      "-c",
       `cd "${cwd}" && touch .env.local && (sed -i '${keysSed}' .env.local || true) && (echo "${b64}" | base64 -d) > /tmp/_uncodie_env_add && cat /tmp/_uncodie_env_add .env.local > .env.local.next && mv .env.local.next .env.local && rm -f /tmp/_uncodie_env_add`,
     ],
   });
@@ -107,7 +119,7 @@ async function mergeDotEnvLocal(sandbox: Sandbox, cwd: string, entries: Record<s
 export async function provisionPlatformKeyStep(
   input: ProvisionPlatformKeyStepInput,
 ): Promise<ProvisionPlatformKeyStepResult> {
-  'use step';
+  "use step";
   const { sandboxId, requirementId, siteId, userId, instanceId } = input;
 
   // The raw Platform API key is only returned once, at creation. If a prior
@@ -119,10 +131,13 @@ export async function provisionPlatformKeyStep(
   let needsFreshKey = false;
   try {
     sandboxForProbe = await getSandboxHandle(sandboxId);
-    needsFreshKey = !(await sandboxHasApiKeyEnv(sandboxForProbe, SandboxService.WORK_DIR));
+    needsFreshKey = !(await sandboxHasApiKeyEnv(
+      sandboxForProbe,
+      SandboxService.WORK_DIR,
+    ));
   } catch (e: unknown) {
     console.warn(
-      '[provisionPlatformKeyStep] sandbox probe failed — forcing rotation to be safe:',
+      "[provisionPlatformKeyStep] sandbox probe failed — forcing rotation to be safe:",
       e instanceof Error ? e.message : e,
     );
     needsFreshKey = true;
@@ -137,7 +152,7 @@ export async function provisionPlatformKeyStep(
   });
 
   const envInjected = !!result.api_key;
-  let tenant: ProvisionPlatformKeyStepResult['tenant'];
+  let tenant: ProvisionPlatformKeyStepResult["tenant"];
 
   // Two bags:
   //   - sandboxEnvBag: everything the generated app needs locally, written to
@@ -164,7 +179,7 @@ export async function provisionPlatformKeyStep(
         requirement_id: requirementId,
         site_id: siteId,
         user_id: userId,
-        auth_provider: input.authProvider ?? 'supabase',
+        auth_provider: input.authProvider ?? "supabase",
       });
       tenant = {
         tenant_id: ten.tenant_id,
@@ -177,10 +192,11 @@ export async function provisionPlatformKeyStep(
       try {
         const apps = getAppsPublicConfig();
         sandboxEnvBag.NEXT_PUBLIC_APPS_SUPABASE_URL = apps.url;
-        if (apps.anonKey) sandboxEnvBag.NEXT_PUBLIC_APPS_SUPABASE_ANON_KEY = apps.anonKey;
+        if (apps.anonKey)
+          sandboxEnvBag.NEXT_PUBLIC_APPS_SUPABASE_ANON_KEY = apps.anonKey;
       } catch (e: unknown) {
         console.warn(
-          '[provisionPlatformKeyStep] apps public config unavailable, skipping NEXT_PUBLIC_APPS_*:',
+          "[provisionPlatformKeyStep] apps public config unavailable, skipping NEXT_PUBLIC_APPS_*:",
           e instanceof Error ? e.message : e,
         );
       }
@@ -191,10 +207,35 @@ export async function provisionPlatformKeyStep(
       sandboxEnvBag.APPS_AUTH_PROVIDER = ten.auth_provider;
     } catch (e: unknown) {
       console.warn(
-        '[provisionPlatformKeyStep] tenant provisioning failed (continuing without DB envs):',
+        "[provisionPlatformKeyStep] tenant provisioning failed (continuing without DB envs):",
         e instanceof Error ? e.message : e,
       );
     }
+  }
+
+  // Retrieve any custom secrets configured for this site/instance
+  try {
+    const { data: secrets } = await supabaseAdmin
+      .from("site_secrets")
+      .select("name, encrypted_value")
+      .eq("site_id", siteId)
+      .or(`instance_id.is.null,instance_id.eq.${instanceId}`);
+
+    if (secrets && secrets.length > 0) {
+      for (const secret of secrets) {
+        if (!secret.encrypted_value) continue;
+        const decrypted = decryptToken(secret.encrypted_value);
+        if (decrypted) {
+          sandboxEnvBag[secret.name] = decrypted;
+          vercelBranchEnvBag[secret.name] = decrypted;
+        }
+      }
+    }
+  } catch (e: unknown) {
+    console.warn(
+      "[provisionPlatformKeyStep] failed to inject site_secrets (continuing):",
+      e instanceof Error ? e.message : e,
+    );
   }
 
   if (Object.keys(sandboxEnvBag).length > 0) {
@@ -203,17 +244,21 @@ export async function provisionPlatformKeyStep(
       await mergeDotEnvLocal(sandbox, SandboxService.WORK_DIR, sandboxEnvBag);
     } catch (e: unknown) {
       console.warn(
-        '[provisionPlatformKeyStep] failed to write .env.local (continuing):',
+        "[provisionPlatformKeyStep] failed to write .env.local (continuing):",
         e instanceof Error ? e.message : e,
       );
     }
 
     if (input.branchName && Object.keys(vercelBranchEnvBag).length > 0) {
       try {
-        await pushVercelBranchEnv(input.branchName, vercelBranchEnvBag, input.gitRepoKind ?? 'applications');
+        await pushVercelBranchEnv(
+          input.branchName,
+          vercelBranchEnvBag,
+          input.gitRepoKind ?? "applications",
+        );
       } catch (e: unknown) {
         console.warn(
-          '[provisionPlatformKeyStep] failed to push Vercel branch env (continuing):',
+          "[provisionPlatformKeyStep] failed to push Vercel branch env (continuing):",
           e instanceof Error ? e.message : e,
         );
       }

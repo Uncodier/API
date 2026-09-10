@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
 
       sender = await createSender({
         name: name || `SMS Agent for Site ${siteId}`,
-        enableSmsOneway: phoneNumber ? undefined : true
+        enableSmsOneway: true // Required by Zavu when creating a sender without an initial phone number
       });
       
       if (phoneNumber) {

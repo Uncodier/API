@@ -50,8 +50,19 @@ export async function POST(request: NextRequest) {
       
       if (updates.buyer_user_id) payload.buyer_user_id = updates.buyer_user_id;
       if (updates.lead_id) payload.lead_id = updates.lead_id;
-      if (updates.current_period_start) payload.current_period_start = updates.current_period_start;
-      if (updates.current_period_end) payload.current_period_end = updates.current_period_end;
+      if (updates.current_period_start) {
+        payload.current_period_start = updates.current_period_start;
+        // Map to start_date as a fallback for some DB schemas
+        payload.start_date = updates.current_period_start;
+      }
+      if (updates.current_period_end) {
+        payload.current_period_end = updates.current_period_end;
+        // Map to end_date as a fallback
+        payload.end_date = updates.current_period_end;
+      }
+      if (updates.amount !== undefined) {
+        payload.amount = updates.amount;
+      }
 
       const { data, error } = await supabaseAdmin
         .from('subscriptions')
