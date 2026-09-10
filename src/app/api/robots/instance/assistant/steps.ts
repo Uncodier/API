@@ -370,9 +370,9 @@ CRITICAL: Your primary task is to CREATE a persistent audience.
   }
 
   const nodeModeInstruction = instanceNodeId
-    ? `\n\n⚠️ VISUAL NODE MODE (IMPRENTA): You are executing inside a visual node graph. Users expect IMMEDIATE media/asset generation results. DO NOT update or create \`instance_plan\` or \`requirements\`.${
+    ? `\n\n⚠️ VISUAL NODE MODE (IMPRENTA): You are executing inside a visual node graph. Users expect IMMEDIATE media/asset generation results. DO NOT update or create \`instance_plan\` or \`requirements\`. You are allowed to use read-only/search tools to gather context even in text-only mode.${
         isTextNodeOnly
-          ? `\nCRITICAL: This is a TEXT-ONLY node (output_type: text). Your goal is ONLY to generate, brainstorm, or write text. DO NOT call any generation, publishing, or messaging tools (like sendBulkMessages, publish, or whatsappTemplate). Just return the requested text directly.`
+          ? `\nCRITICAL: This is a TEXT-ONLY node (output_type: text). Your goal is ONLY to generate, brainstorm, or write text. DO NOT call any generation, publishing, or messaging tools (like sendBulkMessages, publish, or whatsappTemplate). Just return the requested text directly, but feel free to use reading/searching tools to get info first.`
           : `\nCRITICAL: Even if the user asks you to "improve the prompt", "write a script", or "rewrite", you MUST NOT stop at just returning text. You MUST take that improved text and IMMEDIATELY pass it into the appropriate generation tool (via \`tools\`) within this exact same response. Your final output MUST include calling the tool to generate the actual asset (video, image, audio, etc).`
       }${extraContextInstruction}`
     : extraContextInstruction;
