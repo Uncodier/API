@@ -111,16 +111,6 @@ export async function applyPendingMigrations(
     // Automatically expose schemas to PostgREST to ensure new tables/schemas are visible
     // and reload the schema cache so introspection works immediately.
     const exposeSql = `
-      do $$
-      declare
-        current_schemas text;
-      begin
-        select string_agg(nspname, ',') into current_schemas
-        from pg_namespace
-        where nspname like 'app_%' or nspname in ('public', 'graphql_public', 'storage');
-        
-        execute format('alter role authenticator set pgrst.db_schemas = %L', current_schemas);
-      end $$;
       notify pgrst, 'reload config';
       notify pgrst, 'reload schema';
     `;

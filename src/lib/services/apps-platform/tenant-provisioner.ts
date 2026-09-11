@@ -159,16 +159,6 @@ export async function ensureTenant(input: EnsureTenantInput): Promise<EnsureTena
   } else {
     // Automatically expose the new schema to PostgREST
     const exposeSql = `
-      do $$
-      declare
-        current_schemas text;
-      begin
-        select string_agg(nspname, ',') into current_schemas
-        from pg_namespace
-        where nspname like 'app_%' or nspname in ('public', 'graphql_public', 'storage');
-        
-        execute format('alter role authenticator set pgrst.db_schemas = %L', current_schemas);
-      end $$;
       notify pgrst, 'reload config';
       notify pgrst, 'reload schema';
     `;
@@ -211,16 +201,6 @@ export async function destroyTenant(requirement_id: string): Promise<{ ok: boole
 
   // Update exposed schemas after dropping
   await execSql(`
-    do $$
-    declare
-      current_schemas text;
-    begin
-      select string_agg(nspname, ',') into current_schemas
-      from pg_namespace
-      where nspname like 'app_%' or nspname in ('public', 'graphql_public', 'storage');
-      
-      execute format('alter role authenticator set pgrst.db_schemas = %L', current_schemas);
-    end $$;
     notify pgrst, 'reload config';
     notify pgrst, 'reload schema';
   `);

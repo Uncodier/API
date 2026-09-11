@@ -28,6 +28,7 @@ Before writing any UI components, you MUST execute an initial evaluation of the 
 - Read the **Brand Guidelines / Design Tokens** injected by the Orchestrator in your step's `instructions`.
 - Check `tailwind.config.ts`, `globals.css` (or equivalent).
 - If the project's current tokens (Colors, Typography, Radius) do not match the Brand Guidelines, you MUST update the configuration files first. This ensures utility classes (e.g., `text-primary`, `bg-brand-surface`) work correctly and prevents hardcoding hex colors inside JSX.
+- **For Landing Pages / Marketing Sites (Mandatory Advanced UI Install):** If the instructions dictate the use of advanced layouts or animations (e.g., Magic UI, Aceternity, or Framer Motion), you MUST NOT ignore this. You MUST proactively install the core dependencies (e.g., `npm i framer-motion clsx tailwind-merge`) and run the necessary component CLI commands (e.g., `npx magic-ui-cli add [component]`) BEFORE you write the page. Do NOT fallback to basic Shadcn components.
 
 ### 3. Data-testid contract (mandatory when requirement defines one)
 The requirement's section 6.4 lists `data-testid` attributes the frontend must expose. Treat this list as **immutable**:

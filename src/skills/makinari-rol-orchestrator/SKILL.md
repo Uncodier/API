@@ -37,10 +37,16 @@ When a backlog item is already completed (marked as `done` or `ready`), and the 
 Before designing ANY requirements, backlog items, or instance plans, you MUST always search for the company's background, context, and brand identity. Use the `memories` tool and `instance_logs`, or `tools(action="call", name="instance")` to understand the business. 
 
 **Brand Guidelines (Design Tokens):** You are responsible for extracting the visual identity (Voice, Primary/Secondary/Accent Colors, Typography, Spacing, Border Radius) from `memories` or existing context. 
+If `memories` does NOT return an established Brand Guideline, you MUST invent a complete "Design System Token" set based on the client's industry (e.g., for logistics: deep blues, safety oranges, technical typography, sharp borders). This invented token set MUST be detailed explicitly in the `instance_plan`.
 Your requirements, backlog items, and plans MUST align with the company's core objectives, tone, and target audience. 
 **Delegation:** You MUST inject a summary of these Brand Guidelines/Design Tokens directly into the `instructions` field of the plan steps delegated to `makinari-rol-frontend` and `ui-ux-design`. Never assume the sub-agents know the brand colors; you provide them.
 
-### 5. Use sibling skills for the heavy lifting
+### 5. CRITICAL: Landing Pages & Marketing Sites (Dynamic UI Mandate)
+If the Requirement is a Landing Page or Marketing Site, you MUST explicitly instruct the Frontend and Design agents to use animated UI components (e.g., Magic UI, Aceternity). 
+- **NEVER** request basic "Shadcn cards" for marketing sites.
+- **Mandate Animation:** Explicitly request interactions in the step `instructions` (e.g., "Install and use Magic UI Marquee for testimonials", "Install Magic UI Grid Pattern for the Hero background to prevent a flat color").
+
+### 6. Use sibling skills for the heavy lifting
 Each step MUST set **`skill`** (preferred) or **`role`** so the executor loads the right playbook. Available skills:
 
 | Skill | Role |
@@ -62,7 +68,7 @@ Each step MUST set **`skill`** (preferred) or **`role`** so the executor loads t
 
 Use `skill_lookup action="list"` if you need to confirm what is available.
 
-### 4. Translate ambiguous requests (NO AMBIGUOUS SCOPE)
+### 7. Translate ambiguous requests (NO AMBIGUOUS SCOPE)
 Your main leverage is turning a vague client line into a concrete directive. The `instructions` field on each step must be specific — file paths, endpoints, exact UI screens, navigation flows, or acceptance criteria. NEVER leave the UI/UX or navigation up to interpretation. If the client didn't specify how to navigate to a screen, YOU must define it. If you miss a detail, sub-agents are empowered to fill the gaps using the **Contract Adequation** protocol (see `makinari-contract-adequation`), but you should strive to be as complete as possible.
 
 **Example of a BAD Backlog Item (Ambiguous):**
@@ -91,7 +97,7 @@ Your main leverage is turning a vague client line into a concrete directive. The
 | "Quiero algo lindo para el portafolio" | "Make it pretty." | "Build `/portfolio` consuming `src/app/data.json` items (title, image, tags). Grid at 1280x800 (3 cols), stack at 375x812. Primary CTA `portfolio-view` above fold. Match brand tokens from memories." |
 | "Automatiza el reporte semanal" | "Automate the report." | "Expose `/api/report/weekly` with `?mode=test` returning fixture + `?mode=prod` generating PDF via `src/lib/services/report.ts`. Save artifact to Supabase bucket `reports/`. Emit `cron_infra_step_status` on completion." |
 
-### 5. The Hierarchy: Backlog Item -> Instance Plan
+### 8. The Hierarchy: Backlog Item -> Instance Plan
 Understand the structural hierarchy of the system:
 1. **Requirement:** The overall project (e.g., "Habituall Space Management App").
 2. **Backlog Item:** A specific feature or epic (e.g., "Member Portal - Spaces & Reservation View").
@@ -106,33 +112,33 @@ Your `instance_plan` should break this down into execution steps for specialized
 - **Step 3 (QA):** `makinari-rol-qa` -> "Test the booking flow from the UI to the API."
 - **Step 4 (Validation):** `makinari-fase-validacion` -> "Build and verify."
 
-### 6. Empty Sandbox Rule (Base Selection)
+### 9. Empty Sandbox Rule (Base Selection)
 If the branch is new and the sandbox is empty (only contains `.env.local` or `requirement.spec.md`), you MUST NOT start writing code, creating DB migrations, or running QA. The **very first step** of your plan MUST be `makinari-obj-template-selection` to clone the base repository (e.g., Next.js template).
 
-### 7. Sequential execution & Reflection (Self-Correction)
+### 10. Sequential execution & Reflection (Self-Correction)
 Steps execute strictly one after another. Frontend MUST finish before DevOps starts. The system enforces this via `plan-steps.ts`. Do not try to parallelize across steps; parallelize within a step (e.g. multiple files in one frontend step).
 
 **Reflection / Self-Correction:** There are no parallel maintenance agents. If a downstream step (like QA or Validation) fails, the failure signal returns to your loop. You MUST evaluate the error and schedule a new sequential step (e.g. a Refactor or Fix step via `makinari-rol-frontend` or `makinari-rol-backend`) to correct the issue on the current branch before proceeding.
 
-### 8. Preview URL rule
+### 11. Preview URL rule
 The preview URL is the permanent Vercel deployment URL from the branch push (via GitHub Deployments API). Do NOT construct or guess URLs. Validation curls target this permanent URL.
 
-### 9. Requirement instructions are the brain
+### 12. Requirement instructions are the brain
 - The requirement's `instructions` field is the persistent blueprint.
 - The bootstrapped `requirement.spec.md` starts with placeholders. In your **first planning cycle**, you MUST flesh out sections 2, 3, 4, 6, and 7 with concrete details (exact routes, data models, user roles) and overwrite the file using `sandbox_write_file`.
 - After the first cycle, `requirement.spec.md` is IMMUTABLE. Update the DB `instructions` via `requirements action="update"` as the plan evolves, and append to `## Revisions` in the markdown file.
 
-### 10. Defensive execution
+### 13. Defensive execution
 - If a tool call returns an error, do NOT blindly retry `create`. Do a `list` first to check if the previous call succeeded server-side.
 - Wrap mutations in error handling.
 
-### 11. Contract Adequation (Handling deviations)
+### 14. Contract Adequation (Handling deviations)
 Sub-agents (Frontend, Backend, QA) are instructed to prioritize functionality over strict contract adherence. They may add missing `data-testid`s, endpoints, or DB fields to complete a feature.
 - When reviewing a sub-agent's `step_output`, look for the `[CONTRACT ADEQUATION]` flag.
 - Do NOT treat these proactive additions as errors, hallucinations, or contract drift.
 - **Action required:** Immediately update the master `requirement.instructions` (via `requirements action="update"`) to incorporate these new elements so downstream agents (like QA) are aware of the updated contract. See `makinari-contract-adequation` for details.
 
-### 12. Do not rely on external Maintenance
+### 15. Do not rely on external Maintenance
 You are responsible for delivering a working, high-quality feature. Do NOT write messy code or skip tests assuming another agent will clean it up later. Maintenance and refactoring must happen sequentially within the current feature's lifecycle (either by the executor during the step, or via a new reflection step if issues are found). You must deliver production-ready code.
 
 ## Standard plan template (applications repo)
@@ -165,7 +171,7 @@ You are responsible for delivering a working, high-quality feature. Do NOT write
       "order": 3, 
       "title": "Development", 
       "skill": "makinari-rol-frontend", 
-      "instructions": "<specific files + exact UI screens + navigation flows>. explicitly describe the UI layout, components to use (e.g., Shadcn UI Cards, Dialogs, Tables), and responsive behavior."
+      "instructions": "<specific files + exact UI screens + navigation flows>. explicitly describe the UI layout. For marketing pages, MUST mandate animated components (e.g., 'Install Magic UI DotPattern for the hero background, use Framer Motion for scroll reveals, and Aceternity BentoGrid for features. Do NOT use flat backgrounds.')."
     },
     { 
       "id": "step_backend", 
