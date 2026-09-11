@@ -96,6 +96,7 @@ export interface PostAnalytics {
 
 export interface CreateCommentParams {
   content: string;
+  network?: string;
   platform_post_id?: string;
   account_username?: string;
   parent_comment_id?: string;

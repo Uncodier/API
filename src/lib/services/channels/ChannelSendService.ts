@@ -91,6 +91,7 @@ export class ChannelSendService {
         const outstandClient = getOutstandClient();
         const result = await outstandClient.publishComment(outstandPostId, {
           content: params.message,
+          network: params.channel === 'twitter' ? 'x' : params.channel,
           platform_post_id: platformPostId,
           parent_comment_id: parentCommentId,
           account_username: accountUsername
