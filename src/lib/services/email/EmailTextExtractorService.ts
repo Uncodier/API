@@ -6,6 +6,7 @@
  */
 
 import * as cheerio from 'cheerio';
+import { simpleParser } from 'mailparser';
 import { cleanHtmlBasic } from '@/lib/utils/html-content-cleaner';
 
 export interface EmailTextContent {
@@ -39,6 +40,94 @@ export class EmailTextExtractorService {
     preserveStructure: false,
     removeLegalDisclaimer: true
   };
+
+  /**
+   * Extrae únicamente el texto relevante de un correo electrónico de forma asíncrona usando mailparser
+   */
+  static async extractEmailTextAsync(
+    email: any, 
+    options: EmailTextExtractionOptions = {}
+  ): Promise<EmailTextContent> {
+    const opts = { ...this.DEFAULT_OPTIONS, ...options };
+    
+    try {
+      // Extraer campos básicos
+      const subject = this.cleanSubject(email.subject || '');
+      const from = this.extractEmailAddress(email.from || '');
+      const to = this.extractEmailAddress(email.to || '');
+      
+      let rawContent = '';
+
+      // Si tenemos el raw (rfc822), usamos mailparser, que es lo más preciso
+      if (email.raw) {
+        try {
+          const parsed = await simpleParser(email.raw);
+          if (parsed.text) {
+             rawContent = parsed.text;
+          } else if (parsed.html) {
+             rawContent = this.extractTextFromHtml(parsed.html as string);
+          }
+        } catch (parserError) {
+          console.warn('[EmailTextExtractor] Error parsing raw email with mailparser:', parserError);
+        }
+      }
+      
+      // Si mailparser falló o no teníamos raw, usamos la extracción manual
+      if (!rawContent) {
+        if (email.text) {
+          rawContent = email.text;
+        } else if (email.body) {
+          if (typeof email.body === 'string') {
+            rawContent = email.body;
+          } else if (email.body.text) {
+            rawContent = email.body.text;
+          } else if (email.body.html) {
+            rawContent = this.extractTextFromHtml(email.body.html);
+          }
+        } else if (email.html) {
+          rawContent = this.extractTextFromHtml(email.html);
+        }
+      }
+
+      const originalLength = rawContent.length;
+      
+      // Limpiar y optimizar el texto
+      let cleanText = this.cleanEmailText(rawContent, opts);
+      
+      // Aplicar corrección de codificación de caracteres al final
+      cleanText = this.fixTextEncoding(cleanText);
+      
+      // Truncar si es necesario
+      if (opts.maxTextLength && cleanText.length > opts.maxTextLength) {
+        cleanText = cleanText.substring(0, opts.maxTextLength) + '...';
+      }
+
+      const compressionRatio = originalLength > 0 ? (cleanText.length / originalLength) : 0;
+
+      return {
+        subject,
+        from,
+        to,
+        plainText: rawContent,
+        extractedText: cleanText,
+        textLength: cleanText.length,
+        originalLength,
+        compressionRatio
+      };
+    } catch (error) {
+      console.error('[EmailTextExtractor] Error extracting email text:', error);
+      return {
+        subject: email.subject || '',
+        from: email.from || '',
+        to: email.to || '',
+        plainText: '',
+        extractedText: 'Error al extraer texto del email',
+        textLength: 0,
+        originalLength: 0,
+        compressionRatio: 0
+      };
+    }
+  }
 
   /**
    * Extrae únicamente el texto relevante de un correo electrónico
@@ -222,6 +311,9 @@ export class EmailTextExtractorService {
     // Boundaries con formato específico como el ejemplo
     cleanText = cleanText.replace(/^----[a-zA-Z0-9_]+.*$/gm, '');
     cleanText = cleanText.replace(/^--[a-zA-Z0-9_]{20,}.*$/gm, '');
+    
+    // NUEVO: Soporte para Apple Mail y otros boundaries con guiones y signos de igual
+    cleanText = cleanText.replace(/^--[a-zA-Z0-9_\-=]{10,}.*$/gm, '');
     
     // Remover headers Content-Type multiline con charset y encoding
     cleanText = cleanText.replace(/^Content-Type:\s*.*charset=.*$/gmi, '');

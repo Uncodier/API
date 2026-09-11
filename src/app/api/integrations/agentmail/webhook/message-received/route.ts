@@ -171,7 +171,23 @@ export async function POST(request: NextRequest) {
     }
 
     // Extract message content from payload
-    const messageContent = message.body || message.text || message.content || message.html || '';
+    let messageContent = '';
+    
+    // Attempt to use EmailTextExtractorService to get clean text
+    try {
+      const { EmailTextExtractorService } = await import('@/lib/services/email/EmailTextExtractorService');
+      const extraction = await EmailTextExtractorService.extractEmailTextAsync(message, {
+        preserveStructure: false,
+        removeHeaders: true,
+        removeQuotedText: true,
+        removeSignatures: true,
+        removeLegalDisclaimer: true
+      });
+      messageContent = extraction.extractedText || extraction.plainText;
+    } catch (error) {
+      console.warn(`⚠️ [AgentMail] Error using EmailTextExtractorService:`, error);
+      messageContent = message.body || message.text || message.content || message.html || '';
+    }
 
     // Validate that we have at least the message content and one identifier
     if (!messageContent) {
