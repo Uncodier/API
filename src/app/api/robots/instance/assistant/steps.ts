@@ -356,6 +356,17 @@ export async function prepareAssistantContext(
         extraContextInstruction = `\n\n⚠️ IMPORTANT CONTEXT:\n${contextString}`;
       }
       
+      if (isPublishNode) {
+        const destStr = Array.isArray(parsedContext.publish_destinations) 
+          ? JSON.stringify(parsedContext.publish_destinations) 
+          : '[]';
+        extraContextInstruction += `\n\n📢 PUBLISH NODE TASK:
+CRITICAL: You are inside a PUBLISH node. Your goal is to PUBLISH content to the selected social networks.
+1. You MUST use the \`socialMediaPublish\` tool or \`publish\` tool via \`tools\`.
+2. You MUST use these exact social networks/destinations: ${destStr}. DO NOT invent or publish to other networks.
+3. Make sure the content matches the context of the conversation.`;
+      }
+      
       if (isAudienceGeneration) {
         const channelsStr = Array.isArray(parsedContext.audience_channels) && parsedContext.audience_channels.length > 0
           ? `\nREQUIRED FILTERS: You must apply these channel filters to the audience tool using the 'channels' array parameter: ${JSON.stringify(parsedContext.audience_channels)}.`
