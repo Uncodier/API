@@ -976,7 +976,7 @@ export async function POST(request: Request) {
       // EXTRACCIÓN DEL MENSAJE PRINCIPAL
       
       // Prioridad 1: Buscar objetos con property message directamente
-      const messageObject = executedCommand.results.find((r: any) => r.message && r.message.content);
+      const messageObject = executedCommand.results.find((r: any) => r && r.message && r.message.content);
       if (messageObject) {
         assistantMessage = messageObject.message.content;
         console.log(`✅ Mensaje extraído de objeto con property message directa: ${assistantMessage.substring(0, 50)}...`);
@@ -985,7 +985,7 @@ export async function POST(request: Request) {
       // Prioridad 2: Buscar resultados con type 'message' o 'text'
       else {
         const typeResults = executedCommand.results.filter((r: any) => 
-          r.type === 'message' || r.type === 'text'
+          r && (r.type === 'message' || r.type === 'text')
         );
         
         if (typeResults.length > 0) {
@@ -1007,7 +1007,7 @@ export async function POST(request: Request) {
         // Prioridad 3: Cualquier objeto con propiedad content
         else if (assistantMessage === "No response generated") {
           const contentObject = executedCommand.results.find((r: any) => 
-            r.content !== undefined && (
+            r && r.content !== undefined && (
               typeof r.content === 'string' || 
               (typeof r.content === 'object' && (r.content.content || r.content.message))
             )

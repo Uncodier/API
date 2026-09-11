@@ -2144,32 +2144,89 @@ export async function POST(request: Request) {
         }
       }
       
-      // Buscar mensajes en los resultados - enfocado específicamente en la estructura de customer support
+      
+      // EXTRACCIÓN DEL MENSAJE PRINCIPAL - Lógica robusta
       console.log(`🔍 Buscando mensaje del asistente en los resultados...`);
       
-      // Formato específico para customer support: { message: { content: string } }
-      const messageResults = executedCommand.results.filter((r: any) => 
-        r.message && typeof r.message === 'object' && r.message.content && typeof r.message.content === 'string'
-      );
-      console.log(`📝 Resultados con estructura message.content: ${messageResults.length}`);
-      
-      if (messageResults.length > 0) {
-        assistantMessage = messageResults[0].message.content;
-        console.log(`✅ Mensaje extraído: ${assistantMessage.substring(0, 100)}...`);
-      } else {
-        // Log para debugging si no se encuentra la estructura esperada
-        console.log(`⚠️ No se encontró la estructura esperada { message: { content: string } }`);
-        console.log(`📋 Estructuras encontradas:`, executedCommand.results.map((r: any, i: number) => {
-          return `Resultado ${i}: ${Object.keys(r).join(',')}`
-        }).join(' | '));
+      // Prioridad 1: Buscar objetos con property message directamente
+      const messageObject = executedCommand.results.find((r: any) => r && r.message && r.message.content);
+      if (messageObject) {
+        assistantMessage = messageObject.message.content;
+        console.log(`✅ Mensaje extraído de objeto con property message directa: ${assistantMessage.substring(0, 50)}...`);
+      } 
+      // Prioridad 2: Buscar resultados con type 'message' o 'text'
+      else {
+        const typeResults = executedCommand.results.filter((r: any) => 
+          r && (r.type === 'message' || r.type === 'text')
+        );
         
-        // Fallback muy conservador: solo si hay exactamente 1 resultado y es un string directo
-        if (executedCommand.results.length === 1 && typeof executedCommand.results[0] === 'string') {
-          assistantMessage = executedCommand.results[0];
-          console.log(`⚠️ Usando fallback para string directo: ${assistantMessage.substring(0, 100)}...`);
-        } else {
-          console.log(`❌ No se pudo extraer mensaje - estructura no reconocida para customer support`);
-          console.log(`📋 Estructura completa de results:`, JSON.stringify(executedCommand.results, null, 2));
+        if (typeResults.length > 0) {
+          const firstTypeResult = typeResults[0];
+          
+          if (typeof firstTypeResult.content === 'string') {
+            assistantMessage = firstTypeResult.content;
+          } 
+          else if (firstTypeResult.content && firstTypeResult.content.message && firstTypeResult.content.message.content) {
+            assistantMessage = firstTypeResult.content.message.content;
+          } 
+          else if (firstTypeResult.content && typeof firstTypeResult.content.content === 'string') {
+            assistantMessage = firstTypeResult.content.content;
+          }
+          
+          console.log(`✅ Mensaje extraído de resultado con type=${firstTypeResult.type}: ${assistantMessage.substring(0, 50)}...`);
+        }
+        
+        // Prioridad 3: Cualquier objeto con propiedad content
+        if (assistantMessage === "No response generated") {
+          const contentObject = executedCommand.results.find((r: any) => 
+            r && r.content !== undefined && (
+              typeof r.content === 'string' || 
+              (typeof r.content === 'object' && (r.content.content || r.content.message))
+            )
+          );
+          
+          if (contentObject) {
+            if (typeof contentObject.content === 'string') {
+              assistantMessage = contentObject.content;
+            } 
+            else if (contentObject.content.message && contentObject.content.message.content) {
+              assistantMessage = contentObject.content.message.content;
+            } 
+            else if (contentObject.content.content) {
+              assistantMessage = typeof contentObject.content.content === 'string' 
+                ? contentObject.content.content 
+                : JSON.stringify(contentObject.content.content);
+            }
+            
+            console.log(`✅ Mensaje extraído de objeto con property content: ${assistantMessage.substring(0, 50)}...`);
+          }
+          
+          // Prioridad 4: Usar el primer resultado disponible
+          else if (executedCommand.results.length > 0) {
+            const firstResult = executedCommand.results[0];
+            
+            if (typeof firstResult === 'string') {
+              assistantMessage = firstResult;
+              console.log(`⚠️ Usando fallback para string directo: ${assistantMessage.substring(0, 50)}...`);
+            } 
+            else if (typeof firstResult === 'object') {
+              // Intentar extraer cualquier contenido que parezca texto
+              const extractedContent = 
+                firstResult.content || 
+                firstResult.message?.content || 
+                firstResult.text || 
+                JSON.stringify(firstResult);
+                
+              assistantMessage = typeof extractedContent === 'string' 
+                ? extractedContent 
+                : JSON.stringify(extractedContent);
+                
+              console.log(`⚠️ Usando fallback para objeto genérico: ${assistantMessage.substring(0, 50)}...`);
+            }
+          } else {
+            console.log(`❌ No se pudo extraer mensaje - no hay resultados o estructura no reconocida`);
+            console.log(`📋 Estructura completa de results:`, JSON.stringify(executedCommand.results, null, 2));
+          }
         }
       }
     }
