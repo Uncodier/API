@@ -315,7 +315,7 @@ export const getAssistantTools = (
     requirementsTool(siteId, userId),
     leadsTool(siteId, userId),
     contentTool(siteId, userId),
-    sendEmailTool(siteId),
+    sendEmailTool(siteId, instanceId),
     configureEmailTool(siteId),
     configureWhatsAppTool(siteId),
     salesOrderTool(siteId),

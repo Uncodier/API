@@ -11,6 +11,7 @@ import { EmailSendService } from '@/lib/services/email/EmailSendService';
 import { EmailSignatureService } from '@/lib/services/email/EmailSignatureService';
 import { SyncedObjectsService } from '@/lib/services/synced-objects/SyncedObjectsService';
 import { AgentMailSendService } from '@/lib/services/email/AgentMailSendService';
+import { getRedisClient } from '@/lib/utils/redis-client';
 
 export interface SendEmailCoreParams {
   email: string;
@@ -21,6 +22,7 @@ export interface SendEmailCoreParams {
   conversation_id?: string;
   lead_id?: string;
   site_id: string;
+  instance_id?: string;
   /** When true (e.g. newsletter sends), do not append agent/site HTML signature. */
   omit_signature?: boolean;
   /** When lead_id is set, policy for unknown {{...}} tokens. Defaults to strip_tokens. */
@@ -50,6 +52,7 @@ export async function sendEmailCore(params: SendEmailCoreParams): Promise<SendEm
     conversation_id,
     lead_id,
     site_id,
+    instance_id,
     omit_signature = false,
     placeholder_policy,
   } = params;
@@ -59,6 +62,28 @@ export async function sendEmailCore(params: SendEmailCoreParams): Promise<SendEm
       success: false,
       error: { code: 'INVALID_REQUEST', message: 'email, subject, message, and site_id are required' },
     };
+  }
+
+  // Rate Limiting Logic (similar to system_notification)
+  const validInstanceIdForRateLimit = instance_id && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(instance_id) ? instance_id : null;
+  const rateLimitKey = validInstanceIdForRateLimit 
+    ? `rate_limit:send_email:${validInstanceIdForRateLimit}:${email}`
+    : `rate_limit:send_email:site_${site_id}:${email}`; // fallback to site_id if no instance_id
+
+  try {
+    const redis = getRedisClient();
+    const isRateLimited = await redis.get(rateLimitKey);
+    
+    if (isRateLimited) {
+      console.log(`[sendEmail] Rate limited for key: ${rateLimitKey}`);
+      return {
+        success: false,
+        error: { code: 'RATE_LIMITED', message: 'Email skipped due to rate limit (once per hour per instance per email).' },
+      };
+    }
+  } catch (redisError) {
+    console.error(`[sendEmail] Error checking rate limit in Redis:`, redisError);
+    // Continue execution if Redis fails, to avoid breaking core functionality
   }
 
   try {
@@ -166,6 +191,13 @@ export async function sendEmailCore(params: SendEmailCoreParams): Promise<SendEm
           trackingId,
         });
 
+        try {
+          const redis = getRedisClient();
+          await redis.set(rateLimitKey, '1', 'EX', 3600); // Set to expire in 1 hour
+        } catch (redisError) {
+          console.error(`[sendEmail] Error setting rate limit in Redis:`, redisError);
+        }
+
         return { ...result, success: true };
       } catch (error: any) {
         console.error(`[SEND_EMAIL] AgentMail error:`, error);
@@ -226,6 +258,13 @@ export async function sendEmailCore(params: SendEmailCoreParams): Promise<SendEm
   const result = await EmailSendService.sendEmail(emailParams);
   if (!result.success) {
     return { success: false, error: result.error };
+  }
+
+  try {
+    const redis = getRedisClient();
+    await redis.set(rateLimitKey, '1', 'EX', 3600); // Set to expire in 1 hour
+  } catch (redisError) {
+    console.error(`[sendEmail] Error setting rate limit in Redis:`, redisError);
   }
 
   const externalId = result.envelope_id || result.email_id;

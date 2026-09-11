@@ -100,7 +100,9 @@ export async function prepareAssistantContext(
               historyContext += `[${timestamp}] ${role}: ${log.message.substring(0, 150)}${log.message.length > 150 ? '...' : ''}\n`;
             }
         } else {
-          historyContext += `[${timestamp}] ${role}: ${log.message.substring(0, 150)}${log.message.length > 150 ? '...' : ''}\n`;
+          const resultStr = typeof log.tool_result === 'string' ? log.tool_result : JSON.stringify(log.tool_result);
+          const truncatedResult = resultStr.substring(0, 300) + (resultStr.length > 300 ? '...' : '');
+          historyContext += `[${timestamp}] ${role}: Tool ${log.tool_name} called with args: ${log.message.substring(0, 150)}${log.message.length > 150 ? '...' : ''} -> Result: ${truncatedResult}\n`;
         }
       } else {
         historyContext += `[${timestamp}] ${role}: ${log.message.substring(0, 150)}${log.message.length > 150 ? '...' : ''}\n`;
@@ -321,7 +323,8 @@ export async function prepareAssistantContext(
     ? `\n\n⚠️ IMPORTANT: The current instance name "${instanceName}" is generic and not descriptive. You MUST automatically call the instance tool (with action="update") to give this instance a descriptive name that reflects the user's objective and conversation context. Additionally, if the current name does not accurately summarize or reflect the conversation content, you should also call the instance tool. Do this automatically without asking the user.`
     : `\n\n💡 NOTE: If the current instance name "${instanceName}" does not accurately summarize or reflect the conversation/chat content, you should automatically call the instance tool (with action="update") to update it with a more descriptive name.`;
 
-  const instanceContext = `\n\n🆔 INSTANCE CONTEXT:\n- Instance ID: ${instanceId}\n- Site ID: ${siteId}\n- User ID: ${userId}${instance_plan_id ? `\n- Current Plan ID: ${instance_plan_id}` : ''}${allStepsContext}${activeStepContext}${lastCompletedPlanContext}${activeRequirementId ? `\n- Current Requirement ID: ${activeRequirementId}` : ''}\n`;
+  const requirementIdWarning = activeRequirementId ? `\n⚠️ IMPORTANT: Your Current Requirement ID is ${activeRequirementId}. Do not confuse it with your Instance ID (${instanceId}) when calling the requirements tool.` : '';
+  const instanceContext = `\n\n🆔 INSTANCE CONTEXT:\n- Instance ID: ${instanceId}\n- Site ID: ${siteId}\n- User ID: ${userId}${instance_plan_id ? `\n- Current Plan ID: ${instance_plan_id}` : ''}${allStepsContext}${activeStepContext}${lastCompletedPlanContext}${activeRequirementId ? `\n- Current Requirement ID: ${activeRequirementId}${requirementIdWarning}` : ''}\n`;
 
   let extraContextInstruction = '';
   let isAudienceGeneration = false;

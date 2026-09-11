@@ -6,6 +6,7 @@ import { AssistantContext } from './types';
 import { SkillsService } from '@/lib/services/skills-service';
 import { getStepCheckpointPromptFragment, getFileFreshnessPromptFragment } from '@/app/api/cron/shared/step-git-prompts';
 import { SandboxService } from '@/lib/services/sandbox-service';
+import { getRedisClient } from '@/lib/utils/redis-client';
 
 const ROLE_TO_SKILL: Record<string, string> = {
   'template_selection': 'makinari-obj-template-selection',
@@ -294,4 +295,32 @@ RULES:
   }
 
   return stepResult;
+}
+
+export async function acquirePlanExecutionLockStep(planId: string): Promise<boolean> {
+  'use step';
+  try {
+    const redis = getRedisClient();
+    const lockKey = `workflow_lock:plan:${planId}`;
+    // Intentar adquirir el lock, usando SET NX (sólo si no existe) con EX (expiración) de 15 min (900 seg)
+    const result = await redis.set(lockKey, 'locked', 'EX', 900, 'NX');
+    return result === 'OK';
+  } catch (error) {
+    console.error(`[PlanSteps] Error acquiring lock for plan ${planId}:`, error);
+    // En caso de fallo de redis, para no bloquear todo, devolvemos true o false?
+    // Mejor false para no arriesgar concurrencia, pero si redis está caído el sistema de workflows no funcionaría igual.
+    // Usaremos true como fallback inseguro, o false como seguro. Fallback seguro: true para no romper la app entera.
+    return true; 
+  }
+}
+
+export async function releasePlanExecutionLockStep(planId: string): Promise<void> {
+  'use step';
+  try {
+    const redis = getRedisClient();
+    const lockKey = `workflow_lock:plan:${planId}`;
+    await redis.del(lockKey);
+  } catch (error) {
+    console.error(`[PlanSteps] Error releasing lock for plan ${planId}:`, error);
+  }
 }

@@ -27,7 +27,7 @@ export interface SendEmailToolParams {
 /**
  * Creates a sendEmail tool for OpenAI/assistant compatibility
  */
-export function sendEmailTool(site_id: string) {
+export function sendEmailTool(site_id: string, instance_id?: string) {
   return {
     name: 'sendEmail',
     description: `Send an email to a recipient. Required: email, subject, message. Optional: from, lead_id, conversation_id, agent_id, placeholder_policy.
@@ -59,6 +59,7 @@ When lead_id is set, subject and message are personalized. Unknown tokens: strip
       const result = await sendEmailCore({
         ...args,
         site_id,
+        instance_id,
       });
       if (!result.success && result.error) {
         throw new Error(result.error.message || JSON.stringify(result.error));

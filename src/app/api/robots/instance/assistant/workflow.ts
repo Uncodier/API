@@ -1,7 +1,7 @@
 'use workflow';
 
 import { prepareAssistantContext, processAssistantTurn } from './steps';
-import { getActiveInstancePlan, executePlanStep } from './plan-steps';
+import { getActiveInstancePlan, executePlanStep, acquirePlanExecutionLockStep, releasePlanExecutionLockStep } from './plan-steps';
 import { persistUserMessageStep, markAssistantFailedStep, completeUserMessageStep } from './persist-and-fail-steps';
 import { isIncompleteTurn, MAX_RESPAWNS } from '@/lib/services/robot-instance/assistant-respawn';
 import { countRecentRespawnsStep, spawnSilentContinueStep } from './assistant-respawn-steps';
@@ -158,14 +158,29 @@ export async function runAssistantWorkflow(
     if (stepsToExecute.length > 0) {
       console.log(`[Workflow] Executing ${stepsToExecute.length} steps from plan`);
       
-      for (const step of stepsToExecute) {
-        console.log(`[Workflow] processing plan step: ${step.title}`);
-        
-        // Execute the step
-        const stepResult = await executePlanStep(context, activePlan, step);
-        
-        // Accumulate results
-        finalResult = stepResult;
+      const lockAcquired = await acquirePlanExecutionLockStep(activePlan.id);
+      if (!lockAcquired) {
+        console.log(`[Workflow] Could not acquire execution lock for plan ${activePlan.id}. Another workflow might be processing it.`);
+        return {
+          instance_id: instanceId,
+          status: context.instance.status,
+          message: 'Plan execution skipped due to lock contention',
+          assistant_response: 'Plan execution skipped (already running)',
+        };
+      }
+      
+      try {
+        for (const step of stepsToExecute) {
+          console.log(`[Workflow] processing plan step: ${step.title}`);
+          
+          // Execute the step
+          const stepResult = await executePlanStep(context, activePlan, step);
+          
+          // Accumulate results
+          finalResult = stepResult;
+        }
+      } finally {
+        await releasePlanExecutionLockStep(activePlan.id);
       }
       
       if (userMessageLogId) {
