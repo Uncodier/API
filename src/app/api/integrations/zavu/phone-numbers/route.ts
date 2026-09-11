@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getOwnedNumbers } from "@/lib/services/zavu";
+import { getOwnedNumbers, purchaseNumber } from "@/lib/services/zavu";
 
 export async function GET(request: NextRequest) {
   try {
@@ -14,6 +14,27 @@ export async function GET(request: NextRequest) {
     console.error("[Zavu PhoneNumbers] Error fetching owned numbers:", error);
     return NextResponse.json(
       { error: error.message || "Failed to fetch owned phone numbers" },
+      { status: error.status || 500 }
+    );
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { phoneNumber } = body;
+
+    if (!phoneNumber) {
+      return NextResponse.json({ error: "Phone number is required" }, { status: 400 });
+    }
+
+    const data = await purchaseNumber(phoneNumber);
+    
+    return NextResponse.json({ success: true, data });
+  } catch (error: any) {
+    console.error("[Zavu PhoneNumbers] Error purchasing number:", error);
+    return NextResponse.json(
+      { error: error.message || "Failed to purchase phone number" },
       { status: error.status || 500 }
     );
   }

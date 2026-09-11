@@ -79,8 +79,8 @@ export class ChannelSendService {
         const platformPostId = customData.platform_post_id;
         // Reply to the inbound comment itself, not that comment's parent
         const parentCommentId =
+          customData.platform_comment_id || // <-- Alta prioridad (URN correcto)
           customData.origin_message_id ||
-          customData.platform_comment_id ||
           customData.parent_comment_id;
         const accountUsername = customData.account_username;
         
