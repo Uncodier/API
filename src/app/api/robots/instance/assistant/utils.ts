@@ -73,6 +73,8 @@ import { instanceLogsTool } from '@/app/api/agents/tools/instance_logs/assistant
 import { audioToTextTool } from '@/app/api/agents/tools/audioToText/assistantProtocol';
 import { transactionsTool } from '@/app/api/agents/tools/transactions/assistantProtocol';
 import { createSecretTool } from '@/app/api/agents/tools/createSecret/assistantProtocol';
+import { listSiteSecretsTool } from '@/app/api/agents/tools/listSiteSecrets/assistantProtocol';
+import { integrationApiRequestTool } from '@/app/api/agents/tools/integration_api_request/assistantProtocol';
 import { socialMediaAccountsTool } from '@/app/api/agents/tools/socialMediaAccounts/assistantProtocol';
 import { socialMediaPublishTool } from '@/app/api/agents/tools/socialMediaPublish/assistantProtocol';
 import { socialMediaPostsTool } from '@/app/api/agents/tools/socialMediaPosts/assistantProtocol';
@@ -252,6 +254,13 @@ If the user asks to change or switch their active project (e.g. "cambia mi proye
 3. Once they reply with their choice, call \`tools({ action: "call", name: "instance_project", args: { action: "set", site_id: "<selected_id>" } })\` to change the active project.
 Do not perform any other actions or guess the project ID until they confirm.`;
 
+export const EXTERNAL_API_INTEGRATION_INSTRUCTION = `
+🔗 EXTERNAL API INTEGRATIONS & SECRETS:
+If you need to perform an action using a third-party API that does not have a specific native tool (e.g., calling an external provider's REST API):
+1. First, check if the required API key or secret exists by calling the \`list_site_secrets\` tool via \`tools\`.
+2. If the secret does not exist, ask the user to provide the API key. Once provided, IMMEDIATELY save it using the \`create_site_secret\` tool via \`tools\` so it is securely stored and removed from the conversation context. Inform the user you have saved it securely.
+3. To perform the actual API request, DO NOT output a mock response or write a fetch script. You MUST use the \`integration_api_request\` tool via \`tools\`, passing the saved \`secret_id\`. The backend will inject the key automatically.`;
+
 /**
  * Determine the instance type and available tools based on instance data and environment
  */
@@ -366,6 +375,8 @@ export const getAssistantTools = (
     createProjectTool(userId ?? ''),
     audioToTextTool(siteId),
     createSecretTool(siteId),
+    listSiteSecretsTool(siteId, instanceId),
+    integrationApiRequestTool(siteId, instanceId),
     socialMediaAccountsTool(siteId),
     socialMediaPublishTool(siteId),
     socialMediaPostsTool(siteId),
