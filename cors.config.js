@@ -115,16 +115,28 @@ export const isOriginAllowed = async (origin) => {
 export const getNextJsCorsConfig = () => {
   const allowedOrigins = getAllowedOrigins();
   
-  const config = allowedOrigins.map(origin => ({
-    source: '/api/:path*',
-    headers: [
-      { key: 'Access-Control-Allow-Credentials', value: 'true' },
-      { key: 'Access-Control-Allow-Origin', value: origin },
-      { key: 'Access-Control-Allow-Methods', value: 'GET,DELETE,PATCH,POST,PUT,OPTIONS' },
-      { key: 'Access-Control-Allow-Headers', value: ALLOWED_HEADERS },
-      { key: 'Vary', value: 'Origin' }
-    ]
-  }));
+  const config = allowedOrigins.flatMap(origin => [
+    {
+      source: '/api/:path*',
+      headers: [
+        { key: 'Access-Control-Allow-Credentials', value: 'true' },
+        { key: 'Access-Control-Allow-Origin', value: origin },
+        { key: 'Access-Control-Allow-Methods', value: 'GET,DELETE,PATCH,POST,PUT,OPTIONS' },
+        { key: 'Access-Control-Allow-Headers', value: ALLOWED_HEADERS },
+        { key: 'Vary', value: 'Origin' }
+      ]
+    },
+    {
+      source: '/record',
+      headers: [
+        { key: 'Access-Control-Allow-Credentials', value: 'true' },
+        { key: 'Access-Control-Allow-Origin', value: origin },
+        { key: 'Access-Control-Allow-Methods', value: 'GET,DELETE,PATCH,POST,PUT,OPTIONS' },
+        { key: 'Access-Control-Allow-Headers', value: ALLOWED_HEADERS },
+        { key: 'Vary', value: 'Origin' }
+      ]
+    }
+  ]);
   
   return config;
 };

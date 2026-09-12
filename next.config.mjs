@@ -127,6 +127,10 @@ const nextraConfig = withNextra({
         source: '/api/:path*',
         destination: '/api/:path*',
       },
+      {
+        source: '/record',
+        destination: '/api/visitors/record',
+      },
     ]
   },
   async redirects() {

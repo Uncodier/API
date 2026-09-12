@@ -363,7 +363,7 @@ export default async function middleware(request) {
   return response;
 }
 
-// Aplicar el middleware solo a rutas de API
+// Aplicar el middleware solo a rutas de API y record
 export const config = {
-  matcher: ['/api/:path*'],
+  matcher: ['/api/:path*', '/record'],
 }; 
