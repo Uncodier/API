@@ -20,6 +20,7 @@
  *     existence query in `apps_tenants` plus `if not exists` in the DDL).
  */
 import { getAppsAdminClient, issueTenantJWT } from '@/lib/database/apps-supabase';
+import { syncPostgrestSchemas } from './postgrest-config';
 
 export type AppsAuthProvider = 'supabase' | 'auth0';
 
@@ -158,6 +159,10 @@ export async function ensureTenant(input: EnsureTenantInput): Promise<EnsureTena
     );
   } else {
     // Automatically expose the new schema to PostgREST
+    const syncResult = await syncPostgrestSchemas();
+    if (!syncResult.ok) {
+      console.warn(`[tenant-provisioner] failed to sync schemas with Supabase Management API: ${syncResult.error}`);
+    }
     const exposeSql = `
       notify pgrst, 'reload config';
       notify pgrst, 'reload schema';
@@ -200,6 +205,10 @@ export async function destroyTenant(requirement_id: string): Promise<{ ok: boole
   if (!drop.ok) return { ok: false, error: drop.error };
 
   // Update exposed schemas after dropping
+  const syncResult = await syncPostgrestSchemas();
+  if (!syncResult.ok) {
+    console.warn(`[tenant-provisioner] failed to sync schemas with Supabase Management API after drop: ${syncResult.error}`);
+  }
   await execSql(`
     notify pgrst, 'reload config';
     notify pgrst, 'reload schema';

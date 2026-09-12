@@ -1,6 +1,7 @@
 import { getAppsAdminClient } from '@/lib/database/apps-supabase';
 import { lintMigration } from './migration-linter';
 import { Sandbox } from '@vercel/sandbox';
+import { syncPostgrestSchemas } from './postgrest-config';
 
 function schemaForRequirement(requirementId: string): string {
   return `app_${requirementId.replace(/-/g, '').slice(0, 24)}`;
@@ -110,6 +111,10 @@ export async function applyPendingMigrations(
   if (applied.length > 0) {
     // Automatically expose schemas to PostgREST to ensure new tables/schemas are visible
     // and reload the schema cache so introspection works immediately.
+    const syncResult = await syncPostgrestSchemas();
+    if (!syncResult.ok) {
+      errors.push(`Failed to sync schemas with Supabase Management API: ${syncResult.error}`);
+    }
     const exposeSql = `
       notify pgrst, 'reload config';
       notify pgrst, 'reload schema';
