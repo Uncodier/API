@@ -149,6 +149,8 @@ Ideal users include early-stage founders preparing for seed funding, startup acc
 
 ### GET /
 
+Before sending the JSON payload, you MUST extract the actual company **Brand Guidelines** (primary/secondary colors, exact fonts, brand style) from `memories` or the orchestrator. Do NOT invent generic colors (like `#20002c`) or generic fonts (like `Open Sans`) for the `designRecommendations`. If the brand is established, use their exact hex codes and typography.
+
 **Description:** Root endpoint providing API availability status.
 
 **Response:** Returns JSON object confirming API is running.

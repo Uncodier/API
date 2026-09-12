@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { start } from 'workflow/api';
-import { generatePromptImageWorkflow, GeneratePromptImageInput } from '../workflow';
-import { getPromptHash, downloadFromCache } from '@/lib/services/image/promptImageCache';
+import { generatePromptVideoWorkflow, GeneratePromptVideoInput } from '../workflow';
+import { getVideoPromptHash, downloadVideoFromCache } from '@/lib/services/video/promptVideoCache';
 import { resolveSiteFromRequirementUrl } from '@/lib/services/image/resolveSiteFromRequirementUrl';
 
 const NO_STORE_HEADERS = {
@@ -49,7 +49,7 @@ export async function GET(
 ) {
   try {
     let rawPrompt = '';
-    const prefix = '/api/public/image/prompt/';
+    const prefix = '/api/public/video/prompt/';
     
     if (request.nextUrl.pathname.startsWith(prefix)) {
       rawPrompt = request.nextUrl.pathname.slice(prefix.length);
@@ -70,31 +70,21 @@ export async function GET(
     }
 
     const searchParams = request.nextUrl.searchParams;
-    let width = parseInt(searchParams.get('width') || '1024', 10);
-    let height = parseInt(searchParams.get('height') || '1024', 10);
+    let durationSeconds = parseInt(searchParams.get('duration') || '5', 10);
     const expectedSiteId = searchParams.get('site_id');
+    const ratioParam = searchParams.get('ratio') || '16:9';
 
-    if (isNaN(width) || width <= 0) width = 1024;
-    if (isNaN(height) || height <= 0) height = 1024;
+    if (isNaN(durationSeconds) || durationSeconds <= 0) durationSeconds = 5;
 
-    const maxDim = Math.max(width, height);
-    const sizeMap: '256x256' | '512x512' | '1024x1024' =
-      maxDim <= 256 ? '256x256' : maxDim <= 512 ? '512x512' : '1024x1024';
+    let ratio: '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '3:2' | '2:3' = '16:9';
+    if (['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3'].includes(ratioParam)) {
+      ratio = ratioParam as typeof ratio;
+    }
 
-    let ratio: '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '3:2' | '2:3' | undefined = undefined;
-    const ar = width / height;
-    if (ar > 1.7) ratio = '16:9';
-    else if (ar > 1.4) ratio = '3:2';
-    else if (ar > 1.2) ratio = '4:3';
-    else if (ar < 0.6) ratio = '9:16';
-    else if (ar < 0.7) ratio = '2:3';
-    else if (ar < 0.85) ratio = '3:4';
-    else ratio = '1:1';
+    const hash = getVideoPromptHash(promptStr, durationSeconds, ratio);
 
-    const hash = getPromptHash(promptStr, width, height);
-
-    // 1. Cache hit → return image bytes
-    const cached = await downloadFromCache(hash);
+    // 1. Cache hit → return video bytes
+    const cached = await downloadVideoFromCache(hash);
     if (cached) {
       return new NextResponse(cached.buffer as unknown as BodyInit, {
         headers: {
@@ -153,31 +143,31 @@ export async function GET(
       return jsonError('Domain not authorized for prompt generation', 403);
     }
 
-    // 3. Start workflow and wait for the generated image
-    const workflowInput: GeneratePromptImageInput = {
+    // 3. Start workflow and wait for the generated video
+    const workflowInput: GeneratePromptVideoInput = {
       prompt: promptStr,
       siteId,
-      size: sizeMap,
+      durationSeconds,
       ratio,
       hash,
     };
 
-    const runId = `img-prompt-${hash}`;
-    const run = await start(generatePromptImageWorkflow, [workflowInput]);
+    const runId = `video-prompt-${hash}`;
+    const run = await start(generatePromptVideoWorkflow, [workflowInput]);
 
     try {
       await run.returnValue;
     } catch (workflowError: any) {
-      console.error('[PublicPromptImage] Workflow failed:', workflowError);
+      console.error('[PublicPromptVideo] Workflow failed:', workflowError);
       return jsonError(
-        'Image generation failed',
+        'Video generation failed',
         502,
         workflowError?.message || String(workflowError)
       );
     }
 
-    // 4. Return cached image after successful generation
-    const finalCached = await downloadFromCache(hash);
+    // 4. Return cached video after successful generation
+    const finalCached = await downloadVideoFromCache(hash);
     if (finalCached) {
       return new NextResponse(finalCached.buffer as unknown as BodyInit, {
         headers: {
@@ -188,9 +178,9 @@ export async function GET(
       });
     }
 
-    return jsonError('Image generation completed but image was not found in cache', 502);
+    return jsonError('Video generation completed but video was not found in cache', 502);
   } catch (error: any) {
-    console.error('[PublicPromptImage] Unhandled error:', error);
+    console.error('[PublicPromptVideo] Unhandled error:', error);
     return jsonError('Internal server error', 500, error?.message || String(error));
   }
 }

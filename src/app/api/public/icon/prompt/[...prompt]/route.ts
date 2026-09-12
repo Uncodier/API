@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { start } from 'workflow/api';
-import { generatePromptImageWorkflow, GeneratePromptImageInput } from '../workflow';
+import { generatePromptImageWorkflow, GeneratePromptImageInput } from '../../../image/prompt/workflow';
 import { getPromptHash, downloadFromCache } from '@/lib/services/image/promptImageCache';
 import { resolveSiteFromRequirementUrl } from '@/lib/services/image/resolveSiteFromRequirementUrl';
 
@@ -49,7 +49,7 @@ export async function GET(
 ) {
   try {
     let rawPrompt = '';
-    const prefix = '/api/public/image/prompt/';
+    const prefix = '/api/public/icon/prompt/';
     
     if (request.nextUrl.pathname.startsWith(prefix)) {
       rawPrompt = request.nextUrl.pathname.slice(prefix.length);
@@ -70,28 +70,24 @@ export async function GET(
     }
 
     const searchParams = request.nextUrl.searchParams;
-    let width = parseInt(searchParams.get('width') || '1024', 10);
-    let height = parseInt(searchParams.get('height') || '1024', 10);
+    let width = parseInt(searchParams.get('width') || '256', 10);
+    let height = parseInt(searchParams.get('height') || '256', 10);
     const expectedSiteId = searchParams.get('site_id');
+    const bg = searchParams.get('bg') || 'transparent or solid white';
 
-    if (isNaN(width) || width <= 0) width = 1024;
-    if (isNaN(height) || height <= 0) height = 1024;
+    if (isNaN(width) || width <= 0) width = 256;
+    if (isNaN(height) || height <= 0) height = 256;
 
     const maxDim = Math.max(width, height);
     const sizeMap: '256x256' | '512x512' | '1024x1024' =
       maxDim <= 256 ? '256x256' : maxDim <= 512 ? '512x512' : '1024x1024';
 
     let ratio: '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '3:2' | '2:3' | undefined = undefined;
-    const ar = width / height;
-    if (ar > 1.7) ratio = '16:9';
-    else if (ar > 1.4) ratio = '3:2';
-    else if (ar > 1.2) ratio = '4:3';
-    else if (ar < 0.6) ratio = '9:16';
-    else if (ar < 0.7) ratio = '2:3';
-    else if (ar < 0.85) ratio = '3:4';
-    else ratio = '1:1';
+    ratio = '1:1'; // icons are typically square
 
-    const hash = getPromptHash(promptStr, width, height);
+    // Modify the prompt for icon generation
+    const iconPrompt = `A high quality minimalist vector app icon of ${promptStr}, clean lines, flat design, isolated on a ${bg} background, no text.`;
+    const hash = getPromptHash(iconPrompt, width, height);
 
     // 1. Cache hit → return image bytes
     const cached = await downloadFromCache(hash);
@@ -155,7 +151,7 @@ export async function GET(
 
     // 3. Start workflow and wait for the generated image
     const workflowInput: GeneratePromptImageInput = {
-      prompt: promptStr,
+      prompt: iconPrompt,
       siteId,
       size: sizeMap,
       ratio,

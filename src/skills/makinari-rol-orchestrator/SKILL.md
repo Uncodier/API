@@ -42,9 +42,9 @@ Your requirements, backlog items, and plans MUST align with the company's core o
 **Delegation:** You MUST inject a summary of these Brand Guidelines/Design Tokens directly into the `instructions` field of the plan steps delegated to `makinari-rol-frontend` and `ui-ux-design`. Never assume the sub-agents know the brand colors; you provide them.
 
 ### 5. CRITICAL: Landing Pages & Marketing Sites (Dynamic UI Mandate)
-If the Requirement is a Landing Page or Marketing Site, you MUST explicitly instruct the Frontend and Design agents to use animated UI components (e.g., Magic UI, Aceternity). 
+If the Requirement is a Landing Page or Marketing Site, you MUST explicitly insert a `ui-ux-design` step in your plan before the `makinari-rol-frontend` step. The Design step acts as the Art Director.
 - **NEVER** request basic "Shadcn cards" for marketing sites.
-- **Mandate Animation:** Explicitly request interactions in the step `instructions` (e.g., "Install and use Magic UI Marquee for testimonials", "Install Magic UI Grid Pattern for the Hero background to prevent a flat color").
+- **Mandate Animation:** Explicitly request interactions in the `ui-ux-design` step `instructions` (e.g., "Define the brand, configure globals.css with HSL tokens, and create a layout specification using Magic UI Marquee for testimonials and Grid Pattern for the Hero to prevent a flat color").
 
 ### 6. Use sibling skills for the heavy lifting
 Each step MUST set **`skill`** (preferred) or **`role`** so the executor loads the right playbook. Available skills:
@@ -54,7 +54,8 @@ Each step MUST set **`skill`** (preferred) or **`role`** so the executor loads t
 | `makinari-obj-template-selection` | Pick Vitrina vs generic app baseline (usually step 1). |
 | `makinari-fase-investigacion` | Gather context before planning. |
 | `makinari-fase-planeacion` | Turn requirement + investigation into `instance_plan`. |
-| `makinari-rol-frontend` | UI pages, components. |
+| `ui-ux-design` | **Art Director.** Defines HSL variables, Tailwind config, fonts, and animation strategies BEFORE development. |
+| `makinari-rol-frontend` | UI pages, components. Consumes design tokens. |
 | `makinari-rol-backend` | Endpoints, webhooks. |
 | `makinari-rol-content` | Copy, articles, emails. |
 | `makinari-rol-qa` | E2E scenarios + gate triage. |
@@ -167,36 +168,43 @@ You are responsible for delivering a working, high-quality feature. Do NOT write
       "instructions": "Explore repo on the selected base, read existing code, check dependencies."
     },
     { 
-      "id": "step_dev", 
+      "id": "step_design", 
       "order": 3, 
+      "title": "Creative Direction & UX/UI", 
+      "skill": "ui-ux-design", 
+      "instructions": "Act as the Art Director. Define the brand's HSL color palette, typography (Google Fonts), and UI animation strategy. Write the exact CSS variables to `src/app/globals.css` and configure `tailwind.config.ts`. If it is a landing page, explicitly dictate which MagicUI/Aceternity components the frontend MUST use."
+    },
+    { 
+      "id": "step_dev", 
+      "order": 4, 
       "title": "Development", 
       "skill": "makinari-rol-frontend", 
-      "instructions": "<specific files + exact UI screens + navigation flows>. explicitly describe the UI layout. For marketing pages, MUST mandate animated components (e.g., 'Install Magic UI DotPattern for the hero background, use Framer Motion for scroll reveals, and Aceternity BentoGrid for features. Do NOT use flat backgrounds.')."
+      "instructions": "<specific files + exact UI screens + navigation flows>. Consume the design tokens created in step 3. Build the UI layout. For marketing pages, MUST install and use the animated components (Framer Motion, Magic UI) dictated by the Art Director. Do NOT use flat backgrounds."
     },
     { 
       "id": "step_backend", 
-      "order": 4, 
+      "order": 5, 
       "title": "Backend Development", 
       "skill": "makinari-rol-backend", 
       "instructions": "Create plain SQL migration files (.sql) under migrations/ (NEVER use ORM classes) including RLS policies, and implement Next.js API routes with test/prod modes."
     },
     { 
       "id": "step_qa", 
-      "order": 5, 
+      "order": 6, 
       "title": "QA", 
       "skill": "makinari-rol-qa", 
       "instructions": "Perform static general repository health/integrity checks (structure, variables, tests review), author .qa/scenarios, triage gate signals, write qa_results.json."
     },
     { 
       "id": "step_val", 
-      "order": 6, 
+      "order": 7, 
       "title": "Validation", 
       "skill": "makinari-fase-validacion", 
       "instructions": "npm run build, verify preview, write test_results.json."
     },
     { 
       "id": "step_report", 
-      "order": 7, 
+      "order": 8, 
       "title": "Report", 
       "skill": "makinari-fase-reporteado", 
       "instructions": "Create requirement_status with preview URL AND call requirement_backlog action='complete' for the current item."

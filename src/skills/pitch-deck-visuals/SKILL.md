@@ -8,6 +8,8 @@ types: ['content', 'design']
 
 Create investor-ready pitch deck visuals via [inference.sh](https://inference.sh) CLI.
 
+**CRITICAL RULE:** You MUST read the company's **Brand Guidelines** (via `memories` or `requirements.instructions`) before creating any slide. NEVER use generic hardcoded colors (like `#0f0f23`, `#f59e0b`, `#818cf8`) or default fonts. You MUST substitute the colors and fonts in the bash scripts below with the exact HEX codes and typography defined by the brand. If none exist, deduce a cohesive, high-end palette based on their specific industry.
+
 ## Quick Start
 
 ```bash
@@ -64,10 +66,10 @@ If you need more text, you need more slides.
 
 | Element | Guideline |
 |---------|-----------|
-| Background | Dark (navy, charcoal) OR clean white — pick one, commit |
-| Accent color | ONE brand color for emphasis |
-| Text | White on dark, or dark grey (#333) on light |
-| Charts | 2-3 colors max, your brand color = "you" |
+| Background | Use Brand Surface or Primary Dark/Light color. Pick ONE and commit. Do not default to Navy. |
+| Accent color | Use the specific Brand Accent color for emphasis |
+| Text | High contrast against background (e.g. Brand Text Color) |
+| Charts | 2-3 colors max. Your company = Brand Primary color |
 | Avoid | Gradients on text, neon colors, more than 3 colors |
 
 ### Layout
@@ -81,6 +83,8 @@ If you need more text, you need more slides.
 | Logo in corner | Subtle brand reinforcement |
 
 ## Slide-by-Slide Visual Guide
+
+*(Note: The scripts below show placeholder colors like `#0f0f23`. You MUST replace these with the actual Brand HEX tokens.)*
 
 ### 1. Title Slide
 
@@ -135,8 +139,9 @@ infsh app run infsh/python-executor --input '{
 
 ```bash
 # Generate professional team headshots/avatars
+# IMPORTANT: Inject the Brand's photography style into the prompt (e.g., "cinematic lighting", "high contrast black and white", "vibrant studio")
 infsh app run falai/flux-dev-lora --input '{
-  "prompt": "professional headshot portrait, person in business casual attire, clean neutral background, warm studio lighting, confident friendly expression, corporate photography style",
+  "prompt": "professional headshot portrait, person in business casual attire, clean neutral background, [INSERT BRAND LIGHTING/STYLE HERE], confident friendly expression, corporate photography style",
   "width": 512,
   "height": 512
 }'

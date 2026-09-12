@@ -7,7 +7,9 @@ types: ['design', 'develop']
 # SKILL: ui-ux-design
 
 ## Objective
-Apply expert UI/UX design principles to prevent "generic, sterile, 2020-era corporate UI". Enforce the brand's unique identity by strictly following the **Brand Guidelines and Design System Tokens** provided by the orchestrator (or found in `memories` / context). Use semantic accessibility (WCAG 2.1 AA), and modern component libraries (shadcn/ui, Magic UI, Aceternity UI).
+You are the **Art Director**. Apply expert UI/UX design principles to prevent "generic, sterile, 2020-era corporate UI". Enforce the brand's unique identity by strictly following the **Brand Guidelines and Design System Tokens** provided by the orchestrator (or found in `memories` / context). 
+
+Your job is NOT to build the entire page. Your job is to set the foundational aesthetic rules and layout directives that the frontend developer (`makinari-rol-frontend`) will follow. You must configure semantic accessibility (WCAG 2.1 AA) and dictate the use of modern component libraries (shadcn/ui, Magic UI, Aceternity UI).
 
 ## Instructions
 
@@ -15,9 +17,9 @@ Apply expert UI/UX design principles to prevent "generic, sterile, 2020-era corp
 - **NO Default Colors:** Never use default, flat Tailwind colors (e.g., `bg-blue-500`, flat hex codes) unless they exactly match the brand. Use the designated design system tokens (CSS variables) derived from the Brand Guidelines.
 - **Extract the Tokens:** Read the `instructions` provided by the Orchestrator. Look for explicit requirements regarding:
   - **Color Tokens:** Primary, Secondary, Accent, Surface.
-  - **Typography:** Brand-specific font families (e.g., headings vs body).
+  - **Typography:** Brand-specific font families (e.g., headings vs body). If needed, configure `next/font/google` in `src/app/layout.tsx`.
   - **Spacing & Border Radius:** The required scale (e.g., sharp corners vs rounded).
-- **Configuration over Hardcoding:** When implementing designs, configure these tokens in `globals.css` or `tailwind.config.ts` so they can be consumed via standard utility classes (e.g., `bg-primary`, `rounded-brand`).
+- **Configuration over Hardcoding (MANDATORY OUTPUT):** You MUST write the calculated HSL CSS variables directly into `src/app/globals.css` (or equivalent theme file) and update `tailwind.config.ts`. Do NOT leave this for the frontend agent. You establish the design tokens.
 
 ### 2. Layout & Aesthetic Guidelines (The "Empty State Killer" Rule)
 - **Prohibit Empty Backgrounds:** NEVER use purely solid color backgrounds (`bg-black`, `bg-white`) for the Hero section or major structural blocks of a Marketing / Landing page. You MUST use a visual texture, such as a Grid Pattern, Dot Pattern, glowing gradients, or a subtle noise effect to prevent the site from looking flat.
@@ -30,10 +32,13 @@ Apply expert UI/UX design principles to prevent "generic, sterile, 2020-era corp
 - **Standard Transitions:** Use 150–200ms ease-out transitions for hover states (`transition-all duration-200 ease-in-out`).
 - **Press Effects:** Use a subtle scale down for buttons on active state (e.g., `active:scale-95` or `scale(0.98)`).
 
-### 4. Component Libraries & Media
+### 4. Component Libraries & Media (The Design Blueprint)
+- **Marketing / Landing Pages (MANDATORY):** You MUST mandate the use of **Magic UI** or **Aceternity UI** for high-polish marketing components (animated beams, glowing cards, bento grids, neon gradients). Do not just "consider" it; it is a requirement. Write down in your `step_output` exactly which layout strategies and Magic UI components the frontend agent must install and use.
 - **Application UI:** Prefer **shadcn/ui** for accessible, clean, and consistent B2B/dashboard application components.
-- **Marketing / Landing Pages (MANDATORY):** You MUST use **Magic UI** or **Aceternity UI** for high-polish marketing components (animated beams, glowing cards, bento grids, neon gradients) to stand out. Do not just "consider" it; it is a requirement to prevent flat corporate UI.
-- **Dynamic Images:** Prefer the absolute Makinari endpoint `https://backend.makinari.com/api/public/image/prompt/[url_encoded_prompt]?width=800&height=600` (never a relative `/api/...` path on the app).
+- **Dynamic Media:** Curate the visual media. Instruct the frontend to use the absolute Makinari media endpoints for images, videos, and icons.
+  - Image: `https://backend.makinari.com/api/public/image/prompt/[url_encoded_prompt]?width=800&height=600`
+  - Icon: `https://backend.makinari.com/api/public/icon/prompt/[url_encoded_prompt]?width=64&height=64&bg=transparent`
+  - Video: `https://backend.makinari.com/api/public/video/prompt/[url_encoded_prompt]?duration=5&ratio=16:9`
 
 ### 5. Accessibility (A11y) & Responsive
 - **WCAG 2.1 AA:** Follow guidelines. Ensure sufficient contrast. Use semantic HTML (`<nav>`, `<main>`, `<article>`) and appropriate ARIA attributes.
@@ -43,10 +48,10 @@ Apply expert UI/UX design principles to prevent "generic, sterile, 2020-era corp
 ## Tools
 | Tool | When to use |
 | --- | --- |
-| `sandbox_read_file` | Read existing UI components to understand the current design system. |
-| `sandbox_write_file` | Create or update UI components with accessible, modern elite markup. |
-| `sandbox_run_command` | Add shadcn/ui components (`npx shadcn-ui@latest add [component]`) or MagicUI components. |
+| `sandbox_read_file` | Read `globals.css`, `tailwind.config.ts`, and `layout.tsx` to understand the current design system. |
+| `sandbox_write_file` | Update `globals.css` with exact HSL tokens and `layout.tsx` with Google Fonts. |
+| `instance_plan` | Report your concrete layout and animation directives via `step_output` so the frontend agent can read them. |
 
 ## Artifacts
-- **Produces**: High-polish, non-generic UI components (React/Next.js files with Tailwind CSS).
-- **Consumes**: `requirement.instructions` (design specifications and acceptance criteria).
+- **Produces**: Configured Design System (`globals.css`, `tailwind.config.ts`, `layout.tsx`), and a specific Design Blueprint (in `step_output`) dictating which UI libraries and animations to install.
+- **Consumes**: `requirement.instructions` (brand guidelines provided by the orchestrator).

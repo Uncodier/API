@@ -7,7 +7,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
  * @param originOrReferer The Origin or Referer header value
  * @returns The matched site_id or null if no exact hostname match is found
  */
-export async function resolveSiteFromRequirementUrl(originOrReferer: string | null): Promise<string | null> {
+export async function resolveSiteFromRequirementUrl(originOrReferer: string | null, expectedSiteId?: string | null): Promise<string | null> {
   if (!originOrReferer) return null;
 
   try {
@@ -20,10 +20,16 @@ export async function resolveSiteFromRequirementUrl(originOrReferer: string | nu
     }
 
     // First search with ilike to filter rows fast
-    const { data, error } = await supabaseAdmin
+    let query = supabaseAdmin
       .from('requirement_status')
       .select('site_id, preview_url, endpoint_url')
-      .or(`preview_url.ilike.%${hn}%,endpoint_url.ilike.%${hn}%`)
+      .or(`preview_url.ilike.%${hn}%,endpoint_url.ilike.%${hn}%`);
+      
+    if (expectedSiteId) {
+      query = query.eq('site_id', expectedSiteId);
+    }
+
+    const { data, error } = await query
       .order('created_at', { ascending: false })
       .limit(50);
 

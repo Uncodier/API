@@ -93,6 +93,13 @@ export default async function middleware(request) {
   // Verificar si es una ruta pública explícita
   const isPublicRoute = request.nextUrl.pathname.startsWith('/api/public/');
   
+  const pathname = request.nextUrl.pathname;
+  const isPromptImage = pathname.startsWith('/api/public/image/prompt/');
+  const isPromptVideo = pathname.startsWith('/api/public/video/prompt/');
+  const isPromptIcon = pathname.startsWith('/api/public/icon/prompt/');
+  const isPromptSummary = pathname.startsWith('/api/public/summary/prompt/');
+  const isPromptMedia = isPromptImage || isPromptVideo || isPromptIcon || isPromptSummary;
+  
   // Obtener el origen
   const origin = request.headers.get('origin');
   
@@ -195,7 +202,9 @@ export default async function middleware(request) {
     // Si viene de un navegador, verificar si el origen está permitido
     if (origin) {
       const isOriginAllowedCheck = await isOriginAllowed(origin);
-      if (isOriginAllowedCheck || isDevMode) {
+      const isPublicVercelAllowed = isPromptMedia && origin.endsWith('.vercel.app');
+      
+      if (isOriginAllowedCheck || isPublicVercelAllowed || isDevMode) {
         console.log('[Middleware] Public route accessed from allowed origin');
         const response = safeNext();
         response.headers.set('X-Middleware-Executed', 'true');
@@ -215,14 +224,11 @@ export default async function middleware(request) {
     } 
     // Si no hay origen (M2M) o si es origin no permitido, debe tener API key
     else {
-      const pathname = request.nextUrl.pathname;
-      const isPromptImage = pathname.startsWith('/api/public/image/prompt/');
-      const isPromptSummary = pathname.startsWith('/api/public/summary/prompt/');
-      if ((isPromptImage || isPromptSummary) && request.method === 'GET') {
-        console.log(`[Middleware] Prompt ${isPromptImage ? 'image' : 'summary'} GET without origin - allowing`);
+      if (isPromptMedia && request.method === 'GET') {
+        console.log(`[Middleware] Prompt media GET without origin - allowing`);
         const response = safeNext();
         response.headers.set('X-Middleware-Executed', 'true');
-        response.headers.set(isPromptImage ? 'X-Public-Image-Prompt' : 'X-Public-Summary-Prompt', 'true');
+        response.headers.set('X-Public-Media-Prompt', 'true');
         return response;
       }
       
@@ -246,9 +252,14 @@ export default async function middleware(request) {
   
   const originAllowed = await isOriginAllowed(origin);
   
+  // Allow .vercel.app origins ONLY for public media prompts
+  const isVercelOrigin = origin && origin.endsWith('.vercel.app');
+  const isEffectivelyAllowed = originAllowed || (isPromptMedia && isVercelOrigin);
+  
   console.log('[Middleware] Origin check:', {
     origin,
     originAllowed,
+    isEffectivelyAllowed,
     allowedOrigins: isDevMode ? 'ALL (dev mode)' : allowedOrigins
   });
   
@@ -267,7 +278,7 @@ export default async function middleware(request) {
     response.headers.set('X-Middleware-Executed', 'true');
     
     // Si el origen es permitido o estamos en desarrollo, establecer encabezados específicos
-    if (origin && (originAllowed || isDevMode)) {
+    if (origin && (isEffectivelyAllowed || isDevMode)) {
       response.headers.set('Access-Control-Allow-Origin', origin);
       response.headers.set('Access-Control-Allow-Credentials', 'true');
       console.log('[Middleware] OPTIONS: Origin allowed');
@@ -284,14 +295,11 @@ export default async function middleware(request) {
   
   // Si no hay origin (petición machine-to-machine), validar API key
   if (!origin) {
-    const pathname = request.nextUrl.pathname;
-    const isPromptImage = pathname.startsWith('/api/public/image/prompt/');
-    const isPromptSummary = pathname.startsWith('/api/public/summary/prompt/');
-    if ((isPromptImage || isPromptSummary) && request.method === 'GET') {
-      console.log(`[Middleware] Prompt ${isPromptImage ? 'image' : 'summary'} GET without origin - allowing`);
+    if (isPromptMedia && request.method === 'GET') {
+      console.log(`[Middleware] Prompt media GET without origin - allowing`);
       const response = safeNext();
       response.headers.set('X-Middleware-Executed', 'true');
-      response.headers.set(isPromptImage ? 'X-Public-Image-Prompt' : 'X-Public-Summary-Prompt', 'true');
+      response.headers.set('X-Public-Media-Prompt', 'true');
       return response;
     }
 
@@ -328,7 +336,7 @@ export default async function middleware(request) {
   }
   
   // Rechazar si el origen no está permitido (solo en producción)
-  if (origin && !originAllowed && !isDevMode) {
+  if (origin && !isEffectivelyAllowed && !isDevMode) {
     console.log('[Middleware] Origin not allowed in production');
     return new NextResponse(null, {
       status: 403,

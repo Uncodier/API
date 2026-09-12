@@ -10,23 +10,39 @@ types: ['design', 'content', 'integration']
 Create visual and multimedia assets by interacting with Artificial Intelligence tools via the Model Context Protocol (MCP). Craft effective prompts and properly integrate the generated assets into the application.
 
 ## Instructions
-1. **MCP Server Usage:**
+1. **Brand Guidelines First (MANDATORY):** Before generating ANY media, you MUST pull the company's **Brand Guidelines** (colors, typography, photography style, tone) from the orchestrator's instructions or `memories`. If none exist, deduce a cohesive visual identity based on the client's industry. NEVER generate generic "stock photo" style images.
+2. **MCP Server Usage:**
    - For vector graphics (SVG, PNG, WebP), use MCP servers like **SVGverseAI** or **SVGMaker**.
    - For text-to-image generation, prefer the Makinari public image endpoint before falling back to external tools like FAL AI or Pollinations.
    - For video editing and content search, use **Video Editor** (Video Jungle API).
-2. **Effective Prompting:** Be specific and descriptive. Include details about style, colors, composition, lighting, and the main subject. For SVGs, specify the style (flat design, isometric, icon, detailed illustration) and request clean, scalable code. For photorealistic images, specify lens type, camera angle, and lighting conditions.
-3. **Makinari Image Generation API (Preferred for UI embeds):**
-   - Base URL (always absolute — this API lives on the Makinari backend, NOT on the app being built):
-     `https://backend.makinari.com/api/public/image/prompt/[url_encoded_prompt]?width=1024&height=1024`
-   - `prompt` must be URL-encoded. Optional `width` / `height` query params (default 1024).
-   - Example:
+3. **Effective Prompting (Brand Injection):** Be specific and descriptive. You MUST inject the brand's exact aesthetic into the prompt (e.g., "incorporating deep blue and safety orange accents", "shot in a gritty, high-contrast industrial style", "flat vector illustration matching #FF5500"). For photorealistic images, specify lens type, camera angle, and lighting conditions that align with the brand.
+3. **Makinari Media Generation API (Preferred for UI embeds):**
+   - Base URL (always absolute — this API lives on the Makinari backend, NOT on the app being built). Use `image`, `icon`, or `video` in the path.
+   - Images: `https://backend.makinari.com/api/public/image/prompt/[url_encoded_prompt]?width=1024&height=1024`
+   - Icons: `https://backend.makinari.com/api/public/icon/prompt/[url_encoded_prompt]?width=256&height=256&bg=transparent` (Icons have no background by default, optionally pass a `bg` param like `bg=solid+white` or `bg=dark+blue`)
+   - Video: `https://backend.makinari.com/api/public/video/prompt/[url_encoded_prompt]?duration=5&ratio=16:9`
+   - `prompt` must be URL-encoded.
+   - Example Image:
      ```tsx
      <img
        src="https://backend.makinari.com/api/public/image/prompt/a%20futuristic%20cityscape?width=800&height=400"
        alt="Futuristic cityscape at sunset"
      />
      ```
-   - Never use a relative `/api/public/image/prompt/...` path inside sandbox apps — that route does not exist there.
+   - Example Icon:
+     ```tsx
+     <img
+       src="https://backend.makinari.com/api/public/icon/prompt/a%20minimalist%20shopping%20cart%20outline?width=64&height=64&bg=transparent"
+       alt="Shopping Cart Icon"
+     />
+     ```
+   - Example Video:
+     ```tsx
+     <video controls autoplay loop muted>
+       <source src="https://backend.makinari.com/api/public/video/prompt/a%20futuristic%20cityscape%20with%20flying%20cars?duration=8&ratio=16:9" type="video/mp4" />
+     </video>
+     ```
+   - Never use a relative `/api/public/...` path inside sandbox apps — that route does not exist there.
    - Auth: the browser sends `Referer` from the preview/deployed hostname; that hostname must match `requirement_status.preview_url` or `endpoint_url`. Do not call this from curl/scripts without Origin/Referer unless the image is already cached.
 4. **Code Integration:**
    - When generating SVGs directly in code (e.g., React components), ensure they are responsive (use `viewBox` instead of fixed `width`/`height`).

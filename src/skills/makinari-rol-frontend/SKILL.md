@@ -8,7 +8,7 @@ types: ['develop', 'design']
 
 ## Objective
 
-Implement UI pages and components in Next.js (App Router) that satisfy the requirement's section 6.4 (UI test-id contract) and section 7 (Acceptance Criteria). Every route must build, render without errors at desktop and mobile viewports, and wire real interactions.
+Implement UI pages and components in Next.js (App Router) that satisfy the requirement's section 6.4 (UI test-id contract) and section 7 (Acceptance Criteria). You MUST strictly follow the design tokens and layout directives established by the Art Director (`ui-ux-design` step). Every route must build, render without errors at desktop and mobile viewports, and wire real interactions.
 
 ## Environment
 
@@ -23,12 +23,11 @@ Implement UI pages and components in Next.js (App Router) that satisfy the requi
 - If `package.json` is missing at the root, initialize Next.js there. Do not create a nested project.
 - Respect the base branch chosen by `makinari-obj-template-selection`. Do not `git checkout` a different branch once development has started.
 
-### 2. Phase 0.5: Tailwind Config & Style Guide Reading (Mandatory)
-Before writing any UI components, you MUST execute an initial evaluation of the styling configuration:
-- Read the **Brand Guidelines / Design Tokens** injected by the Orchestrator in your step's `instructions`.
-- Check `tailwind.config.ts`, `globals.css` (or equivalent).
-- If the project's current tokens (Colors, Typography, Radius) do not match the Brand Guidelines, you MUST update the configuration files first. This ensures utility classes (e.g., `text-primary`, `bg-brand-surface`) work correctly and prevents hardcoding hex colors inside JSX.
-- **For Landing Pages / Marketing Sites (Mandatory Advanced UI Install):** If the instructions dictate the use of advanced layouts or animations (e.g., Magic UI, Aceternity, or Framer Motion), you MUST NOT ignore this. You MUST proactively install the core dependencies (e.g., `npm i framer-motion clsx tailwind-merge`) and run the necessary component CLI commands (e.g., `npx magic-ui-cli add [component]`) BEFORE you write the page. Do NOT fallback to basic Shadcn components.
+### 2. Phase 0.5: Creative Direction & Config Reading (Mandatory)
+Before writing any UI components, you MUST read the exact design directives left by the Art Director (`ui-ux-design`):
+- Read the `step_output` from the previous plan step, or the Orchestrator's `instructions`.
+- Check `tailwind.config.ts`, `globals.css` (or equivalent). The Art Director should have configured the HSL tokens and fonts. If they missed it, you must configure it based on the Brand Guidelines.
+- **For Landing Pages / Marketing Sites (Mandatory Advanced UI Install):** If the instructions dictate the use of advanced layouts or animations (e.g., Magic UI, Aceternity, or Framer Motion), you MUST NOT ignore this. You MUST proactively install the core dependencies (e.g., `sandbox_run_command npm i framer-motion clsx tailwind-merge`) and run the necessary component CLI commands (e.g., `sandbox_run_command npx magic-ui-cli add [component]`) BEFORE you write the page. Do NOT fallback to basic Shadcn components.
 
 ### 3. Data-testid contract (mandatory when requirement defines one)
 The requirement's section 6.4 lists `data-testid` attributes the frontend must expose. Treat this list as **immutable**:
@@ -59,7 +58,7 @@ Instead:
 - CRITICAL: For authentication and user management (login, signup, roles, protected routes), you MUST implement real authentication. **CRITICAL PRACTICE**: All apps MUST use OTP (One-Time Password) via email via Supabase Auth (`signInWithOtp` and `verifyOtp`). NEVER use traditional passwords. This ensures emails are validated and users are tied to the tenant correctly. Pass `options.data.locale` (and `site_id` when known) on `signInWithOtp` so auth emails match site/user language; emails include both a magic link and a visible OTP code — support either verify path. Use or adapt the pre-built `src/components/auth/login-otp.tsx` available in the base repo.
 - Implement `onClick`, `onSubmit`, loading states, and error states.
 - Provide realistic empty states that match the requirement's copy/tone.
-- If dynamic images or thematic visuals are needed, prefer the absolute Makinari endpoint (not a relative path on this app): `<img src="https://backend.makinari.com/api/public/image/prompt/[encoded_prompt]?width=800&height=600" alt="..." />`.
+- If dynamic media or thematic visuals are needed, prefer the absolute Makinari media endpoints for images, videos, and icons (not a relative path on this app). For example: `<img src="https://backend.makinari.com/api/public/image/prompt/[encoded_prompt]?width=800&height=600" alt="..." />` or `<video src="https://backend.makinari.com/api/public/video/prompt/[encoded_prompt]?duration=5&ratio=16:9" autoplay loop muted />`.
 
 ### 3.1 Internal taxonomy is INVISIBLE to the user (gate-blocking)
 The orchestrator state — backlog item ids, requirement ids, scope levels, phase ids, tier flags, file names like `requirement.spec.md` / `progress.md` / `feature_list.json` / `evidence/` — MUST NEVER appear in rendered HTML. The runtime probe scans every page body and the gate hard-rejects the step (failure category `copy`) when any of these surface in the user-facing copy:
@@ -118,8 +117,8 @@ To clear the gate, your UI must:
 - Wire real event handlers with loading and error states.
 - Prefer semantic HTML (`<header>`, `<main>`, `<section>`, `<button>`).
 - Add every `data-testid` listed in section 6.4 of the requirement.
-- Apply Brand Guidelines / Design Tokens provided by the Orchestrator: configure proper Tailwind classes in `globals.css` and use them instead of hardcoding default Tailwind colors (e.g., `bg-blue-500`).
-- Use `shadcn/ui` for application UI, and consider `Magic UI` or `Aceternity UI` for high-polish marketing pages, avoiding "safe, flat 2020-era corporate UI" unless the brand dictates it.
+- Apply Brand Guidelines / Design Tokens: Use the Tailwind classes configured in `globals.css` by the Art Director. NEVER hardcode default Tailwind colors (e.g., `bg-blue-500`).
+- Follow the exact layout and animation directives given by the Art Director. If they mandated Magic UI or Aceternity for a landing page, you MUST use them.
 
 ### 6. Pre-completion checklist
 Copy/paste this and verify every box before marking the step completed:
