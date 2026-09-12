@@ -136,23 +136,35 @@ export function createAssistantOnStepHandler(
           tool_args: toolCall.args || {},
           tool_result: toolResult ? {
             success: !toolResult.isError,
+            error: toolResult.isError ? (toolResult.error || toolResult.result) : null,
             output: (() => {
-              // Clean output of any base64 image
+              // Clean output of any base64 image and redundant success flags
               const rawOutput = toolResult.result || toolResult.content || '';
+              let cleanOutput: any = rawOutput;
+              
               if (typeof rawOutput === 'string') {
                 if (rawOutput.includes('base64,')) {
-                  return 'Screenshot captured successfully';
+                  cleanOutput = 'Screenshot captured successfully';
                 }
-                return rawOutput;
+              } else if (typeof rawOutput === 'object' && rawOutput !== null) {
+                const stripInternalKeys = (obj: any): any => {
+                  if (Array.isArray(obj)) return obj.map(stripInternalKeys);
+                  if (typeof obj === 'object' && obj !== null) {
+                    const copy = { ...obj };
+                    delete copy.base64Image;
+                    if (copy.success !== undefined) delete copy.success; // Remove redundant success flag
+                    for (const key in copy) {
+                      copy[key] = stripInternalKeys(copy[key]);
+                    }
+                    return copy;
+                  }
+                  return obj;
+                };
+                cleanOutput = stripInternalKeys(rawOutput);
               }
-              if (typeof rawOutput === 'object' && rawOutput !== null) {
-                const cleanOutput = { ...rawOutput };
-                delete cleanOutput.base64Image;
-                return cleanOutput;
-              }
-              return rawOutput;
-            })(),
-            error: toolResult.isError ? (toolResult.error || toolResult.result) : null,
+              
+              return cleanOutput;
+            })()
           } : {},
           screenshot_base64: screenshotBase64,
           parent_log_id: parentLogId,
