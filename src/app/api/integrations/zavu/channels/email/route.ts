@@ -107,27 +107,6 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: "siteId, channelId, and senderId are required" }, { status: 400 });
     }
 
-    // Verify MX record if we are trying to enable receiving
-    if (emailReceivingEnabled) {
-      const connection = await getChannelConnection(siteId, channelId);
-      const domain = connection?.metadata?.domain;
-      if (!domain) {
-        return NextResponse.json({ error: "Domain not found on channel metadata" }, { status: 400 });
-      }
-
-      try {
-        const records = await dns.resolveMx(domain);
-        const hasZavuMx = records.some((r) => r.exchange === "inbound.zavu.dev" || r.exchange === "inbound.zavu.dev.");
-        if (!hasZavuMx) {
-          console.warn("[Zavu] Domain MX records:", records);
-          return NextResponse.json({ error: `No se encontraron los registros MX (inbound.zavu.dev). Verifica tu configuración DNS. Encontramos: ${records.map((r) => r.exchange).join(", ")}` }, { status: 400 });
-        }
-      } catch (error) {
-        console.error("[Zavu] DNS validation error:", error);
-        return NextResponse.json({ error: `Fallo al verificar los registros DNS. Inténtalo de nuevo. Error: ${(error as Error).message}` }, { status: 400 });
-      }
-    }
-
     try {
       await updateSender(senderId, {
         emailReceivingEnabled: !!emailReceivingEnabled,
