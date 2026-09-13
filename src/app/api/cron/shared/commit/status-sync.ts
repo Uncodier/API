@@ -196,6 +196,26 @@ export async function syncLatestRequirementStatusWithPreview(params: {
       context: 'requirement_status_sync',
       repoUrl: repo_url,
     });
+
+    // Whitelist the generated Vercel preview domain for CORS
+    try {
+      const previewHostname = new URL(preview_url.trim()).hostname;
+      const { data: existingDomain } = await supabaseAdmin
+        .from('allowed_domains')
+        .select('id')
+        .eq('domain', previewHostname)
+        .maybeSingle();
+
+      if (!existingDomain) {
+        await supabaseAdmin.from('allowed_domains').insert({
+          site_id: resolvedSiteId,
+          domain: previewHostname,
+        });
+        console.log(`[RequirementStatusSync] Whitelisted preview domain for CORS: ${previewHostname}`);
+      }
+    } catch (domainErr) {
+      console.warn('[RequirementStatusSync] Failed to whitelist preview domain:', domainErr instanceof Error ? domainErr.message : domainErr);
+    }
   }
 
   console.log(
@@ -287,6 +307,26 @@ export async function patchLatestRequirementStatusColumns(params: {
         context: 'requirement_status_patch',
         repoUrl: columns.repo_url ?? null,
       });
+
+      // Whitelist the generated Vercel preview domain for CORS
+      try {
+        const previewHostname = new URL(columns.preview_url.trim()).hostname;
+        const { data: existingDomain } = await supabaseAdmin
+          .from('allowed_domains')
+          .select('id')
+          .eq('domain', previewHostname)
+          .maybeSingle();
+
+        if (!existingDomain) {
+          await supabaseAdmin.from('allowed_domains').insert({
+            site_id: resolvedSiteId,
+            domain: previewHostname,
+          });
+          console.log(`[RequirementStatusPatch] Whitelisted preview domain for CORS: ${previewHostname}`);
+        }
+      } catch (domainErr) {
+        console.warn('[RequirementStatusPatch] Failed to whitelist preview domain:', domainErr instanceof Error ? domainErr.message : domainErr);
+      }
     }
     return { updated: true };
   }
@@ -333,6 +373,26 @@ export async function patchLatestRequirementStatusColumns(params: {
         context: 'requirement_status_insert',
         repoUrl: patch.repo_url ?? null,
       });
+
+      // Whitelist the generated Vercel preview domain for CORS
+      try {
+        const previewHostname = new URL(patch.preview_url.trim()).hostname;
+        const { data: existingDomain } = await supabaseAdmin
+          .from('allowed_domains')
+          .select('id')
+          .eq('domain', previewHostname)
+          .maybeSingle();
+
+        if (!existingDomain) {
+          await supabaseAdmin.from('allowed_domains').insert({
+            site_id: resolvedSiteId,
+            domain: previewHostname,
+          });
+          console.log(`[RequirementStatusPatch] Whitelisted preview domain for CORS: ${previewHostname}`);
+        }
+      } catch (domainErr) {
+        console.warn('[RequirementStatusPatch] Failed to whitelist preview domain:', domainErr instanceof Error ? domainErr.message : domainErr);
+      }
     }
     return { updated: true, created: true };
   } catch (e: unknown) {

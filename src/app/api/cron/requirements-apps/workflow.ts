@@ -21,6 +21,7 @@ import { applyDatabaseMigrationsStep } from '../shared/step-db-migrations';
 // Import directly — the 'use step' plugin forbids re-exports, so the step
 // lives in its own module.
 import { bootstrapRequirementSpecStep } from '../shared/bootstrap-spec-step';
+import { provisionTrackingScriptStep } from '../shared/tracking-script-step';
 import { ensureSourceArchiveStep } from '../shared/ensure-source-archive-step';
 import { classifyRequirementType, isLightRequirementFlow } from '@/lib/services/requirement-flows';
 import { countPendingPlanSteps } from '@/lib/services/cycle-wrapup-prompt';
@@ -237,6 +238,13 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     userId: user_id,
     instanceId,
     branchName,
+  });
+
+  // Step 1c-bis: Injects the Makinari tracking script into the root layout.
+  await provisionTrackingScriptStep({
+    sandboxId: sandboxId!,
+    siteId: site_id,
+    audit: cronAudit,
   });
 
   // Step 1d: Run the admin-loop detector against the recent git history. We
