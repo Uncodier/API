@@ -93,10 +93,14 @@ export async function GET(req: Request) {
               .limit(1)
               .maybeSingle();
               
-            const lastTerminalTime = lastStatus ? new Date(lastStatus.created_at).getTime() : 0;
+            const lastTerminalTime = lastStatus ? new Date(lastStatus.created_at).getTime() : Date.now();
             const newestItemUpdate = Math.max(...(req.backlog?.items || []).map((i: any) => new Date(i.updated_at || i.created_at || 0).getTime()));
             
             shouldRevert = newestItemUpdate > lastTerminalTime;
+            
+            if (!lastStatus) {
+                shouldRevert = true;
+            }
           }
           
           if (shouldRevert) {
