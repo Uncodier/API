@@ -126,16 +126,26 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   let isOrnamentalOnly = false;
   const relevantDecisions: string[] = [];
   let hasAttemptedActiveItems = false;
+  let hasRecentlyUpdatedActiveItems = false;
   let activeItems: any[] = [];
   if (reqContext.backlog?.items) {
     const { isBacklogComplete, isOrnamentalOnlyOutstanding } = require('@/lib/services/requirement-backlog');
     isAllBacklogDone = isBacklogComplete(reqContext.backlog.items);
     isOrnamentalOnly = isOrnamentalOnlyOutstanding(reqContext.backlog.items);
 
+    // Check for ANY active item, even if it has 0 attempts
     activeItems = reqContext.backlog.items.filter((i: any) => 
       i.status === 'in_progress' || i.status === 'needs_review' || i.status === 'pending'
     );
+    // Count items with attempts > 0 as attempted
     hasAttemptedActiveItems = activeItems.some((i: any) => (i.attempts || 0) > 0);
+    
+    // Check if any active item was updated in the last 15 minutes
+    const nowMs = Date.now();
+    hasRecentlyUpdatedActiveItems = activeItems.some((i: any) => {
+      const updatedMs = new Date(i.updated_at || i.created_at || 0).getTime();
+      return (nowMs - updatedMs) < 15 * 60 * 1000;
+    });
     
     activeItems.forEach((item: any) => {
       if (item.assumptions && item.assumptions.length > 0) {
@@ -178,7 +188,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     return { reqId, branch: null, previewUrl: null, status: 'blocked' as const };
   }
 
-  const isFreshWork = !hasAttemptedActiveItems && activeItems.length > 0;
+  const isFreshWork = (!hasAttemptedActiveItems || hasRecentlyUpdatedActiveItems) && activeItems.length > 0;
   const skipOrchestrator = hasActivePlan || (recentPlansGuard.shouldSkipOrchestrator && !isFreshWork);
 
   // If the backlog is empty or fully done we still want the orchestrator to
@@ -190,8 +200,18 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   // We don't want to create a sandbox just to do nothing and push an empty commit.
   // NOTE: If the backlog is empty, we DO want to run so we can finalize the Cycle or create items.
   // If all backlog is done, we DO NOT run the orchestrator (it will just loop). We will emit the final status manually later.
+  
+  // NOTE: IsFreshWork is true when we have active items but NONE of them have any attempts.
+  // So the first time an ornamental item is pending (0 attempts), isFreshWork = true
+  // skipOrchestrator = (false && !true) = false -> runs!
+  // BUT if there's a recent plan, shouldSkipOrchestrator = true
+  // skipOrchestrator = (true && !true) = false -> runs!
+  // Wait, if it has 1 attempt, isFreshWork = false
+  // skipOrchestrator = (true && !false) = true -> skips!
+  // This matches your request: we only skip if it has AT LEAST 1 attempt.
+
   if (skipOrchestrator && !hasActivePlan && !(!reqContext.backlog?.items || reqContext.backlog.items.length === 0)) {
-    console.log(`[CronAppsWorkflow] Skipping cycle: cooling down to avoid re-plan loop. No active plan to execute.`);
+    console.log(`[CronAppsWorkflow] Skipping cycle: cooling down to avoid re-plan loop. No active plan to execute. (isFreshWork: ${isFreshWork})`);
     return { reqId, branch: null, previewUrl: null, status: 'in-progress' as const };
   }
 
@@ -558,11 +578,14 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       // If there's no active plan, but we didn't skip the cycle, it means we
       // either just finished a plan or we are finalizing a previous cycle.
       // We check the most recent plan to see if it was completed.
-      if (planCompleted) {
-        // If we completed a plan AND all core items are now done, we can fast-track the requirement closure
-        // without waiting for the next cron cycle to wake up the orchestrator
-        if (isAllBacklogDone) {
-           console.log(`[CronAppsWorkflow] Plan completed and all backlog is done. Fast-tracking requirement to on-review.`);
+    if (planCompleted) {
+      // If we completed a plan AND all core items are now done, we can fast-track the requirement closure
+      // without waiting for the next cron cycle to wake up the orchestrator
+      const { hasOutstandingWork } = require('@/lib/services/requirement-backlog');
+      const reqContextAfter = await getRequirementFullContextStep(reqId, instanceId, site_id, user_id);
+      const trulyDone = isAllBacklogDone && !hasOutstandingWork(reqContextAfter.backlog?.items || []);
+      if (trulyDone) {
+         console.log(`[CronAppsWorkflow] Plan completed and all backlog is done. Fast-tracking requirement to on-review.`);
            try {
              const { supabaseAdmin } = await import('@/lib/database/supabase-client');
              await supabaseAdmin.from('requirements').update({ status: 'on-review', updated_at: new Date().toISOString() }).eq('id', reqId);

@@ -315,6 +315,12 @@ export async function createFinalStatusStep(params: {
   let preserveWrapUpMessage: string | null = null;
 
   if (!isComplete && existingIsFreshOnReview) {
+    // Check if the wrap-up row was created BEFORE our workflow started
+    // If it's a legacy row (from a previous workflow execution that didn't
+    // finalize properly, or from the user triggering an explicit check), we
+    // should not preserve it if we actually ran the orchestrator/agent steps.
+    // However, if we skipped the orchestrator and just ran the checks, then
+    // it's fine to preserve it.
     effectiveStatus = 'on-review';
     preserveWrapUpMessage = row?.message?.trim() || null;
     console.log(
@@ -380,11 +386,17 @@ export async function createFinalStatusStep(params: {
 
   if (!isComplete && effectiveStatus === 'on-review') {
     // Sync parent requirement so cron respects wrap-up / user-approval cooldown
-    await supabaseAdmin
-      .from('requirements')
-      .update({ status: 'on-review', updated_at: new Date().toISOString() })
-      .eq('id', reqId);
-    console.log(`[CronStep] Requirement ${reqId} → on-review (preserved wrap-up)`);
+    const { hasOutstandingWork } = require('@/lib/services/requirement-backlog');
+    const { data: currentReq } = await supabaseAdmin.from('requirements').select('backlog').eq('id', reqId).single();
+    if (!hasOutstandingWork(currentReq?.backlog?.items || [])) {
+        await supabaseAdmin
+          .from('requirements')
+          .update({ status: 'on-review', updated_at: new Date().toISOString() })
+          .eq('id', reqId);
+        console.log(`[CronStep] Requirement ${reqId} → on-review (preserved wrap-up)`);
+    } else {
+        console.log(`[CronStep] Requirement ${reqId} → prevented on-review (has outstanding work)`);
+    }
   }
 
   if (isComplete) {
