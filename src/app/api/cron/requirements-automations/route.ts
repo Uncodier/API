@@ -56,12 +56,16 @@ export async function GET(req: Request) {
               .in('stage', ['on-review', 'done'])
               .order('created_at', { ascending: false })
               .limit(1)
-              .single();
+              .maybeSingle();
               
-            const lastTerminalTime = lastStatus ? new Date(lastStatus.created_at).getTime() : 0;
+            const lastTerminalTime = lastStatus ? new Date(lastStatus.created_at).getTime() : Date.now();
             const newestItemUpdate = Math.max(...(req.backlog?.items || []).map((i: any) => new Date(i.updated_at || i.created_at || 0).getTime()));
             
             shouldRevert = newestItemUpdate > lastTerminalTime;
+            
+            if (!lastStatus) {
+                shouldRevert = true;
+            }
           }
           
           if (shouldRevert) {
@@ -233,9 +237,10 @@ export async function GET(req: Request) {
         }
 
         const isComplete = isBacklogComplete(requirement.backlog.items);
-        let shouldCountAsAllDone = isComplete;
+        const trulyDone = isComplete && !hasOutstandingWork(requirement.backlog.items);
+        let shouldCountAsAllDone = trulyDone;
 
-        if (isComplete) {
+        if (trulyDone) {
           // Check if there is manual intervention or feedback indicating it should be reopened.
           const latestBacklogUpdate = requirement.backlog.items.reduce((latest: Date, item: any) => {
              const itemDate = new Date(item.updated_at || 0);

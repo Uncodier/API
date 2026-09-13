@@ -42,10 +42,11 @@ export function buildMaintenancePromptForFlow(p: MaintenancePromptInput): string
     ? `\nRECENT PROGRESS (last 5 entries of progress.md, newest first):\n${p.recentProgress.slice(-5).reverse().map((l) => `  - ${l}`).join('\n')}`
     : '';
 
-  const { isBacklogComplete } = require('@/lib/services/requirement-backlog');
+  const { isBacklogComplete, hasOutstandingWork } = require('@/lib/services/requirement-backlog');
   const isComplete = p.backlog?.items && isBacklogComplete(p.backlog.items);
+  const hasWork = p.backlog?.items && hasOutstandingWork(p.backlog.items);
 
-  const closureBlock = isComplete
+  const closureBlock = (isComplete && !hasWork)
     ? `BACKLOG COMPLETO. Ya has revisado los items.
 Tu única acción válida este ciclo:
 - NO crear planes. NO escribir archivos.

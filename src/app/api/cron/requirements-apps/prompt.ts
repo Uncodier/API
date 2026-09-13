@@ -117,10 +117,11 @@ export function buildCoordinatorPromptForFlow(p: CoordinatorPromptInput): string
       Assign the \`makinari-rol-qa\` skill to ALL 7 steps.`
     : `BREAK DOWN the backlog item into specific, actionable execution steps (e.g., 1. investigate/setup, 2. backend API, 3. frontend UI, 4. integration/tests (ensure all tests go into the top-level \`tests/\` folder)).`;
 
-  const { isBacklogComplete } = require('@/lib/services/requirement-backlog');
+  const { isBacklogComplete, hasOutstandingWork } = require('@/lib/services/requirement-backlog');
   const isComplete = p.backlog?.items && isBacklogComplete(p.backlog.items);
+  const hasWork = p.backlog?.items && hasOutstandingWork(p.backlog.items);
 
-  const closureBlock = isComplete
+  const closureBlock = (isComplete && !hasWork)
     ? `BACKLOG COMPLETO. Tu única acción válida este ciclo:
 - Llamar requirement_status stage='on-review' con message='Project complete'.
 - Responder texto plano "Project delivered."
@@ -190,7 +191,7 @@ WORKFLOW (follow IN ORDER):
 3. Pick the single next item (WIP=1). Call \`action='start'\` to mark it in_progress.
 4. Create the plan: \`instance_plan\` with \`action='create'\`. ${breakdownInstruction} Do NOT just copy the item title into a single step. Do NOT create generic steps like "Step 1" with instructions "Execute step 1". Every step MUST have a descriptive \`title\`, specific, descriptive \`instructions\` and a clear objective. Every step MUST set \`skill\` and \`metadata.backlog_item_id=<id>\`. CRITICAL: Maximize the use of the plan schema. For the overall plan, you MUST provide \`expected_output\`, \`success_criteria\` (array of specific files created/modified), and \`validation_rules\` (array of specific test files passed) to enforce strict quality control. For frontend steps, you MUST explicitly describe the UI layout, components to use (e.g., Shadcn UI Cards, Dialogs, Tables), and responsive behavior in the step instructions. Do not leave UI execution up to interpretation. If this is a new branch, Step 1 MUST be \`makinari-obj-template-selection\`. Do NOT add a step to notify the team in your plan.
 5. Check if the INSTRUCTIONS ask for any new changes or features that are NOT covered by the existing backlog items. If there are new unhandled requests, you MUST create new backlog items to cover them using \`requirement_backlog action='upsert'\`.
-6. ONLY if ALL items in the backlog are completely done AND there are no new requests in the instructions: to finalize the work, simply call \`requirement_status\` with \`stage='on-review'\` and \`message='Project complete'\`. DO NOT create an instance plan or a new backlog item to close the project. Just set the status to on-review and return a plain text response.
+6. ONLY if ALL items in the backlog (including ornamental) are completely done AND there are no new requests in the instructions: to finalize the work, simply call \`requirement_status\` with \`stage='on-review'\` and \`message='Project complete'\`. DO NOT create an instance plan or a new backlog item to close the project. Just set the status to on-review and return a plain text response.
 
 CRITICAL EXECUTION RULES:
 1. ALWAYS THINK OUT LOUD: You MUST explain your reasoning and plan inside the \`thought_process\` parameter of every tool call.
