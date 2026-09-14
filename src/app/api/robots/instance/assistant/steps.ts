@@ -366,7 +366,9 @@ export async function prepareAssistantContext(
 CRITICAL: You are inside a PUBLISH node. Your goal is to PUBLISH content to the selected social networks.
 1. You MUST use the \`publish\` tool via \`tools\`.
 2. You MUST use these exact social networks/destinations: ${destStr}. DO NOT invent or publish to other networks.
-3. Make sure the content matches the context of the conversation.`;
+3. The publish tool is MULTI-CHANNEL. You MUST combine and group compatible content into a SINGLE tool call whenever possible (e.g., identical posts going to Facebook and LinkedIn).
+4. If the content significantly differs between channels (e.g., a short Tweet vs. a long Newsletter), you MUST make SEPARATE calls to the publish tool for each distinct content variation.
+5. Make sure the content matches the context of the conversation.`;
       }
       
       if (isAudienceGeneration) {
@@ -438,6 +440,7 @@ Most capabilities (media, messaging, CRM, commerce, social, content, infra, rese
 - Use \`tools({ action: "describe", name: "<tool>" })\` to get the exact parameters schema + expected_use for a specific tool before calling it.
 - Use \`tools({ action: "call", name: "<tool>", args: { ... } })\` to execute it. If args are invalid the error includes the parameters schema so you can auto-correct and retry.
 - Examples: calendars, catalog_commerce, checkout, quotations, generate_image, sendEmail, leads, sales, publish, content, webSearch — ALL live behind tools. The router is the only way to reach them.
+- PUBLISHING CONTENT: The \`publish\` tool is multi-channel. You MUST combine compatible content across networks into a SINGLE tool call, but make SEPARATE calls if the content differs significantly between channels (e.g. short tweet vs newsletter).
 - To find people, working hours, team calendars, or reservable services: \`tools\` → \`calendars\` \`action="list"\`. Do not guess tool names for horarios.
 - Core tools like instance_plan, requirement_status, requirements, and skill_lookup are directly available and NOT routed.`;
 

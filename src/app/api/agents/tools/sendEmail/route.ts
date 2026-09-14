@@ -12,6 +12,7 @@ import { EmailSignatureService } from '@/lib/services/email/EmailSignatureServic
 import { SyncedObjectsService } from '@/lib/services/synced-objects/SyncedObjectsService';
 import { AgentMailSendService } from '@/lib/services/email/AgentMailSendService';
 import { getRedisClient } from '@/lib/utils/redis-client';
+import { markdownToHtml } from '@/lib/messaging/markdown-parser';
 
 export interface SendEmailCoreParams {
   email: string;
@@ -102,7 +103,11 @@ export async function sendEmailCore(params: SendEmailCoreParams): Promise<SendEm
   }
 
   let effectiveSubject = subject;
-  let effectiveMessage = message;
+  
+  // If message doesn't look like HTML, assume it's Markdown and convert it.
+  // We use a simple heuristic to detect HTML tags.
+  const isHtml = /<[a-z][\s\S]*>/i.test(message);
+  let effectiveMessage = isHtml ? message : markdownToHtml(message);
 
   if (lead_id) {
     const lead = await getLeadById(lead_id);
@@ -114,7 +119,7 @@ export async function sendEmailCore(params: SendEmailCoreParams): Promise<SendEm
     }
     const siteName = await fetchSiteNameForMerge(site_id);
     const mergePol = placeholderPolicyToMergePolicy(placeholder_policy);
-    const merged = personalizeMergeSubjectAndMessage(subject, message, lead, siteName, mergePol);
+    const merged = personalizeMergeSubjectAndMessage(subject, effectiveMessage, lead, siteName, mergePol);
     if (merged.aborted) {
       return {
         success: false,
