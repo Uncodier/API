@@ -62,3 +62,63 @@ export function markdownToWhatsApp(markdown: string): string {
 
   return wa;
 }
+
+/**
+ * Strips HTML tags and converts basic HTML structure to Markdown-like or plain text
+ * for channels that don't support HTML (WhatsApp, SMS, Telegram).
+ */
+export function htmlToMarkdownOrPlain(html: string): string {
+  if (!html) return '';
+  
+  let text = html;
+
+  // Reemplazar <br> o <br/> con salto de línea
+  text = text.replace(/<br\s*\/?>/gi, '\n');
+  
+  // Reemplazar <p> con salto de línea (añadiendo un salto extra al final del párrafo)
+  text = text.replace(/<p[^>]*>/gi, '');
+  text = text.replace(/<\/p>/gi, '\n\n');
+
+  // Listas
+  text = text.replace(/<li[^>]*>/gi, '• ');
+  text = text.replace(/<\/li>/gi, '\n');
+  text = text.replace(/<ul[^>]*>/gi, '');
+  text = text.replace(/<\/ul>/gi, '\n');
+  text = text.replace(/<ol[^>]*>/gi, '');
+  text = text.replace(/<\/ol>/gi, '\n');
+
+  // Negrita
+  text = text.replace(/<strong[^>]*>/gi, '**');
+  text = text.replace(/<\/strong>/gi, '**');
+  text = text.replace(/<b[^>]*>/gi, '**');
+  text = text.replace(/<\/b>/gi, '**');
+
+  // Cursiva
+  text = text.replace(/<em[^>]*>/gi, '*');
+  text = text.replace(/<\/em>/gi, '*');
+  text = text.replace(/<i[^>]*>/gi, '*');
+  text = text.replace(/<\/i>/gi, '*');
+
+  // Enlaces: <a href="url">text</a> -> text: url
+  text = text.replace(/<a\s+(?:[^>]*?\s+)?href=["']([^"']*)["'][^>]*>(.*?)<\/a>/gi, '$2: $1');
+
+  // Imágenes: <img src="url" alt="alt" /> -> url
+  text = text.replace(/<img\s+(?:[^>]*?\s+)?src=["']([^"']*)["'][^>]*>/gi, '$1');
+
+  // Quitar el resto de etiquetas HTML
+  text = text.replace(/<[^>]+>/g, '');
+
+  // Decodificar entidades HTML básicas
+  text = text
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ');
+
+  // Limpiar saltos de línea excesivos
+  text = text.replace(/\n{3,}/g, '\n\n');
+
+  return text.trim();
+}
