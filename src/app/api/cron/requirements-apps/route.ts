@@ -133,6 +133,8 @@ export async function GET(req: Request) {
 
     for (const requirement of requirements) {
       const { id: reqId, title, instructions, type, site_id, user_id } = requirement;
+      let instanceId: string | undefined = requirement.metadata?.runner_instance_id;
+      
       console.log('[Cron Apps] cron debug pick', {
         reqId,
         status: requirement.status,
@@ -351,8 +353,6 @@ export async function GET(req: Request) {
       }
 
       // Find or create remote_instance for MAIN BUILDER
-      let instanceId: string | undefined = requirement.metadata?.runner_instance_id;
-      
       if (!instanceId) {
         // 1. Look up the main builder instance by its canonical name
         const { data: instances } = await supabaseAdmin
