@@ -129,7 +129,7 @@ export class EmailSendService {
         to: email,
         subject,
         html: htmlContent,
-        text: message, // Versión de texto plano
+        text: message.replace(/<[^>]+>/g, ''), // Asegurar versión de texto plano limpia
         replyTo: fromAddress
       };
 

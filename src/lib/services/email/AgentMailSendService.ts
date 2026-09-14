@@ -105,7 +105,7 @@ export class AgentMailSendService {
     const agentmailParams = {
       to: targetEmail,
       subject,
-      text: message,
+      text: message.replace(/<[^>]+>/g, ''), // Plain text version without HTML tags
       html: htmlContent,
     };
 
