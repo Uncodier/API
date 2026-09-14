@@ -17,20 +17,29 @@ export async function getLatestTelemetry(
   systemKey: string,
   hoursMax: number = 24
 ): Promise<TelemetryRecord | null> {
-  const since = new Date(Date.now() - hoursMax * 60 * 60 * 1000).toISOString();
-  const { data, error } = await supabaseAdmin
-    .from('system_telemetry')
-    .select('status, message, latency_ms, created_at')
-    .eq('system_key', systemKey)
-    .gte('created_at', since)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  try {
+    const since = new Date(Date.now() - hoursMax * 60 * 60 * 1000).toISOString();
+    const { data, error } = await supabaseAdmin
+      .from('system_telemetry')
+      .select('status, message, latency_ms, created_at')
+      .eq('system_key', systemKey)
+      .gte('created_at', since)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
-  if (error || !data) {
+    if (error) {
+      console.error(`[Telemetry] getLatestTelemetry error for ${systemKey}:`, error);
+      return null;
+    }
+    if (!data) {
+      return null;
+    }
+    return data as TelemetryRecord;
+  } catch (err) {
+    console.error(`[Telemetry] Exception in getLatestTelemetry for ${systemKey}:`, err);
     return null;
   }
-  return data as TelemetryRecord;
 }
 
 /**

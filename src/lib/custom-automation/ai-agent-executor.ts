@@ -188,6 +188,7 @@ export interface ActOptions {
   onReasoningTokensUsed?: (reasoningTokensCount: number) => Promise<void>;
   /** If strictly true, stops the LLM turn loop immediately after the first pass (even if tools are called) */
   enforceSingleTurn?: boolean;
+  toolOverrides?: Record<string, any>;
 }
 
 export interface ActResponse {
@@ -848,6 +849,7 @@ export class AIAgentExecutor {
       onThinkingStreamChunk,
       onReasoningTokensUsed,
       enforceSingleTurn = false,
+      toolOverrides,
     } = options;
 
     const modelName = model || this.model;
@@ -1381,6 +1383,21 @@ export class AIAgentExecutor {
                   console.log(`₍ᐢ•(ܫ)•ᐢ₎ [SCRAPYBARA] Calling ${toolCall.toolName}.execute() with Scrapybara SDK...`);
                 } else {
                   console.log(`₍ᐢ•(ܫ)•ᐢ₎ [LOCAL] Executing ${toolCall.toolName}.execute() locally...`);
+                }
+                
+                // --- FORCE OVERRIDES FOR TOOLS ROUTER ---
+                if (toolCall.toolName === 'tools' && toolCall.args.action === 'call') {
+                  const targetToolName = toolCall.args.name;
+                  if (targetToolName && toolOverrides?.[targetToolName]) {
+                    try {
+                      const innerArgs = typeof toolCall.args.args === 'string' ? JSON.parse(toolCall.args.args) : (toolCall.args.args || {});
+                      const mergedArgs = { ...innerArgs, ...toolOverrides[targetToolName] };
+                      toolCall.args.args = JSON.stringify(mergedArgs);
+                      console.log(`[AI EXECUTOR] Force-injected overrides for ${targetToolName}`, toolOverrides[targetToolName]);
+                    } catch (e) {
+                      console.warn(`[AI EXECUTOR] Could not inject overrides for ${targetToolName}`, e);
+                    }
+                  }
                 }
 
                 let executeAttempts = 0;

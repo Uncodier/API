@@ -20,6 +20,7 @@ export async function runAssistantWorkflow(
   instanceNodeId?: string,
   expectedResultsAmount?: number,
   contextString?: string,
+  toolOverrides?: Record<string, any>,
   options?: { silentContinue?: boolean }
 ) {
   'use workflow';
@@ -46,7 +47,8 @@ export async function runAssistantWorkflow(
     userPhone,
     instanceNodeId,
     expectedResultsAmount,
-    contextString
+    contextString,
+    toolOverrides
   );
 
   let isDone = false;

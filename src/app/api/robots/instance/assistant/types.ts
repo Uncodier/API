@@ -25,4 +25,5 @@ export interface AssistantContext {
   hasLinkedRequirement: boolean;
   instanceNodeId?: string;
   expectedResultsAmount: number;
+  toolOverrides?: Record<string, any>;
 }

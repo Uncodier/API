@@ -139,6 +139,7 @@ function buildContextContent(
     plan_id?: string;
     step_id?: string;
     enforceSingleTurn?: boolean;
+    tool_overrides?: Record<string, any>;
   }
 
 export interface AssistantExecutionResult {
@@ -461,7 +462,8 @@ Do NOT use general conversational history to infer which image/asset to edit. Us
                 onThinkingStreamChunk: thinkingStreamCallbacks?.onThinkingStreamChunk,
                 onReasoningTokensUsed: thinkingStreamCallbacks?.onReasoningTokensUsed,
                 maxIterations: nodeMaxIterations,
-                enforceSingleTurn: options?.enforceSingleTurn
+                enforceSingleTurn: options?.enforceSingleTurn,
+                toolOverrides: options?.tool_overrides
             });
 
         // Finalize node — pack text + tool outputs into unified result
@@ -603,6 +605,7 @@ export async function executeAssistant(
         onThinkingStreamStart: thinkingStreamCallbacks?.onThinkingStreamStart,
         onThinkingStreamChunk: thinkingStreamCallbacks?.onThinkingStreamChunk,
         onReasoningTokensUsed: thinkingStreamCallbacks?.onReasoningTokensUsed,
+        toolOverrides: options?.tool_overrides
       });
 
       console.log(`₍ᐢ•(ܫ)•ᐢ₎ [EXECUTOR RESULT] Text length: ${executionResult.text?.length || 0}`);

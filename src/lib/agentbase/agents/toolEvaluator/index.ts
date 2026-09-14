@@ -428,11 +428,12 @@ export class ToolEvaluator extends Base {
             command.id,
             possibleMatchCalls,
             command.site_id,
-            rejectedFunctionCalls
+            rejectedFunctionCalls,
+            command.metadata
           );
         } else if (possibleMatchCalls && possibleMatchCalls.length > 0) {
           console.log(`[ToolEvaluator] No hay herramientas para ejecutar, pero sí ${possibleMatchCalls.length} possible_match`);
-          await executeSelectedTools([], command.tools, command.id, possibleMatchCalls, command.site_id);
+          await executeSelectedTools([], command.tools, command.id, possibleMatchCalls, command.site_id, undefined, command.metadata);
         } else {
           console.log(`[ToolEvaluator] No se seleccionaron herramientas para ejecutar`);
         }

@@ -34,9 +34,10 @@ export async function prepareAssistantContext(
   agentType?: string,
   userPhone?: string,
   instanceNodeId?: string,
-  expectedResultsAmount?: number,
-  contextString?: string
-): Promise<AssistantContext> {
+    expectedResultsAmount?: number,
+    contextString?: string,
+    toolOverrides?: Record<string, any>
+  ): Promise<AssistantContext> {
   'use step';
   
   // We need to fetch the instance data inside the workflow to ensure we have the latest state
@@ -518,6 +519,7 @@ Follow the loaded SKILL.md playbooks before calling tools via \`tools\`. \`skill
     hasLinkedRequirement,
     instanceNodeId,
     expectedResultsAmount: expectedResultsAmount || 1,
+    toolOverrides,
   };
 }
 
@@ -545,6 +547,7 @@ export async function processAssistantTurn(
     custom_tools: fullTools,
     instance_node_id: context.instanceNodeId,
     expected_results_amount: context.expectedResultsAmount,
+    tool_overrides: context.toolOverrides,
   };
 
   // Hydrate HTTP image_url → data URLs inside THIS step (same process as the LLM).

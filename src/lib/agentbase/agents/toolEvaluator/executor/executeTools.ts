@@ -305,7 +305,7 @@ async function executeCustomApiTool(toolName: string, args: any): Promise<any> {
 export async function executeTools(
   functionCalls: FunctionCall[],
   toolsMap: ToolsMap,
-  context?: { site_id?: string; command_id?: string }
+  context?: { site_id?: string; command_id?: string; metadata?: Record<string, any> }
 ): Promise<ToolExecutionResult[]> {
   const executionStartTime = Date.now();
   
@@ -358,6 +358,21 @@ export async function executeTools(
 
       if (context?.command_id && !parsedArgs.command_id) {
         parsedArgs.command_id = context.command_id;
+      }
+      
+      // --- FORCE OVERRIDES FOR TOOLS ROUTER ---
+      if (functionName === 'tools' && parsedArgs.action === 'call') {
+        const targetToolName = parsedArgs.name;
+        if (targetToolName && context?.metadata?.tool_overrides?.[targetToolName]) {
+          try {
+            const innerArgs = typeof parsedArgs.args === 'string' ? JSON.parse(parsedArgs.args) : (parsedArgs.args || {});
+            const mergedArgs = { ...innerArgs, ...context.metadata.tool_overrides[targetToolName] };
+            parsedArgs.args = JSON.stringify(mergedArgs);
+            console.log(`[ToolExecutor] Force-injected overrides for ${targetToolName}`, context.metadata.tool_overrides[targetToolName]);
+          } catch (e) {
+            console.warn(`[ToolExecutor] Could not inject overrides for ${targetToolName}`, e);
+          }
+        }
       }
       
       let output: any = null;

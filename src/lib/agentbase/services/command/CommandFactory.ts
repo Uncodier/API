@@ -34,6 +34,7 @@ export class CommandFactory {
     toolsModel?: string;
     toolsModelType?: 'anthropic' | 'openai' | 'gemini';
     toolsModelId?: string;
+    metadata?: Record<string, any>;
   }): CreateCommandParams {
     // Combine modelType and modelId into a single model field for database compatibility
     let modelField = params.model;
@@ -69,7 +70,10 @@ export class CommandFactory {
       agent_id: params.agentId,
       agent_role: params.agentRole,
       user_id: params.userId,
-      metadata: params.agentRole ? { agent_role: params.agentRole } : undefined,
+      metadata: {
+        ...(params.metadata || {}),
+        ...(params.agentRole ? { agent_role: params.agentRole } : {})
+      },
       priority: params.priority || 5,
       execution_order: params.executionOrder,
       supervision_params: params.supervisionParams,

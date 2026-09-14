@@ -32,6 +32,7 @@ const AssistantSchema = z.object({
   use_sdk_tools: z.boolean().optional().default(false),
   system_prompt: z.string().optional(),
   context: z.string().optional(),
+  tool_overrides: z.record(z.any()).optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -145,7 +146,8 @@ export async function POST(request: NextRequest) {
         undefined,
         providedNodeId,
         expectedResults,
-        parsedBody.context
+        parsedBody.context,
+        parsedBody.tool_overrides
       ]);
 
       // Return the run information. The frontend might need to poll or we stream.
@@ -215,7 +217,8 @@ export async function POST(request: NextRequest) {
     undefined,
     providedNodeId,
     expectedResults,
-    parsedBody.context
+    parsedBody.context,
+    parsedBody.tool_overrides
   ]);
 
     // Return stream response compatible with Vercel Workflow result streaming
