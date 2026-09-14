@@ -6,6 +6,7 @@ import { runMaintenanceWorkflow } from '../maintenance/workflow';
 import { CronExpressionParser } from 'cron-parser';
 import { acquireRunLock, getSupabaseUrlHostForLogs, releaseRunLock } from '../shared/cron-run-lock';
 import { isBacklogComplete, hasOutstandingWork, gatingItems, outstandingGatingItems } from '@/lib/services/requirement-backlog';
+import { recordTelemetry } from '@/lib/status/telemetry';
 
 /** Must match DB check `remote_instances_instance_type_check` (ubuntu | browser | windows). */
 const REMOTE_INSTANCE_TYPE_CRON_APPS = 'browser' as const;
@@ -859,6 +860,8 @@ export async function GET(req: Request) {
       }
     }
 
+    recordTelemetry('cron', 'up', `Processed apps cron with ${results.length} results`, 100).catch(console.error);
+
     return NextResponse.json({
       message: `Processed ${results.length} requirements`,
       results,
@@ -866,6 +869,7 @@ export async function GET(req: Request) {
 
   } catch (e: any) {
     console.error(`[Cron Apps] Top-level error:`, e?.message || e);
+    recordTelemetry('cron', 'down', `Cron failed: ${e?.message || 'Unknown error'}`, 0).catch(console.error);
     return NextResponse.json({ error: e?.message || 'Internal error' }, { status: 500 });
   }
 }

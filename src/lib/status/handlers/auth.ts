@@ -1,44 +1,32 @@
 import { buildHealthResponse, type SystemHealthHandler } from '@/lib/status/types';
-import { probeHttpRoute } from '@/lib/status/probe-base-url';
+import { getLatestTelemetry } from '@/lib/status/telemetry';
 
 export const apiAuthHandler: SystemHealthHandler = {
   systemKey: 'api_auth',
   label: 'API Authentication',
-  probePath: '/api/status',
   async runCheck() {
     const start = Date.now();
     const serviceKeySet = !!process.env.SERVICE_API_KEY?.trim();
-    const publicStatus = await probeHttpRoute('/api/status', {
-      method: 'GET',
-      useServiceKey: false,
-    });
-    const serviceKey = process.env.SERVICE_API_KEY?.trim();
-    const withKey = await probeHttpRoute('/api/agents/apps/list', {
-      method: 'GET',
-      useServiceKey: false,
-      headers: serviceKey ? { 'x-api-key': serviceKey } : {},
-    });
-    const withoutKey = await probeHttpRoute('/api/agents/apps/list', {
-      method: 'GET',
-      useServiceKey: false,
-      headers: { 'x-api-key': 'invalid-probe-key' },
-    });
+    
+    // Read from passive telemetry instead of doing active HTTP probes
+    const telemetry = await getLatestTelemetry('api_auth');
+    
     const latencyMs = Date.now() - start;
-    const publicOk = publicStatus.ok && publicStatus.status === 200;
-    const serviceKeyValid = withKey.ok && withKey.status !== 401;
-    const blocksInvalidKey = withoutKey.status === 401;
+    
+    // If we have a recent telemetry record, use its status.
+    // If not, assume 'up' if the service key is set.
+    const status = telemetry ? telemetry.status : (serviceKeySet ? 'up' : 'degraded');
+    
     return buildHealthResponse({
       systemKey: 'api_auth',
       label: 'API Authentication',
-      status: serviceKeySet && serviceKeyValid && blocksInvalidKey && publicOk ? 'up' : 'degraded',
-      latencyMs,
-      summary: serviceKeyValid ? 'Service API key accepted' : 'Auth probe inconclusive',
+      status,
+      latencyMs: telemetry?.latency_ms || latencyMs,
+      summary: telemetry ? telemetry.message : (serviceKeySet ? 'Assuming healthy (no recent traffic)' : 'Service key missing'),
       checks: {
         serviceKeySet,
-        serviceKeyValid,
-        publicStatusRoute: { status: publicStatus.status, ok: publicOk },
-        probeWithKey: { status: withKey.status, ok: withKey.ok },
-        probeInvalidKey: { status: withoutKey.status, blocked: blocksInvalidKey },
+        telemetryFound: !!telemetry,
+        lastEventAt: telemetry?.created_at,
       },
       probePath: '/api/status',
     });

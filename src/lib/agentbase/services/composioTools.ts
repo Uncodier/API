@@ -129,4 +129,38 @@ export class ComposioTools {
     const tools = await this.getTools(options);
     return this.toolsToReadableString(tools);
   }
-} 
+
+  /**
+   * Ejecuta una acción de Composio
+   * @param action Nombre de la acción
+   * @param params Parámetros de la acción
+   * @returns Resultado de la ejecución
+   */
+  async executeAction(action: string, params: any): Promise<any> {
+    try {
+      if (!this.toolset) {
+        await this.initialize();
+      }
+
+      if (!this.toolset) {
+        throw new Error('No se pudo inicializar el toolset de Composio');
+      }
+
+      console.log(`[ComposioTools] Ejecutando acción: ${action}`);
+      const result = await this.toolset.executeAction({
+        action,
+        params,
+        entityId: this.config.entityId
+      });
+
+      if (result.successful) {
+        return result.data;
+      } else {
+        throw new Error(result.error || `Failed to execute Composio action: ${action}`);
+      }
+    } catch (error: any) {
+      console.error(`[ComposioTools] Error al ejecutar acción ${action}: ${error.message}`);
+      throw error;
+    }
+  }
+}

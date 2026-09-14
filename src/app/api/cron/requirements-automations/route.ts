@@ -5,6 +5,7 @@ import { runCronAutoWorkflow } from './workflow';
 import { CronExpressionParser } from 'cron-parser';
 import { acquireRunLock, getSupabaseUrlHostForLogs, releaseRunLock } from '../shared/cron-run-lock';
 import { isBacklogComplete, hasOutstandingWork, outstandingGatingItems } from '@/lib/services/requirement-backlog';
+import { recordTelemetry } from '@/lib/status/telemetry';
 
 export const maxDuration = 800; // 13 minutos aprox (Max for pro plan)
 export const dynamic = 'force-dynamic';
@@ -432,6 +433,8 @@ export async function GET(req: Request) {
       }
     }
 
+    recordTelemetry('cron', 'up', `Processed automations cron with ${results.length} results`, 100).catch(console.error);
+
     return NextResponse.json({
       message: `Processed ${results.length} automations`,
       results,
@@ -439,6 +442,7 @@ export async function GET(req: Request) {
 
   } catch (e: any) {
     console.error(`[Cron Auto] Error:`, e?.message || e);
+    recordTelemetry('cron', 'down', `Cron Auto failed: ${e?.message || 'Unknown error'}`, 0).catch(console.error);
     return NextResponse.json({ error: e?.message || 'Internal error' }, { status: 500 });
   }
 }

@@ -299,10 +299,13 @@ export function determineInstanceCapabilities(instance: any, use_sdk_tools: bool
   };
 }
 
+import { getComposioApiKeyForSite } from '@/lib/services/composio-service';
+import { composioActionTool } from '@/app/api/agents/tools/composio/assistantProtocol';
+
 /**
  * Helper to get all assistant tools including custom ones
  */
-export const getAssistantTools = (
+export const getAssistantTools = async (
   siteId: string,
   userId: string | undefined,
   instanceId: string,
@@ -387,6 +390,11 @@ export const getAssistantTools = (
     updateRepoTool(siteId, instanceId, userId),
     showArtifactTool(siteId, instanceId, userId ?? ''),
   ];
+
+  const composioKey = await getComposioApiKeyForSite(siteId);
+  if (composioKey) {
+    tools.push(composioActionTool(siteId, composioKey));
+  }
 
   if (agentType === 'gear') {
     let normalizedPhone: string | undefined = undefined;

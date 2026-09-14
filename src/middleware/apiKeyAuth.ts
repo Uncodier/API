@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ApiKeyService } from '@/lib/services/api-keys/ApiKeyService';
+import { recordTelemetry } from '@/lib/status/telemetry';
 
 export async function apiKeyAuth(req: NextRequest) {
   try {
@@ -66,6 +67,7 @@ export async function apiKeyAuth(req: NextRequest) {
     const serviceApiKey = process.env.SERVICE_API_KEY?.trim();
     if (serviceApiKey && apiKey === serviceApiKey) {
       console.log('[API Key Auth] Valid SERVICE_API_KEY detected');
+      recordTelemetry('api_auth', 'up', 'Service API Key used', 5).catch(console.error);
       // API key de servicio válida, dar acceso completo
       const serviceKeyData = {
         id: 'service-key',
@@ -86,10 +88,13 @@ export async function apiKeyAuth(req: NextRequest) {
 
     console.log('[API Key Auth] Validating API key against database');
     // Si no es el SERVICE_API_KEY, validar contra la base de datos
+    const startTime = Date.now();
     const { isValid, keyData } = await ApiKeyService.validateApiKey(apiKey);
+    const latency = Date.now() - startTime;
 
     if (!isValid) {
       console.log('[API Key Auth] Invalid API key');
+      recordTelemetry('api_auth', 'up', 'Invalid API key rejected', latency).catch(console.error);
       return NextResponse.json(
         {
           success: false,
@@ -107,6 +112,8 @@ export async function apiKeyAuth(req: NextRequest) {
       name: keyData.name,
       scopes: keyData.scopes
     });
+    
+    recordTelemetry('api_auth', 'up', 'Valid DB API key', latency).catch(console.error);
 
     // Verificar scopes si es necesario
     const requiredScope = req.headers.get('x-required-scope');
@@ -139,6 +146,7 @@ export async function apiKeyAuth(req: NextRequest) {
     });
   } catch (error) {
     console.error('[API Key Auth] Error in API key authentication:', error);
+    recordTelemetry('api_auth', 'down', error instanceof Error ? error.message : 'Unknown error', 0).catch(console.error);
     return NextResponse.json(
       {
         success: false,

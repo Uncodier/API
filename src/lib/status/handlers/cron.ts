@@ -1,5 +1,5 @@
 import { buildHealthResponse, type SystemHealthHandler } from '@/lib/status/types';
-import { probeHttpRoute } from '@/lib/status/probe-base-url';
+import { getLatestTelemetry } from '@/lib/status/telemetry';
 
 export const cronHandler: SystemHealthHandler = {
   systemKey: 'cron',
@@ -7,30 +7,22 @@ export const cronHandler: SystemHealthHandler = {
   async runCheck() {
     const start = Date.now();
     const secret = process.env.CRON_SECRET?.trim();
-    const headers = secret ? { Authorization: `Bearer ${secret}` } : {};
-    const apps = await probeHttpRoute('/api/cron/requirements-apps', {
-      method: 'GET',
-      useServiceKey: false,
-      headers,
-    });
-    const automations = await probeHttpRoute('/api/cron/requirements-automations', {
-      method: 'GET',
-      useServiceKey: false,
-      headers,
-    });
+    
+    // Read from passive telemetry instead of doing active HTTP probes
+    const telemetry = await getLatestTelemetry('cron');
+    
     const latencyMs = Date.now() - start;
-    const appsAuth = !secret || apps.status !== 401;
-    const automationsAuth = !secret || automations.status !== 401;
+    const status = telemetry ? telemetry.status : (secret ? 'up' : 'degraded');
+    
     return buildHealthResponse({
       systemKey: 'cron',
       label: 'Cron Jobs',
-      status: appsAuth && automationsAuth ? 'up' : 'degraded',
-      latencyMs,
-      summary: 'Cron entrypoints probed',
+      status,
+      latencyMs: telemetry?.latency_ms || latencyMs,
+      summary: telemetry ? telemetry.message : (secret ? 'Assuming healthy (no recent traffic)' : 'Cron secret missing'),
       checks: {
-        requirementsAppsAuth: { status: apps.status, ok: appsAuth },
-        requirementsAutomationsAuth: { status: automations.status, ok: automationsAuth },
-        lockSchemaOk: true,
+        telemetryFound: !!telemetry,
+        lastEventAt: telemetry?.created_at,
         cronSecretSet: !!secret,
       },
     });

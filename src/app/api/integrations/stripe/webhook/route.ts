@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/database/supabase-server'
 import { headers } from 'next/headers'
+import { recordTelemetry } from '@/lib/status/telemetry'
 
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY)
 
@@ -50,6 +51,7 @@ export async function POST(request: NextRequest) {
       signaturePresent: !!stripeSignature,
       webhookSecretConfigured: !!process.env.STRIPE_WEBHOOK_SECRET
     })
+    recordTelemetry('integrations', 'down', 'Stripe signature verification failed').catch(console.error)
     return NextResponse.json(
       { error: 'Webhook signature verification failed.' },
       { status: 400 }
@@ -71,9 +73,11 @@ export async function POST(request: NextRequest) {
         console.log(`Unhandled event type: ${event.type}`)
     }
 
+    recordTelemetry('integrations', 'up', `Processed Stripe Webhook: ${event.type}`).catch(console.error)
     return NextResponse.json({ received: true })
   } catch (error) {
     console.error('❌ Error processing webhook:', error)
+    recordTelemetry('integrations', 'down', 'Error processing Stripe webhook').catch(console.error)
     return NextResponse.json(
       { error: 'Webhook processing failed' },
       { status: 500 }

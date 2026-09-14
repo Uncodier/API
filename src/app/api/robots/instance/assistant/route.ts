@@ -7,7 +7,6 @@ import { runAssistantWorkflow } from './workflow';
 import { resetRequirementOnUserAction } from '@/lib/services/requirement-cron-reset';
 import {
   generateAgentBackground,
-  getAssistantTools,
   fetchMemoriesContext,
   ICP_CATEGORY_IDS_INSTRUCTION
 } from './utils';

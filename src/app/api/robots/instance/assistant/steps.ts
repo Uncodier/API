@@ -307,7 +307,7 @@ export async function prepareAssistantContext(
   
   // Get tools list just for counting/prompt purposes here
   // We do NOT pass these instantiated tools in the return value to avoid serialization issues
-  const toolsWithImageGeneration = getAssistantTools(siteId, userId, instanceId, customTools, agentType, userPhone);
+  const toolsWithImageGeneration = await getAssistantTools(siteId, userId, instanceId, customTools, agentType, userPhone);
   
   const assetsData = await InstanceAssetsService.getAssetsContext(instanceId);
   const assetsContext = assetsData.text;
@@ -529,7 +529,7 @@ export async function processAssistantTurn(
   'use step';
 
   // Re-instantiate tools here inside the step where they will be used
-  const fullTools = getAssistantTools(
+  const fullTools = await getAssistantTools(
     context.executionOptions.site_id,
     context.executionOptions.user_id,
     context.executionOptions.instance_id,

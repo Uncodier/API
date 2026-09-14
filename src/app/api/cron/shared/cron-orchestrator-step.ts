@@ -64,16 +64,16 @@ function collectToolCallSnapshots(messages: any[]): AssistantToolCallSnapshot[] 
   return out;
 }
 
-function getCronOrchestratorTools(
+async function getCronOrchestratorTools(
   sandboxTools: any[],
   siteId: string,
   instanceId: string,
   userId: string,
-): any[] {
+): Promise<any[]> {
   // getAssistantTools already prepends customTools, so passing sandboxTools
   // here makes sure skill_lookup + sandbox_* stay in the always-on bucket
   // after partitioning.
-  const allTools = getAssistantTools(siteId, userId, instanceId, sandboxTools);
+  const allTools = await getAssistantTools(siteId, userId, instanceId, sandboxTools);
   
   // Also, instance_plan must be available so orchestrator can adapt plans when failing gate
   return allTools;
@@ -213,7 +213,7 @@ export async function runOrchestratorStep(params: {
     cycle_baseline_at: cycleBaselineAt,
   });
 
-  const fullTools = getCronOrchestratorTools(sandboxTools, site_id, instanceId, user_id);
+  const fullTools = await getCronOrchestratorTools(sandboxTools, site_id, instanceId, user_id);
   const routedCount = fullTools.find((t: any) => t?.name === 'tools') ? 1 : 0;
   console.log(
     `[CronStep|orchestrator] Orchestrator tools visible to LLM: ${fullTools.length} (always-on + tools=${routedCount}). Routed tools are discoverable via tools.`,

@@ -5,6 +5,7 @@ import crypto from 'crypto';
 import { WhatsAppSendService } from '@/lib/services/whatsapp/WhatsAppSendService';
 import { CreditService } from '@/lib/services/billing/CreditService';
 import { transcribeAudioBuffer } from '@/lib/services/ai/transcribeAudio';
+import { recordTelemetry } from '@/lib/status/telemetry';
 
 export const maxDuration = 300;
 
@@ -523,12 +524,14 @@ export async function POST(request: NextRequest) {
     }
     
     // Return success
+    recordTelemetry('integrations', 'up', 'Processed WhatsApp Webhook').catch(console.error);
     return NextResponse.json(
       { success: true },
       { status: 200 }
     );
   } catch (error) {
     console.error('❌ Error al procesar webhook de WhatsApp:', error);
+    recordTelemetry('integrations', 'down', 'WhatsApp Webhook error').catch(console.error);
     return NextResponse.json(
       { success: false, error: 'Internal server error' },
       { status: 500 }

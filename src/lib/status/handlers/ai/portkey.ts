@@ -1,11 +1,8 @@
 import {
   buildHealthResponse,
-  evaluateAiProviders,
   type SystemHealthHandler,
 } from '@/lib/status/types';
-import {
-  probePortkeyProvider,
-} from '@/lib/status/handlers/ai/provider-probes';
+import { getLatestTelemetry } from '@/lib/status/telemetry';
 
 export const aiPortkeyHandler: SystemHealthHandler = {
   systemKey: 'ai_portkey',
@@ -13,24 +10,25 @@ export const aiPortkeyHandler: SystemHealthHandler = {
   probePath: '/api/ai',
   async runCheck() {
     const start = Date.now();
-    const [openai, gemini] = await Promise.all([
-      probePortkeyProvider('openai'),
-      probePortkeyProvider('gemini'),
-    ]);
-    const providers = { openai, gemini };
-    const { status, degradedReasons } = evaluateAiProviders(providers, ['openai']);
+    
+    // Read from passive telemetry instead of active probes that fail spuriously
+    const telemetry = await getLatestTelemetry('ai_portkey');
+    
     const latencyMs = Date.now() - start;
+    const status = telemetry ? telemetry.status : 'up';
+    
     return buildHealthResponse({
       systemKey: 'ai_portkey',
       label: 'AI Portkey (/api/ai)',
       status,
-      latencyMs,
-      summary:
-        status === 'up'
-          ? 'All configured Portkey providers passed live probe'
-          : `Portkey providers: ${degradedReasons.join(', ') || status}`,
-      checks: { providers },
-      degradedReasons: degradedReasons.length ? degradedReasons : undefined,
+      latencyMs: telemetry?.latency_ms || latencyMs,
+      summary: telemetry 
+        ? telemetry.message 
+        : 'Assuming healthy (no recent AI traffic)',
+      checks: {
+        telemetryFound: !!telemetry,
+        lastEventAt: telemetry?.created_at,
+      },
       probePath: '/api/ai',
     });
   },

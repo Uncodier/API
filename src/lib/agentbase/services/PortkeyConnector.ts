@@ -4,6 +4,7 @@
 import { PortkeyModelOptions, PortkeyConfig } from '../models/types';
 import Portkey from 'portkey-ai';
 import { AIGatewayService } from './AIGatewayService';
+import { recordTelemetry } from '@/lib/status/telemetry';
 import {
   isRateLimitError,
   isTimeoutOrConnectError,
@@ -253,6 +254,7 @@ export class PortkeyConnector {
 
               const duration = Date.now() - startTime;
               console.log(`[PortkeyConnector] Stream iniciado correctamente en ${duration}ms, devolviendo stream para procesamiento`);
+              recordTelemetry('ai_portkey', 'up', `Stream started for ${usedModel}`, duration).catch(console.error);
               console.log(`[PortkeyConnector] 🔍 Stream response type: ${typeof streamResponse}`);
               console.log(`[PortkeyConnector] 🔍 Stream response constructor: ${streamResponse?.constructor?.name}`);
               console.log(`[PortkeyConnector] 🔍 Stream has asyncIterator: ${!!streamResponse?.[Symbol.asyncIterator]}`);
@@ -355,6 +357,7 @@ export class PortkeyConnector {
               
               const duration = Date.now() - startTime;
               console.log(`[PortkeyConnector] LLM respondió exitosamente en ${duration}ms con ${content?.length || 0} caracteres`);
+              recordTelemetry('ai_portkey', 'up', `Successful call to ${usedModel}`, duration).catch(console.error);
               
               // Return standardized response format with model information
               return {
@@ -408,6 +411,7 @@ export class PortkeyConnector {
           aiGateway: this.aiGateway,
         });
         if (nonStreamFallback) {
+          recordTelemetry('ai_portkey', 'degraded', `Non-stream fallback used for ${usedModel}`, duration).catch(console.error);
           return nonStreamFallback;
         }
 
@@ -417,6 +421,7 @@ export class PortkeyConnector {
                               apiCallError.body?.error?.param?.error ||
                               apiCallError.message ||
                               'Rate limit exceeded';
+          recordTelemetry('ai_portkey', 'down', `Rate limit exceeded: ${errorMessage}`, duration).catch(console.error);
           throw new Error(`Rate limit exceeded: ${errorMessage}`);
         }
         
@@ -430,6 +435,7 @@ export class PortkeyConnector {
           portkey,
         });
         if (streamingFallback) {
+          recordTelemetry('ai_portkey', 'degraded', `Streaming fallback used for ${usedModel}`, duration).catch(console.error);
           return streamingFallback;
         }
         
@@ -455,9 +461,11 @@ export class PortkeyConnector {
             // Errors from AI Gateway would be thrown as exceptions, not contained in response body
             
             console.log(`✅ [PortkeyConnector] Fallback con AI Gateway exitoso`);
+            recordTelemetry('ai_portkey', 'degraded', `AI Gateway fallback used for ${usedModel}`, duration).catch(console.error);
             return fallbackResponse;
           } catch (fallbackError: any) {
             console.error(`❌ [PortkeyConnector] Fallback con AI Gateway también falló:`, fallbackError.message);
+            recordTelemetry('ai_portkey', 'down', `AI Gateway fallback failed: ${fallbackError.message}`, duration).catch(console.error);
             throw new Error(`Portkey y AI Gateway fallaron: ${apiCallError.message} | Fallback: ${fallbackError.message}`);
           }
         }
@@ -465,9 +473,11 @@ export class PortkeyConnector {
         // Check if it's a timeout error
         if (apiCallError.message?.includes('timeout') || apiCallError.code === 'timeout') {
           console.error(`⏰ [PortkeyConnector] TIMEOUT ERROR: LLM no respondió en tiempo esperado (${duration}ms)`);
+          recordTelemetry('ai_portkey', 'down', `Timeout: ${usedModel} (${duration}ms)`, duration).catch(console.error);
           throw new Error(`LLM Timeout: El modelo ${usedModel} no respondió en tiempo esperado (${duration}ms)`);
         }
         
+        recordTelemetry('ai_portkey', 'down', `Error: ${apiCallError.message}`, duration).catch(console.error);
         throw new Error(`Error calling ${provider} API: ${apiCallError.message}`);
       }
     } catch (error: any) {

@@ -7,13 +7,13 @@ import { Sandbox } from '@vercel/sandbox';
 import { getAssistantTools } from '@/app/api/robots/instance/assistant/utils';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
 
-function getMaintenanceTools(
+async function getMaintenanceTools(
   sandboxTools: any[],
   siteId: string,
   instanceId: string,
   userId: string,
-): any[] {
-  const allTools = getAssistantTools(siteId, userId, instanceId, sandboxTools);
+): Promise<any[]> {
+  const allTools = await getAssistantTools(siteId, userId, instanceId, sandboxTools);
   return allTools;
 }
 
@@ -79,7 +79,7 @@ export async function runMaintenanceAgentStep(params: {
     cycle_baseline_at: cycleBaselineAt,
   });
 
-  const fullTools = getMaintenanceTools(sandboxTools, site_id, instanceId, user_id);
+  const fullTools = await getMaintenanceTools(sandboxTools, site_id, instanceId, user_id);
 
   const MAX_TURNS = 25;
   let turns = 0;
