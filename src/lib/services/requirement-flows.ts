@@ -275,14 +275,44 @@ export function advancePhaseIfReadyInMemory(
   backlog: RequirementBacklog,
   flow: FlowDefinition,
 ): { to: FlowPhase; nextBacklog: RequirementBacklog } | null {
+  if (backlog.items.length === 0) return null; // never auto-advance an unseeded backlog
+
   const phaseId = backlog.current_phase_id || flow.phases[0]?.id;
   if (!phaseId) return null;
-  const inPhase = backlog.items.filter((i) => i.phase_id === phaseId);
-  if (inPhase.length === 0) return null; // never auto-advance an unseeded phase
-  const blocking = inPhase.filter((i) => !PHASE_TERMINAL_STATUSES.has(i.status));
-  if (blocking.length > 0) return null;
-  const idx = flow.phases.findIndex((p) => p.id === phaseId);
-  if (idx < 0 || idx >= flow.phases.length - 1) return null;
-  const to = flow.phases[idx + 1];
-  return { to, nextBacklog: { ...backlog, current_phase_id: to.id } };
+
+  let idx = flow.phases.findIndex((p) => p.id === phaseId);
+  if (idx < 0) return null;
+
+  let targetPhase: FlowPhase | null = null;
+
+  while (idx < flow.phases.length) {
+    const pId = flow.phases[idx].id;
+    const inPhase = backlog.items.filter((i) => i.phase_id === pId);
+    
+    // Si la fase actual (idx) tiene elementos bloqueantes, no podemos avanzar más allá de ella.
+    const blocking = inPhase.filter((i) => !PHASE_TERMINAL_STATUSES.has(i.status));
+    if (blocking.length > 0) {
+      break; 
+    }
+    
+    // Si llegamos a la última fase del flujo, no hay más a donde avanzar
+    if (idx >= flow.phases.length - 1) {
+      break;
+    }
+
+    // Como la fase actual está libre (o vacía, o todo terminal), probamos avanzar a la siguiente
+    idx++;
+    targetPhase = flow.phases[idx];
+    
+    // Y en la siguiente iteración del loop, verificaremos si *esa* fase destino
+    // está libre de elementos bloqueantes. Si tiene algo bloqueante, el loop hará `break`
+    // pero `targetPhase` ya se habrá actualizado a esta fase (lo cual es correcto, nos quedamos en ella).
+    // Si la fase está vacía o terminada, el loop continuará y buscará avanzar de nuevo.
+  }
+
+  if (targetPhase && targetPhase.id !== backlog.current_phase_id) {
+    return { to: targetPhase, nextBacklog: { ...backlog, current_phase_id: targetPhase.id } };
+  }
+
+  return null;
 }

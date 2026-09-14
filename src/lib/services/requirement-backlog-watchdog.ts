@@ -192,6 +192,15 @@ export async function ensureInProgressItem(params: {
   const active = backlog.items.find((i) => i.status === 'in_progress');
   if (active) return { promoted: null, reason: 'already_in_progress' };
 
+  // Phase self-healing: if the current phase is empty or all its items are terminal,
+  // we might need to advance the phase before looking for candidates.
+  const advance = advancePhaseIfReadyInMemory(backlog, flow);
+  if (advance) {
+    backlog.current_phase_id = advance.to.id;
+    await writeBacklog(params.requirementId, advance.nextBacklog);
+    console.log(`[Watchdog] Auto-advanced phase to ${advance.to.id} for requirement ${params.requirementId}`);
+  }
+
   const phaseId = backlog.current_phase_id || flow.phases[0]?.id || '';
   const terminalIds = new Set(
     backlog.items
