@@ -29,6 +29,12 @@ const LEAD_ALIAS_TO_CANONICAL: Record<string, string> = {
   'lead.title': 'lead.position',
   'lead.puesto': 'lead.position',
   'lead.cargo': 'lead.position',
+  'name': 'lead.name',
+  'firstname': 'lead.first_name',
+  'first_name': 'lead.first_name',
+  'email': 'lead.email',
+  'phone': 'lead.phone',
+  'company': 'lead.company',
   'site.site_name': 'site.name',
   'site.site': 'site.name',
 };
