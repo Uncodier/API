@@ -13,7 +13,7 @@ import {
   type FlowPhase,
   type RequirementKind,
 } from './requirement-flows';
-import { listBacklog, isBacklogComplete, outstandingGatingItems, type BacklogItem } from './requirement-backlog';
+import { listBacklog, isBacklogComplete, outstandingGatingItems, isItemTerminal, type BacklogItem } from './requirement-backlog';
 
 // `advancePhaseIfReadyInMemory` is re-exported from './requirement-flows' so
 // the backlog module can import it without creating a cycle with this file.
@@ -110,12 +110,12 @@ export async function canCloseRequirement(requirementId: string): Promise<{
   if (backlog.items.length === 0) {
     return { ok: false, reason: 'backlog empty — seed it before closing', pending_core: [] };
   }
-  const pending = outstandingGatingItems(backlog.items);
-  if (pending.length > 0) {
+  const allPending = backlog.items.filter((i) => !isItemTerminal(i.status) && i.status !== 'rejected');
+  if (allPending.length > 0) {
     return {
       ok: false,
-      reason: `${pending.length} gating item(s) still pending: ${pending.slice(0, 3).map((i) => i.title).join(' | ')}${pending.length > 3 ? ' …' : ''}`,
-      pending_core: pending,
+      reason: `${allPending.length} item(s) still pending (including ornamental): ${allPending.slice(0, 3).map((i) => i.title).join(' | ')}${allPending.length > 3 ? ' …' : ''}`,
+      pending_core: allPending,
     };
   }
   if (!isBacklogComplete(backlog.items)) {
