@@ -232,11 +232,15 @@ export class EmailSendService {
    * Construye el contenido HTML del email
    */
   private static buildHtmlContent(message: string, siteInfo: SiteInfo, signatureHtml?: string): string {
-    const contentHtml = this.renderMessageWithLists(message);
+    const isHtml = /<[a-z][\s\S]*>/i.test(message);
+    let htmlContent = isHtml ? message : this.renderMessageWithLists(message);
+    
+    // Si el contenido ya era HTML, no lo envolvemos en el div predeterminado para evitar romper diseños,
+    // a menos que queramos inyectar la firma. Para asegurar que la firma se agregue bien, lo envolvemos.
     return `
       <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; color: #333;">
         <div style="line-height: 1.6; font-size: 16px;">
-          ${contentHtml}
+          ${htmlContent}
         </div>
         ${signatureHtml ? `<div style="margin-top: 20px; font-size: 14px; color: #666;">${signatureHtml}</div>` : ''}
       </div>

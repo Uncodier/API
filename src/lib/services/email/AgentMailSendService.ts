@@ -42,7 +42,8 @@ export class AgentMailSendService {
     const targetEmail = email;
 
     // Prepare HTML content with signature
-    let htmlContent = html || EmailSendService.renderMessageWithLists(message);
+    const isHtmlInput = /<[a-z][\s\S]*>/i.test(message);
+    let htmlContent = html || (isHtmlInput ? message : EmailSendService.renderMessageWithLists(message));
     if (signatureHtml) {
       htmlContent = `
         <div style="font-family: sans-serif; line-height: 1.5;">
