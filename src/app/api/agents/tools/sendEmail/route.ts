@@ -147,23 +147,25 @@ export async function sendEmailCore(params: SendEmailCoreParams): Promise<SendEm
   const configuredEmail = siteSettings.channels?.email?.email;
 
   let trackingId: string | undefined;
-  try {
-    const { data: newMessage } = await supabaseAdmin
-      .from('messages')
-      .insert([{
-        conversation_id, lead_id, agent_id, content: effectiveMessage, role: 'assistant',
-        custom_data: {
-          subject: effectiveSubject,
-          recipient: email,
-          sender: configuredEmail || 'pending',
-          source: 'email_tool',
-        },
-      }])
-      .select('id')
-      .single();
-    if (newMessage) trackingId = newMessage.id;
-  } catch (err) {
-    console.warn(`[SEND_EMAIL] Tracking message error:`, err);
+  if (conversation_id) {
+    try {
+      const { data: newMessage } = await supabaseAdmin
+        .from('messages')
+        .insert([{
+          conversation_id, lead_id, agent_id, content: effectiveMessage, role: 'assistant',
+          custom_data: {
+            subject: effectiveSubject,
+            recipient: email,
+            sender: configuredEmail || 'pending',
+            source: 'email_tool',
+          },
+        }])
+        .select('id')
+        .single();
+      if (newMessage) trackingId = newMessage.id;
+    } catch (err) {
+      console.warn(`[SEND_EMAIL] Tracking message error:`, err);
+    }
   }
 
   if (isAgentEmailActive && process.env.AGENTMAIL_API_KEY) {

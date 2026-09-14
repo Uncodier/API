@@ -593,6 +593,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
              // Also add a requirement_status to make it visible in the UI
              await supabaseAdmin.from('requirement_status').insert({
                requirement_id: reqId,
+               site_id: site_id,
                instance_id: instanceId,
                stage: 'on-review',
                message: 'Project complete (all core backlog items done)',

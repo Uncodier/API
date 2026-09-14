@@ -271,6 +271,7 @@ export async function GET(req: Request) {
             
             await supabaseAdmin.from('requirement_status').insert({
                requirement_id: reqId,
+               site_id: site_id,
                instance_id: instanceId || null,
                stage: 'on-review',
                message: 'Project complete (auto-promoted after cooldown)',
@@ -433,6 +434,7 @@ export async function GET(req: Request) {
         try {
           await supabaseAdmin.from('requirement_status').insert({
             requirement_id: reqId,
+            site_id: site_id,
             instance_id: instanceId || null,
             stage: 'blocked',
             message: blockedMessage,
