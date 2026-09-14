@@ -77,39 +77,20 @@ export async function GET(req: Request) {
         const isComplete = isBacklogComplete(req.backlog?.items || []);
         const hasCoreOutstanding = outstandingGatingItems(req.backlog?.items || []).length > 0;
         
-        // Revert to in-progress if there is outstanding core work OR if ornamental items were added AFTER closure
-        // We detect post-closure additions by checking if there's any item updated more recently than the last 'terminal' status
+        // Revert to in-progress if there is outstanding work (core or ornamental)
+        // Note: For ornamental items, we still respect their max attempt limits indirectly: 
+        // the orchestrator / watchdog won't pick them up if they exhausted their attempts, 
+        // which will eventually stall the phase and trigger self-heal or review.
+        // However, if the requirement is marked 'on-review' or 'done' while there is still
+        // pending work (either core or ornamental), we should revert it to 'in-progress'
+        // so the agent has a chance to execute those items.
         if (['on-review', 'done'].includes(req.status) && hasOutstandingWork(req.backlog?.items || [])) {
-          const hasCoreOutstanding = outstandingGatingItems(req.backlog?.items || []).length > 0;
-          let shouldRevert = hasCoreOutstanding;
-          
-          if (!shouldRevert) {
-            const { data: lastStatus } = await supabaseAdmin
-              .from('requirement_status')
-              .select('created_at')
-              .eq('requirement_id', req.id)
-              .in('stage', ['on-review', 'done'])
-              .order('created_at', { ascending: false })
-              .limit(1)
-              .maybeSingle();
-              
-            const lastTerminalTime = lastStatus ? new Date(lastStatus.created_at).getTime() : Date.now();
-            const newestItemUpdate = Math.max(...(req.backlog?.items || []).map((i: any) => new Date(i.updated_at || i.created_at || 0).getTime()));
-            
-            shouldRevert = newestItemUpdate > lastTerminalTime;
-            
-            if (!lastStatus) {
-                shouldRevert = true;
-            }
-          }
+          let shouldRevert = true;
           
           if (shouldRevert) {
-            const reason = hasCoreOutstanding ? 'outstanding core items' : 'new ornamental items added after closure';
-            console.log(`[Cron Apps] Requirement ${req.id} is ${req.status} but has ${reason}. Reverting to in-progress.`);
+            console.log(`[Cron Apps] Requirement ${req.id} is ${req.status} but has outstanding items. Reverting to in-progress.`);
             await supabaseAdmin.from('requirements').update({ status: 'in-progress' }).eq('id', req.id);
             req.status = 'in-progress';
-          } else {
-            console.log(`[Cron Apps] Requirement ${req.id} has incomplete ornamental items but they pre-date closure. Ignoring.`);
           }
         }
         
