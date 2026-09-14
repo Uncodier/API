@@ -65,7 +65,7 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
     const willSaveContent = !!title && !!type;
     const willUpdateContent = !!content_id;
     const willPublishSocial = !!social_accounts && social_accounts.length > 0;
-    const willSendAudience = !!audience_id && !!channel;
+    const willSendAudience = (!!audience_id && !!channel) || (is_test && !!test_recipient && !!channel);
 
     if (!willSaveContent && !willUpdateContent && !willPublishSocial && !willSendAudience) {
       return { 
@@ -75,9 +75,16 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
     }
 
     // Validation 3: Channel specific
+    let finalSubject = subject;
     if (willSendAudience) {
-      if (channel === 'email' && !subject) {
-        return { success: false, error: 'Subject is required for email audience sending.' };
+      if (channel === 'email' && !finalSubject) {
+        if (title) {
+          finalSubject = title;
+        } else if (is_test) {
+          finalSubject = 'Test Email';
+        } else {
+          return { success: false, error: 'Subject is required for email audience sending.' };
+        }
       }
       if (audience_email_mode === 'newsletter' && channel !== 'email') {
         return {
@@ -211,7 +218,7 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
             const testEmailResult = await sendEmailCore({
               site_id: siteId,
               email: test_recipient,
-              subject: `[TEST] ${subject || 'Test Subject'}`,
+              subject: `[TEST] ${finalSubject || 'Test Subject'}`,
               message: publishText,
               from,
               instance_id: instanceId,
@@ -239,10 +246,10 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
           const bulkSender = sendBulkMessagesTool(siteId);
           
           const audienceResult = await bulkSender.execute({
-            audience_id,
+            audience_id: audience_id as string, // willSendAudience and !is_test ensures audience_id exists
             channel: channel as 'whatsapp' | 'email' | 'telegram' | 'sms' | 'voice',
             message: publishText, // We send the combined text + urls
-            ...(subject ? { subject } : {}),
+            ...(finalSubject ? { subject: finalSubject } : {}),
             ...(from ? { from } : {}),
             ...(audience_email_mode ? { audience_email_mode } : {}),
             ...(finalContentId ? { content_id: finalContentId } : {}),

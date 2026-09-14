@@ -117,7 +117,7 @@ export class WhatsAppSendService {
       const normalizedPhone = this.normalizePhoneNumber(validatedPhone);
 
       // Formatear el mensaje con información del sitio
-      const formattedMessage = this.formatMessage(message, siteInfo, from);
+      let formattedMessage = this.formatMessage(message, siteInfo, from);
 
       // ** NUEVA FUNCIONALIDAD: Verificar ventana de respuesta y usar templates si es necesario **
       console.log('🕐 [WhatsAppSendService] Verificando ventana de respuesta...');
