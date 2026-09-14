@@ -105,8 +105,7 @@ export async function runCronAutoWorkflow(input: CronAutoWorkflowInput) {
   let activeItems: any[] = [];
   if (reqContext.backlog?.items) {
     const { isBacklogComplete, isOrnamentalOnlyOutstanding, hasOutstandingWork } = require('@/lib/services/requirement-backlog');
-    isAllBacklogDone = isBacklogComplete(reqContext.backlog.items);
-    const trulyDone = isAllBacklogDone && !hasOutstandingWork(reqContext.backlog.items);
+    isAllBacklogDone = isBacklogComplete(reqContext.backlog.items) && !hasOutstandingWork(reqContext.backlog.items);
     isOrnamentalOnly = isOrnamentalOnlyOutstanding(reqContext.backlog.items);
 
     activeItems = reqContext.backlog.items.filter((i: any) =>
@@ -123,8 +122,8 @@ export async function runCronAutoWorkflow(input: CronAutoWorkflowInput) {
 
   // To ensure the orchestrator runs if there are no backlog items yet or they are all done
   // (so it can evaluate if new ones are needed based on recent instructions),
-  // we DO NOT skip the orchestrator if trulyDone is true OR if there are no items.
-  const isBacklogEmptyOrDone = !reqContext.backlog?.items || reqContext.backlog.items.length === 0 || trulyDone;
+  // we DO NOT skip the orchestrator if isAllBacklogDone is true OR if there are no items.
+  const isBacklogEmptyOrDone = !reqContext.backlog?.items || reqContext.backlog.items.length === 0 || isAllBacklogDone;
 
   const orchestratorPrompt = `You are an automation runner inside a Vercel Sandbox.
 

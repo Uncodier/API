@@ -129,8 +129,8 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   let hasRecentlyUpdatedActiveItems = false;
   let activeItems: any[] = [];
   if (reqContext.backlog?.items) {
-    const { isBacklogComplete, isOrnamentalOnlyOutstanding } = require('@/lib/services/requirement-backlog');
-    isAllBacklogDone = isBacklogComplete(reqContext.backlog.items);
+    const { isBacklogComplete, isOrnamentalOnlyOutstanding, hasOutstandingWork } = require('@/lib/services/requirement-backlog');
+    isAllBacklogDone = isBacklogComplete(reqContext.backlog.items) && !hasOutstandingWork(reqContext.backlog.items);
     isOrnamentalOnly = isOrnamentalOnlyOutstanding(reqContext.backlog.items);
 
     // Check for ANY active item, even if it has 0 attempts
@@ -581,9 +581,9 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     if (planCompleted) {
       // If we completed a plan AND all core items are now done, we can fast-track the requirement closure
       // without waiting for the next cron cycle to wake up the orchestrator
-      const { hasOutstandingWork } = require('@/lib/services/requirement-backlog');
+      const { isBacklogComplete, hasOutstandingWork } = require('@/lib/services/requirement-backlog');
       const reqContextAfter = await getRequirementFullContextStep(reqId, instanceId, site_id, user_id);
-      const trulyDone = isAllBacklogDone && !hasOutstandingWork(reqContextAfter.backlog?.items || []);
+      const trulyDone = isBacklogComplete(reqContextAfter.backlog?.items || []) && !hasOutstandingWork(reqContextAfter.backlog?.items || []);
       if (trulyDone) {
          console.log(`[CronAppsWorkflow] Plan completed and all backlog is done. Fast-tracking requirement to on-review.`);
            try {
