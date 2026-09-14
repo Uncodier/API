@@ -300,33 +300,12 @@ export async function GET(req: Request) {
 
         // Before deciding to skip, let's process the revert logic.
         // Si estaba en on-review o done, pero hay core pendiente o agregaron un nuevo item que no está completo, debe regresar a in-progress
+        // Edit: this duplicated block was ignoring our earlier changes and restoring the date-check logic.
         if (['on-review', 'done'].includes(currentReq.status) && hasOutstandingWork(requirement.backlog?.items || [])) {
-          const hasCoreOutstanding = outstandingGatingItems(requirement.backlog?.items || []).length > 0;
-          let shouldRevert = hasCoreOutstanding;
-          
-          if (!shouldRevert) {
-            const { data: lastStatus } = await supabaseAdmin
-              .from('requirement_status')
-              .select('created_at')
-              .eq('requirement_id', reqId)
-              .in('stage', ['on-review', 'done'])
-              .order('created_at', { ascending: false })
-              .limit(1)
-              .maybeSingle();
-              
-        const lastTerminalTime = lastStatus ? new Date(lastStatus.created_at).getTime() : Date.now();
-        const newestItemUpdate = Math.max(...(requirement.backlog?.items || []).map((i: any) => new Date(i.updated_at || i.created_at || 0).getTime()));
-        
-        shouldRevert = newestItemUpdate > lastTerminalTime;
-        
-        if (!lastStatus) {
-            shouldRevert = true;
-        }
-          }
+          let shouldRevert = true;
           
           if (shouldRevert) {
-            const reason = hasCoreOutstanding ? 'outstanding core items' : 'incomplete ornamental items added after closure';
-            console.log(`[Cron Apps] Requirement ${reqId} is ${currentReq.status} but has ${reason}. Reverting to in-progress.`);
+            console.log(`[Cron Apps] Requirement ${reqId} is ${currentReq.status} but has outstanding work. Reverting to in-progress.`);
             await supabaseAdmin.from('requirements').update({ status: 'in-progress' }).eq('id', reqId);
             requirement.status = 'in-progress';
             currentReq.status = 'in-progress';
