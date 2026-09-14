@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { fetchTwilioMedia, isTwilioMediaUrl } from '@/lib/services/twilio/fetchTwilioMedia';
+import { recordTelemetry } from '@/lib/status/telemetry';
 
 export const WHISPER_MODEL = 'whisper-1';
 
@@ -207,11 +208,13 @@ export async function transcribeAudioBuffer(
   }
 
   let lastError: Error | undefined;
+  const start = Date.now();
   for (const attempt of plan) {
     try {
       console.log(`${LOG_PREFIX} Attempting transcription via ${attempt.provider} (${attempt.model})...`);
       const text = await runAttempt(attempt, input.buffer, mimeType, fileExt, env);
       console.log(`${LOG_PREFIX} ${attempt.provider} transcription successful.`);
+      recordTelemetry('ai_audio', 'up', `Transcription successful via ${attempt.provider}`, Date.now() - start).catch(console.error);
       return {
         success: true,
         text,
@@ -224,6 +227,7 @@ export async function transcribeAudioBuffer(
     }
   }
 
+  recordTelemetry('ai_audio', 'down', `All providers failed: ${lastError?.message || 'unknown error'}`, Date.now() - start).catch(console.error);
   return {
     success: false,
     error: `All audio transcription providers failed. Last error: ${lastError?.message || 'unknown error'}`,

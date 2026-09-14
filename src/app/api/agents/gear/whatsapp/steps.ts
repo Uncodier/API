@@ -346,13 +346,26 @@ export async function sendWhatsAppResponse(
   'use step';
   
   let formattedMessage = formatMarkdownForWhatsApp(message);
-  let finalMediaUrls = mediaUrls;
+  let finalMediaUrls = mediaUrls || [];
+  
+  // EXTRACCIÓN DE URL PARA AUDIOS GENERADOS POR EL AGENTE
+  const extractedUrlRegex = /(https?:\/\/[^\s]+?\/storage\/v1\/object\/public\/[^\s]+?\.(?:wav|mp3|ogg))/i;
+  const urlMatch = formattedMessage.match(extractedUrlRegex);
+  
+  if (urlMatch && urlMatch[1]) {
+    console.log(`🎵 [GearAgent] Se detectó URL de audio en el mensaje: ${urlMatch[1]}`);
+    finalMediaUrls.push(urlMatch[1]);
+    formattedMessage = formattedMessage.replace(extractedUrlRegex, '').trim();
+    if (formattedMessage.length < 25 || formattedMessage.toLowerCase().includes('aquí está tu audio')) {
+       formattedMessage = ''; 
+    }
+  }
   
   const audioReply = await tryPrepareLongReplyAudio({
     siteId,
     channel: 'whatsapp',
-    text: message,
-    existingMediaUrls: mediaUrls
+    text: formattedMessage || message,
+    existingMediaUrls: finalMediaUrls.length > 0 ? finalMediaUrls : undefined
   });
   
   if (audioReply) {

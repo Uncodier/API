@@ -122,26 +122,47 @@ export class ChannelSendService {
       }
 
       // Check if we should send this long reply as audio
+      let finalMessage = params.message;
+      let audioUrlToAttach: string | undefined = undefined;
+
+      // EXTRACCIÓN DE URL PARA AUDIOS GENERADOS POR EL AGENTE
+      const extractedUrlRegex = /(https?:\/\/[^\s]+?\/storage\/v1\/object\/public\/[^\s]+?\.(?:wav|mp3|ogg))/i;
+      const urlMatch = finalMessage.match(extractedUrlRegex);
+      
+      if (urlMatch && urlMatch[1]) {
+        console.log(`🎵 [ChannelSendService] Se detectó URL de audio en el mensaje: ${urlMatch[1]}`);
+        audioUrlToAttach = urlMatch[1];
+        finalMessage = finalMessage.replace(extractedUrlRegex, '').trim();
+        if (finalMessage.length < 25 || finalMessage.toLowerCase().includes('aquí está tu audio')) {
+           finalMessage = ''; 
+        }
+      }
+
       const audioReply = await tryPrepareLongReplyAudio({
         siteId: params.site_id,
         channel: params.channel,
-        text: params.message
+        text: finalMessage,
+        existingMediaUrls: audioUrlToAttach ? [audioUrlToAttach] : undefined
       });
+      
+      const finalAudioUrl = audioReply?.audioUrl || audioUrlToAttach;
+      const finalMimeType = audioReply?.mimeType || (audioUrlToAttach?.endsWith('.wav') ? 'audio/wav' : 'audio/mpeg');
 
       let result;
-      if (audioReply) {
+      if (finalAudioUrl) {
         result = await sendChannelMessage({
           to: params.to,
           channel: params.channel,
           senderId: connection.zavu_sender_id,
           messageType: 'audio',
-          content: { mediaUrl: audioReply.audioUrl, mimeType: audioReply.mimeType },
+          content: { mediaUrl: finalAudioUrl, mimeType: finalMimeType },
           subject: params.subject
         });
+        // Si sobró texto después de enviar el audio, tal vez Zavu permita mandarlo en otra llamada (fuera del scope por ahora, mandamos solo audio o texto vacío)
       } else {
         result = await sendChannelMessage({
           to: params.to,
-          text: params.message,
+          text: finalMessage,
           channel: params.channel,
           senderId: connection.zavu_sender_id,
           subject: params.subject

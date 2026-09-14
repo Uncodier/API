@@ -141,6 +141,25 @@ export class WhatsAppSendService {
       let templateUsed = false;
       let templateSid: string | undefined;
 
+      // EXTRACCIÓN DE URL PARA AUDIOS GENERADOS POR EL AGENTE
+      // Si el agente incluyó directamente una URL de audio en el texto, extraemos la URL 
+      // y la enviamos como un archivo multimedia adjunto.
+      let finalMediaUrls = params.media_urls || [];
+      const extractedUrlRegex = /(https?:\/\/[^\s]+?\/storage\/v1\/object\/public\/[^\s]+?\.(?:wav|mp3|ogg))/i;
+      const urlMatch = message.match(extractedUrlRegex);
+      
+      if (urlMatch && urlMatch[1]) {
+        console.log(`🎵 [WhatsAppSendService] Se detectó URL de audio en el mensaje: ${urlMatch[1]}`);
+        finalMediaUrls.push(urlMatch[1]);
+        // Limpiamos el mensaje original quitando la URL si está sola o adaptando el texto
+        formattedMessage = formattedMessage.replace(extractedUrlRegex, '').trim();
+        // Si después de quitar la URL quedó muy corto (o era solo un "Aquí está tu audio:"), 
+        // podríamos dejarlo vacío para que se envíe solo el audio.
+        if (formattedMessage.length < 25 || formattedMessage.toLowerCase().includes('aquí está tu audio')) {
+           formattedMessage = ''; 
+        }
+      }
+
       if (!windowCheck.withinWindow) {
         // Fuera de ventana de respuesta - retornar que se requiere template
         console.log('📝 [WhatsAppSendService] Fuera de ventana de respuesta, se requiere template...');
@@ -177,13 +196,12 @@ export class WhatsAppSendService {
         
         // Verificar si es un mensaje largo que se debe enviar como audio
         let finalMessage = formattedMessage;
-        let finalMediaUrls = params.media_urls;
         
         const audioReply = await tryPrepareLongReplyAudio({
           siteId: site_id,
           channel: 'whatsapp',
-          text: message,
-          existingMediaUrls: params.media_urls
+          text: finalMessage, // Use finalMessage in case we already cleared it above
+          existingMediaUrls: finalMediaUrls
         });
         
         if (audioReply) {
@@ -197,7 +215,7 @@ export class WhatsAppSendService {
           accountSid: whatsappConfig.phoneNumberId,
           authToken: whatsappConfig.accessToken,
           fromNumber: whatsappConfig.fromNumber,
-          mediaUrls: finalMediaUrls,
+          mediaUrls: finalMediaUrls.length > 0 ? finalMediaUrls : undefined,
           messagingServiceSid: whatsappConfig.messagingServiceSid,
         });
         
