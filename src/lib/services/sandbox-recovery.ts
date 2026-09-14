@@ -84,10 +84,15 @@ export async function connectOrRecreateRequirementSandbox(params: {
       await warmStartNamedSandbox(sandbox, requirementId, instanceType, { syncToOrigin: false }).catch((e) => {
         console.warn('[Sandbox] connect warm-start skipped:', e instanceof Error ? e.message : e);
       });
-      const branchName = await SandboxService.getCurrentBranch(sandbox);
-      return { sandbox, sandboxId, recovered: false, branchName };
+      try {
+        const branchName = await SandboxService.getCurrentBranch(sandbox);
+        return { sandbox, sandboxId, recovered: false, branchName };
+      } catch (e: unknown) {
+        console.warn(`[Sandbox] connect failed to get branch, forcing reprovision:`, e instanceof Error ? e.message : e);
+      }
+    } else {
+      console.warn(`[Sandbox] Fatal nested layout on ${sandboxId}: ${ping.reason}`);
     }
-    console.warn(`[Sandbox] Fatal nested layout on ${sandboxId}: ${ping.reason}`);
   }
 
   // If the provided sandboxId failed, check if the DB has a newer active_sandbox_id
@@ -112,8 +117,12 @@ export async function connectOrRecreateRequirementSandbox(params: {
           await warmStartNamedSandbox(dbSandbox, requirementId, instanceType, { syncToOrigin: false }).catch((e) => {
             console.warn('[Sandbox] connect warm-start skipped:', e instanceof Error ? e.message : e);
           });
-          const branchName = await SandboxService.getCurrentBranch(dbSandbox);
-          return { sandbox: dbSandbox, sandboxId: reqStatus.active_sandbox_id, recovered: true, branchName };
+          try {
+            const branchName = await SandboxService.getCurrentBranch(dbSandbox);
+            return { sandbox: dbSandbox, sandboxId: reqStatus.active_sandbox_id, recovered: true, branchName };
+          } catch (e: unknown) {
+            console.warn(`[Sandbox] DB active sandbox failed to get branch, forcing reprovision:`, e instanceof Error ? e.message : e);
+          }
         }
       }
     }

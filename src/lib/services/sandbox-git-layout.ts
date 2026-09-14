@@ -70,9 +70,9 @@ export async function verifyPlatformGitLayout(
   return { ok: true };
 }
 
-/** Nested under app/ is unrecoverable. "not a git work tree" after resume is transient. */
+/** Nested under app/ is unrecoverable. 410/404/no snapshot are fatal VM errors. "not a git work tree" after resume is transient. */
 export function isFatalGitLayoutReason(reason: string): boolean {
-  return /lives under app\/|nested under app\//i.test(reason);
+  return /lives under app\/|nested under app\//i.test(reason) || /410|404|no snapshot|cannot resume/i.test(reason);
 }
 
 export async function assertPlatformGitLayout(sandbox: Sandbox): Promise<void> {

@@ -119,7 +119,18 @@ async function tryReuseExistingSandbox(
       e instanceof Error ? e.message : e,
     );
   });
-  const branchName = await SandboxService.getCurrentBranch(sandbox);
+  
+  let branchName: string;
+  try {
+    branchName = await SandboxService.getCurrentBranch(sandbox);
+  } catch (e: unknown) {
+    console.warn(
+      `[CronStep] Failed to get branch on ${idOrName} (sandbox dead?), forcing reprovision:`,
+      e instanceof Error ? e.message : e,
+    );
+    return null;
+  }
+
   console.log(`[CronStep] Reusing sandbox ${idOrName} (ping=${ping.ok ? 'ok' : ping.reason || 'fail'})`);
   return {
     sandboxId: sandboxIdentity(sandbox) || idOrName,
