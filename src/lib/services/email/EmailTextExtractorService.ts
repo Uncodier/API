@@ -241,8 +241,9 @@ export class EmailTextExtractorService {
   /**
    * Limpia el asunto del email
    */
-  private static cleanSubject(subject: string): string {
-    return subject
+  private static cleanSubject(subject: any): string {
+    if (!subject) return '';
+    return String(subject)
       .replace(/^(Re:|RE:|Fwd:|FWD:|Fw:)\s*/gi, '') // Eliminar prefijos de respuesta/reenvío
       .replace(/\[.*?\]/g, '') // Eliminar contenido entre corchetes
       .trim();
@@ -251,10 +252,25 @@ export class EmailTextExtractorService {
   /**
    * Extrae dirección de email limpia
    */
-  private static extractEmailAddress(emailField: string): string {
+  private static extractEmailAddress(emailField: any): string {
+    if (!emailField) return '';
+    
+    // Si es un arreglo, tomar el primer elemento
+    if (Array.isArray(emailField)) {
+      emailField = emailField.length > 0 ? emailField[0] : '';
+    }
+    
+    // Si es un objeto, intentar extraer el campo email o address
+    if (typeof emailField === 'object' && emailField !== null) {
+      emailField = emailField.email || emailField.address || emailField.text || JSON.stringify(emailField);
+    }
+    
+    // Convertir a string por seguridad
+    const emailStr = String(emailField);
+    
     const emailRegex = /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/;
-    const match = emailField.match(emailRegex);
-    return match ? match[1] : emailField.trim();
+    const match = emailStr.match(emailRegex);
+    return match ? match[1] : emailStr.trim();
   }
 
   /**

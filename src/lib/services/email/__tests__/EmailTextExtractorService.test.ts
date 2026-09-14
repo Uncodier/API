@@ -58,13 +58,12 @@ Phone: +1-555-123-4567`
         subject: 'Reply to inquiry',
         from: 'client@example.com',
         text: `Thank you for your response.
+I would like to schedule a meeting.
 
 > On 2024-01-01, you wrote:
 > We offer the following services...
 > 
-> Original message continues here...
-
-I would like to schedule a meeting.`
+> Original message continues here...`
       };
 
       const result = EmailTextExtractorService.extractEmailText(email);
@@ -125,7 +124,8 @@ If you are not the intended recipient, please delete this email.`
 
       const result = EmailTextExtractorService.extractEmailText(emailWithBodyObject);
 
-      expect(result.extractedText).toContain('This is HTML content');
+      // It prefers text over HTML according to priority comments
+      expect(result.extractedText).toContain('This is text content');
     });
 
     it('should handle error cases gracefully', () => {

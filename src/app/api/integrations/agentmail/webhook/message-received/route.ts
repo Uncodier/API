@@ -74,7 +74,17 @@ export async function POST(request: NextRequest) {
     let name: string | undefined;
 
     if (message.from) {
-      const fromMatch = message.from.match(/^(.+?)\s*<(.+?)>$|^(.+?)$/);
+      // Ensure we have a string to match against
+      let fromStr = '';
+      if (typeof message.from === 'string') {
+        fromStr = message.from;
+      } else if (Array.isArray(message.from) && message.from.length > 0) {
+        fromStr = typeof message.from[0] === 'string' ? message.from[0] : JSON.stringify(message.from[0]);
+      } else if (typeof message.from === 'object') {
+        fromStr = message.from.email || message.from.address || message.from.text || JSON.stringify(message.from);
+      }
+
+      const fromMatch = fromStr.match(/^(.+?)\s*<(.+?)>$|^(.+?)$/);
       if (fromMatch) {
         if (fromMatch[2]) {
           // Format: "Name <email@example.com>"
@@ -93,7 +103,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Check if message is intended for Gear System directly
-    if (message.inbox_id && message.inbox_id.toLowerCase() === 'gear@makinari.email') {
+    if (message.inbox_id && String(message.inbox_id).toLowerCase() === 'gear@makinari.email') {
       console.log(`⚙️ [AgentMail] Intercepted message for gear@makinari.email`);
       
       // We process the email just like a Gear WhatsApp message
@@ -133,9 +143,10 @@ export async function POST(request: NextRequest) {
       } else {
         console.warn(`⚠️ [AgentMail] inbox_id not found in settings: ${message.inbox_id}`);
         
-        // If inbox_id lookup failed, try to find by domain
+        // Si inbox_id lookup failed, try to find by domain
         // Extract domain from inbox_id (format: username@domain.com)
-        const domainMatch = message.inbox_id.match(/@(.+)$/);
+        const inboxIdStr = String(message.inbox_id);
+        const domainMatch = inboxIdStr.match(/@(.+)$/);
         if (domainMatch && domainMatch[1]) {
           const domain = domainMatch[1].toLowerCase().trim();
           console.log(`🔍 [AgentMail] Trying to find site_id by domain: ${domain}`);
