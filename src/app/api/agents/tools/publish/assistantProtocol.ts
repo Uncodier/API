@@ -215,6 +215,12 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
           if (test_recipient) {
             // Dispatch a single test message
           if (channel === 'email') {
+            let emailText = publishText;
+            if (audience_email_mode === 'newsletter') {
+               // Newsletter expects HTML via 'message', or Outstand API call?
+               // Wait, 'sendEmailCore' handles plain text or basic HTML in 'message' parameter. 
+               // For newsletter layout, we might need a template, but basic publishText works.
+            }
             const testEmailResult = await sendEmailCore({
               site_id: siteId,
               email: test_recipient,
@@ -224,7 +230,7 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
               instance_id: instanceId,
               omit_signature: audience_email_mode === 'newsletter'
             });
-            results.audience = { success: testEmailResult.success, simulated: true, type: 'single_test_send', result: testEmailResult };
+            results.audience = { success: testEmailResult.success, type: 'single_test_send', result: testEmailResult };
             if (!testEmailResult.success) results.success = false;
           } else if (channel === 'whatsapp' || channel === 'sms') {
             const testWaResult = await WhatsAppSendService.sendMessage({
