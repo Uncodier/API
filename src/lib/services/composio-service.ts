@@ -3,6 +3,9 @@
  * v1 endpoints (e.g. GET /api/v1/apps) return 410 Gone.
  */
 
+import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { decryptToken } from '@/lib/utils/token-decryption';
+
 const COMPOSIO_BASE_URL = 'https://backend.composio.dev/api/v3.1';
 const TOOLKITS_PAGE_LIMIT = 1000;
 const MAX_TOOLKIT_PAGES = 20;
@@ -94,28 +97,39 @@ export function mapComposioAuthConfigToIntegration(authConfig: ComposioAuthConfi
   };
 }
 
+export async function getComposioApiKeyForSite(siteId: string): Promise<string | null> {
+  const { data, error } = await supabaseAdmin
+    .from('site_secrets')
+    .select('encrypted_value')
+    .eq('site_id', siteId)
+    .eq('provider', 'composio')
+    .single();
+
+  if (error || !data || !data.encrypted_value) {
+    return null;
+  }
+
+  return decryptToken(data.encrypted_value);
+}
+
 export class ComposioService {
   private static baseUrl = COMPOSIO_BASE_URL;
 
-  private static get apiKey() {
-    return process.env.COMPOSIO_PROJECT_API_KEY || '';
+  static hasValidApiKey(apiKey: string) {
+    return !!apiKey;
   }
 
-  static hasValidApiKey() {
-    return !!this.apiKey;
-  }
-
-  private static requestHeaders() {
+  private static requestHeaders(apiKey: string) {
     return {
-      'x-api-key': this.apiKey,
+      'x-api-key': apiKey,
       'Content-Type': 'application/json',
     };
   }
 
-  private static assertApiKey() {
-    if (!this.hasValidApiKey()) {
-      console.error('[ComposioService] API key is missing. Please check your environment variables.');
-      throw new Error('Composio API key is not configured.');
+  private static assertApiKey(apiKey: string) {
+    if (!this.hasValidApiKey(apiKey)) {
+      console.error('[ComposioService] API key is missing.');
+      throw new Error('Composio API key is not provided.');
     }
   }
 
@@ -126,12 +140,12 @@ export class ComposioService {
     });
   }
 
-  private static async requestJson<T>(url: string, label: string): Promise<T> {
+  private static async requestJson<T>(url: string, label: string, apiKey: string): Promise<T> {
     console.log(`[ComposioService] Calling URL: ${url}`);
 
     const response = await fetch(url, {
       method: 'GET',
-      headers: this.requestHeaders(),
+      headers: this.requestHeaders(apiKey),
       cache: 'no-store' as RequestCache,
       next: { revalidate: 0 },
     });
@@ -155,13 +169,13 @@ export class ComposioService {
   /**
    * Get all available apps (toolkits) from Composio.
    */
-  static async getIntegrations() {
+  static async getIntegrations(apiKey: string) {
     console.log('[ComposioService] Getting integrations');
     console.log(`[ComposioService] Base URL: ${this.baseUrl}`);
-    console.log(`[ComposioService] API Key available: ${!!this.apiKey}`);
-    console.log(`[ComposioService] API Key length: ${this.apiKey?.length || 0}`);
+    console.log(`[ComposioService] API Key available: ${!!apiKey}`);
+    console.log(`[ComposioService] API Key length: ${apiKey?.length || 0}`);
 
-    this.assertApiKey();
+    this.assertApiKey(apiKey);
 
     try {
       const toolkits: ComposioToolkit[] = [];
@@ -177,6 +191,7 @@ export class ComposioService {
         const data = await this.requestJson<ToolkitsPage>(
           `${this.baseUrl}/toolkits?${params.toString()}`,
           'apps',
+          apiKey
         );
         toolkits.push(...(data.items ?? []));
 
@@ -197,18 +212,19 @@ export class ComposioService {
   /**
    * Get a toolkit by slug or an auth config by id.
    */
-  static async getIntegrationById(integrationId: string) {
+  static async getIntegrationById(integrationId: string, apiKey: string) {
     console.log(`[ComposioService] Getting integration by ID: ${integrationId}`);
-    console.log(`[ComposioService] API Key available: ${!!this.apiKey}`);
-    console.log(`[ComposioService] API Key length: ${this.apiKey?.length || 0}`);
+    console.log(`[ComposioService] API Key available: ${!!apiKey}`);
+    console.log(`[ComposioService] API Key length: ${apiKey?.length || 0}`);
 
-    this.assertApiKey();
+    this.assertApiKey(apiKey);
 
     try {
       if (integrationId.startsWith('ac_')) {
         const authConfig = await this.requestJson<ComposioAuthConfig>(
           `${this.baseUrl}/auth_configs/${encodeURIComponent(integrationId)}`,
           'integration',
+          apiKey
         );
         console.log('[ComposioService] Successfully fetched auth config details');
         return mapComposioAuthConfigToIntegration(authConfig);
@@ -217,6 +233,7 @@ export class ComposioService {
       const toolkit = await this.requestJson<ComposioToolkit>(
         `${this.baseUrl}/toolkits/${encodeURIComponent(integrationId)}`,
         'integration',
+        apiKey
       );
       console.log('[ComposioService] Successfully fetched toolkit details');
       return mapComposioToolkitToApp(toolkit);
@@ -229,5 +246,5 @@ export class ComposioService {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { ComposioService, mapComposioToolkitToApp, mapComposioAuthConfigToIntegration };
+  module.exports = { ComposioService, mapComposioToolkitToApp, mapComposioAuthConfigToIntegration, getComposioApiKeyForSite };
 }

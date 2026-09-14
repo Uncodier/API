@@ -20,9 +20,14 @@ export async function deleteSandboxAndOrphans(idOrName: string): Promise<void> {
     }
     await stopSandboxQuiet(sandbox);
   } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.includes('not found') || msg.includes('404')) {
+      // It's already gone or never existed, which is fine for cleanup
+      return;
+    }
     console.warn(
       `[Sandbox] deleteSandboxAndOrphans skipped for ${id}:`,
-      e instanceof Error ? e.message : e,
+      msg,
     );
   }
 }

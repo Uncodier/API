@@ -87,7 +87,7 @@ describe('ComposioService', () => {
       json: async () => ({ items: [githubToolkit], next_cursor: null }),
     });
 
-    const apps = await ComposioService.getIntegrations();
+    const apps = await ComposioService.getIntegrations('test-composio-key');
 
     expect(global.fetch).toHaveBeenCalledWith(
       'https://backend.composio.dev/api/v3.1/toolkits?limit=1000&sort_by=alphabetically',
@@ -121,7 +121,7 @@ describe('ComposioService', () => {
         }),
       });
 
-    const apps = await ComposioService.getIntegrations();
+    const apps = await ComposioService.getIntegrations('test-composio-key');
 
     expect(global.fetch).toHaveBeenCalledTimes(2);
     expect(global.fetch).toHaveBeenNthCalledWith(
@@ -140,7 +140,7 @@ describe('ComposioService', () => {
       json: async () => ({ error: 'This endpoint is no longer available. Please upgrade to v3 APIs. ' }),
     });
 
-    await expect(ComposioService.getIntegrations()).rejects.toThrow(/410 Gone/);
+    await expect(ComposioService.getIntegrations('test-composio-key')).rejects.toThrow(/410 Gone/);
   });
 
   it('fetches a toolkit by slug', async () => {
@@ -151,7 +151,7 @@ describe('ComposioService', () => {
       json: async () => githubToolkit,
     });
 
-    const app = await ComposioService.getIntegrationById('github');
+    const app = await ComposioService.getIntegrationById('github', 'test-composio-key');
 
     expect(global.fetch).toHaveBeenCalledWith(
       'https://backend.composio.dev/api/v3.1/toolkits/github',
@@ -174,7 +174,7 @@ describe('ComposioService', () => {
       }),
     });
 
-    const integration = await ComposioService.getIntegrationById('ac_123');
+    const integration = await ComposioService.getIntegrationById('ac_123', 'test-composio-key');
 
     expect(global.fetch).toHaveBeenCalledWith(
       'https://backend.composio.dev/api/v3.1/auth_configs/ac_123',

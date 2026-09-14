@@ -38,18 +38,6 @@ export async function GET(req: Request) {
   }
 
   try {
-    console.log('[Cron Apps] cron debug env', {
-      supabaseHost: getSupabaseUrlHostForLogs(),
-      supabaseServiceUrlFromEnv: Boolean(process.env.SUPABASE_URL),
-      hasServiceRoleKey: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY),
-      keyStart: process.env.SUPABASE_SERVICE_ROLE_KEY?.substring(0, 15),
-      keyEnd: process.env.SUPABASE_SERVICE_ROLE_KEY?.slice(-10),
-      keyLength: process.env.SUPABASE_SERVICE_ROLE_KEY?.length,
-      vercelEnv: process.env.VERCEL_ENV ?? 'local',
-      vercelUrl: process.env.VERCEL_URL ?? null,
-      requestUrl: req.url,
-    });
-
     const oneMonthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
     
     // Auto-sanitization pass: detects and repairs requirements that were marked 'on-review' 
@@ -134,22 +122,11 @@ export async function GET(req: Request) {
     for (const requirement of requirements) {
       const { id: reqId, title, instructions, type, site_id, user_id } = requirement;
       let instanceId: string | undefined = requirement.metadata?.runner_instance_id;
-      
-      console.log('[Cron Apps] cron debug pick', {
-        reqId,
-        status: requirement.status,
-        type,
-      });
 
       // Per-requirement advisory lock: prevents two overlapping ticks from
       // launching parallel workflows on the same requirement. Without this we
       // hit `! [rejected] non-fast-forward` on push and clobber sandbox files.
       const runLock = await acquireRunLock(reqId);
-      console.log('[Cron Apps] cron debug lock', {
-        reqId,
-        acquired: runLock != null,
-        runId: runLock?.runId ?? null,
-      });
       if (!runLock) {
         console.log(`[Cron Apps] Skipping ${reqId} — another workflow is already running (lock held)`);
         results.push({

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { ComposioService } from '@/lib/services/composio-service';
+import { ComposioService, getComposioApiKeyForSite } from '@/lib/services/composio-service';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,15 +15,6 @@ export async function GET(request: NextRequest) {
   
   console.log(`[API] Starting Composio integration request for ID: ${id}`);
   
-  // Try to get API key from multiple sources
-  const apiKey = process.env.COMPOSIO_PROJECT_API_KEY || 
-                 process.env.NEXT_PUBLIC_COMPOSIO_PROJECT_API_KEY || 
-                 'du48sq2qy07vkyhm8v9v8g'; // Fallback to hardcoded value if not set
-  
-  console.log(`[API] API Key available: ${!!apiKey}`);
-  console.log(`[API] API Key length: ${apiKey?.length || 0}`);
-  console.log(`[API] Environment mode: ${process.env.NODE_ENV}`);
-
   if (!id) {
     console.error('[API] Missing integration ID in request');
     return NextResponse.json(
@@ -36,51 +27,59 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // Check if API key is available
-  if (!apiKey) {
-    console.error('[API] Missing Composio API Key in environment variables');
-    
-    // Return mock data in development mode
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[API] Returning mock data for development');
-      return NextResponse.json({
-        success: true,
-        data: {
-          id: id,
-          name: `Mock Integration ${id}`,
-          description: 'This is a mock integration for development',
-          appName: 'Mock App',
-          appId: 'mock-app-1',
-          enabled: true,
-          authScheme: 'oauth2',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          connections: [],
-          member: {
-            id: 'mock-member-id',
-            name: 'Mock User',
-            email: 'mock@example.com'
-          }
-        },
-        mock: true,
-        note: 'Using mock data because COMPOSIO_PROJECT_API_KEY is not configured'
-      });
+  // Extract site_id
+  let site_id = url.searchParams.get('site_id') || request.headers.get('x-site-id');
+  
+  if (!site_id) {
+    try {
+      const apiKeyDataStr = request.headers.get('x-api-key-data');
+      if (apiKeyDataStr) {
+        const apiKeyData = JSON.parse(apiKeyDataStr);
+        if (apiKeyData.site_id) {
+          site_id = apiKeyData.site_id;
+        }
+      }
+    } catch (e) {
+      console.warn('[API] Failed to parse x-api-key-data', e);
     }
-    
+  }
+
+  if (!site_id) {
+    console.error('[API] Missing site_id in request');
     return NextResponse.json(
       {
         success: false,
-        error: 'Composio API Key is not configured in server environment',
+        error: 'site_id is required',
         timestamp: new Date().toISOString()
       },
-      { status: 500 }
+      { status: 400 }
+    );
+  }
+  
+  // Try to get API key from site_secrets
+  const apiKey = await getComposioApiKeyForSite(site_id);
+  
+  console.log(`[API] API Key available: ${!!apiKey}`);
+  console.log(`[API] API Key length: ${apiKey?.length || 0}`);
+  console.log(`[API] Environment mode: ${process.env.NODE_ENV}`);
+
+  // Check if API key is available
+  if (!apiKey) {
+    console.error('[API] Missing Composio API Key for site');
+    return NextResponse.json(
+      {
+        success: false,
+        error: 'Composio API Key is not configured for this site. Please configure it in Integrations settings.',
+        timestamp: new Date().toISOString()
+      },
+      { status: 401 }
     );
   }
 
   try {
     // Fetch specific integration from Composio API
     console.log(`[API] Calling ComposioService.getIntegrationById(${id})`);
-    const integration = await ComposioService.getIntegrationById(id);
+    const integration = await ComposioService.getIntegrationById(id, apiKey);
     console.log('[API] Successfully retrieved integration details');
     
     // Return success response with integration data
@@ -93,33 +92,6 @@ export async function GET(request: NextRequest) {
     console.error(`[API] Error fetching Composio integration ${id}:`, error);
     console.error('[API] Error details:', error.message);
     console.error('[API] Stack trace:', error.stack);
-    
-    // Return mock data in development mode for certain errors
-    if (process.env.NODE_ENV === 'development' && error.message.includes('API key')) {
-      console.log('[API] Returning mock data for development due to API key error');
-      return NextResponse.json({
-        success: true,
-        data: {
-          id: id,
-          name: `Mock Integration ${id}`,
-          description: 'This is a mock integration for development',
-          appName: 'Mock App',
-          appId: 'mock-app-1',
-          enabled: true,
-          authScheme: 'oauth2',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          connections: [],
-          member: {
-            id: 'mock-member-id',
-            name: 'Mock User',
-            email: 'mock@example.com'
-          }
-        },
-        mock: true,
-        note: 'Using mock data because of an API key configuration error'
-      });
-    }
     
     // Return error response
     console.log('[API] Returning error response');
