@@ -66,6 +66,7 @@ export interface SingleTurnPromptParams {
   historyContext: string;
   retryContext: string;
   constraintSources?: Array<string | null | undefined>;
+  provisionedEnvKeys?: string[];
 }
 
 export function buildSingleTurnSystemPrompt(p: SingleTurnPromptParams): string {
@@ -95,6 +96,9 @@ ${constraintBlock}
 ${LANGUAGE_REQUIREMENT_PROMPT}
 ${TEMPLATE_CUSTOMIZATION_PROMPT}
 ${SUPABASE_ENVIRONMENT_PROMPT}
+
+PROVISIONED ENVIRONMENT VARIABLES (Sandbox):
+The following variables are available in \`.env.local\` and \`process.env\`: ${(p.provisionedEnvKeys || []).join(', ')}
 
 WORKSPACE — READ THIS CAREFULLY:
 - ${SandboxService.WORK_DIR} is the GIT REPOSITORY ROOT. This is where package.json, next.config.ts, tsconfig.json, src/, and public/ already exist.

@@ -81,7 +81,7 @@ export async function runCronAutoWorkflow(input: CronAutoWorkflowInput) {
   // app can call `/api/platform/*` via the SDK without ever holding raw
   // service credentials. Idempotent: reuses any active key already linked to
   // the remote_instance.
-  await provisionPlatformKeyStep({
+  const platformKeyResult = await provisionPlatformKeyStep({
     sandboxId: sandboxId!,
     requirementId: reqId,
     siteId: site_id,
@@ -90,6 +90,7 @@ export async function runCronAutoWorkflow(input: CronAutoWorkflowInput) {
     branchName,
     gitRepoKind: 'automation',
   });
+  const provisionedEnvKeys = platformKeyResult.injected_env_keys;
 
   // Fetch full requirement context up-front so it is available to both the
   // orchestrator prompt and the skip-cycle guard below.
@@ -135,6 +136,9 @@ ${reqContext.historyContext}
 ${SANDBOX_REPO_ROOT_INVARIANT}
 ${LANGUAGE_REQUIREMENT_PROMPT}
 ${TEMPLATE_CUSTOMIZATION_PROMPT}
+
+PROVISIONED ENVIRONMENT VARIABLES (Sandbox):
+The following variables are available in \`.env.local\` and \`process.env\`: ${provisionedEnvKeys.join(', ')}
 
 WORKSPACE:
 - ${workDir} is the GIT REPOSITORY ROOT on branch "${branchName}".
@@ -296,6 +300,7 @@ HARD RULE: Your turn is NOT done until \`instance_plan action='create'\` has suc
         planStatus: activePlan.status,
         steps: activePlan.steps as any[],
         git_repo_kind: 'automation',
+        provisionedEnvKeys,
       });
       smokeError = stepsPhase?.smokeError ?? null;
       if (stepsPhase?.effectiveSandboxId) {

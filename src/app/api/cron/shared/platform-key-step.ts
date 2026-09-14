@@ -43,6 +43,7 @@ export interface ProvisionPlatformKeyStepResult {
     created: boolean;
     jwt_expires_at: string;
   };
+  injected_env_keys: string[];
 }
 
 function defaultApiBase(): string {
@@ -271,5 +272,6 @@ export async function provisionPlatformKeyStep(
     expires_at: result.expires_at,
     env_injected: envInjected,
     tenant,
+    injected_env_keys: Object.keys(sandboxEnvBag),
   };
 }

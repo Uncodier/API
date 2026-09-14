@@ -46,9 +46,10 @@ export async function executeSingleTurnStep(params: {
   title: string;
   gitRepoKind: GitRepoKind;
   requirementType: string;
+  provisionedEnvKeys?: string[];
 }): Promise<SingleTurnResult> {
   'use step';
-  const { sandboxId, plan, step, requirementId, instanceId, siteId, userId, title, gitRepoKind, requirementType } = params;
+  const { sandboxId, plan, step, requirementId, instanceId, siteId, userId, title, gitRepoKind, requirementType, provisionedEnvKeys } = params;
   
   const audit: CronAuditContext = {
     instanceId: instanceId,
@@ -165,6 +166,7 @@ export async function executeSingleTurnStep(params: {
       historyContext,
       retryContext,
       constraintSources,
+      provisionedEnvKeys,
     });
 
     // 4. Fetch History

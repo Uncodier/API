@@ -73,10 +73,23 @@ export async function runUpdateRepoAgentStep(params: {
   // Background context
   let agentBackground = '';
   let memoriesContext = '';
+  let provisionedEnvKeys: string[] = [];
   try {
     agentBackground = await generateAgentBackground(site_id);
     memoriesContext = await fetchMemoriesContext(site_id, user_id, instanceId);
   } catch(e) {}
+
+  try {
+    const envRes = await sandbox.runCommand({ cmd: 'sh', args: ['-c', `cd "${SandboxService.WORK_DIR}" && cat .env.local 2>/dev/null || echo ""` ] });
+    const envContent = (await envRes.stdout()).toString();
+    provisionedEnvKeys = envContent
+      .split('\n')
+      .map(l => l.trim())
+      .filter(l => l && !l.startsWith('#') && l.includes('='))
+      .map(l => l.split('=')[0]);
+  } catch(e) {
+    console.warn('[UpdateRepoStep] Failed to extract env keys from sandbox:', e);
+  }
 
   const systemPrompt = `You are an AI coding assistant and EXECUTOR agent running inside a Vercel Sandbox.
 Your job is to complete a specific instruction on the codebase by writing code, running commands, and making real changes.
@@ -89,6 +102,9 @@ ${SANDBOX_REPO_ROOT_INVARIANT}
 ${LANGUAGE_REQUIREMENT_PROMPT}
 ${TEMPLATE_CUSTOMIZATION_PROMPT}
 ${SUPABASE_ENVIRONMENT_PROMPT}
+
+PROVISIONED ENVIRONMENT VARIABLES (Sandbox):
+The following variables are available in \`.env.local\` and \`process.env\`: ${provisionedEnvKeys.join(', ')}
 
 WORKSPACE — READ THIS CAREFULLY:
 - ${SandboxService.WORK_DIR} is the GIT REPOSITORY ROOT. This is where package.json, next.config.ts, tsconfig.json, src/, and public/ already exist.

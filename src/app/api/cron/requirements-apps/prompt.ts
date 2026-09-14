@@ -53,6 +53,7 @@ export interface CoordinatorPromptInput {
   agentBackground?: string;
   memoriesContext?: string;
   historyContext?: string;
+  provisionedEnvKeys?: string[];
 }
 
 /**
@@ -141,6 +142,9 @@ ${SANDBOX_REPO_ROOT_INVARIANT}
 ${LANGUAGE_REQUIREMENT_PROMPT}
 ${TEMPLATE_CUSTOMIZATION_PROMPT}
 ${SUPABASE_ENVIRONMENT_PROMPT}
+
+PROVISIONED ENVIRONMENT VARIABLES (Sandbox):
+The following variables are available in \`.env.local\` and \`process.env\`: ${(p.provisionedEnvKeys || []).join(', ')}
 
 WORKSPACE:
 - ${p.workDir} is the GIT REPOSITORY ROOT on branch "${p.branchName}".

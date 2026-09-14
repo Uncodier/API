@@ -251,7 +251,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   // app can call `/api/platform/*` via the SDK without ever holding raw
   // service credentials. Idempotent: reuses any active key already linked to
   // the remote_instance.
-  await provisionPlatformKeyStep({
+  const platformKeyResult = await provisionPlatformKeyStep({
     sandboxId: sandboxId!,
     requirementId: reqId,
     siteId: site_id,
@@ -259,6 +259,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     instanceId,
     branchName,
   });
+  const provisionedEnvKeys = platformKeyResult.injected_env_keys;
 
   // Step 1c-bis: Injects the Makinari tracking script into the root layout.
   await provisionTrackingScriptStep({
@@ -299,6 +300,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     agentBackground: reqContext.agentBackground,
     memoriesContext: reqContext.memoriesContext,
     historyContext: reqContext.historyContext,
+    provisionedEnvKeys,
   });
 
   // Step 4: Run orchestrator (if no pending plan)
@@ -421,7 +423,8 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
                userId: user_id,
                title,
                gitRepoKind: 'applications',
-               requirementType: type
+               requirementType: type,
+               provisionedEnvKeys
             });
             
             if (turnRes.effectiveSandboxId) sandboxId = turnRes.effectiveSandboxId;
