@@ -56,6 +56,14 @@ TEMPLATE CUSTOMIZATION (CRITICAL):
 - Whenever the requirement asks for a specific deliverable (such as a site, app, presentation, landing page, etc.), the home page of the base template MUST be completely restructured and customized to reflect what was specifically requested. Do not leave generic template content on the home page.
 `;
 
+export const SUPABASE_ENVIRONMENT_PROMPT = `
+SUPABASE ENVIRONMENT (CRITICAL):
+- This platform uses a multi-tenant Supabase architecture.
+- NEVER use \`NEXT_PUBLIC_SUPABASE_URL\`, \`NEXT_PUBLIC_SUPABASE_ANON_KEY\`, or \`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY\` in your generated code.
+- You MUST ALWAYS use \`NEXT_PUBLIC_APPS_SUPABASE_URL\` and \`NEXT_PUBLIC_APPS_SUPABASE_ANON_KEY\` instead.
+- You MUST ALWAYS use the \`makinari-obj-apps-supabase\` skill when dealing with databases, auth, or Supabase.
+`;
+
 /** Enforced in code: git + clone root must stay at /vercel/sandbox (never move .git or the repo under app/). */
 export const SANDBOX_REPO_ROOT_INVARIANT = [
   'SANDBOX GIT ROOT (mandatory): The Git clone and package.json live at WORKSPACE ROOT /vercel/sandbox — never under /vercel/sandbox/app.',

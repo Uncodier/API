@@ -12,6 +12,7 @@ import {
   firstActionsPromptLine,
   LANGUAGE_REQUIREMENT_PROMPT,
   TEMPLATE_CUSTOMIZATION_PROMPT,
+  SUPABASE_ENVIRONMENT_PROMPT,
 } from './step-git-prompts';
 import { extractRequirementConstraints, formatConstraintsPromptBlock } from '@/lib/services/requirement-constraints';
 
@@ -93,6 +94,7 @@ ${SANDBOX_REPO_ROOT_INVARIANT}
 ${constraintBlock}
 ${LANGUAGE_REQUIREMENT_PROMPT}
 ${TEMPLATE_CUSTOMIZATION_PROMPT}
+${SUPABASE_ENVIRONMENT_PROMPT}
 
 WORKSPACE — READ THIS CAREFULLY:
 - ${SandboxService.WORK_DIR} is the GIT REPOSITORY ROOT. This is where package.json, next.config.ts, tsconfig.json, src/, and public/ already exist.
