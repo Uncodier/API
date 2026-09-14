@@ -278,6 +278,21 @@ export class EmailSendService {
     const isBullet = (line: string) => /^\s*(?:[-*•]\s+)/.test(line);
     const isNumbered = (line: string) => /^\s*\d+[\.)]\s+/.test(line);
 
+    // Apply inline markdown before parsing blocks
+    const applyInlineMarkdown = (text: string) => {
+      let html = this.escapeHtml(text);
+      // Images: ![alt](url)
+      html = html.replace(/!\[(.*?)\]\((.*?)\)/g, '<br/><img src="$2" alt="$1" style="max-width: 100%; border-radius: 8px; margin: 16px 0;" /><br/>');
+      // Links: [text](url)
+      html = html.replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" target="_blank" style="color: #0066cc; text-decoration: underline;">$1</a>');
+      // Bold
+      html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+      // Italic
+      html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
+      html = html.replace(/_(.*?)_/g, '<em>$1</em>');
+      return html;
+    };
+
     let i = 0;
     while (i < lines.length) {
       const raw = lines[i] ?? '';
@@ -290,7 +305,7 @@ export class EmailSendService {
           const itemText = (lines[i] ?? '')
             .replace(/^\s*[-*•]\s+/, '')
             .trim();
-          items.push(`<li style="margin: 4px 0;">${this.escapeHtml(itemText)}</li>`);
+          items.push(`<li style="margin: 4px 0;">${applyInlineMarkdown(itemText)}</li>`);
           i++;
         }
         htmlParts.push(`<ul style="margin: 0 0 16px 20px; padding-left: 18px; list-style-type: disc;">${items.join('')}</ul>`);
@@ -304,7 +319,7 @@ export class EmailSendService {
           const itemText = (lines[i] ?? '')
             .replace(/^\s*\d+[\.)]\s+/, '')
             .trim();
-          items.push(`<li style="margin: 4px 0;">${this.escapeHtml(itemText)}</li>`);
+          items.push(`<li style="margin: 4px 0;">${applyInlineMarkdown(itemText)}</li>`);
           i++;
         }
         htmlParts.push(`<ol style="margin: 0 0 16px 20px; padding-left: 18px; list-style-type: decimal;">${items.join('')}</ol>`);
@@ -319,7 +334,7 @@ export class EmailSendService {
       }
 
       // Párrafo normal
-      htmlParts.push(`<p style="margin: 0 0 16px 0;">${this.escapeHtml(line.trim())}</p>`);
+      htmlParts.push(`<p style="margin: 0 0 16px 0;">${applyInlineMarkdown(line.trim())}</p>`);
       i++;
     }
 

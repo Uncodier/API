@@ -60,8 +60,25 @@ export class WhatsAppSendService {
    * Envía un mensaje de WhatsApp usando la API de WhatsApp Business
    */
   static async sendMessage(params: SendWhatsAppParams): Promise<SendWhatsAppResult> {
-    const { phone_number, message, from, agent_id, conversation_id, lead_id, site_id, responseWindowEnabled } = params;
+    let { phone_number, message, from, agent_id, conversation_id, lead_id, site_id, responseWindowEnabled } = params;
     
+    // Parse markdown for WhatsApp (Images -> URLs, Links -> Text: URL, Bold -> *bold*)
+    if (message) {
+      let waMessage = message;
+      // Remove Images: ![alt](url) -> url
+      waMessage = waMessage.replace(/!\[(.*?)\]\((.*?)\)/g, '$2');
+      // Links: [text](url) -> text: url
+      waMessage = waMessage.replace(/\[(.*?)\]\((.*?)\)/g, '$1: $2');
+      // Convert standard bold **text** -> {{{BOLD}}}$1{{{BOLD}}}
+      waMessage = waMessage.replace(/\*\*(.*?)\*\*/g, '{{{BOLD}}}$1{{{BOLD}}}');
+      // Convert standard italic *text* -> _text_
+      waMessage = waMessage.replace(/\*([^*]+)\*/g, '_$1_');
+      // Restore WA bold
+      waMessage = waMessage.replace(/\{\{\{BOLD\}\}\}/g, '*');
+      message = waMessage;
+      params.message = message;
+    }
+
     // Si el número es temporal, no enviar mensaje real
     if (phone_number === 'no-phone-example' || phone_number === '+00000000000') {
       console.log('📱 Número temporal detectado, no se enviará mensaje real:', {
