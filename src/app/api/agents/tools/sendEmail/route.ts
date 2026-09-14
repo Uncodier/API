@@ -106,8 +106,9 @@ export async function sendEmailCore(params: SendEmailCoreParams): Promise<SendEm
   
   // If message doesn't look like HTML, assume it's Markdown and convert it.
   // We use a simple heuristic to detect HTML tags.
-  const isHtml = /<[a-z][\s\S]*>/i.test(message);
-  let effectiveMessage = isHtml ? message : markdownToHtml(message);
+  // We will NOT use markdownToHtml here directly because EmailSendService.renderMessageWithLists 
+  // is called downstream and it ALSO does markdown parsing, leading to double-parsing.
+  let effectiveMessage = message;
 
   if (lead_id) {
     const lead = await getLeadById(lead_id);
