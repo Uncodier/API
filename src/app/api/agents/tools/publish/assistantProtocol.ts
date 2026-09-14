@@ -2,8 +2,14 @@ import { createContentCore } from '../content/create/core';
 import { updateContentCore } from '../content/update/route';
 import { getOutstandClient } from '@/lib/integrations/outstand/client';
 import { sendBulkMessagesTool } from '../sendBulkMessages/assistantProtocol';
+import { sendEmailCore } from '../sendEmail/route';
+import { WhatsAppSendService } from '@/lib/services/whatsapp/WhatsAppSendService';
 
 export interface PublishToolParams {
+  // Test Mode
+  is_test?: boolean;
+  test_recipient?: string; // email or phone number for testing
+
   // Content DB Params
   content_id?: string;
   title?: string;
@@ -32,6 +38,8 @@ export interface PublishToolParams {
 export function publishTool(siteId: string, userId?: string, instanceId?: string) {
   const execute = async (args: PublishToolParams) => {
     const {
+      is_test,
+      test_recipient,
       content_id,
       title,
       type,
@@ -79,7 +87,22 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
       }
     }
 
+    // Extra Validation for Social publish: Ensure the accounts array isn't just an empty string or hallucinated format.
+    if (willPublishSocial) {
+      if (social_accounts.some(acc => typeof acc !== 'string' || acc.trim() === '')) {
+         return { success: false, error: 'Invalid social_accounts provided. Must be an array of non-empty strings (e.g. ["linkedin", "x"]).' };
+      }
+    }
+
+    // All-or-Nothing strict validation
+    // If the tool call fails ANY of the conditional validations above, we have ALREADY returned { success: false, error: ... }
+    // Thus, by reaching this point, we are guaranteed that if a specific action was requested, all of its required parameters are valid.
     const results: any = { success: true, actions_attempted: [] };
+    if (is_test) {
+      results.test_mode = true;
+      results.note = "Running in TEST MODE. No real DB changes, social posts, or bulk sends were made.";
+    }
+    
     let finalContentId = content_id;
     
     // Prepare metadata
@@ -100,27 +123,33 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
       results.actions_attempted.push('content');
       try {
         let contentResult;
-        if (willUpdateContent) {
-          contentResult = await updateContentCore({
-            content_id,
-            site_id: siteId,
-            text,
-            status: 'published',
-            metadata
-          });
+        
+        if (is_test) {
+          finalContentId = content_id || 'test-content-uuid-1234';
+          results.content = { success: true, id: finalContentId, simulated: true };
         } else {
-          contentResult = await createContentCore({
-            title,
-            type,
-            site_id: siteId,
-            user_id: userId,
-            text,
-            status: 'published',
-            metadata
-          });
-          finalContentId = contentResult.id;
+          if (willUpdateContent) {
+            contentResult = await updateContentCore({
+              content_id,
+              site_id: siteId,
+              text,
+              status: 'published',
+              metadata
+            });
+          } else {
+            contentResult = await createContentCore({
+              title,
+              type,
+              site_id: siteId,
+              user_id: userId,
+              text,
+              status: 'published',
+              metadata
+            });
+            finalContentId = contentResult.id;
+          }
+          results.content = { success: true, id: finalContentId };
         }
-        results.content = { success: true, id: finalContentId };
       } catch (error: any) {
         results.content = { success: false, error: error.message };
         results.success = false;
@@ -136,31 +165,35 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
     // For social media, Outstand handles media directly if we pass containers, but we'll try to map assets
     let outstandContainers = undefined;
     if (assets && assets.length > 0) {
-       outstandContainers = [{
-          content: publishText,
-          media: assets.map(id => ({ id }))
-       }];
+      outstandContainers = [{
+        content: publishText,
+        media: assets.map(id => ({ id }))
+      }];
     }
 
     // --- 2. Social Media Publish ---
     if (willPublishSocial) {
       results.actions_attempted.push('social');
       try {
-        const client = getOutstandClient();
-        
-        const payload: any = {
-          accounts: social_accounts,
-          ...(scheduledAt ? { scheduledAt } : {}),
-        };
-
-        if (outstandContainers) {
-           payload.containers = outstandContainers;
+        if (is_test) {
+          results.social = { success: true, simulated: true, message: `Would have published to: ${social_accounts.join(', ')}` };
         } else {
-           payload.content = publishText;
-        }
+          const client = getOutstandClient();
+          
+          const payload: any = {
+            accounts: social_accounts,
+            ...(scheduledAt ? { scheduledAt } : {}),
+          };
 
-        const socialResult = await client.createPost(payload, siteId);
-        results.social = { success: true, result: socialResult };
+          if (outstandContainers) {
+            payload.containers = outstandContainers;
+          } else {
+            payload.content = publishText;
+          }
+
+          const socialResult = await client.createPost(payload, siteId);
+          results.social = { success: true, result: socialResult };
+        }
       } catch (error: any) {
         results.social = { success: false, error: error.message };
         results.success = false; // Mark overall as partial failure
@@ -171,21 +204,54 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
     if (willSendAudience) {
       results.actions_attempted.push('audience');
       try {
-        const bulkSender = sendBulkMessagesTool(siteId);
-        
-        const audienceResult = await bulkSender.execute({
-          audience_id,
-          channel: channel as 'whatsapp' | 'email' | 'telegram' | 'sms' | 'voice',
-          message: publishText, // We send the combined text + urls
-          ...(subject ? { subject } : {}),
-          ...(from ? { from } : {}),
-          ...(audience_email_mode ? { audience_email_mode } : {}),
-          ...(finalContentId ? { content_id: finalContentId } : {}),
-        });
+        if (is_test) {
+          if (test_recipient) {
+            // Dispatch a single test message
+          if (channel === 'email') {
+            const testEmailResult = await sendEmailCore({
+              site_id: siteId,
+              email: test_recipient,
+              subject: `[TEST] ${subject || 'Test Subject'}`,
+              message: publishText,
+              from,
+              instance_id: instanceId,
+              omit_signature: audience_email_mode === 'newsletter'
+            });
+            results.audience = { success: testEmailResult.success, simulated: true, type: 'single_test_send', result: testEmailResult };
+            if (!testEmailResult.success) results.success = false;
+          } else if (channel === 'whatsapp' || channel === 'sms') {
+            const testWaResult = await WhatsAppSendService.sendMessage({
+              site_id: siteId,
+              phone_number: test_recipient,
+              message: `[TEST] ${publishText}`,
+              from,
+              media_urls: urls, // Fallback media for WA
+            });
+            results.audience = { success: testWaResult.success, simulated: true, type: 'single_test_send', result: testWaResult };
+            if (!testWaResult.success) results.success = false;
+          } else {
+            results.audience = { success: true, simulated: true, message: `Would have sent a single test to ${test_recipient} via ${channel}` };
+          }
+          } else {
+            results.audience = { success: true, simulated: true, message: `Would have executed bulk send to audience ${audience_id} via ${channel}` };
+          }
+        } else {
+          const bulkSender = sendBulkMessagesTool(siteId);
+          
+          const audienceResult = await bulkSender.execute({
+            audience_id,
+            channel: channel as 'whatsapp' | 'email' | 'telegram' | 'sms' | 'voice',
+            message: publishText, // We send the combined text + urls
+            ...(subject ? { subject } : {}),
+            ...(from ? { from } : {}),
+            ...(audience_email_mode ? { audience_email_mode } : {}),
+            ...(finalContentId ? { content_id: finalContentId } : {}),
+          });
 
-        results.audience = audienceResult;
-        if (!audienceResult.success) {
-           results.success = false;
+          results.audience = audienceResult;
+          if (!audienceResult.success) {
+            results.success = false;
+          }
         }
       } catch (error: any) {
         results.audience = { success: false, error: error.message };
@@ -200,11 +266,14 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
     name: 'publish',
     description: `Consolidated tool to publish content. Can perform one or more of the following actions simultaneously:
 1. Create/Update Content in DB: Requires 'title' and 'type' (to create) OR 'content_id' (to update).
-2. Publish to Social Media: Requires 'social_accounts' array (e.g. ['linkedin', 'x', 'facebook', 'instagram', 'tiktok', 'youtube', 'threads', 'pinterest', 'bluesky']).
-3. Send to Audience: Requires 'audience_id' and 'channel' ('whatsapp', 'telegram', 'sms', 'voice', or 'email').
+2. Publish to Social Media: Requires 'social_accounts' array (e.g. ['linkedin', 'x', 'facebook', 'instagram', 'tiktok', 'youtube', 'threads', 'pinterest', 'bluesky']). DO NOT hallucinate parameters like 'networks'.
+3. Send to Audience: Requires 'audience_id' and 'channel' ('whatsapp', 'telegram', 'sms', 'voice', or 'email'). (Newsletters MUST use channel: "email" and audience_email_mode: "newsletter".)
 
-You MUST provide at least valid 'text', 'assets' (array of media IDs), or 'urls'.
+You MUST provide at least valid 'text', 'assets' (array of media IDs), or 'urls'. DO NOT hallucinate parameters like 'media_urls'.
 If sending email to audience, 'subject' is required.
+
+**TEST MODE (HIGHLY RECOMMENDED FOR DRAFTS/PREVIEWS):**
+Set \`is_test: true\` to safely simulate the publishing actions without modifying the database or making external API calls. If you also provide a \`test_recipient\` (email address or phone number), the tool will send a single real test message to that recipient instead of a bulk audience send.
 
 CRITICAL USAGE EXAMPLES (AVOID DUPLICATE RECORDS):
 - Scenario A (Same text across channels): If publishing the exact SAME text to a blog and social media, make ONE SINGLE tool call providing 'title', 'type', 'text', and 'social_accounts'.
@@ -223,6 +292,10 @@ The tool will return an object detailing the success/failure of each attempted a
     parameters: {
       type: 'object',
       properties: {
+        // Test Mode
+        is_test: { type: 'boolean', description: 'Run the tool in test mode. Bypasses actual DB saves, social posting, and bulk sending.' },
+        test_recipient: { type: 'string', description: 'When in test mode, provide an email or phone number here to send a single real preview message.' },
+
         // Content DB
         content_id: { type: 'string', description: 'ID of existing content to update (optional).' },
         title: { type: 'string', description: 'Title of content (required for create).' },
