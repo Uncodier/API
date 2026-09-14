@@ -17,7 +17,23 @@ async function tryGetSandbox(sandboxId: string): Promise<Sandbox | null> {
   let delayMs = 1000;
   for (let attempt = 0; attempt < GET_SANDBOX_ATTEMPTS; attempt++) {
     try {
-      return await getSandboxHandle(sandboxId);
+      const sandbox = await getSandboxHandle(sandboxId);
+      
+      // Explicitly resume the sandbox bypassing runCommand's "use step" wrapper.
+      // This avoids a 3-retry loop in the Vercel Workflows engine when the sandbox is dead (410).
+      if (typeof (sandbox as any).resume === 'function') {
+        try {
+          await (sandbox as any).resume();
+        } catch (resumeErr: any) {
+          if (resumeErr?.response?.status === 410 || String(resumeErr?.message).includes('410')) {
+            console.warn(`[Sandbox] Not reusing ${sandboxId}: sandbox dead (410)`);
+            return null; // Don't retry getting a dead sandbox
+          }
+          throw resumeErr; // Throw to trigger the getSandboxHandle retry loop
+        }
+      }
+      
+      return sandbox;
     } catch (e: unknown) {
       if (attempt < GET_SANDBOX_ATTEMPTS - 1) {
         console.warn(`[Sandbox] tryGetSandbox attempt ${attempt + 1} failed for ${sandboxId}. Retrying in ${delayMs}ms...`);

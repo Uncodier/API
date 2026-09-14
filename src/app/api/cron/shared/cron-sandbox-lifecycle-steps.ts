@@ -105,7 +105,22 @@ async function tryReuseExistingSandbox(
   let sandbox;
   try {
     sandbox = await getSandboxHandle(idOrName);
-  } catch {
+    
+    // Explicitly resume the sandbox bypassing runCommand's "use step" wrapper.
+    // This avoids a 3-retry loop in the Vercel Workflows engine when the sandbox is dead (410).
+    if (typeof (sandbox as any).resume === 'function') {
+      try {
+        await (sandbox as any).resume();
+      } catch (resumeErr: any) {
+        if (resumeErr?.response?.status === 410 || String(resumeErr?.message).includes('410')) {
+          console.warn(`[CronStep] Not reusing ${idOrName}: sandbox dead (410)`);
+          return null;
+        }
+        throw resumeErr;
+      }
+    }
+  } catch (err) {
+    console.warn(`[CronStep] getSandboxHandle failed for ${idOrName}:`, err instanceof Error ? err.message : err);
     return null;
   }
   const ping = await inspectSandboxWorkspace(sandbox);
