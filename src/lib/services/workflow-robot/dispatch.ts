@@ -44,13 +44,13 @@ export async function dispatchWorkflowEvent(event: DispatchEvent): Promise<{ sta
     
     let matchesTableEvent = false;
     
-    if (cfg.db_events && cfg.db_events.length > 0) {
+    if (Array.isArray(cfg.db_events)) {
       matchesTableEvent = cfg.db_events.some(
         (ev) => ev.table === event.table && ev.op.includes(event.op)
       );
     } else {
       const ops = Array.isArray(cfg.op) ? cfg.op : cfg.op ? [cfg.op] : [];
-      const matchesTable = !cfg.table || cfg.table === event.table;
+      const matchesTable = cfg.table ? cfg.table === event.table : false;
       const matchesOp = ops.length === 0 || ops.includes(event.op);
       matchesTableEvent = matchesTable && matchesOp;
     }

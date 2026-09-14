@@ -363,7 +363,7 @@ export async function prepareAssistantContext(
           : '[]';
         extraContextInstruction += `\n\n📢 PUBLISH NODE TASK:
 CRITICAL: You are inside a PUBLISH node. Your goal is to PUBLISH content to the selected social networks.
-1. You MUST use the \`socialMediaPublish\` tool or \`publish\` tool via \`tools\`.
+1. You MUST use the \`publish\` tool via \`tools\`.
 2. You MUST use these exact social networks/destinations: ${destStr}. DO NOT invent or publish to other networks.
 3. Make sure the content matches the context of the conversation.`;
       }
@@ -436,7 +436,7 @@ Most capabilities (media, messaging, CRM, commerce, social, content, infra, rese
 - Use \`tools({ action: "list" })\` to see every routed tool grouped by category.
 - Use \`tools({ action: "describe", name: "<tool>" })\` to get the exact parameters schema + expected_use for a specific tool before calling it.
 - Use \`tools({ action: "call", name: "<tool>", args: { ... } })\` to execute it. If args are invalid the error includes the parameters schema so you can auto-correct and retry.
-- Examples: calendars, catalog_commerce, checkout, quotations, generate_image, sendEmail, leads, sales, socialMediaPublish, content, webSearch — ALL live behind tools. The router is the only way to reach them.
+- Examples: calendars, catalog_commerce, checkout, quotations, generate_image, sendEmail, leads, sales, publish, content, webSearch — ALL live behind tools. The router is the only way to reach them.
 - To find people, working hours, team calendars, or reservable services: \`tools\` → \`calendars\` \`action="list"\`. Do not guess tool names for horarios.
 - Core tools like instance_plan, requirement_status, requirements, and skill_lookup are directly available and NOT routed.`;
 
