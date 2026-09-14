@@ -64,6 +64,13 @@ export class WhatsAppSendService {
     
     // Parse markdown for WhatsApp (Images -> URLs, Links -> Text: URL, Bold -> *bold*)
     if (message) {
+      const isHtml = /<[a-z][\s\S]*>/i.test(message);
+      if (isHtml) {
+        // We import it here to avoid circular dependencies if any, though at top level is fine
+        const { htmlToMarkdownOrPlain } = await import('@/lib/messaging/markdown-parser');
+        message = htmlToMarkdownOrPlain(message);
+      }
+      
       let waMessage = message;
       // Remove Images: ![alt](url) -> url
       waMessage = waMessage.replace(/!\[(.*?)\]\((.*?)\)/g, '$2');
