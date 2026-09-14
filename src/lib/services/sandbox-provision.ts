@@ -24,6 +24,7 @@ import { buildSandboxCreateParams, requirementSandboxTags } from '@/lib/services
 import { getOrCreateRequirementSandbox } from '@/lib/services/sandbox-get-or-create';
 import { cloneRepoIntoWorkDir } from '@/lib/services/sandbox-git-clone';
 import { SandboxService, type SandboxResult } from '@/lib/services/sandbox-service';
+import { injectSandboxTestLogger } from '@/lib/services/sandbox-test-logger-injection';
 
 export async function createRequirementSandbox(
   requirementId: string,
@@ -175,6 +176,7 @@ export async function createRequirementSandbox(
         await SandboxService.syncTrackedBranchToRemoteTip(sandbox, branch);
         await ensureNpmDeps(sandbox, workDir);
         await assertPlatformGitLayout(sandbox);
+        await injectSandboxTestLogger(sandbox, workDir, auditCtx);
         await logCronInfrastructureEvent(auditCtx, {
           event: CronInfraEvent.GIT_WORKSPACE_READY,
           message: `Git workspace ready (existing branch ${branch})`,
@@ -222,6 +224,7 @@ export async function createRequirementSandbox(
       await SandboxService.syncTrackedBranchToRemoteTip(sandbox, newBranch);
       await ensureNpmDeps(sandbox, workDir);
       await assertPlatformGitLayout(sandbox);
+      await injectSandboxTestLogger(sandbox, workDir, auditCtx);
       await logCronInfrastructureEvent(auditCtx, {
         event: CronInfraEvent.GIT_WORKSPACE_READY,
         message: `Git workspace ready (recovered branch ${newBranch} from origin)`,
@@ -245,6 +248,7 @@ export async function createRequirementSandbox(
 
     await ensureNpmDeps(sandbox, workDir);
     await assertPlatformGitLayout(sandbox);
+    await injectSandboxTestLogger(sandbox, workDir, auditCtx);
     await logCronInfrastructureEvent(auditCtx, {
       event: CronInfraEvent.GIT_WORKSPACE_READY,
       message: `Git workspace ready (new branch ${newBranch})`,
