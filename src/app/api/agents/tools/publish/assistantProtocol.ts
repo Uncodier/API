@@ -4,6 +4,7 @@ import { getOutstandClient } from '@/lib/integrations/outstand/client';
 import { sendBulkMessagesTool } from '../sendBulkMessages/assistantProtocol';
 import { sendEmailCore } from '../sendEmail/route';
 import { WhatsAppSendService } from '@/lib/services/whatsapp/WhatsAppSendService';
+import { getLeadById } from '@/lib/database/lead-db';
 
 export interface PublishToolParams {
   // Test Mode
@@ -213,6 +214,19 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
       try {
         if (is_test) {
           if (test_recipient) {
+            let testEmail = test_recipient;
+            let testPhone = test_recipient;
+            let resolvedLeadId: string | undefined = undefined;
+
+            if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(test_recipient)) {
+              const lead = await getLeadById(test_recipient);
+              if (lead) {
+                testEmail = lead.email || test_recipient;
+                testPhone = lead.phone || test_recipient;
+                resolvedLeadId = test_recipient;
+              }
+            }
+
             // Dispatch a single test message
           if (channel === 'email') {
             let emailText = publishText;
@@ -223,7 +237,8 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
             }
             const testEmailResult = await sendEmailCore({
               site_id: siteId,
-              email: test_recipient,
+              email: testEmail,
+              lead_id: resolvedLeadId,
               subject: `[TEST] ${finalSubject || 'Test Subject'}`,
               message: publishText,
               from,
@@ -235,7 +250,7 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
           } else if (channel === 'whatsapp' || channel === 'sms') {
             const testWaResult = await WhatsAppSendService.sendMessage({
               site_id: siteId,
-              phone_number: test_recipient,
+              phone_number: testPhone,
               message: `[TEST] ${publishText}`,
               from,
               media_urls: urls, // Fallback media for WA
