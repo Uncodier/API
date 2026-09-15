@@ -1,6 +1,7 @@
 import type { EmailLocale } from '@/lib/i18n/email-locale';
 import { authActionKeys, authT } from '@/lib/i18n/email-messages/auth';
 import { EMAIL_BRAND, emailBrandHeadTags, emailCodeBlock, emailCtaButton, emailOtpHero } from '@/lib/emails/brand';
+import type { TeamInvitationContext } from '@/lib/i18n/team-invitation-context';
 
 function escapeHtml(text: string): string {
   return String(text)
@@ -22,14 +23,25 @@ export interface AuthEmailTemplateInput {
   confirmUrl?: string;
   token?: string;
   siteName?: string;
+  teamInvitation?: TeamInvitationContext;
   userEmail?: string;
+}
+
+function invitationRoleLabel(role: string, locale: EmailLocale): string {
+  const labels: Record<string, Partial<Record<EmailLocale, string>>> = {
+    view: { en: 'Viewer', es: 'Lector', fr: 'Lecteur', de: 'Betrachter', ja: '閲覧者' },
+    create: { en: 'Editor', es: 'Editor', fr: 'Éditeur', de: 'Bearbeiter', ja: '編集者' },
+    delete: { en: 'Manager', es: 'Gestor', fr: 'Gestionnaire', de: 'Manager', ja: '管理者' },
+    admin: { en: 'Admin', es: 'Administrador', fr: 'Administrateur', de: 'Administrator', ja: '管理者' },
+  };
+  return labels[role]?.[locale] || labels[role]?.en || role;
 }
 
 /**
  * Auth email: B/W only on CTA + links; header/OTP use lime/gray surfaces.
  */
 export function generateAuthEmailContent(input: AuthEmailTemplateInput): { subject: string; html: string; text: string } {
-  const { locale, actionType, confirmUrl, token, siteName, userEmail } = input;
+  const { locale, actionType, confirmUrl, token, siteName, teamInvitation, userEmail } = input;
   
   if (actionType === 'recovery') {
     const subject = authT(locale, 'auth.recovery.subject');
@@ -165,7 +177,22 @@ export function generateAuthEmailContent(input: AuthEmailTemplateInput): { subje
     body = authT(locale, keys.body);
   }
 
-  const cta = authT(locale, keys.cta);
+  if (teamInvitation) {
+    subject = authT(locale, 'auth.team_invite.subject', { siteName: teamInvitation.siteName });
+    title = authT(locale, 'auth.invite.title');
+    body = authT(
+      locale,
+      teamInvitation.inviterName
+        ? 'auth.team_invite.body_with_inviter'
+        : 'auth.team_invite.body',
+      {
+        inviterName: teamInvitation.inviterName,
+        siteName: teamInvitation.siteName,
+      }
+    );
+  }
+
+  const cta = authT(locale, teamInvitation ? 'auth.invite.cta' : keys.cta);
   const orEnterCode = authT(locale, 'auth.or_enter_code');
   const expires = authT(locale, 'auth.code_expires');
   const footer = authT(locale, 'auth.footer');
@@ -177,6 +204,12 @@ export function generateAuthEmailContent(input: AuthEmailTemplateInput): { subje
   const safeExpires = escapeHtml(expires);
   const safeFooter = escapeHtml(footer);
   const safeSite = siteName ? escapeHtml(siteName) : '';
+  const roleLine = teamInvitation?.role
+    ? authT(locale, 'auth.team_invite.role', {
+        role: invitationRoleLabel(teamInvitation.role, locale),
+      })
+    : '';
+  const safeRoleLine = roleLine ? escapeHtml(roleLine) : '';
   const safeToken = token ? escapeHtml(token) : '';
   const safeUrl = confirmUrl ? escapeAttr(confirmUrl) : '';
 
@@ -211,6 +244,7 @@ export function generateAuthEmailContent(input: AuthEmailTemplateInput): { subje
     </div>
     <div style="padding:32px;">
       <p class="email-text" style="margin:0;color:${EMAIL_BRAND.text};font-size:15px;line-height:1.6;text-align:${headerAlign};">${safeBody}</p>
+      ${safeRoleLine ? `<p class="email-text" style="margin:16px 0 0;color:${EMAIL_BRAND.text};font-size:14px;line-height:1.6;text-align:${headerAlign};font-weight:600;">${safeRoleLine}</p>` : ''}
       ${linkBlock}
       ${codeBlock}
       <p class="email-subtle" style="margin:24px 0 0;color:${EMAIL_BRAND.subtle};font-size:13px;line-height:1.5;text-align:${headerAlign};">${safeExpires}</p>
@@ -224,6 +258,7 @@ export function generateAuthEmailContent(input: AuthEmailTemplateInput): { subje
     title,
     '',
     body,
+    roleLine,
     '',
     autofillLine,
     confirmUrl && input.channel === 'link' ? `${cta}: ${confirmUrl}` : '',

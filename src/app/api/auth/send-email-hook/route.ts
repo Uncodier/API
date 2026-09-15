@@ -4,6 +4,7 @@ import { resolveEmailLocale, tryNormalizeEmailLocale } from '@/lib/i18n/email-lo
 import { buildSupabaseConfirmUrl, generateAuthEmailContent } from '@/lib/i18n/auth-email-template';
 import { verifyStandardWebhook } from '@/lib/i18n/standard-webhook';
 import { resolveAuthEmailChannel } from '@/lib/i18n/auth-email-channel';
+import { resolveTeamInvitationContext } from '@/lib/i18n/team-invitation-context';
 
 export const runtime = 'nodejs';
 
@@ -66,6 +67,7 @@ export async function POST(request: NextRequest) {
   });
 
   const metadata = user.user_metadata || {};
+  const teamInvitation = resolveTeamInvitationContext(emailData.redirect_to, metadata);
   const siteId =
     (typeof metadata.site_id === 'string' && metadata.site_id) ||
     (typeof metadata.siteId === 'string' && metadata.siteId) ||
@@ -108,7 +110,11 @@ export async function POST(request: NextRequest) {
       channel,
       confirmUrl,
       token: opts.token,
-      siteName: typeof metadata.site_name === 'string' ? metadata.site_name : undefined,
+      siteName:
+        teamInvitation?.siteName ||
+        (typeof metadata.site_name === 'string' ? metadata.site_name : undefined) ||
+        (typeof metadata.siteName === 'string' ? metadata.siteName : undefined),
+      teamInvitation,
       userEmail: opts.to,
     });
 
