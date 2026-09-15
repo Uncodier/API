@@ -718,6 +718,17 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       repoUrl,
       audit: cronAudit,
     });
+
+    const { emitSyncDocsToBacklogStep } = await import('../shared/sync-docs-to-backlog-step');
+    await emitSyncDocsToBacklogStep({
+      sandboxId,
+      siteId: site_id,
+      instanceId,
+      userId: user_id,
+      requirementId: reqId,
+      digest,
+      audit: cronAudit,
+    });
   }
 
   // Step 9: Final status — all gates must pass (including smoke test)
