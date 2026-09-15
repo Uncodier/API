@@ -45,6 +45,8 @@ export interface LeadFilters {
   segment_id?: string;
   campaign_id?: string;
   assignee_id?: string;
+  language?: string;
+  company_id?: string;
   search?: string;
   /** When false, search only matches name and email. When true or omitted, notes are included (omitted preserves legacy behavior for callers that do not set this flag). */
   search_include_notes?: boolean;
@@ -119,6 +121,8 @@ export async function getLeads(filters: LeadFilters): Promise<{
   if (filters.segment_id) query = query.eq('segment_id', filters.segment_id);
   if (filters.campaign_id) query = query.eq('campaign_id', filters.campaign_id);
   if (filters.assignee_id) query = query.eq('assignee_id', filters.assignee_id);
+  if (filters.language) query = query.eq('language', filters.language);
+  if (filters.company_id) query = query.eq('company_id', filters.company_id);
   if (filters.origin) query = query.eq('origin', filters.origin);
 
   if ((filters as any)._resolvedChannelOr) {

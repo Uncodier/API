@@ -31,6 +31,8 @@ export interface AudienceToolParams {
   segment_id?: string;
   campaign_id?: string;
   assignee_id?: string;
+  language?: string;
+  company_id?: string;
   search?: string;
   /** Only pass true when the user explicitly asks to search inside lead notes. */
   search_include_notes?: boolean;
@@ -75,6 +77,8 @@ async function collectLeadIds(
       segment_id: params.segment_id,
       campaign_id: params.campaign_id,
       assignee_id: params.assignee_id,
+      language: params.language,
+      company_id: params.company_id,
       search: params.search,
       search_include_notes: params.search_include_notes === true,
       channels: params.channels,
@@ -120,6 +124,8 @@ export function audienceTool(siteId: string, userId: string, instanceId: string)
       if (args.segment_id) sqlQuery += ` AND segment_id = '${args.segment_id}'`;
       if (args.campaign_id) sqlQuery += ` AND campaign_id = '${args.campaign_id}'`;
       if (args.assignee_id) sqlQuery += ` AND assignee_id = '${args.assignee_id}'`;
+      if (args.language) sqlQuery += ` AND language = '${args.language}'`;
+      if (args.company_id) sqlQuery += ` AND company_id = '${args.company_id}'`;
       if (args.origin) sqlQuery += ` AND origin = '${args.origin}'`;
       if (args.channels && args.channels.length > 0) {
         // Just for logging/recording. The real DB filter handles the logic.
@@ -147,6 +153,8 @@ export function audienceTool(siteId: string, userId: string, instanceId: string)
           segment_id: args.segment_id,
           campaign_id: args.campaign_id,
           assignee_id: args.assignee_id,
+          language: args.language,
+          company_id: args.company_id,
           search: args.search,
           search_include_notes: args.search_include_notes === true,
           channels: args.channels,
@@ -269,7 +277,7 @@ export function audienceTool(siteId: string, userId: string, instanceId: string)
 
 Actions:
 • create — query leads by filters and store the result as a named audience.
-  Required: name. Optional filters: status, segment_id, campaign_id, assignee_id, search (name and email only unless search_include_notes is true), origin, channels (array of: phone, email, web, deals), limit (e.g. 10 to only add 10 leads), page_size (default 50).
+  Required: name. Optional filters: status, segment_id, campaign_id, assignee_id, language, company_id, search (name and email only unless search_include_notes is true), origin, channels (array of: phone, email, web, deals), limit (e.g. 10 to only add 10 leads), page_size (default 50). Use ONLY the provided parameters. DO NOT attempt to pass raw SQL.
   Returns audience_id, total_count, total_pages, and example_leads (up to 5 leads).
 • list — list all audiences for this site.
 • get — retrieve a specific page of leads from an audience.
@@ -296,6 +304,8 @@ Usage tips:
         segment_id: { type: 'string', description: 'Filter leads by segment UUID.' },
         campaign_id: { type: 'string', description: 'Filter leads by campaign UUID.' },
         assignee_id: { type: 'string', description: 'Filter leads by assignee UUID.' },
+        language: { type: 'string', description: "Filter leads by language (e.g. 'es', 'en')." },
+        company_id: { type: 'string', description: 'Filter leads by company UUID.' },
         search: {
           type: 'string',
           description:
