@@ -234,7 +234,7 @@ export class EmailSendService {
   private static buildHtmlContent(message: string, siteInfo: SiteInfo, signatureHtml?: string): string {
     // Siempre aplicamos el preprocesamiento de markdown (para convertir ![alt](url) y [text](url))
     // independientemente de si el mensaje parece HTML o no, ya que el LLM puede mezclar ambos.
-    const messageWithMarkdown = this.applyInlineMarkdown(message);
+    const messageWithMarkdown = this.applyInlineMarkdown(message, true);
     
     // Si el contenido ya parece HTML estructurado, no lo envolvemos en párrafos/listas adicionales.
     const isHtml = /<(html|body|table|tbody|tr|td|div|p)\b/i.test(messageWithMarkdown);
@@ -290,7 +290,7 @@ export class EmailSendService {
     // Apply inline markdown before parsing blocks
     const applyInlineMarkdown = (text: string) => {
       if (skipMarkdown) return text;
-      return this.applyInlineMarkdown(text);
+      return this.applyInlineMarkdown(text, false);
     };
 
     let i = 0;
@@ -343,9 +343,12 @@ export class EmailSendService {
   /**
    * Aplica estilos markdown inline (negrita, enlaces, imágenes)
    */
-  public static applyInlineMarkdown(text: string): string {
-    // Escapar < solo si no parece ser el inicio de un tag HTML para permitir tags mezclados con markdown
-    let html = text.replace(/<(?![a-z/])/gi, '&lt;');
+  public static applyInlineMarkdown(text: string, keepAllowedTags: boolean = false): string {
+    // Si keepAllowedTags es false (modo legacy dentro de renderMessageWithLists), escapamos TODO el HTML como antes.
+    // Si es true (en buildHtmlContent), escapamos solo lo que no parezca un tag HTML válido para no romper <img src=""> u otros generados.
+    let html = keepAllowedTags 
+      ? text.replace(/<(?!\/?(html|body|table|tbody|tr|td|div|p|img|a|span|br|strong|em|ul|ol|li)\b)/gi, '&lt;')
+      : this.escapeHtml(text);
     
     // Images: ![alt](url)
     html = html.replace(/!\[(.*?)\]\((.*?)\)/g, '<br/><img src="$2" alt="$1" style="max-width: 100%; border-radius: 8px; margin: 16px 0;" /><br/>');
