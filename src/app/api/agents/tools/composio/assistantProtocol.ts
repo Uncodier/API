@@ -36,7 +36,7 @@ export function composioActionTool(siteId: string, apiKey: string) {
     },
     execute: async (args: ComposioToolParams) => {
       try {
-        const composioTools = new ComposioTools({ apiKey, entityId: 'default' });
+        const composioTools = new ComposioTools({ apiKey, entityId: siteId });
 
         if (args.action === 'search') {
           if (!args.search_intent) {

@@ -30,6 +30,7 @@
   },
   "dependencies": {
     "@ai-sdk/openai": "4.0.16",
+    "@breezystack/lamejs": "1.2.7",
     "@google/genai": "1.25.0",
     "@google/generative-ai": "0.24.1",
     "@googlemaps/google-maps-services-js": "^3.4.1",

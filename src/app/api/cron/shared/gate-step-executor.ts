@@ -35,6 +35,8 @@ export async function runGateStep(params: {
     siteId: siteId,
     userId: userId,
     requirementId: requirementId,
+    planId: plan.id,
+    stepId: step.id,
   };
 
   let connected;

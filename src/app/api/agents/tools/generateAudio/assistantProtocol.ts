@@ -12,13 +12,21 @@ export interface GenerateAudioToolParams {
   model?: string;
 }
 
+interface GenerateAudioToolOptions {
+  forceWhatsAppCompatible?: boolean;
+}
+
 /**
  * Creates a generateAudio tool for OpenAI/assistant compatibility
  * @param site_id - The site ID to use for audio generation
  * @param instance_id - Optional instance ID to link generated audio to the instance
  * @returns Tool definition compatible with OpenAI function calling
  */
-export function generateAudioTool(site_id: string, instance_id?: string) {
+export function generateAudioTool(
+  site_id: string,
+  instance_id?: string,
+  options: GenerateAudioToolOptions = {}
+) {
   return {
     name: 'generate_audio',
     description: 'Generate audio (Text-to-Speech, Rap, Song, Voiceover) using AI. ALWAYS use this tool when the user requests an audio, speech, song, rap, or voice generation. Returns a URL to the generated audio file.',
@@ -52,6 +60,12 @@ export function generateAudioTool(site_id: string, instance_id?: string) {
     },
     execute: async (args: GenerateAudioToolParams) => {
       try {
+        if (options.forceWhatsAppCompatible) {
+          args.provider = 'gemini';
+          args.format = 'mp3';
+          args.model = 'gemini-3.1-flash-tts-preview';
+        }
+
         if (args.model === 'gpt-4o-mini-tts') {
           args.model = 'tts-1';
         }
@@ -130,7 +144,7 @@ export function generateAudioTool(site_id: string, instance_id?: string) {
         const { createInstanceLogCore } = await import('@/app/api/agents/tools/instance_logs/route');
         
         const isGemini = provider === 'gemini';
-        const fileExt = isGemini ? 'wav' : (args.format || 'mp3');
+        const fileExt = args.format || (isGemini ? 'wav' : 'mp3');
         const fileName = `generated_audio_${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
         const filePath = `${site_id}/${fileName}`;
         

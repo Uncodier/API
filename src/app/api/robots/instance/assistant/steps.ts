@@ -10,7 +10,7 @@ import {
 import {
   fetchMemoriesContext,
   generateAgentBackground,
-  getAssistantTools,
+  getInstanceAssistantTools,
   determineInstanceCapabilities,
   ICP_CATEGORY_IDS_INSTRUCTION,
   getRequirementWorkflowInstruction,
@@ -308,7 +308,7 @@ export async function prepareAssistantContext(
   
   // Get tools list just for counting/prompt purposes here
   // We do NOT pass these instantiated tools in the return value to avoid serialization issues
-  const toolsWithImageGeneration = await getAssistantTools(siteId, userId, instanceId, customTools, agentType, userPhone);
+  const toolsWithImageGeneration = await getInstanceAssistantTools(siteId, userId, instanceId, customTools, agentType, userPhone);
   
   const assetsData = await InstanceAssetsService.getAssetsContext(instanceId);
   const assetsContext = assetsData.text;
@@ -534,7 +534,7 @@ export async function processAssistantTurn(
   'use step';
 
   // Re-instantiate tools here inside the step where they will be used
-  const fullTools = await getAssistantTools(
+  const fullTools = await getInstanceAssistantTools(
     context.executionOptions.site_id,
     context.executionOptions.user_id,
     context.executionOptions.instance_id,

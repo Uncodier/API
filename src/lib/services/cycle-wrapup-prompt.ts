@@ -11,6 +11,10 @@ export interface CycleWrapUpPromptInput {
   planCompleted: boolean;
   /** Unstarted / in-progress plan steps still scheduled after this cycle. */
   pendingPlanSteps?: number;
+  /** Deterministic reason why this cycle stopped or needs human input. */
+  wrapUpReason?: string | null;
+  /** Forces a feedback request instead of silently continuing. */
+  requiresUserFeedback?: boolean;
   previewUrl?: string | null;
   repoUrl?: string | null;
 }
@@ -20,7 +24,25 @@ export function countPendingPlanSteps(steps: Array<{ status?: string } | null> |
   return steps.filter((s) => s?.status === 'pending' || s?.status === 'in_progress').length;
 }
 
-/** Wrap-up must not ask for permission while later plan steps are still queued, unless forced by a blocked state. */
+export function feedbackRequiredBacklogItems(
+  items: Array<{
+    status?: string;
+    attempts?: number;
+    tier?: 'core' | 'ornamental';
+  }>,
+  limits: { core: number; ornamental: number },
+) {
+  return items.filter((item) => {
+    if (item.status === 'needs_review') return true;
+    if (item.status === 'pending' && (item.attempts || 0) > 0) return true;
+    if (item.status !== 'in_progress') return false;
+    const maxAttempts =
+      (item.tier ?? 'core') === 'ornamental' ? limits.ornamental : limits.core;
+    return (item.attempts || 0) >= maxAttempts;
+  });
+}
+
+/** Routine cycles may skip queued work; terminal reporting can explicitly override that suppression. */
 export function shouldSkipWrapUpForPendingSteps(opts: {
   planCompleted: boolean;
   pendingPlanSteps?: number;
@@ -36,8 +58,10 @@ export function shouldSkipWrapUpForPendingSteps(opts: {
 export function buildCycleWrapUpSystemPrompt(input: CycleWrapUpPromptInput): string {
   const digestText = formatDigestForPrompt(input.digestFiles ?? []);
   const pending = input.pendingPlanSteps ?? 0;
-  const continuePlan = !input.planCompleted && pending > 0;
-  const verdictBlock = continuePlan
+  const continuePlan = !input.planCompleted && pending > 0 && !input.requiresUserFeedback;
+  const verdictBlock = input.requiresUserFeedback
+    ? `3. VERDICT: USER FEEDBACK REQUIRED. The workflow has already persisted stage='blocked' so cron does not resume automatically. Explain what stopped progress, identify the concrete decision or intervention needed, and explicitly ask the user to reply before work continues. Do NOT change the status to 'in-progress' or 'on-review', and do NOT describe the requirement as delivered.`
+    : continuePlan
     ? `3. VERDICT: Plan steps remain (${pending}). Do NOT ask the user for permission and do NOT use stage='on-review'. Call \`requirement_status\` with stage='in-progress' and a short progress summary.`
     : `3. VERDICT CHOICE: You must decide between:
    - DELIVERED: If the task seems addressed, explain what is done and answer the client clearly in your final response prose. Optionally call \`requirement_status\` with stage='on-review' when appropriate.
@@ -57,7 +81,7 @@ AVAILABLE TOOLS:
 - \`requirement_status\`: Report the current stage ('in-progress', 'on-review', etc.) and a short client-facing message.
 
 HARD RULES:
-1. INFERENCE ONLY: You MUST infer facts ONLY from the Docs Digest below. If the digest contains a quote (e.g. price, timeline), state it clearly. Do NOT invent numbers, features, or facts.
+1. INFERENCE ONLY: You MUST infer facts ONLY from the deterministic Cycle stop reason and Docs Digest below. If the digest contains a quote (e.g. price, timeline), state it clearly. Do NOT invent numbers, features, or facts.
 2. FIDELITY: Respect the ORIGINAL instructions and any LATEST change requests from the user history.
 ${verdictBlock}
 4. When you are done, simply finish your turn. Your final prose response will be shown to the client. Keep it concise (5-15 lines).
@@ -67,6 +91,7 @@ Title: ${input.title}
 ID: ${input.requirementId}
 Plan Completed this cycle: ${input.planCompleted}
 Pending plan steps remaining: ${input.pendingPlanSteps ?? 0}
+Cycle stop reason: ${input.wrapUpReason || 'Normal cycle completion'}
 Preview URL: ${input.previewUrl || 'Not available'}
 Repo URL: ${input.repoUrl || 'Not available'}
 User history mode: ${input.historyMode}

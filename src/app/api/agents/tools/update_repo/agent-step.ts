@@ -68,7 +68,7 @@ export async function runUpdateRepoAgentStep(params: {
     cycle_baseline_at: cycleBaselineAt,
   });
 
-  const fullTools = await getAssistantTools(site_id, user_id, instanceId, sandboxTools);
+  const fullTools = getAssistantTools(site_id, user_id, instanceId, sandboxTools);
 
   // Background context
   let agentBackground = '';

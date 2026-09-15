@@ -43,6 +43,7 @@ import { detectCopyHygieneIssues, summarizeCopyHygiene } from './step-copy-hygie
 import type { GitRepoKind } from './cron-commit-helpers';
 import type { Browser } from 'puppeteer-core';
 import { launchPuppeteerForGate } from '@/lib/puppeteer/launch-gate-browser';
+import { sanitizeRuntimeLog } from './runtime-log-context';
 
 export type ProbeSignals = {
   runtime?: RuntimeSignal;
@@ -70,7 +71,14 @@ export async function runRuntimeAndVisualProbes(params: {
   error?: string;
   signals: ProbeSignals;
 }> {
-  const { sandbox, stepOrder, requirementId, gitRepoKind, audit, stepContext } = params;
+  const {
+    sandbox,
+    stepOrder,
+    requirementId,
+    gitRepoKind,
+    audit,
+    stepContext,
+  } = params;
   const out: ProbeSignals = {};
 
   let inferred: Awaited<ReturnType<typeof inferTargetRoutesFromDiff>>;
@@ -103,12 +111,16 @@ export async function runRuntimeAndVisualProbes(params: {
       apiRoutes: inferred.apiRoutes.map((a) => ({ path: a.path, method: a.method })),
       keepServerAlive: shouldRunVisual,
     });
-    out.runtime = buildRuntimeSignalFromProbe(runtimeProbe);
+    const sanitizedServerLog = sanitizeRuntimeLog(runtimeProbe.server_log_tail);
+    out.runtime = buildRuntimeSignalFromProbe({
+      ...runtimeProbe,
+      server_log_tail: sanitizedServerLog,
+    });
     out.api = buildApiSignalFromProbe(runtimeProbe);
-    if (!runtimeProbe.ok) {
+    if (!runtimeProbe.ok || runtimeProbe.server_errors.length > 0) {
       await logCronInfrastructureEvent(audit, {
         event: CronInfraEvent.RUNTIME_PROBE,
-        level: 'error',
+        level: runtimeProbe.ok ? 'warn' : 'error',
         message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}runtime probe: ${summarizeRuntimeProbe(runtimeProbe).slice(0, 400)}`,
         details: {
           stepOrder,
@@ -117,6 +129,7 @@ export async function runRuntimeAndVisualProbes(params: {
           pages: runtimeProbe.pages.map((p) => ({ path: p.path, status: p.http_status })),
           apis: runtimeProbe.apis.map((a) => ({ method: a.method, path: a.path, status: a.http_status })),
           server_errors: runtimeProbe.server_errors.slice(0, 10),
+          server_log_excerpt: sanitizedServerLog,
           startup_error: runtimeProbe.startup_error,
           changed_files: inferred.changedFiles.slice(0, 50),
           visual_planned: shouldRunVisual,
@@ -157,7 +170,10 @@ export async function runRuntimeAndVisualProbes(params: {
       event: CronInfraEvent.RUNTIME_PROBE,
       level: 'warn',
       message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}runtime probe threw: ${msg.slice(0, 300)}`,
-      details: { stepOrder, error: msg.slice(0, 800) },
+      details: {
+        stepOrder,
+        error: sanitizeRuntimeLog(msg),
+      },
     });
     return { ok: true, signals: out };
   }

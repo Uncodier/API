@@ -75,7 +75,7 @@ describe('long-reply-audio', () => {
       expect(result).toBeNull();
     });
 
-    it('uses an MP3 provider for WhatsApp', async () => {
+    it('encodes Gemini audio as MP3 for WhatsApp', async () => {
       (supabaseAdmin.storage.from as jest.Mock).mockReturnValue({
         upload: jest.fn().mockResolvedValue({ data: { path: 'file.mp3' }, error: null }),
         getPublicUrl: jest.fn().mockReturnValue({ data: { publicUrl: 'https://audio.mp3' } })
@@ -83,16 +83,16 @@ describe('long-reply-audio', () => {
 
       const result = await tryPrepareLongReplyAudio(defaultParams);
       expect(result).toEqual({ audioUrl: 'https://audio.mp3', mimeType: 'audio/mpeg' });
-      expect(synthesizeWithVercel).toHaveBeenCalledWith('a'.repeat(500), 'alloy', 'mp3', 'tts-1');
-      expect(synthesizeWithGemini).not.toHaveBeenCalled();
+      expect(synthesizeWithGemini).toHaveBeenCalledWith('a'.repeat(500), 'Puck', 'mp3', 'gemini-3.1-flash-tts-preview');
+      expect(synthesizeWithVercel).not.toHaveBeenCalled();
     });
 
     it('falls back to text when WhatsApp MP3 synthesis fails', async () => {
-      (synthesizeWithVercel as jest.Mock).mockRejectedValue(new Error('Vercel down'));
+      (synthesizeWithGemini as jest.Mock).mockRejectedValue(new Error('Gemini down'));
 
       const result = await tryPrepareLongReplyAudio(defaultParams);
       expect(result).toBeNull();
-      expect(synthesizeWithGemini).not.toHaveBeenCalled();
+      expect(synthesizeWithVercel).not.toHaveBeenCalled();
     });
 
     it('uses Gemini WAV for other supported channels', async () => {

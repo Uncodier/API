@@ -147,6 +147,13 @@ BEFORE starting to code or execute any commands, you MUST:
 3. Call \`skill_lookup\` tool with \`action="get"\` and the chosen \`skill_name\` to load its instructions.
 `}
 
+SERVER TEST DEBUGGING:
+- Design API tests before or alongside route implementation.
+- Use \`sandbox_probe_api\` or \`sandbox_probe_routes\` for runtime failures. Their result includes request-specific HTTP status, server errors, and a bounded server-log tail.
+- If more detail is needed after a probe, use \`sandbox_tail_api_log\` or \`sandbox_tail_server_log\`; do not add debug endpoints, response fields, global console patches, or test-only route wrappers.
+- Pertinent runtime errors and warnings are sanitized, correlated to this plan step, stored in \`instance_logs\`, and injected into the next attempt under "Runtime Evidence".
+- Never place API keys, authorization headers, cookies, tokens, or secrets in source files or test output.
+
 SHELL LIMITATIONS:
 - The sandbox shell is /bin/sh (NOT bash). Brace expansion like {a,b,c} does NOT work.
 - WRONG: mkdir -p src/app/{community,guests,booking} — creates a LITERAL folder named "{community,guests,booking}".

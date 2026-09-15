@@ -290,13 +290,13 @@ export function getInputSchema(tool: {
 /**
  * Creates an MCP Server with tools/list and tools/call handlers for the given context.
  */
-export async function createMcpServer(
+export function createMcpServer(
   siteId: string,
   userId: string | undefined,
   instanceId: string,
   customTools: any[] = []
 ) {
-  const tools = await getAssistantTools(siteId, userId, instanceId, customTools);
+  const tools = getAssistantTools(siteId, userId, instanceId, customTools);
 
   const server = new Server(
     {

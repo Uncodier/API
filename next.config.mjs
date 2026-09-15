@@ -23,6 +23,7 @@ console.log(`[NEXT-CONFIG] Configuración CORS cargada con ${corsConfig.length} 
 // You can include other Next.js configuration options here, in addition to Nextra settings:
 const nextraConfig = withNextra({
   reactStrictMode: true,
+  transpilePackages: ['@breezystack/lamejs'],
   experimental: {
     serverActions: {
       allowedOrigins: ['localhost:3000', 'localhost:3001', '192.168.87.25:3001', '192.168.87.34:3001', '192.168.87.64:3001', '192.168.87.79:3001', '192.168.0.62:3000', '192.168.0.62:3001', '192.168.0.62:3456', '192.168.0.62:7233', 'localhost:3456']

@@ -45,6 +45,7 @@ export type RuntimeProbeServerError = {
     | 'hydration_mismatch'
     | 'syntax_error'
     | 'type_error'
+    | 'warning'
     | 'generic_error'
     | 'econnrefused';
   line: string;
@@ -94,6 +95,7 @@ function parseServerErrors(log: string): RuntimeProbeServerError[] {
     { kind: 'hydration_mismatch', test: /Hydration failed|text content does not match|did not match/i },
     { kind: 'syntax_error', test: /SyntaxError/ },
     { kind: 'type_error', test: /TypeError:/ },
+    { kind: 'warning', test: /\b(?:warn|warning):/i },
     { kind: 'econnrefused', test: /ECONNREFUSED|connect ECONNREFUSED/ },
     { kind: 'generic_error', test: /^\s*Error:/m },
   ];

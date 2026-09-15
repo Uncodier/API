@@ -12,6 +12,7 @@ import { loadLatestDocsDigestFromLogs } from '@/lib/services/docs-cycle-digest';
 // (no next/server). Do NOT import system_notification here — its route pulls next/server
 // and breaks the Vercel Workflow bundler.
 import { requirementStatusTool } from '@/app/api/agents/tools/requirement_status/assistantProtocol';
+import { createRequirementStatusCore } from '@/lib/tools/requirement-status-core';
 import type { DocsDigestResult } from './docs-digest-step';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
 
@@ -30,7 +31,10 @@ export interface CycleWrapUpParams {
   previewUrl?: string | null;
   repoUrl?: string | null;
   audit?: CronAuditContext;
+  /** Bypass empty-history and pending-plan suppression for terminal reporting. */
   forceWrapUp?: boolean;
+  wrapUpReason?: string | null;
+  requiresUserFeedback?: boolean;
 }
 
 export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<{ ran: boolean }> {
@@ -48,10 +52,32 @@ export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<{ 
     previewUrl,
     repoUrl,
     forceWrapUp,
+    wrapUpReason,
+    requiresUserFeedback,
   } = params;
 
   try {
     const history = await loadUserActionHistory(instanceId, { requirementId });
+
+    if (requiresUserFeedback) {
+      try {
+        await createRequirementStatusCore({
+          site_id: siteId,
+          instance_id: instanceId,
+          requirement_id: requirementId,
+          stage: 'blocked',
+          message: (
+            wrapUpReason ||
+            'Work is paused and requires user feedback before it can continue.'
+          ).slice(0, 1000),
+        });
+      } catch (statusError: unknown) {
+        console.warn(
+          `[CycleWrapUpStep] Failed to persist blocked status for ${requirementId}:`,
+          statusError instanceof Error ? statusError.message : statusError,
+        );
+      }
+    }
 
     // Reload full digest from the log written by emitDocsDigestStep (slim workflow payload).
     let digestFiles =
@@ -92,6 +118,8 @@ export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<{ 
       digestFiles,
       planCompleted,
       pendingPlanSteps,
+      wrapUpReason,
+      requiresUserFeedback,
       previewUrl,
       repoUrl,
     });

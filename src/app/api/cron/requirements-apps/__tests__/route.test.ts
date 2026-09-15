@@ -16,6 +16,10 @@ jest.mock('../workflow', () => ({
   runCronAppsWorkflow: jest.fn(),
 }));
 
+jest.mock('../../shared/forced-cycle-wrapup-workflow', () => ({
+  runForcedCycleWrapUpWorkflow: jest.fn(),
+}));
+
 jest.mock('../../maintenance/workflow', () => ({
   runMaintenanceWorkflow: jest.fn(),
 }));
@@ -50,6 +54,7 @@ describe('Cron Requirements Apps Route', () => {
     mockSupabase = {
       select: jest.fn().mockReturnThis(),
       eq: jest.fn().mockReturnThis(),
+      neq: jest.fn().mockReturnThis(),
       in: jest.fn().mockReturnThis(),
       or: jest.fn().mockReturnThis(),
       not: jest.fn().mockReturnThis(),
@@ -86,14 +91,17 @@ describe('Cron Requirements Apps Route', () => {
       cron: null,
     };
 
-    // First call is for due requirements
+    // Supabase calls: completed cleanup, due requirements, current status,
+    // instance lookup/status/plan, foreign activity, metadata update, history.
     mockSupabase.then = jest.fn()
+      .mockImplementationOnce((res: any) => res({ data: [], error: null })) // recent completed requirements
       .mockImplementationOnce((res: any) => res({ data: [mockRequirement], error: null })) // due requirements
-      .mockImplementationOnce((res: any) => res({ data: { created_at: '2023-01-01T00:00:00.000Z' }, error: null })) // lastStatus
-      .mockImplementationOnce((res: any) => res({ data: [{ id: 'inst-1' }], error: null })) // remote_instances
+      .mockImplementationOnce((res: any) => res({ data: { status: 'in-progress' }, error: null })) // current requirement
+      .mockImplementationOnce((res: any) => res({ data: [{ id: 'inst-1', instance_type: 'browser' }], error: null })) // remote instance
       .mockImplementationOnce((res: any) => res({ data: { status: 'running' }, error: null })) // instanceData
       .mockImplementationOnce((res: any) => res({ data: null, error: null })) // activePlan
-      .mockImplementationOnce((res: any) => res({ data: null, error: null })) // foreignActivity
+      .mockImplementationOnce((res: any) => res({ data: [], error: null })) // foreignActivity
+      .mockImplementationOnce((res: any) => res({ data: null, error: null })) // metadata update
       .mockImplementationOnce((res: any) => res({ data: null, error: null })) // prevStatuses
       .mockImplementationOnce((res: any) => res({ data: null, error: null })); // prevPlans
 
@@ -124,9 +132,9 @@ describe('Cron Requirements Apps Route', () => {
     };
 
     mockSupabase.then = jest.fn()
-      .mockImplementationOnce((res: any) => res({ data: [mockRequirement], error: null })) // due requirements
-      .mockImplementationOnce((res: any) => res({ data: { created_at: '2020-01-01T00:00:00.000Z' }, error: null })) // lastStatus
-      .mockImplementationOnce((res: any) => res({ data: [{ id: 'inst-1' }], error: null })); // instances
+      .mockImplementationOnce((res: any) => res({ data: [mockRequirement], error: null })) // recent completed requirements
+      .mockImplementationOnce((res: any) => res({ data: null, error: null })) // revert update
+      .mockImplementationOnce((res: any) => res({ data: [], error: null })); // no due requirements after cleanup
 
     const req = new Request('http://localhost', {
       headers: { authorization: 'Bearer test-secret' },
@@ -154,8 +162,13 @@ describe('Cron Requirements Apps Route', () => {
     };
 
     mockSupabase.then = jest.fn()
+      .mockImplementationOnce((res: any) => res({ data: [], error: null })) // recent completed requirements
       .mockImplementationOnce((res: any) => res({ data: [mockRequirement], error: null })) // due requirements
-      .mockImplementationOnce((res: any) => res({ data: { created_at: '2020-01-01T00:00:00.000Z' }, error: null })); // lastStatus before the item update
+      .mockImplementationOnce((res: any) => res({ data: { status: 'in-progress' }, error: null })) // current requirement
+      .mockImplementationOnce((res: any) => res({ data: { created_at: '2020-01-01T00:00:00.000Z' }, error: null })) // lastStatus before item update
+      .mockImplementationOnce((res: any) => res({ data: [{ id: 'inst-1', instance_type: 'browser' }], error: null })) // remote instance
+      .mockImplementationOnce((res: any) => res({ data: { status: 'paused' }, error: null })) // instance status
+      .mockImplementationOnce((res: any) => res({ data: null, error: null })); // active plan
 
     const req = new Request('http://localhost', {
       headers: { authorization: 'Bearer test-secret' },

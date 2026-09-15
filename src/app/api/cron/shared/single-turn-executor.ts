@@ -56,6 +56,8 @@ export async function executeSingleTurnStep(params: {
     siteId: siteId,
     userId: userId,
     requirementId: requirementId,
+    planId: plan.id,
+    stepId: step.id,
   };
 
   // 1. Connect to Sandbox
@@ -193,7 +195,7 @@ export async function executeSingleTurnStep(params: {
       cycle_baseline_at: cycleBaselineAt,
     });
     
-    const fullTools = withExecuteStepNoop(await getAssistantTools(siteId, userId, instanceId, sandboxTools));
+    const fullTools = withExecuteStepNoop(getAssistantTools(siteId, userId, instanceId, sandboxTools));
     
     const result = await executeAssistantStep(messages, { id: instanceId, site_id: siteId, user_id: userId, requirement_id: requirementId }, {
       instance_id: instanceId,

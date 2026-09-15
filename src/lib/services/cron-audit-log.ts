@@ -11,6 +11,8 @@ export type CronAuditContext = {
   instanceId?: string;
   userId?: string;
   requirementId?: string;
+  planId?: string;
+  stepId?: string;
 };
 
 /** Stable event names for dashboards / SQL filters */
@@ -145,6 +147,8 @@ export async function logCronInfrastructureEvent(
     source: 'cron_infrastructure',
     event: payload.event,
     requirement_id: ctx.requirementId ?? null,
+    plan_id: ctx.planId ?? null,
+    step_id: ctx.stepId ?? null,
     ...payload.details,
   };
   if (!ctx.instanceId) {

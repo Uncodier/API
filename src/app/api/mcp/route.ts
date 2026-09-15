@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const server = await createMcpServer(siteId, userId, instanceId);
+  const server = createMcpServer(siteId, userId, instanceId);
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,

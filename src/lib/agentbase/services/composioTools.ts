@@ -28,7 +28,10 @@ interface ComposioToolOptions {
  */
 export class ComposioTools {
   private toolset: OpenAIToolSet | null = null;
-  private config: ComposioToolsConfig;
+  private config: {
+    apiKey?: string;
+    entityId: string;
+  };
 
   /**
    * Constructor
@@ -50,11 +53,15 @@ export class ComposioTools {
    */
   async initialize(): Promise<void> {
     try {
-      if (!this.config.apiKey) {
+      const apiKey = this.config.apiKey;
+      if (!apiKey) {
         throw new Error('COMPOSIO_API_KEY es obligatorio para inicializar ComposioTools');
       }
 
-      this.toolset = new OpenAIToolSet({});
+      this.toolset = new OpenAIToolSet({
+        apiKey,
+        entityId: this.config.entityId,
+      });
       
       console.log(`[ComposioTools] Inicializado correctamente con entityId: ${this.config.entityId}`);
     } catch (error: any) {

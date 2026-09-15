@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { start } from 'workflow/api';
 import { runCronAppsWorkflow } from './workflow';
 import { runMaintenanceWorkflow } from '../maintenance/workflow';
+import { runForcedCycleWrapUpWorkflow } from '../shared/forced-cycle-wrapup-workflow';
 import { CronExpressionParser } from 'cron-parser';
 import { acquireRunLock, getSupabaseUrlHostForLogs, releaseRunLock } from '../shared/cron-run-lock';
 import { isBacklogComplete, hasOutstandingWork, gatingItems, outstandingGatingItems } from '@/lib/services/requirement-backlog';
@@ -210,7 +211,6 @@ export async function GET(req: Request) {
         // Only auto-promote if there's no outstanding work that we actively want to do.
         // We consider ornamental work "active" if it was updated recently.
         let shouldAutoPromote = isComplete && !reactivatedByCron;
-        let requireUserIterationFeedback = false;
         
         if (shouldAutoPromote && hasOutstandingWork(requirement.backlog?.items || [])) {
           const hasCoreOutstanding = outstandingGatingItems(requirement.backlog?.items || []).length > 0;
@@ -243,16 +243,6 @@ export async function GET(req: Request) {
           
           if (hasCoreOutstanding || hasRecentOrnamental) {
             shouldAutoPromote = false;
-            
-            // Check if there are outstanding items (core or ornamental) but all have exhausted their allowed attempts.
-            // If so, they need user iteration instead of looping forever. Let cycle-wrapup handle the notification.
-            const hasActionableOutstanding = (requirement.backlog?.items || []).some((i: any) => 
-              !['done', 'needs_review', 'rejected'].includes(i.status) && 
-              (i.attempts || 0) < parseInt(process.env.CRON_CYCLES_PER_BACKLOG_ITEM || '100', 10)
-            );
-            if (!hasActionableOutstanding) {
-              requireUserIterationFeedback = true;
-            }
           }
         }
 
@@ -267,24 +257,6 @@ export async function GET(req: Request) {
 
           if (minutesSinceCoreDone < COOLDOWN_MIN) {
             console.log(`[Cron Apps] Skip ${reqId} — gating backlog done ${minutesSinceCoreDone.toFixed(1)} min ago (cooldown ${COOLDOWN_MIN} min)`);
-            
-            // Check if we need to emit a wrap-up to ask for user feedback due to stuck items
-            if (requireUserIterationFeedback) {
-              console.log(`[Cron Apps] Emitting wrap-up for ${reqId} because items are stuck and require user feedback`);
-              const { emitCycleWrapUpStep } = await import('../shared/cycle-wrapup-step');
-              await emitCycleWrapUpStep({
-                siteId: site_id,
-                instanceId: instanceId || '',
-                userId: user_id,
-                requirementId: reqId,
-                title,
-                instructions,
-                digest: null,
-                planCompleted: false,
-                forceWrapUp: true
-              });
-            }
-
             await releaseRunLock(reqId, runLock.runId);
             results.push({ reqId, skipped: true, reason: 'backlog_cooldown' });
             continue;
@@ -307,34 +279,6 @@ export async function GET(req: Request) {
                message: 'Project complete (auto-promoted after cooldown)',
              });
           }
-        }
-        
-        // If we shouldn't auto-promote but need user iteration feedback and aren't skipping yet
-        if (!shouldAutoPromote && requireUserIterationFeedback && currentReq.status === 'in-progress') {
-            console.log(`[Cron Apps] Requirement ${reqId} has stuck items requiring feedback. Emitting wrap-up...`);
-            const { emitCycleWrapUpStep } = await import('../shared/cycle-wrapup-step');
-            await emitCycleWrapUpStep({
-              siteId: site_id,
-              instanceId: instanceId || '',
-              userId: user_id,
-              requirementId: reqId,
-              title,
-              instructions,
-              digest: null,
-              planCompleted: false,
-              forceWrapUp: true
-            });
-            // Record status so the user knows it's waiting
-            await supabaseAdmin.from('requirement_status').insert({
-              requirement_id: reqId,
-              site_id: site_id,
-              instance_id: instanceId || null,
-              stage: 'on-review',
-              message: 'Pending items require your feedback or intervention to proceed.',
-            });
-            await supabaseAdmin.from('requirements').update({ status: 'on-review', updated_at: new Date().toISOString() }).eq('id', reqId);
-            currentReq.status = 'on-review';
-            requirement.status = 'on-review';
         }
 
         // Before deciding to skip, let's process the revert logic.
@@ -517,20 +461,34 @@ export async function GET(req: Request) {
           await supabaseAdmin.from('instance_plans').update({ status: 'paused' }).eq('instance_id', instanceId).in('status', ['pending', 'in_progress']);
         }
         
-        // Notify user via wrap-up since main builder is blocked
-        console.log(`[Cron Apps] Emitting wrap-up for blocked requirement ${reqId}`);
-        const { emitCycleWrapUpStep } = await import('../shared/cycle-wrapup-step');
-        await emitCycleWrapUpStep({
-          siteId: site_id,
-          instanceId: instanceId || '',
-          userId: user_id,
-          requirementId: reqId,
-          title,
-          instructions,
-          digest: null,
-          planCompleted: false,
-          forceWrapUp: true
-        });
+        // A step function cannot be invoked directly from this route. Start a
+        // small durable workflow so the blocked reason reaches the client.
+        if (instanceId) {
+          try {
+            const wrapUpRun = await start(runForcedCycleWrapUpWorkflow, [{
+              siteId: site_id,
+              instanceId,
+              userId: user_id,
+              requirementId: reqId,
+              title,
+              instructions,
+              planCompleted: false,
+              wrapUpReason: blockedMessage,
+              requiresUserFeedback: true,
+            }]);
+            results.push({
+              reqId,
+              runId: wrapUpRun.runId,
+              started: true,
+              type: 'blocked_wrap_up',
+            });
+          } catch (wrapUpError: unknown) {
+            console.error(
+              `[Cron Apps] Failed to start blocked wrap-up for ${reqId}:`,
+              wrapUpError instanceof Error ? wrapUpError.message : wrapUpError,
+            );
+          }
+        }
         
         // We no longer limit QA runs. QA will continuously improve the app.
         // Trigger QA workflow before continuing

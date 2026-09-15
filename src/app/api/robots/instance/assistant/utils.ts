@@ -5,6 +5,7 @@ import { getContextMemories } from '@/lib/services/agent-memory-tools-service';
 import { BackgroundBuilder } from '@/lib/agentbase/services/agent/BackgroundServices/BackgroundBuilder';
 import { DataFetcher } from '@/lib/agentbase/services/agent/BackgroundServices/DataFetcher';
 import { resolveClientTimezone } from '@/lib/timezone';
+import { getComposioApiKeyForSite } from '@/lib/services/composio-service';
 
 // Tool imports
 import { generateImageTool } from '@/app/api/agents/tools/generateImage/assistantProtocol';
@@ -84,6 +85,7 @@ import { publishTool } from '@/app/api/agents/tools/publish/assistantProtocol';
 import { activateCodingAgentsTool } from '@/app/api/agents/tools/activate_coding_agents/assistantProtocol';
 import { updateRepoTool } from '@/app/api/agents/tools/update_repo/assistantProtocol';
 import { showArtifactTool } from '@/app/api/agents/tools/show_artifact/assistantProtocol';
+import { composioActionTool } from '@/app/api/agents/tools/composio/assistantProtocol';
 
 /**
  * Fetch relevant memories for assistant context (site_id, user_id, instance_id)
@@ -299,13 +301,10 @@ export function determineInstanceCapabilities(instance: any, use_sdk_tools: bool
   };
 }
 
-import { getComposioApiKeyForSite } from '@/lib/services/composio-service';
-import { composioActionTool } from '@/app/api/agents/tools/composio/assistantProtocol';
-
 /**
  * Helper to get all assistant tools including custom ones
  */
-export const getAssistantTools = async (
+export const getAssistantTools = (
   siteId: string,
   userId: string | undefined,
   instanceId: string,
@@ -317,7 +316,9 @@ export const getAssistantTools = async (
     ...customTools,
     generateImageTool(siteId, instanceId),
     generateVideoTool(siteId, instanceId),
-    generateAudioTool(siteId, instanceId),
+    generateAudioTool(siteId, instanceId, {
+      forceWhatsAppCompatible: agentType === 'gear' && !userPhone?.includes('@'),
+    }),
     instanceTool(siteId, instanceId, userId),
     updateSiteSettingsTool(siteId),
     webSearchTool(siteId),
@@ -391,11 +392,6 @@ export const getAssistantTools = async (
     showArtifactTool(siteId, instanceId, userId ?? ''),
   ];
 
-  const composioKey = await getComposioApiKeyForSite(siteId);
-  if (composioKey) {
-    tools.push(composioActionTool(siteId, composioKey));
-  }
-
   if (agentType === 'gear') {
     let normalizedPhone: string | undefined = undefined;
     if (userPhone) {
@@ -414,3 +410,30 @@ export const getAssistantTools = async (
 
   return routeTools(tools as any[]);
 };
+
+/**
+ * Builds the interactive instance assistant tools, including Composio only
+ * when the current site has configured its own Composio secret.
+ */
+export async function getInstanceAssistantTools(
+  siteId: string,
+  userId: string | undefined,
+  instanceId: string,
+  customTools: any[] = [],
+  agentType?: string,
+  userPhone?: string
+) {
+  const composioKey = await getComposioApiKeyForSite(siteId);
+  const instanceTools = composioKey
+    ? [...customTools, composioActionTool(siteId, composioKey)]
+    : customTools;
+
+  return getAssistantTools(
+    siteId,
+    userId,
+    instanceId,
+    instanceTools,
+    agentType,
+    userPhone
+  );
+}

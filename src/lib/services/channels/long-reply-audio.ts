@@ -40,10 +40,10 @@ async function synthesizeReplyAudio(
   text: string,
   channel: string
 ): Promise<{ buffer: Buffer; ext: string; mimeType: string }> {
-  // WhatsApp does not support WAV audio. Use an MPEG response directly and
-  // let the caller fall back to text if the MP3 provider is unavailable.
+  // WhatsApp does not support WAV audio. Gemini returns PCM, which the TTS
+  // service encodes locally as MP3 when this format is requested.
   if (channel === 'whatsapp') {
-    const buffer = await synthesizeWithVercel(text, 'alloy', 'mp3', 'tts-1');
+    const buffer = await synthesizeWithGemini(text, 'Puck', 'mp3', 'gemini-3.1-flash-tts-preview');
     return { buffer, ext: 'mp3', mimeType: 'audio/mpeg' };
   }
 

@@ -1,6 +1,7 @@
 import {
   buildCycleWrapUpSystemPrompt,
   countPendingPlanSteps,
+  feedbackRequiredBacklogItems,
   shouldRunCycleWrapUp,
   shouldSkipWrapUpForPendingSteps,
 } from '../cycle-wrapup-prompt';
@@ -63,9 +64,53 @@ describe('cycle-wrapup-prompt', () => {
     ])).toBe(2);
   });
 
+  it('asks for feedback when a forced wrap-up reports blocked pending work', () => {
+    const prompt = buildCycleWrapUpSystemPrompt({
+      title: 'Research',
+      requirementId: 'req-2',
+      instructions: 'Map channels',
+      historyPromptText: '',
+      historyMode: 'empty',
+      digestFiles: [],
+      planCompleted: false,
+      pendingPlanSteps: 2,
+      wrapUpReason: 'The active item exhausted its attempt budget.',
+      requiresUserFeedback: true,
+    });
+
+    expect(prompt).toContain('USER FEEDBACK REQUIRED');
+    expect(prompt).toContain('explicitly ask the user to reply');
+    expect(prompt).toContain("stage='blocked'");
+    expect(prompt).toContain('The active item exhausted its attempt budget.');
+    expect(prompt).not.toContain('Do NOT ask the user for permission');
+    expect(
+      shouldSkipWrapUpForPendingSteps({
+        planCompleted: false,
+        pendingPlanSteps: 2,
+        forceWrapUp: true,
+      }),
+    ).toBe(false);
+  });
+
   it('shouldRunCycleWrapUp skips only when both empty', () => {
     expect(shouldRunCycleWrapUp({ hasDigest: false, userMessageCount: 0 })).toBe(false);
     expect(shouldRunCycleWrapUp({ hasDigest: true, userMessageCount: 0 })).toBe(true);
     expect(shouldRunCycleWrapUp({ hasDigest: false, userMessageCount: 2 })).toBe(true);
+  });
+
+  it('detects attempted pending items, review items, and exhausted active work', () => {
+    const items = [
+      { status: 'pending', attempts: 2, tier: 'ornamental' as const },
+      { status: 'pending', attempts: 1, tier: 'core' as const },
+      { status: 'in_progress', attempts: 4, tier: 'core' as const },
+      { status: 'needs_review', attempts: 1, tier: 'core' as const },
+      { status: 'done', attempts: 100, tier: 'core' as const },
+    ];
+
+    expect(feedbackRequiredBacklogItems(items, { core: 5, ornamental: 2 })).toEqual([
+      items[0],
+      items[1],
+      items[3],
+    ]);
   });
 });

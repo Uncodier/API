@@ -1,16 +1,29 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { sanitizeRuntimeLog } from './runtime-log-context';
+
+type StepHistoryLog = {
+  log_type: string;
+  message?: string | null;
+  tool_name?: string | null;
+  tool_args?: unknown;
+  tool_result?: {
+    output?: unknown;
+    error?: unknown;
+  } | null;
+  details?: Record<string, unknown> | null;
+};
 
 export async function fetchStepLogHistoryText(instanceId: string, planId: string, stepId: string): Promise<string> {
-  // Query logs for the specific step
-  // We want agent_action (which has the assistant text), tool_call, and thinking logs
+  // Query prior actions plus correlated gate/runtime failures for this step.
   const { data: logs, error } = await supabaseAdmin
     .from('instance_logs')
     .select('id, log_type, message, tool_name, tool_args, tool_result, created_at, details')
     .eq('instance_id', instanceId)
-    .in('log_type', ['agent_action', 'tool_call', 'thinking'])
+    .in('log_type', ['agent_action', 'tool_call', 'thinking', 'infrastructure', 'sandbox_test_failure'])
     .order('created_at', { ascending: true })
     .filter('details->>plan_id', 'eq', planId)
-    .filter('details->>step_id', 'eq', stepId);
+    .filter('details->>step_id', 'eq', stepId)
+    .limit(100);
 
   if (error) {
     console.error(`[StepHistoryBuilder] Failed to fetch logs: ${error.message}`);
@@ -21,6 +34,10 @@ export async function fetchStepLogHistoryText(instanceId: string, planId: string
     return '';
   }
 
+  return formatStepLogHistory(logs as StepHistoryLog[]);
+}
+
+export function formatStepLogHistory(logs: StepHistoryLog[]): string {
   const formatted: string[] = [];
   
   formatted.push('--- PREVIOUS ACTIONS IN THIS STEP ---');
@@ -68,10 +85,39 @@ export async function fetchStepLogHistoryText(instanceId: string, planId: string
         }
         formatted.push(`Result: ${outStr}`);
       }
+    } else if (log.log_type === 'infrastructure' || log.log_type === 'sandbox_test_failure') {
+      const details = log.details && typeof log.details === 'object' ? log.details : {};
+      const event = typeof details.event === 'string' ? details.event : log.log_type;
+      const rawEvidence = [
+        typeof details.error_excerpt === 'string' ? details.error_excerpt : '',
+        typeof details.error === 'string' ? details.error : '',
+        typeof details.server_log_excerpt === 'string' ? details.server_log_excerpt : '',
+        Array.isArray(details.server_errors)
+          ? details.server_errors
+              .map((entry: unknown) =>
+                entry && typeof entry === 'object' && 'line' in entry
+                  ? String((entry as { line: unknown }).line)
+                  : String(entry),
+              )
+              .join('\n')
+          : '',
+      ]
+        .filter(Boolean)
+        .join('\n');
+      const evidence = sanitizeRuntimeLog(rawEvidence);
+      if (evidence || log.message) {
+        formatted.push(`[Runtime Evidence: ${event}]`);
+        if (log.message) formatted.push(sanitizeRuntimeLog(log.message));
+        if (evidence) formatted.push(evidence);
+      }
     }
   }
   
   formatted.push('--- END PREVIOUS ACTIONS ---');
 
-  return formatted.join('\n');
+  const text = formatted.join('\n');
+  const maxContextChars = 12_000;
+  return text.length <= maxContextChars
+    ? text
+    : `--- PREVIOUS ACTIONS TRUNCATED ---\n${text.slice(-maxContextChars)}`;
 }

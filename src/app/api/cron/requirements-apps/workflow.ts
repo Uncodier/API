@@ -23,8 +23,11 @@ import { applyDatabaseMigrationsStep } from '../shared/step-db-migrations';
 import { bootstrapRequirementSpecStep } from '../shared/bootstrap-spec-step';
 import { provisionTrackingScriptStep } from '../shared/tracking-script-step';
 import { ensureSourceArchiveStep } from '../shared/ensure-source-archive-step';
-import { classifyRequirementType, isLightRequirementFlow } from '@/lib/services/requirement-flows';
-import { countPendingPlanSteps } from '@/lib/services/cycle-wrapup-prompt';
+import { classifyRequirementType, getFlow, isLightRequirementFlow } from '@/lib/services/requirement-flows';
+import {
+  countPendingPlanSteps,
+  feedbackRequiredBacklogItems,
+} from '@/lib/services/cycle-wrapup-prompt';
 import { 
   getPlanExecutionGateStep,
   updatePlanStepStatusStep,
@@ -52,6 +55,7 @@ import {
 } from '../shared/workflow-db-steps';
 import { buildCoordinatorPromptForFlow } from './prompt';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
+import type { DocsDigestResult } from '../shared/docs-digest-step';
 import { sleep } from 'workflow';
 
 export interface CronAppsWorkflowInput {
@@ -87,6 +91,19 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   // timeout (observed: 280 creates/day vs ~1 stop/day in instance_logs).
   // Every step that may reprovision the VM updates this via `effectiveSandboxId`.
   let sandboxId: string | null = null;
+  let planCompleted = false;
+  let latestPlanSteps: any[] | undefined;
+  let previewUrl: string | null = null;
+  let repoUrl: string | null = null;
+  let digest: DocsDigestResult | null = null;
+  let wrapUpAttempted = false;
+  let wrapUpReason: string | null = null;
+  let wrapUpRequiresUserFeedback = false;
+  const requirementFlow = getFlow(classifyRequirementType(type));
+  const feedbackAttemptLimits = {
+    core: requirementFlow.cost_envelope.max_cycles_per_item,
+    ornamental: parseInt(process.env.CRON_ORNAMENTAL_MAX_ATTEMPTS || '2', 10),
+  };
 
   try {
   // Step 0: Check if instance or plan is paused
@@ -104,6 +121,8 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     
     if (pausedCheck.isPaused) {
       console.log(`[CronAppsWorkflow] Still paused after 5 minutes. Killing workflow and unblocking requirement.`);
+      wrapUpReason = 'The instance remained paused for five minutes, so this work cycle stopped.';
+      wrapUpRequiresUserFeedback = true;
       await unblockRequirementStep(reqId);
       return { reqId, branch: null, previewUrl: null, status: 'paused' as const };
     }
@@ -152,6 +171,14 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
         relevantDecisions.push(...item.assumptions.map((a: string) => `[${item.title}] ${a}`));
       }
     });
+
+    const feedbackItems = feedbackRequiredBacklogItems(activeItems, feedbackAttemptLimits);
+    if (feedbackItems.length > 0) {
+      wrapUpRequiresUserFeedback = true;
+      wrapUpReason = `Feedback is required for backlog item(s): ${feedbackItems
+        .map((item: any) => `"${item.title}" (status=${item.status}, attempts=${item.attempts || 0})`)
+        .join(', ')}.`;
+    }
   }
 
   // Step 2: If no active plan, decide whether re-planning is safe.
@@ -175,6 +202,8 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   }
 
   if (recentPlansGuard.shouldBlockRequirement) {
+    wrapUpRequiresUserFeedback = true;
+    wrapUpReason = `Re-plan loop detected: ${recentPlansGuard.reason}.`;
     const rec = await recordRequirementBlockedStep({
       site_id,
       instance_id: instanceId,
@@ -212,6 +241,10 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
 
   if (skipOrchestrator && !hasActivePlan && !(!reqContext.backlog?.items || reqContext.backlog.items.length === 0)) {
     console.log(`[CronAppsWorkflow] Skipping cycle: cooling down to avoid re-plan loop. No active plan to execute. (isFreshWork: ${isFreshWork})`);
+    if (hasAttemptedActiveItems) {
+      wrapUpRequiresUserFeedback = true;
+      wrapUpReason ||= 'Attempted backlog work remains, but no runnable plan is available.';
+    }
     return { reqId, branch: null, previewUrl: null, status: 'in-progress' as const };
   }
 
@@ -360,8 +393,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
 
   // Step 5: Execute plan steps (always re-fetch so pause/delete in the same cycle is respected)
   const activePlan = await getActiveInstancePlanStep(instanceId, site_id);
-  let planCompleted = false;
-  let latestPlanSteps: any[] | undefined = activePlan?.steps;
+  latestPlanSteps = activePlan?.steps;
 
   let smokeError: string | null = null;
   let pushResult: { branch: string; pushed: boolean; commitCount: number } | null = null;
@@ -673,14 +705,14 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   }
   const owner = binding.org;
   const repoName = binding.repo;
-  const previewUrl = await getPreviewUrlStep(owner, repoName, effectiveBranch, reqId);
+  previewUrl = await getPreviewUrlStep(owner, repoName, effectiveBranch, reqId);
 
   // Step 7: Check source code
   const sourceCodeUrl = await ensureSourceArchiveStep(reqId, sandboxId);
 
   // Step 8: HTTP validation — also checks repo_url / branch consistency vs
   // the requirement's metadata.git (advisory unless REQUIREMENT_GIT_STRICT=true).
-  const repoUrl = `https://github.com/${owner}/${repoName}/tree/${effectiveBranch}`;
+  repoUrl = `https://github.com/${owner}/${repoName}/tree/${effectiveBranch}`;
   const { repoOk, previewOk } = await validateDeliverablesStep({
     repoUrl,
     previewUrl: previewUrl || undefined,
@@ -689,7 +721,6 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   });
 
   // Step 8.5: Emit Docs Digest and Cycle Wrap-Up
-  let digest = null;
   if (sandboxId) {
     const { emitDocsDigestStep } = await import('../shared/docs-digest-step');
     digest = await emitDocsDigestStep({
@@ -701,9 +732,34 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       audit: cronAudit,
     });
     
-    // Wrap-up skips itself when both digest and user_action history are empty
+    wrapUpRequiresUserFeedback = false;
+    wrapUpReason = null;
+    if (stepsPhase?.anyStepFailed || postFinallyBuildError) {
+      wrapUpRequiresUserFeedback = true;
+      wrapUpReason =
+        postFinallyBuildError ||
+        'One or more execution steps failed and need user feedback before continuing.';
+    } else {
+      const finalRequirementContext = await getRequirementFullContextStep(
+        reqId,
+        instanceId,
+        site_id,
+        user_id,
+      );
+      const finalFeedbackItems = feedbackRequiredBacklogItems(
+        finalRequirementContext.backlog?.items || [],
+        feedbackAttemptLimits,
+      );
+      if (finalFeedbackItems.length > 0) {
+        wrapUpRequiresUserFeedback = true;
+        wrapUpReason = `Feedback is required for backlog item(s): ${finalFeedbackItems
+          .map((item: any) => `"${item.title}" (status=${item.status}, attempts=${item.attempts || 0})`)
+          .join(', ')}.`;
+      }
+    }
+
     const { emitCycleWrapUpStep } = await import('../shared/cycle-wrapup-step');
-    await emitCycleWrapUpStep({
+    const wrapUpResult = await emitCycleWrapUpStep({
       sandboxId,
       siteId: site_id,
       instanceId,
@@ -717,7 +773,11 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       previewUrl,
       repoUrl,
       audit: cronAudit,
+      forceWrapUp: true,
+      wrapUpReason,
+      requiresUserFeedback: wrapUpRequiresUserFeedback,
     });
+    wrapUpAttempted = wrapUpResult.ran;
 
     const { emitSyncDocsToBacklogStep } = await import('../shared/sync-docs-to-backlog-step');
     await emitSyncDocsToBacklogStep({
@@ -748,7 +808,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     audit: cronAudit,
   });
 
-  if (planCompleted) {
+  if (planCompleted && !wrapUpRequiresUserFeedback) {
     await unblockRequirementStep(reqId);
   }
 
@@ -758,9 +818,41 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   return { reqId, branch: effectiveBranch, previewUrl, status: finalStatus };
   } catch (e: any) {
     console.error(`[CronAppsWorkflow] 🚨 CRITICAL ERROR in workflow for req ${reqId}:`, e);
+    wrapUpAttempted = false;
+    wrapUpRequiresUserFeedback = true;
+    wrapUpReason = `The work cycle stopped because of an error: ${e?.message || String(e)}`;
     // Let the finally block handle the sandbox stop
     throw e;
   } finally {
+    if (!wrapUpAttempted) {
+      try {
+        const { emitCycleWrapUpStep } = await import('../shared/cycle-wrapup-step');
+        await emitCycleWrapUpStep({
+          sandboxId: sandboxId || undefined,
+          siteId: site_id,
+          instanceId,
+          userId: user_id,
+          requirementId: reqId,
+          title,
+          instructions,
+          digest,
+          planCompleted,
+          pendingPlanSteps: countPendingPlanSteps(latestPlanSteps),
+          previewUrl,
+          repoUrl,
+          audit: cronAudit,
+          forceWrapUp: true,
+          wrapUpReason: wrapUpReason || 'The work cycle ended before the normal wrap-up stage.',
+          requiresUserFeedback: wrapUpRequiresUserFeedback,
+        });
+      } catch (wrapUpError: unknown) {
+        console.warn(
+          '[CronAppsWorkflow] Final wrap-up failed:',
+          wrapUpError instanceof Error ? wrapUpError.message : wrapUpError,
+        );
+      }
+    }
+
     if (instanceId) {
       try {
         await updateInstanceStatusStep(instanceId, 'pending');

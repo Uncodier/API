@@ -26,7 +26,7 @@ if (!siteId) {
 // Import createMcpServer dynamically to ensure env vars are set before module evaluation
 async function main() {
   const { createMcpServer } = await import('@/lib/mcp/server');
-  const server = await createMcpServer(siteId!, userId, instanceId);
+  const server = createMcpServer(siteId!, userId, instanceId);
   const transport = new StdioServerTransport();
 
   // Force the process to exit when the client disconnects

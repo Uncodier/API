@@ -17,18 +17,22 @@ export async function synthesizeWithVercel(text: string, voice?: string, format?
     throw new Error('Vercel AI Gateway is not configured');
   }
 
-  const baseURL = rawBase.replace(/\/$/, '').replace(/\/v1$/, '');
-  const resp = await fetch(`${baseURL}/v1/audio/speech`, {
+  const gatewayOrigin = new URL(rawBase).origin;
+  const selectedModel = model?.includes('/') ? model : `openai/${model || 'tts-1'}`;
+  const outputFormat = format || 'mp3';
+  const resp = await fetch(`${gatewayOrigin}/v4/ai/speech-model`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${apiKey}`,
+      'ai-gateway-protocol-version': '0.0.1',
+      'ai-speech-model-specification-version': '4',
+      'ai-model-id': selectedModel,
     },
     body: JSON.stringify({
-      model: model || 'tts-1',
-      input: text,
+      text,
       voice: voice || 'alloy',
-      format: format || 'mp3',
+      outputFormat,
     }),
   });
 
@@ -37,8 +41,12 @@ export async function synthesizeWithVercel(text: string, voice?: string, format?
     throw new Error(`Vercel Gateway TTS failed: ${resp.status} ${errorText}`);
   }
 
-  const arrayBuffer = await resp.arrayBuffer();
-  return Buffer.from(arrayBuffer);
+  const result = await resp.json();
+  if (!result?.audio || typeof result.audio !== 'string') {
+    throw new Error('Vercel Gateway TTS did not return base64 audio data');
+  }
+
+  return Buffer.from(result.audio, 'base64');
 }
 
 function writeWavHeader(buffer: Buffer, sampleRate = 24000, numChannels = 1, bitDepth = 16): Buffer {
@@ -61,6 +69,36 @@ function writeWavHeader(buffer: Buffer, sampleRate = 24000, numChannels = 1, bit
   wavHeader.writeUInt32LE(buffer.length, 40);
 
   return Buffer.concat([wavHeader, buffer]);
+}
+
+export async function encodePcm16LeToMp3(
+  pcmBuffer: Buffer,
+  sampleRate = 24000,
+  kbps = 64
+): Promise<Buffer> {
+  const { Mp3Encoder } = await import('@breezystack/lamejs');
+  const samples = new Int16Array(Math.floor(pcmBuffer.length / 2));
+  for (let index = 0; index < samples.length; index++) {
+    samples[index] = pcmBuffer.readInt16LE(index * 2);
+  }
+
+  const encoder = new Mp3Encoder(1, sampleRate, kbps);
+  const mp3Chunks: Buffer[] = [];
+  const sampleBlockSize = 1152;
+
+  for (let offset = 0; offset < samples.length; offset += sampleBlockSize) {
+    const encoded = encoder.encodeBuffer(samples.subarray(offset, offset + sampleBlockSize));
+    if (encoded.length > 0) {
+      mp3Chunks.push(Buffer.from(encoded));
+    }
+  }
+
+  const flushed = encoder.flush();
+  if (flushed.length > 0) {
+    mp3Chunks.push(Buffer.from(flushed));
+  }
+
+  return Buffer.concat(mp3Chunks);
 }
 
 export async function synthesizeWithGemini(text: string, voice?: string, format?: string, model?: string) {
@@ -97,7 +135,11 @@ export async function synthesizeWithGemini(text: string, voice?: string, format?
 
   const rawBuffer = Buffer.from(audioPart.inlineData.data, 'base64');
 
-  // Currently Gemini returns raw PCM audio (audio/l16; rate=24000; channels=1)
-  // We wrap it in a standard WAV header so it's playable everywhere.
+  // Gemini returns raw PCM audio (audio/l16; rate=24000; channels=1).
+  // WhatsApp does not accept WAV, so encode MP3 when explicitly requested.
+  if (format === 'mp3') {
+    return await encodePcm16LeToMp3(rawBuffer, 24000);
+  }
+
   return writeWavHeader(rawBuffer, 24000, 1, 16);
 }

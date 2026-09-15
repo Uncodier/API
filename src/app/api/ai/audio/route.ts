@@ -48,11 +48,10 @@ export async function POST(request: NextRequest) {
     if (provider === 'gemini') {
       try {
         const audio = await synthesizeWithGemini(text, voice, format, model);
-        // Gemini returns wrapped WAV buffer from our function
         return new NextResponse(audio as any, {
           status: 200,
           headers: {
-            'Content-Type': 'audio/wav',
+            'Content-Type': format === 'mp3' ? 'audio/mpeg' : 'audio/wav',
             'Content-Length': String(audio.length),
           },
         });
@@ -98,7 +97,7 @@ export async function GET() {
       requiredForVercel: ['VERCEL_AI_GATEWAY_OPENAI', 'VERCEL_AI_GATEWAY_API_KEY'],
     },
     notes: {
-      gemini: 'Uses models/gemini-3.1-flash-tts-preview to generate native audio. Always returns WAV format.',
+      gemini: 'Uses models/gemini-3.1-flash-tts-preview and can return WAV or MP3 audio.',
       voices: 'Gemini supports Aoede, Charon, Fenrir, Kore, Puck (default).'
     }
   });
