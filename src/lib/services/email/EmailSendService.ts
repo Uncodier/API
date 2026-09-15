@@ -232,7 +232,7 @@ export class EmailSendService {
    * Construye el contenido HTML del email
    */
   private static buildHtmlContent(message: string, siteInfo: SiteInfo, signatureHtml?: string): string {
-    const isHtml = /<[a-z][\s\S]*>/i.test(message);
+    const isHtml = /<(html|body|table|tbody|tr|td|div|p)\b/i.test(message);
     let htmlContent = isHtml ? message : this.renderMessageWithLists(message);
     
     // Si el contenido ya era HTML, no lo envolvemos en el div predeterminado para evitar romper diseños,
@@ -284,7 +284,9 @@ export class EmailSendService {
 
     // Apply inline markdown before parsing blocks
     const applyInlineMarkdown = (text: string) => {
-      let html = this.escapeHtml(text);
+      // Escapar < solo si no parece ser el inicio de un tag HTML para permitir tags mezclados con markdown
+      let html = text.replace(/<(?![a-z/])/gi, '&lt;');
+      
       // Images: ![alt](url)
       html = html.replace(/!\[(.*?)\]\((.*?)\)/g, '<br/><img src="$2" alt="$1" style="max-width: 100%; border-radius: 8px; margin: 16px 0;" /><br/>');
       // Links: [text](url)
