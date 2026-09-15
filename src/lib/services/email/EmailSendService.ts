@@ -358,7 +358,7 @@ export class EmailSendService {
     html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
     // Italic
     html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
-    html = html.replace(/_(.*?)_/g, '<em>$1</em>');
+    html = html.replace(/\b_(.+?)_\b/g, '<em>$1</em>');
     return html;
   }
 
