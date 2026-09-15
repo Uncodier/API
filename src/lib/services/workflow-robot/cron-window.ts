@@ -8,12 +8,13 @@ export function isCronDueInWindow(
   nowMs: number = Date.now(),
   windowMs: number = WORKFLOW_CRON_WINDOW_MS,
   tz: string = DEFAULT_TIMEZONE,
-): boolean {
+): { due: boolean; windowKey: string } {
   const interval = CronExpressionParser.parse(cron, {
     currentDate: nowMs,
     tz: normalizeTimezone(tz),
   });
   const prev = interval.prev().toDate();
   const delta = nowMs - prev.getTime();
-  return delta >= 0 && delta < windowMs;
+  const due = delta >= 0 && delta < windowMs;
+  return { due, windowKey: prev.toISOString().slice(0, 16) };
 }

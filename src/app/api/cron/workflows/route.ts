@@ -46,11 +46,12 @@ export async function GET(req: Request) {
         tz = siteTimezones.get(trigger.site_id) || DEFAULT_TIMEZONE;
       }
 
-      if (!isCronDueInWindow(cron, now, WORKFLOW_CRON_WINDOW_MS, tz)) {
+      const check = isCronDueInWindow(cron, now, WORKFLOW_CRON_WINDOW_MS, tz);
+      if (!check.due) {
         results.push({ trigger_id: trigger.id, skipped: 'not_due' });
         continue;
       }
-      const windowKey = `${trigger.id}:${new Date(now).toISOString().slice(0, 16)}`;
+      const windowKey = `${trigger.id}:${check.windowKey}`;
       const materialized = await materializeRunFromGraph({
         instance_id: trigger.instance_id,
         trigger_id: trigger.id,

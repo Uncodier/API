@@ -195,27 +195,27 @@ describe('isCronDueInWindow', () => {
   const tenThirtyUtc = Date.parse('2026-08-28T10:30:00.000Z');
 
   test('every-minute cron is due', () => {
-    expect(isCronDueInWindow('* * * * *', Date.now(), windowMs)).toBe(true);
+    expect(isCronDueInWindow('* * * * *', Date.now(), windowMs).due).toBe(true);
   });
 
   test('yearly cron far from last tick is not due', () => {
     const midYear = Date.parse('2026-06-15T12:00:00.000Z');
-    expect(isCronDueInWindow('0 0 1 1 *', midYear, windowMs, 'UTC')).toBe(false);
+    expect(isCronDueInWindow('0 0 1 1 *', midYear, windowMs, 'UTC').due).toBe(false);
   });
 
   test('daily 9am is due at 9:00 in America/Mexico_City', () => {
-    expect(isCronDueInWindow('0 9 * * *', nineAmCdmx, windowMs, 'America/Mexico_City')).toBe(true);
+    expect(isCronDueInWindow('0 9 * * *', nineAmCdmx, windowMs, 'America/Mexico_City').due).toBe(true);
   });
 
   test('daily 9am is not due at 15:00 UTC when tz is UTC', () => {
-    expect(isCronDueInWindow('0 9 * * *', nineAmCdmx, windowMs, 'UTC')).toBe(false);
+    expect(isCronDueInWindow('0 9 * * *', nineAmCdmx, windowMs, 'UTC').due).toBe(false);
   });
 
   test('daily 9am is due at 09:00 UTC when tz is UTC', () => {
-    expect(isCronDueInWindow('0 9 * * *', nineAmUtc, windowMs, 'UTC')).toBe(true);
+    expect(isCronDueInWindow('0 9 * * *', nineAmUtc, windowMs, 'UTC').due).toBe(true);
   });
 
   test('hourly cron is not due 30 minutes after the tick', () => {
-    expect(isCronDueInWindow('0 * * * *', tenThirtyUtc, windowMs, 'UTC')).toBe(false);
+    expect(isCronDueInWindow('0 * * * *', tenThirtyUtc, windowMs, 'UTC').due).toBe(false);
   });
 });
