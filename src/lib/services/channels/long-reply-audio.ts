@@ -36,7 +36,17 @@ export function stripMarkdownForSpeech(text: string): string {
   return clean.trim();
 }
 
-async function synthesizeReplyAudio(text: string): Promise<{ buffer: Buffer; ext: string; mimeType: string }> {
+async function synthesizeReplyAudio(
+  text: string,
+  channel: string
+): Promise<{ buffer: Buffer; ext: string; mimeType: string }> {
+  // WhatsApp does not support WAV audio. Use an MPEG response directly and
+  // let the caller fall back to text if the MP3 provider is unavailable.
+  if (channel === 'whatsapp') {
+    const buffer = await synthesizeWithVercel(text, 'alloy', 'mp3', 'tts-1');
+    return { buffer, ext: 'mp3', mimeType: 'audio/mpeg' };
+  }
+
   try {
     const buffer = await synthesizeWithGemini(text, 'Puck', 'wav', 'gemini-3.1-flash-tts-preview');
     return { buffer, ext: 'wav', mimeType: 'audio/wav' };
@@ -94,7 +104,7 @@ export async function tryPrepareLongReplyAudio({
     );
 
     console.log(`[long-reply-audio] Synthesizing audio for ${channel} reply (${cleanText.length} chars)`);
-    const { buffer, ext, mimeType } = await synthesizeReplyAudio(cleanText);
+    const { buffer, ext, mimeType } = await synthesizeReplyAudio(cleanText, channel);
 
     const fileName = `reply_audio_${Date.now()}_${Math.random().toString(36).substring(7)}.${ext}`;
     const filePath = `${siteId}/${fileName}`;
