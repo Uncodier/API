@@ -30,6 +30,7 @@ export interface CycleWrapUpParams {
   previewUrl?: string | null;
   repoUrl?: string | null;
   audit?: CronAuditContext;
+  forceWrapUp?: boolean;
 }
 
 export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<{ ran: boolean }> {
@@ -46,6 +47,7 @@ export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<{ 
     pendingPlanSteps,
     previewUrl,
     repoUrl,
+    forceWrapUp,
   } = params;
 
   try {
@@ -61,7 +63,7 @@ export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<{ 
       digestFiles = await loadLatestDocsDigestFromLogs(instanceId);
     }
 
-    if (shouldSkipWrapUpForPendingSteps({ planCompleted, pendingPlanSteps })) {
+    if (shouldSkipWrapUpForPendingSteps({ planCompleted, pendingPlanSteps, forceWrapUp })) {
       console.log(
         `[CycleWrapUpStep] Skipping wrap-up for ${requirementId} — ${pendingPlanSteps} plan step(s) still pending`,
       );
@@ -69,6 +71,7 @@ export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<{ 
     }
 
     if (
+      !forceWrapUp &&
       !shouldRunCycleWrapUp({
         hasDigest: !!(digestFiles && digestFiles.length > 0),
         userMessageCount: history.totalCount,

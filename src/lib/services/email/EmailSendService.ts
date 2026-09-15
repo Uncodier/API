@@ -232,8 +232,13 @@ export class EmailSendService {
    * Construye el contenido HTML del email
    */
   private static buildHtmlContent(message: string, siteInfo: SiteInfo, signatureHtml?: string): string {
-    const isHtml = /<(html|body|table|tbody|tr|td|div|p)\b/i.test(message);
-    let htmlContent = isHtml ? message : this.renderMessageWithLists(message);
+    // Siempre aplicamos el preprocesamiento de markdown (para convertir ![alt](url) y [text](url))
+    // independientemente de si el mensaje parece HTML o no, ya que el LLM puede mezclar ambos.
+    const messageWithMarkdown = this.applyInlineMarkdown(message);
+    
+    // Si el contenido ya parece HTML estructurado, no lo envolvemos en párrafos/listas adicionales.
+    const isHtml = /<(html|body|table|tbody|tr|td|div|p)\b/i.test(messageWithMarkdown);
+    let htmlContent = isHtml ? messageWithMarkdown : this.renderMessageWithLists(messageWithMarkdown, true);
     
     // Si el contenido ya era HTML, no lo envolvemos en el div predeterminado para evitar romper diseños,
     // a menos que queramos inyectar la firma. Para asegurar que la firma se agregue bien, lo envolvemos.
@@ -275,7 +280,7 @@ export class EmailSendService {
   /**
    * Convierte texto plano a HTML con soporte para listas con -, *, • y 1. 2.
    */
-  public static renderMessageWithLists(message: string): string {
+  public static renderMessageWithLists(message: string, skipMarkdown: boolean = false): string {
     const lines = message.split('\n');
     const htmlParts: string[] = [];
 
@@ -284,19 +289,8 @@ export class EmailSendService {
 
     // Apply inline markdown before parsing blocks
     const applyInlineMarkdown = (text: string) => {
-      // Escapar < solo si no parece ser el inicio de un tag HTML para permitir tags mezclados con markdown
-      let html = text.replace(/<(?![a-z/])/gi, '&lt;');
-      
-      // Images: ![alt](url)
-      html = html.replace(/!\[(.*?)\]\((.*?)\)/g, '<br/><img src="$2" alt="$1" style="max-width: 100%; border-radius: 8px; margin: 16px 0;" /><br/>');
-      // Links: [text](url)
-      html = html.replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" target="_blank" style="color: #0066cc; text-decoration: underline;">$1</a>');
-      // Bold
-      html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-      // Italic
-      html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
-      html = html.replace(/_(.*?)_/g, '<em>$1</em>');
-      return html;
+      if (skipMarkdown) return text;
+      return this.applyInlineMarkdown(text);
     };
 
     let i = 0;
@@ -346,6 +340,25 @@ export class EmailSendService {
 
     return htmlParts.join('');
   }
+  /**
+   * Aplica estilos markdown inline (negrita, enlaces, imágenes)
+   */
+  public static applyInlineMarkdown(text: string): string {
+    // Escapar < solo si no parece ser el inicio de un tag HTML para permitir tags mezclados con markdown
+    let html = text.replace(/<(?![a-z/])/gi, '&lt;');
+    
+    // Images: ![alt](url)
+    html = html.replace(/!\[(.*?)\]\((.*?)\)/g, '<br/><img src="$2" alt="$1" style="max-width: 100%; border-radius: 8px; margin: 16px 0;" /><br/>');
+    // Links: [text](url)
+    html = html.replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" target="_blank" style="color: #0066cc; text-decoration: underline;">$1</a>');
+    // Bold
+    html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+    // Italic
+    html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
+    html = html.replace(/_(.*?)_/g, '<em>$1</em>');
+    return html;
+  }
+
   /**
    * Valida el formato de email
    */

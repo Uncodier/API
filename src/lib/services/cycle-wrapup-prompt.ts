@@ -20,11 +20,13 @@ export function countPendingPlanSteps(steps: Array<{ status?: string } | null> |
   return steps.filter((s) => s?.status === 'pending' || s?.status === 'in_progress').length;
 }
 
-/** Wrap-up must not ask for permission while later plan steps are still queued. */
+/** Wrap-up must not ask for permission while later plan steps are still queued, unless forced by a blocked state. */
 export function shouldSkipWrapUpForPendingSteps(opts: {
   planCompleted: boolean;
   pendingPlanSteps?: number;
+  forceWrapUp?: boolean;
 }): boolean {
+  if (opts.forceWrapUp) return false;
   return !opts.planCompleted && (opts.pendingPlanSteps ?? 0) > 0;
 }
 
