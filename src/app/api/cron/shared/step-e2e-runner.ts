@@ -91,6 +91,7 @@ export type E2eRunnerResult = ScenarioSignal & {
   scenarios_read: number;
   base_url: string;
   error?: string;
+  infrastructureFailure?: boolean;
 };
 
 const DEFAULT_TIMEOUT = 15_000;
@@ -100,7 +101,12 @@ async function readScenariosFromSandbox(sandbox: Sandbox, relDir: string): Promi
   const wd = SandboxService.WORK_DIR;
   const listCmd = `cd ${wd} && if [ -d ${relDir} ]; then find ${relDir} -type f -name '*.json' | sort; fi`;
   const r = await sandbox.runCommand('sh', ['-c', listCmd]);
-  if (r.exitCode !== 0) return [];
+  if (r.exitCode !== 0) {
+    const stderr = await r.stderr().catch(() => '');
+    throw new Error(
+      `Could not list E2E scenarios: ${stderr.trim() || `exit ${r.exitCode}`}`,
+    );
+  }
   const files = (await r.stdout().catch(() => ''))
     .split('\n')
     .map((l) => l.trim())
@@ -108,17 +114,31 @@ async function readScenariosFromSandbox(sandbox: Sandbox, relDir: string): Promi
 
   const scenarios: E2eScenario[] = [];
   for (const rel of files) {
+    let buf: string | Uint8Array;
     try {
-      const buf = await sandbox.fs.readFile(`${wd}/${rel}`, 'utf8').catch(() => null);
-      if (!buf) continue;
+      buf = await sandbox.fs.readFile(`${wd}/${rel}`, 'utf8');
+    } catch (error: unknown) {
+      throw new Error(
+        `Could not read E2E scenario ${rel}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+    try {
       const parsed = JSON.parse(typeof buf === 'string' ? buf : String(buf));
       const normalized = normalizeScenario(parsed, rel);
-      if (normalized) scenarios.push(normalized);
+      scenarios.push(
+        normalized || {
+          name: rel,
+          description: 'invalid scenario definition',
+          steps: [{ action: 'expect' }],
+        },
+      );
     } catch {
       scenarios.push({
         name: rel,
         description: 'malformed scenario JSON',
-        steps: [{ action: 'expect', selector: '__invalid__', exists: false }],
+        steps: [{ action: 'expect' }],
       });
     }
   }
@@ -283,11 +303,12 @@ export async function runE2eScenarios(params: E2eRunnerParams): Promise<E2eRunne
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     return {
-      ok: true,
+      ok: false,
       scenarios: [],
       scenarios_read: 0,
       base_url: '',
       error: `sandbox.domain(${port}) failed — port not exposed (${msg})`,
+      infrastructureFailure: true,
     };
   }
 
@@ -312,6 +333,7 @@ export async function runE2eScenarios(params: E2eRunnerParams): Promise<E2eRunne
           scenarios_read: scenarios.length,
           base_url: baseUrl,
           error: `browser launch failed: ${msg.slice(0, 400)}`,
+          infrastructureFailure: true,
         };
       }
     }

@@ -24,18 +24,63 @@ export function countPendingPlanSteps(steps: Array<{ status?: string } | null> |
   return steps.filter((s) => s?.status === 'pending' || s?.status === 'in_progress').length;
 }
 
-export function feedbackRequiredBacklogItems(
-  items: Array<{
+type FeedbackBacklogItem = {
+  id?: string;
+  status?: string;
+  attempts?: number;
+  tier?: 'core' | 'ornamental';
+  phase_id?: string;
+};
+
+export function activeBacklogItemIdsFromPlanSteps(
+  steps: Array<{
     status?: string;
-    attempts?: number;
-    tier?: 'core' | 'ornamental';
-  }>,
+    backlog_item_id?: string;
+    metadata?: { backlog_item_id?: string };
+  } | null> | null | undefined,
+): string[] {
+  if (!Array.isArray(steps)) return [];
+  return Array.from(new Set(
+    steps
+      .filter((step) => step?.status === 'pending' || step?.status === 'in_progress')
+      .map((step) => step?.metadata?.backlog_item_id || step?.backlog_item_id)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0),
+  ));
+}
+
+export function feedbackRequiredBacklogItems(
+  items: FeedbackBacklogItem[],
   limits: { core: number; ornamental: number },
+  scope?: {
+    activeItemIds?: string[];
+    currentPhaseId?: string | null;
+    hasRunnablePlanSteps?: boolean;
+  },
 ) {
-  return items.filter((item) => {
+  if (scope?.hasRunnablePlanSteps) return [];
+
+  const activeIds = new Set(scope?.activeItemIds || []);
+  const scopedItems = activeIds.size > 0
+    ? items.filter((item) => !!item.id && activeIds.has(item.id))
+    : scope?.currentPhaseId
+      ? items.filter((item) => item.phase_id === scope.currentPhaseId)
+      : items;
+
+  const isRunnable = (item: FeedbackBacklogItem) => {
+    if (item.status !== 'pending' && item.status !== 'in_progress') return false;
+    const maxAttempts =
+      (item.tier ?? 'core') === 'ornamental' ? limits.ornamental : limits.core;
+    return (item.attempts || 0) < maxAttempts;
+  };
+
+  // A review item is phase-terminal and must not pause unrelated executable
+  // work. Ask for human input only when this relevant scope has no runnable
+  // item left.
+  if (scopedItems.some(isRunnable)) return [];
+
+  return scopedItems.filter((item) => {
     if (item.status === 'needs_review') return true;
-    if (item.status === 'pending' && (item.attempts || 0) > 0) return true;
-    if (item.status !== 'in_progress') return false;
+    if (item.status !== 'pending' && item.status !== 'in_progress') return false;
     const maxAttempts =
       (item.tier ?? 'core') === 'ornamental' ? limits.ornamental : limits.core;
     return (item.attempts || 0) >= maxAttempts;

@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { Sandbox } from '@vercel/sandbox';
 import { deleteSnapshotQuiet } from '@/lib/services/sandbox-persisted-snapshot';
 import { getSandboxHandle } from '@/lib/services/sandbox-sdk';
+import { stopSandboxQuiet } from '@/lib/services/sandbox-stop';
 
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
@@ -80,11 +81,9 @@ export async function GET(request: Request) {
       console.log(`[SandboxHousekeeping] Stopping orphaned sandbox ${id} (created ${createdAt ? new Date(createdAt).toISOString() : 'unknown'})`);
       try {
         const sandboxInstance = await getSandboxHandle(id);
-        await Promise.race([
-          sandboxInstance.stop({ blocking: false }),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
-        ]);
-        results.sandboxesStopped++;
+        const stopped = await stopSandboxQuiet(sandboxInstance);
+        if (stopped) results.sandboxesStopped++;
+        else results.sandboxErrors++;
       } catch (stopErr: unknown) {
         console.warn(`[SandboxHousekeeping] Failed to stop sandbox ${id}:`, stopErr instanceof Error ? stopErr.message : stopErr);
         results.sandboxErrors++;

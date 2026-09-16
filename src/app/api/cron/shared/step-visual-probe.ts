@@ -18,6 +18,10 @@ import {
   resolveVisualStorageConfig,
   type LocalVisualCapture,
 } from './visual-screenshot-storage';
+import {
+  sanitizeTelemetryText,
+  sanitizeTelemetryUrl,
+} from './step-telemetry-sanitize';
 
 export type VisualProbeViewport = {
   name: 'mobile' | 'desktop' | string;
@@ -45,6 +49,8 @@ export type VisualProbeParams = {
   imageType?: 'png' | 'jpeg';
   imageQuality?: number;
   hydrationWaitMs?: number;
+  /** Routes explicitly expected to redirect to local authentication pages. */
+  protectedRoutes?: string[];
 };
 
 export type VisualProbeScreenshot = {
@@ -179,6 +185,9 @@ export async function runVisualProbe(params: VisualProbeParams): Promise<VisualP
     new Set(params.pageRoutes.map(normalizeRoute)),
   ).slice(0, maxRoutes);
   const pageRoutes = requestedRoutes.length ? requestedRoutes : ['/'];
+  const protectedRoutes = Array.from(
+    new Set((params.protectedRoutes || []).map(normalizeRoute)),
+  ).filter((route) => pageRoutes.includes(route));
   const fullPage = params.fullPage ?? true;
   const imageType = params.imageType ?? 'png';
   const imageQuality = Math.max(30, Math.min(90, params.imageQuality ?? 65));
@@ -217,6 +226,7 @@ export async function runVisualProbe(params: VisualProbeParams): Promise<VisualP
     imageQuality,
     hydrationWaitMs,
     maxImageBytes: MAX_SCREENSHOT_BYTES,
+    protectedRoutes,
   });
   const scriptPath = '/tmp/visual-probe.js';
   await params.sandbox.writeFiles([{ path: scriptPath, content: scriptContent }]);
@@ -338,9 +348,30 @@ function buildConsoleSignal(
   failedRequests: ConsoleSignal['failed_requests'],
   telemetryDropped?: ConsoleSignal['telemetry_dropped'],
 ): ConsoleSignal {
-  const hasErrors = entries.some((entry) => entry.level === 'error') || pageErrors.length > 0;
+  const safeEntries = entries.map((entry) => ({
+    ...entry,
+    text: sanitizeTelemetryText(entry.text),
+    source: entry.source ? sanitizeTelemetryUrl(entry.source) : entry.source,
+  }));
+  const safePageErrors = pageErrors.map((error) => ({
+    ...error,
+    message: sanitizeTelemetryText(error.message),
+    stack_tail: error.stack_tail
+      ? sanitizeTelemetryText(error.stack_tail)
+      : error.stack_tail,
+  }));
+  const safeFailedRequests = failedRequests.map((request) => ({
+    ...request,
+    url: sanitizeTelemetryUrl(request.url),
+    failure: request.failure
+      ? sanitizeTelemetryText(request.failure)
+      : request.failure,
+  }));
+  const hasErrors =
+    safeEntries.some((entry) => entry.level === 'error') ||
+    safePageErrors.length > 0;
   const blockingResourceTypes = new Set(['document', 'script', 'xhr', 'fetch']);
-  const hasBadNetwork = failedRequests.some((request) => {
+  const hasBadNetwork = safeFailedRequests.some((request) => {
     const relevant =
       !request.resource_type || blockingResourceTypes.has(request.resource_type);
     return relevant && ((request.status ?? 0) >= 500 || !!request.failure);
@@ -350,9 +381,9 @@ function buildConsoleSignal(
     Object.values(telemetryDropped).some((count) => count > 0);
   return {
     ok: !hasErrors && !hasBadNetwork && !telemetryTruncated,
-    entries,
-    page_errors: pageErrors,
-    failed_requests: failedRequests,
+    entries: safeEntries,
+    page_errors: safePageErrors,
+    failed_requests: safeFailedRequests,
     telemetry_dropped: telemetryDropped,
   };
 }

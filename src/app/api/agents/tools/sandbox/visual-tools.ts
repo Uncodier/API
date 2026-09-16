@@ -31,7 +31,7 @@ export function sandboxCaptureScreenshotsTool(sandbox: Sandbox, requirementId?: 
   return {
     name: 'sandbox_capture_screenshots',
     description:
-      'Boot `next start` inside the sandbox and use puppeteer against the public tunnel URL to capture viewport screenshots per route × viewport. Also records browser console entries, page errors, and failed network requests per page. Screenshots are stored privately and signed locators are returned. Use this to SEE what the page actually renders before ending a step, or to feed sandbox_visual_critique.',
+      'Boot `next start` inside the sandbox and use puppeteer against the public tunnel URL to capture viewport screenshots per route × viewport. Also records browser console entries, page errors, and failed network requests per page. Screenshots are stored privately and opaque locators are returned. Use this to SEE what the page actually renders before ending a step, or to feed sandbox_visual_critique.',
     parameters: {
       type: 'object',
       properties: {
@@ -40,6 +40,13 @@ export function sandboxCaptureScreenshotsTool(sandbox: Sandbox, requirementId?: 
           maxItems: 6,
           items: { type: 'string', maxLength: 300 },
           description: 'Absolute page paths to capture (e.g. ["/", "/pricing"]). Defaults to ["/"]. Route × viewport count must not exceed 6.',
+        },
+        protected_routes: {
+          type: 'array',
+          maxItems: 6,
+          items: { type: 'string', maxLength: 300 },
+          description:
+            'Subset of routes explicitly expected to redirect to a local login page when unauthenticated.',
         },
         viewports: {
           type: 'array',
@@ -77,6 +84,7 @@ export function sandboxCaptureScreenshotsTool(sandbox: Sandbox, requirementId?: 
     },
     execute: async (args: {
       routes?: string[];
+      protected_routes?: string[];
       viewports?: Array<{
         name: string;
         width: number;
@@ -162,6 +170,7 @@ export function sandboxCaptureScreenshotsTool(sandbox: Sandbox, requirementId?: 
           imageType: 'jpeg',
           imageQuality: 60,
           hydrationWaitMs: 500,
+          protectedRoutes: args.protected_routes,
         });
         const errorEntries = visual.console.entries.filter((e) => e.level === 'error');
         const warnEntries = visual.console.entries.filter((e) => e.level === 'warn');

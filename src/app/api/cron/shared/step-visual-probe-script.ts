@@ -10,6 +10,7 @@ export interface VisualProbeScriptParams {
   imageQuality: number;
   hydrationWaitMs: number;
   maxImageBytes: number;
+  protectedRoutes?: string[];
 }
 
 export function generateVisualProbeScript(params: VisualProbeScriptParams): string {
@@ -49,6 +50,10 @@ const IMAGE_TYPE = ${JSON.stringify(params.imageType)};
 const IMAGE_QUALITY = ${params.imageQuality};
 const HYDRATION_WAIT_MS = ${params.hydrationWaitMs};
 const MAX_IMAGE_BYTES = ${params.maxImageBytes};
+const LOCAL_ORIGIN = \`http://127.0.0.1:\${PORT}\`;
+const PROTECTED_ROUTES = new Set(${JSON.stringify(
+    params.protectedRoutes || [],
+  )}.map((route) => normalizedPathname(route)));
 const CAPTURE_DIRECTORY = '/tmp/visual-probe-captures';
 const MAX_TELEMETRY_ENTRIES = 50;
 
@@ -76,18 +81,48 @@ function pushBounded(collection, value, key) {
   }
 }
 
-function normalizedPathname(url) {
+function telemetryCheckpoint() {
+  return {
+    consoleLength: consoleEntries.length,
+    pageErrorsLength: pageErrors.length,
+    failedRequestsLength: failedRequests.length,
+    dropped: { ...telemetryDropped },
+  };
+}
+
+function restoreTelemetry(checkpoint) {
+  consoleEntries.length = checkpoint.consoleLength;
+  pageErrors.length = checkpoint.pageErrorsLength;
+  failedRequests.length = checkpoint.failedRequestsLength;
+  Object.assign(telemetryDropped, checkpoint.dropped);
+}
+
+function normalizedLocation(value) {
   try {
-    const pathname = new URL(url).pathname.replace(/\\/+$/, '');
-    return pathname || '/';
+    const url = new URL(value, LOCAL_ORIGIN);
+    const pathname = url.pathname.replace(/\\/+$/, '') || '/';
+    return { origin: url.origin, pathname };
   } catch {
-    return '/';
+    return { origin: '', pathname: '/' };
   }
 }
 
-function isAuthRedirect(requestedRoute, finalRoute) {
-  if (requestedRoute === finalRoute) return false;
-  return /^\\/(?:auth|login|log-in|signin|sign-in)(?:\\/|$)/i.test(finalRoute);
+function normalizedPathname(url) {
+  return normalizedLocation(url).pathname;
+}
+
+function isAuthRedirect(requestedRoute, finalUrl) {
+  const requested = normalizedLocation(requestedRoute);
+  const final = normalizedLocation(finalUrl);
+  if (
+    requested.origin !== LOCAL_ORIGIN ||
+    final.origin !== LOCAL_ORIGIN ||
+    requested.pathname === final.pathname ||
+    !PROTECTED_ROUTES.has(requested.pathname)
+  ) {
+    return false;
+  }
+  return /^\\/(?:auth|login|log-in|signin|sign-in)(?:\\/|$)/i.test(final.pathname);
 }
 
 async function run() {
@@ -173,11 +208,14 @@ async function run() {
 
         let responseStatus = 0;
         for (let attempt = 1; attempt <= 2; attempt++) {
+          const checkpoint = telemetryCheckpoint();
           try {
+            responseStatus = 0;
             const resp = await page.goto(target, { waitUntil: 'load', timeout: TIMEOUT_MS });
             responseStatus = resp?.status() || 0;
             if (responseStatus === 502 || responseStatus === 503 || responseStatus === 504) {
               if (attempt < 2) {
+                restoreTelemetry(checkpoint);
                 await new Promise(r => setTimeout(r, 1000));
                 continue;
               }
@@ -185,6 +223,7 @@ async function run() {
             break;
           } catch (e) {
             if (attempt < 2 && (e.message.includes('ERR_CONNECTION_REFUSED') || e.message.includes('ERR_NAME_NOT_RESOLVED') || e.message.includes('Timeout'))) {
+              restoreTelemetry(checkpoint);
               await new Promise(r => setTimeout(r, 1000));
               continue;
             }
@@ -201,8 +240,9 @@ async function run() {
         }
 
         await new Promise(r => setTimeout(r, HYDRATION_WAIT_MS));
-        const finalRoute = normalizedPathname(page.url());
-        if (isAuthRedirect(safeRoute, finalRoute)) {
+        const finalLocation = normalizedLocation(page.url());
+        const finalRoute = finalLocation.pathname;
+        if (isAuthRedirect(safeRoute, page.url())) {
           authRedirects.push({
             route: safeRoute,
             viewport: viewport.name,
@@ -210,10 +250,17 @@ async function run() {
           });
           continue;
         }
-        if (normalizedPathname(safeRoute) !== finalRoute) {
+        if (
+          finalLocation.origin !== LOCAL_ORIGIN ||
+          normalizedPathname(safeRoute) !== finalRoute
+        ) {
+          const redirectedTo =
+            finalLocation.origin === LOCAL_ORIGIN
+              ? finalRoute
+              : \`\${finalLocation.origin}\${finalRoute}\`;
           pushBounded(failedRequests, {
             url: target,
-            failure: \`navigation unexpectedly redirected to \${finalRoute}\`,
+            failure: \`navigation unexpectedly redirected to \${redirectedTo}\`,
             resource_type: 'document',
             route: safeRoute,
             viewport: viewport.name,

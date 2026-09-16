@@ -1,4 +1,5 @@
 import {
+  activeBacklogItemIdsFromPlanSteps,
   buildCycleWrapUpSystemPrompt,
   countPendingPlanSteps,
   feedbackRequiredBacklogItems,
@@ -98,19 +99,52 @@ describe('cycle-wrapup-prompt', () => {
     expect(shouldRunCycleWrapUp({ hasDigest: false, userMessageCount: 2 })).toBe(true);
   });
 
-  it('detects attempted pending items, review items, and exhausted active work', () => {
+  it('does not let historical review items block runnable work', () => {
     const items = [
-      { status: 'pending', attempts: 2, tier: 'ornamental' as const },
-      { status: 'pending', attempts: 1, tier: 'core' as const },
-      { status: 'in_progress', attempts: 4, tier: 'core' as const },
-      { status: 'needs_review', attempts: 1, tier: 'core' as const },
-      { status: 'done', attempts: 100, tier: 'core' as const },
+      { id: 'old-review', phase_id: 'outline', status: 'needs_review', attempts: 4, tier: 'core' as const },
+      { id: 'active', phase_id: 'build', status: 'in_progress', attempts: 3, tier: 'core' as const },
+      { id: 'next', phase_id: 'build', status: 'pending', attempts: 0, tier: 'core' as const },
     ];
 
-    expect(feedbackRequiredBacklogItems(items, { core: 5, ornamental: 2 })).toEqual([
-      items[0],
-      items[1],
-      items[3],
-    ]);
+    expect(feedbackRequiredBacklogItems(
+      items,
+      { core: 4, ornamental: 2 },
+      { currentPhaseId: 'build' },
+    )).toEqual([]);
+  });
+
+  it('asks for feedback only when the relevant scope has no runnable work', () => {
+    const items = [
+      { id: 'review', phase_id: 'outline', status: 'needs_review', attempts: 4, tier: 'core' as const },
+      { id: 'exhausted', phase_id: 'outline', status: 'in_progress', attempts: 4, tier: 'core' as const },
+      { id: 'unrelated', phase_id: 'build', status: 'pending', attempts: 0, tier: 'core' as const },
+    ];
+
+    expect(feedbackRequiredBacklogItems(
+      items,
+      { core: 4, ornamental: 2 },
+      { currentPhaseId: 'outline' },
+    )).toEqual([items[0], items[1]]);
+  });
+
+  it('suppresses backlog feedback while the current plan can continue', () => {
+    const items = [
+      { id: 'review', status: 'needs_review', attempts: 4, tier: 'core' as const },
+    ];
+
+    expect(feedbackRequiredBacklogItems(
+      items,
+      { core: 4, ornamental: 2 },
+      { hasRunnablePlanSteps: true },
+    )).toEqual([]);
+  });
+
+  it('extracts unique backlog ids from pending plan steps', () => {
+    expect(activeBacklogItemIdsFromPlanSteps([
+      { status: 'completed', metadata: { backlog_item_id: 'done' } },
+      { status: 'in_progress', metadata: { backlog_item_id: 'active' } },
+      { status: 'pending', backlog_item_id: 'active' },
+      { status: 'pending', backlog_item_id: 'next' },
+    ])).toEqual(['active', 'next']);
   });
 });

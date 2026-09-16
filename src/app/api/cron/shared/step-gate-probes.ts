@@ -111,7 +111,12 @@ export async function runRuntimeAndVisualProbes(params: {
     explicit: params.shouldRunVisual,
     gitRepoKind,
     changedFiles: inferred.recentChangedFiles,
-    inferredPageRoutes: inferred.recentPageRoutes,
+    inferredPageRoutes:
+      params.shouldRunVisual === true
+        ? Array.from(
+            new Set([...inferred.recentPageRoutes, ...inferred.pageRoutes]),
+          )
+        : inferred.recentPageRoutes,
     stepContext,
   });
   const shouldRunVisual = visualPlan.enabled;
@@ -394,23 +399,31 @@ export async function runRuntimeAndVisualProbes(params: {
           if (!e2e.ok) {
             return {
               ok: false,
-              error: `E2E scenarios failed — ${e2e.scenarios.filter((s) => !s.pass).map((s) => s.scenario).join(', ') || e2e.error || 'unknown'}`.slice(
-                0,
-                500,
-              ),
+              error: (
+                e2e.infrastructureFailure
+                  ? `E2E infrastructure unavailable: ${e2e.error || 'unknown'}`
+                  : `E2E scenarios failed — ${e2e.scenarios.filter((s) => !s.pass).map((s) => s.scenario).join(', ') || e2e.error || 'unknown'}`
+              ).slice(0, 500),
+              infrastructureFailure: e2e.infrastructureFailure,
               signals: out,
             };
           }
         }
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
-        console.warn('[GateProbes] E2E runner threw (non-fatal):', msg);
+        console.warn('[GateProbes] E2E runner infrastructure failure:', msg);
         await logCronInfrastructureEvent(audit, {
           event: CronInfraEvent.SCENARIO_RUN,
           level: 'warn',
           message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}e2e runner threw: ${msg.slice(0, 300)}`,
           details: { stepOrder, error: msg.slice(0, 800) },
         });
+        return {
+          ok: false,
+          error: `E2E infrastructure unavailable: ${msg}`,
+          infrastructureFailure: true,
+          signals: out,
+        };
       }
     }
   } finally {

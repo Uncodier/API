@@ -343,23 +343,24 @@ export async function snapshotAfterSuccessfulPushAndRecreate(params: {
       ),
     );
 
-    next = await Sandbox.create(buildSandboxCreateParams({
+    const replacement = await Sandbox.create(buildSandboxCreateParams({
       name: requirementSandboxName(requirementId, auditCtx?.instanceId),
       snapshotId,
       tags: requirementSandboxTags(requirementId, auditCtx?.instanceId),
       coldCreate: false,
     }) as any);
+    next = replacement;
     
     // Inmediatamente después de crear el nuevo, intentamos detener el viejo
     // sin importar si el resto del setup del nuevo falla o tiene éxito.
     // Esto previene que el viejo quede huérfano si el setup del nuevo lanza una excepción.
-    if (sandboxIdentity(params.sandbox) !== sandboxIdentity(next)) {
-      console.warn(`[Sandbox] 🧹 CLEANUP: Stopping old sandbox ${sandboxIdentity(params.sandbox)} after successful recreate into ${sandboxIdentity(next)}`);
+    if (sandboxIdentity(params.sandbox) !== sandboxIdentity(replacement)) {
+      console.warn(`[Sandbox] 🧹 CLEANUP: Stopping old sandbox ${sandboxIdentity(params.sandbox)} after successful recreate into ${sandboxIdentity(replacement)}`);
       
       if (auditCtx?.instanceId) {
         // Update the DB to point to the new sandbox immediately
-        await persistActiveSandboxId(requirementId, auditCtx.instanceId, sandboxIdentity(next), auditCtx.siteId)
-          .catch(e => console.error(`[Sandbox] Failed to update active_sandbox_id to ${sandboxIdentity(next)}:`, e));
+        await persistActiveSandboxId(requirementId, auditCtx.instanceId, sandboxIdentity(replacement), auditCtx.siteId)
+          .catch(e => console.error(`[Sandbox] Failed to update active_sandbox_id to ${sandboxIdentity(replacement)}:`, e));
       }
 
       // Detenemos el sandbox de forma determinística (con timeout) en lugar de

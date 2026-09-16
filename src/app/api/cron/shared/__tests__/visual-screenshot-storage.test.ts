@@ -96,7 +96,10 @@ describe('visual screenshot storage', () => {
       expect.objectContaining({ upsert: true, contentType: 'image/jpeg' }),
     );
     expect(result.errors).toEqual([]);
-    expect(result.screenshots[0].url).toContain('visual_version=');
+    expect(result.screenshots[0].url).toMatch(
+      /^visual-storage:\/\/storage\/workspaces\/probe-screenshots\/req-req-123\/step-4\//,
+    );
+    expect(createSignedUrl).not.toHaveBeenCalled();
     expect(remove).toHaveBeenCalledWith([
       'probe-screenshots/req-req-123/step-4/dashboard__desktop__1750000000000.jpg',
     ]);
@@ -165,6 +168,45 @@ describe('visual screenshot storage', () => {
 
     expect(result.errors[0]).toContain('is public');
     expect(from).not.toHaveBeenCalled();
+  });
+
+  it('provisions the private screenshot bucket when it is missing', async () => {
+    const getBucket = jest
+      .fn()
+      .mockResolvedValueOnce({
+        data: null,
+        error: { message: 'Bucket not found' },
+      })
+      .mockResolvedValueOnce({
+        data: { public: false },
+        error: null,
+      });
+    const createBucket = jest.fn().mockResolvedValue({
+      data: { name: 'workspaces' },
+      error: null,
+    });
+    mockedCreateClient.mockReturnValue({
+      storage: {
+        getBucket,
+        createBucket,
+        from: jest.fn().mockReturnValue({}),
+      },
+    } as any);
+
+    const result = await persistVisualCaptures({
+      sandbox: { fs: { readFile: jest.fn() } } as any,
+      requirementId: 'req-1',
+      stepOrder: 1,
+      config: {
+        url: 'https://apps.example.supabase.co',
+        serviceKey: 'service-role',
+        bucket: 'workspaces',
+      },
+      captures: [],
+    });
+
+    expect(createBucket).toHaveBeenCalledWith('workspaces', { public: false });
+    expect(result).toEqual({ screenshots: [], errors: [] });
   });
 
   it('removes expired screenshots across all requirement folders', async () => {

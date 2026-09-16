@@ -240,6 +240,7 @@ export async function runOrchestratorStep(params: {
   let nudged = false;
   let createdPlan = false;
   let noPlanOverrides = 0;
+  const isAdaptation = initialMessage.includes('PLAN ADAPTATION REQUIRED');
 
   const orchestratorModel = process.env.AI_CODE_MODEL || 'gemini-3.1-pro-preview-customtools';
 
@@ -392,7 +393,13 @@ export async function runOrchestratorStep(params: {
       }
     }
 
-    const isAdaptation = initialMessage.includes('PLAN ADAPTATION REQUIRED');
+    // Plan creation is the coordinator's terminal deliverable. Continuing the
+    // same model loop after a successful create lets it issue a second create,
+    // which auto-completes the first untouched plan. Step execution and status
+    // updates are handled deterministically by the workflow after this return.
+    if (createdPlan && !isAdaptation) {
+      isDone = true;
+    }
     
     // Check if we are in core-done mode to adapt the reminder
     let coreDoneReminder = false;

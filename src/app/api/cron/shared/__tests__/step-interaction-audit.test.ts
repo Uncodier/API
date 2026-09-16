@@ -239,7 +239,7 @@ describe('interaction audit', () => {
     expect(parsed.get('src/components/New.tsx')).toBe('*');
   });
 
-  it('marks the deletion anchor so removed handlers remain attributable', () => {
+  it('does not attribute deleted-only hunks to surviving source lines', () => {
     const parsed = parseAddedLines(
       [
         'diff --git a/src/components/Header.tsx b/src/components/Header.tsx',
@@ -250,7 +250,23 @@ describe('interaction audit', () => {
       [],
     );
 
-    expect(parsed.get('src/components/Header.tsx')).toEqual(new Set([4]));
+    expect(parsed.get('src/components/Header.tsx')).toBeUndefined();
+  });
+
+  it('clears the active file when a deleted file is followed by another hunk', () => {
+    const parsed = parseAddedLines(
+      [
+        'diff --git a/src/components/Deleted.tsx b/src/components/Deleted.tsx',
+        '+++ /dev/null',
+        '@@ -1,1 +0,0 @@',
+        '-export const Deleted = true;',
+        'diff --git a/src/components/Existing.tsx b/src/components/Existing.tsx',
+        '@@ -4,1 +4,0 @@',
+        '-    onClick={open}',
+      ].join('\n'),
+    );
+
+    expect(parsed.size).toBe(0);
   });
 
   it('attributes links broken by a deleted destination to the current step', () => {

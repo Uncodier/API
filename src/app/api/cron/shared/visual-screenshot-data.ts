@@ -1,4 +1,8 @@
-import { safeVisualStorageSegment } from './visual-screenshot-storage';
+import { createClient } from '@supabase/supabase-js';
+import {
+  resolveVisualStorageConfig,
+  safeVisualStorageSegment,
+} from './visual-screenshot-storage';
 
 const MAX_FEEDBACK_IMAGE_BYTES = 900_000;
 const FETCH_TIMEOUT_MS = 8_000;
@@ -25,34 +29,90 @@ export interface VisualScreenshotFetchOptions {
 }
 
 export async function fetchVisualScreenshotDataUrl(
-  url: string,
+  locator: string,
   options: VisualScreenshotFetchOptions,
 ): Promise<string | null> {
   let parsed: URL;
   try {
-    parsed = new URL(url);
+    parsed = new URL(locator);
   } catch {
     return null;
   }
 
-  const allowedOrigins = configuredStorageOrigins();
   const bucket = process.env.SUPABASE_BUCKET?.trim() || 'workspaces';
   const requirement = safeVisualStorageSegment(options.requirementId, 'unknown');
-  const requiredPathPrefix =
-    `/storage/v1/object/sign/${bucket}/probe-screenshots/` +
-    `req-${requirement}/`;
-  let pathname: string;
+  const requiredObjectPrefix = `probe-screenshots/req-${requirement}/`;
+  let fetchUrl = locator;
+  let expectedOrigin: string;
+
+  if (parsed.protocol === 'visual-storage:') {
+    const config = resolveVisualStorageConfig();
+    if (!config || parsed.hostname !== 'storage') return null;
+    let segments: string[];
+    try {
+      segments = parsed.pathname
+        .split('/')
+        .filter(Boolean)
+        .map((segment) => decodeURIComponent(segment));
+    } catch {
+      return null;
+    }
+    if (
+      segments.some(
+        (segment) =>
+          segment === '.' ||
+          segment === '..' ||
+          segment.includes('/') ||
+          segment.includes('\\'),
+      )
+    ) {
+      return null;
+    }
+    const locatorBucket = segments.shift();
+    const storagePath = segments.join('/');
+    if (
+      locatorBucket !== config.bucket ||
+      !storagePath.startsWith(requiredObjectPrefix)
+    ) {
+      return null;
+    }
+    const client = createClient(config.url, config.serviceKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const { data, error } = await client.storage
+      .from(config.bucket)
+      .createSignedUrl(storagePath, 60);
+    if (error || !data?.signedUrl) return null;
+    fetchUrl = data.signedUrl;
+    expectedOrigin = new URL(config.url).origin;
+  } else {
+    const allowedOrigins = configuredStorageOrigins();
+    let pathname: string;
+    try {
+      pathname = decodeURIComponent(parsed.pathname);
+    } catch {
+      return null;
+    }
+    const requiredPathPrefix =
+      `/storage/v1/object/sign/${bucket}/${requiredObjectPrefix}`;
+    if (
+      parsed.protocol !== 'https:' ||
+      !allowedOrigins.has(parsed.origin) ||
+      !pathname.startsWith(requiredPathPrefix) ||
+      !parsed.searchParams.has('token')
+    ) {
+      return null;
+    }
+    expectedOrigin = parsed.origin;
+  }
+
+  let fetchTarget: URL;
   try {
-    pathname = decodeURIComponent(parsed.pathname);
+    fetchTarget = new URL(fetchUrl);
   } catch {
     return null;
   }
-  if (
-    parsed.protocol !== 'https:' ||
-    !allowedOrigins.has(parsed.origin) ||
-    !pathname.startsWith(requiredPathPrefix) ||
-    !parsed.searchParams.has('token')
-  ) {
+  if (fetchTarget.protocol !== 'https:' || fetchTarget.origin !== expectedOrigin) {
     return null;
   }
 
@@ -65,11 +125,11 @@ export async function fetchVisualScreenshotDataUrl(
           AbortSignal.timeout(FETCH_TIMEOUT_MS),
         ])
       : AbortSignal.timeout(FETCH_TIMEOUT_MS);
-    const response = await fetch(url, {
+    const response = await fetch(fetchTarget.toString(), {
       redirect: 'manual',
       signal,
     });
-    if (response.url && new URL(response.url).origin !== parsed.origin) return null;
+    if (response.url && new URL(response.url).origin !== expectedOrigin) return null;
     if (!response.ok) return null;
 
     const declaredSize = Number(response.headers.get('content-length') || 0);

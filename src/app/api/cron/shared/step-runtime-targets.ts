@@ -6,7 +6,8 @@
 
 import type { Sandbox } from '@vercel/sandbox';
 import { SandboxService } from '@/lib/services/sandbox-service';
-import { inferAffectedPageFiles } from './step-visual-route-dependencies';
+import { routeFromAppFile } from './step-app-route';
+import { inferAffectedPageFilesForChangeSets } from './step-visual-route-dependencies';
 
 export type InferredTargetRoutes = {
   pageRoutes: string[];
@@ -19,13 +20,12 @@ export type InferredTargetRoutes = {
 const DEFAULT_METHOD: InferredTargetRoutes['apiRoutes'][number]['method'] = 'GET';
 
 export function pageRouteFromFile(rel: string): string | null {
-  const m = rel.match(/^src\/app\/(.*)page\.(tsx|jsx|ts|js)$/);
-  if (!m) return null;
-  const segments = m[1].split('/').filter(Boolean);
-  const cleaned = segments.filter((seg) => !seg.startsWith('(') || !seg.endsWith(')'));
-  if (cleaned.some((seg) => seg.startsWith('[') && seg.endsWith(']'))) return null;
-  const path = '/' + cleaned.join('/');
-  return path === '/' ? '/' : path.replace(/\/$/, '');
+  if (!/^src\/app\/.*page\.(?:tsx|jsx|ts|js)$/.test(rel)) return null;
+  const route = routeFromAppFile(rel);
+  if (!route || route.split('/').some((segment) => segment.includes('['))) {
+    return null;
+  }
+  return route;
 }
 
 function apiRouteFromFile(rel: string): string | null {
@@ -50,9 +50,9 @@ async function readChangedFiles(sandbox: Sandbox): Promise<string[]> {
     '  if [ -n "$DEF" ] && git rev-parse --verify "$DEF" >/dev/null 2>&1; then BASE="$DEF"; fi',
     'fi',
     'if [ -n "$BASE" ]; then',
-    '  CHANGED=$(git diff --name-only "$BASE"...HEAD 2>/dev/null; git diff --name-only 2>/dev/null; git diff --cached --name-only 2>/dev/null; git ls-files --others --exclude-standard 2>/dev/null)',
+    '  CHANGED=$(git diff --name-only --diff-filter=ACMRTUXB "$BASE"...HEAD 2>/dev/null; git diff --name-only --diff-filter=ACMRTUXB 2>/dev/null; git diff --cached --name-only --diff-filter=ACMRTUXB 2>/dev/null; git ls-files --others --exclude-standard 2>/dev/null)',
     'else',
-    '  CHANGED=$(git diff --name-only 2>/dev/null; git diff --cached --name-only 2>/dev/null; git ls-files --others --exclude-standard 2>/dev/null)',
+    '  CHANGED=$(git diff --name-only --diff-filter=ACMRTUXB 2>/dev/null; git diff --cached --name-only --diff-filter=ACMRTUXB 2>/dev/null; git ls-files --others --exclude-standard 2>/dev/null)',
     'fi',
     'printf "%s\\n" "$CHANGED" | sort -u | awk "NF>0"',
   ].join('\n');
@@ -77,15 +77,15 @@ async function readRecentChangedFiles(
     `BASELINE=${JSON.stringify(baseline)}`,
     'if [ -n "$BASELINE" ] && ! git cat-file -e "$BASELINE^{commit}" >/dev/null 2>&1; then git fetch --quiet --no-tags --depth=1 origin "$BASELINE" >/dev/null 2>&1 || true; fi',
     'if [ -n "$BASELINE" ] && git cat-file -e "$BASELINE^{commit}" >/dev/null 2>&1; then',
-    '  git diff --name-only "$BASELINE"..HEAD 2>/dev/null || true',
+    '  git diff --name-only --diff-filter=ACMRTUXB "$BASELINE"..HEAD 2>/dev/null || true',
     'else',
     '  BASE=""',
     '  git rev-parse --verify origin/main >/dev/null 2>&1 && BASE=origin/main',
     '  [ -z "$BASE" ] && git rev-parse --verify origin/master >/dev/null 2>&1 && BASE=origin/master',
-    '  if [ -n "$BASE" ]; then git diff --name-only "$BASE"..HEAD 2>/dev/null || true; else git show --pretty="" --name-only HEAD 2>/dev/null || true; fi',
+    '  if [ -n "$BASE" ]; then git diff --name-only --diff-filter=ACMRTUXB "$BASE"..HEAD 2>/dev/null || true; else git show --pretty="" --name-only --diff-filter=ACMRTUXB HEAD 2>/dev/null || true; fi',
     'fi',
-    'git diff --name-only 2>/dev/null || true',
-    'git diff --cached --name-only 2>/dev/null || true',
+    'git diff --name-only --diff-filter=ACMRTUXB 2>/dev/null || true',
+    'git diff --cached --name-only --diff-filter=ACMRTUXB 2>/dev/null || true',
     'git ls-files --others --exclude-standard 2>/dev/null || true',
   ].join('\n');
   const result = await sandbox.runCommand('sh', ['-c', command]);
@@ -109,16 +109,17 @@ export async function inferTargetRoutesFromDiff(
     readChangedFiles(sandbox),
     readRecentChangedFiles(sandbox, options?.baselineSha),
   ]);
-  const affectedPageFiles = await inferAffectedPageFiles(
-    sandbox,
-    recentChangedFiles,
-  ).catch((error: unknown) => {
-    console.warn(
-      '[RuntimeTargets] Could not infer component-to-page dependencies:',
-      error instanceof Error ? error.message : error,
-    );
-    return [];
-  });
+  const [affectedPageFiles, recentAffectedPageFiles] =
+    await inferAffectedPageFilesForChangeSets(
+      sandbox,
+      [changedFiles, recentChangedFiles],
+    ).catch((error: unknown) => {
+      console.warn(
+        '[RuntimeTargets] Could not infer component-to-page dependencies:',
+        error instanceof Error ? error.message : error,
+      );
+      return [[], []];
+    });
 
   const pageRoutes = new Set<string>();
   const apiRoutes = new Map<string, InferredTargetRoutes['apiRoutes'][number]>();
@@ -131,8 +132,11 @@ export async function inferTargetRoutesFromDiff(
       apiRoutes.set(api, { path: api, method: DEFAULT_METHOD });
     }
   }
+  for (const page of affectedPageFiles.map(pageRouteFromFile)) {
+    if (page) pageRoutes.add(page);
+  }
 
-  const recentPageRoutes = [...recentChangedFiles, ...affectedPageFiles]
+  const recentPageRoutes = [...recentChangedFiles, ...recentAffectedPageFiles]
     .map(pageRouteFromFile)
     .filter((route): route is string => !!route);
 

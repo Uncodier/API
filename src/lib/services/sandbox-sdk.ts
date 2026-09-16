@@ -23,18 +23,19 @@ export async function getSandboxHandle(idOrName: string): Promise<Sandbox> {
   const id = String(idOrName || '').trim();
   if (!id) throw new Error('Sandbox id/name is required');
 
-  const getFn = Sandbox.get.bind(Sandbox) as (opts: Record<string, unknown>) => Promise<Sandbox>;
-  
   if (sandboxSdkMajor() >= 3) {
     // In SDK v3+, `sandboxId` is no longer a valid parameter (it results in a lookup for 'undefined').
     // The backend accepts both names and legacy IDs via the `name` parameter.
-    return await getFn({ name: id });
+    return await Sandbox.get({ name: id });
   }
-  
+
+  const legacyGet = Sandbox.get.bind(Sandbox) as unknown as (
+    opts: Record<string, unknown>,
+  ) => Promise<Sandbox>;
   try {
-    return await getFn({ sandboxId: id });
+    return await legacyGet({ sandboxId: id });
   } catch {
-    return await getFn({ name: id });
+    return await legacyGet({ name: id });
   }
 }
 

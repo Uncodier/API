@@ -12,6 +12,10 @@ import type {
   RuntimeProbeServerError,
 } from './step-runtime-probe';
 import type { GitPushFailureKind } from '@/lib/services/git-push-error-triage';
+import {
+  sanitizeTelemetryText,
+  sanitizeTelemetryUrl,
+} from './step-telemetry-sanitize';
 
 export type GateFailureCategory =
   | 'layout'
@@ -285,9 +289,11 @@ function formatConsole(s: ConsoleSignal): string {
     const warns = s.entries.filter((e) => e.level === 'warn');
     parts.push(`console: ${s.entries.length} entries (${errors.length} errors, ${warns.length} warnings)`);
     for (const e of [...errors, ...warns].slice(0, 12)) {
-      const at = e.source ? ` @ ${e.source}` : '';
+      const at = e.source ? ` @ ${sanitizeTelemetryUrl(e.source)}` : '';
       const scope = e.route ? ` on ${e.route}${e.viewport ? ` (${e.viewport})` : ''}` : '';
-      parts.push(`  - [${e.level}] ${e.text.slice(0, 240)}${at}${scope}`);
+      parts.push(
+        `  - [${e.level}] ${sanitizeTelemetryText(e.text).slice(0, 240)}${at}${scope}`,
+      );
     }
   } else {
     parts.push('console: clean');
@@ -296,8 +302,12 @@ function formatConsole(s: ConsoleSignal): string {
     parts.push(`page_errors: ${s.page_errors.length}`);
     for (const p of s.page_errors.slice(0, 6)) {
       const scope = p.route ? ` on ${p.route}${p.viewport ? ` (${p.viewport})` : ''}` : '';
-      parts.push(`  - ${p.message.slice(0, 220)}${scope}`);
-      if (p.stack_tail) parts.push(`    ${p.stack_tail.slice(0, 240)}`);
+      parts.push(
+        `  - ${sanitizeTelemetryText(p.message).slice(0, 220)}${scope}`,
+      );
+      if (p.stack_tail) {
+        parts.push(`    ${sanitizeTelemetryText(p.stack_tail).slice(0, 240)}`);
+      }
     }
   }
   if (s.failed_requests.length) {
@@ -305,7 +315,9 @@ function formatConsole(s: ConsoleSignal): string {
     for (const r of s.failed_requests.slice(0, 10)) {
       const st = r.status != null ? `${r.status}` : (r.failure || 'failed');
       const scope = r.route ? ` on ${r.route}${r.viewport ? ` (${r.viewport})` : ''}` : '';
-      parts.push(`  - ${st} ${r.url.slice(0, 200)}${scope}`);
+      parts.push(
+        `  - ${st} ${sanitizeTelemetryUrl(r.url).slice(0, 200)}${scope}`,
+      );
     }
   }
   return section('CLIENT (browser)', parts.join('\n'));
@@ -320,7 +332,11 @@ function formatScenarios(s: ScenarioSignal): string {
       if (!st.ok) {
         parts.push(`  - step ${st.index} [${st.action}] FAILED: ${(st.error || 'unknown').slice(0, 220)}`);
         if (st.artifacts?.dom_snippet) parts.push(`    dom: ${st.artifacts.dom_snippet.slice(0, 200)}`);
-        if (st.artifacts?.screenshot_url) parts.push(`    screenshot: ${st.artifacts.screenshot_url}`);
+        if (st.artifacts?.screenshot_url) {
+          parts.push(
+            `    screenshot: ${sanitizeTelemetryUrl(st.artifacts.screenshot_url)}`,
+          );
+        }
       }
     }
   }
@@ -350,7 +366,9 @@ function formatVisual(s: VisualSignal): string {
           shot.route === primaryDefect?.route &&
           shot.viewport === primaryDefect?.viewport,
       ) ?? s.screenshots[0];
-    parts.push(`screenshot: ${screenshot.route} (${screenshot.viewport}): ${screenshot.url}`);
+    parts.push(
+      `screenshot: ${screenshot.route} (${screenshot.viewport}): ${sanitizeTelemetryUrl(screenshot.url)}`,
+    );
     if (screenshot.dom_snippet) {
       parts.push(`dom_snippet: ${screenshot.dom_snippet.slice(0, 600)}`);
     }

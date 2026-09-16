@@ -12,9 +12,10 @@
 -- =====================================================================
 
 -- Workspaces bucket: service-role-only. Drop legacy permissive rules.
-update storage.buckets
-set public = false
-where id = 'workspaces';
+insert into storage.buckets (id, name, public)
+values ('workspaces', 'workspaces', false)
+on conflict (id) do update
+set public = false;
 
 drop policy if exists "workspaces public read" on storage.objects;
 drop policy if exists "workspaces authenticated read" on storage.objects;

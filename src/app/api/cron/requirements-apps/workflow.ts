@@ -25,6 +25,7 @@ import { provisionTrackingScriptStep } from '../shared/tracking-script-step';
 import { ensureSourceArchiveStep } from '../shared/ensure-source-archive-step';
 import { classifyRequirementType, getFlow, isLightRequirementFlow } from '@/lib/services/requirement-flows';
 import {
+  activeBacklogItemIdsFromPlanSteps,
   countPendingPlanSteps,
   feedbackRequiredBacklogItems,
 } from '@/lib/services/cycle-wrapup-prompt';
@@ -172,7 +173,15 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       }
     });
 
-    const feedbackItems = feedbackRequiredBacklogItems(activeItems, feedbackAttemptLimits);
+    const feedbackItems = feedbackRequiredBacklogItems(
+      activeItems,
+      feedbackAttemptLimits,
+      {
+        activeItemIds: activeBacklogItemIdsFromPlanSteps(existingPlan?.steps),
+        currentPhaseId: reqContext.backlog.current_phase_id,
+        hasRunnablePlanSteps: hasActivePlan,
+      },
+    );
     if (feedbackItems.length > 0) {
       wrapUpRequiresUserFeedback = true;
       wrapUpReason = `Feedback is required for backlog item(s): ${feedbackItems
@@ -746,9 +755,15 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
         site_id,
         user_id,
       );
+      const pendingPlanSteps = countPendingPlanSteps(latestPlanSteps);
       const finalFeedbackItems = feedbackRequiredBacklogItems(
         finalRequirementContext.backlog?.items || [],
         feedbackAttemptLimits,
+        {
+          activeItemIds: activeBacklogItemIdsFromPlanSteps(latestPlanSteps),
+          currentPhaseId: finalRequirementContext.backlog?.current_phase_id,
+          hasRunnablePlanSteps: pendingPlanSteps > 0,
+        },
       );
       if (finalFeedbackItems.length > 0) {
         wrapUpRequiresUserFeedback = true;
@@ -759,7 +774,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     }
 
     const { emitCycleWrapUpStep } = await import('../shared/cycle-wrapup-step');
-    const wrapUpResult = await emitCycleWrapUpStep({
+    await emitCycleWrapUpStep({
       sandboxId,
       siteId: site_id,
       instanceId,
@@ -773,11 +788,13 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       previewUrl,
       repoUrl,
       audit: cronAudit,
-      forceWrapUp: true,
+      forceWrapUp: wrapUpRequiresUserFeedback,
       wrapUpReason,
       requiresUserFeedback: wrapUpRequiresUserFeedback,
     });
-    wrapUpAttempted = wrapUpResult.ran;
+    // A skipped wrap-up is intentional while plan steps remain. Mark the
+    // attempt handled so the outer finally does not force the same wrap-up.
+    wrapUpAttempted = true;
 
     const { emitSyncDocsToBacklogStep } = await import('../shared/sync-docs-to-backlog-step');
     await emitSyncDocsToBacklogStep({
@@ -841,7 +858,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
           previewUrl,
           repoUrl,
           audit: cronAudit,
-          forceWrapUp: true,
+          forceWrapUp: wrapUpRequiresUserFeedback,
           wrapUpReason: wrapUpReason || 'The work cycle ended before the normal wrap-up stage.',
           requiresUserFeedback: wrapUpRequiresUserFeedback,
         });

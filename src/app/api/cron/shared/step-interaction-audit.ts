@@ -1,4 +1,7 @@
 import ts from 'typescript';
+import { routeFromAppFile } from './step-app-route';
+
+export { routeFromAppFile } from './step-app-route';
 
 export type InteractionFindingKind = 'broken_link' | 'inert_control';
 export type InteractionConfidence = 'high' | 'medium';
@@ -30,7 +33,6 @@ export interface InteractionSignal {
 
 type AddedLines = Map<string, Set<number> | '*'>;
 
-const NAVIGABLE_FILE_RE = /^src\/app\/(.*)(?:page\.(?:tsx|jsx|ts|js)|route\.(?:ts|js))$/;
 const PUBLIC_ASSET_RE = /\.[a-z0-9]{2,8}$/i;
 const ACTION_ATTRS = new Set([
   'onclick',
@@ -158,18 +160,6 @@ export function routePattern(route: string): RegExp {
     })
     .join('');
   return new RegExp(`^${body}/?$`);
-}
-
-export function routeFromAppFile(file: string): string | null {
-  const match = file.match(NAVIGABLE_FILE_RE);
-  if (!match) return null;
-  const rawSegments = match[1].split('/').filter(Boolean);
-  if (rawSegments.some((segment) => segment.startsWith('_'))) return null;
-  const segments = rawSegments
-    .filter((segment) => !(segment.startsWith('(') && segment.endsWith(')')))
-    .filter((segment) => !segment.startsWith('@'))
-    .map((segment) => segment.replace(/^\(\.{1,3}\)/, ''));
-  return `/${segments.join('/')}`.replace(/\/+$/, '') || '/';
 }
 
 function lineOf(source: ts.SourceFile, node: ts.Node): number {
@@ -417,6 +407,14 @@ export function parseAddedLines(diff: string, untrackedFiles: string[] = []): Ad
   const result: AddedLines = new Map(untrackedFiles.map((file) => [file, '*']));
   let file = '';
   for (const line of diff.split('\n')) {
+    if (line.startsWith('diff --git ')) {
+      file = '';
+      continue;
+    }
+    if (line === '+++ /dev/null') {
+      file = '';
+      continue;
+    }
     const fileMatch = line.match(/^\+\+\+ b\/(.+)$/);
     if (fileMatch) {
       file = fileMatch[1];
@@ -426,10 +424,10 @@ export function parseAddedLines(diff: string, untrackedFiles: string[] = []): Ad
     if (!hunk || !file) continue;
     const start = Number(hunk[1]);
     const count = hunk[2] === undefined ? 1 : Number(hunk[2]);
+    if (count === 0) continue;
     const lines = result.get(file) === '*' ? '*' : (result.get(file) || new Set<number>());
     if (lines !== '*') {
-      const touchedCount = Math.max(1, count);
-      for (let n = start; n < start + touchedCount; n++) lines.add(Math.max(1, n));
+      for (let n = start; n < start + count; n++) lines.add(n);
       result.set(file, lines);
     }
   }

@@ -163,9 +163,23 @@ export async function inferAffectedPageFiles(
   sandbox: Sandbox,
   changedFiles: string[],
 ): Promise<string[]> {
-  if (!changedFiles.some(isFrontendSource)) return [];
+  const [affected] = await inferAffectedPageFilesForChangeSets(sandbox, [
+    changedFiles,
+  ]);
+  return affected;
+}
+
+export async function inferAffectedPageFilesForChangeSets(
+  sandbox: Sandbox,
+  changedFileSets: string[][],
+): Promise<string[][]> {
+  if (!changedFileSets.some((files) => files.some(isFrontendSource))) {
+    return changedFileSets.map(() => []);
+  }
   const files = await readSourceFiles(sandbox);
-  if (files.length === 0) return [];
+  if (files.length === 0) return changedFileSets.map(() => []);
   const contents = await readContents(sandbox, files);
-  return inferAffectedPageFilesFromContents(changedFiles, contents);
+  return changedFileSets.map((changedFiles) =>
+    inferAffectedPageFilesFromContents(changedFiles, contents),
+  );
 }

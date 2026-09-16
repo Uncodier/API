@@ -9,16 +9,15 @@ function sandboxLabel(sandbox: Sandbox): string {
  * Best-effort stop with retries. Shared by provision, snapshot restore, and recovery
  * so zombie-billing cleanup is one implementation.
  */
-export async function stopSandboxQuiet(sandbox: Sandbox, opts?: { blocking?: boolean }): Promise<void> {
-  const blocking = opts?.blocking ?? false;
+export async function stopSandboxQuiet(sandbox: Sandbox): Promise<boolean> {
   let delayMs = 1000;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       await Promise.race([
-        sandbox.stop({ blocking } as { blocking?: boolean }),
+        sandbox.stop(),
         new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000)),
       ]);
-      return;
+      return true;
     } catch (e: unknown) {
       if (attempt < 2) {
         console.warn(
@@ -34,4 +33,5 @@ export async function stopSandboxQuiet(sandbox: Sandbox, opts?: { blocking?: boo
       }
     }
   }
+  return false;
 }

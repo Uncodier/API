@@ -1,4 +1,7 @@
-import { inferTargetRoutesFromDiff } from '../step-runtime-targets';
+import {
+  inferTargetRoutesFromDiff,
+  pageRouteFromFile,
+} from '../step-runtime-targets';
 import { inferAffectedPageFilesFromContents } from '../step-visual-route-dependencies';
 
 jest.mock('@/lib/services/sandbox-service', () => ({
@@ -14,6 +17,17 @@ function commandResult(output: string) {
 }
 
 describe('runtime target inference', () => {
+  it('normalizes App Router groups and excludes non-addressable pages', () => {
+    expect(pageRouteFromFile('src/app/(account)/settings/page.tsx')).toBe(
+      '/settings',
+    );
+    expect(pageRouteFromFile('src/app/@modal/(.)photo/page.tsx')).toBe(
+      '/photo',
+    );
+    expect(pageRouteFromFile('src/app/_private/page.tsx')).toBeNull();
+    expect(pageRouteFromFile('src/app/users/[id]/page.tsx')).toBeNull();
+  });
+
   it('walks reverse imports from a changed component to its page', () => {
     const contents = new Map([
       [
@@ -142,6 +156,7 @@ describe('runtime target inference', () => {
         if (command === 'git') return commandResult(files.join('\n'));
         if (script.includes('BASELINE=')) {
           expect(script).toContain(baseline);
+          expect(script).toContain('--diff-filter=ACMRTUXB');
           return commandResult('src/components/dashboard/value.tsx\n');
         }
         return commandResult('src/components/dashboard/value.tsx\n');
@@ -162,5 +177,39 @@ describe('runtime target inference', () => {
       'src/components/dashboard/value.tsx',
     ]);
     expect(result.recentPageRoutes).toEqual(['/dashboard']);
+  });
+
+  it('keeps cumulative affected pages available for forced maintenance audits', async () => {
+    const files = [
+      'src/app/dashboard/page.tsx',
+      'src/components/dashboard/panel.tsx',
+    ];
+    const contents: Record<string, string> = {
+      'src/app/dashboard/page.tsx':
+        "import { Panel } from '@/components/dashboard/panel';",
+      'src/components/dashboard/panel.tsx':
+        'export function Panel() { return <section />; }',
+    };
+    const sandbox = {
+      runCommand: jest.fn().mockImplementation((command: string, args: string[]) => {
+        const script = args.join(' ');
+        if (command === 'git') return commandResult(files.join('\n'));
+        if (script.includes('BASELINE=')) return commandResult('');
+        return commandResult('src/components/dashboard/panel.tsx\n');
+      }),
+      fs: {
+        readFile: jest.fn().mockImplementation((absolutePath: string) => {
+          const relative = absolutePath.replace('/vercel/sandbox/', '');
+          return Promise.resolve(contents[relative]);
+        }),
+      },
+    } as any;
+
+    const result = await inferTargetRoutesFromDiff(sandbox, {
+      baselineSha: 'a'.repeat(40),
+    });
+
+    expect(result.pageRoutes).toEqual(['/dashboard']);
+    expect(result.recentPageRoutes).toEqual([]);
   });
 });

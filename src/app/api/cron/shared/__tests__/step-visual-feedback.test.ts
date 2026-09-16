@@ -163,6 +163,45 @@ describe('visual feedback formatting', () => {
     );
   });
 
+  it('supports opaque screenshot locators without persisting bearer tokens', () => {
+    const opaque =
+      'visual-storage://storage/workspaces/probe-screenshots/req-req-1/step-1/mobile.jpg';
+    const feedback = formatVisualGateFeedback(
+      {
+        summary: 'The mobile navigation is broken.',
+        defects: [{
+          category: 'responsive',
+          severity: 'major',
+          route: '/dashboard',
+          viewport: 'mobile',
+          description: 'Navigation overlaps content.',
+        }],
+      },
+      [{ route: '/dashboard', viewport: 'mobile', url: opaque }],
+    );
+
+    expect(extractVisualFeedbackScreenshotUrl(feedback)).toBe(opaque);
+
+    const legacyFeedback = formatVisualGateFeedback(
+      {
+        summary: 'Legacy locator.',
+        defects: [{
+          category: 'responsive',
+          severity: 'major',
+          route: '/dashboard',
+          viewport: 'mobile',
+          description: 'Navigation overlaps content.',
+        }],
+      },
+      [{
+        route: '/dashboard',
+        viewport: 'mobile',
+        url: 'https://example.supabase.co/shot.jpg?token=secret-token',
+      }],
+    );
+    expect(legacyFeedback).not.toContain('secret-token');
+  });
+
   it('classifies a failed critic verdict as a visual failure', () => {
     const categories = deriveCategoriesFailed({
       visual: {
@@ -300,6 +339,7 @@ describe('visual probe script', () => {
       imageQuality: 60,
       hydrationWaitMs: 500,
       maxImageBytes: 900_000,
+      protectedRoutes: ['/dashboard'],
     });
 
     expect(() => new Function(script)).not.toThrow();
@@ -310,6 +350,9 @@ describe('visual probe script', () => {
     expect(script).toContain("const CAPTURE_DIRECTORY = '/tmp/visual-probe-captures'");
     expect(script).toContain("crypto.createHash('sha256').update(route)");
     expect(script).toContain('authRedirects.push');
+    expect(script).toContain('new URL(value, LOCAL_ORIGIN)');
+    expect(script).toContain('PROTECTED_ROUTES.has(requested.pathname)');
+    expect(script).toContain('restoreTelemetry(checkpoint)');
     expect(script).toContain('redirected_to: finalRoute');
     expect(script).toContain('route: safeRoute');
     expect(script).toContain('final_route: finalRoute');

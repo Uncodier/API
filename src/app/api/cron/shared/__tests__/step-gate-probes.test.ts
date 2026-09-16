@@ -6,6 +6,8 @@ import {
 import { inferTargetRoutesFromDiff } from '../step-runtime-targets';
 import { runVisualProbe } from '../step-visual-probe';
 import { runVisualCritic } from '../step-visual-critic';
+import { runE2eScenarios } from '../step-e2e-runner';
+import { launchPuppeteerForGate } from '@/lib/puppeteer/launch-gate-browser';
 
 jest.mock('../step-runtime-probe', () => ({
   runRuntimeProbe: jest.fn(),
@@ -118,6 +120,101 @@ describe('runtime and visual probe gate', () => {
         infrastructureFailure: true,
         error: expect.stringContaining('sandbox transport failed'),
       }),
+    );
+  });
+
+  it('fails closed when the E2E runner throws', async () => {
+    (launchPuppeteerForGate as jest.Mock).mockResolvedValue({
+      close: jest.fn().mockResolvedValue(undefined),
+    });
+    (runVisualProbe as jest.Mock).mockResolvedValue({
+      ok: true,
+      duration_ms: 10,
+      screenshots: [],
+      console: {
+        ok: true,
+        entries: [],
+        page_errors: [],
+        failed_requests: [],
+      },
+      visual_raw: {
+        ok: true,
+        pass: true,
+        defects: [],
+        screenshots: [],
+      },
+      base_url: 'http://localhost:3000',
+      auth_redirects: [],
+    });
+    (runE2eScenarios as jest.Mock).mockRejectedValue(
+      new Error('browser transport failed'),
+    );
+
+    const result = await runRuntimeAndVisualProbes({
+      sandbox: {} as any,
+      stepOrder: 1,
+      requirementId: 'req-1',
+      gitRepoKind: 'applications',
+      shouldRunVisual: true,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        ok: false,
+        infrastructureFailure: true,
+        error: expect.stringContaining('browser transport failed'),
+      }),
+    );
+  });
+
+  it('uses cumulative page routes for an explicitly forced visual audit', async () => {
+    (inferTargetRoutesFromDiff as jest.Mock).mockResolvedValueOnce({
+      pageRoutes: ['/dashboard'],
+      apiRoutes: [],
+      changedFiles: ['src/app/dashboard/page.tsx'],
+      recentPageRoutes: [],
+      recentChangedFiles: [],
+    });
+    (launchPuppeteerForGate as jest.Mock).mockResolvedValue({
+      close: jest.fn().mockResolvedValue(undefined),
+    });
+    (runVisualProbe as jest.Mock).mockResolvedValue({
+      ok: true,
+      duration_ms: 10,
+      screenshots: [],
+      console: {
+        ok: true,
+        entries: [],
+        page_errors: [],
+        failed_requests: [],
+      },
+      visual_raw: {
+        ok: true,
+        pass: true,
+        defects: [],
+        screenshots: [],
+      },
+      base_url: 'http://localhost:3000',
+      auth_redirects: [],
+    });
+    (runE2eScenarios as jest.Mock).mockResolvedValue({
+      ok: true,
+      scenarios: [],
+      scenarios_read: 0,
+      base_url: 'http://localhost:3000',
+    });
+
+    const result = await runRuntimeAndVisualProbes({
+      sandbox: {} as any,
+      stepOrder: 0,
+      requirementId: 'req-1',
+      gitRepoKind: 'applications',
+      shouldRunVisual: true,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(runVisualProbe).toHaveBeenCalledWith(
+      expect.objectContaining({ pageRoutes: ['/dashboard'] }),
     );
   });
 });

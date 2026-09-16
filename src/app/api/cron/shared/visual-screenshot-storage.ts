@@ -4,7 +4,6 @@ import type { Sandbox } from '@vercel/sandbox';
 
 const MAX_SCREENSHOT_BYTES = 900_000;
 const CAPTURE_DIRECTORY = '/tmp/visual-probe-captures';
-const SIGNED_URL_TTL_SECONDS = 24 * 60 * 60;
 const SCREENSHOT_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 const RETENTION_SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1_000;
 const STORAGE_LIST_PAGE_SIZE = 100;
@@ -73,6 +72,17 @@ export function safeVisualStorageSegment(value: string, fallback: string): strin
     .replace(/^_+|_+$/g, '')
     .slice(0, 100);
   return safe || fallback;
+}
+
+export function createVisualStorageLocator(
+  bucket: string,
+  storagePath: string,
+): string {
+  const encodedPath = storagePath
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+  return `visual-storage://storage/${encodeURIComponent(bucket)}/${encodedPath}`;
 }
 
 function assertTrustedLocalPath(localPath: string): void {
@@ -176,7 +186,24 @@ export async function persistVisualCaptures(params: {
   });
   const screenshots: PersistedVisualCapture[] = [];
   const errors: string[] = [];
-  const bucketResult = await client.storage.getBucket(params.config.bucket);
+  let bucketResult = await client.storage.getBucket(params.config.bucket);
+  if (!bucketResult.data) {
+    const created = await client.storage.createBucket(params.config.bucket, {
+      public: false,
+    });
+    if (!created.error) {
+      bucketResult = await client.storage.getBucket(params.config.bucket);
+    } else if (!/already exists/i.test(created.error.message)) {
+      return {
+        screenshots,
+        errors: [
+          `Could not provision private screenshot bucket: ${created.error.message}`,
+        ],
+      };
+    } else {
+      bucketResult = await client.storage.getBucket(params.config.bucket);
+    }
+  }
   if (bucketResult.error || !bucketResult.data) {
     return {
       screenshots,
@@ -228,19 +255,10 @@ export async function persistVisualCaptures(params: {
       });
       if (error) throw new Error(error.message);
 
-      const { data: signed, error: signedError } = await storage.createSignedUrl(
-        storagePath,
-        SIGNED_URL_TTL_SECONDS,
-      );
-      if (signedError || !signed?.signedUrl) {
-        throw new Error(signedError?.message || 'Could not sign screenshot URL');
-      }
-      const locator = new URL(signed.signedUrl);
-      locator.searchParams.set('visual_version', String(Date.now()));
       screenshots.push({
         route: capture.route,
         viewport: capture.viewport,
-        url: locator.toString(),
+        url: createVisualStorageLocator(params.config.bucket, storagePath),
         storage_path: storagePath,
         dom_snippet: capture.dom_snippet,
       });

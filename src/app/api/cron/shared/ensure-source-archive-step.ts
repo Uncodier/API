@@ -1,24 +1,36 @@
 'use step';
 
 import { createClient } from '@supabase/supabase-js';
-import { uploadSandboxSourceArchiveToRepository } from '@/app/api/agents/tools/sandbox/sandbox-source-upload';
+import {
+  resolveSourceArchiveStorageConfig,
+  SOURCE_ARCHIVE_URL_TTL_SECONDS,
+  uploadSandboxSourceArchiveToRepository,
+} from '@/app/api/agents/tools/sandbox/sandbox-source-upload';
 import { getSandboxHandle } from '@/lib/services/sandbox-sdk';
 
 export async function checkSourceCodeStep(reqId: string): Promise<string | null> {
   'use step';
-  const repoUrl = process.env.REPOSITORY_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const repoKey = process.env.REPOSITORY_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!repoUrl || !repoKey) return null;
+  const storageConfig = resolveSourceArchiveStorageConfig();
+  if (!storageConfig) return null;
 
-  const storageClient = createClient(repoUrl, repoKey, {
+  const storageClient = createClient(
+    storageConfig.url,
+    storageConfig.serviceKey,
+    {
     auth: { persistSession: false, autoRefreshToken: false },
-  });
-  const bucket = process.env.SUPABASE_BUCKET || 'workspaces';
+    },
+  );
+  const storage = storageClient.storage.from(storageConfig.bucket);
   const names = [`req-${reqId}_source_code.tar.gz`, `req-${reqId}_source_code.zip`];
   for (const name of names) {
-    const { data } = await storageClient.storage.from(bucket).list('', { search: name, limit: 1 });
-    if (data?.length) {
-      return storageClient.storage.from(bucket).getPublicUrl(name).data.publicUrl;
+    const { data, error } = await storage.list('', { search: name, limit: 10 });
+    if (error || !data?.some((entry) => entry.name === name)) continue;
+    const { data: signed, error: signedError } = await storage.createSignedUrl(
+      name,
+      SOURCE_ARCHIVE_URL_TTL_SECONDS,
+    );
+    if (!signedError && signed?.signedUrl) {
+      return signed.signedUrl;
     }
   }
   return null;

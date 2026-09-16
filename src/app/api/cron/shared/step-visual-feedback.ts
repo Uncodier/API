@@ -1,5 +1,6 @@
 import type { VisualDefect } from './step-iteration-signals';
 import type { VisualProbeViewport } from './step-visual-probe';
+import { sanitizeTelemetryUrl } from './step-telemetry-sanitize';
 
 const MAX_VISUAL_SCREENSHOTS = 2;
 const VISUAL_SCREENSHOT_MARKER = 'visual_screenshot_url:';
@@ -194,7 +195,9 @@ export function formatVisualGateFeedback(
   const lines = ['Visual critic blocked the gate.'];
 
   if (screenshotUrl) {
-    lines.push(`${VISUAL_SCREENSHOT_MARKER} ${screenshotUrl}`);
+    lines.push(
+      `${VISUAL_SCREENSHOT_MARKER} ${sanitizeTelemetryUrl(screenshotUrl)}`,
+    );
   }
   lines.push(`Summary: ${verdict.summary.slice(0, 400)}`);
   if (defects.length) {
@@ -211,6 +214,8 @@ export function formatVisualGateFeedback(
 
 export function extractVisualFeedbackScreenshotUrl(text: string | null | undefined): string | null {
   if (!text) return null;
-  const match = text.match(/^visual_screenshot_url:\s*(https?:\/\/\S+)/im);
+  const match = text.match(
+    /^visual_screenshot_url:\s*((?:https?:\/\/|visual-storage:\/\/)\S+)/im,
+  );
   return match?.[1] ?? null;
 }

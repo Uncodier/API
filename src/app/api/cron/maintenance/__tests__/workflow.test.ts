@@ -76,11 +76,11 @@ const input = {
   maintenanceLockKey: 'maintenance:instance-1',
 };
 
-function gateResult(ok: boolean, error?: string) {
+function gateResult(ok: boolean, error?: string, signals: Record<string, unknown> = {}) {
   return {
     ok,
     error,
-    signals: {},
+    signals,
     effectiveSandboxId: 'sandbox-1',
     changeBaselineSha: 'baseline-sha',
   };
@@ -127,7 +127,23 @@ describe('maintenance workflow post-gate repairs', () => {
   it('feeds a failed post-gate back to the agent before pushing', async () => {
     mockedRunGate
       .mockResolvedValueOnce(gateResult(true))
-      .mockResolvedValueOnce(gateResult(false, 'The dashboard button is inert'))
+      .mockResolvedValueOnce(gateResult(
+        false,
+        'The dashboard button is inert',
+        {
+          console: {
+            ok: false,
+            entries: [],
+            page_errors: [],
+            failed_requests: [{
+              url: 'https://api.example.test/data?token=secret-token',
+              status: 500,
+              route: '/dashboard',
+              viewport: 'desktop',
+            }],
+          },
+        },
+      ))
       .mockResolvedValueOnce(gateResult(true));
 
     await runMaintenanceWorkflow(input);
@@ -135,6 +151,15 @@ describe('maintenance workflow post-gate repairs', () => {
     expect(mockedRunAgent).toHaveBeenCalledTimes(2);
     expect(mockedRunAgent.mock.calls[1][0].initialMessage).toContain(
       'The dashboard button is inert',
+    );
+    expect(mockedRunAgent.mock.calls[1][0].initialMessage).toContain(
+      'failed_requests: 1',
+    );
+    expect(mockedRunAgent.mock.calls[1][0].initialMessage).toContain(
+      'token=%5BREDACTED%5D',
+    );
+    expect(mockedRunAgent.mock.calls[1][0].initialMessage).not.toContain(
+      'secret-token',
     );
     expect(mockedRunGate).toHaveBeenCalledTimes(3);
     expect(mockedCommit).toHaveBeenCalledTimes(1);

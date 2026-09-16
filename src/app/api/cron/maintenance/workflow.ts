@@ -15,9 +15,30 @@ import { getRequirementFullContextStep, unblockRequirementStep, checkInstanceAnd
 import { buildMaintenancePromptForFlow } from './prompt';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
 import { selectVisualFeedbackScreenshotUrl } from '../shared/step-visual-feedback';
+import {
+  deriveCategoriesFailed,
+  formatIterationSignals,
+} from '../shared/step-iteration-signals';
+import type { ProbeSignals } from '../shared/step-gate-probes';
 import { sleep } from 'workflow';
 
 const MAX_POST_GATE_REPAIR_ATTEMPTS = 2;
+
+function formatMaintenanceProbeFeedback(params: {
+  error?: string;
+  signals: ProbeSignals;
+  attempt: number;
+  maxAttempts: number;
+}): string {
+  return formatIterationSignals({
+    ...params.signals,
+    attempt: params.attempt,
+    max_attempts: params.maxAttempts,
+    step: { order: 0, title: 'Maintenance validation' },
+    categories_failed: deriveCategoriesFailed(params.signals),
+    top_level_error: params.error,
+  }).slice(0, 8_000);
+}
 
 export interface MaintenanceWorkflowInput {
   reqId: string;
@@ -125,35 +146,14 @@ export async function runMaintenanceWorkflow(input: MaintenanceWorkflowInput) {
       throw new Error(probes.error || 'Maintenance probe infrastructure unavailable');
     }
 
-    let qaContext = '';
-    if (!probes.ok && probes.error) {
-      qaContext += `\nCRITICAL PROBE ERROR:\n- ${probes.error}\n`;
-    }
-    if (probes.signals.runtime && !probes.signals.runtime.ok) {
-      qaContext += `\nRUNTIME ERRORS:\n`;
-      if (probes.signals.runtime.startup_error) {
-        qaContext += `- Startup Error: ${probes.signals.runtime.startup_error}\n`;
-      }
-      if (probes.signals.runtime.server_errors?.length) {
-        qaContext += `${probes.signals.runtime.server_errors.map(e => `- [${e.kind}] ${e.line}`).join('\n')}\n`;
-      }
-      const failedPages = probes.signals.runtime.pages?.filter(p => p.http_status >= 400 || p.http_status === 0);
-      if (failedPages?.length) {
-        qaContext += `Failed Pages: ${failedPages.map(p => `${p.path} (HTTP ${p.http_status})`).join(', ')}\n`;
-      }
-    }
-    if (probes.signals.visual?.error) {
-      qaContext += `\nVISUAL PROBE ERROR:\n- ${probes.signals.visual.error}\n`;
-    }
-    if (probes.signals.visual?.defects?.length) {
-      qaContext += `\nVISUAL DEFECTS FOUND:\n${probes.signals.visual.defects.map(d => `- [${d.severity}] ${d.route} (${d.viewport}): ${d.description} (Hint: ${d.fix_hint || 'N/A'})`).join('\n')}\n`;
-    }
-    if (probes.signals.console?.page_errors?.length) {
-      qaContext += `\nBROWSER CONSOLE ERRORS:\n${probes.signals.console.page_errors.map(e => `- ${e.route}: ${e.message}`).join('\n')}\n`;
-    }
-    if (probes.signals.scenarios?.scenarios?.filter(s => !s.pass)?.length) {
-      qaContext += `\nFAILED E2E SCENARIOS:\n${probes.signals.scenarios.scenarios.filter(s => !s.pass).map(s => `- ${s.scenario}: ${s.steps.find(st => !st.ok)?.error || 'Unknown error'}`).join('\n')}\n`;
-    }
+    const qaContext = probes.ok
+      ? ''
+      : formatMaintenanceProbeFeedback({
+          error: probes.error,
+          signals: probes.signals,
+          attempt: 1,
+          maxAttempts: 1,
+        });
 
     const planInstruction = pausedCheck.hasActivePlan 
       ? `You already have an active execution plan. Execute it step by step using the instance_plan tool (action="execute_step"). Finish your turn once the plan is fully completed.`
@@ -247,7 +247,12 @@ export async function runMaintenanceWorkflow(input: MaintenanceWorkflowInput) {
           user_id,
           initialMessage: [
             `Post-maintenance validation failed. Repair every blocking finding now (repair attempt ${repairAttempts} of ${MAX_POST_GATE_REPAIR_ATTEMPTS}).`,
-            postGate.error || 'The post-maintenance gate failed without a detailed error.',
+            formatMaintenanceProbeFeedback({
+              error: postGate.error,
+              signals: postGate.signals,
+              attempt: repairAttempts,
+              maxAttempts: MAX_POST_GATE_REPAIR_ATTEMPTS,
+            }),
             'Inspect the existing changes, make the smallest complete fix, update the relevant evidence file, and finish only after the reported behavior works.',
           ].join('\n\n'),
           visualFeedbackScreenshotUrl,
