@@ -5,7 +5,7 @@ export function requirementBacklogTool(_siteId: string, defaultRequirementId?: s
   return {
     name: 'requirement_backlog',
     description:
-      'Canonical backlog for a requirement. Every actionable work item lives here — Producer adds them, Consumer starts one (WIP=1), Critic/Judge move it through critic_review → judge_review → done. Actions: list | upsert | start | complete | downgrade | log_assumption | mark_needs_review | set_status. Completion is Judge-owned: complete and set_status=done are accepted only when approved Judge evidence already exists. The tool rejects start when another item is already in_progress; downgrade drops scope_level full → mvp → minimal and resets status to pending.',
+      'Canonical backlog for a requirement. Every actionable work item lives here — Producer adds them, Consumer starts one (WIP=1), and the runner moves it through review to a terminal outcome. Model actions: list | upsert | start | downgrade | log_assumption | set_status. Terminal transitions (done, rejected, needs_review) are runner-owned; finish plan work with instance_plan action="execute_step" so the gate and Judge can decide the outcome. The tool rejects start when another item is already in_progress; downgrade drops scope_level full → mvp → minimal and resets status to pending.',
     parameters: {
       type: 'object',
       properties: {
@@ -15,16 +15,14 @@ export function requirementBacklogTool(_siteId: string, defaultRequirementId?: s
             'list',
             'upsert',
             'start',
-            'complete',
             'downgrade',
             'log_assumption',
-            'mark_needs_review',
             'set_status',
           ],
           description: 'Backlog operation to perform.',
         },
         requirement_id: { type: 'string', description: 'Requirement UUID (required).' },
-        item_id: { type: 'string', description: 'Backlog item UUID. Highly recommended to provide this explicitly for start, complete, downgrade, log_assumption, mark_needs_review, set_status actions. complete only confirms an existing approved Judge verdict.' },
+        item_id: { type: 'string', description: 'Backlog item UUID. Provide this explicitly for start, downgrade, log_assumption, and set_status actions.' },
         title: { type: 'string', description: 'Human-readable item title.' },
         kind: {
           type: 'string',
@@ -59,10 +57,10 @@ export function requirementBacklogTool(_siteId: string, defaultRequirementId?: s
         depends_on: { type: 'array', items: { type: 'string' }, description: 'Item ids this depends on (must be done first).' },
         status: {
           type: 'string',
-          enum: ['pending', 'in_progress', 'critic_review', 'judge_review', 'done', 'needs_review', 'rejected'],
-          description: 'Target status for set_status.',
+          enum: ['pending', 'in_progress', 'critic_review', 'judge_review'],
+          description: 'Non-terminal target status for set_status. Terminal states are runner-owned.',
         },
-        reason: { type: 'string', description: 'Optional reason for set_status or mark_needs_review.' },
+        reason: { type: 'string', description: 'Optional reason for set_status.' },
         assumption: { type: 'string', description: 'Assumption text for log_assumption.' },
         confirm_reopen: { type: 'boolean', description: 'Must be true to set_status out of done.' },
       },

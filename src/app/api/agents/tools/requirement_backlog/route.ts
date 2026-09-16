@@ -17,6 +17,7 @@ import {
 } from '@/lib/services/requirement-backlog';
 import { checkAndResetCronAttempts } from '@/lib/services/requirement-cron-reset';
 import { getRequirementById } from '@/lib/database/requirement-db';
+import { assertAgentBacklogTransitionAllowed } from './agent-transition-policy';
 
 export type BacklogAction =
   | 'list'
@@ -49,6 +50,10 @@ export interface BacklogCoreParams {
 export async function executeBacklogCore(params: BacklogCoreParams) {
   const { action, requirement_id } = params;
   if (!requirement_id) throw new Error('requirement_id is required');
+  assertAgentBacklogTransitionAllowed({
+    action,
+    status: params.status,
+  });
 
   // Coerce arrays in case stringified JSON bypassed the adapter
   if (typeof params.acceptance === 'string') {

@@ -7,6 +7,7 @@ import { getInstancePlansCore } from '@/app/api/agents/tools/instance_plan/get/r
 import { createInstancePlanCore } from '@/app/api/agents/tools/instance_plan/create/route';
 import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/route';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { assertRequirementPlanUpdateAllowed } from './requirement-plan-lock';
 
 // Per-field cutoffs used to slim the `list` response.
 // The orchestrator and other assistants just need an overview of existing
@@ -180,7 +181,10 @@ export function instancePlanTool(
   return {
     name: 'instance_plan',
     description:
-      'Manage instance plans. Plans are strict execution paths composed of steps that the system delegates to specialized sub-agents. Use action="create" to define a new plan — each step SHOULD set "skill" (preferred, any SKILL.md slug such as makinari-rol-frontend, makinari-rol-qa, makinari-obj-template-selection) and/or "role" (legacy slug such as frontend/backend/devops/content/investigate/plan/validate/report/qa/template_selection/orchestrator) so the system injects the right skill. Use action="list" to get current plans. Use action="update" to add steps or modify an existing plan. The system auto-executes pending steps as sub-agents after you finish planning. Note: You can create a workflow template (repeatable process) instead of a one-off plan by passing is_template: true and an array of triggers.',
+      'Manage instance plans. Plans are strict execution paths composed of steps that the system delegates to specialized sub-agents. Use action="create" to define a new plan — each step SHOULD set "skill" (preferred, any SKILL.md slug such as makinari-rol-frontend, makinari-rol-qa, makinari-obj-template-selection) and/or "role" (legacy slug such as frontend/backend/devops/content/investigate/plan/validate/report/qa/template_selection/orchestrator) so the system injects the right skill. Use action="list" to get current plans. Use action="update" to add steps or modify an existing plan. The system auto-executes pending steps as sub-agents after you finish planning. Note: You can create a workflow template (repeatable process) instead of a one-off plan by passing is_template: true and an array of triggers.' +
+      (requirement_id
+        ? ' This tool is running in requirement context: action="create" is rejected while another non-template plan is active, and action="update" cannot complete, fail, or cancel plans or steps. Continue the existing plan and finish executor steps with action="execute_step".'
+        : ''),
     parameters: {
       type: 'object',
       properties: {
@@ -297,6 +301,7 @@ export function instancePlanTool(
           ...params,
           site_id: params.site_id || site_id,
           user_id: params.user_id || user_id,
+          ...(requirement_id ? { requirement_id } : {}),
         };
         
         return createInstancePlanCore(body);
@@ -379,6 +384,11 @@ export function instancePlanTool(
         if (!params.plan_id) {
             throw new Error('Missing required field for update: plan_id');
         }
+        assertRequirementPlanUpdateAllowed({
+          requirementId: requirement_id,
+          status: params.status,
+          steps: params.steps,
+        });
         const body = {
           ...params,
           site_id: params.site_id || site_id,

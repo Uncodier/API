@@ -361,6 +361,7 @@ export async function createFallbackInstancePlanStep(params: {
       instance_id: params.instanceId,
       site_id: params.siteId,
       user_id: params.userId,
+      requirement_id: params.requirementId,
       title: 'Fallback Assistant Execution',
       expected_output: 'Resolve the requirement automatically as a fallback.',
       steps: [

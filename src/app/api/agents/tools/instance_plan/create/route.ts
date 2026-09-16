@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { completeInProgressPlans } from '@/lib/helpers/plan-lifecycle';
 import { resolveBacklogContextForInstance } from '@/lib/services/requirement-backlog';
+import {
+  activeRequirementPlanError,
+  getBlockingActivePlans,
+  shouldProtectRequirementPlanCreation,
+} from '../requirement-plan-lock';
 import { z } from 'zod';
 
 const parseIfString = (val: any) => typeof val === 'string' ? (() => { try { return JSON.parse(val); } catch { return val; } })() : val;
@@ -17,6 +22,7 @@ const CreateInstancePlanSchema = z.object({
   validation_rules: z.preprocess(parseIfString, z.array(z.any())).optional().default([]),
   site_id: z.string().uuid('Site ID is required'),
   user_id: z.string().uuid('User ID is required'),
+  requirement_id: z.string().uuid('Invalid requirement_id').optional(),
   agent_id: z.string().uuid('Invalid agent_id').optional(),
   steps: z.preprocess(parseIfString, z.array(z.preprocess(parseIfString, z.object({
     id: z.string().optional(),
@@ -96,18 +102,48 @@ export async function createInstancePlanCore(params: any) {
     throw new Error('La instancia no pertenece a este sitio');
   }
 
+  const protectRequirementPlan = shouldProtectRequirementPlanCreation({
+    requirementId: validatedData.requirement_id,
+    isTemplate: validatedData.is_template,
+  });
+  if (protectRequirementPlan) {
+    const [activePlan] = await getBlockingActivePlans({
+      instanceId: validatedData.instance_id,
+    });
+    if (activePlan) {
+      throw activeRequirementPlanError(validatedData.requirement_id!, activePlan);
+    }
+  }
+
   // Prepare steps if provided
   let planSteps: any[] = [];
   
   // Anti-loop Guard: Reject empty plans if there is still outstanding work
   const fallbackBacklogCtx = await resolveBacklogContextForInstance(validatedData.instance_id);
-  const fallbackBacklogItemId = fallbackBacklogCtx.inProgressItemId;
+  const fallbackMatchesRequirement =
+    !validatedData.requirement_id ||
+    fallbackBacklogCtx.requirementId === validatedData.requirement_id;
+  const fallbackBacklogItemId = fallbackMatchesRequirement
+    ? fallbackBacklogCtx.inProgressItemId
+    : null;
+  if (
+    validatedData.requirement_id &&
+    fallbackBacklogCtx.requirementId &&
+    !fallbackMatchesRequirement
+  ) {
+    console.warn(
+      `[CreateInstancePlan] Ignoring cross-requirement backlog fallback ` +
+        `${fallbackBacklogCtx.requirementId}; expected ${validatedData.requirement_id}`,
+    );
+  }
   
   if (!validatedData.steps || validatedData.steps.length === 0) {
-    if (fallbackBacklogCtx.requirementId) {
+    const backlogRequirementId =
+      validatedData.requirement_id || fallbackBacklogCtx.requirementId;
+    if (backlogRequirementId) {
       const { hasOutstandingWork } = await import('@/lib/services/requirement-backlog');
       const { loadRequirement, toBacklog } = await import('@/lib/services/requirement-backlog-store');
-      const req = await loadRequirement(fallbackBacklogCtx.requirementId);
+      const req = await loadRequirement(backlogRequirementId);
       if (req) {
         // We do a cheap check for pending work
         const b = toBacklog(req.backlog, 'default');
@@ -211,7 +247,12 @@ export async function createInstancePlanCore(params: any) {
     steps_completed: 0,
     progress_percentage: 0,
     steps: planSteps,
-    metadata: validatedData.is_template ? { workflow_template: true } : {}
+    metadata: {
+      ...(validatedData.is_template ? { workflow_template: true } : {}),
+      ...(validatedData.requirement_id
+        ? { requirement_id: validatedData.requirement_id }
+        : {}),
+    },
   };
 
   const { data: newPlan, error } = await supabaseAdmin
@@ -224,12 +265,33 @@ export async function createInstancePlanCore(params: any) {
     throw new Error(`Failed to create plan: ${error.message}`);
   }
 
-  // The replacement must exist before older plans are closed. Otherwise a
-  // validation/insert failure leaves the instance with no executable plan.
-  // Limiting closure to older rows also makes concurrent creates converge on
-  // the newest plan instead of cancelling each other.
+  // Requirement-bound plans never replace active work. Re-check after insert
+  // to catch a concurrent create and remove this unstarted conflicting row.
+  // Generic instance plans retain their historical replacement semantics:
+  // insert the replacement first, then close only older rows.
   let supersededPlanErrors: string[] = [];
-  if (!validatedData.is_template) {
+  if (protectRequirementPlan) {
+    const contenders = await getBlockingActivePlans({
+      instanceId: validatedData.instance_id,
+    });
+    const winningPlan = contenders[0];
+    if (winningPlan && winningPlan.id !== newPlan.id) {
+      const { error: cleanupError } = await supabaseAdmin
+        .from('instance_plans')
+        .delete()
+        .eq('id', newPlan.id);
+      if (cleanupError) {
+        console.error(
+          `[CreateInstancePlan] Failed to remove conflicting new plan ${newPlan.id}:`,
+          cleanupError,
+        );
+      }
+      throw activeRequirementPlanError(
+        validatedData.requirement_id!,
+        winningPlan,
+      );
+    }
+  } else if (!validatedData.is_template) {
     const closure = await completeInProgressPlans(
       validatedData.instance_id,
       `Superseded by plan ${newPlan.id}`,

@@ -422,7 +422,8 @@ export async function getInstanceAssistantTools(
   instanceId: string,
   customTools: any[] = [],
   agentType?: string,
-  userPhone?: string
+  userPhone?: string,
+  requirementId?: string,
 ) {
   const composioKey = await getComposioApiKeyForSite(siteId);
   const instanceTools = composioKey
@@ -435,6 +436,7 @@ export async function getInstanceAssistantTools(
     instanceId,
     instanceTools,
     agentType,
-    userPhone
+    userPhone,
+    requirementId,
   );
 }

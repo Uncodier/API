@@ -44,7 +44,7 @@ export async function ensureActivePlanAfterSaneo(params: {
     return;
   }
 
-  const userId = await resolveInstanceUserId(instanceId, recent);
+  const userId = await resolveInstanceUserId(instanceId, recent ?? undefined);
   if (!userId) {
     console.warn('[AutoSaneo] Cannot create recovery plan — no user_id on instance or prior plans');
     return;
@@ -55,6 +55,7 @@ export async function ensureActivePlanAfterSaneo(params: {
     instance_id: instanceId,
     site_id: siteId,
     user_id: userId,
+    requirement_id: params.requirementId,
     title: 'Recovery after auto-saneo',
     description: 'Resume the reopened backlog item. Do not restart from scratch.',
     steps: [

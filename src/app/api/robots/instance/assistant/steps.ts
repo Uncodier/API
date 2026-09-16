@@ -1,5 +1,4 @@
 'use step';
-
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { executeAssistantStep } from '@/lib/services/robot-instance/assistant-executor';
 import { InstanceAssetsService } from '@/lib/services/robot-instance/InstanceAssetsService';
@@ -19,9 +18,8 @@ import {
   GEAR_PROJECT_SWITCH_INSTRUCTION,
   EXTERNAL_API_INTEGRATION_INSTRUCTION,
 } from './utils';
-
 import type { AssistantContext } from './types';
-
+import { loadAssistantRequirementContext } from './requirement-context';
 // Step 1: Prepare context (fetch data, build prompts)
 export async function prepareAssistantContext(
   instanceId: string,
@@ -39,14 +37,12 @@ export async function prepareAssistantContext(
     toolOverrides?: Record<string, any>
   ): Promise<AssistantContext> {
   'use step';
-  
   // We need to fetch the instance data inside the workflow to ensure we have the latest state
   let instanceResult = await supabaseAdmin
     .from('remote_instances')
     .select('*')
     .eq('id', instanceId)
     .single();
-    
   // Fallback to robot_instances
   if (instanceResult.error || !instanceResult.data) {
     console.log(`[Workflow] Instance not found in remote_instances, checking robot_instances: ${instanceId}`);
@@ -149,87 +145,12 @@ export async function prepareAssistantContext(
       }
   }
 
-  // Fetch requirement_status context.
-  //
-  // CRITICAL: `requirement_status` is append-only and shared across every
-  // requirement that ever ran in this instance. We used to pick the latest row
-  // blindly and tell the assistant "Current Requirement ID: <last>", which
-  // caused cross-project contamination — a fresh conversation in a reused
-  // instance would inherit the previous requirement (and, via the sandbox
-  // bootstrap, that requirement's snapshot/preview).
-  //
-  // Now we only treat a requirement as "active" when:
-  //   (a) the requirement row itself is still open
-  //       (`status` in 'pending' / 'in-progress' / 'blocked'), AND
-  //   (b) the latest status row for that requirement is non-terminal.
-  // Terminal requirements never leak into the new prompt.
-  const { data: requirementStatuses } = await supabaseAdmin
-    .from('requirement_status')
-    .select('*')
-    .eq('instance_id', instanceId)
-    .order('created_at', { ascending: false })
-    .limit(10);
-
-  let requirementStatusContext = '';
-  let activeRequirementId: string | null = null;
-  if (requirementStatuses && requirementStatuses.length > 0) {
-    const TERMINAL_STAGES = new Set(['done', 'completed', 'cancelled', 'failed']);
-    const candidateId = requirementStatuses[0].requirement_id;
-    const latestStage = String(requirementStatuses[0].stage || '').toLowerCase();
-
-    if (candidateId && !TERMINAL_STAGES.has(latestStage)) {
-      const { data: reqRow } = await supabaseAdmin
-        .from('requirements')
-        .select('status, title, description, instructions, type, priority')
-        .eq('id', candidateId)
-        .maybeSingle();
-      const reqStatus = String(reqRow?.status || '').toLowerCase();
-      const isOpen =
-        !reqStatus || reqStatus === 'pending' || reqStatus === 'in-progress' || reqStatus === 'blocked';
-      if (isOpen) {
-        activeRequirementId = candidateId;
-        
-        requirementStatusContext = '\n\n📋 CURRENT REQUIREMENT CONTEXT:\n';
-        requirementStatusContext += JSON.stringify(reqRow, null, 2);
-      } else {
-        console.log(
-          `[AssistantContext] Skipping activeRequirementId=${candidateId}: requirement is terminal (${reqStatus}). Avoiding cross-project context leak.`,
-        );
-      }
-    }
-
-    if (activeRequirementId) {
-      requirementStatusContext += '\n\n📋 REQUIREMENT STATUS HISTORY:\n';
-      requirementStatusContext += JSON.stringify(requirementStatuses, null, 2);
-      requirementStatusContext += '\n\n💡 WHEN CHANGES ARE REQUESTED: If the user requests changes, you MUST use the requirements tool (action="update") to update the requirement instructions with the new requests and set its status to "in-progress". Then, use the requirement_status tool (action="create") to log that the requirement is back in progress.';
-    }
-  }
-
-  // Fetch requirement progress log and backlog if linked
-  let progressContext = '';
-  let backlogContext = '';
-  if (activeRequirementId) {
-    const { data: reqData } = await supabaseAdmin
-      .from('requirements')
-      .select('progress, backlog')
-      .eq('id', activeRequirementId)
-      .single();
-      
-    if (reqData && reqData.progress && Array.isArray(reqData.progress) && reqData.progress.length > 0) {
-      // Get the last 5 progress entries
-      const recentProgress = reqData.progress.slice(-5);
-      progressContext = '\n\n📋 RECENT REQUIREMENT PROGRESS:\n';
-      progressContext += JSON.stringify(recentProgress, null, 2);
-    }
-
-    if (reqData && reqData.backlog && reqData.backlog.items && Array.isArray(reqData.backlog.items)) {
-      const inProgressItem = reqData.backlog.items.find((item: any) => item.status === 'in_progress');
-      if (inProgressItem) {
-        backlogContext = '\n\n📋 CURRENT BACKLOG ITEM (IN_PROGRESS):\n';
-        backlogContext += JSON.stringify(inProgressItem, null, 2);
-      }
-    }
-  }
+  const {
+    activeRequirementId,
+    requirementStatusContext,
+    progressContext,
+    backlogContext,
+  } = await loadAssistantRequirementContext(instanceId);
 
   // Fetch active instance plan context
   const { data: lastPlans } = await supabaseAdmin
@@ -300,7 +221,7 @@ export async function prepareAssistantContext(
     lastCompletedPlanContext = `\n- Last Completed Plan: "${lastCompletedPlans[0].title}" (ID: ${lastCompletedPlans[0].id})`;
   }
 
-  const hasLinkedRequirement = !!(requirementStatuses && requirementStatuses.length > 0);
+  const hasLinkedRequirement = Boolean(activeRequirementId);
 
   // Generate prompts
   const agentBackground = await generateAgentBackground(siteId, userId);
@@ -308,7 +229,15 @@ export async function prepareAssistantContext(
   
   // Get tools list just for counting/prompt purposes here
   // We do NOT pass these instantiated tools in the return value to avoid serialization issues
-  const toolsWithImageGeneration = await getInstanceAssistantTools(siteId, userId, instanceId, customTools, agentType, userPhone);
+  const toolsWithImageGeneration = await getInstanceAssistantTools(
+    siteId,
+    userId,
+    instanceId,
+    customTools,
+    agentType,
+    userPhone,
+    activeRequirementId ?? undefined,
+  );
   
   const assetsData = await InstanceAssetsService.getAssetsContext(instanceId);
   const assetsContext = assetsData.text;
@@ -517,6 +446,7 @@ Follow the loaded SKILL.md playbooks before calling tools via \`tools\`. \`skill
       instance_id: instanceId,
       site_id: siteId,
       user_id: userId,
+      ...(activeRequirementId ? { requirement_id: activeRequirementId } : {}),
     },
     imageAssets,
     hasLinkedRequirement,
@@ -540,7 +470,8 @@ export async function processAssistantTurn(
     context.executionOptions.instance_id,
     context.customTools,
     context.agentType,
-    context.userPhone
+    context.userPhone,
+    context.executionOptions.requirement_id,
   );
 
   // Re-assemble execution options

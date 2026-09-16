@@ -68,7 +68,15 @@ export async function runUpdateRepoAgentStep(params: {
     cycle_baseline_at: cycleBaselineAt,
   });
 
-  const fullTools = getAssistantTools(site_id, user_id, instanceId, sandboxTools);
+  const fullTools = getAssistantTools(
+    site_id,
+    user_id,
+    instanceId,
+    sandboxTools,
+    undefined,
+    undefined,
+    reqId,
+  );
 
   // Background context
   let agentBackground = '';
