@@ -214,7 +214,10 @@ describe('runtime and visual probe gate', () => {
 
     expect(result.ok).toBe(true);
     expect(runVisualProbe).toHaveBeenCalledWith(
-      expect.objectContaining({ pageRoutes: ['/dashboard'] }),
+      expect.objectContaining({
+        pageRoutes: ['/dashboard'],
+        protectedRoutes: ['/dashboard'],
+      }),
     );
   });
 });

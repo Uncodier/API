@@ -4,6 +4,7 @@ import { sanitizeTelemetryUrl } from './step-telemetry-sanitize';
 
 const MAX_VISUAL_SCREENSHOTS = 2;
 const VISUAL_SCREENSHOT_MARKER = 'visual_screenshot_url:';
+const PROTECTED_ROUTE_PREFIX = /^\/(?:admin|dashboard|protected)(?:\/|$)/i;
 const IMAGE_WORTHY_CATEGORIES = new Set<VisualDefect['category']>([
   'hierarchy',
   'spacing',
@@ -90,6 +91,10 @@ export function extractPageRoutesFromStepContext(
     if (route) routes.add(route);
   }
   return Array.from(routes);
+}
+
+export function inferProtectedVisualRoutes(routes: string[]): string[] {
+  return routes.filter((route) => PROTECTED_ROUTE_PREFIX.test(route));
 }
 
 export function buildVisualProbePlan(input: BuildVisualProbePlanInput): VisualProbePlan {

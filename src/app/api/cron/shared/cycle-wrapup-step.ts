@@ -15,6 +15,9 @@ import { requirementStatusTool } from '@/app/api/agents/tools/requirement_status
 import { createRequirementStatusCore } from '@/lib/tools/requirement-status-core';
 import type { DocsDigestResult } from './docs-digest-step';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
+import { hasRetryablePlanFailure } from './cycle-wrapup-retry-policy';
+
+const STEP_FAILURE_REASON_PREFIX = 'One or more execution steps failed';
 
 export interface CycleWrapUpParams {
   sandboxId?: string;
@@ -62,8 +65,32 @@ export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<Cy
 
   try {
     const history = await loadUserActionHistory(instanceId, { requirementId });
+    const retryableStepFailure =
+      !!requiresUserFeedback &&
+      !!wrapUpReason?.startsWith(STEP_FAILURE_REASON_PREFIX) &&
+      await hasRetryablePlanFailure(instanceId, requirementId);
+    const effectiveRequiresUserFeedback =
+      !!requiresUserFeedback && !retryableStepFailure;
+    const effectiveWrapUpReason = retryableStepFailure
+      ? 'A plan step failed validation but still has retries remaining. Continue automatically in the next cycle.'
+      : wrapUpReason;
 
-    if (requiresUserFeedback) {
+    if (retryableStepFailure) {
+      try {
+        await createRequirementStatusCore({
+          site_id: siteId,
+          instance_id: instanceId,
+          requirement_id: requirementId,
+          stage: 'in-progress',
+          message: effectiveWrapUpReason,
+        });
+      } catch (statusError: unknown) {
+        console.warn(
+          `[CycleWrapUpStep] Failed to preserve retryable status for ${requirementId}:`,
+          statusError instanceof Error ? statusError.message : statusError,
+        );
+      }
+    } else if (effectiveRequiresUserFeedback) {
       try {
         await createRequirementStatusCore({
           site_id: siteId,
@@ -71,7 +98,7 @@ export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<Cy
           requirement_id: requirementId,
           stage: 'blocked',
           message: (
-            wrapUpReason ||
+            effectiveWrapUpReason ||
             'Work is paused and requires user feedback before it can continue.'
           ).slice(0, 1000),
         });
@@ -122,8 +149,8 @@ export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<Cy
       digestFiles,
       planCompleted,
       pendingPlanSteps,
-      wrapUpReason,
-      requiresUserFeedback,
+      wrapUpReason: effectiveWrapUpReason,
+      requiresUserFeedback: effectiveRequiresUserFeedback,
       previewUrl,
       repoUrl,
     });

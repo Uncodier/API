@@ -1,5 +1,7 @@
 import { executeAssistantStep } from '@/lib/services/robot-instance/assistant-executor';
 import { loadUserActionHistory } from '@/lib/services/instance-user-history';
+import { createRequirementStatusCore } from '@/lib/tools/requirement-status-core';
+import { hasRetryablePlanFailure } from '../cycle-wrapup-retry-policy';
 import { emitCycleWrapUpStep } from '../cycle-wrapup-step';
 
 jest.mock('@/lib/services/robot-instance/assistant-executor', () => ({
@@ -17,6 +19,9 @@ jest.mock('@/app/api/agents/tools/requirement_status/assistantProtocol', () => (
 }));
 jest.mock('@/lib/tools/requirement-status-core', () => ({
   createRequirementStatusCore: jest.fn(),
+}));
+jest.mock('../cycle-wrapup-retry-policy', () => ({
+  hasRetryablePlanFailure: jest.fn(),
 }));
 
 const baseParams = {
@@ -37,6 +42,7 @@ describe('emitCycleWrapUpStep outcomes', () => {
       mode: 'empty',
       totalCount: 1,
     });
+    (hasRetryablePlanFailure as jest.Mock).mockResolvedValue(false);
   });
 
   it('reports an intentional skip while plan steps remain', async () => {
@@ -72,5 +78,62 @@ describe('emitCycleWrapUpStep outcomes', () => {
     });
 
     expect(result).toEqual({ ran: true, outcome: 'completed' });
+  });
+
+  it('keeps the requirement in progress when a failed step can retry', async () => {
+    (hasRetryablePlanFailure as jest.Mock).mockResolvedValue(true);
+    (executeAssistantStep as jest.Mock).mockResolvedValue({
+      messages: [{ role: 'assistant', content: 'Continuing' }],
+      isDone: true,
+    });
+
+    const result = await emitCycleWrapUpStep({
+      ...baseParams,
+      pendingPlanSteps: 2,
+      forceWrapUp: true,
+      requiresUserFeedback: true,
+      wrapUpReason:
+        'One or more execution steps failed and need user feedback before continuing.',
+    });
+
+    expect(result).toEqual({ ran: true, outcome: 'completed' });
+    expect(createRequirementStatusCore).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stage: 'in-progress',
+        message: expect.stringContaining('retries remaining'),
+      }),
+    );
+    expect(createRequirementStatusCore).not.toHaveBeenCalledWith(
+      expect.objectContaining({ stage: 'blocked' }),
+    );
+    expect(executeAssistantStep).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({
+        system_prompt: expect.stringContaining(
+          'Do NOT ask the user for permission',
+        ),
+      }),
+    );
+  });
+
+  it('blocks when a failed step has exhausted its retries', async () => {
+    (executeAssistantStep as jest.Mock).mockResolvedValue({
+      messages: [{ role: 'assistant', content: 'Blocked' }],
+      isDone: true,
+    });
+
+    await emitCycleWrapUpStep({
+      ...baseParams,
+      pendingPlanSteps: 1,
+      forceWrapUp: true,
+      requiresUserFeedback: true,
+      wrapUpReason:
+        'One or more execution steps failed and need user feedback before continuing.',
+    });
+
+    expect(createRequirementStatusCore).toHaveBeenCalledWith(
+      expect.objectContaining({ stage: 'blocked' }),
+    );
   });
 });

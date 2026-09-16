@@ -1,5 +1,6 @@
 import type { DigestFileEntry } from '@/lib/services/docs-cycle-digest';
 import { formatDigestForPrompt } from '@/lib/services/docs-cycle-digest';
+import { PLAN_STEP_MAX_RETRIES } from '@/lib/helpers/plan-status';
 
 export interface CycleWrapUpPromptInput {
   title: string;
@@ -9,7 +10,7 @@ export interface CycleWrapUpPromptInput {
   historyMode: 'full' | 'windowed' | 'empty';
   digestFiles: DigestFileEntry[] | null;
   planCompleted: boolean;
-  /** Unstarted / in-progress plan steps still scheduled after this cycle. */
+  /** Pending, in-progress, or retryable failed steps scheduled after this cycle. */
   pendingPlanSteps?: number;
   /** Deterministic reason why this cycle stopped or needs human input. */
   wrapUpReason?: string | null;
@@ -19,9 +20,25 @@ export interface CycleWrapUpPromptInput {
   repoUrl?: string | null;
 }
 
-export function countPendingPlanSteps(steps: Array<{ status?: string } | null> | null | undefined): number {
+type RunnablePlanStep = {
+  status?: string;
+  retry_count?: number;
+};
+
+function isRunnablePlanStep(step: RunnablePlanStep | null): boolean {
+  return !!step && (
+    step.status === 'pending' ||
+    step.status === 'in_progress' ||
+    (
+      step.status === 'failed' &&
+      (step.retry_count ?? 0) < PLAN_STEP_MAX_RETRIES
+    )
+  );
+}
+
+export function countPendingPlanSteps(steps: Array<RunnablePlanStep | null> | null | undefined): number {
   if (!Array.isArray(steps)) return 0;
-  return steps.filter((s) => s?.status === 'pending' || s?.status === 'in_progress').length;
+  return steps.filter(isRunnablePlanStep).length;
 }
 
 type FeedbackBacklogItem = {
@@ -35,6 +52,7 @@ type FeedbackBacklogItem = {
 export function activeBacklogItemIdsFromPlanSteps(
   steps: Array<{
     status?: string;
+    retry_count?: number;
     backlog_item_id?: string;
     metadata?: { backlog_item_id?: string };
   } | null> | null | undefined,
@@ -42,7 +60,7 @@ export function activeBacklogItemIdsFromPlanSteps(
   if (!Array.isArray(steps)) return [];
   return Array.from(new Set(
     steps
-      .filter((step) => step?.status === 'pending' || step?.status === 'in_progress')
+      .filter(isRunnablePlanStep)
       .map((step) => step?.metadata?.backlog_item_id || step?.backlog_item_id)
       .filter((id): id is string => typeof id === 'string' && id.length > 0),
   ));

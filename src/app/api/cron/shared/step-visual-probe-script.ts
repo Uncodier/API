@@ -1,4 +1,5 @@
 import type { VisualProbeViewport } from './step-visual-probe';
+import { HARNESS_TRACKING_SCRIPT_URL } from './step-visual-telemetry';
 
 export interface VisualProbeScriptParams {
   port: number;
@@ -56,6 +57,7 @@ const PROTECTED_ROUTES = new Set(${JSON.stringify(
   )}.map((route) => normalizedPathname(route)));
 const CAPTURE_DIRECTORY = '/tmp/visual-probe-captures';
 const MAX_TELEMETRY_ENTRIES = 50;
+const HARNESS_TRACKING_SCRIPT_URL = ${JSON.stringify(HARNESS_TRACKING_SCRIPT_URL)};
 
 const consoleEntries = [];
 const pageErrors = [];
@@ -79,6 +81,12 @@ function pushBounded(collection, value, key) {
   } else {
     telemetryDropped[key]++;
   }
+}
+
+function isHarnessTrackingTelemetry(...values) {
+  return values.some(value =>
+    typeof value === 'string' && value.includes(HARNESS_TRACKING_SCRIPT_URL)
+  );
 }
 
 function telemetryCheckpoint() {
@@ -166,6 +174,7 @@ async function run() {
           const type = msg.type();
           const levelMap = { log: 'log', info: 'info', warn: 'warn', warning: 'warn', error: 'error', debug: 'debug', verbose: 'debug' };
           const loc = msg.location();
+          if (isHarnessTrackingTelemetry(loc?.url, msg.text())) return;
           pushBounded(consoleEntries, {
             level: levelMap[type] || 'log',
             text: msg.text().slice(0, 600),
@@ -176,6 +185,7 @@ async function run() {
         });
 
         page.on('pageerror', (err) => {
+          if (isHarnessTrackingTelemetry(err.message, err.stack)) return;
           pushBounded(pageErrors, {
             message: err.message.slice(0, 400),
             stack_tail: err.stack ? err.stack.split('\\n').slice(-3).join('\\n').slice(0, 400) : undefined,
@@ -185,6 +195,7 @@ async function run() {
         });
 
         page.on('requestfailed', (req) => {
+          if (isHarnessTrackingTelemetry(req.url())) return;
           pushBounded(failedRequests, {
             url: req.url().slice(0, 300),
             failure: req.failure()?.errorText,
@@ -195,6 +206,7 @@ async function run() {
         });
 
         page.on('response', (res) => {
+          if (isHarnessTrackingTelemetry(res.url())) return;
           if (res.status() >= 400) {
             pushBounded(failedRequests, {
               url: res.url().slice(0, 300),

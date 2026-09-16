@@ -59,10 +59,13 @@ describe('cycle-wrapup-prompt', () => {
     expect(shouldSkipWrapUpForPendingSteps({ planCompleted: true, pendingPlanSteps: 2 })).toBe(false);
     expect(countPendingPlanSteps([
       { status: 'completed' },
-      { status: 'failed' },
+      { status: 'failed', retry_count: 2 },
       { status: 'pending' },
       { status: 'in_progress' },
     ])).toBe(2);
+    expect(countPendingPlanSteps([
+      { status: 'failed', retry_count: 1 },
+    ])).toBe(1);
   });
 
   it('asks for feedback when a forced wrap-up reports blocked pending work', () => {
@@ -142,9 +145,10 @@ describe('cycle-wrapup-prompt', () => {
   it('extracts unique backlog ids from pending plan steps', () => {
     expect(activeBacklogItemIdsFromPlanSteps([
       { status: 'completed', metadata: { backlog_item_id: 'done' } },
+      { status: 'failed', retry_count: 1, metadata: { backlog_item_id: 'retry' } },
       { status: 'in_progress', metadata: { backlog_item_id: 'active' } },
       { status: 'pending', backlog_item_id: 'active' },
       { status: 'pending', backlog_item_id: 'next' },
-    ])).toEqual(['active', 'next']);
+    ])).toEqual(['retry', 'active', 'next']);
   });
 });

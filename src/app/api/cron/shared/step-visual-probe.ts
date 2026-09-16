@@ -22,6 +22,7 @@ import {
   sanitizeTelemetryText,
   sanitizeTelemetryUrl,
 } from './step-telemetry-sanitize';
+import { filterHarnessOwnedTelemetry } from './step-visual-telemetry';
 
 export type VisualProbeViewport = {
   name: 'mobile' | 'desktop' | string;
@@ -348,19 +349,24 @@ function buildConsoleSignal(
   failedRequests: ConsoleSignal['failed_requests'],
   telemetryDropped?: ConsoleSignal['telemetry_dropped'],
 ): ConsoleSignal {
-  const safeEntries = entries.map((entry) => ({
+  const filtered = filterHarnessOwnedTelemetry({
+    entries,
+    pageErrors,
+    failedRequests,
+  });
+  const safeEntries = filtered.entries.map((entry) => ({
     ...entry,
     text: sanitizeTelemetryText(entry.text),
     source: entry.source ? sanitizeTelemetryUrl(entry.source) : entry.source,
   }));
-  const safePageErrors = pageErrors.map((error) => ({
+  const safePageErrors = filtered.pageErrors.map((error) => ({
     ...error,
     message: sanitizeTelemetryText(error.message),
     stack_tail: error.stack_tail
       ? sanitizeTelemetryText(error.stack_tail)
       : error.stack_tail,
   }));
-  const safeFailedRequests = failedRequests.map((request) => ({
+  const safeFailedRequests = filtered.failedRequests.map((request) => ({
     ...request,
     url: sanitizeTelemetryUrl(request.url),
     failure: request.failure
