@@ -1,4 +1,3 @@
-import path from 'node:path';
 import type { Sandbox } from '@vercel/sandbox';
 import { SandboxService } from '@/lib/services/sandbox-service';
 
@@ -17,11 +16,36 @@ function isFrontendSource(file: string): boolean {
   );
 }
 
+function normalizeRepoPath(value: string): string {
+  const normalized: string[] = [];
+  for (const segment of value.replace(/\\/g, '/').split('/')) {
+    if (!segment || segment === '.') continue;
+    if (segment === '..') {
+      if (
+        normalized.length &&
+        normalized[normalized.length - 1] !== '..'
+      ) {
+        normalized.pop();
+      } else {
+        normalized.push(segment);
+      }
+      continue;
+    }
+    normalized.push(segment);
+  }
+  return normalized.join('/');
+}
+
+function importerDirectory(importer: string): string {
+  const separator = importer.lastIndexOf('/');
+  return separator === -1 ? '' : importer.slice(0, separator);
+}
+
 function importBase(importer: string, specifier: string): string | null {
-  if (specifier.startsWith('@/')) return path.posix.normalize(`src/${specifier.slice(2)}`);
-  if (specifier.startsWith('~/')) return path.posix.normalize(`src/${specifier.slice(2)}`);
+  if (specifier.startsWith('@/')) return normalizeRepoPath(`src/${specifier.slice(2)}`);
+  if (specifier.startsWith('~/')) return normalizeRepoPath(`src/${specifier.slice(2)}`);
   if (!specifier.startsWith('.')) return null;
-  return path.posix.normalize(path.posix.join(path.posix.dirname(importer), specifier));
+  return normalizeRepoPath(`${importerDirectory(importer)}/${specifier}`);
 }
 
 function resolveImport(
@@ -96,7 +120,7 @@ export function inferAffectedPageFilesFromContents(
   const pageFiles = new Set<string>();
 
   const addLayoutDescendants = (layoutFile: string) => {
-    const layoutDirectory = `${path.posix.dirname(layoutFile)}/`;
+    const layoutDirectory = `${importerDirectory(layoutFile)}/`;
     for (const file of Array.from(sourceFiles)) {
       if (file.startsWith(layoutDirectory) && PAGE_FILE_RE.test(file)) {
         pageFiles.add(file);

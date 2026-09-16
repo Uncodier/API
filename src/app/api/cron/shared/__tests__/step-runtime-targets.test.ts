@@ -38,6 +38,26 @@ describe('runtime target inference', () => {
     ).toEqual(['src/app/dashboard/page.tsx']);
   });
 
+  it('normalizes parent-relative imports without Node path utilities', () => {
+    const contents = new Map([
+      [
+        'src/app/dashboard/page.tsx',
+        "import { Chart } from '../../components/chart';",
+      ],
+      [
+        'src/components/chart.tsx',
+        'export function Chart() { return <figure />; }',
+      ],
+    ]);
+
+    expect(
+      inferAffectedPageFilesFromContents(
+        ['src/components/chart.tsx'],
+        contents,
+      ),
+    ).toEqual(['src/app/dashboard/page.tsx']);
+  });
+
   it('maps components imported by a layout to descendant pages', () => {
     const contents = new Map([
       [
