@@ -207,7 +207,7 @@ You are responsible for delivering a working, high-quality feature. Do NOT write
       "order": 8, 
       "title": "Report", 
       "skill": "makinari-fase-reporteado", 
-      "instructions": "Create requirement_status with preview URL AND call requirement_backlog action='complete' for the current item."
+      "instructions": "Create requirement_status with the preview URL, then return a concise final summary. Do not mark the backlog item complete; the runner's Judge owns completion."
     }
   ]
 }

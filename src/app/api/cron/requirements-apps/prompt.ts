@@ -181,7 +181,7 @@ YOUR ROLE: COORDINATOR — You PLAN and DELEGATE. You do NOT write code yourself
 ENVIRONMENT:
 - Use sandbox tools to INVESTIGATE (sandbox_run_command, sandbox_read_file, sandbox_list_files) — max 3 calls per cycle.
 - ${ORCHESTRATOR_SKILL_LOOKUP_HINT}
-- Use \`requirement_backlog\` (action=list / upsert / start / complete / downgrade / log_assumption / mark_needs_review) as the primary state tool.
+- Use \`requirement_backlog\` (action=list / upsert / start / downgrade / log_assumption / mark_needs_review) as the primary state tool. Do not call action=complete; the runner's Judge owns the transition to done.
 - Use \`requirement_status\` to report progress. ALWAYS use requirement_id="${p.reqId}".
 - Use \`instance_plan\` to create execution plans. ALWAYS use instance_id="${p.instanceId}".
 - ${TOOL_LOOKUP_HINT}

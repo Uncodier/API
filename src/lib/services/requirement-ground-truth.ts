@@ -351,19 +351,39 @@ export async function syncGroundTruthBeforeCommit(params: {
   requirementId: string;
   title?: string;
   note?: string;
+  appendProgress?: boolean | 'if-workspace-dirty';
 }): Promise<void> {
   await syncBacklogToFile({
     sandbox: params.sandbox,
     cwd: params.cwd,
     requirementId: params.requirementId,
   });
-  await syncProgressEntry({
-    sandbox: params.sandbox,
-    cwd: params.cwd,
-    requirementId: params.requirementId,
-    entry: {
-      ts: isoNow(),
-      summary: params.note || `checkpoint: ${params.title || 'commit'}`,
-    },
-  });
+
+  let shouldAppendProgress = params.appendProgress !== false;
+  if (params.appendProgress === 'if-workspace-dirty') {
+    try {
+      const status = await runInSandbox(params.sandbox, 'git', [
+        '-C',
+        params.cwd,
+        'status',
+        '--porcelain',
+        '--untracked-files=all',
+      ]);
+      shouldAppendProgress = status.exitCode !== 0 || status.stdout.trim().length > 0;
+    } catch {
+      shouldAppendProgress = true;
+    }
+  }
+
+  if (shouldAppendProgress) {
+    await syncProgressEntry({
+      sandbox: params.sandbox,
+      cwd: params.cwd,
+      requirementId: params.requirementId,
+      entry: {
+        ts: isoNow(),
+        summary: params.note || `checkpoint: ${params.title || 'commit'}`,
+      },
+    });
+  }
 }

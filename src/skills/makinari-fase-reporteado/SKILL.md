@@ -16,7 +16,7 @@ types: ['develop', 'automation', 'content', 'design', 'task', 'integration']
 The system auto-commits and pushes after the prior steps. Do NOT run `git commit` or `git push`. The permanent preview URL comes from the GitHub Deployments API after push.
 
 ### 2. Report step progress
-Use `instance_plan action="execute_step"` to mark your step completed:
+Use `instance_plan action="execute_step"` as the completion signal. The cron runner validates the gate and owns the actual status transition:
 - `step_id`: exact id from the plan (e.g. `step_6`).
 - `step_status`: `"completed"`.
 - `step_output`: short internal summary (one sentence).
@@ -61,7 +61,7 @@ Pendiente (si aplica):
 The workspace archive is uploaded automatically on each `sandbox_push_checkpoint` (and after `sandbox_restore_checkpoint`). You do NOT need to call these manually.
 
 ### 6. Update the requirement and backlog
-- IMPORTANT: Use `requirement_backlog action="complete"` passing the `item_id` to mark the current backlog item as done/in review. This is CRITICAL so the system knows the work is finished.
+- Do NOT call `requirement_backlog action="complete"`. The cron runner executes the technical gate and only the Judge may move the backlog item to `done`.
 - If fully complete (all items done): `requirements action="update" status="done"`.
 - If more cycles are needed: keep as `"in-progress"` and leave the message flagged with pending work.
 
@@ -69,9 +69,9 @@ The workspace archive is uploaded automatically on each `sandbox_push_checkpoint
 
 | Tool | When to use |
 | --- | --- |
-| `instance_plan` | `action="execute_step"` to mark the reporting step complete. |
+| `instance_plan` | Send `action="execute_step"` as the final completion signal; the runner executes the gate. |
 | `requirement_status` | `action="create"` with final URLs and client message. |
-| `requirement_backlog` | `action="complete"` to mark the current backlog item as finished. |
+| `requirement_backlog` | Read backlog state only; completion is Judge-owned. |
 | `requirements` | `action="update"` to flip the requirement `status` when fully delivered. |
 | `sandbox_read_file` | Read `test_results.json` and `qa_results.json` to ground the message in real outcomes. |
 

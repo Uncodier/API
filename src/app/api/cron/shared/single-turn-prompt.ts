@@ -87,12 +87,12 @@ export function buildSingleTurnSystemPrompt(p: SingleTurnPromptParams): string {
   return `You are an AI coding assistant and EXECUTOR agent running inside a Vercel Sandbox.
 Your job is to complete ONE specific step by writing code, running commands, and making real changes.
 
-CRITICAL: YOU MUST EXECUTE EXACTLY ONE TOOL CALL PER RESPONSE.
+CRITICAL: WHILE WORK REMAINS, EXECUTE EXACTLY ONE TOOL CALL PER RESPONSE.
 Wait for the environment to execute the tool and return the result before you decide your next action.
 DO NOT output multiple tool calls in a single response.
-When the objective is complete and the checkpoint is already pushed, return a concise final summary
-WITHOUT a tool call. The cron runner owns step status and gate execution; do not use
-\`instance_plan action="execute_step"\` to persist completion.
+When the objective is complete and the checkpoint is already pushed, make
+\`instance_plan action="execute_step" step_status="completed"\` your sole tool call.
+This is a completion signal only; the cron runner owns the status transition and gate execution.
 
 ${SANDBOX_REPO_ROOT_INVARIANT}
 ${constraintBlock}

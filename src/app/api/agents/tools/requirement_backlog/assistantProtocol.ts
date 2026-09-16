@@ -5,7 +5,7 @@ export function requirementBacklogTool(_siteId: string, defaultRequirementId?: s
   return {
     name: 'requirement_backlog',
     description:
-      'Canonical backlog for a requirement. Every actionable work item lives here — Producer adds them, Consumer starts one (WIP=1), Critic/Judge move it through critic_review → judge_review → done. Actions: list | upsert | start | complete | downgrade | log_assumption | mark_needs_review | set_status. The tool rejects start when another item is already in_progress; downgrade drops scope_level full → mvp → minimal and resets status to pending.',
+      'Canonical backlog for a requirement. Every actionable work item lives here — Producer adds them, Consumer starts one (WIP=1), Critic/Judge move it through critic_review → judge_review → done. Actions: list | upsert | start | complete | downgrade | log_assumption | mark_needs_review | set_status. Completion is Judge-owned: complete and set_status=done are accepted only when approved Judge evidence already exists. The tool rejects start when another item is already in_progress; downgrade drops scope_level full → mvp → minimal and resets status to pending.',
     parameters: {
       type: 'object',
       properties: {
@@ -24,7 +24,7 @@ export function requirementBacklogTool(_siteId: string, defaultRequirementId?: s
           description: 'Backlog operation to perform.',
         },
         requirement_id: { type: 'string', description: 'Requirement UUID (required).' },
-        item_id: { type: 'string', description: 'Backlog item UUID. Highly recommended to provide this explicitly for start, complete, downgrade, log_assumption, mark_needs_review, set_status actions.' },
+        item_id: { type: 'string', description: 'Backlog item UUID. Highly recommended to provide this explicitly for start, complete, downgrade, log_assumption, mark_needs_review, set_status actions. complete only confirms an existing approved Judge verdict.' },
         title: { type: 'string', description: 'Human-readable item title.' },
         kind: {
           type: 'string',

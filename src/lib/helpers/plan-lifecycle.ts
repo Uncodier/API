@@ -20,11 +20,17 @@ export interface CompletePlanResult {
  * 
  * @param instanceId - The instance ID to complete plans for
  * @param completionReason - Optional reason for completing the plans
+ * @param options - Excludes the newly-created replacement and, when supplied,
+ * only closes plans older than that replacement.
  * @returns Result object with success status, count, and any errors
  */
 export async function completeInProgressPlans(
   instanceId: string,
-  completionReason: string = 'New plan created - previous plan auto-completed'
+  completionReason: string = 'Superseded by a new plan',
+  options?: {
+    excludePlanId?: string;
+    createdBefore?: string;
+  },
 ): Promise<CompletePlanResult> {
   const result: CompletePlanResult = {
     success: false,
@@ -36,11 +42,18 @@ export async function completeInProgressPlans(
     console.log(`₍ᐢ•(ܫ)•ᐢ₎ Checking for active plans to complete for instance: ${instanceId}`);
     
     // Find all active plans for this instance
-    const { data: activePlans, error: fetchError } = await supabaseAdmin
+    let activePlansQuery = supabaseAdmin
       .from('instance_plans')
       .select('*')
       .eq('instance_id', instanceId)
       .in('status', ['in_progress', 'active', 'pending', 'paused']);
+    if (options?.excludePlanId) {
+      activePlansQuery = activePlansQuery.neq('id', options.excludePlanId);
+    }
+    if (options?.createdBefore) {
+      activePlansQuery = activePlansQuery.lt('created_at', options.createdBefore);
+    }
+    const { data: activePlans, error: fetchError } = await activePlansQuery;
 
     if (fetchError) {
       const errorMsg = `Error fetching active plans: ${fetchError.message}`;

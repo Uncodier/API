@@ -96,11 +96,6 @@ export async function createInstancePlanCore(params: any) {
     throw new Error('La instancia no pertenece a este sitio');
   }
 
-  // Complete active plans before creating a new one (unless it's a template, they don't block the instance)
-  if (!validatedData.is_template) {
-    await completeInProgressPlans(validatedData.instance_id, 'New plan created via agent tool');
-  }
-
   // Prepare steps if provided
   let planSteps: any[] = [];
   
@@ -229,6 +224,29 @@ export async function createInstancePlanCore(params: any) {
     throw new Error(`Failed to create plan: ${error.message}`);
   }
 
+  // The replacement must exist before older plans are closed. Otherwise a
+  // validation/insert failure leaves the instance with no executable plan.
+  // Limiting closure to older rows also makes concurrent creates converge on
+  // the newest plan instead of cancelling each other.
+  let supersededPlanErrors: string[] = [];
+  if (!validatedData.is_template) {
+    const closure = await completeInProgressPlans(
+      validatedData.instance_id,
+      `Superseded by plan ${newPlan.id}`,
+      {
+        excludePlanId: newPlan.id,
+        createdBefore: newPlan.created_at,
+      },
+    );
+    supersededPlanErrors = closure.errors;
+    if (!closure.success) {
+      console.warn(
+        `[CreateInstancePlan] New plan ${newPlan.id} was created, but some older plans could not be closed:`,
+        closure.errors,
+      );
+    }
+  }
+
   // Si es un template y tiene triggers, insertarlos
   if (validatedData.is_template && validatedData.triggers && validatedData.triggers.length > 0) {
     const triggersToInsert = validatedData.triggers.map((t: any) => ({
@@ -256,7 +274,10 @@ export async function createInstancePlanCore(params: any) {
 
   return {
     success: true,
-    data: newPlan
+    data: newPlan,
+    ...(supersededPlanErrors.length > 0
+      ? { warnings: { superseded_plans: supersededPlanErrors } }
+      : {}),
   };
 }
 

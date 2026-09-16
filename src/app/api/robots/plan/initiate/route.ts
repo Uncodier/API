@@ -35,7 +35,7 @@ export async function POST(request: NextRequest) {
     // 1.5. Complete any existing active plans for this instance before starting a new one
     if (plan.instance_id) {
       console.log(`₍ᐢ•(ܫ)•ᐢ₎ Completing any existing active plans for instance before initiating new plan`);
-      await completeInProgressPlans(plan.instance_id, 'New plan initiated - previous plan auto-completed');
+      await completeInProgressPlans(plan.instance_id, 'Superseded by a newly initiated plan');
     }
 
     // 2. Crear instancia en Scrapybara ----------------------------------------------

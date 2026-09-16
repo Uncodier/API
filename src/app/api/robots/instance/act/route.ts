@@ -26,7 +26,7 @@ async function saveCompletePlan(
   try {
     // STEP 1: Complete all in-progress plans FIRST before any other operation
     console.log(`₍ᐢ•(ܫ)•ᐢ₎ STEP 1: Completing existing plans for instance: ${instanceId}`);
-    const completionResult = await completeInProgressPlans(instanceId, 'New plan created - previous plan auto-completed');
+    const completionResult = await completeInProgressPlans(instanceId, 'Superseded by a new plan');
     
     if (!completionResult.success) {
       console.error(`₍ᐢ•(ܫ)•ᐢ₎ ⚠️ Warning: Some plans failed to complete:`, completionResult.errors);
