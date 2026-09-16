@@ -11,7 +11,7 @@
  */
 
 import type { Sandbox } from '@vercel/sandbox';
-import { getSandboxHandle } from '@/lib/services/sandbox-sdk';
+import { getSandboxHandle, sandboxIdentity } from '@/lib/services/sandbox-sdk';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import {
@@ -347,7 +347,7 @@ export async function commitAndPushStep(
     const r = await commitWorkspaceToOrigin(connected.sandbox, title, reqId, message, audit, { gitRepoKind });
     const sand = r.sandboxReplacement ?? connected.sandbox;
     if (r.sandboxReplacement) {
-      effectiveSandboxId = r.sandboxReplacement.sandboxId;
+      effectiveSandboxId = sandboxIdentity(r.sandboxReplacement);
     }
     console.log(
       `[CronPersist] commitAndPushStep finally branch=${r.branch} pushed=${r.pushed} commitCount=${r.commitCount}`,
@@ -365,7 +365,7 @@ export async function commitAndPushStep(
         branch: err.branch || '',
         pushed: false,
         commitCount: 0,
-        effectiveSandboxId: err.sandboxReplacement.sandboxId,
+        effectiveSandboxId: sandboxIdentity(err.sandboxReplacement),
       };
     }
     return null;

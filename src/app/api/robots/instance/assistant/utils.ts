@@ -310,7 +310,8 @@ export const getAssistantTools = (
   instanceId: string,
   customTools: any[] = [],
   agentType?: string,
-  userPhone?: string
+  userPhone?: string,
+  requirementId?: string,
 ) => {
   const tools = [
     ...customTools,
@@ -359,7 +360,7 @@ export const getAssistantTools = (
     campaignsTool(siteId, userId),
     assetsTool(siteId, userId),
     categoriesTool(siteId, userId),
-    instancePlanTool(siteId, instanceId, userId),
+    instancePlanTool(siteId, instanceId, userId, requirementId),
     recordCategoryTool(siteId),
     recordTool(siteId),
     workflowsTool(siteId, userId),

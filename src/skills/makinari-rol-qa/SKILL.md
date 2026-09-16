@@ -41,10 +41,14 @@ The orchestrator assigns you 7 strict steps to execute in order. Look at the `st
 
 ### Step 4: Static Broken Links Audit
 **Trigger:** `step.title` contains "Broken Links" or "Link Audit"
+- The infrastructure gate automatically scans changed frontend code for broken internal links and inert controls (buttons, anchors, or button-like elements with no action). Read its structured `interaction` signal first.
 - Run the static script `node scripts/qa-check-links.mjs` to statically extract and evaluate the state of all internal links (e.g., `<Link href="...">` and `<a>`) across `src/app` and `src/components`.
 - This step ensures we do not add broken links to the code, and uses static code analysis instead of LLM tokens to find them.
 - If the script exits with `0` (no broken links), mark the step as completed.
-- If the script exits with `1` (broken links found), read the error output and either fix the broken paths in the code or escalate if the routes are missing. Do NOT use tokens to manually read all files looking for links; rely on the script's output.
+- If the script exits with `1` (broken links found), read the error output and fix local path/action defects in the current cycle. Do NOT invent an entire screen merely to satisfy a link.
+- When the same missing page remains after one repair cycle, the infrastructure gate creates a deduplicated backlog item and marks the finding as deferred. Do not create a duplicate item or keep retrying the QA step.
+- Inherited findings and medium-confidence visual affordances are warnings; they must be summarized but must not consume a retry.
+- Do NOT use tokens to manually read all files looking for links or controls; rely on the structured audit output.
 
 ### Step 5: Unit & Integration Test Audit
 **Trigger:** `step.title` contains "Test Audit"

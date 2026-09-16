@@ -5,7 +5,7 @@
  *   1) infer target routes from git diff
  *   2) start next start inside the sandbox, hit pages + APIs
  *   3) if we're in an apps repo with real pages, keep the server alive and
- *      run the visual probe (puppeteer on the host → sandbox.domain(port))
+ *      run the visual probe inside the sandbox against localhost
  *   4) stop the server either way
  *
  * Produces a `GateSignals` slice the gate plugs into its return value.
@@ -35,6 +35,7 @@ import {
   buildRuntimeSignalFromProbe,
   type ApiSignal,
   type ConsoleSignal,
+  type InteractionSignal,
   type RuntimeSignal,
   type ScenarioSignal,
   type VisualSignal,
@@ -44,8 +45,13 @@ import type { GitRepoKind } from './cron-commit-helpers';
 import type { Browser } from 'puppeteer-core';
 import { launchPuppeteerForGate } from '@/lib/puppeteer/launch-gate-browser';
 import { sanitizeRuntimeLog } from './runtime-log-context';
+import {
+  buildVisualProbePlan,
+  formatVisualGateFeedback,
+} from './step-visual-feedback';
 
 export type ProbeSignals = {
+  interaction?: InteractionSignal;
   runtime?: RuntimeSignal;
   api?: ApiSignal;
   console?: ConsoleSignal;
@@ -60,6 +66,7 @@ export async function runRuntimeAndVisualProbes(params: {
   gitRepoKind: GitRepoKind;
   audit?: CronAuditContext;
   shouldRunVisual?: boolean;
+  changeBaselineSha?: string | null;
   stepContext?: {
     title?: string;
     instructions?: string;
@@ -69,6 +76,7 @@ export async function runRuntimeAndVisualProbes(params: {
 }): Promise<{
   ok: boolean;
   error?: string;
+  infrastructureFailure?: boolean;
   signals: ProbeSignals;
 }> {
   const {
@@ -78,36 +86,44 @@ export async function runRuntimeAndVisualProbes(params: {
     gitRepoKind,
     audit,
     stepContext,
+    changeBaselineSha,
   } = params;
   const out: ProbeSignals = {};
 
   let inferred: Awaited<ReturnType<typeof inferTargetRoutesFromDiff>>;
   try {
-    inferred = await inferTargetRoutesFromDiff(sandbox);
+    inferred = await inferTargetRoutesFromDiff(sandbox, {
+      baselineSha: changeBaselineSha,
+    });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     console.warn('[GateProbes] inferTargetRoutesFromDiff threw:', msg);
-    inferred = { pageRoutes: [], apiRoutes: [], changedFiles: [] };
+    inferred = {
+      pageRoutes: [],
+      apiRoutes: [],
+      changedFiles: [],
+      recentPageRoutes: [],
+      recentChangedFiles: [],
+    };
   }
 
-  const stepText = `${stepContext?.title || ''} ${stepContext?.instructions || ''}`.toLowerCase();
-  const isBackendOrDevops = /api|endpoint|database|migration|server|auth|backend|supabase|deploy|ci\/cd|build|push|docker|nginx|vercel|infra|devops/.test(stepText);
-  
-  const touchesFrontend = inferred.changedFiles.some(f => 
-    f.includes('src/components/') || 
-    (f.includes('src/app/') && !f.includes('/api/')) || 
-    f.endsWith('.css') || 
-    f.includes('tailwind.config') ||
-    f.includes('postcss.config')
+  const visualPlan = buildVisualProbePlan({
+    explicit: params.shouldRunVisual,
+    gitRepoKind,
+    changedFiles: inferred.recentChangedFiles,
+    inferredPageRoutes: inferred.recentPageRoutes,
+    stepContext,
+  });
+  const shouldRunVisual = visualPlan.enabled;
+  const runtimePageRoutes = Array.from(
+    new Set([...inferred.pageRoutes, ...(shouldRunVisual ? visualPlan.routes : [])]),
   );
-
-  const shouldRunVisual = params.shouldRunVisual ?? false; // Desactivado para el workflow principal, el QA se encarga de lo visual
 
   let runtimeProbe: Awaited<ReturnType<typeof runRuntimeProbe>> | null = null;
   try {
     runtimeProbe = await runRuntimeProbe({
       sandbox,
-      pageRoutes: inferred.pageRoutes,
+      pageRoutes: runtimePageRoutes,
       apiRoutes: inferred.apiRoutes.map((a) => ({ path: a.path, method: a.method })),
       keepServerAlive: shouldRunVisual,
     });
@@ -133,6 +149,8 @@ export async function runRuntimeAndVisualProbes(params: {
           startup_error: runtimeProbe.startup_error,
           changed_files: inferred.changedFiles.slice(0, 50),
           visual_planned: shouldRunVisual,
+          visual_plan_reason: visualPlan.reason,
+          visual_routes: visualPlan.routes,
         },
       });
     }
@@ -165,7 +183,7 @@ export async function runRuntimeAndVisualProbes(params: {
     }
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    console.warn('[GateProbes] Runtime probe threw (non-fatal, proceeding to push):', msg);
+    console.warn('[GateProbes] Runtime probe infrastructure failure:', msg);
     await logCronInfrastructureEvent(audit, {
       event: CronInfraEvent.RUNTIME_PROBE,
       level: 'warn',
@@ -175,7 +193,12 @@ export async function runRuntimeAndVisualProbes(params: {
         error: sanitizeRuntimeLog(msg),
       },
     });
-    return { ok: true, signals: out };
+    return {
+      ok: false,
+      error: `Runtime probe infrastructure unavailable: ${msg}`,
+      infrastructureFailure: true,
+      signals: out,
+    };
   }
 
   if (runtimeProbe && runtimeProbe.pages.length) {
@@ -207,11 +230,13 @@ export async function runRuntimeAndVisualProbes(params: {
   }
 
   let gateBrowser: Browser | undefined;
-  try {
-    gateBrowser = await launchPuppeteerForGate();
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.warn('[GateProbes] Puppeteer launch failed (skip e2e):', msg);
+  if (visualPlan.runScenarios) {
+    try {
+      gateBrowser = await launchPuppeteerForGate();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn('[GateProbes] Puppeteer launch failed (skip e2e):', msg);
+    }
   }
 
   try {
@@ -219,9 +244,15 @@ export async function runRuntimeAndVisualProbes(params: {
       const visual = await runVisualProbe({
         sandbox,
         port: runtimeProbe.port,
-        pageRoutes: inferred.pageRoutes,
+        pageRoutes: visualPlan.routes,
+        viewports: visualPlan.viewports,
         requirementId,
         stepOrder,
+        fullPage: false,
+        imageType: 'jpeg',
+        imageQuality: 60,
+        hydrationWaitMs: 500,
+        pageTimeoutMs: 7_500,
       });
       out.console = visual.console;
       out.visual = visual.visual_raw;
@@ -233,7 +264,9 @@ export async function runRuntimeAndVisualProbes(params: {
           stepOrder,
           ok: visual.ok,
           base_url: visual.base_url,
+          plan_reason: visualPlan.reason,
           screenshots: visual.screenshots.map((s) => ({ route: s.route, viewport: s.viewport, url: s.url })),
+          auth_redirects: visual.auth_redirects,
           error: visual.error,
         },
       });
@@ -249,6 +282,14 @@ export async function runRuntimeAndVisualProbes(params: {
             failed_requests: visual.console.failed_requests.slice(0, 10),
           },
         });
+      }
+      if (!visual.visual_raw.ok) {
+        return {
+          ok: false,
+          error: `Visual probe infrastructure unavailable: ${visual.error || 'capture batch incomplete'}`,
+          infrastructureFailure: true,
+          signals: out,
+        };
       }
       if (!visual.console.ok) {
         return {
@@ -267,6 +308,8 @@ export async function runRuntimeAndVisualProbes(params: {
             expected_output: stepContext?.expected_output,
           },
           brand_context: stepContext?.brand_context,
+          requirementId,
+          maxScreenshots: 2,
         });
         out.visual = mergeCriticIntoVisualSignal(visual.visual_raw, critic);
         await logCronInfrastructureEvent(audit, {
@@ -282,77 +325,93 @@ export async function runRuntimeAndVisualProbes(params: {
             model_used: critic.model_used,
           },
         });
+        if (critic.skipped) {
+          return {
+            ok: false,
+            error: `Visual critic infrastructure unavailable: ${critic.skipped}`,
+            infrastructureFailure: true,
+            signals: out,
+          };
+        }
         if (verdictBlocksGate(critic)) {
           return {
             ok: false,
-            error: `Visual critic blocked gate — ${critic.summary.slice(0, 240)}`,
+            error: formatVisualGateFeedback(critic, visual.screenshots),
             signals: out,
           };
         }
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      console.warn('[GateProbes] Visual probe threw (non-fatal):', msg);
+      console.warn('[GateProbes] Visual probe threw:', msg);
       await logCronInfrastructureEvent(audit, {
         event: CronInfraEvent.VISUAL_PROBE,
         level: 'warn',
         message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}visual probe threw: ${msg.slice(0, 300)}`,
         details: { stepOrder, error: msg.slice(0, 800) },
       });
+      return {
+        ok: false,
+        error: `Visual probe infrastructure unavailable: ${msg}`,
+        infrastructureFailure: true,
+        signals: out,
+      };
     }
 
-    try {
-      const e2e = await runE2eScenarios({
-        sandbox,
-        port: runtimeProbe.port,
-        requirementId,
-        stepOrder,
-        browser: gateBrowser,
-      });
-      if (e2e.scenarios_read > 0 || e2e.error) {
-        out.scenarios = { ok: e2e.ok, scenarios: e2e.scenarios };
-        const summary =
-          e2e.scenarios.length > 0
-            ? `${e2e.scenarios.filter((s) => s.pass).length}/${e2e.scenarios.length} pass`
-            : (e2e.error ?? 'no scenario results').slice(0, 200);
+    if (visualPlan.runScenarios) {
+      try {
+        const e2e = await runE2eScenarios({
+          sandbox,
+          port: runtimeProbe.port,
+          requirementId,
+          stepOrder,
+          browser: gateBrowser,
+        });
+        if (e2e.scenarios_read > 0 || e2e.error) {
+          out.scenarios = { ok: e2e.ok, scenarios: e2e.scenarios };
+          const summary =
+            e2e.scenarios.length > 0
+              ? `${e2e.scenarios.filter((s) => s.pass).length}/${e2e.scenarios.length} pass`
+              : (e2e.error ?? 'no scenario results').slice(0, 200);
+          await logCronInfrastructureEvent(audit, {
+            event: CronInfraEvent.SCENARIO_RUN,
+            level: e2e.ok ? 'info' : 'warn',
+            message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}e2e scenarios: ${summary}`.slice(0, 400),
+            details: {
+              stepOrder,
+              scenarios_read: e2e.scenarios_read,
+              base_url: e2e.base_url,
+              scenarios: e2e.scenarios.map((s) => ({
+                name: s.scenario,
+                pass: s.pass,
+                duration_ms: s.duration_ms,
+                failed_step: s.steps.find((st) => !st.ok)?.index,
+                failure: s.steps.find((st) => !st.ok)?.error,
+              })),
+              error: e2e.error,
+            },
+          });
+          if (!e2e.ok) {
+            return {
+              ok: false,
+              error: `E2E scenarios failed — ${e2e.scenarios.filter((s) => !s.pass).map((s) => s.scenario).join(', ') || e2e.error || 'unknown'}`.slice(
+                0,
+                500,
+              ),
+              signals: out,
+            };
+          }
+        }
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.warn('[GateProbes] E2E runner threw (non-fatal):', msg);
         await logCronInfrastructureEvent(audit, {
           event: CronInfraEvent.SCENARIO_RUN,
-          level: e2e.ok ? 'info' : 'warn',
-          message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}e2e scenarios: ${summary}`.slice(0, 400),
-          details: {
-            stepOrder,
-            scenarios_read: e2e.scenarios_read,
-            base_url: e2e.base_url,
-            scenarios: e2e.scenarios.map((s) => ({
-              name: s.scenario,
-              pass: s.pass,
-              duration_ms: s.duration_ms,
-              failed_step: s.steps.find((st) => !st.ok)?.index,
-              failure: s.steps.find((st) => !st.ok)?.error,
-            })),
-            error: e2e.error,
-          },
+          level: 'warn',
+          message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}e2e runner threw: ${msg.slice(0, 300)}`,
+          details: { stepOrder, error: msg.slice(0, 800) },
         });
-        if (!e2e.ok) {
-          return {
-            ok: false,
-            error: `E2E scenarios failed — ${e2e.scenarios.filter((s) => !s.pass).map((s) => s.scenario).join(', ') || e2e.error || 'unknown'}`.slice(
-              0,
-              500,
-            ),
-            signals: out,
-          };
-        }
       }
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.warn('[GateProbes] E2E runner threw (non-fatal):', msg);
-      await logCronInfrastructureEvent(audit, {
-        event: CronInfraEvent.SCENARIO_RUN,
-        level: 'warn',
-        message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}e2e runner threw: ${msg.slice(0, 300)}`,
-        details: { stepOrder, error: msg.slice(0, 800) },
-      });
     }
   } finally {
     if (gateBrowser) await gateBrowser.close().catch(() => {});

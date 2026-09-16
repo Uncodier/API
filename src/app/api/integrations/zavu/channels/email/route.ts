@@ -63,16 +63,19 @@ export async function POST(request: NextRequest) {
       console.error(`[Zavu] Failed to attach sender ${sender.id} to agent:`, agentError);
     }
 
+    const emailChannelActive =
+      Array.isArray(sender.channels) && sender.channels.includes("email");
     const { channelId } = await upsertChannelConnection(siteId, existingChannelId, {
       type: "email",
       name: name || "Email Channel",
-      status: "connected",
+      status: emailChannelActive ? "connected" : "in_progress",
       zavu_sender_id: sender.id,
       metadata: {
         from_address: emailAddress,
         from_name: emailFromName,
         email_domain_id: emailDomainId,
         emailReceivingEnabled: false,
+        emailChannelActive,
         mx_verified: false,
         ...(sender.webhook?.secret ? { zavu_webhook_secret: encryptToken(sender.webhook.secret) } : {}),
         zavu_webhook_events: sender.webhook?.events || [],
@@ -83,6 +86,10 @@ export async function POST(request: NextRequest) {
       success: true,
       channelId,
       senderId: sender.id,
+      sender: {
+        id: sender.id,
+        channels: sender.channels || [],
+      },
       webhook: sender.webhook ? {
         url: sender.webhook.url,
         events: sender.webhook.events,

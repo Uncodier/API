@@ -16,6 +16,9 @@ function flattenAppSignals(rich: GateSignals): FlowGateSignal[] {
   if (rich.build) {
     out.push({ name: 'build', ok: !!rich.build.ok, detail: rich.build.error_tail || rich.build.layout_error });
   }
+  if (rich.interaction) {
+    out.push({ name: 'interaction', ok: rich.interaction.ok, detail: rich.interaction.summary });
+  }
   if (rich.runtime) {
     const detail = rich.runtime.startup_error
       ? rich.runtime.startup_error
@@ -66,6 +69,8 @@ export async function runAppGate(input: FlowGateInput): Promise<FlowGateResult> 
     planTitle: ac.planTitle,
     requirementId: input.requirementId,
     stepOrder: ac.stepOrder,
+    backlogItemId: ac.backlogItemId,
+    interactionBaselineSha: ac.interactionBaselineSha,
     stepPrompt: ac.stepPrompt,
     stepContext: ac.stepContext,
     currentMessages: ac.currentMessages,
@@ -87,6 +92,7 @@ export async function runAppGate(input: FlowGateInput): Promise<FlowGateResult> 
     richSignals,
     lastResult: gate.lastResult,
     vercelDeploy: gate.vercelDeploy,
+    infrastructureFailure: gate.infrastructureFailure,
     sandboxUnavailable: gate.sandboxUnavailable,
     sandboxReplacement: gate.sandboxReplacement,
   };

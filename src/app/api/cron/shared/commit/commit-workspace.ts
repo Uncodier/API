@@ -1,5 +1,6 @@
 import { Sandbox } from '@vercel/sandbox';
 import { SandboxService } from '@/lib/services/sandbox-service';
+import { sandboxIdentity } from '@/lib/services/sandbox-sdk';
 import { assertPlatformGitLayout } from '@/lib/services/sandbox-git-layout';
 import { validateNpmRepoForVercelDeploy } from '../vercel-npm-repo-guard';
 import { ensurePreviewFrameAncestors } from '../ensure-preview-frame-ancestors';
@@ -55,7 +56,7 @@ export async function commitWorkspaceToOrigin(
     /* may be at limit */
   }
 
-  const priorSandboxId = sandbox.sandboxId;
+  const priorSandboxId = sandboxIdentity(sandbox);
   let activeSandbox: Sandbox = sandbox;
 
   const cwd = SandboxService.WORK_DIR;
@@ -277,7 +278,10 @@ fi`,
       });
       
       throw Object.assign(new CommitPushTriageError(tri, { cause: pushError }), {
-        sandboxReplacement: activeSandbox.sandboxId !== priorSandboxId ? activeSandbox : undefined,
+        sandboxReplacement:
+          sandboxIdentity(activeSandbox) !== priorSandboxId
+            ? activeSandbox
+            : undefined,
         snapshotId,
         source_code,
         requirementStatusSync,
@@ -285,7 +289,10 @@ fi`,
       });
     }
 
-    const sandboxReplacement = activeSandbox.sandboxId !== priorSandboxId ? activeSandbox : undefined;
+    const sandboxReplacement =
+      sandboxIdentity(activeSandbox) !== priorSandboxId
+        ? activeSandbox
+        : undefined;
 
     return {
       branch: result!.branch,

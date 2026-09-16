@@ -14,8 +14,10 @@ import { runMaintenanceAgentStep } from './agent-step';
 import { getRequirementFullContextStep, unblockRequirementStep, checkInstanceAndPlanStatusStep, incrementQaSuccessfulRunsStep, updateInstanceStatusStep } from '../shared/workflow-db-steps';
 import { buildMaintenancePromptForFlow } from './prompt';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
+import { selectVisualFeedbackScreenshotUrl } from '../shared/step-visual-feedback';
 import { sleep } from 'workflow';
 
+const MAX_POST_GATE_REPAIR_ATTEMPTS = 2;
 
 export interface MaintenanceWorkflowInput {
   reqId: string;
@@ -112,11 +114,16 @@ export async function runMaintenanceWorkflow(input: MaintenanceWorkflowInput) {
       probes = {
         ok: false,
         error: `Gate probes step failed after retries: ${error instanceof Error ? error.message : String(error)}`,
+        infrastructureFailure: true,
         signals: {},
         effectiveSandboxId: sandboxId!,
+        changeBaselineSha: null,
       };
     }
     sandboxId = probes.effectiveSandboxId;
+    if (probes.infrastructureFailure) {
+      throw new Error(probes.error || 'Maintenance probe infrastructure unavailable');
+    }
 
     let qaContext = '';
     if (!probes.ok && probes.error) {
@@ -156,6 +163,17 @@ export async function runMaintenanceWorkflow(input: MaintenanceWorkflowInput) {
 
     let agentRun;
     try {
+      const visualSignal = probes.signals.visual;
+      const visualFeedbackScreenshotUrl =
+        visualSignal && !visualSignal.pass
+          ? selectVisualFeedbackScreenshotUrl(
+              {
+                summary: visualSignal.summary || '',
+                defects: visualSignal.defects,
+              },
+              visualSignal.screenshots,
+            )
+          : undefined;
       agentRun = await runMaintenanceAgentStep({
         sandboxId: sandboxId!,
         reqId,
@@ -165,6 +183,7 @@ export async function runMaintenanceWorkflow(input: MaintenanceWorkflowInput) {
         site_id,
         user_id,
         initialMessage: prompt,
+        visualFeedbackScreenshotUrl,
         requirementTitle: title,
         instanceContext: reqContext.instanceContext,
       });
@@ -180,7 +199,70 @@ export async function runMaintenanceWorkflow(input: MaintenanceWorkflowInput) {
     await extendRunLockStep(maintenanceLockKey, cronLockRunId);
 
     if (!agentRun.timedOut) {
-      
+      let repairAttempts = 0;
+      while (true) {
+        const postGate = await runGateProbesStep({
+          sandboxId: sandboxId!,
+          stepOrder: repairAttempts,
+          requirementId: reqId,
+          gitRepoKind: 'applications',
+          audit: cronAudit,
+          stepContext: {
+            title: 'Post-maintenance validation',
+            instructions:
+              'Validate the interaction and visual behavior changed by the maintenance agent.',
+          },
+          instanceType: type,
+          title,
+          changeBaselineSha: probes.changeBaselineSha,
+        });
+        sandboxId = postGate.effectiveSandboxId;
+        if (postGate.ok) break;
+        if (repairAttempts >= MAX_POST_GATE_REPAIR_ATTEMPTS) {
+          throw new Error(
+            postGate.error ||
+              'Post-maintenance interaction and visual gate failed after repair attempts',
+          );
+        }
+
+        repairAttempts += 1;
+        const visualSignal = postGate.signals.visual;
+        const visualFeedbackScreenshotUrl =
+          visualSignal && !visualSignal.pass
+            ? selectVisualFeedbackScreenshotUrl(
+                {
+                  summary: visualSignal.summary || '',
+                  defects: visualSignal.defects,
+                },
+                visualSignal.screenshots,
+              )
+            : undefined;
+        const repairRun = await runMaintenanceAgentStep({
+          sandboxId: sandboxId!,
+          reqId,
+          requirementType: type,
+          maintenancePrompt,
+          instanceId,
+          site_id,
+          user_id,
+          initialMessage: [
+            `Post-maintenance validation failed. Repair every blocking finding now (repair attempt ${repairAttempts} of ${MAX_POST_GATE_REPAIR_ATTEMPTS}).`,
+            postGate.error || 'The post-maintenance gate failed without a detailed error.',
+            'Inspect the existing changes, make the smallest complete fix, update the relevant evidence file, and finish only after the reported behavior works.',
+          ].join('\n\n'),
+          visualFeedbackScreenshotUrl,
+          requirementTitle: title,
+          instanceContext: reqContext.instanceContext,
+        });
+        sandboxId = repairRun.effectiveSandboxId;
+        await extendRunLockStep(maintenanceLockKey, cronLockRunId);
+        if (repairRun.timedOut) {
+          throw new Error(
+            `Maintenance repair attempt ${repairAttempts} timed out`,
+          );
+        }
+      }
+
       const pushed = await commitAndPushStep(sandboxId!, title, reqId, 'QA & Improvement: Fixes and Refactoring', cronAudit, 'applications');
       if (pushed?.effectiveSandboxId) {
         sandboxId = pushed.effectiveSandboxId;

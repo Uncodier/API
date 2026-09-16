@@ -16,6 +16,7 @@ import type { GitPushFailureKind } from '@/lib/services/git-push-error-triage';
 export type GateFailureCategory =
   | 'layout'
   | 'build'
+  | 'interaction'
   | 'runtime'
   | 'api'
   | 'console'
@@ -57,7 +58,19 @@ export type ConsoleSignal = {
   ok: boolean;
   entries: ConsoleSignalEntry[];
   page_errors: Array<{ message: string; route?: string; viewport?: string; stack_tail?: string }>;
-  failed_requests: Array<{ url: string; status?: number; failure?: string; route?: string; viewport?: string }>;
+  failed_requests: Array<{
+    url: string;
+    status?: number;
+    failure?: string;
+    resource_type?: string;
+    route?: string;
+    viewport?: string;
+  }>;
+  telemetry_dropped?: {
+    console: number;
+    pageErrors: number;
+    failedRequests: number;
+  };
 };
 
 export type ScenarioStepOutcome = {
@@ -107,6 +120,11 @@ export type VisualSignal = {
   error?: string;
   defects: VisualDefect[];
   screenshots: Array<{ route: string; viewport: string; url: string; dom_snippet?: string }>;
+  auth_redirects?: Array<{
+    route: string;
+    viewport: string;
+    redirected_to: string;
+  }>;
 };
 
 export type DeploySignal = {
@@ -115,6 +133,8 @@ export type DeploySignal = {
   detail?: string;
   buildLogExcerpt?: string | null;
 };
+
+export type InteractionSignal = import('./step-interaction-audit').InteractionSignal;
 
 /** Origin (git push) gate outcome: full `error` for ops; `errorForAgent` for executor prompts. */
 export type OriginSignal = {
@@ -147,6 +167,7 @@ export type EvidenceSignal = {
     output_tail?: string;
   }>;
   build?: BuildSignal;
+  interaction?: InteractionSignal;
   runtime?: RuntimeSignal;
   scenarios?: ScenarioSignal;
   commit?: { sha?: string; files: string[] };
@@ -173,6 +194,7 @@ export type StepIterationSignals = {
   bucket?: 'build' | 'runtime';
   step: { order: number; title?: string; expected_output?: string };
   build?: BuildSignal;
+  interaction?: InteractionSignal;
   runtime?: RuntimeSignal;
   api?: ApiSignal;
   console?: ConsoleSignal;
@@ -194,6 +216,18 @@ function formatBuild(s: BuildSignal): string {
   const layout = s.layout_error ? `LAYOUT: ${s.layout_error}\n` : '';
   const err = s.error_tail ? s.error_tail : '(no output captured)';
   return section('BUILD', `${layout}FAILED — fix before anything else.\n---\n${err}\n---`);
+}
+
+function formatInteraction(s: InteractionSignal): string {
+  const parts = [s.summary];
+  for (const finding of s.findings.slice(0, 20)) {
+    const target = finding.target ? ` -> ${finding.target}` : '';
+    const backlog = finding.backlog_item_id ? ` backlog=${finding.backlog_item_id}` : '';
+    parts.push(
+      `  - [${finding.confidence}/${finding.disposition}] ${finding.file}:${finding.line} ${finding.element}${target}: ${finding.reason}${backlog}`,
+    );
+  }
+  return section('INTERACTIONS', parts.join('\n'));
 }
 
 function formatRuntime(s: RuntimeSignal): string {
@@ -241,6 +275,11 @@ function formatApi(s: ApiSignal): string {
 
 function formatConsole(s: ConsoleSignal): string {
   const parts: string[] = [];
+  if (s.telemetry_dropped) {
+    parts.push(
+      `telemetry_truncated: console=${s.telemetry_dropped.console}, page_errors=${s.telemetry_dropped.pageErrors}, failed_requests=${s.telemetry_dropped.failedRequests}`,
+    );
+  }
   if (s.entries.length) {
     const errors = s.entries.filter((e) => e.level === 'error');
     const warns = s.entries.filter((e) => e.level === 'warn');
@@ -293,7 +332,7 @@ function formatVisual(s: VisualSignal): string {
   parts.push(`verdict: ${s.pass ? 'PASS' : 'FAIL'}${s.summary ? ` — ${s.summary}` : ''}`);
   if (s.defects.length) {
     parts.push('defects:');
-    for (const d of s.defects.slice(0, 20)) {
+    for (const d of s.defects.slice(0, 3)) {
       parts.push(
         `  - [${d.severity}/${d.category}] ${d.route} (${d.viewport}): ${d.description}${d.fix_hint ? ` | fix: ${d.fix_hint}` : ''}`,
       );
@@ -302,15 +341,21 @@ function formatVisual(s: VisualSignal): string {
     parts.push('IMPORTANT: Visual defects (even minor ones) MUST be fixed if possible. If you cannot fix them, you MUST log them in the backlog assumptions using the requirement_backlog tool (action=log_assumption) so QA is aware.');
   }
   if (s.screenshots.length) {
-    parts.push('screenshots:');
-    for (const sh of s.screenshots) {
-      parts.push(`  - ${sh.route} (${sh.viewport}): ${sh.url}`);
-      if (sh.dom_snippet) {
-        parts.push(`    dom_snippet: ${sh.dom_snippet}`);
-      }
+    const primaryDefect = s.defects.find(
+      (defect) => defect.severity === 'blocker' || defect.severity === 'major',
+    );
+    const screenshot =
+      s.screenshots.find(
+        (shot) =>
+          shot.route === primaryDefect?.route &&
+          shot.viewport === primaryDefect?.viewport,
+      ) ?? s.screenshots[0];
+    parts.push(`screenshot: ${screenshot.route} (${screenshot.viewport}): ${screenshot.url}`);
+    if (screenshot.dom_snippet) {
+      parts.push(`dom_snippet: ${screenshot.dom_snippet.slice(0, 600)}`);
     }
   }
-  return section('VISUAL CRITIC', parts.join('\\n'));
+  return section('VISUAL CRITIC', parts.join('\n'));
 }
 
 function formatDeploy(s: DeploySignal): string {
@@ -341,6 +386,7 @@ export function formatIterationSignals(sig: StepIterationSignals): string {
 
   const body: string[] = [head.join('\n'), ''];
   if (sig.build) body.push(formatBuild(sig.build));
+  if (sig.interaction) body.push(formatInteraction(sig.interaction));
   if (sig.runtime) body.push(formatRuntime(sig.runtime));
   if (sig.api) body.push(formatApi(sig.api));
   if (sig.console) body.push(formatConsole(sig.console));
@@ -359,9 +405,10 @@ export function formatIterationSignals(sig: StepIterationSignals): string {
   body.push(
     [
       '1) Fix the FIRST category in `categories_failed` — higher categories often cause later ones.',
-      '2) Review the VISUAL CRITIC section. If there are defects, you MUST fix them or use the requirement_backlog tool (action=log_assumption) to document them for QA.',
-      '3) After fixing or logging, re-run npm run build; the gate will re-probe automatically.',
-      '4) Only stop when the gate passes (or you receive an explicit human-review instruction).',
+      '2) For interaction failures, repair broken links or inert controls locally. Do not invent an entire missing screen.',
+      '3) Review the VISUAL CRITIC section. If there are defects, fix them or log an assumption for QA.',
+      '4) After fixing or logging, re-run npm run build; the gate will re-probe automatically.',
+      '5) Only stop when the gate passes (or you receive an explicit human-review instruction).',
     ].join('\n'),
   );
 
@@ -372,11 +419,12 @@ export function deriveCategoriesFailed(sig: Omit<StepIterationSignals, 'categori
   const cats: GateFailureCategory[] = [];
   if (sig.build?.layout_error) cats.push('layout');
   if (sig.build && !sig.build.ok) cats.push('build');
+  if (sig.interaction && !sig.interaction.ok) cats.push('interaction');
   if (sig.runtime && !sig.runtime.ok) cats.push('runtime');
   if (sig.api && !sig.api.ok) cats.push('api');
   if (sig.console && !sig.console.ok) cats.push('console');
   if (sig.scenarios && !sig.scenarios.ok) cats.push('scenario');
-  if (sig.visual && !sig.visual.ok) cats.push('visual');
+  if (sig.visual && (!sig.visual.ok || !sig.visual.pass)) cats.push('visual');
   if (sig.origin && !sig.origin.ok) cats.push('origin');
   return cats;
 }

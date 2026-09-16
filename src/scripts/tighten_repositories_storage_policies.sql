@@ -6,9 +6,16 @@
 -- and authenticated tenant JWTs MUST NOT see workspaces. New per-tenant
 -- buckets follow `tenant-<requirementId-no-dashes>` naming with policies
 -- that match `auth.jwt()->>'tenant_id'`.
+-- Rollback: restore only the prior explicitly reviewed policies; do not make
+-- `workspaces` public unless all stored source archives and screenshots are
+-- intended for anonymous access.
 -- =====================================================================
 
 -- Workspaces bucket: service-role-only. Drop legacy permissive rules.
+update storage.buckets
+set public = false
+where id = 'workspaces';
+
 drop policy if exists "workspaces public read" on storage.objects;
 drop policy if exists "workspaces authenticated read" on storage.objects;
 drop policy if exists "workspaces authenticated write" on storage.objects;

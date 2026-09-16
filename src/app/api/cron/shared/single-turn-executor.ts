@@ -12,10 +12,26 @@ import { classifyRequirementType, type RequirementKind } from '@/lib/services/re
 import { isSandboxGoneError } from '@/lib/services/sandbox-gone-error';
 import { getSandboxTools } from '@/app/api/agents/tools/sandbox/assistantProtocol';
 import { SandboxService } from '@/lib/services/sandbox-service';
+import { sandboxIdentity } from '@/lib/services/sandbox-sdk';
 import { runGateForFlow } from './gates';
 import type { AppGateContext } from './gates/types';
 import { runArchetypePostGate } from './step-archetype-postgate';
 import { inferRoleFromStep, ROLE_TO_SKILL, buildSingleTurnSystemPrompt } from './single-turn-prompt';
+import { buildStepRetryFeedback } from './single-turn-visual-feedback';
+import {
+  extractSingleTurnBackgroundState,
+  type SingleTurnBackgroundTask,
+} from './single-turn-background-task';
+import {
+  buildGateErrorFeedback,
+  captureInteractionBaseline,
+  withExecuteStepNoop,
+} from './single-turn-helpers';
+import {
+  buildSingleTurnStartMetadata,
+  markVisualFeedbackDelivered,
+  resolveSingleTurnBacklogItemId,
+} from './single-turn-step-state';
 
 export { inferRoleFromStep } from './single-turn-prompt';
 
@@ -26,11 +42,7 @@ export interface SingleTurnResult {
   error?: string;
   effectiveSandboxId: string;
   sleepRequested?: number;
-  backgroundTask?: {
-    pid: string;
-    logFile: string;
-    toolCallId: string;
-  };
+  backgroundTask?: SingleTurnBackgroundTask;
   gatePassed?: boolean;
   gateErrorExcerpt?: string;
 }
@@ -80,6 +92,7 @@ export async function executeSingleTurnStep(params: {
 
   // 2. Mark step in_progress if pending
   try {
+    let persistedStep = step;
     try {
       const { data: planRow } = await supabaseAdmin
         .from('instance_plans')
@@ -88,6 +101,7 @@ export async function executeSingleTurnStep(params: {
         .maybeSingle();
         
       const freshStep = Array.isArray(planRow?.steps) ? planRow.steps.find((s: any) => s.id === step.id) : undefined;
+      if (freshStep) persistedStep = { ...step, ...freshStep };
       if (freshStep && (freshStep.status === 'completed' || freshStep.status === 'cancelled')) {
         console.log(`[SingleTurn] Step ${step.order} already ${freshStep.status}.`);
         return { ok: true, isDone: true, effectiveSandboxId };
@@ -97,13 +111,32 @@ export async function executeSingleTurnStep(params: {
     // Baseline = first time THIS step started. Do not fall back to plan.created_at
     // (that is often hours/days old and would mark every file updated_this_cycle).
     const nowIso = new Date().toISOString();
-    const cycleBaselineAt = step.started_at || nowIso;
+    const cycleBaselineAt = persistedStep.started_at || nowIso;
+    const interactionBaselineSha = await captureInteractionBaseline(sandbox, persistedStep);
+    const effectiveBacklogItemId = await resolveSingleTurnBacklogItemId({
+      instanceId,
+      requirementId,
+      persistedStep,
+      step,
+    });
+    const retryFeedback = await buildStepRetryFeedback(
+      persistedStep.error_message || step.error_message,
+      persistedStep.metadata?.visual_feedback_image_id,
+      requirementId,
+    );
+    const nextMetadata = buildSingleTurnStartMetadata({
+      persistedMetadata: persistedStep.metadata,
+      interactionBaselineSha,
+      backlogItemId: effectiveBacklogItemId,
+    });
     await updateInstancePlanCore({
       plan_id: plan.id, instance_id: instanceId, site_id: siteId,
+      requirement_id: requirementId,
       steps: [{
         id: step.id,
         status: 'in_progress',
-        ...(step.started_at ? {} : { started_at: cycleBaselineAt }),
+        ...(persistedStep.started_at ? {} : { started_at: cycleBaselineAt }),
+        ...(nextMetadata ? { metadata: nextMetadata } : {}),
       }],
     });
 
@@ -146,19 +179,16 @@ export async function executeSingleTurnStep(params: {
       memoriesContext = mems; // fetchMemoriesContext returns a string
     }
 
-    let retryContext = '';
-    if (step.error_message) {
-      retryContext = `\n\n🚨 PREVIOUS ATTEMPT FAILED 🚨\nThe previous execution of this step failed with the following error:\n\n${step.error_message}\n\nFix only the violating lines. For investigations, append to the existing docs/investigations/*.md — never delete the named deliverable or rewrite it from scratch. If it asks for https:// citations, add real URLs from webSearch. You MUST fix this during this attempt.`;
-    }
+    const retryContext = retryFeedback.promptFragment;
 
     const { loadConstraintSourceBlocks } = await import('@/lib/services/requirement-constraints-persist');
     const constraintSources = requirementId ? await loadConstraintSourceBlocks(requirementId) : [];
     const systemPrompt = buildSingleTurnSystemPrompt({
       instanceId,
       siteId,
+      requirementId,
       plan,
       step,
-      requirementId,
       effectiveRole,
       cycleBaselineAt,
       skillContext,
@@ -173,9 +203,11 @@ export async function executeSingleTurnStep(params: {
 
     // 4. Fetch History
     const historyText = await fetchStepLogHistoryText(instanceId, plan.id, step.id);
-    const messages = [
+    const messages: any[] = [
       { role: 'user' as const, content: `Execute step ${step.order}: ${step.title}. ${step.instructions}` },
     ];
+
+    if (retryFeedback.imageMessage) messages.push(retryFeedback.imageMessage);
 
     if (historyText) {
       messages.push({
@@ -185,6 +217,7 @@ export async function executeSingleTurnStep(params: {
     }
 
     // 5. Call Executor (Max 1 turn)
+    const activeSandboxRef = { current: sandbox };
     const sandboxTools = getSandboxTools(sandbox, requirementId, {
       site_id: siteId,
       instance_id: instanceId,
@@ -193,9 +226,20 @@ export async function executeSingleTurnStep(params: {
       plan_id: plan.id,
       active_step_id: step.id,
       cycle_baseline_at: cycleBaselineAt,
+      activeSandboxRef,
     });
     
-    const fullTools = withExecuteStepNoop(getAssistantTools(siteId, userId, instanceId, sandboxTools));
+    const fullTools = withExecuteStepNoop(
+      getAssistantTools(
+        siteId,
+        userId,
+        instanceId,
+        sandboxTools,
+        undefined,
+        undefined,
+        requirementId,
+      ),
+    );
     
     const result = await executeAssistantStep(messages, { id: instanceId, site_id: siteId, user_id: userId, requirement_id: requirementId }, {
       instance_id: instanceId,
@@ -208,6 +252,21 @@ export async function executeSingleTurnStep(params: {
       custom_tools: fullTools,
       enforceSingleTurn: true // CRITICAL: enforce 1 tool call max per invocation
     });
+    sandbox = activeSandboxRef.current;
+    effectiveSandboxId = sandboxIdentity(sandbox);
+
+    await markVisualFeedbackDelivered({
+      planId: plan.id,
+      instanceId,
+      siteId,
+      requirementId,
+      stepId: step.id,
+      persistedMetadata: persistedStep.metadata,
+      interactionBaselineSha,
+      backlogItemId: effectiveBacklogItemId,
+      imageFeedbackId: retryFeedback.imageFeedbackId,
+      delivered: !!retryFeedback.imageMessage,
+    });
     
     // Check if the LLM attempted to execute tools and failed due to sandbox gone
     const hasSandboxGoneError = result.messages?.some((m: any) => 
@@ -219,43 +278,7 @@ export async function executeSingleTurnStep(params: {
        return { ok: false, isDone: false, transient: true, error: 'Sandbox Gone 410', effectiveSandboxId };
     }
 
-    let sleepRequested: number | undefined;
-    let backgroundTask: { pid: string; logFile: string; toolCallId: string } | undefined;
-    const lastMessage = result.messages?.[result.messages.length - 1];
-
-    if (lastMessage?.role === 'tool') {
-      if (lastMessage.name === 'sandbox_check_background_command') {
-        try {
-          const contentStr = typeof lastMessage.content === 'string' ? lastMessage.content : JSON.stringify(lastMessage.content);
-          const parsed = JSON.parse(contentStr);
-          if (parsed.is_running === true) {
-            sleepRequested = 15; // default wait when process is still running
-            // Re-construct the backgroundTask so the workflow can poll it without the LLM
-            const toolCalls = result.steps?.[result.steps.length - 1]?.toolCalls;
-            const myCall = toolCalls?.find((tc: any) => tc.toolCallId === lastMessage.tool_call_id);
-            if (myCall && myCall.args.pid && myCall.args.log_file) {
-               backgroundTask = {
-                 pid: String(myCall.args.pid),
-                 logFile: String(myCall.args.log_file),
-                 toolCallId: lastMessage.tool_call_id!
-               };
-            }
-          }
-        } catch (e) {}
-      } else if (lastMessage.name === 'sandbox_start_background_command') {
-        try {
-          const contentStr = typeof lastMessage.content === 'string' ? lastMessage.content : JSON.stringify(lastMessage.content);
-          const parsed = JSON.parse(contentStr);
-          if (parsed.success && parsed.pid && parsed.log_file) {
-            backgroundTask = {
-              pid: String(parsed.pid),
-              logFile: String(parsed.log_file),
-              toolCallId: lastMessage.tool_call_id!
-            };
-          }
-        } catch (e) {}
-      }
-    }
+    const { sleepRequested, backgroundTask } = extractSingleTurnBackgroundState(result);
 
     if (result.isDone) {
       // 6. Run Gate right here because we have live sandbox and context
@@ -266,6 +289,8 @@ export async function executeSingleTurnStep(params: {
          appContext = {
             planTitle: plan.title,
             stepOrder: step.order,
+            backlogItemId: effectiveBacklogItemId,
+            interactionBaselineSha,
             stepPrompt: systemPrompt,
             stepContext: {
               title: step.title,
@@ -308,10 +333,29 @@ export async function executeSingleTurnStep(params: {
          appContext,
          audit
       });
+      const gateFeedback = buildGateErrorFeedback({
+        gate: gateRes,
+        step,
+        persistedStep,
+      });
+      const gateErrorExcerpt = gateFeedback.excerpt;
       
       if (gateRes.sandboxReplacement) {
-         effectiveSandboxId = gateRes.sandboxReplacement.sandboxId;
+         effectiveSandboxId = sandboxIdentity(gateRes.sandboxReplacement);
          sandbox = gateRes.sandboxReplacement;
+      }
+
+      if (!gateRes.ok && gateRes.infrastructureFailure) {
+         console.warn(
+           `[SingleTurn] Gate infrastructure unavailable for step ${step.order}: ${gateRes.error || 'unknown error'}`,
+         );
+         return {
+           ok: false,
+           isDone: false,
+           transient: true,
+           error: gateRes.error || 'Gate infrastructure unavailable',
+           effectiveSandboxId,
+         };
       }
       
       if (gateRes.ok) {
@@ -347,12 +391,12 @@ export async function executeSingleTurnStep(params: {
            isLastStep = pendingSteps.length === 0;
          }
          
-         if (isLastStep) {
+         if (isLastStep && effectiveBacklogItemId) {
             console.log(`[SingleTurn] Step ${step.order} is final. Running Post-Gate Archetypes (Critic/Judge)...`);
             await runArchetypePostGate({
                sandbox,
                requirementId,
-               backlogItemId: step.metadata?.backlog_item_id || step.backlog_item_id,
+               backlogItemId: effectiveBacklogItemId,
                stepId: step.id,
                signals: gateRes.richSignals as any,
                capturedAt: new Date().toISOString(),
@@ -368,25 +412,22 @@ export async function executeSingleTurnStep(params: {
            details: { 
               step_id: step.id, 
               plan_id: plan.id,
-              error_excerpt: (gateRes.error || gateRes.reason || '').slice(0, 500),
+              error_excerpt: gateErrorExcerpt.slice(0, 500),
               gate_signals: gateRes.signals,
            }
          });
          
-         const backlogItemId = step.metadata?.backlog_item_id || step.backlog_item_id;
-         if (backlogItemId) {
+         if (effectiveBacklogItemId) {
             const { bumpItemAttempts, recordToolFailure, logAssumption, downgradeScope, markNeedsReview } = await import('@/lib/services/requirement-backlog');
             const { planNextHealingAction } = await import('@/lib/services/requirement-self-heal');
             const { getBacklogItem } = await import('@/lib/services/requirement-backlog');
             const { classifyFailure } = await import('@/lib/services/failure-classification');
             
             try {
-               const { item } = await getBacklogItem(requirementId, backlogItemId);
+               const { item } = await getBacklogItem(requirementId, effectiveBacklogItemId);
                if (item) {
-                   const errorMsg = gateRes.error || gateRes.reason || '';
-                   const { deriveCategoriesFailed } = await import('@/app/api/cron/shared/step-iteration-signals');
-                   const categories = gateRes.richSignals ? deriveCategoriesFailed(gateRes.richSignals as any) : [];
-                   const classified = classifyFailure(errorMsg, categories, {
+                   const errorMsg = gateFeedback.raw;
+                   const classified = classifyFailure(errorMsg, gateFeedback.categories, {
                      flow: requirementType,
                      signals: gateRes.signals,
                      skipAttemptBump: gateRes.skipAttemptBump,
@@ -397,7 +438,7 @@ export async function executeSingleTurnStep(params: {
                      console.log(`[SingleTurn] Plumbing failure detected for tool ${toolName}, logging without attempt bump.`);
                      await recordToolFailure({
                        requirementId,
-                       itemId: backlogItemId,
+                       itemId: effectiveBacklogItemId,
                        toolName,
                        reason: `[plumbing] Tool ${toolName} failed: ${errorMsg.slice(0, 150)}`
                      });
@@ -405,7 +446,7 @@ export async function executeSingleTurnStep(params: {
                      // Product/Judge failure -> consumes attempt and triggers self-heal
                      const bumped = await bumpItemAttempts({
                        requirementId,
-                       itemId: backlogItemId,
+                       itemId: effectiveBacklogItemId,
                        reason: `gate_failed: ${errorMsg.slice(0, 200)}`,
                      });
                      
@@ -438,7 +479,7 @@ export async function executeSingleTurnStep(params: {
          isDone: true, 
          effectiveSandboxId, 
          gatePassed: gateRes.ok, 
-         gateErrorExcerpt: gateRes.error || gateRes.reason,
+         gateErrorExcerpt,
          sleepRequested,
          backgroundTask
       };
@@ -450,27 +491,4 @@ export async function executeSingleTurnStep(params: {
     const transient = isSandboxGoneError(e.message);
     return { ok: false, isDone: false, transient, error: e.message, effectiveSandboxId };
   }
-}
-
-/** Cron runner owns step status — execute_step from the model is a documented no-op. */
-function withExecuteStepNoop<T extends { name?: string; execute?: (args: Record<string, unknown>) => Promise<unknown> }>(
-  tools: T[],
-): T[] {
-  return tools.map((tool) => {
-    if (tool?.name !== 'instance_plan' || typeof tool.execute !== 'function') return tool;
-    const original = tool.execute.bind(tool);
-    return {
-      ...tool,
-      execute: async (args: Record<string, unknown>) => {
-        if (args?.action === 'execute_step') {
-          return {
-            success: true,
-            noop: true,
-            message: 'execute_step is owned by the cron runner; step status was not changed.',
-          };
-        }
-        return original(args);
-      },
-    };
-  });
 }

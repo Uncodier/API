@@ -1,0 +1,124 @@
+import {
+  buildGateErrorFeedback,
+  captureInteractionBaseline,
+} from '../single-turn-helpers';
+import { extractVisualFeedbackScreenshotUrl } from '../step-visual-feedback';
+
+describe('single-turn interaction helpers', () => {
+  it('reuses the persisted step baseline without reading git', async () => {
+    const sandbox = { runCommand: jest.fn() };
+    const sha = 'a'.repeat(40);
+
+    await expect(
+      captureInteractionBaseline(sandbox as any, {
+        metadata: { interaction_audit_baseline_sha: sha },
+      }),
+    ).resolves.toBe(sha);
+    expect(sandbox.runCommand).not.toHaveBeenCalled();
+  });
+
+  it('captures HEAD when the step has no baseline', async () => {
+    const sha = 'b'.repeat(40);
+    const sandbox = {
+      runCommand: jest.fn().mockResolvedValue({
+        exitCode: 0,
+        stdout: jest.fn().mockResolvedValue(`${sha}\n`),
+      }),
+    };
+
+    await expect(captureInteractionBaseline(sandbox as any, {})).resolves.toBe(sha);
+    expect(sandbox.runCommand).toHaveBeenCalledWith('git', [
+      '-C',
+      '/vercel/sandbox',
+      'rev-parse',
+      'HEAD',
+    ]);
+  });
+
+  it('formats interaction findings into the retry excerpt', () => {
+    const feedback = buildGateErrorFeedback({
+      step: { order: 4, title: 'Interaction audit', expected_output: 'Working navigation' },
+      persistedStep: { retry_count: 0 },
+      gate: {
+        ok: false,
+        flow: 'app',
+        signals: [{ name: 'interaction', ok: false }],
+        error: 'Interaction audit failed',
+        richSignals: {
+          interaction: {
+            ok: false,
+            blocking_count: 1,
+            deferred_count: 0,
+            warning_count: 0,
+            summary: '1 blocking interaction finding',
+            findings: [
+              {
+                fingerprint: 'abc',
+                kind: 'broken_link',
+                file: 'src/components/Header.tsx',
+                line: 8,
+                element: 'Link',
+                target: '/pricing',
+                reason: 'No Next.js page matches /pricing',
+                confidence: 'high',
+                introduced_by_step: true,
+                disposition: 'create_backlog',
+              },
+            ],
+          },
+        },
+      } as any,
+    });
+
+    expect(feedback.categories).toEqual(['interaction']);
+    expect(feedback.excerpt).toContain('categories_failed: interaction');
+    expect(feedback.excerpt).toContain('src/components/Header.tsx:8');
+    expect(feedback.excerpt).toContain('/pricing');
+  });
+
+  it('preserves the visual screenshot marker through gate formatting', () => {
+    const screenshotUrl =
+      'https://apps.example.supabase.co/storage/v1/object/public/workspaces/shot.jpg';
+    const feedback = buildGateErrorFeedback({
+      step: { order: 2, title: 'Dashboard' },
+      persistedStep: { retry_count: 0 },
+      gate: {
+        ok: false,
+        flow: 'app',
+        signals: [{ name: 'visual', ok: false }],
+        error: [
+          'Visual critic blocked the gate.',
+          `visual_screenshot_url: ${screenshotUrl}`,
+          'Summary: The mobile layout overflows.',
+        ].join('\n'),
+        richSignals: {
+          visual: {
+            ok: false,
+            pass: false,
+            summary: 'The mobile layout overflows.',
+            defects: [
+              {
+                category: 'responsive',
+                severity: 'blocker',
+                route: '/dashboard',
+                viewport: 'mobile',
+                description: 'Content overflows.',
+              },
+            ],
+            screenshots: [
+              {
+                route: '/dashboard',
+                viewport: 'mobile',
+                url: screenshotUrl,
+              },
+            ],
+          },
+        },
+      } as any,
+    });
+
+    expect(extractVisualFeedbackScreenshotUrl(feedback.excerpt)).toBe(
+      screenshotUrl,
+    );
+  });
+});

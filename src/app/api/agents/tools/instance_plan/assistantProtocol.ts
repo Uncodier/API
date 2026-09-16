@@ -171,7 +171,12 @@ export interface InstancePlanToolParams {
   step_order?: number;
 }
 
-export function instancePlanTool(site_id: string, instance_id: string, user_id?: string) {
+export function instancePlanTool(
+  site_id: string,
+  instance_id: string,
+  user_id?: string,
+  requirement_id?: string,
+) {
   return {
     name: 'instance_plan',
     description:
@@ -334,6 +339,7 @@ export function instancePlanTool(site_id: string, instance_id: string, user_id?:
             plan_id: params.plan_id,
             site_id: params.site_id || site_id,
             instance_id: params.instance_id || instance_id,
+            requirement_id,
             steps: [{
               id: resolved.stepId,
               actual_output: params.step_output,
@@ -376,6 +382,7 @@ export function instancePlanTool(site_id: string, instance_id: string, user_id?:
         const body = {
           ...params,
           site_id: params.site_id || site_id,
+          requirement_id,
         };
         
         return updateInstancePlanCore(body);

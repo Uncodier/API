@@ -84,6 +84,7 @@ export async function executePlanStep(
       plan_id: plan.id,
       instance_id: context.executionOptions.instance_id,
       site_id: context.executionOptions.site_id,
+      requirement_id: context.executionOptions.requirement_id,
       steps: [{
         id: step.id,
         status: 'in_progress',
@@ -265,6 +266,7 @@ RULES:
         plan_id: plan.id,
         instance_id: context.executionOptions.instance_id,
         site_id: context.executionOptions.site_id,
+        requirement_id: context.executionOptions.requirement_id,
         steps: [{
             id: step.id,
             status: 'failed',
@@ -280,6 +282,7 @@ RULES:
     plan_id: plan.id,
     instance_id: context.executionOptions.instance_id,
     site_id: context.executionOptions.site_id,
+    requirement_id: context.executionOptions.requirement_id,
     steps: [{
       id: step.id,
       status: 'completed',

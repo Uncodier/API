@@ -8,6 +8,7 @@ const parseIfString = (val: any) => typeof val === 'string' ? (() => { try { ret
 const UpdateInstancePlanSchema = z.object({
   plan_id: z.string().uuid('Invalid plan_id'),
   instance_id: z.string().uuid('Invalid instance_id').optional(), // Added for execute_step in protocol
+  requirement_id: z.string().uuid('Invalid requirement_id').optional(),
   site_id: z.string().uuid('Site ID is required'),
   title: z.string().optional(),
   description: z.string().optional(),
@@ -46,8 +47,8 @@ const UpdateInstancePlanSchema = z.object({
     vercel_deploy_checked_at: z.string().optional().nullable(),
     vercel_deploy_detail: z.string().optional().nullable(),
     /** Free-form metadata; `backlog_item_id` links the step to a backlog
-     * item so the post-gate Judge can run for it. Auto-bound on the
-     * server side when missing (single in_progress item rule). */
+     * item so the post-gate Judge can run for it. Auto-bound only when a
+     * requirement_id is supplied and matches the instance backlog context. */
     metadata: z.preprocess(parseIfString, z.record(z.any())).optional(),
     backlog_item_id: z.string().optional(),
   })))).optional(),
@@ -59,7 +60,13 @@ const UpdateInstancePlanSchema = z.object({
  */
 export async function updateInstancePlanCore(params: any) {
   const validatedData = UpdateInstancePlanSchema.parse(params);
-  const { plan_id, site_id, instance_id, ...updates } = validatedData;
+  const {
+    plan_id,
+    site_id,
+    instance_id,
+    requirement_id,
+    ...updates
+  } = validatedData;
 
   // Verificar que el plan existe y pertenece al sitio
   const { data: existingPlan, error: fetchError } = await supabaseAdmin
@@ -83,13 +90,24 @@ export async function updateInstancePlanCore(params: any) {
   const updateData: any = { ...updates, updated_at: new Date().toISOString() };
 
   if (updates.steps) {
-    // Resolve a fallback backlog binding once per update (cheap), used to
-    // auto-fill missing `metadata.backlog_item_id` on incoming steps.
+    // Resolve a fallback once per update, but never bind across requirements.
     const effectiveInstanceId = instance_id || (existingPlan as any).instance_id;
     const fallbackCtx = effectiveInstanceId
       ? await resolveBacklogContextForInstance(effectiveInstanceId)
       : { requirementId: null, inProgressItemId: null };
-    const fallbackBacklogItemId = fallbackCtx.inProgressItemId;
+    const fallbackBacklogItemId =
+      requirement_id && fallbackCtx.requirementId === requirement_id
+        ? fallbackCtx.inProgressItemId
+        : null;
+    if (
+      requirement_id &&
+      fallbackCtx.requirementId &&
+      fallbackCtx.requirementId !== requirement_id
+    ) {
+      console.warn(
+        `[UpdateInstancePlan] Ignoring cross-requirement backlog fallback ${fallbackCtx.requirementId}; expected ${requirement_id}`,
+      );
+    }
 
     const mergeMetadata = (currentStep: any, incomingStep: any): Record<string, any> => {
       const baseMetadata = {

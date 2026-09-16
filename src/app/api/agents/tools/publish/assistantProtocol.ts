@@ -5,11 +5,20 @@ import { sendBulkMessagesTool } from '../sendBulkMessages/assistantProtocol';
 import { sendEmailCore } from '../sendEmail/route';
 import { WhatsAppSendService } from '@/lib/services/whatsapp/WhatsAppSendService';
 import { getLeadById } from '@/lib/database/lead-db';
+import {
+  fetchSiteNameForMerge,
+  personalizeMergeTemplate,
+  placeholderPolicyToMergePolicy,
+} from '@/lib/messaging/lead-merge-fields';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const MERGE_TOKEN_RE = /\{\{[^{}]+\}\}/;
 
 export interface PublishToolParams {
   // Test Mode
   is_test?: boolean;
-  test_recipient?: string; // email or phone number for testing
+  test_recipient?: string; // optional email or phone override for testing
+  test_lead_id?: string; // lead identity used for merge fields and default destination
 
   // Content DB Params
   content_id?: string;
@@ -41,6 +50,7 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
     const {
       is_test,
       test_recipient,
+      test_lead_id,
       content_id,
       title,
       type,
@@ -66,7 +76,9 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
     const willSaveContent = !!title && !!type;
     const willUpdateContent = !!content_id;
     const willPublishSocial = !!social_accounts && social_accounts.length > 0;
-    const willSendAudience = (!!audience_id && !!channel) || (is_test && !!test_recipient && !!channel);
+    const willSendAudience =
+      (!!audience_id && !!channel)
+      || (Boolean(is_test) && Boolean(test_recipient || test_lead_id) && !!channel);
 
     if (!willSaveContent && !willUpdateContent && !willPublishSocial && !willSendAudience) {
       return { 
@@ -213,27 +225,33 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
       results.actions_attempted.push('audience');
       try {
         if (is_test) {
-          if (test_recipient) {
-            let testEmail = test_recipient;
-            let testPhone = test_recipient;
-            let resolvedLeadId: string | undefined = undefined;
+          if (test_recipient || test_lead_id) {
+            const legacyLeadId =
+              test_recipient && UUID_RE.test(test_recipient) ? test_recipient : undefined;
+            const resolvedLeadId = test_lead_id || legacyLeadId;
+            const lead = resolvedLeadId ? await getLeadById(resolvedLeadId) : null;
 
-            if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(test_recipient)) {
-              const lead = await getLeadById(test_recipient);
-              if (lead) {
-                testEmail = lead.email || test_recipient;
-                testPhone = lead.phone || test_recipient;
-                resolvedLeadId = test_recipient;
-              }
+            if (resolvedLeadId && (!lead || lead.site_id !== siteId)) {
+              throw new Error(`Test lead ${resolvedLeadId} was not found for this site`);
+            }
+
+            const explicitRecipient = legacyLeadId ? undefined : test_recipient;
+            const testEmail = explicitRecipient || lead?.email || '';
+            const testPhone = explicitRecipient || lead?.phone || '';
+            const hasMergeTokens =
+              MERGE_TOKEN_RE.test(publishText)
+              || MERGE_TOKEN_RE.test(finalSubject || '');
+
+            if (hasMergeTokens && !lead) {
+              throw new Error(
+                'A valid test_lead_id is required when a test message contains merge fields',
+              );
             }
 
             // Dispatch a single test message
           if (channel === 'email') {
-            let emailText = publishText;
-            if (audience_email_mode === 'newsletter') {
-               // Newsletter expects HTML via 'message', or Outstand API call?
-               // Wait, 'sendEmailCore' handles plain text or basic HTML in 'message' parameter. 
-               // For newsletter layout, we might need a template, but basic publishText works.
+            if (!testEmail) {
+              throw new Error(`Test lead ${resolvedLeadId} has no email address`);
             }
             const testEmailResult = await sendEmailCore({
               site_id: siteId,
@@ -243,16 +261,35 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
               message: publishText,
               from,
               instance_id: instanceId,
-              omit_signature: audience_email_mode === 'newsletter'
+              omit_signature: audience_email_mode === 'newsletter',
+              placeholder_policy: placeholders_when_unresolved,
             });
             results.audience = { success: testEmailResult.success, type: 'single_test_send', result: testEmailResult };
             if (!testEmailResult.success) results.success = false;
           } else if (channel === 'whatsapp' || channel === 'sms') {
+            if (!testPhone) {
+              throw new Error(`Test lead ${resolvedLeadId} has no phone number`);
+            }
+            let personalizedText = publishText;
+            if (lead) {
+              const siteName = await fetchSiteNameForMerge(siteId);
+              const merged = personalizeMergeTemplate(
+                publishText,
+                lead,
+                siteName,
+                placeholderPolicyToMergePolicy(placeholders_when_unresolved),
+              );
+              if (merged.aborted) {
+                throw new Error(`Unresolved merge fields: ${merged.unresolved.join(', ')}`);
+              }
+              personalizedText = merged.text;
+            }
             const testWaResult = await WhatsAppSendService.sendMessage({
               site_id: siteId,
               phone_number: testPhone,
-              message: `[TEST] ${publishText}`,
+              message: `[TEST] ${personalizedText}`,
               from,
+              lead_id: resolvedLeadId,
               media_urls: urls, // Fallback media for WA
             });
             results.audience = { success: testWaResult.success, simulated: true, type: 'single_test_send', result: testWaResult };
@@ -302,6 +339,7 @@ If sending email to audience, 'subject' is required.
 
 **TEST MODE (HIGHLY RECOMMENDED FOR DRAFTS/PREVIEWS):**
 Set \`is_test: true\` to safely simulate the publishing actions without modifying the database or making external API calls. If you also provide a \`test_recipient\` (email address or phone number), the tool will send a single real test message to that recipient instead of a bulk audience send.
+For personalized previews, pass \`test_lead_id\`; the tool resolves merge fields from that lead and uses its email or phone when \`test_recipient\` is omitted. A test containing merge fields is rejected when no valid test lead is provided.
 
 CRITICAL USAGE EXAMPLES (AVOID DUPLICATE RECORDS):
 - Scenario A (Same text across channels): If publishing the exact SAME text to a blog and social media, make ONE SINGLE tool call providing 'title', 'type', 'text', and 'social_accounts'.
@@ -322,7 +360,8 @@ The tool will return an object detailing the success/failure of each attempted a
       properties: {
         // Test Mode
         is_test: { type: 'boolean', description: 'Run the tool in test mode. Bypasses actual DB saves, social posting, and bulk sending.' },
-        test_recipient: { type: 'string', description: 'When in test mode, provide an email or phone number here to send a single real preview message.' },
+        test_recipient: { type: 'string', description: 'Optional email or phone override for a single real test send.' },
+        test_lead_id: { type: 'string', description: 'Lead UUID used to resolve merge fields and, by default, the test email or phone destination.' },
 
         // Content DB
         content_id: { type: 'string', description: 'ID of existing content to update (optional).' },

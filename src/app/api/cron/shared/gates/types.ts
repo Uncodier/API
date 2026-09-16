@@ -27,6 +27,7 @@ import type {
   BuildSignal,
   ConsoleSignal,
   DeploySignal,
+  InteractionSignal,
   OriginSignal,
   RuntimeSignal,
   ScenarioSignal,
@@ -37,6 +38,8 @@ import type {
 export interface AppGateContext {
   planTitle: string;
   stepOrder: number;
+  backlogItemId?: string | null;
+  interactionBaselineSha?: string | null;
   stepPrompt: string;
   stepContext?: {
     title?: string;
@@ -74,6 +77,7 @@ export interface FlowGateSignal {
 /** Rich signals the app/site gate returns (build+runtime+visual+deploy+origin). */
 export interface AppRichSignals {
   build?: BuildSignal;
+  interaction?: InteractionSignal;
   runtime?: RuntimeSignal;
   api?: ApiSignal;
   console?: ConsoleSignal;
@@ -107,6 +111,11 @@ export interface FlowGateResult {
    * should reprovision and retry the step — not treat as a code failure.
    */
   sandboxUnavailable?: boolean;
+  /**
+   * A planned gate could not run because its supporting infrastructure failed.
+   * Callers should retry without charging the product step retry budget.
+   */
+  infrastructureFailure?: boolean;
   /**
    * When the gate replaces the sandbox (e.g. after taking a snapshot), it
    * returns the new Sandbox instance here so the caller can use it.

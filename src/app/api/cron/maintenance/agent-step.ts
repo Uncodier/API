@@ -6,14 +6,37 @@ import { connectOrRecreateRequirementSandbox } from '@/lib/services/sandbox-reco
 import { Sandbox } from '@vercel/sandbox';
 import { getAssistantTools } from '@/app/api/robots/instance/assistant/utils';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
+import { fetchVisualScreenshotDataUrl } from '../shared/visual-screenshot-data';
+import { sandboxIdentity } from '@/lib/services/sandbox-sdk';
+
+const VISUAL_EVIDENCE_MESSAGE =
+  'Visual evidence from the automated QA critic. Inspect this screenshot together with the structured defects in the prompt.';
+
+function withoutVisualEvidenceMessage(messages: any[]): any[] {
+  return messages.filter((message) => {
+    if (message?.role !== 'user' || !Array.isArray(message.content)) return true;
+    return !message.content.some(
+      (part: any) => part?.type === 'text' && part.text === VISUAL_EVIDENCE_MESSAGE,
+    );
+  });
+}
 
 function getMaintenanceTools(
   sandboxTools: any[],
   siteId: string,
   instanceId: string,
   userId: string,
+  requirementId: string,
 ): any[] {
-  const allTools = getAssistantTools(siteId, userId, instanceId, sandboxTools);
+  const allTools = getAssistantTools(
+    siteId,
+    userId,
+    instanceId,
+    sandboxTools,
+    undefined,
+    undefined,
+    requirementId,
+  );
   return allTools;
 }
 
@@ -26,6 +49,7 @@ export async function runMaintenanceAgentStep(params: {
   site_id: string;
   user_id: string;
   initialMessage: string;
+  visualFeedbackScreenshotUrl?: string;
   instanceContext: string;
   git_repo_kind?: 'applications' | 'automation';
   requirementTitle?: string;
@@ -71,21 +95,50 @@ export async function runMaintenanceAgentStep(params: {
 
   // Baseline for file freshness tags: when this maintenance run started.
   const cycleBaselineAt = new Date(params.globalStartTime ?? Date.now()).toISOString();
+  const activeSandboxRef = { current: sandbox };
   const sandboxTools = getSandboxTools(sandbox, reqId, {
     site_id,
     instance_id: instanceId,
     git_repo_kind,
     requirement_type: requirementType,
     cycle_baseline_at: cycleBaselineAt,
-  });
+    activeSandboxRef,
+  }).filter((tool) => tool.name !== 'sandbox_push_checkpoint');
 
-  const fullTools = getMaintenanceTools(sandboxTools, site_id, instanceId, user_id);
+  const fullTools = getMaintenanceTools(
+    sandboxTools,
+    site_id,
+    instanceId,
+    user_id,
+    reqId,
+  );
 
   const MAX_TURNS = 25;
   let turns = 0;
   let isDone = false;
   let result: any;
   let messages: any[] = [{ role: 'user', content: initialMessage }];
+  if (params.visualFeedbackScreenshotUrl) {
+    const image = await fetchVisualScreenshotDataUrl(
+      params.visualFeedbackScreenshotUrl,
+      { requirementId: reqId },
+    );
+    if (image) {
+      messages.push({
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: VISUAL_EVIDENCE_MESSAGE,
+          },
+          {
+            type: 'image_url',
+            image_url: { url: image, detail: 'low' },
+          },
+        ],
+      });
+    }
+  }
 
   const agentModel = process.env.AI_CODE_MODEL || 'gemini-3.1-pro-preview-customtools';
   const globalStartTime = params.globalStartTime ?? Date.now();
@@ -124,9 +177,13 @@ export async function runMaintenanceAgentStep(params: {
       throw rawErr;
     }
     messages = result.messages;
+    if (turns === 1 && params.visualFeedbackScreenshotUrl) {
+      messages = withoutVisualEvidenceMessage(messages);
+    }
     isDone = result.isDone;
   }
 
   console.log(`[MaintenanceStep] Agent finished after ${turns} turn(s) (isDone=${isDone}, timedOut=${timedOut})`);
+  effectiveSandboxId = sandboxIdentity(activeSandboxRef.current);
   return { turns, effectiveSandboxId, timedOut };
 }

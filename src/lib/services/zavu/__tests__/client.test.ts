@@ -1,4 +1,5 @@
 import {
+  activateSenderChannel,
   createSender,
   deleteSender,
   ensureProjectWebhook,
@@ -169,6 +170,25 @@ describe("Zavu client webhook contract", () => {
         })
       );
     });
+  });
+
+  it("activates an email sender channel", async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce(
+      mockJson(200, {
+        sender: { id: "snd/1", channels: ["email"] },
+        channel: "email",
+        activated: true,
+        chargedCents: 0,
+        monthlyCents: 0,
+      })
+    );
+
+    await activateSenderChannel("snd/1", "email");
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "https://api.zavu.dev/v1/senders/snd%2F1/channels/email/activate",
+      expect.objectContaining({ method: "POST" })
+    );
   });
 
   it("deleteSender sends DELETE /senders/:id", async () => {

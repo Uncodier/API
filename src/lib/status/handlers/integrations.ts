@@ -16,7 +16,6 @@ export const integrationsHandler: SystemHealthHandler = {
       whatsapp: {
         configured: envSet('TWILIO_ACCOUNT_SID') || envSet('GEAR_TWILIO_ACCOUNT_SID') || envSet('WHATSAPP_WEBHOOK_VERIFY_TOKEN'),
       },
-      vercel: { webhookSecretSet: envSet('VERCEL_WEBHOOK_SECRET') },
     };
     const configuredCount = Object.values(checks).filter(
       (c) => Object.values(c).some(Boolean),

@@ -260,6 +260,16 @@ export async function updateSender(senderId: string, params: {
   });
 }
 
+export async function activateSenderChannel(
+  senderId: string,
+  channel: "whatsapp" | "telegram" | "instagram" | "messenger" | "email"
+): Promise<any> {
+  return zavuFetch(
+    `/senders/${encodeURIComponent(senderId)}/channels/${channel}/activate`,
+    { method: "POST" }
+  );
+}
+
 export async function deleteSender(senderId: string): Promise<void> {
   await zavuFetch(`/senders/${senderId}`, { method: "DELETE" });
 }

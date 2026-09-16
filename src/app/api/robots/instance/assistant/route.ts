@@ -13,6 +13,7 @@ import {
 import { InstanceAssetsService } from '@/lib/services/robot-instance/InstanceAssetsService';
 import { executeAssistant } from '@/lib/services/robot-instance/assistant-executor';
 import { insertUserActionLog, withRetries } from './user-message-log';
+import { normalizePublishToolOverrides } from './publish-tool-overrides';
 
 // ------------------------------------------------------------------------------------
 // POST /api/robots/instance/assistant
@@ -72,6 +73,10 @@ export async function POST(request: NextRequest) {
       use_sdk_tools,
       system_prompt,
     } = parsedBody;
+    const normalizedToolOverrides = normalizePublishToolOverrides(
+      parsedBody.context,
+      parsedBody.tool_overrides,
+    );
 
     // CASE 1: No instance_id provided - Create new uninstantiated instance (FAST PATH - No Workflow needed for creation)
     if (!providedInstanceId) {
@@ -147,7 +152,7 @@ export async function POST(request: NextRequest) {
         providedNodeId,
         expectedResults,
         parsedBody.context,
-        parsedBody.tool_overrides
+        normalizedToolOverrides
       ]);
 
       // Return the run information. The frontend might need to poll or we stream.
@@ -218,7 +223,7 @@ export async function POST(request: NextRequest) {
     providedNodeId,
     expectedResults,
     parsedBody.context,
-    parsedBody.tool_overrides
+    normalizedToolOverrides
   ]);
 
     // Return stream response compatible with Vercel Workflow result streaming

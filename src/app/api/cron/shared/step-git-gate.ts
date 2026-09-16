@@ -33,6 +33,11 @@ import {
 import { isSandboxGoneError } from '@/lib/services/sandbox-gone-error';
 import { fetchAndLogVercelBuildLog } from '@/lib/services/vercel-build-logs';
 import { runRuntimeAndVisualProbes } from './step-gate-probes';
+import {
+  formatInteractionFailure,
+} from './step-interaction-audit';
+import { applyInteractionBacklogPolicy } from './step-interaction-backlog';
+import { runInteractionAudit } from './step-interaction-runner';
 import type {
   ApiSignal,
   BuildSignal,
@@ -42,6 +47,7 @@ import type {
   RuntimeSignal,
   ScenarioSignal,
   VisualSignal,
+  InteractionSignal,
 } from './step-iteration-signals';
 
 export { MAX_PUSH_RECOVERY_TURNS } from './step-git-prompts';
@@ -153,6 +159,8 @@ export type OriginGateParams = {
   planTitle: string;
   requirementId: string;
   stepOrder: number;
+  backlogItemId?: string | null;
+  interactionBaselineSha?: string | null;
   stepPrompt: string;
   /** Plan step context used to ground visual-critic + iteration signals. */
   stepContext?: {
@@ -184,6 +192,7 @@ export type VercelDeployGateInfo = {
 
 export type GateSignals = {
   build?: BuildSignal;
+  interaction?: InteractionSignal;
   runtime?: RuntimeSignal;
   api?: ApiSignal;
   console?: ConsoleSignal;
@@ -408,6 +417,7 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
   ok: boolean;
   lastResult: any;
   error?: string;
+  infrastructureFailure?: boolean;
   vercelDeploy?: VercelDeployGateInfo;
   signals: GateSignals;
   sandboxUnavailable?: boolean;
@@ -418,6 +428,8 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
     planTitle,
     requirementId,
     stepOrder,
+    backlogItemId,
+    interactionBaselineSha,
     stepPrompt,
     stepContext,
     currentMessages,
@@ -502,10 +514,61 @@ fi`,
     details: { stepOrder },
   });
 
+  try {
+    const scanned = await runInteractionAudit(sandbox, {
+      baselineSha: interactionBaselineSha,
+    });
+    const interaction = await applyInteractionBacklogPolicy({
+      requirementId,
+      backlogItemId,
+      signal: scanned,
+    });
+    signals.interaction = interaction;
+    await logCronInfrastructureEvent(audit, {
+      event: CronInfraEvent.STEP_STATUS,
+      level: interaction.ok ? 'info' : 'warn',
+      message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}interaction audit: ${interaction.summary}`,
+      details: {
+        stepOrder,
+        blocking_count: interaction.blocking_count,
+        deferred_count: interaction.deferred_count,
+        warning_count: interaction.warning_count,
+        findings: interaction.findings.slice(0, 50),
+      },
+    });
+    if (!interaction.ok) {
+      return {
+        ok: false,
+        lastResult,
+        error: formatInteractionFailure(interaction),
+        signals,
+      };
+    }
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(
+      '[StepGitGate] interaction audit unavailable:',
+      message,
+    );
+    await logCronInfrastructureEvent(audit, {
+      event: CronInfraEvent.STEP_STATUS,
+      level: 'warn',
+      message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}interaction audit unavailable`,
+      details: { stepOrder, error: message.slice(0, 1000), infrastructure_failure: true },
+    }).catch(() => undefined);
+    return {
+      ok: false,
+      lastResult,
+      error: `Interaction audit infrastructure unavailable: ${message}`,
+      infrastructureFailure: true,
+      signals,
+    };
+  }
+
   // Runtime probe: starts `next start` inside the sandbox, hits changed pages
   // + API routes, captures server stdout/stderr.
-  // Visual probes are disabled here (shouldRunVisual is false in step-gate-probes.ts)
-  // so this only does a quick HTTP 200 check.
+  // Visual checks are selected inside step-gate-probes.ts only when the diff
+  // touches frontend code; explicit QA runs can still force the full suite.
   const runtimeOutcome = await runRuntimeAndVisualProbes({
     sandbox,
     stepOrder,
@@ -513,6 +576,7 @@ fi`,
     gitRepoKind,
     audit,
     stepContext,
+    changeBaselineSha: interactionBaselineSha,
   });
   if (runtimeOutcome.signals.runtime) signals.runtime = runtimeOutcome.signals.runtime;
   if (runtimeOutcome.signals.api) signals.api = runtimeOutcome.signals.api;
@@ -533,6 +597,7 @@ fi`,
       ok: false,
       lastResult,
       error: runtimeOutcome.error,
+      infrastructureFailure: runtimeOutcome.infrastructureFailure,
       signals,
       ...(gone ? { sandboxUnavailable: true } : {}),
     };

@@ -3,24 +3,28 @@
  * runVisualProbe, sends them to a vision-capable model with a strict JSON
  * schema, and returns a VisualSignal enriched with pass/defects.
  *
- * Provider: Vercel AI Gateway (OpenAI-compatible). Falls back gracefully —
- * when env is missing the function returns pass=true and summary explaining
- * the skip so the gate keeps moving.
+ * Uses the configured AI provider with a dedicated low-cost visual model when
+ * available. Failures are reported as skipped so infrastructure outages do
+ * not consume a product retry.
  */
 
 import type { VisualSignal, VisualDefect } from './step-iteration-signals';
-import { AIAgentExecutor } from '@/lib/custom-automation/ai-agent-executor';
+import { fetchVisualScreenshotDataUrl } from './visual-screenshot-data';
+import { requestVisualCriticCompletion } from './visual-critic-client';
 
 const DEFAULT_TIMEOUT_MS = 45_000;
-const MAX_SCREENSHOTS_PER_CALL = 2; // Reduce from 6 to 2 to avoid Vercel 300s function timeouts when base64 sizes are massive
+const DEFAULT_MAX_SCREENSHOTS = 2;
+const MAX_SCREENSHOTS_PER_CALL = 2;
 
 export type VisualCriticInput = {
   screenshots: Array<{ route: string; viewport: string; url: string }>;
   step: { order: number; title?: string; instructions?: string; expected_output?: string };
   rubric?: string;
   brand_context?: string;
+  requirementId?: string;
   model?: string;
   timeoutMs?: number;
+  maxScreenshots?: number;
 };
 
 export type VisualCriticResult = {
@@ -48,22 +52,75 @@ Severities:
 - minor: nitpicks, polish
 `.trim();
 
+export function resolveVisualCriticModel(
+  requestedModel?: string,
+  env: Record<string, string | undefined> = process.env,
+): string {
+  if (requestedModel?.trim()) return requestedModel.trim();
+  if (env.AI_VISUAL_MODEL?.trim()) return env.AI_VISUAL_MODEL.trim();
+  const provider = (env.AI_PROVIDER || 'gemini').toLowerCase();
+  if (provider === 'gemini') return 'gemini-2.5-flash';
+  if (provider === 'openai') return 'gpt-4o-mini';
+  if (provider === 'azure') {
+    return (
+      env.AI_VISUAL_AZURE_DEPLOYMENT ||
+      env.MICROSOFT_AZURE_OPENAI_DEPLOYMENT ||
+      env.AI_MODEL ||
+      'gpt-4o'
+    );
+  }
+  if (provider === 'xai') {
+    return (
+      env.AI_MODEL ||
+      (env.GOOGLE_CLOUD_PROJECT_ID && !env.XAI_API_KEY
+        ? 'xai/grok-4.6'
+        : 'grok-4.6')
+    );
+  }
+  return 'gemini-2.5-flash';
+}
+
 export async function runVisualCritic(input: VisualCriticInput): Promise<VisualCriticResult> {
   if (!input.screenshots.length) {
     return { pass: true, defects: [], summary: 'no screenshots to evaluate', skipped: 'no_screenshots' };
   }
+  if (!input.requirementId) {
+    return {
+      pass: true,
+      defects: [],
+      summary: 'visual critic requires requirement-scoped screenshots',
+      skipped: 'missing_requirement_context',
+    };
+  }
 
-  const rubric = input.rubric || DEFAULT_RUBRIC;
+  const rubric = (input.rubric || DEFAULT_RUBRIC).slice(0, 4_000);
   const timeout = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const maxScreenshots = Math.max(
+    1,
+    Math.min(6, input.maxScreenshots ?? DEFAULT_MAX_SCREENSHOTS),
+  );
+  const screenshots = input.screenshots.slice(0, maxScreenshots);
+  const resolvedModel = resolveVisualCriticModel(input.model);
   const allDefects: VisualDefect[] = [];
-  let allPass = true;
   const summaries: string[] = [];
   let finalSkipped: string | undefined;
-  let finalModelUsed = input.model || 'unknown';
+  let finalModelUsed = resolvedModel;
+  const abortController = new AbortController();
+  let timedOut = false;
+  const timeoutHandle = setTimeout(() => {
+    timedOut = true;
+    abortController.abort();
+  }, timeout);
 
   // Process in batches of MAX_SCREENSHOTS_PER_CALL
-  for (let i = 0; i < input.screenshots.length; i += MAX_SCREENSHOTS_PER_CALL) {
-    const batch = input.screenshots.slice(i, i + MAX_SCREENSHOTS_PER_CALL);
+  try {
+    for (let i = 0; i < screenshots.length; i += MAX_SCREENSHOTS_PER_CALL) {
+      if (abortController.signal.aborted) {
+        finalSkipped = 'timeout';
+        summaries.push(`Visual critic exceeded its ${timeout}ms total deadline.`);
+        break;
+      }
+    const batch = screenshots.slice(i, i + MAX_SCREENSHOTS_PER_CALL);
     
     const systemPrompt = [
       'You are a senior product designer reviewing the UI of a step committed by a coding agent.',
@@ -81,86 +138,70 @@ export async function runVisualCritic(input: VisualCriticInput): Promise<VisualC
       '  }>',
       '}',
       'Rules: pass=false when there is at least one blocker or two+ majors. Always fill route and viewport from the image metadata header.',
+      'Return at most 3 defects, ordered by severity and impact. Ignore cosmetic nitpicks that do not affect delivery quality.',
       'Rubric:',
       rubric,
     ].join('\n');
 
     const userBlocks: Array<
       | { type: 'text'; text: string }
-      | { type: 'image_url'; image_url: { url: string } }
+      | { type: 'image_url'; image_url: { url: string; detail: 'low' } }
     > = [];
     userBlocks.push({
       type: 'text',
       text: [
-        input.step.order !== undefined ? `Step ${input.step.order}${input.step.title ? `: ${input.step.title}` : ''}` : (input.step.title ? `Step: ${input.step.title}` : 'Step evaluation'),
+        input.step.order !== undefined ? `Step ${input.step.order}${input.step.title ? `: ${input.step.title.slice(0, 200)}` : ''}` : (input.step.title ? `Step: ${input.step.title.slice(0, 200)}` : 'Step evaluation'),
         input.step.instructions ? `Instructions: ${input.step.instructions.slice(0, 600)}` : '',
         input.step.expected_output ? `Expected output: ${input.step.expected_output.slice(0, 400)}` : '',
         input.brand_context ? `Brand context: ${input.brand_context.slice(0, 400)}` : '',
         '',
-        `Screenshots follow (Batch ${Math.floor(i / MAX_SCREENSHOTS_PER_CALL) + 1} of ${Math.ceil(input.screenshots.length / MAX_SCREENSHOTS_PER_CALL)}). Each is preceded by its route + viewport metadata.`,
+        `Screenshots follow (Batch ${Math.floor(i / MAX_SCREENSHOTS_PER_CALL) + 1} of ${Math.ceil(screenshots.length / MAX_SCREENSHOTS_PER_CALL)}). Each is preceded by its route + viewport metadata.`,
       ]
         .filter(Boolean)
         .join('\n'),
     });
 
+    let imagesAdded = 0;
     for (const s of batch) {
       userBlocks.push({ type: 'text', text: `route="${s.route}" viewport="${s.viewport}"` });
-      
-      try {
-        const isSupabaseStorage = s.url.includes('/storage/v1/object/public/') || s.url.includes('/storage/v1/object/authenticated/');
-        const fetchUrl = s.url.includes('/storage/v1/object/public/') 
-            ? s.url.replace('/storage/v1/object/public/', '/storage/v1/object/authenticated/') 
-            : s.url;
-        
-        const supabaseKey = 
-          process.env.APPS_SUPABASE_SERVICE_KEY || 
-          process.env.REPOSITORY_SUPABASE_SERVICE_KEY || 
-          process.env.REPOSITORY_SUPABASE_ANON_KEY || 
-          process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 
-          '';
-
-        const headers: Record<string, string> = {};
-        // Use Authorization bearer even if it's "public" if we have the key, just to be safe with Supabase
-        if (isSupabaseStorage && supabaseKey) {
-          headers['Authorization'] = `Bearer ${supabaseKey}`;
-          headers['apikey'] = supabaseKey;
-        }
-
-        const imgRes = await fetch(fetchUrl, { headers });
-        if (imgRes.ok) {
-          const arrayBuffer = await imgRes.arrayBuffer();
-          const base64 = Buffer.from(arrayBuffer).toString('base64');
-          const contentType = imgRes.headers.get('content-type') || 'image/png';
-          userBlocks.push({ type: 'image_url', image_url: { url: `data:${contentType};base64,${base64}` } });
-        } else {
-          console.warn(`[VisualCritic] Failed to fetch screenshot for base64 conversion: ${fetchUrl} - ${imgRes.status}`);
-          // DO NOT fallback to URL for Gemini, it will throw 400 Bad Request if the URL is unreachable or protected
-        }
-      } catch (e) {
-        console.warn(`[VisualCritic] Error fetching screenshot for base64 conversion: ${s.url}`, e);
-        // DO NOT fallback to URL for Gemini
+      const dataUrl = await fetchVisualScreenshotDataUrl(s.url, {
+        requirementId: input.requirementId,
+        signal: abortController.signal,
+      });
+      if (dataUrl) {
+        userBlocks.push({
+          type: 'image_url',
+          image_url: { url: dataUrl, detail: 'low' },
+        });
+        imagesAdded++;
+      } else {
+        console.warn(`[VisualCritic] Screenshot unavailable: ${s.route} (${s.viewport})`);
       }
     }
 
+    if (imagesAdded !== batch.length) {
+      finalSkipped =
+        timedOut
+          ? 'timeout'
+          : imagesAdded === 0
+            ? 'screenshots_unavailable'
+            : 'screenshots_incomplete';
+      summaries.push(
+        `Batch ${Math.floor(i / MAX_SCREENSHOTS_PER_CALL) + 1} loaded ${imagesAdded}/${batch.length} screenshots.`,
+      );
+      if (timedOut) break;
+      continue;
+    }
+
     let rawText = '';
-    
     try {
-      const executor = new AIAgentExecutor({ model: input.model });
-      finalModelUsed = executor.getModel();
-      
-      const actPromise = executor.act({
-        tools: [],
+      const response = await requestVisualCriticCompletion({
+        model: resolvedModel,
         system: systemPrompt,
-        messages: [{ role: 'user', content: userBlocks as any }],
-        temperature: 0.1,
-        maxIterations: 1, // enforce one turn for pure QA
+        content: userBlocks,
+        signal: abortController.signal,
       });
-
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error(`Timeout of ${timeout}ms exceeded`)), timeout);
-      });
-
-      const response = await Promise.race([actPromise, timeoutPromise]);
+      finalModelUsed = response.model;
       rawText = response.text;
 
       const parsed = safeParseVerdict(rawText);
@@ -170,27 +211,36 @@ export async function runVisualCritic(input: VisualCriticInput): Promise<VisualC
         continue;
       }
 
-      if (!parsed.pass) allPass = false;
       allDefects.push(...parsed.defects);
       if (parsed.summary) summaries.push(parsed.summary);
 
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = timedOut
+        ? `Timeout of ${timeout}ms exceeded`
+        : e instanceof Error
+          ? e.message
+          : String(e);
       finalSkipped = 'request_failed';
       summaries.push(`Batch ${Math.floor(i / MAX_SCREENSHOTS_PER_CALL) + 1} failed: ${msg.slice(0, 100)}`);
+      if (timedOut) break;
     }
+    }
+  } finally {
+    clearTimeout(timeoutHandle);
   }
 
-  // If any batch failed to parse or request failed, but we have some results, we still return them
-  // but we might want to flag the summary
+  // Any incomplete batch marks the critic unavailable. The caller retries the
+  // infrastructure instead of accepting a partial visual review.
   const finalSummary = summaries.join(' | ').slice(0, 400) || (finalSkipped ? `visual critic skipped — ${finalSkipped}` : 'No summary provided');
+  const blockers = allDefects.filter((defect) => defect.severity === 'blocker').length;
+  const majors = allDefects.filter((defect) => defect.severity === 'major').length;
 
   return {
-    pass: allPass,
+    pass: blockers === 0 && majors < 2,
     defects: allDefects,
     summary: finalSummary,
     model_used: finalModelUsed,
-    skipped: finalSkipped && allDefects.length === 0 ? finalSkipped : undefined, // Only consider totally skipped if NO defects were parsed at all
+    skipped: finalSkipped,
   };
 }
 
@@ -265,12 +315,11 @@ export function mergeCriticIntoVisualSignal(
   critic: VisualCriticResult,
 ): VisualSignal {
   return {
-    ok: signal.ok,
-    pass: critic.pass,
+    ...signal,
+    ok: signal.ok && !verdictBlocksGate(critic),
+    pass: !verdictBlocksGate(critic),
     summary: critic.summary,
-    error: signal.error,
     defects: critic.defects,
-    screenshots: signal.screenshots,
   };
 }
 
@@ -279,7 +328,6 @@ export function mergeCriticIntoVisualSignal(
  */
 export function verdictBlocksGate(critic: VisualCriticResult): boolean {
   if (critic.skipped) return false;
-  if (!critic.pass) return true;
   const blockers = critic.defects.filter((d) => d.severity === 'blocker').length;
   const majors = critic.defects.filter((d) => d.severity === 'major').length;
   return blockers > 0 || majors >= 2;

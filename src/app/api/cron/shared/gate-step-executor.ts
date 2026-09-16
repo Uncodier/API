@@ -6,6 +6,7 @@ import { CronInfraEvent, logCronInfrastructureEvent, type CronAuditContext } fro
 import { connectOrRecreateRequirementSandbox } from '@/lib/services/sandbox-recovery';
 import type { RequirementKind } from '@/lib/services/requirement-flows';
 import { SandboxService } from '@/lib/services/sandbox-service';
+import { sandboxIdentity } from '@/lib/services/sandbox-sdk';
 
 export interface GateStepResult {
   ok: boolean;
@@ -13,6 +14,7 @@ export interface GateStepResult {
   error?: string;
   gateErrorExcerpt?: string;
   effectiveSandboxId: string;
+  infrastructureFailure?: boolean;
 }
 
 export async function runGateStep(params: {
@@ -72,7 +74,16 @@ export async function runGateStep(params: {
     });
 
     if (gateRes.sandboxReplacement) {
-      effectiveSandboxId = gateRes.sandboxReplacement.sandboxId;
+      effectiveSandboxId = sandboxIdentity(gateRes.sandboxReplacement);
+    }
+    if (!gateRes.ok && gateRes.infrastructureFailure) {
+      return {
+        ok: false,
+        passed: false,
+        error: gateRes.error || 'Gate infrastructure unavailable',
+        effectiveSandboxId,
+        infrastructureFailure: true,
+      };
     }
 
     if (gateRes.ok) {

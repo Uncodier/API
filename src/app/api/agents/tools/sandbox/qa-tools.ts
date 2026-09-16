@@ -349,6 +349,6 @@ export function getQaSandboxTools(sandbox: Sandbox, requirementId?: string, tool
     sandboxTailServerLogTool(sandbox, toolsCtx),
     sandboxTailApiLogTool(sandbox, toolsCtx),
     sandboxCaptureScreenshotsTool(sandbox, requirementId, toolsCtx),
-    sandboxVisualCritiqueTool(toolsCtx),
+    sandboxVisualCritiqueTool(requirementId, toolsCtx),
   ];
 }

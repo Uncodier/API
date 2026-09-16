@@ -31,24 +31,26 @@ export function sandboxCaptureScreenshotsTool(sandbox: Sandbox, requirementId?: 
   return {
     name: 'sandbox_capture_screenshots',
     description:
-      'Boot `next start` inside the sandbox and use puppeteer (on the host) against the public tunnel URL to capture full-page screenshots per route × viewport. Also records browser console entries, page errors, and failed network requests per page. Screenshots are uploaded to Supabase Storage and their public URLs are returned. Use this to SEE what the page actually renders before ending a step, or to feed sandbox_visual_critique.',
+      'Boot `next start` inside the sandbox and use puppeteer against the public tunnel URL to capture viewport screenshots per route × viewport. Also records browser console entries, page errors, and failed network requests per page. Screenshots are stored privately and signed locators are returned. Use this to SEE what the page actually renders before ending a step, or to feed sandbox_visual_critique.',
     parameters: {
       type: 'object',
       properties: {
         routes: {
           type: 'array',
-          items: { type: 'string' },
-          description: 'Absolute page paths to capture (e.g. ["/", "/pricing"]). Defaults to ["/"]. Capped at 12.',
+          maxItems: 6,
+          items: { type: 'string', maxLength: 300 },
+          description: 'Absolute page paths to capture (e.g. ["/", "/pricing"]). Defaults to ["/"]. Route × viewport count must not exceed 6.',
         },
         viewports: {
           type: 'array',
+          maxItems: 6,
           items: {
             type: 'object',
             properties: {
-              name: { type: 'string', description: 'Label used in output and storage path (e.g. "mobile", "desktop").' },
-              width: { type: 'number' },
-              height: { type: 'number' },
-              device_scale_factor: { type: 'number' },
+              name: { type: 'string', maxLength: 40, description: 'Label used in output and storage path (e.g. "mobile", "desktop").' },
+              width: { type: 'number', minimum: 320, maximum: 1920 },
+              height: { type: 'number', minimum: 320, maximum: 1200 },
+              device_scale_factor: { type: 'number', minimum: 1, maximum: 2 },
               is_mobile: { type: 'boolean' },
             },
             required: ['name', 'width', 'height'],
@@ -61,10 +63,14 @@ export function sandboxCaptureScreenshotsTool(sandbox: Sandbox, requirementId?: 
         },
         boot_timeout_ms: {
           type: 'number',
+          minimum: 5_000,
+          maximum: 60_000,
           description: 'Max time (ms) to wait for `next start` to boot before capturing. Defaults to 25000.',
         },
         page_timeout_ms: {
           type: 'number',
+          minimum: 1_000,
+          maximum: 30_000,
           description: 'Per-page navigation timeout (ms). Defaults to 15000.',
         },
       },
@@ -82,6 +88,12 @@ export function sandboxCaptureScreenshotsTool(sandbox: Sandbox, requirementId?: 
       boot_timeout_ms?: number;
       page_timeout_ms?: number;
     }) => {
+      if (!requirementId) {
+        return {
+          ok: false,
+          error: 'A requirement context is required for scoped screenshot storage.',
+        };
+      }
       const creditCheck = await deductSandboxToolCredits(toolsCtx, 'sandbox_capture_screenshots', args);
       if (!creditCheck.success) {
         return { ok: false, error: creditCheck.error };
@@ -105,12 +117,22 @@ export function sandboxCaptureScreenshotsTool(sandbox: Sandbox, requirementId?: 
               isMobile: v.is_mobile,
             }))
         : undefined;
+      const screenshotCount = routes.length * (viewports?.length || 2);
+      if (screenshotCount > 6) {
+        return {
+          ok: false,
+          error: `Requested ${screenshotCount} screenshots; the per-call limit is 6.`,
+        };
+      }
 
       const rt = await runRuntimeProbe({
         sandbox: s0,
         pageRoutes: [routes[0]],
         apiRoutes: [],
-        durationMs: args.boot_timeout_ms ?? 25_000,
+        durationMs: Math.max(
+          5_000,
+          Math.min(60_000, args.boot_timeout_ms ?? 25_000),
+        ),
         port: PROBE_PORT,
         keepServerAlive: true,
       });
@@ -136,6 +158,10 @@ export function sandboxCaptureScreenshotsTool(sandbox: Sandbox, requirementId?: 
           requirementId,
           stepOrder: args.step_order ?? 0,
           pageTimeoutMs: args.page_timeout_ms,
+          fullPage: false,
+          imageType: 'jpeg',
+          imageQuality: 60,
+          hydrationWaitMs: 500,
         });
         const errorEntries = visual.console.entries.filter((e) => e.level === 'error');
         const warnEntries = visual.console.entries.filter((e) => e.level === 'warn');
@@ -146,12 +172,14 @@ export function sandboxCaptureScreenshotsTool(sandbox: Sandbox, requirementId?: 
           duration_ms: visual.duration_ms,
           error: visual.error,
           screenshots: visual.screenshots,
+          auth_redirects: visual.auth_redirects,
           console_ok: visual.console.ok,
           console_errors: errorEntries.slice(0, 40),
           console_errors_truncated: errorEntries.length > 40,
           console_warnings: warnEntries.slice(0, 20),
           page_errors: visual.console.page_errors.slice(0, 20),
           failed_requests: visual.console.failed_requests.slice(0, 30),
+          telemetry_dropped: visual.console.telemetry_dropped,
         };
       } finally {
         await stopProbeServer(s0, rt.port);
@@ -160,7 +188,10 @@ export function sandboxCaptureScreenshotsTool(sandbox: Sandbox, requirementId?: 
   };
 }
 
-export function sandboxVisualCritiqueTool(toolsCtx?: SandboxToolsContext) {
+export function sandboxVisualCritiqueTool(
+  requirementId?: string,
+  toolsCtx?: SandboxToolsContext,
+) {
   return {
     name: 'sandbox_visual_critique',
     description:
@@ -170,14 +201,16 @@ export function sandboxVisualCritiqueTool(toolsCtx?: SandboxToolsContext) {
       properties: {
         screenshots: {
           type: 'array',
+          maxItems: 6,
           items: {
             type: 'object',
             properties: {
-              route: { type: 'string' },
-              viewport: { type: 'string' },
+              route: { type: 'string', maxLength: 300 },
+              viewport: { type: 'string', maxLength: 80 },
               url: {
                 type: 'string',
-                description: 'Public URL of the screenshot (as returned by sandbox_capture_screenshots).',
+                maxLength: 2_000,
+                description: 'Screenshot storage locator returned by sandbox_capture_screenshots.',
               },
             },
             required: ['route', 'viewport', 'url'],
@@ -188,22 +221,25 @@ export function sandboxVisualCritiqueTool(toolsCtx?: SandboxToolsContext) {
           type: 'object',
           properties: {
             order: { type: 'number', description: 'Step index/order for context.' },
-            title: { type: 'string' },
+            title: { type: 'string', maxLength: 200 },
             instructions: {
               type: 'string',
+              maxLength: 2_000,
               description: 'Short paraphrase of step instructions (first ~600 chars used).',
             },
-            expected_output: { type: 'string' },
+            expected_output: { type: 'string', maxLength: 2_000 },
           },
           required: ['order'],
           description: 'Step context so the critic can evaluate against the actual intent.',
         },
         rubric: {
           type: 'string',
+          maxLength: 4_000,
           description: 'Optional override of the default design-quality rubric.',
         },
         brand_context: {
           type: 'string',
+          maxLength: 2_000,
           description: 'Optional brand guidelines, tone, or palette hints.',
         },
       },
@@ -215,6 +251,12 @@ export function sandboxVisualCritiqueTool(toolsCtx?: SandboxToolsContext) {
       rubric?: string;
       brand_context?: string;
     }) => {
+      if (!requirementId) {
+        return {
+          ok: false,
+          error: 'A requirement context is required for scoped visual evidence.',
+        };
+      }
       const creditCheck = await deductSandboxToolCredits(toolsCtx, 'sandbox_visual_critique', { step: args.step });
       if (!creditCheck.success) {
         return { ok: false, error: creditCheck.error };
@@ -239,9 +281,11 @@ export function sandboxVisualCritiqueTool(toolsCtx?: SandboxToolsContext) {
         step: args.step,
         rubric: args.rubric,
         brand_context: args.brand_context,
+        requirementId,
+        maxScreenshots: 6,
       });
       return {
-        ok: true,
+        ok: !critic.skipped,
         pass: critic.pass,
         summary: critic.summary,
         defects: critic.defects,
