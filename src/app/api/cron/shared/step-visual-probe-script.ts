@@ -1,5 +1,5 @@
 import type { VisualProbeViewport } from './step-visual-probe';
-import { HARNESS_TRACKING_SCRIPT_URL } from './step-visual-telemetry';
+import { HARNESS_TRACKING_SCRIPT_URL } from './tracking-script-contract';
 
 export interface VisualProbeScriptParams {
   port: number;
@@ -64,6 +64,7 @@ const pageErrors = [];
 const failedRequests = [];
 const screenshots = [];
 const authRedirects = [];
+const harnessTrackingScopes = [];
 const telemetryDropped = { console: 0, pageErrors: 0, failedRequests: 0 };
 
 fs.mkdirSync(CAPTURE_DIRECTORY, { recursive: true });
@@ -81,12 +82,6 @@ function pushBounded(collection, value, key) {
   } else {
     telemetryDropped[key]++;
   }
-}
-
-function isHarnessTrackingTelemetry(...values) {
-  return values.some(value =>
-    typeof value === 'string' && value.includes(HARNESS_TRACKING_SCRIPT_URL)
-  );
 }
 
 function telemetryCheckpoint() {
@@ -119,18 +114,28 @@ function normalizedPathname(url) {
   return normalizedLocation(url).pathname;
 }
 
-function isAuthRedirect(requestedRoute, finalUrl) {
+function describeAuthRedirect(requestedRoute, finalUrl) {
   const requested = normalizedLocation(requestedRoute);
   const final = normalizedLocation(finalUrl);
   if (
     requested.origin !== LOCAL_ORIGIN ||
-    final.origin !== LOCAL_ORIGIN ||
-    requested.pathname === final.pathname ||
-    !PROTECTED_ROUTES.has(requested.pathname)
+    (
+      final.origin === LOCAL_ORIGIN &&
+      requested.pathname === final.pathname
+    ) ||
+    !/^\\/(?:auth|login|log-in|signin|sign-in)(?:\\/|$)/i.test(final.pathname)
   ) {
-    return false;
+    return null;
   }
-  return /^\\/(?:auth|login|log-in|signin|sign-in)(?:\\/|$)/i.test(final.pathname);
+  return {
+    redirectedTo:
+      final.origin === LOCAL_ORIGIN
+        ? final.pathname
+        : \`\${final.origin}\${final.pathname}\`,
+    expected:
+      final.origin === LOCAL_ORIGIN &&
+      PROTECTED_ROUTES.has(requested.pathname),
+  };
 }
 
 async function run() {
@@ -174,7 +179,6 @@ async function run() {
           const type = msg.type();
           const levelMap = { log: 'log', info: 'info', warn: 'warn', warning: 'warn', error: 'error', debug: 'debug', verbose: 'debug' };
           const loc = msg.location();
-          if (isHarnessTrackingTelemetry(loc?.url, msg.text())) return;
           pushBounded(consoleEntries, {
             level: levelMap[type] || 'log',
             text: msg.text().slice(0, 600),
@@ -185,7 +189,6 @@ async function run() {
         });
 
         page.on('pageerror', (err) => {
-          if (isHarnessTrackingTelemetry(err.message, err.stack)) return;
           pushBounded(pageErrors, {
             message: err.message.slice(0, 400),
             stack_tail: err.stack ? err.stack.split('\\n').slice(-3).join('\\n').slice(0, 400) : undefined,
@@ -195,7 +198,6 @@ async function run() {
         });
 
         page.on('requestfailed', (req) => {
-          if (isHarnessTrackingTelemetry(req.url())) return;
           pushBounded(failedRequests, {
             url: req.url().slice(0, 300),
             failure: req.failure()?.errorText,
@@ -206,7 +208,6 @@ async function run() {
         });
 
         page.on('response', (res) => {
-          if (isHarnessTrackingTelemetry(res.url())) return;
           if (res.status() >= 400) {
             pushBounded(failedRequests, {
               url: res.url().slice(0, 300),
@@ -252,14 +253,36 @@ async function run() {
         }
 
         await new Promise(r => setTimeout(r, HYDRATION_WAIT_MS));
+        const hasHarnessTrackingScript = await page.evaluate((expectedSrc) => {
+          return Array.from(
+            document.querySelectorAll('script[data-uncodie-harness="tracking"]')
+          ).some(script => script.src === expectedSrc);
+        }, HARNESS_TRACKING_SCRIPT_URL).catch(() => false);
+        if (hasHarnessTrackingScript) {
+          harnessTrackingScopes.push({
+            route: safeRoute,
+            viewport: viewport.name,
+          });
+        }
         const finalLocation = normalizedLocation(page.url());
         const finalRoute = finalLocation.pathname;
-        if (isAuthRedirect(safeRoute, page.url())) {
+        const authRedirect = describeAuthRedirect(safeRoute, page.url());
+        if (authRedirect) {
           authRedirects.push({
             route: safeRoute,
             viewport: viewport.name,
-            redirected_to: finalRoute,
+            redirected_to: authRedirect.redirectedTo,
+            expected: authRedirect.expected,
           });
+          if (!authRedirect.expected) {
+            pushBounded(failedRequests, {
+              url: target,
+              failure: \`navigation unexpectedly redirected to authentication at \${authRedirect.redirectedTo}\`,
+              resource_type: 'document',
+              route: safeRoute,
+              viewport: viewport.name,
+            }, 'failedRequests');
+          }
           continue;
         }
         if (
@@ -343,6 +366,7 @@ async function run() {
     console.log(JSON.stringify({
       screenshots,
       authRedirects,
+      harnessTrackingScopes,
       consoleEntries,
       pageErrors,
       failedRequests,

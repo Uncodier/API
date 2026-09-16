@@ -35,7 +35,11 @@ function flattenAppSignals(rich: GateSignals): FlowGateSignal[] {
     out.push({ name: 'console', ok: !!rich.console.ok, detail: errors > 0 ? `${errors} error(s)` : undefined });
   }
   if (rich.visual) {
-    out.push({ name: 'visual', ok: !!rich.visual.ok, detail: rich.visual.summary });
+    out.push({
+      name: 'visual',
+      ok: !!rich.visual.ok && !!rich.visual.pass,
+      detail: rich.visual.summary,
+    });
   }
   if (rich.scenarios) {
     out.push({ name: 'scenarios', ok: !!rich.scenarios.ok, detail: rich.scenarios.scenarios ? `${rich.scenarios.scenarios.length} scenario(s)` : undefined });

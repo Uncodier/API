@@ -8,6 +8,11 @@ import {
   logCronInfrastructureEvent,
   type CronAuditContext,
 } from '@/lib/services/cron-audit-log';
+import {
+  buildHarnessTrackingScriptTag,
+  buildLegacyTrackingScriptTag,
+  HARNESS_TRACKING_SCRIPT_URL,
+} from './tracking-script-contract';
 
 export interface ProvisionTrackingScriptStepInput {
   sandboxId: string;
@@ -58,18 +63,43 @@ export async function provisionTrackingScriptStep(
       cmd: 'sh',
       args: [
         '-c',
-        `grep -q 'files.uncodie.com/tracking.min.js' "${cwd}/${layoutPath}" && echo "YES" || echo "NO"`,
+        `grep -q '${HARNESS_TRACKING_SCRIPT_URL}' "${cwd}/${layoutPath}" && echo "YES" || echo "NO"`,
       ],
     });
     const hasScript = (await hasScriptRes.stdout()).toString().trim();
     
     if (hasScript === 'YES') {
+      const legacyTag = buildLegacyTrackingScriptTag(siteId);
+      const markedTag = buildHarnessTrackingScriptTag(siteId);
+      const upgradeRes = await sandbox.runCommand({
+        cmd: 'node',
+        args: [
+          '-e',
+          [
+            "const fs=require('fs');",
+            'const [path, legacyTag, markedTag] = process.argv.slice(1);',
+            "const source=fs.readFileSync(path,'utf8');",
+            "if(source.includes(markedTag)){process.stdout.write('MARKED');process.exit(0);}",
+            "if(!source.includes(legacyTag)){process.stdout.write('UNOWNED');process.exit(0);}",
+            "fs.writeFileSync(path,source.replace(legacyTag,markedTag));",
+            "process.stdout.write('UPDATED');",
+          ].join(''),
+          `${cwd}/${layoutPath}`,
+          legacyTag,
+          markedTag,
+        ],
+      });
+      const upgradeStatus = (await upgradeRes.stdout()).trim();
+      if (upgradeRes.exitCode === 0 && upgradeStatus === 'UPDATED') {
+        console.log('[TrackingScript] Added harness ownership marker to legacy injection.');
+        return { injected: true };
+      }
       console.log('[TrackingScript] Tracking script already present; skipping.');
       return { injected: false };
     }
 
     // Inject the script
-    const scriptTag = `<script src="https://files.uncodie.com/tracking.min.js" data-site-id="${siteId}"></script>`;
+    const scriptTag = buildHarnessTrackingScriptTag(siteId);
     // Note: use sed without -i '' because Linux (Vercel Sandbox) sed -i behaves differently than macOS sed -i ''
     // A safer portable way is to write to a temp file and mv it back
     const injectRes = await sandbox.runCommand({

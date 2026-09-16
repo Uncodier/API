@@ -45,6 +45,7 @@ const CreateInstancePlanSchema = z.object({
     role: z.string().optional(),
     skill: z.string().optional(),
     test_command: z.string().optional(),
+    protected_routes: z.preprocess(parseIfString, z.array(z.string())).optional(),
     /** Free-form metadata. The orchestrator MUST set
      * `metadata.backlog_item_id` so the post-gate Judge can attribute the
      * step to a backlog item. When missing, the server auto-binds it to
@@ -199,6 +200,9 @@ export async function createInstancePlanCore(params: any) {
       const stepMetadata = {
         ...((step as any).metadata ?? {}),
         ...(resolvedItemId ? { backlog_item_id: resolvedItemId } : {}),
+        ...(step.protected_routes?.length
+          ? { protected_routes: step.protected_routes }
+          : {}),
       };
       if (!explicitItemId && resolvedItemId) {
         console.log(`[CreateInstancePlan] step #${index + 1} "${step.title}" auto-bound to backlog_item_id=${resolvedItemId}`);

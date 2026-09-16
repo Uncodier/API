@@ -20,6 +20,7 @@ export async function runGateProbesStep(params: {
     instructions?: string;
     expected_output?: string;
     brand_context?: string;
+    protected_routes?: string[];
   };
   instanceType: string;
   title: string;

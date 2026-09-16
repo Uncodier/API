@@ -1,6 +1,7 @@
 import {
   buildGateErrorFeedback,
   captureInteractionBaseline,
+  getDeclaredProtectedRoutes,
   getStepTerminalRequest,
   hasStepCompletionRequest,
   withExecuteStepNoop,
@@ -8,6 +9,14 @@ import {
 import { extractVisualFeedbackScreenshotUrl } from '../step-visual-feedback';
 
 describe('single-turn interaction helpers', () => {
+  it('reads declared protected routes from plan step metadata', () => {
+    expect(getDeclaredProtectedRoutes({
+      metadata: {
+        protected_routes: ['/dashboard/orders', 42],
+      },
+    })).toEqual(['/dashboard/orders']);
+  });
+
   it('reuses the persisted step baseline without reading git', async () => {
     const sandbox = { runCommand: jest.fn() };
     const sha = 'a'.repeat(40);

@@ -93,8 +93,20 @@ export function extractPageRoutesFromStepContext(
   return Array.from(routes);
 }
 
-export function inferProtectedVisualRoutes(routes: string[]): string[] {
-  return routes.filter((route) => PROTECTED_ROUTE_PREFIX.test(route));
+export function resolveProtectedVisualRoutes(
+  routes: string[],
+  declaredRoutes: string[] = [],
+): string[] {
+  const normalizedDeclared = new Set(
+    declaredRoutes
+      .map(normalizePageRoute)
+      .filter((route): route is string => !!route),
+  );
+  return routes.filter(
+    (route) =>
+      normalizedDeclared.has(route) ||
+      PROTECTED_ROUTE_PREFIX.test(route),
+  );
 }
 
 export function buildVisualProbePlan(input: BuildVisualProbePlanInput): VisualProbePlan {

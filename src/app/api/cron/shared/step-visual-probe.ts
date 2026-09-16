@@ -22,7 +22,10 @@ import {
   sanitizeTelemetryText,
   sanitizeTelemetryUrl,
 } from './step-telemetry-sanitize';
-import { filterHarnessOwnedTelemetry } from './step-visual-telemetry';
+import {
+  filterHarnessOwnedTelemetry,
+  type HarnessTelemetryScope,
+} from './step-visual-telemetry';
 
 export type VisualProbeViewport = {
   name: 'mobile' | 'desktop' | string;
@@ -73,6 +76,7 @@ export type VisualProbeResult = {
     route: string;
     viewport: string;
     redirected_to: string;
+    expected?: boolean;
   }>;
   error?: string;
 };
@@ -236,6 +240,7 @@ export async function runVisualProbe(params: VisualProbeParams): Promise<VisualP
   let pageErrors: ConsoleSignal['page_errors'] = [];
   let failedRequests: ConsoleSignal['failed_requests'] = [];
   let telemetryDropped: ConsoleSignal['telemetry_dropped'];
+  let harnessTrackingScopes: HarnessTelemetryScope[] = [];
   let screenshots: VisualProbeScreenshot[] = [];
   let authRedirects: VisualProbeResult['auth_redirects'] = [];
   let scriptStderr = '';
@@ -275,6 +280,7 @@ export async function runVisualProbe(params: VisualProbeParams): Promise<VisualP
     failedRequests = parsed.failedRequests || [];
     authRedirects = parsed.authRedirects || [];
     telemetryDropped = parsed.telemetryDropped;
+    harnessTrackingScopes = parsed.harnessTrackingScopes || [];
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     const fullError = `visual probe crashed: ${message}\nStderr: ${scriptStderr}`;
@@ -289,6 +295,7 @@ export async function runVisualProbe(params: VisualProbeParams): Promise<VisualP
         pageErrors,
         failedRequests,
         telemetryDropped,
+        harnessTrackingScopes,
       ),
     );
   } finally {
@@ -301,6 +308,7 @@ export async function runVisualProbe(params: VisualProbeParams): Promise<VisualP
     pageErrors,
     failedRequests,
     telemetryDropped,
+    harnessTrackingScopes,
   );
   const expectedScreenshots = pageRoutes.length * viewports.length;
   const completeCapture =
@@ -309,6 +317,9 @@ export async function runVisualProbe(params: VisualProbeParams): Promise<VisualP
     telemetryDropped,
   ).some((count) => count > 0);
   const evidenceComplete = completeCapture && !telemetryTruncated;
+  const expectedAuthRedirects = authRedirects.filter(
+    (redirect) => redirect.expected !== false,
+  ).length;
   const error = !completeCapture
     ? `${screenshots.length}/${expectedScreenshots} screenshots captured. Stderr: ${scriptStderr}`
     : telemetryTruncated
@@ -317,8 +328,8 @@ export async function runVisualProbe(params: VisualProbeParams): Promise<VisualP
   const visualRaw: VisualSignal = {
     ok: evidenceComplete,
     pass: evidenceComplete && consoleSignal.ok,
-    summary: authRedirects.length
-      ? `${authRedirects.length} protected route capture(s) skipped after an authentication redirect.`
+    summary: expectedAuthRedirects
+      ? `${expectedAuthRedirects} protected route capture(s) skipped after an authentication redirect.`
       : undefined,
     error,
     defects: [],
@@ -348,11 +359,13 @@ function buildConsoleSignal(
   pageErrors: ConsoleSignal['page_errors'],
   failedRequests: ConsoleSignal['failed_requests'],
   telemetryDropped?: ConsoleSignal['telemetry_dropped'],
+  harnessTrackingScopes: HarnessTelemetryScope[] = [],
 ): ConsoleSignal {
   const filtered = filterHarnessOwnedTelemetry({
     entries,
     pageErrors,
     failedRequests,
+    ownedScopes: harnessTrackingScopes,
   });
   const safeEntries = filtered.entries.map((entry) => ({
     ...entry,

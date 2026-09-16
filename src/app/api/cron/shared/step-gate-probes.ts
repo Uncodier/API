@@ -48,7 +48,7 @@ import { sanitizeRuntimeLog } from './runtime-log-context';
 import {
   buildVisualProbePlan,
   formatVisualGateFeedback,
-  inferProtectedVisualRoutes,
+  resolveProtectedVisualRoutes,
 } from './step-visual-feedback';
 
 export type ProbeSignals = {
@@ -73,6 +73,7 @@ export async function runRuntimeAndVisualProbes(params: {
     instructions?: string;
     expected_output?: string;
     brand_context?: string;
+    protected_routes?: string[];
   };
 }): Promise<{
   ok: boolean;
@@ -259,7 +260,10 @@ export async function runRuntimeAndVisualProbes(params: {
         imageQuality: 60,
         hydrationWaitMs: 500,
         pageTimeoutMs: 7_500,
-        protectedRoutes: inferProtectedVisualRoutes(visualPlan.routes),
+        protectedRoutes: resolveProtectedVisualRoutes(
+          visualPlan.routes,
+          stepContext?.protected_routes,
+        ),
       });
       out.console = visual.console;
       out.visual = visual.visual_raw;

@@ -40,6 +40,7 @@ const UpdateInstancePlanSchema = z.object({
     role: z.string().optional(),
     skill: z.string().optional(),
     test_command: z.string().optional(),
+    protected_routes: z.preprocess(parseIfString, z.array(z.string())).optional(),
     /** Set when sandbox_push_checkpoint was invoked during cron executor runs */
     checkpoint_tool_invoked_at: z.string().optional().nullable(),
     checkpoint_tool_calls: z.number().int().optional(),

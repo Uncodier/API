@@ -11,11 +11,15 @@ describe('visual telemetry filtering', () => {
           level: 'error',
           text: 'Failed to load resource',
           source: `${HARNESS_TRACKING_SCRIPT_URL}:0`,
+          route: '/dashboard',
+          viewport: 'desktop',
         },
         {
           level: 'error',
           text: 'Product crashed',
           source: 'http://localhost/app.js:10',
+          route: '/dashboard',
+          viewport: 'desktop',
         },
       ],
       pageErrors: [],
@@ -24,13 +28,18 @@ describe('visual telemetry filtering', () => {
           url: HARNESS_TRACKING_SCRIPT_URL,
           failure: 'net::ERR_NAME_NOT_RESOLVED',
           resource_type: 'script',
+          route: '/dashboard',
+          viewport: 'desktop',
         },
         {
           url: 'https://api.example.invalid/data',
           failure: 'net::ERR_FAILED',
           resource_type: 'fetch',
+          route: '/dashboard',
+          viewport: 'desktop',
         },
       ],
+      ownedScopes: [{ route: '/dashboard', viewport: 'desktop' }],
     });
 
     expect(result.entries).toEqual([
@@ -39,5 +48,22 @@ describe('visual telemetry filtering', () => {
     expect(result.failedRequests).toEqual([
       expect.objectContaining({ url: 'https://api.example.invalid/data' }),
     ]);
+  });
+
+  it('preserves an unmarked product-authored copy of the same script', () => {
+    const result = filterHarnessOwnedTelemetry({
+      entries: [],
+      pageErrors: [],
+      failedRequests: [{
+        url: HARNESS_TRACKING_SCRIPT_URL,
+        failure: 'net::ERR_NAME_NOT_RESOLVED',
+        resource_type: 'script',
+        route: '/pricing',
+        viewport: 'desktop',
+      }],
+      ownedScopes: [],
+    });
+
+    expect(result.failedRequests).toHaveLength(1);
   });
 });

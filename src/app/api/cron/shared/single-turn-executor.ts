@@ -23,6 +23,7 @@ import type { SingleTurnResult } from './single-turn-types';
 import {
   buildGateErrorFeedback,
   captureInteractionBaseline,
+  getDeclaredProtectedRoutes,
   getStepTerminalRequest,
   withExecuteStepNoop,
 } from './single-turn-helpers';
@@ -299,7 +300,8 @@ export async function executeSingleTurnStep(params: {
             stepContext: {
               title: step.title,
               instructions: step.instructions,
-              expected_output: step.expected_output
+              expected_output: step.expected_output,
+              protected_routes: getDeclaredProtectedRoutes(step),
             },
             currentMessages: result.messages,
             assistantContext: {
@@ -488,7 +490,6 @@ export async function executeSingleTurnStep(params: {
          backgroundTask
       };
     }
-
     return { ok: true, isDone: shouldRunGate, effectiveSandboxId, sleepRequested, backgroundTask };
   } catch (e: any) {
     console.error('[SingleTurn] Executor wrapper failed:', e);

@@ -243,6 +243,7 @@ export function instancePlanTool(
                 skill: { type: 'string', description: 'Preferred: explicit SKILL.md slug to inject (e.g. makinari-rol-frontend, makinari-rol-qa, makinari-obj-template-selection). Takes priority over role. One of skill or role must be set.' },
                 test_command: { type: 'string', description: 'Command to run automated tests for this step (e.g. "npm run test:backend"). If omitted, defaults to the standard test command.' },
                 backlog_item_id: { type: 'string', description: 'UUID of the backlog item this step delivers (from `requirement_backlog action="list"`). Required for the Judge to run. Server auto-fills this when there is exactly one in_progress backlog item, but explicit is safer.' },
+                protected_routes: { type: 'array', items: { type: 'string' }, description: 'Application routes that are expected to redirect unauthenticated visual probes to a local login page (for example, ["/dashboard/orders"]). Declare these explicitly so the gate skips login screenshots without hiding unexpected auth redirects.' },
               },
               required: ['title', 'instructions', 'skill'],
             },

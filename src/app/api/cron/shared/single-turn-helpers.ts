@@ -76,6 +76,18 @@ export type StepTerminalRequest = {
   output?: string;
 };
 
+export function getDeclaredProtectedRoutes(step: {
+  protected_routes?: unknown;
+  metadata?: { protected_routes?: unknown };
+}): string[] | undefined {
+  const declared = step.protected_routes ?? step.metadata?.protected_routes;
+  if (!Array.isArray(declared)) return undefined;
+  const routes = declared.filter(
+    (route: unknown): route is string => typeof route === 'string',
+  );
+  return routes.length ? routes : undefined;
+}
+
 /**
  * Treat the executor's legacy `instance_plan.execute_step(completed)` call as
  * a request to run the gate. The cron runner remains the only component that

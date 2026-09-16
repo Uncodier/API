@@ -3,7 +3,7 @@ import {
   extractPageRoutesFromStepContext,
   extractVisualFeedbackScreenshotUrl,
   formatVisualGateFeedback,
-  inferProtectedVisualRoutes,
+  resolveProtectedVisualRoutes,
   selectVisualFeedbackScreenshotUrl,
 } from '../step-visual-feedback';
 import { deriveCategoriesFailed, formatIterationSignals } from '../step-iteration-signals';
@@ -32,17 +32,21 @@ const mockedFetchVisualScreenshotDataUrl =
 
 describe('protected visual routes', () => {
   it('marks high-confidence authenticated route prefixes only', () => {
-    expect(inferProtectedVisualRoutes([
+    expect(resolveProtectedVisualRoutes([
       '/',
       '/dashboard/work-orders',
       '/protected',
       '/admin/users',
       '/login',
       '/pricing',
+      '/workspace/orders',
+    ], [
+      '/workspace/orders',
     ])).toEqual([
       '/dashboard/work-orders',
       '/protected',
       '/admin/users',
+      '/workspace/orders',
     ]);
   });
 });
@@ -371,9 +375,11 @@ describe('visual probe script', () => {
     expect(script).toContain('new URL(value, LOCAL_ORIGIN)');
     expect(script).toContain('PROTECTED_ROUTES.has(requested.pathname)');
     expect(script).toContain('files.uncodie.com/tracking.min.js');
-    expect(script).toContain('isHarnessTrackingTelemetry');
+    expect(script).toContain('script[data-uncodie-harness="tracking"]');
+    expect(script).toContain('harnessTrackingScopes');
+    expect(script).toContain('authRedirect.expected');
     expect(script).toContain('restoreTelemetry(checkpoint)');
-    expect(script).toContain('redirected_to: finalRoute');
+    expect(script).toContain('redirected_to: authRedirect.redirectedTo');
     expect(script).toContain('route: safeRoute');
     expect(script).toContain('final_route: finalRoute');
   });

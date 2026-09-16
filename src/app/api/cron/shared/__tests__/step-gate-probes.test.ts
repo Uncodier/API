@@ -169,9 +169,9 @@ describe('runtime and visual probe gate', () => {
 
   it('uses cumulative page routes for an explicitly forced visual audit', async () => {
     (inferTargetRoutesFromDiff as jest.Mock).mockResolvedValueOnce({
-      pageRoutes: ['/dashboard'],
+      pageRoutes: ['/workspace'],
       apiRoutes: [],
-      changedFiles: ['src/app/dashboard/page.tsx'],
+      changedFiles: ['src/app/workspace/page.tsx'],
       recentPageRoutes: [],
       recentChangedFiles: [],
     });
@@ -210,13 +210,16 @@ describe('runtime and visual probe gate', () => {
       requirementId: 'req-1',
       gitRepoKind: 'applications',
       shouldRunVisual: true,
+      stepContext: {
+        protected_routes: ['/workspace'],
+      },
     });
 
     expect(result.ok).toBe(true);
     expect(runVisualProbe).toHaveBeenCalledWith(
       expect.objectContaining({
-        pageRoutes: ['/dashboard'],
-        protectedRoutes: ['/dashboard'],
+        pageRoutes: ['/workspace'],
+        protectedRoutes: ['/workspace'],
       }),
     );
   });

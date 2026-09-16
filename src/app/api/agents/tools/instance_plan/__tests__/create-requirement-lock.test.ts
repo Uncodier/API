@@ -86,7 +86,11 @@ describe('createInstancePlanCore requirement lock', () => {
       user_id: USER_ID,
       requirement_id: REQUIREMENT_ID,
       title: 'Requirement plan',
-      steps: [{ title: 'Implement feature', instructions: 'Implement it' }],
+      steps: [{
+        title: 'Implement feature',
+        instructions: 'Implement it',
+        protected_routes: ['/dashboard/orders'],
+      }],
     });
 
     expect(getBlockingActivePlans).toHaveBeenCalledTimes(2);
@@ -94,6 +98,13 @@ describe('createInstancePlanCore requirement lock', () => {
     expect(builder.insert).toHaveBeenCalledWith(
       expect.objectContaining({
         metadata: { requirement_id: REQUIREMENT_ID },
+        steps: [
+          expect.objectContaining({
+            metadata: expect.objectContaining({
+              protected_routes: ['/dashboard/orders'],
+            }),
+          }),
+        ],
       }),
     );
   });
