@@ -62,7 +62,54 @@ export function buildGateErrorFeedback(params: {
   };
 }
 
-/** Cron runner owns step status; model-side execute_step is a documented no-op. */
+type StepCompletionResult = {
+  steps?: Array<{
+    toolCalls?: Array<{
+      toolName?: string;
+      args?: Record<string, unknown>;
+    }>;
+  }>;
+};
+
+export type StepTerminalRequest = {
+  status: 'completed' | 'failed';
+  output?: string;
+};
+
+/**
+ * Treat the executor's legacy `instance_plan.execute_step(completed)` call as
+ * a request to run the gate. The cron runner remains the only component that
+ * may persist the terminal step status.
+ */
+export function getStepTerminalRequest(
+  result: StepCompletionResult,
+  expected: { planId: string; stepId: string },
+): StepTerminalRequest | null {
+  for (const executionStep of result.steps || []) {
+    for (const toolCall of executionStep.toolCalls || []) {
+      if (toolCall.toolName !== 'instance_plan') continue;
+      const args = toolCall.args || {};
+      if (args.action !== 'execute_step') continue;
+      if (args.step_status !== 'completed' && args.step_status !== 'failed') continue;
+      if (typeof args.plan_id === 'string' && args.plan_id !== expected.planId) continue;
+      if (typeof args.step_id === 'string' && args.step_id !== expected.stepId) continue;
+      return {
+        status: args.step_status,
+        output: typeof args.step_output === 'string' ? args.step_output : undefined,
+      };
+    }
+  }
+  return null;
+}
+
+export function hasStepCompletionRequest(
+  result: StepCompletionResult,
+  expected: { planId: string; stepId: string },
+): boolean {
+  return getStepTerminalRequest(result, expected)?.status === 'completed';
+}
+
+/** Cron runner owns step status; model-side execute_step is a completion signal. */
 export function withExecuteStepNoop<
   T extends { name?: string; execute?: (args: Record<string, unknown>) => Promise<unknown> },
 >(tools: T[]): T[] {
@@ -76,7 +123,10 @@ export function withExecuteStepNoop<
           ? {
               success: true,
               noop: true,
-              message: 'execute_step is owned by the cron runner; step status was not changed.',
+              terminal_requested: args?.step_status === 'completed' || args?.step_status === 'failed',
+              completion_requested: args?.step_status === 'completed',
+              requested_status: args?.step_status,
+              message: 'Terminal request recorded. The cron runner owns status changes and gate execution.',
             }
           : original(args),
     };

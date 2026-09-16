@@ -253,6 +253,10 @@ export async function markInProgress(params: { requirementId: string; itemId: st
   return backlog.items[idx];
 }
 
+export function hasApprovedJudgeEvidence(item: Pick<BacklogItem, 'evidence'>): boolean {
+  return item.evidence?.judge_verdict === 'approved';
+}
+
 export async function setItemStatus(params: {
   requirementId: string;
   itemId: string;
@@ -266,6 +270,11 @@ export async function setItemStatus(params: {
 
   const idx = backlog.items.findIndex((i) => i.id === params.itemId);
   if (idx < 0) throw new Error(`Item ${params.itemId} not found`);
+  if (params.status === 'done' && !hasApprovedJudgeEvidence(backlog.items[idx])) {
+    throw new Error(
+      `Cannot mark backlog item ${params.itemId} done without an approved Judge verdict`,
+    );
+  }
   backlog.items[idx] = {
     ...backlog.items[idx],
     status: params.status,

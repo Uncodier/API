@@ -18,13 +18,12 @@ import type { AppGateContext } from './gates/types';
 import { runArchetypePostGate } from './step-archetype-postgate';
 import { inferRoleFromStep, ROLE_TO_SKILL, buildSingleTurnSystemPrompt } from './single-turn-prompt';
 import { buildStepRetryFeedback } from './single-turn-visual-feedback';
-import {
-  extractSingleTurnBackgroundState,
-  type SingleTurnBackgroundTask,
-} from './single-turn-background-task';
+import { extractSingleTurnBackgroundState } from './single-turn-background-task';
+import type { SingleTurnResult } from './single-turn-types';
 import {
   buildGateErrorFeedback,
   captureInteractionBaseline,
+  getStepTerminalRequest,
   withExecuteStepNoop,
 } from './single-turn-helpers';
 import {
@@ -32,21 +31,8 @@ import {
   markVisualFeedbackDelivered,
   resolveSingleTurnBacklogItemId,
 } from './single-turn-step-state';
-
 export { inferRoleFromStep } from './single-turn-prompt';
-
-export interface SingleTurnResult {
-  ok: boolean;
-  isDone: boolean;
-  transient?: boolean;
-  error?: string;
-  effectiveSandboxId: string;
-  sleepRequested?: number;
-  backgroundTask?: SingleTurnBackgroundTask;
-  gatePassed?: boolean;
-  gateErrorExcerpt?: string;
-}
-
+export type { SingleTurnResult };
 export async function executeSingleTurnStep(params: {
   sandboxId: string;
   plan: any;
@@ -62,7 +48,6 @@ export async function executeSingleTurnStep(params: {
 }): Promise<SingleTurnResult> {
   'use step';
   const { sandboxId, plan, step, requirementId, instanceId, siteId, userId, title, gitRepoKind, requirementType, provisionedEnvKeys } = params;
-  
   const audit: CronAuditContext = {
     instanceId: instanceId,
     siteId: siteId,
@@ -107,7 +92,6 @@ export async function executeSingleTurnStep(params: {
         return { ok: true, isDone: true, effectiveSandboxId };
       }
     } catch (e) {}
-
     // Baseline = first time THIS step started. Do not fall back to plan.created_at
     // (that is often hours/days old and would mark every file updated_this_cycle).
     const nowIso = new Date().toISOString();
@@ -178,7 +162,6 @@ export async function executeSingleTurnStep(params: {
       const mems = await fetchMemoriesContext(siteId, userId, instanceId);
       memoriesContext = mems; // fetchMemoriesContext returns a string
     }
-
     const retryContext = retryFeedback.promptFragment;
 
     const { loadConstraintSourceBlocks } = await import('@/lib/services/requirement-constraints-persist');
@@ -254,7 +237,6 @@ export async function executeSingleTurnStep(params: {
     });
     sandbox = activeSandboxRef.current;
     effectiveSandboxId = sandboxIdentity(sandbox);
-
     await markVisualFeedbackDelivered({
       planId: plan.id,
       instanceId,
@@ -279,8 +261,30 @@ export async function executeSingleTurnStep(params: {
     }
 
     const { sleepRequested, backgroundTask } = extractSingleTurnBackgroundState(result);
+    const terminalRequest = getStepTerminalRequest(result, {
+      planId: plan.id,
+      stepId: step.id,
+    });
+    if (terminalRequest?.status === 'failed') {
+      return {
+        ok: false,
+        isDone: true,
+        error: terminalRequest.output || `Executor reported failure for step ${step.order}`,
+        effectiveSandboxId,
+        sleepRequested,
+        backgroundTask,
+      };
+    }
+    const completionRequested = terminalRequest?.status === 'completed';
+    const shouldRunGate = result.isDone || completionRequested;
 
-    if (result.isDone) {
+    if (completionRequested && !result.isDone) {
+      console.log(
+        `[SingleTurn] Step ${step.order} requested completion through instance_plan; handing control to the gate.`,
+      );
+    }
+
+    if (shouldRunGate) {
       // 6. Run Gate right here because we have live sandbox and context
       const flow = classifyRequirementType(requirementType);
       
@@ -485,7 +489,7 @@ export async function executeSingleTurnStep(params: {
       };
     }
 
-    return { ok: true, isDone: result.isDone, effectiveSandboxId, sleepRequested, backgroundTask };
+    return { ok: true, isDone: shouldRunGate, effectiveSandboxId, sleepRequested, backgroundTask };
   } catch (e: any) {
     console.error('[SingleTurn] Executor wrapper failed:', e);
     const transient = isSandboxGoneError(e.message);

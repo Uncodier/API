@@ -22,6 +22,7 @@ import { getActiveInstancePlan as _getActiveInstancePlan } from '@/app/api/robot
 import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/route';
 import { commitWorkspaceToOrigin, type GitRepoKind } from './cron-commit-helpers';
 import { validateBuildForStep } from './step-git-gate';
+import { summarizePlanSteps } from '@/lib/helpers/plan-status';
 import {
   CronInfraEvent,
   logCronInfrastructureEvent,
@@ -275,29 +276,17 @@ export async function reconcilePlanStep(planId: string): Promise<string> {
   }
 
   const steps = freshPlan.steps as any[];
-  const completedCount = steps.filter((s) => s.status === 'completed').length;
-  const allDone = steps.every((s) => s.status === 'completed');
-  const anyFailed = steps.some((s) => s.status === 'failed');
-
-  const MAX_RETRIES = 2; // matches the threshold in workflow.ts
-  const isStillRunnable = (s: any) =>
-    s.status === 'pending' ||
-    s.status === 'in_progress' ||
-    (s.status === 'failed' && (s.retry_count ?? 0) < MAX_RETRIES);
-  const noPending = !steps.some(isStillRunnable);
-
-  let planStatus = 'in_progress';
-  if (allDone) planStatus = 'completed';
-  else if (anyFailed && noPending) planStatus = 'failed';
+  const summary = summarizePlanSteps(steps);
+  const planStatus = summary.status;
 
   await supabaseAdmin.from('instance_plans').update({
     status: planStatus,
-    steps_completed: completedCount,
-    progress_percentage: Math.round((completedCount / steps.length) * 100),
-    ...(planStatus === 'completed' || planStatus === 'failed' ? { completed_at: new Date().toISOString() } : {}),
+    steps_completed: summary.completedCount,
+    progress_percentage: summary.progressPercentage,
+    ...(planStatus !== 'in_progress' ? { completed_at: new Date().toISOString() } : {}),
     updated_at: new Date().toISOString(),
   }).eq('id', planId);
-  console.log(`[CronStep] Plan → ${planStatus} (${completedCount}/${steps.length})`);
+  console.log(`[CronStep] Plan → ${planStatus} (${summary.completedCount}/${steps.length})`);
 
   const planAudit: CronAuditContext | undefined =
     freshPlan.instance_id && freshPlan.site_id
@@ -305,13 +294,14 @@ export async function reconcilePlanStep(planId: string): Promise<string> {
       : undefined;
   await logCronInfrastructureEvent(planAudit, {
     event: CronInfraEvent.PLAN_RECONCILE,
-    message: `Plan ${planId} reconciled → ${planStatus} (${completedCount}/${steps.length} steps completed)`,
+    message: `Plan ${planId} reconciled → ${planStatus} (${summary.completedCount}/${steps.length} steps completed)`,
     details: {
       plan_id: planId,
       plan_status: planStatus,
       steps_total: steps.length,
-      steps_completed: completedCount,
-      any_failed: anyFailed,
+      steps_completed: summary.completedCount,
+      any_failed: summary.anyFailed,
+      any_cancelled: summary.anyCancelled,
     },
   });
 

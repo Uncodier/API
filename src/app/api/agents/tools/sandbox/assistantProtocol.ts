@@ -391,7 +391,10 @@ export function sandboxPushCheckpointTool(
         }
 
         return {
-          ok: result.pushed,
+          // A clean tree already synchronized with origin is a successful,
+          // idempotent checkpoint. `pushed` still tells callers whether this
+          // invocation created/published a commit.
+          ok: true,
           pushed: result.pushed,
           branch: result.branch,
           requirement_status_updated: statusPatched,

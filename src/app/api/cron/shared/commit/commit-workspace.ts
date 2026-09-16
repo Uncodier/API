@@ -127,17 +127,34 @@ fi`,
 
     const msg = message ?? `Implement ${title} (${reqId})`;
 
-    // Ground-truth mirror: progress.md / feature_list.json / evidence/*.json are
-    // synced into the workspace right before the commit so the agent never has
-    // to update them manually. Never throws — the commit proceeds even if the
-    // mirror fails to write.
+    // Only materialize ground-truth metadata when the workspace already has a
+    // meaningful change. Otherwise every repeated checkpoint rewrites the
+    // progress timestamp and manufactures a metadata-only commit/deployment.
+    let hasWorkspaceChanges = true;
     try {
-      await syncGroundTruthBeforeCommit({ sandbox, requirementId: reqId, cwd, title, note: msg });
-    } catch (e: unknown) {
-      console.warn(
-        '[PreCommit] Ground-truth sync failed (continuing):',
-        e instanceof Error ? e.message : e,
-      );
+      const status = await sandbox.runCommand({
+        cmd: 'git',
+        args: ['status', '--porcelain', '--untracked-files=all'],
+        cwd,
+      });
+      hasWorkspaceChanges =
+        status.exitCode !== 0 || (await status.stdout()).trim().length > 0;
+    } catch {
+      // Preserve the previous safe behavior when git status is unavailable.
+      hasWorkspaceChanges = true;
+    }
+
+    if (hasWorkspaceChanges) {
+      try {
+        await syncGroundTruthBeforeCommit({ sandbox, requirementId: reqId, cwd, title, note: msg });
+      } catch (e: unknown) {
+        console.warn(
+          '[PreCommit] Ground-truth sync failed (continuing):',
+          e instanceof Error ? e.message : e,
+        );
+      }
+    } else {
+      console.log('[PreCommit] Clean workspace — skipping metadata-only ground-truth rewrite');
     }
 
     let result: { branch: string; pushed: boolean; commitCount: number } | undefined;

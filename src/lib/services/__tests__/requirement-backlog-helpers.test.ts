@@ -4,6 +4,7 @@ import {
   isBacklogComplete,
   outstandingGatingItems,
   hasOutstandingWork,
+  hasApprovedJudgeEvidence,
   isOrnamentalOnlyOutstanding,
   type BacklogItem
 } from '../requirement-backlog';
@@ -162,6 +163,18 @@ describe('Requirement Backlog Helpers', () => {
         createItem('2', 'ornamental', 'done'),
       ];
       expect(isOrnamentalOnlyOutstanding(items)).toBe(false);
+    });
+  });
+
+  describe('hasApprovedJudgeEvidence', () => {
+    it('only accepts an explicit approved verdict', () => {
+      expect(hasApprovedJudgeEvidence({
+        evidence: { judge_verdict: 'approved' } as any,
+      })).toBe(true);
+      expect(hasApprovedJudgeEvidence({
+        evidence: { judge_verdict: 'rejected' } as any,
+      })).toBe(false);
+      expect(hasApprovedJudgeEvidence({ evidence: undefined })).toBe(false);
     });
   });
 });

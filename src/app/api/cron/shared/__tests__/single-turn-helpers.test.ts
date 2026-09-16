@@ -1,6 +1,9 @@
 import {
   buildGateErrorFeedback,
   captureInteractionBaseline,
+  getStepTerminalRequest,
+  hasStepCompletionRequest,
+  withExecuteStepNoop,
 } from '../single-turn-helpers';
 import { extractVisualFeedbackScreenshotUrl } from '../step-visual-feedback';
 
@@ -33,6 +36,66 @@ describe('single-turn interaction helpers', () => {
       'rev-parse',
       'HEAD',
     ]);
+  });
+
+  it('recognizes a completed execute_step call as a gate request', () => {
+    expect(
+      hasStepCompletionRequest(
+        {
+          steps: [{
+            toolCalls: [{
+              toolName: 'instance_plan',
+              args: {
+                action: 'execute_step',
+                plan_id: 'plan-1',
+                step_id: 'step-1',
+                step_status: 'completed',
+              },
+            }],
+          }],
+        },
+        { planId: 'plan-1', stepId: 'step-1' },
+      ),
+    ).toBe(true);
+  });
+
+  it('rejects completion requests for another step or a failed status', () => {
+    const result = {
+      steps: [{
+        toolCalls: [{
+          toolName: 'instance_plan',
+          args: {
+            action: 'execute_step',
+            plan_id: 'plan-1',
+            step_id: 'step-2',
+            step_status: 'completed',
+          },
+        }],
+      }],
+    };
+
+    expect(hasStepCompletionRequest(result, { planId: 'plan-1', stepId: 'step-1' })).toBe(false);
+    result.steps[0].toolCalls[0].args.step_id = 'step-1';
+    result.steps[0].toolCalls[0].args.step_status = 'failed';
+    expect(hasStepCompletionRequest(result, { planId: 'plan-1', stepId: 'step-1' })).toBe(false);
+    expect(getStepTerminalRequest(result, { planId: 'plan-1', stepId: 'step-1' })).toMatchObject({
+      status: 'failed',
+    });
+  });
+
+  it('turns execute_step into a completion signal without mutating the plan', async () => {
+    const execute = jest.fn();
+    const [tool] = withExecuteStepNoop([{ name: 'instance_plan', execute }]);
+
+    await expect(tool.execute?.({
+      action: 'execute_step',
+      step_status: 'completed',
+    })).resolves.toMatchObject({
+      success: true,
+      noop: true,
+      completion_requested: true,
+    });
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it('formats interaction findings into the retry excerpt', () => {

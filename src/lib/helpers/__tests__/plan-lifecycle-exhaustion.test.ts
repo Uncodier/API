@@ -4,7 +4,7 @@ describe('applyItemExhaustionToSteps', () => {
   const item = 'item-a';
   const now = '2026-09-04T00:00:00.000Z';
 
-  it('cancels failed and in_progress for the exhausted item and keeps pending ones', () => {
+  it('cancels every unfinished step for the exhausted item', () => {
     const { nextSteps, stepsCancelled, stillRunnable } = applyItemExhaustionToSteps(
       [
         { id: 's1', status: 'failed', metadata: { backlog_item_id: item } },
@@ -15,18 +15,18 @@ describe('applyItemExhaustionToSteps', () => {
       'attempts exhausted',
       now,
     );
-    expect(stepsCancelled).toBe(2);
+    expect(stepsCancelled).toBe(3);
     expect(nextSteps.find((s) => s.id === 's1')?.status).toBe('cancelled');
     expect(nextSteps.find((s) => s.id === 's2')?.status).toBe('cancelled');
-    expect(nextSteps.find((s) => s.id === 's3')?.status).toBe('pending');
-    expect(stillRunnable).toBe(true);
+    expect(nextSteps.find((s) => s.id === 's3')?.status).toBe('cancelled');
+    expect(stillRunnable).toBe(false);
   });
 
-  it('does not cancel the plan when later pending steps remain', () => {
+  it('keeps pending steps for another backlog item runnable', () => {
     const { stillRunnable, stepsCancelled, nextSteps } = applyItemExhaustionToSteps(
       [
         { id: 's1', status: 'failed', metadata: { backlog_item_id: item } },
-        { id: 's2', status: 'pending', metadata: { backlog_item_id: item } },
+        { id: 's2', status: 'pending', metadata: { backlog_item_id: 'item-b' } },
       ],
       item,
       'attempts exhausted',

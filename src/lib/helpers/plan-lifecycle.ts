@@ -4,6 +4,7 @@
  */
 
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { closeSupersededPlan } from './plan-status';
 
 export interface CompletePlanResult {
   success: boolean;
@@ -12,7 +13,9 @@ export interface CompletePlanResult {
 }
 
 /**
- * Complete all active plans (in_progress, active, pending, paused) for an instance
+ * Close all active plans (in_progress, active, pending, paused) for an instance.
+ * Fully finished plans become completed; superseded plans with unfinished
+ * steps become cancelled so the parent status never contradicts its steps.
  * This ensures only one active plan exists at a time
  * 
  * @param instanceId - The instance ID to complete plans for
@@ -59,15 +62,24 @@ export async function completeInProgressPlans(
 
     console.log(`₍ᐢ•(ܫ)•ᐢ₎ Found ${closablePlans.length} active plan(s) to complete`);
 
-    // Complete all active plans
+    // Close all active plans without manufacturing false completion.
     for (const plan of closablePlans) {
+      const nowIso = new Date().toISOString();
+      const closure = closeSupersededPlan(
+        Array.isArray(plan.steps) ? plan.steps : [],
+        completionReason,
+        nowIso,
+      );
       const { error: updateError } = await supabaseAdmin
         .from('instance_plans')
         .update({
-          status: 'completed',
-          completed_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          completion_reason: completionReason
+          status: closure.status,
+          steps: closure.steps,
+          steps_completed: closure.completedCount,
+          progress_percentage: closure.progressPercentage,
+          completed_at: nowIso,
+          updated_at: nowIso,
+          completion_reason: completionReason,
         })
         .eq('id', plan.id);
 
@@ -77,17 +89,18 @@ export async function completeInProgressPlans(
         result.errors.push(errorMsg);
       } else {
         result.completedCount++;
-        console.log(`₍ᐢ•(ܫ)•ᐢ₎ ✅ Plan ${plan.id} marked as completed (was ${plan.status})`);
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ ✅ Plan ${plan.id} marked as ${closure.status} (was ${plan.status})`);
       }
     }
 
-    // Consider it a success if we completed at least some plans
-    result.success = result.completedCount > 0 || activePlans.length === 0;
+    result.success =
+      result.errors.length === 0 &&
+      result.completedCount === closablePlans.length;
     
     if (result.errors.length > 0) {
-      console.warn(`₍ᐢ•(ܫ)•ᐢ₎ ⚠️ Completed ${result.completedCount}/${activePlans.length} plans with ${result.errors.length} error(s)`);
+      console.warn(`₍ᐢ•(ܫ)•ᐢ₎ ⚠️ Closed ${result.completedCount}/${closablePlans.length} plans with ${result.errors.length} error(s)`);
     } else {
-      console.log(`₍ᐢ•(ܫ)•ᐢ₎ ✅ Successfully completed all ${result.completedCount} active plan(s)`);
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ ✅ Successfully closed all ${result.completedCount} active plan(s)`);
     }
 
     return result;
@@ -304,7 +317,7 @@ export interface CancelPlanStepsForItemResult {
  * Cancel in_progress/failed plan steps bound (via
  * `metadata.backlog_item_id` or root `backlog_item_id`) to a backlog item that
  * just transitioned to a terminal-non-done status (needs_review / rejected).
- * Pending (unstarted) steps stay runnable.
+ * Pending steps for other backlog items stay runnable.
  *
  * Why: when the backlog watchdog (or self-heal policy) escalates an item, the
  * `instance_plans.steps` array still has the per-step subgoals that were
@@ -315,9 +328,9 @@ export interface CancelPlanStepsForItemResult {
  * in_progress).
  *
  * Behavior:
- *  - in_progress and failed steps bound to `itemId` are cancelled so the
+ *  - pending, in_progress, and failed steps bound to `itemId` are cancelled so the
  *    same step does not retry after the item is exhausted.
- *  - Unstarted (pending) steps stay runnable so later work continues.
+ *  - Steps bound to other backlog items stay runnable so later work continues.
  *  - If, after that rewrite, the plan has no remaining pending/in_progress
  *    steps and is not already terminal, the plan itself is marked
  *    `status='cancelled'` so the cron skips it on the next tick.
@@ -334,7 +347,7 @@ export function applyItemExhaustionToSteps(
   reason: string,
   nowIso: string,
 ): { nextSteps: any[]; stepsCancelled: number; stillRunnable: boolean } {
-  const cancelStatuses = new Set(['in_progress', 'failed']);
+  const cancelStatuses = new Set(['pending', 'in_progress', 'failed']);
   const terminalStatuses = new Set(['completed', 'failed', 'cancelled', 'skipped']);
   let stepsCancelled = 0;
   const nextSteps = steps.map((s) => {

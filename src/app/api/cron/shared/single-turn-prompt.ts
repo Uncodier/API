@@ -90,6 +90,9 @@ Your job is to complete ONE specific step by writing code, running commands, and
 CRITICAL: YOU MUST EXECUTE EXACTLY ONE TOOL CALL PER RESPONSE.
 Wait for the environment to execute the tool and return the result before you decide your next action.
 DO NOT output multiple tool calls in a single response.
+When the objective is complete and the checkpoint is already pushed, return a concise final summary
+WITHOUT a tool call. The cron runner owns step status and gate execution; do not use
+\`instance_plan action="execute_step"\` to persist completion.
 
 ${SANDBOX_REPO_ROOT_INVARIANT}
 ${constraintBlock}

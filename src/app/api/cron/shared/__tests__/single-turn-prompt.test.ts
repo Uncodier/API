@@ -39,5 +39,7 @@ describe('firstActionsPromptLine', () => {
     expect(prompt).toContain('sandbox_tail_api_log');
     expect(prompt).toContain('Runtime Evidence');
     expect(prompt).toContain('do not add debug endpoints');
+    expect(prompt).toContain('WITHOUT a tool call');
+    expect(prompt).toContain('`instance_plan action="execute_step"` to persist completion');
   });
 });

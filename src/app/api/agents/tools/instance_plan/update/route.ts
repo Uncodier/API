@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { resolveBacklogContextForInstance } from '@/lib/services/requirement-backlog';
+import { summarizePlanSteps } from '@/lib/helpers/plan-status';
 import { z } from 'zod';
 
 const parseIfString = (val: any) => typeof val === 'string' ? (() => { try { return JSON.parse(val); } catch { return val; } })() : val;
@@ -23,7 +24,7 @@ const UpdateInstancePlanSchema = z.object({
     title: z.string().optional(),
     description: z.string().optional(),
     order: z.number().int().optional(),
-    status: z.enum(['pending', 'in_progress', 'completed', 'failed']).optional(),
+    status: z.enum(['pending', 'in_progress', 'completed', 'failed', 'cancelled']).optional(),
     type: z.string().optional(),
     instructions: z.string().optional(),
     expected_output: z.string().optional(),
@@ -222,25 +223,27 @@ export async function updateInstancePlanCore(params: any) {
     updateData.steps = updatedSteps;
     updateData.steps_total = updatedSteps.length;
     
-    const completedSteps = updatedSteps.filter((step: any) => step.status === 'completed').length;
-    const allDone = updatedSteps.length > 0 && updatedSteps.every((s: any) => s.status === 'completed');
-    const anyFailed = updatedSteps.some((s: any) => s.status === 'failed');
-    const noPending = !updatedSteps.some((s: any) => s.status === 'pending' || s.status === 'in_progress');
+    const summary = summarizePlanSteps(updatedSteps);
+    updateData.steps_completed = summary.completedCount;
+    updateData.progress_percentage = summary.progressPercentage;
 
-    updateData.steps_completed = completedSteps;
-    updateData.progress_percentage = updatedSteps.length > 0 ? Math.round((completedSteps / updatedSteps.length) * 100) : 0;
+    if (updates.status === 'completed' && summary.status !== 'completed') {
+      throw new Error('Cannot mark a plan completed while one or more steps are unfinished');
+    }
 
     // Auto-reconcile plan status based on steps (only if not explicitly overridden by updates)
     if (!updates.status && existingPlan.status !== 'paused' && existingPlan.status !== 'cancelled') {
-      if (allDone) {
-        updateData.status = 'completed';
-        updateData.completed_at = new Date().toISOString();
-      } else if (anyFailed && noPending) {
-        updateData.status = 'failed';
+      if (summary.status !== 'in_progress') {
+        updateData.status = summary.status;
         updateData.completed_at = new Date().toISOString();
       } else if (updateData.progress_percentage > 0 && existingPlan.status === 'pending') {
         updateData.status = 'in_progress';
       }
+    }
+  } else if (updates.status === 'completed') {
+    const summary = summarizePlanSteps((existingPlan.steps as any[]) || []);
+    if (summary.status !== 'completed') {
+      throw new Error('Cannot mark a plan completed while one or more steps are unfinished');
     }
   }
 
