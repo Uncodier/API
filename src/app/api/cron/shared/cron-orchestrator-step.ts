@@ -11,6 +11,7 @@ import { getAssistantTools, fetchMemoriesContext, generateAgentBackground } from
 import { detectPlanningLoop, type AssistantToolCallSnapshot } from './loop-detectors';
 import { CronInfraEvent, logCronInfrastructureEvent, type CronAuditContext } from '@/lib/services/cron-audit-log';
 import { ensureInProgressItem, escalateStaleInProgressItems } from '@/lib/services/requirement-backlog';
+import { guardOrchestratorPlanTool } from './orchestrator-plan-tool-guard';
 
 /**
  * Tool set for the cron orchestrator — routed through `tools`.
@@ -210,8 +211,15 @@ export async function runOrchestratorStep(params: {
     cycle_baseline_at: cycleBaselineAt,
   });
 
-  const fullTools = getCronOrchestratorTools(
-    sandboxTools, site_id, instanceId, user_id, reqId,
+  const planMutationState = {
+    createdPlan: false,
+    updatedPlan: false,
+  };
+  const fullTools = guardOrchestratorPlanTool(
+    getCronOrchestratorTools(
+      sandboxTools, site_id, instanceId, user_id, reqId,
+    ),
+    planMutationState,
   );
   const routedCount = fullTools.find((t: any) => t?.name === 'tools') ? 1 : 0;
   console.log(
@@ -238,7 +246,6 @@ export async function runOrchestratorStep(params: {
   let result: any;
   let messages: any[] = [{ role: 'user', content: initialMessage }];
   let nudged = false;
-  let createdPlan = false;
   let noPlanOverrides = 0;
   const isAdaptation = initialMessage.includes('PLAN ADAPTATION REQUIRED');
 
@@ -374,30 +381,11 @@ export async function runOrchestratorStep(params: {
       isDone = true;
     }
 
-    // Track whether the orchestrator ever invoked `instance_plan action="create"`.
-    // We detect it from assistant tool_calls rather than results so we don't
-    // depend on the executor's internal shape.
-    for (const m of messages) {
-      const toolCalls = (m as any)?.tool_calls;
-      if (!Array.isArray(toolCalls)) continue;
-      for (const tc of toolCalls) {
-        if (tc?.function?.name !== 'instance_plan') continue;
-        try {
-          const args = JSON.parse(tc.function.arguments || '{}');
-          if (args?.action === 'create' || args?.action === 'update') {
-            createdPlan = true;
-          }
-        } catch {
-          /* ignore malformed args */
-        }
-      }
-    }
-
     // Plan creation is the coordinator's terminal deliverable. Continuing the
     // same model loop after a successful create lets it issue a second create,
     // which auto-completes the first untouched plan. Step execution and status
     // updates are handled deterministically by the workflow after this return.
-    if (createdPlan && !isAdaptation) {
+    if (planMutationState.createdPlan && !isAdaptation) {
       isDone = true;
     }
     
@@ -448,7 +436,7 @@ export async function runOrchestratorStep(params: {
     // Nudge once: if after a couple of turns the orchestrator is still only
     // exploring (no instance_plan create yet), remind it that PLANNING is
     // its deliverable. Otherwise the cron loops forever producing no plan.
-    if (!isDone && !createdPlan && !nudged && turns >= PLAN_NUDGE_AFTER_TURN) {
+    if (!isDone && !planMutationState.createdPlan && !nudged && turns >= PLAN_NUDGE_AFTER_TURN) {
       if (!isAdaptation) {
         nudged = true;
         console.log(
@@ -470,7 +458,9 @@ export async function runOrchestratorStep(params: {
     // want it to update the plan.
     
     // In adaptation mode, we consider it "created/updated" if it called instance_plan at all
-    const planUpdated = createdPlan || (isAdaptation && callSnapshots.some(s => s.name === 'instance_plan'));
+    const planUpdated =
+      planMutationState.createdPlan ||
+      (isAdaptation && planMutationState.updatedPlan);
 
     if (
       isDone &&
@@ -498,7 +488,12 @@ export async function runOrchestratorStep(params: {
   }
 
   console.log(
-    `[CronStep|orchestrator] Orchestrator finished after ${turns} turn(s) (createdPlan=${createdPlan}, isDone=${isDone}, timedOut=${timedOut})`,
+    `[CronStep|orchestrator] Orchestrator finished after ${turns} turn(s) (createdPlan=${planMutationState.createdPlan}, isDone=${isDone}, timedOut=${timedOut})`,
   );
-  return { turns, effectiveSandboxId, createdPlan, timedOut };
+  return {
+    turns,
+    effectiveSandboxId,
+    createdPlan: planMutationState.createdPlan,
+    timedOut,
+  };
 }

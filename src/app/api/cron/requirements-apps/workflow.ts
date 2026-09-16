@@ -743,6 +743,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     
     wrapUpRequiresUserFeedback = false;
     wrapUpReason = null;
+    const pendingPlanSteps = countPendingPlanSteps(latestPlanSteps);
     if (stepsPhase?.anyStepFailed || postFinallyBuildError) {
       wrapUpRequiresUserFeedback = true;
       wrapUpReason =
@@ -755,7 +756,6 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
         site_id,
         user_id,
       );
-      const pendingPlanSteps = countPendingPlanSteps(latestPlanSteps);
       const finalFeedbackItems = feedbackRequiredBacklogItems(
         finalRequirementContext.backlog?.items || [],
         feedbackAttemptLimits,
@@ -774,7 +774,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     }
 
     const { emitCycleWrapUpStep } = await import('../shared/cycle-wrapup-step');
-    await emitCycleWrapUpStep({
+    const wrapUpResult = await emitCycleWrapUpStep({
       sandboxId,
       siteId: site_id,
       instanceId,
@@ -784,7 +784,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       instructions,
       digest,
       planCompleted,
-      pendingPlanSteps: countPendingPlanSteps(latestPlanSteps),
+      pendingPlanSteps,
       previewUrl,
       repoUrl,
       audit: cronAudit,
@@ -792,9 +792,9 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       wrapUpReason,
       requiresUserFeedback: wrapUpRequiresUserFeedback,
     });
-    // A skipped wrap-up is intentional while plan steps remain. Mark the
-    // attempt handled so the outer finally does not force the same wrap-up.
-    wrapUpAttempted = true;
+    // Intentional skips are handled. Actual failures remain retryable in the
+    // outer finally block.
+    wrapUpAttempted = wrapUpResult.outcome !== 'failed';
 
     const { emitSyncDocsToBacklogStep } = await import('../shared/sync-docs-to-backlog-step');
     await emitSyncDocsToBacklogStep({

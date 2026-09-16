@@ -37,7 +37,11 @@ export interface CycleWrapUpParams {
   requiresUserFeedback?: boolean;
 }
 
-export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<{ ran: boolean }> {
+export type CycleWrapUpResult =
+  | { ran: true; outcome: 'completed' }
+  | { ran: false; outcome: 'skipped' | 'failed' };
+
+export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<CycleWrapUpResult> {
   'use step';
   const {
     siteId,
@@ -93,7 +97,7 @@ export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<{ 
       console.log(
         `[CycleWrapUpStep] Skipping wrap-up for ${requirementId} — ${pendingPlanSteps} plan step(s) still pending`,
       );
-      return { ran: false };
+      return { ran: false, outcome: 'skipped' };
     }
 
     if (
@@ -106,7 +110,7 @@ export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<{ 
       console.log(
         `[CycleWrapUpStep] Skipping wrap-up for ${requirementId} — no docs digest and no user messages`,
       );
-      return { ran: false };
+      return { ran: false, outcome: 'skipped' };
     }
 
     const systemPrompt = buildCycleWrapUpSystemPrompt({
@@ -166,12 +170,12 @@ export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<{ 
     }
 
     console.log(`[CycleWrapUpStep] Completed in ${turns} turns for req ${requirementId}`);
-    return { ran: true };
+    return { ran: true, outcome: 'completed' };
   } catch (error: unknown) {
     console.warn(
       `[CycleWrapUpStep] Failed to run wrap-up for req ${requirementId}:`,
       error instanceof Error ? error.message : error,
     );
-    return { ran: false };
+    return { ran: false, outcome: 'failed' };
   }
 }
