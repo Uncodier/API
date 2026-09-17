@@ -25,6 +25,7 @@ import {
   captureInteractionBaseline,
   getDeclaredProtectedRoutes,
   getStepTerminalRequest,
+  withActionLoopGuard,
   withExecuteStepNoop,
 } from './single-turn-helpers';
 import {
@@ -185,7 +186,6 @@ export async function executeSingleTurnStep(params: {
       provisionedEnvKeys,
     });
 
-    // 4. Fetch History
     const historyText = await fetchStepLogHistoryText(instanceId, plan.id, step.id);
     const messages: any[] = [
       { role: 'user' as const, content: `Execute step ${step.order}: ${step.title}. ${step.instructions}` },
@@ -213,7 +213,7 @@ export async function executeSingleTurnStep(params: {
       activeSandboxRef,
     });
     
-    const fullTools = withExecuteStepNoop(
+    const fullTools = withActionLoopGuard(withExecuteStepNoop(
       getAssistantTools(
         siteId,
         userId,
@@ -223,8 +223,7 @@ export async function executeSingleTurnStep(params: {
         undefined,
         requirementId,
       ),
-    );
-    
+    ), historyText);
     const result = await executeAssistantStep(messages, { id: instanceId, site_id: siteId, user_id: userId, requirement_id: requirementId }, {
       instance_id: instanceId,
       site_id: siteId,

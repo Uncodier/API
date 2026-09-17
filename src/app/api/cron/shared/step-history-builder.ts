@@ -1,5 +1,10 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { sanitizeRuntimeLog } from './runtime-log-context';
+import {
+  ACTION_LOOP_BLOCKED_ACTION_MARKER,
+  buildToolActionKey,
+  detectActionLoop,
+} from './loop-detectors';
 
 type StepHistoryLog = {
   log_type: string;
@@ -20,7 +25,7 @@ export async function fetchStepLogHistoryText(instanceId: string, planId: string
     .select('id, log_type, message, tool_name, tool_args, tool_result, created_at, details')
     .eq('instance_id', instanceId)
     .in('log_type', ['agent_action', 'tool_call', 'thinking', 'infrastructure', 'sandbox_test_failure'])
-    .order('created_at', { ascending: true })
+    .order('created_at', { ascending: false })
     .filter('details->>plan_id', 'eq', planId)
     .filter('details->>step_id', 'eq', stepId)
     .limit(100);
@@ -34,7 +39,9 @@ export async function fetchStepLogHistoryText(instanceId: string, planId: string
     return '';
   }
 
-  return formatStepLogHistory(logs as StepHistoryLog[]);
+  return formatStepLogHistory(
+    [...(logs as StepHistoryLog[])].reverse(),
+  );
 }
 
 export function formatStepLogHistory(logs: StepHistoryLog[]): string {
@@ -111,6 +118,25 @@ export function formatStepLogHistory(logs: StepHistoryLog[]): string {
         if (evidence) formatted.push(evidence);
       }
     }
+  }
+
+  const recentToolCalls = logs
+    .filter(
+      (log): log is StepHistoryLog & { tool_name: string } =>
+        log.log_type === 'tool_call' && typeof log.tool_name === 'string',
+    )
+    .slice(-5)
+    .map((log) => ({
+      name: log.tool_name,
+      command: buildToolActionKey(log.tool_name, log.tool_args),
+    }));
+  const actionLoop = detectActionLoop(recentToolCalls);
+  if (actionLoop.triggered && actionLoop.blockedAction) {
+    formatted.push('[Action Loop Guard]');
+    formatted.push(actionLoop.feedback || 'Change the current tool strategy.');
+    formatted.push(
+      `${ACTION_LOOP_BLOCKED_ACTION_MARKER}${actionLoop.blockedAction}`,
+    );
   }
   
   formatted.push('--- END PREVIOUS ACTIONS ---');

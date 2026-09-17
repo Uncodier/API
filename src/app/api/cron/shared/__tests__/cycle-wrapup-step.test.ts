@@ -1,7 +1,10 @@
 import { executeAssistantStep } from '@/lib/services/robot-instance/assistant-executor';
 import { loadUserActionHistory } from '@/lib/services/instance-user-history';
 import { createRequirementStatusCore } from '@/lib/tools/requirement-status-core';
-import { hasRetryablePlanFailure } from '../cycle-wrapup-retry-policy';
+import {
+  hasRetryablePlanFailure,
+  hasRunnableRequirementPlan,
+} from '../cycle-wrapup-retry-policy';
 import { emitCycleWrapUpStep } from '../cycle-wrapup-step';
 
 jest.mock('@/lib/services/robot-instance/assistant-executor', () => ({
@@ -22,6 +25,7 @@ jest.mock('@/lib/tools/requirement-status-core', () => ({
 }));
 jest.mock('../cycle-wrapup-retry-policy', () => ({
   hasRetryablePlanFailure: jest.fn(),
+  hasRunnableRequirementPlan: jest.fn(),
 }));
 
 const baseParams = {
@@ -43,6 +47,7 @@ describe('emitCycleWrapUpStep outcomes', () => {
       totalCount: 1,
     });
     (hasRetryablePlanFailure as jest.Mock).mockResolvedValue(false);
+    (hasRunnableRequirementPlan as jest.Mock).mockResolvedValue(false);
   });
 
   it('reports an intentional skip while plan steps remain', async () => {
@@ -133,6 +138,29 @@ describe('emitCycleWrapUpStep outcomes', () => {
     });
 
     expect(createRequirementStatusCore).toHaveBeenCalledWith(
+      expect.objectContaining({ stage: 'blocked' }),
+    );
+  });
+
+  it('keeps an auto-repairable build failure in progress', async () => {
+    (hasRunnableRequirementPlan as jest.Mock).mockResolvedValue(true);
+    (executeAssistantStep as jest.Mock).mockResolvedValue({
+      messages: [{ role: 'assistant', content: 'Continuing' }],
+      isDone: true,
+    });
+
+    await emitCycleWrapUpStep({
+      ...baseParams,
+      pendingPlanSteps: 2,
+      forceWrapUp: true,
+      requiresUserFeedback: true,
+      wrapUpReason: 'Build failed (npm run build, exit 1): invalid JSX',
+    });
+
+    expect(createRequirementStatusCore).toHaveBeenCalledWith(
+      expect.objectContaining({ stage: 'in-progress' }),
+    );
+    expect(createRequirementStatusCore).not.toHaveBeenCalledWith(
       expect.objectContaining({ stage: 'blocked' }),
     );
   });

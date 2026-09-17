@@ -4,6 +4,23 @@ import { fetchOriginBranch } from '@/lib/services/sandbox-git-identity';
 
 export type FeatureAttachAction = 'noop' | 'checkout-B-head';
 
+export type PushWithRebaseRetryOptions = {
+  validateBeforePush?: () => Promise<string | null>;
+};
+
+async function validatePushCandidate(
+  validation?: () => Promise<string | null>,
+): Promise<string | null> {
+  if (!validation) return null;
+  try {
+    return await validation();
+  } catch (error: unknown) {
+    return error instanceof Error
+      ? error.message
+      : `Push validation failed: ${String(error)}`;
+  }
+}
+
 /**
  * Attach to the requirement feature branch from current HEAD.
  * Never reset onto origin/<feature> — that wipes just-written work.
@@ -55,6 +72,7 @@ export async function pushWithRebaseRetry(
   sandbox: Sandbox,
   branch: string,
   cwd: string = SANDBOX_WORK_DIR,
+  options: PushWithRebaseRetryOptions = {},
 ): Promise<{ ok: true; rebased: boolean } | { ok: false; stderr: string }> {
   const b = String(branch).trim();
   if (isInvalidOriginBranchName(b)) {
@@ -63,6 +81,12 @@ export async function pushWithRebaseRetry(
       stderr:
         'Refusing to push: target branch is empty, HEAD, or not a real branch name. Attach with `git checkout -B <branch>` or pass requirementId in commit options.',
     };
+  }
+  const initialValidationError = await validatePushCandidate(
+    options.validateBeforePush,
+  );
+  if (initialValidationError) {
+    return { ok: false, stderr: initialValidationError };
   }
   const refspec = `HEAD:refs/heads/${b}`;
   const first = await runGit(sandbox, ['push', '-u', 'origin', refspec], cwd);
@@ -82,6 +106,12 @@ export async function pushWithRebaseRetry(
   if (fetchRes.exitCode !== 0) {
     const isReqBranch = /^feature\/req-|^req-/.test(b);
     if (isReqBranch) {
+      const forceValidationError = await validatePushCandidate(
+        options.validateBeforePush,
+      );
+      if (forceValidationError) {
+        return { ok: false, stderr: forceValidationError };
+      }
       const lease = await runGit(sandbox, ['push', '--force-with-lease', '-u', 'origin', refspec], cwd);
       if (lease.exitCode === 0) return { ok: true, rebased: true };
     }
@@ -97,6 +127,12 @@ export async function pushWithRebaseRetry(
     const isReqBranch = /^feature\/req-|^req-/.test(b);
     if (isReqBranch) {
       console.warn(`[Sandbox] rebase conflict on ${b} — force-with-lease (harness is the sole writer)`);
+      const forceValidationError = await validatePushCandidate(
+        options.validateBeforePush,
+      );
+      if (forceValidationError) {
+        return { ok: false, stderr: forceValidationError };
+      }
       const lease = await runGit(sandbox, ['push', '--force-with-lease', '-u', 'origin', refspec], cwd);
       if (lease.exitCode === 0) {
         return { ok: true, rebased: true };
@@ -109,6 +145,16 @@ export async function pushWithRebaseRetry(
     return {
       ok: false,
       stderr: `Push rejected and automatic rebase on origin/${b} produced conflicts — manual resolution required: ${rebaseErr}\n---\n${firstStderr}`,
+    };
+  }
+
+  const rebasedValidationError = await validatePushCandidate(
+    options.validateBeforePush,
+  );
+  if (rebasedValidationError) {
+    return {
+      ok: false,
+      stderr: rebasedValidationError,
     };
   }
 

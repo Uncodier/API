@@ -5,6 +5,10 @@ import {
   type GateFailureCategory,
 } from './step-iteration-signals';
 import type { FlowGateResult } from './gates/types';
+import {
+  ACTION_LOOP_BLOCKED_ACTION_MARKER,
+  buildToolActionKey,
+} from './loop-detectors';
 
 const WORK_DIR = '/vercel/sandbox';
 
@@ -86,6 +90,45 @@ export function getDeclaredProtectedRoutes(step: {
     (route: unknown): route is string => typeof route === 'string',
   );
   return routes.length ? routes : undefined;
+}
+
+export function withActionLoopGuard<
+  T extends { name?: string; execute?: (args: Record<string, unknown>) => Promise<unknown> },
+>(tools: T[], historyText: string): T[] {
+  const markerIndex = historyText.lastIndexOf(
+    ACTION_LOOP_BLOCKED_ACTION_MARKER,
+  );
+  if (markerIndex < 0) return tools;
+  const blockedAction = historyText
+    .slice(markerIndex + ACTION_LOOP_BLOCKED_ACTION_MARKER.length)
+    .split('\n', 1)[0]
+    .trim();
+  if (!blockedAction) return tools;
+
+  return tools.map((tool) => {
+    if (!tool.name || typeof tool.execute !== 'function') return tool;
+    const original = tool.execute.bind(tool);
+    return {
+      ...tool,
+      execute: async (args: Record<string, unknown>) => {
+        if (
+          tool.name === 'instance_plan' &&
+          args.action === 'execute_step'
+        ) {
+          return original(args);
+        }
+        if (buildToolActionKey(tool.name!, args) !== blockedAction) {
+          return original(args);
+        }
+        return {
+          success: false,
+          blocked: true,
+          error:
+            'Action loop guard blocked this unchanged tool call after three repetitions. Change the arguments or use a different tool.',
+        };
+      },
+    };
+  });
 }
 
 /**

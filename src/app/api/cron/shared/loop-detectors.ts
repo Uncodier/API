@@ -23,6 +23,8 @@ export interface LoopDetectorVerdict {
   feedback?: string;
   /** Counters useful for logging / cost-envelope debugging. */
   metrics?: Record<string, number>;
+  /** Canonical tool+arguments key that must not be executed again unchanged. */
+  blockedAction?: string;
 }
 
 export interface AssistantToolCallSnapshot {
@@ -33,6 +35,9 @@ export interface AssistantToolCallSnapshot {
   /** Whether the call mutated the workspace (writes / commits / migrations). */
   is_write?: boolean;
 }
+
+export const ACTION_LOOP_BLOCKED_ACTION_MARKER =
+  'ACTION_LOOP_BLOCKED_ACTION:';
 
 const PLANNING_TOOLCALL_THRESHOLD = 8;
 const PLANNING_WRITE_RATIO = 0.1;
@@ -49,6 +54,29 @@ const WRITE_TOOL_PATTERNS = [
 ];
 
 const READ_ONLY_COMMAND_PREFIXES = ['ls', 'cat', 'head', 'tail', 'grep', 'rg', 'find', 'pwd', 'stat'];
+const VOLATILE_TOOL_ARGUMENTS = new Set([
+  'thought_process',
+  'reasoning',
+  'tool_call_id',
+]);
+
+function canonicalizeToolValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalizeToolValue);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([key]) => !VOLATILE_TOOL_ARGUMENTS.has(key))
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, nested]) => [key, canonicalizeToolValue(nested)]),
+  );
+}
+
+export function buildToolActionKey(
+  name: string,
+  args: unknown,
+): string {
+  return `${name}:${JSON.stringify(canonicalizeToolValue(args ?? {}))}`;
+}
 
 function classifyWrite(call: AssistantToolCallSnapshot): boolean {
   if (typeof call.is_write === 'boolean') return call.is_write;
@@ -111,6 +139,7 @@ export function detectActionLoop(calls: AssistantToolCallSnapshot[]): LoopDetect
     reason: `action loop: "${topKey}" repeated ${topCount}/${calls.length} times`,
     feedback: `STOP: action loop. The same command "${topKey}" is failing or no-op ${topCount} times in a row. Change the approach (read the actual error, switch tool, or downgrade scope) instead of retrying.`,
     metrics: { repeats: topCount, total: calls.length, ratio },
+    blockedAction: topKey,
   };
 }
 

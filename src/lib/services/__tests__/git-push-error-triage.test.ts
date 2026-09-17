@@ -59,6 +59,15 @@ Automatic merge failed; fix conflicts and then commit the result.`;
     expect(t.agentMessage).toMatch(/provision|retry|not a code/i);
   });
 
+  it('classifies pre-push builds separately from Vercel layout errors', () => {
+    const t = triageGitPushError(
+      '[pre-push-build] Build output mentioned [vercel] but no commit was pushed',
+    );
+    expect(t.failureKind).toBe('pre_push_build');
+    expect(t.agentActionable).toBe(true);
+    expect(t.agentMessage).toContain('Pre-push build');
+  });
+
   it('classifies automatic rebase with could not apply as rebase_conflict, not non_fast_forward', () => {
     const msg = `Failed to push branch feature/req-fa9f1eb3: Push rejected and automatic rebase on origin/feature/req-fa9f1eb3 produced conflicts — manual resolution required: Rebasing (1/5) error: could not apply 525f41ce... [checkpoint] hint: Resolve all conflicts manually`;
     const t = triageGitPushError(msg);

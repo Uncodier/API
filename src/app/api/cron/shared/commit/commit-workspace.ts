@@ -22,6 +22,11 @@ import {
   type GitPushTriage,
 } from '@/lib/services/git-push-error-triage';
 import { uploadSandboxSourceArchiveToRepository } from '@/app/api/agents/tools/sandbox/sandbox-source-upload';
+import {
+  ensureApplicationBuildCurrent,
+  validateApplicationBeforePush,
+} from './pre-push-build-validation';
+import { clearStuckGitOperationState } from '@/lib/services/sandbox-git-push';
 
 export {
   classifyGitPushFailure,
@@ -61,11 +66,20 @@ export async function commitWorkspaceToOrigin(
 
   const cwd = SandboxService.WORK_DIR;
   await assertPlatformGitLayout(sandbox);
-
-  const headRes = await sandbox.runCommand({ cmd: 'git', args: ['rev-parse', '--short', 'HEAD'], cwd });
-  const headShort = headRes.exitCode === 0 ? (await headRes.stdout()).trim() : '?';
+  let headShort = '?';
 
   try {
+    await clearStuckGitOperationState(sandbox, cwd);
+    await SandboxService.ensureFeatureBranchForCron(sandbox, reqId, title);
+    const headRes = await sandbox.runCommand({
+      cmd: 'git',
+      args: ['rev-parse', '--short', 'HEAD'],
+      cwd,
+    });
+    headShort = headRes.exitCode === 0
+      ? (await headRes.stdout()).trim()
+      : '?';
+
     // Wrong LLM layout: duplicate or misplaced `app/src/app` — canonical routes are ONLY under repo `src/app/`.
     const fixLayout = await sandbox.runCommand('sh', [
       '-c',
@@ -147,6 +161,19 @@ fi`,
       );
     }
 
+    if (gitKind === 'applications') {
+      const validation = await validateApplicationBeforePush({
+        sandbox: activeSandbox,
+        cwd,
+        audit,
+      });
+      if (!validation.ok) {
+        throw new Error(
+          `[pre-push-build] ${validation.error || 'Pre-push build validation failed'}`,
+        );
+      }
+    }
+
     let result: { branch: string; pushed: boolean; commitCount: number } | undefined;
     let pushError: any;
 
@@ -155,6 +182,18 @@ fi`,
         message: msg,
         requirementId: reqId,
         title,
+        validateBeforePush: gitKind === 'applications'
+          ? async () => {
+            const validation = await ensureApplicationBuildCurrent({
+              sandbox: activeSandbox,
+              cwd,
+              audit,
+            });
+            return validation.ok
+              ? null
+              : `[pre-push-build] ${validation.error || 'Build validation failed before push'}`;
+          }
+          : undefined,
       });
     } catch (e: any) {
       pushError = e;

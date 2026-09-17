@@ -58,6 +58,10 @@ export async function GET(req: Request) {
         trigger_payload: { kind: 'cron', cron, fired_at: new Date().toISOString() },
         idempotency_key: `cron:${windowKey}`,
       });
+      if (materialized.steps.length === 0) {
+        results.push({ trigger_id: trigger.id, skipped: 'duplicate' });
+        continue;
+      }
       void runWorkflowPlan(materialized.run_plan_id).catch((err) => {
         console.error(`[CronWorkflows] run failed ${materialized.run_plan_id}:`, err);
       });

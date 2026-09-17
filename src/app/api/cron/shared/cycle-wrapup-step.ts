@@ -15,9 +15,13 @@ import { requirementStatusTool } from '@/app/api/agents/tools/requirement_status
 import { createRequirementStatusCore } from '@/lib/tools/requirement-status-core';
 import type { DocsDigestResult } from './docs-digest-step';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
-import { hasRetryablePlanFailure } from './cycle-wrapup-retry-policy';
+import {
+  hasRetryablePlanFailure,
+  hasRunnableRequirementPlan,
+} from './cycle-wrapup-retry-policy';
 
 const STEP_FAILURE_REASON_PREFIX = 'One or more execution steps failed';
+const AUTOMATED_RECOVERY_ERROR = /^(?:Build failed|Post-finally|Pre-push)/i;
 
 export interface CycleWrapUpParams {
   sandboxId?: string;
@@ -65,10 +69,12 @@ export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<Cy
 
   try {
     const history = await loadUserActionHistory(instanceId, { requirementId });
-    const retryableStepFailure =
-      !!requiresUserFeedback &&
-      !!wrapUpReason?.startsWith(STEP_FAILURE_REASON_PREFIX) &&
-      await hasRetryablePlanFailure(instanceId, requirementId);
+    const retryableStepFailure = !!requiresUserFeedback && !!wrapUpReason && (
+      wrapUpReason.startsWith(STEP_FAILURE_REASON_PREFIX)
+        ? await hasRetryablePlanFailure(instanceId, requirementId)
+        : AUTOMATED_RECOVERY_ERROR.test(wrapUpReason) &&
+          await hasRunnableRequirementPlan(instanceId, requirementId)
+    );
     const effectiveRequiresUserFeedback =
       !!requiresUserFeedback && !retryableStepFailure;
     const effectiveWrapUpReason = retryableStepFailure

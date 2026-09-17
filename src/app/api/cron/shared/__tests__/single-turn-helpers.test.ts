@@ -4,9 +4,14 @@ import {
   getDeclaredProtectedRoutes,
   getStepTerminalRequest,
   hasStepCompletionRequest,
+  withActionLoopGuard,
   withExecuteStepNoop,
 } from '../single-turn-helpers';
 import { extractVisualFeedbackScreenshotUrl } from '../step-visual-feedback';
+import {
+  ACTION_LOOP_BLOCKED_ACTION_MARKER,
+  buildToolActionKey,
+} from '../loop-detectors';
 
 describe('single-turn interaction helpers', () => {
   it('reads declared protected routes from plan step metadata', () => {
@@ -15,6 +20,26 @@ describe('single-turn interaction helpers', () => {
         protected_routes: ['/dashboard/orders', 42],
       },
     })).toEqual(['/dashboard/orders']);
+  });
+
+  it('blocks only the exact repeated tool action', async () => {
+    const execute = jest.fn().mockResolvedValue({ success: true });
+    const blockedAction = buildToolActionKey('sandbox_read_file', {
+      path: '/vercel/sandbox/src/app/layout.tsx',
+    });
+    const tools = withActionLoopGuard(
+      [{ name: 'sandbox_read_file', execute }],
+      `${ACTION_LOOP_BLOCKED_ACTION_MARKER}${blockedAction}`,
+    );
+
+    await expect(tools[0].execute?.({
+      path: '/vercel/sandbox/src/app/layout.tsx',
+      thought_process: 'Try reading it again',
+    })).resolves.toMatchObject({ success: false, blocked: true });
+    expect(execute).not.toHaveBeenCalled();
+
+    await tools[0].execute?.({ path: '/vercel/sandbox/src/app/page.tsx' });
+    expect(execute).toHaveBeenCalledTimes(1);
   });
 
   it('reuses the persisted step baseline without reading git', async () => {

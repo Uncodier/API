@@ -1,6 +1,7 @@
 import {
   findRequirementPlan,
   hasOnlyRetryableStepFailures,
+  hasRunnablePlanWork,
 } from '../cycle-wrapup-retry-policy';
 
 describe('cycle wrap-up retry policy', () => {
@@ -23,6 +24,17 @@ describe('cycle wrap-up retry policy', () => {
   it('does not classify an ordinary pending plan as a retry failure', () => {
     expect(hasOnlyRetryableStepFailures([
       { status: 'pending' },
+    ])).toBe(false);
+  });
+
+  it('recognizes pending, in-progress, and retryable failed work', () => {
+    expect(hasRunnablePlanWork([{ status: 'pending' }])).toBe(true);
+    expect(hasRunnablePlanWork([{ status: 'in_progress' }])).toBe(true);
+    expect(hasRunnablePlanWork([
+      { status: 'failed', retry_count: 1 },
+    ])).toBe(true);
+    expect(hasRunnablePlanWork([
+      { status: 'failed', retry_count: 2 },
     ])).toBe(false);
   });
 

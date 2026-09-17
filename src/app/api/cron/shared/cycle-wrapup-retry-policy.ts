@@ -42,10 +42,22 @@ export function hasOnlyRetryableStepFailures(steps: PlanStep[]): boolean {
   );
 }
 
-export async function hasRetryablePlanFailure(
+export function hasRunnablePlanWork(steps: PlanStep[]): boolean {
+  return steps.some(
+    (step) =>
+      step.status === 'pending' ||
+      step.status === 'in_progress' ||
+      (
+        step.status === 'failed' &&
+        (step.retry_count ?? 0) < PLAN_STEP_MAX_RETRIES
+      ),
+  );
+}
+
+async function loadActiveRequirementPlan(
   instanceId: string,
   requirementId: string,
-): Promise<boolean> {
+): Promise<ActivePlan | undefined> {
   const { data, error } = await supabaseAdmin
     .from('instance_plans')
     .select('steps, metadata')
@@ -58,14 +70,12 @@ export async function hasRetryablePlanFailure(
     console.warn(
       `[CycleWrapUp] Could not inspect retryable plan failures: ${error.message}`,
     );
-    return false;
+    return undefined;
   }
 
   const plans = (data || []) as ActivePlan[];
   const explicitPlan = findRequirementPlan(plans, requirementId, new Set());
-  if (explicitPlan) {
-    return hasOnlyRetryableStepFailures(explicitPlan.steps || []);
-  }
+  if (explicitPlan) return explicitPlan;
 
   // Legacy plans predate plan-level requirement metadata. Scope them through
   // their backlog item links so unrelated generic instance plans remain inert.
@@ -77,9 +87,31 @@ export async function hasRetryablePlanFailure(
         .filter((id: unknown): id is string => typeof id === 'string')
       : [],
   );
-  const requirementPlan = findRequirementPlan(plans, requirementId, itemIds);
+  return findRequirementPlan(plans, requirementId, itemIds);
+}
 
+export async function hasRetryablePlanFailure(
+  instanceId: string,
+  requirementId: string,
+): Promise<boolean> {
+  const requirementPlan = await loadActiveRequirementPlan(
+    instanceId,
+    requirementId,
+  );
   return hasOnlyRetryableStepFailures(
+    Array.isArray(requirementPlan?.steps) ? requirementPlan.steps : [],
+  );
+}
+
+export async function hasRunnableRequirementPlan(
+  instanceId: string,
+  requirementId: string,
+): Promise<boolean> {
+  const requirementPlan = await loadActiveRequirementPlan(
+    instanceId,
+    requirementId,
+  );
+  return hasRunnablePlanWork(
     Array.isArray(requirementPlan?.steps) ? requirementPlan.steps : [],
   );
 }

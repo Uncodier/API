@@ -16,6 +16,7 @@ export type GitPushFailureKind =
   | 'attach_index'
   | 'invalid_ref'
   | 'vercel_layout'
+  | 'pre_push_build'
   | 'sandbox_unavailable'
   | 'unknown';
 
@@ -51,6 +52,9 @@ export function classifyGitPushFailureMessage(stderr: string): string | null {
   }
   if (s.includes('not a full refname') || s.includes("failed to push branch head")) {
     return 'invalid_ref';
+  }
+  if (s.includes('[pre-push-build]')) {
+    return 'pre_push_build';
   }
   if (s.includes('[vercel]') || s.includes('vercel/npm layout')) {
     return 'vercel_layout';
@@ -151,6 +155,16 @@ export function triageGitPushError(fullMessage: string): GitPushTriage {
       failureKind: 'vercel_layout',
       agentActionable: true,
       agentMessage: fullMessage.replace(/^\[vercel\]\s*/i, 'Layout: ').slice(0, 500),
+      operatorMessage,
+    };
+  }
+  if (kindRaw === 'pre_push_build') {
+    return {
+      failureKind: 'pre_push_build',
+      agentActionable: true,
+      agentMessage: fullMessage
+        .replace(/^\[pre-push-build\]\s*/i, 'Pre-push build: ')
+        .slice(0, 2_000),
       operatorMessage,
     };
   }

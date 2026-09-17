@@ -31,6 +31,8 @@ export type CommitAndPushOptions = {
   /** When set, forces a feature branch off main/master before commit+push (cron). Title may be omitted; slug falls back to "work". */
   requirementId?: string;
   title?: string;
+  /** Validates the exact tree before the initial push and after any rebase. */
+  validateBeforePush?: () => Promise<string | null>;
 };
 
 export class SandboxService {
@@ -210,15 +212,27 @@ export class SandboxService {
     const remoteTip = await SandboxService.runWithCwd(sandbox, 'git', ['rev-parse', '--verify', `origin/${branch}`], cwd);
     if (remoteTip.exitCode === 0) {
       const r = await SandboxService.runWithCwd(sandbox, 'git', ['rev-list', '--count', `origin/${branch}..HEAD`], cwd);
-      if (r.exitCode !== 0) return 0;
-      return parseInt((await r.stdout()).trim(), 10) || 0;
+      if (r.exitCode !== 0) {
+        throw new Error(`Failed to count commits ahead of origin/${branch}: ${await r.stderr()}`);
+      }
+      const count = Number.parseInt((await r.stdout()).trim(), 10);
+      if (!Number.isFinite(count)) {
+        throw new Error(`Git returned an invalid ahead count for origin/${branch}`);
+      }
+      return count;
     }
     for (const base of ['origin/main', 'origin/master']) {
       const baseOk = await SandboxService.runWithCwd(sandbox, 'git', ['rev-parse', '--verify', base], cwd);
       if (baseOk.exitCode !== 0) continue;
       const r = await SandboxService.runWithCwd(sandbox, 'git', ['rev-list', '--count', `${base}..HEAD`], cwd);
-      if (r.exitCode !== 0) continue;
-      return parseInt((await r.stdout()).trim(), 10) || 0;
+      if (r.exitCode !== 0) {
+        throw new Error(`Failed to count commits ahead of ${base}: ${await r.stderr()}`);
+      }
+      const count = Number.parseInt((await r.stdout()).trim(), 10);
+      if (!Number.isFinite(count)) {
+        throw new Error(`Git returned an invalid ahead count for ${base}`);
+      }
+      return count;
     }
     return 0;
   }
@@ -265,7 +279,7 @@ export class SandboxService {
   static async hasWorkingTreeChanges(sandbox: Sandbox): Promise<boolean> {
     const cwd = SandboxService.WORK_DIR;
     const r = await SandboxService.runWithCwd(sandbox, 'git', ['status', '--porcelain'], cwd);
-    if (r.exitCode !== 0) return false;
+    if (r.exitCode !== 0) return true;
     return ((await r.stdout()).trim().length > 0);
   }
 
@@ -423,7 +437,9 @@ export class SandboxService {
     }
 
     console.log(`[Sandbox] ${aheadCount} commit(s) ahead of remote on ${branch}, pushing as ${pushName}...`);
-    const pushed = await pushWithRebaseRetry(sandbox, pushName, cwd);
+    const pushed = await pushWithRebaseRetry(sandbox, pushName, cwd, {
+      validateBeforePush: options.validateBeforePush,
+    });
     if (!pushed.ok) {
       throw new Error(`Failed to push branch ${pushName}: ${pushed.stderr}`);
     }

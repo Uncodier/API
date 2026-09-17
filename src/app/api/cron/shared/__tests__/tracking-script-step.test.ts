@@ -23,40 +23,64 @@ describe('tracking script provisioning', () => {
   });
 
   it('marks a newly injected tracking script as harness-owned', async () => {
+    const layout = [
+      'export default function Layout({ children }) {',
+      '  return <html><body>{children}</body></html>;',
+      '}',
+    ].join('\n');
     const runCommand = jest.fn()
       .mockResolvedValueOnce(commandResult('src/app/layout.tsx\n'))
-      .mockResolvedValueOnce(commandResult('NO\n'))
+      .mockResolvedValueOnce(commandResult(layout))
       .mockResolvedValueOnce(commandResult(''));
-    (getSandboxHandle as jest.Mock).mockResolvedValue({ runCommand });
+    const writeFiles = jest.fn().mockResolvedValue(undefined);
+    const rm = jest.fn().mockResolvedValue(undefined);
+    (getSandboxHandle as jest.Mock).mockResolvedValue({
+      runCommand,
+      writeFiles,
+      fs: { rm },
+    });
 
     await expect(provisionTrackingScriptStep({
       sandboxId: 'sandbox-1',
       siteId: 'site-1',
     })).resolves.toEqual({ injected: true });
 
-    expect(runCommand.mock.calls[2][0].args.join(' ')).toContain(
-      'data-uncodie-harness="tracking"',
+    expect(writeFiles).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: '/vercel/sandbox/src/app/layout.tsx',
+          content: expect.stringContaining(
+            'data-uncodie-harness="tracking"',
+          ),
+        }),
+      ]),
     );
   });
 
-  it('upgrades only the exact legacy harness tag', async () => {
+  it('rolls back when the transformed TSX does not parse', async () => {
+    const layout = '<html><body>content</body></html>';
     const runCommand = jest.fn()
       .mockResolvedValueOnce(commandResult('src/app/layout.tsx\n'))
-      .mockResolvedValueOnce(commandResult('YES\n'))
-      .mockResolvedValueOnce(commandResult('UPDATED'));
-    (getSandboxHandle as jest.Mock).mockResolvedValue({ runCommand });
+      .mockResolvedValueOnce(commandResult(layout))
+      .mockResolvedValueOnce(commandResult('', 1));
+    const writeFiles = jest.fn().mockResolvedValue(undefined);
+    const rm = jest.fn().mockResolvedValue(undefined);
+    (getSandboxHandle as jest.Mock).mockResolvedValue({
+      runCommand,
+      writeFiles,
+      fs: { rm },
+    });
 
     await expect(provisionTrackingScriptStep({
       sandboxId: 'sandbox-1',
       siteId: 'site-1',
-    })).resolves.toEqual({ injected: true });
+    })).resolves.toEqual(expect.objectContaining({
+      injected: false,
+      error: expect.stringContaining('rolled back'),
+    }));
 
-    const upgradeArgs = runCommand.mock.calls[2][0].args;
-    expect(upgradeArgs).toContain(
-      '<script src="https://files.uncodie.com/tracking.min.js" data-site-id="site-1"></script>',
-    );
-    expect(upgradeArgs).toContain(
-      '<script src="https://files.uncodie.com/tracking.min.js" data-site-id="site-1" data-uncodie-harness="tracking"></script>',
+    expect(writeFiles).toHaveBeenLastCalledWith(
+      [{ path: '/vercel/sandbox/src/app/layout.tsx', content: layout }],
     );
   });
 });

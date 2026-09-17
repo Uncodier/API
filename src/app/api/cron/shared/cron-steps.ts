@@ -22,6 +22,7 @@ import { getActiveInstancePlan as _getActiveInstancePlan } from '@/app/api/robot
 import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/route';
 import { commitWorkspaceToOrigin, type GitRepoKind } from './cron-commit-helpers';
 import { validateBuildForStep } from './step-git-gate';
+import { consumePrePushBuildMarker } from './commit/pre-push-build-validation';
 import { summarizePlanSteps } from '@/lib/helpers/plan-status';
 import {
   CronInfraEvent,
@@ -383,6 +384,16 @@ export async function postFinallyBuildStep(
     effectiveSandboxId = conn.sandboxId;
   } else {
     sandbox = await getSandboxHandle(sandboxId);
+  }
+  if (
+    await consumePrePushBuildMarker(sandbox, SandboxService.WORK_DIR)
+  ) {
+    await logCronInfrastructureEvent(audit, {
+      event: CronInfraEvent.POST_FINALLY_BUILD,
+      message: 'Post-finally build reused the successful pre-push validation',
+      details: { sandboxId: effectiveSandboxId, reused_pre_push_build: true },
+    });
+    return { ok: true, effectiveSandboxId };
   }
   const err = await validateBuildForStep(sandbox);
   if (err) {

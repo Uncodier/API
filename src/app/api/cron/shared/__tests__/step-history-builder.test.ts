@@ -28,4 +28,21 @@ describe('formatStepLogHistory', () => {
     expect(result).toContain('/vercel/sandbox/src/orders.ts:42:9');
     expect(result).not.toContain('private-token');
   });
+
+  it('injects an enforceable guard after three repeated tool actions', () => {
+    const repeated = Array.from({ length: 3 }, (_, index) => ({
+      log_type: 'tool_call',
+      tool_name: 'sandbox_read_file',
+      tool_args: {
+        path: '/vercel/sandbox/src/app/protected/layout.tsx',
+        thought_process: `attempt ${index}`,
+      },
+    }));
+
+    const result = formatStepLogHistory(repeated);
+
+    expect(result).toContain('[Action Loop Guard]');
+    expect(result).toContain('ACTION_LOOP_BLOCKED_ACTION:');
+    expect(result).toContain('sandbox_read_file');
+  });
 });

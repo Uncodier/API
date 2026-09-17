@@ -54,6 +54,7 @@ export const CronInfraEvent = {
   /** Step closed as completed but flagged for human review (visual budget exhausted with minor defects). */
   NEEDS_HUMAN_REVIEW: 'cron_infra_needs_human_review',
   PLAN_RECONCILE: 'cron_infra_plan_reconcile',
+  PRE_PUSH_BUILD: 'cron_infra_pre_push_build',
   POST_FINALLY_BUILD: 'cron_infra_post_finally_build',
   DELIVERABLES_VALIDATE: 'cron_infra_deliverables_validate',
   SANDBOX_STOP: 'cron_infra_sandbox_stop',
