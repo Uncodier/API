@@ -20,6 +20,15 @@ describe('isSandboxGoneError', () => {
     expect(isSandboxGoneError('The sandbox microVM is unavailable. Please retry.')).toBe(true);
   });
 
+  it('detects a closed sandbox command stream', () => {
+    expect(
+      isSandboxGoneError('Sandbox stream was closed and is not accepting commands.'),
+    ).toBe(true);
+    expect(
+      isSandboxGoneError('The sandbox command stream is closed.'),
+    ).toBe(true);
+  });
+
   it('returns false for normal git errors', () => {
     expect(isSandboxGoneError('fatal: refusing to merge unrelated histories')).toBe(false);
   });

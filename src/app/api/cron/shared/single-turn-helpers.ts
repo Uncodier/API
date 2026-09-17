@@ -9,6 +9,7 @@ import {
   ACTION_LOOP_BLOCKED_ACTION_MARKER,
   buildToolActionKey,
 } from './loop-detectors';
+import { isSandboxGoneError } from '@/lib/services/sandbox-gone-error';
 
 const WORK_DIR = '/vercel/sandbox';
 
@@ -79,6 +80,20 @@ export type StepTerminalRequest = {
   status: 'completed' | 'failed';
   output?: string;
 };
+
+export function isTransientGateFailure(
+  gate: Pick<
+    FlowGateResult,
+    'ok' | 'error' | 'infrastructureFailure' | 'sandboxUnavailable'
+  >,
+): boolean {
+  if (gate.ok) return false;
+  return (
+    gate.infrastructureFailure === true ||
+    gate.sandboxUnavailable === true ||
+    isSandboxGoneError(gate.error)
+  );
+}
 
 export function getDeclaredProtectedRoutes(step: {
   protected_routes?: unknown;

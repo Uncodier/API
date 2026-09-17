@@ -4,6 +4,7 @@ import {
   getDeclaredProtectedRoutes,
   getStepTerminalRequest,
   hasStepCompletionRequest,
+  isTransientGateFailure,
   withActionLoopGuard,
   withExecuteStepNoop,
 } from '../single-turn-helpers';
@@ -130,6 +131,21 @@ describe('single-turn interaction helpers', () => {
       completion_requested: true,
     });
     expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('keeps unavailable sandbox gates in the infrastructure retry path', () => {
+    expect(isTransientGateFailure({
+      ok: false,
+      sandboxUnavailable: true,
+    } as any)).toBe(true);
+    expect(isTransientGateFailure({
+      ok: false,
+      error: 'Sandbox stream was closed and is not accepting commands.',
+    } as any)).toBe(true);
+    expect(isTransientGateFailure({
+      ok: false,
+      error: 'The acceptance criteria are not met.',
+    } as any)).toBe(false);
   });
 
   it('formats interaction findings into the retry excerpt', () => {

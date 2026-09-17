@@ -36,17 +36,35 @@ export async function getPlanExecutionGateStep(planId: string): Promise<PlanGate
 
 export async function updatePlanStepStatusStep(planId: string, stepId: string, status: string, errorMessage?: string): Promise<void> {
   'use step';
-  const { data } = await supabaseAdmin
+  const { data, error } = await supabaseAdmin
     .from('instance_plans')
     .select('steps')
     .eq('id', planId)
     .single();
 
+  if (error) throw new Error(`Failed to load plan ${planId}: ${error.message}`);
   if (!data?.steps) return;
 
   const steps = data.steps as any[];
   const idx = steps.findIndex((s) => s.id === stepId);
   if (idx > -1) {
+    const currentStatus = steps[idx].status;
+    if (
+      (currentStatus === 'completed' || currentStatus === 'cancelled') &&
+      currentStatus !== status
+    ) {
+      console.warn(
+        `[CronStep] Ignoring stale step transition ${stepId}: ${currentStatus} → ${status}`,
+      );
+      return;
+    }
+    if (
+      currentStatus === status &&
+      (status === 'completed' || status === 'failed' || status === 'cancelled')
+    ) {
+      return;
+    }
+
     steps[idx].status = status;
     if (status === 'in_progress') {
       steps[idx].started_at = steps[idx].started_at || new Date().toISOString();
@@ -57,13 +75,19 @@ export async function updatePlanStepStatusStep(planId: string, stepId: string, s
         if (errorMessage) {
           steps[idx].error_message = errorMessage;
         }
+      } else if (status === 'completed') {
+        steps[idx].error_message = null;
+        steps[idx].infra_retry_count = 0;
       }
     }
 
-    await supabaseAdmin
+    const { error: updateError } = await supabaseAdmin
       .from('instance_plans')
       .update({ steps, updated_at: new Date().toISOString() })
       .eq('id', planId);
+    if (updateError) {
+      throw new Error(`Failed to update plan ${planId}: ${updateError.message}`);
+    }
   }
 }
 
@@ -71,17 +95,27 @@ export const MAX_INFRA_RETRIES = 4;
 
 export async function recordStepInfraTransientStep(planId: string, stepId: string, errorMessage?: string): Promise<{ exhausted: boolean; infraCount: number }> {
   'use step';
-  const { data } = await supabaseAdmin
+  const { data, error } = await supabaseAdmin
     .from('instance_plans')
     .select('steps')
     .eq('id', planId)
     .single();
 
+  if (error) throw new Error(`Failed to load plan ${planId}: ${error.message}`);
   if (!data?.steps) return { exhausted: false, infraCount: 0 };
 
   const steps = data.steps as any[];
   const idx = steps.findIndex((s) => s.id === stepId);
   if (idx === -1) return { exhausted: false, infraCount: 0 };
+  if (['completed', 'cancelled', 'failed'].includes(steps[idx].status)) {
+    console.warn(
+      `[CronStep] Ignoring stale infrastructure retry for terminal step ${stepId} (${steps[idx].status})`,
+    );
+    return {
+      exhausted: steps[idx].status === 'failed',
+      infraCount: steps[idx].infra_retry_count || 0,
+    };
+  }
 
   const infraCount = (steps[idx].infra_retry_count || 0) + 1;
   steps[idx].infra_retry_count = infraCount;
@@ -99,10 +133,13 @@ export async function recordStepInfraTransientStep(planId: string, stepId: strin
     }
   }
 
-  await supabaseAdmin
+  const { error: updateError } = await supabaseAdmin
     .from('instance_plans')
     .update({ steps, updated_at: new Date().toISOString() })
     .eq('id', planId);
+  if (updateError) {
+    throw new Error(`Failed to update plan ${planId}: ${updateError.message}`);
+  }
 
   return { exhausted, infraCount };
 }

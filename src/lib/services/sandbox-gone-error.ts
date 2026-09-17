@@ -18,6 +18,8 @@ export function isSandboxGoneError(message: string | undefined | null | { messag
   if (s.includes('sandbox has stopped')) return true;
   if (s.includes('microvm is unavailable')) return true;
   if (s.includes('sandbox microvm is unavailable')) return true;
+  if (s.includes('sandbox') && s.includes('stream') && s.includes('closed')) return true;
+  if (s.includes('sandbox') && s.includes('not accepting commands')) return true;
   if (s.includes('retry-after') && (s.includes('gone') || s.includes('unavailable') || s.includes('410'))) return true;
   return false;
 }

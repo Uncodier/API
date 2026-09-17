@@ -25,6 +25,7 @@ import {
   captureInteractionBaseline,
   getDeclaredProtectedRoutes,
   getStepTerminalRequest,
+  isTransientGateFailure,
   withActionLoopGuard,
   withExecuteStepNoop,
 } from './single-turn-helpers';
@@ -350,7 +351,7 @@ export async function executeSingleTurnStep(params: {
          sandbox = gateRes.sandboxReplacement;
       }
 
-      if (!gateRes.ok && gateRes.infrastructureFailure) {
+      if (isTransientGateFailure(gateRes)) {
          console.warn(
            `[SingleTurn] Gate infrastructure unavailable for step ${step.order}: ${gateRes.error || 'unknown error'}`,
          );
