@@ -28,7 +28,7 @@ export function buildLegacyTrackingScriptTag(siteId: string): string {
 export type TrackingScriptTransform = {
   changed: boolean;
   source: string;
-  reason: 'inserted' | 'upgraded' | 'repaired' | 'already_marked' | 'unowned_existing';
+  reason: 'inserted' | 'upgraded' | 'repaired' | 'already_marked';
 };
 
 export type HarnessTrackingBackup = {
@@ -95,8 +95,12 @@ function findHarnessTrackingScript(source: string): {
   scriptStart: number;
   scriptEnd: number;
   owned: boolean;
+  ownershipInsert: number;
   ownershipStart?: number;
   ownershipEnd?: number;
+  siteId?: string;
+  siteIdStart?: number;
+  siteIdEnd?: number;
 } | null {
   const sourceFile = ts.createSourceFile(
     'layout.tsx',
@@ -131,6 +135,9 @@ function findHarnessTrackingScript(source: string): {
       (attribute) =>
         attribute.name.getText(sourceFile) === 'data-uncodie-harness',
     );
+    const siteIdAttribute = attributes.find(
+      (attribute) => attribute.name.getText(sourceFile) === 'data-site-id',
+    );
     if (
       !sourceAttribute ||
       !sourceAttribute.initializer ||
@@ -149,10 +156,26 @@ function findHarnessTrackingScript(source: string): {
       scriptStart: node.getStart(sourceFile),
       scriptEnd: node.getEnd(),
       owned,
-      ownershipStart: owned
+      ownershipInsert:
+        openingElement.getEnd() -
+        (ts.isJsxSelfClosingElement(openingElement) ? 2 : 1),
+      ownershipStart: ownershipAttribute
         ? ownershipAttribute!.getStart(sourceFile)
         : undefined,
-      ownershipEnd: owned ? ownershipAttribute!.getEnd() : undefined,
+      ownershipEnd: ownershipAttribute
+        ? ownershipAttribute!.getEnd()
+        : undefined,
+      siteId:
+        siteIdAttribute?.initializer &&
+        ts.isStringLiteral(siteIdAttribute.initializer)
+          ? siteIdAttribute.initializer.text
+          : undefined,
+      siteIdStart: siteIdAttribute
+        ? siteIdAttribute.getStart(sourceFile)
+        : undefined,
+      siteIdEnd: siteIdAttribute
+        ? siteIdAttribute.getEnd()
+        : undefined,
     };
   };
   visit(sourceFile);
@@ -192,10 +215,56 @@ export function transformHarnessTrackingScript(
 
   const existingScript = findHarnessTrackingScript(source);
   if (existingScript) {
+    const ownershipAttribute = 'data-uncodie-harness="tracking"';
+    const siteIdAttribute = `data-site-id="${escapeAttribute(siteId)}"`;
+    const edits: Array<{ start: number; end: number; text: string }> = [];
+    const insertions: string[] = [];
+    if (!existingScript.owned) {
+      if (
+        existingScript.ownershipStart !== undefined &&
+        existingScript.ownershipEnd !== undefined
+      ) {
+        edits.push({
+          start: existingScript.ownershipStart,
+          end: existingScript.ownershipEnd,
+          text: ownershipAttribute,
+        });
+      } else {
+        insertions.push(ownershipAttribute);
+      }
+    }
+    if (existingScript.siteId !== siteId) {
+      if (
+        existingScript.siteIdStart !== undefined &&
+        existingScript.siteIdEnd !== undefined
+      ) {
+        edits.push({
+          start: existingScript.siteIdStart,
+          end: existingScript.siteIdEnd,
+          text: siteIdAttribute,
+        });
+      } else {
+        insertions.push(siteIdAttribute);
+      }
+    }
+    if (insertions.length) {
+      edits.push({
+        start: existingScript.ownershipInsert,
+        end: existingScript.ownershipInsert,
+        text: ` ${insertions.join(' ')}`,
+      });
+    }
+    if (edits.length) {
+      return {
+        changed: true,
+        source: applySourceEdits(source, edits),
+        reason: 'upgraded',
+      };
+    }
     return {
       changed: false,
       source,
-      reason: existingScript.owned ? 'already_marked' : 'unowned_existing',
+      reason: 'already_marked',
     };
   }
 
@@ -211,6 +280,34 @@ export function transformHarnessTrackingScript(
   };
 }
 
+function applySourceEdits(
+  source: string,
+  edits: Array<{ start: number; end: number; text: string }>,
+): string {
+  return edits
+    .slice()
+    .sort((a, b) => b.start - a.start)
+    .reduce(
+      (current, edit) =>
+        current.slice(0, edit.start) + edit.text + current.slice(edit.end),
+      source,
+    );
+}
+
+function restoreOriginalTrackingScript(
+  currentSource: string,
+  originalSource: string,
+): string | null {
+  const currentScript = findHarnessTrackingScript(currentSource);
+  const originalScript = findHarnessTrackingScript(originalSource);
+  if (!currentScript || !originalScript) return null;
+  return (
+    currentSource.slice(0, currentScript.scriptStart) +
+    originalSource.slice(originalScript.scriptStart, originalScript.scriptEnd) +
+    currentSource.slice(currentScript.scriptEnd)
+  );
+}
+
 export function rollbackHarnessTrackingScript(
   currentSource: string,
   backup: HarnessTrackingBackup,
@@ -223,11 +320,12 @@ export function rollbackHarnessTrackingScript(
   }
 
   const markedTag = buildHarnessTrackingScriptTag(backup.siteId);
-  if (currentSource.includes(markedTag) && backup.reason === 'upgraded') {
-    return currentSource.replace(
-      markedTag,
-      buildLegacyTrackingScriptTag(backup.siteId),
+  if (backup.reason === 'upgraded') {
+    const restored = restoreOriginalTrackingScript(
+      currentSource,
+      backup.originalSource,
     );
+    if (restored !== null) return restored;
   }
   if (
     currentSource.includes(markedTag) &&
@@ -238,23 +336,6 @@ export function rollbackHarnessTrackingScript(
 
   const ownedScript = findHarnessTrackingScript(currentSource);
   if (!ownedScript?.owned) return null;
-  if (
-    backup.reason === 'upgraded' &&
-    ownedScript.ownershipStart !== undefined &&
-    ownedScript.ownershipEnd !== undefined
-  ) {
-    let removeStart = ownedScript.ownershipStart;
-    while (
-      removeStart > ownedScript.scriptStart &&
-      /[ \t]/.test(currentSource[removeStart - 1])
-    ) {
-      removeStart -= 1;
-    }
-    return (
-      currentSource.slice(0, removeStart) +
-      currentSource.slice(ownedScript.ownershipEnd)
-    );
-  }
   if (backup.reason === 'inserted' || backup.reason === 'repaired') {
     return (
       currentSource.slice(0, ownedScript.scriptStart) +

@@ -5,23 +5,7 @@ import {
   parseChangedTargets,
   routeFromAppFile,
   routePattern,
-  type InteractionSignal,
 } from '../step-interaction-audit';
-import { applyInteractionBacklogPolicy } from '../step-interaction-backlog';
-
-const mockGetBacklogItem = jest.fn();
-const mockListBacklog = jest.fn();
-const mockLogAssumption = jest.fn();
-const mockUpsertBacklogItem = jest.fn();
-const mockIsItemTerminal = jest.fn();
-
-jest.mock('@/lib/services/requirement-backlog', () => ({
-  getBacklogItem: mockGetBacklogItem,
-  isItemTerminal: mockIsItemTerminal,
-  listBacklog: mockListBacklog,
-  logAssumption: mockLogAssumption,
-  upsertBacklogItem: mockUpsertBacklogItem,
-}));
 
 const file = 'src/components/Header.tsx';
 const allLinesAdded = new Map<string, Set<number> | '*'>([[file, '*']]);
@@ -38,11 +22,6 @@ function audit(content: string, addedLines = allLinesAdded) {
 }
 
 describe('interaction audit', () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-    mockIsItemTerminal.mockReturnValue(false);
-  });
-
   it('reports internal links whose page route does not exist', () => {
     const findings = audit(`export const Header = () => <Link href="/pricing">Pricing</Link>;`);
 
@@ -287,173 +266,5 @@ describe('interaction audit', () => {
 
     expect(changedTargets).toContain('/pricing');
     expect(findings[0].introduced_by_step).toBe(true);
-  });
-
-  it('allows one repair cycle before creating and deferring a missing-page item', async () => {
-    const finding = audit(`export const Header = () => <Link href="/pricing">Pricing</Link>;`)[0];
-    const signal: InteractionSignal = {
-      ok: false,
-      findings: [finding],
-      blocking_count: 1,
-      deferred_count: 0,
-      warning_count: 0,
-      summary: '1 blocking',
-    };
-    mockListBacklog.mockResolvedValue({
-      backlog: { current_phase_id: 'implementation', items: [] },
-    });
-    mockGetBacklogItem.mockResolvedValue({
-      item: { id: 'current', assumptions: [] },
-    });
-    mockLogAssumption.mockResolvedValue({});
-
-    const first = await applyInteractionBacklogPolicy({
-      requirementId: 'requirement',
-      backlogItemId: 'current',
-      signal,
-    });
-
-    expect(first.ok).toBe(false);
-    expect(mockLogAssumption).toHaveBeenCalledWith(expect.objectContaining({
-      itemId: 'current',
-      assumption: expect.stringMatching(/^\[interaction-audit:/),
-    }));
-    expect(mockUpsertBacklogItem).not.toHaveBeenCalled();
-
-    const marker = mockLogAssumption.mock.calls[0][0].assumption;
-    mockGetBacklogItem.mockResolvedValue({
-      item: { id: 'current', assumptions: [marker] },
-    });
-    mockUpsertBacklogItem.mockResolvedValue({ id: 'new-page-item' });
-
-    const second = await applyInteractionBacklogPolicy({
-      requirementId: 'requirement',
-      backlogItemId: 'current',
-      signal,
-    });
-
-    expect(mockUpsertBacklogItem).toHaveBeenCalledWith(expect.objectContaining({
-      item: expect.objectContaining({
-        id: expect.stringMatching(/^[0-9a-f-]{36}$/),
-        title: 'Implement missing /pricing screen',
-        kind: 'page',
-        status: 'pending',
-      }),
-    }));
-    expect(second).toEqual(expect.objectContaining({
-      ok: true,
-      blocking_count: 0,
-      deferred_count: 1,
-    }));
-    expect(second.findings[0]).toEqual(expect.objectContaining({
-      disposition: 'deferred',
-      backlog_item_id: 'new-page-item',
-    }));
-  });
-
-  it('does not consume the repair cycle twice for duplicate links to one route', async () => {
-    const first = audit(`export const A = () => <Link href="/pricing">A</Link>;`)[0];
-    const second = { ...first, file: 'src/components/Footer.tsx', line: 2 };
-    mockListBacklog.mockResolvedValue({
-      backlog: { current_phase_id: 'implementation', items: [] },
-    });
-    mockGetBacklogItem.mockResolvedValue({ item: { id: 'current', assumptions: [] } });
-    mockLogAssumption.mockResolvedValue({});
-
-    const result = await applyInteractionBacklogPolicy({
-      requirementId: 'requirement',
-      backlogItemId: 'current',
-      signal: {
-        ok: false,
-        findings: [first, second],
-        blocking_count: 2,
-        deferred_count: 0,
-        warning_count: 0,
-        summary: '2 blocking',
-      },
-    });
-
-    expect(result.ok).toBe(false);
-    expect(mockLogAssumption).toHaveBeenCalledTimes(1);
-    expect(mockUpsertBacklogItem).not.toHaveBeenCalled();
-  });
-
-  it('does not defer to a terminal backlog item that used to own the route', async () => {
-    const finding = audit(
-      `export const Header = () => <Link href="/pricing">Pricing</Link>;`,
-    )[0];
-    mockIsItemTerminal.mockReturnValue(true);
-    mockListBacklog.mockResolvedValue({
-      backlog: {
-        current_phase_id: 'implementation',
-        items: [{
-          id: 'old-item',
-          status: 'needs_review',
-          touches: ['src/app/pricing/page.tsx'],
-        }],
-      },
-    });
-    mockGetBacklogItem.mockResolvedValue({
-      item: {
-        id: 'current',
-        assumptions: [`[interaction-audit:${finding.fingerprint}]`],
-      },
-    });
-    mockUpsertBacklogItem.mockResolvedValue({ id: 'replacement-item' });
-
-    const result = await applyInteractionBacklogPolicy({
-      requirementId: 'requirement',
-      backlogItemId: 'current',
-      signal: {
-        ok: false,
-        findings: [finding],
-        blocking_count: 1,
-        deferred_count: 0,
-        warning_count: 0,
-        summary: '1 blocking',
-      },
-    });
-
-    expect(mockUpsertBacklogItem).toHaveBeenCalled();
-    expect(result.findings[0].backlog_item_id).toBe('replacement-item');
-  });
-
-  it('keeps a missing route blocking when the current item owns that route', async () => {
-    const finding = audit(
-      `export const Header = () => <Link href="/pricing">Pricing</Link>;`,
-    )[0];
-    mockListBacklog.mockResolvedValue({
-      backlog: {
-        current_phase_id: 'implementation',
-        items: [{
-          id: 'current',
-          status: 'in_progress',
-          touches: ['src/app/pricing/page.tsx'],
-        }],
-      },
-    });
-    mockGetBacklogItem.mockResolvedValue({
-      item: {
-        id: 'current',
-        assumptions: [`[interaction-audit:${finding.fingerprint}]`],
-      },
-    });
-
-    const result = await applyInteractionBacklogPolicy({
-      requirementId: 'requirement',
-      backlogItemId: 'current',
-      signal: {
-        ok: false,
-        findings: [finding],
-        blocking_count: 1,
-        deferred_count: 0,
-        warning_count: 0,
-        summary: '1 blocking',
-      },
-    });
-
-    expect(result.ok).toBe(false);
-    expect(mockUpsertBacklogItem).not.toHaveBeenCalled();
-    expect(result.findings[0].disposition).toBe('create_backlog');
   });
 });

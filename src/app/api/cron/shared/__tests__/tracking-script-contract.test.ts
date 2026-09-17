@@ -125,15 +125,85 @@ describe('tracking script contract', () => {
     expect(rolledBack).not.toContain('src=https://');
   });
 
-  it('does not claim an unmarked product-authored script', () => {
+  it('restores ownership after an agent removes the marker', () => {
+    const source =
+      '<html><body><script src="https://files.uncodie.com/tracking.min.js" data-site-id="site-1" defer></script></body></html>';
+
+    const result = transformHarnessTrackingScript(source, 'site-1');
+
+    expect(result.changed).toBe(true);
+    expect(result.reason).toBe('upgraded');
+    expect(result.source).toContain('defer');
+    expect(result.source).toContain(HARNESS_TRACKING_ATTRIBUTE);
+    const parsed = ts.createSourceFile(
+      'layout.tsx',
+      result.source,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TSX,
+    );
+    expect((parsed as any).parseDiagnostics).toEqual([]);
+  });
+
+  it('normalizes a stale site id on an existing tracking script', () => {
+    const source =
+      '<html><body><script src="https://files.uncodie.com/tracking.min.js" data-site-id="old-site" data-uncodie-harness="tracking" defer></script></body></html>';
+
+    const result = transformHarnessTrackingScript(source, 'site-1');
+
+    expect(result.changed).toBe(true);
+    expect(result.reason).toBe('upgraded');
+    expect(result.source).toContain('data-site-id="site-1"');
+    expect(result.source).not.toContain('data-site-id="old-site"');
+    expect(result.source).toContain('defer');
+  });
+
+  it('adds a missing site id while claiming an existing tracking script', () => {
     const source =
       '<html><body><script src="https://files.uncodie.com/tracking.min.js" async></script></body></html>';
 
-    expect(transformHarnessTrackingScript(source, 'site-1')).toEqual({
-      changed: false,
-      source,
-      reason: 'unowned_existing',
+    const result = transformHarnessTrackingScript(source, 'site-1');
+
+    expect(result.source).toContain('data-site-id="site-1"');
+    expect(result.source).toContain(HARNESS_TRACKING_ATTRIBUTE);
+    expect(result.source).toContain('async');
+  });
+
+  it('replaces an invalid ownership value without duplicating the attribute', () => {
+    const source =
+      '<html><body><script src="https://files.uncodie.com/tracking.min.js" data-uncodie-harness="removed"></script></body></html>';
+
+    const result = transformHarnessTrackingScript(source, 'site-1');
+
+    expect(result.reason).toBe('upgraded');
+    expect(result.source.match(/data-uncodie-harness=/g)).toHaveLength(1);
+    expect(result.source).toContain(HARNESS_TRACKING_ATTRIBUTE);
+  });
+
+  it('restores original tracking attributes while preserving later layout edits', () => {
+    const originalSource =
+      '<html><body><script src="https://files.uncodie.com/tracking.min.js" data-site-id="old-site" defer></script></body></html>';
+    const transformed = transformHarnessTrackingScript(
+      originalSource,
+      'site-1',
+    );
+    const editedAfterInjection = transformed.source.replace(
+      '</body>',
+      '<footer>Agent edit</footer></body>',
+    );
+
+    const rolledBack = rollbackHarnessTrackingScript(editedAfterInjection, {
+      path: '/vercel/sandbox/src/app/layout.tsx',
+      originalSource,
+      transformedSource: transformed.source,
+      reason: transformed.reason,
+      siteId: 'site-1',
     });
+
+    expect(rolledBack).toContain('<footer>Agent edit</footer>');
+    expect(rolledBack).toContain('data-site-id="old-site"');
+    expect(rolledBack).not.toContain(HARNESS_TRACKING_ATTRIBUTE);
+    expect(rolledBack).toContain('defer');
   });
 
   it('rolls back only the harness tag when the agent edited the layout later', () => {

@@ -478,7 +478,7 @@ export function formatInteractionFailure(signal: InteractionSignal): string {
   return [
     `Interaction audit failed: ${signal.summary}.`,
     ...lines,
-    'Repair these local defects in this cycle. Do not invent a full missing screen merely to pass the gate.',
-    'If the same missing page remains on the next cycle, infrastructure will create a deduplicated backlog item and defer it.',
+    'Repair these local defects in this cycle. Implement a missing route only when the active item contract requires it; otherwise remove the invalid navigation.',
+    'Out-of-contract missing routes are handled as deduplicated backlog work and must not expand this item.',
   ].join('\n');
 }
