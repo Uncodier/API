@@ -57,6 +57,7 @@ import {
   isRequirementExecutionCurrentStep,
   updateInstanceStatusStep,
   recordCronCycleOutcomeStep,
+  syncCompletedPlanBacklogStep,
 } from '../shared/workflow-db-steps';
 import { buildCoordinatorPromptForFlow } from './prompt';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
@@ -925,30 +926,17 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       if (Array.isArray(finalPlan?.steps)) latestPlanSteps = finalPlan.steps;
 
       if (planCompleted && finalPlan) {
-        const { syncBacklogAfterPlanCompleted } = await import('../shared/plan-backlog-sync');
-        const { connectOrRecreateRequirementSandbox } = await import('@/lib/services/sandbox-recovery');
-        let connectedSandbox;
-        try {
-          if (sandboxId) {
-            const connected = await connectOrRecreateRequirementSandbox({
-              sandboxId,
-              requirementId: reqId,
-              instanceType: gitRepoKind,
-              title,
-              audit: cronAudit,
-            });
-            connectedSandbox = connected.sandbox;
-          }
-        } catch (e) {
-          console.warn(`[CronAppsWorkflow] Could not reconnect sandbox for post-plan evaluation:`, e);
-        }
-
-        await syncBacklogAfterPlanCompleted({
+        const syncResult = await syncCompletedPlanBacklogStep({
           requirementId: reqId,
           plan: finalPlan,
-          sandbox: connectedSandbox,
-          audit: cronAudit
+          sandboxId: sandboxId ?? undefined,
+          instanceType: gitRepoKind,
+          title,
+          audit: cronAudit,
         });
+        if (syncResult.effectiveSandboxId) {
+          sandboxId = syncResult.effectiveSandboxId;
+        }
       }
 
       const completedStepsAfter = (finalPlan?.steps as any[] || []).filter((s) => s.status === 'completed').length;

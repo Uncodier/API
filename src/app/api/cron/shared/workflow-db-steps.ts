@@ -269,6 +269,50 @@ export async function recordCronCycleOutcomeStep(params: {
   });
 }
 
+export async function syncCompletedPlanBacklogStep(params: {
+  requirementId: string;
+  plan: { id: string; steps?: any[] };
+  sandboxId?: string;
+  instanceType: string;
+  title: string;
+  audit?: import('@/lib/services/cron-audit-log').CronAuditContext;
+}): Promise<{ effectiveSandboxId?: string }> {
+  'use step';
+  const { syncBacklogAfterPlanCompleted } = await import('./plan-backlog-sync');
+  let sandbox;
+  let effectiveSandboxId = params.sandboxId;
+
+  if (params.sandboxId) {
+    try {
+      const { connectOrRecreateRequirementSandbox } = await import(
+        '@/lib/services/sandbox-recovery'
+      );
+      const connected = await connectOrRecreateRequirementSandbox({
+        sandboxId: params.sandboxId,
+        requirementId: params.requirementId,
+        instanceType: params.instanceType,
+        title: params.title,
+        audit: params.audit,
+      });
+      sandbox = connected.sandbox;
+      effectiveSandboxId = connected.sandboxId;
+    } catch (e: unknown) {
+      console.warn(
+        '[WorkflowDbStep] Could not reconnect sandbox for post-plan evaluation:',
+        e,
+      );
+    }
+  }
+
+  await syncBacklogAfterPlanCompleted({
+    requirementId: params.requirementId,
+    plan: params.plan,
+    sandbox,
+    audit: params.audit,
+  });
+  return { effectiveSandboxId };
+}
+
 export async function incrementQaSuccessfulRunsStep(requirementId: string): Promise<void> {
   'use step';
   try {
