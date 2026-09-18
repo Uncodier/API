@@ -22,6 +22,10 @@ import { WorkflowService } from '@/lib/services/workflow-service';
 import { WhatsAppLeadService } from '@/lib/services/whatsapp/WhatsAppLeadService';
 import { ConversationService } from '@/lib/services/conversation-service';
 import { normalizePhoneForSearch, normalizePhoneForStorage } from '@/lib/utils/phone-normalizer';
+import {
+  visitorAuthorizationErrorResponse,
+  visitorSessionAuthorizationService
+} from '@/lib/services/visitor-identity/VisitorSessionAuthorizationService';
 
 // Función para validar UUIDs
 function isValidUUID(uuid: string): boolean {
@@ -1072,12 +1076,30 @@ function corsHeaders(request: Request) {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    
-    // Debug para ver los parámetros de la solicitud
-    console.log("🔍 POST /api/agents/customerSupport/message - Cuerpo de la solicitud:", JSON.stringify(body));
-    console.log("🔍 Headers:", JSON.stringify(Object.fromEntries(request.headers)));
-    console.log("🔍 Origen:", request.headers.get('origin'));
-    
+    const browserIdentity = await visitorSessionAuthorizationService.authorizeBrowserRequest({
+      request,
+      siteId: body.site_id,
+      sessionId: body.session_id,
+      conversationId: body.conversationId
+    });
+    if (browserIdentity) {
+      body.site_id = browserIdentity.siteId;
+      body.visitor_id = browserIdentity.visitorId;
+      body.lead_id = browserIdentity.leadId;
+      body.userId = undefined;
+      body.name = undefined;
+      body.email = undefined;
+      body.phone = undefined;
+    }
+
+    console.log('[CustomerSupport] Request accepted', {
+      hasConversationId: Boolean(body.conversationId),
+      hasSessionId: Boolean(body.session_id),
+      hasVisitorId: Boolean(body.visitor_id),
+      hasLeadId: Boolean(body.lead_id),
+      origin: request.headers.get('origin') || 'server'
+    });
+
     // Obtener información de ubicación y tiempo del request
     const requestTimestamp = new Date().toISOString();
     const clientIP = request.headers.get('x-forwarded-for') || 
@@ -2411,6 +2433,8 @@ export async function POST(request: Request) {
       }
     );
   } catch (error) {
+    const authorizationResponse = visitorAuthorizationErrorResponse(error);
+    if (authorizationResponse) return authorizationResponse;
     console.error(`❌ Error en el manejo de la solicitud:`, error);
     return NextResponse.json(
       { success: false, error: { code: 'INTERNAL_SERVER_ERROR', message: 'An unexpected error occurred' } },

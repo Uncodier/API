@@ -34,6 +34,7 @@ export class VisitorIdentityError extends Error {
   ) {
     super(message);
     this.name = 'VisitorIdentityError';
+    Object.setPrototypeOf(this, VisitorIdentityError.prototype);
   }
 }
 

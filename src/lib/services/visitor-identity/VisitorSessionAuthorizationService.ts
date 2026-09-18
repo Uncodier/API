@@ -28,7 +28,8 @@ interface AuthorizationInput {
 
 export class VisitorSessionAuthorizationService {
   isBrowserRequest(request: Request): boolean {
-    return Boolean(request.headers.get('origin'));
+    return Boolean(request.headers.get('origin'))
+      || !request.headers.get('x-api-key-data');
   }
 
   async authorizeBrowserRequest(input: AuthorizationInput): Promise<CanonicalVisitorIdentity | null> {
@@ -71,7 +72,7 @@ export class VisitorSessionAuthorizationService {
       siteId: input.siteId,
       sessionId: input.sessionId,
       visitorId: session.visitor_id,
-      leadId: grant?.lead_id || null
+      leadId: session.lead_id ? grant?.lead_id || null : null
     };
     if (input.conversationId) {
       await this.assertConversationOwnership(identity, input.conversationId);

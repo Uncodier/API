@@ -317,6 +317,7 @@ export default async function middleware(request) {
         console.log('[Middleware] API key validation failed');
         return apiKeyResponse;
       }
+      requestHeaders.set('x-api-key-data', JSON.stringify({ validated: true }));
       console.log('[Middleware] API key validation passed');
     }
   }

@@ -10,7 +10,12 @@ import {
   normalizeIdentityEmail
 } from './contracts';
 import { visitorIdentityEmailService } from './email-service';
-import { generateOtpCode, hashIdentityRateLimitValue, hashOtp } from './otp-crypto';
+import {
+  generateOtpCode,
+  hashIdentityRateLimitValue,
+  hashOtp,
+  otpHashesEqual
+} from './otp-crypto';
 
 interface IdentifyInput {
   siteId: string;
@@ -55,7 +60,12 @@ export class VisitorIdentityService {
       .eq('id', sessionId)
       .eq('site_id', siteId)
       .maybeSingle();
-    if (error || !data || (visitorId && data.visitor_id !== visitorId)) {
+    if (
+      error
+      || !data
+      || !data.is_active
+      || (visitorId && data.visitor_id !== visitorId)
+    ) {
       throw new VisitorIdentityError('invalid_session', 'Visitor session was not found', 404);
     }
     return data as { id: string; site_id: string; visitor_id: string; lead_id: string | null; is_active: boolean };
@@ -210,7 +220,7 @@ export class VisitorIdentityService {
       p_challenge_id: params.challengeId,
       p_site_id: params.siteId,
       p_session_id: params.sessionId,
-      p_otp_hash: candidateHash,
+      p_is_match: otpHashesEqual(challenge.otpHash, candidateHash),
       p_trusted_token_hash: null
     });
     const result = rpcData(data, error);
@@ -279,7 +289,7 @@ export class VisitorIdentityService {
   private async loadChallenge(params: { siteId: string; sessionId: string; challengeId: string }) {
     const { data, error } = await supabaseAdmin
       .from('visitor_identity_challenges')
-      .select('id, site_id, session_id, visitor_id, lead_id, normalized_email, masked_email')
+      .select('id, site_id, session_id, visitor_id, lead_id, normalized_email, masked_email, otp_hash')
       .eq('id', params.challengeId)
       .eq('site_id', params.siteId)
       .eq('session_id', params.sessionId)
@@ -289,6 +299,7 @@ export class VisitorIdentityService {
     }
     return {
       maskedEmail: data.masked_email as string,
+      otpHash: data.otp_hash as string,
       context: {
         challengeId: data.id,
         siteId: data.site_id,

@@ -51,7 +51,13 @@ export async function POST(
     });
     return NextResponse.json(
       { success: true, data: result },
-      { status: result.identity_status === 'verification_required' ? 202 : 201 }
+      {
+        status: result.identity_status === 'verification_required'
+          ? 202
+          : result.identity_status === 'new_lead'
+            ? 201
+            : 200
+      }
     );
   } catch (error) {
     const identityError = error instanceof VisitorIdentityError

@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { WorkflowService } from '@/lib/services/workflow-service';
+import {
+  visitorAuthorizationErrorResponse,
+  visitorSessionAuthorizationService
+} from '@/lib/services/visitor-identity/VisitorSessionAuthorizationService';
 
 interface CustomerSupportWorkflowArgs {
   conversationId?: string;
@@ -36,6 +40,21 @@ export async function POST(request: NextRequest) {
 
     // Extraer y validar parámetros del cuerpo de la petición
     const body = await request.json();
+    const identity = await visitorSessionAuthorizationService.authorizeBrowserRequest({
+      request,
+      siteId: body.site_id,
+      sessionId: body.session_id,
+      conversationId: body.conversationId
+    });
+    if (identity) {
+      body.site_id = identity.siteId;
+      body.visitor_id = identity.visitorId;
+      body.lead_id = identity.leadId;
+      body.userId = undefined;
+      body.name = undefined;
+      body.email = undefined;
+      body.phone = undefined;
+    }
     const { 
       conversationId, 
       userId, 
@@ -143,6 +162,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(result.data, { status: 200 });
 
   } catch (error) {
+    const authorizationResponse = visitorAuthorizationErrorResponse(error);
+    if (authorizationResponse) return authorizationResponse;
     console.error('❌ Error en el endpoint del workflow customerSupport:', error);
     
     return NextResponse.json(

@@ -10,6 +10,8 @@ export interface GetMessagesParams {
   conversation_id?: string;
   /** Filter by messages.lead_id (UUID) */
   lead_id?: string;
+  /** Filter through conversations.visitor_id for anonymous browser sessions */
+  visitor_id?: string;
   /** Filter by messages.role (e.g. user, assistant, system) */
   role?: string;
   /** Filter by messages.interaction (e.g. opened, clicked for email tracking) */
@@ -31,6 +33,7 @@ export async function getMessagesCore(params: GetMessagesParams): Promise<{
     site_id: siteId,
     conversation_id: conversationId,
     lead_id: leadId,
+    visitor_id: visitorId,
     role: roleFilter,
     interaction: interactionFilter,
     custom_data_status: customDataStatus,
@@ -41,6 +44,7 @@ export async function getMessagesCore(params: GetMessagesParams): Promise<{
   if (!siteId) throw new Error('INVALID_REQUEST: site_id is required');
   if (!isValidUUID(siteId)) throw new Error('INVALID_REQUEST: site_id must be a valid UUID');
   if (leadId && !isValidUUID(leadId)) throw new Error('INVALID_REQUEST: lead_id must be a valid UUID');
+  if (visitorId && !isValidUUID(visitorId)) throw new Error('INVALID_REQUEST: visitor_id must be a valid UUID');
 
   // Clamp limit to avoid runaway queries and ensure at least 1
   const safeLimit = Math.min(Math.max(limit, 1), 100);
@@ -54,6 +58,7 @@ export async function getMessagesCore(params: GetMessagesParams): Promise<{
       .order('created_at', { ascending: false })
       .range(offset, offset + safeLimit - 1);
     if (leadId) siteQuery = siteQuery.eq('lead_id', leadId);
+    if (visitorId) siteQuery = siteQuery.eq('conversations.visitor_id', visitorId);
     if (roleFilter) siteQuery = siteQuery.eq('role', roleFilter);
     if (interactionFilter) siteQuery = siteQuery.eq('interaction', interactionFilter);
     if (customDataStatus) siteQuery = siteQuery.filter('custom_data->>status', 'eq', customDataStatus);

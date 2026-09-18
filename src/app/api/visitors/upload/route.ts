@@ -5,6 +5,10 @@ import { createTask } from '@/lib/database/task-db';
 import { TeamNotificationService } from '@/lib/services/team-notification-service';
 import { NotificationType } from '@/lib/services/notification-service';
 import { WorkflowService } from '@/lib/services/workflow-service';
+import {
+  visitorAuthorizationErrorResponse,
+  visitorSessionAuthorizationService
+} from '@/lib/services/visitor-identity/VisitorSessionAuthorizationService';
 
 function corsHeaders(request: NextRequest) {
   const origin = request.headers.get('origin') || '*';
@@ -79,7 +83,7 @@ export async function POST(request: NextRequest) {
 
     const siteId = (form.get('site_id') || '').toString();
     let conversationId = form.get('conversation_id')?.toString() || null;
-    const visitorId = form.get('visitor_id')?.toString() || null;
+    let visitorId = form.get('visitor_id')?.toString() || null;
     let leadId = form.get('lead_id')?.toString() || null;
     let userId = form.get('user_id')?.toString() || null;
     const agentId = form.get('agent_id')?.toString() || null;
@@ -111,8 +115,20 @@ export async function POST(request: NextRequest) {
     if (!siteId) return jsonT({ success: false, error: 'site_id is required' }, 400, request, traceId);
     if (!files.length) return jsonT({ success: false, error: 'At least one file is required under key "file"' }, 400, request, traceId);
 
+    const identity = await visitorSessionAuthorizationService.authorizeBrowserRequest({
+      request,
+      siteId,
+      sessionId: form.get('session_id')?.toString(),
+      conversationId: isValidUUID(conversationId) ? conversationId : null
+    });
+    if (identity) {
+      visitorId = identity.visitorId;
+      leadId = identity.leadId;
+      userId = null;
+    }
+
     // Resolve lead_id from visitor if missing
-    if (!leadId && visitorId) {
+    if (!identity && !leadId && visitorId) {
       console.log(`[VisitorsUpload:${traceId}] CP3 resolving lead from visitor:`, visitorId);
       const { data: vrow, error: vErr } = await supabaseAdmin
         .from('visitors')
@@ -464,6 +480,8 @@ export async function POST(request: NextRequest) {
       traceId
     );
   } catch (err: any) {
+    const authorizationResponse = visitorAuthorizationErrorResponse(err);
+    if (authorizationResponse) return authorizationResponse;
     const traceId = crypto.randomUUID();
     console.error(`[VisitorsUpload:${traceId}] ❌ Uncaught error:`, err?.stack || err);
     return jsonT({ success: false, error: 'Internal server error', message: err?.message || String(err) }, 500, request, traceId);

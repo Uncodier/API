@@ -12,7 +12,6 @@ import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
 import { parse } from 'url';
 import { createClient } from '@supabase/supabase-js';
-import { v4 as uuidv4 } from 'uuid';
 
 // Función para validar UUIDs
 function isValidUUID(uuid) {
@@ -180,6 +179,54 @@ const supabaseChannels = new Map();
 const inMemoryMessages = new Map();
 // Almacenamiento para canales mock (modo offline)
 const mockChannels = {};
+
+async function authorizeConnection({ site_id, session_id, conversation_id }) {
+  if (OFFLINE_MODE) {
+    return { ok: false, code: 'REALTIME_AUTH_UNAVAILABLE', message: 'Protected realtime is unavailable offline' };
+  }
+  if (![site_id, session_id, conversation_id].every(isValidUUID)) {
+    return { ok: false, code: 'INVALID_PARAMETERS', message: 'site_id, session_id, and conversation_id must be valid UUIDs' };
+  }
+
+  const { data: session, error: sessionError } = await supabase
+    .from('visitor_sessions')
+    .select('id, site_id, visitor_id, lead_id, is_active')
+    .eq('id', session_id)
+    .eq('site_id', site_id)
+    .maybeSingle();
+  if (sessionError || !session || !session.is_active) {
+    return { ok: false, code: 'INVALID_SESSION', message: 'Visitor session is invalid or inactive' };
+  }
+
+  const { data: grant, error: grantError } = await supabase
+    .from('visitor_session_identity_grants')
+    .select('visitor_id, lead_id, expires_at')
+    .eq('site_id', site_id)
+    .eq('session_id', session_id)
+    .eq('visitor_id', session.visitor_id)
+    .is('revoked_at', null)
+    .maybeSingle();
+  if (grantError) {
+    return { ok: false, code: 'AUTHORIZATION_UNAVAILABLE', message: 'Unable to authorize realtime session' };
+  }
+  const grantExpired = grant?.expires_at && new Date(grant.expires_at).getTime() <= Date.now();
+  if (session.lead_id && (!grant || grantExpired || grant.lead_id !== session.lead_id)) {
+    return { ok: false, code: 'IDENTITY_VERIFICATION_REQUIRED', message: 'An active identity grant is required' };
+  }
+
+  const { data: conversation, error: conversationError } = await supabase
+    .from('conversations')
+    .select('id, site_id, visitor_id, lead_id')
+    .eq('id', conversation_id)
+    .eq('site_id', site_id)
+    .maybeSingle();
+  const owned = conversation
+    && (conversation.visitor_id === session.visitor_id || (grant?.lead_id && conversation.lead_id === grant.lead_id));
+  if (conversationError || !owned) {
+    return { ok: false, code: 'CONVERSATION_FORBIDDEN', message: 'Conversation does not belong to this session' };
+  }
+  return { ok: true, visitor_id: session.visitor_id, lead_id: session.lead_id ? grant?.lead_id || null : null };
+}
 
 // Función para registrar el estado del servidor periódicamente
 function setupServerStatusLogger() {
@@ -522,11 +569,18 @@ wss.on('connection', async (ws, req, params) => {
   const now = new Date().toISOString();
   console.log(`🟢 [${now}] Nueva conexión WebSocket establecida`);
 
-  const { visitor_id, site_id, conversation_id } = params;
+  const { site_id, session_id, conversation_id } = params;
+  const authorization = await authorizeConnection({ site_id, session_id, conversation_id });
+  if (!authorization.ok) {
+    ws.send(JSON.stringify({ type: 'error', payload: { code: authorization.code, message: authorization.message } }));
+    ws.close(1008, 'Unauthorized');
+    return;
+  }
+  const visitor_id = authorization.visitor_id;
   console.log(`📊 [${now}] Datos de conexión: visitor=${visitor_id}, conversation=${conversation_id}, site=${site_id}`);
 
   // Validar los parámetros requeridos
-  if (!visitor_id || !conversation_id) {
+  if (!visitor_id || !conversation_id || !session_id) {
     console.error(`❌ [${now}] Faltan parámetros requeridos: visitor_id o conversation_id`);
     ws.send(JSON.stringify({
       type: 'error',
@@ -593,6 +647,13 @@ wss.on('connection', async (ws, req, params) => {
         case 'subscribe':
           // Cliente solicitando suscripción a conversación
           const subConvId = data.payload?.conversation_id || conversation_id;
+          if (subConvId !== conversation_id) {
+            ws.send(JSON.stringify({
+              type: 'error',
+              payload: { code: 'CONVERSATION_FORBIDDEN', message: 'Cannot switch conversations on this connection' }
+            }));
+            break;
+          }
           console.log(`📥 [${now}] Suscripción a conversación ${subConvId} recibida de ${visitor_id}`);
           // Enviar ACK de la suscripción (usando el formato original que espera el cliente)
           ws.send(JSON.stringify({
@@ -612,7 +673,7 @@ wss.on('connection', async (ws, req, params) => {
           try {
             const { payload } = data;
             
-            if (!payload || !payload.content || !payload.conversation_id) {
+            if (!payload || !payload.content || payload.conversation_id !== conversation_id) {
               console.error(`❌ [${now}] Mensaje inválido: falta contenido o ID de conversación`);
               ws.send(JSON.stringify({
                 type: 'error',
@@ -628,7 +689,7 @@ wss.on('connection', async (ws, req, params) => {
             const { data: newMessage, error } = await supabase
               .from('messages')
               .insert([{
-                conversation_id: payload.conversation_id,
+                conversation_id,
                 content: payload.content,
                 role: 'visitor',
                 visitor_id: visitor_id,
@@ -664,8 +725,8 @@ wss.on('connection', async (ws, req, params) => {
             console.log(`📤 [${now}] Confirmación de mensaje enviada a visitor=${visitor_id}, message_id=${newMessage.id}`);
             
             // Enviar respuesta automática del agente (para desarrollo)
-            console.log(`🤖 [${now}] Generando respuesta automática para conversación ${payload.conversation_id}`);
-            await sendAgentResponse(payload.conversation_id, visitor_id, payload.content);
+            console.log(`🤖 [${now}] Generando respuesta automática para conversación ${conversation_id}`);
+            await sendAgentResponse(conversation_id, visitor_id, payload.content);
             
             // Nota: No es necesario emitir el mensaje de vuelta al cliente
             // ya que Supabase se encargará de enviar el mensaje a través del canal suscrito
@@ -821,22 +882,9 @@ server.on('upgrade', (request, socket, head) => {
       const params = {
         visitor_id: query.visitor_id,
         site_id: query.site_id,
+        session_id: query.session_id,
         conversation_id: query.conversation_id
       };
-      
-      // Verificar si el conversation_id tiene formato de UUID válido, si no, convertirlo
-      if (params.conversation_id && !isValidUUID(params.conversation_id)) {
-        console.log(`⚠️ [${upgradeNow}] Formato de conversation_id no válido: ${params.conversation_id}`);
-        
-        // Extraer números del ID si existe o generar uno nuevo
-        const numericPart = params.conversation_id.replace(/\D/g, '');
-        const timestamp = numericPart || Date.now().toString();
-        
-        // Generar un UUID v4 utilizando uuidv4() o construir uno basado en el timestamp
-        const uuid = uuidv4();
-        console.log(`🔄 [${upgradeNow}] Convirtiendo conversation_id a UUID: ${uuid}`);
-        params.conversation_id = uuid;
-      }
       
       console.log(`📊 [${upgradeNow}] Parámetros de conexión: `, params);
       wss.emit('connection', ws, request, params);
