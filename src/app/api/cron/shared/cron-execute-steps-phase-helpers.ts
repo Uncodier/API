@@ -14,6 +14,7 @@ import {
   blockRequirementForProductNoProgress,
   clearPlanStepInfrastructureState,
   InfrastructureStateDatabaseError,
+  patchPlanStepAtomically,
   type InfrastructureBlockMutation,
   type InfrastructureFailureMutation,
   type PlanStepStatusMutation,
@@ -238,6 +239,9 @@ export async function blockRequirementForProductNoProgressStep(params: {
   requirementId: string;
   siteId: string;
   instanceId: string;
+  planId: string;
+  stepId: string;
+  expectedStepGeneration: number;
   cycleId: string;
   minimumFailures: number;
   message: string;
@@ -246,6 +250,47 @@ export async function blockRequirementForProductNoProgressStep(params: {
   'use step';
   const result = await blockRequirementForProductNoProgress(params);
   return result.blocked;
+}
+
+export async function requestNoProgressStepAdjudicationStep(params: {
+  planId: string;
+  stepId: string;
+  expectedGeneration: number;
+  cycleId: string;
+  persistedMetadata?: Record<string, unknown>;
+}): Promise<{ persisted: boolean; state: string; generation?: number }> {
+  'use step';
+  const result = await patchPlanStepAtomically({
+    planId: params.planId,
+    stepId: params.stepId,
+    expectedGeneration: params.expectedGeneration,
+    eventId: `${params.cycleId}:${params.stepId}:no-progress-adjudication`,
+    patch: {
+      metadata: {
+        ...(params.persistedMetadata || {}),
+        no_progress_adjudication: {
+          state: 'requested',
+          cycle_id: params.cycleId,
+          requested_at: new Date().toISOString(),
+        },
+      },
+    },
+  });
+  return {
+    persisted: result.persisted,
+    state: result.state,
+    generation: result.generation,
+  };
+}
+
+export function shouldDeferNoProgressBlock(
+  mutation: { persisted: boolean; state: string },
+): boolean {
+  return (
+    mutation.persisted ||
+    mutation.state === 'stale' ||
+    mutation.state === 'terminal'
+  );
 }
 
 export async function reconnectSandboxStep(params: {

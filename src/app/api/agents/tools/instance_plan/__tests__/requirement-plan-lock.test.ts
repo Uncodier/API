@@ -19,6 +19,7 @@ import {
   activeRequirementPlanError,
   assertRequirementPlanUpdateAllowed,
   getBlockingActivePlans,
+  isRunnerOwnedRequirementStepTerminal,
   shouldProtectRequirementPlanCreation,
 } from '../requirement-plan-lock';
 
@@ -147,14 +148,25 @@ describe('requirement plan creation lock', () => {
     expect(() => assertRequirementPlanUpdateAllowed({
       requirementId: 'req-1',
       status: 'cancelled',
-    })).toThrow('plan terminal transitions are runner-owned');
+    })).toThrow('plan and step execution results are runner-owned');
   });
 
-  it('allows requirement step adaptation through update', () => {
+  it('allows requirement step cancellation for plan adaptation', () => {
+    expect(() => assertRequirementPlanUpdateAllowed({
+      requirementId: 'req-1',
+      steps: [{ status: 'cancelled' }],
+    })).not.toThrow();
+  });
+
+  it('prevents requirement agents from bypassing step gates through update', () => {
     expect(() => assertRequirementPlanUpdateAllowed({
       requirementId: 'req-1',
       steps: [{ status: 'completed' }],
-    })).not.toThrow();
+    })).toThrow('step execution results are runner-owned');
+    expect(() => assertRequirementPlanUpdateAllowed({
+      requirementId: 'req-1',
+      steps: [{ status: 'failed' }],
+    })).toThrow('step execution results are runner-owned');
   });
 
   it('preserves generic plan updates and non-terminal requirement updates', () => {
@@ -167,5 +179,23 @@ describe('requirement plan creation lock', () => {
       status: 'in_progress',
       steps: [{ status: 'in_progress' }],
     })).not.toThrow();
+  });
+
+  it('reserves requirement step terminal transitions for the runner', () => {
+    expect(isRunnerOwnedRequirementStepTerminal({
+      requirementId: 'req-1',
+      stepStatus: 'completed',
+    })).toBe(true);
+    expect(isRunnerOwnedRequirementStepTerminal({
+      requirementId: 'req-1',
+      stepStatus: 'failed',
+    })).toBe(true);
+    expect(isRunnerOwnedRequirementStepTerminal({
+      requirementId: 'req-1',
+      stepStatus: 'in_progress',
+    })).toBe(false);
+    expect(isRunnerOwnedRequirementStepTerminal({
+      stepStatus: 'completed',
+    })).toBe(false);
   });
 });

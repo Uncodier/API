@@ -57,7 +57,9 @@ import {
   blockRequirementForInfrastructureCircuitStep,
   blockRequirementForCronInfrastructureCyclesStep,
   blockRequirementForProductNoProgressStep,
+  requestNoProgressStepAdjudicationStep,
   selectPlanStepsForExecution,
+  shouldDeferNoProgressBlock,
 } from './cron-execute-steps-phase-helpers';
 
 export {
@@ -71,7 +73,9 @@ export {
   blockRequirementForInfrastructureCircuitStep,
   blockRequirementForCronInfrastructureCyclesStep,
   blockRequirementForProductNoProgressStep,
+  requestNoProgressStepAdjudicationStep,
   selectPlanStepsForExecution,
+  shouldDeferNoProgressBlock,
 };
 
 export type ExecuteStepsPhaseResult = any;

@@ -2,6 +2,7 @@ import {
   patchPlanStepAtomically,
   type PlanStepPatchMutation,
 } from '@/lib/services/instance-plan-infrastructure-state';
+import { NO_PROGRESS_ADJUDICATION_METADATA_KEY } from './no-progress-adjudication';
 
 type BacklogResolver = (instanceId: string) => Promise<{
   requirementId: string | null;
@@ -92,6 +93,30 @@ export async function markVisualFeedbackDelivered(params: {
           ? { backlog_item_id: params.backlogItemId }
           : {}),
         visual_feedback_image_id: params.imageFeedbackId,
+      },
+    },
+  });
+}
+
+export async function markNoProgressAdjudicationConsumed(params: {
+  planId: string;
+  stepId: string;
+  expectedGeneration: number;
+  eventId: string;
+  persistedMetadata?: Record<string, unknown>;
+}): Promise<PlanStepPatchMutation> {
+  return patchPlanStepAtomically({
+    planId: params.planId,
+    stepId: params.stepId,
+    expectedGeneration: params.expectedGeneration,
+    eventId: params.eventId,
+    patch: {
+      metadata: {
+        ...(params.persistedMetadata || {}),
+        [NO_PROGRESS_ADJUDICATION_METADATA_KEY]: {
+          state: 'consumed',
+          consumed_at: new Date().toISOString(),
+        },
       },
     },
   });

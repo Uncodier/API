@@ -161,50 +161,43 @@ You are responsible for delivering a working, high-quality feature. Do NOT write
       "instructions": "From req type and instructions, pick Vitrina or generic app. git fetch; checkout into feature branch; append BASE: ... to requirement.instructions."
     },
     { 
-      "id": "step_invest", 
-      "order": 2, 
-      "title": "Investigation", 
-      "skill": "makinari-fase-investigacion", 
-      "instructions": "Explore repo on the selected base, read existing code, check dependencies."
-    },
-    { 
       "id": "step_design", 
-      "order": 3, 
+      "order": 2, 
       "title": "Creative Direction & UX/UI", 
       "skill": "ui-ux-design", 
       "instructions": "Act as the Art Director. Define the brand's HSL color palette, typography (Google Fonts), and UI animation strategy. Write the exact CSS variables to `src/app/globals.css` and configure `tailwind.config.ts`. If it is a landing page, explicitly dictate which MagicUI/Aceternity components the frontend MUST use."
     },
     { 
       "id": "step_dev", 
-      "order": 4, 
+      "order": 3, 
       "title": "Development", 
       "skill": "makinari-rol-frontend", 
-      "instructions": "<specific files + exact UI screens + navigation flows>. Consume the design tokens created in step 3. Build the UI layout. For marketing pages, MUST install and use the animated components (Framer Motion, Magic UI) dictated by the Art Director. Do NOT use flat backgrounds."
+      "instructions": "Inspect the named existing files once, then implement <specific files + exact UI screens + navigation flows>. Consume the design tokens created in the prior step. Build the UI layout. For marketing pages, MUST install and use the animated components (Framer Motion, Magic UI) dictated by the Art Director. Do NOT use flat backgrounds."
     },
     { 
       "id": "step_backend", 
-      "order": 5, 
+      "order": 4, 
       "title": "Backend Development", 
       "skill": "makinari-rol-backend", 
       "instructions": "Create plain SQL migration files (.sql) under migrations/ (NEVER use ORM classes) including RLS policies, and implement Next.js API routes with test/prod modes."
     },
     { 
       "id": "step_qa", 
-      "order": 6, 
+      "order": 5, 
       "title": "QA", 
       "skill": "makinari-rol-qa", 
       "instructions": "Perform static general repository health/integrity checks (structure, variables, tests review), author .qa/scenarios, triage gate signals, write qa_results.json."
     },
     { 
       "id": "step_val", 
-      "order": 7, 
+      "order": 6, 
       "title": "Validation", 
       "skill": "makinari-fase-validacion", 
       "instructions": "npm run build, verify preview, write test_results.json."
     },
     { 
       "id": "step_report", 
-      "order": 8, 
+      "order": 7, 
       "title": "Report", 
       "skill": "makinari-fase-reporteado", 
       "instructions": "Create requirement_status with the preview URL, then return a concise final summary. Do not mark the backlog item complete; the runner's Judge owns completion."

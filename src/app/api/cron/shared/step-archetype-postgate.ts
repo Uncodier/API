@@ -45,6 +45,7 @@ export interface RunArchetypePostGateInput {
   signals: PostGateGateSignals;
   capturedAt: string;
   audit: CronAuditContext;
+  contractAcceptance?: string[];
 }
 
 export interface RunArchetypePostGateResult {
@@ -70,13 +71,25 @@ export async function runArchetypePostGate(
         error: `Backlog item ${input.backlogItemId} was not found`,
       };
     }
+    const adjudicatedItem = input.contractAcceptance?.length
+      ? {
+          ...item,
+          acceptance: Array.from(new Set([
+            ...(item.acceptance || []),
+            ...input.contractAcceptance,
+          ])),
+        }
+      : item;
 
     // Phase 10: structural coverage check before the archetype pass. Runs
     // cheap `test -f` probes in the sandbox; any failure turns into a judge
     // rejection through the evidence.feature_coverage slice.
     let coverage: Awaited<ReturnType<typeof computeFeatureCoverage>> | null = null;
     try {
-      coverage = await computeFeatureCoverage({ sandbox: input.sandbox, item });
+      coverage = await computeFeatureCoverage({
+        sandbox: input.sandbox,
+        item: adjudicatedItem,
+      });
     } catch (e: unknown) {
       console.warn(`[CronStep] feature coverage failed: ${e instanceof Error ? e.message : e}`);
     }
@@ -104,7 +117,11 @@ export async function runArchetypePostGate(
       record: evidenceRecord,
     });
 
-    const archetypeCtx = { item, evidence: persisted, flow: kind as RequirementKind };
+    const archetypeCtx = {
+      item: adjudicatedItem,
+      evidence: persisted,
+      flow: kind as RequirementKind,
+    };
     const critic = runCritic(archetypeCtx);
     const judge = runJudge(archetypeCtx);
 

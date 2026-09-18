@@ -9,7 +9,11 @@ const hardeningMigration = readFileSync(
   resolve(process.cwd(), 'supabase/migrations/20260917233000_visitor_identity_verification_hardening.sql'),
   'utf8'
 );
-const migration = `${initialMigration}\n${hardeningMigration}`;
+const idempotencyMigration = readFileSync(
+  resolve(process.cwd(), 'supabase/migrations/20260918013500_reuse_active_visitor_identity_challenge.sql'),
+  'utf8'
+);
+const migration = `${initialMigration}\n${hardeningMigration}\n${idempotencyMigration}`;
 
 describe('visitor identity SQL contract', () => {
   it('keeps identity tables private and RPCs service-role only', () => {
@@ -47,6 +51,17 @@ describe('visitor identity SQL contract', () => {
     );
     expect(migration).toMatch(
       /issue_visitor_identity_challenge[\s\S]*update public\.visitor_sessions[\s\S]*set lead_id = null/
+    );
+  });
+
+  it('reuses an active matching challenge before applying the issuance limit', () => {
+    const existingChallengeCheck = idempotencyMigration.indexOf("'status', 'existing'");
+    const rateLimitCheck = idempotencyMigration.indexOf("v_recent_count >= 5");
+
+    expect(existingChallengeCheck).toBeGreaterThan(-1);
+    expect(rateLimitCheck).toBeGreaterThan(existingChallengeCheck);
+    expect(idempotencyMigration).toMatch(
+      /session_id = p_session_id[\s\S]*lead_id = p_lead_id[\s\S]*expires_at > v_now/
     );
   });
 

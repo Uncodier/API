@@ -45,4 +45,5 @@ describe('formatStepLogHistory', () => {
     expect(result).toContain('ACTION_LOOP_BLOCKED_ACTION:');
     expect(result).toContain('sandbox_read_file');
   });
+
 });

@@ -76,7 +76,7 @@ export async function persistActiveSandboxId(
     let resolvedSiteId = site_id;
     if (!resolvedSiteId) {
       const { data: inst } = await supabaseAdmin
-        .from('instances')
+        .from('remote_instances')
         .select('site_id')
         .eq('id', instance_id)
         .maybeSingle();

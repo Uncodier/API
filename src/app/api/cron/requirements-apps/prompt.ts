@@ -106,6 +106,7 @@ export function buildCoordinatorPromptForFlow(p: CoordinatorPromptInput): string
 
   const phaseId = p.backlog?.current_phase_id || flow.phases[0]?.id;
   const isQaPhase = phaseId === 'qa';
+  const isBuildPhase = phaseId === 'build';
 
   const breakdownInstruction = isQaPhase
     ? `Since this is the QA phase, you MUST break down the instance_plan into exactly 7 strict execution steps in this specific order:
@@ -117,7 +118,9 @@ export function buildCoordinatorPromptForFlow(p: CoordinatorPromptInput): string
       6. "Feature E2E & Contract Validation" (Validate the specific backlog item, write scenarios, assert acceptance criteria)
       7. "Runtime Error & Log Audit" (Inspect server and browser logs for hidden exceptions, hydration errors, or unhandled promises after tests).
       Assign the \`makinari-rol-qa\` skill to ALL 7 steps.`
-    : `BREAK DOWN the backlog item into specific, actionable execution steps (e.g., 1. investigate/setup, 2. backend API, 3. frontend UI, 4. integration/tests (ensure all tests go into the top-level \`tests/\` folder)).`;
+    : isBuildPhase
+      ? `BREAK DOWN the backlog item into implementation and verification steps (for example: backend/API, frontend/UI, integration/tests). Do not create a standalone investigation step; include bounded repository inspection in the first implementation step.`
+      : `BREAK DOWN the backlog item into specific, actionable execution steps appropriate to the current ${phaseId} phase.`;
 
   const { isBacklogComplete, hasOutstandingWork } = require('@/lib/services/requirement-backlog');
   const isComplete = p.backlog?.items && isBacklogComplete(p.backlog.items);
@@ -180,12 +183,16 @@ YOUR ROLE: COORDINATOR — You PLAN and DELEGATE. You do NOT write code yourself
 
 ENVIRONMENT:
 - Use sandbox tools to INVESTIGATE (sandbox_run_command, sandbox_read_file, sandbox_list_files) — max 3 calls per cycle.
+- Complete general repository investigation with those coordinator calls BEFORE creating a build-phase plan. Do not delegate an open-ended "investigate current implementation/errors" step to the executor.
 - ${ORCHESTRATOR_SKILL_LOOKUP_HINT}
 - Use \`requirement_backlog\` (action=list / upsert / start / downgrade / log_assumption / non-terminal set_status) as the primary state tool. Do not call action=complete, action=mark_needs_review, or set_status to done/rejected/needs_review; terminal transitions belong to the runner.
 - Use \`requirement_status\` to report progress. ALWAYS use requirement_id="${p.reqId}".
 - Use \`instance_plan\` to create execution plans. ALWAYS use instance_id="${p.instanceId}". Once a requirement plan is active, continue it; do not create a replacement plan. Finish executor work with action=execute_step so the runner can gate it.
 - ${TOOL_LOOKUP_HINT}
 - Each plan step should have a \`skill\` (preferred) or \`role\` for injection, and a \`metadata.backlog_item_id\` pointing to the single item it delivers.
+- Every step MUST define a non-empty \`expected_output\`, \`success_criteria\`, and \`validation_rules\`. These fields are the executor's stop contract, not optional documentation.
+- A step with \`type='research'\` MUST use \`role='investigate'\` and \`skill='makinari-fase-investigacion'\`. In a build-phase backlog item, standalone research is forbidden unless \`metadata.blocking_unknown\` names one concrete unknown that prevents implementation. Otherwise fold the necessary file inspection into the implementation step.
+- Historical failures are context, not assumed current failures. Research and validation steps must explicitly allow "not reproducible with current evidence" as a terminal result after their declared checks pass.
 - NEVER run git commit or git push as coordinator — executors follow platform rules; the workflow checkpoints to origin after each plan step.
 - ${ORCHESTRATOR_STEP_ORIGIN_RULE}
 
@@ -195,7 +202,7 @@ WORKFLOW (follow IN ORDER):
    a) Rewrite \`requirement.spec.md\` using \`sandbox_write_file\` to replace all "_To be refined..._" placeholders with a concrete architecture, exact navigation flows, data models, and acceptance criteria.
    b) Derive a COMPREHENSIVE list of items (as many as needed to fully cover the scope, typically 5-15) DIRECTLY FROM your newly fleshed-out contract and \`action='upsert'\` them. These items form the Backlog. Remember the hierarchy: A Requirement has many Backlog Items, and each Backlog Item will later be broken down into an \`instance_plan\` (a sequence of execution steps). Each item needs \`title\`, \`kind\`, \`phase_id\`, \`acceptance[]\`, and \`tier\` ('core' or 'ornamental'). CRITICAL: You MUST eliminate ambiguity. For UI features, explicitly list the exact routes (e.g., \`/dashboard/spaces\`), the navigation flow, and the required components in the acceptance criteria (e.g. "GET /dashboard renders a grid of Shadcn Cards"). For backend, list the exact API endpoints and data schema. CRITICAL: For specific app or site deliverables, you MUST explicitly include a backlog item to deeply restructure the home page to reflect the requested specific domain, removing any generic template content.
 3. Pick the single next item (WIP=1). Call \`action='start'\` to mark it in_progress.
-4. Create the plan: \`instance_plan\` with \`action='create'\`. ${breakdownInstruction} Do NOT just copy the item title into a single step. Do NOT create generic steps like "Step 1" with instructions "Execute step 1". Every step MUST have a descriptive \`title\`, specific, descriptive \`instructions\` and a clear objective. Every step MUST set \`skill\` and \`metadata.backlog_item_id=<id>\`. CRITICAL: Maximize the use of the plan schema. For the overall plan, you MUST provide \`expected_output\`, \`success_criteria\` (array of specific files created/modified), and \`validation_rules\` (array of specific test files passed) to enforce strict quality control. For frontend steps, you MUST explicitly describe the UI layout, components to use (e.g., Shadcn UI Cards, Dialogs, Tables), and responsive behavior in the step instructions. Do not leave UI execution up to interpretation. If this is a new branch, Step 1 MUST be \`makinari-obj-template-selection\`. Do NOT add a step to notify the team in your plan.
+4. Create the plan: \`instance_plan\` with \`action='create'\`. ${breakdownInstruction} Do NOT just copy the item title into a single step. Do NOT create generic steps like "Step 1" with instructions "Execute step 1". Every step MUST have a descriptive \`title\`, specific \`instructions\`, a clear objective, non-empty \`expected_output\`, \`success_criteria\`, and \`validation_rules\`. Every step MUST set \`skill\` and \`metadata.backlog_item_id=<id>\`. CRITICAL: Maximize the use of the plan schema. For the overall plan, you MUST provide \`expected_output\`, \`success_criteria\` (array of specific files created/modified), and \`validation_rules\` (array of specific test files passed) to enforce strict quality control. For frontend steps, you MUST explicitly describe the UI layout, components to use (e.g., Shadcn UI Cards, Dialogs, Tables), and responsive behavior in the step instructions. Do not leave UI execution up to interpretation. If this is a new branch, Step 1 MUST be \`makinari-obj-template-selection\`. Do NOT add a step to notify the team in your plan.
 5. Check if the INSTRUCTIONS ask for any new changes or features that are NOT covered by the existing backlog items. If there are new unhandled requests, you MUST create new backlog items to cover them using \`requirement_backlog action='upsert'\`.
 6. ONLY if ALL items in the backlog (including ornamental) are completely done AND there are no new requests in the instructions: to finalize the work, simply call \`requirement_status\` with \`stage='on-review'\` and \`message='Project complete'\`. DO NOT create an instance plan or a new backlog item to close the project. Just set the status to on-review and return a plain text response. CRITICAL: If ANY items (core or ornamental) remain in the 'pending' or 'in_progress' state, YOU MUST NOT call \`requirement_status\` to close the project. Instead, you MUST create an \`instance_plan\` to process the pending items.
 

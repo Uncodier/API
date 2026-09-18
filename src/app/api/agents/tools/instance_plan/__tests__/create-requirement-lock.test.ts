@@ -124,6 +124,30 @@ describe('createInstancePlanCore requirement lock', () => {
     expect(completeInProgressPlans).toHaveBeenCalledTimes(1);
   });
 
+  it('infers requirement protection when the direct caller omits requirement_id', async () => {
+    resolveBacklogContextForInstance.mockResolvedValueOnce({
+      requirementId: REQUIREMENT_ID,
+      inProgressItemId: 'item-1',
+    });
+    mockSuccessfulInsert();
+
+    await createInstancePlanCore({
+      instance_id: INSTANCE_ID,
+      site_id: SITE_ID,
+      user_id: USER_ID,
+      title: 'Direct route plan',
+      steps: [{ title: 'Implement feature', instructions: 'Implement it' }],
+    });
+
+    expect(getBlockingActivePlans).toHaveBeenCalledTimes(2);
+    expect(completeInProgressPlans).not.toHaveBeenCalled();
+    expect(builder.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: { requirement_id: REQUIREMENT_ID },
+      }),
+    );
+  });
+
   it('keeps workflow templates outside the requirement execution lock', async () => {
     mockSuccessfulInsert();
 
@@ -203,6 +227,112 @@ describe('createInstancePlanCore requirement lock', () => {
     })).rejects.toThrow('already has active plan active-plan');
 
     expect(builder.insert).not.toHaveBeenCalled();
+  });
+
+  it('rejects open-ended standalone research for a build-phase item', async () => {
+    single.mockResolvedValueOnce({ data: { site_id: SITE_ID }, error: null });
+    resolveBacklogContextForInstance.mockResolvedValueOnce({
+      requirementId: REQUIREMENT_ID,
+      inProgressItemId: 'build-item',
+    });
+    loadRequirement.mockResolvedValueOnce({
+      backlog: {
+        items: [{ id: 'build-item', phase_id: 'build', status: 'in_progress' }],
+      },
+    });
+    toBacklog.mockReturnValueOnce({
+      items: [{ id: 'build-item', phase_id: 'build', status: 'in_progress' }],
+    });
+
+    await expect(createInstancePlanCore({
+      instance_id: INSTANCE_ID,
+      site_id: SITE_ID,
+      user_id: USER_ID,
+      requirement_id: REQUIREMENT_ID,
+      title: 'Bad build plan',
+      steps: [{
+        title: 'Investigate current implementation',
+        type: 'research',
+        skill: 'makinari-rol-frontend',
+        instructions: 'Keep looking for possible errors.',
+      }],
+    })).rejects.toThrow('Standalone research step');
+
+    expect(builder.insert).not.toHaveBeenCalled();
+  });
+
+  it('rejects role-based research disguised as a task', async () => {
+    single.mockResolvedValueOnce({ data: { site_id: SITE_ID }, error: null });
+    resolveBacklogContextForInstance.mockResolvedValueOnce({
+      requirementId: REQUIREMENT_ID,
+      inProgressItemId: 'build-item',
+    });
+    loadRequirement.mockResolvedValueOnce({
+      backlog: {
+        items: [{ id: 'build-item', phase_id: 'build', status: 'in_progress' }],
+      },
+    });
+    toBacklog.mockReturnValueOnce({
+      items: [{ id: 'build-item', phase_id: 'build', status: 'in_progress' }],
+    });
+
+    await expect(createInstancePlanCore({
+      instance_id: INSTANCE_ID,
+      site_id: SITE_ID,
+      user_id: USER_ID,
+      title: 'Disguised research plan',
+      steps: [{
+        title: 'Inspect current implementation',
+        type: 'task',
+        role: 'investigate',
+        instructions: 'Keep looking for possible errors.',
+      }],
+    })).rejects.toThrow('Standalone research step');
+
+    expect(builder.insert).not.toHaveBeenCalled();
+  });
+
+  it('allows bounded research for a genuinely blocking build unknown', async () => {
+    resolveBacklogContextForInstance.mockResolvedValueOnce({
+      requirementId: REQUIREMENT_ID,
+      inProgressItemId: 'build-item',
+    });
+    loadRequirement.mockResolvedValueOnce({
+      backlog: {
+        items: [{ id: 'build-item', phase_id: 'build', status: 'in_progress' }],
+      },
+    });
+    toBacklog.mockReturnValueOnce({
+      items: [{ id: 'build-item', phase_id: 'build', status: 'in_progress' }],
+    });
+    mockSuccessfulInsert();
+
+    await createInstancePlanCore({
+      instance_id: INSTANCE_ID,
+      site_id: SITE_ID,
+      user_id: USER_ID,
+      requirement_id: REQUIREMENT_ID,
+      title: 'Bounded research plan',
+      steps: [{
+        title: 'Determine provider API compatibility',
+        type: 'research',
+        instructions: 'Identify the supported API version.',
+        expected_output: 'A provider compatibility decision.',
+        success_criteria: ['The supported version is identified.'],
+        metadata: { blocking_unknown: 'The provider API version is unknown.' },
+      }],
+    });
+
+    expect(builder.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        steps: [
+          expect.objectContaining({
+            role: 'investigate',
+            skill: 'makinari-fase-investigacion',
+          }),
+        ],
+      }),
+    );
   });
 
   it('removes a concurrent non-winning requirement plan', async () => {

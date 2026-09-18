@@ -1,6 +1,8 @@
 const mockMutateBacklogAtomically = jest.fn();
 const mockRequirementStatusSingle = jest.fn();
 const mockUserActionLimit = jest.fn();
+const mockUserActionSingle = jest.fn();
+const mockUserActionUpdate = jest.fn();
 const mockResumeRequirementExecution = jest.fn();
 
 jest.mock('../requirement-backlog-mutation', () => ({
@@ -36,10 +38,13 @@ jest.mock('@/lib/database/supabase-client', () => ({
           eq: jest.fn(),
           order: jest.fn(),
           limit: mockUserActionLimit,
+          maybeSingle: mockUserActionSingle,
+          update: mockUserActionUpdate,
         };
         query.select.mockReturnValue(query);
         query.eq.mockReturnValue(query);
         query.order.mockReturnValue(query);
+        query.update.mockReturnValue(query);
         return query;
       }
       throw new Error(`Unexpected table ${table}`);
@@ -59,6 +64,10 @@ describe('resetRequirementOnUserAction concurrency', () => {
     mockResumeRequirementExecution.mockResolvedValue(undefined);
     mockUserActionLimit.mockResolvedValue({
       data: [{ id: 'user-action-1' }],
+      error: null,
+    });
+    mockUserActionSingle.mockResolvedValue({
+      data: { details: { prompt_source: 'assistant_route' } },
       error: null,
     });
   });
@@ -115,5 +124,11 @@ describe('resetRequirementOnUserAction concurrency', () => {
       true,
       'user-action-1',
     );
+    expect(mockUserActionUpdate).toHaveBeenCalledWith({
+      details: {
+        prompt_source: 'assistant_route',
+        requirement_id: 'requirement-1',
+      },
+    });
   });
 });

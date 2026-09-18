@@ -40,7 +40,9 @@ import {
   blockRequirementForInfrastructureCircuitStep,
   blockRequirementForCronInfrastructureCyclesStep,
   blockRequirementForProductNoProgressStep,
+  requestNoProgressStepAdjudicationStep,
   selectPlanStepsForExecution,
+  shouldDeferNoProgressBlock,
 } from '../shared/cron-execute-steps-phase';
 import { executeSingleTurnStep, type SingleTurnResult } from '../shared/single-turn-executor';
 import { runGateStep } from '../shared/gate-step-executor';
@@ -1316,20 +1318,119 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     if (
       accounting.is_latest &&
       accounting.recorded_outcome === 'product_no_progress' &&
+      accounting.no_progress_cycles === 2
+    ) {
+      const recoveryPlan = await getActiveInstancePlanStep(instanceId, site_id);
+      const recoveryStep = selectPlanStepsForExecution(
+        Array.isArray(recoveryPlan?.steps) ? recoveryPlan.steps : [],
+      )[0];
+      if (recoveryPlan && recoveryStep) {
+        try {
+          const request = await requestNoProgressStepAdjudicationStep({
+            planId: recoveryPlan.id,
+            stepId: recoveryStep.id,
+            expectedGeneration: Number(
+              recoveryStep.infrastructure_generation || 0,
+            ),
+            cycleId: cronLockRunId,
+            persistedMetadata: recoveryStep.metadata,
+          });
+          if (request.persisted) {
+            await logCronInfrastructureEventStep(cronAudit, {
+              event: 'cron_product_no_progress_adjudication_requested',
+              level: 'warn',
+              message:
+                `Step ${recoveryStep.id} made no terminal progress for two cycles. ` +
+                'The next execution will skip free-form work and run the existing technical gate and final Judge directly.',
+              details: {
+                plan_id: recoveryPlan.id,
+                step_id: recoveryStep.id,
+                no_progress_cycles: accounting.no_progress_cycles,
+                infrastructure_generation: request.generation,
+              },
+            });
+          }
+        } catch (error: unknown) {
+          console.warn(
+            '[CronAppsWorkflow] Failed to request no-progress adjudication:',
+            error instanceof Error ? error.message : error,
+          );
+        }
+      }
+    } else if (
+      accounting.is_latest &&
+      accounting.recorded_outcome === 'product_no_progress' &&
       accounting.no_progress_cycles >= 3
     ) {
-      const message =
-        `The plan has failed to complete any new step for ${accounting.no_progress_cycles} consecutive cycles. Circuit breaker triggered to avoid infinite loop.`;
-      console.warn(`[CronAppsWorkflow] ${message}`);
-      await blockRequirementForProductNoProgressStep({
-        requirementId: reqId,
-        siteId: site_id,
+      // Re-read after accounting to avoid blocking a plan completed by a
+      // concurrent assistant or webhook between reconciliation and teardown.
+      const stillActivePlan = await getActiveInstancePlanStep(
         instanceId,
-        cycleId: cronLockRunId,
-        minimumFailures: 3,
-        message,
-        expectedExecutionGeneration: executionGeneration,
-      });
+        site_id,
+      );
+      const stillActiveStep = stillActivePlan
+        ? selectPlanStepsForExecution(
+            Array.isArray(stillActivePlan.steps) ? stillActivePlan.steps : [],
+          )[0]
+        : undefined;
+      if (stillActivePlan && stillActiveStep) {
+        const adjudicationState =
+          stillActiveStep?.metadata?.no_progress_adjudication?.state;
+        let blockerDeferred = false;
+        if (
+          stillActiveStep &&
+          adjudicationState !== 'consumed' &&
+          accounting.no_progress_cycles === 3
+        ) {
+          try {
+            const request = await requestNoProgressStepAdjudicationStep({
+              planId: stillActivePlan.id,
+              stepId: stillActiveStep.id,
+              expectedGeneration: Number(
+                stillActiveStep.infrastructure_generation || 0,
+              ),
+              cycleId: cronLockRunId,
+              persistedMetadata: stillActiveStep.metadata,
+            });
+            blockerDeferred = shouldDeferNoProgressBlock(request);
+            if (blockerDeferred) {
+              console.warn(
+                '[CronAppsWorkflow] Deferring the no-progress blocker for one final adjudication cycle.',
+              );
+            }
+          } catch (error: unknown) {
+            console.warn(
+              '[CronAppsWorkflow] Final no-progress adjudication request failed:',
+              error instanceof Error ? error.message : error,
+            );
+          }
+        }
+        if (!blockerDeferred) {
+          const message =
+            `The plan failed to complete a step after a bounded no-progress adjudication ` +
+            `(${accounting.no_progress_cycles} accepted no-progress cycles since the last completed step). ` +
+            'Circuit breaker triggered to avoid an infinite loop.';
+          console.warn(`[CronAppsWorkflow] ${message}`);
+          await blockRequirementForProductNoProgressStep({
+            requirementId: reqId,
+            siteId: site_id,
+            instanceId,
+            planId: stillActivePlan.id,
+            stepId: stillActiveStep.id,
+            expectedStepGeneration: Number(
+              stillActiveStep.infrastructure_generation || 0,
+            ),
+            cycleId: cronLockRunId,
+            minimumFailures: 3,
+            message,
+            expectedExecutionGeneration: executionGeneration,
+          });
+        }
+      } else {
+        console.log(
+          '[CronAppsWorkflow] Skipping no-progress blocker because no active runnable step remains.',
+        );
+      }
     } else if (
       accounting.is_latest &&
       accounting.recorded_outcome === 'infrastructure_retry' &&

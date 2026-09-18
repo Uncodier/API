@@ -278,7 +278,7 @@ RULES:
             error_message: error.message,
             completed_at: new Date().toISOString(),
         }]
-      });
+      }, { trustedRunner: true });
       throw error;
   }
 
@@ -294,7 +294,7 @@ RULES:
       actual_output: stepResult.text,
       completed_at: new Date().toISOString(),
     }]
-  });
+  }, { trustedRunner: true });
 
   // Si hay instanceNodeId, actualizamos el nodo de respuesta con el resultado
   if (context.instanceNodeId) {

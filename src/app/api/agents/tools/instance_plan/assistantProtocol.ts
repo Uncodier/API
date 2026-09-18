@@ -7,7 +7,10 @@ import { getInstancePlansCore } from '@/app/api/agents/tools/instance_plan/get/r
 import { createInstancePlanCore } from '@/app/api/agents/tools/instance_plan/create/route';
 import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/route';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { assertRequirementPlanUpdateAllowed } from './requirement-plan-lock';
+import {
+  assertRequirementPlanUpdateAllowed,
+  isRunnerOwnedRequirementStepTerminal,
+} from './requirement-plan-lock';
 
 // Per-field cutoffs used to slim the `list` response.
 // The orchestrator and other assistants just need an overview of existing
@@ -183,7 +186,7 @@ export function instancePlanTool(
     description:
       'Manage instance plans. Plans are strict execution paths composed of steps that the system delegates to specialized sub-agents. Use action="create" to define a new plan — each step SHOULD set "skill" (preferred, any SKILL.md slug such as makinari-rol-frontend, makinari-rol-qa, makinari-obj-template-selection) and/or "role" (legacy slug such as frontend/backend/devops/content/investigate/plan/validate/report/qa/template_selection/orchestrator) so the system injects the right skill. Use action="list" to get current plans. Use action="update" to add steps or modify an existing plan. The system auto-executes pending steps as sub-agents after you finish planning. Note: You can create a workflow template (repeatable process) instead of a one-off plan by passing is_template: true and an array of triggers.' +
       (requirement_id
-        ? ' This tool is running in requirement context: action="create" is rejected while another non-template plan is active, and action="update" cannot complete, fail, or cancel plans or steps. Continue the existing plan and finish executor steps with action="execute_step".'
+        ? ' This tool is running in requirement context: action="create" is rejected while another non-template plan is active. action="update" cannot complete/fail steps or terminally transition plans; it may cancel a failing step only when replacing it during plan adaptation. Executor completion requests use action="execute_step", and only the runner persists them after gates.'
         : ''),
     parameters: {
       type: 'object',
@@ -239,13 +242,24 @@ export function instancePlanTool(
                 status: { type: 'string', enum: ['pending', 'in_progress', 'completed', 'failed'], description: 'Status of the step' },
                 type: { type: 'string', description: 'Type of step (e.g., task, research, content_creation)' },
                 instructions: { type: 'string', description: 'Detailed instructions for the step' },
+                expected_output: { type: 'string', description: 'Concrete terminal output that tells the executor when this step is complete.' },
+                success_criteria: { type: 'array', items: { type: 'string' }, description: 'Observable conditions that must be satisfied before requesting completion.' },
+                validation_rules: { type: 'array', items: { type: 'string' }, description: 'Bounded checks and stop rules. Research steps must allow a not-reproducible conclusion after declared checks pass.' },
                 role: { type: 'string', description: 'Optional legacy role slug for skill injection (frontend, backend, devops, content, qa, investigate, plan, validate, report, template_selection, orchestrator). Prefer setting "skill" instead — role is only used as a fallback when skill is empty.' },
                 skill: { type: 'string', description: 'Preferred: explicit SKILL.md slug to inject (e.g. makinari-rol-frontend, makinari-rol-qa, makinari-obj-template-selection). Takes priority over role. One of skill or role must be set.' },
                 test_command: { type: 'string', description: 'Command to run automated tests for this step (e.g. "npm run test:backend"). If omitted, defaults to the standard test command.' },
                 backlog_item_id: { type: 'string', description: 'UUID of the backlog item this step delivers (from `requirement_backlog action="list"`). Required for the Judge to run. Server auto-fills this when there is exactly one in_progress backlog item, but explicit is safer.' },
                 protected_routes: { type: 'array', items: { type: 'string' }, description: 'Application routes that are expected to redirect unauthenticated visual probes to a local login page (for example, ["/dashboard/orders"]). Declare these explicitly so the gate skips login screenshots without hiding unexpected auth redirects.' },
+                metadata: {
+                  type: 'object',
+                  description: 'Step metadata. For an exceptional standalone research step in build phase, blocking_unknown must name the concrete implementation blocker.',
+                  properties: {
+                    backlog_item_id: { type: 'string' },
+                    blocking_unknown: { type: 'string' },
+                  },
+                },
               },
-              required: ['title', 'instructions', 'skill'],
+              required: ['title', 'instructions', 'expected_output', 'success_criteria', 'validation_rules', 'skill'],
             },
             description: 'Array of flat plan steps. Do NOT nest objects inside steps.' 
           },
@@ -320,6 +334,20 @@ export function instancePlanTool(
           return {
             success: false,
             error: 'Missing step_status for execute_step (pending | in_progress | completed | failed).',
+          };
+        }
+        if (isRunnerOwnedRequirementStepTerminal({
+          requirementId: requirement_id,
+          stepStatus: params.step_status,
+        })) {
+          return {
+            success: true,
+            noop: true,
+            terminal_requested: true,
+            requested_status: params.step_status,
+            message:
+              'Requirement plan terminal transitions are runner-owned. ' +
+              'The request was not persisted directly; the cron executor must run the gate first.',
           };
         }
 

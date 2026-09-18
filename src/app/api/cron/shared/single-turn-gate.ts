@@ -9,6 +9,7 @@ import {
   logCronInfrastructureEvent,
 } from '@/lib/services/cron-audit-log';
 import {
+  completePlanStepAfterGateAtomically,
   InfrastructureStateDatabaseError,
   updatePlanStepStatusAtomically,
 } from '@/lib/services/instance-plan-infrastructure-state';
@@ -20,6 +21,7 @@ import { SandboxService } from '@/lib/services/sandbox-service';
 import { sandboxIdentity } from '@/lib/services/sandbox-sdk';
 import { applyGateFailureHealing } from './gate-failure-healing';
 import { runArchetypePostGate } from './step-archetype-postgate';
+import { isStrictFinalPlanStep } from '@/lib/helpers/plan-status';
 import { runGateForFlow } from './gates';
 import type { AppGateContext } from './gates/types';
 import {
@@ -48,6 +50,7 @@ interface RunSingleTurnGateInput {
   fullTools: any;
   audit: CronAuditContext;
   infrastructureGeneration: number;
+  requireContractJudge?: boolean;
   sleepRequested?: number;
   backgroundTask?: SingleTurnResult['backgroundTask'];
 }
@@ -77,6 +80,7 @@ export async function runSingleTurnGate(
     audit,
     sleepRequested,
     backgroundTask,
+    requireContractJudge = false,
   } = input;
   let { sandbox, effectiveSandboxId, infrastructureGeneration } = input;
   const flow = classifyRequirementType(requirementType);
@@ -186,11 +190,20 @@ export async function runSingleTurnGate(
     if (!latestPlan || !Array.isArray(latestPlan.steps)) {
       throw new Error(`Plan ${plan.id} is missing after gate`);
     }
-    const isLastStep = !latestPlan.steps.some(
-      (candidate: any) =>
-        candidate.id !== step.id &&
-        (candidate.status === 'pending' || candidate.status === 'in_progress'),
+    const isLastStep = isStrictFinalPlanStep(
+      latestPlan.steps,
+      step.id,
     );
+    if ((isLastStep || requireContractJudge) && !backlogItemId) {
+      return {
+        ok: false,
+        isDone: true,
+        error:
+          `Plan step ${step.id} has no backlog_item_id; Judge execution is mandatory before completion.`,
+        effectiveSandboxId,
+        infrastructureGeneration,
+      };
+    }
 
     const gateBarrier = await updatePlanStepStatusAtomically({
       planId: plan.id,
@@ -211,9 +224,10 @@ export async function runSingleTurnGate(
     infrastructureGeneration =
       gateBarrier.generation ?? infrastructureGeneration;
 
-    if (isLastStep && backlogItemId) {
+    let finalGateApproved = false;
+    if ((isLastStep || requireContractJudge) && backlogItemId) {
       console.log(
-        `[SingleTurn] Step ${step.order} is final. Running Post-Gate Archetypes (Critic/Judge)...`,
+        `[SingleTurn] Running Post-Gate Archetypes (Critic/Judge) for step ${step.order}.`,
       );
       const postGate = await runArchetypePostGate({
         sandbox,
@@ -223,6 +237,9 @@ export async function runSingleTurnGate(
         signals: gateRes.richSignals as any,
         capturedAt: new Date().toISOString(),
         audit,
+        ...(requireContractJudge
+          ? { contractAcceptance: stepContractAcceptance(step) }
+          : {}),
       });
       if (!postGate.ran) {
         return {
@@ -252,19 +269,22 @@ export async function runSingleTurnGate(
           infrastructureGeneration,
         };
       }
+      finalGateApproved = true;
     }
 
-    const completionMutation = await updatePlanStepStatusAtomically({
+    const completionMutation = await completePlanStepAfterGateAtomically({
       planId: plan.id,
       stepId: step.id,
-      status: 'completed',
       expectedGeneration: infrastructureGeneration,
+      finalGateApproved,
     });
     if (!completionMutation.persisted) {
       return {
         ok: false,
         isDone: false,
-        error: `Step completion rejected (${completionMutation.state})`,
+        error: completionMutation.state === 'guarded'
+          ? 'Step became final concurrently and requires a fresh final Judge pass'
+          : `Step completion rejected (${completionMutation.state})`,
         effectiveSandboxId,
         infrastructureGeneration: completionMutation.generation,
         concurrencyHalt: true,
@@ -274,7 +294,7 @@ export async function runSingleTurnGate(
       completionMutation.generation ?? infrastructureGeneration;
     persistedTerminalStatus = 'completed';
 
-    if (isLastStep && backlogItemId) {
+    if (completionMutation.final && backlogItemId) {
       try {
         await setItemStatus({
           requirementId,
@@ -369,4 +389,15 @@ export async function runSingleTurnGate(
     infrastructureGeneration,
     ...(persistedTerminalStatus ? { persistedTerminalStatus } : {}),
   };
+}
+
+function stepContractAcceptance(step: any): string[] {
+  return Array.from(new Set([
+    step.instructions,
+    step.expected_output,
+    ...(Array.isArray(step.success_criteria) ? step.success_criteria : []),
+    ...(Array.isArray(step.validation_rules) ? step.validation_rules : []),
+  ].filter((value): value is string =>
+    typeof value === 'string' && value.trim().length > 0,
+  )));
 }

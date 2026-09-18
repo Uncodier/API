@@ -1,4 +1,8 @@
-import { closeSupersededPlan, summarizePlanSteps } from '../plan-status';
+import {
+  closeSupersededPlan,
+  isStrictFinalPlanStep,
+  summarizePlanSteps,
+} from '../plan-status';
 
 describe('summarizePlanSteps', () => {
   it('only completes a plan when every step completed', () => {
@@ -37,6 +41,40 @@ describe('summarizePlanSteps', () => {
     expect(summarizePlanSteps([
       { status: 'failed', retry_count: 1 },
     ]).status).toBe('in_progress');
+  });
+
+  it('keeps replacement work runnable after an earlier step is cancelled', () => {
+    expect(summarizePlanSteps([
+      { status: 'cancelled' },
+      { status: 'pending' },
+    ])).toMatchObject({
+      status: 'in_progress',
+      hasRunnable: true,
+    });
+  });
+});
+
+describe('isStrictFinalPlanStep', () => {
+  it('requires every sibling step to be completed', () => {
+    expect(isStrictFinalPlanStep([
+      { id: 'step-1', status: 'completed' },
+      { id: 'step-2', status: 'in_progress' },
+    ], 'step-2')).toBe(true);
+
+    for (const status of ['pending', 'in_progress', 'failed', 'cancelled']) {
+      expect(isStrictFinalPlanStep([
+        { id: 'step-1', status },
+        { id: 'step-2', status: 'in_progress' },
+      ], 'step-2')).toBe(false);
+    }
+  });
+
+  it('rejects missing or duplicate current step ids', () => {
+    expect(isStrictFinalPlanStep([], 'step-1')).toBe(false);
+    expect(isStrictFinalPlanStep([
+      { id: 'step-1', status: 'in_progress' },
+      { id: 'step-1', status: 'completed' },
+    ], 'step-1')).toBe(false);
   });
 });
 

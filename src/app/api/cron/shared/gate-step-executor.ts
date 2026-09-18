@@ -9,6 +9,7 @@ import { SandboxService } from '@/lib/services/sandbox-service';
 import { sandboxIdentity } from '@/lib/services/sandbox-sdk';
 import { deriveCategoriesFailed } from './step-iteration-signals';
 import { applyGateFailureHealing } from './gate-failure-healing';
+import { isStrictFinalPlanStep } from '@/lib/helpers/plan-status';
 
 export interface GateStepResult {
   ok: boolean;
@@ -96,7 +97,7 @@ export async function runGateStep(params: {
        // for this plan, otherwise the Judge will reject the intermediate steps and burn
        // the backlog item's attempts before the plan even finishes executing.
        let isLastStep = false;
-       let pendingStepsCount = 0;
+       let remainingStepsCount = 0;
        try {
          const { data: latestPlan } = await supabaseAdmin
            .from('instance_plans')
@@ -105,29 +106,29 @@ export async function runGateStep(params: {
            .single();
          
          if (latestPlan && Array.isArray(latestPlan.steps)) {
-           const pendingSteps = latestPlan.steps.filter((s: any) => 
-             s.id !== step.id && (s.status === 'pending' || s.status === 'in_progress')
+           const remainingSteps = latestPlan.steps.filter((s: any) =>
+             s.id !== step.id && s.status !== 'completed'
            );
-           pendingStepsCount = pendingSteps.length;
-           isLastStep = pendingSteps.length === 0;
+           remainingStepsCount = remainingSteps.length;
+           isLastStep = isStrictFinalPlanStep(latestPlan.steps, step.id);
          } else {
-           const pendingSteps = (plan?.steps || []).filter((s: any) => 
-             s.id !== step.id && (s.status === 'pending' || s.status === 'in_progress')
+           const remainingSteps = (plan?.steps || []).filter((s: any) =>
+             s.id !== step.id && s.status !== 'completed'
            );
-           pendingStepsCount = pendingSteps.length;
-           isLastStep = pendingSteps.length === 0;
+           remainingStepsCount = remainingSteps.length;
+           isLastStep = isStrictFinalPlanStep(plan?.steps || [], step.id);
          }
        } catch (e) {
          console.warn(`[GateStep] Error checking isLastStep, falling back to in-memory`, e);
-         const pendingSteps = (plan?.steps || []).filter((s: any) => 
-           s.id !== step.id && (s.status === 'pending' || s.status === 'in_progress')
+         const remainingSteps = (plan?.steps || []).filter((s: any) =>
+           s.id !== step.id && s.status !== 'completed'
          );
-         pendingStepsCount = pendingSteps.length;
-         isLastStep = pendingSteps.length === 0;
+         remainingStepsCount = remainingSteps.length;
+         isLastStep = isStrictFinalPlanStep(plan?.steps || [], step.id);
        }
 
        if (!isLastStep) {
-           console.log(`[GateStep] Step ${step.order} passed. Skipping Critic/Judge because there are ${pendingStepsCount} more steps pending in the plan.`);
+           console.log(`[GateStep] Step ${step.order} passed. Skipping Critic/Judge because there are ${remainingStepsCount} non-completed sibling steps in the plan.`);
            return { ok: true, passed: true, effectiveSandboxId };
        }
 

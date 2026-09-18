@@ -8,6 +8,14 @@ import {
   shouldProtectRequirementPlanCreation,
 } from '../requirement-plan-lock';
 import { z } from 'zod';
+import {
+  assertCompatiblePlanStepAssignment,
+  assertKnownPlanStepSkill,
+  assertResearchStepAllowedForPhase,
+  isResearchPlanStep,
+  normalizePlanStepContract,
+} from '@/lib/services/instance-plan-step-contract';
+import { SkillsService } from '@/lib/services/skills-service';
 
 const parseIfString = (val: any) => typeof val === 'string' ? (() => { try { return JSON.parse(val); } catch { return val; } })() : val;
 
@@ -103,8 +111,16 @@ export async function createInstancePlanCore(params: any) {
     throw new Error('La instancia no pertenece a este sitio');
   }
 
+  const fallbackBacklogCtx = await resolveBacklogContextForInstance(
+    validatedData.instance_id,
+  );
+  const effectiveRequirementId =
+    validatedData.requirement_id ||
+    (!validatedData.is_template
+      ? fallbackBacklogCtx.requirementId || undefined
+      : undefined);
   const protectRequirementPlan = shouldProtectRequirementPlanCreation({
-    requirementId: validatedData.requirement_id,
+    requirementId: effectiveRequirementId,
     isTemplate: validatedData.is_template,
   });
   if (protectRequirementPlan) {
@@ -112,7 +128,7 @@ export async function createInstancePlanCore(params: any) {
       instanceId: validatedData.instance_id,
     });
     if (activePlan) {
-      throw activeRequirementPlanError(validatedData.requirement_id!, activePlan);
+      throw activeRequirementPlanError(effectiveRequirementId!, activePlan);
     }
   }
 
@@ -120,27 +136,26 @@ export async function createInstancePlanCore(params: any) {
   let planSteps: any[] = [];
   
   // Anti-loop Guard: Reject empty plans if there is still outstanding work
-  const fallbackBacklogCtx = await resolveBacklogContextForInstance(validatedData.instance_id);
   const fallbackMatchesRequirement =
-    !validatedData.requirement_id ||
-    fallbackBacklogCtx.requirementId === validatedData.requirement_id;
+    !effectiveRequirementId ||
+    fallbackBacklogCtx.requirementId === effectiveRequirementId;
   const fallbackBacklogItemId = fallbackMatchesRequirement
     ? fallbackBacklogCtx.inProgressItemId
     : null;
   if (
-    validatedData.requirement_id &&
+    effectiveRequirementId &&
     fallbackBacklogCtx.requirementId &&
     !fallbackMatchesRequirement
   ) {
     console.warn(
       `[CreateInstancePlan] Ignoring cross-requirement backlog fallback ` +
-        `${fallbackBacklogCtx.requirementId}; expected ${validatedData.requirement_id}`,
+        `${fallbackBacklogCtx.requirementId}; expected ${effectiveRequirementId}`,
     );
   }
   
   if (!validatedData.steps || validatedData.steps.length === 0) {
     const backlogRequirementId =
-      validatedData.requirement_id || fallbackBacklogCtx.requirementId;
+      effectiveRequirementId || fallbackBacklogCtx.requirementId;
     if (backlogRequirementId) {
       const { hasOutstandingWork } = await import('@/lib/services/requirement-backlog');
       const { loadRequirement, toBacklog } = await import('@/lib/services/requirement-backlog-store');
@@ -162,6 +177,7 @@ export async function createInstancePlanCore(params: any) {
   if (validatedData.steps && validatedData.steps.length > 0) {
     // Deduplicate steps by title or instructions to prevent LLM hallucinations from repeating steps
     const uniqueSteps: any[] = [];
+    const contractSources = new Map<any, any>();
     const seenTitles = new Set<string>();
     
     validatedData.steps.forEach((step, idx) => {
@@ -179,9 +195,48 @@ export async function createInstancePlanCore(params: any) {
       
       if (!seenTitles.has(title)) {
         seenTitles.add(title);
-        uniqueSteps.push(step);
+        const normalized = normalizePlanStepContract(step);
+        uniqueSteps.push(normalized);
+        contractSources.set(normalized, step);
       }
     });
+
+    if (effectiveRequirementId && !validatedData.is_template) {
+      for (const step of uniqueSteps) {
+        assertCompatiblePlanStepAssignment(step);
+        assertKnownPlanStepSkill(
+          step,
+          (skill) => !!SkillsService.getSkillBySlugOrName(skill),
+        );
+      }
+    }
+
+    if (
+      effectiveRequirementId &&
+      uniqueSteps.some(isResearchPlanStep)
+    ) {
+      const { loadRequirement, toBacklog } = await import(
+        '@/lib/services/requirement-backlog-store'
+      );
+      const requirement = await loadRequirement(effectiveRequirementId);
+      const backlog = requirement
+        ? toBacklog(requirement.backlog, 'default')
+        : null;
+      for (const step of uniqueSteps) {
+        const stepBacklogItemId =
+          step.backlog_item_id ||
+          step.metadata?.backlog_item_id ||
+          fallbackBacklogItemId;
+        const activeItem = backlog?.items.find(
+          (item: any) => item.id === stepBacklogItemId,
+        );
+        assertResearchStepAllowedForPhase(
+          step,
+          activeItem?.phase_id,
+          contractSources.get(step),
+        );
+      }
+    }
 
     // Auto-bind `metadata.backlog_item_id` for steps that didn't carry one.
     // The post-gate Judge skips items it can't link to a step, which used to
@@ -207,7 +262,7 @@ export async function createInstancePlanCore(params: any) {
       if (!explicitItemId && resolvedItemId) {
         console.log(`[CreateInstancePlan] step #${index + 1} "${step.title}" auto-bound to backlog_item_id=${resolvedItemId}`);
       } else if (!resolvedItemId) {
-        console.warn(`[CreateInstancePlan] step #${index + 1} "${step.title}" has NO backlog_item_id (orchestrator omitted it and no unique in_progress item to bind). Judge will be skipped.`);
+        console.warn(`[CreateInstancePlan] step #${index + 1} "${step.title}" has NO backlog_item_id (orchestrator omitted it and no unique in_progress item to bind). A requirement final gate will reject completion until the item is bound.`);
       }
       return {
         id: `step_${index + 1}`,
@@ -253,8 +308,8 @@ export async function createInstancePlanCore(params: any) {
     steps: planSteps,
     metadata: {
       ...(validatedData.is_template ? { workflow_template: true } : {}),
-      ...(validatedData.requirement_id
-        ? { requirement_id: validatedData.requirement_id }
+      ...(effectiveRequirementId
+        ? { requirement_id: effectiveRequirementId }
         : {}),
     },
   };
@@ -291,7 +346,7 @@ export async function createInstancePlanCore(params: any) {
         );
       }
       throw activeRequirementPlanError(
-        validatedData.requirement_id!,
+        effectiveRequirementId!,
         winningPlan,
       );
     }

@@ -88,7 +88,7 @@ export function activeRequirementPlanError(
 export function assertRequirementPlanUpdateAllowed(input: {
   requirementId?: string;
   status?: string;
-  /** Step-level terminal updates remain available for plan adaptation. */
+  /** Cancellation remains available for runner-owned plan adaptation. */
   steps?: Array<{ status?: string }>;
 }): void {
   if (!input.requirementId) return;
@@ -96,11 +96,25 @@ export function assertRequirementPlanUpdateAllowed(input: {
   const terminalStatuses = new Set(['completed', 'failed', 'cancelled']);
   const changesPlanTerminalState =
     input.status !== undefined && terminalStatuses.has(input.status);
-  if (!changesPlanTerminalState) return;
+  const changesStepExecutionResult = (input.steps || []).some(
+    (step) => step.status === 'completed' || step.status === 'failed',
+  );
+  if (!changesPlanTerminalState && !changesStepExecutionResult) return;
 
   throw new Error(
-    `Requirement ${input.requirementId} plan terminal transitions are ` +
-      'runner-owned. Do not complete, fail, or cancel a plan with ' +
-      'action="update"; finish the current step with action="execute_step".',
+    `Requirement ${input.requirementId} plan and step execution results are ` +
+      'runner-owned. Do not complete or fail steps, or complete, fail, or ' +
+      'cancel a plan with action="update"; the executor must request a ' +
+      'terminal step result and let the runner execute its gate.',
+  );
+}
+
+export function isRunnerOwnedRequirementStepTerminal(input: {
+  requirementId?: string;
+  stepStatus?: string;
+}): boolean {
+  return Boolean(
+    input.requirementId &&
+    (input.stepStatus === 'completed' || input.stepStatus === 'failed'),
   );
 }

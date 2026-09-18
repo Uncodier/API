@@ -132,6 +132,9 @@ export class VisitorIdentityService {
     if (result.status === 'rate_limited') {
       throw new VisitorIdentityError('rate_limited', 'Too many verification requests', 429, Number(result.retry_after));
     }
+    if (result.status === 'existing') {
+      return challengeResponse(result);
+    }
     if (result.status !== 'issued') {
       throw new VisitorIdentityError('invalid_session', 'Visitor session was not found', 404);
     }

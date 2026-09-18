@@ -15,6 +15,7 @@ import {
   SUPABASE_ENVIRONMENT_PROMPT,
 } from './step-git-prompts';
 import { extractRequirementConstraints, formatConstraintsPromptBlock } from '@/lib/services/requirement-constraints';
+import { PLAN_ROLE_TO_SKILL } from '@/lib/services/instance-plan-step-contract';
 
 export { firstActionsPromptLine } from './step-git-prompts';
 
@@ -37,19 +38,7 @@ export function inferRoleFromStep(step: any): string | null {
   return 'frontend'; // default for app requirements
 }
 
-export const ROLE_TO_SKILL: Record<string, string> = {
-  'template_selection': 'makinari-obj-template-selection',
-  'frontend': 'makinari-rol-frontend',
-  'backend': 'makinari-rol-backend',
-  'devops': 'makinari-rol-devops',
-  'content': 'makinari-rol-content',
-  'orchestrator': 'makinari-rol-orchestrator',
-  'qa': 'makinari-rol-qa',
-  'investigate': 'makinari-fase-investigacion',
-  'plan': 'makinari-fase-planeacion',
-  'validate': 'makinari-fase-validacion',
-  'report': 'makinari-fase-reporteado',
-};
+export const ROLE_TO_SKILL = PLAN_ROLE_TO_SKILL;
 
 export interface SingleTurnPromptParams {
   instanceId: string;
@@ -67,6 +56,7 @@ export interface SingleTurnPromptParams {
   retryContext: string;
   constraintSources?: Array<string | null | undefined>;
   provisionedEnvKeys?: string[];
+  noProgressAdjudication?: boolean;
 }
 
 export function buildSingleTurnSystemPrompt(p: SingleTurnPromptParams): string {
@@ -93,6 +83,9 @@ DO NOT output multiple tool calls in a single response.
 When the objective is complete and the checkpoint is already pushed, make
 \`instance_plan action="execute_step" step_status="completed"\` your sole tool call.
 This is a completion signal only; the cron runner owns the status transition and gate execution.
+If the step was read-only and changed no files, no checkpoint is required:
+send the completion signal as soon as the expected output and success criteria are satisfied.
+Passing diagnostics are evidence, not an invitation to search indefinitely for a historical failure.
 
 ${SANDBOX_REPO_ROOT_INVARIANT}
 ${constraintBlock}
@@ -113,7 +106,9 @@ WORKSPACE — READ THIS CAREFULLY:
 - To add a new page, write files under src/app/<route>/page.tsx only.
 - To add components, write under src/components/.
 - All relative paths in sandbox tools resolve from ${SandboxService.WORK_DIR}.
-${firstActionsPromptLine(effectiveRole)}
+${p.noProgressAdjudication
+  ? '- GATE-ONLY ADJUDICATION MODE: normal executor actions are skipped; the runner is validating the existing workspace evidence directly.'
+  : firstActionsPromptLine(effectiveRole)}
 - LAST ACTION BEFORE STOPPING: Call sandbox_push_checkpoint (title_hint = this step's title) after your work builds — mandatory if you modified files; see CHECKPOINTS section below.
 
 COMPANY BACKGROUND & MEMORIES:
@@ -135,11 +130,15 @@ Title: ${step.title}
 Role: ${effectiveRole || 'general'}
 Instructions: ${step.instructions}
 Expected Output: ${step.expected_output || 'Complete the step successfully.'}${retryContext}
+Success Criteria: ${JSON.stringify(step.success_criteria || [])}
+Validation Rules: ${JSON.stringify(step.validation_rules || [])}
 
 Cycle baseline: ${cycleBaselineAt || 'unknown'}
 File freshness: sandbox_list_files / sandbox_read_file report updated_this_cycle vs this baseline.
 
-${skillContext
+${p.noProgressAdjudication
+  ? ''
+  : skillContext
   ? skillContext
   : effectiveRole === 'investigate'
     ? ''
@@ -163,8 +162,8 @@ SHELL LIMITATIONS:
 - RIGHT: mkdir -p src/app/community src/app/guests src/app/booking — list each path separately.
 - FOR LONG COMMANDS (like npm run build, tests, or servers), ALWAYS use sandbox_start_background_command. Never use sandbox_run_command for them.
 
-${TOOL_LOOKUP_HINT}
-${effectiveRole === 'investigate' ? RESEARCH_WEBSEARCH_HINT : ''}
+${p.noProgressAdjudication ? '' : TOOL_LOOKUP_HINT}
+${p.noProgressAdjudication ? '' : effectiveRole === 'investigate' ? RESEARCH_WEBSEARCH_HINT : ''}
 ${getFileFreshnessPromptFragment(cycleBaselineAt)}
 ${getStepCheckpointPromptFragment(requirementId, instanceId)}`;
 }

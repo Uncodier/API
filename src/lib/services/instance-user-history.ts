@@ -187,6 +187,7 @@ export async function resolveRequirementInstanceIds(
 async function fetchUserActionsForInstances(
   instanceIds: string[],
   hardCap: number,
+  requirementId?: string,
 ): Promise<UserHistoryMessage[]> {
   if (instanceIds.length === 0) return [];
 
@@ -199,13 +200,20 @@ async function fetchUserActionsForInstances(
     const start = page * pageSize;
     const end = start + pageSize - 1;
 
-    const { data, error } = await supabaseAdmin
+    let query = supabaseAdmin
       .from('instance_logs')
-      .select('id, created_at, message, instance_id')
+      .select('id, created_at, message, instance_id, details')
       .in('instance_id', instanceIds)
       .eq('log_type', 'user_action')
-      .order('created_at', { ascending: true })
-      .range(start, end);
+      .order('created_at', { ascending: false });
+    if (requirementId) {
+      query = query.filter(
+        'details->>requirement_id',
+        'eq',
+        requirementId,
+      );
+    }
+    const { data, error } = await query.range(start, end);
 
     if (error) {
       console.warn(`[UserHistory] Failed to fetch user actions:`, error);
@@ -239,7 +247,7 @@ async function fetchUserActionsForInstances(
     seen.add(m.id);
     deduped.push(m);
   }
-  return deduped.slice(0, hardCap);
+  return deduped.slice(0, hardCap).reverse();
 }
 
 /**
@@ -261,7 +269,11 @@ export async function loadUserActionHistory(
     }
   }
 
-  const allMessages = await fetchUserActionsForInstances(instanceIds, hardCap);
+  const allMessages = await fetchUserActionsForInstances(
+    instanceIds,
+    hardCap,
+    requirementId,
+  );
 
   if (allMessages.length >= hardCap) {
     console.warn(

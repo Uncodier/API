@@ -34,6 +34,13 @@ export interface PlanStepPatchMutation {
   generation?: number;
 }
 
+export interface PlanStepCompletionMutation {
+  state: PlanStepStatusMutation['state'] | 'guarded';
+  persisted: boolean;
+  generation?: number;
+  final: boolean;
+}
+
 export interface InfrastructureBlockMutation {
   state: InfrastructureMutationState | 'guarded';
   blocked: boolean;
@@ -161,6 +168,38 @@ export async function updatePlanStepStatusAtomically(params: {
   return data as PlanStepStatusMutation;
 }
 
+export async function completePlanStepAfterGateAtomically(params: {
+  planId: string;
+  stepId: string;
+  expectedGeneration: number;
+  finalGateApproved: boolean;
+}): Promise<PlanStepCompletionMutation> {
+  const { data, error } = await supabaseAdmin.rpc(
+    'complete_instance_plan_step_after_gate',
+    {
+      p_plan_id: params.planId,
+      p_step_id: params.stepId,
+      p_expected_generation: params.expectedGeneration,
+      p_final_gate_approved: params.finalGateApproved,
+    },
+  );
+  if (error) {
+    throw new InfrastructureStateDatabaseError(
+      'Failed to complete plan step after gate',
+      error,
+    );
+  }
+  if (
+    !data ||
+    typeof data.state !== 'string' ||
+    typeof data.persisted !== 'boolean' ||
+    typeof data.final !== 'boolean'
+  ) {
+    throw new Error('Plan step completion RPC returned an invalid result');
+  }
+  return data as PlanStepCompletionMutation;
+}
+
 export async function patchPlanStepAtomically(params: {
   planId: string;
   stepId: string;
@@ -278,6 +317,9 @@ export async function blockRequirementForProductNoProgress(params: {
   requirementId: string;
   siteId: string;
   instanceId: string;
+  planId: string;
+  stepId: string;
+  expectedStepGeneration: number;
   cycleId: string;
   minimumFailures: number;
   message: string;
@@ -293,6 +335,9 @@ export async function blockRequirementForProductNoProgress(params: {
       p_minimum_failures: params.minimumFailures,
       p_message: params.message,
       p_expected_execution_generation: params.expectedExecutionGeneration,
+      p_plan_id: params.planId,
+      p_step_id: params.stepId,
+      p_expected_step_generation: params.expectedStepGeneration,
     },
   );
   if (error) {

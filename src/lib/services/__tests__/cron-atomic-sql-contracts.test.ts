@@ -40,6 +40,9 @@ describe('atomic cron SQL contracts', () => {
   const activePlanSql = workspaceFile(
     'supabase/migrations/20260917203700_single_active_instance_plan.sql',
   );
+  const planGateSql = workspaceFile(
+    'supabase/migrations/20260918020000_atomic_plan_gate_completion.sql',
+  );
   const recoveryLeaseSql = workspaceFile(
     'supabase/migrations/20260917203800_deployment_recovery_scan_lease.sql',
   );
@@ -221,6 +224,24 @@ describe('atomic cron SQL contracts', () => {
     );
   });
 
+  it('makes final-step completion and no-progress blocking generation guarded', () => {
+    expect(planGateSql).toContain(
+      'complete_instance_plan_step_after_gate',
+    );
+    expect(planGateSql).toContain('p_final_gate_approved');
+    expect(planGateSql).toContain(
+      'reconcile_instance_plan_status_atomic',
+    );
+    expect(planGateSql).toContain(
+      'p_expected_step_generation',
+    );
+    expect(planGateSql).toMatch(
+      /no_progress_adjudication'->>'state',[\s\S]*\) <> 'consumed'/,
+    );
+    expect(planGateSql.trimEnd().split(/\r?\n/).length)
+      .toBeLessThanOrEqual(500);
+  });
+
   it('atomically guards product blockers and limits counter resets to legacy recovery', () => {
     expect(recoverySql).toMatch(
       /FROM public\.requirements[\s\S]*FOR UPDATE/,
@@ -309,7 +330,7 @@ describe('atomic cron SQL contracts', () => {
       "postGate.judge_verdict !== 'approved'",
     );
     const completionWrite = singleTurnGateSource.indexOf(
-      "status: 'completed'",
+      'completePlanStepAfterGateAtomically({',
       postGateGuard,
     );
     const backlogCompletion = singleTurnGateSource.indexOf(

@@ -41,5 +41,36 @@ describe('firstActionsPromptLine', () => {
     expect(prompt).toContain('do not add debug endpoints');
     expect(prompt).toContain('`instance_plan action="execute_step" step_status="completed"`');
     expect(prompt).toContain('completion signal only');
+    expect(prompt).toContain('no checkpoint is required');
+    expect(prompt).toContain('Success Criteria: []');
+    expect(prompt).toContain('Validation Rules: []');
+  });
+
+  it('suppresses normal first actions during no-progress adjudication', () => {
+    const prompt = buildSingleTurnSystemPrompt({
+      instanceId: 'instance-1',
+      siteId: 'site-1',
+      plan: { id: 'plan-1', title: 'Stalled work' },
+      step: {
+        id: 'step-1',
+        order: 1,
+        title: 'Validate existing work',
+        instructions: 'Validate it.',
+      },
+      requirementId: 'requirement-1',
+      effectiveRole: 'frontend',
+      cycleBaselineAt: '2026-09-15T00:00:00.000Z',
+      skillContext: 'Frontend skill instructions',
+      progressContext: '',
+      agentBackground: '',
+      memoriesContext: '',
+      historyContext: '',
+      retryContext: '',
+      noProgressAdjudication: true,
+    });
+
+    expect(prompt).toContain('ADJUDICATION MODE');
+    expect(prompt).not.toContain('FIRST ACTIONS (MANDATORY ORDER)');
+    expect(prompt).not.toContain('Frontend skill instructions');
   });
 });

@@ -101,7 +101,7 @@ describe('instance plan requirement context', () => {
       instance_id: 'instance-1',
       plan_id: 'plan-1',
       status: 'cancelled',
-    } as any)).rejects.toThrow('plan terminal transitions are runner-owned');
+    } as any)).rejects.toThrow('plan and step execution results are runner-owned');
     expect(mockedUpdateInstancePlanCore).not.toHaveBeenCalled();
 
     const genericTool = instancePlanTool('site-1', 'instance-1', 'user-1');
@@ -112,5 +112,28 @@ describe('instance plan requirement context', () => {
       status: 'cancelled',
     } as any)).resolves.toEqual({ success: true });
     expect(mockedUpdateInstancePlanCore).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not let the interactive assistant bypass requirement step gates', async () => {
+    const tool = instancePlanTool(
+      'site-1',
+      'instance-1',
+      'user-1',
+      'req-1',
+    );
+
+    await expect(tool.execute({
+      action: 'execute_step',
+      instance_id: 'instance-1',
+      plan_id: 'plan-1',
+      step_id: 'step-1',
+      step_status: 'completed',
+      step_output: 'Looks complete.',
+    } as any)).resolves.toMatchObject({
+      noop: true,
+      terminal_requested: true,
+      requested_status: 'completed',
+    });
+    expect(mockedUpdateInstancePlanCore).not.toHaveBeenCalled();
   });
 });

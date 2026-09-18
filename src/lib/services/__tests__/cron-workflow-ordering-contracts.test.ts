@@ -27,6 +27,12 @@ describe('requirements workflow ordering contracts', () => {
   const runLockSource = workspaceFile(
     'src/app/api/cron/shared/cron-run-lock.ts',
   );
+  const singleTurnExecutorSource = workspaceFile(
+    'src/app/api/cron/shared/single-turn-executor.ts',
+  );
+  const noProgressGateSource = workspaceFile(
+    'src/app/api/cron/shared/no-progress-gate-adjudicator.ts',
+  );
 
   it('derives progress from the persisted final plan delta', () => {
     const finalPlanRead = workflowSource.indexOf(
@@ -48,6 +54,29 @@ describe('requirements workflow ordering contracts', () => {
     );
     expect(accountingCall).toBeGreaterThan(-1);
     expect(lockRelease).toBeGreaterThan(accountingCall);
+  });
+
+  it('runs no-progress adjudication through the gate without another assistant turn', () => {
+    const adjudicationBranch = singleTurnExecutorSource.indexOf(
+      'if (noProgressAdjudication) {',
+    );
+    const assistantTurn = singleTurnExecutorSource.indexOf(
+      'const result = await executeAssistantStep',
+      adjudicationBranch,
+    );
+    const branchSource = singleTurnExecutorSource.slice(
+      adjudicationBranch,
+      assistantTurn,
+    );
+
+    expect(adjudicationBranch).toBeGreaterThan(-1);
+    expect(assistantTurn).toBeGreaterThan(adjudicationBranch);
+    expect(branchSource).toContain(
+      'return runGateOnlyNoProgressAdjudication({',
+    );
+    expect(branchSource).not.toContain('executeAssistantStep(');
+    expect(noProgressGateSource).toContain('return runSingleTurnGate({');
+    expect(noProgressGateSource).not.toContain('executeAssistantStep(');
   });
 
   it('does not continue from stale infrastructure mutations', () => {

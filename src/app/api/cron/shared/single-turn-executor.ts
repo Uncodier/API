@@ -4,6 +4,7 @@ import { executeAssistantStep } from '@/lib/services/robot-instance/assistant-ex
 import { getAssistantTools, fetchMemoriesContext, generateAgentBackground } from '@/app/api/robots/instance/assistant/utils';
 import { fetchStepLogHistoryText } from './step-history-builder';
 import { SkillsService } from '@/lib/services/skills-service';
+import { loadUserActionHistory } from '@/lib/services/instance-user-history';
 import type { GitRepoKind } from './cron-commit-helpers';
 import { connectOrRecreateRequirementSandbox } from '@/lib/services/sandbox-recovery';
 import { type CronAuditContext } from '@/lib/services/cron-audit-log';
@@ -31,6 +32,8 @@ import {
   patchPlanStepAtomically,
 } from '@/lib/services/instance-plan-infrastructure-state';
 import { runSingleTurnGate } from './single-turn-gate';
+import { isNoProgressAdjudicationRequested } from './no-progress-adjudication';
+import { runGateOnlyNoProgressAdjudication } from './no-progress-gate-adjudicator';
 export { inferRoleFromStep } from './single-turn-prompt';
 export type { SingleTurnResult };
 export async function executeSingleTurnStep(params: {
@@ -186,6 +189,8 @@ export async function executeSingleTurnStep(params: {
       ...(nextMetadata ? { metadata: nextMetadata } : {}),
       infrastructure_generation: infrastructureGeneration,
     };
+    const noProgressAdjudication =
+      isNoProgressAdjudicationRequested(persistedStep);
 
     // 3. Build Prompt & Context
     const effectiveRole = step.role || inferRoleFromStep(step) || 'general';
@@ -216,14 +221,28 @@ export async function executeSingleTurnStep(params: {
     }
 
     // Get instance context for background/memories
-    const { data: instanceData } = await supabaseAdmin.from('instances').select('*').eq('id', instanceId).maybeSingle();
-    let agentBackground = '';
-    let memoriesContext = '';
+    const agentBackground = await generateAgentBackground(siteId);
+    const memoriesContext = await fetchMemoriesContext(
+      siteId,
+      userId,
+      instanceId,
+    );
     let historyContext = '';
-    if (instanceData) {
-      agentBackground = await generateAgentBackground(siteId);
-      const mems = await fetchMemoriesContext(siteId, userId, instanceId);
-      memoriesContext = mems; // fetchMemoriesContext returns a string
+    try {
+      const userHistory = await loadUserActionHistory(instanceId, {
+        requirementId,
+        maxTotalBytes: 8 * 1024,
+        headN: 3,
+        tailN: 8,
+        hardCap: 100,
+        maxMessageBytes: 2 * 1024,
+      });
+      historyContext = `\n\n${userHistory.promptText}`;
+    } catch (error: unknown) {
+      console.warn(
+        '[SingleTurn] Could not load requirement user history:',
+        error instanceof Error ? error.message : error,
+      );
     }
     const retryContext = retryFeedback.promptFragment;
 
@@ -245,12 +264,14 @@ export async function executeSingleTurnStep(params: {
       retryContext,
       constraintSources,
       provisionedEnvKeys,
+      noProgressAdjudication,
     });
 
     const historyText = await fetchStepLogHistoryText(instanceId, plan.id, step.id);
-    const messages: any[] = [
-      { role: 'user' as const, content: `Execute step ${step.order}: ${step.title}. ${step.instructions}` },
-    ];
+    const messages: any[] = [{
+      role: 'user' as const,
+      content: `Execute step ${step.order}: ${step.title}. ${step.instructions}`,
+    }];
 
     if (retryFeedback.imageMessage) messages.push(retryFeedback.imageMessage);
 
@@ -275,7 +296,7 @@ export async function executeSingleTurnStep(params: {
       activeSandboxRef,
     });
     
-    const fullTools = withActionLoopGuard(withExecuteStepNoop(
+    const guardedTools = withActionLoopGuard(withExecuteStepNoop(
       getAssistantTools(
         siteId,
         userId,
@@ -286,6 +307,21 @@ export async function executeSingleTurnStep(params: {
         requirementId,
       ),
     ), historyText);
+    const fullTools = guardedTools;
+
+    if (noProgressAdjudication) {
+      return runGateOnlyNoProgressAdjudication({
+        executionEventId,
+        gateInput: {
+          sandbox, effectiveSandboxId, plan, step, persistedStep,
+          requirementId, instanceId, siteId, userId, requirementType,
+          gitRepoKind, backlogItemId: effectiveBacklogItemId,
+          interactionBaselineSha, systemPrompt, fullTools, audit,
+          infrastructureGeneration, result: {},
+        },
+      });
+    }
+
     const result = await executeAssistantStep(messages, { id: instanceId, site_id: siteId, user_id: userId, requirement_id: requirementId }, {
       instance_id: instanceId,
       site_id: siteId,
@@ -336,7 +372,7 @@ export async function executeSingleTurnStep(params: {
         infrastructure_generation: infrastructureGeneration,
       };
     }
-    
+
     // Check if the LLM attempted to execute tools and failed due to sandbox gone
     const hasSandboxGoneError = result.messages?.some((m: any) => 
       m.role === 'tool' && isSandboxGoneError(typeof m.content === 'string' ? m.content : JSON.stringify(m.content))

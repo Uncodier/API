@@ -2,6 +2,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { listBacklog } from '@/lib/services/requirement-backlog';
 import type { RequirementBacklog } from '@/lib/services/requirement-backlog-types';
 import { fetchMemoriesContext, generateAgentBackground } from '@/app/api/robots/instance/assistant/utils';
+import { loadUserActionHistory } from '@/lib/services/instance-user-history';
 
 export interface FullRequirementContext {
   backlog: RequirementBacklog | null;
@@ -186,20 +187,39 @@ export class RequirementContextService {
     } catch(e) {}
     
     try {
+      const userHistory = await loadUserActionHistory(instanceId, {
+        requirementId: reqId,
+        maxTotalBytes: 12 * 1024,
+        headN: 5,
+        tailN: 10,
+        hardCap: 150,
+        maxMessageBytes: 2 * 1024,
+      });
+      if (userHistory.mode !== 'empty') {
+        historyContext = `\n\n${userHistory.promptText}`;
+      }
+
       const { data: rawHistoricalLogs } = await supabaseAdmin
         .from('instance_logs')
         .select('log_type, message, created_at, tool_name, tool_result')
         .eq('instance_id', instanceId)
-        .in('log_type', ['user_action', 'agent_action', 'execution_summary', 'tool_call'])
+        .in('log_type', ['agent_action', 'execution_summary', 'tool_call'])
         .order('created_at', { ascending: false })
         .limit(50);
 
       const historicalLogs = rawHistoricalLogs ? [...rawHistoricalLogs].reverse() : [];
       if (historicalLogs && historicalLogs.length > 0) {
-        historyContext = '\n\n📋 CONVERSATION HISTORY:\n';
+        historyContext += '\n\n📋 RUNNER EXECUTION HISTORY:\n';
         historicalLogs.forEach((log) => {
-          const timestamp = new Date(log.created_at).toLocaleTimeString();
+          const createdAt = new Date(log.created_at);
+          const timestamp = Number.isNaN(createdAt.getTime())
+            ? 'unknown time'
+            : createdAt.toLocaleTimeString();
           const role = log.log_type === 'user_action' ? 'User' : 'Assistant';
+          const rawMessage = String(log.message || '');
+          const message =
+            `${rawMessage.substring(0, 150)}` +
+            `${rawMessage.length > 150 ? '...' : ''}`;
           
           if (log.log_type === 'tool_call' && log.tool_name && log.tool_result) {
             if (['generate_image', 'generate_video'].includes(log.tool_name)) {
@@ -210,16 +230,16 @@ export class RequirementContextService {
                   if (urls.length > 0) {
                     historyContext += `[${timestamp}] ${role}: Generated ${log.tool_name} - URLs: ${urls.join(', ')}\n`;
                   } else {
-                    historyContext += `[${timestamp}] ${role}: ${log.message.substring(0, 150)}${log.message.length > 150 ? '...' : ''}\n`;
+                    historyContext += `[${timestamp}] ${role}: ${message}\n`;
                   }
                 } else {
-                  historyContext += `[${timestamp}] ${role}: ${log.message.substring(0, 150)}${log.message.length > 150 ? '...' : ''}\n`;
+                  historyContext += `[${timestamp}] ${role}: ${message}\n`;
                 }
             } else {
-              historyContext += `[${timestamp}] ${role}: ${log.message.substring(0, 150)}${log.message.length > 150 ? '...' : ''}\n`;
+              historyContext += `[${timestamp}] ${role}: ${message}\n`;
             }
           } else {
-            historyContext += `[${timestamp}] ${role}: ${log.message.substring(0, 150)}${log.message.length > 150 ? '...' : ''}\n`;
+            historyContext += `[${timestamp}] ${role}: ${message}\n`;
           }
         });
       }

@@ -47,6 +47,21 @@ export function summarizePlanSteps(
   };
 }
 
+export function isStrictFinalPlanStep(
+  steps: Array<{ id?: string; status?: string }>,
+  currentStepId: string,
+): boolean {
+  if (
+    !currentStepId ||
+    steps.filter((step) => step.id === currentStepId).length !== 1
+  ) {
+    return false;
+  }
+  return steps.every(
+    (step) => step.id === currentStepId || step.status === 'completed',
+  );
+}
+
 export function closeSupersededPlan(
   steps: Array<Record<string, any>>,
   reason: string,

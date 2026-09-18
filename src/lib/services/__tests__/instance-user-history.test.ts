@@ -3,6 +3,7 @@ import { buildUserHistoryPrompt, loadUserActionHistory } from '../instance-user-
 const mockRange = jest.fn();
 const mockMaybeSingle = jest.fn();
 const mockLimit = jest.fn();
+const mockFilter = jest.fn();
 
 jest.mock('@/lib/database/supabase-client', () => ({
   supabaseAdmin: {
@@ -23,13 +24,18 @@ jest.mock('@/lib/database/supabase-client', () => ({
         };
       }
       // instance_logs
-      return {
+      const query = {
         select: jest.fn().mockReturnThis(),
         eq: jest.fn().mockReturnThis(),
         in: jest.fn().mockReturnThis(),
         order: jest.fn().mockReturnThis(),
         range: (...args: unknown[]) => mockRange(...args),
+        filter: (...args: unknown[]) => {
+          mockFilter(...args);
+          return query;
+        },
       };
+      return query;
     }),
   },
 }));
@@ -169,6 +175,11 @@ describe('loadUserActionHistory', () => {
 
     expect(result.totalCount).toBe(1);
     expect(result.promptText).toContain('cotización');
+    expect(mockFilter).toHaveBeenCalledWith(
+      'details->>requirement_id',
+      'eq',
+      'req-123',
+    );
   });
 
   it('respects hardCap', async () => {
@@ -191,5 +202,7 @@ describe('loadUserActionHistory', () => {
 
     const result = await loadUserActionHistory('inst-1', { hardCap: 150 });
     expect(result.totalCount).toBe(150);
+    expect(result.messages[0].id).toBe('msg-149');
+    expect(result.messages.at(-1)?.id).toBe('msg-0');
   });
 });

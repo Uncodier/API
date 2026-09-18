@@ -2,6 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { resolveBacklogContextForInstance } from '@/lib/services/requirement-backlog';
 import { summarizePlanSteps } from '@/lib/helpers/plan-status';
+import {
+  assertCompatiblePlanStepAssignment,
+  assertKnownPlanStepSkill,
+  assertResearchStepAllowedForPhase,
+  normalizePlanStepContract,
+} from '@/lib/services/instance-plan-step-contract';
+import { assertRequirementPlanUpdateAllowed } from '../requirement-plan-lock';
+import { SkillsService } from '@/lib/services/skills-service';
 import { z } from 'zod';
 
 const parseIfString = (val: any) => typeof val === 'string' ? (() => { try { return JSON.parse(val); } catch { return val; } })() : val;
@@ -60,7 +68,10 @@ const UpdateInstancePlanSchema = z.object({
 /**
  * Core function to update an instance plan
  */
-export async function updateInstancePlanCore(params: any) {
+export async function updateInstancePlanCore(
+  params: any,
+  options: { trustedRunner?: boolean } = {},
+) {
   const validatedData = UpdateInstancePlanSchema.parse(params);
   const {
     plan_id,
@@ -73,7 +84,7 @@ export async function updateInstancePlanCore(params: any) {
   // Verificar que el plan existe y pertenece al sitio
   const { data: existingPlan, error: fetchError } = await supabaseAdmin
     .from('instance_plans')
-    .select('site_id, steps, status, instance_id') // Select steps, status, instance_id as well
+    .select('site_id, steps, status, instance_id, metadata, updated_at')
     .eq('id', plan_id)
     .single();
 
@@ -84,31 +95,96 @@ export async function updateInstancePlanCore(params: any) {
   if (existingPlan.site_id !== site_id) {
     throw new Error('No tienes permiso para actualizar este plan');
   }
+  if (instance_id && instance_id !== existingPlan.instance_id) {
+    throw new Error('Plan does not belong to the provided instance');
+  }
 
   if (Object.keys(updates).length === 0 && !updates.steps) {
     return { success: true, message: 'No updates provided' };
   }
 
   const updateData: any = { ...updates, updated_at: new Date().toISOString() };
+  const storedRequirementId =
+    typeof existingPlan.metadata?.requirement_id === 'string'
+      ? existingPlan.metadata.requirement_id
+      : undefined;
+  if (
+    requirement_id &&
+    storedRequirementId &&
+    requirement_id !== storedRequirementId
+  ) {
+    throw new Error(
+      `Plan ${plan_id} belongs to requirement ${storedRequirementId}, not ${requirement_id}.`,
+    );
+  }
+  const effectiveInstanceId = existingPlan.instance_id;
+  const fallbackCtx =
+    !existingPlan.metadata?.workflow_template && effectiveInstanceId
+      ? await resolveBacklogContextForInstance(effectiveInstanceId)
+      : { requirementId: null, inProgressItemId: null };
+  const effectiveRequirementId =
+    storedRequirementId ||
+    requirement_id ||
+    fallbackCtx.requirementId ||
+    undefined;
+  if (
+    requirement_id &&
+    fallbackCtx.requirementId &&
+    requirement_id !== fallbackCtx.requirementId
+  ) {
+    throw new Error(
+      `Instance ${effectiveInstanceId} is bound to requirement ` +
+        `${fallbackCtx.requirementId}, not ${requirement_id}.`,
+    );
+  }
+  if (!options.trustedRunner) {
+    assertRequirementPlanUpdateAllowed({
+      requirementId: effectiveRequirementId,
+      status: updates.status,
+      steps: updates.steps,
+    });
+  }
+  if (
+    effectiveRequirementId &&
+    existingPlan.status === 'completed' &&
+    Object.keys(updates).some((key) => key !== 'updated_at')
+  ) {
+    throw new Error(
+      `Requirement ${effectiveRequirementId} plan ${plan_id} is completed and immutable.`,
+    );
+  }
 
   if (updates.steps) {
     // Resolve a fallback once per update, but never bind across requirements.
-    const effectiveInstanceId = instance_id || (existingPlan as any).instance_id;
-    const fallbackCtx = effectiveInstanceId
-      ? await resolveBacklogContextForInstance(effectiveInstanceId)
-      : { requirementId: null, inProgressItemId: null };
     const fallbackBacklogItemId =
-      requirement_id && fallbackCtx.requirementId === requirement_id
+      effectiveRequirementId &&
+      fallbackCtx.requirementId === effectiveRequirementId
         ? fallbackCtx.inProgressItemId
         : null;
     if (
-      requirement_id &&
+      effectiveRequirementId &&
       fallbackCtx.requirementId &&
-      fallbackCtx.requirementId !== requirement_id
+      fallbackCtx.requirementId !== effectiveRequirementId
     ) {
       console.warn(
-        `[UpdateInstancePlan] Ignoring cross-requirement backlog fallback ${fallbackCtx.requirementId}; expected ${requirement_id}`,
+        `[UpdateInstancePlan] Ignoring cross-requirement backlog fallback ${fallbackCtx.requirementId}; expected ${effectiveRequirementId}`,
       );
+    }
+
+    const backlogPhaseByItemId = new Map<string, string>();
+    if (effectiveRequirementId) {
+      const { loadRequirement, toBacklog } = await import(
+        '@/lib/services/requirement-backlog-store'
+      );
+      const requirement = await loadRequirement(effectiveRequirementId);
+      const backlog = requirement
+        ? toBacklog(requirement.backlog, 'default')
+        : null;
+      for (const item of backlog?.items || []) {
+        if (item.id && item.phase_id) {
+          backlogPhaseByItemId.set(item.id, item.phase_id);
+        }
+      }
     }
 
     const mergeMetadata = (currentStep: any, incomingStep: any): Record<string, any> => {
@@ -141,6 +217,44 @@ export async function updateInstancePlanCore(params: any) {
     // explicit retry paths that bump `retry_count` are allowed to demote a
     // `failed` step back to `pending`.
     const isTerminalSticky = (s: string | undefined) => s === 'completed' || s === 'cancelled';
+    const changesStepDefinition = (step: any): boolean =>
+      [
+        'title',
+        'description',
+        'type',
+        'instructions',
+        'expected_output',
+        'success_criteria',
+        'validation_rules',
+        'role',
+        'skill',
+        'test_command',
+        'metadata',
+        'backlog_item_id',
+      ].some((key) => Object.prototype.hasOwnProperty.call(step, key));
+    const normalizeAndValidateStep = (
+      step: any,
+      contractSource: any = step,
+    ): any => {
+      const normalized = normalizePlanStepContract(step);
+      if (effectiveRequirementId) {
+        assertCompatiblePlanStepAssignment(normalized);
+        assertKnownPlanStepSkill(
+          normalized,
+          (skill) => !!SkillsService.getSkillBySlugOrName(skill),
+        );
+      }
+      const itemId =
+        normalized.backlog_item_id ||
+        normalized.metadata?.backlog_item_id ||
+        fallbackBacklogItemId;
+      assertResearchStepAllowedForPhase(
+        normalized,
+        itemId ? backlogPhaseByItemId.get(itemId) : undefined,
+        contractSource,
+      );
+      return normalized;
+    };
     const safeMergeStatus = (currentStep: any, incomingStep: any): {
       status: string | undefined;
       completed_at: string | null | undefined;
@@ -177,7 +291,7 @@ export async function updateInstancePlanCore(params: any) {
       );
       if (!incomingStep) return currentStep;
       const safe = safeMergeStatus(currentStep, incomingStep);
-      return {
+      const mergedStep = {
         ...currentStep,
         ...incomingStep,
         status: safe.status,
@@ -187,6 +301,9 @@ export async function updateInstancePlanCore(params: any) {
         metadata: mergeMetadata(currentStep, incomingStep),
         updated_at: new Date().toISOString(),
       };
+      return changesStepDefinition(incomingStep)
+        ? normalizeAndValidateStep(mergedStep, incomingStep)
+        : mergedStep;
     });
 
     // Add new steps that might be in updates.steps but not in currentSteps
@@ -210,13 +327,14 @@ export async function updateInstancePlanCore(params: any) {
         if (incomingStep.title && !seenNewTitles.has(incomingStep.title)) {
           seenNewTitles.add(incomingStep.title);
 
-          updatedSteps.push({
+          updatedSteps.push(normalizeAndValidateStep({
             ...incomingStep,
             id: incomingStep.id || `step_added_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+            status: incomingStep.status || 'pending',
             metadata: mergeMetadata(null, incomingStep),
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString()
-          });
+          }, incomingStep));
         }
       }
     });
@@ -233,12 +351,20 @@ export async function updateInstancePlanCore(params: any) {
     }
 
     // Auto-reconcile plan status based on steps (only if not explicitly overridden by updates)
-    if (!updates.status && existingPlan.status !== 'paused' && existingPlan.status !== 'cancelled') {
+    if (
+      !updates.status &&
+      existingPlan.status !== 'paused' &&
+      (existingPlan.status !== 'cancelled' || summary.hasRunnable)
+    ) {
       if (summary.status !== 'in_progress') {
         updateData.status = summary.status;
         updateData.completed_at = new Date().toISOString();
-      } else if (updateData.progress_percentage > 0 && existingPlan.status === 'pending') {
+      } else if (
+        existingPlan.status === 'cancelled' ||
+        existingPlan.status === 'pending'
+      ) {
         updateData.status = 'in_progress';
+        updateData.completed_at = null;
       }
     }
   } else if (updates.status === 'completed') {
@@ -252,10 +378,19 @@ export async function updateInstancePlanCore(params: any) {
     .from('instance_plans')
     .update(updateData)
     .eq('id', plan_id)
+    .eq('updated_at', existingPlan.updated_at)
     .select()
     .single();
 
   if (error) {
+    if (
+      error.code === 'PGRST116' ||
+      /0 rows|no rows/i.test(error.message || '')
+    ) {
+      throw new Error(
+        `Plan ${plan_id} changed concurrently; reload it before updating.`,
+      );
+    }
     throw new Error(`Failed to update plan: ${error.message}`);
   }
 

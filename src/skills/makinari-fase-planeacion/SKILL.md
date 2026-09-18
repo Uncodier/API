@@ -34,7 +34,7 @@ or items from future phases are rejected by the coordinator.
 Before calling `instance_plan action="create"`, verify:
 
 - [ ] If the requirement targets the applications repo, **step 1 selects the base** via `makinari-obj-template-selection` (unless `instructions` already declares `BASE: ...` from a prior cycle).
-- [ ] Investigation is either already done (step exists and is completed) OR is step 2.
+- [ ] Investigation findings from the dedicated investigate phase have been consumed. Do not add another standalone investigation step to a build-phase plan; include any final file inspection in the first implementation step.
 - [ ] Every Acceptance Criterion maps to at least one step's `instructions`.
 - [ ] Development steps (`makinari-rol-frontend` / `makinari-rol-backend` / `makinari-rol-content`) are followed by **one QA step** using `makinari-rol-qa`.
 - [ ] Validation (`makinari-fase-validacion`) runs before reporting.
@@ -70,28 +70,18 @@ Before calling `instance_plan action="create"`, verify:
       "validation_rules": ["Do not overwrite existing BASE if present"]
     },
     { 
-      "id": "step_invest", 
-      "order": 2, 
-      "title": "Investigation", 
-      "skill": "makinari-fase-investigacion", 
-      "instructions": "Produce Investigation section per output contract.",
-      "expected_output": "Investigation context gathered for downstream steps.",
-      "success_criteria": ["Dependencies verified"],
-      "validation_rules": ["Do not write code in this step"]
-    },
-    { 
       "id": "step_fe", 
-      "order": 3, 
+      "order": 2, 
       "title": "Frontend", 
       "skill": "makinari-rol-frontend", 
-      "instructions": "Implement routes <list>, expose data-testids per req section 6.4, wire real handlers. explicitly describe the UI layout, components to use (e.g., Shadcn UI Cards, Magic UI animations), and responsive behavior. Enforce Modern Elite Design aesthetics (dark-mode-first, glassmorphism, no flat generic corporate UI).",
+      "instructions": "Inspect the named existing files once, then implement routes <list>, expose data-testids per req section 6.4, and wire real handlers. Explicitly describe the UI layout, components to use (e.g., Shadcn UI Cards, Magic UI animations), and responsive behavior. Enforce Modern Elite Design aesthetics (dark-mode-first, glassmorphism, no flat generic corporate UI).",
       "expected_output": "UI components and pages created and wired to real endpoints.",
       "success_criteria": ["Pages render without 500 errors", "Shadcn/MagicUI components used for layout", "Responsive on mobile"],
       "validation_rules": ["No mocked data", "Must use Tailwind classes", "No generic flat colors"]
     },
     { 
       "id": "step_qa", 
-      "order": 4, 
+      "order": 3, 
       "title": "QA", 
       "skill": "makinari-rol-qa", 
       "instructions": "Author .qa/scenarios per req section 6.5, triage gate signals, write qa_results.json.",
@@ -101,7 +91,7 @@ Before calling `instance_plan action="create"`, verify:
     },
     { 
       "id": "step_val", 
-      "order": 5, 
+      "order": 4, 
       "title": "Validation", 
       "skill": "makinari-fase-validacion", 
       "instructions": "npm run build, verify preview, write test_results.json.",
@@ -111,7 +101,7 @@ Before calling `instance_plan action="create"`, verify:
     },
     { 
       "id": "step_report", 
-      "order": 6, 
+      "order": 5, 
       "title": "Report", 
       "skill": "makinari-fase-reporteado", 
       "instructions": "Create requirement_status with preview URL.",
@@ -131,13 +121,12 @@ Before calling `instance_plan action="create"`, verify:
   "title": "Automation: <title>",
   "steps": [
     { "id": "step_base", "order": 1, "skill": "makinari-obj-template-selection", "instructions": "Select automation runner Vitrina branch." },
-    { "id": "step_invest", "order": 2, "skill": "makinari-fase-investigacion", "instructions": "Confirm endpoint shape + env vars per req section 6.1 and 6.3." },
-    { "id": "step_be", "order": 3, "skill": "makinari-rol-backend", "test_command": "npm run test:backend", "instructions": "Implement endpoint with ?mode=test and ?mode=prod per req section 6.1." },
-    { "id": "step_obj", "order": 4, "skill": "makinari-obj-automatizacion", "instructions": "Inject runner UI via Vitrina data.json." },
-    { "id": "step_qa", "order": 5, "skill": "makinari-rol-qa", "instructions": "Scenario exercises mode=test from the runner UI and asserts response shape." },
-    { "id": "step_val", "order": 6, "skill": "makinari-fase-validacion", "instructions": "curl mode=test, write test_results.json." },
-    { "id": "step_devops", "order": 7, "skill": "makinari-rol-devops", "instructions": "Verify SHA on GitHub, extend test_results.json with commit_sha and preview_url_verified." },
-    { "id": "step_report", "order": 8, "skill": "makinari-fase-reporteado", "instructions": "Create requirement_status with endpoint_url and preview_url." }
+    { "id": "step_be", "order": 2, "skill": "makinari-rol-backend", "test_command": "npm run test:backend", "instructions": "Inspect the declared endpoint/env contract once, then implement endpoint with ?mode=test and ?mode=prod per req section 6.1." },
+    { "id": "step_obj", "order": 3, "skill": "makinari-obj-automatizacion", "instructions": "Inject runner UI via Vitrina data.json." },
+    { "id": "step_qa", "order": 4, "skill": "makinari-rol-qa", "instructions": "Scenario exercises mode=test from the runner UI and asserts response shape." },
+    { "id": "step_val", "order": 5, "skill": "makinari-fase-validacion", "instructions": "curl mode=test, write test_results.json." },
+    { "id": "step_devops", "order": 6, "skill": "makinari-rol-devops", "instructions": "Verify SHA on GitHub, extend test_results.json with commit_sha and preview_url_verified." },
+    { "id": "step_report", "order": 7, "skill": "makinari-fase-reporteado", "instructions": "Create requirement_status with endpoint_url and preview_url." }
   ]
 }
 ```

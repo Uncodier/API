@@ -1,6 +1,7 @@
 import { patchPlanStepAtomically } from '@/lib/services/instance-plan-infrastructure-state';
 import {
   buildSingleTurnStartMetadata,
+  markNoProgressAdjudicationConsumed,
   markVisualFeedbackDelivered,
   resolveSingleTurnBacklogItemId,
 } from '../single-turn-step-state';
@@ -100,6 +101,39 @@ describe('single-turn step state', () => {
             visual_feedback_image_id: 'image-1',
           }),
         }),
+      }),
+    );
+  });
+
+  it('atomically consumes a no-progress adjudication request', async () => {
+    mockPatchPlanStep.mockResolvedValue({
+      state: 'applied',
+      persisted: true,
+      generation: 8,
+    });
+
+    await markNoProgressAdjudicationConsumed({
+      planId: 'plan-1',
+      stepId: 'step-1',
+      expectedGeneration: 7,
+      eventId: 'cycle-3:no-progress-consumed',
+      persistedMetadata: {
+        backlog_item_id: 'backlog-1',
+        no_progress_adjudication: { state: 'requested' },
+      },
+    });
+
+    expect(mockPatchPlanStep).toHaveBeenCalledWith(
+      expect.objectContaining({
+        expectedGeneration: 7,
+        patch: {
+          metadata: expect.objectContaining({
+            backlog_item_id: 'backlog-1',
+            no_progress_adjudication: expect.objectContaining({
+              state: 'consumed',
+            }),
+          }),
+        },
       }),
     );
   });

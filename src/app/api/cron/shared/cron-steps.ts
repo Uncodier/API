@@ -23,7 +23,6 @@ import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/upd
 import { commitWorkspaceToOrigin, type GitRepoKind } from './cron-commit-helpers';
 import { validateBuildForStep } from './step-git-gate';
 import { consumePrePushBuildMarker } from './commit/pre-push-build-validation';
-import { summarizePlanSteps } from '@/lib/helpers/plan-status';
 import {
   CronInfraEvent,
   logCronInfrastructureEvent,
@@ -278,45 +277,43 @@ export async function checkRecentPlansGuardStep(params: {
 
 export async function reconcilePlanStep(planId: string): Promise<string> {
   'use step';
-  const { data: freshPlan, error: planErr } = await supabaseAdmin
+  const { data: reconciliation, error: reconcileError } =
+    await supabaseAdmin.rpc('reconcile_instance_plan_status_atomic', {
+      p_plan_id: planId,
+    });
+  if (reconcileError) {
+    throw new Error(
+      `Failed to reconcile plan ${planId}: ${reconcileError.message}`,
+    );
+  }
+  if (!reconciliation || typeof reconciliation.status !== 'string') {
+    return 'unknown';
+  }
+  const planStatus = reconciliation.status;
+  const completedCount = Number(reconciliation.completed_count || 0);
+  const totalCount = Number(reconciliation.total_count || 0);
+
+  const { data: freshPlan } = await supabaseAdmin
     .from('instance_plans')
-    .select('instance_id, site_id, steps, status')
+    .select('instance_id, site_id')
     .eq('id', planId)
     .maybeSingle();
-  if (planErr || !freshPlan?.steps) return 'unknown';
-
-  if (freshPlan.status === 'paused' || freshPlan.status === 'cancelled') {
-    console.log(`[CronStep] Plan reconcile skipped — preserved status=${freshPlan.status}`);
-    return freshPlan.status;
-  }
-
-  const steps = freshPlan.steps as any[];
-  const summary = summarizePlanSteps(steps);
-  const planStatus = summary.status;
-
-  await supabaseAdmin.from('instance_plans').update({
-    status: planStatus,
-    steps_completed: summary.completedCount,
-    progress_percentage: summary.progressPercentage,
-    ...(planStatus !== 'in_progress' ? { completed_at: new Date().toISOString() } : {}),
-    updated_at: new Date().toISOString(),
-  }).eq('id', planId);
-  console.log(`[CronStep] Plan → ${planStatus} (${summary.completedCount}/${steps.length})`);
+  console.log(
+    `[CronStep] Plan → ${planStatus} (${completedCount}/${totalCount})`,
+  );
 
   const planAudit: CronAuditContext | undefined =
-    freshPlan.instance_id && freshPlan.site_id
+    freshPlan?.instance_id && freshPlan?.site_id
       ? { instanceId: freshPlan.instance_id, siteId: freshPlan.site_id }
       : undefined;
   await logCronInfrastructureEvent(planAudit, {
     event: CronInfraEvent.PLAN_RECONCILE,
-    message: `Plan ${planId} reconciled → ${planStatus} (${summary.completedCount}/${steps.length} steps completed)`,
+    message: `Plan ${planId} reconciled → ${planStatus} (${completedCount}/${totalCount} steps completed)`,
     details: {
       plan_id: planId,
       plan_status: planStatus,
-      steps_total: steps.length,
-      steps_completed: summary.completedCount,
-      any_failed: summary.anyFailed,
-      any_cancelled: summary.anyCancelled,
+      steps_total: totalCount,
+      steps_completed: completedCount,
     },
   });
 

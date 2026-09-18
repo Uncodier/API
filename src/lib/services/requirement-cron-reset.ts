@@ -31,6 +31,37 @@ async function findLatestUserActionId(
   return typeof data?.[0]?.id === 'string' ? data[0].id : null;
 }
 
+async function tagUserActionWithRequirement(
+  actionId: string,
+  requirementId: string,
+): Promise<void> {
+  const { data, error } = await supabaseAdmin
+    .from('instance_logs')
+    .select('details')
+    .eq('id', actionId)
+    .maybeSingle();
+  if (error || !data) return;
+  const details =
+    data.details && typeof data.details === 'object' ? data.details : {};
+  const existingRequirementId =
+    (details as Record<string, unknown>).requirement_id;
+  if (
+    typeof existingRequirementId === 'string' &&
+    existingRequirementId !== requirementId
+  ) {
+    return;
+  }
+  await supabaseAdmin
+    .from('instance_logs')
+    .update({
+      details: {
+        ...details,
+        requirement_id: requirementId,
+      },
+    })
+    .eq('id', actionId);
+}
+
 export function reopenReviewBacklogOnUserAction(
   backlogValue: unknown,
 ): { backlog?: RequirementBacklog; reopenedItemIds: string[] } {
@@ -146,6 +177,14 @@ export async function resetRequirementOnUserAction(instanceId: string): Promise<
           `[CronReset] No user-action identity found for instance ${instanceId}; recovery was not applied.`,
         );
         return;
+      }
+      try {
+        await tagUserActionWithRequirement(actionId, requirementId);
+      } catch (error) {
+        console.warn(
+          `[CronReset] Failed to scope user action ${actionId} to requirement ${requirementId}:`,
+          error,
+        );
       }
       const recovery = await mutateBacklogAtomically(
         requirementId,

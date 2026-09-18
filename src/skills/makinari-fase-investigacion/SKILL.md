@@ -12,6 +12,16 @@ types: ['develop', 'automation', 'content', 'design', 'task', 'integration', 're
 
 ## Execution Rules
 
+### 0. Bounded investigation and stop conditions
+- Investigation answers one concrete question; it is not an open-ended search for possible defects.
+- Treat historical failures as leads, not as proof that the failure still exists.
+- Run each targeted diagnostic command or runtime probe at most once unless its inputs changed.
+- Do not reread an unchanged file. Use the prior tool result already present in the step history.
+- A passing targeted test plus a passing relevant runtime probe is sufficient evidence that a historical failure is currently **not reproducible**. "Not reproducible with current evidence" is a valid terminal diagnosis.
+- Use at most 6 investigation tool calls. On the next turn, report the evidence-backed conclusion and call `instance_plan action="execute_step" step_status="completed"`.
+- If one concrete unknown remains after the budget, report it and call `instance_plan action="execute_step" step_status="failed"`; do not continue exploring indefinitely.
+- Read-only investigations do not require a checkpoint. A checkpoint is required only when files were modified.
+
 ### 1. Read the requirement first
 - `requirements action="read"` — load the full `instructions` field.
 - Identify which sections are already filled and which are missing. If section 6 (Contracts) or section 7 (Acceptance Criteria) are missing while the requirement involves UI or APIs, flag it — the planner cannot plan around an empty contract.
@@ -38,6 +48,11 @@ Before editing any file:
 Produce a concise structured summary. Either:
 - Append it as a `## Investigation (YYYY-MM-DD)` section to `requirement.instructions` via `requirements action="update"`, or
 - Write `INVESTIGATION.md` at the repo root via `sandbox_write_file`.
+
+When the step is investigating an already implemented feature or a historical
+failure, prefer returning the structured summary in `step_output`; do not
+create or rewrite repository documentation unless the step explicitly asks
+for a durable artifact.
 
 **Template**
 
@@ -71,6 +86,11 @@ Produce a concise structured summary. Either:
 ### 6. Handshake to planning
 The planner will quote the "Current state", "Data model", and "Recommended base" sections when building `instance_plan` steps. Keep the output compact and factual — no narrative, no speculation.
 
+Your final action must be `instance_plan action="execute_step"` with:
+- `step_status="completed"` when the question was answered, including when the historical failure is not reproducible.
+- `step_status="failed"` only when a named unknown still blocks planning after the tool budget.
+- `step_output` containing the files inspected, commands/probes executed once, observed results, conclusion, and recommended next action.
+
 ## Tools
 
 | Tool | When to use |
@@ -93,3 +113,6 @@ The planner will quote the "Current state", "Data model", and "Recommended base"
 - Writing a narrative essay. Keep findings bulleted and factual.
 - Guessing at file paths or schemas. Verify with `sandbox_read_file`.
 - Skipping the "Open questions" section when ambiguity exists — silent assumptions cost downstream cycles.
+- Re-running a passing test or probe to search for a different outcome.
+- Continuing to search merely because the instructions mention a historical failure.
+- Treating absence of a reproducible error as incomplete work.

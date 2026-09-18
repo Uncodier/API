@@ -6,6 +6,7 @@ import {
   blockRequirementForCronInfrastructureCycles,
   blockRequirementForProductNoProgress,
   clearPlanStepInfrastructureState,
+  completePlanStepAfterGateAtomically,
   patchPlanStepAtomically,
   recordPlanStepInfrastructureFailure,
   updatePlanStepStatusAtomically,
@@ -22,6 +23,34 @@ const mockRpc = supabaseAdmin.rpc as unknown as jest.MockedFunction<
 describe('instance plan infrastructure state RPC wrappers', () => {
   beforeEach(() => {
     mockRpc.mockReset();
+  });
+
+  it('completes a gated step with an atomic finality guard', async () => {
+    mockRpc.mockResolvedValue({
+      data: {
+        state: 'applied',
+        persisted: true,
+        final: true,
+        generation: 5,
+      },
+      error: null,
+    });
+
+    await expect(completePlanStepAfterGateAtomically({
+      planId: 'plan-1',
+      stepId: 'step-1',
+      expectedGeneration: 4,
+      finalGateApproved: true,
+    })).resolves.toMatchObject({ persisted: true, final: true });
+    expect(mockRpc).toHaveBeenCalledWith(
+      'complete_instance_plan_step_after_gate',
+      {
+        p_plan_id: 'plan-1',
+        p_step_id: 'step-1',
+        p_expected_generation: 4,
+        p_final_gate_approved: true,
+      },
+    );
   });
 
   it('records a failure with its unique event and expected generation', async () => {
@@ -170,6 +199,9 @@ describe('instance plan infrastructure state RPC wrappers', () => {
       requirementId: 'req-1',
       siteId: 'site-1',
       instanceId: 'instance-1',
+      planId: 'plan-1',
+      stepId: 'step-1',
+      expectedStepGeneration: 6,
       cycleId: 'cycle-5',
       minimumFailures: 3,
       message: 'No product progress',
@@ -180,6 +212,9 @@ describe('instance plan infrastructure state RPC wrappers', () => {
       expect.objectContaining({
         p_cycle_id: 'cycle-5',
         p_expected_execution_generation: 9,
+        p_plan_id: 'plan-1',
+        p_step_id: 'step-1',
+        p_expected_step_generation: 6,
       }),
     );
   });
