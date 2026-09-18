@@ -49,6 +49,10 @@
     {
       "path": "/api/cron/pending-work",
       "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/record-embeddings",
+      "schedule": "*/5 * * * *"
     }
   ]
 }

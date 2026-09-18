@@ -53,6 +53,7 @@ Before you begin, ensure you have the following installed:
    - `NEXT_PUBLIC_SUPABASE_URL` - Your Supabase project URL
    - `SUPABASE_SERVICE_ROLE_KEY` - Your Supabase service role key
    - `SERVICE_API_KEY` - Internal API key for service-to-service communication
+   - `CRON_SECRET` - Bearer secret used by Vercel Cron
    - `ENCRYPTION_KEY` - 32-byte encryption key for API keys
    - AI Provider keys (at least one): `PORTKEY_API_KEY`, `ANTHROPIC_API_KEY`, `AZURE_OPENAI_API_KEY`, or `GEMINI_API_KEY`
 
@@ -142,6 +143,7 @@ Key environment variables (see `src/config/env.example` for complete list):
 - `NEXT_PUBLIC_SUPABASE_URL` - Supabase project URL
 - `SUPABASE_SERVICE_ROLE_KEY` - Supabase service role key
 - `SERVICE_API_KEY` - Internal service API key
+- `CRON_SECRET` - Vercel Cron authentication secret
 - `ENCRYPTION_KEY` - 32-byte encryption key
 
 ### AI Providers (at least one required)
