@@ -75,7 +75,14 @@ describe('requirements workflow ordering contracts', () => {
       'return runGateOnlyNoProgressAdjudication({',
     );
     expect(branchSource).not.toContain('executeAssistantStep(');
-    expect(noProgressGateSource).toContain('return runSingleTurnGate({');
+    const gateCall = noProgressGateSource.indexOf(
+      'const result = await runSingleTurnGate({',
+    );
+    const consumeCall = noProgressGateSource.indexOf(
+      'markNoProgressAdjudicationConsumed({',
+    );
+    expect(gateCall).toBeGreaterThan(-1);
+    expect(consumeCall).toBeGreaterThan(gateCall);
     expect(noProgressGateSource).not.toContain('executeAssistantStep(');
   });
 

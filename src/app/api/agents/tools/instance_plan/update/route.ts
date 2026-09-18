@@ -291,6 +291,7 @@ export async function updateInstancePlanCore(
       );
       if (!incomingStep) return currentStep;
       const safe = safeMergeStatus(currentStep, incomingStep);
+      const definitionChanged = changesStepDefinition(incomingStep);
       const mergedStep = {
         ...currentStep,
         ...incomingStep,
@@ -299,9 +300,15 @@ export async function updateInstancePlanCore(
         actual_output: safe.actual_output,
         id: currentStep.id,
         metadata: mergeMetadata(currentStep, incomingStep),
+        ...(definitionChanged
+          ? {
+              infrastructure_generation:
+                Number(currentStep.infrastructure_generation || 0) + 1,
+            }
+          : {}),
         updated_at: new Date().toISOString(),
       };
-      return changesStepDefinition(incomingStep)
+      return definitionChanged
         ? normalizeAndValidateStep(mergedStep, incomingStep)
         : mergedStep;
     });
