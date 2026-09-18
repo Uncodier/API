@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { start } from 'workflow/api';
 import { runGearAgentWorkflow, runUnregisteredGearAgentWorkflow } from '../workflow';
 import { resetRequirementOnUserAction } from '@/lib/services/requirement-cron-reset';
+import { insertUserActionLog } from '@/app/api/robots/instance/assistant/user-message-log';
 
 import { normalizePhoneForSearch, normalizePhoneForStorage } from '@/lib/utils/phone-normalizer';
 import { handleTwilioMediaAndCreateTask, TwilioMediaDownload } from '@/lib/services/twilio/TwilioMediaTaskService';
@@ -14,18 +15,14 @@ function extractPhoneNumber(twilioPhoneFormat: string): string {
   return twilioPhoneFormat.replace('whatsapp:', '');
 }
 
-// ------------------------------------------------------------------------------------
 // GET /api/agents/gear/whatsapp/webhook
-// ------------------------------------------------------------------------------------
 export async function GET() {
   // Twilio no requiere un challenge riguroso como Meta, pero responde con 200
   return new NextResponse('Gear Agent Twilio Webhook is running', { status: 200 });
 }
 
-// ------------------------------------------------------------------------------------
 // POST /api/agents/gear/whatsapp/webhook
 // Handle incoming Twilio messages
-// ------------------------------------------------------------------------------------
 export async function POST(request: NextRequest) {
   try {
     console.log('📩 Webhook de Twilio WhatsApp (Gear) recibido');
@@ -451,22 +448,24 @@ export async function POST(request: NextRequest) {
     
     // 4.5. INSERTAR MENSAJE DEL USUARIO EN instance_logs ANTES DE INICIAR EL WORKFLOW
     // Esto es crucial para que el workflow.ts encuentre el historial y el contexto de qué responder.
-    await supabaseAdmin.from('instance_logs').insert({
-      log_type: 'user_action',
-      level: 'info',
+    const userAction = await insertUserActionLog({
+      instanceId,
+      siteId,
+      userId,
       message: messageContent,
+      skipDuplicateCheck: true,
       details: {
         prompt_source: 'whatsapp_webhook',
-        message_sid: messageSid
+        message_sid: messageSid,
       },
-      instance_id: instanceId,
-      site_id: siteId,
-      user_id: userId,
     });
     console.log(`📝 Log de mensaje de usuario insertado en instance_logs para instancia ${instanceId}`);
     
     // Async unblock the requirement
-    resetRequirementOnUserAction(instanceId).catch(console.error);
+    resetRequirementOnUserAction(
+      instanceId,
+      userAction.id,
+    ).catch(console.error);
     
     // Trigger Workflow normal
     console.log(`🚀 Iniciando workflow GearAgent normal para ${phoneNumber}...`);

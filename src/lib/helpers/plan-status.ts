@@ -58,7 +58,9 @@ export function isStrictFinalPlanStep(
     return false;
   }
   return steps.every(
-    (step) => step.id === currentStepId || step.status === 'completed',
+    (step) =>
+      step.id === currentStepId ||
+      ['completed', 'cancelled', 'skipped'].includes(step.status || ''),
   );
 }
 

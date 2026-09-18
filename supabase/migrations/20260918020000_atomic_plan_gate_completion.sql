@@ -2,6 +2,8 @@
 -- DROP FUNCTION IF EXISTS public.complete_instance_plan_step_after_gate(uuid, text, integer, boolean);
 -- DROP FUNCTION IF EXISTS public.reconcile_instance_plan_status_atomic(uuid);
 -- DROP FUNCTION IF EXISTS public.block_requirement_for_product_no_progress(uuid, uuid, uuid, text, integer, text, integer, uuid, text, integer);
+-- The seven-argument block_requirement_for_product_no_progress overload is
+-- intentionally retained for rolling-deployment compatibility.
 
 CREATE OR REPLACE FUNCTION public.complete_instance_plan_step_after_gate(
   p_plan_id uuid,
@@ -35,6 +37,14 @@ BEGIN
       'state', 'missing', 'persisted', false, 'final', false
     );
   END IF;
+  IF v_plan_status IN ('paused', 'cancelled', 'failed') THEN
+    RETURN jsonb_build_object(
+      'state',
+      CASE WHEN v_plan_status = 'paused' THEN 'guarded' ELSE 'terminal' END,
+      'persisted', false,
+      'final', false
+    );
+  END IF;
 
   SELECT entry.value, (entry.ordinality - 1)::integer
   INTO v_step, v_step_index
@@ -63,13 +73,21 @@ BEGIN
         p_expected_generation::bigint + 1
     )
   THEN
-    SELECT bool_and(entry.value->>'status' = 'completed')
+    SELECT bool_and(
+      entry.value->>'status' IN ('completed', 'cancelled', 'skipped')
+    )
     INTO v_final
     FROM jsonb_array_elements(v_steps) AS entry(value);
     RETURN jsonb_build_object(
       'state', 'duplicate',
       'persisted', true,
       'final', COALESCE(v_final, false),
+      'generation', v_generation
+    );
+  END IF;
+  IF v_plan_status = 'completed' THEN
+    RETURN jsonb_build_object(
+      'state', 'terminal', 'persisted', false, 'final', true,
       'generation', v_generation
     );
   END IF;
@@ -96,7 +114,9 @@ BEGIN
     v_steps, ARRAY[v_step_index::text], v_step, false
   );
   SELECT
-    bool_and(entry.value->>'status' = 'completed'),
+    bool_and(
+      entry.value->>'status' IN ('completed', 'cancelled', 'skipped')
+    ),
     count(*) FILTER (WHERE entry.value->>'status' = 'completed')
   INTO v_final, v_completed_count
   FROM jsonb_array_elements(v_steps) AS entry(value);
@@ -115,12 +135,13 @@ BEGIN
     steps = v_steps,
     status = CASE
       WHEN COALESCE(v_final, false) THEN 'completed'
-      WHEN v_plan_status IN ('pending', 'cancelled') THEN 'in_progress'
+      WHEN v_plan_status = 'pending' THEN 'in_progress'
       ELSE v_plan_status
     END,
     steps_completed = v_completed_count,
     progress_percentage = CASE
       WHEN jsonb_array_length(v_steps) = 0 THEN 0
+      WHEN COALESCE(v_final, false) THEN 100
       ELSE round(
         (v_completed_count::numeric / jsonb_array_length(v_steps)) * 100
       )::integer
@@ -169,7 +190,7 @@ BEGIN
   IF NOT FOUND THEN
     RETURN jsonb_build_object('state', 'missing', 'status', 'unknown');
   END IF;
-  IF v_status = 'paused' THEN
+  IF v_status IN ('paused', 'cancelled', 'completed', 'failed') THEN
     RETURN jsonb_build_object('state', 'guarded', 'status', v_status);
   END IF;
 
@@ -226,9 +247,6 @@ BEGIN
 END;
 $$;
 
-DROP FUNCTION IF EXISTS public.block_requirement_for_product_no_progress(
-  uuid, uuid, uuid, text, integer, text, integer
-);
 CREATE OR REPLACE FUNCTION public.block_requirement_for_product_no_progress(
   p_requirement_id uuid,
   p_site_id uuid,
@@ -318,6 +336,11 @@ BEGIN
       v_step->'metadata'->'no_progress_adjudication'->>'state',
       ''
     ) <> 'consumed'
+    OR COALESCE(
+      v_step->'metadata'->'no_progress_adjudication'
+        ->>'execution_generation',
+      ''
+    ) <> p_expected_execution_generation::text
   THEN
     RETURN jsonb_build_object('state', 'stale', 'blocked', false);
   END IF;
@@ -384,9 +407,73 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION public.block_requirement_for_product_no_progress(
+  p_requirement_id uuid,
+  p_site_id uuid,
+  p_instance_id uuid,
+  p_cycle_id text,
+  p_minimum_failures integer,
+  p_message text,
+  p_expected_execution_generation integer
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+  v_plan_id uuid;
+  v_step_id text;
+  v_step_generation integer;
+BEGIN
+  SELECT
+    plan.id,
+    entry.value->>'id',
+    CASE
+      WHEN COALESCE(
+        entry.value->>'infrastructure_generation',
+        ''
+      ) ~ '^[0-9]{1,9}$'
+        THEN (entry.value->>'infrastructure_generation')::integer
+      ELSE 0
+    END
+  INTO v_plan_id, v_step_id, v_step_generation
+  FROM public.instance_plans AS plan
+  CROSS JOIN LATERAL jsonb_array_elements(
+    CASE WHEN jsonb_typeof(plan.steps) = 'array'
+      THEN plan.steps ELSE '[]'::jsonb END
+  ) WITH ORDINALITY AS entry(value, ordinality)
+  WHERE plan.instance_id = p_instance_id
+    AND plan.metadata->>'requirement_id' = p_requirement_id::text
+    AND plan.status IN ('pending', 'in_progress', 'active')
+    AND entry.value->>'status' IN ('pending', 'in_progress', 'failed')
+  ORDER BY plan.updated_at DESC, plan.id, entry.ordinality
+  LIMIT 1;
+
+  IF v_plan_id IS NULL OR v_step_id IS NULL THEN
+    RETURN jsonb_build_object('state', 'stale', 'blocked', false);
+  END IF;
+
+  RETURN public.block_requirement_for_product_no_progress(
+    p_requirement_id,
+    p_site_id,
+    p_instance_id,
+    p_cycle_id,
+    p_minimum_failures,
+    p_message,
+    p_expected_execution_generation,
+    v_plan_id,
+    v_step_id,
+    v_step_generation
+  );
+END;
+$$;
+
 REVOKE ALL ON FUNCTION public.complete_instance_plan_step_after_gate(uuid, text, integer, boolean) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.reconcile_instance_plan_status_atomic(uuid) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.block_requirement_for_product_no_progress(uuid, uuid, uuid, text, integer, text, integer) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.block_requirement_for_product_no_progress(uuid, uuid, uuid, text, integer, text, integer, uuid, text, integer) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.complete_instance_plan_step_after_gate(uuid, text, integer, boolean) TO service_role;
 GRANT EXECUTE ON FUNCTION public.reconcile_instance_plan_status_atomic(uuid) TO service_role;
+GRANT EXECUTE ON FUNCTION public.block_requirement_for_product_no_progress(uuid, uuid, uuid, text, integer, text, integer) TO service_role;
 GRANT EXECUTE ON FUNCTION public.block_requirement_for_product_no_progress(uuid, uuid, uuid, text, integer, text, integer, uuid, text, integer) TO service_role;

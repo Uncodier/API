@@ -109,6 +109,21 @@ describe('createInstancePlanCore requirement lock', () => {
     );
   });
 
+  it('rejects pre-completed steps at creation time', async () => {
+    await expect(createInstancePlanCore({
+      instance_id: INSTANCE_ID,
+      site_id: SITE_ID,
+      user_id: USER_ID,
+      title: 'Invalid completed plan',
+      steps: [{
+        title: 'Already complete',
+        status: 'completed',
+      }],
+    })).rejects.toThrow();
+
+    expect(builder.insert).not.toHaveBeenCalled();
+  });
+
   it('preserves generic plan supersession outside requirement context', async () => {
     mockSuccessfulInsert();
 

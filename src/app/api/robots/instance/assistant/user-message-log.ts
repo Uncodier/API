@@ -9,6 +9,8 @@ export async function insertUserActionLog(params: {
   message: string;
   details?: Record<string, unknown>;
   skipDuplicateCheck?: boolean;
+  agentId?: string | null;
+  commandId?: string | null;
 }): Promise<{ id: string }> {
   if (!params.skipDuplicateCheck) {
     const since = new Date(Date.now() - DUPLICATE_WINDOW_MS).toISOString();
@@ -43,6 +45,8 @@ export async function insertUserActionLog(params: {
       instance_id: params.instanceId,
       site_id: params.siteId,
       user_id: params.userId || null,
+      ...(params.agentId ? { agent_id: params.agentId } : {}),
+      ...(params.commandId ? { command_id: params.commandId } : {}),
     })
     .select('id')
     .single();

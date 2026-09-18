@@ -2,6 +2,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { start } from 'workflow/api';
 import { runGearEmailWorkflow, runUnregisteredGearEmailWorkflow } from './workflow';
 import { resetRequirementOnUserAction } from '@/lib/services/requirement-cron-reset';
+import { insertUserActionLog } from '@/app/api/robots/instance/assistant/user-message-log';
 
 export async function handleGearEmailWebhook(message: any, userEmail: string, profileName?: string) {
   console.log(`📩 Webhook de Email (Gear) recibido para ${userEmail}`);
@@ -254,22 +255,24 @@ export async function handleGearEmailWebhook(message: any, userEmail: string, pr
   }
 
   // 4.5. INSERTAR MENSAJE DEL USUARIO EN instance_logs
-  await supabaseAdmin.from('instance_logs').insert({
-    log_type: 'user_action',
-    level: 'info',
+  const userAction = await insertUserActionLog({
+    instanceId,
+    siteId,
+    userId,
     message: messageContent,
+    skipDuplicateCheck: true,
     details: {
       prompt_source: 'email_webhook',
-      message_id: messageId
+      message_id: messageId,
     },
-    instance_id: instanceId,
-    site_id: siteId,
-    user_id: userId,
   });
   console.log(`📝 Log de mensaje de usuario insertado en instance_logs para instancia ${instanceId}`);
   
   // Async unblock the requirement
-  resetRequirementOnUserAction(instanceId).catch(console.error);
+  resetRequirementOnUserAction(
+    instanceId,
+    userAction.id,
+  ).catch(console.error);
   
   // Trigger Workflow normal
   console.log(`🚀 Iniciando workflow GearAgent Email normal para ${userEmail}...`);

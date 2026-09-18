@@ -88,8 +88,14 @@ export function activeRequirementPlanError(
 export function assertRequirementPlanUpdateAllowed(input: {
   requirementId?: string;
   status?: string;
-  /** Cancellation remains available for runner-owned plan adaptation. */
-  steps?: Array<{ status?: string }>;
+  /** Cancellation remains available only when executable replacement work remains. */
+  steps?: Array<{ id?: string; order?: number; status?: string }>;
+  existingSteps?: Array<{
+    id?: string;
+    order?: number;
+    status?: string;
+    retry_count?: number;
+  }>;
 }): void {
   if (!input.requirementId) return;
 
@@ -99,7 +105,46 @@ export function assertRequirementPlanUpdateAllowed(input: {
   const changesStepExecutionResult = (input.steps || []).some(
     (step) => step.status === 'completed' || step.status === 'failed',
   );
-  if (!changesPlanTerminalState && !changesStepExecutionResult) return;
+  const changesStepCancellation = (input.steps || []).some(
+    (step) => step.status === 'cancelled',
+  );
+  if (changesStepCancellation) {
+    const matches = (
+      current: { id?: string; order?: number },
+      incoming: { id?: string; order?: number },
+    ) =>
+      Boolean(
+        (incoming.id && incoming.id === current.id) ||
+        (
+          incoming.order !== undefined &&
+          incoming.order === current.order
+        ),
+      );
+    const incomingSteps = input.steps || [];
+    const existingSteps = input.existingSteps || [];
+    const projectedSteps = existingSteps.map((current) => ({
+      ...current,
+      ...(incomingSteps.find((incoming) => matches(current, incoming)) || {}),
+    }));
+    for (const incoming of incomingSteps) {
+      if (!existingSteps.some((current) => matches(current, incoming))) {
+        projectedSteps.push({
+          ...incoming,
+          status: incoming.status || 'pending',
+        });
+      }
+    }
+    if (!hasRunnablePlanSteps(projectedSteps)) {
+      throw new Error(
+        `Requirement ${input.requirementId} plan adaptation cannot cancel ` +
+          'all executable steps. Add a pending replacement in the same update.',
+      );
+    }
+  }
+  if (
+    !changesPlanTerminalState &&
+    !changesStepExecutionResult
+  ) return;
 
   throw new Error(
     `Requirement ${input.requirementId} plan and step execution results are ` +

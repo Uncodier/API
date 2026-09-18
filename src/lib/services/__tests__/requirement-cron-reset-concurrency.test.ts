@@ -111,7 +111,10 @@ describe('resetRequirementOnUserAction concurrency', () => {
       },
     );
 
-    await resetRequirementOnUserAction('instance-1');
+    await resetRequirementOnUserAction(
+      'instance-1',
+      'inserted-user-action',
+    );
 
     expect(mockMutateBacklogAtomically).toHaveBeenCalledWith(
       'requirement-1',
@@ -122,8 +125,9 @@ describe('resetRequirementOnUserAction concurrency', () => {
       'requirement-1',
       'instance-1',
       true,
-      'user-action-1',
+      'inserted-user-action',
     );
+    expect(mockUserActionLimit).not.toHaveBeenCalled();
     expect(mockUserActionUpdate).toHaveBeenCalledWith({
       details: {
         prompt_source: 'assistant_route',

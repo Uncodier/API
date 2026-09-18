@@ -325,7 +325,7 @@ export async function blockRequirementForProductNoProgress(params: {
   message: string;
   expectedExecutionGeneration: number;
 }): Promise<InfrastructureBlockMutation> {
-  const { data, error } = await supabaseAdmin.rpc(
+  let { data, error } = await supabaseAdmin.rpc(
     'block_requirement_for_product_no_progress',
     {
       p_requirement_id: params.requirementId,
@@ -340,6 +340,28 @@ export async function blockRequirementForProductNoProgress(params: {
       p_expected_step_generation: params.expectedStepGeneration,
     },
   );
+  if (
+    error &&
+    (
+      error.code === 'PGRST202' ||
+      error.code === '42883' ||
+      /function .*block_requirement_for_product_no_progress.*does not exist/i
+        .test(error.message || '')
+    )
+  ) {
+    ({ data, error } = await supabaseAdmin.rpc(
+      'block_requirement_for_product_no_progress',
+      {
+        p_requirement_id: params.requirementId,
+        p_site_id: params.siteId,
+        p_instance_id: params.instanceId,
+        p_cycle_id: params.cycleId,
+        p_minimum_failures: params.minimumFailures,
+        p_message: params.message,
+        p_expected_execution_generation: params.expectedExecutionGeneration,
+      },
+    ));
+  }
   if (error) {
     throw new InfrastructureStateDatabaseError(
       'Failed to persist product no-progress circuit',

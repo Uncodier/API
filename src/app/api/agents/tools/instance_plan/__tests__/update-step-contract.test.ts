@@ -178,6 +178,44 @@ describe('updateInstancePlanCore step contracts', () => {
     );
   });
 
+  it('keeps completed steps fully immutable when status is omitted', async () => {
+    const completedStep = {
+      id: 'step-1',
+      order: 1,
+      title: 'Completed implementation',
+      status: 'completed',
+      actual_output: 'Verified output',
+      completed_at: '2026-09-18T06:00:00.000Z',
+      metadata: { backlog_item_id: 'item-1' },
+    };
+    single
+      .mockResolvedValueOnce({
+        data: existingPlan([completedStep]),
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        data: { id: PLAN_ID },
+        error: null,
+      });
+
+    await updateInstancePlanCore({
+      plan_id: PLAN_ID,
+      instance_id: INSTANCE_ID,
+      site_id: SITE_ID,
+      steps: [{
+        id: 'step-1',
+        title: 'Mutated title',
+        actual_output: null,
+        completed_at: null,
+        backlog_item_id: 'foreign-item',
+      }],
+    });
+
+    expect(builder.update).toHaveBeenCalledWith(
+      expect.objectContaining({ steps: [completedStep] }),
+    );
+  });
+
   it('enforces requirement terminal protections for direct core calls', async () => {
     single.mockResolvedValueOnce({
       data: existingPlan([{ id: 'step-1', status: 'in_progress' }]),

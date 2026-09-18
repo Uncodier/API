@@ -238,6 +238,16 @@ describe('atomic cron SQL contracts', () => {
     expect(planGateSql).toMatch(
       /no_progress_adjudication'->>'state',[\s\S]*\) <> 'consumed'/,
     );
+    expect(planGateSql).toContain("'execution_generation'");
+    expect(planGateSql).toContain(
+      "v_plan_status IN ('paused', 'cancelled', 'failed')",
+    );
+    expect(planGateSql).toContain(
+      "v_status IN ('paused', 'cancelled', 'completed', 'failed')",
+    );
+    expect(planGateSql).toContain(
+      'block_requirement_for_product_no_progress(uuid, uuid, uuid, text, integer, text, integer)',
+    );
     expect(planGateSql.trimEnd().split(/\r?\n/).length)
       .toBeLessThanOrEqual(500);
   });
@@ -351,6 +361,10 @@ describe('atomic cron SQL contracts', () => {
     );
     expect(singleTurnSource).not.toContain('infra_retry_count: 0');
     expect(singleTurnSource).toContain('return await runSingleTurnGate({');
+    expect(singleTurnSource).toContain('step: persistedStep');
+    expect(singleTurnSource).toContain(
+      'active_step_id: persistedStep.id',
+    );
   });
 
   it('drops legacy unguarded RPC overloads', () => {

@@ -142,6 +142,9 @@ export async function updateInstancePlanCore(
       requirementId: effectiveRequirementId,
       status: updates.status,
       steps: updates.steps,
+      existingSteps: Array.isArray(existingPlan.steps)
+        ? existingPlan.steps
+        : [],
     });
   }
   if (
@@ -248,11 +251,20 @@ export async function updateInstancePlanCore(
         normalized.backlog_item_id ||
         normalized.metadata?.backlog_item_id ||
         fallbackBacklogItemId;
-      assertResearchStepAllowedForPhase(
-        normalized,
-        itemId ? backlogPhaseByItemId.get(itemId) : undefined,
-        contractSource,
-      );
+      if (effectiveRequirementId) {
+        if (itemId && !backlogPhaseByItemId.has(itemId)) {
+          throw new Error(
+            `Step "${normalized.title || 'Untitled step'}" references ` +
+              `unknown backlog_item_id "${itemId}" for requirement ` +
+              `${effectiveRequirementId}.`,
+          );
+        }
+        assertResearchStepAllowedForPhase(
+          normalized,
+          itemId ? backlogPhaseByItemId.get(itemId) : undefined,
+          contractSource,
+        );
+      }
       return normalized;
     };
     const safeMergeStatus = (currentStep: any, incomingStep: any): {
@@ -290,6 +302,13 @@ export async function updateInstancePlanCore(
         (s.order !== undefined && s.order === currentStep.order)
       );
       if (!incomingStep) return currentStep;
+      if (isTerminalSticky(currentStep.status)) {
+        console.warn(
+          `[UpdateInstancePlan] Ignored mutation of immutable terminal step ` +
+            `"${currentStep.title || currentStep.id}" (${currentStep.status}).`,
+        );
+        return currentStep;
+      }
       const safe = safeMergeStatus(currentStep, incomingStep);
       const definitionChanged = changesStepDefinition(incomingStep);
       const mergedStep = {

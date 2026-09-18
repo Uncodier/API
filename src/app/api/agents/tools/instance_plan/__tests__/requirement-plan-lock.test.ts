@@ -151,10 +151,20 @@ describe('requirement plan creation lock', () => {
     })).toThrow('plan and step execution results are runner-owned');
   });
 
-  it('allows requirement step cancellation for plan adaptation', () => {
+  it('requires replacement work when cancelling the last runnable step', () => {
     expect(() => assertRequirementPlanUpdateAllowed({
       requirementId: 'req-1',
-      steps: [{ status: 'cancelled' }],
+      existingSteps: [{ id: 'step-1', status: 'in_progress' }],
+      steps: [{ id: 'step-1', status: 'cancelled' }],
+    })).toThrow('cannot cancel all executable steps');
+
+    expect(() => assertRequirementPlanUpdateAllowed({
+      requirementId: 'req-1',
+      existingSteps: [{ id: 'step-1', status: 'in_progress' }],
+      steps: [
+        { id: 'step-1', status: 'cancelled' },
+        { id: 'step-2' },
+      ],
     })).not.toThrow();
   });
 

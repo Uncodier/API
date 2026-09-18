@@ -256,6 +256,7 @@ export async function requestNoProgressStepAdjudicationStep(params: {
   planId: string;
   stepId: string;
   expectedGeneration: number;
+  expectedExecutionGeneration: number;
   cycleId: string;
   persistedMetadata?: Record<string, unknown>;
 }): Promise<{ persisted: boolean; state: string; generation?: number }> {
@@ -271,6 +272,7 @@ export async function requestNoProgressStepAdjudicationStep(params: {
         no_progress_adjudication: {
           state: 'requested',
           cycle_id: params.cycleId,
+          execution_generation: params.expectedExecutionGeneration,
           requested_at: new Date().toISOString(),
         },
       },

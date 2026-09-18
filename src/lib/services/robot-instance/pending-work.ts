@@ -143,7 +143,7 @@ export async function startPendingAssistant(row: PendingWorkRow): Promise<void> 
   const activity = row.activity || 'ask';
   const contextString = stringifyPendingContext(row.context);
 
-  await withRetries(() => insertUserActionLog({
+  const userAction = await withRetries(() => insertUserActionLog({
     instanceId: row.instance_id,
     siteId,
     userId,
@@ -158,7 +158,10 @@ export async function startPendingAssistant(row: PendingWorkRow): Promise<void> 
     },
   }));
 
-  resetRequirementOnUserAction(row.instance_id).catch(console.error);
+  resetRequirementOnUserAction(
+    row.instance_id,
+    userAction.id,
+  ).catch(console.error);
 
   await start(runAssistantWorkflow, [
     row.instance_id,

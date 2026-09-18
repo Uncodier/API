@@ -8,6 +8,7 @@ import {
 
 jest.mock('@/lib/database/supabase-client', () => ({
   supabaseAdmin: {
+    from: jest.fn(),
     rpc: jest.fn()
   }
 }));
@@ -23,6 +24,7 @@ jest.mock('@/lib/services/visitor-identity/email-service', () => ({
 }));
 
 describe('VisitorIdentityService challenge issuance', () => {
+  const from = supabaseAdmin.from as jest.Mock;
   const rpc = supabaseAdmin.rpc as jest.Mock;
   const sendCode = visitorIdentityEmailService.sendCode as jest.Mock;
   const params = {
@@ -66,4 +68,36 @@ describe('VisitorIdentityService challenge issuance', () => {
     });
     expect(sendCode).not.toHaveBeenCalled();
   });
+
+  it('restores an active grant without issuing a challenge or email', async () => {
+    from
+      .mockReturnValueOnce(queryResult({
+        id: params.sessionId,
+        site_id: params.siteId,
+        visitor_id: params.visitorId,
+        lead_id: params.leadId,
+        is_active: true
+      }))
+      .mockReturnValueOnce(queryResult({
+        id: params.leadId,
+        email: params.email
+      }))
+      .mockReturnValueOnce(queryResult({ lead_id: params.leadId }));
+
+    await expect(new VisitorIdentityService().restore(params)).resolves.toEqual({
+      identity_status: 'verified',
+      lead_id: params.leadId
+    });
+    expect(rpc).not.toHaveBeenCalled();
+    expect(sendCode).not.toHaveBeenCalled();
+  });
 });
+
+function queryResult(data: unknown) {
+  const builder: Record<string, jest.Mock> = {};
+  for (const method of ['select', 'eq', 'ilike', 'order', 'limit', 'is', 'or']) {
+    builder[method] = jest.fn(() => builder);
+  }
+  builder.maybeSingle = jest.fn().mockResolvedValue({ data, error: null });
+  return builder;
+}

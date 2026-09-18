@@ -55,18 +55,22 @@ describe('summarizePlanSteps', () => {
 });
 
 describe('isStrictFinalPlanStep', () => {
-  it('requires every sibling step to be completed', () => {
+  it('requires every sibling step to be resolved', () => {
     expect(isStrictFinalPlanStep([
       { id: 'step-1', status: 'completed' },
       { id: 'step-2', status: 'in_progress' },
     ], 'step-2')).toBe(true);
 
-    for (const status of ['pending', 'in_progress', 'failed', 'cancelled']) {
+    for (const status of ['pending', 'in_progress', 'failed']) {
       expect(isStrictFinalPlanStep([
         { id: 'step-1', status },
         { id: 'step-2', status: 'in_progress' },
       ], 'step-2')).toBe(false);
     }
+    expect(isStrictFinalPlanStep([
+      { id: 'step-1', status: 'cancelled' },
+      { id: 'step-2', status: 'in_progress' },
+    ], 'step-2')).toBe(true);
   });
 
   it('rejects missing or duplicate current step ids', () => {

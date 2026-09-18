@@ -3,7 +3,6 @@ import { buildUserHistoryPrompt, loadUserActionHistory } from '../instance-user-
 const mockRange = jest.fn();
 const mockMaybeSingle = jest.fn();
 const mockLimit = jest.fn();
-const mockFilter = jest.fn();
 
 jest.mock('@/lib/database/supabase-client', () => ({
   supabaseAdmin: {
@@ -30,10 +29,6 @@ jest.mock('@/lib/database/supabase-client', () => ({
         in: jest.fn().mockReturnThis(),
         order: jest.fn().mockReturnThis(),
         range: (...args: unknown[]) => mockRange(...args),
-        filter: (...args: unknown[]) => {
-          mockFilter(...args);
-          return query;
-        },
       };
       return query;
     }),
@@ -148,7 +143,7 @@ describe('loadUserActionHistory', () => {
     expect(result.mode).toBe('full');
   });
 
-  it('resolves related instances when requirementId is provided', async () => {
+  it('includes matching and untagged legacy logs but excludes foreign tags', async () => {
     mockLimit.mockResolvedValueOnce({
       data: [{ instance_id: 'chat-inst' }],
       error: null,
@@ -164,6 +159,21 @@ describe('loadUserActionHistory', () => {
           created_at: new Date().toISOString(),
           message: 'Necesito una cotización',
           instance_id: 'chat-inst',
+          details: { requirement_id: 'req-123' },
+        },
+        {
+          id: 'ua-legacy',
+          created_at: new Date().toISOString(),
+          message: 'Legacy context',
+          instance_id: 'chat-inst',
+          details: { prompt_source: 'legacy' },
+        },
+        {
+          id: 'ua-foreign',
+          created_at: new Date().toISOString(),
+          message: 'Foreign context',
+          instance_id: 'chat-inst',
+          details: { requirement_id: 'req-999' },
         },
       ],
       error: null,
@@ -173,13 +183,10 @@ describe('loadUserActionHistory', () => {
       requirementId: 'req-123',
     });
 
-    expect(result.totalCount).toBe(1);
+    expect(result.totalCount).toBe(2);
     expect(result.promptText).toContain('cotización');
-    expect(mockFilter).toHaveBeenCalledWith(
-      'details->>requirement_id',
-      'eq',
-      'req-123',
-    );
+    expect(result.promptText).toContain('Legacy context');
+    expect(result.promptText).not.toContain('Foreign context');
   });
 
   it('respects hardCap', async () => {

@@ -141,7 +141,10 @@ export async function checkAndResetCronAttempts(requirementId: string, metadata:
  * Resets the cron_attempts to 0 and sets status to in-progress for the requirement associated 
  * with the given instance_id. To be called immediately when a user sends a message.
  */
-export async function resetRequirementOnUserAction(instanceId: string): Promise<void> {
+export async function resetRequirementOnUserAction(
+  instanceId: string,
+  insertedActionId?: string,
+): Promise<void> {
   try {
     // Find requirement ID by checking requirement_status
     let requirementId: string | undefined;
@@ -171,7 +174,8 @@ export async function resetRequirementOnUserAction(instanceId: string): Promise<
     }
     
     if (requirementId) {
-      const actionId = await findLatestUserActionId(instanceId);
+      const actionId =
+        insertedActionId || await findLatestUserActionId(instanceId);
       if (!actionId) {
         console.warn(
           `[CronReset] No user-action identity found for instance ${instanceId}; recovery was not applied.`,

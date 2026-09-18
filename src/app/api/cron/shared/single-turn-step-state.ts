@@ -114,6 +114,13 @@ export async function markNoProgressAdjudicationConsumed(params: {
       metadata: {
         ...(params.persistedMetadata || {}),
         [NO_PROGRESS_ADJUDICATION_METADATA_KEY]: {
+          ...(
+            (
+              params.persistedMetadata?.[
+                NO_PROGRESS_ADJUDICATION_METADATA_KEY
+              ]
+            ) as Record<string, unknown> | undefined
+          ),
           state: 'consumed',
           consumed_at: new Date().toISOString(),
         },

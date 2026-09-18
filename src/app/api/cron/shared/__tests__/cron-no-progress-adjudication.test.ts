@@ -37,6 +37,7 @@ describe('requestNoProgressStepAdjudicationStep', () => {
       planId: 'plan-1',
       stepId: 'step-1',
       expectedGeneration: 11,
+      expectedExecutionGeneration: 7,
       cycleId: 'cycle-2',
       persistedMetadata: { backlog_item_id: 'item-1' },
     })).resolves.toEqual({
@@ -56,6 +57,7 @@ describe('requestNoProgressStepAdjudicationStep', () => {
           no_progress_adjudication: expect.objectContaining({
             state: 'requested',
             cycle_id: 'cycle-2',
+            execution_generation: 7,
           }),
         }),
       },

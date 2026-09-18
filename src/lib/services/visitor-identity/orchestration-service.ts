@@ -5,6 +5,7 @@ import {
   type IdentifyResult,
   type IdentityChallengeResponse,
   type IdentityContext,
+  type RestoreIdentityResult,
   VisitorIdentityError,
   maskIdentityEmail,
   normalizeIdentityEmail
@@ -26,6 +27,14 @@ interface IdentifyInput {
   email: string;
   phone?: string;
   requestIp?: string;
+}
+
+interface RestoreIdentityInput {
+  siteId: string;
+  sessionId: string;
+  visitorId?: string;
+  leadId: string;
+  email: string;
 }
 
 type RpcResult = Record<string, unknown>;
@@ -154,6 +163,33 @@ export class VisitorIdentityService {
       throw error;
     }
     return challengeResponse(result);
+  }
+
+  async restore(input: RestoreIdentityInput): Promise<RestoreIdentityResult> {
+    const normalizedEmail = normalizeIdentityEmail(input.email);
+    const session = await this.loadSession(
+      input.siteId,
+      input.sessionId,
+      input.visitorId
+    );
+    if (session.lead_id !== input.leadId) {
+      return { identity_status: 'anonymous' };
+    }
+
+    const lead = await this.findLead(
+      input.siteId,
+      normalizedEmail,
+      input.leadId
+    );
+    const hasGrant = lead && await this.hasActiveGrant(
+      input.siteId,
+      input.sessionId,
+      session.visitor_id,
+      lead.id
+    );
+    return hasGrant
+      ? { identity_status: 'verified', lead_id: lead.id }
+      : { identity_status: 'anonymous' };
   }
 
   async identify(input: IdentifyInput): Promise<IdentifyResult> {

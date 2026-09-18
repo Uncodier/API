@@ -206,13 +206,6 @@ async function fetchUserActionsForInstances(
       .in('instance_id', instanceIds)
       .eq('log_type', 'user_action')
       .order('created_at', { ascending: false });
-    if (requirementId) {
-      query = query.filter(
-        'details->>requirement_id',
-        'eq',
-        requirementId,
-      );
-    }
     const { data, error } = await query.range(start, end);
 
     if (error) {
@@ -224,6 +217,19 @@ async function fetchUserActionsForInstances(
       hasMore = false;
     } else {
       for (const row of data) {
+        const taggedRequirementId =
+          row.details &&
+          typeof row.details === 'object' &&
+          typeof row.details.requirement_id === 'string'
+            ? row.details.requirement_id
+            : null;
+        if (
+          requirementId &&
+          taggedRequirementId &&
+          taggedRequirementId !== requirementId
+        ) {
+          continue;
+        }
         allMessages.push({
           id: String(row.id),
           created_at: String(row.created_at),

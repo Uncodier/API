@@ -7,15 +7,10 @@ import { findGrowthRobotAgent } from '@/lib/helpers/agent-finder';
 import { completeInProgressPlans } from '@/lib/helpers/plan-lifecycle';
 import { provisionScrapybaraInstance, needsProvisioning } from '@/lib/services/robot-instance/instance-provisioner';
 import { resetRequirementOnUserAction } from '@/lib/services/requirement-cron-reset';
+import { insertUserActionLog } from '@/app/api/robots/instance/assistant/user-message-log';
 
-// ------------------------------------------------------------------------------------
 // Instance Act Specific Context (builds on the shared planning core)
-// ------------------------------------------------------------------------------------
-
-// ------------------------------------------------------------------------------------
 // Helper function to save complete plan with proper structure
-// ------------------------------------------------------------------------------------
-
 async function saveCompletePlan(
   instanceId: string,
   planData: any,
@@ -238,28 +233,30 @@ export async function POST(request: NextRequest) {
     }
 
     // 5. Registrar la acción del usuario con información de decisión
-    await supabaseAdmin.from('instance_logs').insert({
-      log_type: 'user_action',
-      level: 'info',
-      message: message,
-      details: { 
+    const userAction = await insertUserActionLog({
+      instanceId: instance_id,
+      siteId: instance.site_id,
+      userId: instance.user_id,
+      message,
+      skipDuplicateCheck: true,
+      agentId: instance.agent_id,
+      commandId: instance.command_id,
+      details: {
         user_message: message,
         user_context: userContext,
-        step_status: step_status,
+        step_status,
         plan_id: activePlan?.id || completedPlan?.id || null,
         plan_status: activePlan?.status || completedPlan?.status || null,
         actually_completed_plan_id: actuallyCompletedPlan?.id || null,
-        plan_decision: planDecision
+        plan_decision: planDecision,
       },
-      instance_id: instance_id,
-      site_id: instance.site_id,
-      user_id: instance.user_id,
-      agent_id: instance.agent_id,
-      command_id: instance.command_id,
     });
     
     // Async unblock the requirement
-    resetRequirementOnUserAction(instance_id).catch(console.error);
+    resetRequirementOnUserAction(
+      instance_id,
+      userAction.id,
+    ).catch(console.error);
 
 
     let planResult = null;

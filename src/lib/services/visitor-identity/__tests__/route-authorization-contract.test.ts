@@ -56,6 +56,13 @@ describe('browser route authorization contract', () => {
     expect(identify).toContain("result.identity_status === 'verification_required'");
     expect(identify).toContain("result.identity_status === 'new_lead'");
 
+    const status = readFileSync(
+      resolve(process.cwd(), 'src/app/api/visitors/session/[session_id]/identify/status/route.ts'),
+      'utf8'
+    );
+    expect(status).toContain('visitorIdentityService.restore');
+    expect(status).not.toContain('visitorIdentityService.identify');
+
     for (const operation of ['challenge', 'logout']) {
       const source = readFileSync(
         resolve(process.cwd(), `src/app/api/visitors/session/[session_id]/identify/${operation}/route.ts`),

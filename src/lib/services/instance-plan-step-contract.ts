@@ -15,7 +15,7 @@ export type PlanStepContractInput = {
 
 const INVESTIGATION_SKILL = 'makinari-fase-investigacion';
 const RESEARCH_INTENT =
-  /\b(investigat|research|inspect|analy[sz]e|diagnos|audit|review current)\b/i;
+  /\b(?:investigat|research|inspect|analy[sz]|diagnos|audit)[a-z]*\b|\breview\s+current\b/i;
 
 export const PLAN_ROLE_TO_SKILL: Record<string, string> = {
   template_selection: 'makinari-obj-template-selection',
@@ -37,9 +37,9 @@ export function isResearchPlanStep(step: PlanStepContractInput): boolean {
   const role = String(step.role || '').toLowerCase();
   const skill = String(step.skill || '').toLowerCase();
   if (role === 'investigate' || skill === INVESTIGATION_SKILL) return true;
-  if (type) return false;
   return RESEARCH_INTENT.test(
-    `${step.title || ''} ${step.description || ''}`,
+    `${step.title || ''} ${step.description || ''} ` +
+      `${step.instructions || ''} ${step.expected_output || ''}`,
   );
 }
 
@@ -62,6 +62,12 @@ export function assertResearchStepAllowedForPhase(
   phaseId?: string | null,
   contractSource: PlanStepContractInput = step,
 ): void {
+  if (isResearchPlanStep(step) && !phaseId) {
+    throw new Error(
+      `Research step "${step.title || 'Untitled research'}" must reference ` +
+        'an existing backlog_item_id so its requirement phase can be verified.',
+    );
+  }
   if (
     phaseId === 'build' &&
     isResearchPlanStep(step) &&

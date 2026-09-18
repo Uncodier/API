@@ -11,7 +11,12 @@ import { type CronAuditContext } from '@/lib/services/cron-audit-log';
 import { isSandboxGoneError } from '@/lib/services/sandbox-gone-error';
 import { getSandboxTools } from '@/app/api/agents/tools/sandbox/assistantProtocol';
 import { sandboxIdentity } from '@/lib/services/sandbox-sdk';
-import { inferRoleFromStep, ROLE_TO_SKILL, buildSingleTurnSystemPrompt } from './single-turn-prompt';
+import {
+  buildSingleTurnSystemPrompt,
+  buildUntrustedHistoryMessage,
+  inferRoleFromStep,
+  ROLE_TO_SKILL,
+} from './single-turn-prompt';
 import { buildStepRetryFeedback } from './single-turn-visual-feedback';
 import { extractSingleTurnBackgroundState } from './single-turn-background-task';
 import type { SingleTurnResult } from './single-turn-types';
@@ -50,9 +55,10 @@ export async function executeSingleTurnStep(params: {
   validateDeployment?: boolean;
   provisionedEnvKeys?: string[];
   executionEventId: string;
+  executionGeneration: number;
 }): Promise<SingleTurnResult> {
   'use step';
-  const { sandboxId, plan, step, requirementId, instanceId, siteId, userId, title, gitRepoKind, requirementType, validateDeployment = true, provisionedEnvKeys, executionEventId } = params;
+  const { sandboxId, plan, step, requirementId, instanceId, siteId, userId, title, gitRepoKind, requirementType, validateDeployment = true, provisionedEnvKeys, executionEventId, executionGeneration } = params;
   const audit: CronAuditContext = {
     instanceId: instanceId,
     siteId: siteId,
@@ -190,11 +196,16 @@ export async function executeSingleTurnStep(params: {
       infrastructure_generation: infrastructureGeneration,
     };
     const noProgressAdjudication =
-      isNoProgressAdjudicationRequested(persistedStep);
+      isNoProgressAdjudicationRequested(
+        persistedStep,
+        executionGeneration,
+      );
 
     // 3. Build Prompt & Context
-    const effectiveRole = step.role || inferRoleFromStep(step) || 'general';
-    const skillName = step.skill || (effectiveRole && ROLE_TO_SKILL[effectiveRole]);
+    const effectiveRole =
+      persistedStep.role || inferRoleFromStep(persistedStep) || 'general';
+    const skillName =
+      persistedStep.skill || (effectiveRole && ROLE_TO_SKILL[effectiveRole]);
     let skillContext = '';
     if (skillName) {
       const matched = SkillsService.getSkillBySlugOrName(skillName);
@@ -253,7 +264,7 @@ export async function executeSingleTurnStep(params: {
       siteId,
       requirementId,
       plan,
-      step,
+      step: persistedStep,
       effectiveRole,
       cycleBaselineAt,
       skillContext,
@@ -267,12 +278,24 @@ export async function executeSingleTurnStep(params: {
       noProgressAdjudication,
     });
 
-    const historyText = await fetchStepLogHistoryText(instanceId, plan.id, step.id);
-    const messages: any[] = [{
+    const historyText = await fetchStepLogHistoryText(
+      instanceId,
+      plan.id,
+      persistedStep.id,
+    );
+    const messages: any[] = [];
+    if (historyContext) {
+      messages.push({
+        role: 'user' as const,
+        content: buildUntrustedHistoryMessage(historyContext),
+      });
+    }
+    messages.push({
       role: 'user' as const,
-      content: `Execute step ${step.order}: ${step.title}. ${step.instructions}`,
-    }];
-
+      content:
+        `Execute step ${persistedStep.order}: ${persistedStep.title}. ` +
+        `${persistedStep.instructions}`,
+    });
     if (retryFeedback.imageMessage) messages.push(retryFeedback.imageMessage);
 
     if (historyText) {
@@ -291,7 +314,7 @@ export async function executeSingleTurnStep(params: {
       requirement_type: requirementType,
       validate_deployment: validateDeployment,
       plan_id: plan.id,
-      active_step_id: step.id,
+      active_step_id: persistedStep.id,
       cycle_baseline_at: cycleBaselineAt,
       activeSandboxRef,
     });
@@ -313,7 +336,7 @@ export async function executeSingleTurnStep(params: {
       return runGateOnlyNoProgressAdjudication({
         executionEventId,
         gateInput: {
-          sandbox, effectiveSandboxId, plan, step, persistedStep,
+          sandbox, effectiveSandboxId, plan, step: persistedStep, persistedStep,
           requirementId, instanceId, siteId, userId, requirementType,
           gitRepoKind, backlogItemId: effectiveBacklogItemId,
           interactionBaselineSha, systemPrompt, fullTools, audit,
@@ -328,7 +351,7 @@ export async function executeSingleTurnStep(params: {
       user_id: userId,
       requirement_id: requirementId,
       plan_id: plan.id,
-      step_id: step.id,
+      step_id: persistedStep.id,
       system_prompt: systemPrompt,
       custom_tools: fullTools,
       enforceSingleTurn: true // CRITICAL: enforce 1 tool call max per invocation
@@ -340,7 +363,7 @@ export async function executeSingleTurnStep(params: {
       instanceId,
       siteId,
       requirementId,
-      stepId: step.id,
+      stepId: persistedStep.id,
       persistedMetadata: persistedStep.metadata,
       interactionBaselineSha,
       backlogItemId: effectiveBacklogItemId,
@@ -393,13 +416,15 @@ export async function executeSingleTurnStep(params: {
     const { sleepRequested, backgroundTask } = extractSingleTurnBackgroundState(result);
     const terminalRequest = getStepTerminalRequest(result, {
       planId: plan.id,
-      stepId: step.id,
+      stepId: persistedStep.id,
     });
     if (terminalRequest?.status === 'failed') {
       return {
         ok: false,
         isDone: true,
-        error: terminalRequest.output || `Executor reported failure for step ${step.order}`,
+        error:
+          terminalRequest.output ||
+          `Executor reported failure for step ${persistedStep.order}`,
         effectiveSandboxId,
         sleepRequested,
         backgroundTask,
@@ -411,7 +436,7 @@ export async function executeSingleTurnStep(params: {
 
     if (completionRequested && !result.isDone) {
       console.log(
-        `[SingleTurn] Step ${step.order} requested completion through instance_plan; handing control to the gate.`,
+        `[SingleTurn] Step ${persistedStep.order} requested completion through instance_plan; handing control to the gate.`,
       );
     }
 
@@ -420,7 +445,7 @@ export async function executeSingleTurnStep(params: {
         sandbox,
         effectiveSandboxId,
         plan,
-        step,
+        step: persistedStep,
         persistedStep,
         requirementId,
         instanceId,

@@ -198,16 +198,20 @@ export async function POST(request: NextRequest) {
     const site_id = providedSiteId || instance.site_id;
     const user_id = providedUserId || instance.user_id;
 
-    await withRetries(() => insertUserActionLog({
+    const userAction = await withRetries(() => insertUserActionLog({
       instanceId: providedInstanceId,
       siteId: site_id,
       userId: user_id,
       message,
+      skipDuplicateCheck: true,
       details: { instance_status: instance.status || 'running' },
     }));
     
     // Async unblock the requirement (reset cron_attempts and set to in-progress)
-    resetRequirementOnUserAction(providedInstanceId).catch(console.error);
+    resetRequirementOnUserAction(
+      providedInstanceId,
+      userAction.id,
+    ).catch(console.error);
 
     // Start the workflow
   const workflowRun = await start(runAssistantWorkflow, [

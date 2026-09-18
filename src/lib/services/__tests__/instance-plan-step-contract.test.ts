@@ -49,6 +49,14 @@ describe('instance plan step contracts', () => {
     expect(step.skill).toBe('makinari-fase-investigacion');
   });
 
+  it('does not let an arbitrary type suppress textual research intent', () => {
+    expect(isResearchPlanStep({
+      title: 'Investigate the current API failure',
+      type: 'task',
+      role: 'backend',
+    })).toBe(true);
+  });
+
   it('derives a verifiable contract for implementation steps', () => {
     const step = normalizePlanStepContract({
       title: 'Implement upload endpoint',
@@ -117,5 +125,12 @@ describe('instance plan step contracts', () => {
       'build',
       source,
     )).toThrow('Standalone research step');
+  });
+
+  it('rejects research when the backlog phase cannot be verified', () => {
+    expect(() => assertResearchStepAllowedForPhase(
+      { title: 'Investigate current behavior', type: 'research' },
+      undefined,
+    )).toThrow('must reference an existing backlog_item_id');
   });
 });

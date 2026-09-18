@@ -595,6 +595,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
                provisionedEnvKeys,
                executionEventId:
                  `${cronLockRunId}:${workingStep.id}:turn:${turnCount}`,
+               executionGeneration,
             });
             
             if (turnRes.effectiveSandboxId) sandboxId = turnRes.effectiveSandboxId;
@@ -1332,6 +1333,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
             expectedGeneration: Number(
               recoveryStep.infrastructure_generation || 0,
             ),
+            expectedExecutionGeneration: executionGeneration,
             cycleId: cronLockRunId,
             persistedMetadata: recoveryStep.metadata,
           });
@@ -1374,8 +1376,12 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
           )[0]
         : undefined;
       if (stillActivePlan && stillActiveStep) {
+        const adjudication =
+          stillActiveStep?.metadata?.no_progress_adjudication;
         const adjudicationState =
-          stillActiveStep?.metadata?.no_progress_adjudication?.state;
+          adjudication?.execution_generation === executionGeneration
+            ? adjudication.state
+            : undefined;
         let blockerDeferred = false;
         if (
           stillActiveStep &&
@@ -1389,6 +1395,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
               expectedGeneration: Number(
                 stillActiveStep.infrastructure_generation || 0,
               ),
+              expectedExecutionGeneration: executionGeneration,
               cycleId: cronLockRunId,
               persistedMetadata: stillActiveStep.metadata,
             });

@@ -16,6 +16,14 @@ export interface VerifiedIdentityResponse {
 
 export type IdentifyResult = IdentityChallengeResponse | VerifiedIdentityResponse;
 
+export interface AnonymousIdentityResponse {
+  identity_status: 'anonymous';
+}
+
+export type RestoreIdentityResult =
+  | AnonymousIdentityResponse
+  | VerifiedIdentityResponse;
+
 export interface IdentityContext {
   challengeId: string;
   siteId: string;

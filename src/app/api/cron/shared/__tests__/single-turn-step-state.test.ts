@@ -119,7 +119,11 @@ describe('single-turn step state', () => {
       eventId: 'cycle-3:no-progress-consumed',
       persistedMetadata: {
         backlog_item_id: 'backlog-1',
-        no_progress_adjudication: { state: 'requested' },
+        no_progress_adjudication: {
+          state: 'requested',
+          cycle_id: 'cycle-2',
+          execution_generation: 5,
+        },
       },
     });
 
@@ -131,6 +135,8 @@ describe('single-turn step state', () => {
             backlog_item_id: 'backlog-1',
             no_progress_adjudication: expect.objectContaining({
               state: 'consumed',
+              cycle_id: 'cycle-2',
+              execution_generation: 5,
             }),
           }),
         },
