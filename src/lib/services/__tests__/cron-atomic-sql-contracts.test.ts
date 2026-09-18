@@ -8,6 +8,9 @@ function workspaceFile(path: string): string {
 const cronCapacitySql = workspaceFile(
   'supabase/migrations/20260917204500_atomic_requirement_cron_capacity.sql',
 );
+const cronMonthlyScopeSql = workspaceFile(
+  'supabase/migrations/20260917204600_current_month_requirement_cron_scope.sql',
+);
 
 describe('atomic cron SQL contracts', () => {
   const cycleSql = workspaceFile(
@@ -59,6 +62,7 @@ describe('atomic cron SQL contracts', () => {
     cycleSql,
     infrastructureSql,
     cronCapacitySql,
+    cronMonthlyScopeSql,
     recoverySql,
     blockSql,
     accumulatedBlockSql,

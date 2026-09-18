@@ -9,6 +9,9 @@ describe('requirements workflow ordering contracts', () => {
   const cronCapacitySql = workspaceFile(
     'supabase/migrations/20260917204500_atomic_requirement_cron_capacity.sql',
   );
+  const cronMonthlyScopeSql = workspaceFile(
+    'supabase/migrations/20260917204600_current_month_requirement_cron_scope.sql',
+  );
   const workflowSource = workspaceFile(
     'src/app/api/cron/requirements-apps/workflow.ts',
   );
@@ -89,6 +92,15 @@ describe('requirements workflow ordering contracts', () => {
     expect(cronCapacitySql).not.toContain('DISABLE TRIGGER');
     expect(cronCapacitySql).toContain(
       "COALESCE(requirement.status, '') NOT IN ('backlog', 'in-progress')",
+    );
+    expect(cronMonthlyScopeSql).toContain(
+      "pg_catalog.date_trunc('month', v_now AT TIME ZONE 'UTC')",
+    );
+    expect(cronMonthlyScopeSql).toContain(
+      'requirement.created_at >= v_month_start',
+    );
+    expect(cronMonthlyScopeSql).toContain(
+      'requirement.updated_at >= v_month_start',
     );
     expect(routeStateSource).toContain(
       "'claim_requirement_cron_candidates'",
