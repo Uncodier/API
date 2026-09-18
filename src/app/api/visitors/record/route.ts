@@ -1,6 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { v4 as uuidv4 } from 'uuid';
+import { createHash } from 'node:crypto';
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function finiteTimestamp(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.trunc(value)
+    : fallback;
+}
+
+function isDuplicateStorageObject(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const value = error as {
+    statusCode?: string | number;
+    error?: string;
+    message?: string;
+  };
+  return String(value.statusCode) === '409'
+    || value.error === 'Duplicate'
+    || /already exists|duplicate/i.test(value.message || '');
+}
 
 /**
  * API DE GRABACIÓN DE SESIÓN (RRWEB)
@@ -24,15 +46,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, message: 'No events to save' });
     }
 
-    // Generar un ID único para este chunk
-    const chunkId = uuidv4();
-    const timestamp = Date.now();
-    
-    // Ruta en el storage: session_recordings/site_id/session_id/chunk_id.json
-    const storagePath = `${site_id}/${session_id}/${timestamp}_${chunkId}.json`;
+    // Reuse the client-generated identifiers so retries are idempotent.
+    const chunkId =
+      typeof body.chunk_id === 'string' && UUID_PATTERN.test(body.chunk_id)
+        ? body.chunk_id
+        : uuidv4();
+    const timestamp = finiteTimestamp(body.chunk_timestamp, Date.now());
     
     // Convertir eventos a string
     const eventsJson = JSON.stringify(events);
+    const contentHash = createHash('sha256').update(eventsJson).digest('hex');
+
+    // Content-addressed paths make accepted chunks immutable. Reusing a chunk
+    // ID with different events produces a conflict in the metadata RPC.
+    const storagePath =
+      `${site_id}/${session_id}/${timestamp}_${chunkId}_${contentHash}.json`;
     
     // 1. Guardar el payload pesado en Supabase Storage
     const { error: storageError } = await supabaseAdmin
@@ -43,95 +71,57 @@ export async function POST(request: NextRequest) {
         upsert: false
       });
 
-    if (storageError) {
-      // Si el bucket no existe o hay otro error, podríamos querer crearlo o manejarlo de otra forma.
+    if (storageError && !isDuplicateStorageObject(storageError)) {
       console.error('[Session Recording] Error guardando en Storage:', storageError);
-      
-      // Intentar crear el bucket si el error es "Bucket not found"
-      if (storageError.message.includes('Bucket not found') || storageError.name === 'BucketNotFound') {
-        await supabaseAdmin.storage.createBucket('session_recordings', { public: false });
-        
-        // Reintentar
-        const { error: retryError } = await supabaseAdmin.storage.from('session_recordings').upload(storagePath, eventsJson, {
-          contentType: 'application/json',
-          upsert: false
-        });
-        
-        if (retryError) throw retryError;
-      } else {
-        throw storageError;
-      }
+      throw storageError;
     }
 
-    // 2. Registrar/Actualizar Metadata en session_events (PostgreSQL)
-    // Extraer timestamps de los eventos para calcular duración
-    const startTimestamp = events[0]?.timestamp || timestamp;
-    const endTimestamp = events[events.length - 1]?.timestamp || timestamp;
-    
-    // Primero, buscar si ya existe un registro de grabación para esta sesión
-    const { data: existingRecord, error: searchError } = await supabaseAdmin
-      .from('session_events')
-      .select('id, properties')
-      .eq('session_id', session_id)
-      .eq('event_type', 'session_recording')
-      .single();
-      
-    if (searchError && searchError.code !== 'PGRST116') { // PGRST116 es "no rows returned"
-      console.error('[Session Recording] Error buscando evento previo:', searchError);
+    // Persist metadata atomically so concurrent chunks cannot overwrite each
+    // other or create additional recording rows for the same session.
+    const startTimestamp = finiteTimestamp(events[0]?.timestamp, timestamp);
+    const endTimestamp = finiteTimestamp(
+      events[events.length - 1]?.timestamp,
+      timestamp,
+    );
+    const { data: recording, error: recordingError } = await supabaseAdmin.rpc(
+      'append_session_recording_chunk',
+      {
+        p_event_id: uuidv4(),
+        p_site_id: site_id,
+        p_visitor_id:
+          typeof visitor_id === 'string' && UUID_PATTERN.test(visitor_id)
+            ? visitor_id
+            : null,
+        p_session_id: session_id,
+        p_url: typeof body.url === 'string' ? body.url : null,
+        p_timestamp: timestamp,
+        p_storage_path: storagePath,
+        p_chunk_id: chunkId,
+        p_content_hash: contentHash,
+        p_start_timestamp: startTimestamp,
+        p_end_timestamp: endTimestamp,
+        p_event_count: events.length,
+        p_metadata:
+          metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+            ? metadata
+            : {},
+      },
+    );
+
+    if (recordingError) {
+      console.error(
+        '[Session Recording] Error persisting chunk metadata:',
+        recordingError,
+      );
+      throw recordingError;
     }
 
-    if (existingRecord) {
-      // Actualizar registro existente
-      const prevProps = existingRecord.properties || {};
-      const chunks = prevProps.chunks || [];
-      chunks.push(storagePath);
-      
-      const newDuration = (prevProps.duration || 0) + (endTimestamp - startTimestamp);
-      const totalEvents = (prevProps.total_events || 0) + events.length;
-
-      await supabaseAdmin
-        .from('session_events')
-        .update({
-          timestamp: timestamp, // Última actualización
-          properties: {
-            ...prevProps,
-            chunks,
-            end_time: endTimestamp,
-            duration: newDuration,
-            total_events: totalEvents,
-            last_chunk_at: timestamp
-          }
-        })
-        .eq('id', existingRecord.id);
-        
-    } else {
-      // Crear nuevo registro de grabación
-      const eventId = uuidv4();
-      
-      const dbData = {
-        id: eventId,
-        site_id,
-        visitor_id: visitor_id || null,
-        session_id,
-        event_type: 'session_recording',
-        url: body.url || null,
-        timestamp,
-        properties: {
-          start_time: startTimestamp,
-          end_time: endTimestamp,
-          duration: endTimestamp - startTimestamp,
-          total_events: events.length,
-          chunks: [storagePath],
-          metadata: metadata || {}
-        }
-      };
-
-      await supabaseAdmin
-        .from('session_events')
-        .insert([dbData]);
-    }
-
-    return NextResponse.json({ success: true, chunk_id: chunkId, path: storagePath });
+    return NextResponse.json({
+      success: true,
+      chunk_id: chunkId,
+      path: storagePath,
+      recording,
+    });
     
   } catch (error: any) {
     console.error('[Session Recording] Error no manejado:', error);

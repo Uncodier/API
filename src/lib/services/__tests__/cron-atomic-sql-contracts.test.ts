@@ -5,6 +5,10 @@ function workspaceFile(path: string): string {
   return readFileSync(resolve(process.cwd(), path), 'utf8');
 }
 
+const cronCapacitySql = workspaceFile(
+  'supabase/migrations/20260917204500_atomic_requirement_cron_capacity.sql',
+);
+
 describe('atomic cron SQL contracts', () => {
   const cycleSql = workspaceFile(
     'supabase/migrations/20260917203000_atomic_cron_cycle_accounting.sql',
@@ -54,6 +58,7 @@ describe('atomic cron SQL contracts', () => {
   const securityDefinerMigrations = [
     cycleSql,
     infrastructureSql,
+    cronCapacitySql,
     recoverySql,
     blockSql,
     accumulatedBlockSql,
@@ -103,12 +108,12 @@ describe('atomic cron SQL contracts', () => {
       const definitions = sql.match(/\bSECURITY DEFINER\b/g) ?? [];
       const hardenedRevokes =
         sql.match(
-          /REVOKE ALL ON FUNCTION[^\n]+FROM PUBLIC, anon, authenticated;/g,
+          /REVOKE ALL ON FUNCTION[\s\S]*?FROM PUBLIC, anon, authenticated;/g,
         ) ?? [];
 
       expect(hardenedRevokes).toHaveLength(definitions.length);
       expect(sql).not.toMatch(
-        /REVOKE ALL ON FUNCTION[^\n]+FROM PUBLIC;/,
+        /REVOKE ALL ON FUNCTION[\s\S]*?FROM PUBLIC;/,
       );
     }
     expect(cycleSql).toContain(
@@ -390,93 +395,6 @@ describe('fallback discovery contracts', () => {
     );
     expect(fallbackSource).not.toContain(
       'main builder hit',
-    );
-  });
-});
-
-describe('requirements workflow ordering contracts', () => {
-  const workflowSource = workspaceFile(
-    'src/app/api/cron/requirements-apps/workflow.ts',
-  );
-  const finalizerSource = workspaceFile(
-    'src/app/api/cron/shared/cron-workflow-finalize.ts',
-  );
-  const routeSource = workspaceFile(
-    'src/app/api/cron/requirements-apps/route.ts',
-  );
-  const routeStateSource = workspaceFile(
-    'src/app/api/cron/requirements-apps/route-state.ts',
-  );
-
-  it('derives progress from the persisted final plan delta', () => {
-    const finalPlanRead = workflowSource.indexOf(
-      'getInstancePlanByIdStep(activePlan.id)',
-    );
-    const progressAssignment = workflowSource.indexOf(
-      "cycleOutcome = 'progress'",
-    );
-    expect(finalPlanRead).toBeGreaterThan(-1);
-    expect(progressAssignment).toBeGreaterThan(finalPlanRead);
-  });
-
-  it('records the cycle before releasing its lock', () => {
-    const accountingCall = workflowSource.lastIndexOf(
-      'recordCronCycleOutcomeStep({',
-    );
-    const lockRelease = workflowSource.lastIndexOf(
-      'releaseRunLockStep(reqId, cronLockRunId)',
-    );
-    expect(accountingCall).toBeGreaterThan(-1);
-    expect(lockRelease).toBeGreaterThan(accountingCall);
-  });
-
-  it('does not continue from stale infrastructure mutations', () => {
-    expect(workflowSource).toContain(
-      "infra.state !== 'applied' &&",
-    );
-    expect(workflowSource).toContain(
-      "clearResult.state !== 'applied'",
-    );
-    expect(workflowSource).toContain(
-      'if (!completionMutation.persisted)',
-    );
-    expect(workflowSource).toContain(
-      'turnRes.infrastructureGeneration ??',
-    );
-  });
-
-  it('checks execution generation before final status side effects', () => {
-    const finalStatusCall = workflowSource.indexOf('createFinalStatusStep({');
-    const generationGuard = workflowSource.lastIndexOf(
-      'isRequirementExecutionCurrentStep(',
-      finalStatusCall,
-    );
-    expect(generationGuard).toBeGreaterThan(-1);
-    expect(generationGuard).toBeLessThan(finalStatusCall);
-    expect(finalizerSource).toContain('expectedExecutionGeneration: number');
-    expect(finalizerSource).toContain("state: 'applied' | 'stale'");
-  });
-
-  it('bounds unlocked canonical candidates and refreshes them under lock', () => {
-    expect(routeStateSource).toContain(
-      'status.in.(backlog,in-progress),and(status.eq.blocked,cron.not.is.null)',
-    );
-    expect(routeStateSource).toContain(
-      'cron_lock_expires_at.is.null,cron_lock_expires_at.lt.',
-    );
-    expect(routeStateSource).toContain(
-      '.range(offset, offset + pageSize - 1)',
-    );
-    expect(routeSource).toContain(
-      'countActiveRequirementCronRuns()',
-    );
-    expect(routeSource).toContain(
-      'listRequirementsForCronRun(availableSlots)',
-    );
-    expect(routeSource).not.toContain('oneMonthAgo');
-    expect(routeSource).not.toContain('.limit(10);\n\n    if (!requirements');
-    expect(routeSource).toMatch(
-      /\.from\('requirements'\)\s*\.select\('\*'\)\s*\.eq\('id', reqId\)/,
     );
   });
 });

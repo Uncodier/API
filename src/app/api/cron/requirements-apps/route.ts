@@ -3,61 +3,31 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { start } from 'workflow/api';
 import { runCronAppsWorkflow } from './workflow';
 import { runForcedCycleWrapUpWorkflow } from '../shared/forced-cycle-wrapup-workflow';
-import { acquireRunLock, releaseRunLock } from '../shared/cron-run-lock';
+import {
+  CRON_RUN_LOCK_TTL_MS,
+  releaseRunLock,
+} from '../shared/cron-run-lock';
 import { recordTelemetry } from '@/lib/status/telemetry';
 import {
   blockRequirementForProductAttemptBudget,
   patchRequirementMetadataKeys,
 } from '@/lib/services/requirement-metadata-patch';
 import {
+  activateRequirementCronRun,
   cleanupRecentlyCompletedRequirements,
-  countActiveRequirementCronRuns,
-  listRequirementsForCronRun,
+  claimRequirementsForCronRun,
   prepareRequirementForCronRun,
   runRequirementRecoveryPrepass,
 } from './route-state';
 import { resolveRequirementGitRepoKind } from '@/lib/services/requirement-git-binding';
-
-/** Must match DB check `remote_instances_instance_type_check` (ubuntu | browser | windows). */
-const REMOTE_INSTANCE_TYPE_CRON_APPS = 'browser' as const;
-const DEFAULT_MAX_CONCURRENT_REQUIREMENT_RUNS = 8;
-
-function getMaxConcurrentRequirementRuns(): number {
-  const configured = Number.parseInt(
-    process.env.CRON_MAX_CONCURRENT_REQUIREMENT_RUNS || '',
-    10,
-  );
-  return Number.isSafeInteger(configured) && configured > 0
-    ? configured
-    : DEFAULT_MAX_CONCURRENT_REQUIREMENT_RUNS;
-}
-
-function readExecutionGeneration(value: unknown): number {
-  if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) {
-    return value;
-  }
-  if (typeof value === 'string' && /^[0-9]{1,9}$/.test(value)) {
-    return Number.parseInt(value, 10);
-  }
-  return 0;
-}
-
-/** Cron runners use Vercel Sandbox workflows — not Scrapybara; keep provider/CDP null. */
-function cronRemoteInstancePayload(base: {
-  site_id: string;
-  user_id: string;
-  name: string;
-  created_by: string;
-  instance_type?: string;
-}) {
-  return {
-    ...base,
-    status: 'pending' as const,
-    instance_type: base.instance_type || REMOTE_INSTANCE_TYPE_CRON_APPS,
-    provider_instance_id: null as string | null,
-    cdp_url: null as string | null,
-  };
-}
+import {
+  cronRemoteInstancePayload,
+  getMaxConcurrentRequirementRuns,
+  getRequirementEvaluationLimit,
+  readExecutionGeneration,
+  REMOTE_INSTANCE_TYPE_CRON_APPS,
+} from './scheduler-config';
+import { buildPreviousWorkContext } from './previous-work-context';
 
 export const maxDuration = 800; // Approximately 13 minutes (Pro plan maximum).
 export const dynamic = 'force-dynamic';
@@ -71,41 +41,41 @@ export async function GET(req: Request) {
 
   try {
     const maxConcurrentRuns = getMaxConcurrentRequirementRuns();
-    const activeRuns = await countActiveRequirementCronRuns();
-    const availableSlots = Math.max(0, maxConcurrentRuns - activeRuns);
-    if (availableSlots === 0) {
-      return NextResponse.json({
-        message: 'Requirement cron capacity is full',
-        activeRuns,
-        maxConcurrentRuns,
-      });
-    }
+    const evaluationLimit = getRequirementEvaluationLimit();
 
     await runRequirementRecoveryPrepass();
     await cleanupRecentlyCompletedRequirements();
 
-    // This is the canonical scheduler for every requirement flow.
-    const requirements = await listRequirementsForCronRun(availableSlots);
-    if (requirements.length === 0) {
-      return NextResponse.json({ message: 'No app requirements to process' });
-    }
-
     const results = [];
+    const evaluatedRequirementIds: string[] = [];
+    let capacityReached = false;
+    let activeRuns: number | undefined;
 
-    for (const requirement of requirements) {
-      const reqId = requirement.id;
-
-      // Serialize cron workflows per requirement.
-      const runLock = await acquireRunLock(reqId);
-      if (!runLock) {
-        console.log(`[Cron Apps] Skipping ${reqId} — another workflow is already running (lock held)`);
-        results.push({
-          reqId,
-          skipped: true,
-          reason: 'locked',
-        });
-        continue;
+    // Claim and evaluate one candidate at a time. A skipped/frozen requirement
+    // releases its lease, then the next candidate is considered without using
+    // one of the eight real workflow slots.
+    while (evaluatedRequirementIds.length < evaluationLimit) {
+      const claims = await claimRequirementsForCronRun(
+        maxConcurrentRuns,
+        CRON_RUN_LOCK_TTL_MS,
+        evaluatedRequirementIds,
+      );
+      const claimResult = claims[0];
+      if (!claimResult) break;
+      if (claimResult.state === 'capacity_full') {
+        capacityReached = true;
+        activeRuns = claimResult.active_runs;
+        break;
       }
+      const claim = claimResult;
+
+      const requirement = claim.requirement;
+      const reqId = requirement.id;
+      evaluatedRequirementIds.push(reqId);
+      const runLock = {
+        runId: claim.run_id,
+        expiresAt: claim.expires_at,
+      };
 
       // Re-fetch the entire mutable row under the run lock. Backlog and
       // metadata from candidate discovery may already be stale.
@@ -410,6 +380,28 @@ export async function GET(req: Request) {
         continue;
       }
 
+      const activation = await activateRequirementCronRun({
+        requirementId: reqId,
+        runId: runLock.runId,
+        maxConcurrentRuns,
+        lockTtlMs: CRON_RUN_LOCK_TTL_MS,
+      }).catch(async (activationError: unknown) => {
+        await releaseRunLock(reqId, runLock.runId);
+        throw activationError;
+      });
+      if (activation.state === 'capacity_full') {
+        capacityReached = true;
+        activeRuns = activation.active_runs;
+        await releaseRunLock(reqId, runLock.runId);
+        results.push({ reqId, skipped: true, reason: 'capacity_full' });
+        break;
+      }
+      if (activation.state !== 'active') {
+        await releaseRunLock(reqId, runLock.runId);
+        results.push({ reqId, skipped: true, reason: 'stale_claim' });
+        continue;
+      }
+
       if (requirement.status === 'backlog') {
         await supabaseAdmin.from('requirements').update({ 
           status: 'in-progress',
@@ -428,49 +420,10 @@ export async function GET(req: Request) {
         await supabaseAdmin.from('instance_plans').update({ status: 'in_progress' }).eq('id', activePlan.id);
       }
 
-      // Build previous work context
-      const { data: prevStatuses } = await supabaseAdmin
-        .from('requirement_status')
-        .select('stage, message, preview_url, repo_url, created_at')
-        .eq('requirement_id', reqId)
-        .order('created_at', { ascending: false })
-        .limit(10);
-
-      const { data: prevPlans } = await supabaseAdmin
-        .from('instance_plans')
-        .select('id, title, status, steps')
-        .eq('instance_id', instanceId)
-        .order('created_at', { ascending: false })
-        .limit(3);
-
-      // Extract actionable blockers from the latest status
-      const latestStatus = prevStatuses?.[0];
-      let blockerContext = '';
-      if (latestStatus && latestStatus.stage !== 'done') {
-        const blockers: string[] = [];
-        if (latestStatus.message?.includes('preview_url returns error/404')) {
-          blockers.push('CRITICAL: The deployed preview URL returns 404. The app has no working root page. You MUST create a plan step to fix the root route (e.g. src/app/page.tsx).');
-        }
-        if (latestStatus.message?.includes('no push')) {
-          blockers.push('WARNING: Last cycle produced no git push. The agent must write actual files, not just update metadata.');
-        }
-        if (latestStatus.message?.includes('plan not completed')) {
-          blockers.push('WARNING: Last cycle failed because you did not call the `instance_plan` tool with action="create". You MUST use the `instance_plan` tool to create the execution plan for the current backlog item. Do not try to fix code; just create the plan.');
-        }
-        if (!latestStatus.preview_url) {
-          blockers.push('No preview URL available yet. Ensure code changes are meaningful so the deployment works.');
-        }
-        if (blockers.length) {
-          blockerContext = `\n⚠️ BLOCKERS FROM LAST CYCLE (MUST ADDRESS FIRST):\n${blockers.map(b => `- ${b}`).join('\n')}\n`;
-        }
-      }
-
-      const previousWorkContext = [
-        blockerContext,
-        (prevStatuses?.length || prevPlans?.length)
-          ? `\nPREVIOUS WORK:\n${prevStatuses?.length ? `- Latest stage: ${latestStatus?.stage} — ${latestStatus?.message || 'no message'}` : ''}\n${prevPlans?.length ? `- Recent plans: ${prevPlans.map((p: any) => `${p.title} (${p.status})`).join(', ')}` : ''}\n`
-          : '',
-      ].filter(Boolean).join('\n');
+      const previousWorkContext = await buildPreviousWorkContext(
+        reqId,
+        instanceId,
+      );
 
       // Start the MAIN workflow — durable execution with step-level retries
       console.log(`[Cron Apps] Starting main workflow for req ${reqId}, instance ${instanceId}`);
@@ -500,10 +453,23 @@ export async function GET(req: Request) {
 
     }
 
+    if (results.length === 0) {
+      return NextResponse.json({
+        message: capacityReached
+          ? 'Requirement cron capacity is full'
+          : 'No runnable app requirements to process',
+        evaluatedRequirements: evaluatedRequirementIds.length,
+        ...(activeRuns === undefined ? {} : { activeRuns, maxConcurrentRuns }),
+      });
+    }
+
     recordTelemetry('cron', 'up', `Processed apps cron with ${results.length} results`, 100).catch(console.error);
 
     return NextResponse.json({
       message: `Processed ${results.length} requirements`,
+      evaluatedRequirements: evaluatedRequirementIds.length,
+      capacityReached,
+      ...(activeRuns === undefined ? {} : { activeRuns, maxConcurrentRuns }),
       results,
     });
 

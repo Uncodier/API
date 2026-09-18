@@ -33,8 +33,6 @@ export type RequirementRunPreparation = {
   skipReason?: string;
 };
 
-const CRON_CANDIDATE_PAGE_SIZE = 100;
-
 export type CronRequirementCandidate = RequirementRow & {
   user_id: string;
   title: string;
@@ -42,51 +40,64 @@ export type CronRequirementCandidate = RequirementRow & {
   type: string;
 };
 
-export async function countActiveRequirementCronRuns(
-  nowIso: string = new Date().toISOString(),
-): Promise<number> {
-  const { count, error } = await supabaseAdmin
-    .from('requirements')
-    .select('id', { count: 'exact', head: true })
-    .gt('cron_lock_expires_at', nowIso);
+export type ClaimedCronRequirement = {
+  state: 'claimed';
+  requirement: CronRequirementCandidate;
+  run_id: string;
+  expires_at: string;
+};
 
-  if (error) throw error;
-  return count ?? 0;
-}
+export type CronRequirementCapacityFull = {
+  state: 'capacity_full';
+  active_runs: number;
+};
 
-export async function listRequirementsForCronRun(
-  maxResults: number = CRON_CANDIDATE_PAGE_SIZE,
-): Promise<CronRequirementCandidate[]> {
-  if (!Number.isSafeInteger(maxResults) || maxResults <= 0) return [];
+export type CronRequirementActivation =
+  | { state: 'active'; active_runs: number }
+  | CronRequirementCapacityFull
+  | { state: 'stale' };
 
-  const requirements = new Map<string, CronRequirementCandidate>();
-  let offset = 0;
-  const nowIso = new Date().toISOString();
-
-  while (requirements.size < maxResults) {
-    const remaining = maxResults - requirements.size;
-    const pageSize = Math.min(CRON_CANDIDATE_PAGE_SIZE, remaining);
-    const { data, error } = await supabaseAdmin
-      .from('requirements')
-      .select('*')
-      .or(
-        'status.in.(backlog,in-progress),and(status.eq.blocked,cron.not.is.null),and(status.in.(on-review,done,cancelled),cron.not.is.null)',
-      )
-      .or(`cron_lock_expires_at.is.null,cron_lock_expires_at.lt."${nowIso}"`)
-      .order('updated_at', { ascending: true, nullsFirst: true })
-      .order('id', { ascending: true })
-      .range(offset, offset + pageSize - 1);
-    if (error) throw error;
-
-    const page = (data || []) as CronRequirementCandidate[];
-    for (const requirement of page) {
-      requirements.set(requirement.id, requirement);
-    }
-    if (page.length < pageSize) break;
-    offset += pageSize;
+export async function claimRequirementsForCronRun(
+  maxConcurrentRuns: number,
+  lockTtlMs: number,
+  excludedRequirementIds: string[] = [],
+): Promise<Array<ClaimedCronRequirement | CronRequirementCapacityFull>> {
+  if (!Number.isSafeInteger(maxConcurrentRuns) || maxConcurrentRuns <= 0) {
+    return [];
   }
 
-  return Array.from(requirements.values());
+  const { data, error } = await supabaseAdmin.rpc(
+    'claim_requirement_cron_candidates',
+    {
+      p_max_concurrent: maxConcurrentRuns,
+      p_ttl_seconds: Math.ceil(lockTtlMs / 1000),
+      p_excluded_ids: [...excludedRequirementIds],
+    },
+  );
+  if (error) throw error;
+
+  return (data || []) as Array<
+    ClaimedCronRequirement | CronRequirementCapacityFull
+  >;
+}
+
+export async function activateRequirementCronRun(params: {
+  requirementId: string;
+  runId: string;
+  maxConcurrentRuns: number;
+  lockTtlMs: number;
+}): Promise<CronRequirementActivation> {
+  const { data, error } = await supabaseAdmin.rpc(
+    'activate_requirement_cron_run',
+    {
+      p_requirement_id: params.requirementId,
+      p_run_id: params.runId,
+      p_max_concurrent: params.maxConcurrentRuns,
+      p_ttl_seconds: Math.ceil(params.lockTtlMs / 1000),
+    },
+  );
+  if (error) throw error;
+  return data as CronRequirementActivation;
 }
 
 export async function cleanupRecentlyCompletedRequirements(): Promise<void> {

@@ -1,5 +1,5 @@
 /**
- * Per-requirement advisory lock for cron workflows.
+ * Per-requirement lease for cron evaluation and workflows.
  *
  * Problem: cron routes fire every 5 (apps) / 1 (automations) minutes, but a
  * single workflow often exceeds that interval. Without this lock two runs
@@ -16,6 +16,9 @@
  *      WHERE id = :reqId
  *        AND (cron_lock_expires_at IS NULL OR cron_lock_expires_at < :now)
  *    If no row is affected, another workflow already holds the lock.
+ *  - A newly acquired lease has `cron_lock_active=false`. The requirements
+ *    scheduler promotes it atomically only after the candidate passes its
+ *    frozen/paused checks, so evaluation does not consume a work slot.
  *  - `releaseRunLock` clears the columns only when the caller still owns the
  *    lock (matches `runId`), so a stale release from a crashed run cannot
  *    unlock a newer owner.
@@ -93,12 +96,15 @@ function isLockColumnsMissingError(err: PostgrestErrorLike): boolean {
   const code = err.code || '';
   const msg = err.message || '';
   const implicatesLockCols =
-    /cron_lock_(expires_at|run_id)/i.test(msg) &&
+    /cron_lock_(expires_at|run_id|active)/i.test(msg) &&
     (/does not exist/i.test(msg) ||
       /could not find/i.test(msg) ||
       /not found in schema cache/i.test(msg));
   if (implicatesLockCols) return true;
-  if (code === 'PGRST204' && /cron_lock_(expires_at|run_id)/i.test(msg)) return true;
+  if (
+    code === 'PGRST204'
+    && /cron_lock_(expires_at|run_id|active)/i.test(msg)
+  ) return true;
   return false;
 }
 
@@ -160,7 +166,11 @@ export async function acquireRunLock(
 
   const { error } = await supabaseAdmin
     .from('requirements')
-    .update({ cron_lock_expires_at: expiresAt, cron_lock_run_id: runId })
+    .update({
+      cron_lock_expires_at: expiresAt,
+      cron_lock_run_id: runId,
+      cron_lock_active: false,
+    })
     .eq('id', requirementId)
     .or(orClause);
 
@@ -227,7 +237,11 @@ export async function releaseRunLock(lockKey: string, runId: string): Promise<vo
   try {
     const { error } = await supabaseAdmin
       .from('requirements')
-      .update({ cron_lock_expires_at: null, cron_lock_run_id: null })
+      .update({
+        cron_lock_expires_at: null,
+        cron_lock_run_id: null,
+        cron_lock_active: false,
+      })
       .eq('id', requirementId)
       .eq('cron_lock_run_id', runId);
 

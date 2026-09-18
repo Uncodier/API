@@ -39,7 +39,7 @@ async function main() {
 
   const { data, error } = await supabase
     .from('requirements')
-    .select('id, cron_lock_expires_at, cron_lock_run_id')
+    .select('id, cron_lock_expires_at, cron_lock_run_id, cron_lock_active')
     .limit(1);
 
   if (error) {
@@ -58,7 +58,11 @@ Run in Supabase SQL (same project as URL above / host ${host}):
   select column_name
   from information_schema.columns
   where table_schema = 'public' and table_name = 'requirements'
-    and column_name in ('cron_lock_expires_at','cron_lock_run_id');
+    and column_name in (
+      'cron_lock_expires_at',
+      'cron_lock_run_id',
+      'cron_lock_active'
+    );
 `);
     }
     process.exit(1);

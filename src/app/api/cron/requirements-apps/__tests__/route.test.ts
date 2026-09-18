@@ -5,11 +5,13 @@ import { start } from 'workflow/api';
 const mockBlockRequirementForProductAttemptBudget =
   jest.fn(async () => ({ state: 'applied', blocked: true }));
 const mockResumeRequirementExecution = jest.fn(async () => undefined);
+const mockRpc: any = jest.fn();
 
 // Mocks
 jest.mock('@/lib/database/supabase-client', () => ({
   supabaseAdmin: {
     from: jest.fn(),
+    rpc: mockRpc,
   },
 }));
 
@@ -30,7 +32,7 @@ jest.mock('../../maintenance/workflow', () => ({
 }));
 
 jest.mock('../../shared/cron-run-lock', () => ({
-  acquireRunLock: jest.fn(async () => ({ runId: 'test-lock-id' })),
+  CRON_RUN_LOCK_TTL_MS: 7_200_000,
   releaseRunLock: jest.fn(async () => true),
   getSupabaseUrlHostForLogs: jest.fn().mockReturnValue('mock-host'),
 }));
@@ -71,13 +73,31 @@ import { GET } from '../route';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import * as backlogService from '@/lib/services/requirement-backlog';
 import { patchRequirementMetadataKeys } from '@/lib/services/requirement-metadata-patch';
+import { releaseRunLock } from '../../shared/cron-run-lock';
 
 describe('Cron Requirements Apps Route', () => {
   let mockSupabase: any;
 
+  function mockClaimBatches(
+    batches: any[][],
+    activation = { state: 'active', active_runs: 1 },
+  ) {
+    let claimIndex = 0;
+    mockRpc.mockImplementation(async (functionName: string) => {
+      if (functionName === 'activate_requirement_cron_run') {
+        return { data: activation, error: null };
+      }
+      if (functionName === 'claim_requirement_cron_candidates') {
+        return { data: batches[claimIndex++] || [], error: null };
+      }
+      throw new Error(`Unexpected RPC ${functionName}`);
+    });
+  }
+
   beforeEach(() => {
     jest.clearAllMocks();
     process.env.CRON_SECRET = 'test-secret';
+    delete process.env.CRON_REQUIREMENT_EVALUATION_LIMIT;
 
     mockSupabase = {
       select: jest.fn().mockReturnThis(),
@@ -99,6 +119,7 @@ describe('Cron Requirements Apps Route', () => {
     };
 
     (supabaseAdmin.from as jest.Mock).mockReturnValue(mockSupabase);
+    mockClaimBatches([]);
   });
 
   it('returns 401 without correct authorization header', async () => {
@@ -118,6 +139,22 @@ describe('Cron Requirements Apps Route', () => {
     expect(res.status).toBe(401);
   });
 
+  it('reports capacity only when eight real run leases are active', async () => {
+    mockClaimBatches([[{ state: 'capacity_full', active_runs: 8 }]]);
+
+    const res = await GET(new Request('http://localhost', {
+      headers: { authorization: 'Bearer test-secret' },
+    }));
+
+    await expect(res.json()).resolves.toMatchObject({
+      message: 'Requirement cron capacity is full',
+      activeRuns: 8,
+      maxConcurrentRuns: 8,
+      evaluatedRequirements: 0,
+    });
+    expect(start).not.toHaveBeenCalled();
+  });
+
   it('processes requirements successfully', async () => {
     // Mock the initial query for requirements
     const mockRequirement = {
@@ -132,12 +169,19 @@ describe('Cron Requirements Apps Route', () => {
       metadata: {},
       cron: null,
     };
+    mockClaimBatches([[
+      {
+        state: 'claimed',
+        requirement: mockRequirement,
+        run_id: 'test-lock-id',
+        expires_at: '2026-09-17T23:00:00.000Z',
+      },
+    ]]);
 
-    // Supabase calls: completed cleanup, due requirements, current status,
+    // Supabase calls: completed cleanup, current status,
     // instance lookup/status/plan, foreign activity, metadata update, history.
     mockSupabase.then = jest.fn()
       .mockImplementationOnce((res: any) => res({ data: [], error: null })) // recent completed requirements
-      .mockImplementationOnce((res: any) => res({ data: [mockRequirement], error: null })) // due requirements
       .mockImplementationOnce((res: any) => res({
         data: {
           ...mockRequirement,
@@ -172,9 +216,22 @@ describe('Cron Requirements Apps Route', () => {
       requirementId: 'req-1',
       patch: { runner_instance_id: 'inst-1' },
     });
-    expect(mockSupabase.range).toHaveBeenCalledWith(0, 99);
-    expect(mockSupabase.or).toHaveBeenCalledWith(
-      expect.stringContaining('status.in.(backlog,in-progress,blocked)'),
+    expect(mockRpc).toHaveBeenCalledWith(
+      'claim_requirement_cron_candidates',
+      {
+        p_max_concurrent: 8,
+        p_ttl_seconds: 7200,
+        p_excluded_ids: [],
+      },
+    );
+    expect(mockRpc).toHaveBeenCalledWith(
+      'activate_requirement_cron_run',
+      {
+        p_requirement_id: 'req-1',
+        p_run_id: 'test-lock-id',
+        p_max_concurrent: 8,
+        p_ttl_seconds: 7200,
+      },
     );
     expect(mockSupabase.select).toHaveBeenCalledWith('*');
     expect(start).toHaveBeenCalledWith(
@@ -206,8 +263,7 @@ describe('Cron Requirements Apps Route', () => {
 
     mockSupabase.then = jest.fn()
       .mockImplementationOnce((res: any) => res({ data: [mockRequirement], error: null })) // recent completed requirements
-      .mockImplementationOnce((res: any) => res({ data: null, error: null })) // revert update
-      .mockImplementationOnce((res: any) => res({ data: [], error: null })); // no due requirements after cleanup
+      .mockImplementationOnce((res: any) => res({ data: null, error: null })); // revert update
 
     const req = new Request('http://localhost', {
       headers: { authorization: 'Bearer test-secret' },
@@ -237,10 +293,17 @@ describe('Cron Requirements Apps Route', () => {
       metadata: {},
       cron: null,
     };
+    mockClaimBatches([[
+      {
+        state: 'claimed',
+        requirement: mockRequirement,
+        run_id: 'test-lock-id',
+        expires_at: '2026-09-17T23:00:00.000Z',
+      },
+    ]]);
 
     mockSupabase.then = jest.fn()
       .mockImplementationOnce((res: any) => res({ data: [], error: null })) // recent completed requirements
-      .mockImplementationOnce((res: any) => res({ data: [mockRequirement], error: null })) // due requirements
       .mockImplementationOnce((res: any) => res({ data: { status: 'in-progress' }, error: null })) // current requirement
       .mockImplementationOnce((res: any) => res({ data: { created_at: '2020-01-01T00:00:00.000Z' }, error: null })) // lastStatus before item update
       .mockImplementationOnce((res: any) => res({ data: [{ id: 'inst-1', instance_type: 'browser' }], error: null })) // remote instance
@@ -259,5 +322,130 @@ describe('Cron Requirements Apps Route', () => {
     
     // Should NOT have called update to on-review
     expect(mockSupabase.update).not.toHaveBeenCalledWith(expect.objectContaining({ status: 'on-review' }));
+  });
+
+  it('continues evaluating candidates after a frozen requirement is skipped', async () => {
+    const pausedRequirement = {
+      id: 'req-paused',
+      status: 'in-progress',
+      site_id: 'site-1',
+      user_id: 'user-1',
+      title: 'Paused work',
+      instructions: null,
+      type: 'application',
+      backlog: { items: [{ id: 'item-1', status: 'pending' }] },
+      metadata: { runner_instance_id: 'inst-paused' },
+      cron: null,
+    };
+    const runnableRequirement = {
+      ...pausedRequirement,
+      id: 'req-runnable',
+      title: 'Runnable work',
+      metadata: { runner_instance_id: 'inst-runnable' },
+    };
+
+    mockClaimBatches([
+      [{
+          state: 'claimed',
+          requirement: pausedRequirement,
+          run_id: 'lock-paused',
+          expires_at: '2026-09-17T23:00:00.000Z',
+      }],
+      [{
+          state: 'claimed',
+          requirement: runnableRequirement,
+          run_id: 'lock-runnable',
+          expires_at: '2026-09-17T23:00:00.000Z',
+      }],
+    ]);
+
+    mockSupabase.then = jest.fn()
+      .mockImplementationOnce((resolve: any) => resolve({ data: [], error: null }))
+      .mockImplementationOnce((resolve: any) => resolve({ data: pausedRequirement, error: null }))
+      .mockImplementationOnce((resolve: any) => resolve({ data: { status: 'paused' }, error: null }))
+      .mockImplementationOnce((resolve: any) => resolve({ data: null, error: null }))
+      .mockImplementationOnce((resolve: any) => resolve({ data: runnableRequirement, error: null }))
+      .mockImplementationOnce((resolve: any) => resolve({ data: { status: 'running' }, error: null }))
+      .mockImplementationOnce((resolve: any) => resolve({ data: null, error: null }))
+      .mockImplementationOnce((resolve: any) => resolve({ data: [], error: null }))
+      .mockImplementationOnce((resolve: any) => resolve({ data: null, error: null }))
+      .mockImplementationOnce((resolve: any) => resolve({ data: null, error: null }));
+
+    (backlogService.isBacklogComplete as jest.Mock).mockReturnValue(false);
+    (backlogService.hasOutstandingWork as jest.Mock).mockReturnValue(true);
+    (backlogService.outstandingGatingItems as jest.Mock).mockReturnValue([
+      { id: 'item-1' },
+    ]);
+
+    const res = await GET(new Request('http://localhost', {
+      headers: { authorization: 'Bearer test-secret' },
+    }));
+    const json = await res.json();
+
+    expect(json.evaluatedRequirements).toBe(2);
+    expect(json.results).toEqual(expect.arrayContaining([
+      expect.objectContaining({ reqId: 'req-paused', reason: 'paused' }),
+      expect.objectContaining({ reqId: 'req-runnable', started: true }),
+    ]));
+    expect(mockRpc).toHaveBeenNthCalledWith(
+      2,
+      'claim_requirement_cron_candidates',
+      expect.objectContaining({
+        p_excluded_ids: ['req-paused'],
+      }),
+    );
+    expect(start).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not start an evaluated requirement when all work slots are full', async () => {
+    const requirement = {
+      id: 'req-waiting',
+      status: 'in-progress',
+      site_id: 'site-1',
+      user_id: 'user-1',
+      title: 'Waiting work',
+      instructions: null,
+      type: 'application',
+      backlog: { items: [{ id: 'item-1', status: 'pending' }] },
+      metadata: { runner_instance_id: 'inst-waiting' },
+      cron: null,
+    };
+    mockClaimBatches(
+      [[{
+        state: 'claimed',
+        requirement,
+        run_id: 'lock-waiting',
+        expires_at: '2026-09-17T23:00:00.000Z',
+      }]],
+      { state: 'capacity_full', active_runs: 8 },
+    );
+    mockSupabase.then = jest.fn()
+      .mockImplementationOnce((resolve: any) => resolve({ data: [], error: null }))
+      .mockImplementationOnce((resolve: any) => resolve({ data: requirement, error: null }))
+      .mockImplementationOnce((resolve: any) => resolve({ data: { status: 'running' }, error: null }))
+      .mockImplementationOnce((resolve: any) => resolve({ data: null, error: null }))
+      .mockImplementationOnce((resolve: any) => resolve({ data: [], error: null }));
+
+    (backlogService.isBacklogComplete as jest.Mock).mockReturnValue(false);
+    (backlogService.hasOutstandingWork as jest.Mock).mockReturnValue(true);
+    (backlogService.outstandingGatingItems as jest.Mock).mockReturnValue([
+      { id: 'item-1' },
+    ]);
+
+    const res = await GET(new Request('http://localhost', {
+      headers: { authorization: 'Bearer test-secret' },
+    }));
+    const json = await res.json();
+
+    expect(json.capacityReached).toBe(true);
+    expect(json.results).toContainEqual(expect.objectContaining({
+      reqId: 'req-waiting',
+      reason: 'capacity_full',
+    }));
+    expect(releaseRunLock).toHaveBeenCalledWith(
+      'req-waiting',
+      'lock-waiting',
+    );
+    expect(start).not.toHaveBeenCalled();
   });
 });
