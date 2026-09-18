@@ -11,6 +11,7 @@ import {
 } from '@/lib/services/requirement-metadata-patch';
 import {
   cleanupRecentlyCompletedRequirements,
+  countActiveRequirementCronRuns,
   listRequirementsForCronRun,
   prepareRequirementForCronRun,
   runRequirementRecoveryPrepass,
@@ -19,6 +20,17 @@ import { resolveRequirementGitRepoKind } from '@/lib/services/requirement-git-bi
 
 /** Must match DB check `remote_instances_instance_type_check` (ubuntu | browser | windows). */
 const REMOTE_INSTANCE_TYPE_CRON_APPS = 'browser' as const;
+const DEFAULT_MAX_CONCURRENT_REQUIREMENT_RUNS = 8;
+
+function getMaxConcurrentRequirementRuns(): number {
+  const configured = Number.parseInt(
+    process.env.CRON_MAX_CONCURRENT_REQUIREMENT_RUNS || '',
+    10,
+  );
+  return Number.isSafeInteger(configured) && configured > 0
+    ? configured
+    : DEFAULT_MAX_CONCURRENT_REQUIREMENT_RUNS;
+}
 
 function readExecutionGeneration(value: unknown): number {
   if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) {
@@ -58,11 +70,22 @@ export async function GET(req: Request) {
   }
 
   try {
+    const maxConcurrentRuns = getMaxConcurrentRequirementRuns();
+    const activeRuns = await countActiveRequirementCronRuns();
+    const availableSlots = Math.max(0, maxConcurrentRuns - activeRuns);
+    if (availableSlots === 0) {
+      return NextResponse.json({
+        message: 'Requirement cron capacity is full',
+        activeRuns,
+        maxConcurrentRuns,
+      });
+    }
+
     await runRequirementRecoveryPrepass();
     await cleanupRecentlyCompletedRequirements();
 
     // This is the canonical scheduler for every requirement flow.
-    const requirements = await listRequirementsForCronRun();
+    const requirements = await listRequirementsForCronRun(availableSlots);
     if (requirements.length === 0) {
       return NextResponse.json({ message: 'No app requirements to process' });
     }

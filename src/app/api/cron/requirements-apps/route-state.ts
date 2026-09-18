@@ -42,28 +42,48 @@ export type CronRequirementCandidate = RequirementRow & {
   type: string;
 };
 
-export async function listRequirementsForCronRun(): Promise<CronRequirementCandidate[]> {
+export async function countActiveRequirementCronRuns(
+  nowIso: string = new Date().toISOString(),
+): Promise<number> {
+  const { count, error } = await supabaseAdmin
+    .from('requirements')
+    .select('id', { count: 'exact', head: true })
+    .gt('cron_lock_expires_at', nowIso);
+
+  if (error) throw error;
+  return count ?? 0;
+}
+
+export async function listRequirementsForCronRun(
+  maxResults: number = CRON_CANDIDATE_PAGE_SIZE,
+): Promise<CronRequirementCandidate[]> {
+  if (!Number.isSafeInteger(maxResults) || maxResults <= 0) return [];
+
   const requirements = new Map<string, CronRequirementCandidate>();
   let offset = 0;
+  const nowIso = new Date().toISOString();
 
-  while (true) {
+  while (requirements.size < maxResults) {
+    const remaining = maxResults - requirements.size;
+    const pageSize = Math.min(CRON_CANDIDATE_PAGE_SIZE, remaining);
     const { data, error } = await supabaseAdmin
       .from('requirements')
       .select('*')
       .or(
-        'status.in.(backlog,in-progress,blocked),and(status.in.(on-review,done,cancelled),cron.not.is.null)',
+        'status.in.(backlog,in-progress),and(status.eq.blocked,cron.not.is.null),and(status.in.(on-review,done,cancelled),cron.not.is.null)',
       )
+      .or(`cron_lock_expires_at.is.null,cron_lock_expires_at.lt."${nowIso}"`)
       .order('updated_at', { ascending: true, nullsFirst: true })
       .order('id', { ascending: true })
-      .range(offset, offset + CRON_CANDIDATE_PAGE_SIZE - 1);
+      .range(offset, offset + pageSize - 1);
     if (error) throw error;
 
     const page = (data || []) as CronRequirementCandidate[];
     for (const requirement of page) {
       requirements.set(requirement.id, requirement);
     }
-    if (page.length < CRON_CANDIDATE_PAGE_SIZE) break;
-    offset += CRON_CANDIDATE_PAGE_SIZE;
+    if (page.length < pageSize) break;
+    offset += pageSize;
   }
 
   return Array.from(requirements.values());

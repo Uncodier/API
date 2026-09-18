@@ -35,6 +35,10 @@
       "schedule": "*/15 * * * *"
     },
     {
+      "path": "/api/cron/maintenance/session-events",
+      "schedule": "17 3 * * *"
+    },
+    {
       "path": "/api/cron/workflows",
       "schedule": "* * * * *"
     },

@@ -457,12 +457,21 @@ describe('requirements workflow ordering contracts', () => {
     expect(finalizerSource).toContain("state: 'applied' | 'stale'");
   });
 
-  it('paginates all canonical candidates and refreshes them under lock', () => {
+  it('bounds unlocked canonical candidates and refreshes them under lock', () => {
     expect(routeStateSource).toContain(
-      'status.in.(backlog,in-progress,blocked)',
+      'status.in.(backlog,in-progress),and(status.eq.blocked,cron.not.is.null)',
     );
     expect(routeStateSource).toContain(
-      '.range(offset, offset + CRON_CANDIDATE_PAGE_SIZE - 1)',
+      'cron_lock_expires_at.is.null,cron_lock_expires_at.lt.',
+    );
+    expect(routeStateSource).toContain(
+      '.range(offset, offset + pageSize - 1)',
+    );
+    expect(routeSource).toContain(
+      'countActiveRequirementCronRuns()',
+    );
+    expect(routeSource).toContain(
+      'listRequirementsForCronRun(availableSlots)',
     );
     expect(routeSource).not.toContain('oneMonthAgo');
     expect(routeSource).not.toContain('.limit(10);\n\n    if (!requirements');
