@@ -100,12 +100,16 @@ export function parseGitBindingFromMetadata(metadata: unknown): GitBinding | nul
 }
 
 /**
- * Resolves the default git binding from env + instance type. Used when the
- * requirement has no `metadata.git` yet (pre-migration rows or callers that
- * didn't set it).
+ * Resolves the default git binding from env plus an instance or requirement
+ * type. Used when the requirement has no `metadata.git` yet (pre-migration
+ * rows or callers that didn't set it).
  */
 export function resolveDefaultGitBinding(instanceType?: string | null): GitBinding {
-  const isAutomation = String(instanceType || '').trim().toLowerCase() === 'automation';
+  const normalizedType = String(instanceType || '').trim().toLowerCase();
+  const isAutomation =
+    normalizedType === 'automation' ||
+    normalizedType === 'integration' ||
+    normalizedType.includes('automat');
   const kind: GitBindingKind = isAutomation ? 'automation' : 'applications';
   const org = process.env.GIT_ORG || DEFAULT_GIT_ORG_FALLBACK;
   const repo = isAutomation
@@ -153,6 +157,20 @@ export function mergeGitBinding(
  */
 export function instanceTypeFromGitKind(kind: GitBindingKind | undefined | null): 'applications' | 'automation' {
   return kind === 'automation' ? 'automation' : 'applications';
+}
+
+/**
+ * Resolves the runtime repository kind from the persisted requirement binding.
+ * The requirement type is only a fallback for legacy rows without metadata.git.
+ */
+export function resolveRequirementGitRepoKind(
+  metadata: unknown,
+  fallbackRequirementType?: string | null,
+): 'applications' | 'automation' {
+  const binding =
+    parseGitBindingFromMetadata(metadata) ??
+    resolveDefaultGitBinding(fallbackRequirementType);
+  return instanceTypeFromGitKind(binding.kind);
 }
 
 /**

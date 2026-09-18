@@ -105,6 +105,8 @@ export type SandboxToolsContext = {
   git_repo_kind?: GitRepoKind;
   /** Narrows skill_lookup list/search to skills whose types match this requirement. */
   requirement_type?: string;
+  /** Whether checkpoint pushes should enforce deployable-app repository checks. */
+  validate_deployment?: boolean;
   /** When set (cron executor), sandbox_push_checkpoint updates this plan step for auditing */
   plan_id?: string;
   active_step_id?: string;
@@ -274,6 +276,7 @@ export function sandboxPushCheckpointTool(
           {
             gitRepoKind: toolsCtx?.git_repo_kind,
             deferRequirementStatusPersist: true,
+            validateDeployment: toolsCtx?.validate_deployment,
           },
         );
         if (result.sandboxReplacement && toolsCtx?.activeSandboxRef) {
@@ -306,6 +309,8 @@ export function sandboxPushCheckpointTool(
             siteId: toolsCtx?.site_id,
             instanceId: toolsCtx?.instance_id,
             gitRepoKind: toolsCtx?.git_repo_kind,
+            use_resolved_preview_only:
+              toolsCtx?.validate_deployment === false,
             persist: false,
           });
         }

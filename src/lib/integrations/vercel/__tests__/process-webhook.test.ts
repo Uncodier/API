@@ -3,14 +3,14 @@ import type { VercelWebhookEvent } from '../webhook-types';
 import type { ResolvedVercelContext } from '../webhook-resolver';
 import type { handleVercelWebhookEvent as HandleFn } from '../process-webhook';
 
-// The project runs with `ts-jest` in native-ESM mode (`useESM: true`), which
-// disables the usual `jest.mock` hoisting above `import` statements. The
-// ESM-safe pattern is `jest.unstable_mockModule` + dynamic `await import`.
-// We also import `jest` from `@jest/globals` because the repo's `jest.setup.js`
-// stubs `globalThis.jest` with a noop object too early.
+// Import `jest` from `@jest/globals` because the repo's `jest.setup.js` stubs
+// `globalThis.jest` with a noop object too early.
 
 const mockLogCronInfrastructureEvent = jest.fn();
-const mockPatchLatestRequirementStatusColumns = jest.fn();
+const mockPatchLatestRequirementStatusColumns =
+  jest.fn() as jest.MockedFunction<(...args: any[]) => Promise<any>>;
+const mockReconcileReadyDeployment =
+  jest.fn() as jest.MockedFunction<(...args: any[]) => Promise<any>>;
 const dedupeBuilder = {
   select: jest.fn().mockReturnThis(),
   eq: jest.fn().mockReturnThis(),
@@ -22,7 +22,7 @@ const dedupeBuilder = {
 // infinitely recurse into the mock). Instead we mirror the exports actually
 // consumed by process-webhook: `CronInfraEvent` (just a constant map) and
 // `logCronInfrastructureEvent`.
-jest.unstable_mockModule('@/lib/services/cron-audit-log', () => ({
+jest.mock('@/lib/services/cron-audit-log', () => ({
   logCronInfrastructureEvent: mockLogCronInfrastructureEvent,
   CronInfraEvent: {
     VERCEL_WEBHOOK_DEPLOYMENT_CREATED: 'cron_infra_vercel_webhook_deployment_created',
@@ -35,11 +35,15 @@ jest.unstable_mockModule('@/lib/services/cron-audit-log', () => ({
   },
 }));
 
-jest.unstable_mockModule('@/app/api/cron/shared/commit/status-sync', () => ({
+jest.mock('@/app/api/cron/shared/commit/status-sync', () => ({
   patchLatestRequirementStatusColumns: mockPatchLatestRequirementStatusColumns,
 }));
 
-jest.unstable_mockModule('@/lib/database/supabase-client', () => ({
+jest.mock('@/lib/services/deployment-infrastructure-recovery', () => ({
+  reconcileReadyDeployment: mockReconcileReadyDeployment,
+}));
+
+jest.mock('@/lib/database/supabase-client', () => ({
   supabaseAdmin: {
     from: jest.fn(() => dedupeBuilder),
   },
@@ -106,9 +110,17 @@ describe('handleVercelWebhookEvent', () => {
   beforeEach(() => {
     mockLogCronInfrastructureEvent.mockReset();
     mockPatchLatestRequirementStatusColumns.mockReset();
+    mockReconcileReadyDeployment.mockReset();
     dedupeBuilder.limit.mockReset();
     stubDedupe(false);
     mockPatchLatestRequirementStatusColumns.mockResolvedValue({ updated: true });
+    mockReconcileReadyDeployment.mockResolvedValue({
+      matched: true,
+      recovered: true,
+      requirementReopened: false,
+      planIds: ['plan-1'],
+      stepIds: ['step-1'],
+    });
   });
 
   test('ignores non-deployment events without any DB writes', async () => {
@@ -192,6 +204,15 @@ describe('handleVercelWebhookEvent', () => {
       instanceId: INSTANCE_ID,
       columns: { preview_url: 'https://apps-abc-makinari.vercel.app' },
     });
+    expect(mockReconcileReadyDeployment).toHaveBeenCalledWith({
+      requirementId: REQ_ID,
+      siteId: SITE_ID,
+      instanceId: INSTANCE_ID,
+      branch: `feature/req-${REQ_ID}`,
+      commitSha: 'sha123',
+      deploymentId: 'dpl_abc',
+      previewUrl: 'https://apps-abc-makinari.vercel.app',
+    });
   });
 
   test('on deployment.error logs with level=error and does NOT patch preview_url', async () => {
@@ -236,7 +257,7 @@ describe('handleVercelWebhookEvent', () => {
     expect(payload.event).toBe('cron_infra_vercel_webhook_deployment_canceled');
   });
 
-  test('dedupes when the same raw_event_id already exists for the site', async () => {
+  test('dedupes logging but still retries idempotent ready reconciliation', async () => {
     stubDedupe(true);
     const out = await handleVercelWebhookEvent(buildEvent(), {
       resolveContext: async () => ctx(),
@@ -244,7 +265,24 @@ describe('handleVercelWebhookEvent', () => {
 
     expect(out).toEqual({ status: 'deduped', event: 'deployment.ready', requirementId: REQ_ID });
     expect(mockLogCronInfrastructureEvent).not.toHaveBeenCalled();
-    expect(mockPatchLatestRequirementStatusColumns).not.toHaveBeenCalled();
+    expect(mockReconcileReadyDeployment).toHaveBeenCalledTimes(1);
+    expect(mockPatchLatestRequirementStatusColumns).toHaveBeenCalledTimes(1);
+  });
+
+  test('a duplicate still attempts reconciliation after an earlier partial failure', async () => {
+    stubDedupe(true);
+    mockReconcileReadyDeployment.mockRejectedValueOnce(
+      new Error('temporary recovery write failure'),
+    );
+
+    const out = await handleVercelWebhookEvent(buildEvent(), {
+      resolveContext: async () => ctx(),
+    });
+
+    expect(out.status).toBe('deduped');
+    expect(mockReconcileReadyDeployment).toHaveBeenCalledTimes(1);
+    expect(mockPatchLatestRequirementStatusColumns).toHaveBeenCalledTimes(1);
+    expect(mockLogCronInfrastructureEvent).not.toHaveBeenCalled();
   });
 
   test('does not throw when patchLatestRequirementStatusColumns fails on ready', async () => {
@@ -273,5 +311,6 @@ describe('handleVercelWebhookEvent', () => {
       updatedPreview: false,
     });
     expect(mockPatchLatestRequirementStatusColumns).not.toHaveBeenCalled();
+    expect(mockReconcileReadyDeployment).toHaveBeenCalledTimes(1);
   });
 });

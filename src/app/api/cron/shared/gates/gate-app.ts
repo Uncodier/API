@@ -87,6 +87,8 @@ export async function runAppGate(input: FlowGateInput): Promise<FlowGateResult> 
 
   const richSignals: AppRichSignals = gate.signals;
   const signals = flattenAppSignals(richSignals);
+  const remediationScheduled =
+    richSignals.interaction?.active_item_suspended === true;
 
   return {
     ok: gate.ok,
@@ -99,5 +101,7 @@ export async function runAppGate(input: FlowGateInput): Promise<FlowGateResult> 
     infrastructureFailure: gate.infrastructureFailure,
     sandboxUnavailable: gate.sandboxUnavailable,
     sandboxReplacement: gate.sandboxReplacement,
+    remediationScheduled,
+    skipAttemptBump: remediationScheduled,
   };
 }

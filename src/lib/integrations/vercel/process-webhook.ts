@@ -25,6 +25,7 @@ import {
   type VercelWebhookPayloadBody,
 } from './webhook-types';
 import { resolveVercelContext, type ResolvedVercelContext } from './webhook-resolver';
+import { reconcileReadyDeployment } from '@/lib/services/deployment-infrastructure-recovery';
 
 export type VercelWebhookOutcome =
   | { status: 'processed'; event: string; requirementId: string; updatedPreview: boolean }
@@ -202,6 +203,50 @@ export async function handleVercelWebhookEvent(
   }
 
   const previewUrl = buildPreviewUrl(event.payload.deployment?.url);
+  let updatedPreview = false;
+  if (mapped.key === 'VERCEL_WEBHOOK_DEPLOYMENT_READY') {
+    const deployment = event.payload.deployment;
+    const commitSha = deployment?.meta?.githubCommitSha?.trim();
+    if (commitSha && ctx.branch) {
+      try {
+        await reconcileReadyDeployment({
+          requirementId: ctx.requirementId,
+          siteId: ctx.siteId,
+          instanceId: ctx.instanceId,
+          branch: ctx.branch,
+          commitSha,
+          deploymentId: deployment?.id ?? null,
+          previewUrl,
+        });
+      } catch (error: unknown) {
+        // Reconciliation deliberately runs before dedupe. A duplicate delivery
+        // can therefore finish any DB writes left incomplete by this attempt.
+        console.warn(
+          '[VercelWebhook] deployment recovery failed:',
+          error instanceof Error ? error.message : error,
+        );
+      }
+    }
+    if (previewUrl) {
+      try {
+        const res = await patchLatestRequirementStatusColumns({
+          requirementId: ctx.requirementId,
+          siteId: ctx.siteId,
+          instanceId: ctx.instanceId ?? undefined,
+          columns: { preview_url: previewUrl },
+        });
+        updatedPreview = Boolean(res.updated);
+      } catch (e: unknown) {
+        // Never let a status write failure tank the webhook ack — Vercel would
+        // retry forever. Reconciliation still runs again on duplicate events.
+        console.warn(
+          '[VercelWebhook] patchLatestRequirementStatusColumns failed:',
+          e instanceof Error ? e.message : e,
+        );
+      }
+    }
+  }
+
   const duplicate = await isDuplicateEvent({ siteId: ctx.siteId, rawEventId: event.id });
   if (duplicate) {
     return { status: 'deduped', event: event.type, requirementId: ctx.requirementId };
@@ -219,26 +264,6 @@ export async function handleVercelWebhookEvent(
     message: buildLogMessage(event, ctx, previewUrl),
     details: buildLogDetails(event, ctx, previewUrl),
   });
-
-  let updatedPreview = false;
-  if (mapped.key === 'VERCEL_WEBHOOK_DEPLOYMENT_READY' && previewUrl) {
-    try {
-      const res = await patchLatestRequirementStatusColumns({
-        requirementId: ctx.requirementId,
-        siteId: ctx.siteId,
-        instanceId: ctx.instanceId ?? undefined,
-        columns: { preview_url: previewUrl },
-      });
-      updatedPreview = Boolean(res.updated);
-    } catch (e: unknown) {
-      // Never let a status write failure tank the webhook ack — Vercel would
-      // retry forever. We already captured the ready event in instance_logs.
-      console.warn(
-        '[VercelWebhook] patchLatestRequirementStatusColumns failed:',
-        e instanceof Error ? e.message : e,
-      );
-    }
-  }
 
   return {
     status: 'processed',

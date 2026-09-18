@@ -269,11 +269,13 @@ export async function runRuntimeAndVisualProbes(params: {
       out.visual = visual.visual_raw;
       await logCronInfrastructureEvent(audit, {
         event: CronInfraEvent.VISUAL_PROBE,
-        level: visual.ok ? 'info' : 'warn',
+        level: visual.capture_ok ? 'info' : 'warn',
         message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}visual probe: ${visual.screenshots.length} screenshot(s) at ${visual.base_url || 'n/a'}`.slice(0, 400),
         details: {
           stepOrder,
           ok: visual.ok,
+          capture_ok: visual.capture_ok,
+          console_ok: visual.console.ok,
           base_url: visual.base_url,
           plan_reason: visualPlan.reason,
           screenshots: visual.screenshots.map((s) => ({ route: s.route, viewport: s.viewport, url: s.url })),
@@ -294,7 +296,7 @@ export async function runRuntimeAndVisualProbes(params: {
           },
         });
       }
-      if (!visual.visual_raw.ok) {
+      if (!visual.capture_ok || !visual.visual_raw.ok) {
         return {
           ok: false,
           error: `Visual probe infrastructure unavailable: ${visual.error || 'capture batch incomplete'}`,
@@ -305,7 +307,9 @@ export async function runRuntimeAndVisualProbes(params: {
       if (!visual.console.ok) {
         return {
           ok: false,
-          error: `Client runtime errors detected — see console/page_errors/failed_requests`,
+          error:
+            visual.error ||
+            'Client runtime errors detected. Inspect console entries, page errors, and failed requests.',
           signals: out,
         };
       }
@@ -325,18 +329,23 @@ export async function runRuntimeAndVisualProbes(params: {
         out.visual = mergeCriticIntoVisualSignal(visual.visual_raw, critic);
         await logCronInfrastructureEvent(audit, {
           event: CronInfraEvent.VISUAL_CRITIC_VERDICT,
-          level: critic.skipped ? 'warn' : critic.pass ? 'info' : 'warn',
-          message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}visual critic: ${critic.skipped ? `skipped (${critic.skipped})` : critic.pass ? 'pass' : 'fail'} — ${critic.summary.slice(0, 200)}`.slice(0, 400),
+          level: critic.status === 'unavailable' ? 'warn' : critic.pass ? 'info' : 'warn',
+          message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}visual critic: ${critic.status === 'unavailable' ? `unavailable (${critic.skipped || 'unknown'})` : critic.pass ? 'pass' : 'fail'} — ${critic.summary.slice(0, 200)}`.slice(0, 400),
           details: {
             stepOrder,
+            status: critic.status,
             pass: critic.pass,
             skipped: critic.skipped,
             summary: critic.summary,
             defects: critic.defects.slice(0, 20),
             model_used: critic.model_used,
+            completion_attempts: critic.completion_attempts,
+            finish_reason: critic.finish_reason,
+            response_format: critic.response_format,
+            response_excerpt: critic.response_excerpt,
           },
         });
-        if (critic.skipped) {
+        if (critic.status === 'unavailable') {
           return {
             ok: false,
             error: `Visual critic infrastructure unavailable: ${critic.skipped}`,

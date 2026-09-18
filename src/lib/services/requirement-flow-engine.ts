@@ -14,6 +14,7 @@ import {
   type RequirementKind,
 } from './requirement-flows';
 import { listBacklog, isBacklogComplete, outstandingGatingItems, isItemTerminal, type BacklogItem } from './requirement-backlog';
+import { mutateBacklogAtomically } from './requirement-backlog-mutation';
 
 // `advancePhaseIfReadyInMemory` is re-exported from './requirement-flows' so
 // the backlog module can import it without creating a cycle with this file.
@@ -81,19 +82,19 @@ export async function shouldAdvancePhase(requirementId: string): Promise<{ advan
 }
 
 export async function advancePhaseIfReady(requirementId: string): Promise<{ advanced: boolean; to: FlowPhase | null }> {
-  const decision = await shouldAdvancePhase(requirementId);
-  if (!decision.advance || !decision.to) {
-    return { advanced: false, to: decision.to };
-  }
-  const { data } = await supabaseAdmin
-    .from('requirements')
-    .select('backlog')
-    .eq('id', requirementId)
-    .maybeSingle();
-  const backlog = ((data?.backlog as Record<string, any>) || {}) as Record<string, any>;
-  backlog.current_phase_id = decision.to.id;
-  await supabaseAdmin.from('requirements').update({ backlog }).eq('id', requirementId);
-  return { advanced: true, to: decision.to };
+  return mutateBacklogAtomically(requirementId, ({ backlog, flow }) => {
+    const advance = advancePhaseIfReadyInMemory(backlog, flow);
+    if (!advance) {
+      return {
+        result: { advanced: false, to: null },
+        write: false,
+      };
+    }
+    return {
+      result: { advanced: true, to: advance.to },
+      backlog: advance.nextBacklog,
+    };
+  });
 }
 
 /**

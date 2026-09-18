@@ -1,13 +1,16 @@
-import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/route';
+import { patchPlanStepAtomically } from '@/lib/services/instance-plan-infrastructure-state';
 import {
   buildSingleTurnStartMetadata,
   markVisualFeedbackDelivered,
   resolveSingleTurnBacklogItemId,
 } from '../single-turn-step-state';
 
-jest.mock('@/app/api/agents/tools/instance_plan/update/route', () => ({
-  updateInstancePlanCore: jest.fn(),
+jest.mock('@/lib/services/instance-plan-infrastructure-state', () => ({
+  patchPlanStepAtomically: jest.fn(),
 }));
+
+const mockPatchPlanStep =
+  patchPlanStepAtomically as jest.MockedFunction<typeof patchPlanStepAtomically>;
 
 describe('single-turn step state', () => {
   beforeEach(() => {
@@ -65,9 +68,16 @@ describe('single-turn step state', () => {
       backlogItemId: 'backlog-1',
       imageFeedbackId: 'image-1',
       delivered: false,
+      expectedGeneration: 3,
+      eventId: 'cycle-1:visual-feedback',
     });
-    expect(updateInstancePlanCore).not.toHaveBeenCalled();
+    expect(mockPatchPlanStep).not.toHaveBeenCalled();
 
+    mockPatchPlanStep.mockResolvedValue({
+      state: 'applied',
+      persisted: true,
+      generation: 4,
+    });
     await markVisualFeedbackDelivered({
       planId: 'plan-1',
       instanceId: 'instance-1',
@@ -77,17 +87,19 @@ describe('single-turn step state', () => {
       backlogItemId: 'backlog-1',
       imageFeedbackId: 'image-1',
       delivered: true,
+      expectedGeneration: 3,
+      eventId: 'cycle-1:visual-feedback',
     });
-    expect(updateInstancePlanCore).toHaveBeenCalledWith(
+    expect(mockPatchPlanStep).toHaveBeenCalledWith(
       expect.objectContaining({
-        steps: [
-          expect.objectContaining({
-            metadata: expect.objectContaining({
-              backlog_item_id: 'backlog-1',
-              visual_feedback_image_id: 'image-1',
-            }),
+        expectedGeneration: 3,
+        eventId: 'cycle-1:visual-feedback',
+        patch: expect.objectContaining({
+          metadata: expect.objectContaining({
+            backlog_item_id: 'backlog-1',
+            visual_feedback_image_id: 'image-1',
           }),
-        ],
+        }),
       }),
     );
   });

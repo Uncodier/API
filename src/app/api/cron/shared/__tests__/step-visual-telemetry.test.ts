@@ -1,4 +1,5 @@
 import {
+  dedupeFailedRequests,
   filterHarnessOwnedTelemetry,
   HARNESS_TRACKING_SCRIPT_URL,
 } from '../step-visual-telemetry';
@@ -92,5 +93,53 @@ describe('visual telemetry filtering', () => {
 
     expect(result.entries).toHaveLength(1);
     expect(result.failedRequests).toHaveLength(1);
+  });
+
+  it('merges Next.js prefetch response and abort events for one request', () => {
+    const requests = [
+      {
+        url: 'http://127.0.0.1:3000/privacy?_rsc=first',
+        status: 404,
+        resource_type: 'fetch',
+        route: '/contact',
+        viewport: 'desktop',
+      },
+      {
+        url: 'http://127.0.0.1:3000/privacy?_rsc=second',
+        failure: 'net::ERR_ABORTED',
+        resource_type: 'fetch',
+        route: '/contact',
+        viewport: 'desktop',
+      },
+    ];
+    const result = dedupeFailedRequests(requests);
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        status: 404,
+        failure: 'net::ERR_ABORTED',
+      }),
+    ]);
+    expect(dedupeFailedRequests([...requests].reverse())).toEqual(result);
+  });
+
+  it.each([
+    ['404 then 503', [404, 503]],
+    ['503 then 404', [503, 404]],
+  ])('keeps the most severe status for %s', (_label, statuses) => {
+    const result = dedupeFailedRequests(statuses.map((status, index) => ({
+      url: `http://127.0.0.1:3000/privacy?_rsc=${index}`,
+      status,
+      resource_type: 'fetch',
+      route: '/contact',
+      viewport: 'desktop',
+    })));
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        url: 'http://127.0.0.1:3000/privacy',
+        status: 503,
+      }),
+    ]);
   });
 });

@@ -1,5 +1,9 @@
 import type { Sandbox } from '@vercel/sandbox';
-import { getBacklogItem, setItemStatus } from '@/lib/services/requirement-backlog';
+import {
+  getBacklogItem,
+  hasApprovedJudgeEvidence,
+  setItemStatus,
+} from '@/lib/services/requirement-backlog';
 import { runArchetypePostGate, type PostGateGateSignals } from './step-archetype-postgate';
 import { logCronInfrastructureEvent, CronInfraEvent, type CronAuditContext } from '@/lib/services/cron-audit-log';
 
@@ -51,6 +55,7 @@ export async function syncBacklogAfterPlanCompleted(params: SyncBacklogAfterPlan
   }
 
   const results = [];
+  const errors: Error[] = [];
 
   // 2. Evaluate each item
   for (const itemId of Array.from(itemIds)) {
@@ -61,6 +66,16 @@ export async function syncBacklogAfterPlanCompleted(params: SyncBacklogAfterPlan
       // 3. Skip terminal statuses
       if (item.status === 'done' || item.status === 'rejected' || item.status === 'needs_review') {
         results.push({ itemId, action: 'skipped', reason: `already ${item.status}` });
+        continue;
+      }
+
+      if (hasApprovedJudgeEvidence(item)) {
+        await setItemStatus({
+          requirementId,
+          itemId,
+          status: 'done',
+        });
+        results.push({ itemId, action: 'completed_from_evidence' });
         continue;
       }
 
@@ -78,12 +93,22 @@ export async function syncBacklogAfterPlanCompleted(params: SyncBacklogAfterPlan
           audit: audit || {} as any,
         });
 
-        results.push({ 
-          itemId, 
-          action: 'evaluated', 
-          verdict: evalResult.judge_verdict || 'unknown',
-          healing: evalResult.healing_applied
-        });
+        if (!evalResult.ran) {
+          throw new Error(
+            evalResult.error || `Post-gate evaluation unavailable for ${itemId}`,
+          );
+        }
+        if (evalResult.judge_verdict === 'approved') {
+          await setItemStatus({ requirementId, itemId, status: 'done' });
+          results.push({ itemId, action: 'completed', verdict: 'approved' });
+        } else {
+          results.push({
+            itemId,
+            action: 'evaluated',
+            verdict: evalResult.judge_verdict,
+            healing: evalResult.healing_applied,
+          });
+        }
       } else {
         // Edge case: no live sandbox or no valid step id. Just bump to judge_review.
         console.log(`[PlanBacklogSync] No sandbox available for item ${itemId}. Bumping to judge_review.`);
@@ -98,6 +123,7 @@ export async function syncBacklogAfterPlanCompleted(params: SyncBacklogAfterPlan
     } catch (e: any) {
       console.warn(`[PlanBacklogSync] Failed to sync item ${itemId}:`, e);
       results.push({ itemId, action: 'error', error: e.message });
+      errors.push(e instanceof Error ? e : new Error(String(e)));
     }
   }
 
@@ -108,5 +134,10 @@ export async function syncBacklogAfterPlanCompleted(params: SyncBacklogAfterPlan
       message: `Plan ${plan.id} completed. Backlog sync: evaluated ${results.filter(r => r.action === 'evaluated').length} items.`,
       details: { results }
     });
+  }
+  if (errors.length > 0) {
+    throw new Error(
+      `Plan/backlog reconciliation failed: ${errors.map((error) => error.message).join('; ')}`,
+    );
   }
 }

@@ -1,5 +1,7 @@
 import { Sandbox } from '@vercel/sandbox';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { mutateBacklogAtomically } from './requirement-backlog-mutation';
+import { patchRequirementMetadataKeys } from './requirement-metadata-patch';
 
 /**
  * Ground-truth file helpers.
@@ -139,15 +141,12 @@ export async function writeEvidence(params: {
 
   // Persist in DB backlog item's evidence field (canonical).
   try {
-    const { data: req } = await loadRequirementMetadata(params.requirementId);
-    const backlog = (req?.backlog ?? { schema_version: 1, items: [] }) as any;
-    const items: any[] = Array.isArray(backlog.items) ? backlog.items : [];
-    const idx = items.findIndex((it) => it?.id === params.itemId);
-    if (idx >= 0) {
-      items[idx] = { ...items[idx], evidence: full };
-    }
-    backlog.items = items;
-    await supabaseAdmin.from('requirements').update({ backlog }).eq('id', params.requirementId);
+    await mutateBacklogAtomically(params.requirementId, ({ backlog }) => {
+      const idx = backlog.items.findIndex((item) => item.id === params.itemId);
+      if (idx < 0) return { result: undefined, write: false };
+      backlog.items[idx] = { ...backlog.items[idx], evidence: full };
+      return { result: undefined };
+    });
   } catch (e: unknown) {
     console.warn('[GroundTruth.writeEvidence] DB persist failed:', e instanceof Error ? e.message : e);
   }
@@ -308,8 +307,10 @@ export async function appendDecision(params: {
     const metadata = (req?.metadata ?? {}) as Record<string, any>;
     const log: DecisionEntry[] = Array.isArray(metadata.decisions_log) ? metadata.decisions_log : [];
     log.push(decision);
-    metadata.decisions_log = log.slice(-200);
-    await supabaseAdmin.from('requirements').update({ metadata }).eq('id', params.requirementId);
+    await patchRequirementMetadataKeys({
+      requirementId: params.requirementId,
+      patch: { decisions_log: log.slice(-200) },
+    });
   } catch (e: unknown) {
     console.warn('[GroundTruth.appendDecision] DB shadow failed:', e instanceof Error ? e.message : e);
   }

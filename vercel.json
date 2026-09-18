@@ -27,10 +27,6 @@
       "schedule": "* * * * *"
     },
     {
-      "path": "/api/cron/requirements-automations",
-      "schedule": "* * * * *"
-    },
-    {
       "path": "/api/cron/system-status",
       "schedule": "0 * * * *"
     },

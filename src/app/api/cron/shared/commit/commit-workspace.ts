@@ -44,7 +44,11 @@ export async function commitWorkspaceToOrigin(
   reqId: string,
   message?: string,
   audit?: CronAuditContext,
-  options?: { gitRepoKind?: GitRepoKind; deferRequirementStatusPersist?: boolean },
+  options?: {
+    gitRepoKind?: GitRepoKind;
+    deferRequirementStatusPersist?: boolean;
+    validateDeployment?: boolean;
+  },
 ): Promise<{
   branch: string;
   pushed: boolean;
@@ -65,6 +69,8 @@ export async function commitWorkspaceToOrigin(
   let activeSandbox: Sandbox = sandbox;
 
   const cwd = SandboxService.WORK_DIR;
+  const gitKind = options?.gitRepoKind ?? 'applications';
+  const validateDeployment = options?.validateDeployment ?? true;
   await assertPlatformGitLayout(sandbox);
   let headShort = '?';
 
@@ -80,10 +86,12 @@ export async function commitWorkspaceToOrigin(
       ? (await headRes.stdout()).trim()
       : '?';
 
-    // Wrong LLM layout: duplicate or misplaced `app/src/app` — canonical routes are ONLY under repo `src/app/`.
-    const fixLayout = await sandbox.runCommand('sh', [
-      '-c',
-      `cd "${cwd}" || exit 0
+    if (validateDeployment) {
+      // Wrong LLM layout: duplicate or misplaced `app/src/app` — canonical
+      // routes are only under the repository's `src/app/`.
+      const fixLayout = await sandbox.runCommand('sh', [
+        '-c',
+        `cd "${cwd}" || exit 0
 if [ -d src/app ] && [ -d app/src/app ] && [ ! -f app/package.json ]; then
   rm -rf app
   echo FIX_RM_DUP
@@ -98,40 +106,42 @@ if [ -d src/app ] && [ -d app ] && [ ! -f app/package.json ] && [ ! -d app/src/a
   rm -rf app
   echo FIX_RM_ORPHAN
 fi`,
-    ]);
-    const fixMsg = (await fixLayout.stdout()).trim();
-    if (fixMsg.includes('FIX_RM_DUP')) {
-      console.log('[PreCommit] Removed mistaken root app/ (duplicate app/src/app vs src/app)');
-    }
-    if (fixMsg.includes('FIX_MV_APP')) {
-      console.log('[PreCommit] Moved app/src/app → src/app');
-    }
-    if (fixMsg.includes('FIX_RM_ORPHAN')) {
-      console.log('[PreCommit] Removed orphan root app/ (routes live in src/app/ only)');
-    }
+      ]);
+      const fixMsg = (await fixLayout.stdout()).trim();
+      if (fixMsg.includes('FIX_RM_DUP')) {
+        console.log('[PreCommit] Removed mistaken root app/ (duplicate app/src/app vs src/app)');
+      }
+      if (fixMsg.includes('FIX_MV_APP')) {
+        console.log('[PreCommit] Moved app/src/app → src/app');
+      }
+      if (fixMsg.includes('FIX_RM_ORPHAN')) {
+        console.log('[PreCommit] Removed orphan root app/ (routes live in src/app/ only)');
+      }
 
-    let nestedRemoved = 0;
-    for (const dir of ['app', 'my-app', 'frontend', 'project', 'web']) {
-      const check = await sandbox.runCommand('sh', ['-c', `test -f ${cwd}/${dir}/package.json && echo YES`]);
-      if ((await check.stdout()).trim() === 'YES') {
-        nestedRemoved++;
-        console.log(`[PreCommit] Removing nested project directory: ${dir}/`);
-        await sandbox.runCommand('rm', ['-rf', `${cwd}/${dir}`]);
+      let nestedRemoved = 0;
+      for (const dir of ['app', 'my-app', 'frontend', 'project', 'web']) {
+        const check = await sandbox.runCommand('sh', ['-c', `test -f ${cwd}/${dir}/package.json && echo YES`]);
+        if ((await check.stdout()).trim() === 'YES') {
+          nestedRemoved++;
+          console.log(`[PreCommit] Removing nested project directory: ${dir}/`);
+          await sandbox.runCommand('rm', ['-rf', `${cwd}/${dir}`]);
+        }
+      }
+      if (nestedRemoved > 0) {
+        console.log(
+          `[PreCommit] summary nested_package_roots_removed=${nestedRemoved} (work under mistaken app/ may be deleted before commit — prefer src/app/)`,
+        );
       }
     }
-    if (nestedRemoved > 0) {
-      console.log(
-        `[PreCommit] summary nested_package_roots_removed=${nestedRemoved} (work under mistaken app/ may be deleted before commit — prefer src/app/)`,
-      );
+
+    if (validateDeployment) {
+      const vercelLayoutErr = await validateNpmRepoForVercelDeploy(sandbox, gitKind);
+      if (vercelLayoutErr) {
+        throw new Error(`[vercel] ${vercelLayoutErr}`);
+      }
     }
 
-    const gitKind = options?.gitRepoKind ?? 'applications';
-    const vercelLayoutErr = await validateNpmRepoForVercelDeploy(sandbox, gitKind);
-    if (vercelLayoutErr) {
-      throw new Error(`[vercel] ${vercelLayoutErr}`);
-    }
-
-    if (gitKind === 'applications') {
+    if (validateDeployment && gitKind === 'applications') {
       try {
         await ensurePreviewFrameAncestors(sandbox, cwd);
       } catch (e) {
@@ -161,7 +171,7 @@ fi`,
       );
     }
 
-    if (gitKind === 'applications') {
+    if (validateDeployment && gitKind === 'applications') {
       const validation = await validateApplicationBeforePush({
         sandbox: activeSandbox,
         cwd,
@@ -182,7 +192,7 @@ fi`,
         message: msg,
         requirementId: reqId,
         title,
-        validateBeforePush: gitKind === 'applications'
+        validateBeforePush: validateDeployment && gitKind === 'applications'
           ? async () => {
             const validation = await ensureApplicationBuildCurrent({
               sandbox: activeSandbox,
@@ -294,6 +304,7 @@ fi`,
           siteId: audit.siteId,
           instanceId: audit.instanceId,
           gitRepoKind,
+          use_resolved_preview_only: !validateDeployment,
           persist: persistStatus,
           snapshot_id: snapshotId,
           source_code,

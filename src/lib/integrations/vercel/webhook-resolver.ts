@@ -76,8 +76,7 @@ export function isProductionBranch(branch: string | null | undefined): boolean {
 
 /**
  * Resolves `site_id` + `instance_id` by reading the latest `requirement_status`
- * row for the requirement. Mirrors the pattern used in
- * `src/app/api/cron/requirements-automations/route.ts`.
+ * row for the requirement.
  */
 async function loadLatestRequirementContext(requirementId: string): Promise<{
   siteId: string | null;

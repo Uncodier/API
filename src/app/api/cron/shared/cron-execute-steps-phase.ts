@@ -4,6 +4,9 @@ export type PlanExecutionHaltReason =
   | 'paused'
   | 'cancelled'
   | 'terminal'
+  | 'infrastructure_wait'
+  | 'infrastructure_circuit_open'
+  | 'step_changed'
   | 'missing';
 
 export function buildPlanAdaptationUserMessage(
@@ -35,7 +38,13 @@ export function buildPlanAdaptationUserMessage(
 
 export type PlanGate =
   | { runnable: true; dbStatus: string }
-  | { runnable: false; reason: PlanExecutionHaltReason };
+  | {
+      runnable: false;
+      reason: PlanExecutionHaltReason;
+      infrastructureKind?: string;
+      infrastructureProvenance?: string;
+      infrastructureGeneration?: number;
+    };
 
 import { 
   getPlanExecutionGateFromStatus, 
@@ -43,7 +52,12 @@ import {
   updatePlanStepStatusStep, 
   reconnectSandboxStep, 
   logCronInfrastructureEventStep,
-  recordStepInfraTransientStep
+  recordStepInfraTransientStep,
+  clearStepInfrastructureStateStep,
+  blockRequirementForInfrastructureCircuitStep,
+  blockRequirementForCronInfrastructureCyclesStep,
+  blockRequirementForProductNoProgressStep,
+  selectPlanStepsForExecution,
 } from './cron-execute-steps-phase-helpers';
 
 export {
@@ -52,7 +66,12 @@ export {
   updatePlanStepStatusStep, 
   reconnectSandboxStep, 
   logCronInfrastructureEventStep,
-  recordStepInfraTransientStep
+  recordStepInfraTransientStep,
+  clearStepInfrastructureStateStep,
+  blockRequirementForInfrastructureCircuitStep,
+  blockRequirementForCronInfrastructureCyclesStep,
+  blockRequirementForProductNoProgressStep,
+  selectPlanStepsForExecution,
 };
 
 export type ExecuteStepsPhaseResult = any;

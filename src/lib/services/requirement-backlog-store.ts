@@ -18,8 +18,10 @@ export interface RequirementRow {
   id: string;
   site_id?: string | null;
   type: string | null;
+  status?: string | null;
   metadata: Record<string, any> | null;
   backlog: Record<string, any> | null;
+  backlog_revision: number;
 }
 
 export async function loadRequirement(requirementId: string): Promise<RequirementRow | null> {
@@ -29,7 +31,7 @@ export async function loadRequirement(requirementId: string): Promise<Requiremen
   // `Requirement <id> not found`, masking the real problem at the caller.
   const { data, error } = await supabaseAdmin
     .from('requirements')
-    .select('id, site_id, type, metadata, backlog')
+    .select('id, site_id, type, status, metadata, backlog, backlog_revision')
     .eq('id', requirementId)
     .maybeSingle();
   if (error) {
@@ -52,9 +54,34 @@ export function toBacklog(backlogData: Record<string, any> | null, defaultPhase:
   };
 }
 
-export async function writeBacklog(requirementId: string, backlog: RequirementBacklog): Promise<void> {
-  const { error } = await supabaseAdmin.from('requirements').update({ backlog }).eq('id', requirementId);
+export class BacklogWriteConflictError extends Error {
+  constructor(requirementId: string) {
+    super(`Backlog changed concurrently for requirement ${requirementId}`);
+    this.name = 'BacklogWriteConflictError';
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+export async function writeBacklogCas(
+  requirementId: string,
+  backlog: RequirementBacklog,
+  expectedRevision: number,
+): Promise<number> {
+  const nextRevision = expectedRevision + 1;
+  const { data, error } = await supabaseAdmin
+    .from('requirements')
+    .update({
+      backlog,
+      backlog_revision: nextRevision,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', requirementId)
+    .eq('backlog_revision', expectedRevision)
+    .select('backlog_revision')
+    .maybeSingle();
   if (error) throw new Error(`Failed to persist backlog: ${error.message}`);
+  if (!data) throw new BacklogWriteConflictError(requirementId);
+  return data.backlog_revision as number;
 }
 
 /**

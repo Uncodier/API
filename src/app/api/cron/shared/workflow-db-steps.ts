@@ -15,9 +15,18 @@
 
 import { listBacklog } from '@/lib/services/requirement-backlog';
 import type { RequirementBacklog } from '@/lib/services/requirement-backlog-types';
-import { createRequirementStatusCore } from '@/lib/tools/requirement-status-core';
+import { resumeRequirementExecutionOnUserAction } from '@/lib/services/requirement-execution-recovery';
 
 import type { FullRequirementContext } from '@/lib/services/requirement-context-service';
+import {
+  blockRequirementWithProvenance,
+  incrementRequirementMetadataCounter,
+  patchRequirementMetadataKeys,
+  recordRequirementCronCycleOutcome,
+  type CronCycleAccountingResult,
+  type CronCycleOutcome,
+} from '@/lib/services/requirement-metadata-patch';
+import { InfrastructureStateDatabaseError } from '@/lib/services/instance-plan-infrastructure-state';
 
 export async function getRequirementFullContextStep(
   requirementId: string,
@@ -91,6 +100,9 @@ export interface RecordRequirementBlockedInput {
   instance_id: string;
   requirement_id: string;
   message: string;
+  event_id: string;
+  expected_execution_generation: number;
+  provenance?: string;
 }
 
 export interface RecordRequirementBlockedResult {
@@ -100,22 +112,25 @@ export interface RecordRequirementBlockedResult {
 
 /**
  * Records a `status='blocked'` entry on the requirement. Used by the
- * workflow safety nets (re-plan loop guard, orchestrator-no-plan fallback)
- * so those code paths do not call `createRequirementStatusCore` from the
- * workflow VM.
+ * workflow safety nets through one atomic requirement/status transition.
  */
 export async function recordRequirementBlockedStep(
   input: RecordRequirementBlockedInput,
 ): Promise<RecordRequirementBlockedResult> {
   'use step';
   try {
-    await createRequirementStatusCore({
-      site_id: input.site_id,
-      instance_id: input.instance_id,
-      requirement_id: input.requirement_id,
-      stage: 'blocked',
+    const result = await blockRequirementWithProvenance({
+      siteId: input.site_id,
+      instanceId: input.instance_id,
+      requirementId: input.requirement_id,
       message: input.message,
+      provenance: input.provenance || 'product_workflow_circuit',
+      eventId: input.event_id,
+      expectedExecutionGeneration: input.expected_execution_generation,
     });
+    if (!result.blocked) {
+      return { ok: false, error: `Block transition was ${result.state}` };
+    }
     return { ok: true };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -128,123 +143,140 @@ export async function recordRequirementBlockedStep(
 
 export async function checkInstanceAndPlanStatusStep(instanceId: string): Promise<{ isPaused: boolean; hasActivePlan: boolean }> {
   'use step';
-  try {
-    const { supabaseAdmin } = await import('@/lib/database/supabase-client');
-    
-    const { data: instanceData } = await supabaseAdmin
-      .from('remote_instances')
-      .select('status')
-      .eq('id', instanceId)
-      .single();
-
-    const { data: activePlan } = await supabaseAdmin
-      .from('instance_plans')
-      .select('status')
-      .eq('instance_id', instanceId)
-      .in('status', ['pending', 'in_progress', 'paused'])
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .single();
-
-    return {
-      isPaused: instanceData?.status === 'paused' || activePlan?.status === 'paused',
-      hasActivePlan: !!activePlan && activePlan.status !== 'paused'
-    };
-  } catch (e: unknown) {
-    console.warn(`[WorkflowDbStep] Failed to check paused status for instance ${instanceId}:`, e);
-    return { isPaused: false, hasActivePlan: false };
+  const { supabaseAdmin } = await import('@/lib/database/supabase-client');
+  const instanceResult = await supabaseAdmin
+    .from('remote_instances')
+    .select('status')
+    .eq('id', instanceId)
+    .maybeSingle();
+  if (instanceResult.error) {
+    throw new InfrastructureStateDatabaseError(
+      `Failed to load instance status ${instanceId}`,
+      instanceResult.error,
+    );
   }
+
+  const planResult = await supabaseAdmin
+    .from('instance_plans')
+    .select('status')
+    .eq('instance_id', instanceId)
+    .in('status', ['pending', 'in_progress', 'active', 'paused'])
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (planResult.error) {
+    throw new InfrastructureStateDatabaseError(
+      `Failed to load active plan status for ${instanceId}`,
+      planResult.error,
+    );
+  }
+
+  return {
+    isPaused:
+      instanceResult.data?.status === 'paused' ||
+      planResult.data?.status === 'paused',
+    hasActivePlan:
+      !!planResult.data && planResult.data.status !== 'paused',
+  };
 }
 
-export async function unblockRequirementStep(requirementId: string, forceStatusToInProgress = false): Promise<void> {
+export async function isRequirementExecutionCurrentStep(
+  requirementId: string,
+  expectedGeneration: number,
+): Promise<boolean> {
   'use step';
-  try {
-    const { supabaseAdmin } = await import('@/lib/database/supabase-client');
-    const { data } = await supabaseAdmin.from('requirements').select('metadata, status').eq('id', requirementId).single();
-    
-    const newMetadata = data?.metadata ? { ...data.metadata, cron_attempts: 0 } : { cron_attempts: 0 };
-    
-    const updatePayload: any = {
-      metadata: newMetadata,
-      updated_at: new Date().toISOString()
-    };
-
-    if (data?.status === 'cancelled' || data?.status === 'done' || data?.status === 'on-review') {
-      // Never unblock a requirement that is already cancelled or done
-      console.log(`[WorkflowDbStep] Skipping unblock for req ${requirementId} because it is ${data.status}`);
-      return;
-    }
-
-    if (forceStatusToInProgress || data?.status === 'blocked') {
-      updatePayload.status = 'in-progress';
-    }
-    
-    await supabaseAdmin.from('requirements').update(updatePayload).eq('id', requirementId);
-    
-    // Also resume the instance and plan if they were paused
-    const { data: reqData } = await supabaseAdmin.from('requirements').select('metadata').eq('id', requirementId).single();
-    const instanceId = reqData?.metadata?.runner_instance_id;
-    if (instanceId) {
-      await supabaseAdmin.from('remote_instances').update({ status: 'running' }).eq('id', instanceId);
-      await supabaseAdmin.from('instance_plans').update({ status: 'in_progress' }).eq('instance_id', instanceId).in('status', ['paused']);
-    }
-    
-    console.log(`[WorkflowDbStep] Successfully unblocked req ${requirementId} and reset cron_attempts`);
-  } catch (e: unknown) {
-    console.warn(`[WorkflowDbStep] Failed to unblock req ${requirementId}:`, e);
+  const { supabaseAdmin } = await import('@/lib/database/supabase-client');
+  const { data, error } = await supabaseAdmin
+    .from('requirements')
+    .select('metadata')
+    .eq('id', requirementId)
+    .maybeSingle();
+  if (error) {
+    throw new InfrastructureStateDatabaseError(
+      `Failed to validate execution generation for ${requirementId}`,
+      error,
+    );
   }
+  if (!data) return false;
+  const value = data.metadata?.requirement_execution_generation;
+  const currentGeneration =
+    typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+      ? value
+      : typeof value === 'string' && /^[0-9]{1,9}$/.test(value)
+        ? Number.parseInt(value, 10)
+        : 0;
+  return currentGeneration === expectedGeneration;
 }
 
-/**
- * Resets ONLY the `cron_attempts` circuit-breaker counter to 0.
- *
- * Unlike `unblockRequirementStep`, this does NOT touch the requirement status
- * nor resume paused instances/plans — it is safe to call mid-cycle whenever the
- * builder makes real forward progress (a plan step completed). Without this the
- * counter only ever reset on FULL plan completion, so a multi-step requirement
- * that advances one step per cycle would still trip the breaker at 10 ticks and
- * die silently. Idempotent: no-op when the counter is already 0/undefined.
- */
-export async function resetCronAttemptsStep(requirementId: string): Promise<void> {
+export async function unblockRequirementStep(
+  requirementId: string,
+  actionId: string,
+  forceStatusToInProgress = false,
+): Promise<void> {
   'use step';
-  try {
-    const { supabaseAdmin } = await import('@/lib/database/supabase-client');
-    const { data } = await supabaseAdmin.from('requirements').select('metadata').eq('id', requirementId).single();
-
-    const attempts = data?.metadata?.cron_attempts;
-    if (attempts === undefined || attempts === 0) {
-      return;
-    }
-
-    const newMetadata = { ...(data?.metadata || {}), cron_attempts: 0 };
-    await supabaseAdmin.from('requirements').update({
-      metadata: newMetadata,
-      updated_at: new Date().toISOString(),
-    }).eq('id', requirementId);
-
-    console.log(`[WorkflowDbStep] Reset cron_attempts for req ${requirementId} after real progress`);
-  } catch (e: unknown) {
-    console.warn(`[WorkflowDbStep] Failed to reset cron_attempts for req ${requirementId}:`, e);
+  const { supabaseAdmin } = await import('@/lib/database/supabase-client');
+  const { data, error } = await supabaseAdmin
+    .from('requirements')
+    .select('status, metadata')
+    .eq('id', requirementId)
+    .maybeSingle();
+  if (error) {
+    throw new InfrastructureStateDatabaseError(
+      `Failed to load requirement ${requirementId} before recovery`,
+      error,
+    );
   }
+  if (!data) return;
+  if (['cancelled', 'done', 'on-review'].includes(data.status)) {
+    console.log(
+      `[WorkflowDbStep] Skipping unblock for req ${requirementId} because it is ${data.status}`,
+    );
+    return;
+  }
+  if (!forceStatusToInProgress && data.status !== 'blocked') return;
+  const instanceId =
+    typeof data.metadata?.runner_instance_id === 'string'
+      ? data.metadata.runner_instance_id
+      : null;
+  await resumeRequirementExecutionOnUserAction(
+    requirementId,
+    instanceId,
+    true,
+    actionId,
+  );
+  console.log(
+    `[WorkflowDbStep] Atomically resumed requirement ${requirementId}`,
+  );
+}
+
+export async function recordCronCycleOutcomeStep(params: {
+  requirementId: string;
+  cycleId: string;
+  cycleStartedAt: string;
+  outcome: CronCycleOutcome;
+  expectedExecutionGeneration: number;
+  runnerInstanceId?: string;
+}): Promise<CronCycleAccountingResult> {
+  'use step';
+  return recordRequirementCronCycleOutcome({
+    requirementId: params.requirementId,
+    cycleId: params.cycleId,
+    cycleStartedAt: params.cycleStartedAt,
+    outcome: params.outcome,
+    expectedExecutionGeneration: params.expectedExecutionGeneration,
+    runnerInstanceId: params.runnerInstanceId,
+  });
 }
 
 export async function incrementQaSuccessfulRunsStep(requirementId: string): Promise<void> {
   'use step';
   try {
-    const { supabaseAdmin } = await import('@/lib/database/supabase-client');
-    const { data } = await supabaseAdmin.from('requirements').select('metadata').eq('id', requirementId).single();
-    
-    const currentRuns = data?.metadata?.qa_successful_runs || 0;
-    const newMetadata = data?.metadata 
-      ? { ...data.metadata, qa_successful_runs: currentRuns + 1 } 
-      : { qa_successful_runs: 1 };
-    
-    await supabaseAdmin.from('requirements').update({
-      metadata: newMetadata,
-      updated_at: new Date().toISOString()
-    }).eq('id', requirementId);
-    
-    console.log(`[WorkflowDbStep] Incremented qa_successful_runs for req ${requirementId} to ${currentRuns + 1}`);
+    const next = await incrementRequirementMetadataCounter({
+      requirementId,
+      key: 'qa_successful_runs',
+    });
+    console.log(`[WorkflowDbStep] Incremented qa_successful_runs for req ${requirementId} to ${next}`);
   } catch (e: unknown) {
     console.warn(`[WorkflowDbStep] Failed to increment qa_successful_runs for req ${requirementId}:`, e);
   }
@@ -258,51 +290,6 @@ export async function updateInstanceStatusStep(instanceId: string, status: 'pend
     console.log(`[WorkflowDbStep] Updated instance ${instanceId} to status: ${status}`);
   } catch (e: unknown) {
     console.warn(`[WorkflowDbStep] Failed to update instance ${instanceId} status:`, e);
-  }
-}
-
-export async function incrementNoProgressCyclesStep(requirementId: string): Promise<number> {
-  'use step';
-  try {
-    const { supabaseAdmin } = await import('@/lib/database/supabase-client');
-    const { data } = await supabaseAdmin.from('requirements').select('metadata').eq('id', requirementId).single();
-    
-    const current = data?.metadata?.no_progress_cycles || 0;
-    const next = current + 1;
-    const newMetadata = data?.metadata 
-      ? { ...data.metadata, no_progress_cycles: next } 
-      : { no_progress_cycles: next };
-    
-    await supabaseAdmin.from('requirements').update({
-      metadata: newMetadata,
-      updated_at: new Date().toISOString()
-    }).eq('id', requirementId);
-    
-    console.log(`[WorkflowDbStep] Incremented no_progress_cycles for req ${requirementId} to ${next}`);
-    return next;
-  } catch (e: unknown) {
-    console.warn(`[WorkflowDbStep] Failed to increment no_progress_cycles for req ${requirementId}:`, e);
-    return 0;
-  }
-}
-
-export async function resetNoProgressCyclesStep(requirementId: string): Promise<void> {
-  'use step';
-  try {
-    const { supabaseAdmin } = await import('@/lib/database/supabase-client');
-    const { data } = await supabaseAdmin.from('requirements').select('metadata').eq('id', requirementId).single();
-    
-    if (data?.metadata && data.metadata.no_progress_cycles) {
-      const newMetadata = { ...data.metadata };
-      delete newMetadata.no_progress_cycles;
-      await supabaseAdmin.from('requirements').update({
-        metadata: newMetadata,
-        updated_at: new Date().toISOString()
-      }).eq('id', requirementId);
-      console.log(`[WorkflowDbStep] Reset no_progress_cycles for req ${requirementId}`);
-    }
-  } catch (e: unknown) {
-    console.warn(`[WorkflowDbStep] Failed to reset no_progress_cycles for req ${requirementId}:`, e);
   }
 }
 

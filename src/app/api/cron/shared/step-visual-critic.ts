@@ -9,12 +9,17 @@
  */
 
 import type { VisualSignal, VisualDefect } from './step-iteration-signals';
+import { sanitizeTelemetryText } from './step-telemetry-sanitize';
 import { fetchVisualScreenshotDataUrl } from './visual-screenshot-data';
 import { requestVisualCriticCompletion } from './visual-critic-client';
+import { parseVisualCriticVerdict } from './visual-critic-parser';
+
+export { parseVisualCriticVerdict } from './visual-critic-parser';
 
 const DEFAULT_TIMEOUT_MS = 45_000;
 const DEFAULT_MAX_SCREENSHOTS = 2;
 const MAX_SCREENSHOTS_PER_CALL = 2;
+const MAX_COMPLETION_ATTEMPTS = 2;
 
 export type VisualCriticInput = {
   screenshots: Array<{ route: string; viewport: string; url: string }>;
@@ -28,12 +33,17 @@ export type VisualCriticInput = {
 };
 
 export type VisualCriticResult = {
+  status: 'verified' | 'unavailable';
   pass: boolean;
   defects: VisualDefect[];
   summary: string;
   model_used?: string;
   /** When the critic could not run (env missing, network failure, bad parse, etc.). */
   skipped?: string;
+  completion_attempts?: number;
+  finish_reason?: string;
+  response_format?: 'json_schema' | 'json_object';
+  response_excerpt?: string;
 };
 
 const DEFAULT_RUBRIC = `
@@ -82,11 +92,18 @@ export function resolveVisualCriticModel(
 
 export async function runVisualCritic(input: VisualCriticInput): Promise<VisualCriticResult> {
   if (!input.screenshots.length) {
-    return { pass: true, defects: [], summary: 'no screenshots to evaluate', skipped: 'no_screenshots' };
+    return {
+      status: 'unavailable',
+      pass: false,
+      defects: [],
+      summary: 'no screenshots to evaluate',
+      skipped: 'no_screenshots',
+    };
   }
   if (!input.requirementId) {
     return {
-      pass: true,
+      status: 'unavailable',
+      pass: false,
       defects: [],
       summary: 'visual critic requires requirement-scoped screenshots',
       skipped: 'missing_requirement_context',
@@ -105,6 +122,10 @@ export async function runVisualCritic(input: VisualCriticInput): Promise<VisualC
   const summaries: string[] = [];
   let finalSkipped: string | undefined;
   let finalModelUsed = resolvedModel;
+  let completionAttempts = 0;
+  let finalFinishReason: string | undefined;
+  let finalResponseFormat: 'json_schema' | 'json_object' | undefined;
+  let invalidResponseExcerpt: string | undefined;
   const abortController = new AbortController();
   let timedOut = false;
   const timeoutHandle = setTimeout(() => {
@@ -134,7 +155,7 @@ export async function runVisualCritic(input: VisualCriticInput): Promise<VisualC
       '    "route": string,',
       '    "viewport": string,',
       '    "description": string,',
-      '    "fix_hint": string',
+      '    "fix_hint": string | null',
       '  }>',
       '}',
       'Rules: pass=false when there is at least one blocker or two+ majors. Always fill route and viewport from the image metadata header.',
@@ -193,37 +214,82 @@ export async function runVisualCritic(input: VisualCriticInput): Promise<VisualC
       continue;
     }
 
-    let rawText = '';
-    try {
-      const response = await requestVisualCriticCompletion({
-        model: resolvedModel,
-        system: systemPrompt,
-        content: userBlocks,
-        signal: abortController.signal,
-      });
-      finalModelUsed = response.model;
-      rawText = response.text;
+    const configuredFallback = process.env.AI_VISUAL_FALLBACK_MODEL?.trim();
+    const attemptModels = [
+      resolvedModel,
+      configuredFallback && configuredFallback !== resolvedModel
+        ? configuredFallback
+        : resolvedModel,
+    ];
+    let parsed: ReturnType<typeof parseVisualCriticVerdict> = null;
+    let batchFailure = 'parse_error';
+    let requestFailure = '';
+    for (
+      let attempt = 0;
+      attempt < MAX_COMPLETION_ATTEMPTS && !abortController.signal.aborted;
+      attempt++
+    ) {
+      try {
+        completionAttempts++;
+        const retryInstruction = attempt === 0
+          ? []
+          : [{
+              type: 'text' as const,
+              text: 'Retry: the previous response was invalid. Return exactly one JSON object matching the required schema.',
+            }];
+        const response = await requestVisualCriticCompletion({
+          model: attemptModels[attempt],
+          system: systemPrompt,
+          content: [...userBlocks, ...retryInstruction],
+          signal: abortController.signal,
+        });
+        finalModelUsed = response.model;
+        finalFinishReason = response.finishReason;
+        finalResponseFormat = response.responseFormat;
+        if (response.refusal) {
+          batchFailure = 'model_refusal';
+          invalidResponseExcerpt = sanitizeTelemetryText(response.refusal)
+            .replace(/\s+/g, ' ')
+            .slice(0, 300);
+          continue;
+        }
+        parsed = parseVisualCriticVerdict(
+          response.text,
+          response.responseFormat,
+        );
+        if (parsed) {
+          invalidResponseExcerpt = undefined;
+          break;
+        }
 
-      const parsed = safeParseVerdict(rawText);
-      if (!parsed) {
-        finalSkipped = 'parse_error';
-        summaries.push(`Batch ${Math.floor(i / MAX_SCREENSHOTS_PER_CALL) + 1} parse error.`);
-        continue;
+        batchFailure = response.finishReason === 'length'
+          ? 'truncated_response'
+          : 'parse_error';
+        invalidResponseExcerpt = sanitizeTelemetryText(response.text)
+          .replace(/\s+/g, ' ')
+          .slice(0, 300);
+      } catch (e: unknown) {
+        requestFailure = timedOut
+          ? `Timeout of ${timeout}ms exceeded`
+          : e instanceof Error
+            ? e.message
+            : String(e);
+        batchFailure = timedOut ? 'timeout' : 'request_failed';
       }
+    }
 
+    if (parsed) {
       allDefects.push(...parsed.defects);
       if (parsed.summary) summaries.push(parsed.summary);
-
-    } catch (e: unknown) {
-      const msg = timedOut
-        ? `Timeout of ${timeout}ms exceeded`
-        : e instanceof Error
-          ? e.message
-          : String(e);
-      finalSkipped = 'request_failed';
-      summaries.push(`Batch ${Math.floor(i / MAX_SCREENSHOTS_PER_CALL) + 1} failed: ${msg.slice(0, 100)}`);
-      if (timedOut) break;
+      continue;
     }
+
+    finalSkipped = batchFailure;
+    const detail = requestFailure ? `: ${requestFailure.slice(0, 100)}` : '';
+    summaries.push(
+      `Batch ${Math.floor(i / MAX_SCREENSHOTS_PER_CALL) + 1} unavailable after ${MAX_COMPLETION_ATTEMPTS} attempt(s) (${batchFailure})${detail}.`,
+    );
+    if (timedOut) break;
     }
   } finally {
     clearTimeout(timeoutHandle);
@@ -236,78 +302,17 @@ export async function runVisualCritic(input: VisualCriticInput): Promise<VisualC
   const majors = allDefects.filter((defect) => defect.severity === 'major').length;
 
   return {
-    pass: blockers === 0 && majors < 2,
+    status: finalSkipped ? 'unavailable' : 'verified',
+    pass: !finalSkipped && blockers === 0 && majors < 2,
     defects: allDefects,
     summary: finalSummary,
     model_used: finalModelUsed,
     skipped: finalSkipped,
+    completion_attempts: completionAttempts,
+    finish_reason: finalFinishReason,
+    response_format: finalResponseFormat,
+    response_excerpt: invalidResponseExcerpt,
   };
-}
-
-function safeParseVerdict(text: string): { pass: boolean; defects: VisualDefect[]; summary: string } | null {
-  if (!text) return null;
-  let raw = text.trim();
-  const fenceMatch = raw.match(/^```(?:json)?\s*([\s\S]*?)```\s*$/i);
-  if (fenceMatch) raw = fenceMatch[1].trim();
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    const match = raw.match(/\{[\s\S]*\}/);
-    if (!match) return null;
-    try {
-      parsed = JSON.parse(match[0]);
-    } catch {
-      return null;
-    }
-  }
-  if (!parsed || typeof parsed !== 'object') return null;
-  const p = parsed as Record<string, unknown>;
-  const defectsRaw = Array.isArray(p.defects) ? p.defects : [];
-  const defects: VisualDefect[] = [];
-  for (const d of defectsRaw) {
-    if (!d || typeof d !== 'object') continue;
-    const r = d as Record<string, unknown>;
-    const category = coerceCategory(r.category);
-    const severity = coerceSeverity(r.severity);
-    if (!category || !severity) continue;
-    defects.push({
-      category,
-      severity,
-      route: typeof r.route === 'string' ? r.route : 'unknown',
-      viewport: typeof r.viewport === 'string' ? r.viewport : 'unknown',
-      description: typeof r.description === 'string' ? r.description.slice(0, 400) : '',
-      fix_hint: typeof r.fix_hint === 'string' ? r.fix_hint.slice(0, 400) : undefined,
-    });
-  }
-  return {
-    pass: !!p.pass,
-    defects,
-    summary: typeof p.summary === 'string' ? p.summary.slice(0, 400) : '',
-  };
-}
-
-function coerceCategory(v: unknown): VisualDefect['category'] | null {
-  const allowed: VisualDefect['category'][] = [
-    'hierarchy',
-    'spacing',
-    'typography',
-    'color_contrast',
-    'responsive',
-    'copy',
-    'state_missing',
-    'broken_visual',
-  ];
-  return typeof v === 'string' && (allowed as string[]).includes(v)
-    ? (v as VisualDefect['category'])
-    : null;
-}
-
-function coerceSeverity(v: unknown): VisualDefect['severity'] | null {
-  const allowed: VisualDefect['severity'][] = ['blocker', 'major', 'minor'];
-  return typeof v === 'string' && (allowed as string[]).includes(v)
-    ? (v as VisualDefect['severity'])
-    : null;
 }
 
 export function mergeCriticIntoVisualSignal(
@@ -316,8 +321,13 @@ export function mergeCriticIntoVisualSignal(
 ): VisualSignal {
   return {
     ...signal,
-    ok: signal.ok && !verdictBlocksGate(critic),
-    pass: !verdictBlocksGate(critic),
+    ok:
+      signal.ok &&
+      critic.status === 'verified' &&
+      !verdictBlocksGate(critic),
+    pass:
+      critic.status === 'verified' &&
+      !verdictBlocksGate(critic),
     summary: critic.summary,
     defects: critic.defects,
   };
@@ -327,7 +337,7 @@ export function mergeCriticIntoVisualSignal(
  * Pass/fail logic the gate uses: block on blockers or 2+ majors; minors log only.
  */
 export function verdictBlocksGate(critic: VisualCriticResult): boolean {
-  if (critic.skipped) return false;
+  if (critic.status !== 'verified') return false;
   const blockers = critic.defects.filter((d) => d.severity === 'blocker').length;
   const majors = critic.defects.filter((d) => d.severity === 'major').length;
   return blockers > 0 || majors >= 2;

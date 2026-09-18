@@ -88,6 +88,7 @@ export async function runOrchestratorStep(params: {
   initialMessage: string;
   instanceContext?: string;
   git_repo_kind?: 'applications' | 'automation';
+  validate_deployment?: boolean;
   /** Used when reprovisioning the VM (branch title) */
   requirementTitle?: string;
   globalStartTime?: number;
@@ -104,6 +105,7 @@ export async function runOrchestratorStep(params: {
     initialMessage,
     instanceContext = '',
     git_repo_kind = 'applications',
+    validate_deployment = true,
     requirementTitle,
   } = params;
 
@@ -208,6 +210,7 @@ export async function runOrchestratorStep(params: {
     instance_id: instanceId,
     git_repo_kind,
     requirement_type: requirementType,
+    validate_deployment,
     cycle_baseline_at: cycleBaselineAt,
   });
 

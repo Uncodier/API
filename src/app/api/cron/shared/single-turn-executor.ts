@@ -2,30 +2,21 @@ import { Sandbox } from '@vercel/sandbox';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { executeAssistantStep } from '@/lib/services/robot-instance/assistant-executor';
 import { getAssistantTools, fetchMemoriesContext, generateAgentBackground } from '@/app/api/robots/instance/assistant/utils';
-import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/route';
 import { fetchStepLogHistoryText } from './step-history-builder';
 import { SkillsService } from '@/lib/services/skills-service';
 import type { GitRepoKind } from './cron-commit-helpers';
 import { connectOrRecreateRequirementSandbox } from '@/lib/services/sandbox-recovery';
-import { CronInfraEvent, logCronInfrastructureEvent, type CronAuditContext } from '@/lib/services/cron-audit-log';
-import { classifyRequirementType, type RequirementKind } from '@/lib/services/requirement-flows';
+import { type CronAuditContext } from '@/lib/services/cron-audit-log';
 import { isSandboxGoneError } from '@/lib/services/sandbox-gone-error';
 import { getSandboxTools } from '@/app/api/agents/tools/sandbox/assistantProtocol';
-import { SandboxService } from '@/lib/services/sandbox-service';
 import { sandboxIdentity } from '@/lib/services/sandbox-sdk';
-import { runGateForFlow } from './gates';
-import type { AppGateContext } from './gates/types';
-import { runArchetypePostGate } from './step-archetype-postgate';
 import { inferRoleFromStep, ROLE_TO_SKILL, buildSingleTurnSystemPrompt } from './single-turn-prompt';
 import { buildStepRetryFeedback } from './single-turn-visual-feedback';
 import { extractSingleTurnBackgroundState } from './single-turn-background-task';
 import type { SingleTurnResult } from './single-turn-types';
 import {
-  buildGateErrorFeedback,
   captureInteractionBaseline,
-  getDeclaredProtectedRoutes,
   getStepTerminalRequest,
-  isTransientGateFailure,
   withActionLoopGuard,
   withExecuteStepNoop,
 } from './single-turn-helpers';
@@ -34,6 +25,12 @@ import {
   markVisualFeedbackDelivered,
   resolveSingleTurnBacklogItemId,
 } from './single-turn-step-state';
+import { CRON_INFRASTRUCTURE_PROVENANCE } from '@/lib/services/cron-infrastructure-state';
+import {
+  InfrastructureStateDatabaseError,
+  patchPlanStepAtomically,
+} from '@/lib/services/instance-plan-infrastructure-state';
+import { runSingleTurnGate } from './single-turn-gate';
 export { inferRoleFromStep } from './single-turn-prompt';
 export type { SingleTurnResult };
 export async function executeSingleTurnStep(params: {
@@ -47,10 +44,12 @@ export async function executeSingleTurnStep(params: {
   title: string;
   gitRepoKind: GitRepoKind;
   requirementType: string;
+  validateDeployment?: boolean;
   provisionedEnvKeys?: string[];
+  executionEventId: string;
 }): Promise<SingleTurnResult> {
   'use step';
-  const { sandboxId, plan, step, requirementId, instanceId, siteId, userId, title, gitRepoKind, requirementType, provisionedEnvKeys } = params;
+  const { sandboxId, plan, step, requirementId, instanceId, siteId, userId, title, gitRepoKind, requirementType, validateDeployment = true, provisionedEnvKeys, executionEventId } = params;
   const audit: CronAuditContext = {
     instanceId: instanceId,
     siteId: siteId,
@@ -62,6 +61,8 @@ export async function executeSingleTurnStep(params: {
 
   // 1. Connect to Sandbox
   const instanceType = gitRepoKind === 'automation' ? 'automation' : 'applications';
+  let infrastructureGeneration =
+    Number(step.infrastructure_generation || 0);
   let connected;
   try {
     connected = await connectOrRecreateRequirementSandbox({
@@ -73,7 +74,18 @@ export async function executeSingleTurnStep(params: {
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    return { ok: false, isDone: false, error: msg, effectiveSandboxId: sandboxId };
+    return {
+      ok: false,
+      isDone: false,
+      transient: true,
+      error: msg,
+      effectiveSandboxId: sandboxId,
+      infrastructureGeneration,
+      infrastructureWait: {
+        kind: 'sandbox',
+        provenance: CRON_INFRASTRUCTURE_PROVENANCE,
+      },
+    };
   }
   let sandbox = connected.sandbox;
   let effectiveSandboxId = connected.sandboxId;
@@ -81,20 +93,49 @@ export async function executeSingleTurnStep(params: {
   // 2. Mark step in_progress if pending
   try {
     let persistedStep = step;
-    try {
-      const { data: planRow } = await supabaseAdmin
-        .from('instance_plans')
-        .select('steps, status')
-        .eq('id', plan.id)
-        .maybeSingle();
-        
-      const freshStep = Array.isArray(planRow?.steps) ? planRow.steps.find((s: any) => s.id === step.id) : undefined;
-      if (freshStep) persistedStep = { ...step, ...freshStep };
-      if (freshStep && (freshStep.status === 'completed' || freshStep.status === 'cancelled')) {
-        console.log(`[SingleTurn] Step ${step.order} already ${freshStep.status}.`);
-        return { ok: true, isDone: true, effectiveSandboxId };
-      }
-    } catch (e) {}
+    const { data: planRow, error: planReadError } = await supabaseAdmin
+      .from('instance_plans')
+      .select('steps, status')
+      .eq('id', plan.id)
+      .maybeSingle();
+    if (planReadError) {
+      throw new InfrastructureStateDatabaseError(
+        `Failed to load plan ${plan.id} before executing step ${step.id}`,
+        planReadError,
+      );
+    }
+    const freshStep = Array.isArray(planRow?.steps)
+      ? planRow.steps.find((candidate: any) => candidate.id === step.id)
+      : undefined;
+    if (!freshStep) {
+      return {
+        ok: false,
+        isDone: false,
+        error: `Plan step ${step.id} is missing`,
+        effectiveSandboxId,
+        infrastructureGeneration,
+        concurrencyHalt: true,
+      };
+    }
+    persistedStep = { ...step, ...freshStep };
+    infrastructureGeneration =
+      Number(persistedStep.infrastructure_generation || 0);
+    if (
+      freshStep.status === 'completed' ||
+      freshStep.status === 'cancelled'
+    ) {
+      console.log(`[SingleTurn] Step ${step.order} already ${freshStep.status}.`);
+      return {
+        ok: true,
+        isDone: true,
+        effectiveSandboxId,
+        infrastructureGeneration,
+        concurrencyHalt: true,
+        ...(freshStep.status === 'completed'
+          ? { persistedTerminalStatus: 'completed' as const }
+          : {}),
+      };
+    }
     // Baseline = first time THIS step started. Do not fall back to plan.created_at
     // (that is often hours/days old and would mark every file updated_this_cycle).
     const nowIso = new Date().toISOString();
@@ -116,16 +157,35 @@ export async function executeSingleTurnStep(params: {
       interactionBaselineSha,
       backlogItemId: effectiveBacklogItemId,
     });
-    await updateInstancePlanCore({
-      plan_id: plan.id, instance_id: instanceId, site_id: siteId,
-      requirement_id: requirementId,
-      steps: [{
-        id: step.id,
+    const startMutation = await patchPlanStepAtomically({
+      planId: plan.id,
+      stepId: step.id,
+      expectedGeneration: infrastructureGeneration,
+      eventId: `${executionEventId}:start`,
+      patch: {
         status: 'in_progress',
         ...(persistedStep.started_at ? {} : { started_at: cycleBaselineAt }),
         ...(nextMetadata ? { metadata: nextMetadata } : {}),
-      }],
+      },
     });
+    if (!startMutation.persisted) {
+      return {
+        ok: false,
+        isDone: false,
+        error: `Plan step start rejected (${startMutation.state})`,
+        effectiveSandboxId,
+        infrastructureGeneration: startMutation.generation,
+        concurrencyHalt: true,
+      };
+    }
+    infrastructureGeneration =
+      startMutation.generation ?? infrastructureGeneration;
+    persistedStep = {
+      ...persistedStep,
+      status: 'in_progress',
+      ...(nextMetadata ? { metadata: nextMetadata } : {}),
+      infrastructure_generation: infrastructureGeneration,
+    };
 
     // 3. Build Prompt & Context
     const effectiveRole = step.role || inferRoleFromStep(step) || 'general';
@@ -208,6 +268,7 @@ export async function executeSingleTurnStep(params: {
       instance_id: instanceId,
       git_repo_kind: gitRepoKind,
       requirement_type: requirementType,
+      validate_deployment: validateDeployment,
       plan_id: plan.id,
       active_step_id: step.id,
       cycle_baseline_at: cycleBaselineAt,
@@ -238,7 +299,7 @@ export async function executeSingleTurnStep(params: {
     });
     sandbox = activeSandboxRef.current;
     effectiveSandboxId = sandboxIdentity(sandbox);
-    await markVisualFeedbackDelivered({
+    const visualFeedbackMutation = await markVisualFeedbackDelivered({
       planId: plan.id,
       instanceId,
       siteId,
@@ -249,7 +310,32 @@ export async function executeSingleTurnStep(params: {
       backlogItemId: effectiveBacklogItemId,
       imageFeedbackId: retryFeedback.imageFeedbackId,
       delivered: !!retryFeedback.imageMessage,
+      expectedGeneration: infrastructureGeneration,
+      eventId: `${executionEventId}:visual-feedback`,
     });
+    if (visualFeedbackMutation) {
+      if (!visualFeedbackMutation.persisted) {
+        return {
+          ok: false,
+          isDone: false,
+          error:
+            `Visual feedback state changed concurrently (${visualFeedbackMutation.state})`,
+          effectiveSandboxId,
+          infrastructureGeneration: visualFeedbackMutation.generation,
+          concurrencyHalt: true,
+        };
+      }
+      infrastructureGeneration =
+        visualFeedbackMutation.generation ?? infrastructureGeneration;
+      persistedStep = {
+        ...persistedStep,
+        metadata: {
+          ...(persistedStep.metadata || {}),
+          visual_feedback_image_id: retryFeedback.imageFeedbackId,
+        },
+        infrastructure_generation: infrastructureGeneration,
+      };
+    }
     
     // Check if the LLM attempted to execute tools and failed due to sandbox gone
     const hasSandboxGoneError = result.messages?.some((m: any) => 
@@ -258,7 +344,14 @@ export async function executeSingleTurnStep(params: {
     
     if (hasSandboxGoneError) {
        console.warn(`[SingleTurn] Sandbox gone detected. Will retry next workflow cycle.`);
-       return { ok: false, isDone: false, transient: true, error: 'Sandbox Gone 410', effectiveSandboxId };
+       return {
+         ok: false,
+         isDone: false,
+         transient: true,
+         error: 'Sandbox Gone 410',
+         effectiveSandboxId,
+         infrastructureGeneration,
+       };
     }
 
     const { sleepRequested, backgroundTask } = extractSingleTurnBackgroundState(result);
@@ -274,6 +367,7 @@ export async function executeSingleTurnStep(params: {
         effectiveSandboxId,
         sleepRequested,
         backgroundTask,
+        infrastructureGeneration,
       };
     }
     const completionRequested = terminalRequest?.status === 'completed';
@@ -286,214 +380,50 @@ export async function executeSingleTurnStep(params: {
     }
 
     if (shouldRunGate) {
-      // 6. Run Gate right here because we have live sandbox and context
-      const flow = classifyRequirementType(requirementType);
-      
-      let appContext: AppGateContext | undefined;
-      if (flow === 'app' || flow === 'site') {
-         appContext = {
-            planTitle: plan.title,
-            stepOrder: step.order,
-            backlogItemId: effectiveBacklogItemId,
-            interactionBaselineSha,
-            stepPrompt: systemPrompt,
-            stepContext: {
-              title: step.title,
-              instructions: step.instructions,
-              expected_output: step.expected_output,
-              protected_routes: getDeclaredProtectedRoutes(step),
-            },
-            currentMessages: result.messages,
-            assistantContext: {
-              instance: { id: instanceId, site_id: siteId, user_id: userId, requirement_id: requirementId },
-              systemPrompt,
-              customTools: fullTools,
-              executionOptions: {
-                 instance_id: instanceId,
-                 site_id: siteId,
-                 user_id: userId,
-                 requirement_id: requirementId,
-                 plan_id: plan.id,
-                 step_id: step.id,
-                 system_prompt: systemPrompt,
-                 custom_tools: fullTools,
-              }
-            } as any,
-            fullTools,
-            lastResult: result,
-            gitRepoKind
-         };
-      }
-      
-      const gateRes = await runGateForFlow({
-         flow,
-         sandbox,
-         workDir: SandboxService.WORK_DIR,
-         requirementId,
-         item: {
-           id: step.id,
-           title: step.title,
-           order: step.order,
-           acceptance: step.instructions ? [String(step.instructions)] : [],
-         } as any,
-         appContext,
-         audit
-      });
-      const gateFeedback = buildGateErrorFeedback({
-        gate: gateRes,
+      return await runSingleTurnGate({
+        sandbox,
+        effectiveSandboxId,
+        plan,
         step,
         persistedStep,
+        requirementId,
+        instanceId,
+        siteId,
+        userId,
+        requirementType,
+        gitRepoKind,
+        backlogItemId: effectiveBacklogItemId,
+        interactionBaselineSha,
+        systemPrompt,
+        result,
+        fullTools,
+        audit,
+        infrastructureGeneration,
+        sleepRequested,
+        backgroundTask,
       });
-      const gateErrorExcerpt = gateFeedback.excerpt;
-      
-      if (gateRes.sandboxReplacement) {
-         effectiveSandboxId = sandboxIdentity(gateRes.sandboxReplacement);
-         sandbox = gateRes.sandboxReplacement;
-      }
-
-      if (isTransientGateFailure(gateRes)) {
-         console.warn(
-           `[SingleTurn] Gate infrastructure unavailable for step ${step.order}: ${gateRes.error || 'unknown error'}`,
-         );
-         return {
-           ok: false,
-           isDone: false,
-           transient: true,
-           error: gateRes.error || 'Gate infrastructure unavailable',
-           effectiveSandboxId,
-         };
-      }
-      
-      if (gateRes.ok) {
-         console.log(`[SingleTurn] Gate PASSED for step ${step.order}`);
-         let isLastStep = false;
-         let pendingStepsCount = 0;
-         try {
-           const { data: latestPlan } = await supabaseAdmin
-             .from('instance_plans')
-             .select('steps')
-             .eq('id', plan.id)
-             .single();
-           
-           if (latestPlan && Array.isArray(latestPlan.steps)) {
-             const pendingSteps = latestPlan.steps.filter((s: any) => 
-               s.id !== step.id && (s.status === 'pending' || s.status === 'in_progress')
-             );
-             pendingStepsCount = pendingSteps.length;
-             isLastStep = pendingSteps.length === 0;
-           } else {
-             const pendingSteps = (plan?.steps || []).filter((s: any) => 
-               s.id !== step.id && (s.status === 'pending' || s.status === 'in_progress')
-             );
-             pendingStepsCount = pendingSteps.length;
-             isLastStep = pendingSteps.length === 0;
-           }
-         } catch (e) {
-           console.warn(`[SingleTurn] Error checking isLastStep, falling back to in-memory`, e);
-           const pendingSteps = (plan?.steps || []).filter((s: any) => 
-             s.id !== step.id && (s.status === 'pending' || s.status === 'in_progress')
-           );
-           pendingStepsCount = pendingSteps.length;
-           isLastStep = pendingSteps.length === 0;
-         }
-         
-         if (isLastStep && effectiveBacklogItemId) {
-            console.log(`[SingleTurn] Step ${step.order} is final. Running Post-Gate Archetypes (Critic/Judge)...`);
-            await runArchetypePostGate({
-               sandbox,
-               requirementId,
-               backlogItemId: effectiveBacklogItemId,
-               stepId: step.id,
-               signals: gateRes.richSignals as any,
-               capturedAt: new Date().toISOString(),
-               audit,
-            });
-         }
-      } else {
-         console.log(`[SingleTurn] Gate FAILED for step ${step.order}`);
-         await logCronInfrastructureEvent(audit, {
-           event: CronInfraEvent.STEP_STATUS,
-           level: 'warn',
-           message: `Plan step ${step.order} failed gate validation`,
-           details: { 
-              step_id: step.id, 
-              plan_id: plan.id,
-              error_excerpt: gateErrorExcerpt.slice(0, 500),
-              gate_signals: gateRes.signals,
-           }
-         });
-         
-         if (effectiveBacklogItemId) {
-            const { bumpItemAttempts, recordToolFailure, logAssumption, downgradeScope, markNeedsReview } = await import('@/lib/services/requirement-backlog');
-            const { planNextHealingAction } = await import('@/lib/services/requirement-self-heal');
-            const { getBacklogItem } = await import('@/lib/services/requirement-backlog');
-            const { classifyFailure } = await import('@/lib/services/failure-classification');
-            
-            try {
-               const { item } = await getBacklogItem(requirementId, effectiveBacklogItemId);
-               if (item) {
-                   const errorMsg = gateFeedback.raw;
-                   const classified = classifyFailure(errorMsg, gateFeedback.categories, {
-                     flow: requirementType,
-                     signals: gateRes.signals,
-                     skipAttemptBump: gateRes.skipAttemptBump,
-                   });
-                   
-                   if (gateRes.skipAttemptBump || classified.failureClass === 'plumbing' || !classified.countsTowardAttempts) {
-                     const toolName = classified.toolName || `gate:${requirementType || 'task'}`;
-                     console.log(`[SingleTurn] Plumbing failure detected for tool ${toolName}, logging without attempt bump.`);
-                     await recordToolFailure({
-                       requirementId,
-                       itemId: effectiveBacklogItemId,
-                       toolName,
-                       reason: `[plumbing] Tool ${toolName} failed: ${errorMsg.slice(0, 150)}`
-                     });
-                   } else {
-                     // Product/Judge failure -> consumes attempt and triggers self-heal
-                     const bumped = await bumpItemAttempts({
-                       requirementId,
-                       itemId: effectiveBacklogItemId,
-                       reason: `gate_failed: ${errorMsg.slice(0, 200)}`,
-                     });
-                     
-                     const attemptsForHeal = (bumped?.attempts ?? (item.attempts ?? 0) + 1);
-                     const action = planNextHealingAction({ 
-                        item, 
-                        verdict: { verdict: 'rejected', reason: errorMsg || 'Gate failed', matched_acceptance: [], unmatched_acceptance: [] }, 
-                        attempts: attemptsForHeal 
-                     });
-                     
-                     switch (action.kind) {
-                       case 'rotate_strategy': await logAssumption({ requirementId, itemId: item.id, assumption: `[rotate] ${action.hint}` }); break;
-                       case 'downgrade_scope': 
-                         await downgradeScope({ requirementId, itemId: item.id });
-                         await logAssumption({ requirementId, itemId: item.id, assumption: `[downgrade ${action.from}→${action.to}] ${action.reason}` }); 
-                         break;
-                       case 'log_assumption_and_continue': await logAssumption({ requirementId, itemId: item.id, assumption: action.assumption }); break;
-                       case 'mark_needs_review': await markNeedsReview({ requirementId, itemId: item.id, reason: action.reason }); break;
-                     }
-                   }
-               }
-            } catch (healErr) {
-               console.error(`[SingleTurn] Exception applying self-healing on gate failure:`, healErr);
-            }
-         }
-      }
-      
-      return { 
-         ok: true, 
-         isDone: true, 
-         effectiveSandboxId, 
-         gatePassed: gateRes.ok, 
-         gateErrorExcerpt,
-         sleepRequested,
-         backgroundTask
-      };
     }
-    return { ok: true, isDone: shouldRunGate, effectiveSandboxId, sleepRequested, backgroundTask };
+    return {
+      ok: true,
+      isDone: shouldRunGate,
+      effectiveSandboxId,
+      sleepRequested,
+      backgroundTask,
+      infrastructureGeneration,
+    };
   } catch (e: any) {
     console.error('[SingleTurn] Executor wrapper failed:', e);
-    const transient = isSandboxGoneError(e.message);
-    return { ok: false, isDone: false, transient, error: e.message, effectiveSandboxId };
+    return {
+      ok: false,
+      isDone: false,
+      transient: true,
+      error: e.message,
+      effectiveSandboxId,
+      infrastructureGeneration,
+      infrastructureWait: {
+        kind: isSandboxGoneError(e.message) ? 'sandbox' : 'gate',
+        provenance: CRON_INFRASTRUCTURE_PROVENANCE,
+      },
+    };
   }
 }

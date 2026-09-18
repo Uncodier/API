@@ -5,6 +5,7 @@ describe('triageGitPushError', () => {
     const t = triageGitPushError('remote: HTTP Basic: Access denied\nfatal: authentication failed');
     expect(t.failureKind).toBe('auth');
     expect(t.agentActionable).toBe(false);
+    expect(t.infrastructureFailure).toBe(true);
     expect(t.agentMessage).toContain('escalate');
   });
 
@@ -12,12 +13,21 @@ describe('triageGitPushError', () => {
     const t = triageGitPushError('remote: error: GH013: protected branch');
     expect(t.failureKind).toBe('protected_branch');
     expect(t.agentActionable).toBe(false);
+    expect(t.infrastructureFailure).toBe(true);
   });
 
   it('marks network as not agent-actionable', () => {
     const t = triageGitPushError('fatal: could not resolve host github.com');
     expect(t.failureKind).toBe('network');
     expect(t.agentActionable).toBe(false);
+    expect(t.infrastructureFailure).toBe(true);
+  });
+
+  it('marks git hosting platform outages as infrastructure failures', () => {
+    const t = triageGitPushError('fatal: unable to access remote: The requested URL returned error: 503');
+    expect(t.failureKind).toBe('platform');
+    expect(t.agentActionable).toBe(false);
+    expect(t.infrastructureFailure).toBe(true);
   });
 
   it('extracts a single CONFLICT line', () => {
@@ -65,6 +75,7 @@ Automatic merge failed; fix conflicts and then commit the result.`;
     );
     expect(t.failureKind).toBe('pre_push_build');
     expect(t.agentActionable).toBe(true);
+    expect(t.infrastructureFailure).toBe(false);
     expect(t.agentMessage).toContain('Pre-push build');
   });
 
@@ -73,6 +84,7 @@ Automatic merge failed; fix conflicts and then commit the result.`;
     const t = triageGitPushError(msg);
     expect(t.failureKind).toBe('rebase_conflict');
     expect(t.agentActionable).toBe(true);
+    expect(t.infrastructureFailure).toBe(false);
     expect(t.agentMessage).toMatch(/Rebase|conflict|rebase/);
   });
 });

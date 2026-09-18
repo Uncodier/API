@@ -1,9 +1,14 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { loadRequirement, toBacklog, writeBacklog } from './requirement-backlog-store';
-import { getFlow, classifyRequirementType } from './requirement-flows';
+import { mutateBacklogAtomically } from './requirement-backlog-mutation';
 import { isBacklogComplete } from './requirement-backlog';
 import { cancelPlanStepsForBacklogItem } from '@/lib/helpers/plan-lifecycle';
 import type { BacklogItem } from './requirement-backlog-types';
+import { patchRequirementMetadataKeys } from './requirement-metadata-patch';
+import { resumeRequirementExecutionOnUserAction } from './requirement-execution-recovery';
+import {
+  computeRatio,
+  reconcilePhaseForItem,
+} from './requirement-backlog-store';
 
 export interface SanitizationItem {
   id: string;
@@ -145,79 +150,102 @@ export function detectUnhealthyOnReview(req: any): SanitizationPlan {
 export async function applyOnReviewSanitization(reqId: string, plan: SanitizationPlan): Promise<void> {
   if (!plan.needsSanitization) return;
 
-  const req = await loadRequirement(reqId);
-  if (!req) return;
+  const mutation = await mutateBacklogAtomically(
+    reqId,
+    ({ requirement, backlog, flow }) => {
+      let itemsChanged = 0;
+      const cancellationItemIds: string[] = [];
 
-  const flow = getFlow(classifyRequirementType(req.type));
-  const backlog = toBacklog(req.backlog, flow.phases[0]?.id || 'default');
-  let itemsChanged = 0;
-
-  for (const sanitization of plan.itemsToReopen) {
-    const idx = backlog.items.findIndex(i => i.id === sanitization.id);
-    if (idx >= 0) {
-      const item = backlog.items[idx];
-      backlog.items[idx] = {
-        ...item,
-        status: sanitization.targetStatus,
-        // PRESERVE attempts instead of resetting to 0
-        attempts: item.attempts || 0,
-        assumptions: [...(item.assumptions || []), sanitization.reason].slice(-20),
-        updated_at: new Date().toISOString()
-      };
-      itemsChanged++;
-
-      // Keep in_progress plans alive so finalize does not see "plan not completed"
-      // and the instance is not left pending with no active plan. Only cancel when
-      // we escalate to needs_review (human takeover).
-      if (sanitization.targetStatus === 'needs_review') {
-        try {
-          await cancelPlanStepsForBacklogItem({
-            itemId: item.id,
-            reason: `[auto-saneo] Cancelling plans for unhealthy item ${item.id} (transitioning to ${sanitization.targetStatus})`
-          });
-        } catch (e) {
-          console.warn(`[AutoSaneo] Failed to cancel plans for item ${item.id}`, e);
+      for (const sanitization of plan.itemsToReopen) {
+        const idx = backlog.items.findIndex((item) => item.id === sanitization.id);
+        if (idx < 0) continue;
+        const item = backlog.items[idx];
+        if (item.status !== sanitization.previousStatus) continue;
+        backlog.items[idx] = {
+          ...item,
+          status: sanitization.targetStatus,
+          attempts: item.attempts || 0,
+          assumptions: [...(item.assumptions || []), sanitization.reason].slice(-20),
+          updated_at: new Date().toISOString(),
+        };
+        itemsChanged++;
+        if (sanitization.targetStatus === 'needs_review') {
+          cancellationItemIds.push(item.id);
+        } else {
+          reconcilePhaseForItem(backlog, flow, backlog.items[idx]);
         }
       }
+      if (itemsChanged > 0) {
+        backlog.completion_ratio = computeRatio(backlog.items);
+      }
+
+      return {
+        result: {
+          itemsChanged,
+          cancellationItemIds,
+          items: backlog.items,
+          siteId: requirement.site_id || null,
+          instanceId: requirement.metadata?.runner_instance_id as string | undefined,
+        },
+        write: itemsChanged > 0,
+      };
+    },
+  );
+
+  if (mutation.itemsChanged > 0) {
+    for (const itemId of mutation.cancellationItemIds) {
+      try {
+        await cancelPlanStepsForBacklogItem({
+          itemId,
+          reason: `[auto-saneo] Cancelling plans for unhealthy item ${itemId} (transitioning to needs_review)`,
+        });
+      } catch (error) {
+        console.warn(`[AutoSaneo] Failed to cancel plans for item ${itemId}`, error);
+      }
     }
-  }
 
-  if (itemsChanged > 0) {
-    // Reset requirement metadata
-    const metadata = req.metadata || {};
-    const updatedMetadata = {
-      ...metadata,
-      cron_attempts: 0,
-      all_done_cycles: 0,
-      has_completed_backlog: false,
-      last_sanitized_at: new Date().toISOString()
-    };
-
-    await writeBacklog(reqId, backlog);
-
-    const next = requirementStatusAfterSaneo(backlog.items);
-    await supabaseAdmin.from('requirements').update({
-      status: next.status,
-      metadata: updatedMetadata,
-      updated_at: new Date().toISOString()
-    }).eq('id', reqId);
+    const next = requirementStatusAfterSaneo(mutation.items);
+    if (next.status === 'in-progress') {
+      await resumeRequirementExecutionOnUserAction(
+        reqId,
+        mutation.instanceId || null,
+        false,
+        `auto-saneo:${crypto.randomUUID()}`,
+        true,
+      );
+    }
+    await patchRequirementMetadataKeys({
+      requirementId: reqId,
+      patch: {
+        ...(next.status === 'on-review' ? { cron_attempts: 0 } : {}),
+        all_done_cycles: 0,
+        has_completed_backlog: false,
+        last_sanitized_at: new Date().toISOString(),
+      },
+    });
+    if (next.status === 'on-review') {
+      await supabaseAdmin
+        .from('requirements')
+        .update({ status: 'on-review', updated_at: new Date().toISOString() })
+        .eq('id', reqId);
+    }
 
     // Record the sanitization event
     try {
       await supabaseAdmin.from('requirement_status').insert({
         requirement_id: reqId,
-        site_id: req.site_id || null,
-        instance_id: req.metadata?.runner_instance_id || null,
+        site_id: mutation.siteId,
+        instance_id: mutation.instanceId || null,
         stage: next.stage,
         message: next.status === 'on-review'
-          ? `[auto-saneo] Escalated to on-review (needs_review). Sanitized ${itemsChanged} item(s); nothing left runnable.`
-          : `[auto-saneo] Reverted requirement to in-progress. Sanitized ${itemsChanged} unhealthy items (fake-done or plumbing-stalled).`
+          ? `[auto-saneo] Escalated to on-review (needs_review). Sanitized ${mutation.itemsChanged} item(s); nothing left runnable.`
+          : `[auto-saneo] Reverted requirement to in-progress. Sanitized ${mutation.itemsChanged} unhealthy items (fake-done or plumbing-stalled).`
       });
     } catch (err) {
       console.error(`[AutoSaneo] Failed to record requirement_status for ${reqId}:`, err);
     }
 
-    console.log(`[AutoSaneo] Successfully sanitized requirement ${reqId}, reopened ${itemsChanged} items.`);
+    console.log(`[AutoSaneo] Successfully sanitized requirement ${reqId}, reopened ${mutation.itemsChanged} items.`);
 
     const pendingItems = plan.itemsToReopen.filter((i) => i.targetStatus === 'pending');
     if (pendingItems.length > 0) {
@@ -225,8 +253,8 @@ export async function applyOnReviewSanitization(reqId: string, plan: Sanitizatio
         const { ensureActivePlanAfterSaneo } = await import('@/lib/services/saneo-recovery-plan');
         await ensureActivePlanAfterSaneo({
           requirementId: reqId,
-          instanceId: req.metadata?.runner_instance_id,
-          siteId: req.site_id,
+          instanceId: mutation.instanceId,
+          siteId: mutation.siteId,
           reopenedItemIds: pendingItems.map((i) => i.id),
         });
       } catch (e) {

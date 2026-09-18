@@ -1,5 +1,10 @@
 import { describe, expect, it, jest, beforeEach } from '@jest/globals';
 import { NextResponse } from 'next/server';
+import { start } from 'workflow/api';
+
+const mockBlockRequirementForProductAttemptBudget =
+  jest.fn(async () => ({ state: 'applied', blocked: true }));
+const mockResumeRequirementExecution = jest.fn(async () => undefined);
 
 // Mocks
 jest.mock('@/lib/database/supabase-client', () => ({
@@ -9,7 +14,7 @@ jest.mock('@/lib/database/supabase-client', () => ({
 }));
 
 jest.mock('workflow/api', () => ({
-  start: jest.fn().mockResolvedValue({ runId: 'test-workflow-run-id' }),
+  start: jest.fn(async () => ({ runId: 'test-workflow-run-id' })),
 }));
 
 jest.mock('../workflow', () => ({
@@ -25,8 +30,8 @@ jest.mock('../../maintenance/workflow', () => ({
 }));
 
 jest.mock('../../shared/cron-run-lock', () => ({
-  acquireRunLock: jest.fn().mockResolvedValue({ runId: 'test-lock-id' }),
-  releaseRunLock: jest.fn().mockResolvedValue(true),
+  acquireRunLock: jest.fn(async () => ({ runId: 'test-lock-id' })),
+  releaseRunLock: jest.fn(async () => true),
   getSupabaseUrlHostForLogs: jest.fn().mockReturnValue('mock-host'),
 }));
 
@@ -37,12 +42,35 @@ jest.mock('@/lib/services/requirement-backlog', () => ({
 }));
 
 jest.mock('@/lib/services/requirement-onreview-sanitizer', () => ({
-  runOnReviewSanitization: jest.fn().mockResolvedValue({ requirementsSanitized: 0, itemsReopened: 0 }),
+  runOnReviewSanitization: jest.fn(async () => ({
+    requirementsSanitized: 0,
+    itemsReopened: 0,
+  })),
+}));
+
+jest.mock('@/lib/services/deployment-infrastructure-fallback', () => ({
+  reconcilePendingDeploymentInfrastructureWaits: jest.fn(async () => ({
+    checked: 0,
+    recovered: 0,
+  })),
+}));
+
+jest.mock('@/lib/services/requirement-execution-recovery', () => ({
+  resumeRequirementExecutionOnUserAction: mockResumeRequirementExecution,
+}));
+
+jest.mock('@/lib/services/requirement-metadata-patch', () => ({
+  blockRequirementForProductAttemptBudget:
+    mockBlockRequirementForProductAttemptBudget,
+  patchRequirementMetadataKeys: jest.fn(async () => ({
+    runner_instance_id: 'inst-1',
+  })),
 }));
 
 import { GET } from '../route';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import * as backlogService from '@/lib/services/requirement-backlog';
+import { patchRequirementMetadataKeys } from '@/lib/services/requirement-metadata-patch';
 
 describe('Cron Requirements Apps Route', () => {
   let mockSupabase: any;
@@ -61,12 +89,13 @@ describe('Cron Requirements Apps Route', () => {
       gte: jest.fn().mockReturnThis(),
       order: jest.fn().mockReturnThis(),
       limit: jest.fn().mockReturnThis(),
+      range: jest.fn().mockReturnThis(),
       single: jest.fn().mockReturnThis(),
       maybeSingle: jest.fn().mockReturnThis(),
       update: jest.fn().mockReturnThis(),
       insert: jest.fn().mockReturnThis(),
       like: jest.fn().mockReturnThis(),
-      then: function(resolve) { resolve({ data: [], error: null }); },
+      then: function(resolve: any) { resolve({ data: [], error: null }); },
     };
 
     (supabaseAdmin.from as jest.Mock).mockReturnValue(mockSupabase);
@@ -80,12 +109,25 @@ describe('Cron Requirements Apps Route', () => {
     expect(res.status).toBe(401);
   });
 
+  it('returns 401 when CRON_SECRET is missing', async () => {
+    delete process.env.CRON_SECRET;
+    const req = new Request('http://localhost', {
+      headers: { authorization: 'Bearer undefined' },
+    });
+    const res = await GET(req);
+    expect(res.status).toBe(401);
+  });
+
   it('processes requirements successfully', async () => {
     // Mock the initial query for requirements
     const mockRequirement = {
       id: 'req-1',
       status: 'in-progress',
       site_id: 'site-1',
+      user_id: 'user-1',
+      title: 'Build the automation',
+      instructions: 'Implement the requirement',
+      type: 'automation',
       backlog: { items: [] },
       metadata: {},
       cron: null,
@@ -96,7 +138,14 @@ describe('Cron Requirements Apps Route', () => {
     mockSupabase.then = jest.fn()
       .mockImplementationOnce((res: any) => res({ data: [], error: null })) // recent completed requirements
       .mockImplementationOnce((res: any) => res({ data: [mockRequirement], error: null })) // due requirements
-      .mockImplementationOnce((res: any) => res({ data: { status: 'in-progress' }, error: null })) // current requirement
+      .mockImplementationOnce((res: any) => res({
+        data: {
+          ...mockRequirement,
+          title: 'Fresh title',
+          metadata: { requirement_execution_generation: 7 },
+        },
+        error: null,
+      })) // current requirement
       .mockImplementationOnce((res: any) => res({ data: [{ id: 'inst-1', instance_type: 'browser' }], error: null })) // remote instance
       .mockImplementationOnce((res: any) => res({ data: { status: 'running' }, error: null })) // instanceData
       .mockImplementationOnce((res: any) => res({ data: null, error: null })) // activePlan
@@ -119,6 +168,29 @@ describe('Cron Requirements Apps Route', () => {
     
     expect(res.status).toBe(200);
     expect(json.results[0].started).toBe(true);
+    expect(patchRequirementMetadataKeys).toHaveBeenCalledWith({
+      requirementId: 'req-1',
+      patch: { runner_instance_id: 'inst-1' },
+    });
+    expect(mockSupabase.range).toHaveBeenCalledWith(0, 99);
+    expect(mockSupabase.or).toHaveBeenCalledWith(
+      expect.stringContaining('status.in.(backlog,in-progress,blocked)'),
+    );
+    expect(mockSupabase.select).toHaveBeenCalledWith('*');
+    expect(start).toHaveBeenCalledWith(
+      expect.anything(),
+      [expect.objectContaining({
+        title: 'Fresh title',
+        executionGeneration: 7,
+        gitRepoKind: 'automation',
+        instance_type: 'automation',
+      })],
+    );
+    expect(mockSupabase.update).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({ cron_attempts: 1 }),
+      }),
+    );
   });
   
   it('reverts on-review requirement to in-progress if there is outstanding work', async () => {
@@ -128,6 +200,7 @@ describe('Cron Requirements Apps Route', () => {
       site_id: 'site-1',
       backlog: { items: [{ updated_at: new Date().toISOString() }] },
       metadata: {},
+      backlog_revision: 4,
       cron: null,
     };
 
@@ -146,9 +219,13 @@ describe('Cron Requirements Apps Route', () => {
 
     await GET(req);
     
-    // Should have called update to in-progress
-    expect(supabaseAdmin.from).toHaveBeenCalledWith('requirements');
-    expect(mockSupabase.update).toHaveBeenCalledWith({ status: 'in-progress' });
+    expect(mockResumeRequirementExecution).toHaveBeenCalledWith(
+      'req-2',
+      null,
+      false,
+      'outstanding-backlog:4',
+      true,
+    );
   });
 
   it('skips auto-promotion if there is recent outstanding ornamental work', async () => {

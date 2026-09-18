@@ -3,6 +3,7 @@
 import {
   cleanupNestedProjectsStep,
   getActiveInstancePlanStep,
+  getInstancePlanByIdStep,
   checkRecentPlansGuardStep,
   reconcilePlanStep,
   commitAndPushStep,
@@ -23,7 +24,7 @@ import { applyDatabaseMigrationsStep } from '../shared/step-db-migrations';
 import { bootstrapRequirementSpecStep } from '../shared/bootstrap-spec-step';
 import { provisionTrackingScriptStep } from '../shared/tracking-script-step';
 import { ensureSourceArchiveStep } from '../shared/ensure-source-archive-step';
-import { classifyRequirementType, getFlow, isLightRequirementFlow } from '@/lib/services/requirement-flows';
+import { classifyRequirementType, getFlow } from '@/lib/services/requirement-flows';
 import {
   activeBacklogItemIdsFromPlanSteps,
   countPendingPlanSteps,
@@ -35,6 +36,11 @@ import {
   reconnectSandboxStep,
   logCronInfrastructureEventStep,
   recordStepInfraTransientStep,
+  clearStepInfrastructureStateStep,
+  blockRequirementForInfrastructureCircuitStep,
+  blockRequirementForCronInfrastructureCyclesStep,
+  blockRequirementForProductNoProgressStep,
+  selectPlanStepsForExecution,
 } from '../shared/cron-execute-steps-phase';
 import { executeSingleTurnStep, type SingleTurnResult } from '../shared/single-turn-executor';
 import { runGateStep } from '../shared/gate-step-executor';
@@ -46,18 +52,22 @@ import { isSandboxGoneError } from '@/lib/services/sandbox-gone-error';
 import {
   recordRequirementBlockedStep,
   createFallbackInstancePlanStep,
-  unblockRequirementStep,
   checkInstanceAndPlanStatusStep,
   getRequirementFullContextStep,
+  isRequirementExecutionCurrentStep,
   updateInstanceStatusStep,
-  incrementNoProgressCyclesStep,
-  resetNoProgressCyclesStep,
-  resetCronAttemptsStep,
+  recordCronCycleOutcomeStep,
 } from '../shared/workflow-db-steps';
 import { buildCoordinatorPromptForFlow } from './prompt';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
 import type { DocsDigestResult } from '../shared/docs-digest-step';
 import { sleep } from 'workflow';
+import type { CronCycleOutcome } from '@/lib/services/requirement-metadata-patch';
+import {
+  CRON_INFRASTRUCTURE_PROVENANCE,
+  DEPLOYMENT_INFRASTRUCTURE_PROVENANCE,
+} from '@/lib/services/cron-infrastructure-state';
+import type { GitRepoKind } from '../shared/cron-commit-helpers';
 
 export interface CronAppsWorkflowInput {
   reqId: string;
@@ -68,15 +78,22 @@ export interface CronAppsWorkflowInput {
   user_id: string;
   instanceId: string;
   previousWorkContext: string;
-  instance_type: string;
+  /** Legacy normalized sandbox kind retained in the durable workflow payload. */
+  instance_type: GitRepoKind;
   /** Advisory lock id acquired by the cron route; used to release on workflow end. */
-  cronLockRunId?: string;
+  cronLockRunId: string;
+  /** Stable ordering key used by exactly-once cycle accounting. */
+  cycleStartedAt: string;
+  /** Rejects stale product blockers after a user resumes execution. */
+  executionGeneration: number;
+  /** Persisted repository binding normalized for sandbox and Vercel operations. */
+  gitRepoKind?: GitRepoKind;
 }
 
 export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   'use workflow';
 
-  const { reqId, title, instructions, type, site_id, user_id, instanceId, previousWorkContext, cronLockRunId } = input;
+  const { reqId, title, instructions, type, site_id, user_id, instanceId, previousWorkContext, cronLockRunId, cycleStartedAt, executionGeneration } = input;
   console.log(`[CronAppsWorkflow] Starting for req ${reqId}: ${title}`);
 
   const cronAudit: CronAuditContext = {
@@ -100,7 +117,13 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   let wrapUpAttempted = false;
   let wrapUpReason: string | null = null;
   let wrapUpRequiresUserFeedback = false;
-  const requirementFlow = getFlow(classifyRequirementType(type));
+  let cycleOutcome: CronCycleOutcome = 'idle';
+  let preservePausedState = false;
+  const requirementKind = classifyRequirementType(type);
+  const requirementFlow = getFlow(requirementKind);
+  const gitRepoKind: GitRepoKind =
+    input.gitRepoKind ??
+    (requirementKind === 'automation' ? 'automation' : 'applications');
   const feedbackAttemptLimits = {
     core: requirementFlow.cost_envelope.max_cycles_per_item,
     ornamental: parseInt(process.env.CRON_ORNAMENTAL_MAX_ATTEMPTS || '2', 10),
@@ -121,10 +144,11 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     }
     
     if (pausedCheck.isPaused) {
-      console.log(`[CronAppsWorkflow] Still paused after 5 minutes. Killing workflow and unblocking requirement.`);
+      console.log(`[CronAppsWorkflow] Still paused after 5 minutes. Ending workflow without changing the pause.`);
+      cycleOutcome = 'paused';
+      preservePausedState = true;
       wrapUpReason = 'The instance remained paused for five minutes, so this work cycle stopped.';
       wrapUpRequiresUserFeedback = true;
-      await unblockRequirementStep(reqId);
       return { reqId, branch: null, previewUrl: null, status: 'paused' as const };
     }
   }
@@ -132,11 +156,71 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   // Step 1: Check for active plan BEFORE creating the sandbox
   // This saves VM costs if we are in a re-plan loop cooldown or blocked state.
   const existingPlan = await getActiveInstancePlanStep(instanceId, site_id);
-  const actionableSteps = existingPlan?.steps
-    ? (existingPlan.steps as any[]).filter((s: any) =>
-        s.status === 'pending' || s.status === 'in_progress' || (s.status === 'failed' && (s.retry_count ?? 0) < 2))
-    : [];
+  const actionableSteps = selectPlanStepsForExecution(
+    Array.isArray(existingPlan?.steps) ? existingPlan.steps : [],
+  );
   const hasActivePlan = !!(existingPlan && actionableSteps.length > 0);
+
+  if (existingPlan && actionableSteps[0]) {
+    const preflightGate = await getPlanExecutionGateStep(
+      existingPlan.id,
+      actionableSteps[0].id,
+    );
+    if (!preflightGate.runnable) {
+      if (preflightGate.reason === 'infrastructure_circuit_open') {
+        cycleOutcome = 'infrastructure_exhausted';
+        const provenance =
+          preflightGate.infrastructureProvenance ||
+          (preflightGate.infrastructureKind === 'deployment'
+            ? DEPLOYMENT_INFRASTRUCTURE_PROVENANCE
+            : CRON_INFRASTRUCTURE_PROVENANCE);
+        wrapUpRequiresUserFeedback =
+          provenance !== DEPLOYMENT_INFRASTRUCTURE_PROVENANCE;
+        wrapUpReason = wrapUpRequiresUserFeedback
+          ? 'Infrastructure retry budget exhausted. User or operator intervention is required before execution can resume.'
+          : 'Deployment infrastructure retry budget exhausted. Waiting for the correlated deployment recovery signal.';
+        const blockResult =
+          await blockRequirementForInfrastructureCircuitStep({
+          requirementId: reqId,
+          siteId: site_id,
+          instanceId,
+          planId: existingPlan.id,
+          stepId: actionableSteps[0].id,
+          expectedGeneration:
+            preflightGate.infrastructureGeneration || 0,
+          provenance,
+          message: wrapUpReason,
+          eventId:
+            `${cronLockRunId}:${actionableSteps[0].id}:preflight-circuit`,
+          expectedExecutionGeneration: executionGeneration,
+        });
+        if (!blockResult.blocked) {
+          cycleOutcome = 'idle';
+          wrapUpReason = null;
+          wrapUpRequiresUserFeedback = false;
+        }
+      } else if (preflightGate.reason === 'infrastructure_wait') {
+        cycleOutcome = 'infrastructure_wait';
+      } else if (preflightGate.reason === 'paused') {
+        cycleOutcome = 'paused';
+        preservePausedState = true;
+      } else {
+        cycleOutcome = 'idle';
+      }
+      wrapUpAttempted =
+        preflightGate.reason !== 'infrastructure_circuit_open' ||
+        !wrapUpRequiresUserFeedback;
+      console.log(
+        `[CronAppsWorkflow] Preflight stopped before sandbox creation for step ${actionableSteps[0].id}: ${preflightGate.reason}`,
+      );
+      return {
+        reqId,
+        branch: null,
+        previewUrl: null,
+        status: preflightGate.reason,
+      };
+    }
+  }
 
   // Fetch full requirement context up-front so it is available to both the
   // orchestrator prompt and the skip-cycle guard below.
@@ -211,6 +295,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   }
 
   if (recentPlansGuard.shouldBlockRequirement) {
+    cycleOutcome = 'remediation_handoff';
     wrapUpRequiresUserFeedback = true;
     wrapUpReason = `Re-plan loop detected: ${recentPlansGuard.reason}.`;
     const rec = await recordRequirementBlockedStep({
@@ -218,9 +303,14 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       instance_id: instanceId,
       requirement_id: reqId,
       message: `Re-plan loop detected: ${recentPlansGuard.reason}. Review recent instance_plans for this requirement and re-open manually once unblocked.`,
+      provenance: 'product_replan_circuit',
+      event_id: `${cronLockRunId}:replan-circuit`,
+      expected_execution_generation: executionGeneration,
     });
     if (!rec.ok) {
-      console.error(`[CronAppsWorkflow] Failed to record re-plan-loop blocker: ${rec.error}`);
+      throw new Error(
+        `Failed to record re-plan-loop blocker: ${rec.error || 'unknown error'}`,
+      );
     }
     // Early exit without creating a sandbox
     return { reqId, branch: null, previewUrl: null, status: 'blocked' as const };
@@ -250,6 +340,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
 
   if (skipOrchestrator && !hasActivePlan && !(!reqContext.backlog?.items || reqContext.backlog.items.length === 0)) {
     console.log(`[CronAppsWorkflow] Skipping cycle: cooling down to avoid re-plan loop. No active plan to execute. (isFreshWork: ${isFreshWork})`);
+    cycleOutcome = 'scheduler_cooldown';
     if (hasAttemptedActiveItems) {
       wrapUpRequiresUserFeedback = true;
       wrapUpReason ||= 'Attempted backlog work remains, but no runnable plan is available.';
@@ -261,13 +352,15 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   // We only create it if we actually need to run steps, run the orchestrator,
   // or if we are skipping the orchestrator but still want to finalize the cycle
   // (e.g., to check if a Vercel preview URL is now ready).
-  const created = await createSandboxStep(reqId, type, title, cronAudit);
+  const created = await createSandboxStep(reqId, gitRepoKind, title, cronAudit);
   sandboxId = created.sandboxId;
   const { branchName, workDir, isNewBranch, instanceType } = created;
 
-  // Step 1b: Remove any nested project directories left by previous agent cycles
-  const cleanup = await cleanupNestedProjectsStep(sandboxId!, cronAudit);
-  sandboxId = cleanup.effectiveSandboxId;
+  if (requirementFlow.delivery.validate_deployment) {
+    // Deployable flows enforce the canonical Next.js repository layout.
+    const cleanup = await cleanupNestedProjectsStep(sandboxId!, cronAudit);
+    sandboxId = cleanup.effectiveSandboxId;
+  }
 
   // Step 1b.1: Make sure `requirement.spec.md` exists on the branch before
   // the coordinator runs. The orchestrator prompt asks the model to derive
@@ -299,16 +392,24 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     siteId: site_id,
     userId: user_id,
     instanceId,
-    branchName,
+    branchName: requirementFlow.delivery.validate_deployment
+      ? branchName
+      : undefined,
+    authProvider: requirementFlow.delivery.provision_app_tenant
+      ? 'supabase'
+      : null,
+    gitRepoKind,
   });
   const provisionedEnvKeys = platformKeyResult.injected_env_keys;
 
-  // Step 1c-bis: Injects the Makinari tracking script into the root layout.
-  await provisionTrackingScriptStep({
-    sandboxId: sandboxId!,
-    siteId: site_id,
-    audit: cronAudit,
-  });
+  if (requirementFlow.delivery.provision_tracking_script) {
+    // Application flows expose browser telemetry through the root layout.
+    await provisionTrackingScriptStep({
+      sandboxId: sandboxId!,
+      siteId: site_id,
+      audit: cronAudit,
+    });
+  }
 
   // Step 1d: Run the admin-loop detector against the recent git history. We
   // only log the verdict here; downgrade-on-next-cycle is enforced inside
@@ -363,6 +464,8 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       initialMessage: prompt,
       requirementTitle: title,
       instanceContext: reqContext.instanceContext,
+      git_repo_kind: gitRepoKind,
+      validate_deployment: requirementFlow.delivery.validate_deployment,
     });
     sandboxId = orch.effectiveSandboxId;
 
@@ -406,16 +509,15 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
 
   let smokeError: string | null = null;
   let pushResult: { branch: string; pushed: boolean; commitCount: number } | null = null;
-      let stepsPhase: any = null;
+  let stepsPhase: any = null;
+  let infrastructureHalt = false;
+  let attemptedProductWork = false;
+  let executionPhaseCompleted = false;
 
   try {
     if (activePlan?.steps) {
       const allSteps = activePlan.steps as any[];
-      const pending = allSteps
-        .filter((s) => s.status === 'pending' || s.status === 'in_progress')
-        .sort((a, b) => (a.order || 0) - (b.order || 0));
-      const retries = allSteps.filter((s) => s.status === 'failed' && (s.retry_count ?? 0) < 2);
-      const stepsToRun = [...retries, ...pending];
+      const stepsToRun = selectPlanStepsForExecution(allSteps);
       
       let executed = 0;
       let anyStepFailed = false;
@@ -440,9 +542,28 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
             turnCount++;
             
             // Check plan gate
-            const gate = await getPlanExecutionGateStep(activePlan.id);
+            const gate = await getPlanExecutionGateStep(
+              activePlan.id,
+              workingStep.id,
+            );
             if (!gate.runnable) {
                console.log(`[CronAppsWorkflow] Plan execution halted (reason=${gate.reason})`);
+               if (
+                 gate.reason === 'infrastructure_wait' ||
+                 gate.reason === 'infrastructure_circuit_open'
+               ) {
+                 infrastructureHalt = true;
+                 cycleOutcome =
+                   gate.reason === 'infrastructure_circuit_open'
+                     ? 'infrastructure_exhausted'
+                     : 'infrastructure_wait';
+                 wrapUpAttempted = true;
+               } else if (gate.reason === 'paused') {
+                 cycleOutcome = 'paused';
+                 preservePausedState = true;
+               } else {
+                 cycleOutcome = 'idle';
+               }
                await logCronInfrastructureEventStep(cronAudit, {
                  event: 'cron_infra_plan_execution_halted',
                  level: 'warn',
@@ -453,6 +574,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
             }
             
             lastTouchedStepId = workingStep.id;
+            attemptedProductWork = true;
             
             const turnRes = await executeSingleTurnStep({
                sandboxId: sandboxId!,
@@ -463,30 +585,162 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
                siteId: site_id,
                userId: user_id,
                title,
-               gitRepoKind: 'applications',
+               gitRepoKind,
                requirementType: type,
-               provisionedEnvKeys
+               validateDeployment:
+                 requirementFlow.delivery.validate_deployment,
+               provisionedEnvKeys,
+               executionEventId:
+                 `${cronLockRunId}:${workingStep.id}:turn:${turnCount}`,
             });
             
             if (turnRes.effectiveSandboxId) sandboxId = turnRes.effectiveSandboxId;
+            if (typeof turnRes.infrastructureGeneration === 'number') {
+              workingStep.infrastructure_generation =
+                turnRes.infrastructureGeneration;
+            }
+            if (turnRes.concurrencyHalt) {
+              infrastructureHalt = true;
+              cycleOutcome = 'idle';
+              break outer;
+            }
             
             if (!turnRes.ok) {
                if (turnRes.transient || isSandboxGoneError(turnRes.error)) {
                  console.warn(`[CronAppsWorkflow] Step ${workingStep.order} transient infra error: ${turnRes.error}`);
-                 const infra = await recordStepInfraTransientStep(activePlan.id, workingStep.id, turnRes.error);
-                 if (infra.exhausted) {
-                   anyStepFailed = true;
+                 const infra = await recordStepInfraTransientStep(
+                   activePlan.id,
+                   workingStep.id,
+                   `${cronLockRunId}:${workingStep.id}:turn:${turnCount}:failure`,
+                   turnRes.error,
+                   turnRes.infrastructureWait,
+                   {
+                     allowRetryableFailed: workingStep.status === 'failed',
+                     expectedGeneration:
+                       turnRes.infrastructureGeneration ??
+                       Number(workingStep.infrastructure_generation || 0),
+                   },
+                 );
+                 infrastructureHalt = true;
+                 if (
+                   infra.state !== 'applied' &&
+                   infra.state !== 'duplicate'
+                 ) {
+                   cycleOutcome = 'idle';
+                   break outer;
                  }
+                 cycleOutcome = infra.circuitOpen
+                   ? 'infrastructure_exhausted'
+                   : turnRes.infrastructureWait?.kind === 'deployment'
+                     ? 'infrastructure_wait'
+                     : 'infrastructure_retry';
+                 if (infra.circuitOpen) {
+                   const provenance =
+                     turnRes.infrastructureWait?.provenance ||
+                     CRON_INFRASTRUCTURE_PROVENANCE;
+                   wrapUpRequiresUserFeedback =
+                     provenance !== DEPLOYMENT_INFRASTRUCTURE_PROVENANCE;
+                   wrapUpReason = wrapUpRequiresUserFeedback
+                     ? 'Infrastructure retry budget exhausted. User or operator intervention is required before execution can resume.'
+                     : 'Deployment infrastructure retry budget exhausted. Waiting for the correlated deployment recovery signal.';
+                   const blockResult =
+                     await blockRequirementForInfrastructureCircuitStep({
+                     requirementId: reqId,
+                     siteId: site_id,
+                     instanceId,
+                     planId: activePlan.id,
+                     stepId: workingStep.id,
+                     expectedGeneration:
+                       infra.generation ??
+                       Number(workingStep.infrastructure_generation || 0),
+                     provenance,
+                     message: wrapUpReason,
+                     eventId:
+                       `${cronLockRunId}:${workingStep.id}:turn:${turnCount}:circuit`,
+                     expectedExecutionGeneration: executionGeneration,
+                   });
+                   if (!blockResult.blocked) {
+                     cycleOutcome = 'idle';
+                     wrapUpReason = null;
+                     wrapUpRequiresUserFeedback = false;
+                     break outer;
+                   }
+                   await logCronInfrastructureEventStep(cronAudit, {
+                     event: 'cron_infra_circuit_open',
+                     level: 'error',
+                     message: `Infrastructure circuit opened for step ${workingStep.id}; automatic execution is paused pending recovery or intervention.`,
+                     details: {
+                       plan_id: activePlan.id,
+                       step_id: workingStep.id,
+                       infra_retry_count: infra.infraCount,
+                       infrastructure_kind:
+                         turnRes.infrastructureWait?.kind || 'gate',
+                     },
+                   });
+                 }
+                 wrapUpAttempted =
+                   !infra.circuitOpen || !wrapUpRequiresUserFeedback;
                  break outer;
                } else {
                  // Step failed genuinely
                  anyStepFailed = true;
                  console.warn(`[CronAppsWorkflow] Step ${workingStep.order} turn failed: ${turnRes.error}`);
-                 await updatePlanStepStatusStep(activePlan.id, workingStep.id, 'failed', turnRes.error);
+                 const clearResult = await clearStepInfrastructureStateStep(
+                   activePlan.id,
+                   workingStep.id,
+                   `${cronLockRunId}:${workingStep.id}:turn:${turnCount}:product-failure-clear`,
+                   Number(workingStep.infrastructure_generation || 0),
+                 );
+                 if (
+                   clearResult.state !== 'applied' &&
+                   !(clearResult.state === 'duplicate' && clearResult.cleared)
+                 ) {
+                   infrastructureHalt = true;
+                   cycleOutcome = 'idle';
+                   break outer;
+                 }
+                 if (typeof clearResult.generation === 'number') {
+                   workingStep.infrastructure_generation = clearResult.generation;
+                 }
+                 const failureMutation = await updatePlanStepStatusStep(
+                   activePlan.id,
+                   workingStep.id,
+                   'failed',
+                   turnRes.error,
+                   Number(workingStep.infrastructure_generation || 0),
+                 );
+                 cycleOutcome = failureMutation.persisted
+                   ? 'product_failure'
+                   : 'idle';
+                 infrastructureHalt = !failureMutation.persisted;
                  break outer;
                }
             }
 
+            if (turnRes.remediationScheduled) {
+               const clearResult = await clearStepInfrastructureStateStep(
+                 activePlan.id,
+                 workingStep.id,
+                 `${cronLockRunId}:${workingStep.id}:turn:${turnCount}:remediation-clear`,
+                 Number(workingStep.infrastructure_generation || 0),
+               );
+               if (
+                 clearResult.state !== 'applied' &&
+                 !(clearResult.state === 'duplicate' && clearResult.cleared)
+               ) {
+                 infrastructureHalt = true;
+                 cycleOutcome = 'idle';
+                 break outer;
+               }
+               if (typeof clearResult.generation === 'number') {
+                 workingStep.infrastructure_generation = clearResult.generation;
+               }
+               cycleOutcome = 'remediation_handoff';
+               console.log(
+                 `[CronAppsWorkflow] Step ${workingStep.order} handed off to remediation work.`,
+               );
+               break outer;
+            }
             if (turnRes.sleepRequested && !turnRes.backgroundTask) {
                console.log(`[CronAppsWorkflow] Turn requested sleep for ${turnRes.sleepRequested}s (generic)`);
                await sleep(turnRes.sleepRequested * 1000);
@@ -512,31 +766,134 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
                      }
                   } catch (e: unknown) {
                      console.warn(`[CronAppsWorkflow] Failed to check background command:`, e instanceof Error ? e.message : e);
-                     // If it fails (e.g. sandbox gone), break the polling and let the LLM or outer loop handle it
-                     isRunning = false;
+                     const infra = await recordStepInfraTransientStep(
+                       activePlan.id,
+                       workingStep.id,
+                       `${cronLockRunId}:${workingStep.id}:turn:${turnCount}:background`,
+                       e instanceof Error ? e.message : String(e),
+                       undefined,
+                       {
+                         allowRetryableFailed: workingStep.status === 'failed',
+                         expectedGeneration:
+                           Number(workingStep.infrastructure_generation || 0),
+                       },
+                     );
+                     infrastructureHalt = true;
+                     if (
+                       infra.state !== 'applied' &&
+                       infra.state !== 'duplicate'
+                     ) {
+                       cycleOutcome = 'idle';
+                       break outer;
+                     }
+                     cycleOutcome = infra.circuitOpen
+                       ? 'infrastructure_exhausted'
+                       : 'infrastructure_retry';
+                     if (infra.circuitOpen) {
+                       wrapUpRequiresUserFeedback = true;
+                       wrapUpReason =
+                         'Infrastructure retry budget exhausted while monitoring a background command. User or operator intervention is required.';
+                       const blockResult =
+                         await blockRequirementForInfrastructureCircuitStep({
+                         requirementId: reqId,
+                         siteId: site_id,
+                         instanceId,
+                         planId: activePlan.id,
+                         stepId: workingStep.id,
+                         expectedGeneration:
+                           infra.generation ??
+                           Number(workingStep.infrastructure_generation || 0),
+                         provenance: CRON_INFRASTRUCTURE_PROVENANCE,
+                         message: wrapUpReason,
+                         eventId:
+                           `${cronLockRunId}:${workingStep.id}:turn:${turnCount}:background-circuit`,
+                         expectedExecutionGeneration: executionGeneration,
+                       });
+                       if (!blockResult.blocked) {
+                         cycleOutcome = 'idle';
+                         wrapUpReason = null;
+                         wrapUpRequiresUserFeedback = false;
+                         break outer;
+                       }
+                       await logCronInfrastructureEventStep(cronAudit, {
+                         event: 'cron_infra_circuit_open',
+                         level: 'error',
+                         message: `Infrastructure circuit opened while monitoring step ${workingStep.id}.`,
+                         details: {
+                           plan_id: activePlan.id,
+                           step_id: workingStep.id,
+                           infra_retry_count: infra.infraCount,
+                         },
+                       });
+                     }
+                     wrapUpAttempted = !infra.circuitOpen;
+                     break outer;
                   }
                }
+            }
+
+            if (turnRes.persistedTerminalStatus === 'completed') {
+              stepCompleted = true;
+              executed++;
+              continue;
+            }
+            if (turnRes.persistedTerminalStatus === 'failed') {
+              anyStepFailed = true;
+              cycleOutcome = 'product_failure';
+              break outer;
+            }
+
+            const clearResult = await clearStepInfrastructureStateStep(
+              activePlan.id,
+              workingStep.id,
+              `${cronLockRunId}:${workingStep.id}:turn:${turnCount}:success-clear`,
+              Number(workingStep.infrastructure_generation || 0),
+            );
+            if (
+              clearResult.state !== 'applied' &&
+              !(clearResult.state === 'duplicate' && clearResult.cleared)
+            ) {
+              infrastructureHalt = true;
+              cycleOutcome = 'idle';
+              break outer;
+            }
+            if (typeof clearResult.generation === 'number') {
+              workingStep.infrastructure_generation = clearResult.generation;
             }
             
             if (turnRes.isDone) {
                if (turnRes.effectiveSandboxId) sandboxId = turnRes.effectiveSandboxId;
                
                if (turnRes.gatePassed) {
-                  stepCompleted = true;
-                  executed++;
-                  await updatePlanStepStatusStep(activePlan.id, workingStep.id, 'completed');
-               } else if (!turnRes.ok && isSandboxGoneError(turnRes.error)) {
-                  console.warn(`[CronAppsWorkflow] Step ${workingStep.order} gate hit transient infra error: ${turnRes.error}`);
-                  const infra = await recordStepInfraTransientStep(activePlan.id, workingStep.id, turnRes.error);
-                  if (infra.exhausted) {
-                    anyStepFailed = true;
+                  const completionMutation = await updatePlanStepStatusStep(
+                    activePlan.id,
+                    workingStep.id,
+                    'completed',
+                    undefined,
+                    Number(workingStep.infrastructure_generation || 0),
+                  );
+                  stepCompleted = completionMutation.persisted;
+                  if (completionMutation.persisted) executed++;
+                  if (!completionMutation.persisted) {
+                    infrastructureHalt = true;
+                    cycleOutcome = 'idle';
+                    break outer;
                   }
-                  break outer;
                } else {
                   // Gate failed, do adaptation loop
                   anyStepFailed = true;
                   console.warn(`[CronAppsWorkflow] Step ${workingStep.order} gate failed`);
-                  await updatePlanStepStatusStep(activePlan.id, workingStep.id, 'failed', turnRes.gateErrorExcerpt);
+                  const failureMutation = await updatePlanStepStatusStep(
+                    activePlan.id,
+                    workingStep.id,
+                    'failed',
+                    turnRes.gateErrorExcerpt,
+                    Number(workingStep.infrastructure_generation || 0),
+                  );
+                  cycleOutcome = failureMutation.persisted
+                    ? 'product_failure'
+                    : 'idle';
+                  infrastructureHalt = !failureMutation.persisted;
                   
                   // For now, if the gate fails, we mark the step failed and break to let the next cron orchestrate adaptation
                   break outer;
@@ -564,7 +921,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       planCompleted = reconciledStatus === 'completed';
 
       // Re-fetch the final plan to count completed steps
-      const finalPlan = await getActiveInstancePlanStep(instanceId, site_id);
+      const finalPlan = await getInstancePlanByIdStep(activePlan.id);
       if (Array.isArray(finalPlan?.steps)) latestPlanSteps = finalPlan.steps;
 
       if (planCompleted && finalPlan) {
@@ -576,7 +933,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
             const connected = await connectOrRecreateRequirementSandbox({
               sandboxId,
               requirementId: reqId,
-              instanceType: type,
+              instanceType: gitRepoKind,
               title,
               audit: cronAudit,
             });
@@ -597,25 +954,10 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       const completedStepsAfter = (finalPlan?.steps as any[] || []).filter((s) => s.status === 'completed').length;
       const deltaCompleted = completedStepsAfter - completedStepsBefore;
 
-      if (deltaCompleted === 0 && executed > 0) {
-        const noProgressCount = await incrementNoProgressCyclesStep(reqId);
-        if (noProgressCount >= 3) {
-          console.warn(`[CronAppsWorkflow] No progress for ${noProgressCount} cycles. Marking requirement as blocked.`);
-          await recordRequirementBlockedStep({
-            site_id,
-            instance_id: instanceId,
-            requirement_id: reqId,
-            message: `The plan has failed to complete any new step for ${noProgressCount} consecutive cycles. Circuit breaker triggered to avoid infinite loop.`,
-          });
-          // Avoid triggering further things in this cycle
-          planCompleted = false;
-        }
-      } else if (deltaCompleted > 0) {
-        await resetNoProgressCyclesStep(reqId);
-        // Real forward progress (a plan step completed this cycle) — reset the
-        // coarse `cron_attempts` circuit breaker too, otherwise a multi-step
-        // requirement that advances one step per cycle still trips at 10 ticks.
-        await resetCronAttemptsStep(reqId);
+      if (deltaCompleted > 0) {
+        cycleOutcome = 'progress';
+      } else if (attemptedProductWork && cycleOutcome === 'idle') {
+        cycleOutcome = 'product_no_progress';
       }
     } else {
       console.log(`[CronAppsWorkflow] No active plan found.`);
@@ -649,11 +991,17 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
         }
       }
     }
+    executionPhaseCompleted = true;
   } finally {
     const anyFail = stepsPhase?.anyStepFailed ?? false;
     
-    // DB Migrations still only run on full success to avoid breaking DB on incomplete state
-    if (!anyFail) {
+    // Application database migrations only run on a successful app/site cycle.
+    if (
+      requirementFlow.delivery.apply_database_migrations &&
+      executionPhaseCompleted &&
+      !anyFail &&
+      !infrastructureHalt
+    ) {
       const dbMig = await applyDatabaseMigrationsStep(sandboxId!, reqId, instanceType, title, cronAudit);
       sandboxId = dbMig.effectiveSandboxId;
       if (dbMig.errors.length > 0) {
@@ -663,23 +1011,48 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       }
     }
 
-    // Always push to origin to save WIP code/sandbox state, even if a step failed
-    const commitMsg = anyFail 
-      ? `Cron cycle complete (with failures): ${title}`
-      : `Cron cycle complete: ${title}`;
-      
-    const pushed = await commitAndPushStep(sandboxId!, title, reqId, commitMsg, cronAudit, 'applications');
-    pushResult = pushed;
-    if (pushed?.effectiveSandboxId) {
-      sandboxId = pushed.effectiveSandboxId;
+    if (!infrastructureHalt) {
+      // Save product work even when a product gate failed.
+      const commitMsg = anyFail
+        ? `Cron cycle complete (with failures): ${title}`
+        : `Cron cycle complete: ${title}`;
+
+      const pushed = await commitAndPushStep(
+        sandboxId!,
+        title,
+        reqId,
+        commitMsg,
+        cronAudit,
+        gitRepoKind,
+        {
+          validateDeployment:
+            requirementFlow.delivery.validate_deployment,
+        },
+      );
+      pushResult = pushed;
+      if (pushed?.effectiveSandboxId) {
+        sandboxId = pushed.effectiveSandboxId;
+      }
     }
+  }
+
+  if (infrastructureHalt) {
+    return {
+      reqId,
+      branch: null,
+      previewUrl: null,
+      status: cycleOutcome,
+    };
   }
 
   await extendRunLockStep(reqId, cronLockRunId);
 
   let postFinallyBuildError: string | undefined;
-  const lightFlow = isLightRequirementFlow(classifyRequirementType(type));
-  if (pushResult && !(stepsPhase?.anyStepFailed) && !lightFlow) {
+  if (
+    pushResult &&
+    !(stepsPhase?.anyStepFailed) &&
+    requirementFlow.delivery.validate_deployment
+  ) {
     const pf = await postFinallyBuildStep(sandboxId!, cronAudit, {
       requirementId: reqId,
       title,
@@ -708,13 +1081,15 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   const { getRequirementGitBinding, resolveDefaultGitBinding } = await import('@/lib/services/requirement-git-binding');
   let binding;
   try {
-    binding = await getRequirementGitBinding(reqId, 'applications');
+    binding = await getRequirementGitBinding(reqId, gitRepoKind);
   } catch {
-    binding = resolveDefaultGitBinding('applications');
+    binding = resolveDefaultGitBinding(gitRepoKind);
   }
   const owner = binding.org;
   const repoName = binding.repo;
-  previewUrl = await getPreviewUrlStep(owner, repoName, effectiveBranch, reqId);
+  previewUrl = requirementFlow.delivery.validate_deployment
+    ? await getPreviewUrlStep(owner, repoName, effectiveBranch, reqId)
+    : null;
 
   // Step 7: Check source code
   const sourceCodeUrl = await ensureSourceArchiveStep(reqId, sandboxId);
@@ -728,6 +1103,23 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     requirementId: reqId,
     audit: cronAudit,
   });
+
+  const executionIsCurrentBeforeFinalStatus =
+    await isRequirementExecutionCurrentStep(reqId, executionGeneration);
+  if (!executionIsCurrentBeforeFinalStatus) {
+    console.warn(
+      `[CronAppsWorkflow] Skipping finalization for stale execution generation ${executionGeneration}.`,
+    );
+    preservePausedState = true;
+    wrapUpAttempted = true;
+    cycleOutcome = 'idle';
+    return {
+      reqId,
+      branch: effectiveBranch,
+      previewUrl,
+      status: 'stale_execution' as const,
+    };
+  }
 
   // Step 8.5: Emit Docs Digest and Cycle Wrap-Up
   if (sandboxId) {
@@ -810,7 +1202,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
 
   // Step 9: Final status — all gates must pass (including smoke test)
   const smokeOk = !smokeError;
-  const { effectiveStatus: finalStatus } = await createFinalStatusStep({
+  const finalStatusResult = await createFinalStatusStep({
     site_id, instanceId, reqId, sandboxId: sandboxId || undefined,
     repoUrl,
     previewUrl: previewUrl || undefined,
@@ -821,13 +1213,23 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     previewOk,
     smokeError: smokeError || undefined,
     postFinallyBuildError,
-    flowKind: classifyRequirementType(type),
+    flowKind: requirementKind,
     audit: cronAudit,
+    expectedExecutionGeneration: executionGeneration,
+    cycleId: cronLockRunId,
   });
-
-  if (planCompleted && !wrapUpRequiresUserFeedback) {
-    await unblockRequirementStep(reqId);
+  if (finalStatusResult.state === 'stale') {
+    preservePausedState = true;
+    wrapUpAttempted = true;
+    cycleOutcome = 'idle';
+    return {
+      reqId,
+      branch: effectiveBranch,
+      previewUrl,
+      status: 'stale_execution' as const,
+    };
   }
+  const finalStatus = finalStatusResult.effectiveStatus;
 
   // Sandbox stop happens in the outer `finally` — never in the happy path.
   // Keeping a single exit point guarantees we never leak a VM even when a
@@ -835,12 +1237,38 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   return { reqId, branch: effectiveBranch, previewUrl, status: finalStatus };
   } catch (e: any) {
     console.error(`[CronAppsWorkflow] 🚨 CRITICAL ERROR in workflow for req ${reqId}:`, e);
+    if (
+      cycleOutcome !== 'progress' &&
+      cycleOutcome !== 'product_failure' &&
+      cycleOutcome !== 'product_no_progress'
+    ) {
+      cycleOutcome = 'infrastructure_retry';
+    }
     wrapUpAttempted = false;
     wrapUpRequiresUserFeedback = true;
     wrapUpReason = `The work cycle stopped because of an error: ${e?.message || String(e)}`;
     // Let the finally block handle the sandbox stop
     throw e;
   } finally {
+    let executionIsCurrent = false;
+    try {
+      executionIsCurrent = await isRequirementExecutionCurrentStep(
+        reqId,
+        executionGeneration,
+      );
+    } catch (generationError: unknown) {
+      console.warn(
+        '[CronAppsWorkflow] Failed to validate execution generation:',
+        generationError instanceof Error
+          ? generationError.message
+          : generationError,
+      );
+    }
+    if (!executionIsCurrent) {
+      wrapUpAttempted = true;
+      preservePausedState = true;
+      cycleOutcome = 'idle';
+    }
     if (!wrapUpAttempted) {
       try {
         const { emitCycleWrapUpStep } = await import('../shared/cycle-wrapup-step');
@@ -870,7 +1298,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       }
     }
 
-    if (instanceId) {
+    if (instanceId && !preservePausedState) {
       try {
         await updateInstanceStatusStep(instanceId, 'pending');
       } catch (e: unknown) {
@@ -878,7 +1306,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       }
     }
     
-    if (sandboxId) {
+    if (sandboxId && executionIsCurrent) {
       try {
         await stopSandboxStep(sandboxId, cronAudit);
       } catch (e: unknown) {
@@ -887,6 +1315,50 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
           e instanceof Error ? e.message : e,
         );
       }
+    }
+
+    const accounting = await recordCronCycleOutcomeStep({
+      requirementId: reqId,
+      cycleId: cronLockRunId,
+      cycleStartedAt,
+      outcome: cycleOutcome,
+      expectedExecutionGeneration: executionGeneration,
+      runnerInstanceId: instanceId,
+    });
+    if (
+      accounting.is_latest &&
+      accounting.recorded_outcome === 'product_no_progress' &&
+      accounting.no_progress_cycles >= 3
+    ) {
+      const message =
+        `The plan has failed to complete any new step for ${accounting.no_progress_cycles} consecutive cycles. Circuit breaker triggered to avoid infinite loop.`;
+      console.warn(`[CronAppsWorkflow] ${message}`);
+      await blockRequirementForProductNoProgressStep({
+        requirementId: reqId,
+        siteId: site_id,
+        instanceId,
+        cycleId: cronLockRunId,
+        minimumFailures: 3,
+        message,
+        expectedExecutionGeneration: executionGeneration,
+      });
+    } else if (
+      accounting.is_latest &&
+      accounting.recorded_outcome === 'infrastructure_retry' &&
+      accounting.infrastructure_failure_cycles >= 4
+    ) {
+      const message =
+        `Infrastructure persistence failed for ${accounting.infrastructure_failure_cycles} consecutive cycles. Automatic execution is blocked pending operator intervention.`;
+      console.warn(`[CronAppsWorkflow] ${message}`);
+      await blockRequirementForCronInfrastructureCyclesStep({
+        requirementId: reqId,
+        siteId: site_id,
+        instanceId,
+        cycleId: cronLockRunId,
+        minimumFailures: 4,
+        message,
+        expectedExecutionGeneration: executionGeneration,
+      });
     }
     await releaseRunLockStep(reqId, cronLockRunId);
   }

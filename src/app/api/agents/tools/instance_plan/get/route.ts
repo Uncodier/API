@@ -7,7 +7,7 @@ const GetInstancePlansSchema = z.object({
   site_id: z.string().uuid('Site ID is required'),
   user_id: z.string().uuid('Invalid user_id').optional(),
   agent_id: z.string().uuid('Invalid agent_id').optional(),
-  status: z.enum(['pending', 'completed', 'failed', 'cancelled', 'paused', 'in_progress']).optional(),
+  status: z.enum(['pending', 'completed', 'failed', 'cancelled', 'paused', 'in_progress', 'active']).optional(),
   limit: z.number().int().min(1).max(100).optional().default(20),
   offset: z.number().int().min(0).optional().default(0),
 });
@@ -37,6 +37,7 @@ export async function getInstancePlansCore(filters: Record<string, unknown>) {
 
   query = query
     .order('created_at', { ascending: false })
+    .order('id', { ascending: false })
     .range(validatedFilters.offset, validatedFilters.offset + validatedFilters.limit - 1);
 
   const { data, error, count } = await query;

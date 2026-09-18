@@ -11,6 +11,7 @@ export type GitPushFailureKind =
   | 'rebase_ops_only'
   | 'protected_branch'
   | 'auth'
+  | 'platform'
   | 'server_hook'
   | 'network'
   | 'attach_index'
@@ -28,6 +29,8 @@ export type GitPushTriage = {
   agentMessage: string;
   /** Full diagnostic for instance_logs and operators. */
   operatorMessage: string;
+  /** True when retry policy must not charge the product step failure budget. */
+  infrastructureFailure: boolean;
 };
 
 const OPS_ONLY_MESSAGE =
@@ -80,6 +83,8 @@ export function classifyGitPushFailureMessage(stderr: string): string | null {
     s.includes('invalid credentials') ||
     s.includes('permission denied') ||
     s.includes('could not read username') ||
+    s.includes('repository not found') ||
+    s.includes('could not read from remote repository') ||
     /\b403\b/.test(s) ||
     (s.includes('permission') && s.includes('remote'))
   ) {
@@ -87,6 +92,15 @@ export function classifyGitPushFailureMessage(stderr: string): string | null {
   }
   if (s.includes('pre-receive hook') || s.includes('hook declined') || s.includes('gh001') || s.includes('large files detected')) {
     return 'server_hook';
+  }
+  if (
+    /\b(429|500|502|503|504)\b/.test(s) ||
+    s.includes('service unavailable') ||
+    s.includes('remote end hung up unexpectedly') ||
+    s.includes('the remote end hung up unexpectedly') ||
+    s.includes('rpc failed')
+  ) {
+    return 'platform';
   }
   if (messageMentionsRebase(s) && (s.includes('conflict') || s.includes('could not apply'))) {
     return 'rebase_conflict';
@@ -127,6 +141,7 @@ export function triageGitPushError(fullMessage: string): GitPushTriage {
     return {
       failureKind: 'sandbox_unavailable',
       agentActionable: false,
+      infrastructureFailure: true,
       agentMessage:
         'Sandbox microVM is no longer running (stopped or expired). The platform will provision a fresh VM and retry — this is not a code defect.',
       operatorMessage,
@@ -138,6 +153,7 @@ export function triageGitPushError(fullMessage: string): GitPushTriage {
     return {
       failureKind: 'attach_index',
       agentActionable: true,
+      infrastructureFailure: false,
       agentMessage: ATTACH_INDEX_HINT,
       operatorMessage,
     };
@@ -146,6 +162,7 @@ export function triageGitPushError(fullMessage: string): GitPushTriage {
     return {
       failureKind: 'invalid_ref',
       agentActionable: true,
+      infrastructureFailure: false,
       agentMessage: INVALID_REF_HINT,
       operatorMessage,
     };
@@ -154,6 +171,7 @@ export function triageGitPushError(fullMessage: string): GitPushTriage {
     return {
       failureKind: 'vercel_layout',
       agentActionable: true,
+      infrastructureFailure: false,
       agentMessage: fullMessage.replace(/^\[vercel\]\s*/i, 'Layout: ').slice(0, 500),
       operatorMessage,
     };
@@ -162,6 +180,7 @@ export function triageGitPushError(fullMessage: string): GitPushTriage {
     return {
       failureKind: 'pre_push_build',
       agentActionable: true,
+      infrastructureFailure: false,
       agentMessage: fullMessage
         .replace(/^\[pre-push-build\]\s*/i, 'Pre-push build: ')
         .slice(0, 2_000),
@@ -172,6 +191,7 @@ export function triageGitPushError(fullMessage: string): GitPushTriage {
     return {
       failureKind: kindRaw,
       agentActionable: false,
+      infrastructureFailure: true,
       agentMessage: OPS_ONLY_MESSAGE,
       operatorMessage,
     };
@@ -180,6 +200,7 @@ export function triageGitPushError(fullMessage: string): GitPushTriage {
     return {
       failureKind: 'server_hook',
       agentActionable: true,
+      infrastructureFailure: false,
       agentMessage: 'Push rejected by server hook (often due to file size limits, e.g., pushing node_modules or .next). Check git log and use `git reset --soft HEAD~1` and `git rm -r --cached node_modules .next` to remove large files from the commit history before pushing again.',
       operatorMessage,
     };
@@ -188,7 +209,17 @@ export function triageGitPushError(fullMessage: string): GitPushTriage {
     return {
       failureKind: 'network',
       agentActionable: false,
+      infrastructureFailure: true,
       agentMessage: 'Network error talking to the git remote. Retry later or check connectivity; the agent cannot fix network policy.',
+      operatorMessage,
+    };
+  }
+  if (kindRaw === 'platform') {
+    return {
+      failureKind: 'platform',
+      agentActionable: false,
+      infrastructureFailure: true,
+      agentMessage: 'The git hosting platform rejected or interrupted the push. Retry later; this is not a product code defect.',
       operatorMessage,
     };
   }
@@ -201,6 +232,7 @@ export function triageGitPushError(fullMessage: string): GitPushTriage {
     return {
       failureKind: 'rebase_ops_only',
       agentActionable: true,
+      infrastructureFailure: false,
       agentMessage:
         'Rebase has conflicts in source code files. Resolve them locally (not only progress/ground-truth), then add, rebase --continue, and push.',
       operatorMessage,
@@ -218,7 +250,8 @@ export function triageGitPushError(fullMessage: string): GitPushTriage {
       : 'Rebase/merge failed with conflicts. Manual resolution required.';
     return {
       failureKind: 'rebase_conflict',
-      agentActionable: false,
+      agentActionable: true,
+      infrastructureFailure: false,
       agentMessage: short,
       operatorMessage,
     };
@@ -227,6 +260,7 @@ export function triageGitPushError(fullMessage: string): GitPushTriage {
         return {
           failureKind: 'rebase_ops_only',
           agentActionable: false,
+          infrastructureFailure: false,
           agentMessage:
             'Push was rejected; automatic rebase could not be completed. Manual resolution required.',
           operatorMessage,
@@ -236,6 +270,7 @@ export function triageGitPushError(fullMessage: string): GitPushTriage {
     return {
       failureKind: 'non_fast_forward',
       agentActionable: false,
+      infrastructureFailure: false,
       agentMessage:
         'Remote advanced the branch or push failed. Manual resolution required to avoid divergence.',
       operatorMessage,
@@ -245,6 +280,7 @@ export function triageGitPushError(fullMessage: string): GitPushTriage {
     return {
       failureKind: 'invalid_ref',
       agentActionable: true,
+      infrastructureFailure: false,
       agentMessage: INVALID_REF_HINT,
       operatorMessage,
     };
@@ -253,6 +289,7 @@ export function triageGitPushError(fullMessage: string): GitPushTriage {
     return {
       failureKind: 'unknown',
       agentActionable: true,
+      infrastructureFailure: false,
       agentMessage: 'Push was refused. Check git output in logs; create/check out a valid feature branch and try again.',
       operatorMessage,
     };
@@ -260,6 +297,7 @@ export function triageGitPushError(fullMessage: string): GitPushTriage {
   return {
     failureKind: 'unknown',
     agentActionable: true,
+    infrastructureFailure: false,
     agentMessage: 'Commit/push failed. See the operator log for the full git error.',
     operatorMessage,
   };

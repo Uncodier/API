@@ -29,8 +29,13 @@ import {
   loadRequirement,
   reconcilePhaseForItem,
   toBacklog,
-  writeBacklog,
 } from './requirement-backlog-store';
+import {
+  assertBacklogGraph,
+  assertBacklogInvariants,
+  assertBacklogStatusTransition,
+} from './requirement-backlog-invariants';
+import { mutateBacklogAtomically } from './requirement-backlog-mutation';
 import { validateAcceptance } from './requirement-acceptance';
 import { cancelPlanStepsForBacklogItem } from '@/lib/helpers/plan-lifecycle';
 
@@ -57,7 +62,7 @@ export function gatingItems(items: BacklogItem[]): BacklogItem[] {
 
 export function isBacklogComplete(items: BacklogItem[]): boolean {
   const gating = gatingItems(items);
-  return gating.length > 0 && gating.every((i) => isItemTerminal(i.status));
+  return gating.length > 0 && gating.every((i) => i.status === 'done');
 }
 
 export function outstandingGatingItems(items: BacklogItem[]): BacklogItem[] {
@@ -75,9 +80,8 @@ export function isOrnamentalOnlyOutstanding(items: BacklogItem[]): boolean {
 }
 
 /**
- * True when every `tier='core'` item is in a terminal state (`done` or
- * `needs_review`). Consumers (flow engine, close-requirement gates) should
- * call this instead of checking `completion_ratio === 1`.
+ * True when every gating item completed successfully. `needs_review` is
+ * scheduling-terminal but never counts as successful delivery.
  * @deprecated Use `isBacklogComplete(items)` instead.
  */
 export function coreItemsAllDone(items: BacklogItem[]): boolean {
@@ -175,82 +179,142 @@ export async function upsertBacklogItem(params: {
   requirementId: string;
   item: Partial<BacklogItem> & { title: string; kind: BacklogItemKind; phase_id: string; acceptance: string[] };
 }): Promise<BacklogItem> {
-  const req = await loadRequirement(params.requirementId);
-  if (!req) throw new Error(`Requirement ${params.requirementId} not found`);
-  const flow = getFlow(classifyRequirementType(req.type));
-  const backlog = toBacklog(req.backlog, flow.phases[0]?.id || 'default');
-
-  const idx = params.item.id ? backlog.items.findIndex((i) => i.id === params.item.id) : -1;
-  const next = ensureItemDefaults(
-    idx >= 0 ? { ...backlog.items[idx], ...params.item } : params.item,
-  );
-
-  // Hard rule (matches Phase 10 Judge contract): a `tier=core` item must have
-  // at least one *executable* acceptance entry — i.e. one that contains an
-  // HTTP verb (GET/POST/...), a route anchor (`/foo`), a status-code anchor
-  // (2xx/200/...) or an observable verb (returns/renders/inserts/...). If
-  // every entry is narrative, the Judge will reject every cycle forever (no
-  // amount of code can satisfy "Admin can configure max_capacity" because
-  // there is no anchor to match in evidence). Refusing the upsert here makes
-  // the orchestrator see a clear error in its tool result and forces it to
-  // rewrite the acceptance with a real anchor, which is the only way out of
-  // the loop. Existing items can still be updated as long as the post-merge
-  // acceptance is executable.
-  if ((next.tier ?? 'core') === 'core') {
-    const v = validateAcceptance(next.acceptance);
-    if (!v.has_any_executable) {
-      throw new Error(
-        `Backlog upsert rejected: tier=core item "${next.title}" has narrative-only acceptance. ` +
-          `Add at least one executable anchor per entry — HTTP verb (GET/POST/...), route ` +
-          `(/api/...), status code (2xx/200) or observable verb (returns, renders, inserts, ` +
-          `creates, updates, deletes, redirects, persists). Example BEFORE: ` +
-          `"Admin can configure max_capacity on studios". Example AFTER: ` +
-          `"PATCH /api/studios/:id with { max_capacity: number } returns 200 and persists the value, ` +
-          `and GET /api/studios returns it in the response payload". Or set tier=ornamental if this ` +
-          `is polish-only and should not block requirement closure.`,
+  return mutateBacklogAtomically(
+    params.requirementId,
+    ({ backlog, flow }) => {
+      const idx = params.item.id
+        ? backlog.items.findIndex((item) => item.id === params.item.id)
+        : -1;
+      const next = ensureItemDefaults(
+        idx >= 0 ? { ...backlog.items[idx], ...params.item } : params.item,
       );
-    }
-  }
 
-  if (idx >= 0) {
-    backlog.items[idx] = next;
-  } else {
-    backlog.items.push(next);
-  }
-  // When a new (or revived) item lands in a phase BEFORE the requirement's
-  // current phase, the orchestrator would otherwise keep evaluating the
-  // forward phase and never see the item — leaving it eternally
-  // in_progress / pending. Reconciliation rewinds current_phase_id to the
-  // earliest unfinished phase so the cron picks the item up next cycle.
-  reconcilePhaseForItem(backlog, flow, next);
-  backlog.completion_ratio = computeRatio(backlog.items);
-  await writeBacklog(params.requirementId, backlog);
-  return next;
+      if ((next.tier ?? 'core') === 'core') {
+        const validation = validateAcceptance(next.acceptance);
+        if (!validation.has_any_executable) {
+          throw new Error(
+            `Backlog upsert rejected: tier=core item "${next.title}" has narrative-only acceptance. ` +
+              'Add at least one executable anchor per entry — HTTP verb (GET/POST/...), route ' +
+              '(/api/...), status code (2xx/200) or observable verb (returns, renders, inserts, ' +
+              'creates, updates, deletes, redirects, persists). Or set tier=ornamental.',
+          );
+        }
+      }
+
+      if (idx >= 0) backlog.items[idx] = next;
+      else backlog.items.push(next);
+      assertBacklogInvariants(
+        backlog.items,
+        flow.phases.map((phase) => phase.id),
+      );
+      reconcilePhaseForItem(backlog, flow, next);
+      backlog.completion_ratio = computeRatio(backlog.items);
+      return { result: next };
+    },
+  );
 }
 
-export async function markInProgress(params: { requirementId: string; itemId: string }): Promise<BacklogItem> {
-  const req = await loadRequirement(params.requirementId);
-  if (!req) throw new Error(`Requirement ${params.requirementId} not found`);
-  const flow = getFlow(classifyRequirementType(req.type));
-  const backlog = toBacklog(req.backlog, flow.phases[0]?.id || 'default');
+/**
+ * Suspends an active item behind mandatory remediation work.
+ *
+ * The parent remains incomplete and cannot be selected again until every
+ * dependency is successfully done. Its old plan steps are cancelled so the
+ * orchestrator creates a focused plan for the remediation item next cycle.
+ */
+export async function suspendItemForRemediation(params: {
+  requirementId: string;
+  itemId: string;
+  remediationItemIds: string[];
+  reason: string;
+}): Promise<BacklogItem | null> {
+  const dependencyIds = Array.from(new Set(params.remediationItemIds))
+    .filter((id) => id);
+  if (dependencyIds.length === 0) return null;
 
-  const active = backlog.items.find((i) => i.status === 'in_progress');
-  if (active && active.id !== params.itemId) {
+  const suspended = await mutateBacklogAtomically(
+    params.requirementId,
+    ({ backlog, flow }) => {
+      const parentIndex = backlog.items.findIndex(
+        (item) => item.id === params.itemId,
+      );
+      if (parentIndex < 0) return { result: null, write: false };
+
+      const parent = backlog.items[parentIndex];
+      const nextDependencies = Array.from(new Set([
+        ...(parent.depends_on || []),
+        ...dependencyIds,
+      ]));
+      const graphProbe = backlog.items.map((item, index) =>
+        index === parentIndex
+          ? { ...item, depends_on: nextDependencies }
+          : item,
+      );
+      const phaseOrder = flow.phases.map((phase) => phase.id);
+      assertBacklogGraph(graphProbe, phaseOrder);
+
+      const knownDependencies = dependencyIds.filter((id) =>
+        backlog.items.some((item) => item.id === id && item.status !== 'done'),
+      );
+      if (knownDependencies.length === 0) {
+        return { result: null, write: false };
+      }
+
+      backlog.items[parentIndex] = {
+        ...parent,
+        status: 'pending',
+        depends_on: Array.from(new Set([
+          ...(parent.depends_on || []),
+          ...knownDependencies,
+        ])),
+        assumptions: Array.from(new Set([
+          ...(parent.assumptions || []),
+          `[remediation] ${params.reason}`,
+        ])).slice(-20),
+        updated_at: new Date().toISOString(),
+      };
+      assertBacklogInvariants(backlog.items, phaseOrder);
+      for (const dependencyId of knownDependencies) {
+        const dependency = backlog.items.find((item) => item.id === dependencyId);
+        if (dependency) reconcilePhaseForItem(backlog, flow, dependency);
+      }
+      backlog.completion_ratio = computeRatio(backlog.items);
+      return { result: backlog.items[parentIndex] };
+    },
+  );
+  if (!suspended) return null;
+
+  const cancellation = await cancelPlanStepsForBacklogItem({
+    itemId: params.itemId,
+    reason: `Suspended for mandatory remediation: ${params.reason}`.slice(0, 240),
+  });
+  if (cancellation.errors.length > 0) {
     throw new Error(
-      `WIP=1 violation: item ${active.id} ("${active.title}") is already in_progress. Complete or downgrade it before starting ${params.itemId}.`,
+      `Could not suspend plan steps for ${params.itemId}: ${cancellation.errors.join('; ')}`,
     );
   }
 
-  const idx = backlog.items.findIndex((i) => i.id === params.itemId);
-  if (idx < 0) throw new Error(`Item ${params.itemId} not found`);
-  backlog.items[idx] = {
-    ...backlog.items[idx],
-    status: 'in_progress',
-    attempts: (backlog.items[idx].attempts || 0) + 1,
-    updated_at: new Date().toISOString(),
-  };
-  await writeBacklog(params.requirementId, backlog);
-  return backlog.items[idx];
+  return suspended;
+}
+
+export async function markInProgress(params: { requirementId: string; itemId: string }): Promise<BacklogItem> {
+  return mutateBacklogAtomically(
+    params.requirementId,
+    ({ backlog, flow }) => {
+      const idx = backlog.items.findIndex((item) => item.id === params.itemId);
+      if (idx < 0) throw new Error(`Item ${params.itemId} not found`);
+      assertBacklogStatusTransition(backlog.items, params.itemId, 'in_progress');
+      backlog.items[idx] = {
+        ...backlog.items[idx],
+        status: 'in_progress',
+        updated_at: new Date().toISOString(),
+      };
+      assertBacklogInvariants(
+        backlog.items,
+        flow.phases.map((phase) => phase.id),
+      );
+      return { result: backlog.items[idx] };
+    },
+  );
 }
 
 export function hasApprovedJudgeEvidence(item: Pick<BacklogItem, 'evidence'>): boolean {
@@ -262,39 +326,43 @@ export async function setItemStatus(params: {
   itemId: string;
   status: BacklogItemStatus;
   reason?: string;
+  allowDoneReopen?: boolean;
 }): Promise<BacklogItem> {
-  const req = await loadRequirement(params.requirementId);
-  if (!req) throw new Error(`Requirement ${params.requirementId} not found`);
-  const flow = getFlow(classifyRequirementType(req.type));
-  const backlog = toBacklog(req.backlog, flow.phases[0]?.id || 'default');
-
-  const idx = backlog.items.findIndex((i) => i.id === params.itemId);
-  if (idx < 0) throw new Error(`Item ${params.itemId} not found`);
-  if (params.status === 'done' && !hasApprovedJudgeEvidence(backlog.items[idx])) {
-    throw new Error(
-      `Cannot mark backlog item ${params.itemId} done without an approved Judge verdict`,
-    );
-  }
-  backlog.items[idx] = {
-    ...backlog.items[idx],
-    status: params.status,
-    updated_at: new Date().toISOString(),
-  };
-  if (params.reason && params.status !== 'done') {
-    const assumptions = backlog.items[idx].assumptions || [];
-    backlog.items[idx].assumptions = [...assumptions, params.reason].slice(-20);
-  }
-  backlog.completion_ratio = computeRatio(backlog.items);
-
-  // Piggy-back phase advance on the same write. When all items in the current
-  // phase reach a terminal status (done / rejected / needs_review) and there
-  // is a next phase defined for the flow, bump `current_phase_id` so the
-  // orchestrator immediately starts pulling from the next phase on the next
-  // turn. The engine helper is pure so this stays in a single DB roundtrip.
-  const advance = advancePhaseIfReadyInMemory(backlog, flow);
-  const toWrite = advance ? advance.nextBacklog : backlog;
-
-  await writeBacklog(params.requirementId, toWrite);
+  const item = await mutateBacklogAtomically(
+    params.requirementId,
+    ({ backlog, flow }) => {
+      const idx = backlog.items.findIndex((candidate) => candidate.id === params.itemId);
+      if (idx < 0) throw new Error(`Item ${params.itemId} not found`);
+      assertBacklogStatusTransition(
+        backlog.items,
+        params.itemId,
+        params.status,
+        { allowDoneReopen: params.allowDoneReopen },
+      );
+      if (params.status === 'done' && !hasApprovedJudgeEvidence(backlog.items[idx])) {
+        throw new Error(
+          `Cannot mark backlog item ${params.itemId} done without an approved Judge verdict`,
+        );
+      }
+      backlog.items[idx] = {
+        ...backlog.items[idx],
+        status: params.status,
+        updated_at: new Date().toISOString(),
+      };
+      if (params.reason && params.status !== 'done') {
+        const assumptions = backlog.items[idx].assumptions || [];
+        backlog.items[idx].assumptions = [...assumptions, params.reason].slice(-20);
+      }
+      assertBacklogInvariants(
+        backlog.items,
+        flow.phases.map((phase) => phase.id),
+      );
+      backlog.completion_ratio = computeRatio(backlog.items);
+      const advance = advancePhaseIfReadyInMemory(backlog, flow);
+      const toWrite = advance ? advance.nextBacklog : backlog;
+      return { result: toWrite.items[idx], backlog: toWrite };
+    },
+  );
 
   // Stop zombie plan loops: when the item leaves the actively-worked tier
   // toward a non-success terminal (needs_review / rejected), any pending or
@@ -318,7 +386,7 @@ export async function setItemStatus(params: {
     }
   }
 
-  return toWrite.items[idx];
+  return item;
 }
 
 export async function completeItem(params: { requirementId: string; itemId: string; commit_sha?: string }): Promise<BacklogItem> {
@@ -326,41 +394,46 @@ export async function completeItem(params: { requirementId: string; itemId: stri
 }
 
 export async function downgradeScope(params: { requirementId: string; itemId: string; from?: BacklogItemScope }): Promise<BacklogItem> {
-  const req = await loadRequirement(params.requirementId);
-  if (!req) throw new Error(`Requirement ${params.requirementId} not found`);
-  const flow = getFlow(classifyRequirementType(req.type));
-  const backlog = toBacklog(req.backlog, flow.phases[0]?.id || 'default');
-
-  const idx = backlog.items.findIndex((i) => i.id === params.itemId);
-  if (idx < 0) throw new Error(`Item ${params.itemId} not found`);
-  const current = backlog.items[idx].scope_level;
-  const next: BacklogItemScope = current === 'full' ? 'mvp' : current === 'mvp' ? 'minimal' : 'minimal';
-  backlog.items[idx] = {
-    ...backlog.items[idx],
-    scope_level: next,
-    status: 'pending',
-    updated_at: new Date().toISOString(),
-  };
-  await writeBacklog(params.requirementId, backlog);
-  return backlog.items[idx];
+  return mutateBacklogAtomically(
+    params.requirementId,
+    ({ backlog, flow }) => {
+      const idx = backlog.items.findIndex((item) => item.id === params.itemId);
+      if (idx < 0) throw new Error(`Item ${params.itemId} not found`);
+      assertBacklogStatusTransition(backlog.items, params.itemId, 'pending');
+      const current = backlog.items[idx].scope_level;
+      const next: BacklogItemScope =
+        current === 'full' ? 'mvp' : current === 'mvp' ? 'minimal' : 'minimal';
+      backlog.items[idx] = {
+        ...backlog.items[idx],
+        scope_level: next,
+        status: 'pending',
+        updated_at: new Date().toISOString(),
+      };
+      assertBacklogInvariants(
+        backlog.items,
+        flow.phases.map((phase) => phase.id),
+      );
+      backlog.completion_ratio = computeRatio(backlog.items);
+      return { result: backlog.items[idx] };
+    },
+  );
 }
 
 export async function logAssumption(params: { requirementId: string; itemId: string; assumption: string }): Promise<BacklogItem> {
-  const req = await loadRequirement(params.requirementId);
-  if (!req) throw new Error(`Requirement ${params.requirementId} not found`);
-  const flow = getFlow(classifyRequirementType(req.type));
-  const backlog = toBacklog(req.backlog, flow.phases[0]?.id || 'default');
-
-  const idx = backlog.items.findIndex((i) => i.id === params.itemId);
-  if (idx < 0) throw new Error(`Item ${params.itemId} not found`);
-  const assumptions = backlog.items[idx].assumptions || [];
-  backlog.items[idx] = {
-    ...backlog.items[idx],
-    assumptions: [...assumptions, params.assumption].slice(-20),
-    updated_at: new Date().toISOString(),
-  };
-  await writeBacklog(params.requirementId, backlog);
-  return backlog.items[idx];
+  return mutateBacklogAtomically(
+    params.requirementId,
+    ({ backlog }) => {
+      const idx = backlog.items.findIndex((item) => item.id === params.itemId);
+      if (idx < 0) throw new Error(`Item ${params.itemId} not found`);
+      const assumptions = backlog.items[idx].assumptions || [];
+      backlog.items[idx] = {
+        ...backlog.items[idx],
+        assumptions: [...assumptions, params.assumption].slice(-20),
+        updated_at: new Date().toISOString(),
+      };
+      return { result: backlog.items[idx] };
+    },
+  );
 }
 
 export async function markNeedsReview(params: { requirementId: string; itemId: string; reason?: string }): Promise<BacklogItem> {

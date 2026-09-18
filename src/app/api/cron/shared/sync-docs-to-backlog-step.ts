@@ -5,6 +5,7 @@ import { loadLatestDocsDigestFromLogs, formatDigestForPrompt } from '@/lib/servi
 import { requirementBacklogTool } from '@/app/api/agents/tools/requirement_backlog/assistantProtocol';
 import type { DocsDigestResult } from './docs-digest-step';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
+import { patchRequirementMetadataKeys } from '@/lib/services/requirement-metadata-patch';
 
 export interface SyncDocsToBacklogParams {
   sandboxId?: string;
@@ -141,15 +142,12 @@ ${digestText}
     console.log(`[SyncDocsToBacklogStep] Completed in ${turns} turns for req ${requirementId}`);
 
     // Update last_docs_to_backlog_sync_at
-    const updatedMetadata = { 
-      ...metadata, 
-      last_docs_to_backlog_sync_at: new Date().toISOString() 
-    };
-    
-    await supabaseAdmin
-      .from('requirements')
-      .update({ metadata: updatedMetadata })
-      .eq('id', requirementId);
+    await patchRequirementMetadataKeys({
+      requirementId,
+      patch: {
+        last_docs_to_backlog_sync_at: new Date().toISOString(),
+      },
+    });
 
     return { ran: true };
   } catch (error: unknown) {

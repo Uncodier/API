@@ -187,13 +187,9 @@ See the `docs/` folder for detailed API documentation.
 
 ## Documentation
 
-Additional documentation is available in the `docs/` folder:
-
-- `API-FAQ.md` - Frequently asked questions about the API
-- `docs/README-ApiKeyAuth.md` - API key authentication details
-- `docs/README-SendGrid.md` - SendGrid integration guide
-- `docs/VERCEL_COMPATIBILITY.md` - Vercel deployment guide
-- `docs/WHATSAPP_SETUP.md` - WhatsApp integration setup
+Internal architecture, integration guides, and historical implementation
+notes are indexed in [`docs/README.md`](docs/README.md). Start with the
+dated code-agent harness checkpoint for the current execution architecture.
 
 ## Development Tips
 

@@ -13,6 +13,7 @@ import {
   ACTION_LOOP_BLOCKED_ACTION_MARKER,
   buildToolActionKey,
 } from '../loop-detectors';
+import { triageGitPushError } from '@/lib/services/git-push-error-triage';
 
 describe('single-turn interaction helpers', () => {
   it('reads declared protected routes from plan step metadata', () => {
@@ -140,12 +141,39 @@ describe('single-turn interaction helpers', () => {
     } as any)).toBe(true);
     expect(isTransientGateFailure({
       ok: false,
+      infrastructureFailure: true,
+      error: 'Deployment is still pending.',
+    } as any)).toBe(true);
+    expect(isTransientGateFailure({
+      ok: false,
       error: 'Sandbox stream was closed and is not accepting commands.',
     } as any)).toBe(true);
     expect(isTransientGateFailure({
       ok: false,
       error: 'The acceptance criteria are not met.',
     } as any)).toBe(false);
+  });
+
+  it('keeps git infrastructure failures out of the product failure path', () => {
+    for (const message of [
+      'fatal: authentication failed',
+      'fatal: could not resolve host github.com',
+      'remote returned HTTP 503 Service Unavailable',
+    ]) {
+      const triage = triageGitPushError(message);
+      expect(isTransientGateFailure({
+        ok: false,
+        infrastructureFailure: triage.infrastructureFailure,
+        error: triage.agentMessage,
+      })).toBe(true);
+    }
+
+    const productFailure = triageGitPushError('[pre-push-build] TypeScript compilation failed');
+    expect(isTransientGateFailure({
+      ok: false,
+      infrastructureFailure: productFailure.infrastructureFailure,
+      error: productFailure.agentMessage,
+    })).toBe(false);
   });
 
   it('formats interaction findings into the retry excerpt', () => {

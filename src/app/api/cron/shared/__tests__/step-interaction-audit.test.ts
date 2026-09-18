@@ -72,6 +72,14 @@ describe('interaction audit', () => {
     ]);
   });
 
+  it('does not infer behavior from a custom component name ending in Button', () => {
+    const findings = audit(
+      `export const Account = () => <AuthButton userId="user-1" />;`,
+    );
+
+    expect(findings).toHaveLength(0);
+  });
+
   it('reports placeholder links as inert controls', () => {
     const findings = audit(`export const Header = () => <a href="#">Plans</a>;`);
 

@@ -176,13 +176,14 @@ export function sandboxCaptureScreenshotsTool(sandbox: Sandbox, requirementId?: 
         const warnEntries = visual.console.entries.filter((e) => e.level === 'warn');
         return {
           ok: visual.ok,
+          capture_ok: visual.capture_ok,
+          console_ok: visual.console.ok,
           server_booted: true,
           base_url: visual.base_url,
           duration_ms: visual.duration_ms,
           error: visual.error,
           screenshots: visual.screenshots,
           auth_redirects: visual.auth_redirects,
-          console_ok: visual.console.ok,
           console_errors: errorEntries.slice(0, 40),
           console_errors_truncated: errorEntries.length > 40,
           console_warnings: warnEntries.slice(0, 20),

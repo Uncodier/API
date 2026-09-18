@@ -12,6 +12,7 @@ import {
   resolveDefaultGitBinding,
   mergeGitBinding,
   instanceTypeFromGitKind,
+  resolveRequirementGitRepoKind,
   gitBindingRepoUrl,
   gitBindingBranchTreeUrl,
 } from '../requirement-git-binding';
@@ -133,6 +134,7 @@ describe('resolveDefaultGitBinding', () => {
     process.env.GIT_AUTOMATIONS_REPO = 'automations';
     expect(resolveDefaultGitBinding('automation').kind).toBe('automation');
     expect(resolveDefaultGitBinding('automation').repo).toBe('automations');
+    expect(resolveDefaultGitBinding('integration').kind).toBe('automation');
   });
 
   test('uses hardcoded fallbacks when env vars are missing', () => {
@@ -193,6 +195,34 @@ describe('instanceTypeFromGitKind', () => {
     expect(instanceTypeFromGitKind('applications')).toBe('applications');
     expect(instanceTypeFromGitKind('custom')).toBe('applications');
     expect(instanceTypeFromGitKind(undefined)).toBe('applications');
+  });
+});
+
+describe('resolveRequirementGitRepoKind', () => {
+  test('uses the persisted binding as the source of truth', () => {
+    expect(resolveRequirementGitRepoKind({
+      git: {
+        kind: 'automation',
+        org: 'makinary',
+        repo: 'automations',
+        default_branch: 'main',
+      },
+    }, 'app')).toBe('automation');
+
+    expect(resolveRequirementGitRepoKind({
+      git: {
+        kind: 'applications',
+        org: 'makinary',
+        repo: 'apps',
+        default_branch: 'main',
+      },
+    }, 'automation')).toBe('applications');
+  });
+
+  test('falls back to the requirement type for legacy metadata', () => {
+    expect(resolveRequirementGitRepoKind({}, 'automation')).toBe('automation');
+    expect(resolveRequirementGitRepoKind({}, 'integration')).toBe('automation');
+    expect(resolveRequirementGitRepoKind(null, 'doc')).toBe('applications');
   });
 });
 

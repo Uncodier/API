@@ -64,6 +64,7 @@ async function loadActiveRequirementPlan(
     .eq('instance_id', instanceId)
     .in('status', ['pending', 'in_progress', 'active'])
     .order('created_at', { ascending: false })
+    .order('id', { ascending: false })
     .limit(10);
 
   if (error) {

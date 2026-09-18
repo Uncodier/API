@@ -1,9 +1,13 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { start } from 'workflow/api';
-import { runMaintenanceWorkflow } from './workflow';
+import {
+  runMaintenanceWorkflow,
+  type MaintenanceWorkflowInput,
+} from './workflow';
 import { acquireRunLock, getSupabaseUrlHostForLogs, releaseRunLock } from '../shared/cron-run-lock';
 import { isBacklogComplete } from '@/lib/services/requirement-backlog';
+import { patchRequirementMetadataKeys } from '@/lib/services/requirement-metadata-patch';
 
 /** Instance type for maintenance runners to keep them separate from main builders */
 const REMOTE_INSTANCE_TYPE_MAINTENANCE = 'browser' as const;
@@ -52,13 +56,14 @@ export async function GET(req: Request) {
       .limit(10); // increased limit since we'll filter some out
 
     if (error) throw error;
-    if (!requirements || requirements.length === 0) {
+    const requirementRows = requirements ?? [];
+    if (requirementRows.length === 0) {
       return NextResponse.json({ message: 'No requirements to maintain' });
     }
 
     const results = [];
 
-    for (const requirement of requirements) {
+    for (const requirement of requirementRows) {
       const { id: reqId, title, instructions, type, site_id, user_id } = requirement;
       
       const isComplete = isBacklogComplete(requirement.backlog?.items || []);
@@ -80,6 +85,7 @@ export async function GET(req: Request) {
         results.push({ reqId, skipped: true, reason: 'locked' });
         continue;
       }
+      const maintenanceRunId = runLock!.runId;
 
       // Find or create a dedicated remote_instance for maintenance
       let instanceId: string | undefined;
@@ -92,9 +98,7 @@ export async function GET(req: Request) {
         .eq('name', instanceName)
         .limit(1);
 
-      if (instances && instances.length > 0) {
-        instanceId = instances[0].id;
-      }
+      instanceId = instances?.[0]?.id;
 
       let hasActivePlan = false;
       if (instanceId) {
@@ -102,7 +106,9 @@ export async function GET(req: Request) {
           .from('instance_plans')
           .select('id')
           .eq('instance_id', instanceId)
-          .in('status', ['pending', 'in_progress'])
+          .in('status', ['pending', 'in_progress', 'active'])
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: false })
           .limit(1)
           .single();
         if (activePlan) {
@@ -128,8 +134,9 @@ export async function GET(req: Request) {
           .order('created_at', { ascending: false })
           .limit(1)
           .single();
-        if (latestLog) {
-          mainInstanceActivityMs = new Date(latestLog.created_at).getTime();
+        const latestCreatedAt = latestLog?.created_at;
+        if (latestCreatedAt) {
+          mainInstanceActivityMs = new Date(latestCreatedAt).getTime();
         }
       }
       
@@ -143,7 +150,7 @@ export async function GET(req: Request) {
         }
 
         results.push({ reqId, skipped: true, reason: 'qa_already_run_for_attempt_no_plan' });
-        await releaseRunLock(maintenanceLockKey, runLock.runId);
+        await releaseRunLock(maintenanceLockKey, maintenanceRunId);
         continue;
       }
       
@@ -158,22 +165,23 @@ export async function GET(req: Request) {
         
         // Also cancel any active plan since we hit the hard limit
         if (hasActivePlan) {
-           await supabaseAdmin.from('instance_plans').update({ status: 'cancelled' }).eq('instance_id', instanceId).in('status', ['pending', 'in_progress']);
+           await supabaseAdmin.from('instance_plans').update({ status: 'cancelled' }).eq('instance_id', instanceId).in('status', ['pending', 'in_progress', 'active']);
         }
         
-        await releaseRunLock(maintenanceLockKey, runLock.runId);
+        await releaseRunLock(maintenanceLockKey, maintenanceRunId);
         continue;
       }
 
       console.log(`[Cron Maintenance] Processing ${reqId}: ${title}`);
 
       // Update the sync tracker so it doesn't run again for this main workflow cycle
-      const updatedMetadata = { 
-        ...requirement.metadata, 
-        qa_last_attempt_sync: currentAttempt,
-        qa_last_activity_sync: mainInstanceActivityMs
-      };
-      await supabaseAdmin.from('requirements').update({ metadata: updatedMetadata }).eq('id', reqId);
+      const updatedMetadata = await patchRequirementMetadataKeys({
+        requirementId: reqId,
+        patch: {
+          qa_last_attempt_sync: currentAttempt,
+          qa_last_activity_sync: mainInstanceActivityMs,
+        },
+      });
       requirement.metadata = updatedMetadata;
 
       // Create instance if not found
@@ -197,54 +205,60 @@ export async function GET(req: Request) {
       if (!instanceId) {
         console.error(`[Cron Maintenance] Failed to create or find remote_instance for req ${reqId}`);
         results.push({ reqId, error: 'Failed to create or find remote_instance' });
-        await releaseRunLock(maintenanceLockKey, runLock.runId);
+        await releaseRunLock(maintenanceLockKey, maintenanceRunId);
         continue;
       }
+      const maintenanceInstanceId = instanceId;
 
       // Validate instance and plan are not paused, otherwise put them in play
       const { data: instanceData } = await supabaseAdmin
         .from('remote_instances')
         .select('status')
-        .eq('id', instanceId)
+        .eq('id', maintenanceInstanceId)
         .single();
 
       const { data: activePlan } = await supabaseAdmin
         .from('instance_plans')
         .select('id, status')
-        .eq('instance_id', instanceId)
-        .in('status', ['pending', 'in_progress', 'paused'])
+        .eq('instance_id', maintenanceInstanceId)
+        .in('status', ['pending', 'in_progress', 'active', 'paused'])
         .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
         .limit(1)
         .single();
 
       // Permitir que QA corra incluso si estaba pausado (lo reanudamos)
-      if (instanceData && instanceData.status !== 'running') {
-        await supabaseAdmin.from('remote_instances').update({ status: 'running' }).eq('id', instanceId);
+      const currentInstanceStatus = instanceData?.status;
+      if (currentInstanceStatus && currentInstanceStatus !== 'running') {
+        await supabaseAdmin.from('remote_instances').update({ status: 'running' }).eq('id', maintenanceInstanceId);
       }
-      if (activePlan && activePlan.status !== 'in_progress') {
-        await supabaseAdmin.from('instance_plans').update({ status: 'in_progress' }).eq('id', activePlan.id);
+      const currentPlanStatus = activePlan?.status;
+      const currentPlanId = activePlan?.id;
+      if (currentPlanId && currentPlanStatus !== 'in_progress') {
+        await supabaseAdmin.from('instance_plans').update({ status: 'in_progress' }).eq('id', currentPlanId);
       }
 
       try {
-        const workflowRun = await start(runMaintenanceWorkflow, [{
-          reqId,
-          title,
-          instructions,
-          type,
-          site_id,
-          user_id,
-          instanceId,
+        const workflowInput: MaintenanceWorkflowInput = {
+          reqId: reqId || '',
+          title: title || 'Untitled requirement',
+          instructions: instructions ?? null,
+          type: type || 'app',
+          site_id: site_id || '',
+          user_id: user_id || '',
+          instanceId: maintenanceInstanceId,
           previousWorkContext: '', // Maintenance doesn't strictly need the main builder's blocker context
-          instance_type: type,
-          cronLockRunId: runLock.runId,
+          instance_type: type || 'app',
+          cronLockRunId: maintenanceRunId,
           maintenanceLockKey,
-        }]);
+        };
+        const workflowRun = await start(runMaintenanceWorkflow, [workflowInput]);
 
         results.push({ reqId, runId: workflowRun.runId, started: true });
       } catch (err: any) {
         console.error(`[Cron Maintenance] Error starting workflow for req ${reqId}:`, err);
         results.push({ reqId, error: err?.message || 'Failed to start workflow' });
-        await releaseRunLock(maintenanceLockKey, runLock.runId);
+        await releaseRunLock(maintenanceLockKey, maintenanceRunId);
       }
     }
 

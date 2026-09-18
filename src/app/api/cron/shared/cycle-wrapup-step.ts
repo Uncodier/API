@@ -88,7 +88,7 @@ export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<Cy
           instance_id: instanceId,
           requirement_id: requirementId,
           stage: 'in-progress',
-          message: effectiveWrapUpReason,
+          message: effectiveWrapUpReason ?? undefined,
         });
       } catch (statusError: unknown) {
         console.warn(

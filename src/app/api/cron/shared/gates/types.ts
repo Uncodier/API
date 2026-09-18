@@ -63,7 +63,7 @@ export interface FlowGateInput {
   item?: BacklogItem | null;
   /** Optional: file paths in the workspace the gate should focus on. */
   artifacts?: string[];
-  /** Required when `flow` is `app` or `site`; ignored by other gates. */
+  /** Rich app context, also used by automation gates for origin persistence. */
   appContext?: AppGateContext;
   /** Shared audit context for cron infra logs. */
   audit?: CronAuditContext;
@@ -92,6 +92,10 @@ export interface VercelDeployInfo {
   previewUrl: string | null;
   deployState: string;
   detail?: string;
+  commitSha?: string;
+  branch?: string;
+  deploymentId?: string | null;
+  gitRepoKind?: GitRepoKind;
   buildLogExcerpt?: string | null;
 }
 
@@ -127,4 +131,9 @@ export interface FlowGateResult {
    * Callers must not bump backlog attempts.
    */
   skipAttemptBump?: boolean;
+  /**
+   * The gate created mandatory backlog work and suspended the active item
+   * behind it. This is orchestration progress, not a product failure.
+   */
+  remediationScheduled?: boolean;
 }

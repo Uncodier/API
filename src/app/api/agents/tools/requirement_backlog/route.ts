@@ -173,6 +173,7 @@ export async function executeBacklogCore(params: BacklogCoreParams) {
         itemId: params.item_id,
         status: params.status,
         reason: params.reason,
+        allowDoneReopen: params.confirm_reopen,
       });
       return { action, requirement_id, item };
     }

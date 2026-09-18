@@ -122,6 +122,19 @@ describe('visual feedback planning', () => {
     expect(plan.routes).toEqual(['/dashboard']);
   });
 
+  it('prioritizes the step protected route over unrelated affected pages', () => {
+    const plan = buildVisualProbePlan({
+      gitRepoKind: 'applications',
+      changedFiles: ['src/components/auth/auth-button.tsx'],
+      inferredPageRoutes: ['/auth/error', '/auth/forgot-password'],
+      stepContext: {
+        protected_routes: ['/dashboard/assets'],
+      },
+    });
+
+    expect(plan.routes).toEqual(['/dashboard/assets', '/auth/error']);
+  });
+
   it('caps multiple routes to two desktop screenshots', () => {
     const plan = buildVisualProbePlan({
       explicit: true,
@@ -235,6 +248,25 @@ describe('visual feedback formatting', () => {
     });
 
     expect(categories).toContain('visual');
+  });
+
+  it('does not duplicate a console-only failure as a visual failure', () => {
+    const categories = deriveCategoriesFailed({
+      console: {
+        ok: false,
+        entries: [{ level: 'error', text: 'Request failed' }],
+        page_errors: [],
+        failed_requests: [],
+      },
+      visual: {
+        ok: true,
+        pass: true,
+        defects: [],
+        screenshots: [],
+      },
+    });
+
+    expect(categories).toEqual(['console']);
   });
 
   it('does not select an expensive feedback image for minor-only feedback', () => {
@@ -398,6 +430,7 @@ describe('visual critic model selection', () => {
   it('uses deterministic defect thresholds instead of the model pass boolean', () => {
     expect(
       verdictBlocksGate({
+        status: 'verified',
         pass: false,
         summary: 'Model was stricter than the gate policy.',
         defects: [
@@ -414,6 +447,7 @@ describe('visual critic model selection', () => {
 
     expect(
       verdictBlocksGate({
+        status: 'verified',
         pass: true,
         summary: 'Model returned an inconsistent pass.',
         defects: [

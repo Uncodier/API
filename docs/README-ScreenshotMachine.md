@@ -17,11 +17,10 @@ Añade a tu `.env.local`:
 SCREENSHOTMACHINE_API_KEY=tu_api_key_aqui
 ```
 
-### **3. Para desarrollo inmediato**
-Puedes usar la key de prueba: `68f26b`
-```bash
-SCREENSHOTMACHINE_API_KEY=68f26b
-```
+### **3. Desarrollo**
+Usa una API key propia y guárdala únicamente en el entorno local o en el
+gestor de secretos del deployment. No publiques credenciales compartidas en
+la documentación.
 
 ## 🛠️ **Configuración Actual en el Código**
 
@@ -119,22 +118,22 @@ user-agent=Mozilla/5.0%20(iPhone...)     - Simular iPhone
 
 ### **Screenshot Básico**
 ```
-https://api.screenshotmachine.com/?key=68f26b&url=google.com&dimension=1024x768
+https://api.screenshotmachine.com/?key=YOUR_API_KEY&url=google.com&dimension=1024x768
 ```
 
 ### **Screenshot Móvil**
 ```
-https://api.screenshotmachine.com/?key=68f26b&url=google.com&dimension=480x800&device=phone
+https://api.screenshotmachine.com/?key=YOUR_API_KEY&url=google.com&dimension=480x800&device=phone
 ```
 
 ### **Screenshot sin Cookies**
 ```
-https://api.screenshotmachine.com/?key=68f26b&url=google.com&dimension=1200x800&hide=.cookie-banner&click=.accept-all
+https://api.screenshotmachine.com/?key=YOUR_API_KEY&url=google.com&dimension=1200x800&hide=.cookie-banner&click=.accept-all
 ```
 
 ### **Screenshot de Alta Calidad**
 ```
-https://api.screenshotmachine.com/?key=68f26b&url=google.com&dimension=1920x1080&format=png&zoom=200&delay=3000
+https://api.screenshotmachine.com/?key=YOUR_API_KEY&url=google.com&dimension=1920x1080&format=png&zoom=200&delay=3000
 ```
 
 ## 🔧 **Personalizar la Implementación**
@@ -192,9 +191,8 @@ Entonces usar: `&hash=${hash}` en la URL de la API.
 
 ## 📊 **Límites y Precios**
 
-- **API Key de prueba (68f26b)**: Limitada, solo para testing
-- **Cuentas premium**: Desde $39/mes según volumen
-- **Límites**: Varían según el plan contratado
+- Consulta el dashboard y la documentación vigente del proveedor.
+- Los límites y precios varían según el plan contratado.
 
 ## 🐛 **Debugging**
 

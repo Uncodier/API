@@ -79,12 +79,18 @@ describe('Requirement Backlog Helpers', () => {
       expect(isBacklogComplete(items)).toBe(false);
     });
 
-    it('returns true if all items are done and there are no core items', () => {
+    it('does not treat needs_review as successful completion', () => {
       const items = [
         createItem('1', 'ornamental', 'done'),
         createItem('2', 'ornamental', 'needs_review'),
       ];
-      expect(isBacklogComplete(items)).toBe(true);
+      expect(isBacklogComplete(items)).toBe(false);
+    });
+
+    it('does not treat a core review item as successfully complete', () => {
+      expect(isBacklogComplete([
+        createItem('1', 'core', 'needs_review'),
+      ])).toBe(false);
     });
 
     it('returns false if any ornamental item is pending and there are no core items', () => {

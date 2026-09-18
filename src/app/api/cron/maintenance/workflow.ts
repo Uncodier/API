@@ -85,7 +85,11 @@ export async function runMaintenanceWorkflow(input: MaintenanceWorkflowInput) {
       
       if (pausedCheck.isPaused) {
         console.log(`[QAWorkflow] Still paused after 5 minutes. Killing workflow and unblocking requirement.`);
-        await unblockRequirementStep(reqId, true);
+        await unblockRequirementStep(
+          reqId,
+          `maintenance-timeout:${cronLockRunId || maintenanceLockKey}`,
+          true,
+        );
         return { reqId, status: 'paused' as const };
       }
     }
@@ -289,7 +293,10 @@ export async function runMaintenanceWorkflow(input: MaintenanceWorkflowInput) {
     // Unblock the requirement so the main builder can pick it up again
     // This is especially important if QA was triggered because the main builder was blocked
     // Only unblock if it was explicitly blocked, otherwise we might undo an intentional on-review/done state
-    await unblockRequirementStep(reqId, false);
+    await unblockRequirementStep(
+      reqId,
+      `maintenance-complete:${cronLockRunId || maintenanceLockKey}`,
+    );
 
     return { reqId, status: 'qa_improvement_cycle_complete' };
   } catch (e: any) {

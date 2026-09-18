@@ -35,6 +35,13 @@ export interface CostEnvelope {
   max_cycles_per_requirement: number;
 }
 
+export interface FlowDeliveryCapabilities {
+  provision_tracking_script: boolean;
+  apply_database_migrations: boolean;
+  provision_app_tenant: boolean;
+  validate_deployment: boolean;
+}
+
 /**
  * Vitrina (showcase) descriptor — a companion template repo that renders a
  * deliverable so the harness can run build+runtime probes on it. Example:
@@ -70,12 +77,34 @@ export interface FlowDefinition {
   showcase?: FlowShowcase;
   completion_detector: string;
   cost_envelope: CostEnvelope;
+  delivery: FlowDeliveryCapabilities;
 }
 
 const DEFAULT_ENVELOPE: CostEnvelope = {
   max_cycles_per_item: 50,
   max_turns_per_step: 5,
   max_cycles_per_requirement: 3000,
+};
+
+const APPLICATION_DELIVERY: FlowDeliveryCapabilities = {
+  provision_tracking_script: true,
+  apply_database_migrations: true,
+  provision_app_tenant: true,
+  validate_deployment: true,
+};
+
+const AUTOMATION_DELIVERY: FlowDeliveryCapabilities = {
+  provision_tracking_script: false,
+  apply_database_migrations: false,
+  provision_app_tenant: true,
+  validate_deployment: true,
+};
+
+const NON_APPLICATION_DELIVERY: FlowDeliveryCapabilities = {
+  provision_tracking_script: false,
+  apply_database_migrations: false,
+  provision_app_tenant: false,
+  validate_deployment: false,
 };
 
 function appPhases(): FlowPhase[] {
@@ -144,6 +173,7 @@ export const FLOWS: Record<RequirementKind, FlowDefinition> = {
     standard_library: { name: 'shadcn', bootstrap_skill: 'makinari-obj-template-selection' },
     completion_detector: 'phase:report',
     cost_envelope: DEFAULT_ENVELOPE,
+    delivery: APPLICATION_DELIVERY,
   },
   site: {
     kind: 'site',
@@ -155,6 +185,7 @@ export const FLOWS: Record<RequirementKind, FlowDefinition> = {
     standard_library: { name: 'shadcn', bootstrap_skill: 'makinari-obj-template-selection' },
     completion_detector: 'phase:report',
     cost_envelope: DEFAULT_ENVELOPE,
+    delivery: APPLICATION_DELIVERY,
   },
   doc: {
     kind: 'doc',
@@ -166,6 +197,7 @@ export const FLOWS: Record<RequirementKind, FlowDefinition> = {
     standard_library: { name: 'mdx-remark', bootstrap_skill: 'makinari-obj-template-selection' },
     completion_detector: 'phase:report',
     cost_envelope: DEFAULT_ENVELOPE,
+    delivery: NON_APPLICATION_DELIVERY,
   },
   presentation: {
     kind: 'presentation',
@@ -177,6 +209,7 @@ export const FLOWS: Record<RequirementKind, FlowDefinition> = {
     standard_library: { name: 'reveal', bootstrap_skill: 'makinari-obj-template-selection' },
     completion_detector: 'phase:report',
     cost_envelope: DEFAULT_ENVELOPE,
+    delivery: NON_APPLICATION_DELIVERY,
   },
   contract: {
     kind: 'contract',
@@ -188,6 +221,7 @@ export const FLOWS: Record<RequirementKind, FlowDefinition> = {
     standard_library: { name: 'mdx-remark', bootstrap_skill: 'makinari-obj-template-selection' },
     completion_detector: 'phase:report',
     cost_envelope: DEFAULT_ENVELOPE,
+    delivery: NON_APPLICATION_DELIVERY,
   },
   automation: {
     kind: 'automation',
@@ -198,6 +232,7 @@ export const FLOWS: Record<RequirementKind, FlowDefinition> = {
     critic_skill: 'makinari-rol-critic',
     completion_detector: 'phase:report',
     cost_envelope: DEFAULT_ENVELOPE,
+    delivery: AUTOMATION_DELIVERY,
   },
   task: {
     kind: 'task',
@@ -208,6 +243,7 @@ export const FLOWS: Record<RequirementKind, FlowDefinition> = {
     critic_skill: 'makinari-rol-critic',
     completion_detector: 'phase:report',
     cost_envelope: DEFAULT_ENVELOPE,
+    delivery: NON_APPLICATION_DELIVERY,
   },
   makinari: {
     kind: 'makinari',
@@ -218,6 +254,7 @@ export const FLOWS: Record<RequirementKind, FlowDefinition> = {
     critic_skill: 'makinari-rol-critic',
     completion_detector: 'phase:report',
     cost_envelope: DEFAULT_ENVELOPE,
+    delivery: NON_APPLICATION_DELIVERY,
   },
 };
 

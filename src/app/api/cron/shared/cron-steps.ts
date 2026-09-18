@@ -160,6 +160,19 @@ export async function getActiveInstancePlanStep(instanceId: string, siteId: stri
   return _getActiveInstancePlan(instanceId, siteId);
 }
 
+export async function getInstancePlanByIdStep(planId: string) {
+  'use step';
+  const { data, error } = await supabaseAdmin
+    .from('instance_plans')
+    .select('*')
+    .eq('id', planId)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`Failed to load reconciled plan ${planId}: ${error.message}`);
+  }
+  return data;
+}
+
 // ─── Step: Recent plans guard (stops orchestrator re-plan loop) ──────
 
 export interface RecentPlansGuardResult {
@@ -213,6 +226,7 @@ export async function checkRecentPlansGuardStep(params: {
     .in('status', ['completed', 'failed'])
     .gte('created_at', windowStart)
     .order('created_at', { ascending: false })
+    .order('id', { ascending: false })
     .limit(20);
 
   if (error) {
@@ -318,6 +332,7 @@ export async function commitAndPushStep(
   message?: string,
   audit?: CronAuditContext,
   gitRepoKind?: GitRepoKind,
+  options?: { validateDeployment?: boolean },
 ): Promise<{
   branch: string;
   pushed: boolean;
@@ -335,7 +350,17 @@ export async function commitAndPushStep(
       audit,
     });
     let effectiveSandboxId = connected.sandboxId;
-    const r = await commitWorkspaceToOrigin(connected.sandbox, title, reqId, message, audit, { gitRepoKind });
+    const r = await commitWorkspaceToOrigin(
+      connected.sandbox,
+      title,
+      reqId,
+      message,
+      audit,
+      {
+        gitRepoKind,
+        validateDeployment: options?.validateDeployment,
+      },
+    );
     const sand = r.sandboxReplacement ?? connected.sandbox;
     if (r.sandboxReplacement) {
       effectiveSandboxId = sandboxIdentity(r.sandboxReplacement);

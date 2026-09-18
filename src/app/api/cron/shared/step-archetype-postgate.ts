@@ -9,7 +9,7 @@
 import type { Sandbox } from '@vercel/sandbox';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import { runCritic, runJudge } from './archetype-runner';
-import { bumpItemAttempts, getBacklogItem, downgradeScope, logAssumption, markNeedsReview, setItemStatus } from '@/lib/services/requirement-backlog';
+import { bumpItemAttempts, getBacklogItem, downgradeScope, logAssumption, markNeedsReview } from '@/lib/services/requirement-backlog';
 import { writeEvidence, type EvidenceRecord } from '@/lib/services/requirement-ground-truth';
 import type { RequirementKind } from '@/lib/services/requirement-flows';
 import { planNextHealingAction } from '@/lib/services/requirement-self-heal';
@@ -51,19 +51,25 @@ export interface RunArchetypePostGateResult {
   ran: boolean;
   judge_verdict?: 'approved' | 'rejected' | 'escalate';
   healing_applied?: string;
+  error?: string;
 }
 
 /**
  * Entry point used by the step executor after a successful technical gate.
- * Failures here are logged and swallowed — we must not block the step on
- * archetype issues; the next cycle picks it up via the persisted evidence.
+ * Approval is returned to the caller so it can complete the plan step with a
+ * CAS before moving the linked backlog item to done.
  */
 export async function runArchetypePostGate(
   input: RunArchetypePostGateInput,
 ): Promise<RunArchetypePostGateResult> {
   try {
     const { kind, item } = await getBacklogItem(input.requirementId, input.backlogItemId);
-    if (!item) return { ran: false };
+    if (!item) {
+      return {
+        ran: false,
+        error: `Backlog item ${input.backlogItemId} was not found`,
+      };
+    }
 
     // Phase 10: structural coverage check before the archetype pass. Runs
     // cheap `test -f` probes in the sandbox; any failure turns into a judge
@@ -116,9 +122,7 @@ export async function runArchetypePostGate(
     });
 
     let healingApplied: string | undefined;
-    if (judge.verdict === 'approved') {
-      await setItemStatus({ requirementId: input.requirementId, itemId: item.id, status: 'done' });
-    } else {
+    if (judge.verdict !== 'approved') {
       // Bump attempts BEFORE planning the next heal so the deterministic
       // policy sees the real number of attempts. `markInProgress` only fires
       // once per item under the WIP=1 RESUME rule, so without this the
@@ -184,10 +188,11 @@ export async function runArchetypePostGate(
 
     return { ran: true, judge_verdict: judge.verdict, healing_applied: healingApplied };
   } catch (e: unknown) {
+    const error = e instanceof Error ? e.message : String(e);
     console.warn(
-      `[CronStep] archetype runner failed (continuing): ${e instanceof Error ? e.message : e}`,
+      `[CronStep] archetype runner failed: ${error}`,
     );
-    return { ran: false };
+    return { ran: false, error };
   }
 }
 

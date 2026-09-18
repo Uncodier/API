@@ -31,37 +31,42 @@ export async function getActiveInstancePlan(
   siteId: string
 ) {
   'use step';
-  try {
-    const result = await getInstancePlansCore({
+  const result = await getInstancePlansCore({
       instance_id: instanceId,
       site_id: siteId,
       status: 'in_progress', // We only care about in_progress plans, or maybe pending too?
       limit: 1,
-    });
+  });
 
-    if (result.success && result.data.plans.length > 0) {
-      return result.data.plans[0];
-    }
-    
-    // Check for pending plans if no in_progress one exists
-    const pendingResult = await getInstancePlansCore({
-        instance_id: instanceId,
-        site_id: siteId,
-        status: 'pending',
-        limit: 1,
-      });
-
-    if (pendingResult.success && pendingResult.data.plans.length > 0) {
-        // Automatically start the pending plan?
-        // For now, let's return it. The workflow can decide to start it.
-        return pendingResult.data.plans[0];
-    }
-
-    return null;
-  } catch (error) {
-    console.error('[PlanSteps] Error fetching active plan:', error);
-    return null;
+  if (result.success && result.data.plans.length > 0) {
+    return result.data.plans[0];
   }
+    
+  const activeResult = await getInstancePlansCore({
+    instance_id: instanceId,
+    site_id: siteId,
+    status: 'active',
+    limit: 1,
+  });
+  if (activeResult.success && activeResult.data.plans.length > 0) {
+    return activeResult.data.plans[0];
+  }
+
+  // Check for pending plans if no in_progress one exists
+  const pendingResult = await getInstancePlansCore({
+    instance_id: instanceId,
+    site_id: siteId,
+    status: 'pending',
+    limit: 1,
+  });
+
+  if (pendingResult.success && pendingResult.data.plans.length > 0) {
+    // Automatically start the pending plan?
+    // For now, let's return it. The workflow can decide to start it.
+    return pendingResult.data.plans[0];
+  }
+
+  return null;
 }
 
 /**

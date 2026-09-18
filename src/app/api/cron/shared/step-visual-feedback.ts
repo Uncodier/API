@@ -48,6 +48,7 @@ interface BuildVisualProbePlanInput {
     title?: string;
     instructions?: string;
     expected_output?: string;
+    protected_routes?: string[];
   };
 }
 
@@ -134,8 +135,15 @@ export function buildVisualProbePlan(input: BuildVisualProbePlanInput): VisualPr
     };
   }
 
+  const declaredRoutes = (input.stepContext?.protected_routes || [])
+    .map(normalizePageRoute)
+    .filter((route): route is string => !!route);
   const contextRoutes = extractPageRoutesFromStepContext(input.stepContext);
-  const candidates = [...contextRoutes, ...input.inferredPageRoutes]
+  const candidates = [
+    ...declaredRoutes,
+    ...contextRoutes,
+    ...input.inferredPageRoutes,
+  ]
     .map(normalizePageRoute)
     .filter((route): route is string => !!route);
   const routes = Array.from(new Set(candidates)).slice(0, MAX_VISUAL_SCREENSHOTS);

@@ -7,12 +7,12 @@ import { routesFromAcceptance } from '@/lib/services/requirement-acceptance';
 
 const mockListBacklog = jest.fn();
 const mockUpsertBacklogItem = jest.fn();
-const mockIsItemTerminal = jest.fn();
+const mockSuspendItemForRemediation = jest.fn();
 const mockResolveRequirementScopePolicy = jest.fn();
 
 jest.mock('@/lib/services/requirement-backlog', () => ({
-  isItemTerminal: mockIsItemTerminal,
   listBacklog: mockListBacklog,
+  suspendItemForRemediation: mockSuspendItemForRemediation,
   upsertBacklogItem: mockUpsertBacklogItem,
 }));
 
@@ -71,7 +71,6 @@ function currentItem(overrides: Record<string, unknown> = {}) {
 describe('interaction backlog policy', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockIsItemTerminal.mockReturnValue(false);
     mockListBacklog.mockResolvedValue({
       backlog: {
         current_phase_id: 'implementation',
@@ -83,9 +82,16 @@ describe('interaction backlog policy', () => {
       reason: 'requirement allows backlog expansion',
     });
     mockUpsertBacklogItem.mockResolvedValue({ id: 'new-item' });
+    mockSuspendItemForRemediation.mockImplementation(
+      async ({ remediationItemIds }: { remediationItemIds: string[] }) =>
+        currentItem({
+          status: 'pending',
+          depends_on: remediationItemIds,
+        }),
+    );
   });
 
-  it('immediately creates and defers a missing-page item for flexible scope', async () => {
+  it('schedules a missing-page item and suspends the parent for flexible scope', async () => {
     const result = await applyInteractionBacklogPolicy({
       requirementId: 'requirement',
       backlogItemId: 'current',
@@ -108,14 +114,22 @@ describe('interaction backlog policy', () => {
       '/pricing',
     ]);
     expect(result).toEqual(expect.objectContaining({
-      ok: true,
+      ok: false,
       blocking_count: 0,
       deferred_count: 1,
+      remediation_required: true,
+      active_item_suspended: true,
     }));
     expect(result.findings[0]).toEqual(expect.objectContaining({
       disposition: 'deferred',
       backlog_item_id: 'new-item',
     }));
+    expect(mockSuspendItemForRemediation).toHaveBeenCalledWith({
+      requirementId: 'requirement',
+      itemId: 'current',
+      remediationItemIds: ['new-item'],
+      reason: 'Resolve broken navigation for /pricing',
+    });
   });
 
   it('creates one item for duplicate links to one route', async () => {
@@ -128,9 +142,29 @@ describe('interaction backlog policy', () => {
       ]),
     });
 
-    expect(result.ok).toBe(true);
+    expect(result.ok).toBe(false);
     expect(result.deferred_count).toBe(2);
     expect(mockUpsertBacklogItem).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the finding blocking when the parent could not be suspended', async () => {
+    mockSuspendItemForRemediation.mockResolvedValue(null);
+    const finding = missingRoute();
+    finding.introduced_by_step = false;
+
+    const result = await applyInteractionBacklogPolicy({
+      requirementId: 'requirement',
+      backlogItemId: 'current',
+      signal: signal([finding]),
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      blocking_count: 1,
+      deferred_count: 0,
+      remediation_required: false,
+    }));
+    expect(result.findings[0].disposition).toBe('repair');
   });
 
   it('creates a removal item when adding the route would exceed strict scope', async () => {
@@ -168,7 +202,7 @@ describe('interaction backlog policy', () => {
     const removalItem = mockUpsertBacklogItem.mock.calls[0][0].item;
     expect(routesFromAcceptance(removalItem.acceptance)).toEqual([]);
     expect(result).toEqual(expect.objectContaining({
-      ok: true,
+      ok: false,
       blocking_count: 0,
       deferred_count: 1,
     }));
@@ -238,7 +272,11 @@ describe('interaction backlog policy', () => {
       null,
     );
     expect(mockUpsertBacklogItem).toHaveBeenCalledTimes(1);
-    expect(result.ok).toBe(true);
+    expect(mockSuspendItemForRemediation).not.toHaveBeenCalled();
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      active_item_suspended: false,
+    }));
   });
 
   it('extends an existing removal item when another source references the route', async () => {
@@ -306,11 +344,10 @@ describe('interaction backlog policy', () => {
 
     expect(mockUpsertBacklogItem).not.toHaveBeenCalled();
     expect(result.findings[0].backlog_item_id).toBe('pricing-item');
-    expect(result.ok).toBe(true);
+    expect(result.ok).toBe(false);
   });
 
   it('does not defer to a terminal backlog item that used to own the route', async () => {
-    mockIsItemTerminal.mockReturnValue(true);
     mockListBacklog.mockResolvedValue({
       backlog: {
         current_phase_id: 'implementation',
@@ -352,6 +389,32 @@ describe('interaction backlog policy', () => {
 
     expect(result.ok).toBe(false);
     expect(mockUpsertBacklogItem).not.toHaveBeenCalled();
-    expect(result.findings[0].disposition).toBe('create_backlog');
+    expect(result.findings[0].disposition).toBe('repair');
+  });
+
+  it('schedules removal for a pre-existing broken route instead of ignoring it', async () => {
+    const finding = missingRoute('/legacy');
+    finding.introduced_by_step = false;
+
+    const result = await applyInteractionBacklogPolicy({
+      requirementId: 'requirement',
+      backlogItemId: 'current',
+      signal: signal([finding]),
+    });
+
+    expect(mockResolveRequirementScopePolicy).not.toHaveBeenCalled();
+    expect(mockUpsertBacklogItem).toHaveBeenCalledWith(expect.objectContaining({
+      item: expect.objectContaining({
+        title: 'Remove out-of-scope /legacy navigation',
+        assumptions: expect.arrayContaining([
+          '[interaction-resolution:remove]',
+        ]),
+      }),
+    }));
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      remediation_required: true,
+      deferred_count: 1,
+    }));
   });
 });

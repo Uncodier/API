@@ -69,6 +69,7 @@ describe('runtime and visual probe gate', () => {
   it('returns a retryable infrastructure failure when planned capture is empty', async () => {
     (runVisualProbe as jest.Mock).mockResolvedValue({
       ok: false,
+      capture_ok: false,
       duration_ms: 10,
       screenshots: [],
       console: {
@@ -123,12 +124,54 @@ describe('runtime and visual probe gate', () => {
     );
   });
 
+  it('reports console failure without converting visual evidence into a defect', async () => {
+    (runVisualProbe as jest.Mock).mockResolvedValue({
+      ok: false,
+      capture_ok: true,
+      duration_ms: 10,
+      screenshots: [{ route: '/', viewport: 'desktop', url: 'shot.jpg' }],
+      console: {
+        ok: false,
+        entries: [{ level: 'error', text: 'Request failed' }],
+        page_errors: [],
+        failed_requests: [],
+      },
+      visual_raw: {
+        ok: true,
+        pass: true,
+        defects: [],
+        screenshots: [{ route: '/', viewport: 'desktop', url: 'shot.jpg' }],
+      },
+      base_url: 'http://localhost:3000',
+      auth_redirects: [],
+      error:
+        'Client runtime errors detected. Inspect console entries, page errors, and failed requests, then fix the application-owned errors.',
+    });
+
+    const result = await runRuntimeAndVisualProbes({
+      sandbox: {} as any,
+      stepOrder: 1,
+      requirementId: 'req-1',
+      gitRepoKind: 'applications',
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('Inspect console entries');
+    expect(result.signals.console?.ok).toBe(false);
+    expect(result.signals.visual).toEqual(expect.objectContaining({
+      ok: true,
+      pass: true,
+    }));
+    expect(runVisualCritic).not.toHaveBeenCalled();
+  });
+
   it('fails closed when the E2E runner throws', async () => {
     (launchPuppeteerForGate as jest.Mock).mockResolvedValue({
       close: jest.fn().mockResolvedValue(undefined),
     });
     (runVisualProbe as jest.Mock).mockResolvedValue({
       ok: true,
+      capture_ok: true,
       duration_ms: 10,
       screenshots: [],
       console: {
@@ -167,6 +210,111 @@ describe('runtime and visual probe gate', () => {
     );
   });
 
+  it('keeps an unavailable visual critic retryable instead of passing', async () => {
+    (runVisualProbe as jest.Mock).mockResolvedValue({
+      ok: true,
+      capture_ok: true,
+      duration_ms: 10,
+      screenshots: [{
+        route: '/',
+        viewport: 'desktop',
+        url: 'visual-storage://shot.jpg',
+      }],
+      console: {
+        ok: true,
+        entries: [],
+        page_errors: [],
+        failed_requests: [],
+      },
+      visual_raw: {
+        ok: true,
+        pass: true,
+        defects: [],
+        screenshots: [{
+          route: '/',
+          viewport: 'desktop',
+          url: 'visual-storage://shot.jpg',
+        }],
+      },
+      base_url: 'http://localhost:3000',
+      auth_redirects: [],
+    });
+    (runVisualCritic as jest.Mock).mockResolvedValue({
+      status: 'unavailable',
+      pass: false,
+      defects: [],
+      summary: 'Structured response could not be parsed.',
+      skipped: 'parse_error',
+      completion_attempts: 2,
+    });
+
+    const result = await runRuntimeAndVisualProbes({
+      sandbox: {} as any,
+      stepOrder: 1,
+      requirementId: 'req-1',
+      gitRepoKind: 'applications',
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      infrastructureFailure: true,
+      error: 'Visual critic infrastructure unavailable: parse_error',
+    }));
+  });
+
+  it('still rejects application-owned browser failures before visual review', async () => {
+    (runVisualProbe as jest.Mock).mockResolvedValue({
+      ok: false,
+      capture_ok: true,
+      duration_ms: 10,
+      screenshots: [{
+        route: '/',
+        viewport: 'desktop',
+        url: 'visual-storage://shot.jpg',
+      }],
+      console: {
+        ok: false,
+        entries: [],
+        page_errors: [],
+        failed_requests: [{
+          url: 'http://localhost:3000/api/assets',
+          route: '/',
+          failure: 'net::ERR_FAILED',
+          viewport: 'desktop',
+          resource_type: 'fetch',
+        }],
+      },
+      visual_raw: {
+        ok: true,
+        pass: true,
+        defects: [],
+        screenshots: [{
+          route: '/',
+          viewport: 'desktop',
+          url: 'visual-storage://shot.jpg',
+        }],
+      },
+      base_url: 'http://localhost:3000',
+      auth_redirects: [],
+      error:
+        'Client runtime errors detected. Inspect console entries, page errors, and failed requests, then fix the application-owned errors.',
+    });
+
+    const result = await runRuntimeAndVisualProbes({
+      sandbox: {} as any,
+      stepOrder: 1,
+      requirementId: 'req-1',
+      gitRepoKind: 'applications',
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      error: expect.stringContaining('Client runtime errors detected'),
+    }));
+    expect(result.infrastructureFailure).toBeUndefined();
+    expect(runVisualCritic).not.toHaveBeenCalled();
+  });
+
   it('uses cumulative page routes for an explicitly forced visual audit', async () => {
     (inferTargetRoutesFromDiff as jest.Mock).mockResolvedValueOnce({
       pageRoutes: ['/workspace'],
@@ -180,6 +328,7 @@ describe('runtime and visual probe gate', () => {
     });
     (runVisualProbe as jest.Mock).mockResolvedValue({
       ok: true,
+      capture_ok: true,
       duration_ms: 10,
       screenshots: [],
       console: {

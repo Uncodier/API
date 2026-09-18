@@ -32,8 +32,13 @@ import {
   loadRequirement,
   reconcilePhaseForItem,
   toBacklog,
-  writeBacklog,
 } from './requirement-backlog-store';
+import { mutateBacklogAtomically } from './requirement-backlog-mutation';
+import {
+  assertBacklogInvariants,
+  isBacklogActiveStatus,
+} from './requirement-backlog-invariants';
+import { patchRequirementMetadataKeys } from './requirement-metadata-patch';
 import { cancelPlanStepsForBacklogItem } from '@/lib/helpers/plan-lifecycle';
 
 export async function bumpItemAttempts(params: {
@@ -41,23 +46,24 @@ export async function bumpItemAttempts(params: {
   itemId: string;
   reason?: string;
 }): Promise<BacklogItem | null> {
-  const req = await loadRequirement(params.requirementId);
-  if (!req) return null;
-  const flow = getFlow(classifyRequirementType(req.type));
-  const backlog = toBacklog(req.backlog, flow.phases[0]?.id || 'default');
-  const idx = backlog.items.findIndex((i) => i.id === params.itemId);
-  if (idx < 0) return null;
-  backlog.items[idx] = {
-    ...backlog.items[idx],
-    attempts: (backlog.items[idx].attempts || 0) + 1,
-    updated_at: new Date().toISOString(),
-  };
-  if (params.reason) {
-    const assumptions = backlog.items[idx].assumptions || [];
-    backlog.items[idx].assumptions = [...assumptions, params.reason].slice(-20);
-  }
-  await writeBacklog(params.requirementId, backlog);
-  return backlog.items[idx];
+  return mutateBacklogAtomically(
+    params.requirementId,
+    ({ backlog }) => {
+      const idx = backlog.items.findIndex((item) => item.id === params.itemId);
+      if (idx < 0) return { result: null, write: false };
+      backlog.items[idx] = {
+        ...backlog.items[idx],
+        attempts: (backlog.items[idx].attempts || 0) + 1,
+        updated_at: new Date().toISOString(),
+      };
+      if (params.reason) {
+        const assumptions = backlog.items[idx].assumptions || [];
+        backlog.items[idx].assumptions = [...assumptions, params.reason].slice(-20);
+      }
+      return { result: backlog.items[idx] };
+    },
+    { onMissing: () => null },
+  );
 }
 
 export async function recordToolFailure(params: {
@@ -66,42 +72,52 @@ export async function recordToolFailure(params: {
   toolName: string;
   reason?: string;
 }): Promise<BacklogItem | null> {
-  const req = await loadRequirement(params.requirementId);
-  if (!req) return null;
-  const flow = getFlow(classifyRequirementType(req.type));
-  const backlog = toBacklog(req.backlog, flow.phases[0]?.id || 'default');
-  const idx = backlog.items.findIndex((i) => i.id === params.itemId);
-  if (idx < 0) return null;
-  
-  const failures = backlog.items[idx].tool_failures || {};
-  failures[params.toolName] = (failures[params.toolName] || 0) + 1;
-  
-  backlog.items[idx] = {
-    ...backlog.items[idx],
-    tool_failures: failures,
-    updated_at: new Date().toISOString(),
-  };
-  
-  if (params.reason) {
-    const assumptions = backlog.items[idx].assumptions || [];
-    backlog.items[idx].assumptions = [...assumptions, params.reason].slice(-20);
-  }
-  
-  await writeBacklog(params.requirementId, backlog);
+  const mutation = await mutateBacklogAtomically<{
+    item: BacklogItem | null;
+    metadata: Record<string, any> | null;
+  }>(
+    params.requirementId,
+    ({ requirement, backlog }) => {
+      const idx = backlog.items.findIndex((item) => item.id === params.itemId);
+      if (idx < 0) {
+        return {
+          result: { item: null, metadata: requirement.metadata },
+          write: false,
+        };
+      }
+      const failures = { ...(backlog.items[idx].tool_failures || {}) };
+      failures[params.toolName] = (failures[params.toolName] || 0) + 1;
+      backlog.items[idx] = {
+        ...backlog.items[idx],
+        tool_failures: failures,
+        updated_at: new Date().toISOString(),
+      };
+      if (params.reason) {
+        const assumptions = backlog.items[idx].assumptions || [];
+        backlog.items[idx].assumptions = [...assumptions, params.reason].slice(-20);
+      }
+      return {
+        result: { item: backlog.items[idx], metadata: requirement.metadata },
+      };
+    },
+    { onMissing: () => ({ item: null, metadata: null }) },
+  );
+  if (!mutation.item) return null;
 
   // Telemetry: aggregate tool failures in requirement.metadata.tool_health
   try {
-    const metadata = req.metadata || {};
+    const metadata: Record<string, any> = mutation.metadata || {};
     const toolHealth = metadata.tool_health || {};
     toolHealth[params.toolName] = (toolHealth[params.toolName] || 0) + 1;
-    await supabaseAdmin.from('requirements').update({
-      metadata: { ...metadata, tool_health: toolHealth }
-    }).eq('id', params.requirementId);
+    await patchRequirementMetadataKeys({
+      requirementId: params.requirementId,
+      patch: { tool_health: toolHealth },
+    });
   } catch (err) {
     console.error(`[Watchdog] Failed to update tool_health telemetry:`, err);
   }
 
-  return backlog.items[idx];
+  return mutation.item;
 }
 
 const DEFAULT_STALE_IN_PROGRESS_MS = 6 * 60 * 60 * 1000; // 6 hours
@@ -111,51 +127,51 @@ export async function escalateStaleInProgressItems(params: {
   maxIdleMs?: number;
   maxAttempts?: number;
 }): Promise<{ escalated: BacklogItem[] }> {
-  const req = await loadRequirement(params.requirementId);
-  if (!req) return { escalated: [] };
-  const flow = getFlow(classifyRequirementType(req.type));
-  const backlog = toBacklog(req.backlog, flow.phases[0]?.id || 'default');
   const now = Date.now();
   const idleMs = params.maxIdleMs ?? DEFAULT_STALE_IN_PROGRESS_MS;
-  const maxAttempts = params.maxAttempts ?? flow.cost_envelope.max_cycles_per_item;
-  const escalated: BacklogItem[] = [];
+  const result = await mutateBacklogAtomically(
+    params.requirementId,
+    ({ backlog, flow }) => {
+      const maxAttempts =
+        params.maxAttempts ?? flow.cost_envelope.max_cycles_per_item;
+      const escalated: BacklogItem[] = [];
 
-  for (let i = 0; i < backlog.items.length; i++) {
-    const it = backlog.items[i];
-    if (it.status !== 'in_progress') continue;
-    
-    // Guard against escalating due to plumbing failures
-    const lastAssumption = it.assumptions && it.assumptions.length > 0 ? it.assumptions[it.assumptions.length - 1] : '';
-    const isIdleDueToPlumbing = lastAssumption.includes('[plumbing]');
-    
-    const updatedMs = it.updated_at ? Date.parse(it.updated_at) : NaN;
-    const idle = Number.isFinite(updatedMs) ? now - updatedMs : Infinity;
-    const overAttempts = (it.attempts || 0) >= maxAttempts;
-    
-    if (idle < idleMs && !overAttempts) continue;
-    
-    if (!overAttempts && isIdleDueToPlumbing) {
-      console.log(`[Watchdog] Item ${it.id} is idle (${Math.round(idle / 60000)}m) but last assumption was plumbing. Skipping escalation.`);
-      // We don't escalate, it stays in_progress so tools can keep retrying.
-      continue;
-    }
-    
-    const note = `[watchdog] auto-escalated to needs_review after idle=${Math.round(idle / 60000)}m attempts=${it.attempts ?? 0} (thresholds idle_min=${Math.round(idleMs / 60000)} max_attempts=${maxAttempts})`;
-    backlog.items[i] = {
-      ...it,
-      status: 'needs_review',
-      updated_at: new Date().toISOString(),
-      assumptions: [...(it.assumptions || []), note].slice(-20),
-    };
-    escalated.push(backlog.items[i]);
-  }
-
-  if (escalated.length === 0) return { escalated };
-
-  backlog.completion_ratio = computeRatio(backlog.items);
-  const advance = advancePhaseIfReadyInMemory(backlog, flow);
-  const toWrite = advance ? advance.nextBacklog : backlog;
-  await writeBacklog(params.requirementId, toWrite);
+      for (let i = 0; i < backlog.items.length; i++) {
+        const item = backlog.items[i];
+        if (item.status !== 'in_progress') continue;
+        const lastAssumption = item.assumptions?.at(-1) || '';
+        const isIdleDueToPlumbing = lastAssumption.includes('[plumbing]');
+        const updatedMs = item.updated_at ? Date.parse(item.updated_at) : NaN;
+        const idle = Number.isFinite(updatedMs) ? now - updatedMs : Infinity;
+        const overAttempts = (item.attempts || 0) >= maxAttempts;
+        if (idle < idleMs && !overAttempts) continue;
+        if (!overAttempts && isIdleDueToPlumbing) {
+          console.log(
+            `[Watchdog] Item ${item.id} is idle (${Math.round(idle / 60000)}m) but last assumption was plumbing. Skipping escalation.`,
+          );
+          continue;
+        }
+        const note = `[watchdog] auto-escalated to needs_review after idle=${Math.round(idle / 60000)}m attempts=${item.attempts ?? 0} (thresholds idle_min=${Math.round(idleMs / 60000)} max_attempts=${maxAttempts})`;
+        backlog.items[i] = {
+          ...item,
+          status: 'needs_review',
+          updated_at: new Date().toISOString(),
+          assumptions: [...(item.assumptions || []), note].slice(-20),
+        };
+        escalated.push(backlog.items[i]);
+      }
+      if (escalated.length === 0) {
+        return { result: { escalated }, write: false };
+      }
+      backlog.completion_ratio = computeRatio(backlog.items);
+      const advance = advancePhaseIfReadyInMemory(backlog, flow);
+      return {
+        result: { escalated },
+        backlog: advance ? advance.nextBacklog : backlog,
+      };
+    },
+    { onMissing: () => ({ escalated: [] }) },
+  );
 
   // Stop the zombie loop: when a backlog item is escalated to needs_review,
   // any plan steps still pending/in_progress for that item must be cancelled.
@@ -163,7 +179,7 @@ export async function escalateStaleInProgressItems(params: {
   // and the agent burns turns trying to finish work whose acceptance gate is
   // no longer reachable (observed on item 8afbb973: 10 attempts, plan
   // 031a9346 still in_progress after the watchdog escalated the item).
-  for (const it of escalated) {
+  for (const it of result.escalated) {
     try {
       const r = await cancelPlanStepsForBacklogItem({
         itemId: it.id,
@@ -178,87 +194,127 @@ export async function escalateStaleInProgressItems(params: {
       console.warn(`[watchdog] cancelPlanStepsForBacklogItem failed for ${it.id}:`, e);
     }
   }
-  return { escalated };
+  return result;
 }
 
 export async function ensureInProgressItem(params: {
   requirementId: string;
 }): Promise<{ promoted: BacklogItem | null; reason: string }> {
-  const req = await loadRequirement(params.requirementId);
-  if (!req) return { promoted: null, reason: 'requirement_not_found' };
-  const flow = getFlow(classifyRequirementType(req.type));
-  const backlog = toBacklog(req.backlog, flow.phases[0]?.id || 'default');
-
-  const active = backlog.items.find((i) => i.status === 'in_progress');
-  if (active) return { promoted: null, reason: 'already_in_progress' };
-
-  // Phase self-healing: if the current phase is empty or all its items are terminal,
-  // we might need to advance the phase before looking for candidates.
-  const advance = advancePhaseIfReadyInMemory(backlog, flow);
-  if (advance) {
-    backlog.current_phase_id = advance.to.id;
-    await writeBacklog(params.requirementId, advance.nextBacklog);
-    console.log(`[Watchdog] Auto-advanced phase to ${advance.to.id} for requirement ${params.requirementId}`);
-  }
-
-  const phaseId = backlog.current_phase_id || flow.phases[0]?.id || '';
-  const terminalIds = new Set(
-    backlog.items
-      .filter((i) => i.status === 'done' || i.status === 'needs_review')
-      .map((i) => i.id),
-  );
-  const isUnblocked = (it: BacklogItem): boolean => {
-    const deps = it.depends_on ?? [];
-    return deps.every((d) => terminalIds.has(d));
-  };
-  const candidates = backlog.items
-    .map((it, idx) => ({ it, idx }))
-    .filter(({ it }) => {
-      if (it.status !== 'pending' || !isUnblocked(it)) return false;
-      const tier = it.tier ?? 'core';
-      if (tier === 'ornamental') {
-        const maxAttempts = parseInt(process.env.CRON_ORNAMENTAL_MAX_ATTEMPTS || '2', 10);
-        if ((it.attempts || 0) >= maxAttempts) {
-          return false;
-        }
+  const mutation = await mutateBacklogAtomically<{
+    promoted: BacklogItem | null;
+    reason: string;
+    advancedTo: string | null;
+  }>(
+    params.requirementId,
+    ({ backlog, flow }) => {
+      const active = backlog.items.find((item) =>
+        isBacklogActiveStatus(item.status),
+      );
+      if (active) {
+        return {
+          result: {
+            promoted: null,
+            reason: 'already_in_progress',
+            advancedTo: null,
+          },
+          write: false,
+        };
       }
-      return true;
-    });
 
-  if (candidates.length === 0) {
-    return { promoted: null, reason: 'no_pending_unblocked' };
+      const advance = advancePhaseIfReadyInMemory(backlog, flow);
+      const workingBacklog = advance ? advance.nextBacklog : backlog;
+      const phaseId =
+        workingBacklog.current_phase_id || flow.phases[0]?.id || '';
+      const completedIds = new Set(
+        workingBacklog.items
+          .filter((item) => item.status === 'done')
+          .map((item) => item.id),
+      );
+      const candidates = workingBacklog.items
+        .map((item, idx) => ({ item, idx }))
+        .filter(({ item }) => {
+          const unblocked = (item.depends_on || []).every((dependencyId) =>
+            completedIds.has(dependencyId),
+          );
+          if (item.status !== 'pending' || !unblocked) return false;
+          if ((item.tier ?? 'core') === 'ornamental') {
+            const maxAttempts = parseInt(
+              process.env.CRON_ORNAMENTAL_MAX_ATTEMPTS || '2',
+              10,
+            );
+            if ((item.attempts || 0) >= maxAttempts) return false;
+          }
+          return true;
+        });
+
+      if (candidates.length === 0) {
+        return {
+          result: {
+            promoted: null,
+            reason: 'no_pending_unblocked',
+            advancedTo: advance?.to.id || null,
+          },
+          backlog: workingBacklog,
+          write: !!advance,
+        };
+      }
+
+      const phaseIndex = (id: string): number => {
+        const index = flow.phases.findIndex((phase) => phase.id === id);
+        return index >= 0 ? index : flow.phases.length + 1;
+      };
+      const currentPhaseIndex = phaseIndex(phaseId);
+      candidates.sort((left, right) => {
+        const leftPhase = phaseIndex(left.item.phase_id);
+        const rightPhase = phaseIndex(right.item.phase_id);
+        const leftDistance = leftPhase >= currentPhaseIndex
+          ? leftPhase - currentPhaseIndex
+          : leftPhase + flow.phases.length;
+        const rightDistance = rightPhase >= currentPhaseIndex
+          ? rightPhase - currentPhaseIndex
+          : rightPhase + flow.phases.length;
+        if (leftDistance !== rightDistance) return leftDistance - rightDistance;
+        const leftTier = (left.item.tier ?? 'core') === 'core' ? 0 : 1;
+        const rightTier = (right.item.tier ?? 'core') === 'core' ? 0 : 1;
+        return leftTier !== rightTier ? leftTier - rightTier : left.idx - right.idx;
+      });
+
+      const pick = candidates[0];
+      const note = `[watchdog] auto-started — no active item with ${candidates.length} pending unblocked`;
+      workingBacklog.items[pick.idx] = {
+        ...pick.item,
+        status: 'in_progress',
+        updated_at: new Date().toISOString(),
+        assumptions: [...(pick.item.assumptions || []), note].slice(-20),
+      };
+      reconcilePhaseForItem(workingBacklog, flow, workingBacklog.items[pick.idx]);
+      assertBacklogInvariants(
+        workingBacklog.items,
+        flow.phases.map((phase) => phase.id),
+      );
+      return {
+        result: {
+          promoted: workingBacklog.items[pick.idx],
+          reason: 'auto_started',
+          advancedTo: advance?.to.id || null,
+        },
+        backlog: workingBacklog,
+      };
+    },
+    {
+      onMissing: () => ({
+        promoted: null,
+        reason: 'requirement_not_found',
+        advancedTo: null,
+      }),
+    },
+  );
+  if (mutation.advancedTo) {
+    console.log(
+      `[Watchdog] Auto-advanced phase to ${mutation.advancedTo} for requirement ${params.requirementId}`,
+    );
   }
-
-  const phaseIndex = (id: string): number => {
-    const i = flow.phases.findIndex((p) => p.id === id);
-    return i >= 0 ? i : flow.phases.length + 1;
-  };
-  const curIdx = phaseIndex(phaseId);
-  candidates.sort((a, b) => {
-    const aPhase = phaseIndex(a.it.phase_id);
-    const bPhase = phaseIndex(b.it.phase_id);
-    // Items in current phase first; then forward phases; then earlier phases.
-    const aDist = aPhase >= curIdx ? aPhase - curIdx : aPhase + flow.phases.length;
-    const bDist = bPhase >= curIdx ? bPhase - curIdx : bPhase + flow.phases.length;
-    if (aDist !== bDist) return aDist - bDist;
-    const aTier = (a.it.tier ?? 'core') === 'core' ? 0 : 1;
-    const bTier = (b.it.tier ?? 'core') === 'core' ? 0 : 1;
-    if (aTier !== bTier) return aTier - bTier;
-    return a.idx - b.idx;
-  });
-
-  const pick = candidates[0];
-  const note = `[watchdog] auto-started — no in_progress item with ${candidates.length} pending unblocked`;
-  backlog.items[pick.idx] = {
-    ...pick.it,
-    status: 'in_progress',
-    attempts: (pick.it.attempts || 0) + 1,
-    updated_at: new Date().toISOString(),
-    assumptions: [...(pick.it.assumptions || []), note].slice(-20),
-  };
-  reconcilePhaseForItem(backlog, flow, backlog.items[pick.idx]);
-  await writeBacklog(params.requirementId, backlog);
-  return { promoted: backlog.items[pick.idx], reason: 'auto_started' };
+  return { promoted: mutation.promoted, reason: mutation.reason };
 }
 
 export async function resolveBacklogContextForInstance(instanceId: string): Promise<{

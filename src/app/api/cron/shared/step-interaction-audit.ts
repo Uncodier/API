@@ -1,12 +1,9 @@
 import ts from 'typescript';
 import { routeFromAppFile } from './step-app-route';
-
 export { routeFromAppFile } from './step-app-route';
-
 export type InteractionFindingKind = 'broken_link' | 'inert_control';
 export type InteractionConfidence = 'high' | 'medium';
 export type InteractionDisposition = 'repair' | 'create_backlog' | 'deferred' | 'warning';
-
 export interface InteractionFinding {
   fingerprint: string;
   kind: InteractionFindingKind;
@@ -28,11 +25,13 @@ export interface InteractionSignal {
   blocking_count: number;
   deferred_count: number;
   warning_count: number;
+  remediation_required?: boolean;
+  remediation_item_ids?: string[];
+  active_item_suspended?: boolean;
   summary: string;
 }
 
 type AddedLines = Map<string, Set<number> | '*'>;
-
 const PUBLIC_ASSET_RE = /\.[a-z0-9]{2,8}$/i;
 const ACTION_ATTRS = new Set([
   'onclick',
@@ -56,7 +55,6 @@ function hash(value: string): string {
   }
   return (h >>> 0).toString(36);
 }
-
 function attrName(attr: ts.JsxAttributeLike): string {
   return ts.isJsxAttribute(attr) ? attr.name.getText().toLowerCase() : '';
 }
@@ -215,12 +213,7 @@ export function collectActionClassNames(file: string, content: string): Set<stri
   return classes;
 }
 
-function wasIntroduced(
-  file: string,
-  node: ts.Node,
-  source: ts.SourceFile,
-  addedLines: AddedLines,
-): boolean {
+function wasIntroduced(file: string, node: ts.Node, source: ts.SourceFile, addedLines: AddedLines): boolean {
   const lines = addedLines.get(file);
   if (lines === '*') return true;
   if (!lines) return false;
@@ -232,9 +225,7 @@ function wasIntroduced(
   return false;
 }
 
-function makeFinding(
-  input: Omit<InteractionFinding, 'fingerprint'>,
-): InteractionFinding {
+function makeFinding(input: Omit<InteractionFinding, 'fingerprint'>): InteractionFinding {
   const identity = input.target
     ? `${input.kind}:${input.target}`
     : `${input.kind}:${input.file}:${input.element}:${input.label || ''}`;
@@ -333,7 +324,7 @@ export function auditInteractionSource(params: {
       const hasSpreadAttributes = node.attributes.properties.some(ts.isJsxSpreadAttribute);
       const inputButton =
         lowerTag === 'input' && (type === 'button' || type === 'submit' || type === 'reset');
-      const semanticButton = lowerTag === 'button' || lowerTag.endsWith('button') || inputButton;
+      const semanticButton = lowerTag === 'button' || inputButton;
       const linkElement = lowerTag === 'a' || lowerTag === 'link' || lowerTag.endsWith('.link');
       const placeholderHref = href === '' || href === '#' || /^javascript:/i.test(href || '');
       const anchorWithoutHref = lowerTag === 'a' && !findAttr(node, 'href');
@@ -457,24 +448,48 @@ export function summarizeInteractionFindings(findings: InteractionFinding[]): In
   );
   const deferred = findings.filter((finding) => finding.disposition === 'deferred');
   const warnings = findings.filter((finding) => !blocking.includes(finding) && !deferred.includes(finding));
+  const remediationItemIds = Array.from(new Set(
+    deferred
+      .map((finding) => finding.backlog_item_id)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0),
+  ));
   return {
-    ok: blocking.length === 0,
+    ok: blocking.length === 0 && deferred.length === 0,
     findings,
     blocking_count: blocking.length,
     deferred_count: deferred.length,
     warning_count: warnings.length,
-    summary: `${blocking.length} blocking, ${deferred.length} deferred, ${warnings.length} warning interaction finding(s)`,
+    remediation_required: deferred.length > 0,
+    remediation_item_ids: remediationItemIds,
+    summary: `${blocking.length} blocking, ${deferred.length} scheduled remediation, ${warnings.length} warning interaction finding(s)`,
   };
 }
 
 export function formatInteractionFailure(signal: InteractionSignal): string {
   const lines = signal.findings
-    .filter((finding) => finding.introduced_by_step && finding.disposition !== 'deferred')
+    .filter(
+      (finding) =>
+        finding.disposition === 'deferred' ||
+        finding.introduced_by_step,
+    )
     .slice(0, 20)
     .map((finding) => {
       const target = finding.target ? ` target=${finding.target}` : '';
-      return `- ${finding.file}:${finding.line} [${finding.kind}/${finding.confidence}] ${finding.reason}${target}`;
+      const backlog = finding.backlog_item_id
+        ? ` remediation=${finding.backlog_item_id}`
+        : '';
+      return `- ${finding.file}:${finding.line} [${finding.kind}/${finding.confidence}] ${finding.reason}${target}${backlog}`;
     });
+  if (signal.remediation_required) {
+    const handoff = signal.active_item_suspended
+      ? 'The active item is suspended until the remediation backlog item passes its own gates.'
+      : 'Remediation backlog work was scheduled, while the active item remains responsible for its other blocking findings.';
+    return [
+      `Interaction remediation scheduled: ${signal.summary}.`,
+      ...lines,
+      handoff,
+    ].join('\n');
+  }
   return [
     `Interaction audit failed: ${signal.summary}.`,
     ...lines,

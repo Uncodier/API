@@ -66,7 +66,10 @@ export type VisualProbeScreenshot = {
 };
 
 export type VisualProbeResult = {
+  /** Aggregate result: screenshot capture and browser console checks passed. */
   ok: boolean;
+  /** Screenshot capture completed independently of browser console health. */
+  capture_ok: boolean;
   duration_ms: number;
   screenshots: VisualProbeScreenshot[];
   console: ConsoleSignal;
@@ -137,6 +140,7 @@ function failedProbe(
 ): VisualProbeResult {
   return {
     ok: false,
+    capture_ok: false,
     duration_ms: Date.now() - started,
     screenshots,
     console: consoleSignal,
@@ -316,22 +320,25 @@ export async function runVisualProbe(params: VisualProbeParams): Promise<VisualP
   const telemetryTruncated = !!telemetryDropped && Object.values(
     telemetryDropped,
   ).some((count) => count > 0);
-  const evidenceComplete = completeCapture && !telemetryTruncated;
+  const captureOk = completeCapture;
   const expectedAuthRedirects = authRedirects.filter(
     (redirect) => redirect.expected !== false,
   ).length;
-  const error = !completeCapture
+  const captureError = !completeCapture
     ? `${screenshots.length}/${expectedScreenshots} screenshots captured. Stderr: ${scriptStderr}`
-    : telemetryTruncated
-      ? `Browser telemetry was truncated: ${JSON.stringify(telemetryDropped)}`
-      : undefined;
+    : undefined;
+  const consoleError = telemetryTruncated
+    ? `Browser telemetry was truncated: ${JSON.stringify(telemetryDropped)}`
+    : !consoleSignal.ok
+      ? 'Client runtime errors detected. Inspect console entries, page errors, and failed requests, then fix the application-owned errors.'
+    : undefined;
   const visualRaw: VisualSignal = {
-    ok: evidenceComplete,
-    pass: evidenceComplete && consoleSignal.ok,
+    ok: captureOk,
+    pass: captureOk,
     summary: expectedAuthRedirects
       ? `${expectedAuthRedirects} protected route capture(s) skipped after an authentication redirect.`
       : undefined,
-    error,
+    error: captureError,
     defects: [],
     auth_redirects: authRedirects,
     screenshots: screenshots.map((screenshot) => ({
@@ -343,14 +350,15 @@ export async function runVisualProbe(params: VisualProbeParams): Promise<VisualP
   };
 
   return {
-    ok: evidenceComplete && consoleSignal.ok,
+    ok: captureOk && consoleSignal.ok,
+    capture_ok: captureOk,
     duration_ms: Date.now() - started,
     screenshots,
     console: consoleSignal,
     visual_raw: visualRaw,
     base_url: baseUrl,
     auth_redirects: authRedirects,
-    error,
+    error: captureError || consoleError,
   };
 }
 

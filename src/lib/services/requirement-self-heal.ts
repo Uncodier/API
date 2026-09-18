@@ -5,12 +5,11 @@
  *
  *   attempt 1 → rotate_strategy      (keep scope, try a different approach)
  *   attempt 2 → downgrade_scope      (full → mvp → minimal)
- *   attempt 3 → log_assumption_and_continue (weakens the acceptance via DECISIONS.md)
+ *   attempt 3 → retry mandatory core work; ornamental work may be deferred
  *   attempt 4 → mark_needs_review    (non-blocking; human triage if desired)
  *
- * The policy never *blocks* progress — `needs_review` is an informational
- * label. The flow advances even when items stay in that state, so a single
- * stuck item cannot deadlock the whole requirement.
+ * `needs_review` releases the scheduler but does not count as successful
+ * requirement completion.
  */
 
 import type { BacklogItem, BacklogItemScope } from './requirement-backlog-types';
@@ -100,12 +99,24 @@ export function planNextHealingAction(ctx: HealingContext): HealingAction {
     // Already minimal → fall through to assumption path.
   }
 
-  if (attempts === 3 || (attempts === 2 && ctx.item.scope_level === 'minimal')) {
+  if (
+    (attempts === 3 || (attempts === 2 && ctx.item.scope_level === 'minimal')) &&
+    ctx.item.tier === 'ornamental'
+  ) {
     const assumption = deriveAssumption(ctx);
     return {
       kind: 'log_assumption_and_continue',
       assumption,
       relaxed_acceptance: ctx.item.acceptance.slice(0, Math.max(1, Math.floor(ctx.item.acceptance.length / 2))),
+    };
+  }
+
+  if (attempts <= 3) {
+    return {
+      kind: 'rotate_strategy',
+      hint:
+        `Core acceptance remains mandatory after ${attempts} failed attempts. ` +
+        `${nextAction} Do not defer, weaken, or replace the required behavior with an assumption.`,
     };
   }
 

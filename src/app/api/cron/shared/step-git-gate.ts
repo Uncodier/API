@@ -83,6 +83,7 @@ type PersistOriginResult = {
   errorForAgent?: string;
   failureKind?: GitPushFailureKind;
   agentActionable?: boolean;
+  infrastructureFailure?: boolean;
   /** MicroVM stopped — reprovision, do not burn gate retries on push recovery. */
   sandboxUnavailable?: boolean;
 };
@@ -114,6 +115,7 @@ async function persistOrVerifyOrigin(
         errorForAgent: t.agentMessage,
         failureKind: t.failureKind,
         agentActionable: t.agentActionable,
+        infrastructureFailure: t.infrastructureFailure,
         sandboxUnavailable: t.failureKind === 'sandbox_unavailable',
         ...((e as any).sandboxReplacement ? { sandbox: (e as any).sandboxReplacement } : {}),
       };
@@ -127,6 +129,7 @@ async function persistOrVerifyOrigin(
       errorForAgent: tri.agentMessage,
       failureKind: tri.failureKind,
       agentActionable: tri.agentActionable,
+      infrastructureFailure: tri.infrastructureFailure,
       sandboxUnavailable: tri.failureKind === 'sandbox_unavailable',
       ...((e as any).sandboxReplacement ? { sandbox: (e as any).sandboxReplacement } : {}),
     };
@@ -186,6 +189,10 @@ export type VercelDeployGateInfo = {
   previewUrl: string | null;
   deployState: string;
   detail?: string;
+  commitSha?: string;
+  branch?: string;
+  deploymentId?: string | null;
+  gitRepoKind?: GitRepoKind;
   /** When VERCEL_TOKEN + project id are set — excerpt stored in instance_logs and on gate errors */
   buildLogExcerpt?: string | null;
 };
@@ -208,6 +215,7 @@ export async function verifyOriginAndRecover(params: OriginGateParams): Promise<
   lastResult: any;
   error?: string;
   signals: GateSignals;
+  infrastructureFailure?: boolean;
   sandboxUnavailable?: boolean;
   sandboxReplacement?: Sandbox;
 }> {
@@ -268,6 +276,7 @@ export async function verifyOriginAndRecover(params: OriginGateParams): Promise<
         lastResult,
         error: agentLine,
         signals,
+        infrastructureFailure: true,
         sandboxUnavailable: true,
         sandboxReplacement: sandbox !== initialSandbox ? sandbox : undefined,
       };
@@ -363,6 +372,7 @@ export async function verifyOriginAndRecover(params: OriginGateParams): Promise<
         lastResult,
         error: agentLine,
         signals,
+        infrastructureFailure: true,
         sandboxUnavailable: true,
         sandboxReplacement: sandbox !== initialSandbox ? sandbox : undefined,
       };
@@ -392,6 +402,7 @@ export async function verifyOriginAndRecover(params: OriginGateParams): Promise<
       lastResult,
       error: errFinal,
       signals,
+      infrastructureFailure: persist.infrastructureFailure,
       sandboxReplacement: sandbox !== initialSandbox ? sandbox : undefined,
     };
   }
@@ -623,6 +634,7 @@ fi`,
       ok: false,
       lastResult,
       error: recovery.error,
+      infrastructureFailure: recovery.infrastructureFailure,
       signals,
       sandboxUnavailable: recovery.sandboxUnavailable,
       sandboxReplacement: sandbox !== initialSandbox ? sandbox : undefined,
@@ -660,7 +672,20 @@ const branch = persist.branch;
       message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}gate: ${errSha}`,
       details: { stepOrder, branch },
     });
-    return { ok: false, lastResult, error: errSha, signals };
+    return {
+      ok: false,
+      lastResult,
+      error: errSha,
+      infrastructureFailure: true,
+      vercelDeploy: {
+        previewUrl: null,
+        deployState: 'pending',
+        detail: errSha,
+        branch,
+        gitRepoKind,
+      },
+      signals,
+    };
   }
 
   const poll = await pollGitHubDeploymentForSha(gitOrg, repoName, sha, {
@@ -732,6 +757,10 @@ const branch = persist.branch;
       vercelDeploy: {
         previewUrl: poll.previewUrl,
         deployState: 'success',
+        commitSha: sha,
+        branch,
+        deploymentId: poll.vercelDeploymentId ?? null,
+        gitRepoKind,
         buildLogExcerpt: vercelBuildExcerpt,
       },
       signals,
@@ -763,6 +792,10 @@ const branch = persist.branch;
         previewUrl: poll.previewUrl,
         deployState: poll.state,
         detail: poll.detail,
+        commitSha: sha,
+        branch,
+        deploymentId: poll.vercelDeploymentId ?? null,
+        gitRepoKind,
         buildLogExcerpt: vercelBuildExcerpt,
       },
       signals,
@@ -785,14 +818,19 @@ const branch = persist.branch;
     detail: poll.detail,
     buildLogExcerpt: vercelBuildExcerpt,
   };
-    return {
+  return {
       ok: false,
       lastResult,
       error: errTimeout,
+      infrastructureFailure: true,
       vercelDeploy: {
         previewUrl: null,
         deployState: poll.state,
         detail: poll.detail,
+        commitSha: sha,
+        branch,
+        deploymentId: poll.vercelDeploymentId ?? null,
+        gitRepoKind,
         buildLogExcerpt: vercelBuildExcerpt,
       },
       signals,

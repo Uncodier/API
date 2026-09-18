@@ -1,4 +1,7 @@
-import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/route';
+import {
+  patchPlanStepAtomically,
+  type PlanStepPatchMutation,
+} from '@/lib/services/instance-plan-infrastructure-state';
 
 type BacklogResolver = (instanceId: string) => Promise<{
   requirementId: string | null;
@@ -70,32 +73,26 @@ export async function markVisualFeedbackDelivered(params: {
   backlogItemId?: string | null;
   imageFeedbackId?: string;
   delivered: boolean;
-}): Promise<void> {
+  expectedGeneration: number;
+  eventId: string;
+}): Promise<PlanStepPatchMutation | undefined> {
   if (!params.delivered || !params.imageFeedbackId) return;
-  try {
-    await updateInstancePlanCore({
-      plan_id: params.planId,
-      instance_id: params.instanceId,
-      site_id: params.siteId,
-      requirement_id: params.requirementId,
-      steps: [{
-        id: params.stepId,
-        metadata: {
-          ...(params.persistedMetadata || {}),
-          ...(params.interactionBaselineSha
-            ? { interaction_audit_baseline_sha: params.interactionBaselineSha }
-            : {}),
-          ...(params.backlogItemId
-            ? { backlog_item_id: params.backlogItemId }
-            : {}),
-          visual_feedback_image_id: params.imageFeedbackId,
-        },
-      }],
-    });
-  } catch (error: unknown) {
-    console.warn(
-      '[SingleTurn] Could not persist delivered visual feedback id:',
-      error instanceof Error ? error.message : error,
-    );
-  }
+  return patchPlanStepAtomically({
+    planId: params.planId,
+    stepId: params.stepId,
+    expectedGeneration: params.expectedGeneration,
+    eventId: params.eventId,
+    patch: {
+      metadata: {
+        ...(params.persistedMetadata || {}),
+        ...(params.interactionBaselineSha
+          ? { interaction_audit_baseline_sha: params.interactionBaselineSha }
+          : {}),
+        ...(params.backlogItemId
+          ? { backlog_item_id: params.backlogItemId }
+          : {}),
+        visual_feedback_image_id: params.imageFeedbackId,
+      },
+    },
+  });
 }

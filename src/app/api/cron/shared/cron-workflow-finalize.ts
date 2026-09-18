@@ -6,11 +6,7 @@
 
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { getSandboxHandle } from '@/lib/services/sandbox-sdk';
-import { deleteRequirementSandboxes, shouldTakeManualEndOfWorkflowSnapshot } from '@/lib/services/sandbox-lifecycle';
-// NOTE: Import from `@/lib/tools/...` (not the sibling route folder) so the
-// Vercel Workflow bundler doesn't co-bundle `requirement_status/route.ts`
-// (which imports `next/server` and crashes with `__dirname is not defined`).
-import { createRequirementStatusCore } from '@/lib/tools/requirement-status-core';
+import { shouldTakeManualEndOfWorkflowSnapshot } from '@/lib/services/sandbox-lifecycle';
 import {
   CronInfraEvent,
   logCronInfrastructureEvent,
@@ -21,6 +17,7 @@ import { getRequirementGitBinding } from '@/lib/services/requirement-git-binding
 import { canCloseRequirement } from '@/lib/services/requirement-flow-engine';
 import { isLightRequirementFlow } from '@/lib/services/requirement-flows';
 import { deleteSnapshotQuiet } from '@/lib/services/sandbox-persisted-snapshot';
+import { finalizeRequirementExecution } from '@/lib/services/requirement-finalization';
 
 const REQUIREMENT_GIT_STRICT = () => process.env.REQUIREMENT_GIT_STRICT === 'true';
 
@@ -161,7 +158,12 @@ export async function createFinalStatusStep(params: {
   smokeError?: string;
   postFinallyBuildError?: string;
   audit?: CronAuditContext;
-}): Promise<{ effectiveStatus: 'done' | 'in-progress' | 'blocked' | 'on-review' }> {
+  expectedExecutionGeneration: number;
+  cycleId: string;
+}): Promise<{
+  effectiveStatus: 'done' | 'in-progress' | 'blocked' | 'on-review';
+  state: 'applied' | 'stale';
+}> {
   'use step';
   const {
     site_id,
@@ -178,9 +180,38 @@ export async function createFinalStatusStep(params: {
     smokeError,
     postFinallyBuildError,
     audit,
+    expectedExecutionGeneration,
+    cycleId,
   } = params;
 
   const smokeOk = !smokeError;
+  const { data: currentRequirement, error: requirementError } =
+    await supabaseAdmin
+      .from('requirements')
+      .select('metadata')
+      .eq('id', reqId)
+      .maybeSingle();
+  if (requirementError) throw requirementError;
+  const rawExecutionGeneration =
+    currentRequirement?.metadata?.requirement_execution_generation;
+  const currentExecutionGeneration =
+    typeof rawExecutionGeneration === 'number' &&
+    Number.isSafeInteger(rawExecutionGeneration) &&
+    rawExecutionGeneration >= 0
+      ? rawExecutionGeneration
+      : typeof rawExecutionGeneration === 'string' &&
+          /^[0-9]{1,9}$/.test(rawExecutionGeneration)
+        ? Number.parseInt(rawExecutionGeneration, 10)
+        : 0;
+  if (
+    !currentRequirement ||
+    currentExecutionGeneration !== expectedExecutionGeneration
+  ) {
+    console.warn(
+      `[CronStep] Finalize rejected for stale execution generation ${expectedExecutionGeneration}.`,
+    );
+    return { effectiveStatus: 'in-progress', state: 'stale' };
+  }
 
   const { data: existing } = await supabaseAdmin
     .from('requirement_status')
@@ -235,7 +266,10 @@ export async function createFinalStatusStep(params: {
         existing_message: row!.message ?? null,
       },
     });
-    return { effectiveStatus: row!.stage === 'needs_review' ? 'on-review' : 'blocked' };
+    return {
+      effectiveStatus: row!.stage === 'needs_review' ? 'on-review' : 'blocked',
+      state: 'applied',
+    };
   }
   const incomingPreview = previewUrl?.trim() || '';
   const incomingSource = sourceCodeUrl?.trim() || '';
@@ -262,6 +296,7 @@ export async function createFinalStatusStep(params: {
       .select('status, metadata, completion_reason, updated_at')
       .eq('instance_id', instanceId)
       .order('updated_at', { ascending: false })
+      .order('id', { ascending: false })
       .limit(1)
       .maybeSingle();
     const { planCancelledBySaneo } = await import('@/lib/helpers/plan-lifecycle');
@@ -331,9 +366,7 @@ export async function createFinalStatusStep(params: {
   const mergedRepoUrl = didPush ? (repoUrl || null) : row?.repo_url ?? null;
 
   let newSnapshotId: string | undefined;
-  if (isComplete && (params.sandboxId || reqId)) {
-    await deleteRequirementSandboxes(reqId, instanceId, [params.sandboxId]);
-  } else if (!isComplete && params.sandboxId && shouldTakeManualEndOfWorkflowSnapshot()) {
+  if (!isComplete && params.sandboxId && shouldTakeManualEndOfWorkflowSnapshot()) {
     try {
       const liveSandbox = await getSandboxHandle(params.sandboxId);
       // v1 only: keep a 48h snapshot until the next cron. v3 stop() snapshots.
@@ -345,106 +378,35 @@ export async function createFinalStatusStep(params: {
     }
   }
 
-  const statusPayload = {
-    repo_url: mergedRepoUrl,
-    preview_url: mergedPreviewUrl,
-    source_code: mergedSourceCode,
-    stage: effectiveStatus,
-    ...(newSnapshotId ? { snapshot_id: newSnapshotId } : {}),
+  const finalization = await finalizeRequirementExecution({
+    requirementId: reqId,
+    siteId: site_id,
+    instanceId,
+    expectedExecutionGeneration,
+    eventId: cycleId,
+    existingStatusId: existing?.id,
+    status: effectiveStatus,
     message: isComplete
       ? `Cycle complete. Repo: ${repoUrl} | Preview: ${mergedPreviewUrl} | Source: ${mergedSourceCode}`
-      : preserveWrapUpMessage
-        ? preserveWrapUpMessage
-        : `In progress — missing: ${missingParts.join(', ')}. Will retry next cycle.`,
-  };
-
-  if (existing?.id) {
-    await supabaseAdmin
-      .from('requirement_status')
-      .update({ ...statusPayload, updated_at: new Date().toISOString() })
-      .eq('id', existing.id);
-    console.log(
-      `[CronStep] Updated requirement_status ${existing.id} → ${effectiveStatus} | preview: ${mergedPreviewUrl || 'none'} | source: ${mergedSourceCode ? 'yes' : 'no'}`,
-    );
-  } else {
-    // Note: We don't pass active_sandbox_id here because this is the final status
-    // and the sandbox is about to be stopped anyway.
-    await createRequirementStatusCore({
-      site_id,
-      instance_id: instanceId,
-      requirement_id: reqId,
-      repo_url: statusPayload.repo_url ?? undefined,
-      preview_url: statusPayload.preview_url ?? undefined,
-      source_code: statusPayload.source_code ?? undefined,
-      stage: statusPayload.stage,
-      message: statusPayload.message,
-    });
-    console.log(
-      `[CronStep] Created requirement_status → ${effectiveStatus} | preview: ${mergedPreviewUrl || 'none'} | source: ${mergedSourceCode ? 'yes' : 'no'}`,
-    );
+      : preserveWrapUpMessage ||
+        `In progress — missing: ${missingParts.join(', ')}. Will retry next cycle.`,
+    repoUrl: mergedRepoUrl,
+    previewUrl: mergedPreviewUrl,
+    sourceCodeUrl: mergedSourceCode,
+    snapshotId: newSnapshotId,
+    isComplete,
+    markOnReview: !isComplete && effectiveStatus === 'on-review',
+  });
+  if (finalization.state !== 'applied') {
+    if (newSnapshotId) await deleteSnapshotQuiet(newSnapshotId);
+    return {
+      effectiveStatus: finalization.effectiveStatus,
+      state: 'stale',
+    };
   }
-
-  if (!isComplete && effectiveStatus === 'on-review') {
-    // Sync parent requirement so cron respects wrap-up / user-approval cooldown
-    const { hasOutstandingWork } = require('@/lib/services/requirement-backlog');
-    const { data: currentReq } = await supabaseAdmin.from('requirements').select('backlog').eq('id', reqId).single();
-    if (!hasOutstandingWork(currentReq?.backlog?.items || [])) {
-        await supabaseAdmin
-          .from('requirements')
-          .update({ status: 'on-review', updated_at: new Date().toISOString() })
-          .eq('id', reqId);
-        console.log(`[CronStep] Requirement ${reqId} → on-review (preserved wrap-up)`);
-    } else {
-        console.log(`[CronStep] Requirement ${reqId} → prevented on-review (has outstanding work)`);
-    }
-  }
-
-  if (isComplete) {
-    await supabaseAdmin
-      .from('requirements')
-      .update({ status: 'done', updated_at: new Date().toISOString() })
-      .eq('id', reqId);
-    console.log(`[CronStep] Requirement ${reqId} → done`);
-    
-    // Clean up instances when requirement is done
-    try {
-      console.log(`[CronStep] Cleaning up instances for done requirement ${reqId}`);
-      // Pause/pending any running instances
-      await supabaseAdmin
-        .from('remote_instances')
-        .update({ status: 'pending' })
-        .eq('site_id', site_id)
-        .like('name', `%req-%${reqId.substring(0, 8)}%`)
-        .in('status', ['running', 'starting']);
-        
-      // Cancel any active plans
-      const { data: instances } = await supabaseAdmin
-        .from('remote_instances')
-        .select('id')
-        .eq('site_id', site_id)
-        .like('name', `%req-%${reqId.substring(0, 8)}%`);
-        
-      if (instances && instances.length > 0) {
-        const instanceIds = instances.map((i) => i.id);
-        await supabaseAdmin
-          .from('instance_plans')
-          .update({ status: 'cancelled' })
-          .in('instance_id', instanceIds)
-          .in('status', ['pending', 'in_progress']);
-      }
-    } catch (cleanupErr) {
-      console.error(`[CronStep] Failed to clean up instances for done requirement ${reqId}:`, cleanupErr);
-    }
-    
-    // Clean up the final snapshot since the requirement is done
-    // and the code is safely in GitHub
-    if (existing?.snapshot_id) {
-      console.log(`[CronStep] Requirement done, cleaning up final snapshot: ${existing.snapshot_id}`);
-      deleteSnapshotQuiet(existing.snapshot_id).catch(e => {
-        console.error(`[CronStep] Failed to delete final snapshot ${existing.snapshot_id}:`, e);
-      });
-    }
-  }
+  console.log(
+    `[CronStep] Atomically finalized requirement ${reqId} → ${effectiveStatus} | preview: ${mergedPreviewUrl || 'none'} | source: ${mergedSourceCode ? 'yes' : 'no'}`,
+  );
 
   await logCronInfrastructureEvent(audit ?? { instanceId, siteId: site_id }, {
     event: CronInfraEvent.FINAL_STATUS,
@@ -455,8 +417,9 @@ export async function createFinalStatusStep(params: {
       missingParts,
       didPush,
       planCompleted: !!planCompleted,
+      execution_generation: expectedExecutionGeneration,
     },
   });
 
-  return { effectiveStatus };
+  return { effectiveStatus, state: 'applied' };
 }

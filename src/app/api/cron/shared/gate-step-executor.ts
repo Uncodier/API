@@ -7,6 +7,8 @@ import { connectOrRecreateRequirementSandbox } from '@/lib/services/sandbox-reco
 import type { RequirementKind } from '@/lib/services/requirement-flows';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import { sandboxIdentity } from '@/lib/services/sandbox-sdk';
+import { deriveCategoriesFailed } from './step-iteration-signals';
+import { applyGateFailureHealing } from './gate-failure-healing';
 
 export interface GateStepResult {
   ok: boolean;
@@ -15,6 +17,7 @@ export interface GateStepResult {
   gateErrorExcerpt?: string;
   effectiveSandboxId: string;
   infrastructureFailure?: boolean;
+  remediationScheduled?: boolean;
 }
 
 export async function runGateStep(params: {
@@ -130,7 +133,7 @@ export async function runGateStep(params: {
 
        console.log(`[GateStep] Step ${step.order} is the final step. Running Post-Gate Archetypes (Critic/Judge)...`);
        // Trigger Post-Gate Archetypes (Critic/Judge)
-       await runArchetypePostGate({
+       const postGate = await runArchetypePostGate({
           sandbox: gateRes.sandboxReplacement || sandbox,
           requirementId,
           backlogItemId: step.metadata?.backlog_item_id || step.backlog_item_id,
@@ -139,6 +142,25 @@ export async function runGateStep(params: {
           capturedAt: new Date().toISOString(),
           audit,
        });
+       if (!postGate.ran) {
+         return {
+           ok: false,
+           passed: false,
+           error: postGate.error || 'Post-gate evaluation was unavailable.',
+           effectiveSandboxId,
+           infrastructureFailure: true,
+         };
+       }
+       if (postGate.judge_verdict !== 'approved') {
+         return {
+           ok: true,
+           passed: false,
+           gateErrorExcerpt:
+             `Post-gate judge returned ${postGate.judge_verdict}.`,
+           effectiveSandboxId,
+           remediationScheduled: true,
+         };
+       }
 
        return { ok: true, passed: true, effectiveSandboxId };
     } else {
@@ -162,85 +184,33 @@ export async function runGateStep(params: {
        // trigger (e.g. rotate_strategy or downgrade_scope) instead of infinite loop.
        const backlogItemId = step.metadata?.backlog_item_id || step.backlog_item_id;
        if (backlogItemId) {
-          const { bumpItemAttempts, recordToolFailure, logAssumption, downgradeScope, markNeedsReview } = await import('@/lib/services/requirement-backlog');
-          const { planNextHealingAction } = await import('@/lib/services/requirement-self-heal');
-          const { getBacklogItem } = await import('@/lib/services/requirement-backlog');
-          const { classifyFailure } = await import('@/lib/services/failure-classification');
-          
           try {
-             const { item } = await getBacklogItem(requirementId, backlogItemId);
-             if (item) {
-                 const errorMsg = gateRes.error || gateRes.reason || '';
-                 const { deriveCategoriesFailed } = await import('@/app/api/cron/shared/step-iteration-signals');
-                 const categories = gateRes.richSignals ? deriveCategoriesFailed(gateRes.richSignals as any) : [];
-                 const classified = classifyFailure(errorMsg, categories, {
-                   flow: requirementType,
-                   signals: gateRes.signals,
-                   skipAttemptBump: gateRes.skipAttemptBump,
-                 });
-                 
-                 if (gateRes.skipAttemptBump || classified.failureClass === 'plumbing' || !classified.countsTowardAttempts) {
-                   const toolName = classified.toolName || `gate:${requirementType || 'task'}`;
-                   console.log(`[GateStep] Plumbing failure detected for tool ${toolName}, logging without attempt bump.`);
-                   await recordToolFailure({
-                     requirementId,
-                     itemId: backlogItemId,
-                     toolName,
-                     reason: `[plumbing] Tool ${toolName} failed: ${errorMsg.slice(0, 150)}`
-                   });
-                 } else {
-                   const bumped = await bumpItemAttempts({
-                     requirementId,
-                     itemId: backlogItemId,
-                     reason: `gate_failed: ${errorMsg.slice(0, 200)}`,
-                   });
-                   
-                   const attemptsForHeal = (bumped?.attempts ?? (item.attempts ?? 0) + 1);
-                   const action = planNextHealingAction({ 
-                      item, 
-                      verdict: { verdict: 'rejected', reason: errorMsg || 'Gate failed', matched_acceptance: [], unmatched_acceptance: [] }, 
-                      attempts: attemptsForHeal 
-                   });
-                   
-                   switch (action.kind) {
-                     case 'rotate_strategy':
-                       await logAssumption({
-                         requirementId,
-                         itemId: item.id,
-                         assumption: `[rotate] ${action.hint}`,
-                       });
-                       break;
-                     case 'downgrade_scope':
-                       await downgradeScope({ requirementId, itemId: item.id });
-                       await logAssumption({
-                         requirementId,
-                         itemId: item.id,
-                         assumption: `[downgrade ${action.from}→${action.to}] ${action.reason}`,
-                       });
-                       break;
-                     case 'log_assumption_and_continue':
-                       await logAssumption({
-                         requirementId,
-                         itemId: item.id,
-                         assumption: action.assumption,
-                       });
-                       break;
-                     case 'mark_needs_review':
-                       await markNeedsReview({
-                         requirementId,
-                         itemId: item.id,
-                         reason: action.reason,
-                       });
-                       break;
-                   }
-                 }
-             }
+             const errorMsg = gateRes.error || gateRes.reason || '';
+             await applyGateFailureHealing({
+               requirementId,
+               backlogItemId,
+               error: errorMsg,
+               categories: gateRes.richSignals
+                 ? deriveCategoriesFailed(gateRes.richSignals as any)
+                 : [],
+               flow: requirementType,
+               signals: gateRes.signals,
+               skipAttemptBump: gateRes.skipAttemptBump,
+               remediationScheduled: gateRes.remediationScheduled,
+               logPrefix: '[GateStep]',
+             });
           } catch (healErr) {
              console.error(`[GateStep] Exception applying self-healing on gate failure:`, healErr);
           }
        }
        
-       return { ok: true, passed: false, gateErrorExcerpt: gateRes.error || gateRes.reason, effectiveSandboxId };
+       return {
+         ok: true,
+         passed: false,
+         gateErrorExcerpt: gateRes.error || gateRes.reason,
+         effectiveSandboxId,
+         remediationScheduled: gateRes.remediationScheduled,
+       };
     }
   } catch (e: any) {
     console.error(`[GateStep] Exception running gate:`, e);

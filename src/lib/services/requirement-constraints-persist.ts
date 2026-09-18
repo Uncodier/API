@@ -1,6 +1,7 @@
 import { extractRequirementConstraints } from '@/lib/services/requirement-constraints';
-import { loadRequirement, toBacklog, writeBacklog } from '@/lib/services/requirement-backlog-store';
+import { mutateBacklogAtomically } from '@/lib/services/requirement-backlog-mutation';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { patchRequirementMetadataKeys } from './requirement-metadata-patch';
 
 /**
  * Stamp MUST NOT lines onto backlog items and requirement metadata so the
@@ -15,23 +16,26 @@ export async function persistExtractedConstraints(
   if (!texts.length) return [];
 
   try {
-    const req = await loadRequirement(requirementId);
-    if (!req) return texts;
+    await mutateBacklogAtomically(
+      requirementId,
+      ({ backlog }) => {
+        let changed = false;
+        backlog.items = backlog.items.map((item) => {
+          if (item.constraints && item.constraints.length > 0) return item;
+          changed = true;
+          return { ...item, constraints: texts };
+        });
+        return {
+          result: undefined,
+          write: changed,
+        };
+      },
+    );
 
-    const backlog = toBacklog(req.backlog, 'default');
-    let changed = false;
-    backlog.items = backlog.items.map((item) => {
-      if (item.constraints && item.constraints.length > 0) return item;
-      changed = true;
-      return { ...item, constraints: texts };
+    await patchRequirementMetadataKeys({
+      requirementId,
+      patch: { extracted_constraints: texts },
     });
-    if (changed) await writeBacklog(requirementId, backlog);
-
-    const metadata = { ...(req.metadata || {}), extracted_constraints: texts };
-    await supabaseAdmin
-      .from('requirements')
-      .update({ metadata, updated_at: new Date().toISOString() })
-      .eq('id', requirementId);
   } catch (e) {
     console.warn(
       '[Constraints] persistExtractedConstraints failed:',

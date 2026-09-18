@@ -1,4 +1,73 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { computeRatio } from './requirement-backlog-store';
+import type {
+  BacklogItem,
+  RequirementBacklog,
+} from './requirement-backlog-types';
+import { mutateBacklogAtomically } from './requirement-backlog-mutation';
+import { resumeRequirementExecutionOnUserAction } from './requirement-execution-recovery';
+
+async function findLatestUserActionId(
+  instanceId: string,
+  createdAfter?: string,
+): Promise<string | null> {
+  let query = supabaseAdmin
+    .from('instance_logs')
+    .select('id')
+    .eq('instance_id', instanceId)
+    .eq('log_type', 'user_action');
+  if (createdAfter) {
+    query = query.gt('created_at', createdAfter);
+  }
+  const { data, error } = await query
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: false })
+    .limit(1);
+  if (error) {
+    throw new Error(
+      `Failed to load the latest user action: ${error.message}`,
+    );
+  }
+  return typeof data?.[0]?.id === 'string' ? data[0].id : null;
+}
+
+export function reopenReviewBacklogOnUserAction(
+  backlogValue: unknown,
+): { backlog?: RequirementBacklog; reopenedItemIds: string[] } {
+  if (!backlogValue || typeof backlogValue !== 'object') {
+    return { reopenedItemIds: [] };
+  }
+  const backlog = backlogValue as RequirementBacklog;
+  if (!Array.isArray(backlog.items)) return { reopenedItemIds: [] };
+
+  const reopenedItemIds: string[] = [];
+  const items = backlog.items.map((item: BacklogItem) => {
+    if (item.status !== 'needs_review') return item;
+    reopenedItemIds.push(item.id);
+    return {
+      ...item,
+      status: 'pending' as const,
+      attempts: 0,
+      assumptions: Array.from(new Set([
+        ...(item.assumptions || []),
+        '[user-feedback] Reopened for mandatory execution and validation.',
+      ])).slice(-20),
+      updated_at: new Date().toISOString(),
+    };
+  });
+  if (reopenedItemIds.length === 0) return { reopenedItemIds };
+
+  const firstReopened = items.find((item) => reopenedItemIds.includes(item.id));
+  return {
+    backlog: {
+      ...backlog,
+      items,
+      current_phase_id: firstReopened?.phase_id || backlog.current_phase_id,
+      completion_ratio: computeRatio(items),
+    },
+    reopenedItemIds,
+  };
+}
 
 /**
  * Checks if there has been a recent user action (e.g. within 15 minutes) for the given requirement,
@@ -19,35 +88,18 @@ export async function checkAndResetCronAttempts(requirementId: string, metadata:
     // Check for recent user action (last 15 minutes)
     const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
     
-    const { data: recentLogs, error: logError } = await supabaseAdmin
-      .from('instance_logs')
-      .select('id')
-      .eq('instance_id', instanceId)
-      .eq('log_type', 'user_action')
-      .gt('created_at', fifteenMinutesAgo)
-      .limit(1);
-
-    if (logError) {
-      console.warn(`[CronReset] Error querying instance_logs for requirement ${requirementId}:`, logError);
-      return;
-    }
-
-    if (recentLogs && recentLogs.length > 0) {
+    const actionId = await findLatestUserActionId(
+      instanceId,
+      fifteenMinutesAgo,
+    );
+    if (actionId) {
       console.log(`[CronReset] Recent user action detected for requirement ${requirementId}. Resetting cron_attempts to 0.`);
-      
-      const updatedMetadata = {
-        ...metadata,
-        cron_attempts: 0
-      };
-      
-      const { error: updateError } = await supabaseAdmin
-        .from('requirements')
-        .update({ metadata: updatedMetadata, status: 'in-progress' })
-        .eq('id', requirementId);
-        
-      if (updateError) {
-        console.warn(`[CronReset] Failed to reset cron_attempts for requirement ${requirementId}:`, updateError);
-      }
+      await resumeRequirementExecutionOnUserAction(
+        requirementId,
+        instanceId,
+        false,
+        actionId,
+      );
     }
   } catch (error) {
     console.error(`[CronReset] Unexpected error:`, error);
@@ -88,26 +140,52 @@ export async function resetRequirementOnUserAction(instanceId: string): Promise<
     }
     
     if (requirementId) {
-      const { data: req } = await supabaseAdmin
-        .from('requirements')
-        .select('metadata, status')
-        .eq('id', requirementId)
-        .single();
-        
-      if (req) {
-        // If it's already in progress and has 0 attempts, no need to update
-        if (req.status === 'in-progress' && (req.metadata?.cron_attempts === 0 || req.metadata?.cron_attempts === undefined)) {
-          return;
-        }
-        
-        const updatedMetadata = { ...(req.metadata || {}), cron_attempts: 0 };
-        await supabaseAdmin
-          .from('requirements')
-          .update({ metadata: updatedMetadata, status: 'in-progress', updated_at: new Date().toISOString() })
-          .eq('id', requirementId);
-          
-        console.log(`[CronReset] User action on instance ${instanceId} -> Reset requirement ${requirementId} to in-progress (cron_attempts=0)`);
+      const actionId = await findLatestUserActionId(instanceId);
+      if (!actionId) {
+        console.warn(
+          `[CronReset] No user-action identity found for instance ${instanceId}; recovery was not applied.`,
+        );
+        return;
       }
+      const recovery = await mutateBacklogAtomically(
+        requirementId,
+        ({ requirement, backlog }) => {
+          const reopened = ['blocked', 'on-review'].includes(
+            requirement.status || '',
+          )
+            ? reopenReviewBacklogOnUserAction(backlog)
+            : { reopenedItemIds: [] };
+          return {
+            result: {
+              found: true,
+              status: requirement.status,
+              metadata: requirement.metadata,
+              reopenedItemIds: reopened.reopenedItemIds,
+            },
+            backlog: reopened.backlog,
+            write: !!reopened.backlog,
+          };
+        },
+        {
+          onMissing: () => ({
+            found: false,
+            status: null,
+            metadata: null,
+            reopenedItemIds: [],
+          }),
+        },
+      );
+      if (!recovery.found) return;
+      await resumeRequirementExecutionOnUserAction(
+        requirementId,
+        instanceId,
+        recovery.status === 'blocked' || recovery.status === 'on-review',
+        actionId,
+      );
+
+      console.log(
+        `[CronReset] User action on instance ${instanceId} -> Reset requirement ${requirementId} to in-progress (cron_attempts=0, reopened=${recovery.reopenedItemIds.length})`,
+      );
     }
   } catch (error) {
     console.error(`[CronReset] Error resetting requirement for instance ${instanceId}:`, error);
