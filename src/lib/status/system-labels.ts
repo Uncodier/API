@@ -12,6 +12,7 @@ export const SYSTEM_LABELS: Record<string, string> = {
   finder: 'Finder API',
   robots: 'Robots API',
   cron: 'Cron Jobs',
+  redis: 'Redis Queues',
   platform: 'Platform API',
   notifications: 'Notifications',
   ai_portkey: 'AI Portkey',

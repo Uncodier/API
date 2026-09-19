@@ -1,6 +1,11 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import type { SystemHealthStatus } from './types';
 
+export const REDIS_TELEMETRY_KEYS = {
+  tracking: 'redis_tracking_queue',
+  recordings: 'redis_recording_queue',
+} as const;
+
 export interface TelemetryRecord {
   status: SystemHealthStatus;
   message: string;

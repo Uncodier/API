@@ -12,6 +12,7 @@ import { visitorsHandler } from '@/lib/status/handlers/visitors';
 import { finderHandler } from '@/lib/status/handlers/finder';
 import { robotsHandler } from '@/lib/status/handlers/robots';
 import { cronHandler } from '@/lib/status/handlers/cron';
+import { redisHandler } from '@/lib/status/handlers/redis';
 import { platformHandler } from '@/lib/status/handlers/platform';
 import { notificationsHandler } from '@/lib/status/handlers/notifications';
 import { aiPortkeyHandler } from '@/lib/status/handlers/ai/portkey';
@@ -35,6 +36,7 @@ const HANDLERS: SystemHealthHandler[] = [
   finderHandler,
   robotsHandler,
   cronHandler,
+  redisHandler,
   platformHandler,
   notificationsHandler,
   aiPortkeyHandler,

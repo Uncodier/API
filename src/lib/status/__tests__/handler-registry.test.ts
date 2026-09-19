@@ -13,6 +13,10 @@ describe('handler-registry', () => {
     expect(keys).toContain('ai_image');
   });
 
+  it('includes passive Redis queue health', () => {
+    expect(getHandlerSystemKeys()).toContain('redis');
+  });
+
   it('every handler returns valid shape', async () => {
     process.env.STATUS_AI_PROBE_ENABLED = 'false';
     const handlers = getAllHealthHandlers();
