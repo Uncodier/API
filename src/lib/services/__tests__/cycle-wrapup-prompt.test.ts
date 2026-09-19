@@ -3,6 +3,7 @@ import {
   buildCycleWrapUpSystemPrompt,
   countPendingPlanSteps,
   feedbackRequiredBacklogItems,
+  hasRunnableBacklogWork,
   shouldRunCycleWrapUp,
   shouldSkipWrapUpForPendingSteps,
 } from '../cycle-wrapup-prompt';
@@ -56,6 +57,11 @@ describe('cycle-wrapup-prompt', () => {
     expect(prompt).toContain('Do NOT ask the user for permission');
     expect(prompt).not.toContain('NEEDS USER ITERATION');
     expect(shouldSkipWrapUpForPendingSteps({ planCompleted: false, pendingPlanSteps: 2 })).toBe(true);
+    expect(shouldSkipWrapUpForPendingSteps({
+      planCompleted: false,
+      pendingPlanSteps: 0,
+      hasRunnableBacklogWork: true,
+    })).toBe(true);
     expect(shouldSkipWrapUpForPendingSteps({ planCompleted: true, pendingPlanSteps: 2 })).toBe(false);
     expect(countPendingPlanSteps([
       { status: 'completed' },
@@ -114,6 +120,41 @@ describe('cycle-wrapup-prompt', () => {
       { core: 4, ornamental: 2 },
       { currentPhaseId: 'build' },
     )).toEqual([]);
+  });
+
+  it('continues when independent backlog work remains after a failure', () => {
+    expect(hasRunnableBacklogWork([
+      {
+        id: 'failed',
+        status: 'needs_review',
+        attempts: 4,
+        tier: 'core',
+      },
+      {
+        id: 'independent',
+        status: 'pending',
+        attempts: 0,
+        tier: 'core',
+      },
+    ], { core: 4, ornamental: 2 })).toBe(true);
+  });
+
+  it('does not call dependency-blocked work runnable', () => {
+    expect(hasRunnableBacklogWork([
+      {
+        id: 'failed',
+        status: 'needs_review',
+        attempts: 4,
+        tier: 'core',
+      },
+      {
+        id: 'dependent',
+        status: 'pending',
+        attempts: 0,
+        tier: 'core',
+        depends_on: ['failed'],
+      },
+    ], { core: 4, ornamental: 2 })).toBe(false);
   });
 
   it('asks for feedback only when the relevant scope has no runnable work', () => {

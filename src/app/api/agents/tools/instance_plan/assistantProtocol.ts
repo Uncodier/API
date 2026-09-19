@@ -247,9 +247,24 @@ export function instancePlanTool(
                 validation_rules: { type: 'array', items: { type: 'string' }, description: 'Bounded checks and stop rules. Research steps must allow a not-reproducible conclusion after declared checks pass.' },
                 role: { type: 'string', description: 'Optional legacy role slug for skill injection (frontend, backend, devops, content, qa, investigate, plan, validate, report, template_selection, orchestrator). Prefer setting "skill" instead — role is only used as a fallback when skill is empty.' },
                 skill: { type: 'string', description: 'Preferred: explicit SKILL.md slug to inject (e.g. makinari-rol-frontend, makinari-rol-qa, makinari-obj-template-selection). Takes priority over role. One of skill or role must be set.' },
-                test_command: { type: 'string', description: 'Command to run automated tests for this step (e.g. "npm run test:backend"). If omitted, defaults to the standard test command.' },
+                test_command: { type: 'string', description: 'Exact automated test command the deterministic gate must execute after the agent changes (for example, "npm test -- assets-upload.test.ts"). Omit when tests are not a required part of this step contract; no command is guessed.' },
                 backlog_item_id: { type: 'string', description: 'UUID of the backlog item this step delivers (from `requirement_backlog action="list"`). Required for the Judge to run. Server auto-fills this when there is exactly one in_progress backlog item, but explicit is safer.' },
                 protected_routes: { type: 'array', items: { type: 'string' }, description: 'Application routes that are expected to redirect unauthenticated visual probes to a local login page (for example, ["/dashboard/orders"]). Declare these explicitly so the gate skips login screenshots without hiding unexpected auth redirects.' },
+                validation_targets: {
+                  type: 'array',
+                  description: 'Explicit deterministic targets. Only these targets may hard-fail route/API validation; inferred paths remain advisory. Non-GET APIs require a real payload.',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      kind: { type: 'string', enum: ['page', 'api'] },
+                      path: { type: 'string' },
+                      method: { type: 'string', enum: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'] },
+                      expected_statuses: { type: 'array', items: { type: 'number' } },
+                      payload: { description: 'Real request payload when a non-GET API target can be exercised safely.' },
+                    },
+                    required: ['kind', 'path'],
+                  },
+                },
                 metadata: {
                   type: 'object',
                   description: 'Step metadata. For an exceptional standalone research step in build phase, blocking_unknown must name the concrete implementation blocker.',

@@ -29,6 +29,7 @@ import {
   activeBacklogItemIdsFromPlanSteps,
   countPendingPlanSteps,
   feedbackRequiredBacklogItems,
+  hasRunnableBacklogWork,
 } from '@/lib/services/cycle-wrapup-prompt';
 import { 
   getPlanExecutionGateStep,
@@ -122,6 +123,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   let wrapUpRequiresUserFeedback = false;
   let cycleOutcome: CronCycleOutcome = 'idle';
   let preservePausedState = false;
+  let hasRunnableBacklog = false;
   const requirementKind = classifyRequirementType(type);
   const requirementFlow = getFlow(requirementKind);
   const gitRepoKind: GitRepoKind =
@@ -158,7 +160,11 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
 
   // Step 1: Check for active plan BEFORE creating the sandbox
   // This saves VM costs if we are in a re-plan loop cooldown or blocked state.
-  const existingPlan = await getActiveInstancePlanStep(instanceId, site_id);
+  const existingPlan = await getActiveInstancePlanStep(
+    instanceId,
+    site_id,
+    reqId,
+  );
   const actionableSteps = selectPlanStepsForExecution(
     Array.isArray(existingPlan?.steps) ? existingPlan.steps : [],
   );
@@ -269,7 +275,11 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
         hasRunnablePlanSteps: hasActivePlan,
       },
     );
-    if (feedbackItems.length > 0) {
+    hasRunnableBacklog = hasRunnableBacklogWork(
+      reqContext.backlog.items,
+      feedbackAttemptLimits,
+    );
+    if (feedbackItems.length > 0 && !hasRunnableBacklog) {
       wrapUpRequiresUserFeedback = true;
       wrapUpReason = `Feedback is required for backlog item(s): ${feedbackItems
         .map((item: any) => `"${item.title}" (status=${item.status}, attempts=${item.attempts || 0})`)
@@ -297,7 +307,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     }
   }
 
-  if (recentPlansGuard.shouldBlockRequirement) {
+  if (recentPlansGuard.shouldBlockRequirement && !hasRunnableBacklog) {
     cycleOutcome = 'remediation_handoff';
     wrapUpRequiresUserFeedback = true;
     wrapUpReason = `Re-plan loop detected: ${recentPlansGuard.reason}.`;
@@ -320,7 +330,13 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   }
 
   const isFreshWork = (!hasAttemptedActiveItems || hasRecentlyUpdatedActiveItems) && activeItems.length > 0;
-  const skipOrchestrator = hasActivePlan || (recentPlansGuard.shouldSkipOrchestrator && !isFreshWork);
+  const skipOrchestrator =
+    hasActivePlan ||
+    (
+      recentPlansGuard.shouldSkipOrchestrator &&
+      !isFreshWork &&
+      !hasRunnableBacklog
+    );
 
   // If the backlog is empty or fully done we still want the orchestrator to
   // run so it can either seed the initial items or finalize the requirement.
@@ -477,7 +493,11 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     // the requirement back to in-progress forever. Record an explicit blocker
     // so the next cycle sees a clear reason and operators can intervene.
     if (!orch.createdPlan) {
-      const postOrchPlan = await getActiveInstancePlanStep(instanceId, site_id);
+      const postOrchPlan = await getActiveInstancePlanStep(
+        instanceId,
+        site_id,
+        reqId,
+      );
       if (!postOrchPlan) {
         if (orch.timedOut) {
           console.warn(
@@ -507,7 +527,11 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   await extendRunLockStep(reqId, cronLockRunId);
 
   // Step 5: Execute plan steps (always re-fetch so pause/delete in the same cycle is respected)
-  const activePlan = await getActiveInstancePlanStep(instanceId, site_id);
+  const activePlan = await getActiveInstancePlanStep(
+    instanceId,
+    site_id,
+    reqId,
+  );
   latestPlanSteps = activePlan?.steps;
 
   let smokeError: string | null = null;
@@ -730,7 +754,8 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
                );
                if (
                  clearResult.state !== 'applied' &&
-                 !(clearResult.state === 'duplicate' && clearResult.cleared)
+                 !(clearResult.state === 'duplicate' && clearResult.cleared) &&
+                 clearResult.state !== 'terminal'
                ) {
                  infrastructureHalt = true;
                  cycleOutcome = 'idle';
@@ -1127,20 +1152,23 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     wrapUpRequiresUserFeedback = false;
     wrapUpReason = null;
     const pendingPlanSteps = countPendingPlanSteps(latestPlanSteps);
-    if (stepsPhase?.anyStepFailed || postFinallyBuildError) {
+    const finalRequirementContext = await getRequirementFullContextStep(
+      reqId,
+      instanceId,
+      site_id,
+      user_id,
+    );
+    const finalBacklogItems = finalRequirementContext.backlog?.items || [];
+    hasRunnableBacklog = hasRunnableBacklogWork(
+      finalBacklogItems,
+      feedbackAttemptLimits,
+    );
+    if (postFinallyBuildError) {
       wrapUpRequiresUserFeedback = true;
-      wrapUpReason =
-        postFinallyBuildError ||
-        'One or more execution steps failed and need user feedback before continuing.';
+      wrapUpReason = postFinallyBuildError;
     } else {
-      const finalRequirementContext = await getRequirementFullContextStep(
-        reqId,
-        instanceId,
-        site_id,
-        user_id,
-      );
       const finalFeedbackItems = feedbackRequiredBacklogItems(
-        finalRequirementContext.backlog?.items || [],
+        finalBacklogItems,
         feedbackAttemptLimits,
         {
           activeItemIds: activeBacklogItemIdsFromPlanSteps(latestPlanSteps),
@@ -1148,11 +1176,18 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
           hasRunnablePlanSteps: pendingPlanSteps > 0,
         },
       );
-      if (finalFeedbackItems.length > 0) {
+      if (!hasRunnableBacklog && finalFeedbackItems.length > 0) {
         wrapUpRequiresUserFeedback = true;
         wrapUpReason = `Feedback is required for backlog item(s): ${finalFeedbackItems
           .map((item: any) => `"${item.title}" (status=${item.status}, attempts=${item.attempts || 0})`)
           .join(', ')}.`;
+      } else if (stepsPhase?.anyStepFailed && !hasRunnableBacklog) {
+        wrapUpRequiresUserFeedback = true;
+        wrapUpReason =
+          'A confirmed product failure exhausted the current item and no independent backlog work remains runnable.';
+      } else if (stepsPhase?.anyStepFailed) {
+        wrapUpReason =
+          'The failed item was isolated; independent backlog work remains runnable and will continue automatically.';
       }
     }
 
@@ -1168,6 +1203,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       digest,
       planCompleted,
       pendingPlanSteps,
+      hasRunnableBacklogWork: hasRunnableBacklog,
       previewUrl,
       repoUrl,
       audit: cronAudit,
@@ -1274,6 +1310,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
           digest,
           planCompleted,
           pendingPlanSteps: countPendingPlanSteps(latestPlanSteps),
+          hasRunnableBacklogWork: hasRunnableBacklog,
           previewUrl,
           repoUrl,
           audit: cronAudit,
@@ -1321,7 +1358,11 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       accounting.recorded_outcome === 'product_no_progress' &&
       accounting.no_progress_cycles === 2
     ) {
-      const recoveryPlan = await getActiveInstancePlanStep(instanceId, site_id);
+      const recoveryPlan = await getActiveInstancePlanStep(
+        instanceId,
+        site_id,
+        reqId,
+      );
       const recoveryStep = selectPlanStepsForExecution(
         Array.isArray(recoveryPlan?.steps) ? recoveryPlan.steps : [],
       )[0];
@@ -1369,6 +1410,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       const stillActivePlan = await getActiveInstancePlanStep(
         instanceId,
         site_id,
+        reqId,
       );
       const stillActiveStep = stillActivePlan
         ? selectPlanStepsForExecution(

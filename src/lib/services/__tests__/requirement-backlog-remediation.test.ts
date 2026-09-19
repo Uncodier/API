@@ -186,6 +186,39 @@ describe('mandatory backlog remediation', () => {
     expect(mockWriteBacklog).not.toHaveBeenCalled();
   });
 
+  it('resets product and tool attempts in the same reopen mutation', async () => {
+    const reviewBacklog = backlog();
+    reviewBacklog.items[0].status = 'needs_review';
+    reviewBacklog.items[0].attempts = 4;
+    reviewBacklog.items[0].tool_failures = { runtime: 3 };
+    mockToBacklog.mockReturnValueOnce(reviewBacklog);
+
+    const reopened = await setItemStatus({
+      requirementId: 'requirement',
+      itemId: 'parent',
+      status: 'pending',
+    });
+
+    expect(reopened).toEqual(expect.objectContaining({
+      status: 'pending',
+      attempts: 0,
+      tool_failures: {},
+    }));
+    expect(mockWriteBacklog).toHaveBeenCalledWith(
+      'requirement',
+      expect.objectContaining({
+        items: expect.arrayContaining([
+          expect.objectContaining({
+            id: 'parent',
+            status: 'pending',
+            attempts: 0,
+          }),
+        ]),
+      }),
+      0,
+    );
+  });
+
   it('prevents setItemStatus from bypassing WIP across review states', async () => {
     const activeBacklog = backlog();
     activeBacklog.items[0].status = 'critic_review';

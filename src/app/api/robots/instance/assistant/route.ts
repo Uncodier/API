@@ -207,11 +207,11 @@ export async function POST(request: NextRequest) {
       details: { instance_status: instance.status || 'running' },
     }));
     
-    // Async unblock the requirement (reset cron_attempts and set to in-progress)
-    resetRequirementOnUserAction(
+    // Finish recovery before the workflow reads requirement/backlog state.
+    await resetRequirementOnUserAction(
       providedInstanceId,
       userAction.id,
-    ).catch(console.error);
+    );
 
     // Start the workflow
   const workflowRun = await start(runAssistantWorkflow, [

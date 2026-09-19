@@ -33,6 +33,11 @@ import type {
   ScenarioSignal,
   VisualSignal,
 } from '../step-iteration-signals';
+import type { TestSignal } from '../step-test-evidence';
+import type {
+  ProbeDisposition,
+  ProbeObservation,
+} from '../step-probe-policy';
 
 /** Extras the heavy `app`/`site` gate needs (build + runtime + deploy + origin push). */
 export interface AppGateContext {
@@ -47,6 +52,8 @@ export interface AppGateContext {
     expected_output?: string;
     brand_context?: string;
     protected_routes?: string[];
+    validation_targets?: unknown;
+    test_command?: string;
   };
   currentMessages: any[];
   assistantContext: AssistantContext;
@@ -73,6 +80,7 @@ export interface FlowGateSignal {
   name: string;
   ok: boolean;
   detail?: string;
+  disposition?: ProbeDisposition;
 }
 
 /** Rich signals the app/site gate returns (build+runtime+visual+deploy+origin). */
@@ -86,6 +94,8 @@ export interface AppRichSignals {
   scenarios?: ScenarioSignal;
   origin?: OriginSignal;
   deploy?: DeploySignal;
+  tests?: TestSignal;
+  observations?: ProbeObservation[];
 }
 
 export interface VercelDeployInfo {
@@ -101,6 +111,7 @@ export interface VercelDeployInfo {
 
 export interface FlowGateResult {
   ok: boolean;
+  disposition?: 'pass' | 'hard_fail' | 'unknown' | 'advisory';
   flow: RequirementKind;
   signals: FlowGateSignal[];
   reason?: string;

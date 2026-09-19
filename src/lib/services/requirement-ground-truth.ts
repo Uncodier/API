@@ -37,7 +37,13 @@ export interface EvidenceRecord {
   schema_version: 1;
   item_id: string;
   captured_at: string;
-  tests?: { command: string; exit_code: number; output_tail: string; ran_after_changes: boolean }[];
+  tests?: {
+    command: string;
+    exit_code: number;
+    output_tail: string;
+    ran_after_changes: boolean;
+    captured_at?: string;
+  }[];
   build?: { command: string; exit_code: number; duration_ms: number };
   runtime?: { route: string; http_status: number; screenshot_url?: string };
   scenarios?: { name: string; pass: boolean; duration_ms: number }[];
@@ -54,6 +60,13 @@ export interface EvidenceRecord {
   feature_coverage?: FeatureCoverageEvidence;
   commit_sha?: string;
   assumptions_logged?: string[];
+  observations?: Array<{
+    kind: string;
+    disposition: 'pass' | 'hard_fail' | 'unknown' | 'advisory';
+    source: string;
+    target?: string;
+    detail: string;
+  }>;
   critic_passes: number;
   judge_verdict?: 'approved' | 'rejected' | 'escalate';
   judge_reason?: string;
@@ -129,23 +142,28 @@ export async function writeEvidence(params: {
   cwd?: string;
   requirementId: string;
   itemId: string;
-  record: Omit<EvidenceRecord, 'item_id' | 'schema_version'> & Partial<Pick<EvidenceRecord, 'schema_version'>>;
+  record: Partial<Omit<EvidenceRecord, 'item_id' | 'schema_version'>> &
+    Partial<Pick<EvidenceRecord, 'schema_version'>>;
 }): Promise<EvidenceRecord> {
-  const full: EvidenceRecord = {
+  const incoming: EvidenceRecordInput = {
     ...params.record,
     schema_version: 1,
     item_id: params.itemId,
     captured_at: params.record.captured_at || isoNow(),
-    critic_passes: params.record.critic_passes ?? 0,
   };
+  let full = mergeEvidenceRecords(undefined, incoming);
 
   // Persist in DB backlog item's evidence field (canonical).
   try {
-    await mutateBacklogAtomically(params.requirementId, ({ backlog }) => {
+    full = await mutateBacklogAtomically(params.requirementId, ({ backlog }) => {
       const idx = backlog.items.findIndex((item) => item.id === params.itemId);
-      if (idx < 0) return { result: undefined, write: false };
-      backlog.items[idx] = { ...backlog.items[idx], evidence: full };
-      return { result: undefined };
+      if (idx < 0) return { result: full, write: false };
+      const merged = mergeEvidenceRecords(
+        backlog.items[idx].evidence,
+        incoming,
+      );
+      backlog.items[idx] = { ...backlog.items[idx], evidence: merged };
+      return { result: merged };
     });
   } catch (e: unknown) {
     console.warn('[GroundTruth.writeEvidence] DB persist failed:', e instanceof Error ? e.message : e);
@@ -166,6 +184,49 @@ export async function writeEvidence(params: {
 
   return full;
 }
+
+export function mergeEvidenceRecords(
+  existing: EvidenceRecord | undefined,
+  incoming: EvidenceRecordInput,
+): EvidenceRecord {
+  const tests = new Map<string, NonNullable<EvidenceRecord['tests']>[number]>();
+  for (const test of [...(existing?.tests || []), ...(incoming.tests || [])]) {
+    tests.set(`${test.command}:${test.captured_at || ''}`, test);
+  }
+  const observations = new Map<
+    string,
+    NonNullable<EvidenceRecord['observations']>[number]
+  >();
+  for (const observation of [
+    ...(existing?.observations || []),
+    ...(incoming.observations || []),
+  ]) {
+    observations.set(
+      [
+        observation.kind,
+        observation.disposition,
+        observation.source,
+        observation.target || '',
+        observation.detail,
+      ].join(':'),
+      observation,
+    );
+  }
+  return {
+    ...existing,
+    ...incoming,
+    tests: tests.size ? Array.from(tests.values()).slice(-20) : undefined,
+    observations: observations.size
+      ? Array.from(observations.values()).slice(-100)
+      : undefined,
+    critic_passes:
+      incoming.critic_passes ?? existing?.critic_passes ?? 0,
+  };
+}
+
+type EvidenceRecordInput =
+  Partial<EvidenceRecord> &
+  Pick<EvidenceRecord, 'schema_version' | 'item_id' | 'captured_at'>;
 
 export async function syncBacklogToFile(params: {
   sandbox: Sandbox;

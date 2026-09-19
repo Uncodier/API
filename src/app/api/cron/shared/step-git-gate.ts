@@ -49,6 +49,11 @@ import type {
   VisualSignal,
   InteractionSignal,
 } from './step-iteration-signals';
+import {
+  runDeclaredTestCommand,
+  type TestSignal,
+} from './step-test-evidence';
+import type { ProbeObservation } from './step-probe-policy';
 
 export { MAX_PUSH_RECOVERY_TURNS } from './step-git-prompts';
 export { runGateForFlow } from './gates';
@@ -171,6 +176,9 @@ export type OriginGateParams = {
     instructions?: string;
     expected_output?: string;
     brand_context?: string;
+    protected_routes?: string[];
+    validation_targets?: unknown;
+    test_command?: string;
   };
   currentMessages: any[];
   context: AssistantContext;
@@ -207,6 +215,8 @@ export type GateSignals = {
   scenarios?: ScenarioSignal;
   origin?: OriginSignal;
   deploy?: DeploySignal;
+  tests?: TestSignal;
+  observations?: ProbeObservation[];
 };
 
 
@@ -525,6 +535,50 @@ fi`,
     details: { stepOrder },
   });
 
+  if (stepContext?.test_command?.trim()) {
+    try {
+      const tests = await runDeclaredTestCommand(
+        sandbox,
+        stepContext.test_command.trim(),
+      );
+      signals.tests = tests;
+      await logCronInfrastructureEvent(audit, {
+        event: CronInfraEvent.STEP_STATUS,
+        level: tests.ok ? 'info' : 'error',
+        message:
+          `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}` +
+          `declared test command ${tests.ok ? 'passed' : 'failed'}`,
+        details: {
+          stepOrder,
+          command: stepContext.test_command.trim(),
+          exit_code: tests.tests[0]?.exit_code,
+          output_tail: tests.tests[0]?.output_tail.slice(-1_200),
+        },
+      });
+      if (!tests.ok) {
+        return {
+          ok: false,
+          lastResult,
+          error:
+            `Declared test command failed: ${stepContext.test_command.trim()}\n` +
+            `${tests.tests[0]?.output_tail || ''}`,
+          signals,
+        };
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      const gone = isSandboxGoneError(message);
+      return {
+        ok: false,
+        lastResult,
+        error: `Declared test command unavailable: ${message}`,
+        infrastructureFailure: true,
+        signals,
+        ...(gone ? { sandboxUnavailable: true } : {}),
+      };
+    }
+  }
+
   try {
     const scanned = await runInteractionAudit(sandbox, {
       baselineSha: interactionBaselineSha,
@@ -594,6 +648,9 @@ fi`,
   if (runtimeOutcome.signals.console) signals.console = runtimeOutcome.signals.console;
   if (runtimeOutcome.signals.visual) signals.visual = runtimeOutcome.signals.visual;
   if (runtimeOutcome.signals.scenarios) signals.scenarios = runtimeOutcome.signals.scenarios;
+  if (runtimeOutcome.signals.observations) {
+    signals.observations = runtimeOutcome.signals.observations;
+  }
   if (!runtimeOutcome.ok) {
     const gone = isSandboxGoneError(runtimeOutcome.error);
     if (gone) {

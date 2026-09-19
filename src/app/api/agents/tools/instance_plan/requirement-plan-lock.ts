@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { PLAN_STEP_MAX_RETRIES } from '@/lib/helpers/plan-status';
+import { isWorkflowManagedPlan } from '@/lib/services/workflow-robot/plan-ownership';
 
 export const ACTIVE_PLAN_STATUSES = [
   'pending',
@@ -24,6 +25,7 @@ export function shouldProtectRequirementPlanCreation(input: {
 
 export async function getBlockingActivePlans(input: {
   instanceId: string;
+  requirementId?: string;
 }): Promise<ActivePlanSummary[]> {
   const { data, error } = await supabaseAdmin
     .from('instance_plans')
@@ -38,7 +40,11 @@ export async function getBlockingActivePlans(input: {
   return (data || [])
     .filter(
       (plan) =>
-        !plan.metadata?.workflow_template &&
+        !isWorkflowManagedPlan(plan) &&
+        (
+          !input.requirementId ||
+          plan.metadata?.requirement_id === input.requirementId
+        ) &&
         hasRunnablePlanSteps(Array.isArray(plan.steps) ? plan.steps : []),
     )
     .map((plan) => ({

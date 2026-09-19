@@ -38,7 +38,11 @@ export function getPlanExecutionGateFromStatus(status: string | undefined | null
   }
   if (status === 'paused') return { runnable: false, reason: 'paused' };
   if (status === 'cancelled') return { runnable: false, reason: 'cancelled' };
-  if (status === 'pending' || status === 'in_progress') {
+  if (
+    status === 'pending' ||
+    status === 'in_progress' ||
+    status === 'active'
+  ) {
     return { runnable: true, dbStatus: status };
   }
   return { runnable: false, reason: 'terminal' };

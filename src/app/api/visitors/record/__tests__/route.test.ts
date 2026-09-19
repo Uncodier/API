@@ -62,14 +62,55 @@ describe('visitor recording route', () => {
       { contentType: 'application/json', upsert: false },
     );
     expect(mockRpc).toHaveBeenCalledWith(
-      'append_session_recording_chunk',
-      expect.objectContaining({
-        p_session_id: sessionId,
-        p_storage_path: storagePath,
-        p_chunk_id: chunkId,
-        p_content_hash: contentHash,
-        p_event_count: 2,
+      'append_session_recording_chunks',
+      {
+        p_chunks: [
+          expect.objectContaining({
+            session_id: sessionId,
+            storage_path: storagePath,
+            chunk_id: chunkId,
+            content_hash: contentHash,
+            event_count: 2,
+          }),
+        ],
+      },
+    );
+  });
+
+  it('uploads three chunks but persists their metadata with one RPC', async () => {
+    const chunkIds = [
+      '44444444-4444-4444-8444-444444444444',
+      '55555555-5555-4555-8555-555555555555',
+      '66666666-6666-4666-8666-666666666666',
+    ];
+    const response = await POST(new Request('http://localhost/api/visitors/record', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        chunks: chunkIds.map((id, index) => ({
+          site_id: siteId,
+          session_id: sessionId,
+          visitor_id: visitorId,
+          chunk_id: id,
+          chunk_timestamp: 1000 + index,
+          events: [{ timestamp: 1000 + index }],
+        })),
       }),
+    }) as never);
+
+    expect(response.status).toBe(200);
+    expect(mockUpload).toHaveBeenCalledTimes(3);
+    expect(mockRpc).toHaveBeenCalledTimes(1);
+    expect(mockRpc).toHaveBeenCalledWith(
+      'append_session_recording_chunks',
+      {
+        p_chunks: expect.arrayContaining(
+          chunkIds.map((id) => expect.objectContaining({ chunk_id: id })),
+        ),
+      },
+    );
+    await expect(response.json()).resolves.toEqual(
+      expect.objectContaining({ success: true, accepted: 3 }),
     );
   });
 
@@ -94,6 +135,49 @@ describe('visitor recording route', () => {
     expect(mockRpc).toHaveBeenCalledTimes(1);
   });
 
+  it('derives a stable identity for legacy retries without a chunk ID', async () => {
+    const body = JSON.stringify({
+      site_id: siteId,
+      session_id: sessionId,
+      timestamp: 1000,
+      events: [{ timestamp: 1000 }],
+    });
+
+    await POST(new Request('http://localhost/api/visitors/record', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body,
+    }) as never);
+    await POST(new Request('http://localhost/api/visitors/record', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body,
+    }) as never);
+
+    expect(mockUpload.mock.calls[0][0]).toBe(mockUpload.mock.calls[1][0]);
+    const firstChunkId = mockRpc.mock.calls[0][1].p_chunks[0].chunk_id;
+    const secondChunkId = mockRpc.mock.calls[1][1].p_chunks[0].chunk_id;
+    expect(firstChunkId).toBe(secondChunkId);
+  });
+
+  it('rejects batches larger than three chunks', async () => {
+    const response = await POST(new Request('http://localhost/api/visitors/record', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        chunks: Array.from({ length: 4 }, (_, index) => ({
+          site_id: siteId,
+          session_id: sessionId,
+          events: [{ timestamp: 1000 + index }],
+        })),
+      }),
+    }) as never);
+
+    expect(response.status).toBe(400);
+    expect(mockUpload).not.toHaveBeenCalled();
+    expect(mockRpc).not.toHaveBeenCalled();
+  });
+
   it('does not persist metadata when the storage upload fails', async () => {
     mockUpload.mockResolvedValue({
       error: { message: 'Storage unavailable' },
@@ -109,7 +193,32 @@ describe('visitor recording route', () => {
       }),
     }) as never);
 
-    expect(response.status).toBe(500);
+    expect(response.status).toBe(503);
+    expect(response.headers.get('Retry-After')).not.toBeNull();
     expect(mockRpc).not.toHaveBeenCalled();
+  });
+
+  it('returns Retry-After when PostgreSQL cancels the metadata query', async () => {
+    mockRpc.mockResolvedValue({
+      data: null,
+      error: { code: '57014', message: 'statement timeout' },
+    });
+
+    const response = await POST(new Request('http://localhost/api/visitors/record', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        site_id: siteId,
+        session_id: sessionId,
+        chunk_id: chunkId,
+        chunk_timestamp: 1000,
+        events: [{ timestamp: 1000 }],
+      }),
+    }) as never);
+
+    expect(response.status).toBe(503);
+    const retryAfter = Number(response.headers.get('Retry-After'));
+    expect(retryAfter).toBeGreaterThanOrEqual(10);
+    expect(retryAfter).toBeLessThanOrEqual(30);
   });
 });

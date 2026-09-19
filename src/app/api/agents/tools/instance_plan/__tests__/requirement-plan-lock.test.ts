@@ -63,6 +63,14 @@ describe('requirement plan creation lock', () => {
         created_at: '2026-09-16T06:00:00.000Z',
         steps: [{ status: 'pending' }],
       },
+      {
+        id: 'workflow-run-1',
+        title: 'Workflow run',
+        status: 'in_progress',
+        metadata: { workflow_run: true },
+        created_at: '2026-09-16T06:30:00.000Z',
+        steps: [{ status: 'in_progress' }],
+      },
     ];
 
     await expect(getBlockingActivePlans({
@@ -76,6 +84,32 @@ describe('requirement plan creation lock', () => {
       },
     ]);
     expect(query.eq).toHaveBeenCalledWith('instance_id', 'instance-1');
+  });
+
+  it('only blocks plans owned by the requested requirement', async () => {
+    queryResult.data = [
+      {
+        id: 'req-1-plan',
+        status: 'pending',
+        metadata: { requirement_id: 'req-1' },
+        created_at: '2026-09-16T06:00:00.000Z',
+        steps: [{ status: 'pending' }],
+      },
+      {
+        id: 'req-2-plan',
+        status: 'in_progress',
+        metadata: { requirement_id: 'req-2' },
+        created_at: '2026-09-16T05:00:00.000Z',
+        steps: [{ status: 'in_progress' }],
+      },
+    ];
+
+    await expect(getBlockingActivePlans({
+      instanceId: 'instance-1',
+      requirementId: 'req-1',
+    })).resolves.toEqual([
+      expect.objectContaining({ id: 'req-1-plan' }),
+    ]);
   });
 
   it('ignores stale active rows without runnable steps', async () => {

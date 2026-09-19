@@ -66,7 +66,7 @@ describe('runtime and visual probe gate', () => {
     (stopProbeServer as jest.Mock).mockResolvedValue(undefined);
   });
 
-  it('returns a retryable infrastructure failure when planned capture is empty', async () => {
+  it('keeps an automatic visual capture outage non-blocking', async () => {
     (runVisualProbe as jest.Mock).mockResolvedValue({
       ok: false,
       capture_ok: false,
@@ -96,9 +96,14 @@ describe('runtime and visual probe gate', () => {
       gitRepoKind: 'applications',
     });
 
-    expect(result.ok).toBe(false);
-    expect(result.infrastructureFailure).toBe(true);
-    expect(result.error).toContain('Visual probe infrastructure unavailable');
+    expect(result.ok).toBe(true);
+    expect(result.infrastructureFailure).toBeUndefined();
+    expect(result.signals.observations).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'visual',
+        disposition: 'unknown',
+      }),
+    ]));
     expect(runVisualCritic).not.toHaveBeenCalled();
     expect(stopProbeServer).toHaveBeenCalled();
   });
@@ -122,6 +127,46 @@ describe('runtime and visual probe gate', () => {
         error: expect.stringContaining('sandbox transport failed'),
       }),
     );
+  });
+
+  it('does not fail the gate for an undeclared 404 beside a passing target', async () => {
+    (inferTargetRoutesFromDiff as jest.Mock).mockResolvedValueOnce({
+      pageRoutes: ['/dashboard/assets'],
+      apiRoutes: [],
+      changedFiles: ['src/app/dashboard/assets/page.tsx'],
+      recentPageRoutes: ['/dashboard/assets'],
+      recentChangedFiles: ['src/app/dashboard/assets/page.tsx'],
+    });
+    (runRuntimeProbe as jest.Mock).mockResolvedValueOnce({
+      ok: true,
+      port: 3000,
+      duration_ms: 10,
+      server_log_tail: '',
+      server_errors: [],
+      pages: [
+        { path: '/', http_status: 404 },
+        { path: '/ui', http_status: 404 },
+        { path: '/dashboard/assets', http_status: 200 },
+      ],
+      apis: [],
+      server_log_path: '/tmp/server.log',
+    });
+
+    const result = await runRuntimeAndVisualProbes({
+      sandbox: {} as any,
+      stepOrder: 1,
+      requirementId: 'req-1',
+      gitRepoKind: 'applications',
+      shouldRunVisual: false,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.signals.observations).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        target: '/ui',
+        disposition: 'advisory',
+      }),
+    ]));
   });
 
   it('reports console failure without converting visual evidence into a defect', async () => {
@@ -155,8 +200,7 @@ describe('runtime and visual probe gate', () => {
       gitRepoKind: 'applications',
     });
 
-    expect(result.ok).toBe(false);
-    expect(result.error).toContain('Inspect console entries');
+    expect(result.ok).toBe(true);
     expect(result.signals.console?.ok).toBe(false);
     expect(result.signals.visual).toEqual(expect.objectContaining({
       ok: true,
@@ -210,7 +254,7 @@ describe('runtime and visual probe gate', () => {
     );
   });
 
-  it('keeps an unavailable visual critic retryable instead of passing', async () => {
+  it('keeps an unavailable automatic visual critic advisory', async () => {
     (runVisualProbe as jest.Mock).mockResolvedValue({
       ok: true,
       capture_ok: true,
@@ -255,14 +299,16 @@ describe('runtime and visual probe gate', () => {
       gitRepoKind: 'applications',
     });
 
-    expect(result).toEqual(expect.objectContaining({
-      ok: false,
-      infrastructureFailure: true,
-      error: 'Visual critic infrastructure unavailable: parse_error',
-    }));
+    expect(result.ok).toBe(true);
+    expect(result.signals.observations).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'visual',
+        disposition: 'unknown',
+      }),
+    ]));
   });
 
-  it('still rejects application-owned browser failures before visual review', async () => {
+  it('reports automatic browser failures without blocking the step', async () => {
     (runVisualProbe as jest.Mock).mockResolvedValue({
       ok: false,
       capture_ok: true,
@@ -307,11 +353,14 @@ describe('runtime and visual probe gate', () => {
       gitRepoKind: 'applications',
     });
 
-    expect(result).toEqual(expect.objectContaining({
-      ok: false,
-      error: expect.stringContaining('Client runtime errors detected'),
-    }));
+    expect(result.ok).toBe(true);
     expect(result.infrastructureFailure).toBeUndefined();
+    expect(result.signals.observations).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'console',
+        disposition: 'advisory',
+      }),
+    ]));
     expect(runVisualCritic).not.toHaveBeenCalled();
   });
 

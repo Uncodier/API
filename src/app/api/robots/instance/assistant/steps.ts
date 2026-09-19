@@ -1,5 +1,6 @@
 'use step';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { findAssistantManagedPlan } from '@/lib/services/workflow-robot/plan-ownership';
 import { executeAssistantStep } from '@/lib/services/robot-instance/assistant-executor';
 import { InstanceAssetsService } from '@/lib/services/robot-instance/InstanceAssetsService';
 import {
@@ -20,7 +21,6 @@ import {
 } from './utils';
 import type { AssistantContext } from './types';
 import { loadAssistantRequirementContext } from './requirement-context';
-// Step 1: Prepare context (fetch data, build prompts)
 export async function prepareAssistantContext(
   instanceId: string,
   message: string,
@@ -159,15 +159,14 @@ export async function prepareAssistantContext(
     .eq('instance_id', instanceId)
     .in('status', ['pending', 'in_progress'])
     .order('created_at', { ascending: false })
-    .limit(1);
+    .limit(20);
 
   let instance_plan_id = null;
   let activeStepContext = '';
   let allStepsContext = '';
   let lastCompletedPlanContext = '';
-  
-  if (lastPlans && lastPlans.length > 0) {
-    const activePlan = lastPlans[0];
+  const activePlan = findAssistantManagedPlan(lastPlans);
+  if (activePlan) {
     
     // Determine if we should consider this plan "active" based on its steps
     let isPlanFullyDone = false;

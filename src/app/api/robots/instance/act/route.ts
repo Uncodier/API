@@ -252,11 +252,11 @@ export async function POST(request: NextRequest) {
       },
     });
     
-    // Async unblock the requirement
-    resetRequirementOnUserAction(
+    // Finish recovery before reading or mutating plan state.
+    await resetRequirementOnUserAction(
       instance_id,
       userAction.id,
-    ).catch(console.error);
+    );
 
 
     let planResult = null;

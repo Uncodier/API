@@ -212,4 +212,24 @@ describe('runtime target inference', () => {
     expect(result.pageRoutes).toEqual(['/dashboard']);
     expect(result.recentPageRoutes).toEqual([]);
   });
+
+  it('infers exported API methods instead of probing every route with GET', async () => {
+    const routeFile = 'src/app/api/assets/route.ts';
+    const sandbox = {
+      runCommand: jest.fn().mockResolvedValue(commandResult(`${routeFile}\n`)),
+      fs: {
+        readFile: jest.fn().mockResolvedValue(
+          'export async function POST(request: Request) { return Response.json({}, { status: 201 }); }',
+        ),
+      },
+    } as any;
+
+    const result = await inferTargetRoutesFromDiff(sandbox, {
+      baselineSha: 'a'.repeat(40),
+    });
+
+    expect(result.apiRoutes).toEqual([
+      { path: '/api/assets', method: 'POST' },
+    ]);
+  });
 });

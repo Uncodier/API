@@ -36,6 +36,7 @@ jest.mock('@/lib/database/supabase-client', () => ({
         const query = {
           select: jest.fn(),
           eq: jest.fn(),
+          gt: jest.fn(),
           order: jest.fn(),
           limit: mockUserActionLimit,
           maybeSingle: mockUserActionSingle,
@@ -43,6 +44,7 @@ jest.mock('@/lib/database/supabase-client', () => ({
         };
         query.select.mockReturnValue(query);
         query.eq.mockReturnValue(query);
+        query.gt.mockReturnValue(query);
         query.order.mockReturnValue(query);
         query.update.mockReturnValue(query);
         return query;
@@ -52,7 +54,10 @@ jest.mock('@/lib/database/supabase-client', () => ({
   },
 }));
 
-import { resetRequirementOnUserAction } from '../requirement-cron-reset';
+import {
+  checkAndResetCronAttempts,
+  resetRequirementOnUserAction,
+} from '../requirement-cron-reset';
 
 describe('resetRequirementOnUserAction concurrency', () => {
   beforeEach(() => {
@@ -134,5 +139,20 @@ describe('resetRequirementOnUserAction concurrency', () => {
         requirement_id: 'requirement-1',
       },
     });
+  });
+
+  it('reports when recent user feedback was applied', async () => {
+    mockMutateBacklogAtomically.mockResolvedValue([]);
+
+    await expect(checkAndResetCronAttempts('requirement-1', {
+      runner_instance_id: 'instance-1',
+    })).resolves.toBe(true);
+
+    expect(mockResumeRequirementExecution).toHaveBeenCalledWith(
+      'requirement-1',
+      'instance-1',
+      false,
+      'user-action-1',
+    );
   });
 });

@@ -10,6 +10,7 @@ import {
   buildToolActionKey,
 } from './loop-detectors';
 import { isSandboxGoneError } from '@/lib/services/sandbox-gone-error';
+import { normalizeStepValidationTargets } from './step-probe-policy';
 
 const WORK_DIR = '/vercel/sandbox';
 
@@ -105,6 +106,37 @@ export function getDeclaredProtectedRoutes(step: {
     (route: unknown): route is string => typeof route === 'string',
   );
   return routes.length ? routes : undefined;
+}
+
+export function getDeclaredValidationTargets(step: {
+  validation_targets?: unknown;
+  metadata?: { validation_targets?: unknown };
+}) {
+  const targets = normalizeStepValidationTargets(
+    step.validation_targets ?? step.metadata?.validation_targets,
+  );
+  return targets.length ? targets : undefined;
+}
+
+export function getDeclaredTestCommand(step: {
+  test_command?: unknown;
+  validation_rules?: unknown;
+}): string | undefined {
+  if (
+    typeof step.test_command === 'string' &&
+    step.test_command.trim().length > 0
+  ) {
+    return step.test_command.trim();
+  }
+  if (!Array.isArray(step.validation_rules)) return undefined;
+  for (const rule of step.validation_rules) {
+    if (typeof rule !== 'string') continue;
+    const explicit = rule.match(
+      /`((?:npm|pnpm|yarn|bun|npx)\s+[^`]*(?:test|jest|vitest)[^`]*)`/i,
+    );
+    if (explicit?.[1]) return explicit[1].trim();
+  }
+  return undefined;
 }
 
 export function withActionLoopGuard<

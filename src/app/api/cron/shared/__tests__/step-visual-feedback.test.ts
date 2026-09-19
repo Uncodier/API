@@ -152,7 +152,7 @@ describe('visual feedback planning', () => {
   it('ignores API and source-file paths in step context', () => {
     expect(
       extractPageRoutesFromStepContext({
-        instructions: 'Connect /api/bookings from /dashboard, edit /src/lib/client.ts, and read https://example.com/docs.',
+        instructions: 'Connect /api/bookings from /dashboard, edit /src/lib/client.ts and components/ui/button.tsx, then inspect hydration/runtime errors at https://example.com/docs.',
       }),
     ).toEqual(['/dashboard']);
   });

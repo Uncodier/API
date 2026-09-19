@@ -18,6 +18,10 @@ interface BackgroundToolDependencies {
   ) => Promise<{ success: boolean; error?: string }>;
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
 export function createSandboxStartBackgroundCommandTool(
   sandbox: Sandbox,
   toolsCtx: BackgroundToolsContext | undefined,
@@ -51,10 +55,18 @@ export function createSandboxStartBackgroundCommandTool(
 
       const activeSandbox = dependencies.liveSandbox(sandbox, toolsCtx);
       const logFile = `/tmp/bg_cmd_${Date.now()}.log`;
+      const exitFile = `${logFile}.exit`;
+      const commandFile = `${logFile}.command`;
       const cwd = dependencies.resolvePath(
         args.cwd,
         SandboxService.WORK_DIR,
       );
+      const wrappedCommand =
+        `( ${args.command} ) > ${shellQuote(logFile)} 2>&1; ` +
+        `CODE=$?; printf '%s' "$CODE" > ${shellQuote(exitFile)}; exit "$CODE"`;
+      await activeSandbox.writeFiles([
+        { path: commandFile, content: args.command },
+      ]);
 
       try {
         const detached = await (
@@ -65,7 +77,7 @@ export function createSandboxStartBackgroundCommandTool(
           }
         ).runCommand({
           cmd: 'sh',
-          args: ['-c', `${args.command} > ${logFile} 2>&1`],
+          args: ['-c', wrappedCommand],
           cwd,
           detached: true,
         });
@@ -78,6 +90,8 @@ export function createSandboxStartBackgroundCommandTool(
             pid: commandId,
             command_id: commandId,
             log_file: logFile,
+            exit_file: exitFile,
+            command_file: commandFile,
             message: `Command started detached (${commandId}). Use sandbox_check_background_command to check status and read logs.`,
           };
         }
@@ -85,7 +99,7 @@ export function createSandboxStartBackgroundCommandTool(
         // SDK < 3 or detached commands unsupported.
       }
 
-      const command = `nohup ${args.command} > ${logFile} 2>&1 & echo $!`;
+      const command = `nohup sh -c ${shellQuote(wrappedCommand)} >/dev/null 2>&1 & echo $!`;
       const result = await SandboxService.runCommandInSandbox(
         activeSandbox,
         'sh',
@@ -97,6 +111,8 @@ export function createSandboxStartBackgroundCommandTool(
         success: true,
         pid,
         log_file: logFile,
+        exit_file: exitFile,
+        command_file: commandFile,
         message: `Command started in background with PID ${pid}. Use sandbox_check_background_command to check status and read logs.`,
       };
     },
@@ -139,6 +155,17 @@ export function createSandboxCheckBackgroundCommandTool(
     }) => {
       const activeSandbox = dependencies.liveSandbox(sandbox, toolsCtx);
       const commandId = String(args.command_id || args.pid || '').trim();
+      let originalCommand = '';
+      try {
+        const value = await activeSandbox.fs.readFile(
+          `${args.log_file}.command`,
+          'utf8',
+        );
+        originalCommand = String(value || '').trim();
+      } catch {
+        // Commands started before command receipts were introduced have no
+        // sidecar; callers can still inspect status and logs.
+      }
       const getCommand = (
         activeSandbox as unknown as {
           getCommand?: (
@@ -158,6 +185,8 @@ export function createSandboxCheckBackgroundCommandTool(
           return {
             status: running ? 'RUNNING' : 'STOPPED',
             is_running: running,
+            exit_code: command?.exitCode ?? null,
+            command: originalCommand || undefined,
             recent_output: logResult.stdout,
             message: running
               ? `Detached command ${commandId} is still running. You can check again later.`
@@ -182,9 +211,21 @@ export function createSandboxCheckBackgroundCommandTool(
         'tail',
         ['-n', '200', args.log_file],
       );
+      let exitCode: number | null = null;
+      if (status !== 'RUNNING') {
+        const exitResult = await SandboxService.runCommandInSandbox(
+          activeSandbox,
+          'sh',
+          ['-c', `cat ${shellQuote(`${args.log_file}.exit`)} 2>/dev/null || true`],
+        );
+        const parsed = Number.parseInt(exitResult.stdout.trim(), 10);
+        if (Number.isInteger(parsed)) exitCode = parsed;
+      }
       return {
         status,
         is_running: status === 'RUNNING',
+        exit_code: exitCode,
+        command: originalCommand || undefined,
         recent_output: logResult.stdout,
         message:
           status === 'RUNNING'

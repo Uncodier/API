@@ -44,6 +44,14 @@ function flattenAppSignals(rich: GateSignals): FlowGateSignal[] {
   if (rich.scenarios) {
     out.push({ name: 'scenarios', ok: !!rich.scenarios.ok, detail: rich.scenarios.scenarios ? `${rich.scenarios.scenarios.length} scenario(s)` : undefined });
   }
+  if (rich.tests) {
+    out.push({
+      name: 'tests',
+      ok: rich.tests.ok,
+      detail: rich.tests.tests.map((test) => test.command).join(', '),
+      disposition: rich.tests.ok ? 'pass' : 'hard_fail',
+    });
+  }
   if (rich.origin) {
     const detail = rich.origin.ok
       ? rich.origin.branch
@@ -54,6 +62,14 @@ function flattenAppSignals(rich: GateSignals): FlowGateSignal[] {
     const state = rich.deploy.deployState ?? 'unknown';
     const ok = state === 'success' || state === 'skipped_default_branch';
     out.push({ name: 'deploy', ok, detail: rich.deploy.detail ? `${state} — ${rich.deploy.detail}` : state });
+  }
+  for (const observation of rich.observations || []) {
+    out.push({
+      name: `observation:${observation.kind}`,
+      ok: observation.disposition !== 'hard_fail',
+      detail: `${observation.target ? `${observation.target}: ` : ''}${observation.detail}`,
+      disposition: observation.disposition,
+    });
   }
   return out;
 }
@@ -92,6 +108,13 @@ export async function runAppGate(input: FlowGateInput): Promise<FlowGateResult> 
 
   return {
     ok: gate.ok,
+    disposition: gate.ok
+      ? 'pass'
+      : gate.infrastructureFailure || gate.sandboxUnavailable
+        ? 'unknown'
+        : remediationScheduled
+          ? 'advisory'
+          : 'hard_fail',
     flow: input.flow,
     signals,
     error: gate.error,

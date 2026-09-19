@@ -20,15 +20,24 @@ import {
 } from '@/lib/services/cron-audit-log';
 import { computeFeatureCoverage, summarizeFeatureCoverage } from './feature-coverage';
 import { inferTargetRoutesFromDiff } from './step-runtime-targets';
+import type { TestSignal } from './step-test-evidence';
+import type { ProbeObservation } from './step-probe-policy';
 
 export interface PostGateGateSignals {
   build?: { ok: boolean };
   runtime?: {
-    pages?: Array<{ path?: string; http_status?: number }>;
+    pages?: Array<{
+      path?: string;
+      http_status?: number;
+      validation_required?: boolean;
+      validation_disposition?: 'pass' | 'hard_fail' | 'unknown' | 'advisory';
+    }>;
   };
   scenarios?: {
     scenarios?: Array<{ scenario: string; pass: boolean; duration_ms: number }>;
   };
+  tests?: TestSignal;
+  observations?: ProbeObservation[];
   /**
    * Files actually modified by the producer in this cycle (sourced from
    * `git diff` inside the runtime probe). Passed to the archetype runner so
@@ -88,7 +97,10 @@ export async function runArchetypePostGate(
     try {
       coverage = await computeFeatureCoverage({
         sandbox: input.sandbox,
-        item: adjudicatedItem,
+        // Structural coverage is derived only from the canonical backlog
+        // contract. Plan-step prose can contain file paths and slash-separated
+        // words that are useful context but are not required application URLs.
+        item,
       });
     } catch (e: unknown) {
       console.warn(`[CronStep] feature coverage failed: ${e instanceof Error ? e.message : e}`);
@@ -218,15 +230,28 @@ function buildEvidenceRecord(
   capturedAt: string,
   coverage: Awaited<ReturnType<typeof computeFeatureCoverage>> | null,
 ): Omit<EvidenceRecord, 'item_id' | 'schema_version'> {
+  const runtimePage =
+    signals.runtime?.pages?.find(
+      (page) =>
+        page.validation_required === true &&
+        page.validation_disposition === 'pass',
+    ) ||
+    signals.runtime?.pages?.find(
+      (page) =>
+        page.http_status !== undefined &&
+        page.http_status >= 200 &&
+        page.http_status < 400,
+    );
   return {
     captured_at: capturedAt,
     build: signals.build
       ? { command: 'npm run build', exit_code: signals.build.ok ? 0 : 1, duration_ms: 0 }
       : undefined,
-    runtime: signals.runtime?.pages?.[0]
+    tests: signals.tests?.tests,
+    runtime: runtimePage
       ? {
-          route: signals.runtime.pages[0].path ?? '/',
-          http_status: signals.runtime.pages[0].http_status ?? 0,
+          route: runtimePage.path ?? '/',
+          http_status: runtimePage.http_status ?? 0,
         }
       : undefined,
     scenarios: signals.scenarios?.scenarios?.map((s) => ({
@@ -235,6 +260,7 @@ function buildEvidenceRecord(
       duration_ms: s.duration_ms,
     })),
     changed_files: signals.changed_files,
+    observations: signals.observations,
     feature_coverage: coverage
       ? {
           ok: coverage.ok,

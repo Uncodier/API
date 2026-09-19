@@ -6,6 +6,7 @@ import {
   LOOKBACK_MS,
   spawnSilentContinueWorkflow,
 } from '@/lib/services/robot-instance/assistant-respawn';
+import { isWorkflowManagedPlan } from '@/lib/services/workflow-robot/plan-ownership';
 
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
@@ -58,6 +59,21 @@ export async function GET(req: Request) {
       if (decision !== 'respawn') {
         results.push({ instance_id: instanceId, status: decision });
         continue;
+      }
+
+      const linkedPlanId = logs.find((row) =>
+        typeof row.details?.plan_id === 'string',
+      )?.details?.plan_id;
+      if (linkedPlanId) {
+        const { data: linkedPlan } = await supabaseAdmin
+          .from('instance_plans')
+          .select('metadata')
+          .eq('id', linkedPlanId)
+          .maybeSingle();
+        if (isWorkflowManagedPlan(linkedPlan)) {
+          results.push({ instance_id: instanceId, status: 'skipped_workflow_managed' });
+          continue;
+        }
       }
 
       const lastLog = logs.find((row) => row.log_type !== 'infrastructure');

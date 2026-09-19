@@ -24,6 +24,9 @@ export type RuntimePageProbe = {
   ttfb_ms?: number;
   content_type?: string;
   body_snippet?: string;
+  validation_source?: 'contract' | 'protected_route' | 'diff' | 'prose' | 'default';
+  validation_disposition?: 'pass' | 'hard_fail' | 'unknown' | 'advisory';
+  validation_required?: boolean;
 };
 
 export type RuntimeApiProbe = {
@@ -35,6 +38,9 @@ export type RuntimeApiProbe = {
   content_type?: string;
   body_snippet?: string;
   payload_excerpt?: string;
+  validation_source?: 'contract' | 'protected_route' | 'diff' | 'prose' | 'default';
+  validation_disposition?: 'pass' | 'hard_fail' | 'unknown' | 'advisory';
+  validation_required?: boolean;
 };
 
 export type RuntimeProbeServerError = {
@@ -382,27 +388,14 @@ export async function runRuntimeProbe(params: RuntimeProbeParams): Promise<Runti
     startupError = startupError || 'next start did not respond within the probe window';
   }
 
-  let soft404Detected = false;
-  const anyPageFailure = pages.some((p) => {
-    if (p.http_status < 200 || p.http_status >= 400 || p.http_status === 0) return true;
-    const body = p.body_snippet?.toLowerCase() || '';
-    if (body.includes('this page could not be found') || body.includes('application error') || body.includes('404 page not found')) {
-      soft404Detected = true;
-      return true;
-    }
-    return false;
-  });
-
-  if (soft404Detected && !startupError) {
-    startupError = 'Soft 404 or Next.js Error Boundary detected in page response body.';
-  }
-
-  const anyApi5xx = apis.some((a) => a.http_status >= 500 || a.http_status === 0);
   const hasBlockingServerError = serverErrors.some((e) =>
     ['module_not_found', 'unhandled_rejection', 'uncaught_exception', 'syntax_error', 'type_error'].includes(e.kind),
   );
 
-  const ok = !startupError && !anyPageFailure && !anyApi5xx && !hasBlockingServerError;
+  // Route-level status belongs to step-probe-policy, where explicit contract
+  // targets can block while inferred/prose targets stay advisory. This raw
+  // probe only owns process startup and process-wide fatal errors.
+  const ok = !startupError && !hasBlockingServerError;
 
   return {
     ok,

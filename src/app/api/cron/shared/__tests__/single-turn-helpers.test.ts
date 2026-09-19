@@ -2,6 +2,8 @@ import {
   buildGateErrorFeedback,
   captureInteractionBaseline,
   getDeclaredProtectedRoutes,
+  getDeclaredTestCommand,
+  getDeclaredValidationTargets,
   getStepTerminalRequest,
   hasStepCompletionRequest,
   isTransientGateFailure,
@@ -22,6 +24,36 @@ describe('single-turn interaction helpers', () => {
         protected_routes: ['/dashboard/orders', 42],
       },
     })).toEqual(['/dashboard/orders']);
+  });
+
+  it('reads explicit validation targets without inferring prose', () => {
+    expect(getDeclaredValidationTargets({
+      metadata: {
+        validation_targets: [{
+          kind: 'api',
+          path: '/api/orders',
+          method: 'POST',
+          expected_statuses: [201],
+          payload: { product_id: 'product-1' },
+        }],
+      },
+    })).toEqual([expect.objectContaining({
+      kind: 'api',
+      path: '/api/orders',
+      method: 'POST',
+    })]);
+  });
+
+  it('uses only an explicit test command or a quoted validation command', () => {
+    expect(getDeclaredTestCommand({
+      test_command: 'npm test -- orders.test.ts',
+    })).toBe('npm test -- orders.test.ts');
+    expect(getDeclaredTestCommand({
+      validation_rules: ['Run `npm test -- orders.test.ts` after changes.'],
+    })).toBe('npm test -- orders.test.ts');
+    expect(getDeclaredTestCommand({
+      validation_rules: ['Run relevant tests after changes.'],
+    })).toBeUndefined();
   });
 
   it('blocks only the exact repeated tool action', async () => {

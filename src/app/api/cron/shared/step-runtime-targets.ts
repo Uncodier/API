@@ -18,6 +18,8 @@ export type InferredTargetRoutes = {
 };
 
 const DEFAULT_METHOD: InferredTargetRoutes['apiRoutes'][number]['method'] = 'GET';
+const HTTP_METHOD_PATTERN =
+  /\b(?:export\s+(?:async\s+)?function|export\s+const)\s+(GET|POST|PUT|DELETE|PATCH)\b/g;
 
 export function pageRouteFromFile(rel: string): string | null {
   if (!/^src\/app\/.*page\.(?:tsx|jsx|ts|js)$/.test(rel)) return null;
@@ -35,6 +37,32 @@ function apiRouteFromFile(rel: string): string | null {
   const cleaned = segments.filter((seg) => !seg.startsWith('(') || !seg.endsWith(')'));
   if (cleaned.some((seg) => seg.startsWith('[') && seg.endsWith(']'))) return null;
   return '/api/' + cleaned.join('/');
+}
+
+async function methodsFromApiFile(
+  sandbox: Sandbox,
+  rel: string,
+): Promise<InferredTargetRoutes['apiRoutes'][number]['method'][]> {
+  try {
+    const source = await sandbox.fs.readFile(
+      `${SandboxService.WORK_DIR}/${rel}`,
+      'utf8',
+    );
+    const text = typeof source === 'string' ? source : String(source ?? '');
+    const methods = new Set<
+      InferredTargetRoutes['apiRoutes'][number]['method']
+    >();
+    let match: RegExpExecArray | null;
+    HTTP_METHOD_PATTERN.lastIndex = 0;
+    while ((match = HTTP_METHOD_PATTERN.exec(text))) {
+      methods.add(
+        match[1] as InferredTargetRoutes['apiRoutes'][number]['method'],
+      );
+    }
+    return methods.size ? Array.from(methods) : [DEFAULT_METHOD];
+  } catch {
+    return [DEFAULT_METHOD];
+  }
 }
 
 async function readChangedFiles(sandbox: Sandbox): Promise<string[]> {
@@ -128,8 +156,11 @@ export async function inferTargetRoutesFromDiff(
     const page = pageRouteFromFile(rel);
     if (page) pageRoutes.add(page);
     const api = apiRouteFromFile(rel);
-    if (api && !apiRoutes.has(api)) {
-      apiRoutes.set(api, { path: api, method: DEFAULT_METHOD });
+    if (api) {
+      const methods = await methodsFromApiFile(sandbox, rel);
+      for (const method of methods) {
+        apiRoutes.set(`${method} ${api}`, { path: api, method });
+      }
     }
   }
   for (const page of affectedPageFiles.map(pageRouteFromFile)) {

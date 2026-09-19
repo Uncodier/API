@@ -12,6 +12,7 @@ import type {
   RuntimeProbeServerError,
 } from './step-runtime-probe';
 import type { GitPushFailureKind } from '@/lib/services/git-push-error-triage';
+import type { TestSignal } from './step-test-evidence';
 import {
   sanitizeTelemetryText,
   sanitizeTelemetryUrl,
@@ -20,6 +21,7 @@ import {
 export type GateFailureCategory =
   | 'layout'
   | 'build'
+  | 'test'
   | 'interaction'
   | 'runtime'
   | 'api'
@@ -206,6 +208,7 @@ export type StepIterationSignals = {
   visual?: VisualSignal;
   origin?: OriginSignal;
   deploy?: DeploySignal;
+  tests?: TestSignal;
   categories_failed: GateFailureCategory[];
   top_level_error?: string;
 };
@@ -437,6 +440,7 @@ export function deriveCategoriesFailed(sig: Omit<StepIterationSignals, 'categori
   const cats: GateFailureCategory[] = [];
   if (sig.build?.layout_error) cats.push('layout');
   if (sig.build && !sig.build.ok) cats.push('build');
+  if (sig.tests && !sig.tests.ok) cats.push('test');
   if (sig.interaction && !sig.interaction.ok) cats.push('interaction');
   if (sig.runtime && !sig.runtime.ok) cats.push('runtime');
   if (sig.api && !sig.api.ok) cats.push('api');
@@ -474,6 +478,11 @@ export function buildRuntimeSignalFromProbe(r: {
 }
 
 export function buildApiSignalFromProbe(r: { apis: RuntimeApiProbe[] }): ApiSignal {
-  const ok = r.apis.every((a) => a.http_status > 0 && a.http_status < 500);
+  const ok = r.apis.every(
+    (api) =>
+      api.validation_disposition
+        ? api.validation_disposition !== 'hard_fail'
+        : api.http_status > 0 && api.http_status < 500,
+  );
   return { ok, apis: r.apis };
 }

@@ -14,6 +14,14 @@ import { z } from 'zod';
 
 const parseIfString = (val: any) => typeof val === 'string' ? (() => { try { return JSON.parse(val); } catch { return val; } })() : val;
 
+const ValidationTargetSchema = z.object({
+  kind: z.enum(['page', 'api']),
+  path: z.string().startsWith('/'),
+  method: z.enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH']).optional(),
+  expected_statuses: z.array(z.number().int().min(100).max(599)).optional(),
+  payload: z.unknown().optional(),
+});
+
 const UpdateInstancePlanSchema = z.object({
   plan_id: z.string().uuid('Invalid plan_id'),
   instance_id: z.string().uuid('Invalid instance_id').optional(), // Added for execute_step in protocol
@@ -49,6 +57,10 @@ const UpdateInstancePlanSchema = z.object({
     skill: z.string().optional(),
     test_command: z.string().optional(),
     protected_routes: z.preprocess(parseIfString, z.array(z.string())).optional(),
+    validation_targets: z.preprocess(
+      parseIfString,
+      z.array(ValidationTargetSchema),
+    ).optional(),
     /** Set when sandbox_push_checkpoint was invoked during cron executor runs */
     checkpoint_tool_invoked_at: z.string().optional().nullable(),
     checkpoint_tool_calls: z.number().int().optional(),
@@ -205,6 +217,12 @@ export async function updateInstancePlanCore(
         console.log(`[UpdateInstancePlan] step "${incomingStep?.title || currentStep?.title}" auto-bound to backlog_item_id=${resolvedItemId}`);
       }
       if (resolvedItemId) baseMetadata.backlog_item_id = resolvedItemId;
+      if (Array.isArray(incomingStep?.protected_routes)) {
+        baseMetadata.protected_routes = incomingStep.protected_routes;
+      }
+      if (Array.isArray(incomingStep?.validation_targets)) {
+        baseMetadata.validation_targets = incomingStep.validation_targets;
+      }
       return baseMetadata;
     };
 
@@ -232,6 +250,8 @@ export async function updateInstancePlanCore(
         'role',
         'skill',
         'test_command',
+        'protected_routes',
+        'validation_targets',
         'metadata',
         'backlog_item_id',
       ].some((key) => Object.prototype.hasOwnProperty.call(step, key));

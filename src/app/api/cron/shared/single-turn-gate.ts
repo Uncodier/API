@@ -27,9 +27,13 @@ import type { AppGateContext } from './gates/types';
 import {
   buildGateErrorFeedback,
   getDeclaredProtectedRoutes,
+  getDeclaredTestCommand,
+  getDeclaredValidationTargets,
   isTransientGateFailure,
 } from './single-turn-helpers';
 import type { SingleTurnResult } from './single-turn-types';
+import { writeEvidence } from '@/lib/services/requirement-ground-truth';
+import { extractTestEvidenceFromResult } from './step-test-evidence';
 
 interface RunSingleTurnGateInput {
   sandbox: Sandbox;
@@ -98,6 +102,8 @@ export async function runSingleTurnGate(
         instructions: step.instructions,
         expected_output: step.expected_output,
         protected_routes: getDeclaredProtectedRoutes(step),
+        validation_targets: getDeclaredValidationTargets(step),
+        test_command: getDeclaredTestCommand(step),
       },
       currentMessages: result.messages,
       assistantContext: {
@@ -146,6 +152,28 @@ export async function runSingleTurnGate(
     persistedStep,
   });
   const gateErrorExcerpt = gateFeedback.excerpt;
+  const tests = [
+    ...extractTestEvidenceFromResult(result),
+    ...(gateRes.richSignals?.tests?.tests || []),
+  ];
+  const observations = gateRes.richSignals?.observations || [];
+
+  if (
+    backlogItemId &&
+    (tests.length > 0 || observations.length > 0)
+  ) {
+    await writeEvidence({
+      sandbox,
+      cwd: SandboxService.WORK_DIR,
+      requirementId,
+      itemId: backlogItemId,
+      record: {
+        captured_at: new Date().toISOString(),
+        tests,
+        observations,
+      },
+    });
+  }
 
   if (gateRes.sandboxReplacement) {
     effectiveSandboxId = sandboxIdentity(gateRes.sandboxReplacement);
@@ -190,7 +218,12 @@ export async function runSingleTurnGate(
     if (!latestPlan || !Array.isArray(latestPlan.steps)) {
       throw new Error(`Plan ${plan.id} is missing after gate`);
     }
-    const isLastStep = isStrictFinalPlanStep(
+    const hasCancelledSibling = latestPlan.steps.some(
+      (candidate: any) =>
+        candidate.id !== step.id &&
+        (candidate.status === 'cancelled' || candidate.status === 'skipped'),
+    );
+    const isLastStep = !hasCancelledSibling && isStrictFinalPlanStep(
       latestPlan.steps,
       step.id,
     );

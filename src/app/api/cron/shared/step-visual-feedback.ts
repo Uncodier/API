@@ -87,7 +87,11 @@ export function extractPageRoutesFromStepContext(
   let match: RegExpExecArray | null;
   while ((match = routePattern.exec(text))) {
     const preceding = match.index > 0 ? text[match.index - 1] : '';
-    if (preceding === ':' || preceding === '/') continue;
+    // A slash embedded in a word/path (`components/ui`, `hydration/runtime`)
+    // is not an application route. Only standalone route tokens are eligible.
+    if (preceding === ':' || preceding === '/' || /[a-zA-Z0-9_.-]/.test(preceding)) {
+      continue;
+    }
     const route = normalizePageRoute(match[0]);
     if (route) routes.add(route);
   }

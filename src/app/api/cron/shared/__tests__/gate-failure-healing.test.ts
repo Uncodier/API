@@ -87,4 +87,26 @@ describe('gate failure healing', () => {
       assumption: expect.stringContaining('Repair the first failing category'),
     }));
   });
+
+  it('does not charge advisory or unknown findings', async () => {
+    await applyGateFailureHealing({
+      ...baseParams,
+      categories: [],
+      signals: [
+        {
+          name: 'observation:page',
+          ok: true,
+          disposition: 'advisory',
+        },
+        {
+          name: 'observation:visual',
+          ok: true,
+          disposition: 'unknown',
+        },
+      ],
+    });
+
+    expect(mockGetBacklogItem).not.toHaveBeenCalled();
+    expect(mockBumpItemAttempts).not.toHaveBeenCalled();
+  });
 });

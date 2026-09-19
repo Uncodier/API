@@ -11,6 +11,7 @@ import {
   formatWorkflowValidationPrompt,
   resolveMaxRetries,
 } from './retry';
+import { claimWorkflowRunExecution } from './execution-claim';
 
 function buildWorkflowStepPrompt(params: {
   plan: any;
@@ -134,6 +135,15 @@ export async function runWorkflowPlan(runPlanId: string): Promise<{
     throw new Error('Plan is not a workflow run');
   }
 
+  const claimed = await claimWorkflowRunExecution(runPlanId);
+  if (!claimed) {
+    return {
+      run_plan_id: runPlanId,
+      status: 'already_running',
+      steps_completed: plan.steps_completed || 0,
+    };
+  }
+
   const dryRun = Boolean((plan.metadata as any)?.dry_run);
   const triggerPayload = ((plan.metadata as any)?.trigger_payload || {}) as Record<string, unknown>;
   const steps = Array.isArray(plan.steps) ? [...plan.steps] : [];
@@ -143,10 +153,6 @@ export async function runWorkflowPlan(runPlanId: string): Promise<{
     .from('instance_plans')
     .update({ status: 'in_progress', started_at: new Date().toISOString(), updated_at: new Date().toISOString() })
     .eq('id', runPlanId);
-  await supabaseAdmin
-    .from('workflow_runs')
-    .update({ status: 'in_progress', updated_at: new Date().toISOString() })
-    .eq('run_plan_id', runPlanId);
 
   const previousOutputs: Record<string, unknown> = {};
   let sandboxId: string | null = null;

@@ -12,6 +12,8 @@ export interface CycleWrapUpPromptInput {
   planCompleted: boolean;
   /** Pending, in-progress, or retryable failed steps scheduled after this cycle. */
   pendingPlanSteps?: number;
+  /** Runnable backlog work that has not been materialized into a plan yet. */
+  hasRunnableBacklogWork?: boolean;
   /** Deterministic reason why this cycle stopped or needs human input. */
   wrapUpReason?: string | null;
   /** Forces a feedback request instead of silently continuing. */
@@ -47,7 +49,33 @@ type FeedbackBacklogItem = {
   attempts?: number;
   tier?: 'core' | 'ornamental';
   phase_id?: string;
+  depends_on?: string[];
 };
+
+export function hasRunnableBacklogWork(
+  items: FeedbackBacklogItem[],
+  limits: { core: number; ornamental: number },
+): boolean {
+  const completedIds = new Set(
+    items
+      .filter((item) => item.status === 'done')
+      .map((item) => item.id)
+      .filter((id): id is string => !!id),
+  );
+  return items.some((item) => {
+    if (item.status !== 'pending' && item.status !== 'in_progress') {
+      return false;
+    }
+    const maxAttempts =
+      (item.tier ?? 'core') === 'ornamental'
+        ? limits.ornamental
+        : limits.core;
+    if ((item.attempts || 0) >= maxAttempts) return false;
+    return (item.depends_on || []).every((dependencyId) =>
+      completedIds.has(dependencyId),
+    );
+  });
+}
 
 export function activeBacklogItemIdsFromPlanSteps(
   steps: Array<{
@@ -109,10 +137,14 @@ export function feedbackRequiredBacklogItems(
 export function shouldSkipWrapUpForPendingSteps(opts: {
   planCompleted: boolean;
   pendingPlanSteps?: number;
+  hasRunnableBacklogWork?: boolean;
   forceWrapUp?: boolean;
 }): boolean {
   if (opts.forceWrapUp) return false;
-  return !opts.planCompleted && (opts.pendingPlanSteps ?? 0) > 0;
+  return !opts.planCompleted && (
+    (opts.pendingPlanSteps ?? 0) > 0 ||
+    opts.hasRunnableBacklogWork === true
+  );
 }
 
 /**
@@ -121,11 +153,14 @@ export function shouldSkipWrapUpForPendingSteps(opts: {
 export function buildCycleWrapUpSystemPrompt(input: CycleWrapUpPromptInput): string {
   const digestText = formatDigestForPrompt(input.digestFiles ?? []);
   const pending = input.pendingPlanSteps ?? 0;
-  const continuePlan = !input.planCompleted && pending > 0 && !input.requiresUserFeedback;
+  const continuePlan =
+    !input.planCompleted &&
+    (pending > 0 || input.hasRunnableBacklogWork === true) &&
+    !input.requiresUserFeedback;
   const verdictBlock = input.requiresUserFeedback
     ? `3. VERDICT: USER FEEDBACK REQUIRED. The workflow has already persisted stage='blocked' so cron does not resume automatically. Explain what stopped progress, identify the concrete decision or intervention needed, and explicitly ask the user to reply before work continues. Do NOT change the status to 'in-progress' or 'on-review', and do NOT describe the requirement as delivered.`
     : continuePlan
-    ? `3. VERDICT: Plan steps remain (${pending}). Do NOT ask the user for permission and do NOT use stage='on-review'. Call \`requirement_status\` with stage='in-progress' and a short progress summary.`
+    ? `3. VERDICT: Executable work remains (${pending} queued plan step(s), backlog runnable=${input.hasRunnableBacklogWork === true}). Do NOT ask the user for permission and do NOT use stage='on-review'. Call \`requirement_status\` with stage='in-progress' and a short progress summary.`
     : `3. VERDICT CHOICE: You must decide between:
    - DELIVERED: If the task seems addressed, explain what is done and answer the client clearly in your final response prose. Optionally call \`requirement_status\` with stage='on-review' when appropriate.
    - NEEDS USER ITERATION: If something critical is missing, ambiguous, or requires human approval, you MUST explicitly ask the user for permission to run another iteration in your final response prose. Also call \`requirement_status\` with a clear waiting message (e.g. stage='on-review' or 'in-progress').`;
@@ -154,6 +189,7 @@ Title: ${input.title}
 ID: ${input.requirementId}
 Plan Completed this cycle: ${input.planCompleted}
 Pending plan steps remaining: ${input.pendingPlanSteps ?? 0}
+Runnable backlog work remains: ${input.hasRunnableBacklogWork === true}
 Cycle stop reason: ${input.wrapUpReason || 'Normal cycle completion'}
 Preview URL: ${input.previewUrl || 'Not available'}
 Repo URL: ${input.repoUrl || 'Not available'}

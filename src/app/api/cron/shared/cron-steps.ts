@@ -154,9 +154,13 @@ fi`,
 
 // ─── Step: Get active instance plan ──────────────────────────────────
 
-export async function getActiveInstancePlanStep(instanceId: string, siteId: string) {
+export async function getActiveInstancePlanStep(
+  instanceId: string,
+  siteId: string,
+  requirementId?: string,
+) {
   'use step';
-  return _getActiveInstancePlan(instanceId, siteId);
+  return _getActiveInstancePlan(instanceId, siteId, requirementId);
 }
 
 export async function getInstancePlanByIdStep(planId: string) {

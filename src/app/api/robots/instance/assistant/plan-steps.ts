@@ -7,6 +7,9 @@ import { SkillsService } from '@/lib/services/skills-service';
 import { getStepCheckpointPromptFragment, getFileFreshnessPromptFragment } from '@/app/api/cron/shared/step-git-prompts';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import { getRedisClient } from '@/lib/utils/redis-client';
+import {
+  findAssistantManagedPlanForRequirement,
+} from '@/lib/services/workflow-robot/plan-ownership';
 
 const ROLE_TO_SKILL: Record<string, string> = {
   'template_selection': 'makinari-obj-template-selection',
@@ -28,42 +31,26 @@ const ROLE_TO_SKILL: Record<string, string> = {
  */
 export async function getActiveInstancePlan(
   instanceId: string,
-  siteId: string
+  siteId: string,
+  requirementId?: string,
 ) {
   'use step';
-  const result = await getInstancePlansCore({
+  for (const status of ['in_progress', 'active', 'pending'] as const) {
+    const result = await getInstancePlansCore({
       instance_id: instanceId,
       site_id: siteId,
-      status: 'in_progress', // We only care about in_progress plans, or maybe pending too?
-      limit: 1,
-  });
-
-  if (result.success && result.data.plans.length > 0) {
-    return result.data.plans[0];
-  }
-    
-  const activeResult = await getInstancePlansCore({
-    instance_id: instanceId,
-    site_id: siteId,
-    status: 'active',
-    limit: 1,
-  });
-  if (activeResult.success && activeResult.data.plans.length > 0) {
-    return activeResult.data.plans[0];
-  }
-
-  // Check for pending plans if no in_progress one exists
-  const pendingResult = await getInstancePlansCore({
-    instance_id: instanceId,
-    site_id: siteId,
-    status: 'pending',
-    limit: 1,
-  });
-
-  if (pendingResult.success && pendingResult.data.plans.length > 0) {
-    // Automatically start the pending plan?
-    // For now, let's return it. The workflow can decide to start it.
-    return pendingResult.data.plans[0];
+      status,
+      limit: 20,
+    });
+    const assistantManagedPlan = result.success
+      ? findAssistantManagedPlanForRequirement(
+          result.data.plans,
+          requirementId,
+        )
+      : null;
+    if (assistantManagedPlan) {
+      return assistantManagedPlan;
+    }
   }
 
   return null;

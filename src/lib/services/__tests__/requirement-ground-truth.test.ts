@@ -149,4 +149,39 @@ describe('syncGroundTruthBeforeCommit', () => {
       expect.objectContaining({ metadata: expect.anything() }),
     );
   });
+
+  it('preserves passing test receipts across later gate writes', async () => {
+    const { mergeEvidenceRecords } = await import('../requirement-ground-truth');
+    const previous = {
+      schema_version: 1 as const,
+      item_id: 'item-1',
+      captured_at: '2026-09-18T00:00:00.000Z',
+      critic_passes: 0,
+      tests: [{
+        command: 'npm test -- assets.test.ts',
+        exit_code: 0,
+        output_tail: 'PASS',
+        ran_after_changes: true,
+        captured_at: '2026-09-18T00:01:00.000Z',
+      }],
+    };
+    const next = {
+      schema_version: 1 as const,
+      item_id: 'item-1',
+      captured_at: '2026-09-18T00:02:00.000Z',
+      build: {
+        command: 'npm run build',
+        exit_code: 0,
+        duration_ms: 100,
+      },
+      critic_passes: 0,
+    };
+
+    expect(mergeEvidenceRecords(previous, next)).toEqual(
+      expect.objectContaining({
+        tests: previous.tests,
+        build: next.build,
+      }),
+    );
+  });
 });

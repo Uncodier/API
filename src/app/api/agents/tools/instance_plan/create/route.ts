@@ -19,6 +19,14 @@ import { SkillsService } from '@/lib/services/skills-service';
 
 const parseIfString = (val: any) => typeof val === 'string' ? (() => { try { return JSON.parse(val); } catch { return val; } })() : val;
 
+const ValidationTargetSchema = z.object({
+  kind: z.enum(['page', 'api']),
+  path: z.string().startsWith('/'),
+  method: z.enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH']).optional(),
+  expected_statuses: z.array(z.number().int().min(100).max(599)).optional(),
+  payload: z.unknown().optional(),
+});
+
 const CreateInstancePlanSchema = z.object({
   instance_id: z.string().uuid('Invalid instance_id'),
   title: z.string().optional().default('Agent Generated Plan'),
@@ -54,6 +62,10 @@ const CreateInstancePlanSchema = z.object({
     skill: z.string().optional(),
     test_command: z.string().optional(),
     protected_routes: z.preprocess(parseIfString, z.array(z.string())).optional(),
+    validation_targets: z.preprocess(
+      parseIfString,
+      z.array(ValidationTargetSchema),
+    ).optional(),
     /** Free-form metadata. The orchestrator MUST set
      * `metadata.backlog_item_id` so the post-gate Judge can attribute the
      * step to a backlog item. When missing, the server auto-binds it to
@@ -126,6 +138,7 @@ export async function createInstancePlanCore(params: any) {
   if (protectRequirementPlan) {
     const [activePlan] = await getBlockingActivePlans({
       instanceId: validatedData.instance_id,
+      requirementId: validatedData.requirement_id,
     });
     if (activePlan) {
       throw activeRequirementPlanError(effectiveRequirementId!, activePlan);
@@ -258,6 +271,9 @@ export async function createInstancePlanCore(params: any) {
         ...(step.protected_routes?.length
           ? { protected_routes: step.protected_routes }
           : {}),
+        ...(step.validation_targets?.length
+          ? { validation_targets: step.validation_targets }
+          : {}),
       };
       if (!explicitItemId && resolvedItemId) {
         console.log(`[CreateInstancePlan] step #${index + 1} "${step.title}" auto-bound to backlog_item_id=${resolvedItemId}`);
@@ -332,6 +348,7 @@ export async function createInstancePlanCore(params: any) {
   if (protectRequirementPlan) {
     const contenders = await getBlockingActivePlans({
       instanceId: validatedData.instance_id,
+      requirementId: validatedData.requirement_id,
     });
     const winningPlan = contenders[0];
     if (winningPlan && winningPlan.id !== newPlan.id) {

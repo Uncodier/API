@@ -86,11 +86,19 @@ export function validateAcceptance(acceptance: string[] | undefined | null): Acc
 export function routesFromAcceptance(acceptance: string[] | undefined | null): string[] {
   const out = new Set<string>();
   for (const line of acceptance ?? []) {
-    const m = line.match(/\/[a-z0-9_\-/\[\]\.]+/gi);
-    if (!m) continue;
-    for (const r of m) {
-      const cleaned = r.replace(/[.,)\]]+$/, '');
-      if (cleaned.length > 1) out.add(cleaned);
+    const routePattern = /(^|[\s("'`])((?:\/[a-z0-9_\-/\[\]\.]+))/gi;
+    let match: RegExpExecArray | null;
+    while ((match = routePattern.exec(line))) {
+      const cleaned = match[2].replace(/[.,)\]]+$/, '');
+      if (
+        cleaned.length <= 1 ||
+        cleaned.startsWith('/src/') ||
+        cleaned.startsWith('/public/') ||
+        /\.[a-z0-9]{2,8}$/i.test(cleaned)
+      ) {
+        continue;
+      }
+      out.add(cleaned);
     }
   }
   return Array.from(out);

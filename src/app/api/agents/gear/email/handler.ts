@@ -268,11 +268,11 @@ export async function handleGearEmailWebhook(message: any, userEmail: string, pr
   });
   console.log(`📝 Log de mensaje de usuario insertado en instance_logs para instancia ${instanceId}`);
   
-  // Async unblock the requirement
-  resetRequirementOnUserAction(
+  // Finish recovery before starting the workflow.
+  await resetRequirementOnUserAction(
     instanceId,
     userAction.id,
-  ).catch(console.error);
+  );
   
   // Trigger Workflow normal
   console.log(`🚀 Iniciando workflow GearAgent Email normal para ${userEmail}...`);

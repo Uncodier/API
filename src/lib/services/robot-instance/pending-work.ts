@@ -158,10 +158,10 @@ export async function startPendingAssistant(row: PendingWorkRow): Promise<void> 
     },
   }));
 
-  resetRequirementOnUserAction(
+  await resetRequirementOnUserAction(
     row.instance_id,
     userAction.id,
-  ).catch(console.error);
+  );
 
   await start(runAssistantWorkflow, [
     row.instance_id,

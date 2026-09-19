@@ -142,6 +142,15 @@ function isTier(item: BacklogItem, tier: 'core' | 'ornamental'): boolean {
   return (item.tier ?? 'core') === tier;
 }
 
+function requiresSuccessfulTestEvidence(item: BacklogItem): boolean {
+  if (item.kind === 'api' || item.kind === 'crud') return true;
+  const contract = `${item.title} ${(item.acceptance || []).join(' ')}`;
+  return (
+    /\b(?:jest|vitest|unit test|integration test|test suite)\b/i.test(contract) ||
+    /\b(?:POST|PUT|PATCH|DELETE)\s+\/api\//i.test(contract)
+  );
+}
+
 function isAdminOnlyDiff(files: string[]): boolean {
   if (!files.length) return false;
   return files.every((f) =>
@@ -227,7 +236,7 @@ function criticGenericRules(ctx: ArchetypeContext): CriticSuggestion[] {
       if (!kr.satisfied) {
         out.push({
           rule: `feature-coverage:${kr.requirement}`,
-          severity: 'blocker',
+          severity: 'major',
           fix_hint: `kind=${kr.kind} contract failed: ${kr.requirement}. Detail: ${kr.detail || 'n/a'}`,
         });
       }
@@ -241,7 +250,7 @@ function criticGenericRules(ctx: ArchetypeContext): CriticSuggestion[] {
     if (missingPages > 0 || missingApis > 0) {
       out.push({
         rule: 'feature-coverage:missing-routes',
-        severity: 'blocker',
+        severity: 'major',
         fix_hint: `Acceptance / touches declared routes that do not exist on disk — pages missing: ${missingPages}, api handlers missing: ${missingApis}. Ship them or rewrite acceptance.`,
       });
     }
@@ -409,9 +418,11 @@ function judgeApp(item: BacklogItem, evidence: EvidenceRecord): JudgeResult {
       return rejected(item, 'core item commit is admin-only (docs/evidence/ground-truth). Ship code under src/** or set tier=ornamental.');
     }
     
-    // TDD Assertion: Core items must have passing tests
-    const hasPassingTests = evidence.tests?.some((t) => t.exit_code === 0 && t.ran_after_changes) ?? false;
-    if (!hasPassingTests) {
+    const hasPassingTests =
+      evidence.tests?.some(
+        (test) => test.exit_code === 0 && test.ran_after_changes,
+      ) ?? false;
+    if (requiresSuccessfulTestEvidence(item) && !hasPassingTests) {
       return rejected(item, 'core item requires successful test evidence — write and run Jest tests before claiming done');
     }
 
@@ -424,12 +435,13 @@ function judgeApp(item: BacklogItem, evidence: EvidenceRecord): JudgeResult {
       }
     }
 
-    if (evidence.feature_coverage && evidence.feature_coverage.ok === false) {
-      const kr = (evidence.feature_coverage.kind_requirements ?? []).filter((k) => !k.satisfied);
-      const reason = kr.length
-        ? `feature coverage failed — ${kr.map((k) => `${k.kind}:${k.requirement}`).join(', ')}`
-        : 'feature coverage failed — declared touches/routes missing on disk';
-      return rejected(item, reason);
+    const missingDeclaredTouches =
+      evidence.feature_coverage?.missing_touches || [];
+    if (missingDeclaredTouches.length > 0) {
+      return rejected(
+        item,
+        `explicitly declared files are missing: ${missingDeclaredTouches.join(', ')}`,
+      );
     }
     if (
       (item.kind === 'page' || item.kind === 'component' || item.kind === 'crud' || item.kind === 'auth') &&
@@ -512,12 +524,13 @@ function judgeBackend(item: BacklogItem, evidence: EvidenceRecord): JudgeResult 
       }
     }
 
-    if (evidence.feature_coverage && evidence.feature_coverage.ok === false) {
-      const kr = (evidence.feature_coverage.kind_requirements ?? []).filter((k) => !k.satisfied);
-      const reason = kr.length
-        ? `backend feature coverage failed — ${kr.map((k) => `${k.kind}:${k.requirement}`).join(', ')}`
-        : 'backend feature coverage failed — declared api route handler missing or incomplete';
-      return rejected(item, reason);
+    const missingDeclaredTouches =
+      evidence.feature_coverage?.missing_touches || [];
+    if (missingDeclaredTouches.length > 0) {
+      return rejected(
+        item,
+        `explicitly declared backend files are missing: ${missingDeclaredTouches.join(', ')}`,
+      );
     }
     // Soft runtime check: at least one successful 2xx/3xx runtime tool call.
     const anyRuntimeOk = toolCalls(evidence).some((c) => /^curl\s/.test(c.name) && c.ok);

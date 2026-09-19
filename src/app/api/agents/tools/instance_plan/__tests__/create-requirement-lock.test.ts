@@ -90,6 +90,13 @@ describe('createInstancePlanCore requirement lock', () => {
         title: 'Implement feature',
         instructions: 'Implement it',
         protected_routes: ['/dashboard/orders'],
+        validation_targets: [{
+          kind: 'api',
+          path: '/api/orders',
+          method: 'POST',
+          expected_statuses: [201],
+          payload: { product_id: 'product-1' },
+        }],
       }],
     });
 
@@ -102,6 +109,13 @@ describe('createInstancePlanCore requirement lock', () => {
           expect.objectContaining({
             metadata: expect.objectContaining({
               protected_routes: ['/dashboard/orders'],
+              validation_targets: [
+                expect.objectContaining({
+                  kind: 'api',
+                  path: '/api/orders',
+                  method: 'POST',
+                }),
+              ],
             }),
           }),
         ],

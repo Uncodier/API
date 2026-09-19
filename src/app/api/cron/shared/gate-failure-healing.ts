@@ -29,6 +29,21 @@ export async function applyGateFailureHealing(params: {
     return;
   }
 
+  const classifiedSignals = params.signals.filter(
+    (signal) => signal.disposition !== undefined,
+  );
+  if (
+    classifiedSignals.length > 0 &&
+    !classifiedSignals.some(
+      (signal) => signal.disposition === 'hard_fail',
+    )
+  ) {
+    console.log(
+      `${params.logPrefix} Gate returned only advisory/unknown findings; preserving the product attempt budget.`,
+    );
+    return;
+  }
+
   const { item } = await getBacklogItem(
     params.requirementId,
     params.backlogItemId,

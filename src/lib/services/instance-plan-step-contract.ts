@@ -9,6 +9,8 @@ export type PlanStepContractInput = {
   success_criteria?: unknown[];
   validation_rules?: unknown[];
   test_command?: string | null;
+  protected_routes?: unknown[];
+  validation_targets?: unknown[];
   metadata?: Record<string, unknown>;
   [key: string]: unknown;
 };

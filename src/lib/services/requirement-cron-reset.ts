@@ -106,15 +106,13 @@ export function reopenReviewBacklogOnUserAction(
  * 
  * Should be called by tools that modify the requirement (like `requirements` or `requirement_backlog`).
  */
-export async function checkAndResetCronAttempts(requirementId: string, metadata: Record<string, unknown> | null): Promise<void> {
+export async function checkAndResetCronAttempts(
+  requirementId: string,
+  metadata: Record<string, unknown> | null,
+): Promise<boolean> {
   try {
     const instanceId = metadata?.runner_instance_id as string | undefined;
-    if (!instanceId) return; // Need an instance ID to find instance_logs
-
-    // Check if the requirement already has cron_attempts = 0 or undefined, then we don't need to do anything
-    if (metadata?.cron_attempts === undefined || metadata?.cron_attempts === 0) {
-      return;
-    }
+    if (!instanceId) return false; // Need an instance ID to find instance_logs
 
     // Check for recent user action (last 15 minutes)
     const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
@@ -124,17 +122,34 @@ export async function checkAndResetCronAttempts(requirementId: string, metadata:
       fifteenMinutesAgo,
     );
     if (actionId) {
-      console.log(`[CronReset] Recent user action detected for requirement ${requirementId}. Resetting cron_attempts to 0.`);
+      const recovery = await mutateBacklogAtomically(
+        requirementId,
+        ({ backlog }) => {
+          const reopened = reopenReviewBacklogOnUserAction(backlog);
+          return {
+            result: reopened.reopenedItemIds,
+            backlog: reopened.backlog,
+            write: !!reopened.backlog,
+          };
+        },
+        { onMissing: () => [] as string[] },
+      );
+      console.log(
+        `[CronReset] Recent user action detected for requirement ${requirementId}. ` +
+        `Resetting cron attempts and reopening ${recovery.length} review item(s).`,
+      );
       await resumeRequirementExecutionOnUserAction(
         requirementId,
         instanceId,
-        false,
+        recovery.length > 0,
         actionId,
       );
+      return true;
     }
   } catch (error) {
     console.error(`[CronReset] Unexpected error:`, error);
   }
+  return false;
 }
 
 /**

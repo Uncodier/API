@@ -24,7 +24,6 @@ import {
 } from './step-runtime-probe';
 import { inferTargetRoutesFromDiff } from './step-runtime-targets';
 import { runVisualProbe } from './step-visual-probe';
-import { runE2eScenarios } from './step-e2e-runner';
 import {
   mergeCriticIntoVisualSignal,
   runVisualCritic,
@@ -42,14 +41,19 @@ import {
 } from './step-iteration-signals';
 import { detectCopyHygieneIssues, summarizeCopyHygiene } from './step-copy-hygiene';
 import type { GitRepoKind } from './cron-commit-helpers';
-import type { Browser } from 'puppeteer-core';
-import { launchPuppeteerForGate } from '@/lib/puppeteer/launch-gate-browser';
 import { sanitizeRuntimeLog } from './runtime-log-context';
+import { runExplicitE2eGate } from './step-e2e-gate';
 import {
   buildVisualProbePlan,
+  extractPageRoutesFromStepContext,
   formatVisualGateFeedback,
   resolveProtectedVisualRoutes,
 } from './step-visual-feedback';
+import {
+  buildRuntimeTargetPlan,
+  evaluateRuntimeProbe,
+  type ProbeObservation,
+} from './step-probe-policy';
 
 export type ProbeSignals = {
   interaction?: InteractionSignal;
@@ -58,6 +62,7 @@ export type ProbeSignals = {
   console?: ConsoleSignal;
   visual?: VisualSignal;
   scenarios?: ScenarioSignal;
+  observations?: ProbeObservation[];
 };
 
 export async function runRuntimeAndVisualProbes(params: {
@@ -74,6 +79,7 @@ export async function runRuntimeAndVisualProbes(params: {
     expected_output?: string;
     brand_context?: string;
     protected_routes?: string[];
+    validation_targets?: unknown;
   };
 }): Promise<{
   ok: boolean;
@@ -91,6 +97,7 @@ export async function runRuntimeAndVisualProbes(params: {
     changeBaselineSha,
   } = params;
   const out: ProbeSignals = {};
+  const explicitVisual = params.shouldRunVisual === true;
 
   let inferred: Awaited<ReturnType<typeof inferTargetRoutesFromDiff>>;
   try {
@@ -122,25 +129,54 @@ export async function runRuntimeAndVisualProbes(params: {
     stepContext,
   });
   const shouldRunVisual = visualPlan.enabled;
-  const runtimePageRoutes = Array.from(
-    new Set([...inferred.pageRoutes, ...(shouldRunVisual ? visualPlan.routes : [])]),
-  );
+  const inferredPageRoutes = explicitVisual
+    ? Array.from(new Set([...inferred.recentPageRoutes, ...inferred.pageRoutes]))
+    : inferred.recentPageRoutes;
+  const targetPlan = buildRuntimeTargetPlan({
+    validationTargets: stepContext?.validation_targets,
+    protectedRoutes: stepContext?.protected_routes,
+    proseRoutes: extractPageRoutesFromStepContext(stepContext),
+    inferredPageRoutes,
+    inferredApiRoutes: inferred.apiRoutes,
+  });
+  const runtimePageRoutes = targetPlan.pages.map((target) => target.path);
+  out.observations = [...targetPlan.observations];
 
   let runtimeProbe: Awaited<ReturnType<typeof runRuntimeProbe>> | null = null;
   try {
     runtimeProbe = await runRuntimeProbe({
       sandbox,
       pageRoutes: runtimePageRoutes,
-      apiRoutes: inferred.apiRoutes.map((a) => ({ path: a.path, method: a.method })),
+      apiRoutes: targetPlan.apis.map((target) => ({
+        path: target.path,
+        method: target.method,
+        payload: target.payload,
+        payload_source: target.source === 'contract' ? 'scenario' : 'inferred',
+      })),
       keepServerAlive: shouldRunVisual,
     });
+    const evaluated = evaluateRuntimeProbe(runtimeProbe, targetPlan);
+    runtimeProbe = {
+      ...runtimeProbe,
+      ok: runtimeProbe.ok && !evaluated.hardFailure,
+      pages: evaluated.pages,
+      apis: evaluated.apis,
+    };
+    out.observations = evaluated.observations;
     const sanitizedServerLog = sanitizeRuntimeLog(runtimeProbe.server_log_tail);
     out.runtime = buildRuntimeSignalFromProbe({
       ...runtimeProbe,
       server_log_tail: sanitizedServerLog,
     });
     out.api = buildApiSignalFromProbe(runtimeProbe);
-    if (!runtimeProbe.ok || runtimeProbe.server_errors.length > 0) {
+    const noteworthyObservations = (out.observations || []).filter(
+      (observation) => observation.disposition !== 'pass',
+    );
+    if (
+      !runtimeProbe.ok ||
+      runtimeProbe.server_errors.length > 0 ||
+      noteworthyObservations.length > 0
+    ) {
       await logCronInfrastructureEvent(audit, {
         event: CronInfraEvent.RUNTIME_PROBE,
         level: runtimeProbe.ok ? 'warn' : 'error',
@@ -158,6 +194,7 @@ export async function runRuntimeAndVisualProbes(params: {
           visual_planned: shouldRunVisual,
           visual_plan_reason: visualPlan.reason,
           visual_routes: visualPlan.routes,
+          observations: out.observations.slice(0, 30),
         },
       });
     }
@@ -223,27 +260,17 @@ export async function runRuntimeAndVisualProbes(params: {
       });
     }
     if (!hygiene.ok) {
-      if (shouldRunVisual) await stopProbeServer(sandbox, runtimeProbe.port);
-      return {
-        ok: false,
-        error: summarizeCopyHygiene(hygiene),
-        signals: out,
-      };
+      out.observations?.push({
+        kind: 'copy',
+        disposition: 'advisory',
+        source: 'diff',
+        detail: summarizeCopyHygiene(hygiene),
+      });
     }
   }
 
   if (!shouldRunVisual || !runtimeProbe) {
     return { ok: true, signals: out };
-  }
-
-  let gateBrowser: Browser | undefined;
-  if (visualPlan.runScenarios) {
-    try {
-      gateBrowser = await launchPuppeteerForGate();
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.warn('[GateProbes] Puppeteer launch failed (skip e2e):', msg);
-    }
   }
 
   try {
@@ -297,6 +324,15 @@ export async function runRuntimeAndVisualProbes(params: {
         });
       }
       if (!visual.capture_ok || !visual.visual_raw.ok) {
+        out.observations?.push({
+          kind: 'visual',
+          disposition: 'unknown',
+          source: explicitVisual ? 'contract' : 'diff',
+          detail: visual.error || 'capture batch incomplete',
+        });
+        if (!explicitVisual) {
+          return { ok: true, signals: out };
+        }
         return {
           ok: false,
           error: `Visual probe infrastructure unavailable: ${visual.error || 'capture batch incomplete'}`,
@@ -305,6 +341,17 @@ export async function runRuntimeAndVisualProbes(params: {
         };
       }
       if (!visual.console.ok) {
+        out.observations?.push({
+          kind: 'console',
+          disposition: explicitVisual ? 'hard_fail' : 'advisory',
+          source: explicitVisual ? 'contract' : 'diff',
+          detail:
+            visual.error ||
+            'Client runtime errors detected in the automatic browser probe.',
+        });
+        if (!explicitVisual) {
+          return { ok: true, signals: out };
+        }
         return {
           ok: false,
           error:
@@ -346,6 +393,15 @@ export async function runRuntimeAndVisualProbes(params: {
           },
         });
         if (critic.status === 'unavailable') {
+          out.observations?.push({
+            kind: 'visual',
+            disposition: 'unknown',
+            source: explicitVisual ? 'contract' : 'diff',
+            detail: `Visual critic unavailable: ${critic.skipped || 'unknown'}`,
+          });
+          if (!explicitVisual) {
+            return { ok: true, signals: out };
+          }
           return {
             ok: false,
             error: `Visual critic infrastructure unavailable: ${critic.skipped}`,
@@ -354,9 +410,19 @@ export async function runRuntimeAndVisualProbes(params: {
           };
         }
         if (verdictBlocksGate(critic)) {
+          const feedback = formatVisualGateFeedback(critic, visual.screenshots);
+          out.observations?.push({
+            kind: 'visual',
+            disposition: explicitVisual ? 'hard_fail' : 'advisory',
+            source: explicitVisual ? 'contract' : 'diff',
+            detail: feedback,
+          });
+          if (!explicitVisual) {
+            return { ok: true, signals: out };
+          }
           return {
             ok: false,
-            error: formatVisualGateFeedback(critic, visual.screenshots),
+            error: feedback,
             signals: out,
           };
         }
@@ -370,6 +436,15 @@ export async function runRuntimeAndVisualProbes(params: {
         message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}visual probe threw: ${msg.slice(0, 300)}`,
         details: { stepOrder, error: msg.slice(0, 800) },
       });
+      out.observations?.push({
+        kind: 'visual',
+        disposition: 'unknown',
+        source: explicitVisual ? 'contract' : 'diff',
+        detail: `Visual probe unavailable: ${msg}`,
+      });
+      if (!explicitVisual) {
+        return { ok: true, signals: out };
+      }
       return {
         ok: false,
         error: `Visual probe infrastructure unavailable: ${msg}`,
@@ -379,70 +454,24 @@ export async function runRuntimeAndVisualProbes(params: {
     }
 
     if (visualPlan.runScenarios) {
-      try {
-        const e2e = await runE2eScenarios({
-          sandbox,
-          port: runtimeProbe.port,
-          requirementId,
-          stepOrder,
-          browser: gateBrowser,
-        });
-        if (e2e.scenarios_read > 0 || e2e.error) {
-          out.scenarios = { ok: e2e.ok, scenarios: e2e.scenarios };
-          const summary =
-            e2e.scenarios.length > 0
-              ? `${e2e.scenarios.filter((s) => s.pass).length}/${e2e.scenarios.length} pass`
-              : (e2e.error ?? 'no scenario results').slice(0, 200);
-          await logCronInfrastructureEvent(audit, {
-            event: CronInfraEvent.SCENARIO_RUN,
-            level: e2e.ok ? 'info' : 'warn',
-            message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}e2e scenarios: ${summary}`.slice(0, 400),
-            details: {
-              stepOrder,
-              scenarios_read: e2e.scenarios_read,
-              base_url: e2e.base_url,
-              scenarios: e2e.scenarios.map((s) => ({
-                name: s.scenario,
-                pass: s.pass,
-                duration_ms: s.duration_ms,
-                failed_step: s.steps.find((st) => !st.ok)?.index,
-                failure: s.steps.find((st) => !st.ok)?.error,
-              })),
-              error: e2e.error,
-            },
-          });
-          if (!e2e.ok) {
-            return {
-              ok: false,
-              error: (
-                e2e.infrastructureFailure
-                  ? `E2E infrastructure unavailable: ${e2e.error || 'unknown'}`
-                  : `E2E scenarios failed — ${e2e.scenarios.filter((s) => !s.pass).map((s) => s.scenario).join(', ') || e2e.error || 'unknown'}`
-              ).slice(0, 500),
-              infrastructureFailure: e2e.infrastructureFailure,
-              signals: out,
-            };
-          }
-        }
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        console.warn('[GateProbes] E2E runner infrastructure failure:', msg);
-        await logCronInfrastructureEvent(audit, {
-          event: CronInfraEvent.SCENARIO_RUN,
-          level: 'warn',
-          message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}e2e runner threw: ${msg.slice(0, 300)}`,
-          details: { stepOrder, error: msg.slice(0, 800) },
-        });
+      const e2e = await runExplicitE2eGate({
+        sandbox,
+        port: runtimeProbe.port,
+        requirementId,
+        stepOrder,
+        audit,
+      });
+      if (e2e.signal) out.scenarios = e2e.signal;
+      if (!e2e.ok) {
         return {
           ok: false,
-          error: `E2E infrastructure unavailable: ${msg}`,
-          infrastructureFailure: true,
+          error: e2e.error,
+          infrastructureFailure: e2e.infrastructureFailure,
           signals: out,
         };
       }
     }
   } finally {
-    if (gateBrowser) await gateBrowser.close().catch(() => {});
     try {
       await stopProbeServer(sandbox, runtimeProbe.port);
     } catch {

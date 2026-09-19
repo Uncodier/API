@@ -3,6 +3,7 @@ import { parseGithubTreeUrl, branchBelongsToRequirement } from '@/lib/services/r
 import { getRequirementGitBinding } from '@/lib/services/requirement-git-binding';
 import { checkAndResetCronAttempts } from '@/lib/services/requirement-cron-reset';
 import { getRequirementById } from '@/lib/database/requirement-db';
+import { preserveUserActionRecovery } from '@/lib/services/requirement-status-recovery';
 
 /**
  * Pure (next/server-free) implementation of the requirement_status tool core.
@@ -113,12 +114,6 @@ export async function createRequirementStatusCore(params: {
   cycle?: string;
   endpoint_url?: string;
 }) {
-  // Async unblock if there was a recent user action
-  getRequirementById(params.requirement_id).then(req => {
-    if (req?.metadata) {
-      checkAndResetCronAttempts(params.requirement_id, req.metadata).catch(console.error);
-    }
-  }).catch(console.error);
   const {
     site_id,
     instance_id,
@@ -139,11 +134,22 @@ export async function createRequirementStatusCore(params: {
     throw new Error('site_id, requirement_id, and stage are required');
   }
 
+  const requirement = await getRequirementById(requirement_id);
+  const recoveredFromUserAction = requirement?.metadata
+    ? await checkAndResetCronAttempts(requirement_id, requirement.metadata)
+    : false;
+
   // Deliverable gate: done only with repo_url, preview or endpoint, and source archive URL.
   const hasRepo = !!repo_url;
   const hasEndpoint = !!(preview_url || endpoint_url);
   const hasSourceArchive = !!source_code?.trim();
-  let effectiveStage = stage;
+  const recoveredStatus = preserveUserActionRecovery({
+    stage,
+    message,
+    recoveredFromUserAction,
+  });
+  let effectiveStage = recoveredStatus.stage;
+  const effectiveMessage = recoveredStatus.message;
   const missing: string[] = [];
   if (!hasRepo) missing.push('repo_url');
   if (!hasEndpoint) missing.push('preview_url/endpoint_url');
@@ -195,7 +201,7 @@ export async function createRequirementStatusCore(params: {
         snapshot_id: snapshot_id?.trim() || null,
         active_sandbox_id: active_sandbox_id || currentStatus?.active_sandbox_id || null,
         stage: effectiveStage,
-        message: message || null,
+        message: effectiveMessage || null,
         cycle: cycle || null,
         endpoint_url: endpoint_url || null,
         created_at: new Date().toISOString(),
@@ -221,10 +227,15 @@ export async function createRequirementStatusCore(params: {
     if (effectiveStage === 'blocked' || effectiveStage === 'failed') mappedStatus = 'blocked';
     if (effectiveStage === 'on-review') mappedStatus = 'on-review';
 
-    await supabaseAdmin
+    const { error: requirementUpdateError } = await supabaseAdmin
       .from('requirements')
       .update({ status: mappedStatus, updated_at: new Date().toISOString() })
       .eq('id', requirement_id);
+    if (requirementUpdateError) {
+      throw new Error(
+        `Error updating requirement status: ${requirementUpdateError.message}`,
+      );
+    }
   }
 
   return { success: true, data };

@@ -79,6 +79,8 @@ jest.mock('../single-turn-helpers', () => ({
     categories: [],
   })),
   getDeclaredProtectedRoutes: jest.fn(() => []),
+  getDeclaredValidationTargets: jest.fn(() => []),
+  getDeclaredTestCommand: jest.fn(() => undefined),
   isTransientGateFailure: jest.fn(() => false),
 }));
 
