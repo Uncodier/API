@@ -2,15 +2,30 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { createHash } from 'node:crypto';
 
 const mockUpload: any = jest.fn();
-const mockRpc: any = jest.fn();
+const mockRemove: any = jest.fn();
+const mockAdmission: any = jest.fn();
+const mockEnqueue: any = jest.fn();
+const mockMaybeSingle: any = jest.fn();
+const mockEq: any = jest.fn(() => ({
+  eq: mockEq,
+  maybeSingle: mockMaybeSingle,
+}));
+const mockSelect: any = jest.fn(() => ({ eq: mockEq }));
+const mockFrom: any = jest.fn(() => ({ select: mockSelect }));
 
 jest.mock('@/lib/database/supabase-client', () => ({
   supabaseAdmin: {
+    from: mockFrom,
     storage: {
-      from: jest.fn(() => ({ upload: mockUpload })),
+      from: jest.fn(() => ({ upload: mockUpload, remove: mockRemove })),
     },
-    rpc: mockRpc,
   },
+}));
+jest.mock('@/lib/services/session-recording-admission', () => ({
+  admitRecordingRequest: mockAdmission,
+}));
+jest.mock('@/lib/services/session-recording-queue', () => ({
+  enqueueRecordingMetadata: mockEnqueue,
 }));
 
 import { POST } from '../route';
@@ -24,13 +39,13 @@ describe('visitor recording route', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockUpload.mockResolvedValue({ error: null });
-    mockRpc.mockResolvedValue({
-      data: { state: 'updated', event_id: 'event-1' },
-      error: null,
-    });
+    mockRemove.mockResolvedValue({ error: null });
+    mockAdmission.mockResolvedValue({ accepted: true, reason: 'accepted' });
+    mockEnqueue.mockResolvedValue('1-0');
+    mockMaybeSingle.mockResolvedValue({ data: { id: sessionId }, error: null });
   });
 
-  it('uses a stable storage path and atomically records chunk metadata', async () => {
+  it('uses a stable storage path and queues chunk metadata', async () => {
     const serializedEvents = JSON.stringify([
       { timestamp: 900 },
       { timestamp: 1000 },
@@ -61,23 +76,45 @@ describe('visitor recording route', () => {
       serializedEvents,
       { contentType: 'application/json', upsert: false },
     );
-    expect(mockRpc).toHaveBeenCalledWith(
-      'append_session_recording_chunks',
-      {
-        p_chunks: [
-          expect.objectContaining({
-            session_id: sessionId,
-            storage_path: storagePath,
-            chunk_id: chunkId,
-            content_hash: contentHash,
-            event_count: 2,
-          }),
-        ],
-      },
+    expect(mockEnqueue).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          session_id: sessionId,
+          storage_path: storagePath,
+          chunk_id: chunkId,
+          content_hash: contentHash,
+          event_count: 2,
+          metadata: { device_type: 'desktop' },
+        }),
+      ],
     );
   });
 
-  it('uploads three chunks but persists their metadata with one RPC', async () => {
+  it('keeps only bounded known metadata fields', async () => {
+    const response = await POST(new Request('http://localhost/api/visitors/record', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        site_id: siteId,
+        session_id: sessionId,
+        events: [{ timestamp: 1000 }],
+        metadata: {
+          device_type: 'mobile',
+          screen_size: '390x844',
+          arbitrary: 'x'.repeat(10_000),
+        },
+      }),
+    }) as never);
+
+    expect(response.status).toBe(200);
+    expect(mockEnqueue).toHaveBeenCalledWith([
+      expect.objectContaining({
+        metadata: { device_type: 'mobile', screen_size: '390x844' },
+      }),
+    ]);
+  });
+
+  it('uploads three chunks but queues their metadata once', async () => {
     const chunkIds = [
       '44444444-4444-4444-8444-444444444444',
       '55555555-5555-4555-8555-555555555555',
@@ -100,14 +137,11 @@ describe('visitor recording route', () => {
 
     expect(response.status).toBe(200);
     expect(mockUpload).toHaveBeenCalledTimes(3);
-    expect(mockRpc).toHaveBeenCalledTimes(1);
-    expect(mockRpc).toHaveBeenCalledWith(
-      'append_session_recording_chunks',
-      {
-        p_chunks: expect.arrayContaining(
-          chunkIds.map((id) => expect.objectContaining({ chunk_id: id })),
-        ),
-      },
+    expect(mockEnqueue).toHaveBeenCalledTimes(1);
+    expect(mockEnqueue).toHaveBeenCalledWith(
+      expect.arrayContaining(
+        chunkIds.map((id) => expect.objectContaining({ chunk_id: id })),
+      ),
     );
     await expect(response.json()).resolves.toEqual(
       expect.objectContaining({ success: true, accepted: 3 }),
@@ -132,7 +166,7 @@ describe('visitor recording route', () => {
     }) as never);
 
     expect(response.status).toBe(200);
-    expect(mockRpc).toHaveBeenCalledTimes(1);
+    expect(mockEnqueue).toHaveBeenCalledTimes(1);
   });
 
   it('derives a stable identity for legacy retries without a chunk ID', async () => {
@@ -155,8 +189,8 @@ describe('visitor recording route', () => {
     }) as never);
 
     expect(mockUpload.mock.calls[0][0]).toBe(mockUpload.mock.calls[1][0]);
-    const firstChunkId = mockRpc.mock.calls[0][1].p_chunks[0].chunk_id;
-    const secondChunkId = mockRpc.mock.calls[1][1].p_chunks[0].chunk_id;
+    const firstChunkId = mockEnqueue.mock.calls[0][0][0].chunk_id;
+    const secondChunkId = mockEnqueue.mock.calls[1][0][0].chunk_id;
     expect(firstChunkId).toBe(secondChunkId);
   });
 
@@ -175,7 +209,7 @@ describe('visitor recording route', () => {
 
     expect(response.status).toBe(400);
     expect(mockUpload).not.toHaveBeenCalled();
-    expect(mockRpc).not.toHaveBeenCalled();
+    expect(mockEnqueue).not.toHaveBeenCalled();
   });
 
   it('returns 400 for null chunk entries', async () => {
@@ -187,7 +221,7 @@ describe('visitor recording route', () => {
 
     expect(response.status).toBe(400);
     expect(mockUpload).not.toHaveBeenCalled();
-    expect(mockRpc).not.toHaveBeenCalled();
+    expect(mockEnqueue).not.toHaveBeenCalled();
   });
 
   it('does not persist metadata when the storage upload fails', async () => {
@@ -207,13 +241,13 @@ describe('visitor recording route', () => {
 
     expect(response.status).toBe(503);
     expect(response.headers.get('Retry-After')).not.toBeNull();
-    expect(mockRpc).not.toHaveBeenCalled();
+    expect(mockEnqueue).not.toHaveBeenCalled();
   });
 
-  it('returns Retry-After when PostgreSQL cancels the metadata query', async () => {
-    mockRpc.mockResolvedValue({
-      data: null,
-      error: { code: '57014', message: 'statement timeout' },
+  it('drops sampled-out sessions before calling Supabase', async () => {
+    mockAdmission.mockResolvedValue({
+      accepted: false,
+      reason: 'sampled_out',
     });
 
     const response = await POST(new Request('http://localhost/api/visitors/record', {
@@ -228,9 +262,73 @@ describe('visitor recording route', () => {
       }),
     }) as never);
 
+    expect(response.status).toBe(202);
+    expect(mockUpload).not.toHaveBeenCalled();
+    expect(mockEnqueue).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      accepted: 0,
+      reason: 'sampled_out',
+    });
+  });
+
+  it('rejects a session that does not belong to the supplied site before upload', async () => {
+    mockMaybeSingle.mockResolvedValue({ data: null, error: null });
+
+    const response = await POST(new Request('http://localhost/api/visitors/record', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        site_id: siteId,
+        session_id: sessionId,
+        events: [{ timestamp: 1000 }],
+      }),
+    }) as never);
+
+    expect(response.status).toBe(404);
+    expect(mockUpload).not.toHaveBeenCalled();
+    expect(mockAdmission).not.toHaveBeenCalled();
+    expect(mockEnqueue).not.toHaveBeenCalled();
+  });
+
+  it('drops uploaded chunks if the queue fills after admission', async () => {
+    mockEnqueue.mockResolvedValue(null);
+
+    const response = await POST(new Request('http://localhost/api/visitors/record', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        site_id: siteId,
+        session_id: sessionId,
+        events: [{ timestamp: 1000 }],
+      }),
+    }) as never);
+
+    expect(response.status).toBe(202);
+    expect(mockRemove).toHaveBeenCalledTimes(1);
+    await expect(response.json()).resolves.toMatchObject({
+      accepted: 0,
+      reason: 'queue_backlog',
+    });
+  });
+
+  it('removes newly uploaded objects when metadata cannot be queued', async () => {
+    mockEnqueue.mockRejectedValue(new Error('Redis unavailable'));
+
+    const response = await POST(new Request('http://localhost/api/visitors/record', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        site_id: siteId,
+        session_id: sessionId,
+        chunk_id: chunkId,
+        chunk_timestamp: 1000,
+        events: [{ timestamp: 1000 }],
+      }),
+    }) as never);
+
     expect(response.status).toBe(503);
-    const retryAfter = Number(response.headers.get('Retry-After'));
-    expect(retryAfter).toBeGreaterThanOrEqual(10);
-    expect(retryAfter).toBeLessThanOrEqual(30);
+    expect(mockRemove).toHaveBeenCalledTimes(1);
+    expect(response.headers.get('Retry-After')).not.toBeNull();
   });
 });

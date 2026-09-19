@@ -44,8 +44,19 @@ const legacyWrapperMigration = fs.readFileSync(
   ),
   'utf8',
 );
+const fixedSummaryMigration = fs.readFileSync(
+  path.join(
+    process.cwd(),
+    'supabase/migrations/20260918233800_session_recording_fixed_summary.sql',
+  ),
+  'utf8',
+);
 const route = fs.readFileSync(
   path.join(process.cwd(), 'src/app/api/visitors/record/route.ts'),
+  'utf8',
+);
+const queue = fs.readFileSync(
+  path.join(process.cwd(), 'src/lib/services/session-recording-queue.ts'),
   'utf8',
 );
 
@@ -99,11 +110,13 @@ describe('atomic session recording persistence', () => {
     expect(backfillMigration).toContain('ON CONFLICT DO NOTHING');
   });
 
-  it('uses stable chunk identities and one metadata RPC per request', () => {
+  it('uses stable chunk identities and queues metadata once per request', () => {
     expect(route).toContain('input.chunk_id');
     expect(route).toContain('upsert: false');
     expect(route).toContain("createHash('sha256')");
-    expect(route).toContain("'append_session_recording_chunks'");
+    expect(route).toContain('enqueueRecordingMetadata');
+    expect(queue).toContain("'append_session_recording_chunks'");
+    expect(queue).toContain('MAX_CHUNKS_PER_RPC = 10');
   });
 
   it('routes legacy single-chunk RPC calls through the batch implementation', () => {
@@ -111,5 +124,32 @@ describe('atomic session recording persistence', () => {
       'public.append_session_recording_chunks',
     );
     expect(legacyWrapperMigration).toContain('jsonb_build_array');
+  });
+
+  it('keeps recording summaries bounded instead of growing JSONB manifests', () => {
+    expect(fixedSummaryMigration).toContain(
+      "v_properties - 'chunks' - 'chunk_manifest'",
+    );
+    expect(fixedSummaryMigration).toContain(
+      'INSERT INTO public.session_recording_chunks',
+    );
+    expect(fixedSummaryMigration).toContain(
+      "'metadata', v_new_metadata",
+    );
+    expect(fixedSummaryMigration).not.toContain(
+      "END || v_new_metadata",
+    );
+    expect(fixedSummaryMigration).toContain(
+      "IN ('desktop', 'tablet', 'mobile')",
+    );
+  });
+
+  it('validates session ownership and keeps the worker lease beyond max duration', () => {
+    expect(route).toContain("from('visitor_sessions')");
+    expect(route).toContain(".eq('site_id', siteId)");
+    expect(fixedSummaryMigration).toContain(
+      'FROM public.visitor_sessions',
+    );
+    expect(queue).toContain('WORKER_LOCK_SECONDS = 90');
   });
 });

@@ -3,7 +3,11 @@
 import { prepareAssistantContext, processAssistantTurn } from './steps';
 import { getActiveInstancePlan, executePlanStep, acquirePlanExecutionLockStep, releasePlanExecutionLockStep } from './plan-steps';
 import { persistUserMessageStep, markAssistantFailedStep, completeUserMessageStep } from './persist-and-fail-steps';
-import { isIncompleteTurn, MAX_RESPAWNS } from '@/lib/services/robot-instance/assistant-respawn';
+import {
+  isIncompleteTurn,
+  MAX_RESPAWNS,
+  SILENT_CONTINUE_PROMPT,
+} from '@/lib/services/robot-instance/assistant-respawn';
 import { countRecentRespawnsStep, spawnSilentContinueStep } from './assistant-respawn-steps';
 
 // Define the workflow step
@@ -27,7 +31,9 @@ export async function runAssistantWorkflow(
 
   let userMessageLogId: string | null = null;
   try {
-    if (!options?.silentContinue) {
+    const isSilentContinue =
+      options?.silentContinue === true || message === SILENT_CONTINUE_PROMPT;
+    if (!isSilentContinue) {
       const logResult = await persistUserMessageStep(instanceId, message, siteId, userId, {
         prompt_source: 'assistant_workflow',
       });

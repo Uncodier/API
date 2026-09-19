@@ -1,6 +1,9 @@
 import type { SingleTurnResult } from './single-turn-types';
 import { runSingleTurnGate } from './single-turn-gate';
-import { markNoProgressAdjudicationConsumed } from './single-turn-step-state';
+import {
+  markNoProgressAdjudicationConsumed,
+  markNoProgressAdjudicationRetryable,
+} from './single-turn-step-state';
 
 type GateInput = Parameters<typeof runSingleTurnGate>[0];
 
@@ -19,12 +22,20 @@ export async function runGateOnlyNoProgressAdjudication(params: {
   });
   if (result.transient || result.concurrencyHalt) return result;
 
-  const mutation = await markNoProgressAdjudicationConsumed({
+  const gateCompletedStep =
+    result.gatePassed === true &&
+    result.persistedTerminalStatus === 'completed';
+  const persistAdjudication = gateCompletedStep
+    ? markNoProgressAdjudicationConsumed
+    : markNoProgressAdjudicationRetryable;
+  const mutation = await persistAdjudication({
     planId: gateInput.plan.id,
     stepId: gateInput.step.id,
     expectedGeneration:
       result.infrastructureGeneration ?? gateInput.infrastructureGeneration,
-    eventId: `${executionEventId}:no-progress-consumed`,
+    eventId: gateCompletedStep
+      ? `${executionEventId}:no-progress-consumed`
+      : `${executionEventId}:no-progress-retryable`,
     persistedMetadata: gateInput.persistedStep.metadata,
   });
   if (!mutation.persisted && !result.persistedTerminalStatus) {

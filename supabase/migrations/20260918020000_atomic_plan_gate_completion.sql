@@ -201,11 +201,11 @@ BEGIN
       entry.value->>'status' IN ('pending', 'in_progress')
       OR (
         entry.value->>'status' = 'failed'
-        AND CASE
+        AND (CASE
           WHEN COALESCE(entry.value->>'retry_count', '') ~ '^[0-9]{1,9}$'
             THEN (entry.value->>'retry_count')::integer
           ELSE 0
-        END < 2
+        END) < 2
       )
     ),
     bool_or(entry.value->>'status' = 'failed'),

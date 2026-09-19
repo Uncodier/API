@@ -22,6 +22,9 @@ describe('atomic cron SQL contracts', () => {
   const recoverySql = workspaceFile(
     'supabase/migrations/20260917203200_atomic_deployment_infrastructure_recovery.sql',
   );
+  const recoveryFenceSql = workspaceFile(
+    'supabase/migrations/20260918234000_reassert_deployment_recovery_generation.sql',
+  );
   const blockSql = workspaceFile(
     'supabase/migrations/20260917203300_atomic_infrastructure_block_transition.sql',
   );
@@ -278,6 +281,18 @@ describe('atomic cron SQL contracts', () => {
     );
     expect(recoverySql.match(/v_structured_match := COALESCE\(\(/g)).toHaveLength(2);
     expect(recoverySql.match(/v_legacy_match := COALESCE\(\(/g)).toHaveLength(2);
+  });
+
+  it('reasserts deployment recovery generation fencing for drifted databases', () => {
+    expect(recoveryFenceSql).toContain(
+      'CREATE OR REPLACE FUNCTION public.recover_ready_deployment_infrastructure',
+    );
+    expect(recoveryFenceSql).toContain(
+      "'requirement_execution_generation'",
+    );
+    expect(recoveryFenceSql).toContain('v_blocker_step_matched');
+    expect(recoveryFenceSql.trimEnd().split(/\r?\n/).length)
+      .toBeLessThanOrEqual(500);
   });
 
   it('validates the latest cycle before applying product and infrastructure blocks', () => {

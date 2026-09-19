@@ -1,10 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
-import { verifyZavuSignature } from "@/lib/services/zavu";
+import { z } from "zod";
+import { verifyZavuSignature } from "@/lib/services/zavu/signature";
 import { decryptToken } from "@/lib/utils/token-decryption";
-import { findSettingsForSender } from "@/lib/services/zavu/webhook-handlers";
-
-// Use the existing supabase clients to interact with database
 import { getSupabaseAdmin } from "@/lib/database/supabase-server";
+import { manageLeadCreation } from "@/lib/services/leads/lead-service";
+
+const requestSchema = z.object({
+  tool: z.string().optional(),
+  arguments: z.record(z.unknown()),
+  context: z.record(z.unknown()).optional(),
+  timestamp: z.number().optional(),
+});
+
+const captureLeadSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+  phone: z.string().trim().min(5).max(30),
+  email: z.string().trim().email().max(320).optional(),
+});
 
 export async function POST(request: NextRequest) {
   try {
@@ -15,7 +27,7 @@ export async function POST(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const siteId = searchParams.get("siteId");
 
-    if (!siteId) {
+    if (!siteId || !z.string().uuid().safeParse(siteId).success) {
       return NextResponse.json({ error: "Missing siteId query parameter" }, { status: 400 });
     }
 
@@ -23,85 +35,66 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Missing x-zavu-tool header" }, { status: 400 });
     }
 
-    // Try to get the webhook secret from the database using siteId to verify signature
-    let secret = process.env.ZAVUDEV_WEBHOOK_SECRET;
     const supabase = getSupabaseAdmin();
-    const { data: site } = await supabase.from('sites_settings').select('*').eq('id', siteId).single();
-    
-    if (site) {
-      const connections = (site.channels as any)?.connections || [];
-      const zavuConn = connections.find((c: any) => c.zavu_sender_id);
-      if (zavuConn?.metadata?.zavu_webhook_secret) {
-        const decrypted = decryptToken(zavuConn.metadata.zavu_webhook_secret);
-        secret = decrypted || zavuConn.metadata.zavu_webhook_secret;
-      }
+    const { data: agent, error: agentError } = await supabase
+      .from("agents")
+      .select("configuration")
+      .eq("site_id", siteId)
+      .eq("role", "Customer Support")
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (agentError || !agent) {
+      return NextResponse.json({ error: "Customer Support agent not found" }, { status: 404 });
     }
 
-    if (!verifyZavuSignature(signature, rawBody, secret)) {
+    const encryptedSecret = (agent.configuration as any)?.zavu?.tool_webhook_secret;
+    const secret = typeof encryptedSecret === "string" ? decryptToken(encryptedSecret) : null;
+    if (!verifyZavuSignature(signature, rawBody, secret || undefined)) {
       console.warn(`[Zavu Voice Webhook] Invalid signature for site ${siteId}`);
-      // return new NextResponse("Invalid signature", { status: 401 });
+      return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
     }
 
-    const payload = JSON.parse(rawBody);
-    console.log(`[Zavu Voice Webhook] Tool Execution: ${toolName} for site ${siteId}`, payload);
-    
-    let result: any = { status: "success" };
-
-    switch (toolName) {
-      case "capture_lead":
-        // Logic to save lead
-        // await supabase.from('leads').insert({ site_id: siteId, name: payload.name, phone: payload.phone, email: payload.email });
-        result = {
-          success: true,
-          message: `Lead ${payload.name} successfully captured.`,
-          leadId: `lead_${Date.now()}`
-        };
-        break;
-
-      case "order_status":
-        // Logic to fetch order status
-        const randomStatus = ["Processing", "Shipped", "Delivered", "Pending"][Math.floor(Math.random() * 4)];
-        result = {
-          success: true,
-          orderId: payload.orderId || "unknown",
-          status: randomStatus,
-          expectedDelivery: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
-          message: `The order is currently ${randomStatus}.`
-        };
-        break;
-
-      case "book_reservation":
-        // Logic to create reservation
-        result = {
-          success: true,
-          reservationId: `res_${Date.now()}`,
-          status: "Confirmed",
-          date: payload.date,
-          time: payload.time,
-          message: `Reservation confirmed for ${payload.date} at ${payload.time}.`
-        };
-        break;
-
-      case "faq_knowledge":
-        // Context query logic (e.g. vector search)
-        result = {
-          success: true,
-          question: payload.query,
-          answer: "Based on our knowledge base, our business hours are from 9 AM to 6 PM, Monday to Friday. We are closed on weekends.",
-          source: "kb_business_hours"
-        };
-        break;
-
-      default:
-        console.warn(`[Zavu Voice Webhook] Unknown tool requested: ${toolName}`);
-        return NextResponse.json({ error: "Unknown tool" }, { status: 400 });
+    const parsed = requestSchema.safeParse(JSON.parse(rawBody));
+    if (!parsed.success) {
+      return NextResponse.json({ error: "Invalid tool payload" }, { status: 400 });
     }
 
-    return NextResponse.json(result);
+    if (
+      toolName !== "capture_lead" ||
+      (parsed.data.tool && parsed.data.tool !== toolName)
+    ) {
+      return NextResponse.json({ error: "Unknown tool" }, { status: 400 });
+    }
+
+    const lead = captureLeadSchema.safeParse(parsed.data.arguments);
+    if (!lead.success) {
+      return NextResponse.json({ error: "Invalid lead information" }, { status: 400 });
+    }
+
+    const result = await manageLeadCreation({
+      ...lead.data,
+      siteId,
+      origin: "voice",
+      createTask: true,
+    });
+    if (!result.leadId) {
+      return NextResponse.json({ error: "Lead could not be captured" }, { status: 500 });
+    }
+
+    return NextResponse.json({
+      success: true,
+      leadId: result.leadId,
+      created: result.isNewLead,
+      message: result.isNewLead
+        ? "Lead captured successfully."
+        : "Lead already exists and was matched successfully.",
+    });
   } catch (error: any) {
     console.error("[Zavu Voice Webhook] Error:", error);
     return NextResponse.json(
-      { error: "Internal server error", message: error.message },
+      { error: "Internal server error" },
       { status: 500 }
     );
   }

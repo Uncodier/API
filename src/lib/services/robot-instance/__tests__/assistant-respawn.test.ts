@@ -4,9 +4,13 @@ import {
   LOOKBACK_MS,
   MAX_RESPAWNS,
   RESPAWN_COOLDOWN_MS,
+  SILENT_CONTINUE_PROMPT,
+  spawnSilentContinueWorkflow,
   STALL_MS,
   type StallLogRow,
 } from '../assistant-respawn';
+import { start } from 'workflow/api';
+import { runAssistantWorkflow } from '@/app/api/robots/instance/assistant/workflow';
 
 jest.mock('@/lib/database/supabase-client', () => ({
   supabaseAdmin: {
@@ -133,5 +137,21 @@ describe('Assistant Respawn', () => {
       expect(RESPAWN_COOLDOWN_MS).toBe(2 * 60 * 1000);
       expect(MAX_RESPAWNS).toBe(2);
     });
+  });
+
+  it('passes silentContinue in the workflow options slot', async () => {
+    await spawnSilentContinueWorkflow({
+      instanceId: 'instance-1',
+      siteId: 'site-1',
+      userId: 'user-1',
+    });
+
+    const mockedStart = start as jest.MockedFunction<typeof start>;
+    expect(mockedStart).toHaveBeenCalledTimes(1);
+    const [, args] = mockedStart.mock.calls[0];
+    expect(args[1]).toBe(SILENT_CONTINUE_PROMPT);
+    expect(args[12]).toBeUndefined();
+    expect(args[13]).toEqual({ silentContinue: true });
+    expect(mockedStart.mock.calls[0][0]).toBe(runAssistantWorkflow);
   });
 });

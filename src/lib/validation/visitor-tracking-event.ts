@@ -1,7 +1,8 @@
 import { z } from 'zod';
 
 const baseEventSchema = z.object({
-  site_id: z.string(),
+  event_id: z.string().uuid().optional(),
+  site_id: z.string().uuid(),
   url: z.string().url(),
   referrer: z.string().url().optional(),
   id: z.string().uuid().optional(),

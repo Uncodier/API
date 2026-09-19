@@ -2,13 +2,22 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { v4 as uuidv4 } from 'uuid';
 import { createHash } from 'node:crypto';
+import { admitRecordingRequest } from '@/lib/services/session-recording-admission';
+import {
+  enqueueRecordingMetadata,
+  type RecordingMetadataChunk,
+} from '@/lib/services/session-recording-queue';
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_CHUNKS_PER_REQUEST = 3;
 const MAX_EVENTS_PER_CHUNK = 20_000;
+const DEFAULT_MAX_REQUEST_BYTES = 1024 * 1024;
+const DEFAULT_MAX_CHUNK_BYTES = 512 * 1024;
 const MIN_RETRY_AFTER_SECONDS = 10;
 const MAX_RETRY_AFTER_SECONDS = 30;
+const RECORDING_METADATA_MAX_BYTES = 256;
+const DEVICE_TYPES = new Set(['desktop', 'tablet', 'mobile']);
 
 interface RecordingChunkInput {
   site_id?: unknown;
@@ -26,21 +35,8 @@ interface PreparedRecordingChunk {
   chunkId: string;
   storagePath: string;
   eventsJson: string;
-  rpcPayload: {
-    event_id: string;
-    site_id: string;
-    visitor_id: string | null;
-    session_id: string;
-    url: string | null;
-    timestamp: number;
-    storage_path: string;
-    chunk_id: string;
-    content_hash: string;
-    start_timestamp: number;
-    end_timestamp: number;
-    event_count: number;
-    metadata: Record<string, unknown>;
-  };
+  eventBytes: number;
+  rpcPayload: RecordingMetadataChunk;
 }
 
 class RecordingRequestError extends Error {
@@ -60,6 +56,36 @@ function finiteTimestamp(value: unknown, fallback: number): number {
     && value >= 0
     ? Math.trunc(value)
     : fallback;
+}
+
+function positiveIntegerSetting(name: string, fallback: number): number {
+  const parsed = Number(process.env[name]);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+async function readRequestBody(request: NextRequest): Promise<{
+  body: unknown;
+  bytes: number;
+}> {
+  const maxBytes = positiveIntegerSetting(
+    'SESSION_RECORDING_MAX_REQUEST_BYTES',
+    DEFAULT_MAX_REQUEST_BYTES,
+  );
+  const contentLength = Number(request.headers.get('content-length'));
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    throw new RecordingRequestError('Recording request is too large', 413);
+  }
+
+  const rawBody = await request.text();
+  const bytes = Buffer.byteLength(rawBody);
+  if (bytes > maxBytes) {
+    throw new RecordingRequestError('Recording request is too large', 413);
+  }
+  try {
+    return { body: JSON.parse(rawBody), bytes };
+  } catch {
+    throw new RecordingRequestError('Invalid recording payload', 400);
+  }
 }
 
 function isDuplicateStorageObject(error: unknown): boolean {
@@ -93,6 +119,29 @@ function deterministicChunkId(value: string): string {
   ].join('-');
 }
 
+function sanitizeMetadata(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const source = value as Record<string, unknown>;
+  const metadata: Record<string, string> = {};
+
+  if (
+    typeof source.device_type === 'string'
+    && DEVICE_TYPES.has(source.device_type)
+  ) {
+    metadata.device_type = source.device_type;
+  }
+  if (
+    typeof source.screen_size === 'string'
+    && /^\d{1,5}x\d{1,5}$/.test(source.screen_size)
+  ) {
+    metadata.screen_size = source.screen_size;
+  }
+
+  return Buffer.byteLength(JSON.stringify(metadata)) <= RECORDING_METADATA_MAX_BYTES
+    ? metadata
+    : {};
+}
+
 function parseChunks(body: unknown): RecordingChunkInput[] {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     throw new RecordingRequestError('Invalid recording payload', 400);
@@ -115,7 +164,7 @@ function prepareChunk(input: RecordingChunkInput): PreparedRecordingChunk | null
     || typeof input !== 'object'
     || Array.isArray(input)
     || typeof input.site_id !== 'string'
-    || input.site_id.length === 0
+    || !UUID_PATTERN.test(input.site_id)
     || typeof input.session_id !== 'string'
     || !UUID_PATTERN.test(input.session_id)
     || !Array.isArray(input.events)
@@ -135,6 +184,14 @@ function prepareChunk(input: RecordingChunkInput): PreparedRecordingChunk | null
   }
 
   const eventsJson = JSON.stringify(input.events);
+  const eventBytes = Buffer.byteLength(eventsJson);
+  const maxChunkBytes = positiveIntegerSetting(
+    'SESSION_RECORDING_MAX_CHUNK_BYTES',
+    DEFAULT_MAX_CHUNK_BYTES,
+  );
+  if (eventBytes > maxChunkBytes) {
+    throw new RecordingRequestError('Recording chunk is too large', 413);
+  }
   const contentHash = createHash('sha256').update(eventsJson).digest('hex');
   const chunkId =
     typeof input.chunk_id === 'string'
@@ -157,6 +214,7 @@ function prepareChunk(input: RecordingChunkInput): PreparedRecordingChunk | null
     chunkId,
     storagePath,
     eventsJson,
+    eventBytes,
     rpcPayload: {
       event_id: uuidv4(),
       site_id: input.site_id,
@@ -173,17 +231,45 @@ function prepareChunk(input: RecordingChunkInput): PreparedRecordingChunk | null
       start_timestamp: finiteTimestamp(firstEvent?.timestamp, timestamp),
       end_timestamp: finiteTimestamp(lastEvent?.timestamp, timestamp),
       event_count: input.events.length,
-      metadata:
-        input.metadata
-        && typeof input.metadata === 'object'
-        && !Array.isArray(input.metadata)
-          ? (input.metadata as Record<string, unknown>)
-          : {},
+      metadata: sanitizeMetadata(input.metadata),
     },
   };
 }
 
-async function uploadChunk(chunk: PreparedRecordingChunk): Promise<void> {
+async function validateSessionOwnership(
+  chunks: PreparedRecordingChunk[],
+): Promise<void> {
+  const sessions = new Map<string, { siteId: string; sessionId: string }>();
+  for (const chunk of chunks) {
+    const { site_id: siteId, session_id: sessionId } = chunk.rpcPayload;
+    sessions.set(`${siteId}\0${sessionId}`, { siteId, sessionId });
+  }
+
+  for (const { siteId, sessionId } of Array.from(sessions.values())) {
+    const { data, error } = await supabaseAdmin
+      .from('visitor_sessions')
+      .select('id')
+      .eq('id', sessionId)
+      .eq('site_id', siteId)
+      .maybeSingle();
+    if (error) {
+      console.error('[Session Recording] Session validation failed:', error);
+      throw new RecordingRequestError(
+        'Recording session validation is temporarily unavailable',
+        503,
+        retryAfterSeconds(),
+      );
+    }
+    if (!data) {
+      throw new RecordingRequestError(
+        'Recording session was not found for this site',
+        404,
+      );
+    }
+  }
+}
+
+async function uploadChunk(chunk: PreparedRecordingChunk): Promise<boolean> {
   const { error } = await supabaseAdmin
     .storage
     .from('session_recordings')
@@ -192,7 +278,8 @@ async function uploadChunk(chunk: PreparedRecordingChunk): Promise<void> {
       upsert: false,
     });
 
-  if (error && !isDuplicateStorageObject(error)) {
+  if (error && isDuplicateStorageObject(error)) return false;
+  if (error) {
     console.error('[Session Recording] Storage upload failed:', error);
     throw new RecordingRequestError(
       'Recording storage is temporarily unavailable',
@@ -200,29 +287,19 @@ async function uploadChunk(chunk: PreparedRecordingChunk): Promise<void> {
       retryAfterSeconds(),
     );
   }
+  return true;
 }
 
-function databaseError(error: unknown): RecordingRequestError {
-  const value = error && typeof error === 'object'
-    ? error as { code?: string; message?: string }
-    : {};
-  if (/identity conflicts|does not belong to site/i.test(value.message || '')) {
-    return new RecordingRequestError('Recording chunk conflicts with stored data', 409);
+async function removeUploadedChunks(
+  chunks: PreparedRecordingChunk[],
+): Promise<void> {
+  if (chunks.length === 0) return;
+  const { error } = await supabaseAdmin.storage
+    .from('session_recordings')
+    .remove(chunks.map((chunk) => chunk.storagePath));
+  if (error) {
+    console.error('[Session Recording] Could not remove unqueued objects:', error);
   }
-  if (
-    value.code === '57014'
-    || value.code === '40001'
-    || value.code === '40P01'
-    || value.code === '53300'
-    || value.code?.startsWith('08')
-  ) {
-    return new RecordingRequestError(
-      'Recording database is temporarily unavailable',
-      503,
-      retryAfterSeconds(),
-    );
-  }
-  return new RecordingRequestError('Could not persist recording metadata', 500);
 }
 
 function errorResponse(error: unknown): NextResponse {
@@ -240,7 +317,8 @@ function errorResponse(error: unknown): NextResponse {
 
 export async function POST(request: NextRequest) {
   try {
-    const preparedChunks = parseChunks(await request.json())
+    const { body, bytes } = await readRequestBody(request);
+    const preparedChunks = parseChunks(body)
       .map(prepareChunk)
       .filter((chunk): chunk is PreparedRecordingChunk => chunk !== null);
 
@@ -248,30 +326,100 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, accepted: 0 });
     }
 
+    await validateSessionOwnership(preparedChunks);
+
+    const chunksBySession = new Map<string, PreparedRecordingChunk[]>();
     for (const chunk of preparedChunks) {
-      await uploadChunk(chunk);
+      const key = `${chunk.rpcPayload.site_id}\0${chunk.rpcPayload.session_id}`;
+      const sessionChunks = chunksBySession.get(key) || [];
+      sessionChunks.push(chunk);
+      chunksBySession.set(key, sessionChunks);
     }
 
-    const { data: recording, error } = await supabaseAdmin.rpc(
-      'append_session_recording_chunks',
-      { p_chunks: preparedChunks.map((chunk) => chunk.rpcPayload) },
+    const admittedChunks: PreparedRecordingChunk[] = [];
+    const droppedReasons: string[] = [];
+    const totalEventBytes = preparedChunks.reduce(
+      (total, chunk) => total + chunk.eventBytes,
+      0,
     );
-    if (error) {
-      console.error('[Session Recording] Metadata batch failed:', error);
-      throw databaseError(error);
+    for (const sessionChunks of Array.from(chunksBySession.values())) {
+      const first = sessionChunks[0].rpcPayload;
+      const sessionEventBytes = sessionChunks.reduce(
+        (total, chunk) => total + chunk.eventBytes,
+        0,
+      );
+      const admission = await admitRecordingRequest({
+        siteId: first.site_id,
+        sessionId: first.session_id,
+        requestBytes: Math.max(
+          1,
+          Math.ceil(bytes * sessionEventBytes / totalEventBytes),
+        ),
+      });
+      if (admission.accepted) admittedChunks.push(...sessionChunks);
+      else droppedReasons.push(admission.reason);
     }
 
-    const chunks = preparedChunks.map((chunk) => ({
+    if (admittedChunks.length === 0) {
+      return NextResponse.json(
+        {
+          success: true,
+          accepted: 0,
+          dropped: preparedChunks.length,
+          reason: droppedReasons[0] || 'admission_rejected',
+        },
+        { status: 202 },
+      );
+    }
+
+    const uploadedChunks: PreparedRecordingChunk[] = [];
+    try {
+      for (const chunk of admittedChunks) {
+        if (await uploadChunk(chunk)) uploadedChunks.push(chunk);
+      }
+    } catch (error) {
+      await removeUploadedChunks(uploadedChunks);
+      throw error;
+    }
+
+    try {
+      const messageId = await enqueueRecordingMetadata(
+        admittedChunks.map((chunk) => chunk.rpcPayload),
+      );
+      if (messageId === null) {
+        await removeUploadedChunks(uploadedChunks);
+        return NextResponse.json(
+          {
+            success: true,
+            accepted: 0,
+            dropped: preparedChunks.length,
+            reason: 'queue_backlog',
+          },
+          { status: 202 },
+        );
+      }
+    } catch (error) {
+      console.error('[Session Recording] Metadata queue failed:', error);
+      await removeUploadedChunks(uploadedChunks);
+      throw new RecordingRequestError(
+        'Recording metadata queue is temporarily unavailable',
+        503,
+        retryAfterSeconds(),
+      );
+    }
+
+    const chunks = admittedChunks.map((chunk) => ({
       chunk_id: chunk.chunkId,
       path: chunk.storagePath,
     }));
     return NextResponse.json({
       success: true,
       accepted: chunks.length,
+      dropped: preparedChunks.length - admittedChunks.length,
       chunk_id: chunks[0].chunk_id,
       path: chunks[0].path,
       chunks,
-      recording,
+      queued: true,
     });
   } catch (error: unknown) {
     if (!(error instanceof RecordingRequestError)) {

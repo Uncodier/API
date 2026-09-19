@@ -3,7 +3,10 @@ import { parseGithubTreeUrl, branchBelongsToRequirement } from '@/lib/services/r
 import { getRequirementGitBinding } from '@/lib/services/requirement-git-binding';
 import { checkAndResetCronAttempts } from '@/lib/services/requirement-cron-reset';
 import { getRequirementById } from '@/lib/database/requirement-db';
-import { preserveUserActionRecovery } from '@/lib/services/requirement-status-recovery';
+import {
+  assertRequirementReopenAuthorized,
+  preserveUserActionRecovery,
+} from '@/lib/services/requirement-status-recovery';
 
 /**
  * Pure (next/server-free) implementation of the requirement_status tool core.
@@ -150,6 +153,11 @@ export async function createRequirementStatusCore(params: {
   });
   let effectiveStage = recoveredStatus.stage;
   const effectiveMessage = recoveredStatus.message;
+  assertRequirementReopenAuthorized({
+    currentStatus: requirement?.status,
+    nextStatus: effectiveStage,
+    recoveredFromUserAction,
+  });
   const missing: string[] = [];
   if (!hasRepo) missing.push('repo_url');
   if (!hasEndpoint) missing.push('preview_url/endpoint_url');

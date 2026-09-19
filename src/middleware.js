@@ -48,7 +48,8 @@ export default async function middleware(request) {
 
   // Zavu webhook: HMAC signature validated in route (ZAVUDEV_WEBHOOK_SECRET)
   const isZavuWebhook =
-    request.nextUrl.pathname === '/api/integrations/zavu/webhook';
+    request.nextUrl.pathname === '/api/integrations/zavu/webhook' ||
+    request.nextUrl.pathname === '/api/integrations/zavu/voice-tools';
 
   // Vercel webhook: secret validated in route (VERCEL_WEBHOOK_SECRET)
   const isVercelWebhook =
@@ -271,7 +272,7 @@ export default async function middleware(request) {
     // Establecer encabezados CORS
     const allowedHeaders = getAllowedHeaders();
     
-    response.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    response.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
     response.headers.set('Access-Control-Allow-Headers', allowedHeaders);
     response.headers.set('Vary', 'Origin');
     response.headers.set('Access-Control-Max-Age', '86400');
@@ -327,7 +328,7 @@ export default async function middleware(request) {
     console.log('[Middleware] Dev mode with origin - allowing all origins');
     const response = safeNext();
     response.headers.set('Access-Control-Allow-Origin', origin);
-    response.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    response.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
     response.headers.set('Access-Control-Allow-Headers', getAllowedHeaders());
     response.headers.set('Access-Control-Allow-Credentials', 'true');
     response.headers.set('Vary', 'Origin');
@@ -357,7 +358,7 @@ export default async function middleware(request) {
     console.log('[Middleware] Setting CORS headers for allowed origin');
     // IMPORTANTE: Nunca usar el comodín cuando hay credenciales
     response.headers.set('Access-Control-Allow-Origin', origin);
-    response.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    response.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
     response.headers.set('Access-Control-Allow-Headers', getAllowedHeaders());
     response.headers.set('Access-Control-Allow-Credentials', 'true');
   } else {

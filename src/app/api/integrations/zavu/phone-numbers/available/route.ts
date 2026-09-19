@@ -1,16 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
-import { searchAvailableNumbers } from "@/lib/services/zavu";
+import { z } from "zod";
+import { requireZavuSiteManager, searchAvailableNumbers } from "@/lib/services/zavu";
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
+    const siteId = searchParams.get("siteId");
     const countryCode = searchParams.get("countryCode");
     const areaCode = searchParams.get("areaCode");
-    const capabilities = searchParams.getAll("capabilities");
+    const capabilities = searchParams
+      .getAll("capabilities")
+      .flatMap((value) => value.split(","))
+      .filter(Boolean);
 
-    if (!countryCode) {
-      return NextResponse.json({ error: "countryCode is required" }, { status: 400 });
+    if (!siteId || !z.string().uuid().safeParse(siteId).success || !countryCode) {
+      return NextResponse.json(
+        { error: "Valid siteId and countryCode are required" },
+        { status: 400 }
+      );
     }
+    await requireZavuSiteManager(request, siteId);
 
     const data = await searchAvailableNumbers({ 
       countryCode, 
@@ -37,7 +46,7 @@ export async function GET(request: NextRequest) {
   } catch (error: any) {
     console.error("[Zavu PhoneNumbers] Error searching available numbers:", error);
     return NextResponse.json(
-      { error: error.message || "Failed to search phone numbers" },
+      { error: error.status ? error.message : "Failed to search phone numbers" },
       { status: error.status || 500 }
     );
   }

@@ -1,6 +1,9 @@
 import ts from 'typescript';
 
 export const HARNESS_TRACKING_SCRIPT_URL =
+  'https://backend.makinari.com/tracking.min.js';
+
+export const LEGACY_TRACKING_SCRIPT_URL =
   'https://files.uncodie.com/tracking.min.js';
 
 export const HARNESS_TRACKING_ATTRIBUTE =
@@ -22,7 +25,7 @@ export function buildHarnessTrackingScriptTag(siteId: string): string {
 }
 
 export function buildLegacyTrackingScriptTag(siteId: string): string {
-  return `<script src="${HARNESS_TRACKING_SCRIPT_URL}" data-site-id="${escapeAttribute(siteId)}"></script>`;
+  return `<script src="${LEGACY_TRACKING_SCRIPT_URL}" data-site-id="${escapeAttribute(siteId)}"></script>`;
 }
 
 export type TrackingScriptTransform = {
@@ -95,6 +98,9 @@ function findHarnessTrackingScript(source: string): {
   scriptStart: number;
   scriptEnd: number;
   owned: boolean;
+  sourceUrl: string;
+  sourceStart: number;
+  sourceEnd: number;
   ownershipInsert: number;
   ownershipStart?: number;
   ownershipEnd?: number;
@@ -142,7 +148,10 @@ function findHarnessTrackingScript(source: string): {
       !sourceAttribute ||
       !sourceAttribute.initializer ||
       !ts.isStringLiteral(sourceAttribute.initializer) ||
-      sourceAttribute.initializer.text !== HARNESS_TRACKING_SCRIPT_URL
+      ![
+        HARNESS_TRACKING_SCRIPT_URL,
+        LEGACY_TRACKING_SCRIPT_URL,
+      ].includes(sourceAttribute.initializer.text)
     ) {
       ts.forEachChild(node, visit);
       return;
@@ -156,6 +165,9 @@ function findHarnessTrackingScript(source: string): {
       scriptStart: node.getStart(sourceFile),
       scriptEnd: node.getEnd(),
       owned,
+      sourceUrl: sourceAttribute.initializer.text,
+      sourceStart: sourceAttribute.initializer.getStart(sourceFile),
+      sourceEnd: sourceAttribute.initializer.getEnd(),
       ownershipInsert:
         openingElement.getEnd() -
         (ts.isJsxSelfClosingElement(openingElement) ? 2 : 1),
@@ -201,7 +213,10 @@ export function transformHarnessTrackingScript(
   }
 
   const malformedHarnessTag = new RegExp(
-    `<script\\s+src=${escapeRegex(HARNESS_TRACKING_SCRIPT_URL)}\\s+` +
+    `<script\\s+src=(?:${[
+      HARNESS_TRACKING_SCRIPT_URL,
+      LEGACY_TRACKING_SCRIPT_URL,
+    ].map(escapeRegex).join('|')})\\s+` +
       `data-site-id=${escapeRegex(siteId)}` +
       `(?:\\s+data-uncodie-harness=tracking)?\\s*><\\/script>`,
   );
@@ -219,6 +234,13 @@ export function transformHarnessTrackingScript(
     const siteIdAttribute = `data-site-id="${escapeAttribute(siteId)}"`;
     const edits: Array<{ start: number; end: number; text: string }> = [];
     const insertions: string[] = [];
+    if (existingScript.sourceUrl !== HARNESS_TRACKING_SCRIPT_URL) {
+      edits.push({
+        start: existingScript.sourceStart,
+        end: existingScript.sourceEnd,
+        text: JSON.stringify(HARNESS_TRACKING_SCRIPT_URL),
+      });
+    }
     if (!existingScript.owned) {
       if (
         existingScript.ownershipStart !== undefined &&

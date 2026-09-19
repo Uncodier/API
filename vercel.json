@@ -39,6 +39,14 @@
       "schedule": "17 3 * * *"
     },
     {
+      "path": "/api/cron/maintenance/session-recordings",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/maintenance/tracking-events",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/cron/workflows",
       "schedule": "* * * * *"
     },

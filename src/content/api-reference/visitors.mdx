@@ -30,7 +30,11 @@ curl -X GET "https://backend.makinari.com/api/visitors/sites?site_id=YOUR_SITE_I
   <code>/api/visitors/track</code>
 </div>
 
-Typical body: `site_id`, `event_type`, `event_name`, `url`, `visitor_id`, `session_id`. From the page, the tracking script does this for you.
+Typical body: `site_id`, `event_type`, `event_name`, `url`, `visitor_id`,
+`session_id`, and a client-generated UUID in `event_id`. Reuse the same
+`event_id` when retrying a request. A `202` response means the event was
+durably queued; retry `5xx` responses. From the page, the tracking script does
+this for you.
 
 ## Identify
 

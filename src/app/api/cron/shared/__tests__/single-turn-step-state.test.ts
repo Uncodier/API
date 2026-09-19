@@ -2,6 +2,7 @@ import { patchPlanStepAtomically } from '@/lib/services/instance-plan-infrastruc
 import {
   buildSingleTurnStartMetadata,
   markNoProgressAdjudicationConsumed,
+  markNoProgressAdjudicationRetryable,
   markVisualFeedbackDelivered,
   resolveSingleTurnBacklogItemId,
 } from '../single-turn-step-state';
@@ -136,6 +137,41 @@ describe('single-turn step state', () => {
             no_progress_adjudication: expect.objectContaining({
               state: 'consumed',
               cycle_id: 'cycle-2',
+              execution_generation: 5,
+            }),
+          }),
+        },
+      }),
+    );
+  });
+
+  it('returns a failed adjudication to a retryable state', async () => {
+    mockPatchPlanStep.mockResolvedValue({
+      state: 'applied',
+      persisted: true,
+      generation: 9,
+    });
+
+    await markNoProgressAdjudicationRetryable({
+      planId: 'plan-1',
+      stepId: 'step-1',
+      expectedGeneration: 8,
+      eventId: 'cycle-4:no-progress-retryable',
+      persistedMetadata: {
+        no_progress_adjudication: {
+          state: 'requested',
+          execution_generation: 5,
+        },
+      },
+    });
+
+    expect(mockPatchPlanStep).toHaveBeenCalledWith(
+      expect.objectContaining({
+        expectedGeneration: 8,
+        patch: {
+          metadata: expect.objectContaining({
+            no_progress_adjudication: expect.objectContaining({
+              state: 'retryable',
               execution_generation: 5,
             }),
           }),

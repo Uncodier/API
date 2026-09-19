@@ -23,6 +23,11 @@ interface SessionEventRow {
   properties: unknown;
 }
 
+interface RecordingChunkRow {
+  recording_event_id: string;
+  storage_path: string;
+}
+
 export interface SessionEventRetentionResult {
   cutoff: string;
   protectedSites: number;
@@ -108,6 +113,9 @@ async function removeRecordingObjects(
   events: SessionEventRow[],
 ): Promise<{ failedEventIds: Set<string>; deletedObjects: number; errors: number }> {
   const ownerByPath = new Map<string, Set<string>>();
+  const recordingEventIds = events
+    .filter((event) => event.event_type === 'session_recording')
+    .map((event) => event.id);
 
   for (const event of events) {
     if (event.event_type !== 'session_recording') continue;
@@ -115,6 +123,21 @@ async function removeRecordingObjects(
       const owners = ownerByPath.get(path) || new Set<string>();
       owners.add(event.id);
       ownerByPath.set(path, owners);
+    }
+  }
+
+  for (const eventIdBatch of chunks(recordingEventIds, EVENT_BATCH_SIZE)) {
+    const { data, error } = await client
+      .from('session_recording_chunks')
+      .select('recording_event_id, storage_path')
+      .in('recording_event_id', eventIdBatch);
+    if (error) {
+      throw new Error(`Could not load recording chunks: ${error.message}`);
+    }
+    for (const chunk of (data || []) as RecordingChunkRow[]) {
+      const owners = ownerByPath.get(chunk.storage_path) || new Set<string>();
+      owners.add(chunk.recording_event_id);
+      ownerByPath.set(chunk.storage_path, owners);
     }
   }
 

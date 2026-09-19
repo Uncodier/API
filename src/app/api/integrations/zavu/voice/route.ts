@@ -1,101 +1,72 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createSender, attachSenderToAgent, ensureProjectWebhook, purchaseNumber, assignNumberToSender } from "@/lib/services/zavu";
-import { supabaseAdmin } from "@/lib/database/supabase-server";
-import { v4 as uuidv4 } from "uuid";
+import { z } from "zod";
+import {
+  assignNumberToSender,
+  assertPhoneResourcesAvailable,
+  createSender,
+  ensureProjectWebhook,
+  ensureSenderWebhook,
+  getOwnedNumbers,
+  purchaseNumber,
+  requireZavuSiteAccess,
+  requireZavuSiteManager,
+  syncConnectedCustomerSupportVoiceAgent,
+  syncCustomerSupportVoiceAgent,
+  syncVoiceTools,
+  upsertChannelConnection,
+} from "@/lib/services/zavu";
 
-// Re-use logic to sync tools to Zavu Voice since it's the backend
-const VOICE_TOOLS_SCHEMA = [
-  {
-    name: "capture_lead",
-    description: "Captures lead information (name, phone, email) from the user during the call to follow up later.",
-    parameters: {
-      type: "object",
-      properties: {
-        name: { type: "string", description: "Full name of the lead" },
-        email: { type: "string", description: "Email address of the lead" },
-        phone: { type: "string", description: "Phone number of the lead" }
-      },
-      required: ["name", "phone"]
-    }
-  },
-  {
-    name: "order_status",
-    description: "Check the current status of a customer's order using their order ID.",
-    parameters: {
-      type: "object",
-      properties: {
-        orderId: { type: "string", description: "The unique identifier of the order" }
-      },
-      required: ["orderId"]
-    }
-  },
-  {
-    name: "book_reservation",
-    description: "Book a reservation or appointment for a specific date and time.",
-    parameters: {
-      type: "object",
-      properties: {
-        date: { type: "string", description: "The requested date for the reservation (YYYY-MM-DD)" },
-        time: { type: "string", description: "The requested time for the reservation (HH:MM)" },
-        guests: { type: "number", description: "Number of guests or participants" }
-      },
-      required: ["date", "time"]
-    }
-  },
-  {
-    name: "faq_knowledge",
-    description: "Query the knowledge base or FAQ to answer customer questions about business hours, policies, etc.",
-    parameters: {
-      type: "object",
-      properties: {
-        query: { type: "string", description: "The user's question or search query" }
-      },
-      required: ["query"]
-    }
-  }
-];
+const voiceRequestSchema = z.object({
+  siteId: z.string().uuid(),
+  channelId: z.string().uuid().optional(),
+  name: z.string().trim().max(100).optional(),
+  phoneNumber: z.string().trim().min(5).max(30),
+  active: z.boolean().optional(),
+}).strict();
 
-async function syncSiteToolsToZavu(siteId: string, zavuSenderId: string) {
-  const ZAVU_API_KEY = process.env.ZAVUDEV_API_KEY;
-  const webhookSecret = process.env.ZAVUDEV_WEBHOOK_SECRET;
-  const API_URL = process.env.NEXT_PUBLIC_API_SERVER_URL || process.env.API_SERVER_URL;
-  const webhookUrl = `${API_URL}/api/integrations/zavu/voice-tools?siteId=${siteId}`;
+function unwrapPhoneNumbers(payload: any): any[] {
+  return payload?.items || payload?.results || (Array.isArray(payload) ? payload : []);
+}
 
-  for (const tool of VOICE_TOOLS_SCHEMA) {
-    const payload = {
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.parameters,
-      webhookUrl: webhookUrl,
-      webhookSecret: webhookSecret
-    };
-
-    const response = await fetch(`https://api.zavu.dev/v1/senders/${zavuSenderId}/agent/tools`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${ZAVU_API_KEY}`
-      },
-      body: JSON.stringify(payload)
+async function resolveSender(input: z.infer<typeof voiceRequestSchema>) {
+  let phone = unwrapPhoneNumbers(await getOwnedNumbers())
+    .find((item) => item.phoneNumber === input.phoneNumber);
+  if (phone) {
+    await assertPhoneResourcesAvailable(input.siteId, {
+      id: phone.id,
+      phoneNumber: phone.phoneNumber,
+      senderId: phone.senderId,
     });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error(`[Zavu Voice] Error registrando tool ${tool.name} en Zavu:`, errorText);
-    } else {
-      console.log(`[Zavu Voice] Tool ${tool.name} registrado con éxito para sender ${zavuSenderId}.`);
-    }
   }
+  if (!phone) {
+    const purchased = await purchaseNumber(input.phoneNumber);
+    phone = purchased?.phoneNumber || purchased;
+    await assertPhoneResourcesAvailable(input.siteId, {
+      id: phone?.id,
+      phoneNumber: input.phoneNumber,
+      senderId: phone?.senderId,
+    });
+  }
+  if (phone?.senderId) {
+    return { sender: await ensureSenderWebhook(phone.senderId), phone };
+  }
+
+  const sender = await createSender({
+    name: input.name || `Voice ${input.siteId}`,
+    enableSmsOneway: true,
+  });
+  await assignNumberToSender(sender.id, input.phoneNumber);
+  return { sender, phone };
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { siteId, name, phoneNumber } = body;
-
-    if (!siteId) {
-      return NextResponse.json({ error: "siteId is required" }, { status: 400 });
+    const parsed = voiceRequestSchema.safeParse(await request.json());
+    if (!parsed.success) {
+      return NextResponse.json({ error: "Invalid Voice configuration" }, { status: 400 });
     }
+    const input = parsed.data;
+    await requireZavuSiteManager(request, input.siteId);
 
     try {
       await ensureProjectWebhook();
@@ -103,100 +74,72 @@ export async function POST(request: NextRequest) {
       console.warn("[Zavu Voice] Failed to ensure project webhook:", whError);
     }
 
-    // Create a generic sender for Voice
-    let sender;
     try {
-      if (phoneNumber) {
-        try {
-          await purchaseNumber(phoneNumber);
-        } catch (e: any) {
-          console.warn("[Zavu Voice] Number might already be purchased or error buying:", e.message);
-        }
-      }
-
-      sender = await createSender({
-        name: name || `Voice Agent for Site ${siteId}`,
-        enableSmsOneway: true // Required by Zavu when creating a sender without an initial phone number
+      const { sender, phone } = await resolveSender(input);
+      const synced = await syncCustomerSupportVoiceAgent({
+        siteId: input.siteId,
+        senderIds: [sender.id],
       });
-      
-      if (phoneNumber) {
-        await assignNumberToSender(sender.id, phoneNumber);
-      }
-      
-      await attachSenderToAgent(sender.id);
+      await syncVoiceTools({
+        agentId: synced.agent.id,
+        siteId: input.siteId,
+        webhookSecret: synced.webhookSecret,
+      });
+
+      const { channelId } = await upsertChannelConnection(input.siteId, input.channelId, {
+        type: "voice",
+        name: input.name || "Voice Channel",
+        status: "connected",
+        zavu_sender_id: sender.id,
+        metadata: {
+          phone_number: input.phoneNumber,
+          phone_number_id: phone?.id,
+          zavu_agent_id: synced.agent.id,
+          webhook_events: sender.webhook?.events || [],
+        },
+      });
+
+      return NextResponse.json({
+        success: true,
+        channelId,
+        senderId: sender.id,
+        zavuAgentId: synced.agent.id,
+        agentEnabled: synced.agent.enabled,
+      });
     } catch (zavuError: any) {
       console.error("[Zavu Voice] Error creating sender:", zavuError);
       return NextResponse.json(
         { error: `Zavu API Error: ${zavuError.message || "Unknown error"}` },
-        { status: 502 }
+        { status: zavuError.status || 502 }
       );
     }
-
-    // Sync the voice tools immediately after creating the sender
-    await syncSiteToolsToZavu(siteId, sender.id);
-
-    // Save connection to DB
-    const { data: settingsRow, error: settingsError } = await supabaseAdmin
-      .from("settings")
-      .select("id, channels")
-      .eq("site_id", siteId)
-      .maybeSingle();
-
-    if (settingsError) {
-      console.error("[Zavu Voice] Error fetching settings:", settingsError);
-      return NextResponse.json({ error: "Failed to fetch site settings" }, { status: 500 });
-    }
-
-    const currentChannels = settingsRow?.channels || {};
-    const connections = Array.isArray((currentChannels as any).connections)
-      ? [...(currentChannels as any).connections]
-      : [];
-
-    const channelId = uuidv4();
-    const nextConnection = {
-      id: channelId,
-      type: "voice",
-      name: name || "Voice Channel",
-      status: "connected",
-      zavu_sender_id: sender.id,
-      metadata: {
-        phone_number: phoneNumber,
-        webhook_events: sender.webhook?.events || [],
-      },
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-
-    connections.push(nextConnection);
-    const updatedChannels = {
-      ...currentChannels,
-      connections,
-    };
-
-    const { error: updateError } = settingsRow
-      ? await supabaseAdmin
-          .from("settings")
-          .update({ channels: updatedChannels })
-          .eq("site_id", siteId)
-      : await supabaseAdmin
-          .from("settings")
-          .insert({ site_id: siteId, channels: updatedChannels });
-
-    if (updateError) {
-      console.error("[Zavu Voice] Error updating settings:", updateError);
-      return NextResponse.json({ error: "Failed to save connection in database" }, { status: 500 });
-    }
-
-    return NextResponse.json({
-      success: true,
-      channelId,
-      senderId: sender.id,
-    });
   } catch (error: any) {
     console.error("[Zavu Voice] Unhandled error in create voice channel:", error);
     return NextResponse.json(
-      { error: error.message || "Internal server error" },
-      { status: 500 }
+      { error: error.status ? error.message : "Internal server error" },
+      { status: error.status || 500 }
+    );
+  }
+}
+
+export async function PATCH(request: NextRequest) {
+  try {
+    const body = z.object({ siteId: z.string().uuid() }).safeParse(await request.json());
+    if (!body.success) {
+      return NextResponse.json({ error: "Invalid siteId" }, { status: 400 });
+    }
+    await requireZavuSiteAccess(request, body.data.siteId);
+
+    const synced = await syncConnectedCustomerSupportVoiceAgent(body.data.siteId);
+    return NextResponse.json({
+      success: true,
+      synced,
+    });
+  } catch (error: any) {
+    console.error("[Zavu Voice] Agent sync failed:", error);
+    return NextResponse.json(
+      { error: error.status ? error.message : "Failed to sync Voice agent" },
+      { status: error.status || 500 }
     );
   }
 }

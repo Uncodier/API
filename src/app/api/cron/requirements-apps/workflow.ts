@@ -72,6 +72,8 @@ import {
   DEPLOYMENT_INFRASTRUCTURE_PROVENANCE,
 } from '@/lib/services/cron-infrastructure-state';
 import type { GitRepoKind } from '../shared/cron-commit-helpers';
+import { finalizePlanCycleOutcome } from '../shared/plan-cycle-outcome';
+import { shouldHoldNoProgressBlock } from '../shared/no-progress-adjudication';
 
 export interface CronAppsWorkflowInput {
   reqId: string;
@@ -967,14 +969,15 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
         }
       }
 
-      const completedStepsAfter = (finalPlan?.steps as any[] || []).filter((s) => s.status === 'completed').length;
-      const deltaCompleted = completedStepsAfter - completedStepsBefore;
-
-      if (deltaCompleted > 0) {
-        cycleOutcome = 'progress';
-      } else if (attemptedProductWork && cycleOutcome === 'idle') {
-        cycleOutcome = 'product_no_progress';
-      }
+      const completedStepsAfter = (finalPlan?.steps as any[] || [])
+        .filter((s) => s.status === 'completed').length;
+      cycleOutcome = finalizePlanCycleOutcome({
+        completedStepsBefore,
+        completedStepsAfter,
+        attemptedProductWork,
+        infrastructureHalt,
+        currentOutcome: cycleOutcome,
+      });
     } else {
       console.log(`[CronAppsWorkflow] No active plan found.`);
       // If there's no active plan, but we didn't skip the cycle, it means we
@@ -1427,30 +1430,33 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
         let blockerDeferred = false;
         if (
           stillActiveStep &&
-          adjudicationState !== 'consumed' &&
-          accounting.no_progress_cycles === 3
+          shouldHoldNoProgressBlock(adjudicationState)
         ) {
-          try {
-            const request = await requestNoProgressStepAdjudicationStep({
-              planId: stillActivePlan.id,
-              stepId: stillActiveStep.id,
-              expectedGeneration: Number(
-                stillActiveStep.infrastructure_generation || 0,
-              ),
-              expectedExecutionGeneration: executionGeneration,
-              cycleId: cronLockRunId,
-              persistedMetadata: stillActiveStep.metadata,
-            });
-            blockerDeferred = shouldDeferNoProgressBlock(request);
-            if (blockerDeferred) {
+          if (adjudicationState === 'requested') {
+            blockerDeferred = true;
+          } else {
+            try {
+              const request = await requestNoProgressStepAdjudicationStep({
+                planId: stillActivePlan.id,
+                stepId: stillActiveStep.id,
+                expectedGeneration: Number(
+                  stillActiveStep.infrastructure_generation || 0,
+                ),
+                expectedExecutionGeneration: executionGeneration,
+                cycleId: cronLockRunId,
+                persistedMetadata: stillActiveStep.metadata,
+              });
+              blockerDeferred = shouldDeferNoProgressBlock(request);
+            } catch (error: unknown) {
               console.warn(
-                '[CronAppsWorkflow] Deferring the no-progress blocker for one final adjudication cycle.',
+                '[CronAppsWorkflow] Final no-progress adjudication request failed:',
+                error instanceof Error ? error.message : error,
               );
             }
-          } catch (error: unknown) {
+          }
+          if (blockerDeferred) {
             console.warn(
-              '[CronAppsWorkflow] Final no-progress adjudication request failed:',
-              error instanceof Error ? error.message : error,
+              '[CronAppsWorkflow] Deferring the no-progress blocker until the requested adjudication completes.',
             );
           }
         }

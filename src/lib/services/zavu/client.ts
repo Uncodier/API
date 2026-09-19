@@ -42,7 +42,7 @@ function getApiKey(): string {
   return apiKey;
 }
 
-async function zavuFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+export async function zavuFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`${ZAVU_API_BASE}${path}`, {
     ...init,
     headers: {
@@ -196,8 +196,8 @@ export async function ensureProjectWebhook() {
   }
 }
 
-export async function attachSenderToAgent(senderId: string) {
-  const agentId = process.env.ZAVUDEV_AGENT_ID;
+export async function attachSenderToAgent(senderId: string, requestedAgentId?: string) {
+  const agentId = requestedAgentId || process.env.ZAVUDEV_AGENT_ID;
   if (!agentId) {
     console.warn("[Zavu] ZAVUDEV_AGENT_ID is not set; sender will not be attached to an agent");
     return null;
@@ -233,9 +233,16 @@ export async function createSender(params: {
   emailReceivingEnabled?: boolean;
   setAsDefault?: boolean;
 }): Promise<any> {
+  const webhookUrl = getZavuWebhookUrl();
   const payload = await zavuFetch("/senders", {
     method: "POST",
-    body: JSON.stringify(params),
+    body: JSON.stringify({
+      ...params,
+      webhookUrl,
+      webhookEvents: ZAVU_SENDER_WEBHOOK_EVENTS,
+      webhookActive: true,
+      webhookSignatureVersion: "v1+v2",
+    }),
   });
   
   const created = unwrapSender(payload);

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { trySyncConnectedCustomerSupportVoiceAgent } from '@/lib/services/zavu/voice-sync';
 
 const CreateCampaignSchema = z.object({
   title: z.string().min(1, 'Title is required'),
@@ -55,5 +56,6 @@ export async function createCampaignCore(input: any) {
   if (error) {
     throw new Error(error.message);
   }
+  await trySyncConnectedCustomerSupportVoiceAgent(validated.site_id);
   return campaign;
 }

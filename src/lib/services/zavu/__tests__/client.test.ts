@@ -1,13 +1,15 @@
 import {
   activateSenderChannel,
+  attachSenderToAgent,
   createSender,
   deleteSender,
   ensureProjectWebhook,
   ensureSenderWebhook,
   ZAVU_PROJECT_WEBHOOK_EVENTS,
   ZAVU_SENDER_WEBHOOK_EVENTS,
-  sendChannelMessage
+  sendChannelMessage,
 } from "../client";
+import { createStandaloneAgent, upsertAgentTool } from "../agent-client";
 
 function mockJson(status: number, body: unknown) {
   return {
@@ -199,6 +201,66 @@ describe("Zavu client webhook contract", () => {
     expect(global.fetch).toHaveBeenCalledWith(
       "https://api.zavu.dev/v1/senders/snd_1",
       expect.objectContaining({ method: "DELETE" })
+    );
+  });
+
+  it("creates a standalone managed agent", async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce(
+      mockJson(201, { agent: { id: "agent_1", name: "Support" } })
+    );
+
+    const agent = await createStandaloneAgent({
+      name: "Support",
+      provider: "zavu",
+      model: "openai/gpt-4o-mini",
+      systemPrompt: "Help customers.",
+    });
+
+    expect(agent.id).toBe("agent_1");
+    expect(global.fetch).toHaveBeenCalledWith(
+      "https://api.zavu.dev/v1/agents",
+      expect.objectContaining({ method: "POST" })
+    );
+  });
+
+  it("attaches a sender to the requested agent instead of the legacy global agent", async () => {
+    process.env.ZAVUDEV_AGENT_ID = "agent_global";
+    (global.fetch as jest.Mock).mockResolvedValueOnce(
+      mockJson(201, { agent: { id: "agent_site" } })
+    );
+
+    await attachSenderToAgent("sender_1", "agent_site");
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "https://api.zavu.dev/v1/agents/agent_site/senders",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ senderId: "sender_1" }),
+      })
+    );
+  });
+
+  it("updates an existing tool by name instead of creating duplicates", async () => {
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce(mockJson(200, {
+        items: [{ id: "tool_1", agentId: "agent_1", name: "capture_lead" }],
+      }))
+      .mockResolvedValueOnce(mockJson(200, {
+        tool: { id: "tool_1", agentId: "agent_1", name: "capture_lead" },
+      }));
+
+    await upsertAgentTool("agent_1", {
+      name: "capture_lead",
+      description: "Capture a lead",
+      parameters: { type: "object" },
+      webhookUrl: "https://backend.example.com/voice-tools",
+      webhookSecret: "secret",
+    });
+
+    expect(global.fetch).toHaveBeenNthCalledWith(
+      2,
+      "https://api.zavu.dev/v1/agents/agent_1/tools/tool_1",
+      expect.objectContaining({ method: "PATCH" })
     );
   });
 

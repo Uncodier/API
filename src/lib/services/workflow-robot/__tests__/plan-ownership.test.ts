@@ -1,6 +1,7 @@
 import {
   findAssistantManagedPlan,
   findAssistantManagedPlanForRequirement,
+  isRespawnManagedPlan,
   isWorkflowManagedPlan,
 } from '../plan-ownership';
 
@@ -10,6 +11,18 @@ describe('workflow plan ownership', () => {
     expect(isWorkflowManagedPlan({ metadata: { workflow_run: true } })).toBe(true);
     expect(isWorkflowManagedPlan({ metadata: { workflow_run: false } })).toBe(false);
     expect(isWorkflowManagedPlan({ metadata: null })).toBe(false);
+  });
+
+  it('prevents respawns for workflow and requirement-managed plans', () => {
+    expect(isRespawnManagedPlan({
+      metadata: { requirement_id: 'requirement-1' },
+    })).toBe(true);
+    expect(isRespawnManagedPlan({
+      metadata: { workflow_run: true },
+    })).toBe(true);
+    expect(isRespawnManagedPlan({
+      metadata: { source: 'assistant' },
+    })).toBe(false);
   });
 
   it('keeps generic assistants away from workflow-managed plans', () => {

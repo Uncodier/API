@@ -133,7 +133,7 @@ export async function spawnSilentContinueWorkflow({
   const { start } = await import('workflow/api');
   const { runAssistantWorkflow } = await import('@/app/api/robots/instance/assistant/workflow');
 
-  await start(runAssistantWorkflow, [
+  const workflowArgs: Parameters<typeof runAssistantWorkflow> = [
     instanceId,
     SILENT_CONTINUE_PROMPT,
     siteId,
@@ -146,6 +146,8 @@ export async function spawnSilentContinueWorkflow({
     instanceNodeId,
     expectedResultsAmount,
     contextString,
+    undefined,
     { silentContinue: true },
-  ]);
+  ];
+  await start(runAssistantWorkflow, workflowArgs);
 }

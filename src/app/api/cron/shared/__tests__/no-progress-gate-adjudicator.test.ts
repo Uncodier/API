@@ -1,8 +1,10 @@
 const markNoProgressAdjudicationConsumed = jest.fn();
+const markNoProgressAdjudicationRetryable = jest.fn();
 const runSingleTurnGate = jest.fn();
 
 jest.mock('../single-turn-step-state', () => ({
   markNoProgressAdjudicationConsumed,
+  markNoProgressAdjudicationRetryable,
 }));
 jest.mock('../single-turn-gate', () => ({
   runSingleTurnGate,
@@ -51,6 +53,7 @@ describe('gate-only no-progress adjudicator', () => {
     runSingleTurnGate.mockResolvedValue({
       ok: true,
       isDone: true,
+      gatePassed: true,
       persistedTerminalStatus: 'completed',
       infrastructureGeneration: 5,
     });
@@ -75,13 +78,15 @@ describe('gate-only no-progress adjudicator', () => {
     );
   });
 
-  it('halts when the post-gate consume CAS is stale', async () => {
+  it('halts when the post-gate retryable CAS is stale', async () => {
     runSingleTurnGate.mockResolvedValue({
       ok: true,
       isDone: false,
+      gatePassed: false,
+      remediationScheduled: true,
       infrastructureGeneration: 4,
     });
-    markNoProgressAdjudicationConsumed.mockResolvedValue({
+    markNoProgressAdjudicationRetryable.mockResolvedValue({
       persisted: false,
       state: 'stale',
       generation: 5,
@@ -98,6 +103,34 @@ describe('gate-only no-progress adjudicator', () => {
     expect(runSingleTurnGate).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps a failed product gate retryable for remediation', async () => {
+    runSingleTurnGate.mockResolvedValue({
+      ok: true,
+      isDone: false,
+      gatePassed: false,
+      remediationScheduled: true,
+      infrastructureGeneration: 4,
+    });
+    markNoProgressAdjudicationRetryable.mockResolvedValue({
+      persisted: true,
+      state: 'applied',
+      generation: 5,
+    });
+
+    await runGateOnlyNoProgressAdjudication({
+      gateInput: gateInput(),
+      executionEventId: 'cycle-3:step-1',
+    });
+
+    expect(markNoProgressAdjudicationConsumed).not.toHaveBeenCalled();
+    expect(markNoProgressAdjudicationRetryable).toHaveBeenCalledWith(
+      expect.objectContaining({
+        expectedGeneration: 4,
+        eventId: 'cycle-3:step-1:no-progress-retryable',
+      }),
+    );
+  });
+
   it('keeps the request retryable after a transient gate failure', async () => {
     runSingleTurnGate.mockResolvedValue({
       ok: false,
@@ -112,5 +145,6 @@ describe('gate-only no-progress adjudicator', () => {
     });
 
     expect(markNoProgressAdjudicationConsumed).not.toHaveBeenCalled();
+    expect(markNoProgressAdjudicationRetryable).not.toHaveBeenCalled();
   });
 });

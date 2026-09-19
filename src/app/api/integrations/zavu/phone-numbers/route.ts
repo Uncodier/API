@@ -1,19 +1,33 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getOwnedNumbers, purchaseNumber } from "@/lib/services/zavu";
+import { z } from "zod";
+import {
+  assertPhoneResourcesAvailable,
+  filterPhoneNumbersForSite,
+  getOwnedNumbers,
+  purchaseNumber,
+  requireZavuSiteManager,
+} from "@/lib/services/zavu";
+
+const purchaseSchema = z.object({
+  siteId: z.string().uuid(),
+  phoneNumber: z.string().trim().min(5).max(30),
+});
 
 export async function GET(request: NextRequest) {
   try {
+    const siteId = request.nextUrl.searchParams.get("siteId");
+    if (!siteId || !z.string().uuid().safeParse(siteId).success) {
+      return NextResponse.json({ error: "Invalid siteId" }, { status: 400 });
+    }
+    await requireZavuSiteManager(request, siteId);
+
     const data = await getOwnedNumbers();
-    // Zavu usually returns paginated results in 'items' or 'results'
     const results = data?.items || data?.results || (Array.isArray(data) ? data : []);
-    
-    // Filter only those that have 'voice' capability if we want to be strict,
-    // but the frontend will show them.
-    return NextResponse.json(results);
+    return NextResponse.json(await filterPhoneNumbersForSite(siteId, results));
   } catch (error: any) {
     console.error("[Zavu PhoneNumbers] Error fetching owned numbers:", error);
     return NextResponse.json(
-      { error: error.message || "Failed to fetch owned phone numbers" },
+      { error: error.status ? error.message : "Failed to fetch owned phone numbers" },
       { status: error.status || 500 }
     );
   }
@@ -21,20 +35,20 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { phoneNumber } = body;
-
-    if (!phoneNumber) {
-      return NextResponse.json({ error: "Phone number is required" }, { status: 400 });
+    const parsed = purchaseSchema.safeParse(await request.json());
+    if (!parsed.success) {
+      return NextResponse.json({ error: "Invalid phone-number purchase request" }, { status: 400 });
     }
+    const { siteId, phoneNumber } = parsed.data;
+    await requireZavuSiteManager(request, siteId);
+    await assertPhoneResourcesAvailable(siteId, { phoneNumber });
 
     const data = await purchaseNumber(phoneNumber);
-    
     return NextResponse.json({ success: true, data });
   } catch (error: any) {
     console.error("[Zavu PhoneNumbers] Error purchasing number:", error);
     return NextResponse.json(
-      { error: error.message || "Failed to purchase phone number" },
+      { error: error.status ? error.message : "Failed to purchase phone number" },
       { status: error.status || 500 }
     );
   }

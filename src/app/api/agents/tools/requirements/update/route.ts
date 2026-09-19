@@ -13,6 +13,7 @@ import {
   verifyGitBindingReachable,
 } from '../git-binding-schema';
 import { checkAndResetCronAttempts } from '@/lib/services/requirement-cron-reset';
+import { assertRequirementReopenAuthorized } from '@/lib/services/requirement-status-recovery';
 
 const UpdateRequirementSchema = z.object({
   requirement_id: z.string().uuid('Requirement ID must be a valid UUID'),
@@ -42,7 +43,8 @@ export async function updateRequirementCore(params: any) {
   const validated = UpdateRequirementSchema.parse(params);
 
 
-  const { requirement_id, site_id, ...updateFields } = validated;
+  const { requirement_id, site_id, ...validatedUpdateFields } = validated;
+  const updateFields = { ...validatedUpdateFields };
 
   const existing = await getRequirementById(requirement_id);
   if (!existing) {
@@ -51,6 +53,20 @@ export async function updateRequirementCore(params: any) {
 
   if (existing.site_id !== site_id) {
     throw new Error('No tienes permiso para actualizar este requerimiento');
+  }
+
+  const reopensBlockedRequirement =
+    existing.status === 'blocked' && updateFields.status === 'in-progress';
+  if (reopensBlockedRequirement) {
+    const recovered = existing.metadata
+      ? await checkAndResetCronAttempts(requirement_id, existing.metadata)
+      : false;
+    assertRequirementReopenAuthorized({
+      currentStatus: existing.status,
+      nextStatus: updateFields.status,
+      recoveredFromUserAction: recovered,
+    });
+    delete updateFields.status;
   }
 
   // Phase 10 guardrail: reject a requirement closure while core backlog items
@@ -92,7 +108,7 @@ export async function updateRequirementCore(params: any) {
   const requirement = await updateRequirement(requirement_id, updateFields);
 
   // Unblock if there was a recent user action
-  if (existing.metadata) {
+  if (!reopensBlockedRequirement && existing.metadata) {
     await checkAndResetCronAttempts(requirement_id, existing.metadata);
   }
 

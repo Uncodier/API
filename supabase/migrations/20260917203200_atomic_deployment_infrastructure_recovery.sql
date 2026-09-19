@@ -182,14 +182,14 @@ BEGIN
       IF v_structured_match
         AND v_plan.id::text = v_blocker_plan_id
         AND v_step->>'id' = v_blocker_step_id
-        AND CASE
+        AND (CASE
           WHEN COALESCE(
             v_step->>'infrastructure_generation',
             ''
           ) ~ '^[0-9]{1,9}$'
             THEN (v_step->>'infrastructure_generation')::integer
           ELSE -1
-        END = v_blocker_generation
+        END) = v_blocker_generation
       THEN
         v_blocker_step_matched := true;
       END IF;
@@ -227,14 +227,14 @@ BEGIN
       OR (
         v_legacy_matched
         AND v_legacy_audited
-        AND CASE
+        AND (CASE
           WHEN COALESCE(
             v_requirement_metadata->>'deployment_recovery_version',
             ''
           ) ~ '^[0-9]{1,9}$'
             THEN (v_requirement_metadata->>'deployment_recovery_version')::integer
           ELSE 0
-        END < 1
+        END) < 1
       )
     )
   ) THEN

@@ -6,6 +6,13 @@ export function isWorkflowManagedPlan(plan: PlanWithMetadata | null | undefined)
   return plan?.metadata?.workflow_run === true || plan?.metadata?.workflow_template === true;
 }
 
+export function isRespawnManagedPlan(plan: PlanWithMetadata | null | undefined): boolean {
+  return (
+    isWorkflowManagedPlan(plan) ||
+    typeof plan?.metadata?.requirement_id === 'string'
+  );
+}
+
 export function findAssistantManagedPlan<T extends PlanWithMetadata>(
   plans: T[] | null | undefined,
 ): T | undefined {

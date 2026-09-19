@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { trySyncConnectedCustomerSupportVoiceAgent } from '@/lib/services/zavu/voice-sync';
 
 export interface SiteSettingsParams {
   action: 'get' | 'update';
@@ -142,6 +143,7 @@ export async function siteSettingsCore(site_id: string, params: SiteSettingsPara
       }
 
       console.log(`[SiteSettings] ✅ Settings updated successfully`);
+      await trySyncConnectedCustomerSupportVoiceAgent(site_id);
       
       return {
         success: true,

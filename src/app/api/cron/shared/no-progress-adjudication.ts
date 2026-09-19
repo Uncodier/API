@@ -18,3 +18,9 @@ export function isNoProgressAdjudicationRequested(
       executionGeneration
   );
 }
+
+export function shouldHoldNoProgressBlock(
+  state: unknown,
+): boolean {
+  return state !== 'consumed';
+}

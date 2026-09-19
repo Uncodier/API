@@ -105,6 +105,30 @@ export async function markNoProgressAdjudicationConsumed(params: {
   eventId: string;
   persistedMetadata?: Record<string, unknown>;
 }): Promise<PlanStepPatchMutation> {
+  return markNoProgressAdjudicationState(params, 'consumed', 'consumed_at');
+}
+
+export async function markNoProgressAdjudicationRetryable(params: {
+  planId: string;
+  stepId: string;
+  expectedGeneration: number;
+  eventId: string;
+  persistedMetadata?: Record<string, unknown>;
+}): Promise<PlanStepPatchMutation> {
+  return markNoProgressAdjudicationState(params, 'retryable', 'retryable_at');
+}
+
+async function markNoProgressAdjudicationState(
+  params: {
+    planId: string;
+    stepId: string;
+    expectedGeneration: number;
+    eventId: string;
+    persistedMetadata?: Record<string, unknown>;
+  },
+  state: 'consumed' | 'retryable',
+  timestampKey: 'consumed_at' | 'retryable_at',
+): Promise<PlanStepPatchMutation> {
   return patchPlanStepAtomically({
     planId: params.planId,
     stepId: params.stepId,
@@ -121,8 +145,8 @@ export async function markNoProgressAdjudicationConsumed(params: {
               ]
             ) as Record<string, unknown> | undefined
           ),
-          state: 'consumed',
-          consumed_at: new Date().toISOString(),
+          state,
+          [timestampKey]: new Date().toISOString(),
         },
       },
     },

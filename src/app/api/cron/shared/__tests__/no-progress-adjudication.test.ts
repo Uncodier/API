@@ -1,5 +1,6 @@
 import {
   isNoProgressAdjudicationRequested,
+  shouldHoldNoProgressBlock,
 } from '../no-progress-adjudication';
 
 describe('no-progress step adjudication', () => {
@@ -30,4 +31,10 @@ describe('no-progress step adjudication', () => {
     }, 4)).toBe(false);
   });
 
+  it('holds the blocker until adjudication is consumed', () => {
+    expect(shouldHoldNoProgressBlock(undefined)).toBe(true);
+    expect(shouldHoldNoProgressBlock('requested')).toBe(true);
+    expect(shouldHoldNoProgressBlock('retryable')).toBe(true);
+    expect(shouldHoldNoProgressBlock('consumed')).toBe(false);
+  });
 });

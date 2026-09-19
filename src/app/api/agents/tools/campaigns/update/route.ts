@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { trySyncConnectedCustomerSupportVoiceAgent } from '@/lib/services/zavu/voice-sync';
 
 const UpdateCampaignSchema = z.object({
   campaign_id: z.string().uuid('Valid campaign_id required'),
@@ -61,6 +62,7 @@ export async function POST(request: NextRequest) {
     if (error) {
       throw new Error(error.message);
     }
+    await trySyncConnectedCustomerSupportVoiceAgent(validated.site_id);
 
     return NextResponse.json({
       success: true,
