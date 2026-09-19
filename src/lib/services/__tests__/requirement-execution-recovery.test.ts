@@ -14,18 +14,22 @@ describe('resumeRequirementExecutionOnUserAction', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockRpc.mockResolvedValue({
-      data: { plans_updated: 1, steps_cleared: 1 },
+      data: { state: 'applied', plans_updated: 1, steps_cleared: 1 },
       error: null,
     });
   });
 
   it('clears circuits and resumes plans through one atomic RPC', async () => {
-    await resumeRequirementExecutionOnUserAction(
+    await expect(resumeRequirementExecutionOnUserAction(
       'requirement-1',
       'instance-1',
       true,
       'user-action-1',
-    );
+    )).resolves.toEqual({
+      state: 'applied',
+      plans_updated: 1,
+      steps_cleared: 1,
+    });
 
     expect(mockRpc).toHaveBeenCalledWith(
       'resume_instance_execution_on_user_action',

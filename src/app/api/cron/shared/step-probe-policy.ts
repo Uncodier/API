@@ -160,17 +160,6 @@ export function buildRuntimeTargetPlan(input: {
       });
       continue;
     }
-    if (target.method !== 'GET' && target.payload === undefined) {
-      observations.push({
-        kind: 'api',
-        disposition: 'unknown',
-        source: 'contract',
-        target: `${target.method} ${target.path}`,
-        detail:
-          'Required non-GET target has no explicit payload; the harness did not invent one.',
-      });
-      continue;
-    }
     upsertApi(apis, {
       ...target,
       kind: 'api',
@@ -375,6 +364,7 @@ export function evaluateRuntimeProbe(
       'uncaught_exception',
       'syntax_error',
       'type_error',
+      'hydration_mismatch',
     ].includes(error.kind);
     observations.push({
       kind: 'runtime',

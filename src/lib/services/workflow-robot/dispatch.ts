@@ -76,8 +76,10 @@ export async function dispatchWorkflowEvent(event: DispatchEvent): Promise<{ sta
         idempotency_key,
       });
       if (materialized.steps.length === 0 && materialized.run_plan_id) {
-        skipped++;
-        continue;
+        if (!materialized.resume_existing_run) {
+          skipped++;
+          continue;
+        }
       }
       started++;
       void runWorkflowPlan(materialized.run_plan_id).catch((err) => {

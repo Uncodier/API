@@ -20,7 +20,7 @@ DECLARE
   v_deleted integer := 0;
   v_has_more boolean := false;
 BEGIN
-  IF p_row_limit < 1 OR p_row_limit > 500 THEN
+  IF p_row_limit IS NULL OR p_row_limit < 1 OR p_row_limit > 500 THEN
     RAISE EXCEPTION 'Row limit must be between 1 and 500';
   END IF;
 
@@ -98,6 +98,37 @@ BEGIN
     FROM public.session_events AS event
     WHERE event.id = ANY(v_row_ids)
   ),
+  unique_recording_rows AS (
+    SELECT DISTINCT ON (chunk_identity)
+      id,
+      created_at,
+      timestamp,
+      properties
+    FROM (
+      SELECT
+        row.*,
+        CASE
+          WHEN row.properties->'chunk_manifest' <> '{}'::jsonb
+            THEN COALESCE(
+              (
+                SELECT jsonb_agg(
+                  manifest.value->>'content_hash'
+                  ORDER BY manifest.value->>'content_hash'
+                )
+                FROM jsonb_each(
+                  row.properties->'chunk_manifest'
+                ) AS manifest
+              ),
+              row.properties->'chunk_manifest'
+            )
+          WHEN row.properties->'chunks' <> '[]'::jsonb
+            THEN row.properties->'chunks'
+          ELSE jsonb_build_object('row_id', row.id)
+        END AS chunk_identity
+      FROM recording_rows AS row
+    ) AS identified
+    ORDER BY chunk_identity, created_at, id
+  ),
   latest_metadata AS (
     SELECT
       CASE
@@ -105,7 +136,7 @@ BEGIN
           THEN properties->'metadata'
         ELSE '{}'::jsonb
       END AS metadata
-    FROM recording_rows
+    FROM unique_recording_rows
     ORDER BY created_at DESC, id DESC
     LIMIT 1
   ),
@@ -140,7 +171,16 @@ BEGIN
           ELSE 0
         END
       ) AS total_events
-    FROM recording_rows
+    FROM unique_recording_rows
+  ),
+  ledger_stats AS (
+    SELECT
+      CASE
+        WHEN count(*) > 0 AND count(chunk.event_count) = count(*)
+          THEN sum(chunk.event_count)::bigint
+      END AS total_events
+    FROM public.session_recording_chunks AS chunk
+    WHERE chunk.session_id = v_session_id
   ),
   path_values AS (
     SELECT
@@ -208,16 +248,23 @@ BEGIN
       'start_time', stats.start_time,
       'end_time', stats.end_time,
       'duration', GREATEST(0, stats.end_time - stats.start_time),
-      'total_events', stats.total_events,
+      'total_events', COALESCE(ledger.total_events, stats.total_events),
       'last_chunk_at', stats.last_chunk_at,
       'metadata', metadata.metadata
     ),
     updated_at = timezone('utc', now())
   FROM recording_stats AS stats
+  CROSS JOIN ledger_stats AS ledger
   CROSS JOIN latest_metadata AS metadata
   CROSS JOIN merged_paths AS paths
   CROSS JOIN merged_manifest AS manifest
   WHERE target.id = v_canonical_id;
+
+  UPDATE public.session_recording_chunks
+  SET recording_event_id = v_canonical_id
+  WHERE session_id = v_session_id
+    AND recording_event_id = ANY(v_row_ids)
+    AND recording_event_id <> v_canonical_id;
 
   DELETE FROM public.session_events
   WHERE id = ANY(v_row_ids)

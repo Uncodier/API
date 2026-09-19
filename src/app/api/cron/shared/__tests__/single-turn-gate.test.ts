@@ -56,6 +56,10 @@ jest.mock('@/lib/services/cron-infrastructure-state', () => ({
   buildGateInfrastructureWait: jest.fn(() => ({ kind: 'gate' })),
 }));
 
+jest.mock('@/lib/services/requirement-ground-truth', () => ({
+  writeEvidence: jest.fn(async () => ({})),
+}));
+
 jest.mock('@/lib/services/sandbox-sdk', () => ({
   sandboxIdentity: jest.fn(() => 'replacement-sandbox'),
 }));
@@ -179,7 +183,6 @@ describe('runSingleTurnGate', () => {
   it.each([
     ['retryable failed', { id: 'step-2', status: 'failed', retry_count: 1 }],
     ['exhausted failed', { id: 'step-2', status: 'failed', retry_count: 2 }],
-    ['cancelled', { id: 'step-2', status: 'cancelled' }],
   ])(
     'does not run the final Judge with a %s sibling',
     async (_label, sibling) => {
@@ -212,6 +215,33 @@ describe('runSingleTurnGate', () => {
       expect(mockSetItemStatus).not.toHaveBeenCalled();
     },
   );
+
+  it('runs the final Judge when all sibling steps are cancelled', async () => {
+    mockMaybeSingle.mockResolvedValue({
+      data: {
+        steps: [
+          { id: 'step-1', status: 'in_progress' },
+          { id: 'step-2', status: 'cancelled' },
+        ],
+      },
+      error: null,
+    });
+    mockUpdatePlanStepStatus.mockResolvedValueOnce({
+      persisted: true,
+      state: 'applied',
+      generation: 4,
+    });
+    mockSetItemStatus.mockResolvedValue({ id: 'item-1', status: 'done' });
+
+    await expect(runSingleTurnGate(input())).resolves.toMatchObject({
+      ok: true,
+      persistedTerminalStatus: 'completed',
+    });
+    expect(mockRunArchetypePostGate).toHaveBeenCalledTimes(1);
+    expect(mockCompletePlanStepAfterGate).toHaveBeenCalledWith(
+      expect.objectContaining({ finalGateApproved: true }),
+    );
+  });
 
   it('does not run the final Judge when the current step id is duplicated', async () => {
     mockMaybeSingle.mockResolvedValue({
@@ -282,6 +312,58 @@ describe('runSingleTurnGate', () => {
           'The orders page renders',
           'npm test succeeds',
         ]),
+      }),
+    );
+  });
+
+  it('passes assistant tests and API observations to the Judge', async () => {
+    mockRunGateForFlow.mockResolvedValue({
+      ok: true,
+      richSignals: {
+        observations: [{
+          kind: 'api',
+          disposition: 'pass',
+          source: 'contract',
+          target: 'POST /api/assets',
+          detail: 'HTTP 201',
+        }],
+      },
+    });
+    mockUpdatePlanStepStatus.mockResolvedValueOnce({
+      persisted: true,
+      state: 'applied',
+      generation: 4,
+    });
+
+    await runSingleTurnGate({
+      ...input(),
+      result: {
+        messages: [],
+        steps: [{
+          toolCalls: [{
+            id: 'test',
+            toolName: 'sandbox_run_command',
+            args: { command: 'npm test' },
+          }],
+          toolResults: [{
+            toolCallId: 'test',
+            result: { exitCode: 0, stdout: 'PASS' },
+          }],
+        }],
+      },
+    });
+
+    expect(mockRunArchetypePostGate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        signals: expect.objectContaining({
+          tests: expect.objectContaining({
+            ok: true,
+            tests: [expect.objectContaining({ command: 'npm test' })],
+          }),
+          observations: [
+            expect.objectContaining({ target: 'POST /api/assets' }),
+          ],
+        }),
       }),
     );
   });

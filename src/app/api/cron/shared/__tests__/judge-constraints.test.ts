@@ -82,4 +82,115 @@ describe('runJudge constraint rejection', () => {
 
     expect(verdict.reason).toContain('requires successful test evidence');
   });
+
+  it('uses a successful API observation as runtime evidence', () => {
+    const item = {
+      id: 'api-2',
+      title: 'Read assets API',
+      kind: 'api',
+      phase_id: 'build',
+      status: 'in_progress',
+      scope_level: 'full',
+      acceptance: ['GET /api/assets returns 200'],
+      attempts: 0,
+      tier: 'core',
+    } as BacklogItem;
+    const evidence: EvidenceRecord = {
+      schema_version: 1,
+      item_id: item.id,
+      captured_at: new Date().toISOString(),
+      critic_passes: 0,
+      tests: [{
+        command: 'npm test -- assets.test.ts',
+        exit_code: 0,
+        output_tail: 'PASS',
+        ran_after_changes: true,
+      }],
+      observations: [{
+        kind: 'api',
+        disposition: 'pass',
+        source: 'contract',
+        target: 'GET /api/assets',
+        detail: 'HTTP 200',
+      }],
+      changed_files: ['src/app/api/assets/route.ts'],
+    };
+
+    const verdict = runJudge({ item, evidence, flow: 'app' });
+
+    expect(verdict.verdict).toBe('approved');
+  });
+
+  it('does not use a failed API observation to satisfy acceptance', () => {
+    const item = {
+      id: 'api-failed',
+      title: 'Read assets API',
+      kind: 'api',
+      phase_id: 'build',
+      status: 'in_progress',
+      scope_level: 'full',
+      acceptance: ['GET /api/assets returns 200'],
+      attempts: 0,
+      tier: 'core',
+    } as BacklogItem;
+    const evidence: EvidenceRecord = {
+      schema_version: 1,
+      item_id: item.id,
+      captured_at: new Date().toISOString(),
+      critic_passes: 0,
+      tests: [{
+        command: 'npm test',
+        exit_code: 0,
+        output_tail: 'PASS',
+        ran_after_changes: true,
+      }],
+      observations: [{
+        kind: 'api',
+        disposition: 'hard_fail',
+        source: 'contract',
+        target: 'GET /api/assets',
+        detail: 'HTTP 500',
+      }],
+    };
+
+    const verdict = runJudge({ item, evidence, flow: 'app' });
+
+    expect(verdict.verdict).toBe('rejected');
+  });
+
+  it('rejects missing expected API routes and failed kind requirements', () => {
+    const item = {
+      id: 'api-3',
+      title: 'Create assets API',
+      kind: 'api',
+      phase_id: 'build',
+      status: 'in_progress',
+      scope_level: 'full',
+      acceptance: ['POST /api/assets returns 201'],
+      attempts: 0,
+      tier: 'core',
+    } as BacklogItem;
+    const evidence: EvidenceRecord = {
+      schema_version: 1,
+      item_id: item.id,
+      captured_at: new Date().toISOString(),
+      critic_passes: 0,
+      feature_coverage: {
+        ok: false,
+        expected_api_routes: ['/api/assets'],
+        present_api_files: [],
+        kind_requirements: [{
+          kind: 'api',
+          requirement: 'at_least_one_route_file',
+          satisfied: false,
+          detail: 'no matching route.ts found',
+        }],
+      },
+    };
+
+    const verdict = runJudge({ item, evidence, flow: 'app' });
+
+    expect(verdict.verdict).toBe('rejected');
+    expect(verdict.reason).toContain('at_least_one_route_file');
+  });
 });

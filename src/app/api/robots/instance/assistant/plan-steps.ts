@@ -1,5 +1,4 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { getInstancePlansCore } from '@/app/api/agents/tools/instance_plan/get/route';
 import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/route';
 import { processAssistantTurn } from './steps';
 import { AssistantContext } from './types';
@@ -7,9 +6,6 @@ import { SkillsService } from '@/lib/services/skills-service';
 import { getStepCheckpointPromptFragment, getFileFreshnessPromptFragment } from '@/app/api/cron/shared/step-git-prompts';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import { getRedisClient } from '@/lib/utils/redis-client';
-import {
-  findAssistantManagedPlanForRequirement,
-} from '@/lib/services/workflow-robot/plan-ownership';
 
 const ROLE_TO_SKILL: Record<string, string> = {
   'template_selection': 'makinari-obj-template-selection',
@@ -36,21 +32,40 @@ export async function getActiveInstancePlan(
 ) {
   'use step';
   for (const status of ['in_progress', 'active', 'pending'] as const) {
-    const result = await getInstancePlansCore({
-      instance_id: instanceId,
-      site_id: siteId,
-      status,
-      limit: 20,
-    });
-    const assistantManagedPlan = result.success
-      ? findAssistantManagedPlanForRequirement(
-          result.data.plans,
-          requirementId,
-        )
-      : null;
-    if (assistantManagedPlan) {
-      return assistantManagedPlan;
+    const buildQuery = () => supabaseAdmin
+      .from('instance_plans')
+      .select('*')
+      .eq('instance_id', instanceId)
+      .eq('site_id', siteId)
+      .eq('status', status)
+      .or('metadata->>workflow_run.is.null,metadata->>workflow_run.eq.false')
+      .or('metadata->>workflow_template.is.null,metadata->>workflow_template.eq.false')
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
+      .limit(1);
+
+    if (requirementId) {
+      const { data: owned, error: ownedError } = await buildQuery()
+        .contains('metadata', { requirement_id: requirementId })
+        .maybeSingle();
+      if (ownedError) {
+        throw new Error(`Failed to load requirement plan: ${ownedError.message}`);
+      }
+      if (owned) return owned;
+
+      const { data: legacy, error: legacyError } = await buildQuery()
+        .is('metadata->>requirement_id', null)
+        .maybeSingle();
+      if (legacyError) {
+        throw new Error(`Failed to load legacy requirement plan: ${legacyError.message}`);
+      }
+      if (legacy) return legacy;
+      continue;
     }
+
+    const { data, error } = await buildQuery().maybeSingle();
+    if (error) throw new Error(`Failed to load active plan: ${error.message}`);
+    if (data) return data;
   }
 
   return null;

@@ -128,6 +128,11 @@ async function evaluateKindRequirements(
   presence: {
     presentPageFiles: string[];
     presentApiFiles: string[];
+    apiTargets: Array<{
+      route: string;
+      file: string;
+      methods: string[];
+    }>;
   },
 ): Promise<KindRequirementResult[]> {
   const out: KindRequirementResult[] = [];
@@ -153,15 +158,23 @@ async function evaluateKindRequirements(
         satisfied: apis.length > 0,
         detail: apis.join(', ') || 'no matching src/app/api/*/route.ts found',
       });
-      if (apis.length > 0) {
-        const handlers = item.kind === 'crud' ? ['GET', 'POST'] : ['GET'];
-        const declared = await apiFileDeclaresHandlers(sandbox, apis[0], handlers);
-        for (const h of handlers) {
+      for (const target of presence.apiTargets) {
+        const handlers = target.methods.length > 0
+          ? target.methods
+          : item.kind === 'crud'
+            ? ['GET', 'POST']
+            : [];
+        const declared = await apiFileDeclaresHandlers(
+          sandbox,
+          target.file,
+          handlers,
+        );
+        for (const handler of handlers) {
           out.push({
             kind: item.kind,
-            requirement: `exports_${h}`,
-            satisfied: !!declared[h],
-            detail: `${apis[0]}`,
+            requirement: `${handler} ${target.route} exports_${handler}`,
+            satisfied: !!declared[handler],
+            detail: target.file,
           });
         }
       }
@@ -229,9 +242,25 @@ export async function computeFeatureCoverage(params: {
     if (found) presentPageFiles.push(found);
   }
   const presentApiFiles: string[] = [];
+  const apiTargets: Array<{
+    route: string;
+    file: string;
+    methods: string[];
+  }> = [];
   for (const route of expectedApiRoutes) {
     const found = await findApiFile(sandbox, route);
-    if (found) presentApiFiles.push(found);
+    if (!found) continue;
+    presentApiFiles.push(found);
+    const methods = Array.from(new Set(
+      acceptance
+        .filter((line) => line.includes(route))
+        .flatMap((line) =>
+          Array.from(
+            line.matchAll(/\b(GET|POST|PUT|PATCH|DELETE)\b/gi),
+            (match) => match[1].toUpperCase(),
+          )),
+    ));
+    apiTargets.push({ route, file: found, methods });
   }
 
   const presentTouches: string[] = [];
@@ -244,6 +273,7 @@ export async function computeFeatureCoverage(params: {
   const kindResults = await evaluateKindRequirements(sandbox, item, {
     presentPageFiles,
     presentApiFiles,
+    apiTargets,
   });
 
   const kindOk = kindResults.every((r) => r.satisfied);

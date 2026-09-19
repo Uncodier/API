@@ -1,25 +1,21 @@
-/**
- * Archetype runner — Critic + Judge.
- *
- * Both archetypes are intentionally **deterministic** (rule-based) at this
- * phase rather than LLM-backed. The plan calls for "critic and judge run in
- * ephemeral sub-agent sessions"; we keep that contract by exporting two pure
- * functions whose inputs and outputs are typed and reproducible. Once the
- * harness is stable a future patch can swap the rule pass for an LLM
- * evaluator without changing call-sites in `inline-step-executor.ts`.
- *
- * Critic = bounded suggestions (no authority).
- * Judge  = single-shot verdict that decides item completion.
- *
- * Hard rule: the Judge ONLY approves when `evidence.tool_calls` carries
- * matching proof for every acceptance entry. Free-text claims are ignored.
- */
+/** Deterministic Critic and Judge rules for persisted execution evidence. */
 
 import type { BacklogItem, BacklogItemKind } from '@/lib/services/requirement-backlog-types';
 import type { RequirementKind } from '@/lib/services/requirement-flows';
 import type { EvidenceRecord } from '@/lib/services/requirement-ground-truth';
 import { validateAcceptance } from '@/lib/services/requirement-acceptance';
 import { extractRequirementConstraints, findConstraintViolations } from '@/lib/services/requirement-constraints';
+import {
+  commitSummary,
+  evidenceClaim,
+  evidenceHaystack,
+  featureCoverageFailure,
+  gateSignals,
+  hasToolCall,
+  isAdminOnlyDiff,
+  isLandingOnlyDiff,
+  toolCalls,
+} from './archetype-evidence';
 
 export type CriticSeverity = 'blocker' | 'major' | 'minor';
 
@@ -50,94 +46,6 @@ export interface ArchetypeContext {
   flow: RequirementKind;
 }
 
-interface ToolCallSummary {
-  name: string;
-  ok: boolean;
-  text?: string;
-}
-
-/**
- * Normalise the EvidenceRecord into a flat list of tool-call summaries.
- * Today the record exposes typed slices (build / tests / runtime / scenarios)
- * rather than a generic `tool_calls[]`. We map each slice into a synthetic
- * tool-call so the rule pass below can stay shape-agnostic.
- */
-function toolCalls(evidence: EvidenceRecord): ToolCallSummary[] {
-  const out: ToolCallSummary[] = [];
-  if (evidence.build) {
-    out.push({
-      name: evidence.build.command || 'npm run build',
-      ok: evidence.build.exit_code === 0,
-      text: `exit_code=${evidence.build.exit_code} duration_ms=${evidence.build.duration_ms}`,
-    });
-  }
-  for (const t of evidence.tests ?? []) {
-    out.push({
-      name: t.command,
-      ok: t.exit_code === 0 && t.ran_after_changes,
-      text: t.output_tail,
-    });
-  }
-  if (evidence.runtime) {
-    out.push({
-      name: `curl ${evidence.runtime.route}`,
-      ok: evidence.runtime.http_status >= 200 && evidence.runtime.http_status < 400,
-      text: `status=${evidence.runtime.http_status}`,
-    });
-  }
-  for (const s of evidence.scenarios ?? []) {
-    out.push({
-      name: `scenario:${s.name}`,
-      ok: s.pass,
-      text: `duration_ms=${s.duration_ms}`,
-    });
-  }
-  return out;
-}
-
-function hasToolCall(evidence: EvidenceRecord, predicate: (c: ToolCallSummary) => boolean): boolean {
-  return toolCalls(evidence).some(predicate);
-}
-
-export function gateSignals(evidence: EvidenceRecord): {
-  build?: { ok: boolean; detail?: string };
-  runtime?: { ok: boolean; detail?: string };
-  scenarios?: { ok: boolean; detail?: string };
-} {
-  const out: { build?: { ok: boolean; detail?: string }; runtime?: { ok: boolean; detail?: string }; scenarios?: { ok: boolean; detail?: string } } = {};
-  
-  if (evidence.build) {
-    const ok = evidence.build.exit_code === 0;
-    out.build = { 
-      ok, 
-      detail: !ok ? `command="${evidence.build.command}" exit_code=${evidence.build.exit_code}` : undefined 
-    };
-  }
-  
-  if (evidence.runtime) {
-    const ok = evidence.runtime.http_status >= 200 && evidence.runtime.http_status < 400;
-    out.runtime = { 
-      ok, 
-      detail: !ok ? `route="${evidence.runtime.route}" http_status=${evidence.runtime.http_status}` : undefined 
-    };
-  }
-  
-  if (evidence.scenarios?.length) {
-    const failed = evidence.scenarios.filter(s => !s.pass).map(s => s.name);
-    const ok = failed.length === 0;
-    out.scenarios = { 
-      ok, 
-      detail: !ok ? `failed=[${failed.slice(0, 3).join(', ')}${failed.length > 3 ? '...' : ''}]` : undefined 
-    };
-  }
-  
-  return out;
-}
-
-function commitSummary(evidence: EvidenceRecord): { sha?: string; files: string[] } {
-  return { sha: evidence.commit_sha, files: evidence.changed_files ?? [] };
-}
-
 function isTier(item: BacklogItem, tier: 'core' | 'ornamental'): boolean {
   return (item.tier ?? 'core') === tier;
 }
@@ -149,43 +57,6 @@ function requiresSuccessfulTestEvidence(item: BacklogItem): boolean {
     /\b(?:jest|vitest|unit test|integration test|test suite)\b/i.test(contract) ||
     /\b(?:POST|PUT|PATCH|DELETE)\s+\/api\//i.test(contract)
   );
-}
-
-function isAdminOnlyDiff(files: string[]): boolean {
-  if (!files.length) return false;
-  return files.every((f) =>
-    /\.md$/i.test(f) ||
-    /^evidence\//.test(f) ||
-    /^progress\.md$/i.test(f) ||
-    /^DECISIONS\.md$/i.test(f) ||
-    /^README(\.md)?$/i.test(f) ||
-    /^feature_list\.json$/i.test(f) ||
-    /^requirement\.spec\.md$/i.test(f) ||
-    /^\.instructions$/i.test(f),
-  );
-}
-
-function isLandingOnlyDiff(files: string[]): boolean {
-  if (!files.length) return false;
-  const code = files.filter((f) => /^src\//.test(f));
-  if (!code.length) return false;
-  // Landing-only = every code change is either the root page.tsx, layout.tsx,
-  // a component under src/components/, or globals.css. No API route, no nested
-  // /app/<feature>/page.tsx, no middleware, no lib/services/* touched.
-  return code.every((f) =>
-    /^src\/app\/page\.(t|j)sx?$/.test(f) ||
-    /^src\/app\/layout\.(t|j)sx?$/.test(f) ||
-    /^src\/app\/globals\.css$/.test(f) ||
-    /^src\/components\//.test(f) ||
-    /^src\/styles\//.test(f),
-  );
-}
-
-function evidenceClaim(evidence: EvidenceRecord): string {
-  const parts: string[] = [];
-  if (evidence.judge_reason) parts.push(evidence.judge_reason);
-  if (evidence.assumptions_logged?.length) parts.push(evidence.assumptions_logged.join(' | '));
-  return parts.join('\n');
 }
 
 // ─── Critic rules ───────────────────────────────────────────────────────
@@ -382,14 +253,6 @@ function matchAcceptanceByKeywords(
   return { matched, unmatched };
 }
 
-function evidenceHaystack(evidence: EvidenceRecord): string[] {
-  const calls = toolCalls(evidence).map((c) => `${c.name} ${c.text ?? ''}`);
-  const sig = JSON.stringify(gateSignals(evidence));
-  const claim = evidenceClaim(evidence);
-  const commit = JSON.stringify(commitSummary(evidence));
-  return [...calls, sig, claim, commit];
-}
-
 function judgeApp(item: BacklogItem, evidence: EvidenceRecord): JudgeResult {
   const sig = gateSignals(evidence);
   
@@ -410,6 +273,10 @@ function judgeApp(item: BacklogItem, evidence: EvidenceRecord): JudgeResult {
 
   // Phase 10: hard contracts for core items.
   if (isTier(item, 'core')) {
+    const coverageFailure = featureCoverageFailure(evidence);
+    if (coverageFailure) {
+      return rejected(item, coverageFailure);
+    }
     const narrative = !validateAcceptance(item.acceptance).has_any_executable;
     if (narrative) {
       return rejected(item, 'core item has only narrative acceptance — rewrite with an executable anchor (route, HTTP verb, status code, observable verb) or downgrade to tier=ornamental');
@@ -501,10 +368,17 @@ function judgeContract(item: BacklogItem, evidence: EvidenceRecord): JudgeResult
 }
 
 function judgeBackend(item: BacklogItem, evidence: EvidenceRecord): JudgeResult {
-  if (!hasToolCall(evidence, (c) => /curl|fetch|http|test/i.test(c.name))) {
+  if (!hasToolCall(
+    evidence,
+    (call) => call.ok && /curl|fetch|http|test/i.test(call.name),
+  )) {
     return rejected(item, 'backend judge requires an HTTP probe or test run. Next: curl/fetch the shipped route and keep a successful probe in evidence.');
   }
   if (isTier(item, 'core')) {
+    const coverageFailure = featureCoverageFailure(evidence);
+    if (coverageFailure) {
+      return rejected(item, coverageFailure);
+    }
     if (!validateAcceptance(item.acceptance).has_any_executable) {
       return rejected(item, 'backend core item has narrative-only acceptance — add a concrete anchor (route/verb/status)');
     }

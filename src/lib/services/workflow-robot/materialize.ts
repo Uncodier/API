@@ -168,7 +168,7 @@ export async function materializeRunFromGraph(
   if (input.idempotency_key) {
     const { data: dup } = await supabaseAdmin
       .from('workflow_runs')
-      .select('id, run_plan_id, template_plan_id, dry_run')
+      .select('id, run_plan_id, template_plan_id, dry_run, status, claim_expires_at')
       .eq('idempotency_key', input.idempotency_key)
       .maybeSingle();
     if (dup) {
@@ -178,6 +178,13 @@ export async function materializeRunFromGraph(
         workflow_run_id: dup.id,
         dry_run: dup.dry_run,
         steps: [],
+        resume_existing_run:
+          dup.status === 'pending' ||
+          (
+            dup.status === 'in_progress' &&
+            typeof dup.claim_expires_at === 'string' &&
+            Date.parse(dup.claim_expires_at) <= Date.now()
+          ),
       };
     }
   }

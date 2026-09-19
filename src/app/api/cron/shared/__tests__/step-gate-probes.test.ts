@@ -169,7 +169,48 @@ describe('runtime and visual probe gate', () => {
     ]));
   });
 
-  it('reports console failure without converting visual evidence into a defect', async () => {
+  it('executes an explicitly declared bodyless mutation target', async () => {
+    (runRuntimeProbe as jest.Mock).mockResolvedValueOnce({
+      ok: true,
+      port: 3000,
+      duration_ms: 10,
+      server_log_tail: '',
+      server_errors: [],
+      pages: [{ path: '/', http_status: 200 }],
+      apis: [{ path: '/api/assets', method: 'POST', http_status: 204 }],
+      server_log_path: '/tmp/server.log',
+    });
+
+    const result = await runRuntimeAndVisualProbes({
+      sandbox: {} as any,
+      stepOrder: 1,
+      requirementId: 'req-1',
+      gitRepoKind: 'applications',
+      shouldRunVisual: false,
+      stepContext: {
+        validation_targets: [{
+          kind: 'api',
+          path: '/api/assets',
+          method: 'POST',
+          expected_statuses: [204],
+        }],
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(runRuntimeProbe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiRoutes: [{
+          path: '/api/assets',
+          method: 'POST',
+          payload: undefined,
+          payload_source: 'scenario',
+        }],
+      }),
+    );
+  });
+
+  it('blocks on console failure without converting visual evidence into a defect', async () => {
     (runVisualProbe as jest.Mock).mockResolvedValue({
       ok: false,
       capture_ok: true,
@@ -200,7 +241,7 @@ describe('runtime and visual probe gate', () => {
       gitRepoKind: 'applications',
     });
 
-    expect(result.ok).toBe(true);
+    expect(result.ok).toBe(false);
     expect(result.signals.console?.ok).toBe(false);
     expect(result.signals.visual).toEqual(expect.objectContaining({
       ok: true,
@@ -308,7 +349,7 @@ describe('runtime and visual probe gate', () => {
     ]));
   });
 
-  it('reports automatic browser failures without blocking the step', async () => {
+  it('blocks the step on automatic browser runtime failures', async () => {
     (runVisualProbe as jest.Mock).mockResolvedValue({
       ok: false,
       capture_ok: true,
@@ -353,12 +394,12 @@ describe('runtime and visual probe gate', () => {
       gitRepoKind: 'applications',
     });
 
-    expect(result.ok).toBe(true);
+    expect(result.ok).toBe(false);
     expect(result.infrastructureFailure).toBeUndefined();
     expect(result.signals.observations).toEqual(expect.arrayContaining([
       expect.objectContaining({
         kind: 'console',
-        disposition: 'advisory',
+        disposition: 'hard_fail',
       }),
     ]));
     expect(runVisualCritic).not.toHaveBeenCalled();

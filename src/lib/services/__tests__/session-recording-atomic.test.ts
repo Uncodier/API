@@ -23,6 +23,13 @@ const consolidationMigration = fs.readFileSync(
   ),
   'utf8',
 );
+const backfillMigration = fs.readFileSync(
+  path.join(
+    process.cwd(),
+    'supabase/migrations/20260918233330_backfill_session_recording_chunks.sql',
+  ),
+  'utf8',
+);
 const orderedIndexMigration = fs.readFileSync(
   path.join(
     process.cwd(),
@@ -49,6 +56,10 @@ describe('atomic session recording persistence', () => {
     expect(batchMigration).toContain('session_recording_chunks');
     expect(batchMigration).toContain('ON CONFLICT DO NOTHING');
     expect(batchMigration).toContain("'duplicate_chunks'");
+    expect(batchMigration).toContain(
+      'session_recording_chunks_session_hash_uidx',
+    );
+    expect(batchMigration).toContain('content_hash = v_content_hash');
   });
 
   it('keeps the RPC private to the service role', () => {
@@ -70,6 +81,22 @@ describe('atomic session recording persistence', () => {
     expect(consolidationMigration).toContain(
       'DELETE FROM public.session_events',
     );
+    expect(consolidationMigration).toContain('p_row_limit IS NULL');
+    expect(consolidationMigration).toContain('unique_recording_rows');
+    expect(consolidationMigration).toMatch(
+      /AS total_events\s+FROM unique_recording_rows/,
+    );
+    expect(consolidationMigration).toContain(
+      'SET recording_event_id = v_canonical_id',
+    );
+  });
+
+  it('backfills legacy chunk identities before retries are accepted', () => {
+    expect(backfillMigration).toContain('manifest_chunks');
+    expect(backfillMigration).toContain(
+      'INSERT INTO public.session_recording_chunks',
+    );
+    expect(backfillMigration).toContain('ON CONFLICT DO NOTHING');
   });
 
   it('uses stable chunk identities and one metadata RPC per request', () => {

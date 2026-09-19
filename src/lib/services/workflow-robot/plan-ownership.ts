@@ -18,11 +18,11 @@ export function findAssistantManagedPlanForRequirement<
   plans: T[] | null | undefined,
   requirementId?: string,
 ): T | undefined {
-  return findAssistantManagedPlan(
-    plans?.filter(
-      (plan) =>
-        !requirementId ||
-        plan.metadata?.requirement_id === requirementId,
-    ),
+  const assistantPlans = plans?.filter((plan) => !isWorkflowManagedPlan(plan));
+  if (!requirementId) return assistantPlans?.[0];
+  return assistantPlans?.find(
+    (plan) => plan.metadata?.requirement_id === requirementId,
+  ) ?? assistantPlans?.find(
+    (plan) => !plan.metadata?.requirement_id,
   );
 }

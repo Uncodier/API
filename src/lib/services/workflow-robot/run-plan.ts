@@ -11,7 +11,11 @@ import {
   formatWorkflowValidationPrompt,
   resolveMaxRetries,
 } from './retry';
-import { claimWorkflowRunExecution } from './execution-claim';
+import {
+  claimWorkflowRunExecution,
+  finishWorkflowRunExecution,
+  renewWorkflowRunExecutionClaim,
+} from './execution-claim';
 
 function buildWorkflowStepPrompt(params: {
   plan: any;
@@ -149,11 +153,6 @@ export async function runWorkflowPlan(runPlanId: string): Promise<{
   const steps = Array.isArray(plan.steps) ? [...plan.steps] : [];
   steps.sort((a: any, b: any) => (a.order || 0) - (b.order || 0));
 
-  await supabaseAdmin
-    .from('instance_plans')
-    .update({ status: 'in_progress', started_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-    .eq('id', runPlanId);
-
   const previousOutputs: Record<string, unknown> = {};
   let sandboxId: string | null = null;
   let sandboxTools: unknown[] = [];
@@ -161,8 +160,23 @@ export async function runWorkflowPlan(runPlanId: string): Promise<{
   let completed = 0;
 
   try {
+    const { error: startError } = await supabaseAdmin
+      .from('instance_plans')
+      .update({
+        status: 'in_progress',
+        started_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', runPlanId);
+    if (startError) {
+      throw new Error(`Failed to mark workflow plan in progress: ${startError.message}`);
+    }
+
     for (const step of steps) {
       if (step.status === 'completed' || step.status === 'cancelled') continue;
+      if (!await renewWorkflowRunExecutionClaim(runPlanId, claimed.token)) {
+        throw new Error('Workflow run claim was lost before step execution');
+      }
 
       const maxRetries = resolveMaxRetries(step.max_retries);
       if (step.status === 'failed' && !canRetryStep(step.retry_count || 0, maxRetries)) {
@@ -237,6 +251,9 @@ export async function runWorkflowPlan(runPlanId: string): Promise<{
           ? `[${modeLabel}] Execute step ${step.order}: ${step.title}. This is retry ${step.retry_count}; follow the recovery plan if provided.`
           : `[${modeLabel}] Execute step ${step.order}: ${step.title}. ${step.instructions}`;
 
+        if (!await renewWorkflowRunExecutionClaim(runPlanId, claimed.token)) {
+          throw new Error('Workflow run claim was lost during step execution');
+        }
         try {
           const lastText = await runStepTurns(context, userContent);
           const isCondition = step.type === 'condition';
@@ -278,24 +295,51 @@ export async function runWorkflowPlan(runPlanId: string): Promise<{
 
       if (anyFailed) break;
     }
+
+    const finalStatus = anyFailed ? 'failed' : 'completed';
+    if (!await renewWorkflowRunExecutionClaim(runPlanId, claimed.token)) {
+      throw new Error('Workflow run claim was lost before finalization');
+    }
+    const { error: finalPlanError } = await supabaseAdmin.from('instance_plans').update({
+      status: finalStatus,
+      completed_at: new Date().toISOString(),
+      steps_completed: completed,
+      progress_percentage: steps.length ? Math.round((completed / steps.length) * 100) : 100,
+      updated_at: new Date().toISOString(),
+    }).eq('id', runPlanId);
+    if (finalPlanError) {
+      throw new Error(`Failed to finalize workflow plan: ${finalPlanError.message}`);
+    }
+    const finalized = await finishWorkflowRunExecution(
+      runPlanId,
+      claimed.token,
+      finalStatus,
+    );
+    if (!finalized) {
+      throw new Error('Workflow run claim was lost before finalization');
+    }
+
+    return { run_plan_id: runPlanId, status: finalStatus, steps_completed: completed };
+  } catch (error) {
+    const released = await finishWorkflowRunExecution(
+      runPlanId,
+      claimed.token,
+      'pending',
+      error instanceof Error ? error.message : String(error),
+    ).catch(() => false);
+    if (released) {
+      await supabaseAdmin
+        .from('instance_plans')
+        .update({
+          status: 'pending',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', runPlanId);
+    }
+    throw error;
   } finally {
     if (sandboxId) {
       await stopWorkflowSandbox(sandboxId);
     }
   }
-
-  const finalStatus = anyFailed ? 'failed' : 'completed';
-  await supabaseAdmin.from('instance_plans').update({
-    status: finalStatus,
-    completed_at: new Date().toISOString(),
-    steps_completed: completed,
-    progress_percentage: steps.length ? Math.round((completed / steps.length) * 100) : 100,
-    updated_at: new Date().toISOString(),
-  }).eq('id', runPlanId);
-  await supabaseAdmin.from('workflow_runs').update({
-    status: finalStatus,
-    updated_at: new Date().toISOString(),
-  }).eq('run_plan_id', runPlanId);
-
-  return { run_plan_id: runPlanId, status: finalStatus, steps_completed: completed };
 }

@@ -111,7 +111,10 @@ function parseChunks(body: unknown): RecordingChunkInput[] {
 
 function prepareChunk(input: RecordingChunkInput): PreparedRecordingChunk | null {
   if (
-    typeof input.site_id !== 'string'
+    !input
+    || typeof input !== 'object'
+    || Array.isArray(input)
+    || typeof input.site_id !== 'string'
     || input.site_id.length === 0
     || typeof input.session_id !== 'string'
     || !UUID_PATTERN.test(input.session_id)

@@ -1,4 +1,5 @@
 import type { Sandbox } from '@vercel/sandbox';
+import { randomUUID } from 'node:crypto';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { setItemStatus } from '@/lib/services/requirement-backlog';
 import { classifyRequirementType } from '@/lib/services/requirement-flows';
@@ -157,6 +158,7 @@ export async function runSingleTurnGate(
     ...(gateRes.richSignals?.tests?.tests || []),
   ];
   const observations = gateRes.richSignals?.observations || [];
+  const evidenceRunId = randomUUID();
 
   if (
     backlogItemId &&
@@ -168,6 +170,7 @@ export async function runSingleTurnGate(
       requirementId,
       itemId: backlogItemId,
       record: {
+        evidence_run_id: evidenceRunId,
         captured_at: new Date().toISOString(),
         tests,
         observations,
@@ -218,12 +221,7 @@ export async function runSingleTurnGate(
     if (!latestPlan || !Array.isArray(latestPlan.steps)) {
       throw new Error(`Plan ${plan.id} is missing after gate`);
     }
-    const hasCancelledSibling = latestPlan.steps.some(
-      (candidate: any) =>
-        candidate.id !== step.id &&
-        (candidate.status === 'cancelled' || candidate.status === 'skipped'),
-    );
-    const isLastStep = !hasCancelledSibling && isStrictFinalPlanStep(
+    const isLastStep = isStrictFinalPlanStep(
       latestPlan.steps,
       step.id,
     );
@@ -267,8 +265,22 @@ export async function runSingleTurnGate(
         requirementId,
         backlogItemId,
         stepId: step.id,
-        signals: gateRes.richSignals as any,
+        signals: {
+          ...(gateRes.richSignals as any),
+          ...(tests.length > 0
+            ? {
+                tests: {
+                  ok: tests.every(
+                    (test) => test.exit_code === 0 && test.ran_after_changes,
+                  ),
+                  tests,
+                },
+              }
+            : {}),
+          observations,
+        },
         capturedAt: new Date().toISOString(),
+        evidenceRunId,
         audit,
         ...(requireContractJudge
           ? { contractAcceptance: stepContractAcceptance(step) }

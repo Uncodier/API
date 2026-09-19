@@ -144,7 +144,7 @@ export function extractTestEvidenceFromResult(
         command = started?.command ||
           (typeof parsed.command === 'string' ? parsed.command : '');
         ranAfterChanges =
-          !started || started.mutationVersion === mutationVersion;
+          !!started && started.mutationVersion === mutationVersion;
       }
 
       if (!command || !isTestCommand(command)) continue;

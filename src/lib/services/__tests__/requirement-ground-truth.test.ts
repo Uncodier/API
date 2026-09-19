@@ -150,13 +150,15 @@ describe('syncGroundTruthBeforeCommit', () => {
     );
   });
 
-  it('preserves passing test receipts across later gate writes', async () => {
+  it('invalidates passing test receipts when a later change set is captured', async () => {
     const { mergeEvidenceRecords } = await import('../requirement-ground-truth');
     const previous = {
       schema_version: 1 as const,
       item_id: 'item-1',
+      evidence_run_id: 'run-1',
       captured_at: '2026-09-18T00:00:00.000Z',
       critic_passes: 0,
+      judge_verdict: 'approved' as const,
       tests: [{
         command: 'npm test -- assets.test.ts',
         exit_code: 0,
@@ -168,20 +170,51 @@ describe('syncGroundTruthBeforeCommit', () => {
     const next = {
       schema_version: 1 as const,
       item_id: 'item-1',
+      evidence_run_id: 'run-2',
       captured_at: '2026-09-18T00:02:00.000Z',
       build: {
         command: 'npm run build',
         exit_code: 0,
         duration_ms: 100,
       },
+      changed_files: ['src/app/api/assets/route.ts'],
       critic_passes: 0,
     };
 
-    expect(mergeEvidenceRecords(previous, next)).toEqual(
+    const merged = mergeEvidenceRecords(previous, next);
+    expect(merged).toEqual(
       expect.objectContaining({
-        tests: previous.tests,
+        tests: undefined,
         build: next.build,
       }),
     );
+    expect(merged.judge_verdict).toBeUndefined();
+  });
+
+  it('preserves current receipts across writes in the same evidence run', async () => {
+    const { mergeEvidenceRecords } = await import('../requirement-ground-truth');
+    const previous = {
+      schema_version: 1 as const,
+      item_id: 'item-1',
+      evidence_run_id: 'run-1',
+      captured_at: '2026-09-18T00:00:00.000Z',
+      critic_passes: 0,
+      tests: [{
+        command: 'npm test',
+        exit_code: 0,
+        output_tail: 'PASS',
+        ran_after_changes: true,
+      }],
+    };
+    const next = {
+      schema_version: 1 as const,
+      item_id: 'item-1',
+      evidence_run_id: 'run-1',
+      captured_at: '2026-09-18T00:01:00.000Z',
+      changed_files: ['src/app/page.tsx'],
+      critic_passes: 1,
+    };
+
+    expect(mergeEvidenceRecords(previous, next).tests).toEqual(previous.tests);
   });
 });

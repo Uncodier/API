@@ -59,7 +59,7 @@ describe('runtime probe policy', () => {
     }));
   });
 
-  it('does not invent payloads for non-GET APIs', () => {
+  it('executes required non-GET APIs without inventing payloads', () => {
     const plan = buildRuntimeTargetPlan({
       validationTargets: [{
         kind: 'api',
@@ -73,17 +73,27 @@ describe('runtime probe policy', () => {
       }],
     });
 
-    expect(plan.apis).toEqual([]);
-    expect(plan.observations).toEqual(expect.arrayContaining([
+    expect(plan.apis).toEqual([
       expect.objectContaining({
-        target: 'POST /api/assets',
-        disposition: 'unknown',
+        path: '/api/assets',
+        method: 'POST',
+        required: true,
       }),
+    ]);
+    expect(plan.observations).toEqual(expect.arrayContaining([
       expect.objectContaining({
         target: 'PATCH /api/jobs',
         disposition: 'advisory',
       }),
     ]));
+    const result = evaluateRuntimeProbe(probe({
+      apis: [{
+        path: '/api/assets',
+        method: 'POST',
+        http_status: 400,
+      }],
+    }), plan);
+    expect(result.hardFailure).toBe(true);
   });
 
   it('validates an explicit method, payload, and status', () => {

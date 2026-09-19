@@ -343,15 +343,12 @@ export async function runRuntimeAndVisualProbes(params: {
       if (!visual.console.ok) {
         out.observations?.push({
           kind: 'console',
-          disposition: explicitVisual ? 'hard_fail' : 'advisory',
+          disposition: 'hard_fail',
           source: explicitVisual ? 'contract' : 'diff',
           detail:
             visual.error ||
             'Client runtime errors detected in the automatic browser probe.',
         });
-        if (!explicitVisual) {
-          return { ok: true, signals: out };
-        }
         return {
           ok: false,
           error:

@@ -28,6 +28,15 @@ CREATE TABLE IF NOT EXISTS public.session_recording_chunks (
 
 ALTER TABLE public.session_recording_chunks ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS session_recording_chunks_service_role
+  ON public.session_recording_chunks;
+CREATE POLICY session_recording_chunks_service_role
+  ON public.session_recording_chunks
+  FOR ALL
+  TO service_role
+  USING (true)
+  WITH CHECK (true);
+
 REVOKE ALL ON TABLE public.session_recording_chunks
   FROM PUBLIC, anon, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.session_recording_chunks
@@ -38,6 +47,9 @@ CREATE INDEX IF NOT EXISTS idx_session_recording_chunks_session_time
 
 CREATE INDEX IF NOT EXISTS idx_session_recording_chunks_event
   ON public.session_recording_chunks (recording_event_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS session_recording_chunks_session_hash_uidx
+  ON public.session_recording_chunks (session_id, content_hash);
 
 CREATE OR REPLACE FUNCTION public.append_session_recording_chunks(
   p_chunks jsonb
@@ -63,6 +75,7 @@ DECLARE
   v_content_hash text;
   v_existing_path text;
   v_existing_hash text;
+  v_existing_manifest_chunk jsonb;
   v_timestamp bigint;
   v_start_timestamp bigint;
   v_end_timestamp bigint;
@@ -220,6 +233,29 @@ BEGIN
       v_end_timestamp := (v_chunk->>'end_timestamp')::bigint;
       v_event_count := (v_chunk->>'event_count')::integer;
       v_inserted_chunk_id := NULL;
+      v_existing_manifest_chunk := CASE
+        WHEN jsonb_typeof(v_properties->'chunk_manifest') = 'object'
+          THEN v_properties->'chunk_manifest'->(v_chunk_id::text)
+      END;
+
+      IF v_existing_manifest_chunk IS NOT NULL THEN
+        IF v_existing_manifest_chunk->>'path' IS DISTINCT FROM v_storage_path
+          OR v_existing_manifest_chunk->>'content_hash'
+            IS DISTINCT FROM v_content_hash
+        THEN
+          RAISE EXCEPTION
+            'Recording chunk identity conflicts with existing content';
+        END IF;
+        v_duplicate_total := v_duplicate_total + 1;
+        CONTINUE;
+      END IF;
+
+      IF jsonb_typeof(v_properties->'chunks') = 'array'
+        AND v_properties->'chunks' ? v_storage_path
+      THEN
+        v_duplicate_total := v_duplicate_total + 1;
+        CONTINUE;
+      END IF;
 
       INSERT INTO public.session_recording_chunks (
         chunk_id,
@@ -258,13 +294,25 @@ BEGIN
         FROM public.session_recording_chunks
         WHERE chunk_id = v_chunk_id
           OR storage_path = v_storage_path
-        ORDER BY (chunk_id = v_chunk_id) DESC
+          OR (
+            session_id = v_session_id
+            AND content_hash = v_content_hash
+          )
+        ORDER BY
+          (chunk_id = v_chunk_id) DESC,
+          (storage_path = v_storage_path) DESC
         LIMIT 1;
 
-        IF v_existing_chunk_id IS DISTINCT FROM v_chunk_id
-          OR v_existing_session_id IS DISTINCT FROM v_session_id
-          OR v_existing_path IS DISTINCT FROM v_storage_path
+        IF v_existing_session_id IS DISTINCT FROM v_session_id
           OR v_existing_hash IS DISTINCT FROM v_content_hash
+          OR (
+            v_existing_chunk_id = v_chunk_id
+            AND v_existing_path IS DISTINCT FROM v_storage_path
+          )
+          OR (
+            v_existing_path = v_storage_path
+            AND v_existing_chunk_id IS DISTINCT FROM v_chunk_id
+          )
         THEN
           RAISE EXCEPTION
             'Recording chunk identity conflicts with existing content';
@@ -281,7 +329,11 @@ BEGIN
         v_chunk_id::text,
         jsonb_build_object(
           'path', v_storage_path,
-          'content_hash', v_content_hash
+          'content_hash', v_content_hash,
+          'timestamp', v_timestamp,
+          'start_timestamp', v_start_timestamp,
+          'end_timestamp', v_end_timestamp,
+          'event_count', v_event_count
         )
       );
       v_new_metadata := v_new_metadata || CASE

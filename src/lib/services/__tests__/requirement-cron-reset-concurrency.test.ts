@@ -3,6 +3,7 @@ const mockRequirementStatusSingle = jest.fn();
 const mockUserActionLimit = jest.fn();
 const mockUserActionSingle = jest.fn();
 const mockUserActionUpdate = jest.fn();
+const mockUserActionFilter = jest.fn();
 const mockResumeRequirementExecution = jest.fn();
 
 jest.mock('../requirement-backlog-mutation', () => ({
@@ -36,6 +37,7 @@ jest.mock('@/lib/database/supabase-client', () => ({
         const query = {
           select: jest.fn(),
           eq: jest.fn(),
+          filter: mockUserActionFilter,
           gt: jest.fn(),
           order: jest.fn(),
           limit: mockUserActionLimit,
@@ -44,6 +46,7 @@ jest.mock('@/lib/database/supabase-client', () => ({
         };
         query.select.mockReturnValue(query);
         query.eq.mockReturnValue(query);
+        query.filter.mockReturnValue(query);
         query.gt.mockReturnValue(query);
         query.order.mockReturnValue(query);
         query.update.mockReturnValue(query);
@@ -66,7 +69,11 @@ describe('resetRequirementOnUserAction concurrency', () => {
       data: { requirement_id: 'requirement-1' },
       error: null,
     });
-    mockResumeRequirementExecution.mockResolvedValue(undefined);
+    mockResumeRequirementExecution.mockResolvedValue({
+      state: 'applied',
+      plans_updated: 1,
+      steps_cleared: 1,
+    });
     mockUserActionLimit.mockResolvedValue({
       data: [{ id: 'user-action-1' }],
       error: null,
@@ -154,5 +161,48 @@ describe('resetRequirementOnUserAction concurrency', () => {
       false,
       'user-action-1',
     );
+    expect(mockUserActionFilter).toHaveBeenCalledWith(
+      'details->>requirement_id',
+      'eq',
+      'requirement-1',
+    );
+  });
+
+  it('does not report duplicate feedback as a new recovery', async () => {
+    mockMutateBacklogAtomically.mockResolvedValue([]);
+    mockResumeRequirementExecution.mockResolvedValueOnce({
+      state: 'duplicate',
+      plans_updated: 0,
+      steps_cleared: 0,
+    });
+
+    await expect(checkAndResetCronAttempts('requirement-1', {
+      runner_instance_id: 'instance-1',
+    })).resolves.toBe(false);
+  });
+
+  it('does not reopen backlog items for an already consumed action', async () => {
+    await expect(checkAndResetCronAttempts('requirement-1', {
+      runner_instance_id: 'instance-1',
+      requirement_last_resume_action_id: 'user-action-1',
+    })).resolves.toBe(false);
+
+    expect(mockMutateBacklogAtomically).not.toHaveBeenCalled();
+    expect(mockResumeRequirementExecution).not.toHaveBeenCalled();
+  });
+
+  it('does not recover a requirement from an action tagged to another one', async () => {
+    mockUserActionSingle.mockResolvedValueOnce({
+      data: { details: { requirement_id: 'requirement-2' } },
+      error: null,
+    });
+
+    await resetRequirementOnUserAction(
+      'instance-1',
+      'foreign-user-action',
+    );
+
+    expect(mockMutateBacklogAtomically).not.toHaveBeenCalled();
+    expect(mockResumeRequirementExecution).not.toHaveBeenCalled();
   });
 });

@@ -178,6 +178,18 @@ describe('visitor recording route', () => {
     expect(mockRpc).not.toHaveBeenCalled();
   });
 
+  it('returns 400 for null chunk entries', async () => {
+    const response = await POST(new Request('http://localhost/api/visitors/record', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ chunks: [null] }),
+    }) as never);
+
+    expect(response.status).toBe(400);
+    expect(mockUpload).not.toHaveBeenCalled();
+    expect(mockRpc).not.toHaveBeenCalled();
+  });
+
   it('does not persist metadata when the storage upload fails', async () => {
     mockUpload.mockResolvedValue({
       error: { message: 'Storage unavailable' },

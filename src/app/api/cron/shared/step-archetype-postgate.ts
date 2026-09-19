@@ -7,6 +7,7 @@
  */
 
 import type { Sandbox } from '@vercel/sandbox';
+import { randomUUID } from 'node:crypto';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import { runCritic, runJudge } from './archetype-runner';
 import { bumpItemAttempts, getBacklogItem, downgradeScope, logAssumption, markNeedsReview } from '@/lib/services/requirement-backlog';
@@ -53,6 +54,7 @@ export interface RunArchetypePostGateInput {
   stepId: string;
   signals: PostGateGateSignals;
   capturedAt: string;
+  evidenceRunId?: string;
   audit: CronAuditContext;
   contractAcceptance?: string[];
 }
@@ -103,7 +105,9 @@ export async function runArchetypePostGate(
         item,
       });
     } catch (e: unknown) {
-      console.warn(`[CronStep] feature coverage failed: ${e instanceof Error ? e.message : e}`);
+      throw new Error(
+        `Feature coverage unavailable: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
 
     // Reuse the diff-inference helper to enrich evidence with the list of
@@ -120,7 +124,12 @@ export async function runArchetypePostGate(
     }
     const signalsWithDiff: PostGateGateSignals = { ...input.signals, changed_files: changedFiles };
 
-    const evidenceRecord = buildEvidenceRecord(signalsWithDiff, input.capturedAt, coverage);
+    const evidenceRecord = buildEvidenceRecord(
+      signalsWithDiff,
+      input.capturedAt,
+      coverage,
+      input.evidenceRunId || randomUUID(),
+    );
     const persisted = await writeEvidence({
       sandbox: input.sandbox,
       cwd: SandboxService.WORK_DIR,
@@ -229,6 +238,7 @@ function buildEvidenceRecord(
   signals: PostGateGateSignals,
   capturedAt: string,
   coverage: Awaited<ReturnType<typeof computeFeatureCoverage>> | null,
+  evidenceRunId: string,
 ): Omit<EvidenceRecord, 'item_id' | 'schema_version'> {
   const runtimePage =
     signals.runtime?.pages?.find(
@@ -243,6 +253,7 @@ function buildEvidenceRecord(
         page.http_status < 400,
     );
   return {
+    evidence_run_id: evidenceRunId,
     captured_at: capturedAt,
     build: signals.build
       ? { command: 'npm run build', exit_code: signals.build.ok ? 0 : 1, duration_ms: 0 }

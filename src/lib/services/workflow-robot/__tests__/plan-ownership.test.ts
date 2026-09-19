@@ -42,4 +42,15 @@ describe('workflow plan ownership', () => {
       findAssistantManagedPlanForRequirement(plans, 'req-1')?.id,
     ).toBe('matching-plan');
   });
+
+  it('falls back to a legacy unscoped assistant plan', () => {
+    const plans = [
+      { id: 'other-requirement', metadata: { requirement_id: 'req-2' } },
+      { id: 'legacy-plan', metadata: { source: 'assistant' } },
+    ];
+
+    expect(
+      findAssistantManagedPlanForRequirement(plans, 'req-1')?.id,
+    ).toBe('legacy-plan');
+  });
 });

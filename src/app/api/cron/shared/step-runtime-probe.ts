@@ -304,7 +304,7 @@ export async function runRuntimeProbe(params: RuntimeProbeParams): Promise<Runti
     path: api.path,
     method: (api.method || 'GET') as HttpMethod,
     payload: api.payload,
-    payload_source: api.payload_source || (api.payload != null ? 'inferred' : 'none'),
+    payload_source: api.payload_source || (api.payload !== undefined ? 'inferred' : 'none'),
   }));
 
   const apiWithPayloads: Array<{
@@ -317,7 +317,7 @@ export async function runRuntimeProbe(params: RuntimeProbeParams): Promise<Runti
   for (let i = 0; i < apiRoutes.length; i++) {
     const a = apiRoutes[i];
     let payloadFile: string | undefined;
-    if (a.payload != null) {
+    if (a.payload !== undefined) {
       payloadFile = `/tmp/mk-api-payload-${i}.json`;
       await sandbox.writeFiles([{ path: payloadFile, content: JSON.stringify(a.payload) }]).catch(() => {});
     }
@@ -378,7 +378,7 @@ export async function runRuntimeProbe(params: RuntimeProbeParams): Promise<Runti
       content_type: stats.contentType,
       body_snippet: decodeB64(a.b64),
       payload_excerpt:
-        raw?.payload != null
+        raw?.payload !== undefined
           ? tail(typeof raw.payload === 'string' ? raw.payload : JSON.stringify(raw.payload), 400)
           : undefined,
     };
@@ -389,7 +389,14 @@ export async function runRuntimeProbe(params: RuntimeProbeParams): Promise<Runti
   }
 
   const hasBlockingServerError = serverErrors.some((e) =>
-    ['module_not_found', 'unhandled_rejection', 'uncaught_exception', 'syntax_error', 'type_error'].includes(e.kind),
+    [
+      'module_not_found',
+      'unhandled_rejection',
+      'uncaught_exception',
+      'syntax_error',
+      'type_error',
+      'hydration_mismatch',
+    ].includes(e.kind),
   );
 
   // Route-level status belongs to step-probe-policy, where explicit contract

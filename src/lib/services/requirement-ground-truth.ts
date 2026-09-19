@@ -36,6 +36,7 @@ export interface FeatureCoverageEvidence {
 export interface EvidenceRecord {
   schema_version: 1;
   item_id: string;
+  evidence_run_id?: string;
   captured_at: string;
   tests?: {
     command: string;
@@ -189,18 +190,31 @@ export function mergeEvidenceRecords(
   existing: EvidenceRecord | undefined,
   incoming: EvidenceRecordInput,
 ): EvidenceRecord {
+  const startsNewEvidenceRun =
+    typeof incoming.evidence_run_id === 'string' &&
+    incoming.evidence_run_id.length > 0 &&
+    incoming.evidence_run_id !== existing?.evidence_run_id;
+  const startsLegacyChangeSet =
+    !incoming.evidence_run_id &&
+    Array.isArray(incoming.changed_files) &&
+    incoming.changed_files.length > 0;
+  const startsNewChangeSet = startsNewEvidenceRun || startsLegacyChangeSet;
+  const prior = startsNewChangeSet ? undefined : existing;
   const tests = new Map<string, NonNullable<EvidenceRecord['tests']>[number]>();
-  for (const test of [...(existing?.tests || []), ...(incoming.tests || [])]) {
+  const testCandidates = startsNewChangeSet
+    ? incoming.tests || []
+    : [...(prior?.tests || []), ...(incoming.tests || [])];
+  for (const test of testCandidates) {
     tests.set(`${test.command}:${test.captured_at || ''}`, test);
   }
   const observations = new Map<
     string,
     NonNullable<EvidenceRecord['observations']>[number]
   >();
-  for (const observation of [
-    ...(existing?.observations || []),
-    ...(incoming.observations || []),
-  ]) {
+  const observationCandidates = startsNewChangeSet
+    ? incoming.observations || []
+    : [...(prior?.observations || []), ...(incoming.observations || [])];
+  for (const observation of observationCandidates) {
     observations.set(
       [
         observation.kind,
@@ -213,14 +227,14 @@ export function mergeEvidenceRecords(
     );
   }
   return {
-    ...existing,
+    ...prior,
     ...incoming,
     tests: tests.size ? Array.from(tests.values()).slice(-20) : undefined,
     observations: observations.size
       ? Array.from(observations.values()).slice(-100)
       : undefined,
     critic_passes:
-      incoming.critic_passes ?? existing?.critic_passes ?? 0,
+      incoming.critic_passes ?? prior?.critic_passes ?? 0,
   };
 }
 

@@ -96,4 +96,27 @@ describe('cron workflows route', () => {
     expect(runWorkflowPlan).toHaveBeenCalledTimes(1);
     expect(runWorkflowPlan).toHaveBeenCalledWith('new-plan');
   });
+
+  it('retries an existing run whose claim is recoverable', async () => {
+    (materializeRunFromGraph as jest.Mock).mockResolvedValue({
+      template_plan_id: 'template-1',
+      run_plan_id: 'expired-plan',
+      workflow_run_id: 'existing-run',
+      dry_run: false,
+      steps: [],
+      resume_existing_run: true,
+    } as never);
+    (runWorkflowPlan as jest.Mock).mockResolvedValue({
+      run_plan_id: 'expired-plan',
+      status: 'completed',
+      steps_completed: 1,
+    } as never);
+
+    const response = await GET(new Request('http://localhost', {
+      headers: { authorization: 'Bearer test-secret' },
+    }));
+
+    expect(response.status).toBe(200);
+    expect(runWorkflowPlan).toHaveBeenCalledWith('expired-plan');
+  });
 });

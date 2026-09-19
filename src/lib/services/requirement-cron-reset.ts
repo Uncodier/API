@@ -9,13 +9,15 @@ import { resumeRequirementExecutionOnUserAction } from './requirement-execution-
 
 async function findLatestUserActionId(
   instanceId: string,
+  requirementId: string,
   createdAfter?: string,
 ): Promise<string | null> {
   let query = supabaseAdmin
     .from('instance_logs')
     .select('id')
     .eq('instance_id', instanceId)
-    .eq('log_type', 'user_action');
+    .eq('log_type', 'user_action')
+    .filter('details->>requirement_id', 'eq', requirementId);
   if (createdAfter) {
     query = query.gt('created_at', createdAfter);
   }
@@ -34,13 +36,16 @@ async function findLatestUserActionId(
 async function tagUserActionWithRequirement(
   actionId: string,
   requirementId: string,
-): Promise<void> {
+): Promise<boolean> {
   const { data, error } = await supabaseAdmin
     .from('instance_logs')
     .select('details')
     .eq('id', actionId)
     .maybeSingle();
-  if (error || !data) return;
+  if (error) {
+    throw new Error(`Failed to load user action ${actionId}: ${error.message}`);
+  }
+  if (!data) return false;
   const details =
     data.details && typeof data.details === 'object' ? data.details : {};
   const existingRequirementId =
@@ -49,9 +54,9 @@ async function tagUserActionWithRequirement(
     typeof existingRequirementId === 'string' &&
     existingRequirementId !== requirementId
   ) {
-    return;
+    return false;
   }
-  await supabaseAdmin
+  const { error: updateError } = await supabaseAdmin
     .from('instance_logs')
     .update({
       details: {
@@ -60,6 +65,10 @@ async function tagUserActionWithRequirement(
       },
     })
     .eq('id', actionId);
+  if (updateError) {
+    throw new Error(`Failed to scope user action ${actionId}: ${updateError.message}`);
+  }
+  return true;
 }
 
 export function reopenReviewBacklogOnUserAction(
@@ -119,9 +128,13 @@ export async function checkAndResetCronAttempts(
     
     const actionId = await findLatestUserActionId(
       instanceId,
+      requirementId,
       fifteenMinutesAgo,
     );
     if (actionId) {
+      if (metadata?.requirement_last_resume_action_id === actionId) {
+        return false;
+      }
       const recovery = await mutateBacklogAtomically(
         requirementId,
         ({ backlog }) => {
@@ -138,13 +151,13 @@ export async function checkAndResetCronAttempts(
         `[CronReset] Recent user action detected for requirement ${requirementId}. ` +
         `Resetting cron attempts and reopening ${recovery.length} review item(s).`,
       );
-      await resumeRequirementExecutionOnUserAction(
+      const resume = await resumeRequirementExecutionOnUserAction(
         requirementId,
         instanceId,
         recovery.length > 0,
         actionId,
       );
-      return true;
+      return resume.state === 'applied';
     }
   } catch (error) {
     console.error(`[CronReset] Unexpected error:`, error);
@@ -190,7 +203,8 @@ export async function resetRequirementOnUserAction(
     
     if (requirementId) {
       const actionId =
-        insertedActionId || await findLatestUserActionId(instanceId);
+        insertedActionId ||
+        await findLatestUserActionId(instanceId, requirementId);
       if (!actionId) {
         console.warn(
           `[CronReset] No user-action identity found for instance ${instanceId}; recovery was not applied.`,
@@ -198,12 +212,22 @@ export async function resetRequirementOnUserAction(
         return;
       }
       try {
-        await tagUserActionWithRequirement(actionId, requirementId);
+        const scoped = await tagUserActionWithRequirement(
+          actionId,
+          requirementId,
+        );
+        if (!scoped) {
+          console.warn(
+            `[CronReset] User action ${actionId} belongs to another requirement; recovery was skipped.`,
+          );
+          return;
+        }
       } catch (error) {
         console.warn(
           `[CronReset] Failed to scope user action ${actionId} to requirement ${requirementId}:`,
           error,
         );
+        return;
       }
       const recovery = await mutateBacklogAtomically(
         requirementId,

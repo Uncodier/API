@@ -48,6 +48,7 @@ export interface MaterializeRunResult {
   workflow_run_id: string;
   dry_run: boolean;
   steps: unknown[];
+  resume_existing_run?: boolean;
 }
 
 export const DB_EVENT_TABLES = [

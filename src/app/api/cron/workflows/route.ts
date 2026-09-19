@@ -59,8 +59,10 @@ export async function GET(req: Request) {
         idempotency_key: `cron:${windowKey}`,
       });
       if (materialized.steps.length === 0) {
-        results.push({ trigger_id: trigger.id, skipped: 'duplicate' });
-        continue;
+        if (!materialized.resume_existing_run) {
+          results.push({ trigger_id: trigger.id, skipped: 'duplicate' });
+          continue;
+        }
       }
       void runWorkflowPlan(materialized.run_plan_id).catch((err) => {
         console.error(`[CronWorkflows] run failed ${materialized.run_plan_id}:`, err);

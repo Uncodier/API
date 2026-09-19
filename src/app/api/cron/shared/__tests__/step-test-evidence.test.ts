@@ -113,7 +113,7 @@ describe('declared test evidence', () => {
     expect(tests[0]?.ran_after_changes).toBe(false);
   });
 
-  it('captures a background receipt completed in a later turn', () => {
+  it('does not mark an untracked background receipt as current', () => {
     const tests = extractTestEvidenceFromResult({
       steps: [{
         toolCalls: [{
@@ -137,8 +137,48 @@ describe('declared test evidence', () => {
       expect.objectContaining({
         command: 'npx jest assets.test.ts',
         exit_code: 0,
-        ran_after_changes: true,
+        ran_after_changes: false,
       }),
     ]);
+  });
+
+  it('invalidates a tracked background test when a later turn mutates files', () => {
+    const tests = extractTestEvidenceFromResult({
+      steps: [
+        {
+          toolCalls: [{
+            id: 'start',
+            toolName: 'sandbox_start_background_command',
+            args: { command: 'npm test', log_file: '/tmp/test.log' },
+          }],
+          toolResults: [{
+            toolCallId: 'start',
+            result: { success: true, log_file: '/tmp/test.log' },
+          }],
+        },
+        {
+          toolCalls: [{
+            id: 'edit',
+            toolName: 'sandbox_edit_file',
+            args: { path: 'src/app/page.tsx' },
+          }],
+        },
+        {
+          toolCalls: [{
+            id: 'check',
+            toolName: 'sandbox_check_background_command',
+            args: { log_file: '/tmp/test.log' },
+          }],
+          toolResults: [{
+            toolCallId: 'check',
+            result: { is_running: false, exit_code: 0, recent_output: 'PASS' },
+          }],
+        },
+      ],
+    });
+
+    expect(tests[0]).toEqual(expect.objectContaining({
+      ran_after_changes: false,
+    }));
   });
 });
