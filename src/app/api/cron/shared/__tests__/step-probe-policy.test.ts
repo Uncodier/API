@@ -122,5 +122,13 @@ describe('runtime probe policy', () => {
       }),
     ]);
     expect(result.hardFailure).toBe(false);
+    expect(result.observations).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        target: 'POST /api/assets',
+        method: 'POST',
+        http_status: 201,
+        expected_statuses: [201],
+      }),
+    ]));
   });
 });

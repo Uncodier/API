@@ -16,11 +16,24 @@ describe('browser route authorization contract', () => {
       resolve(process.cwd(), 'src/lib/services/visitor-identity/VisitorSessionAuthorizationService.ts'),
       'utf8'
     );
-    expect(source).toContain("!request.headers.get('x-api-key-data')");
+    expect(source).toContain('authorizeVisitorSession(input.request');
+    const middleware = readFileSync(
+      resolve(process.cwd(), 'src/middleware/requestMiddleware.ts'),
+      'utf8'
+    );
+    expect(middleware).toContain("requestHeaders.delete('x-api-key-data')");
+    const apiKeyMiddleware = readFileSync(
+      resolve(process.cwd(), 'src/middleware/apiKeyAuth.ts'),
+      'utf8'
+    );
+    expect(apiKeyMiddleware).toContain("requestHeaders.set('x-api-key-data'");
+    expect(apiKeyMiddleware).toContain("headers.delete('x-auth-user-id')");
+    expect(apiKeyMiddleware).toContain("headers.delete('x-auth-validated')");
+    expect(apiKeyMiddleware).not.toContain("if (origin) {\n");
     for (const middlewareFile of ['src/middleware.js', 'middleware.js']) {
-      const middleware = readFileSync(resolve(process.cwd(), middlewareFile), 'utf8');
-      expect(middleware).toContain("requestHeaders.delete('x-api-key-data')");
-      expect(middleware).toContain("requestHeaders.set('x-api-key-data'");
+      const entrypoint = readFileSync(resolve(process.cwd(), middlewareFile), 'utf8');
+      expect(entrypoint).toContain('middleware/requestMiddleware');
+      expect(entrypoint).toContain('export default requestMiddleware');
     }
   });
 
@@ -69,6 +82,20 @@ describe('browser route authorization contract', () => {
         'utf8'
       );
       expect(source).toContain('new Response(null, { status: 204 })');
+    }
+  });
+
+  it('identity routes authorize the visitor session before mutations', () => {
+    for (const operation of ['', 'status', 'challenge', 'verify', 'resend', 'logout']) {
+      const suffix = operation ? `/${operation}` : '';
+      const source = readFileSync(
+        resolve(
+          process.cwd(),
+          `src/app/api/visitors/session/[session_id]/identify${suffix}/route.ts`
+        ),
+        'utf8'
+      );
+      expect(source).toContain('authorizeVisitorSession(request');
     }
   });
 });

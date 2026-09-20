@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { VisitorIdentityError } from '@/lib/services/visitor-identity/contracts';
 import { visitorIdentityService } from '@/lib/services/visitor-identity/orchestration-service';
 import { assertRouteIdentity, visitorIdentityRouteError } from '@/lib/services/visitor-identity/route-utils';
+import { authorizeVisitorSession } from '@/lib/security/authorize-visitor-session';
 
 const ResendSchema = z.object({
   site_id: z.string().uuid(),
@@ -26,6 +27,16 @@ export async function POST(
       parsed.data.site_id,
       request.nextUrl.searchParams.get('site_id')
     );
+    if (!await authorizeVisitorSession(request, {
+      siteId: parsed.data.site_id,
+      sessionId: pathSessionId,
+    })) {
+      throw new VisitorIdentityError(
+        'forbidden',
+        'Visitor session authorization is required',
+        403,
+      );
+    }
     const result = await visitorIdentityService.resend({
       siteId: parsed.data.site_id,
       sessionId: pathSessionId,

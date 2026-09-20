@@ -11,6 +11,10 @@ Read these first when changing the code-agent harness:
 1. [Code-agent harness checkpoint — 2026-09-17](./CODE_AGENT_HARNESS_CHECKPOINT_2026-09-17.md)
 2. [Harness reliability appendix — 2026-09-17](./CODE_AGENT_HARNESS_RELIABILITY_CHECKPOINT_2026-09-17.md)
 
+## Availability audits
+
+- [Redis/Upstash availability and consistency audit — 2026-09-20](./REDIS_UPSTASH_AVAILABILITY_AUDIT_2026-09-20.md)
+
 ## Active integration guides
 
 These integrations still exist, but verify configuration details against the referenced implementation before operational changes:

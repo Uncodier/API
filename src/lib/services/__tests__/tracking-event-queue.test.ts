@@ -75,14 +75,25 @@ describe('tracking event queue', () => {
 
   it('durably enqueues events without trimming the stream', async () => {
     const events = [event('11111111-1111-4111-8111-111111111111')];
+    mockEval.mockResolvedValueOnce('1-0');
 
     await expect(enqueueTrackingEvents(events)).resolves.toBe('1-0');
-    expect(mockXadd).toHaveBeenCalledWith(
+    expect(mockEval).toHaveBeenCalledWith(
+      expect.stringContaining("'XLEN'"),
+      1,
       'tracking:{events}:pending',
-      '*',
-      'payload',
+      100_000,
       JSON.stringify({ version: 1, events }),
     );
+    expect(mockXadd).not.toHaveBeenCalled();
+  });
+
+  it('rejects an enqueue when the atomic queue limit is reached', async () => {
+    mockEval.mockResolvedValueOnce(null);
+
+    await expect(enqueueTrackingEvents([
+      event('11111111-1111-4111-8111-111111111111'),
+    ])).rejects.toThrow('Tracking queue backlog limit reached');
   });
 
   it('persists and atomically acknowledges a claimed message', async () => {

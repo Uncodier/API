@@ -1,18 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import {
-  assignNumberToSender,
+  assignPhoneNumberToSender,
   assertPhoneResourcesAvailable,
   createSender,
+  createVoiceSender,
+  deleteSender,
   ensureProjectWebhook,
   ensureSenderWebhook,
+  ensureVoiceSender,
+  getChannelConnection,
   getOwnedNumbers,
   purchaseNumber,
   requireZavuSiteAccess,
   requireZavuSiteManager,
   syncConnectedCustomerSupportVoiceAgent,
-  syncCustomerSupportVoiceAgent,
-  syncVoiceTools,
+  syncCustomerSupportVoiceAgentWithTools,
+  updateAgent,
+  updateSender,
   upsertChannelConnection,
 } from "@/lib/services/zavu";
 
@@ -28,7 +33,22 @@ function unwrapPhoneNumbers(payload: any): any[] {
   return payload?.items || payload?.results || (Array.isArray(payload) ? payload : []);
 }
 
-async function resolveSender(input: z.infer<typeof voiceRequestSchema>) {
+function getRegulatoryStatus(phone: any): string | undefined {
+  return phone?.regulatoryStatus || phone?.regulatory_status || phone?.regulatory?.status;
+}
+
+type ResolvedVoiceSender = {
+  sender: any;
+  phone: any;
+  createdSender: boolean;
+  replacedSenderId?: string;
+  voiceWasEnabled: boolean;
+};
+
+async function resolveSender(
+  input: z.infer<typeof voiceRequestSchema>
+): Promise<ResolvedVoiceSender> {
+  const existingConnection = await getChannelConnection(input.siteId, input.channelId);
   let phone = unwrapPhoneNumbers(await getOwnedNumbers())
     .find((item) => item.phoneNumber === input.phoneNumber);
   if (phone) {
@@ -40,23 +60,88 @@ async function resolveSender(input: z.infer<typeof voiceRequestSchema>) {
   }
   if (!phone) {
     const purchased = await purchaseNumber(input.phoneNumber);
-    phone = purchased?.phoneNumber || purchased;
+    phone =
+      (purchased?.item && typeof purchased.item === "object" && purchased.item) ||
+      (purchased?.phoneNumber &&
+        typeof purchased.phoneNumber === "object" &&
+        purchased.phoneNumber) ||
+      purchased;
     await assertPhoneResourcesAvailable(input.siteId, {
       id: phone?.id,
       phoneNumber: input.phoneNumber,
       senderId: phone?.senderId,
     });
   }
+  const persistedPreviousSenderId =
+    typeof existingConnection?.metadata?.previous_sender_id === "string"
+      ? existingConnection.metadata.previous_sender_id
+      : undefined;
+  const existingSenderId =
+    typeof existingConnection?.zavu_sender_id === "string"
+      ? existingConnection.zavu_sender_id
+      : undefined;
+  const staleSenderId =
+    persistedPreviousSenderId && persistedPreviousSenderId !== phone?.senderId
+      ? persistedPreviousSenderId
+      : existingSenderId && existingSenderId !== phone?.senderId
+        ? existingSenderId
+        : undefined;
+
   if (phone?.senderId) {
-    return { sender: await ensureSenderWebhook(phone.senderId), phone };
+    try {
+      const sender = await ensureSenderWebhook(phone.senderId);
+      return {
+        sender,
+        phone,
+        createdSender: false,
+        replacedSenderId: staleSenderId,
+        voiceWasEnabled:
+          Array.isArray(sender.channels) && sender.channels.includes("voice"),
+      };
+    } catch (error: any) {
+      if (error?.status !== 404) throw error;
+      console.warn(
+        `[Zavu Voice] Phone ${input.phoneNumber} references missing sender ${phone.senderId}; creating a replacement`
+      );
+    }
   }
 
-  const sender = await createSender({
-    name: input.name || `Voice ${input.siteId}`,
-    enableSmsOneway: true,
-  });
-  await assignNumberToSender(sender.id, input.phoneNumber);
-  return { sender, phone };
+  const name = input.name || `Voice ${input.siteId}`;
+  if (!phone?.senderId) {
+    return {
+      sender: await createVoiceSender({ name, phoneNumber: input.phoneNumber }),
+      phone,
+      createdSender: true,
+      replacedSenderId: staleSenderId,
+      voiceWasEnabled: false,
+    };
+  }
+
+  if (!phone?.id) {
+    throw new Error("The owned phone number is missing its Zavu ID");
+  }
+
+  const replacement = await createSender({ name, enableSmsOneway: true });
+  try {
+    await assignPhoneNumberToSender(phone.id, replacement.id);
+    return {
+      sender: replacement,
+      phone: { ...phone, senderId: replacement.id },
+      createdSender: true,
+      replacedSenderId: phone.senderId as string,
+      voiceWasEnabled: false,
+    };
+  } catch (error) {
+    try {
+      await deleteSender(replacement.id);
+    } catch (cleanupError) {
+      console.error(
+        `[Zavu Voice] Failed to remove replacement sender ${replacement.id}:`,
+        cleanupError
+      );
+    }
+    throw error;
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -74,39 +159,135 @@ export async function POST(request: NextRequest) {
       console.warn("[Zavu Voice] Failed to ensure project webhook:", whError);
     }
 
+    let resolved: Awaited<ReturnType<typeof resolveSender>> | undefined;
+    let synced: Awaited<ReturnType<typeof syncCustomerSupportVoiceAgentWithTools>> | undefined;
+    let staged: Awaited<ReturnType<typeof upsertChannelConnection>> | undefined;
+    let voiceActivationAttempted = false;
     try {
-      const { sender, phone } = await resolveSender(input);
-      const synced = await syncCustomerSupportVoiceAgent({
-        siteId: input.siteId,
-        senderIds: [sender.id],
-      });
-      await syncVoiceTools({
-        agentId: synced.agent.id,
-        siteId: input.siteId,
-        webhookSecret: synced.webhookSecret,
-      });
-
-      const { channelId } = await upsertChannelConnection(input.siteId, input.channelId, {
+      resolved = await resolveSender(input);
+      const regulatoryStatus = getRegulatoryStatus(resolved.phone);
+      const stagedPatch = {
         type: "voice",
         name: input.name || "Voice Channel",
-        status: "connected",
-        zavu_sender_id: sender.id,
+        zavu_sender_id: resolved.sender.id,
         metadata: {
           phone_number: input.phoneNumber,
-          phone_number_id: phone?.id,
-          zavu_agent_id: synced.agent.id,
-          webhook_events: sender.webhook?.events || [],
+          phone_number_id: resolved.phone?.id,
+          regulatory_status: regulatoryStatus,
+          activation_pending: true,
+          webhook_events: resolved.sender.webhook?.events || [],
+          previous_sender_id: resolved.replacedSenderId,
         },
+      };
+      staged = await upsertChannelConnection(input.siteId, input.channelId, {
+        ...stagedPatch,
+        status: "in_progress",
       });
+
+      synced = await syncCustomerSupportVoiceAgentWithTools({
+        siteId: input.siteId,
+        senderIds: [resolved.sender.id],
+        activate: false,
+      });
+      const connectionPatch = {
+        ...stagedPatch,
+        metadata: {
+          ...stagedPatch.metadata,
+          zavu_agent_id: synced.agent.id,
+        },
+      };
+      const agent = await updateAgent(synced.agent.id, {
+        enabled: synced.shouldEnable,
+      });
+      voiceActivationAttempted = synced.shouldEnable && !resolved.voiceWasEnabled;
+      const sender = synced.shouldEnable
+        ? await ensureVoiceSender(resolved.sender.id)
+        : resolved.sender;
+      let persisted = staged;
+      if (synced.shouldEnable) {
+        persisted = await upsertChannelConnection(
+          input.siteId,
+          staged.channelId,
+          {
+            ...connectionPatch,
+            status: regulatoryStatus === "pending_review" ? "in_progress" : "connected",
+            metadata: {
+              ...connectionPatch.metadata,
+              activation_pending: false,
+              webhook_events: sender.webhook?.events || [],
+              previous_sender_id: undefined,
+            },
+          },
+          resolved.replacedSenderId
+            ? {
+                replaceSender: {
+                  previousSenderId: resolved.replacedSenderId,
+                  replacementSenderId: sender.id,
+                },
+              }
+            : undefined
+        );
+      } else {
+        persisted = await upsertChannelConnection(
+          input.siteId,
+          staged.channelId,
+          {
+            ...connectionPatch,
+            status: "pending",
+          },
+          resolved.replacedSenderId
+            ? {
+                replaceSender: {
+                  previousSenderId: resolved.replacedSenderId,
+                  replacementSenderId: resolved.sender.id,
+                },
+              }
+            : undefined
+        );
+      }
 
       return NextResponse.json({
         success: true,
-        channelId,
+        channelId: persisted.channelId,
+        connection: persisted.connection,
+        connections: persisted.connections,
         senderId: sender.id,
-        zavuAgentId: synced.agent.id,
-        agentEnabled: synced.agent.enabled,
+        phoneNumberId: resolved.phone?.id,
+        regulatoryStatus,
+        zavuAgentId: agent.id,
+        agentEnabled: agent.enabled,
       });
     } catch (zavuError: any) {
+      if (voiceActivationAttempted && resolved && !resolved.voiceWasEnabled) {
+        try {
+          await updateSender(resolved.sender.id, { enableVoice: false });
+        } catch (rollbackError) {
+          console.error(
+            `[Zavu Voice] Failed to disable sender ${resolved.sender.id} during rollback:`,
+            rollbackError
+          );
+        }
+      }
+      if (synced) {
+        try {
+          await updateAgent(synced.agent.id, { enabled: synced.previousEnabled });
+        } catch (rollbackError) {
+          console.error(
+            `[Zavu Voice] Failed to restore agent ${synced.agent.id} during rollback:`,
+            rollbackError
+          );
+        }
+      }
+      if (resolved?.createdSender && !resolved.replacedSenderId && !staged) {
+        try {
+          await deleteSender(resolved.sender.id);
+        } catch (cleanupError) {
+          console.error(
+            `[Zavu Voice] Failed to remove staged sender ${resolved.sender.id}:`,
+            cleanupError
+          );
+        }
+      }
       console.error("[Zavu Voice] Error creating sender:", zavuError);
       return NextResponse.json(
         { error: `Zavu API Error: ${zavuError.message || "Unknown error"}` },

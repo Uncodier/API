@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getPromptHash, downloadFromCache, uploadToCache } from '@/lib/services/summary/promptSummaryCache';
 import { resolveSiteFromRequirementUrl } from '@/lib/services/image/resolveSiteFromRequirementUrl';
 import { SummaryGenerationService } from '@/lib/services/summary/SummaryGenerationService';
+import { hasAuthenticatedPrincipal } from '@/lib/security/request-rate-limit';
+import { canAccessSite } from '@/lib/security/site-access';
+import { acquireLock, releaseLock } from '@/lib/security/upstash-rest';
 
 const NO_STORE_HEADERS = {
   'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
@@ -53,75 +56,72 @@ export async function GET(
     if (!promptStr || promptStr.trim() === '') {
       return jsonError('Prompt is required', 400);
     }
-
-    const hash = getPromptHash(promptStr);
-
-    // 1. Cache hit → return summary
-    const cached = await downloadFromCache(hash);
-    if (cached) {
-      return NextResponse.json(
-        { summary: cached },
-        { headers: { 'Cache-Control': 'public, max-age=31536000, immutable' } }
-      );
+    if (promptStr.length > 2_000) {
+      return jsonError('Prompt must be 2000 characters or fewer', 400);
     }
 
-    // 2. Cache miss → validate client via requirement URL
+    const expectedSiteId = request.nextUrl.searchParams.get('site_id');
+
+    if (!hasAuthenticatedPrincipal(request)) {
+      return jsonError('Authentication is required to access generated summaries', 401);
+    }
+
     const origin = request.headers.get('origin');
     const referer = request.headers.get('referer');
     const originOrReferer = origin || referer;
 
-    if (!originOrReferer) {
-      return jsonError('Missing Origin or Referer to resolve requirement', 403);
-    }
-
-    let isOfficialApp = false;
-    try {
-      const hn = !originOrReferer.startsWith('http') 
-        ? new URL(`https://${originOrReferer}`).hostname 
-        : new URL(originOrReferer).hostname;
-        
-      if (
-        hn === 'app.makinari.com' ||
-        hn === 'www.makinari.com' ||
-        hn === 'makinari.com' ||
-        hn === 'localhost' ||
-        hn === '127.0.0.1'
-      ) {
-        isOfficialApp = true;
-      }
-    } catch(e) {}
-
-    let siteId: string | null = null;
-    if (isOfficialApp) {
-      siteId = '00000000-0000-0000-0000-000000000000'; // System site ID for official app
-    } else {
-      siteId = await resolveSiteFromRequirementUrl(originOrReferer);
-    }
+    const siteId = expectedSiteId
+      || (originOrReferer
+        ? await resolveSiteFromRequirementUrl(originOrReferer)
+        : null);
 
     if (!siteId) {
-      return jsonError('Domain not authorized for summary generation', 403);
+      return jsonError('A site_id is required for summary generation', 400);
+    }
+    if (!await canAccessSite(request, siteId)) {
+      return jsonError('Site access denied', 403);
     }
 
-    // 3. Generate summary
-    const result = await SummaryGenerationService.summarize({
-      text: promptStr,
-      site_id: siteId
-    });
-
-    if (!result.success || !result.summary) {
-      return jsonError('Summary generation failed', 502, result.error);
+    const hash = getPromptHash(`v2:${siteId}:${promptStr}`);
+    const cached = await downloadFromCache(hash);
+    if (cached) {
+      return NextResponse.json(
+        { summary: cached },
+        { headers: { 'Cache-Control': 'private, max-age=31536000, immutable' } }
+      );
     }
 
-    // 4. Cache it
-    await uploadToCache(hash, result.summary).catch((err) => {
-      console.warn('[PublicPromptSummary] Failed to cache summary:', err);
-    });
-
-    // 5. Return summary
-    return NextResponse.json(
-      { summary: result.summary },
-      { headers: { 'Cache-Control': 'public, max-age=31536000, immutable' } }
-    );
+    const lockKey = `lock:public-summary:${hash}`;
+    const lock = await acquireLock(lockKey, 180);
+    if (lock.state === 'contended') {
+      return jsonError('Summary generation is already in progress', 409);
+    }
+    if (lock.state !== 'acquired') {
+      return jsonError('Summary generation admission is unavailable', 503);
+    }
+    try {
+      const rechecked = await downloadFromCache(hash);
+      if (rechecked) {
+        return NextResponse.json(
+          { summary: rechecked },
+          { headers: { 'Cache-Control': 'private, max-age=31536000, immutable' } },
+        );
+      }
+      const result = await SummaryGenerationService.summarize({
+        text: promptStr,
+        site_id: siteId
+      });
+      if (!result.success || !result.summary) {
+        return jsonError('Summary generation failed', 502, result.error);
+      }
+      await uploadToCache(hash, result.summary);
+      return NextResponse.json(
+        { summary: result.summary },
+        { headers: { 'Cache-Control': 'private, max-age=31536000, immutable' } }
+      );
+    } finally {
+      await releaseLock(lockKey, lock.token);
+    }
   } catch (error: any) {
     console.error('[PublicPromptSummary] Unhandled error:', error);
     return jsonError('Internal server error', 500, error?.message || String(error));

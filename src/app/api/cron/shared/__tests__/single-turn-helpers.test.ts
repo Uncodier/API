@@ -1,6 +1,7 @@
 import {
   buildGateErrorFeedback,
   captureInteractionBaseline,
+  captureWorkspaceProgressFingerprint,
   getDeclaredProtectedRoutes,
   getDeclaredTestCommand,
   getDeclaredValidationTargets,
@@ -104,6 +105,30 @@ describe('single-turn interaction helpers', () => {
       'rev-parse',
       'HEAD',
     ]);
+  });
+
+  it('captures a stable workspace progress fingerprint', async () => {
+    const fingerprint = 'c'.repeat(40);
+    const sandbox = {
+      runCommand: jest.fn().mockResolvedValue({
+        exitCode: 0,
+        stdout: jest.fn().mockResolvedValue(`${fingerprint}\n`),
+      }),
+    };
+
+    await expect(
+      captureWorkspaceProgressFingerprint(sandbox as any),
+    ).resolves.toBe(fingerprint);
+    expect(sandbox.runCommand).toHaveBeenCalledWith(
+      'sh',
+      expect.arrayContaining(['-c']),
+    );
+    const script = sandbox.runCommand.mock.calls[0][1][1];
+    expect(script).toContain(
+      'progress.md|evidence/*|.qa/*|qa_results.json|test_results.json',
+    );
+    expect(script).toContain('feature_list.json|requirement.spec.md');
+    expect(script).not.toContain('git rev-parse HEAD');
   });
 
   it('recognizes a completed execute_step call as a gate request', () => {

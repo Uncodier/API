@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { EmbeddingsService } from '@/lib/services/embeddings-service';
+import {
+  enforceRequestRateLimit,
+  getAuthenticatedRateIdentity,
+  isInternalServiceRequest,
+} from '@/lib/security/request-rate-limit';
 
 const DEFAULT_MODEL = 'text-embedding-3-small';
 const DEFAULT_DIMENSIONS = 1536;
@@ -15,6 +20,15 @@ function isValidInput(input: unknown): input is string | string[] {
 
 export async function POST(request: NextRequest) {
   try {
+    const limited = await enforceRequestRateLimit(request, {
+      namespace: 'ai-embeddings-principal',
+      identity: getAuthenticatedRateIdentity(request),
+      limit: isInternalServiceRequest(request) ? 300 : 60,
+      windowSeconds: 60,
+      failClosed: true,
+    });
+    if (limited) return limited;
+
     const body = await request.json();
     const { input, modelId = DEFAULT_MODEL, dimensions = DEFAULT_DIMENSIONS } = body || {};
 
@@ -22,6 +36,27 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: 'Parameter "input" is required (non-empty string or string[])' },
         { status: 400 }
+      );
+    }
+    const values = Array.isArray(input) ? input : [input];
+    const totalCharacters = values.reduce(
+      (total, value) => total + value.length,
+      0,
+    );
+    if (values.length > 100 || totalCharacters > 100_000) {
+      return NextResponse.json(
+        { error: 'Embedding input exceeds request limits' },
+        { status: 413 },
+      );
+    }
+    if (
+      !Number.isSafeInteger(dimensions)
+      || dimensions < 1
+      || dimensions > 3_072
+    ) {
+      return NextResponse.json(
+        { error: 'Parameter "dimensions" must be an integer between 1 and 3072' },
+        { status: 400 },
       );
     }
 

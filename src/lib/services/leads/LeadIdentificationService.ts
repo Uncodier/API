@@ -1,6 +1,6 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { normalizePhoneForStorage } from '@/lib/utils/phone-normalizer';
-import { IdentifyRequest } from '@/src/app/api/visitors/identify/types';
+import type { IdentifyRequest } from '@/app/api/visitors/identify/types';
 
 export class LeadIdentificationService {
   /** Normalize email for upsert: trim + lowercase */
@@ -26,7 +26,7 @@ export class LeadIdentificationService {
 
     // If we have a specific lead_id, we update that lead
     if (lead_id) {
-      return await this.updateExistingLead(lead_id, traits);
+      return await this.updateExistingLead(lead_id, traits, site_id);
     }
 
     // Otherwise, we perform an atomic upsert based on site_id, name, and email
@@ -50,7 +50,7 @@ export class LeadIdentificationService {
             .maybeSingle();
 
           if (existingLead) {
-            return await this.updateExistingLead(existingLead.id, traits);
+            return await this.updateExistingLead(existingLead.id, traits, site_id);
           }
         }
       }
@@ -98,7 +98,11 @@ export class LeadIdentificationService {
     return lead;
   }
 
-  private static async updateExistingLead(leadId: string, traits: any) {
+  private static async updateExistingLead(
+    leadId: string,
+    traits: any,
+    siteId: string,
+  ) {
     const updateData: any = {
       updated_at: new Date().toISOString()
     };
@@ -120,6 +124,7 @@ export class LeadIdentificationService {
       .from('leads')
       .update(updateData)
       .eq('id', leadId)
+      .eq('site_id', siteId)
       .select()
       .single();
 
@@ -131,7 +136,12 @@ export class LeadIdentificationService {
     return lead;
   }
 
-  static async updateVisitorAndMerge(visitorId: string, leadId: string, segmentId?: string) {
+  static async updateVisitorAndMerge(
+    visitorId: string,
+    leadId: string,
+    segmentId: string | undefined,
+    siteId: string,
+  ) {
     const visitorUpdateData: any = {
       lead_id: leadId,
       segment_id: segmentId,
@@ -150,16 +160,17 @@ export class LeadIdentificationService {
       throw updateError;
     }
 
-    // Find related visitors
-    const { data: relatedVisitors } = await supabaseAdmin
-      .from('visitors')
-      .select('id')
+    const { count: relatedVisitorCount, error: relatedError } = await supabaseAdmin
+      .from('visitor_sessions')
+      .select('visitor_id', { count: 'exact', head: true })
+      .eq('site_id', siteId)
       .eq('lead_id', leadId)
-      .neq('id', visitorId);
+      .neq('visitor_id', visitorId);
+    if (relatedError) throw relatedError;
 
     return {
       updatedVisitor,
-      relatedVisitors: relatedVisitors || []
+      relatedVisitorCount: relatedVisitorCount ?? 0,
     };
   }
 }

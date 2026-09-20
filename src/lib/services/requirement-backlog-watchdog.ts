@@ -25,6 +25,7 @@ import {
   classifyRequirementType,
   getFlow,
   advancePhaseIfReadyInMemory,
+  productAttemptLimits,
 } from './requirement-flows';
 import type { BacklogItem } from './requirement-backlog-types';
 import {
@@ -39,7 +40,16 @@ import {
   isBacklogActiveStatus,
 } from './requirement-backlog-invariants';
 import { patchRequirementMetadataKeys } from './requirement-metadata-patch';
-import { cancelPlanStepsForBacklogItem } from '@/lib/helpers/plan-lifecycle';
+import {
+  isBacklogItemBlocked,
+  releaseDueAutomaticBlockers,
+} from './requirement-backlog-blockers';
+import {
+  fulfillPlanCancellationRequests,
+  pendingPlanCancellation,
+  requestPlanCancellation,
+  type PendingPlanCancellation,
+} from './requirement-plan-cancellation';
 
 export async function bumpItemAttempts(params: {
   requirementId: string;
@@ -132,9 +142,11 @@ export async function escalateStaleInProgressItems(params: {
   const result = await mutateBacklogAtomically(
     params.requirementId,
     ({ backlog, flow }) => {
-      const maxAttempts =
-        params.maxAttempts ?? flow.cost_envelope.max_cycles_per_item;
+      const attemptLimits = productAttemptLimits(flow);
       const escalated: BacklogItem[] = [];
+      const cancellationRequests: PendingPlanCancellation[] = backlog.items
+        .map(pendingPlanCancellation)
+        .filter((request): request is PendingPlanCancellation => !!request);
 
       for (let i = 0; i < backlog.items.length; i++) {
         const item = backlog.items[i];
@@ -143,6 +155,11 @@ export async function escalateStaleInProgressItems(params: {
         const isIdleDueToPlumbing = lastAssumption.includes('[plumbing]');
         const updatedMs = item.updated_at ? Date.parse(item.updated_at) : NaN;
         const idle = Number.isFinite(updatedMs) ? now - updatedMs : Infinity;
+        const maxAttempts =
+          params.maxAttempts ??
+          ((item.tier ?? 'core') === 'ornamental'
+            ? attemptLimits.ornamental
+            : attemptLimits.core);
         const overAttempts = (item.attempts || 0) >= maxAttempts;
         if (idle < idleMs && !overAttempts) continue;
         if (!overAttempts && isIdleDueToPlumbing) {
@@ -152,25 +169,37 @@ export async function escalateStaleInProgressItems(params: {
           continue;
         }
         const note = `[watchdog] auto-escalated to needs_review after idle=${Math.round(idle / 60000)}m attempts=${item.attempts ?? 0} (thresholds idle_min=${Math.round(idleMs / 60000)} max_attempts=${maxAttempts})`;
-        backlog.items[i] = {
+        const cancellationReason =
+          'watchdog escalated backlog item to needs_review ' +
+          '(idle/attempts envelope exhausted)';
+        const cancellationRequestedAt = new Date().toISOString();
+        backlog.items[i] = requestPlanCancellation({
           ...item,
           status: 'needs_review',
           updated_at: new Date().toISOString(),
           assumptions: [...(item.assumptions || []), note].slice(-20),
-        };
+        }, cancellationReason, cancellationRequestedAt);
         escalated.push(backlog.items[i]);
+        cancellationRequests.push({
+          itemId: item.id,
+          reason: cancellationReason,
+          requestedAt: cancellationRequestedAt,
+        });
       }
       if (escalated.length === 0) {
-        return { result: { escalated }, write: false };
+        return {
+          result: { escalated, cancellationRequests },
+          write: false,
+        };
       }
       backlog.completion_ratio = computeRatio(backlog.items);
       const advance = advancePhaseIfReadyInMemory(backlog, flow);
       return {
-        result: { escalated },
+        result: { escalated, cancellationRequests },
         backlog: advance ? advance.nextBacklog : backlog,
       };
     },
-    { onMissing: () => ({ escalated: [] }) },
+    { onMissing: () => ({ escalated: [], cancellationRequests: [] }) },
   );
 
   // Stop the zombie loop: when a backlog item is escalated to needs_review,
@@ -179,22 +208,11 @@ export async function escalateStaleInProgressItems(params: {
   // and the agent burns turns trying to finish work whose acceptance gate is
   // no longer reachable (observed on item 8afbb973: 10 attempts, plan
   // 031a9346 still in_progress after the watchdog escalated the item).
-  for (const it of result.escalated) {
-    try {
-      const r = await cancelPlanStepsForBacklogItem({
-        itemId: it.id,
-        reason: `watchdog escalated backlog item to needs_review (idle/attempts envelope exhausted)`,
-      });
-      if (r.stepsCancelled > 0) {
-        console.warn(
-          `[watchdog] cancelled ${r.stepsCancelled} plan step(s) across ${r.plansTouched} plan(s) bound to escalated item ${it.id} (plansCancelled=${r.plansCancelled})`,
-        );
-      }
-    } catch (e) {
-      console.warn(`[watchdog] cancelPlanStepsForBacklogItem failed for ${it.id}:`, e);
-    }
-  }
-  return result;
+  await fulfillPlanCancellationRequests({
+    requirementId: params.requirementId,
+    requests: result.cancellationRequests,
+  });
+  return { escalated: result.escalated };
 }
 
 export async function ensureInProgressItem(params: {
@@ -207,6 +225,7 @@ export async function ensureInProgressItem(params: {
   }>(
     params.requirementId,
     ({ backlog, flow }) => {
+      const releasedBlockers = releaseDueAutomaticBlockers(backlog.items);
       const active = backlog.items.find((item) =>
         isBacklogActiveStatus(item.status),
       );
@@ -217,7 +236,7 @@ export async function ensureInProgressItem(params: {
             reason: 'already_in_progress',
             advancedTo: null,
           },
-          write: false,
+          write: releasedBlockers.length > 0,
         };
       }
 
@@ -236,7 +255,13 @@ export async function ensureInProgressItem(params: {
           const unblocked = (item.depends_on || []).every((dependencyId) =>
             completedIds.has(dependencyId),
           );
-          if (item.status !== 'pending' || !unblocked) return false;
+          if (
+            item.status !== 'pending' ||
+            !unblocked ||
+            isBacklogItemBlocked(item)
+          ) {
+            return false;
+          }
           if ((item.tier ?? 'core') === 'ornamental') {
             const maxAttempts = parseInt(
               process.env.CRON_ORNAMENTAL_MAX_ATTEMPTS || '2',
@@ -255,7 +280,7 @@ export async function ensureInProgressItem(params: {
             advancedTo: advance?.to.id || null,
           },
           backlog: workingBacklog,
-          write: !!advance,
+          write: !!advance || releasedBlockers.length > 0,
         };
       }
 

@@ -1,10 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { SummaryGenerationService } from '@/lib/services/summary/SummaryGenerationService';
+import {
+  enforceRequestRateLimit,
+  getAuthenticatedRateIdentity,
+  isInternalServiceRequest,
+} from '@/lib/security/request-rate-limit';
+import { canAccessSite } from '@/lib/security/site-access';
 
 export async function POST(request: NextRequest) {
   try {
+    const limited = await enforceRequestRateLimit(request, {
+      namespace: 'ai-summary-principal',
+      identity: getAuthenticatedRateIdentity(request),
+      limit: isInternalServiceRequest(request) ? 300 : 30,
+      windowSeconds: 60,
+      failClosed: true,
+    });
+    if (limited) return limited;
+
     const body = await request.json();
-    const { text, source, site_id = '00000000-0000-0000-0000-000000000000' } = body || {};
+    const { text, source, site_id } = body || {};
 
     const hasText = typeof text === 'string' && text.trim().length > 0;
     const hasSource = Boolean(source?.collection && source?.id);
@@ -14,6 +29,28 @@ export async function POST(request: NextRequest) {
         { error: 'Either "text" or "source.collection" and "source.id" are required' },
         { status: 400 }
       );
+    }
+    if (
+      typeof site_id !== 'string'
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(site_id)
+    ) {
+      return NextResponse.json(
+        { error: 'A valid site_id is required' },
+        { status: 400 },
+      );
+    }
+    if (hasText && text.length > 100_000) {
+      return NextResponse.json(
+        { error: 'Text exceeds 100000 characters' },
+        { status: 413 },
+      );
+    }
+    if (
+      site_id === '00000000-0000-0000-0000-000000000000'
+      ? !isInternalServiceRequest(request)
+      : !await canAccessSite(request, site_id)
+    ) {
+      return NextResponse.json({ error: 'Site access denied' }, { status: 403 });
     }
 
     const result = hasSource

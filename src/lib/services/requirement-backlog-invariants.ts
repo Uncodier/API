@@ -2,6 +2,7 @@ import type {
   BacklogItem,
   BacklogItemStatus,
 } from './requirement-backlog-types';
+import { isBacklogItemBlocked } from './requirement-backlog-blockers';
 
 const ACTIVE_STATUSES = new Set<BacklogItemStatus>([
   'in_progress',
@@ -106,6 +107,11 @@ export function assertBacklogTransitionInvariants(
 
   const itemsById = new Map(items.map((item) => [item.id, item]));
   for (const item of activeItems) {
+    if (isBacklogItemBlocked(item)) {
+      throw new Error(
+        `Cannot keep backlog item "${item.id}" active: blocked_by is not empty`,
+      );
+    }
     const blockedBy = (item.depends_on || [])
       .map((dependencyId) => itemsById.get(dependencyId))
       .filter(
@@ -164,6 +170,11 @@ export function assertBacklogStatusTransition(
     nextStatus === 'judge_review' ||
     nextStatus === 'done'
   ) {
+    if (isBacklogItemBlocked(item)) {
+      throw new Error(
+        `Cannot move backlog item "${itemId}" to ${nextStatus}: blocked_by is not empty`,
+      );
+    }
     const itemsById = new Map(items.map((candidate) => [candidate.id, candidate]));
     const blockedBy = (item.depends_on || [])
       .map((dependencyId) => itemsById.get(dependencyId))

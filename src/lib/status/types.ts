@@ -1,3 +1,5 @@
+import type { SlaWindow } from '@/lib/status/compute-sla';
+
 export type SystemHealthStatus = 'up' | 'degraded' | 'down' | 'skipped';
 
 export type ProbeTrigger = 'github_push' | 'cron_hourly' | 'manual';
@@ -38,7 +40,7 @@ export interface ProbeRunResult {
   overallStatus: 'healthy' | 'degraded' | 'down';
   durationMs: number;
   systems: SystemHealthResponse[];
-  slaSnapshot: Record<string, { uptime24h: number; uptime7d: number; uptime30d: number }>;
+  slaSnapshot: Record<string, SlaWindow>;
 }
 
 const SECRET_PATTERNS = [

@@ -1,6 +1,5 @@
 import { NextRequest } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { isOriginAllowedInDb } from '@/lib/cors/cors-db';
 import { createTask } from '@/lib/database/task-db';
 import { TeamNotificationService } from '@/lib/services/team-notification-service';
 import { NotificationType } from '@/lib/services/notification-service';
@@ -9,32 +8,13 @@ import {
   visitorAuthorizationErrorResponse,
   visitorSessionAuthorizationService
 } from '@/lib/services/visitor-identity/VisitorSessionAuthorizationService';
-
-function corsHeaders(request: NextRequest) {
-  const origin = request.headers.get('origin') || '*';
-  return {
-    'Access-Control-Allow-Origin': origin,
-    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With',
-    'Access-Control-Allow-Credentials': 'true',
-    'Access-Control-Max-Age': '86400',
-  } as Record<string, string>;
-}
-
-function json(res: any, status: number, request: NextRequest) {
-  return new Response(JSON.stringify(res), {
-    status,
-    headers: {
-      'Content-Type': 'application/json',
-      ...corsHeaders(request),
-    },
-  });
-}
-
-function jsonT(res: any, status: number, request: NextRequest, traceId: string) {
-  const payload = typeof res === 'object' && res !== null ? { ...res, trace_id: traceId } : res;
-  return json(payload, status, request);
-}
+import {
+  authorizeUploadBeforeParsing,
+  corsHeaders,
+  isValidUuid as isValidUUID,
+  json,
+  jsonWithTrace as jsonT,
+} from './request-helpers';
 
 export async function OPTIONS(request: NextRequest) {
   return new Response(null, { status: 204, headers: corsHeaders(request) });
@@ -44,11 +24,6 @@ const MAX_FILE_SIZE_MB = 25;
 const MAX_FILE_SIZE = MAX_FILE_SIZE_MB * 1024 * 1024;
 const BUCKET = 'assets';
 const CONVERSATION_REUSE_WINDOW_MIN = 30;
-
-function isValidUUID(v?: string | null) {
-  if (!v) return false;
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
-}
 
 export async function POST(request: NextRequest) {
   try {
@@ -63,9 +38,15 @@ export async function POST(request: NextRequest) {
       method: request.method
     });
 
-    const allowed = await isOriginAllowedInDb(origin);
-    console.log(`[VisitorsUpload:${traceId}] CP1 origin allowed:`, allowed);
-    if (!allowed) return jsonT({ success: false, error: 'Origin not allowed' }, 403, request, traceId);
+    const admission = await authorizeUploadBeforeParsing(request);
+    if (admission.error) {
+      return jsonT(
+        { success: false, error: admission.error },
+        admission.siteId && admission.sessionId ? 403 : 401,
+        request,
+        traceId,
+      );
+    }
 
     if (!contentType.toLowerCase().includes('multipart/form-data')) {
       return jsonT({ success: false, error: 'Unsupported content type. Use multipart/form-data' }, 415, request, traceId);
@@ -82,6 +63,7 @@ export async function POST(request: NextRequest) {
     }
 
     const siteId = (form.get('site_id') || '').toString();
+    const sessionId = form.get('session_id')?.toString() || null;
     let conversationId = form.get('conversation_id')?.toString() || null;
     let visitorId = form.get('visitor_id')?.toString() || null;
     let leadId = form.get('lead_id')?.toString() || null;
@@ -112,19 +94,45 @@ export async function POST(request: NextRequest) {
       filesCount: files.length
     });
 
-    if (!siteId) return jsonT({ success: false, error: 'site_id is required' }, 400, request, traceId);
+    if (!isValidUUID(siteId)) return jsonT({ success: false, error: 'site_id is invalid' }, 400, request, traceId);
     if (!files.length) return jsonT({ success: false, error: 'At least one file is required under key "file"' }, 400, request, traceId);
+    if (
+      !admission.authenticated
+      && (
+        siteId !== admission.siteId
+        || sessionId !== admission.sessionId
+      )
+    ) {
+      return jsonT({ success: false, error: 'Session context mismatch' }, 403, request, traceId);
+    }
+    if (!isValidUUID(sessionId)) {
+      return jsonT({ success: false, error: 'session_id is required' }, 400, request, traceId);
+    }
 
     const identity = await visitorSessionAuthorizationService.authorizeBrowserRequest({
       request,
       siteId,
-      sessionId: form.get('session_id')?.toString(),
+      sessionId,
       conversationId: isValidUUID(conversationId) ? conversationId : null
     });
     if (identity) {
       visitorId = identity.visitorId;
       leadId = identity.leadId;
       userId = null;
+    }
+    if (agentId) {
+      if (!isValidUUID(agentId)) {
+        return jsonT({ success: false, error: 'agent_id is invalid' }, 400, request, traceId);
+      }
+      const { data: agent, error: agentError } = await supabaseAdmin
+        .from('agents')
+        .select('id')
+        .eq('id', agentId)
+        .eq('site_id', siteId)
+        .maybeSingle();
+      if (agentError || !agent) {
+        return jsonT({ success: false, error: 'Agent does not belong to this site' }, 403, request, traceId);
+      }
     }
 
     // Resolve lead_id from visitor if missing

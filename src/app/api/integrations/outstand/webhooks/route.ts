@@ -2,6 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { processOutstandWebhookPayload } from '@/lib/integrations/outstand/process-webhook';
 import { verifyOutstandWebhookSignature } from '@/lib/integrations/outstand/webhook-verification';
 import type { OutstandWebhookPayload } from '@/lib/integrations/outstand/webhook-types';
+import { sha256 } from '@/lib/security/upstash-rest';
+import {
+  claimProviderWebhookEvent,
+  finishProviderWebhookEvent,
+  type ProviderWebhookClaim,
+} from '@/lib/services/provider-webhook-claims';
 
 const KNOWN_EVENTS = new Set([
   'post.published',
@@ -30,14 +36,19 @@ export async function POST(request: NextRequest) {
   const secret = process.env.OUTSTAND_WEBHOOK_SECRET;
   const signature = request.headers.get('x-outstand-signature');
 
-  if (secret) {
-    if (!signature || !verifyOutstandWebhookSignature(rawBody, signature, secret)) {
-      console.warn('[Outstand webhook] invalid or missing signature');
-      return NextResponse.json(
-        { success: false, error: 'Invalid signature' },
-        { status: 401 }
-      );
-    }
+  if (!secret) {
+    console.error('[Outstand webhook] OUTSTAND_WEBHOOK_SECRET is not configured');
+    return NextResponse.json(
+      { success: false, error: 'Webhook secret not configured' },
+      { status: 503 },
+    );
+  }
+  if (!signature || !verifyOutstandWebhookSignature(rawBody, signature, secret)) {
+    console.warn('[Outstand webhook] invalid or missing signature');
+    return NextResponse.json(
+      { success: false, error: 'Invalid signature' },
+      { status: 401 }
+    );
   }
 
   let parsed: unknown;
@@ -56,11 +67,53 @@ export async function POST(request: NextRequest) {
       { status: 400 }
     );
   }
+  let claim: ProviderWebhookClaim;
+  const eventId = await sha256(rawBody);
+  try {
+    claim = await claimProviderWebhookEvent(
+      'outstand',
+      eventId,
+      parsed.event,
+    );
+  } catch (error) {
+    console.error('[Outstand webhook] durable admission failed:', error);
+    return NextResponse.json(
+      { success: false, error: 'Webhook admission unavailable' },
+      { status: 503, headers: { 'Retry-After': '5' } },
+    );
+  }
+  if (claim.state === 'completed') {
+    return NextResponse.json({ success: true, duplicate: true });
+  }
+  if (claim.state === 'busy') {
+    return NextResponse.json(
+      { success: false, error: 'Webhook admission unavailable' },
+      { status: 503, headers: { 'Retry-After': '5' } },
+    );
+  }
 
   try {
     await processOutstandWebhookPayload(parsed);
+    const completed = await finishProviderWebhookEvent(
+      'outstand',
+      eventId,
+      claim.token,
+      'completed',
+    );
+    if (!completed) {
+      throw new Error('Outstand webhook claim ownership was lost before completion');
+    }
     return NextResponse.json({ success: true, received: true, event: parsed.event });
   } catch (err) {
+    await finishProviderWebhookEvent(
+      'outstand',
+      eventId,
+      claim.token,
+      'failed',
+      err instanceof Error ? err.message : String(err),
+    ).catch((finishError) => {
+      console.error('[Outstand webhook] failed to record processing failure:', finishError);
+    });
     console.error('[Outstand webhook] processing error:', err);
     return NextResponse.json(
       { success: false, error: 'Webhook processing failed' },

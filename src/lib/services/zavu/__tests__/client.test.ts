@@ -1,10 +1,13 @@
 import {
   activateSenderChannel,
+  assignPhoneNumberToSender,
   attachSenderToAgent,
   createSender,
+  createVoiceSender,
   deleteSender,
   ensureProjectWebhook,
   ensureSenderWebhook,
+  ensureVoiceSender,
   ZAVU_PROJECT_WEBHOOK_EVENTS,
   ZAVU_SENDER_WEBHOOK_EVENTS,
   sendChannelMessage,
@@ -95,6 +98,83 @@ describe("Zavu client webhook contract", () => {
     expect(sender.id).toBe("snd_3");
     const body = JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body);
     expect(body.webhookEvents).toEqual(ZAVU_SENDER_WEBHOOK_EVENTS);
+  });
+
+  it("enables Voice and verifies the sender channel", async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce(
+      mockJson(200, {
+        sender: {
+          id: "snd_voice",
+          channels: ["voice"],
+          webhook: { events: ZAVU_SENDER_WEBHOOK_EVENTS, active: true },
+        },
+      })
+    );
+
+    await expect(ensureVoiceSender("snd/voice")).resolves.toMatchObject({
+      id: "snd_voice",
+      channels: ["voice"],
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "https://api.zavu.dev/v1/senders/snd%2Fvoice",
+      expect.objectContaining({ method: "PATCH" })
+    );
+    const body = JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body);
+    expect(body.enableVoice).toBe(true);
+    expect(body).not.toHaveProperty("enableSmsOneway");
+    expect(body.webhookEvents).toEqual(ZAVU_SENDER_WEBHOOK_EVENTS);
+  });
+
+  it("creates a staged sender with its phone number and Voice disabled", async () => {
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce(
+        mockJson(201, {
+          sender: {
+            id: "snd_voice",
+            channels: [],
+            webhook: {
+              events: ZAVU_SENDER_WEBHOOK_EVENTS,
+              secret: "whsec_sender",
+            },
+          },
+        })
+      )
+      .mockResolvedValueOnce(
+        mockJson(200, {
+          sender: {
+            id: "snd_voice",
+            channels: [],
+            webhook: { events: ZAVU_SENDER_WEBHOOK_EVENTS },
+          },
+        })
+      );
+
+    await createVoiceSender({
+      name: "Voice Support",
+      phoneNumber: "+14155550100",
+    });
+
+    const createBody = JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body);
+    expect(createBody.phoneNumber).toBe("+14155550100");
+    expect(createBody).not.toHaveProperty("enableVoice");
+  });
+
+  it("assigns an owned phone number by its authoritative ID", async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce(mockJson(200, {
+      id: "phone_1",
+      senderId: "sender_1",
+    }));
+
+    await assignPhoneNumberToSender("phone/1", "sender_1");
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "https://api.zavu.dev/v1/phone-numbers/phone%2F1",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ senderId: "sender_1" }),
+      })
+    );
   });
 
   it("ensureProjectWebhook PATCHes when a webhook already exists", async () => {

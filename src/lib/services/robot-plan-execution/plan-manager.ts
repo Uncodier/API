@@ -88,7 +88,7 @@ export async function updatePlanWithStepResult(
   stepStatus: string,
   finalResult: string,
   executionStartTime: number,
-  allSteps: any[]
+  _allSteps: any[]
 ) {
   const planUpdateData: any = {
     updated_at: new Date().toISOString(),
@@ -116,6 +116,16 @@ export async function updatePlanWithStepResult(
   
   // Merge with latest version - use most current steps from DB
   const latestSteps = latestPlan.steps || [];
+  const persistedStep = latestSteps.find((step: any) => step.id === currentStep.id);
+  if (
+    !['pending', 'in_progress', 'active'].includes(latestPlan.status) ||
+    !persistedStep ||
+    persistedStep.status === 'cancelled'
+  ) {
+    throw new Error(
+      `Plan ${effective_plan_id} or step ${currentStep.id} is no longer runnable`,
+    );
+  }
   
   // Update only the current step in the latest version
   const finalUpdatedSteps = latestSteps.map((step: any) => {
@@ -187,13 +197,25 @@ export async function updatePlanWithStepResult(
     updated_steps_count: finalUpdatedSteps.length
   });
 
-  const updateResult = await supabaseAdmin
+  let updateQuery = supabaseAdmin
     .from('instance_plans')
     .update(planUpdateData)
-    .eq('id', effective_plan_id);
+    .eq('id', effective_plan_id)
+    .in('status', ['pending', 'in_progress', 'active']);
+  updateQuery = latestPlan.updated_at == null
+    ? updateQuery.is('updated_at', null)
+    : updateQuery.eq('updated_at', latestPlan.updated_at);
+  const updateResult = await updateQuery
+    .select('id')
+    .maybeSingle();
     
   if (updateResult.error) {
     console.error(`₍ᐢ•(ܫ)•ᐢ₎ Error updating plan:`, updateResult.error);
+    throw new Error(`Failed to update plan: ${updateResult.error.message}`);
+  } else if (!updateResult.data) {
+    throw new Error(
+      `Plan ${effective_plan_id} changed concurrently; step result was not persisted`,
+    );
   } else {
     console.log(`₍ᐢ•(ܫ)•ᐢ₎ Plan updated successfully`);
   }
@@ -206,32 +228,63 @@ export async function updatePlanWithStepResult(
  */
 export async function markPlanAsStarted(
   effective_plan_id: string,
-  planSteps: any[],
+  _planSteps: any[],
   currentStep: any
 ) {
   console.log(`₍ᐢ•(ܫ)•ᐢ₎ Marking plan as in_progress and current step as started before execution`);
-  
+
+  const { data: latestPlan, error: fetchError } = await supabaseAdmin
+    .from('instance_plans')
+    .select('id, status, steps, updated_at')
+    .eq('id', effective_plan_id)
+    .single();
+  if (fetchError || !latestPlan) {
+    throw new Error(`Failed to fetch plan before starting: ${fetchError?.message}`);
+  }
+  if (!['pending', 'in_progress', 'active'].includes(latestPlan.status)) {
+    throw new Error(`Plan ${effective_plan_id} is no longer runnable`);
+  }
+  const latestSteps = Array.isArray(latestPlan.steps) ? latestPlan.steps : [];
+  const persistedStep = latestSteps.find((step: any) => step.id === currentStep.id);
+  if (!persistedStep || persistedStep.status !== 'pending') {
+    throw new Error(`Plan step ${currentStep.id} is no longer pending`);
+  }
+
   // Mark current step as started/in_progress before execution
-  const updatedStepsForStart = planSteps.map((step: any) => {
+  const startedAt = new Date().toISOString();
+  const updatedStepsForStart = latestSteps.map((step: any) => {
     if (step.id === currentStep.id) {
       return {
         ...step,
         status: 'in_progress',
-        started_at: new Date().toISOString()
+        started_at: startedAt,
       };
     }
     return step;
   });
-  
-  await supabaseAdmin
+
+  let updateQuery = supabaseAdmin
     .from('instance_plans')
     .update({ 
       status: 'in_progress', 
-      started_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      started_at: startedAt,
+      updated_at: startedAt,
       steps: updatedStepsForStart
     })
-    .eq('id', effective_plan_id);
+    .eq('id', effective_plan_id)
+    .in('status', ['pending', 'in_progress', 'active']);
+  updateQuery = latestPlan.updated_at == null
+    ? updateQuery.is('updated_at', null)
+    : updateQuery.eq('updated_at', latestPlan.updated_at);
+  const { data, error } = await updateQuery.select('id').maybeSingle();
+  if (error) {
+    throw new Error(`Failed to mark plan as started: ${error.message}`);
+  }
+  if (!data) {
+    throw new Error(
+      `Plan ${effective_plan_id} changed concurrently; step was not started`,
+    );
+  }
 }
 
 /**

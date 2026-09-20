@@ -110,9 +110,9 @@ describe('cycle-wrapup-prompt', () => {
 
   it('does not let historical review items block runnable work', () => {
     const items = [
-      { id: 'old-review', phase_id: 'outline', status: 'needs_review', attempts: 4, tier: 'core' as const },
-      { id: 'active', phase_id: 'build', status: 'in_progress', attempts: 3, tier: 'core' as const },
-      { id: 'next', phase_id: 'build', status: 'pending', attempts: 0, tier: 'core' as const },
+      { id: 'old-review', phase_id: 'outline', status: 'needs_review' as const, attempts: 4, tier: 'core' as const },
+      { id: 'active', phase_id: 'build', status: 'in_progress' as const, attempts: 3, tier: 'core' as const },
+      { id: 'next', phase_id: 'build', status: 'pending' as const, attempts: 0, tier: 'core' as const },
     ];
 
     expect(feedbackRequiredBacklogItems(
@@ -157,11 +157,66 @@ describe('cycle-wrapup-prompt', () => {
     ], { core: 4, ornamental: 2 })).toBe(false);
   });
 
+  it('does not call explicitly blocked work runnable', () => {
+    expect(hasRunnableBacklogWork([
+      {
+        id: 'blocked',
+        status: 'pending',
+        attempts: 0,
+        tier: 'core',
+        blocked_by: [{
+          blocker_id: 'preview',
+          category: 'missing_precondition',
+          reason: 'Preview URL unavailable.',
+          resolution_actor: 'platform',
+        }],
+      },
+    ], { core: 4, ornamental: 2 })).toBe(false);
+  });
+
+  it('requests feedback only for blockers owned by the user', () => {
+    const platformBlocked = {
+      id: 'platform',
+      phase_id: 'build',
+      status: 'pending' as const,
+      attempts: 0,
+      tier: 'core' as const,
+      blocked_by: [{
+        blocker_id: 'preview',
+        category: 'missing_precondition' as const,
+        reason: 'Preview URL unavailable.',
+        resolution_actor: 'platform' as const,
+      }],
+    };
+    const userBlocked = {
+      ...platformBlocked,
+      id: 'user',
+      blocked_by: [{
+        blocker_id: 'credential',
+        category: 'user_decision' as const,
+        reason: 'A credential is required.',
+        resolution_actor: 'user' as const,
+        user_action_required: true,
+      }],
+    };
+
+    expect(feedbackRequiredBacklogItems(
+      [platformBlocked],
+      { core: 4, ornamental: 2 },
+      { currentPhaseId: 'build' },
+    )).toEqual([]);
+    expect(feedbackRequiredBacklogItems(
+      [platformBlocked, userBlocked],
+      { core: 4, ornamental: 2 },
+      { currentPhaseId: 'build' },
+    )).toEqual([userBlocked]);
+  });
+
   it('asks for feedback only when the relevant scope has no runnable work', () => {
     const items = [
-      { id: 'review', phase_id: 'outline', status: 'needs_review', attempts: 4, tier: 'core' as const },
-      { id: 'exhausted', phase_id: 'outline', status: 'in_progress', attempts: 4, tier: 'core' as const },
-      { id: 'unrelated', phase_id: 'build', status: 'pending', attempts: 0, tier: 'core' as const },
+      { id: 'review', phase_id: 'outline', status: 'needs_review' as const, attempts: 4, tier: 'core' as const },
+      { id: 'exhausted', phase_id: 'outline', status: 'in_progress' as const, attempts: 4, tier: 'core' as const },
+      { id: 'unrelated', phase_id: 'build', status: 'pending' as const, attempts: 0, tier: 'core' as const },
     ];
 
     expect(feedbackRequiredBacklogItems(
@@ -171,9 +226,32 @@ describe('cycle-wrapup-prompt', () => {
     )).toEqual([items[0], items[1]]);
   });
 
+  it('retains user blockers from an earlier phase in terminal feedback', () => {
+    const priorUserBlocked = {
+      id: 'credential',
+      phase_id: 'research',
+      status: 'pending' as const,
+      attempts: 0,
+      tier: 'core' as const,
+      blocked_by: [{
+        blocker_id: 'user-key',
+        category: 'user_decision' as const,
+        reason: 'API key required.',
+        resolution_actor: 'user' as const,
+        user_action_required: true,
+      }],
+    };
+
+    expect(feedbackRequiredBacklogItems(
+      [priorUserBlocked],
+      { core: 4, ornamental: 2 },
+      { currentPhaseId: 'build' },
+    )).toEqual([priorUserBlocked]);
+  });
+
   it('suppresses backlog feedback while the current plan can continue', () => {
     const items = [
-      { id: 'review', status: 'needs_review', attempts: 4, tier: 'core' as const },
+      { id: 'review', status: 'needs_review' as const, attempts: 4, tier: 'core' as const },
     ];
 
     expect(feedbackRequiredBacklogItems(

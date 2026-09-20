@@ -11,6 +11,7 @@ import {
   writeBacklogCas,
   type RequirementRow,
 } from './requirement-backlog-store';
+import { reconcileBacklogBlockedBy } from './requirement-backlog-blockers';
 
 const MAX_BACKLOG_WRITE_ATTEMPTS = 4;
 
@@ -51,11 +52,13 @@ export async function mutateBacklogAtomically<T>(
     );
     const outcome = await mutate({ requirement, backlog, flow });
     if (outcome.write === false) return outcome.result;
+    const backlogToWrite = outcome.backlog || backlog;
+    reconcileBacklogBlockedBy(backlogToWrite.items);
 
     try {
       await writeBacklogCas(
         requirementId,
-        outcome.backlog || backlog,
+        backlogToWrite,
         Number(requirement.backlog_revision) || 0,
       );
       return outcome.result;

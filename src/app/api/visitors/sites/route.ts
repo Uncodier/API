@@ -1,180 +1,143 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { z } from 'zod'
-import { supabaseAdmin } from '@/lib/database/supabase-client'
-import { v4 as uuidv4 } from 'uuid'
+import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
+import { supabaseAdmin } from '@/lib/database/supabase-client';
+import {
+  canAccessSite,
+  getRequestSitePrincipal,
+} from '@/lib/security/site-access';
 
-// Validation schema for site creation
 const createSiteSchema = z.object({
-  name: z.string(),
-  domain: z.string().optional()
+  name: z.string().trim().min(1).max(200),
+  domain: z.string().trim().max(253).optional(),
 });
 
-// Validation schema for site retrieval
-const getSiteSchema = z.object({
-  id: z.string().uuid()
-});
+const siteIdSchema = z.string().uuid();
+
+function forbidden() {
+  return NextResponse.json(
+    { success: false, error: { code: 'forbidden', message: 'Site access is required' } },
+    { status: 403 },
+  );
+}
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const validatedData = createSiteSchema.parse(body);
-
-    const siteId = uuidv4();
+    const principal = getRequestSitePrincipal(request);
+    if (!principal.internal && (!principal.userId || principal.siteId)) {
+      return forbidden();
+    }
+    const input = createSiteSchema.parse(await request.json());
+    const siteUrl = input.domain
+      ? (/^https?:\/\//i.test(input.domain) ? input.domain : `https://${input.domain}`)
+      : null;
     const { data: site, error } = await supabaseAdmin
       .from('sites')
-      .insert([{
-        id: siteId,
-        name: validatedData.name,
-        domain: validatedData.domain,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      }])
-      .select()
+      .insert({
+        name: input.name,
+        url: siteUrl,
+        user_id: principal.userId,
+      })
+      .select('id, name, url, user_id, created_at, updated_at')
       .single();
-
     if (error) {
-      console.error('Error creating site:', error);
+      console.error('[Visitor Sites] Site creation failed:', error);
       return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: 'site_creation_error',
-            message: 'Error creating site'
-          }
-        },
-        { status: 500 }
+        { success: false, error: { code: 'site_creation_error', message: 'Error creating site' } },
+        { status: 500 },
       );
     }
-
-    return NextResponse.json({
-      success: true,
-      site
-    });
-
+    return NextResponse.json({ success: true, site }, { status: 201 });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: 'invalid_parameters',
-            message: 'Invalid request parameters',
-            details: error.errors
-          }
-        },
-        { status: 400 }
+        { success: false, error: { code: 'invalid_parameters', message: 'Invalid request parameters' } },
+        { status: 400 },
       );
     }
-
+    console.error('[Visitor Sites] Unexpected creation error:', error);
     return NextResponse.json(
-      {
-        success: false,
-        error: {
-          code: 'internal_error',
-          message: 'Internal server error'
-        }
-      },
-      { status: 500 }
+      { success: false, error: { code: 'internal_error', message: 'Internal server error' } },
+      { status: 500 },
     );
   }
 }
 
 export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
-
-    if (!id) {
-      // If no ID provided, return all sites
-      const { data: sites, error } = await supabaseAdmin
+    const rawId = request.nextUrl.searchParams.get('id');
+    if (rawId) {
+      const id = siteIdSchema.parse(rawId);
+      if (!await canAccessSite(request, id)) return forbidden();
+      const { data: site, error } = await supabaseAdmin
         .from('sites')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (error) {
-        console.error('Error fetching sites:', error);
+        .select('id, name, url, user_id, created_at, updated_at')
+        .eq('id', id)
+        .maybeSingle();
+      if (error) throw error;
+      if (!site) {
         return NextResponse.json(
-          {
-            success: false,
-            error: {
-              code: 'sites_fetch_error',
-              message: 'Error fetching sites'
-            }
-          },
-          { status: 500 }
+          { success: false, error: { code: 'site_not_found', message: 'Site not found' } },
+          { status: 404 },
         );
       }
-
-      return NextResponse.json({
-        success: true,
-        sites
-      });
+      return NextResponse.json({ success: true, site });
     }
 
-    // If ID provided, validate and fetch specific site
-    const validatedData = getSiteSchema.parse({ id });
-    const { data: site, error } = await supabaseAdmin
+    const principal = getRequestSitePrincipal(request);
+    const baseQuery = () => supabaseAdmin
       .from('sites')
-      .select('*')
-      .eq('id', validatedData.id)
-      .single();
-
-    if (error) {
-      console.error('Error fetching site:', error);
-      return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: 'site_fetch_error',
-            message: 'Error fetching site'
-          }
-        },
-        { status: 500 }
-      );
+      .select('id, name, url, user_id, created_at, updated_at')
+      .order('created_at', { ascending: false })
+      .limit(100);
+    if (principal.siteId) {
+      const { data: sites, error } = await baseQuery().eq('id', principal.siteId);
+      if (error) throw error;
+      return NextResponse.json({ success: true, sites: sites ?? [] });
+    }
+    if (!principal.internal && !principal.userId) {
+      return forbidden();
+    }
+    if (principal.internal) {
+      const { data: sites, error } = await baseQuery();
+      if (error) throw error;
+      return NextResponse.json({ success: true, sites: sites ?? [] });
     }
 
-    if (!site) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: 'site_not_found',
-            message: 'Site not found'
-          }
-        },
-        { status: 404 }
-      );
+    const [{ data: directSites, error: directError }, { data: ownerships, error: ownershipError }] =
+      await Promise.all([
+        baseQuery().eq('user_id', principal.userId),
+        supabaseAdmin
+          .from('site_ownership')
+          .select('site_id')
+          .eq('user_id', principal.userId)
+          .limit(100),
+      ]);
+    if (directError || ownershipError) throw directError || ownershipError;
+    const directIds = new Set((directSites ?? []).map((site) => site.id));
+    const ownedIds = (ownerships ?? [])
+      .map((ownership) => ownership.site_id)
+      .filter((id) => !directIds.has(id));
+    let memberSites: typeof directSites = [];
+    if (ownedIds.length) {
+      const { data, error } = await baseQuery().in('id', ownedIds);
+      if (error) throw error;
+      memberSites = data;
     }
-
     return NextResponse.json({
       success: true,
-      site
+      sites: [...(directSites ?? []), ...(memberSites ?? [])].slice(0, 100),
     });
-
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: 'invalid_parameters',
-            message: 'Invalid request parameters',
-            details: error.errors
-          }
-        },
-        { status: 400 }
+        { success: false, error: { code: 'invalid_parameters', message: 'Invalid site ID' } },
+        { status: 400 },
       );
     }
-
+    console.error('[Visitor Sites] Site retrieval failed:', error);
     return NextResponse.json(
-      {
-        success: false,
-        error: {
-          code: 'internal_error',
-          message: 'Internal server error'
-        }
-      },
-      { status: 500 }
+      { success: false, error: { code: 'sites_fetch_error', message: 'Error fetching sites' } },
+      { status: 500 },
     );
   }
-} 
+}

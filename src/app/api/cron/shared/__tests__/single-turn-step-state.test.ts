@@ -36,12 +36,30 @@ describe('single-turn step state', () => {
       persistedMetadata: {},
       interactionBaselineSha: 'a'.repeat(40),
       backlogItemId,
+      cycleId: 'cycle-1',
+      executionGeneration: 3,
     });
 
     expect(resolver).toHaveBeenCalledWith('instance-1');
     expect(metadata).toMatchObject({
       backlog_item_id: 'backlog-1',
       interaction_audit_baseline_sha: 'a'.repeat(40),
+      cron_cycle_id: 'cycle-1',
+      cron_execution_generation: 3,
+    });
+  });
+
+  it('replaces stale cycle identity even without optional start metadata', () => {
+    expect(buildSingleTurnStartMetadata({
+      persistedMetadata: {
+        cron_cycle_id: 'cycle-1',
+        cron_execution_generation: 2,
+      },
+      cycleId: 'cycle-2',
+      executionGeneration: 3,
+    })).toMatchObject({
+      cron_cycle_id: 'cycle-2',
+      cron_execution_generation: 3,
     });
   });
 

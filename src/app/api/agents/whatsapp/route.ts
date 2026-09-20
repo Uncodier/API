@@ -4,6 +4,7 @@ import { normalizePhoneForSearch } from '@/lib/utils/phone-normalizer';
 import type { TwilioWhatsAppWebhook } from '@/lib/services/twilio/TwilioIncomingService';
 import { findWhatsAppConfiguration, processIncomingMessage, getUserIdFromSite, findExistingLead, findWhatsAppConversation } from '@/lib/services/twilio/TwilioIncomingService';
 import { handleTwilioMediaAndCreateTask } from '@/lib/services/twilio/TwilioMediaTaskService';
+import { claimKey, sha256 } from '@/lib/security/upstash-rest';
 
 /**
  * Twilio WhatsApp webhook.
@@ -123,6 +124,19 @@ export async function POST(request: NextRequest) {
           details: validationResult.error 
         },
         { status: 403 }
+      );
+    }
+    const claim = await claimKey(
+      `webhook:twilio:agents:${await sha256(webhookData.MessageSid)}`,
+      24 * 60 * 60,
+    );
+    if (claim.state === 'contended') {
+      return NextResponse.json({ success: true, duplicate: true });
+    }
+    if (claim.state !== 'acquired') {
+      return NextResponse.json(
+        { success: false, error: 'Webhook admission unavailable' },
+        { status: 503, headers: { 'Retry-After': '5' } },
       );
     }
     

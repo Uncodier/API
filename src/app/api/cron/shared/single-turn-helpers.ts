@@ -38,6 +38,43 @@ export async function captureInteractionBaseline(
   }
 }
 
+/**
+ * Hashes product files without mutating the worktree. Administrative mirrors
+ * are deliberately excluded so progress/evidence-only edits cannot reset the
+ * no-progress circuit.
+ */
+export async function captureWorkspaceProgressFingerprint(
+  sandbox: Sandbox,
+): Promise<string | undefined> {
+  try {
+    const result = await sandbox.runCommand('sh', [
+      '-c',
+      [
+        `cd "${WORK_DIR}"`,
+        '{',
+        'git ls-files --cached --others --exclude-standard | sort -u | while IFS= read -r file; do',
+        '  case "$file" in',
+        '    progress.md|evidence/*|.qa/*|qa_results.json|test_results.json|feature_list.json|requirement.spec.md|DECISIONS.md|README.md|AGENTS.md|.instructions) continue ;;',
+        '  esac',
+        '  printf "%s " "$file"',
+        '  git hash-object "$file" 2>/dev/null || true',
+        'done',
+        '} | git hash-object --stdin',
+      ].join('\n'),
+    ]);
+    const fingerprint = (await result.stdout().catch(() => '')).trim();
+    return result.exitCode === 0 && /^[0-9a-f]{40,64}$/i.test(fingerprint)
+      ? fingerprint
+      : undefined;
+  } catch (error: unknown) {
+    console.warn(
+      '[SingleTurn] Could not capture workspace progress fingerprint:',
+      error instanceof Error ? error.message : error,
+    );
+    return undefined;
+  }
+}
+
 export function buildGateErrorFeedback(params: {
   gate: FlowGateResult;
   step: any;

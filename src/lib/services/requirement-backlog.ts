@@ -38,6 +38,7 @@ import {
 import { mutateBacklogAtomically } from './requirement-backlog-mutation';
 import { validateAcceptance } from './requirement-acceptance';
 import { cancelPlanStepsForBacklogItem } from '@/lib/helpers/plan-lifecycle';
+import { isBacklogItemRunnable } from './requirement-backlog-blockers';
 
 export type { BacklogItem, BacklogItemStatus, BacklogItemKind, BacklogItemScope, BacklogItemTier, RequirementBacklog };
 
@@ -50,6 +51,7 @@ export {
   escalateStaleInProgressItems,
   resolveBacklogContextForInstance,
 } from './requirement-backlog-watchdog';
+export { hasUserRequestedMoreWork } from './requirement-backlog-user-action';
 
 export function isItemTerminal(status: string): boolean {
   return status === 'done' || status === 'needs_review';
@@ -149,6 +151,7 @@ function ensureItemDefaults(partial: Partial<BacklogItem> & { title: string; kin
     scope_level: partial.scope_level || 'full',
     tier: partial.tier ?? 'core',
     depends_on: partial.depends_on,
+    blocked_by: partial.blocked_by,
     evidence: partial.evidence,
     created_at: partial.created_at || now,
     updated_at: now,
@@ -284,6 +287,7 @@ export async function suspendItemForRemediation(params: {
   if (!suspended) return null;
 
   const cancellation = await cancelPlanStepsForBacklogItem({
+    requirementId: params.requirementId,
     itemId: params.itemId,
     reason: `Suspended for mandatory remediation: ${params.reason}`.slice(0, 240),
   });
@@ -351,6 +355,7 @@ export async function setItemStatus(params: {
       backlog.items[idx] = {
         ...backlog.items[idx],
         status: params.status,
+        ...(params.status === 'done' ? { blocked_by: undefined } : {}),
         ...(reopeningReviewItem
           ? {
               attempts: 0,
@@ -381,18 +386,21 @@ export async function setItemStatus(params: {
   // (For `done` we leave the plan alone — its steps should already be
   // completing naturally as the work lands.)
   if (params.status === 'needs_review' || params.status === 'rejected') {
-    try {
-      const r = await cancelPlanStepsForBacklogItem({
-        itemId: params.itemId,
-        reason: `setItemStatus → ${params.status}: ${params.reason ?? 'no reason provided'}`.slice(0, 240),
-      });
-      if (r.stepsCancelled > 0) {
-        console.warn(
-          `[backlog] cancelled ${r.stepsCancelled} plan step(s) bound to item ${params.itemId} after status=${params.status} (plansTouched=${r.plansTouched}, plansCancelled=${r.plansCancelled})`,
-        );
-      }
-    } catch (e) {
-      console.warn(`[backlog] cancelPlanStepsForBacklogItem failed for ${params.itemId}:`, e);
+    const cancellation = await cancelPlanStepsForBacklogItem({
+      requirementId: params.requirementId,
+      itemId: params.itemId,
+      reason: `setItemStatus → ${params.status}: ${params.reason ?? 'no reason provided'}`.slice(0, 240),
+    });
+    if (cancellation.errors.length > 0) {
+      throw new Error(
+        `Failed to cancel plans for ${params.itemId} after ` +
+        `status=${params.status}: ${cancellation.errors.join('; ')}`,
+      );
+    }
+    if (cancellation.stepsCancelled > 0) {
+      console.warn(
+        `[backlog] cancelled ${cancellation.stepsCancelled} plan step(s) bound to item ${params.itemId} after status=${params.status} (plansTouched=${cancellation.plansTouched}, plansCancelled=${cancellation.plansCancelled})`,
+      );
     }
   }
 
@@ -451,51 +459,20 @@ export async function markNeedsReview(params: { requirementId: string; itemId: s
 }
 
 export function pendingInPhase(backlog: RequirementBacklog, phaseId: string, limit: number = 3): BacklogItem[] {
+  const completedIds = new Set(
+    backlog.items
+      .filter((item) => item.status === 'done')
+      .map((item) => item.id),
+  );
   return backlog.items
-    .filter((i) => i.phase_id === phaseId && i.status === 'pending')
+    .filter(
+      (item) =>
+        item.phase_id === phaseId &&
+        isBacklogItemRunnable(item, completedIds),
+    )
     .slice(0, limit);
 }
 
 export function currentInProgress(backlog: RequirementBacklog): BacklogItem | null {
   return backlog.items.find((i) => i.status === 'in_progress') ?? null;
-}
-
-/**
- * True when a real user message (instance_logs.log_type='user_action') was
- * recorded for this requirement's runner instance AFTER the gating backlog
- * was completed. That user message is explicit permission to expand the
- * backlog, so the upsert gate may let new items through. Without it, the
- * agent could keep inventing items autonomously after closure (infinite
- * backlog) — which is exactly what the gate must prevent.
- */
-export async function hasUserRequestedMoreWork(requirementId: string): Promise<boolean> {
-  const { supabaseAdmin } = await import('@/lib/database/supabase-server');
-  const { data: req } = await supabaseAdmin
-    .from('requirements')
-    .select('metadata, backlog')
-    .eq('id', requirementId)
-    .single();
-
-  const instanceId = (req?.metadata as Record<string, any>)?.runner_instance_id as string | undefined;
-  if (!instanceId) return false;
-
-  const { data: ua } = await supabaseAdmin
-    .from('instance_logs')
-    .select('created_at')
-    .eq('instance_id', instanceId)
-    .eq('log_type', 'user_action')
-    .order('created_at', { ascending: false })
-    .limit(1);
-  if (!ua || ua.length === 0) return false;
-
-  const lastUserActionTime = new Date(ua[0].created_at).getTime();
-  const backlogData = req?.backlog as Record<string, any> | undefined;
-  const items = (backlogData?.items || []) as BacklogItem[];
-  const gating = gatingItems(items);
-  const completedTime = gating.length
-    ? Math.max(...gating.map((i: any) => new Date(i.updated_at || 0).getTime()))
-    : 0;
-
-  // The user asked for something after the backlog was already done.
-  return lastUserActionTime >= completedTime;
 }

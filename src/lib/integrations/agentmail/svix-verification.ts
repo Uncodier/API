@@ -5,13 +5,13 @@ import { headers } from 'next/headers';
  * Verifies Svix webhook signature for AgentMail webhooks
  * @param body Raw request body as string
  * @param webhookSecret Optional webhook secret. If not provided, uses AGENTMAIL_WEBHOOK_SECRET for backward compatibility
- * @returns Verified payload object, or null if verification is not possible (secret not configured or verification failed)
+ * @returns Verified payload object, or null when verification fails closed.
  */
 export async function verifySvixWebhook(body: string, webhookSecret?: string): Promise<any | null> {
   const secret = webhookSecret || process.env.AGENTMAIL_WEBHOOK_SECRET;
 
   if (!secret) {
-    console.warn('⚠️ [AgentMail] Webhook secret is not configured. Skipping signature verification.');
+    console.error('❌ [AgentMail] Webhook secret is not configured.');
     return null;
   }
 
@@ -21,7 +21,7 @@ export async function verifySvixWebhook(body: string, webhookSecret?: string): P
   const svixTimestamp = headersList.get('svix-timestamp');
 
   if (!svixId || !svixSignature || !svixTimestamp) {
-    console.warn('⚠️ [AgentMail] Missing required Svix headers. Skipping signature verification.');
+    console.warn('⚠️ [AgentMail] Missing required Svix headers.');
     return null;
   }
 

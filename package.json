@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
     "dev": "next dev -H 0.0.0.0 -p 3001",
     "ws": "node wsServer.js",
@@ -33,7 +36,6 @@
     "@breezystack/lamejs": "1.2.7",
     "@google/genai": "1.25.0",
     "@google/generative-ai": "0.24.1",
-    "@googlemaps/google-maps-services-js": "^3.4.1",
     "@mdx-js/loader": "3.1.1",
     "@mdx-js/mdx": "3.1.1",
     "@mdx-js/react": "^3.1.0",
@@ -58,7 +60,7 @@
     "date-fns": "^4.1.0",
     "date-fns-tz": "^3.2.0",
     "google-auth-library": "11.0.2",
-    "imapflow": "^1.0.188",
+    "imapflow": "1.4.7",
     "ioredis": "^5.6.0",
     "mailparser": "3.9.25",
     "neverbounce": "5.0.5",
@@ -66,7 +68,7 @@
     "nextra": "4.6.1",
     "nextra-theme-docs": "4.6.1",
     "node-ical": "0.25.6",
-    "nodemailer": "9.0.3",
+    "nodemailer": "9.1.1",
     "openai": "^4.0.0",
     "portkey-ai": "^1.7.2",
     "puppeteer": "24.35.0",
@@ -81,7 +83,7 @@
     "svix": "1.97.0",
     "unified": "11.0.5",
     "uuid": "^11.1.1",
-    "workflow": "4.8.5",
+    "workflow": "4.8.9",
     "ws": "^8.18.2",
     "zod": "^3.22.4",
     "zod-to-json-schema": "3.24.6"
@@ -95,9 +97,16 @@
     "langium": "4.2.1",
     "yargs-parser": "^21.0.0",
     "devalue": "^5.6.2",
-    "undici": "7.28.0"
+    "@puppeteer/browsers": "3.2.2",
+    "@xmldom/xmldom": "0.9.12",
+    "imapflow": {
+      "nodemailer": "9.1.1"
+    },
+    "qs": "6.16.0",
+    "undici": "7.29.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.8",
     "@types/jest": "^29.5.14",
     "@types/mailparser": "3.4.6",
     "@types/node": "^20.9.1",

@@ -11,19 +11,16 @@ export async function POST(request: NextRequest) {
     console.log('📩 [AgentMail] domain.verified webhook received');
 
     const body = await request.text();
-    let payload = await verifySvixWebhook(body);
+    const payload = await verifySvixWebhook(
+      body,
+      process.env.AGENTMAIL_WEBHOOK_SECRET_DOMAIN_VERIFIED,
+    );
 
     if (!payload) {
-      console.warn('⚠️ [AgentMail] Signature verification skipped, parsing body directly');
-      try {
-        payload = JSON.parse(body);
-      } catch (parseError: any) {
-        console.error('❌ [AgentMail] Failed to parse webhook body:', parseError.message);
-        return NextResponse.json(
-          { success: false, error: 'Invalid JSON payload' },
-          { status: 400 }
-        );
-      }
+      return NextResponse.json(
+        { success: false, error: 'Invalid webhook signature' },
+        { status: 401 },
+      );
     }
 
     if (!payload || payload.type !== 'event' || payload.event_type !== 'domain.verified') {

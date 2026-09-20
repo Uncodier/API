@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse, after } from 'next/server';
+import crypto from 'node:crypto';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { v4 as uuidv4 } from 'uuid';
-import crypto from 'crypto';
 import { WhatsAppSendService } from '@/lib/services/whatsapp/WhatsAppSendService';
 import { CreditService } from '@/lib/services/billing/CreditService';
 import { transcribeAudioBuffer } from '@/lib/services/ai/transcribeAudio';
-import { recordTelemetry } from '@/lib/status/telemetry';
+import { handleMetaWebhookPost } from './post-handler';
 
 export const maxDuration = 300;
 
@@ -447,94 +447,5 @@ export async function GET(request: NextRequest) {
  * POST handler for receiving webhook events from WhatsApp Business API
  */
 export async function POST(request: NextRequest) {
-  try {
-    // Log the start of webhook processing
-    console.log('📩 Webhook de WhatsApp recibido');
-    
-    // Get the raw request body
-    const body = await request.json();
-    
-    // Debug the webhook body
-    console.log(`📄 Contenido del webhook: ${JSON.stringify(body).substring(0, 200)}...`);
-    
-    // Extract site_id and agent_id from the webhook URL for routing purposes
-    const searchParams = request.nextUrl.searchParams;
-    const siteId = searchParams.get('site_id');
-    const agentId = searchParams.get('agent_id');
-    
-    if (!siteId || !isValidUUID(siteId)) {
-      console.error('❌ site_id inválido o faltante en los parámetros del webhook');
-      return NextResponse.json(
-        { success: false, error: 'Invalid site_id parameter' },
-        { status: 400 }
-      );
-    }
-    
-    // Verify that this is a valid WhatsApp webhook request
-    if (!body.object || !body.entry || !Array.isArray(body.entry)) {
-      console.warn('❌ Formato de webhook de WhatsApp inválido');
-      return NextResponse.json(
-        { success: false, error: 'Invalid webhook format' },
-        { status: 400 }
-      );
-    }
-    
-    // Process each entry in the webhook
-    for (const entry of body.entry) {
-      // Check if this is a WhatsApp Business webhook
-      if (!entry.changes || !Array.isArray(entry.changes)) {
-        continue;
-      }
-      
-      for (const change of entry.changes) {
-        if (change.field !== 'messages') {
-          continue;
-        }
-        
-        // Get the WhatsApp Business Account ID
-        const businessAccountId = change.value?.metadata?.phone_number_id || 'unknown';
-        
-        // Process the messages
-        if (change.value?.messages && Array.isArray(change.value.messages)) {
-          for (const message of change.value.messages) {
-            // Only process messages from users, not those sent by the business
-            if (message.from && message.type) {
-              const phoneNumber = message.from;
-              
-              // Process the message
-              await processWhatsAppMessage(
-                message,
-                phoneNumber,
-                businessAccountId,
-                siteId || undefined,
-                agentId || undefined
-              );
-            }
-          }
-        }
-        
-        // Process status updates (delivery and read receipts)
-        if (change.value?.statuses && Array.isArray(change.value.statuses)) {
-          for (const status of change.value.statuses) {
-            console.log(`📤 Actualización de estado de mensaje: ${status.status} para mensaje ${status.id}`);
-            // Here you could update your database with delivery/read status
-          }
-        }
-      }
-    }
-    
-    // Return success
-    recordTelemetry('integrations', 'up', 'Processed WhatsApp Webhook').catch(console.error);
-    return NextResponse.json(
-      { success: true },
-      { status: 200 }
-    );
-  } catch (error) {
-    console.error('❌ Error al procesar webhook de WhatsApp:', error);
-    recordTelemetry('integrations', 'down', 'WhatsApp Webhook error').catch(console.error);
-    return NextResponse.json(
-      { success: false, error: 'Internal server error' },
-      { status: 500 }
-    );
-  }
+  return handleMetaWebhookPost(request, processWhatsAppMessage);
 } 

@@ -17,7 +17,17 @@ export async function downloadFromCache(hash: string): Promise<{ buffer: Buffer;
   const path = `prompt_cache/${hash}`;
   const { data, error } = await supabaseAdmin.storage.from('generative_images').download(path);
   
-  if (error || !data) {
+  if (error) {
+    const storageError = error as { statusCode?: string | number; message?: string };
+    if (
+      String(storageError.statusCode) === '404'
+      || /not found|does not exist/i.test(storageError.message || '')
+    ) {
+      return null;
+    }
+    throw new Error(`Image cache lookup failed: ${error.message}`);
+  }
+  if (!data) {
     return null;
   }
   

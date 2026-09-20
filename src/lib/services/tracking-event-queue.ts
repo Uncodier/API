@@ -13,6 +13,14 @@ const DEFAULT_EVENTS_PER_RUN = 500;
 const DEFAULT_MESSAGES_PER_RUN = 100;
 const DEFAULT_EVENTS_PER_MESSAGE = 100;
 const DEFAULT_CLAIM_IDLE_MS = 60_000;
+const DEFAULT_MAX_PENDING_MESSAGES = 100_000;
+
+const ENQUEUE_IF_BELOW_LIMIT_SCRIPT = `
+  if redis.call('XLEN', KEYS[1]) >= tonumber(ARGV[1]) then
+    return false
+  end
+  return redis.call('XADD', KEYS[1], '*', 'payload', ARGV[2])
+`;
 
 const ACK_AND_DELETE_SCRIPT = `
   local acknowledged = 0
@@ -233,13 +241,24 @@ export async function enqueueTrackingEvents(
   if (events.length < 1 || events.length > DEFAULT_EVENTS_PER_MESSAGE) {
     throw new Error('Tracking messages must contain 1-100 events');
   }
-  const messageId = await getTrackingRedisClient().xadd(
-    STREAM_KEY,
-    '*',
-    'payload',
-    JSON.stringify({ version: 1, events }),
+  const redis = getTrackingRedisClient();
+  const maxPending = Math.min(
+    positiveIntegerSetting(
+      'TRACKING_QUEUE_MAX_PENDING_MESSAGES',
+      DEFAULT_MAX_PENDING_MESSAGES,
+    ),
+    1_000_000,
   );
-  if (!messageId) throw new Error('Could not enqueue tracking events');
+  const messageId = await redis.eval(
+    ENQUEUE_IF_BELOW_LIMIT_SCRIPT,
+    1,
+    STREAM_KEY,
+    maxPending,
+    JSON.stringify({ version: 1, events }),
+  ) as string | null;
+  if (!messageId) {
+    throw new Error('Tracking queue backlog limit reached');
+  }
   return messageId;
 }
 

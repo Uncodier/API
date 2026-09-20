@@ -166,14 +166,18 @@ export async function runAssistantWorkflow(
     if (stepsToExecute.length > 0) {
       console.log(`[Workflow] Executing ${stepsToExecute.length} steps from plan`);
       
-      const lockAcquired = await acquirePlanExecutionLockStep(activePlan.id);
-      if (!lockAcquired) {
-        console.log(`[Workflow] Could not acquire execution lock for plan ${activePlan.id}. Another workflow might be processing it.`);
+      const lock = await acquirePlanExecutionLockStep(activePlan.id);
+      if (lock.state !== 'acquired') {
+        console.log(
+          `[Workflow] Could not acquire execution lock for plan ${activePlan.id}: ${lock.state}`,
+        );
         return {
           instance_id: instanceId,
           status: context.instance.status,
-          message: 'Plan execution skipped due to lock contention',
-          assistant_response: 'Plan execution skipped (already running)',
+          message: `Plan execution skipped because the lock is ${lock.state}`,
+          assistant_response: lock.state === 'contended'
+            ? 'Plan execution skipped (already running)'
+            : 'Plan execution temporarily unavailable',
         };
       }
       
@@ -188,7 +192,7 @@ export async function runAssistantWorkflow(
           finalResult = stepResult;
         }
       } finally {
-        await releasePlanExecutionLockStep(activePlan.id);
+        await releasePlanExecutionLockStep(activePlan.id, lock.token);
       }
       
       if (userMessageLogId) {

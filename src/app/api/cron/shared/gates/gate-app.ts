@@ -9,7 +9,35 @@
  * across every flow. All heavy logic stays in `step-git-gate.ts`.
  */
 import { runBuildAndOriginGate, type GateSignals } from '../step-git-gate';
-import type { FlowGateInput, FlowGateResult, FlowGateSignal, AppRichSignals } from './types';
+import type {
+  AppRichSignals,
+  FlowGateFailureKind,
+  FlowGateInput,
+  FlowGateResult,
+  FlowGateSignal,
+} from './types';
+
+function classifyOriginFailure(
+  failureKind: string | undefined,
+): FlowGateFailureKind {
+  if (
+    failureKind === 'auth' ||
+    failureKind === 'protected_branch' ||
+    failureKind === 'network' ||
+    failureKind === 'platform' ||
+    failureKind === 'sandbox_unavailable'
+  ) {
+    return 'infrastructure_unavailable';
+  }
+  if (
+    failureKind === 'pre_push_build' ||
+    failureKind === 'vercel_layout' ||
+    failureKind === 'server_hook'
+  ) {
+    return 'product_defect';
+  }
+  return 'missing_precondition';
+}
 
 function flattenAppSignals(rich: GateSignals): FlowGateSignal[] {
   const out: FlowGateSignal[] = [];
@@ -32,13 +60,32 @@ function flattenAppSignals(rich: GateSignals): FlowGateSignal[] {
   }
   if (rich.console) {
     const errors = (rich.console.page_errors?.length ?? 0) + (rich.console.failed_requests?.length ?? 0);
-    out.push({ name: 'console', ok: !!rich.console.ok, detail: errors > 0 ? `${errors} error(s)` : undefined });
+    const disposition = rich.observations?.find(
+      (observation) => observation.kind === 'console',
+    )?.disposition ?? (rich.console.ok ? 'pass' : 'hard_fail');
+    out.push({
+      name: 'console',
+      ok: !!rich.console.ok || disposition === 'advisory',
+      detail: errors > 0 ? `${errors} error(s)` : undefined,
+      disposition,
+      failureKind:
+        disposition === 'hard_fail' ? 'product_defect' : undefined,
+    });
   }
   if (rich.visual) {
+    const disposition = rich.observations?.find(
+      (observation) => observation.kind === 'visual',
+    )?.disposition ??
+      (rich.visual.ok && rich.visual.pass ? 'pass' : 'hard_fail');
     out.push({
       name: 'visual',
-      ok: !!rich.visual.ok && !!rich.visual.pass,
+      ok:
+        (!!rich.visual.ok && !!rich.visual.pass) ||
+        disposition === 'advisory',
       detail: rich.visual.summary,
+      disposition,
+      failureKind:
+        disposition === 'hard_fail' ? 'product_defect' : undefined,
     });
   }
   if (rich.scenarios) {
@@ -56,7 +103,20 @@ function flattenAppSignals(rich: GateSignals): FlowGateSignal[] {
     const detail = rich.origin.ok
       ? rich.origin.branch
       : rich.origin.errorForAgent || rich.origin.error;
-    out.push({ name: 'origin', ok: !!rich.origin.ok, detail });
+    const failureKind = rich.origin.ok
+      ? undefined
+      : classifyOriginFailure(rich.origin.failureKind);
+    out.push({
+      name: 'origin',
+      ok: !!rich.origin.ok,
+      detail,
+      disposition: rich.origin.ok
+        ? 'pass'
+        : failureKind === 'product_defect'
+          ? 'hard_fail'
+          : 'unknown',
+      failureKind,
+    });
   }
   if (rich.deploy) {
     const state = rich.deploy.deployState ?? 'unknown';
@@ -78,6 +138,7 @@ export async function runAppGate(input: FlowGateInput): Promise<FlowGateResult> 
   if (!input.appContext) {
     return {
       ok: false,
+      failureKind: 'contract_error',
       flow: input.flow,
       signals: [],
       error: 'runAppGate: missing appContext (executor must pass planTitle/stepOrder/stepPrompt/... for app flows)',
@@ -105,23 +166,37 @@ export async function runAppGate(input: FlowGateInput): Promise<FlowGateResult> 
   const signals = flattenAppSignals(richSignals);
   const remediationScheduled =
     richSignals.interaction?.active_item_suspended === true;
+  const originFailureKind = richSignals.origin?.ok === false
+    ? classifyOriginFailure(richSignals.origin.failureKind)
+    : undefined;
+  const infrastructureFailure = Boolean(
+    gate.infrastructureFailure ||
+    gate.sandboxUnavailable ||
+    originFailureKind === 'infrastructure_unavailable',
+  );
 
   return {
     ok: gate.ok,
     disposition: gate.ok
       ? 'pass'
-      : gate.infrastructureFailure || gate.sandboxUnavailable
+      : infrastructureFailure
         ? 'unknown'
         : remediationScheduled
           ? 'advisory'
           : 'hard_fail',
+    failureKind: gate.ok || remediationScheduled
+      ? undefined
+      : originFailureKind ||
+        (infrastructureFailure
+          ? 'infrastructure_unavailable'
+          : 'product_defect'),
     flow: input.flow,
     signals,
     error: gate.error,
     richSignals,
     lastResult: gate.lastResult,
     vercelDeploy: gate.vercelDeploy,
-    infrastructureFailure: gate.infrastructureFailure,
+    infrastructureFailure,
     sandboxUnavailable: gate.sandboxUnavailable,
     sandboxReplacement: gate.sandboxReplacement,
     remediationScheduled,

@@ -1,39 +1,43 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ApiKeyService } from '@/lib/services/api-keys/ApiKeyService';
 import { recordTelemetry } from '@/lib/status/telemetry';
+import { enforceRequestRateLimit } from '@/lib/security/request-rate-limit';
+
+function positiveIntegerSetting(name: string, fallback: number): number {
+  const parsed = Number(process.env[name]);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function sanitizedForwardHeaders(request: Request): Headers {
+  const headers = new Headers(request.headers);
+  headers.delete('x-api-key-data');
+  headers.delete('x-auth-user-id');
+  headers.delete('x-auth-validated');
+  headers.delete('x-required-scope');
+  return headers;
+}
+
+export function requiredApiKeyScope(
+  pathname: string,
+  method: string,
+): string | null {
+  if (method === 'GET' && pathname.endsWith('/health')) return null;
+  if (
+    pathname.startsWith('/api/ai/')
+    || pathname === '/api/analyze'
+    || pathname.startsWith('/api/site/analyze')
+    || pathname.startsWith('/api/site/tester')
+    || /^\/api\/public\/(image|video|icon|summary)\/prompt\//.test(pathname)
+  ) {
+    return 'ai:generate';
+  }
+  return null;
+}
 
 export async function apiKeyAuth(req: NextRequest) {
   try {
-    // Validar API keys cuando no hay origin (peticiones machine-to-machine)
-    // tanto en desarrollo como en producción
-    const origin = req.headers.get('origin');
-    const isProduction = process.env.NODE_ENV === 'production';
-    
-    console.log('[API Key Auth] Request details:', {
-      url: req.url,
-      method: req.method,
-      origin: origin || 'NO_ORIGIN',
-      isProduction,
-      headers: {
-        'x-api-key': req.headers.get('x-api-key') ? 'PRESENT' : 'ABSENT',
-        'authorization': req.headers.get('authorization') ? 'PRESENT' : 'ABSENT',
-      }
-    });
-    
-    // Si hay origin (viene de un navegador), continuar sin validar API key
-    if (origin) {
-      console.log('[API Key Auth] Skipping API key validation:', {
-        reason: 'Has origin (browser request)',
-        origin
-      });
-      const safeHeaders = new Headers(req.headers);
-      safeHeaders.delete('x-api-key-data');
-      return NextResponse.next({ request: { headers: safeHeaders } });
-    }
-
-    console.log('[API Key Auth] Processing server-to-server request (no origin)');
-
-    // Obtener API key de x-api-key o authorization header
+    // CORS validation and authentication are independent. A browser Origin
+    // never grants access to a private API route.
     let apiKey = req.headers.get('x-api-key');
     
     if (!apiKey) {
@@ -43,14 +47,10 @@ export async function apiKeyAuth(req: NextRequest) {
         apiKey = authHeader.startsWith('Bearer ') 
           ? authHeader.substring(7) 
           : authHeader;
-        console.log('[API Key Auth] Using Authorization header');
       }
-    } else {
-      console.log('[API Key Auth] Using x-api-key header');
     }
 
     if (!apiKey) {
-      console.log('[API Key Auth] No API key found in headers');
       return NextResponse.json(
         {
           success: false,
@@ -66,7 +66,17 @@ export async function apiKeyAuth(req: NextRequest) {
     // Primero verificar si es el SERVICE_API_KEY para servicios internos
     const serviceApiKey = process.env.SERVICE_API_KEY?.trim();
     if (serviceApiKey && apiKey === serviceApiKey) {
-      console.log('[API Key Auth] Valid SERVICE_API_KEY detected');
+      const limited = await enforceRequestRateLimit(req, {
+        namespace: 'service-api-key',
+        identity: 'service-key',
+        limit: positiveIntegerSetting(
+          'SERVICE_API_KEY_REQUESTS_PER_MINUTE',
+          5_000,
+        ),
+        windowSeconds: 60,
+        failClosed: true,
+      });
+      if (limited) return limited;
       recordTelemetry('api_auth', 'up', 'Service API Key used', 5).catch(console.error);
       // API key de servicio válida, dar acceso completo
       const serviceKeyData = {
@@ -76,7 +86,7 @@ export async function apiKeyAuth(req: NextRequest) {
         isService: true
       };
       
-      const requestHeaders = new Headers(req.headers);
+      const requestHeaders = sanitizedForwardHeaders(req);
       requestHeaders.set('x-api-key-data', JSON.stringify(serviceKeyData));
       
       return NextResponse.next({
@@ -86,14 +96,12 @@ export async function apiKeyAuth(req: NextRequest) {
       });
     }
 
-    console.log('[API Key Auth] Validating API key against database');
     // Si no es el SERVICE_API_KEY, validar contra la base de datos
     const startTime = Date.now();
     const { isValid, keyData } = await ApiKeyService.validateApiKey(apiKey);
     const latency = Date.now() - startTime;
 
-    if (!isValid) {
-      console.log('[API Key Auth] Invalid API key');
+    if (!isValid || !keyData) {
       recordTelemetry('api_auth', 'up', 'Invalid API key rejected', latency).catch(console.error);
       return NextResponse.json(
         {
@@ -106,39 +114,44 @@ export async function apiKeyAuth(req: NextRequest) {
         { status: 401 }
       );
     }
-
-    console.log('[API Key Auth] Valid API key:', {
-      id: keyData.id,
-      name: keyData.name,
-      scopes: keyData.scopes
+    const principalLimited = await enforceRequestRateLimit(req, {
+      namespace: 'api-key-principal',
+      identity: keyData.id,
+      limit: positiveIntegerSetting(
+        'API_KEY_PRINCIPAL_REQUESTS_PER_MINUTE',
+        600,
+      ),
+      windowSeconds: 60,
+      failClosed: true,
     });
-    
-    recordTelemetry('api_auth', 'up', 'Valid DB API key', latency).catch(console.error);
+    if (principalLimited) return principalLimited;
 
-    // Verificar scopes si es necesario
-    const requiredScope = req.headers.get('x-required-scope');
-    if (requiredScope && keyData.scopes && !keyData.scopes.includes(requiredScope) && !keyData.scopes.includes('*')) {
-      console.log('[API Key Auth] Insufficient scope:', {
-        required: requiredScope,
-        available: keyData.scopes
-      });
+    recordTelemetry('api_auth', 'up', 'Valid DB API key', latency).catch(console.error);
+    const requiredScope = requiredApiKeyScope(
+      req.nextUrl.pathname,
+      req.method.toUpperCase(),
+    );
+    if (
+      requiredScope
+      && !keyData.scopes?.includes(requiredScope)
+      && !keyData.scopes?.includes('*')
+    ) {
       return NextResponse.json(
         {
           success: false,
           error: {
             code: 'INSUFFICIENT_SCOPE',
-            message: `This operation requires the '${requiredScope}' scope`
-          }
+            message: `This operation requires the '${requiredScope}' scope`,
+          },
         },
-        { status: 403 }
+        { status: 403 },
       );
     }
 
     // Añadir información de la API key a la request para uso posterior
-    const requestHeaders = new Headers(req.headers);
+    const requestHeaders = sanitizedForwardHeaders(req);
     requestHeaders.set('x-api-key-data', JSON.stringify(keyData));
     
-    console.log('[API Key Auth] API key validation successful');
     return NextResponse.next({
       request: {
         headers: requestHeaders,

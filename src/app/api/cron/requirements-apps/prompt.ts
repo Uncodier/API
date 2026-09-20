@@ -32,6 +32,7 @@ import {
 } from '@/lib/services/requirement-flows';
 import { extractRequirementConstraints, formatConstraintsPromptBlock } from '@/lib/services/requirement-constraints';
 import type { BacklogItem, RequirementBacklog } from '@/lib/services/requirement-backlog';
+import { isBacklogItemRunnable } from '@/lib/services/requirement-backlog-blockers';
 
 export interface CoordinatorPromptInput {
   reqId: string;
@@ -173,6 +174,9 @@ ${snapshot}${progress}${decisions}
 
 HARD RULE WIP=1:
 - Your deliverable this cycle is at most ONE item from the pending queue of the current phase. If there is already an in_progress item, RESUME it; do NOT open another.
+- Never start an item whose \`blocked_by\` array is non-empty. A blocker affects only its source item and dependency descendants; continue with another pending item that has no blockers.
+- If work cannot proceed, call \`requirement_backlog action='report_blocker'\` with a typed category, concrete reason, and resolution_actor. Set resolution_actor='user' only for a specific credential, irreversible approval, or material product decision that an agent cannot make.
+- Use \`requirement_backlog action='resolve_blocker'\` after the blocker is actually resolved. Never mark the whole requirement blocked while an independent backlog item remains runnable.
 - If the current phase has no pending items but the requirement is not done, advance the phase via the flow (the backlog tool enforces this).
 
 HARD RULE ANTI-REWORK:
@@ -185,7 +189,7 @@ ENVIRONMENT:
 - Use sandbox tools to INVESTIGATE (sandbox_run_command, sandbox_read_file, sandbox_list_files) — max 3 calls per cycle.
 - Complete general repository investigation with those coordinator calls BEFORE creating a build-phase plan. Do not delegate an open-ended "investigate current implementation/errors" step to the executor.
 - ${ORCHESTRATOR_SKILL_LOOKUP_HINT}
-- Use \`requirement_backlog\` (action=list / upsert / start / downgrade / log_assumption / non-terminal set_status) as the primary state tool. Do not call action=complete, action=mark_needs_review, or set_status to done/rejected/needs_review; terminal transitions belong to the runner.
+- Use \`requirement_backlog\` (action=list / upsert / start / downgrade / log_assumption / report_blocker / resolve_blocker / non-terminal set_status) as the primary state tool. Do not call action=complete, action=mark_needs_review, or set_status to done/rejected/needs_review; terminal transitions belong to the runner.
 - Use \`requirement_status\` to report progress. ALWAYS use requirement_id="${p.reqId}".
 - Use \`instance_plan\` to create execution plans. ALWAYS use instance_id="${p.instanceId}". Once a requirement plan is active, continue it; do not create a replacement plan. Finish executor work with action=execute_step so the runner can gate it.
 - ${TOOL_LOOKUP_HINT}
@@ -201,7 +205,7 @@ WORKFLOW (follow IN ORDER):
 2. If the backlog is empty, this is the FIRST cycle. You MUST do two things:
    a) Rewrite \`requirement.spec.md\` using \`sandbox_write_file\` to replace all "_To be refined..._" placeholders with a concrete architecture, exact navigation flows, data models, and acceptance criteria.
    b) Derive a COMPREHENSIVE list of items (as many as needed to fully cover the scope, typically 5-15) DIRECTLY FROM your newly fleshed-out contract and \`action='upsert'\` them. These items form the Backlog. Remember the hierarchy: A Requirement has many Backlog Items, and each Backlog Item will later be broken down into an \`instance_plan\` (a sequence of execution steps). Each item needs \`title\`, \`kind\`, \`phase_id\`, \`acceptance[]\`, and \`tier\` ('core' or 'ornamental'). CRITICAL: You MUST eliminate ambiguity. For UI features, explicitly list the exact routes (e.g., \`/dashboard/spaces\`), the navigation flow, and the required components in the acceptance criteria (e.g. "GET /dashboard renders a grid of Shadcn Cards"). For backend, list the exact API endpoints and data schema. CRITICAL: For specific app or site deliverables, you MUST explicitly include a backlog item to deeply restructure the home page to reflect the requested specific domain, removing any generic template content.
-3. Pick the single next item (WIP=1). Call \`action='start'\` to mark it in_progress.
+3. Pick the single next unblocked item (WIP=1). It must have \`blocked_by=[]\` or no \`blocked_by\` field and all \`depends_on\` items done. Call \`action='start'\` to mark it in_progress.
 4. Create the plan: \`instance_plan\` with \`action='create'\`. ${breakdownInstruction} Do NOT just copy the item title into a single step. Do NOT create generic steps like "Step 1" with instructions "Execute step 1". Every step MUST have a descriptive \`title\`, specific \`instructions\`, a clear objective, non-empty \`expected_output\`, \`success_criteria\`, and \`validation_rules\`. Every step MUST set \`skill\` and \`metadata.backlog_item_id=<id>\`. CRITICAL: Maximize the use of the plan schema. For the overall plan, you MUST provide \`expected_output\`, \`success_criteria\` (array of specific files created/modified), and \`validation_rules\` (array of specific test files passed) to enforce strict quality control. For frontend steps, you MUST explicitly describe the UI layout, components to use (e.g., Shadcn UI Cards, Dialogs, Tables), and responsive behavior in the step instructions. Do not leave UI execution up to interpretation. If this is a new branch, Step 1 MUST be \`makinari-obj-template-selection\`. Do NOT add a step to notify the team in your plan.
 5. Check if the INSTRUCTIONS ask for any new changes or features that are NOT covered by the existing backlog items. If there are new unhandled requests, you MUST create new backlog items to cover them using \`requirement_backlog action='upsert'\`.
 6. ONLY if ALL items in the backlog (including ornamental) are completely done AND there are no new requests in the instructions: to finalize the work, simply call \`requirement_status\` with \`stage='on-review'\` and \`message='Project complete'\`. DO NOT create an instance plan or a new backlog item to close the project. Just set the status to on-review and return a plain text response. CRITICAL: If ANY items (core or ornamental) remain in the 'pending' or 'in_progress' state, YOU MUST NOT call \`requirement_status\` to close the project. Instead, you MUST create an \`instance_plan\` to process the pending items.
@@ -256,7 +260,21 @@ CURRENT PHASE: ${flow.phases[0]?.id ?? 'n/a'} — ${flow.phases[0]?.title ?? ''}
   const phaseId = backlog.current_phase_id || flow.phases[0]?.id;
   const phaseTitle = flow.phases.find((p) => p.id === phaseId)?.title ?? phaseId;
   const inProgress = backlog.items.find((i) => i.status === 'in_progress');
-  const pending = backlog.items.filter((i) => i.status === 'pending' && i.phase_id === phaseId).slice(0, 3);
+  const completedIds = new Set(
+    backlog.items
+      .filter((item) => item.status === 'done')
+      .map((item) => item.id),
+  );
+  const pending = backlog.items
+    .filter(
+      (item) =>
+        item.phase_id === phaseId &&
+        isBacklogItemRunnable(item, completedIds),
+    )
+    .slice(0, 3);
+  const blocked = backlog.items
+    .filter((item) => item.blocked_by?.length)
+    .slice(0, 3);
   const done = backlog.items.filter((i) => i.status === 'done').length;
   const total = backlog.items.length;
 
@@ -266,13 +284,19 @@ BACKLOG:
   ${inProgress ? `IN_PROGRESS: ${renderItem(inProgress)}` : 'IN_PROGRESS: (none — pick one from the queue)'}
   NEXT UP (max 3):
 ${pending.length ? pending.map((i) => `    - ${renderItem(i)}`).join('\n') : '    (none in this phase — advance the phase)'}
+  BLOCKED (max 3; do not start, continue independent work):
+${blocked.length ? blocked.map((i) => `    - ${renderItem(i)}`).join('\n') : '    (none)'}
 `;
 }
 
 function renderItem(i: BacklogItem): string {
   const accept = (i.acceptance || []).slice(0, 2).map((a) => `"${a.slice(0, 80)}"`).join(' + ');
   const tier = i.tier ?? 'core';
-  return `[${i.id.slice(0, 8)}] kind=${i.kind} tier=${tier} scope=${i.scope_level} attempts=${i.attempts} — ${i.title}${accept ? ` | acceptance: ${accept}` : ''}`;
+  const blockers = (i.blocked_by || [])
+    .map((blocker) =>
+      `${blocker.blocker_id}:${blocker.resolution_actor}`)
+    .join(',');
+  return `[${i.id.slice(0, 8)}] kind=${i.kind} tier=${tier} scope=${i.scope_level} attempts=${i.attempts}${blockers ? ` blocked_by=${blockers}` : ''} — ${i.title}${accept ? ` | acceptance: ${accept}` : ''}`;
 }
 
 /** Back-compat alias kept until all workflows adopt the new name. */

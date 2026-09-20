@@ -50,6 +50,9 @@ export interface ProbeObservation {
   source: ProbeTargetSource;
   target?: string;
   detail: string;
+  method?: HttpMethod;
+  http_status?: number;
+  expected_statuses?: number[];
 }
 
 export interface RuntimeTargetPlan {
@@ -282,6 +285,9 @@ export function evaluateRuntimeProbe(
       source,
       target: probe.path,
       detail: `HTTP ${probe.http_status}${isSoftPageFailure(probe) ? ' (soft error page)' : ''}`,
+      method: 'GET',
+      http_status: probe.http_status,
+      expected_statuses: target?.expected_statuses,
     });
     return {
       ...probe,
@@ -312,6 +318,9 @@ export function evaluateRuntimeProbe(
       source,
       target: key,
       detail: `HTTP ${probe.http_status}`,
+      method: probe.method,
+      http_status: probe.http_status,
+      expected_statuses: target?.expected_statuses,
     });
     return {
       ...probe,
@@ -329,6 +338,8 @@ export function evaluateRuntimeProbe(
       source: target.source,
       target: target.path,
       detail: 'The planned page probe produced no result.',
+      method: 'GET',
+      expected_statuses: target.expected_statuses,
     });
   }
   for (const target of plan.apis) {
@@ -346,6 +357,8 @@ export function evaluateRuntimeProbe(
       source: target.source,
       target: `${target.method} ${target.path}`,
       detail: 'The planned API probe produced no result.',
+      method: target.method,
+      expected_statuses: target.expected_statuses,
     });
   }
 

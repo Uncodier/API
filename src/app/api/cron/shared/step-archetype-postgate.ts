@@ -10,7 +10,14 @@ import type { Sandbox } from '@vercel/sandbox';
 import { randomUUID } from 'node:crypto';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import { runCritic, runJudge } from './archetype-runner';
-import { bumpItemAttempts, getBacklogItem, downgradeScope, logAssumption, markNeedsReview } from '@/lib/services/requirement-backlog';
+import {
+  bumpItemAttempts,
+  getBacklogItem,
+  downgradeScope,
+  logAssumption,
+  markNeedsReview,
+  recordToolFailure,
+} from '@/lib/services/requirement-backlog';
 import { writeEvidence, type EvidenceRecord } from '@/lib/services/requirement-ground-truth';
 import type { RequirementKind } from '@/lib/services/requirement-flows';
 import { planNextHealingAction } from '@/lib/services/requirement-self-heal';
@@ -85,10 +92,9 @@ export async function runArchetypePostGate(
     const adjudicatedItem = input.contractAcceptance?.length
       ? {
           ...item,
-          acceptance: Array.from(new Set([
-            ...(item.acceptance || []),
-            ...input.contractAcceptance,
-          ])),
+          // A no-progress adjudication evaluates the current step contract,
+          // not work intentionally assigned to later steps in the same item.
+          acceptance: Array.from(new Set(input.contractAcceptance)),
         }
       : item;
 
@@ -123,12 +129,27 @@ export async function runArchetypePostGate(
       }
     }
     const signalsWithDiff: PostGateGateSignals = { ...input.signals, changed_files: changedFiles };
+    const hasFreshProducerEvidence =
+      !!signalsWithDiff.build ||
+      !!signalsWithDiff.runtime ||
+      !!signalsWithDiff.scenarios ||
+      !!signalsWithDiff.tests ||
+      (signalsWithDiff.changed_files?.length ?? 0) > 0 ||
+      (signalsWithDiff.observations?.length ?? 0) > 0;
+    const evidenceRunId =
+      input.evidenceRunId ||
+      (
+        !hasFreshProducerEvidence &&
+        item.evidence?.evidence_run_id
+          ? item.evidence.evidence_run_id
+          : randomUUID()
+      );
 
     const evidenceRecord = buildEvidenceRecord(
       signalsWithDiff,
       input.capturedAt,
       coverage,
-      input.evidenceRunId || randomUUID(),
+      evidenceRunId,
     );
     const persisted = await writeEvidence({
       sandbox: input.sandbox,
@@ -156,53 +177,87 @@ export async function runArchetypePostGate(
         critic_passes: critic.iterations,
         judge_verdict: judge.verdict,
         judge_reason: judge.reason,
+        judge_failure_kind: judge.failure_kind,
       },
     });
 
     let healingApplied: string | undefined;
     if (judge.verdict !== 'approved') {
-      // Bump attempts BEFORE planning the next heal so the deterministic
-      // policy sees the real number of attempts. `markInProgress` only fires
-      // once per item under the WIP=1 RESUME rule, so without this the
-      // counter freezes at 1 and `mark_needs_review` is never reached.
-      const bumped = await bumpItemAttempts({
-        requirementId: input.requirementId,
-        itemId: item.id,
-        reason: `judge_verdict=${judge.verdict}: ${(judge.reason || '').slice(0, 200)}`,
-      });
-      const attemptsForHeal = (bumped?.attempts ?? (item.attempts ?? 0) + 1);
-      const action = planNextHealingAction({ item, verdict: judge, attempts: attemptsForHeal });
-      healingApplied = action.kind;
-      switch (action.kind) {
-        case 'rotate_strategy':
-          await logAssumption({
-            requirementId: input.requirementId,
-            itemId: item.id,
-            assumption: `[rotate] ${action.hint}`,
-          });
-          break;
-        case 'downgrade_scope':
-          await downgradeScope({ requirementId: input.requirementId, itemId: item.id });
-          await logAssumption({
-            requirementId: input.requirementId,
-            itemId: item.id,
-            assumption: `[downgrade ${action.from}→${action.to}] ${action.reason}`,
-          });
-          break;
-        case 'log_assumption_and_continue':
-          await logAssumption({
-            requirementId: input.requirementId,
-            itemId: item.id,
-            assumption: action.assumption,
-          });
-          break;
-        case 'mark_needs_review':
-          await markNeedsReview({
-            requirementId: input.requirementId,
-            itemId: item.id,
-            reason: action.reason,
-          });
-          break;
+      if (
+        judge.failure_kind === 'evidence_gap' ||
+        judge.failure_kind === 'contract_error'
+      ) {
+        const toolName =
+          judge.failure_kind === 'evidence_gap'
+            ? 'evidence_collector'
+            : 'acceptance_contract';
+        await recordToolFailure({
+          requirementId: input.requirementId,
+          itemId: item.id,
+          toolName,
+          reason:
+            `[${judge.failure_kind}] ${judge.reason}`.slice(0, 400),
+        });
+        await logAssumption({
+          requirementId: input.requirementId,
+          itemId: item.id,
+          assumption:
+            `[${judge.failure_kind}] Retry verification without consuming ` +
+            `the product attempt budget: ${judge.reason}`.slice(0, 800),
+        });
+        healingApplied =
+          judge.failure_kind === 'evidence_gap'
+            ? 'collect_evidence'
+            : 'repair_contract';
+      } else {
+        // Product defects use the bounded self-heal policy.
+        const bumped = await bumpItemAttempts({
+          requirementId: input.requirementId,
+          itemId: item.id,
+          reason: `judge_verdict=${judge.verdict}: ${(judge.reason || '').slice(0, 200)}`,
+        });
+        const attemptsForHeal =
+          bumped?.attempts ?? (item.attempts ?? 0) + 1;
+        const action = planNextHealingAction({
+          item,
+          verdict: judge,
+          attempts: attemptsForHeal,
+        });
+        healingApplied = action.kind;
+        switch (action.kind) {
+          case 'rotate_strategy':
+            await logAssumption({
+              requirementId: input.requirementId,
+              itemId: item.id,
+              assumption: `[rotate] ${action.hint}`,
+            });
+            break;
+          case 'downgrade_scope':
+            await downgradeScope({
+              requirementId: input.requirementId,
+              itemId: item.id,
+            });
+            await logAssumption({
+              requirementId: input.requirementId,
+              itemId: item.id,
+              assumption: `[downgrade ${action.from}→${action.to}] ${action.reason}`,
+            });
+            break;
+          case 'log_assumption_and_continue':
+            await logAssumption({
+              requirementId: input.requirementId,
+              itemId: item.id,
+              assumption: action.assumption,
+            });
+            break;
+          case 'mark_needs_review':
+            await markNeedsReview({
+              requirementId: input.requirementId,
+              itemId: item.id,
+              reason: action.reason,
+            });
+            break;
+        }
       }
     }
 
@@ -275,15 +330,23 @@ function buildEvidenceRecord(
     feature_coverage: coverage
       ? {
           ok: coverage.ok,
+          evaluable: coverage.evaluable,
           declared_touches: coverage.declared_touches,
           present_touches: coverage.present_touches,
           missing_touches: coverage.missing_touches,
+          not_evaluable_touches: coverage.not_evaluable_touches,
           expected_page_routes: coverage.expected_page_routes,
           expected_api_routes: coverage.expected_api_routes,
           present_page_files: coverage.present_page_files,
           present_api_files: coverage.present_api_files,
+          not_evaluable_page_routes:
+            coverage.not_evaluable_page_routes,
+          not_evaluable_api_routes:
+            coverage.not_evaluable_api_routes,
           acceptance_route_anchors: coverage.acceptance_route_anchors,
+          artifact_proofs: coverage.artifact_proofs,
           kind_requirements: coverage.kind_requirements,
+          probe_errors: coverage.probe_errors,
           summary: summarizeFeatureCoverage(coverage),
         }
       : undefined,

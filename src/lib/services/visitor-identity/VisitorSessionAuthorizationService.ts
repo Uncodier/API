@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { authorizeVisitorSession } from '@/lib/security/authorize-visitor-session';
+import { hasAuthenticatedPrincipal } from '@/lib/security/request-rate-limit';
 
 export interface CanonicalVisitorIdentity {
   siteId: string;
@@ -27,18 +29,35 @@ interface AuthorizationInput {
 }
 
 export class VisitorSessionAuthorizationService {
-  isBrowserRequest(request: Request): boolean {
-    return Boolean(request.headers.get('origin'))
-      || !request.headers.get('x-api-key-data');
-  }
-
   async authorizeBrowserRequest(input: AuthorizationInput): Promise<CanonicalVisitorIdentity | null> {
-    if (!this.isBrowserRequest(input.request)) return null;
-    if (!input.siteId || !input.sessionId) {
+    if (!input.siteId) {
       throw new VisitorAuthorizationError(
         'SESSION_REQUIRED',
-        'site_id and session_id are required for browser requests',
+        'site_id is required',
         401
+      );
+    }
+    if (!input.sessionId) {
+      if (
+        hasAuthenticatedPrincipal(input.request)
+        && await authorizeVisitorSession(input.request, { siteId: input.siteId })
+      ) {
+        return null;
+      }
+      throw new VisitorAuthorizationError(
+        'SESSION_REQUIRED',
+        'session_id is required',
+        401,
+      );
+    }
+    if (!await authorizeVisitorSession(input.request, {
+      siteId: input.siteId,
+      sessionId: input.sessionId,
+    })) {
+      throw new VisitorAuthorizationError(
+        'SESSION_FORBIDDEN',
+        'Visitor session authorization is required',
+        403,
       );
     }
 

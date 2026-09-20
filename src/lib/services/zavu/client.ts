@@ -130,6 +130,19 @@ function hasWebhookEvents(sender: any): boolean {
   return Array.isArray(sender?.webhook?.events) && sender.webhook.events.length > 0;
 }
 
+function hasVoiceChannel(sender: any): boolean {
+  return Array.isArray(sender?.channels) && sender.channels.includes("voice");
+}
+
+function senderWebhookConfiguration() {
+  return {
+    webhookUrl: getZavuWebhookUrl(),
+    webhookEvents: ZAVU_SENDER_WEBHOOK_EVENTS,
+    webhookActive: true,
+    webhookSignatureVersion: "v1+v2",
+  };
+}
+
 export function mergeSenderWebhook(created: any, patched: any) {
   const next = { ...created, ...patched };
   next.webhook = {
@@ -144,17 +157,29 @@ export function mergeSenderWebhook(created: any, patched: any) {
 }
 
 export async function ensureSenderWebhook(senderId: string) {
-  const webhookUrl = getZavuWebhookUrl();
-  const payload = await zavuFetch(`/senders/${senderId}`, {
+  const payload = await zavuFetch(`/senders/${encodeURIComponent(senderId)}`, {
     method: "PATCH",
-    body: JSON.stringify({
-      webhookUrl,
-      webhookEvents: ZAVU_SENDER_WEBHOOK_EVENTS,
-      webhookActive: true,
-      webhookSignatureVersion: "v1+v2",
-    }),
+    body: JSON.stringify(senderWebhookConfiguration()),
   });
   return unwrapSender(payload);
+}
+
+export async function ensureVoiceSender(senderId: string): Promise<any> {
+  const payload = await zavuFetch(`/senders/${encodeURIComponent(senderId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      ...senderWebhookConfiguration(),
+      enableVoice: true,
+    }),
+  });
+  const sender = unwrapSender(payload);
+  if (!hasVoiceChannel(sender)) {
+    throw new Error("Zavu did not enable the Voice channel for the sender");
+  }
+  if (!hasWebhookEvents(sender)) {
+    throw new Error("Zavu sender webhook events were not persisted");
+  }
+  return sender;
 }
 
 export async function ensureProjectWebhook() {
@@ -226,6 +251,8 @@ export async function detachSenderFromAgent(senderId: string) {
 // SENDER & CHANNELS
 export async function createSender(params: {
   name: string;
+  phoneNumber?: string;
+  enableVoice?: boolean;
   enableSmsOneway?: boolean;
   emailAddress?: string;
   emailFromName?: string;
@@ -233,15 +260,11 @@ export async function createSender(params: {
   emailReceivingEnabled?: boolean;
   setAsDefault?: boolean;
 }): Promise<any> {
-  const webhookUrl = getZavuWebhookUrl();
   const payload = await zavuFetch("/senders", {
     method: "POST",
     body: JSON.stringify({
       ...params,
-      webhookUrl,
-      webhookEvents: ZAVU_SENDER_WEBHOOK_EVENTS,
-      webhookActive: true,
-      webhookSignatureVersion: "v1+v2",
+      ...senderWebhookConfiguration(),
     }),
   });
   
@@ -256,10 +279,22 @@ export async function createSender(params: {
   return sender;
 }
 
+export async function createVoiceSender(params: {
+  name: string;
+  phoneNumber: string;
+}): Promise<any> {
+  const sender = await createSender({
+    ...params,
+  });
+  return sender;
+}
+
 export async function updateSender(senderId: string, params: {
   emailAddress?: string;
   emailFromName?: string;
   emailReceivingEnabled?: boolean;
+  enableVoice?: boolean;
+  enableSmsOneway?: boolean;
 }): Promise<any> {
   return zavuFetch(`/senders/${senderId}`, {
     method: "PATCH",
@@ -326,10 +361,7 @@ export async function assignNumberToSender(senderId: string, phoneNumber: string
     const phoneObj = list.find((n: any) => n.phoneNumber === phoneNumber);
     
     if (phoneObj && phoneObj.id) {
-      return zavuFetch(`/phone-numbers/${phoneObj.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ senderId }),
-      });
+      return assignPhoneNumberToSender(phoneObj.id, senderId);
     }
     // Wait 1 second before retrying to account for potential API replication delay
     if (i < retries - 1) {
@@ -338,6 +370,16 @@ export async function assignNumberToSender(senderId: string, phoneNumber: string
   }
 
   throw new Error(`Phone number ${phoneNumber} not found in owned numbers to assign`);
+}
+
+export async function assignPhoneNumberToSender(
+  phoneNumberId: string,
+  senderId: string
+): Promise<any> {
+  return zavuFetch(`/phone-numbers/${encodeURIComponent(phoneNumberId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ senderId }),
+  });
 }
 
 export async function connectTelegram(senderId: string, botToken: string): Promise<any> {

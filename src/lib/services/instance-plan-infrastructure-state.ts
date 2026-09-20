@@ -47,6 +47,17 @@ export interface InfrastructureBlockMutation {
   generation?: number;
 }
 
+export interface ScopedBacklogBlockMutation {
+  state:
+    | InfrastructureMutationState
+    | 'guarded'
+    | 'no_alternative'
+    | 'unsupported';
+  isolated: boolean;
+  affected_item_ids: string[];
+  generation?: number;
+}
+
 export class InfrastructureStateDatabaseError extends Error {
   readonly code?: string;
   readonly details?: string;
@@ -276,6 +287,78 @@ export async function blockRequirementForInfrastructureCircuit(params: {
   return data as InfrastructureBlockMutation;
 }
 
+export async function blockBacklogItemForCircuitAtomically(params: {
+  requirementId: string;
+  siteId: string;
+  instanceId: string;
+  planId: string;
+  stepId: string;
+  backlogItemId: string;
+  expectedStepGeneration: number;
+  expectedExecutionGeneration: number;
+  circuitKind: 'infrastructure' | 'product_no_progress';
+  blockerId: string;
+  category: 'product_defect' | 'infrastructure_unavailable';
+  reason: string;
+  resolutionActor: 'executor' | 'platform';
+  retryAfter?: string;
+  provenance?: string;
+  cycleId?: string;
+  minimumFailures?: number;
+  attemptLimits: { core: number; ornamental: number };
+}): Promise<ScopedBacklogBlockMutation> {
+  const { data, error } = await supabaseAdmin.rpc(
+    'block_backlog_item_for_circuit_atomic',
+    {
+      p_requirement_id: params.requirementId,
+      p_site_id: params.siteId,
+      p_instance_id: params.instanceId,
+      p_plan_id: params.planId,
+      p_step_id: params.stepId,
+      p_backlog_item_id: params.backlogItemId,
+      p_expected_step_generation: params.expectedStepGeneration,
+      p_expected_execution_generation: params.expectedExecutionGeneration,
+      p_circuit_kind: params.circuitKind,
+      p_blocker_id: params.blockerId,
+      p_category: params.category,
+      p_reason: params.reason,
+      p_resolution_actor: params.resolutionActor,
+      p_retry_after: params.retryAfter ?? null,
+      p_provenance: params.provenance ?? null,
+      p_cycle_id: params.cycleId ?? null,
+      p_minimum_failures: params.minimumFailures ?? null,
+      p_core_attempt_limit: params.attemptLimits.core,
+      p_ornamental_attempt_limit: params.attemptLimits.ornamental,
+    },
+  );
+  if (error) {
+    if (
+      error.code === 'PGRST202' ||
+      /block_backlog_item_for_circuit_atomic/i.test(error.message) &&
+        /not find|does not exist|schema cache/i.test(error.message)
+    ) {
+      return {
+        state: 'unsupported',
+        isolated: false,
+        affected_item_ids: [],
+      };
+    }
+    throw new InfrastructureStateDatabaseError(
+      'Failed to atomically isolate backlog circuit',
+      error,
+    );
+  }
+  if (
+    !data ||
+    typeof data.state !== 'string' ||
+    typeof data.isolated !== 'boolean' ||
+    !Array.isArray(data.affected_item_ids)
+  ) {
+    throw new Error('Scoped backlog circuit RPC returned an invalid result');
+  }
+  return data as ScopedBacklogBlockMutation;
+}
+
 export async function blockRequirementForCronInfrastructureCycles(params: {
   requirementId: string;
   siteId: string;
@@ -325,7 +408,7 @@ export async function blockRequirementForProductNoProgress(params: {
   message: string;
   expectedExecutionGeneration: number;
 }): Promise<InfrastructureBlockMutation> {
-  let { data, error } = await supabaseAdmin.rpc(
+  const { data, error } = await supabaseAdmin.rpc(
     'block_requirement_for_product_no_progress',
     {
       p_requirement_id: params.requirementId,
@@ -340,28 +423,6 @@ export async function blockRequirementForProductNoProgress(params: {
       p_expected_step_generation: params.expectedStepGeneration,
     },
   );
-  if (
-    error &&
-    (
-      error.code === 'PGRST202' ||
-      error.code === '42883' ||
-      /function .*block_requirement_for_product_no_progress.*does not exist/i
-        .test(error.message || '')
-    )
-  ) {
-    ({ data, error } = await supabaseAdmin.rpc(
-      'block_requirement_for_product_no_progress',
-      {
-        p_requirement_id: params.requirementId,
-        p_site_id: params.siteId,
-        p_instance_id: params.instanceId,
-        p_cycle_id: params.cycleId,
-        p_minimum_failures: params.minimumFailures,
-        p_message: params.message,
-        p_expected_execution_generation: params.expectedExecutionGeneration,
-      },
-    ));
-  }
   if (error) {
     throw new InfrastructureStateDatabaseError(
       'Failed to persist product no-progress circuit',

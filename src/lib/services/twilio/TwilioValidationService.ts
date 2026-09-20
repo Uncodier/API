@@ -6,6 +6,7 @@ import crypto from 'crypto';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { decryptToken } from '@/lib/utils/token-decryption';
 import { pickMatchingWhatsAppToken } from '@/lib/services/twilio/whatsapp-number-match';
+import { getCachedJson, setCachedJson, sha256 } from '@/lib/security/upstash-rest';
 
 interface TwilioValidationResult {
   isValid: boolean;
@@ -74,12 +75,28 @@ export class TwilioValidationService {
   ): Promise<{ success: boolean; authToken?: string; error?: string }> {
     try {
       console.log('[TwilioValidation] Buscando auth token para número:', whatsappNumber);
+      const cacheKey = `twilio:auth-token:${await sha256(
+        `${siteId}:${whatsappNumber}`,
+      )}`;
+      const cached = await getCachedJson<{
+        encryptedValue?: string;
+        missing?: boolean;
+      }>(cacheKey);
+      if (cached?.missing) {
+        return { success: false, error: 'No Twilio auth token found' };
+      }
+      if (cached?.encryptedValue) {
+        const authToken = this.decryptToken(cached.encryptedValue);
+        return authToken
+          ? { success: true, authToken }
+          : { success: false, error: 'Failed to decrypt auth token' };
+      }
       
       // Site already resolved. Match identifier with MX +52/+521 variants;
       // if the site has a single WhatsApp token, use it even when formats differ.
       const { data: tokens, error } = await supabaseAdmin
         .from('secure_tokens')
-        .select('*')
+        .select('identifier, encrypted_value, value')
         .eq('site_id', siteId)
         .eq('token_type', 'twilio_whatsapp');
 
@@ -93,6 +110,7 @@ export class TwilioValidationService {
 
       const tokenRecord = pickMatchingWhatsAppToken(tokens || [], whatsappNumber);
       if (!tokenRecord) {
+        await setCachedJson(cacheKey, { missing: true }, 30);
         console.log('[TwilioValidation] No se encontró token para este número');
         return {
           success: false,
@@ -102,7 +120,8 @@ export class TwilioValidationService {
       console.log('[TwilioValidation] Token encontrado, desencriptando...');
 
       // Desencriptar el token
-      const decryptedToken = this.decryptToken(tokenRecord.encrypted_value || tokenRecord.value);
+      const encryptedValue = tokenRecord.encrypted_value || tokenRecord.value;
+      const decryptedToken = this.decryptToken(encryptedValue);
       
       if (!decryptedToken) {
         return {
@@ -111,6 +130,7 @@ export class TwilioValidationService {
         };
       }
 
+      await setCachedJson(cacheKey, { encryptedValue }, 300);
       console.log('[TwilioValidation] Token desencriptado exitosamente');
       return {
         success: true,
@@ -131,7 +151,7 @@ export class TwilioValidationService {
    * Implementación basada en la documentación de Twilio:
    * https://www.twilio.com/docs/usage/webhooks/webhooks-security
    */
-  private static validateSignature(
+  static validateSignature(
     url: string,
     postData: Record<string, any>,
     twilioSignature: string,
@@ -155,10 +175,7 @@ export class TwilioValidationService {
         .update(dataString, 'utf-8')
         .digest('base64');
 
-      console.log('[TwilioValidation] Firma esperada:', expectedSignature);
-      console.log('[TwilioValidation] Firma recibida:', twilioSignature);
-
-      // 3. Comparar las firmas de forma segura
+      if (expectedSignature.length !== twilioSignature.length) return false;
       return crypto.timingSafeEqual(
         Buffer.from(expectedSignature),
         Buffer.from(twilioSignature)

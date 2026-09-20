@@ -5,7 +5,7 @@ export function requirementBacklogTool(_siteId: string, defaultRequirementId?: s
   return {
     name: 'requirement_backlog',
     description:
-      'Canonical backlog for a requirement. Every actionable work item lives here — Producer adds them, Consumer starts one (WIP=1), and the runner moves it through review to a terminal outcome. Model actions: list | upsert | start | downgrade | log_assumption | set_status. Terminal transitions (done, rejected, needs_review) are runner-owned; finish plan work with instance_plan action="execute_step" so the gate and Judge can decide the outcome. The tool rejects start when another item is already in_progress; downgrade drops scope_level full → mvp → minimal and resets status to pending.',
+      'Canonical backlog for a requirement. Every actionable work item lives here — Producer adds them, Consumer starts one (WIP=1), and the runner moves it through review to a terminal outcome. Model actions: list | upsert | start | downgrade | log_assumption | report_blocker | resolve_blocker | set_status. report_blocker pauses only the affected item, propagates blocked_by to dependency descendants, and releases WIP so independent items can continue. It never blocks the whole requirement. Terminal transitions (done, rejected, needs_review) are runner-owned; finish plan work with instance_plan action="execute_step" so the gate and Judge can decide the outcome.',
     parameters: {
       type: 'object',
       properties: {
@@ -17,6 +17,8 @@ export function requirementBacklogTool(_siteId: string, defaultRequirementId?: s
             'start',
             'downgrade',
             'log_assumption',
+            'report_blocker',
+            'resolve_blocker',
             'set_status',
           ],
           description: 'Backlog operation to perform.',
@@ -26,7 +28,7 @@ export function requirementBacklogTool(_siteId: string, defaultRequirementId?: s
         title: { type: 'string', description: 'Human-readable item title.' },
         kind: {
           type: 'string',
-          description: 'Item kind (flow-specific). Examples: page, component, crud, api, auth, integration, section, slide, clause, subtask, script, content, polish.',
+          description: 'Item kind (flow-specific). Examples: page, component, crud, api, auth, integration, doc, section, slide, clause, subtask, script, content, polish.',
         },
         phase_id: {
           type: 'string',
@@ -55,6 +57,33 @@ export function requirementBacklogTool(_siteId: string, defaultRequirementId?: s
           description: 'Functional tier. `core` = must-ship functional item (the Judge applies kind-specific hard contracts and rejects narrative-only acceptance). `ornamental` = polish / landing / nice-to-have (relaxed contracts, does not block requirement closure). Default `core`.',
         },
         depends_on: { type: 'array', items: { type: 'string' }, description: 'Item ids this depends on (must be done first).' },
+        blocker_id: {
+          type: 'string',
+          description: 'Stable blocker id. Optional for report_blocker; required for resolve_blocker.',
+        },
+        blocker_category: {
+          type: 'string',
+          enum: [
+            'product_defect',
+            'infrastructure_unavailable',
+            'missing_precondition',
+            'evidence_gap',
+            'contract_error',
+            'user_decision',
+          ],
+          description: 'Typed reason preventing only this item from progressing.',
+        },
+        resolution_actor: {
+          type: 'string',
+          enum: ['executor', 'verifier', 'platform', 'user'],
+          description: 'Who can resolve the blocker. Use user only for a concrete non-agentifiable decision or credential.',
+        },
+        source_step_id: { type: 'string', description: 'Optional plan step that produced the blocker.' },
+        user_action_required: {
+          type: 'boolean',
+          description: 'True only when a concrete user response is required. Infrastructure and evidence gaps must be false.',
+        },
+        retry_after: { type: 'string', description: 'Optional ISO timestamp for an automatic retry.' },
         status: {
           type: 'string',
           enum: ['pending', 'in_progress', 'critic_review', 'judge_review'],
@@ -84,6 +113,12 @@ export function requirementBacklogTool(_siteId: string, defaultRequirementId?: s
         status: args.status as BacklogItemStatus | undefined,
         reason: args.reason,
         assumption: args.assumption,
+        blocker_id: args.blocker_id,
+        blocker_category: args.blocker_category,
+        resolution_actor: args.resolution_actor,
+        source_step_id: args.source_step_id,
+        user_action_required: args.user_action_required,
+        retry_after: args.retry_after,
         confirm_reopen: args.confirm_reopen,
       };
       return executeBacklogCore(params);

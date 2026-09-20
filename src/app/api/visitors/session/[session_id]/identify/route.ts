@@ -5,6 +5,7 @@ import {
   identityErrorBody
 } from '@/lib/services/visitor-identity/contracts';
 import { visitorIdentityService } from '@/lib/services/visitor-identity/orchestration-service';
+import { authorizeVisitorSession } from '@/lib/security/authorize-visitor-session';
 
 export const dynamic = 'force-dynamic';
 
@@ -37,6 +38,17 @@ export async function POST(
     const querySiteId = request.nextUrl.searchParams.get('site_id');
     if (querySiteId && querySiteId !== parsed.data.site_id) {
       throw new VisitorIdentityError('site_mismatch', 'site_id does not match the request URL', 400);
+    }
+    if (!await authorizeVisitorSession(request, {
+      siteId: parsed.data.site_id,
+      sessionId: pathSessionId,
+      visitorId: parsed.data.visitor_id,
+    })) {
+      throw new VisitorIdentityError(
+        'forbidden',
+        'Visitor session authorization is required',
+        403,
+      );
     }
 
     const result = await visitorIdentityService.identify({

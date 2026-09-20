@@ -10,6 +10,10 @@
  */
 
 import type { BacklogItemKind, BacklogItemStatus, RequirementBacklog } from './requirement-backlog-types';
+import {
+  isBacklogItemBlocked,
+  requiresUserAction,
+} from './requirement-backlog-blockers';
 
 export type RequirementKind =
   | 'app'
@@ -31,6 +35,7 @@ export interface FlowPhase {
 
 export interface CostEnvelope {
   max_cycles_per_item: number;
+  max_product_attempts_per_item: number;
   max_turns_per_step: number;
   max_cycles_per_requirement: number;
 }
@@ -82,9 +87,30 @@ export interface FlowDefinition {
 
 const DEFAULT_ENVELOPE: CostEnvelope = {
   max_cycles_per_item: 50,
+  max_product_attempts_per_item: 4,
   max_turns_per_step: 5,
   max_cycles_per_requirement: 3000,
 };
+
+function positiveInteger(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(value || '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+export function productAttemptLimits(
+  flow: FlowDefinition,
+): { core: number; ornamental: number } {
+  return {
+    core: positiveInteger(
+      process.env.CRON_CORE_MAX_ATTEMPTS,
+      flow.cost_envelope.max_product_attempts_per_item,
+    ),
+    ornamental: positiveInteger(
+      process.env.CRON_ORNAMENTAL_MAX_ATTEMPTS,
+      2,
+    ),
+  };
+}
 
 const APPLICATION_DELIVERY: FlowDeliveryCapabilities = {
   provision_tracking_script: true,
@@ -320,6 +346,31 @@ export function advancePhaseIfReadyInMemory(
   let idx = flow.phases.findIndex((p) => p.id === phaseId);
   if (idx < 0) return null;
 
+  const earliestUserBlockedPhaseIndex = backlog.items.reduce(
+    (earliest, item) => {
+      if (!requiresUserAction(item)) return earliest;
+      const itemPhaseIndex = flow.phases.findIndex(
+        (phase) => phase.id === item.phase_id,
+      );
+      if (itemPhaseIndex < 0) return earliest;
+      return earliest < 0
+        ? itemPhaseIndex
+        : Math.min(earliest, itemPhaseIndex);
+    },
+    -1,
+  );
+  if (earliestUserBlockedPhaseIndex >= 0 &&
+      earliestUserBlockedPhaseIndex < idx) {
+    const blockedPhase = flow.phases[earliestUserBlockedPhaseIndex];
+    return {
+      to: blockedPhase,
+      nextBacklog: {
+        ...backlog,
+        current_phase_id: blockedPhase.id,
+      },
+    };
+  }
+
   let targetPhase: FlowPhase | null = null;
 
   while (idx < flow.phases.length) {
@@ -327,7 +378,14 @@ export function advancePhaseIfReadyInMemory(
     const inPhase = backlog.items.filter((i) => i.phase_id === pId);
     
     // Si la fase actual (idx) tiene elementos bloqueantes, no podemos avanzar más allá de ella.
-    const blocking = inPhase.filter((i) => !PHASE_TERMINAL_STATUSES.has(i.status));
+    const blocking = inPhase.filter(
+      (item) =>
+        !PHASE_TERMINAL_STATUSES.has(item.status) &&
+        (
+          !isBacklogItemBlocked(item) ||
+          requiresUserAction(item)
+        ),
+    );
     if (blocking.length > 0) {
       break; 
     }

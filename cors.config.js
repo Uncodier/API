@@ -61,7 +61,7 @@ const corsConfig = {
 };
 
 // Encabezados CORS permitidos
-const ALLOWED_HEADERS = 'Content-Type, Authorization, X-SA-API-KEY, x-api-key, x-sa-api-key, x-api-secret, Accept, Origin, X-Requested-With, Access-Control-Allow-Headers, Access-Control-Request-Headers, Access-Control-Request-Method';
+const ALLOWED_HEADERS = 'Content-Type, Authorization, X-SA-API-KEY, X-Visitor-Session-Token, x-api-key, x-sa-api-key, x-api-secret, Accept, Origin, X-Requested-With, Access-Control-Allow-Headers, Access-Control-Request-Headers, Access-Control-Request-Method';
 
 /**
  * Obtiene la lista de orígenes permitidos según el entorno
@@ -92,21 +92,8 @@ export const isOriginAllowed = async (origin) => {
     return true;
   }
 
-  // Primero verificar contra la lista de orígenes permitidos
   const allowedOrigins = getAllowedOrigins();
-  if (allowedOrigins.includes(origin)) {
-    return true;
-  }
-
-  // Si no está en la lista estática, verificar en la base de datos
-  try {
-    const { isOriginAllowedInDb } = await import('@/lib/cors/cors-db');
-    const isAllowed = await isOriginAllowedInDb(origin);
-    return isAllowed;
-  } catch (error) {
-    console.error('[CORS-CONFIG] Error al verificar origen en base de datos:', error);
-    return false;
-  }
+  return allowedOrigins.includes(origin);
 };
 
 /**

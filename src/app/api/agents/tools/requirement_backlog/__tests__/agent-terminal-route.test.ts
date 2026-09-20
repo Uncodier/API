@@ -18,6 +18,10 @@ jest.mock('@/lib/services/requirement-backlog', () => ({
 jest.mock('@/lib/services/requirement-cron-reset', () => ({
   checkAndResetCronAttempts: jest.fn(),
 }));
+jest.mock('@/lib/services/requirement-backlog-blocker-service', () => ({
+  blockBacklogItem: jest.fn(),
+  resolveBacklogItemBlocker: jest.fn(),
+}));
 jest.mock('@/lib/database/requirement-db', () => ({
   getRequirementById: jest.fn(),
 }));
@@ -57,6 +61,9 @@ describe('model-facing requirement backlog terminal transitions', () => {
     );
     expect(properties.status.enum).not.toEqual(
       expect.arrayContaining(['done', 'rejected', 'needs_review']),
+    );
+    expect(properties.action.enum).toEqual(
+      expect.arrayContaining(['report_blocker', 'resolve_blocker']),
     );
   });
 });

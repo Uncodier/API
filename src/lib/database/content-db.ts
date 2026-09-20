@@ -3,6 +3,11 @@
  */
 
 import { supabaseAdmin } from './supabase-client';
+import {
+  getCachedJson,
+  setCachedJson,
+  sha256,
+} from '@/lib/security/upstash-rest';
 
 export const CONTENT_TYPES = [
   'blog_post',
@@ -66,6 +71,9 @@ export interface ContentFilters {
   sort_order?: 'asc' | 'desc';
   limit?: number;
   offset?: number;
+  exact_count?: boolean;
+  full_text_search?: boolean;
+  public_projection?: boolean;
 }
 
 export interface CreateContentParams {
@@ -102,7 +110,59 @@ export async function getContents(filters: ContentFilters): Promise<{
   total: number;
   hasMore: boolean;
 }> {
-  let query = supabaseAdmin.from('content').select('*', { count: 'exact' });
+  const safeSearch = filters.search
+    ?.trim()
+    .slice(0, 100)
+    .replace(/[,%()._"'\\]/g, ' ');
+  const allowedSortColumns = new Set([
+    'created_at',
+    'updated_at',
+    'published_at',
+    'title',
+  ]);
+  const sortBy = filters.sort_by && allowedSortColumns.has(filters.sort_by)
+    ? filters.sort_by
+    : 'created_at';
+  const sortOrder = filters.sort_order || 'desc';
+  const limit = Math.min(100, Math.max(1, Math.trunc(filters.limit ?? 50)));
+  const offset = Math.min(10_000, Math.max(0, Math.trunc(filters.offset ?? 0)));
+  const cacheable = Boolean(
+    filters.site_id
+    && filters.status === 'published'
+    && !filters.user_id
+    && !filters.campaign_id
+    && !filters.segment_id,
+  );
+  const cacheKey = cacheable
+    ? `cache:public-content:${await sha256(JSON.stringify({
+        siteId: filters.site_id,
+        type: filters.type || null,
+        search: safeSearch || null,
+        sortBy,
+        sortOrder,
+        limit,
+        offset,
+        exactCount: filters.exact_count !== false,
+        fullTextSearch: filters.full_text_search === true,
+        publicProjection: filters.public_projection === true,
+      }))}`
+    : null;
+  if (cacheKey) {
+    const cached = await getCachedJson<{
+      contents: DbContentWithAssets[];
+      total: number;
+      hasMore: boolean;
+    }>(cacheKey);
+    if (cached) return cached;
+  }
+
+  const exactCount = filters.exact_count !== false;
+  const contentProjection = filters.public_projection
+    ? 'id,title,description,type,status,site_id,created_at,updated_at,published_at,tags,estimated_reading_time,text,metadata'
+    : '*';
+  let query = supabaseAdmin
+    .from('content')
+    .select(contentProjection, exactCount ? { count: 'exact' } : undefined);
 
   if (filters.site_id) query = query.eq('site_id', filters.site_id);
   if (filters.user_id) query = query.eq('user_id', filters.user_id);
@@ -111,19 +171,20 @@ export async function getContents(filters: ContentFilters): Promise<{
   if (filters.campaign_id) query = query.eq('campaign_id', filters.campaign_id);
   if (filters.segment_id) query = query.eq('segment_id', filters.segment_id);
 
-  if (filters.search) {
-    query = query.or(
-      `title.ilike.%${filters.search}%,description.ilike.%${filters.search}%,text.ilike.%${filters.search}%`
-    );
+  if (safeSearch) {
+    query = filters.full_text_search
+      ? query.textSearch('public_search', safeSearch, {
+          config: 'simple',
+          type: 'plain',
+        })
+      : query.or(
+          `title.ilike.%${safeSearch}%,description.ilike.%${safeSearch}%,text.ilike.%${safeSearch}%`
+        );
   }
 
-  const sortBy = filters.sort_by || 'created_at';
-  const sortOrder = filters.sort_order || 'desc';
   query = query.order(sortBy, { ascending: sortOrder === 'asc' });
 
-  const limit = filters.limit ?? 50;
-  const offset = filters.offset ?? 0;
-  query = query.range(offset, offset + limit - 1);
+  query = query.range(offset, offset + limit - (exactCount ? 1 : 0));
 
   const { data, error, count } = await query;
 
@@ -131,7 +192,8 @@ export async function getContents(filters: ContentFilters): Promise<{
     throw new Error(`Error getting content: ${error.message}`);
   }
 
-  const contents = (data ?? []) as DbContentWithAssets[];
+  const hasExtraRow = !exactCount && (data?.length ?? 0) > limit;
+  const contents = (data ?? []).slice(0, limit) as unknown as DbContentWithAssets[];
 
   // Initialize assets array for all contents
   contents.forEach(content => {
@@ -141,10 +203,18 @@ export async function getContents(filters: ContentFilters): Promise<{
   // Fetch associated assets for each content item
   if (contents.length > 0) {
     const contentIds = contents.map(c => c.id);
-    const { data: contentAssets, error: assetsError } = await supabaseAdmin
+    let assetsQuery = supabaseAdmin
       .from('content_assets')
-      .select('content_id, position, is_primary, assets(*)')
+      .select(
+        filters.public_projection
+          ? 'content_id,position,is_primary,assets!inner(id,name,description,file_path,file_type)'
+          : 'content_id,position,is_primary,assets(*)',
+      )
       .in('content_id', contentIds);
+    if (filters.public_projection) {
+      assetsQuery = assetsQuery.eq('assets.is_public', true);
+    }
+    const { data: contentAssets, error: assetsError } = await assetsQuery;
 
     if (!assetsError && contentAssets) {
       // Group assets by content_id
@@ -178,12 +248,16 @@ export async function getContents(filters: ContentFilters): Promise<{
     }
   }
 
-  const total = count ?? (data?.length ?? 0);
-  return {
+  const total = count ?? offset + contents.length + (hasExtraRow ? 1 : 0);
+  const result = {
     contents,
     total,
-    hasMore: total > offset + (data?.length ?? 0),
+    hasMore: exactCount
+      ? total > offset + contents.length
+      : hasExtraRow,
   };
+  if (cacheKey) await setCachedJson(cacheKey, result, 30);
+  return result;
 }
 
 export async function getContentById(id: string): Promise<DbContent | null> {

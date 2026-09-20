@@ -178,7 +178,14 @@ async function persistZavuAgentId(
 export async function syncCustomerSupportVoiceAgent(params: {
   siteId: string;
   senderIds: string[];
-}): Promise<{ agent: ZavuAgent; localAgentId: string; webhookSecret: string }> {
+  deferActivation?: boolean;
+}): Promise<{
+  agent: ZavuAgent;
+  localAgentId: string;
+  webhookSecret: string;
+  shouldEnable: boolean;
+  previousEnabled: boolean;
+}> {
   const senderIds = Array.from(new Set(params.senderIds.filter(Boolean)));
   if (senderIds.length === 0) {
     throw new Error("At least one Zavu sender is required");
@@ -207,27 +214,53 @@ export async function syncCustomerSupportVoiceAgent(params: {
     zavuAgent = await findReusableSenderAgent(senderIds);
   }
 
+  const shouldEnable = localAgent.status === "active";
   if (!zavuAgent) {
-    zavuAgent = await createStandaloneAgent(desired);
+    zavuAgent = await createStandaloneAgent({
+      ...desired,
+      enabled: params.deferActivation ? false : shouldEnable,
+    });
   }
 
-  for (const senderId of senderIds) {
-    try {
-      const current = await getSenderAgent(senderId);
-      if (current.id !== zavuAgent.id) {
-        throw new Error(`Sender ${senderId} already belongs to another Zavu agent`);
+  const previousEnabled = zavuAgent.enabled === true;
+  try {
+    zavuAgent = await updateAgent(zavuAgent.id, {
+      ...desired,
+      enabled: params.deferActivation && shouldEnable
+        ? previousEnabled
+        : shouldEnable,
+    });
+
+    for (const senderId of senderIds) {
+      try {
+        const current = await getSenderAgent(senderId);
+        if (current.id !== zavuAgent.id) {
+          throw new Error(`Sender ${senderId} already belongs to another Zavu agent`);
+        }
+      } catch (error: any) {
+        if (error?.status !== 404) throw error;
+        await attachSenderToAgent(senderId, zavuAgent.id);
       }
-    } catch (error: any) {
-      if (error?.status !== 404) throw error;
-      await attachSenderToAgent(senderId, zavuAgent.id);
     }
+
+    await persistZavuAgentId(localAgent, zavuAgent.id, encryptToken(webhookSecret));
+  } catch (error) {
+    try {
+      await updateAgent(zavuAgent.id, { enabled: previousEnabled });
+    } catch (rollbackError) {
+      console.error(
+        `[Zavu Voice] Failed to restore agent ${zavuAgent.id} after synchronization failure:`,
+        rollbackError
+      );
+    }
+    throw error;
   }
 
-  zavuAgent = await updateAgent(zavuAgent.id, {
-    ...desired,
-    enabled: localAgent.status === "active",
-  });
-  await persistZavuAgentId(localAgent, zavuAgent.id, encryptToken(webhookSecret));
-
-  return { agent: zavuAgent, localAgentId: localAgent.id, webhookSecret };
+  return {
+    agent: zavuAgent,
+    localAgentId: localAgent.id,
+    webhookSecret,
+    shouldEnable,
+    previousEnabled,
+  };
 }

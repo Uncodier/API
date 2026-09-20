@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { EmailTrackingService } from '@/lib/services/tracking/EmailTrackingService';
+import {
+  enforceRequestRateLimit,
+  getTrustedClientIp,
+} from '@/lib/security/request-rate-limit';
 
 /**
  * Endpoint para rastreo de correos (aperturas y clics)
@@ -16,6 +20,15 @@ export async function GET(request: NextRequest) {
 
   const ip = request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || '';
   const ua = request.headers.get('user-agent') || '';
+
+  const limited = await enforceRequestRateLimit(request, {
+    namespace: `email-${action === 'click' ? 'click' : 'open'}`,
+    identity: `${messageId}:${getTrustedClientIp(request)}`,
+    limit: action === 'click' ? 20 : 10,
+    windowSeconds: 60 * 60,
+    failClosed: true,
+  });
+  if (limited) return limited;
 
   const metadata = { ip, ua };
 
@@ -43,13 +56,23 @@ export async function GET(request: NextRequest) {
   }
 
   if (action === 'click' && targetUrl) {
+    let redirectUrl: URL;
+    try {
+      redirectUrl = new URL(targetUrl);
+      if (!['http:', 'https:'].includes(redirectUrl.protocol)) {
+        throw new Error('Unsupported redirect protocol');
+      }
+    } catch {
+      return new NextResponse('Invalid target URL', { status: 400 });
+    }
+
     // El tracking se hace de forma asíncrona
     EmailTrackingService.trackClick(messageId, targetUrl, metadata).catch(err => {
       console.error('[TrackingAPI] Error tracking click:', err);
     });
 
     // Redirigir al URL original
-    return NextResponse.redirect(new URL(targetUrl));
+    return NextResponse.redirect(redirectUrl);
   }
 
   return new NextResponse('Invalid action', { status: 400 });

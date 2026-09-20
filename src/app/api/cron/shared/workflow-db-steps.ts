@@ -257,6 +257,8 @@ export async function recordCronCycleOutcomeStep(params: {
   outcome: CronCycleOutcome;
   expectedExecutionGeneration: number;
   runnerInstanceId?: string;
+  planId?: string;
+  stepId?: string;
 }): Promise<CronCycleAccountingResult> {
   'use step';
   return recordRequirementCronCycleOutcome({
@@ -266,6 +268,8 @@ export async function recordCronCycleOutcomeStep(params: {
     outcome: params.outcome,
     expectedExecutionGeneration: params.expectedExecutionGeneration,
     runnerInstanceId: params.runnerInstanceId,
+    planId: params.planId,
+    stepId: params.stepId,
   });
 }
 

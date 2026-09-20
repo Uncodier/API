@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import type { SystemHealthStatus } from './types';
+import { claimKey, sha256 } from '@/lib/security/upstash-rest';
 
 export const REDIS_TELEMETRY_KEYS = {
   tracking: 'redis_tracking_queue',
@@ -63,6 +64,13 @@ export async function recordTelemetry(
 ): Promise<void> {
   // Telemetry is intended to be fast and not fail the main request.
   try {
+    const fingerprint = await sha256(`${systemKey}:${status}:${message}`);
+    const claim = await claimKey(
+      `telemetry:sample:${fingerprint}`,
+      60,
+    );
+    if (claim.state !== 'acquired') return;
+
     const { error } = await supabaseAdmin.from('system_telemetry').insert({
       system_key: systemKey,
       status: status === 'skipped' ? 'up' : status, // 'skipped' mapped to 'up' for telemetry

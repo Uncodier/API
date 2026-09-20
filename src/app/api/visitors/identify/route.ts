@@ -4,6 +4,12 @@ import { supabaseAdmin } from '@/lib/database/supabase-client'
 import { extractRequestInfoWithLocation } from '@/lib/utils/request-info-extractor'
 import { identifySchema } from './types'
 import { LeadIdentificationService } from '@/lib/services/leads/LeadIdentificationService'
+import { hasAuthenticatedPrincipal } from '@/lib/security/request-rate-limit'
+import { canAccessSite } from '@/lib/security/site-access'
+import {
+  verifyVisitorSessionToken,
+  visitorSessionTokenFromRequest,
+} from '@/lib/security/visitor-session-token'
 
 /**
  * API DE IDENTIFICACIÓN DE VISITANTES
@@ -18,6 +24,28 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const validatedData = identifySchema.parse(body);
+    const authorized = hasAuthenticatedPrincipal(request)
+      ? await canAccessSite(request, validatedData.site_id)
+      : await verifyVisitorSessionToken(
+          visitorSessionTokenFromRequest(request),
+          {
+            siteId: validatedData.site_id,
+            sessionId: validatedData.session_id,
+            visitorId: validatedData.id,
+          },
+        );
+    if (!authorized) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'forbidden',
+            message: 'Visitor session authorization is required',
+          },
+        },
+        { status: 403 },
+      );
+    }
 
     // 1. Verify Site
     const { data: site, error: siteError } = await supabaseAdmin
@@ -40,7 +68,27 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 2. Verify Visitor
+    // 2. Verify the visitor belongs to this active site session.
+    const { data: session, error: sessionError } = await supabaseAdmin
+      .from('visitor_sessions')
+      .select('id')
+      .eq('id', validatedData.session_id)
+      .eq('site_id', validatedData.site_id)
+      .eq('visitor_id', validatedData.id)
+      .eq('is_active', true)
+      .maybeSingle();
+    if (sessionError || !session) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'visitor_session_not_found',
+            message: 'Visitor session was not found or is inactive',
+          },
+        },
+        { status: 400 },
+      );
+    }
     const { data: visitor, error: visitorError } = await supabaseAdmin
       .from('visitors')
       .select('id')
@@ -69,10 +117,11 @@ export async function POST(request: NextRequest) {
     }
 
     // 4. Update Visitor and Handle Merges
-    const { updatedVisitor, relatedVisitors } = await LeadIdentificationService.updateVisitorAndMerge(
+    const { updatedVisitor, relatedVisitorCount } = await LeadIdentificationService.updateVisitorAndMerge(
       validatedData.id,
       lead.id,
-      validatedData.segment_id
+      validatedData.segment_id,
+      validatedData.site_id,
     );
 
     // Extra logging (optional)
@@ -83,8 +132,8 @@ export async function POST(request: NextRequest) {
       id: updatedVisitor.id,
       lead_id: lead.id,
       segment_id: updatedVisitor.segment_id,
-      merged: relatedVisitors.length > 0,
-      merged_ids: relatedVisitors.map((v: any) => v.id)
+      merged: relatedVisitorCount > 0,
+      merged_count: relatedVisitorCount,
     });
 
   } catch (error) {
@@ -124,7 +173,7 @@ export async function OPTIONS(request: NextRequest) {
   
   response.headers.set('Access-Control-Allow-Origin', origin);
   response.headers.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  response.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-SA-API-KEY, Accept, Origin, X-Requested-With');
+  response.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-SA-API-KEY, X-Visitor-Session-Token, Accept, Origin, X-Requested-With');
   response.headers.set('Access-Control-Allow-Credentials', 'true');
   response.headers.set('Access-Control-Max-Age', '86400');
   

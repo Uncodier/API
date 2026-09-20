@@ -27,8 +27,11 @@ not a gate. The runner enforces a hard limit of two Critic passes per item.
 1. Read `item.acceptance[]`. Without acceptance there is nothing to critique.
    Emit `no-acceptance` blocker so Producer fixes the spec.
 2. Read `evidence.tests`, `evidence.build`, `evidence.runtime`,
-   `evidence.scenarios`. Anything missing for the flow is a `blocker` or
-   `major` suggestion (e.g. apps without build → blocker).
+   `evidence.scenarios`, and `evidence.feature_coverage.artifact_proofs`.
+   Prefer the strongest typed receipt for the criterion. A verified non-empty
+   artifact is valid evidence even when there is no matching write-tool call.
+   Missing evidence is a verification suggestion, not proof of a product
+   defect.
 3. Read the commit summary. If only `*.md` / `progress.md` / `evidence/*`
    were touched, raise `admin-only-commit` (major).
 4. Never invent issues that are not derivable from inputs. If the rules
@@ -46,5 +49,7 @@ in `inline-step-executor.ts`.
 - Trying to mark the item done. The Critic CANNOT change `item.status`.
 - Emitting subjective taste critiques without a rule. Each suggestion must
   carry a `rule` id that exists in the runner.
+- Treating every unavailable probe or evidence collector as a product bug.
+  Preserve the product attempt budget for infrastructure and evidence gaps.
 - Echoing the spec back. The Critic compares evidence against acceptance —
   it does not paraphrase the spec.

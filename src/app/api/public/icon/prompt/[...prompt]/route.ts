@@ -3,6 +3,9 @@ import { start } from 'workflow/api';
 import { generatePromptImageWorkflow, GeneratePromptImageInput } from '../../../image/prompt/workflow';
 import { getPromptHash, downloadFromCache } from '@/lib/services/image/promptImageCache';
 import { resolveSiteFromRequirementUrl } from '@/lib/services/image/resolveSiteFromRequirementUrl';
+import { hasAuthenticatedPrincipal } from '@/lib/security/request-rate-limit';
+import { canAccessSite } from '@/lib/security/site-access';
+import { acquireLock, releaseLock } from '@/lib/security/upstash-rest';
 
 const NO_STORE_HEADERS = {
   'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
@@ -68,6 +71,9 @@ export async function GET(
     if (!promptStr || promptStr.trim() === '') {
       return jsonError('Prompt is required', 400);
     }
+    if (promptStr.length > 2_000) {
+      return jsonError('Prompt must be 2000 characters or fewer', 400);
+    }
 
     const searchParams = request.nextUrl.searchParams;
     let width = parseInt(searchParams.get('width') || '256', 10);
@@ -87,104 +93,90 @@ export async function GET(
 
     // Modify the prompt for icon generation
     const iconPrompt = `A high quality minimalist vector app icon of ${promptStr}, clean lines, flat design, isolated on a ${bg} background, no text.`;
-    const hash = getPromptHash(iconPrompt, width, height);
+    if (!hasAuthenticatedPrincipal(request)) {
+      return jsonError('Authentication is required to access generated icons', 401);
+    }
 
-    // 1. Cache hit → return image bytes
+    const origin = request.headers.get('origin');
+    const referer = request.headers.get('referer');
+    const originOrReferer = origin || referer;
+
+    const siteId = expectedSiteId
+      || (originOrReferer
+        ? await resolveSiteFromRequirementUrl(originOrReferer)
+        : null);
+
+    if (!siteId) {
+      return jsonError('A site_id is required for icon generation', 400);
+    }
+    if (!await canAccessSite(request, siteId)) {
+      return jsonError('Site access denied', 403);
+    }
+
+    const hash = getPromptHash(`v2:${siteId}:${iconPrompt}`, width, height);
     const cached = await downloadFromCache(hash);
     if (cached) {
       return new NextResponse(cached.buffer as unknown as BodyInit, {
         headers: {
           'Content-Type': cached.mimeType,
-          'Cache-Control': 'public, max-age=31536000, immutable',
+          'Cache-Control': 'private, max-age=31536000, immutable',
           'Access-Control-Allow-Origin': '*',
         },
       });
     }
 
-    // 2. Cache miss → validate client via requirement URL
-    const origin = request.headers.get('origin');
-    const referer = request.headers.get('referer');
-    const originOrReferer = origin || referer;
-
-    if (!originOrReferer) {
-      return jsonError('Missing Origin or Referer to resolve requirement', 403);
+    const lockKey = `lock:public-image:${hash}`;
+    const lock = await acquireLock(lockKey, 600);
+    if (lock.state === 'contended') {
+      return jsonError('Icon generation is already in progress', 409);
     }
-
-    let isOfficialApp = false;
+    if (lock.state !== 'acquired') {
+      return jsonError('Icon generation admission is unavailable', 503);
+    }
     try {
-      const hn = !originOrReferer.startsWith('http') 
-        ? new URL(`https://${originOrReferer}`).hostname 
-        : new URL(originOrReferer).hostname;
-        
-      if (
-        hn === 'app.makinari.com' ||
-        hn === 'www.makinari.com' ||
-        hn === 'makinari.com' ||
-        hn === 'localhost' ||
-        hn === '127.0.0.1'
-      ) {
-        isOfficialApp = true;
+      const rechecked = await downloadFromCache(hash);
+      if (rechecked) {
+        return new NextResponse(rechecked.buffer as unknown as BodyInit, {
+          headers: {
+            'Content-Type': rechecked.mimeType,
+            'Cache-Control': 'private, max-age=31536000, immutable',
+            'Access-Control-Allow-Origin': '*',
+          },
+        });
       }
-    } catch(e) {}
-
-    let siteId: string | null = null;
-    if (isOfficialApp) {
-      siteId = '00000000-0000-0000-0000-000000000000'; // System site ID for official app
-      if (expectedSiteId) {
-        siteId = expectedSiteId; // Allow official app to specify any site_id
-      }
-    } else {
-      siteId = await resolveSiteFromRequirementUrl(originOrReferer, expectedSiteId);
-      
-      // If expectedSiteId was provided but resolving failed, it means validation failed
-      if (expectedSiteId && !siteId) {
-        return NextResponse.json(
-          { error: `URL does not belong to the requested site_id: ${expectedSiteId}` },
-          { status: 403, headers: NO_STORE_HEADERS }
+      const workflowInput: GeneratePromptImageInput = {
+        prompt: iconPrompt,
+        siteId,
+        size: sizeMap,
+        ratio,
+        hash,
+      };
+      const run = await start(generatePromptImageWorkflow, [workflowInput]);
+      try {
+        await run.returnValue;
+      } catch (workflowError: any) {
+        console.error('[PublicPromptImage] Workflow failed:', workflowError);
+        return jsonError(
+          'Image generation failed',
+          502,
+          workflowError?.message || String(workflowError)
         );
       }
+
+      const finalCached = await downloadFromCache(hash);
+      if (finalCached) {
+        return new NextResponse(finalCached.buffer as unknown as BodyInit, {
+          headers: {
+            'Content-Type': finalCached.mimeType,
+            'Cache-Control': 'private, max-age=31536000, immutable',
+            'Access-Control-Allow-Origin': '*',
+          },
+        });
+      }
+      return jsonError('Image generation completed but image was not found in cache', 502);
+    } finally {
+      await releaseLock(lockKey, lock.token);
     }
-
-    if (!siteId) {
-      return jsonError('Domain not authorized for prompt generation', 403);
-    }
-
-    // 3. Start workflow and wait for the generated image
-    const workflowInput: GeneratePromptImageInput = {
-      prompt: iconPrompt,
-      siteId,
-      size: sizeMap,
-      ratio,
-      hash,
-    };
-
-    const runId = `img-prompt-${hash}`;
-    const run = await start(generatePromptImageWorkflow, [workflowInput]);
-
-    try {
-      await run.returnValue;
-    } catch (workflowError: any) {
-      console.error('[PublicPromptImage] Workflow failed:', workflowError);
-      return jsonError(
-        'Image generation failed',
-        502,
-        workflowError?.message || String(workflowError)
-      );
-    }
-
-    // 4. Return cached image after successful generation
-    const finalCached = await downloadFromCache(hash);
-    if (finalCached) {
-      return new NextResponse(finalCached.buffer as unknown as BodyInit, {
-        headers: {
-          'Content-Type': finalCached.mimeType,
-          'Cache-Control': 'public, max-age=31536000, immutable',
-          'Access-Control-Allow-Origin': '*',
-        },
-      });
-    }
-
-    return jsonError('Image generation completed but image was not found in cache', 502);
   } catch (error: any) {
     console.error('[PublicPromptImage] Unhandled error:', error);
     return jsonError('Internal server error', 500, error?.message || String(error));

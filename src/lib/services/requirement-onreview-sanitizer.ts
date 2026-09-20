@@ -1,7 +1,5 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { mutateBacklogAtomically } from './requirement-backlog-mutation';
-import { isBacklogComplete } from './requirement-backlog';
-import { cancelPlanStepsForBacklogItem } from '@/lib/helpers/plan-lifecycle';
 import type { BacklogItem } from './requirement-backlog-types';
 import { patchRequirementMetadataKeys } from './requirement-metadata-patch';
 import { resumeRequirementExecutionOnUserAction } from './requirement-execution-recovery';
@@ -9,6 +7,12 @@ import {
   computeRatio,
   reconcilePhaseForItem,
 } from './requirement-backlog-store';
+import {
+  fulfillPlanCancellationRequests,
+  pendingPlanCancellation,
+  requestPlanCancellation,
+  type PendingPlanCancellation,
+} from './requirement-plan-cancellation';
 
 export interface SanitizationItem {
   id: string;
@@ -18,6 +22,7 @@ export interface SanitizationItem {
   isFakeDone: boolean;
   isPlumbingStuck: boolean;
   targetStatus: 'pending' | 'needs_review';
+  cancellationRetry?: boolean;
 }
 
 export interface SanitizationPlan {
@@ -55,6 +60,21 @@ export function detectUnhealthyOnReview(req: any): SanitizationPlan {
   const maxReopens = parseInt(process.env.ONREVIEW_SANITIZE_MAX_REOPENS || '2', 10);
 
   for (const item of req.backlog.items as BacklogItem[]) {
+    const cancellationRequest = pendingPlanCancellation(item);
+    if (item.status === 'needs_review' && cancellationRequest) {
+      plan.itemsToReopen.push({
+        id: item.id,
+        title: item.title,
+        previousStatus: item.status,
+        reason: cancellationRequest.reason,
+        isFakeDone: false,
+        isPlumbingStuck: false,
+        targetStatus: 'needs_review',
+        cancellationRetry: true,
+      });
+      continue;
+    }
+
     const isCore = (item.tier ?? 'core') === 'core';
     const failureKeys = Object.keys(item.tool_failures || {});
     const ignorableKeys = failureKeys.filter((k) =>
@@ -154,14 +174,19 @@ export async function applyOnReviewSanitization(reqId: string, plan: Sanitizatio
     reqId,
     ({ requirement, backlog, flow }) => {
       let itemsChanged = 0;
-      const cancellationItemIds: string[] = [];
+      const cancellationRequests: PendingPlanCancellation[] = [];
 
       for (const sanitization of plan.itemsToReopen) {
         const idx = backlog.items.findIndex((item) => item.id === sanitization.id);
         if (idx < 0) continue;
         const item = backlog.items[idx];
         if (item.status !== sanitization.previousStatus) continue;
-        backlog.items[idx] = {
+        if (sanitization.cancellationRetry) {
+          const pending = pendingPlanCancellation(item);
+          if (pending) cancellationRequests.push(pending);
+          continue;
+        }
+        let nextItem: BacklogItem = {
           ...item,
           status: sanitization.targetStatus,
           attempts: item.attempts || 0,
@@ -170,10 +195,21 @@ export async function applyOnReviewSanitization(reqId: string, plan: Sanitizatio
         };
         itemsChanged++;
         if (sanitization.targetStatus === 'needs_review') {
-          cancellationItemIds.push(item.id);
+          nextItem = requestPlanCancellation(
+            nextItem,
+            `[auto-saneo] Cancelling plans for unhealthy item ${item.id} ` +
+              '(transitioning to needs_review)',
+            new Date().toISOString(),
+          );
+          cancellationRequests.push({
+            itemId: item.id,
+            reason: nextItem.plan_cancellation_pending!.reason,
+            requestedAt: nextItem.plan_cancellation_pending!.requested_at,
+          });
         } else {
-          reconcilePhaseForItem(backlog, flow, backlog.items[idx]);
+          reconcilePhaseForItem(backlog, flow, nextItem);
         }
+        backlog.items[idx] = nextItem;
       }
       if (itemsChanged > 0) {
         backlog.completion_ratio = computeRatio(backlog.items);
@@ -182,7 +218,7 @@ export async function applyOnReviewSanitization(reqId: string, plan: Sanitizatio
       return {
         result: {
           itemsChanged,
-          cancellationItemIds,
+          cancellationRequests,
           items: backlog.items,
           siteId: requirement.site_id || null,
           instanceId: requirement.metadata?.runner_instance_id as string | undefined,
@@ -192,18 +228,13 @@ export async function applyOnReviewSanitization(reqId: string, plan: Sanitizatio
     },
   );
 
-  if (mutation.itemsChanged > 0) {
-    for (const itemId of mutation.cancellationItemIds) {
-      try {
-        await cancelPlanStepsForBacklogItem({
-          itemId,
-          reason: `[auto-saneo] Cancelling plans for unhealthy item ${itemId} (transitioning to needs_review)`,
-        });
-      } catch (error) {
-        console.warn(`[AutoSaneo] Failed to cancel plans for item ${itemId}`, error);
-      }
-    }
+  await fulfillPlanCancellationRequests({
+    requirementId: reqId,
+    requests: mutation.cancellationRequests,
+    instanceId: mutation.instanceId,
+  });
 
+  if (mutation.itemsChanged > 0) {
     const next = requirementStatusAfterSaneo(mutation.items);
     if (next.status === 'in-progress') {
       await resumeRequirementExecutionOnUserAction(

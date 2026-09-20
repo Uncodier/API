@@ -1,6 +1,7 @@
 const mockMaybeSingle = jest.fn();
 const mockSyncAgent = jest.fn();
 const mockSyncTools = jest.fn();
+const mockUpdateAgent = jest.fn();
 
 jest.mock("@/lib/database/supabase-server", () => ({
   supabaseAdmin: {
@@ -17,17 +18,26 @@ jest.mock("../voice-agent", () => ({
 jest.mock("../voice-tools", () => ({
   syncVoiceTools: mockSyncTools,
 }));
+jest.mock("../agent-client", () => ({
+  updateAgent: mockUpdateAgent,
+}));
 
-import { syncConnectedCustomerSupportVoiceAgent } from "../voice-sync";
+import {
+  syncConnectedCustomerSupportVoiceAgent,
+  syncCustomerSupportVoiceAgentWithTools,
+} from "../voice-sync";
 
 describe("syncConnectedCustomerSupportVoiceAgent", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockSyncAgent.mockResolvedValue({
-      agent: { id: "agent_1" },
+      agent: { id: "agent_1", enabled: false },
       webhookSecret: "whsec_test",
+      shouldEnable: true,
+      previousEnabled: true,
     });
     mockSyncTools.mockResolvedValue(undefined);
+    mockUpdateAgent.mockResolvedValue({ id: "agent_1", enabled: true });
   });
 
   it("syncs the agent and restores tools for connected Voice senders", async () => {
@@ -50,12 +60,16 @@ describe("syncConnectedCustomerSupportVoiceAgent", () => {
     expect(mockSyncAgent).toHaveBeenCalledWith({
       siteId: "site-1",
       senderIds: ["sender_1"],
+      deferActivation: true,
     });
     expect(mockSyncTools).toHaveBeenCalledWith({
       agentId: "agent_1",
       siteId: "site-1",
       webhookSecret: "whsec_test",
     });
+    expect(mockUpdateAgent).toHaveBeenCalledWith("agent_1", { enabled: true });
+    expect(mockSyncTools.mock.invocationCallOrder[0])
+      .toBeLessThan(mockUpdateAgent.mock.invocationCallOrder[0]);
   });
 
   it("does nothing when the site has no connected Voice sender", async () => {
@@ -69,5 +83,33 @@ describe("syncConnectedCustomerSupportVoiceAgent", () => {
     ).resolves.toBe(false);
     expect(mockSyncAgent).not.toHaveBeenCalled();
     expect(mockSyncTools).not.toHaveBeenCalled();
+    expect(mockUpdateAgent).not.toHaveBeenCalled();
+  });
+
+  it("restores the existing agent state when tool registration fails", async () => {
+    mockSyncTools.mockRejectedValueOnce(new Error("Tool registration failed"));
+
+    await expect(
+      syncCustomerSupportVoiceAgentWithTools({
+        siteId: "site-1",
+        senderIds: ["sender_1"],
+      })
+    ).rejects.toThrow("Tool registration failed");
+
+    expect(mockUpdateAgent).toHaveBeenCalledWith("agent_1", { enabled: true });
+  });
+
+  it("leaves the staged agent disabled until the caller finalizes activation", async () => {
+    await expect(
+      syncCustomerSupportVoiceAgentWithTools({
+        siteId: "site-1",
+        senderIds: ["sender_1"],
+        activate: false,
+      })
+    ).resolves.toMatchObject({
+      agent: { id: "agent_1", enabled: false },
+    });
+
+    expect(mockUpdateAgent).not.toHaveBeenCalled();
   });
 });

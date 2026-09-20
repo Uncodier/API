@@ -32,6 +32,7 @@ export async function processOutstandWebhookPayload(
 
           if (searchError) {
             console.error('[Outstand webhook] Error finding content item:', searchError);
+            throw searchError;
           } else if (contents && contents.length > 0) {
             const content = contents[0];
             const currentTags = content.tags || [];
@@ -56,6 +57,7 @@ export async function processOutstandWebhookPayload(
                 
               if (updateError) {
                 console.error('[Outstand webhook] Error updating content tags:', updateError);
+                throw updateError;
               } else {
                 console.log(`[Outstand webhook] Updated tags for content ${content.id} with platform post IDs`);
               }
@@ -63,6 +65,7 @@ export async function processOutstandWebhookPayload(
           }
         } catch (e) {
           console.error('[Outstand webhook] Exception linking post.published:', e);
+          throw e;
         }
       }
       break;

@@ -4,6 +4,7 @@ import {
   pickMatchingWhatsAppToken,
   whatsappIdentifierSearchKeys,
 } from '@/lib/services/twilio/whatsapp-number-match';
+import { getCachedJson, setCachedJson, sha256 } from '@/lib/security/upstash-rest';
 
 export interface TwilioWhatsAppWebhook {
   MessageSid: string;
@@ -145,18 +146,25 @@ export async function findWhatsAppConfiguration(
 }> {
   try {
     const searchKeys = whatsappIdentifierSearchKeys(businessPhoneNumber);
-    const orFilter = searchKeys
-      .slice(0, 12)
-      .map((key) => `identifier.ilike."%${key}%"`)
-      .join(',');
+    const cacheKey = `twilio:whatsapp-config:${await sha256(JSON.stringify({
+      businessPhoneNumber,
+      accountSid: accountSid || null,
+    }))}`;
+    const cached = await getCachedJson<{
+      success: boolean;
+      siteId?: string;
+      agentId?: string;
+      error?: string;
+    }>(cacheKey);
+    if (cached) return cached;
 
     let tokens: Array<{ site_id?: string; identifier?: string | null; metadata?: { agent_id?: string } | null }> = [];
-    if (orFilter) {
+    if (searchKeys.length) {
       const { data, error } = await supabaseAdmin
         .from('secure_tokens')
-        .select('*')
+        .select('site_id, identifier, metadata')
         .eq('token_type', 'twilio_whatsapp')
-        .or(orFilter);
+        .in('identifier', searchKeys.slice(0, 12));
       if (error) {
         return { success: false, error: `Database error: ${error.message}` };
       }
@@ -174,15 +182,23 @@ export async function findWhatsAppConfiguration(
     }
 
     if (!siteId) {
-      return {
+      const result = {
         success: false,
         error: `No WhatsApp configuration found for business number ${businessPhoneNumber}`,
       };
+      await setCachedJson(cacheKey, result, 30);
+      return result;
     }
 
     const agentId = await findAgentForSite(siteId, tokenRecord || undefined);
-    if (!agentId) return { success: false, error: `No active agent found for site ${siteId}` };
-    return { success: true, siteId, agentId };
+    if (!agentId) {
+      const result = { success: false, error: `No active agent found for site ${siteId}` };
+      await setCachedJson(cacheKey, result, 30);
+      return result;
+    }
+    const result = { success: true, siteId, agentId };
+    await setCachedJson(cacheKey, result, 300);
+    return result;
   } catch (error) {
     return { success: false, error: `Error finding WhatsApp configuration: ${error instanceof Error ? error.message : 'Unknown error'}` };
   }

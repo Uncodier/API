@@ -83,12 +83,13 @@ async function resolveRelationLine(relType: string, relId: string): Promise<stri
   return `- Linked to ${relType} (ID: ${relId})`;
 }
 
-async function loadRecordSourceText(id: string): Promise<string> {
-  const { data: record, error } = await supabaseAdmin
+async function loadRecordSourceText(id: string, siteId?: string): Promise<string> {
+  let query = supabaseAdmin
     .from('records')
     .select('*, category:record_categories(*)')
-    .eq('id', id)
-    .single();
+    .eq('id', id);
+  if (siteId) query = query.eq('site_id', siteId);
+  const { data: record, error } = await query.single();
 
   if (error || !record) throw new Error(`Record not found: ${id}`);
 
@@ -112,12 +113,13 @@ async function loadRecordSourceText(id: string): Promise<string> {
   return text;
 }
 
-async function loadCatalogItemSourceText(id: string): Promise<string> {
-  const { data: item, error } = await supabaseAdmin
+async function loadCatalogItemSourceText(id: string, siteId?: string): Promise<string> {
+  let query = supabaseAdmin
     .from('catalog_items')
     .select('*')
-    .eq('id', id)
-    .single();
+    .eq('id', id);
+  if (siteId) query = query.eq('site_id', siteId);
+  const { data: item, error } = await query.single();
 
   if (error || !item) throw new Error(`Catalog item not found: ${id}`);
 
@@ -131,14 +133,18 @@ async function loadCatalogItemSourceText(id: string): Promise<string> {
  * Collection-agnostic compact source text for summarization.
  * Clients send { collection, id } so long payloads stay server-side.
  */
-export async function loadSourceText(collection: string, id: string): Promise<string> {
+export async function loadSourceText(
+  collection: string,
+  id: string,
+  siteId?: string,
+): Promise<string> {
   if (!isSupportedCollection(collection)) {
     throw new UnsupportedCollectionError(collection);
   }
 
   if (collection === 'records') {
-    return loadRecordSourceText(id);
+    return loadRecordSourceText(id, siteId);
   }
 
-  return loadCatalogItemSourceText(id);
+  return loadCatalogItemSourceText(id, siteId);
 }

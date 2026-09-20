@@ -1,6 +1,15 @@
 import type { GateFailureCategory } from '@/app/api/cron/shared/step-iteration-signals';
+import type {
+  FlowGateFailureKind,
+} from '@/app/api/cron/shared/gates/types';
 
-export type FailureClass = 'product' | 'plumbing' | 'judge';
+export type FailureClass =
+  | 'product'
+  | 'plumbing'
+  | 'judge'
+  | 'evidence'
+  | 'contract'
+  | 'precondition';
 
 export interface ClassifiedFailure {
   failureClass: FailureClass;
@@ -11,7 +20,13 @@ export interface ClassifiedFailure {
 
 export type ClassifyFailureContext = {
   flow?: string;
-  signals?: Array<{ name: string; ok: boolean }>;
+  failureKind?: FlowGateFailureKind;
+  signals?: Array<{
+    name: string;
+    ok: boolean;
+    disposition?: 'pass' | 'hard_fail' | 'unknown' | 'advisory';
+    failureKind?: FlowGateFailureKind;
+  }>;
   skipAttemptBump?: boolean;
 };
 
@@ -32,6 +47,51 @@ export function classifyFailure(
 ): ClassifiedFailure {
   const error = errorText.toLowerCase();
   const flowLabel = ctx?.flow ? `gate:${ctx.flow}` : 'gate:task';
+  const typedFailure =
+    ctx?.failureKind ||
+    ctx?.signals?.find((signal) => !signal.ok && signal.failureKind)
+      ?.failureKind;
+  const signals = ctx?.signals || [];
+  const failedSignals = signals.filter((signal) => !signal.ok);
+  const onlyOrigin =
+    failedSignals.length > 0 &&
+    failedSignals.every((signal) => /origin|push|rebase/.test(signal.name));
+
+  if (
+    onlyOrigin &&
+    !failedSignals.some(
+      (signal) => signal.failureKind === 'product_defect',
+    )
+  ) {
+    return {
+      failureClass: 'plumbing',
+      toolName: 'origin',
+      countsTowardAttempts: false,
+    };
+  }
+
+  if (typedFailure && typedFailure !== 'product_defect') {
+    const failureClass: FailureClass =
+      typedFailure === 'evidence_gap'
+        ? 'evidence'
+        : typedFailure === 'contract_error'
+          ? 'contract'
+          : typedFailure === 'missing_precondition'
+            ? 'precondition'
+            : 'plumbing';
+    return {
+      failureClass,
+      toolName: namedTool(typedFailure, flowLabel),
+      countsTowardAttempts: false,
+    };
+  }
+  if (typedFailure === 'product_defect') {
+    return {
+      failureClass: 'product',
+      toolName: flowLabel,
+      countsTowardAttempts: true,
+    };
+  }
 
   if (
     ctx?.skipAttemptBump
@@ -45,6 +105,46 @@ export function classifyFailure(
     };
   }
 
+  if (
+    error.includes('missing evidence') ||
+    error.includes('lack matching evidence') ||
+    error.includes('evidence unavailable') ||
+    error.includes('not found in the evidence')
+  ) {
+    return {
+      failureClass: 'evidence',
+      toolName: 'evidence_collector',
+      countsTowardAttempts: false,
+    };
+  }
+
+  if (
+    error.includes('no preview url') ||
+    error.includes('preview url is not available') ||
+    error.includes('visual critic unavailable') ||
+    error.includes('truncated_response') ||
+    error.includes('vercel_project_id') ||
+    error.includes('missing project url')
+  ) {
+    return {
+      failureClass: 'precondition',
+      toolName: 'deployment',
+      countsTowardAttempts: false,
+    };
+  }
+
+  if (
+    error.includes('narrative-only acceptance') ||
+    error.includes('invalid validation target') ||
+    error.includes('malformed acceptance')
+  ) {
+    return {
+      failureClass: 'contract',
+      toolName: 'acceptance_contract',
+      countsTowardAttempts: false,
+    };
+  }
+
   if (error.includes('judge_verdict') || error.includes('unmatched_constraint')) {
     return {
       failureClass: 'judge',
@@ -53,15 +153,13 @@ export function classifyFailure(
     };
   }
 
-  const signals = ctx?.signals || [];
   if (signals.length > 0) {
     const failed = signals.filter((s) => !s.ok);
-    const onlyOrigin = failed.length > 0 && failed.every((s) => /origin|push|rebase/.test(s.name));
-    if (onlyOrigin || /rebase|non-fast-forward|failed to push/.test(error)) {
+    if (/rebase|non-fast-forward|failed to push/.test(error)) {
       return {
-        failureClass: 'product',
+        failureClass: 'plumbing',
         toolName: 'origin',
-        countsTowardAttempts: true,
+        countsTowardAttempts: false,
       };
     }
     return {

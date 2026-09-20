@@ -10,6 +10,7 @@ import {
   assertRouteIdentity,
   visitorIdentityRouteError
 } from '@/lib/services/visitor-identity/route-utils';
+import { authorizeVisitorSession } from '@/lib/security/authorize-visitor-session';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,6 +42,17 @@ export async function POST(
       parsed.data.site_id,
       request.nextUrl.searchParams.get('site_id')
     );
+    if (!await authorizeVisitorSession(request, {
+      siteId: parsed.data.site_id,
+      sessionId: pathSessionId,
+      visitorId: parsed.data.visitor_id,
+    })) {
+      throw new VisitorIdentityError(
+        'forbidden',
+        'Visitor session authorization is required',
+        403,
+      );
+    }
     const result = await visitorIdentityService.restore({
       siteId: parsed.data.site_id,
       sessionId: pathSessionId,

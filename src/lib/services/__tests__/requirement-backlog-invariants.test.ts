@@ -91,4 +91,21 @@ describe('backlog graph invariants', () => {
       'done',
     )).toThrow(/dependencies are not done/);
   });
+
+  it('rejects starting an item with an explicit blocker', () => {
+    const blocked = item('blocked');
+    blocked.blocked_by = [{
+      blocker_id: 'missing-secret',
+      category: 'missing_precondition',
+      reason: 'A required secret is unavailable.',
+      resolution_actor: 'user',
+      user_action_required: true,
+    }];
+
+    expect(() => assertBacklogStatusTransition(
+      [blocked],
+      'blocked',
+      'in_progress',
+    )).toThrow(/blocked_by is not empty/);
+  });
 });

@@ -15,6 +15,11 @@ import {
 } from './requirement-flows';
 import { listBacklog, isBacklogComplete, outstandingGatingItems, isItemTerminal, type BacklogItem } from './requirement-backlog';
 import { mutateBacklogAtomically } from './requirement-backlog-mutation';
+import {
+  isBacklogItemBlocked,
+  isBacklogItemRunnable,
+  requiresUserAction,
+} from './requirement-backlog-blockers';
 
 // `advancePhaseIfReadyInMemory` is re-exported from './requirement-flows' so
 // the backlog module can import it without creating a cycle with this file.
@@ -54,7 +59,16 @@ export async function nextPendingItems(requirementId: string, limit: number = 3)
   const { backlog, kind } = await listBacklog(requirementId);
   const flow = getFlow(kind);
   const phase = currentPhase(flow, backlog.current_phase_id);
-  const pending = backlog.items.filter((i) => i.phase_id === phase.id && i.status === 'pending');
+  const completedIds = new Set(
+    backlog.items
+      .filter((item) => item.status === 'done')
+      .map((item) => item.id),
+  );
+  const pending = backlog.items.filter(
+    (item) =>
+      item.phase_id === phase.id &&
+      isBacklogItemRunnable(item, completedIds),
+  );
   const inProgress = backlog.items.find((i) => i.status === 'in_progress') ?? null;
   return {
     flow,
@@ -72,7 +86,18 @@ export async function shouldAdvancePhase(requirementId: string): Promise<{ advan
   const flow = getFlow(kind);
   const phase = currentPhase(flow, backlog.current_phase_id);
   const pendingInPhase = backlog.items.filter(
-    (i) => i.phase_id === phase.id && (i.status === 'pending' || i.status === 'in_progress' || i.status === 'critic_review' || i.status === 'judge_review'),
+    (item) =>
+      item.phase_id === phase.id &&
+      (
+        !isBacklogItemBlocked(item) ||
+        requiresUserAction(item)
+      ) &&
+      (
+        item.status === 'pending' ||
+        item.status === 'in_progress' ||
+        item.status === 'critic_review' ||
+        item.status === 'judge_review'
+      ),
   );
   if (pendingInPhase.length > 0) {
     return { advance: false, from: phase, to: null };

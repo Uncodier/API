@@ -150,6 +150,8 @@ export interface CycleGitChange {
 const ADMIN_FILE_PATTERNS = [
   /\.md$/i,
   /^evidence\//i,
+  /^\.qa\//i,
+  /^(?:qa|test)_results\.json$/i,
   /^progress\.md$/i,
   /^DECISIONS\.md$/i,
   /^feature_list\.json$/i,

@@ -50,10 +50,13 @@ export function buildSingleTurnStartMetadata(params: {
   persistedMetadata?: Record<string, unknown>;
   interactionBaselineSha?: string;
   backlogItemId?: string | null;
-}): Record<string, unknown> | undefined {
-  if (!params.interactionBaselineSha && !params.backlogItemId) return undefined;
+  cycleId: string;
+  executionGeneration: number;
+}): Record<string, unknown> {
   return {
     ...(params.persistedMetadata || {}),
+    cron_cycle_id: params.cycleId,
+    cron_execution_generation: params.executionGeneration,
     ...(params.interactionBaselineSha
       ? { interaction_audit_baseline_sha: params.interactionBaselineSha }
       : {}),

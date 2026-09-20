@@ -18,6 +18,14 @@ import {
 import { checkAndResetCronAttempts } from '@/lib/services/requirement-cron-reset';
 import { getRequirementById } from '@/lib/database/requirement-db';
 import { assertAgentBacklogTransitionAllowed } from './agent-transition-policy';
+import {
+  blockBacklogItem,
+  resolveBacklogItemBlocker,
+} from '@/lib/services/requirement-backlog-blocker-service';
+import type {
+  BacklogBlockerCategory,
+  BacklogBlockerResolutionActor,
+} from '@/lib/services/requirement-backlog-types';
 
 export type BacklogAction =
   | 'list'
@@ -27,6 +35,8 @@ export type BacklogAction =
   | 'downgrade'
   | 'log_assumption'
   | 'mark_needs_review'
+  | 'report_blocker'
+  | 'resolve_blocker'
   | 'set_status';
 
 export interface BacklogCoreParams {
@@ -44,6 +54,12 @@ export interface BacklogCoreParams {
   status?: BacklogItemStatus;
   reason?: string;
   assumption?: string;
+  blocker_id?: string;
+  blocker_category?: BacklogBlockerCategory;
+  resolution_actor?: BacklogBlockerResolutionActor;
+  source_step_id?: string;
+  user_action_required?: boolean;
+  retry_after?: string;
   confirm_reopen?: boolean;
 }
 
@@ -151,6 +167,45 @@ export async function executeBacklogCore(params: BacklogCoreParams) {
     case 'mark_needs_review': {
       if (!params.item_id) throw new Error('mark_needs_review requires item_id');
       const item = await markNeedsReview({ requirementId: requirement_id, itemId: params.item_id, reason: params.reason });
+      return { action, requirement_id, item };
+    }
+    case 'report_blocker': {
+      if (
+        !params.item_id ||
+        !params.blocker_category ||
+        !params.reason ||
+        !params.resolution_actor
+      ) {
+        throw new Error(
+          'report_blocker requires item_id, blocker_category, reason, and resolution_actor',
+        );
+      }
+      const result = await blockBacklogItem({
+        requirementId: requirement_id,
+        itemId: params.item_id,
+        blockerId: params.blocker_id,
+        category: params.blocker_category,
+        reason: params.reason,
+        resolutionActor: params.resolution_actor,
+        sourceStepId: params.source_step_id,
+        userActionRequired: params.user_action_required,
+        retryAfter: params.retry_after,
+      });
+      if (!result) {
+        throw new Error('Could not persist backlog blocker');
+      }
+      return { action, requirement_id, ...result };
+    }
+    case 'resolve_blocker': {
+      if (!params.item_id || !params.blocker_id) {
+        throw new Error('resolve_blocker requires item_id and blocker_id');
+      }
+      const item = await resolveBacklogItemBlocker({
+        requirementId: requirement_id,
+        itemId: params.item_id,
+        blockerId: params.blocker_id,
+        reason: params.reason,
+      });
       return { action, requirement_id, item };
     }
     case 'set_status': {

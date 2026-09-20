@@ -7,6 +7,18 @@ import { getStepCheckpointPromptFragment, getFileFreshnessPromptFragment } from 
 import { SandboxService } from '@/lib/services/sandbox-service';
 import { getRedisClient } from '@/lib/utils/redis-client';
 
+const RELEASE_PLAN_LOCK_SCRIPT = `
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('DEL', KEYS[1])
+end
+return 0
+`;
+
+export type PlanExecutionLockResult =
+  | { state: 'acquired'; token: string }
+  | { state: 'contended' }
+  | { state: 'unavailable' };
+
 const ROLE_TO_SKILL: Record<string, string> = {
   'template_selection': 'makinari-obj-template-selection',
   'frontend': 'makinari-rol-frontend',
@@ -307,30 +319,41 @@ RULES:
   return stepResult;
 }
 
-export async function acquirePlanExecutionLockStep(planId: string): Promise<boolean> {
+export async function acquirePlanExecutionLockStep(
+  planId: string,
+): Promise<PlanExecutionLockResult> {
   'use step';
   try {
     const redis = getRedisClient();
     const lockKey = `workflow_lock:plan:${planId}`;
-    // Intentar adquirir el lock, usando SET NX (sólo si no existe) con EX (expiración) de 15 min (900 seg)
-    const result = await redis.set(lockKey, 'locked', 'EX', 900, 'NX');
-    return result === 'OK';
+    const token = crypto.randomUUID();
+    const result = await redis.set(lockKey, token, 'EX', 900, 'NX');
+    return result === 'OK'
+      ? { state: 'acquired', token }
+      : { state: 'contended' };
   } catch (error) {
     console.error(`[PlanSteps] Error acquiring lock for plan ${planId}:`, error);
-    // En caso de fallo de redis, para no bloquear todo, devolvemos true o false?
-    // Mejor false para no arriesgar concurrencia, pero si redis está caído el sistema de workflows no funcionaría igual.
-    // Usaremos true como fallback inseguro, o false como seguro. Fallback seguro: true para no romper la app entera.
-    return true; 
+    return { state: 'unavailable' };
   }
 }
 
-export async function releasePlanExecutionLockStep(planId: string): Promise<void> {
+export async function releasePlanExecutionLockStep(
+  planId: string,
+  token: string,
+): Promise<boolean> {
   'use step';
   try {
     const redis = getRedisClient();
     const lockKey = `workflow_lock:plan:${planId}`;
-    await redis.del(lockKey);
+    const released = await redis.eval(
+      RELEASE_PLAN_LOCK_SCRIPT,
+      1,
+      lockKey,
+      token,
+    );
+    return Number(released) === 1;
   } catch (error) {
     console.error(`[PlanSteps] Error releasing lock for plan ${planId}:`, error);
+    return false;
   }
 }

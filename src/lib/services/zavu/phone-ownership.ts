@@ -14,6 +14,7 @@ const ASSIGNED_STATUSES = new Set([
   "active",
   "connected",
   "in_progress",
+  "pending",
   "synced",
 ]);
 

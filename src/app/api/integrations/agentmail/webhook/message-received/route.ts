@@ -16,22 +16,15 @@ export async function POST(request: NextRequest) {
     // Get raw body for signature verification
     const body = await request.text();
 
-    // Verify Svix signature (optional - falls back to parsing JSON if verification fails)
+    // Verify the Svix signature before parsing or processing the payload.
     const webhookSecret = process.env.AGENTMAIL_WEBHOOK_SECRET_MESSAGE_RECEIVED;
-    let payload = await verifySvixWebhook(body, webhookSecret);
+    const payload = await verifySvixWebhook(body, webhookSecret);
     
-    // If verification failed or secret not configured, parse body directly
     if (!payload) {
-      console.warn('⚠️ [AgentMail] Signature verification skipped, parsing body directly');
-      try {
-        payload = JSON.parse(body);
-      } catch (parseError: any) {
-        console.error('❌ [AgentMail] Failed to parse webhook body:', parseError.message);
-        return NextResponse.json(
-          { success: false, error: 'Invalid JSON payload' },
-          { status: 400 }
-        );
-      }
+      return NextResponse.json(
+        { success: false, error: 'Invalid webhook signature' },
+        { status: 401 },
+      );
     }
 
     // Validate payload structure

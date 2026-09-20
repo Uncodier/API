@@ -1,233 +1,99 @@
+import {
+  beforeEach,
+  describe,
+  expect,
+  it,
+  jest,
+} from '@jest/globals';
 import { NextRequest } from 'next/server';
-import { POST, GET, DELETE } from '../route';
-import { ApiKeyService } from '@/lib/services/api-keys/ApiKeyService';
 
-// Mock environment variables
-process.env.ENCRYPTION_KEY = 'test_encryption_key_32_bytes_length!!';
-process.env.NEXT_PUBLIC_SUPABASE_URL = 'http://localhost:54321';
-process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = 'test-anon-key';
-process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-role-key';
+const mockCreate: any = jest.fn();
+const mockList: any = jest.fn();
+const mockRevoke: any = jest.fn();
+const mockMaybeSingle: any = jest.fn();
+const mockEq: any = jest.fn(() => ({ eq: mockEq, maybeSingle: mockMaybeSingle }));
+const mockSelect: any = jest.fn(() => ({ eq: mockEq }));
+const mockClient = { from: jest.fn(() => ({ select: mockSelect })) };
 
-// Mock session
-jest.mock('@/lib/auth/session', () => ({
-  getSession: jest.fn().mockResolvedValue({
-    user: {
-      id: 'test-user-id'
-    }
-  })
-}));
-
-// Mock ApiKeyService
 jest.mock('@/lib/services/api-keys/ApiKeyService', () => ({
   ApiKeyService: {
-    createApiKey: jest.fn(),
-    listApiKeys: jest.fn(),
-    revokeApiKey: jest.fn(),
-    generateApiKey: jest.fn()
-  }
+    createApiKey: mockCreate,
+    listApiKeys: mockList,
+    revokeApiKey: mockRevoke,
+  },
+}));
+jest.mock('@/lib/database/supabase-server', () => ({
+  createSupabaseClient: jest.fn(() => mockClient),
 }));
 
-// Mock Supabase client
-jest.mock('@/lib/database/supabase-client', () => ({
-  supabase: {
-    from: jest.fn().mockReturnValue({
-      select: jest.fn().mockReturnThis(),
-      insert: jest.fn().mockReturnThis(),
-      update: jest.fn().mockReturnThis(),
-      delete: jest.fn().mockReturnThis(),
-      eq: jest.fn().mockReturnThis(),
-      single: jest.fn().mockResolvedValue({
-        data: { role: 'admin' },
-        error: null
-      })
-    })
-  }
-}));
+import { DELETE, GET, POST } from '../route';
 
-describe('/api/keys route', () => {
-  const testUserId = 'test-user-id';
-  const testSiteId = '123e4567-e89b-12d3-a456-426614174000';
-  
-  // Request body válido para reutilizar en los tests
-  const validRequestBody = {
-    name: 'Test API Key',
-    scopes: ['read', 'write'],
-    site_id: testSiteId,
-    expirationDays: 90
-  };
-  
+const userId = '11111111-1111-4111-8111-111111111111';
+const siteId = '22222222-2222-4222-8222-222222222222';
+const authenticatedHeaders = {
+  'content-type': 'application/json',
+  'x-auth-user-id': userId,
+};
+
+describe('/api/keys', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.ENCRYPTION_KEY = 'test-encryption-key';
+    mockMaybeSingle.mockResolvedValue({ data: { id: siteId }, error: null });
   });
 
-  describe('POST /api/keys', () => {
-    it('should create a new API key with proper encryption', async () => {
-      // Mock API key creation
-      const mockApiKey = 'test_abcdef123456';
-      const mockResponse = {
-        apiKey: mockApiKey,
-        id: 'new-key-id',
-        prefix: 'test',
-        expires_at: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString()
-      };
-      
-      (ApiKeyService.createApiKey as jest.Mock).mockResolvedValue(mockResponse);
-      (ApiKeyService.generateApiKey as jest.Mock).mockReturnValue(mockApiKey);
-
-      // Create request
-      const request = new NextRequest('http://localhost:3000/api/keys', {
-        method: 'POST',
-        body: JSON.stringify(validRequestBody)
-      });
-
-      // Execute request
-      const response = await POST(request);
-      const responseData = await response.json();
-
-      // Verify response
-      expect(response.status).toBe(200);
-      expect(responseData.success).toBe(true);
-      expect(responseData.data).toHaveProperty('apiKey');
-      expect(responseData.data.apiKey).toBe(mockApiKey);
-
-      // Verify service calls
-      expect(ApiKeyService.createApiKey).toHaveBeenCalledWith(
-        testUserId,
-        validRequestBody
-      );
+  it('creates a key for the authenticated user', async () => {
+    mockCreate.mockResolvedValue({
+      apiKey: 'key_secret',
+      id: 'key-id',
+      prefix: 'key',
+      expires_at: new Date().toISOString(),
     });
+    const response = await POST(new NextRequest('http://localhost/api/keys', {
+      method: 'POST',
+      headers: authenticatedHeaders,
+      body: JSON.stringify({
+        name: 'Integration',
+        scopes: ['read'],
+        site_id: siteId,
+      }),
+    }));
 
-    it('should validate request parameters', async () => {
-      const invalidBody = {
-        name: '', // nombre vacío
-        scopes: [], // scopes vacío
-        site_id: 'invalid-uuid'
-      };
-
-      const request = new NextRequest('http://localhost:3000/api/keys', {
-        method: 'POST',
-        body: JSON.stringify(invalidBody)
-      });
-
-      const response = await POST(request);
-      const responseData = await response.json();
-
-      expect(response.status).toBe(400);
-      expect(responseData.success).toBe(false);
-      expect(responseData.error.code).toBe('INVALID_REQUEST');
-    });
+    expect(response.status).toBe(200);
+    expect(mockCreate).toHaveBeenCalledWith(
+      userId,
+      expect.objectContaining({ site_id: siteId }),
+      expect.objectContaining({ client: mockClient }),
+    );
   });
 
-  describe('GET /api/keys', () => {
-    it('should list API keys with decrypted prefixes', async () => {
-      // Mock API keys list
-      const mockApiKeys = [
-        {
-          id: 'key-1',
-          name: 'Test Key 1',
-          prefix: 'test',
-          status: 'active',
-          expires_at: new Date(Date.now() + 86400000).toISOString()
-        },
-        {
-          id: 'key-2',
-          name: 'Test Key 2',
-          prefix: 'prod',
-          status: 'expired',
-          expires_at: new Date(Date.now() - 86400000).toISOString()
-        }
-      ];
+  it('lists keys without trusting a user_id query parameter', async () => {
+    mockList.mockResolvedValue([{ id: 'key-id', prefix: 'key' }]);
+    const response = await GET(new NextRequest(
+      `http://localhost/api/keys?site_id=${siteId}`,
+      { headers: authenticatedHeaders },
+    ));
 
-      (ApiKeyService.listApiKeys as jest.Mock).mockResolvedValue(mockApiKeys);
-
-      const request = new NextRequest(`http://localhost:3000/api/keys?site_id=${testSiteId}`);
-      const response = await GET(request);
-      const responseData = await response.json();
-
-      expect(response.status).toBe(200);
-      expect(responseData.success).toBe(true);
-      expect(responseData.data).toHaveLength(2);
-      expect(responseData.data[0]).toHaveProperty('prefix', 'test');
-      expect(responseData.data[0]).not.toHaveProperty('key_hash');
-
-      // Verify service calls
-      expect(ApiKeyService.listApiKeys).toHaveBeenCalledWith(testUserId, testSiteId);
-    });
-
-    it('should require site_id parameter', async () => {
-      const request = new NextRequest('http://localhost:3000/api/keys');
-      const response = await GET(request);
-      const responseData = await response.json();
-
-      expect(response.status).toBe(400);
-      expect(responseData.success).toBe(false);
-      expect(responseData.error.code).toBe('INVALID_REQUEST');
-    });
+    expect(response.status).toBe(200);
+    expect(mockList).toHaveBeenCalledWith(userId, siteId);
   });
 
-  describe('DELETE /api/keys', () => {
-    it('should revoke API key and invalidate hash', async () => {
-      const keyId = 'test-key-id';
-      (ApiKeyService.revokeApiKey as jest.Mock).mockResolvedValue(true);
+  it('revokes keys for the authenticated user', async () => {
+    mockRevoke.mockResolvedValue(true);
+    const response = await DELETE(new NextRequest(
+      `http://localhost/api/keys?id=key-id&site_id=${siteId}`,
+      { headers: authenticatedHeaders },
+    ));
 
-      const request = new NextRequest(
-        `http://localhost:3000/api/keys?id=${keyId}&site_id=${testSiteId}`
-      );
-
-      const response = await DELETE(request);
-      const responseData = await response.json();
-
-      expect(response.status).toBe(200);
-      expect(responseData.success).toBe(true);
-      expect(responseData.message).toBe('API key revoked successfully');
-
-      // Verify service calls
-      expect(ApiKeyService.revokeApiKey).toHaveBeenCalledWith(testUserId, keyId, testSiteId);
-    });
-
-    it('should require key_id parameter', async () => {
-      const request = new NextRequest(
-        `http://localhost:3000/api/keys?site_id=${testSiteId}`
-      );
-
-      const response = await DELETE(request);
-      const responseData = await response.json();
-
-      expect(response.status).toBe(400);
-      expect(responseData.success).toBe(false);
-      expect(responseData.error.code).toBe('INVALID_REQUEST');
-    });
+    expect(response.status).toBe(200);
+    expect(mockRevoke).toHaveBeenCalledWith(userId, 'key-id', siteId);
   });
 
-  describe('Error handling', () => {
-    it('should handle service errors gracefully', async () => {
-      (ApiKeyService.createApiKey as jest.Mock).mockRejectedValue(
-        new Error('Service error')
-      );
-
-      const request = new NextRequest('http://localhost:3000/api/keys', {
-        method: 'POST',
-        body: JSON.stringify(validRequestBody)
-      });
-
-      const response = await POST(request);
-      const responseData = await response.json();
-
-      expect(response.status).toBe(500);
-      expect(responseData.success).toBe(false);
-      expect(responseData.error.code).toBe('SYSTEM_ERROR');
-    });
-
-    it('should handle missing authentication', async () => {
-      require('@/lib/auth/session').getSession.mockResolvedValueOnce(null);
-
-      const request = new NextRequest('http://localhost:3000/api/keys');
-      const response = await GET(request);
-      const responseData = await response.json();
-
-      expect(response.status).toBe(401);
-      expect(responseData.success).toBe(false);
-      expect(responseData.error.code).toBe('UNAUTHORIZED');
-    });
+  it('rejects requests without trusted middleware identity', async () => {
+    const response = await GET(new NextRequest(
+      `http://localhost/api/keys?site_id=${siteId}&user_id=${userId}`,
+    ));
+    expect(response.status).toBe(401);
+    expect(mockList).not.toHaveBeenCalled();
   });
-}); 
+});

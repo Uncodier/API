@@ -9,7 +9,10 @@ import {
 import { classifyFailure } from '@/lib/services/failure-classification';
 import { planNextHealingAction } from '@/lib/services/requirement-self-heal';
 import type { GateFailureCategory } from './step-iteration-signals';
-import type { FlowGateSignal } from './gates/types';
+import type {
+  FlowGateFailureKind,
+  FlowGateSignal,
+} from './gates/types';
 
 export async function applyGateFailureHealing(params: {
   requirementId: string;
@@ -18,6 +21,7 @@ export async function applyGateFailureHealing(params: {
   categories: GateFailureCategory[];
   flow: string;
   signals: FlowGateSignal[];
+  failureKind?: FlowGateFailureKind;
   skipAttemptBump?: boolean;
   remediationScheduled?: boolean;
   logPrefix: string;
@@ -53,6 +57,7 @@ export async function applyGateFailureHealing(params: {
   const classified = classifyFailure(params.error, params.categories, {
     flow: params.flow,
     signals: params.signals,
+    failureKind: params.failureKind,
     skipAttemptBump: params.skipAttemptBump,
   });
   if (
@@ -62,13 +67,15 @@ export async function applyGateFailureHealing(params: {
   ) {
     const toolName = classified.toolName || `gate:${params.flow || 'task'}`;
     console.log(
-      `${params.logPrefix} Plumbing failure detected for ${toolName}; preserving the product attempt budget.`,
+      `${params.logPrefix} Non-product failure (${classified.failureClass}) detected for ${toolName}; preserving the product attempt budget.`,
     );
     await recordToolFailure({
       requirementId: params.requirementId,
       itemId: params.backlogItemId,
       toolName,
-      reason: `[plumbing] Tool ${toolName} failed: ${params.error.slice(0, 150)}`,
+      reason:
+        `[${classified.failureClass}] ${toolName} failed: ` +
+        params.error.slice(0, 150),
     });
     return;
   }

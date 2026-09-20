@@ -53,4 +53,25 @@ describe("Zavu phone ownership", () => {
       phoneNumber: "+14155550100",
     })).resolves.toBeUndefined();
   });
+
+  it("treats pending inactive-agent connections as assigned", async () => {
+    mockSelect.mockResolvedValueOnce({
+      data: [{
+        site_id: "site-other",
+        channels: {
+          connections: [{
+            type: "voice",
+            status: "pending",
+            zavu_sender_id: "sender_pending",
+            metadata: { phone_number_id: "phone_pending" },
+          }],
+        },
+      }],
+      error: null,
+    });
+
+    await expect(assertPhoneResourcesAvailable("site-current", {
+      id: "phone_pending",
+    })).rejects.toMatchObject({ status: 403 });
+  });
 });

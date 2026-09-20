@@ -93,6 +93,8 @@ describe('requirement metadata RPC helpers', () => {
       outcome: 'product_no_progress',
       expectedExecutionGeneration: 5,
       runnerInstanceId: 'instance-1',
+      planId: '31c35450-1234-4abc-9def-0123456789ab',
+      stepId: 'step-1',
     });
 
     expect(mockRpc).toHaveBeenCalledWith(
@@ -104,6 +106,8 @@ describe('requirement metadata RPC helpers', () => {
         p_outcome: 'product_no_progress',
         p_expected_execution_generation: 5,
         p_runner_instance_id: 'instance-1',
+        p_plan_id: '31c35450-1234-4abc-9def-0123456789ab',
+        p_step_id: 'step-1',
       },
     );
   });
@@ -133,6 +137,57 @@ describe('requirement metadata RPC helpers', () => {
       recorded_outcome: 'product_failure',
       cron_attempts: 2,
     });
+    expect(mockRpc).toHaveBeenLastCalledWith(
+      'record_requirement_cron_cycle_outcome',
+      expect.objectContaining({
+        p_plan_id: null,
+        p_step_id: null,
+      }),
+    );
+  });
+
+  it('falls back to the legacy cycle RPC during gradual deployment', async () => {
+    mockRpc
+      .mockResolvedValueOnce({
+        data: null,
+        error: {
+          code: 'PGRST202',
+          message:
+            'Could not find record_requirement_cron_cycle_outcome in schema cache',
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          accepted: true,
+          is_latest: true,
+          recorded_outcome: 'progress',
+          metadata: {},
+          cron_attempts: 0,
+          no_progress_cycles: 0,
+          infrastructure_failure_cycles: 0,
+        },
+        error: null,
+      });
+
+    await recordRequirementCronCycleOutcome({
+      requirementId: '21c35450-1234-4abc-9def-0123456789ab',
+      cycleId: 'cron-cycle-legacy',
+      cycleStartedAt: '2026-09-19T20:00:00.000Z',
+      outcome: 'progress',
+      expectedExecutionGeneration: 5,
+      runnerInstanceId: 'instance-1',
+      planId: '31c35450-1234-4abc-9def-0123456789ab',
+      stepId: 'step-1',
+    });
+
+    expect(mockRpc).toHaveBeenNthCalledWith(
+      2,
+      'record_requirement_cron_cycle_outcome',
+      expect.not.objectContaining({
+        p_plan_id: expect.anything(),
+        p_step_id: expect.anything(),
+      }),
+    );
   });
 
   it('blocks a product attempt budget against the latest accounted cycle', async () => {

@@ -5,6 +5,14 @@ const mockEnqueue: any = jest.fn();
 jest.mock('@/lib/services/tracking-event-queue', () => ({
   enqueueTrackingEvents: mockEnqueue,
 }));
+jest.mock('@/lib/security/site-access', () => ({
+  canAccessSite: jest.fn(async () => true),
+  originBelongsToSite: jest.fn(async () => true),
+}));
+jest.mock('@/lib/security/visitor-session-token', () => ({
+  verifyVisitorSessionToken: jest.fn(async () => true),
+  visitorSessionTokenFromRequest: jest.fn(() => 'session-token'),
+}));
 
 import { POST } from '../route';
 

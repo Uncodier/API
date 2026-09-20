@@ -2,6 +2,9 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { createTask } from '@/lib/database/task-db';
 import { isValidUUID } from '@/lib/helpers/command-utils';
 import { EmailSendService } from '../email/EmailSendService';
+import { claimKey, sha256 } from '@/lib/security/upstash-rest';
+
+const MAX_INTERACTION_EVENTS = 100;
 
 export interface TrackingEvent {
   at: string;
@@ -86,6 +89,7 @@ export class EmailTrackingService {
         at: new Date().toISOString(),
         ...metadata
       });
+      interaction.opens = interaction.opens.slice(-MAX_INTERACTION_EVENTS);
 
       await supabaseAdmin
         .from('messages')
@@ -130,6 +134,7 @@ export class EmailTrackingService {
         url,
         ...metadata
       });
+      interaction.clicks = interaction.clicks.slice(-MAX_INTERACTION_EVENTS);
 
       await supabaseAdmin
         .from('messages')
@@ -140,6 +145,15 @@ export class EmailTrackingService {
 
       // Crear tarea para el clic
       if (message.lead_id && message.site_id) {
+        const taskFingerprint = await sha256(
+          `${messageId}:${url}:${metadata.ip || 'unknown'}`,
+        );
+        const claim = await claimKey(
+          `email-click-task:${taskFingerprint}`,
+          24 * 60 * 60,
+        );
+        if (claim.state !== 'acquired') return;
+
         await createTask({
           title: 'Email link clicked',
           description: `A link was clicked in an email.\n\nURL: ${url}\nMessage ID: ${messageId}\nMessage Content Snippet: ${message.content?.substring(0, 100)}...`,

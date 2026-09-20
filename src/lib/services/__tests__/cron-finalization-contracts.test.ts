@@ -108,4 +108,10 @@ describe('atomic requirement finalization contracts', () => {
       'previewUrl = requirementFlow.delivery.validate_deployment',
     );
   });
+
+  it('halts delivery side effects while an origin precondition is missing', () => {
+    expect(workflowSource).toMatch(
+      /gateFailureKind === 'missing_precondition'[\s\S]*?infrastructureHalt = true;[\s\S]*?break outer;/,
+    );
+  });
 });

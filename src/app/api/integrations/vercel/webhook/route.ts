@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { verifyVercelWebhookSignature } from '@/lib/integrations/vercel/webhook-verification';
 import { isVercelWebhookEvent } from '@/lib/integrations/vercel/webhook-types';
 import { handleVercelWebhookEvent } from '@/lib/integrations/vercel/process-webhook';
+import { claimKey, sha256 } from '@/lib/security/upstash-rest';
 
 export const runtime = 'nodejs';
 
@@ -50,6 +51,19 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       { success: false, error: 'Invalid webhook payload' },
       { status: 400 },
+    );
+  }
+  const claim = await claimKey(
+    `webhook:vercel:${await sha256(rawBody)}`,
+    24 * 60 * 60,
+  );
+  if (claim.state === 'contended') {
+    return NextResponse.json({ success: true, duplicate: true }, { status: 202 });
+  }
+  if (claim.state !== 'acquired') {
+    return NextResponse.json(
+      { success: false, error: 'Webhook admission unavailable' },
+      { status: 503, headers: { 'Retry-After': '5' } },
     );
   }
 

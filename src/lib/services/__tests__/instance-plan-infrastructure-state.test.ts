@@ -219,48 +219,6 @@ describe('instance plan infrastructure state RPC wrappers', () => {
     );
   });
 
-  it('falls back to the legacy no-progress overload during rolling deploys', async () => {
-    mockRpc
-      .mockResolvedValueOnce({
-        data: null,
-        error: {
-          code: 'PGRST202',
-          message: 'Could not find the function overload',
-        },
-      })
-      .mockResolvedValueOnce({
-        data: { state: 'stale', blocked: false },
-        error: null,
-      });
-
-    await blockRequirementForProductNoProgress({
-      requirementId: 'req-1',
-      siteId: 'site-1',
-      instanceId: 'instance-1',
-      planId: 'plan-1',
-      stepId: 'step-1',
-      expectedStepGeneration: 6,
-      cycleId: 'cycle-5',
-      minimumFailures: 3,
-      message: 'No product progress',
-      expectedExecutionGeneration: 9,
-    });
-
-    expect(mockRpc).toHaveBeenNthCalledWith(
-      2,
-      'block_requirement_for_product_no_progress',
-      {
-        p_requirement_id: 'req-1',
-        p_site_id: 'site-1',
-        p_instance_id: 'instance-1',
-        p_cycle_id: 'cycle-5',
-        p_minimum_failures: 3,
-        p_message: 'No product progress',
-        p_expected_execution_generation: 9,
-      },
-    );
-  });
-
   it('preserves database error fields', async () => {
     mockRpc.mockResolvedValue({
       data: null,

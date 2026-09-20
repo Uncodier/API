@@ -1,34 +1,35 @@
 import { z } from 'zod';
 
 export const identifySchema = z.object({
-  site_id: z.string(),
-  id: z.string(),
-  lead_id: z.string().optional(),
-  segment_id: z.string().optional(),
+  site_id: z.string().uuid(),
+  session_id: z.string().uuid(),
+  id: z.string().uuid(),
+  lead_id: z.string().uuid().optional(),
+  segment_id: z.string().uuid().optional(),
   traits: z.object({
     email: z.string().email().optional(),
-    phone: z.string().optional(),
-    name: z.string().optional(),
-    position: z.string().optional(),
-    birthday: z.string().optional(),
-    origin: z.string().optional(),
-    social_networks: z.record(z.string()).optional(),
+    phone: z.string().max(100).optional(),
+    name: z.string().max(500).optional(),
+    position: z.string().max(500).optional(),
+    birthday: z.string().max(100).optional(),
+    origin: z.string().max(500).optional(),
+    social_networks: z.record(z.string().max(2_048)).optional(),
     address: z.object({
-      street: z.string().optional(),
-      city: z.string().optional(),
-      state: z.string().optional(),
-      postalCode: z.string().optional(),
-      country: z.string().optional()
+      street: z.string().max(500).optional(),
+      city: z.string().max(200).optional(),
+      state: z.string().max(200).optional(),
+      postalCode: z.string().max(50).optional(),
+      country: z.string().max(200).optional()
     }).optional(),
     company: z.object({
-      name: z.string().optional(),
-      industry: z.string().optional(),
+      name: z.string().max(500).optional(),
+      industry: z.string().max(500).optional(),
       employee_count: z.number().optional()
     }).optional(),
     subscription: z.object({
-      plan: z.string().optional(),
-      status: z.string().optional(),
-      started_at: z.string().optional()
+      plan: z.string().max(200).optional(),
+      status: z.string().max(200).optional(),
+      started_at: z.string().max(100).optional()
     }).optional()
   }).optional(),
   timestamp: z.number().optional(),

@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import {
+  enforceRequestRateLimit,
+  getAuthenticatedRateIdentity,
+  isInternalServiceRequest,
+} from '@/lib/security/request-rate-limit';
 
 type Provider = 'azure' | 'gemini' | 'vercel';
 
@@ -150,37 +155,102 @@ async function generateWithVercelGateway(options: {
 
 export async function POST(request: NextRequest) {
   try {
+    const identity = getAuthenticatedRateIdentity(request);
+    const limited = await enforceRequestRateLimit(request, {
+      namespace: 'ai-text-principal',
+      identity,
+      limit: isInternalServiceRequest(request) ? 300 : 30,
+      windowSeconds: 60,
+      failClosed: true,
+    });
+    if (limited) return limited;
+
     const body = (await request.json()) as TextRequestBody;
     const { messages, provider = 'azure', model, temperature, maxTokens, topP } = body || {};
 
-    if (!messages || !Array.isArray(messages) || messages.length === 0) {
+    if (
+      !Array.isArray(messages)
+      || messages.length === 0
+      || messages.length > 50
+      || messages.some((message) => (
+        !message
+        || !['system', 'user', 'assistant'].includes(message.role)
+        || typeof message.content !== 'string'
+        || message.content.length === 0
+      ))
+    ) {
       return NextResponse.json({ error: 'Parameter "messages" is required (non-empty array)' }, { status: 400 });
     }
+    const totalInputCharacters = messages.reduce(
+      (total, message) => total + message.content.length,
+      0,
+    );
+    if (totalInputCharacters > 100_000) {
+      return NextResponse.json(
+        { error: 'Combined message content exceeds 100000 characters' },
+        { status: 413 },
+      );
+    }
+    const safeMaxTokens = Math.min(8_192, Math.max(1, Math.trunc(maxTokens || 2_048)));
+    const safeTemperature = temperature === undefined
+      ? undefined
+      : Math.min(2, Math.max(0, temperature));
+    const safeTopP = topP === undefined
+      ? undefined
+      : Math.min(1, Math.max(0, topP));
 
     if (provider === 'azure') {
       try {
-        const result = await generateWithAzure({ messages, temperature, maxTokens, topP });
+        const result = await generateWithAzure({
+          messages,
+          temperature: safeTemperature,
+          maxTokens: safeMaxTokens,
+          topP: safeTopP,
+        });
         return NextResponse.json(result);
       } catch (err) {
         console.warn('[text api] Azure provider failed, trying Gemini fallback...', err);
-        const fallback = await generateWithGemini({ messages, model, temperature, maxTokens, topP });
+        const fallback = await generateWithGemini({
+          messages,
+          model,
+          temperature: safeTemperature,
+          maxTokens: safeMaxTokens,
+          topP: safeTopP,
+        });
         return NextResponse.json({ ...fallback, fallbackFrom: 'azure' });
       }
     }
 
     if (provider === 'gemini') {
       try {
-        const result = await generateWithGemini({ messages, model, temperature, maxTokens, topP });
+        const result = await generateWithGemini({
+          messages,
+          model,
+          temperature: safeTemperature,
+          maxTokens: safeMaxTokens,
+          topP: safeTopP,
+        });
         return NextResponse.json(result);
       } catch (err) {
         console.warn('[text api] Gemini provider failed, trying Azure fallback...', err);
-        const fallback = await generateWithAzure({ messages, temperature, maxTokens, topP });
+        const fallback = await generateWithAzure({
+          messages,
+          temperature: safeTemperature,
+          maxTokens: safeMaxTokens,
+          topP: safeTopP,
+        });
         return NextResponse.json({ ...fallback, fallbackFrom: 'gemini' });
       }
     }
 
     if (provider === 'vercel') {
-      const result = await generateWithVercelGateway({ messages, model, temperature, maxTokens, topP });
+      const result = await generateWithVercelGateway({
+        messages,
+        model,
+        temperature: safeTemperature,
+        maxTokens: safeMaxTokens,
+        topP: safeTopP,
+      });
       return NextResponse.json(result);
     }
 

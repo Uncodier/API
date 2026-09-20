@@ -51,6 +51,25 @@ describe('applyItemExhaustionToSteps', () => {
     expect(stillRunnable).toBe(true);
   });
 
+  it('cancels steps for dependency descendants propagated by a blocker', () => {
+    const { nextSteps, stepsCancelled, stillRunnable } =
+      applyItemExhaustionToSteps(
+        [
+          { id: 's1', status: 'in_progress', metadata: { backlog_item_id: item } },
+          { id: 's2', status: 'pending', metadata: { backlog_item_id: 'child' } },
+          { id: 's3', status: 'pending', metadata: { backlog_item_id: 'independent' } },
+        ],
+        [item, 'child'],
+        'blocked dependency chain',
+        now,
+      );
+
+    expect(stepsCancelled).toBe(2);
+    expect(nextSteps.find((s) => s.id === 's2')?.status).toBe('cancelled');
+    expect(nextSteps.find((s) => s.id === 's3')?.status).toBe('pending');
+    expect(stillRunnable).toBe(true);
+  });
+
   it('detects saneo cancel from completion_reason, not only metadata', () => {
     expect(
       planCancelledBySaneo({

@@ -21,15 +21,34 @@ import { patchRequirementMetadataKeys } from './requirement-metadata-patch';
 
 export interface FeatureCoverageEvidence {
   ok: boolean;
+  evaluable?: boolean;
   declared_touches?: string[];
   present_touches?: string[];
   missing_touches?: string[];
+  not_evaluable_touches?: string[];
   expected_page_routes?: string[];
   expected_api_routes?: string[];
   present_page_files?: string[];
   present_api_files?: string[];
+  not_evaluable_page_routes?: string[];
+  not_evaluable_api_routes?: string[];
   acceptance_route_anchors?: string[];
-  kind_requirements?: Array<{ kind: string; requirement: string; satisfied: boolean; detail?: string }>;
+  artifact_proofs?: Array<{
+    path: string;
+    exists: boolean;
+    outcome?: 'pass' | 'fail' | 'not_evaluable';
+    bytes?: number;
+    content_excerpt?: string;
+    error?: string;
+  }>;
+  kind_requirements?: Array<{
+    kind: string;
+    requirement: string;
+    satisfied: boolean;
+    outcome?: 'pass' | 'fail' | 'not_evaluable';
+    detail?: string;
+  }>;
+  probe_errors?: Array<{ target: string; detail: string }>;
   summary?: string;
 }
 
@@ -67,10 +86,14 @@ export interface EvidenceRecord {
     source: string;
     target?: string;
     detail: string;
+    method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
+    http_status?: number;
+    expected_statuses?: number[];
   }>;
   critic_passes: number;
   judge_verdict?: 'approved' | 'rejected' | 'escalate';
   judge_reason?: string;
+  judge_failure_kind?: 'product_defect' | 'evidence_gap' | 'contract_error';
 }
 
 export interface ProgressEntry {
@@ -226,9 +249,12 @@ export function mergeEvidenceRecords(
       observation,
     );
   }
+  const definedIncoming = Object.fromEntries(
+    Object.entries(incoming).filter(([, value]) => value !== undefined),
+  ) as EvidenceRecordInput;
   return {
     ...prior,
-    ...incoming,
+    ...definedIncoming,
     tests: tests.size ? Array.from(tests.values()).slice(-20) : undefined,
     observations: observations.size
       ? Array.from(observations.values()).slice(-100)

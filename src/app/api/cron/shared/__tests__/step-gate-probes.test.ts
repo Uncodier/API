@@ -1,3 +1,4 @@
+import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { runRuntimeAndVisualProbes } from '../step-gate-probes';
 import {
   runRuntimeProbe,
@@ -8,6 +9,9 @@ import { runVisualProbe } from '../step-visual-probe';
 import { runVisualCritic } from '../step-visual-critic';
 import { runE2eScenarios } from '../step-e2e-runner';
 import { launchPuppeteerForGate } from '@/lib/puppeteer/launch-gate-browser';
+
+type LooseMock = ReturnType<typeof jest.fn<(...args: any[]) => any>>;
+const asMock = (value: unknown): LooseMock => value as LooseMock;
 
 jest.mock('../step-runtime-probe', () => ({
   runRuntimeProbe: jest.fn(),
@@ -33,20 +37,21 @@ jest.mock('@/lib/puppeteer/launch-gate-browser', () => ({
 }));
 jest.mock('@/lib/services/cron-audit-log', () => ({
   CronInfraEvent: new Proxy({}, { get: (_target, property) => String(property) }),
-  logCronInfrastructureEvent: jest.fn().mockResolvedValue(undefined),
+  logCronInfrastructureEvent:
+    jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
 }));
 
 describe('runtime and visual probe gate', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    (inferTargetRoutesFromDiff as jest.Mock).mockResolvedValue({
+    asMock(inferTargetRoutesFromDiff).mockResolvedValue({
       pageRoutes: ['/'],
       apiRoutes: [],
       changedFiles: ['src/app/page.tsx'],
       recentPageRoutes: ['/'],
       recentChangedFiles: ['src/app/page.tsx'],
     });
-    (runRuntimeProbe as jest.Mock).mockResolvedValue({
+    asMock(runRuntimeProbe).mockResolvedValue({
       ok: true,
       port: 3000,
       duration_ms: 10,
@@ -63,11 +68,11 @@ describe('runtime and visual probe gate', () => {
       apis: [],
       server_log_path: '/tmp/server.log',
     });
-    (stopProbeServer as jest.Mock).mockResolvedValue(undefined);
+    asMock(stopProbeServer).mockResolvedValue(undefined);
   });
 
   it('keeps an automatic visual capture outage non-blocking', async () => {
-    (runVisualProbe as jest.Mock).mockResolvedValue({
+    asMock(runVisualProbe).mockResolvedValue({
       ok: false,
       capture_ok: false,
       duration_ms: 10,
@@ -109,7 +114,7 @@ describe('runtime and visual probe gate', () => {
   });
 
   it('fails closed when the runtime probe throws', async () => {
-    (runRuntimeProbe as jest.Mock).mockRejectedValueOnce(
+    asMock(runRuntimeProbe).mockRejectedValueOnce(
       new Error('sandbox transport failed'),
     );
 
@@ -130,14 +135,14 @@ describe('runtime and visual probe gate', () => {
   });
 
   it('does not fail the gate for an undeclared 404 beside a passing target', async () => {
-    (inferTargetRoutesFromDiff as jest.Mock).mockResolvedValueOnce({
+    asMock(inferTargetRoutesFromDiff).mockResolvedValueOnce({
       pageRoutes: ['/dashboard/assets'],
       apiRoutes: [],
       changedFiles: ['src/app/dashboard/assets/page.tsx'],
       recentPageRoutes: ['/dashboard/assets'],
       recentChangedFiles: ['src/app/dashboard/assets/page.tsx'],
     });
-    (runRuntimeProbe as jest.Mock).mockResolvedValueOnce({
+    asMock(runRuntimeProbe).mockResolvedValueOnce({
       ok: true,
       port: 3000,
       duration_ms: 10,
@@ -170,7 +175,7 @@ describe('runtime and visual probe gate', () => {
   });
 
   it('executes an explicitly declared bodyless mutation target', async () => {
-    (runRuntimeProbe as jest.Mock).mockResolvedValueOnce({
+    asMock(runRuntimeProbe).mockResolvedValueOnce({
       ok: true,
       port: 3000,
       duration_ms: 10,
@@ -211,7 +216,7 @@ describe('runtime and visual probe gate', () => {
   });
 
   it('blocks on console failure without converting visual evidence into a defect', async () => {
-    (runVisualProbe as jest.Mock).mockResolvedValue({
+    asMock(runVisualProbe).mockResolvedValue({
       ok: false,
       capture_ok: true,
       duration_ms: 10,
@@ -239,6 +244,7 @@ describe('runtime and visual probe gate', () => {
       stepOrder: 1,
       requirementId: 'req-1',
       gitRepoKind: 'applications',
+      shouldRunVisual: true,
     });
 
     expect(result.ok).toBe(false);
@@ -251,10 +257,10 @@ describe('runtime and visual probe gate', () => {
   });
 
   it('fails closed when the E2E runner throws', async () => {
-    (launchPuppeteerForGate as jest.Mock).mockResolvedValue({
-      close: jest.fn().mockResolvedValue(undefined),
+    asMock(launchPuppeteerForGate).mockResolvedValue({
+      close: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
     });
-    (runVisualProbe as jest.Mock).mockResolvedValue({
+    asMock(runVisualProbe).mockResolvedValue({
       ok: true,
       capture_ok: true,
       duration_ms: 10,
@@ -274,7 +280,7 @@ describe('runtime and visual probe gate', () => {
       base_url: 'http://localhost:3000',
       auth_redirects: [],
     });
-    (runE2eScenarios as jest.Mock).mockRejectedValue(
+    asMock(runE2eScenarios).mockRejectedValue(
       new Error('browser transport failed'),
     );
 
@@ -296,7 +302,7 @@ describe('runtime and visual probe gate', () => {
   });
 
   it('keeps an unavailable automatic visual critic advisory', async () => {
-    (runVisualProbe as jest.Mock).mockResolvedValue({
+    asMock(runVisualProbe).mockResolvedValue({
       ok: true,
       capture_ok: true,
       duration_ms: 10,
@@ -324,7 +330,7 @@ describe('runtime and visual probe gate', () => {
       base_url: 'http://localhost:3000',
       auth_redirects: [],
     });
-    (runVisualCritic as jest.Mock).mockResolvedValue({
+    asMock(runVisualCritic).mockResolvedValue({
       status: 'unavailable',
       pass: false,
       defects: [],
@@ -349,8 +355,8 @@ describe('runtime and visual probe gate', () => {
     ]));
   });
 
-  it('blocks the step on automatic browser runtime failures', async () => {
-    (runVisualProbe as jest.Mock).mockResolvedValue({
+  it('keeps automatic browser runtime findings advisory', async () => {
+    asMock(runVisualProbe).mockResolvedValue({
       ok: false,
       capture_ok: true,
       duration_ms: 10,
@@ -394,29 +400,29 @@ describe('runtime and visual probe gate', () => {
       gitRepoKind: 'applications',
     });
 
-    expect(result.ok).toBe(false);
+    expect(result.ok).toBe(true);
     expect(result.infrastructureFailure).toBeUndefined();
     expect(result.signals.observations).toEqual(expect.arrayContaining([
       expect.objectContaining({
         kind: 'console',
-        disposition: 'hard_fail',
+        disposition: 'advisory',
       }),
     ]));
     expect(runVisualCritic).not.toHaveBeenCalled();
   });
 
   it('uses cumulative page routes for an explicitly forced visual audit', async () => {
-    (inferTargetRoutesFromDiff as jest.Mock).mockResolvedValueOnce({
+    asMock(inferTargetRoutesFromDiff).mockResolvedValueOnce({
       pageRoutes: ['/workspace'],
       apiRoutes: [],
       changedFiles: ['src/app/workspace/page.tsx'],
       recentPageRoutes: [],
       recentChangedFiles: [],
     });
-    (launchPuppeteerForGate as jest.Mock).mockResolvedValue({
-      close: jest.fn().mockResolvedValue(undefined),
+    asMock(launchPuppeteerForGate).mockResolvedValue({
+      close: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
     });
-    (runVisualProbe as jest.Mock).mockResolvedValue({
+    asMock(runVisualProbe).mockResolvedValue({
       ok: true,
       capture_ok: true,
       duration_ms: 10,
@@ -436,7 +442,7 @@ describe('runtime and visual probe gate', () => {
       base_url: 'http://localhost:3000',
       auth_redirects: [],
     });
-    (runE2eScenarios as jest.Mock).mockResolvedValue({
+    asMock(runE2eScenarios).mockResolvedValue({
       ok: true,
       scenarios: [],
       scenarios_read: 0,

@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse, after } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { verifyZavuSignature } from "@/lib/services/zavu";
 import { decryptToken } from "@/lib/utils/token-decryption";
 import { 
@@ -7,6 +7,12 @@ import {
   handleInboundMessage, 
   handleInvitationStatusChanged 
 } from "@/lib/services/zavu/webhook-handlers";
+import { sha256 } from "@/lib/security/upstash-rest";
+import {
+  claimProviderWebhookEvent,
+  finishProviderWebhookEvent,
+  type ProviderWebhookClaim,
+} from "@/lib/services/provider-webhook-claims";
 
 export async function POST(request: NextRequest) {
   try {
@@ -14,17 +20,20 @@ export async function POST(request: NextRequest) {
     const rawBody = await request.text();
     let secret = process.env.ZAVUDEV_WEBHOOK_SECRET;
 
-    // Parse early only to inspect senderId (this doesn't affect signature checking against rawBody)
-    let event: any = {};
+    let event: any;
     try {
       event = JSON.parse(rawBody);
-    } catch (e) {
-      console.error("[Zavu Webhook] Failed to parse body", e);
+    } catch {
+      return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    }
+    if (!event || typeof event !== "object" || Array.isArray(event)) {
+      return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
     }
 
-    // Since every created sender has its own webhook secret, we look it up from the DB
+    // Prefer the project secret so invalid requests never reach the database.
+    let verified = verifyZavuSignature(signature, rawBody, secret);
     const senderId = event.senderId || event.data?.senderId || event.sender?.id;
-    if (senderId) {
+    if (!verified && typeof senderId === "string") {
       const sites = await findSettingsForSender(senderId);
       if (sites.length > 0) {
         const site = sites[0];
@@ -33,35 +42,68 @@ export async function POST(request: NextRequest) {
         if (conn?.metadata?.zavu_webhook_secret) {
           const decrypted = decryptToken(conn.metadata.zavu_webhook_secret);
           secret = decrypted || conn.metadata.zavu_webhook_secret;
-          console.log(`[Zavu Webhook] Found specific secret for sender ${senderId} (decrypted: ${!!decrypted})`);
-        } else {
-          console.log(`[Zavu Webhook] No secret stored for sender ${senderId}, falling back to env var`);
+          verified = verifyZavuSignature(signature, rawBody, secret);
         }
-      } else {
-        console.log(`[Zavu Webhook] Site not found for sender ${senderId}`);
       }
-    } else {
-      console.log(`[Zavu Webhook] No senderId in event payload, will use project secret`);
     }
 
-    // Acknowledge immediately before slow verifications or processing, to keep it async like Vercel needs
-    // But we need to verify signature first before trusting the payload
-    if (!verifyZavuSignature(signature, rawBody, secret)) {
+    if (!verified) {
       console.warn("[Zavu Webhook] Invalid signature");
       return new NextResponse("Invalid signature", { status: 401 });
     }
-
-    const eventType = event.type || (event.data?.text && event.data?.from ? "message.inbound" : undefined);
+    const eventType = event.type
+      || (event.data?.text && event.data?.from ? "message.inbound" : "unknown");
     event.type = eventType;
     console.log(`[Zavu Webhook] Received event: ${eventType || "unknown"}`);
 
-    after(() =>
-      processEventAsync(event).catch((error) => {
-        console.error("[Zavu Webhook] Async processing error:", error);
-      })
-    );
+    const providerEventId = event.id || event.eventId || event.data?.messageId;
+    const eventId = typeof providerEventId === "string"
+      ? providerEventId
+      : await sha256(rawBody);
+    let claim: ProviderWebhookClaim;
+    try {
+      claim = await claimProviderWebhookEvent("zavu", eventId, eventType);
+    } catch (error) {
+      console.error("[Zavu Webhook] Durable admission failed:", error);
+      return NextResponse.json(
+        { success: false, error: "Webhook admission unavailable" },
+        { status: 503, headers: { "Retry-After": "5" } },
+      );
+    }
+    if (claim.state === "completed") {
+      return NextResponse.json({ success: true, duplicate: true });
+    }
+    if (claim.state === "busy") {
+      return NextResponse.json(
+        { success: false, error: "Webhook event is already processing" },
+        { status: 503, headers: { "Retry-After": "5" } },
+      );
+    }
 
-    return new NextResponse("OK", { status: 200 });
+    try {
+      await processEventAsync(event);
+      const completed = await finishProviderWebhookEvent(
+        "zavu",
+        eventId,
+        claim.token,
+        "completed",
+      );
+      if (!completed) {
+        throw new Error("Zavu webhook claim ownership was lost before completion");
+      }
+      return new NextResponse("OK", { status: 200 });
+    } catch (error) {
+      await finishProviderWebhookEvent(
+        "zavu",
+        eventId,
+        claim.token,
+        "failed",
+        error instanceof Error ? error.message : String(error),
+      ).catch((finishError) => {
+        console.error("[Zavu Webhook] Failed to record processing failure:", finishError);
+      });
+      throw error;
+    }
   } catch (error) {
     console.error("[Zavu Webhook] Error handling webhook:", error);
     return new NextResponse("Internal Server Error", { status: 500 });

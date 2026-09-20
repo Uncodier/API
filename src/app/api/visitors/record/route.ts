@@ -7,6 +7,14 @@ import {
   enqueueRecordingMetadata,
   type RecordingMetadataChunk,
 } from '@/lib/services/session-recording-queue';
+import { hasAuthenticatedPrincipal } from '@/lib/security/request-rate-limit';
+import {
+  canAccessSite,
+} from '@/lib/security/site-access';
+import {
+  verifyVisitorSessionToken,
+  visitorSessionTokenFromRequest,
+} from '@/lib/security/visitor-session-token';
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -248,7 +256,7 @@ async function validateSessionOwnership(
   for (const { siteId, sessionId } of Array.from(sessions.values())) {
     const { data, error } = await supabaseAdmin
       .from('visitor_sessions')
-      .select('id')
+      .select('id, visitor_id, is_active')
       .eq('id', sessionId)
       .eq('site_id', siteId)
       .maybeSingle();
@@ -260,11 +268,19 @@ async function validateSessionOwnership(
         retryAfterSeconds(),
       );
     }
-    if (!data) {
+    if (!data || !data.is_active) {
       throw new RecordingRequestError(
-        'Recording session was not found for this site',
-        404,
+        'Recording session is invalid or inactive',
+        403,
       );
+    }
+    for (const chunk of chunks) {
+      if (
+        chunk.rpcPayload.site_id === siteId
+        && chunk.rpcPayload.session_id === sessionId
+      ) {
+        chunk.rpcPayload.visitor_id = data.visitor_id;
+      }
     }
   }
 }
@@ -324,6 +340,45 @@ export async function POST(request: NextRequest) {
 
     if (preparedChunks.length === 0) {
       return NextResponse.json({ success: true, accepted: 0 });
+    }
+    const siteIds = new Set(
+      preparedChunks.map((chunk) => chunk.rpcPayload.site_id),
+    );
+    if (siteIds.size !== 1) {
+      throw new RecordingRequestError(
+        'All recording chunks must belong to one site',
+        400,
+      );
+    }
+    const siteId = preparedChunks[0].rpcPayload.site_id;
+    const sessionId = preparedChunks[0].rpcPayload.session_id;
+    const authenticated = hasAuthenticatedPrincipal(request);
+    const sessionIds = new Set(
+      preparedChunks.map((chunk) => chunk.rpcPayload.session_id),
+    );
+    const visitorIds = new Set(
+      preparedChunks
+        .map((chunk) => chunk.rpcPayload.visitor_id)
+        .filter((visitorId): visitorId is string => Boolean(visitorId)),
+    );
+    if (!authenticated && (sessionIds.size !== 1 || visitorIds.size > 1)) {
+      throw new RecordingRequestError(
+        'All recording chunks must belong to one visitor session',
+        400,
+      );
+    }
+    const authorized = authenticated
+      ? await canAccessSite(request, siteId)
+      : await verifyVisitorSessionToken(
+          visitorSessionTokenFromRequest(request),
+          {
+            siteId,
+            sessionId,
+            visitorId: Array.from(visitorIds)[0],
+          },
+        );
+    if (!authorized) {
+      throw new RecordingRequestError('Site access denied', 403);
     }
 
     await validateSessionOwnership(preparedChunks);

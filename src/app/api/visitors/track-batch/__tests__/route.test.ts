@@ -5,6 +5,19 @@ const mockEnqueue: any = jest.fn();
 jest.mock('@/lib/services/tracking-event-queue', () => ({
   enqueueTrackingEvents: mockEnqueue,
 }));
+jest.mock('@/lib/security/site-access', () => ({
+  canAccessSite: jest.fn(async () => true),
+  originBelongsToSite: jest.fn(async () => true),
+}));
+jest.mock('@/lib/security/visitor-session-token', () => ({
+  verifiedVisitorSessionClaims: jest.fn(async () => ({
+    siteId,
+    sessionId,
+    visitorId,
+    expiresAt: Date.now() + 60_000,
+  })),
+  visitorSessionTokenFromRequest: jest.fn(() => 'session-token'),
+}));
 
 import { POST } from '../route';
 
@@ -79,6 +92,33 @@ describe('visitor tracking batch route', () => {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify([]),
+      },
+    ) as never);
+
+    expect(response.status).toBe(400);
+    expect(mockEnqueue).not.toHaveBeenCalled();
+  });
+
+  it('rejects mixed session and sessionless events', async () => {
+    const response = await POST(new Request(
+      'http://localhost/api/visitors/track-batch',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify([
+          {
+            site_id: siteId,
+            visitor_id: visitorId,
+            session_id: sessionId,
+            event_type: 'pageview',
+            url: 'https://example.com/',
+          },
+          {
+            site_id: siteId,
+            event_type: 'pageview',
+            url: 'https://example.com/next',
+          },
+        ]),
       },
     ) as never);
 

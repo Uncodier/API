@@ -9,6 +9,7 @@ import {
   commitSummary,
   evidenceClaim,
   evidenceHaystack,
+  featureCoverageEvidenceGap,
   featureCoverageFailure,
   gateSignals,
   hasToolCall,
@@ -16,6 +17,16 @@ import {
   isLandingOnlyDiff,
   toolCalls,
 } from './archetype-evidence';
+import {
+  matchOrEscalateJudgeResult as matchOrEscalate,
+  rejectedJudgeResult as rejected,
+  type JudgeResult,
+} from './archetype-judge-result';
+export type {
+  JudgeFailureKind,
+  JudgeResult,
+  JudgeVerdict,
+} from './archetype-judge-result';
 
 export type CriticSeverity = 'blocker' | 'major' | 'minor';
 
@@ -29,15 +40,6 @@ export interface CriticResult {
   ok: boolean;
   iterations: number;
   suggestions: CriticSuggestion[];
-}
-
-export type JudgeVerdict = 'approved' | 'rejected' | 'escalate';
-
-export interface JudgeResult {
-  verdict: JudgeVerdict;
-  reason: string;
-  matched_acceptance: string[];
-  unmatched_acceptance: string[];
 }
 
 export interface ArchetypeContext {
@@ -87,7 +89,10 @@ function criticGenericRules(ctx: ArchetypeContext): CriticSuggestion[] {
     }
   }
   const calls = toolCalls(evidence);
-  if (calls.length === 0) {
+  const hasVerifiedArtifact = (
+    evidence.feature_coverage?.artifact_proofs || []
+  ).some((artifact) => artifact.exists && (artifact.bytes ?? 0) > 0);
+  if (calls.length === 0 && !hasVerifiedArtifact) {
     out.push({
       rule: 'no-tool-calls',
       severity: 'blocker',
@@ -166,7 +171,18 @@ function criticAppRules(ctx: ArchetypeContext): CriticSuggestion[] {
 function criticDocRules(ctx: ArchetypeContext): CriticSuggestion[] {
   const out: CriticSuggestion[] = [];
   const calls = toolCalls(ctx.evidence);
-  if (!calls.some((c) => /lint|markdown/i.test(c.name))) {
+  const hasVerifiedDocument = (
+    ctx.evidence.feature_coverage?.artifact_proofs || []
+  ).some(
+    (artifact) =>
+      artifact.exists &&
+      (artifact.bytes ?? 0) > 0 &&
+      /\.(?:md|mdx|txt)$/i.test(artifact.path),
+  );
+  if (
+    !hasVerifiedDocument &&
+    !calls.some((c) => /lint|markdown/i.test(c.name))
+  ) {
     out.push({
       rule: 'no-markdown-lint',
       severity: 'major',
@@ -191,7 +207,11 @@ function criticByFlow(ctx: ArchetypeContext): CriticSuggestion[] {
 
 export function runCritic(ctx: ArchetypeContext, opts?: { maxIterations?: number }): CriticResult {
   const maxIterations = Math.max(1, Math.min(2, opts?.maxIterations ?? 2));
-  const suggestions = [...criticGenericRules(ctx), ...criticByFlow(ctx)];
+  const flowSuggestions =
+    ctx.item.kind === 'doc'
+      ? criticDocRules(ctx)
+      : criticByFlow(ctx);
+  const suggestions = [...criticGenericRules(ctx), ...flowSuggestions];
   return {
     ok: suggestions.filter((s) => s.severity === 'blocker').length === 0,
     iterations: maxIterations,
@@ -200,58 +220,6 @@ export function runCritic(ctx: ArchetypeContext, opts?: { maxIterations?: number
 }
 
 // ─── Judge per-flow rules ───────────────────────────────────────────────
-
-function defaultUnmatched(item: BacklogItem): string[] {
-  return [...(item.acceptance ?? [])];
-}
-
-/**
- * Phase 10: stricter acceptance matching.
- *
- *   1. Narrative acceptance (no anchor) is marked as unmatched regardless of
- *      evidence text — the Judge cannot rubber-stamp a landing just because
- *      some words overlap.
- *   2. Executable acceptance is matched via its anchors (routes, HTTP verbs,
- *      status codes, observable verbs) rather than generic 4-char keywords.
- *      A route anchor must appear verbatim in the haystack; a status-code
- *      anchor must appear as a number/status literal; an observable verb
- *      must co-occur with at least one other anchor or keyword from the
- *      acceptance line so we don't match "returns" anywhere in logs.
- */
-function matchAcceptanceByKeywords(
-  acceptance: string[],
-  haystacks: string[],
-): { matched: string[]; unmatched: string[] } {
-  const matched: string[] = [];
-  const unmatched: string[] = [];
-  const validation = validateAcceptance(acceptance);
-  const analysisByText = new Map(validation.analyses.map((a) => [a.text, a]));
-  const haystackLower = haystacks.map((h) => h.toLowerCase());
-  for (const a of acceptance) {
-    const analysis = analysisByText.get(a);
-    if (!analysis || !analysis.executable) {
-      unmatched.push(a);
-      continue;
-    }
-    // Every anchor must have at least one corroborating signal in the evidence.
-    // This guards against "returns 200" matching a log line elsewhere — we
-    // require at least 2 anchors to co-occur in the SAME haystack entry when
-    // the line has ≥2 anchors, else the single anchor must appear.
-    const anchorStrings = analysis.anchors.map((an) => an.value.toLowerCase());
-    const minHits = Math.min(2, anchorStrings.length);
-    const hit = haystackLower.some((hay) => {
-      let count = 0;
-      for (const anchor of anchorStrings) {
-        if (hay.includes(anchor)) count++;
-        if (count >= minHits) return true;
-      }
-      return count >= minHits;
-    });
-    if (hit) matched.push(a);
-    else unmatched.push(a);
-  }
-  return { matched, unmatched };
-}
 
 function judgeApp(item: BacklogItem, evidence: EvidenceRecord): JudgeResult {
   const sig = gateSignals(evidence);
@@ -273,13 +241,21 @@ function judgeApp(item: BacklogItem, evidence: EvidenceRecord): JudgeResult {
 
   // Phase 10: hard contracts for core items.
   if (isTier(item, 'core')) {
+    const coverageGap = featureCoverageEvidenceGap(evidence);
+    if (coverageGap) {
+      return rejected(item, coverageGap, 'evidence_gap');
+    }
     const coverageFailure = featureCoverageFailure(evidence);
     if (coverageFailure) {
       return rejected(item, coverageFailure);
     }
     const narrative = !validateAcceptance(item.acceptance).has_any_executable;
     if (narrative) {
-      return rejected(item, 'core item has only narrative acceptance — rewrite with an executable anchor (route, HTTP verb, status code, observable verb) or downgrade to tier=ornamental');
+      return rejected(
+        item,
+        'core item has only narrative acceptance — rewrite with an executable anchor (route, HTTP verb, status code, observable verb) or downgrade to tier=ornamental',
+        'contract_error',
+      );
     }
     if (isAdminOnlyDiff(evidence.changed_files ?? [])) {
       return rejected(item, 'core item commit is admin-only (docs/evidence/ground-truth). Ship code under src/** or set tier=ornamental.');
@@ -290,7 +266,11 @@ function judgeApp(item: BacklogItem, evidence: EvidenceRecord): JudgeResult {
         (test) => test.exit_code === 0 && test.ran_after_changes,
       ) ?? false;
     if (requiresSuccessfulTestEvidence(item) && !hasPassingTests) {
-      return rejected(item, 'core item requires successful test evidence — write and run Jest tests before claiming done');
+      return rejected(
+        item,
+        'core item requires successful test evidence — write and run Jest tests before claiming done',
+        'evidence_gap',
+      );
     }
 
     const text = `${item.title} ${item.acceptance?.join(' ') || ''}`.toLowerCase();
@@ -345,8 +325,23 @@ function judgeDoc(item: BacklogItem, evidence: EvidenceRecord): JudgeResult {
   const constraintHit = rejectUnmatchedConstraints(item, evidence);
   if (constraintHit) return constraintHit;
   const calls = toolCalls(evidence);
-  if (!calls.some((c) => /lint|markdown|remark/i.test(c.name))) {
-    return rejected(item, 'doc judge requires a lint/markdown tool call in evidence. Next: run a markdown/lint tool and keep the call in evidence.');
+  const hasNonEmptyDocument = (
+    evidence.feature_coverage?.artifact_proofs || []
+  ).some(
+    (artifact) =>
+      artifact.exists &&
+      (artifact.bytes ?? 0) > 0 &&
+      /\.(?:md|mdx|txt)$/i.test(artifact.path),
+  );
+  if (
+    !hasNonEmptyDocument &&
+    !calls.some((c) => /lint|markdown|remark/i.test(c.name))
+  ) {
+    return rejected(
+      item,
+      'doc judge requires a lint/markdown tool call in evidence. Next: run a markdown/lint tool and keep the call in evidence.',
+      'evidence_gap',
+    );
   }
   return matchOrEscalate(item, evidence);
 }
@@ -354,7 +349,11 @@ function judgeDoc(item: BacklogItem, evidence: EvidenceRecord): JudgeResult {
 function judgeSlides(item: BacklogItem, evidence: EvidenceRecord): JudgeResult {
   const calls = toolCalls(evidence);
   if (!calls.some((c) => /screenshot|capture|reveal|spectacle/i.test(c.name))) {
-    return rejected(item, 'slides judge requires per-slide screenshot evidence. Next: capture per-slide screenshots and keep them in evidence.');
+    return rejected(
+      item,
+      'slides judge requires per-slide screenshot evidence. Next: capture per-slide screenshots and keep them in evidence.',
+      'evidence_gap',
+    );
   }
   return matchOrEscalate(item, evidence);
 }
@@ -372,21 +371,37 @@ function judgeBackend(item: BacklogItem, evidence: EvidenceRecord): JudgeResult 
     evidence,
     (call) => call.ok && /curl|fetch|http|test/i.test(call.name),
   )) {
-    return rejected(item, 'backend judge requires an HTTP probe or test run. Next: curl/fetch the shipped route and keep a successful probe in evidence.');
+    return rejected(
+      item,
+      'backend judge requires an HTTP probe or test run. Next: curl/fetch the shipped route and keep a successful probe in evidence.',
+      'evidence_gap',
+    );
   }
   if (isTier(item, 'core')) {
+    const coverageGap = featureCoverageEvidenceGap(evidence);
+    if (coverageGap) {
+      return rejected(item, coverageGap, 'evidence_gap');
+    }
     const coverageFailure = featureCoverageFailure(evidence);
     if (coverageFailure) {
       return rejected(item, coverageFailure);
     }
     if (!validateAcceptance(item.acceptance).has_any_executable) {
-      return rejected(item, 'backend core item has narrative-only acceptance — add a concrete anchor (route/verb/status)');
+      return rejected(
+        item,
+        'backend core item has narrative-only acceptance — add a concrete anchor (route/verb/status)',
+        'contract_error',
+      );
     }
     
     // TDD Assertion: Core items must have passing tests
     const hasPassingTests = evidence.tests?.some((t) => t.exit_code === 0 && t.ran_after_changes) ?? false;
     if (!hasPassingTests) {
-      return rejected(item, 'backend core item requires successful test evidence — write and run Jest tests before claiming done');
+      return rejected(
+        item,
+        'backend core item requires successful test evidence — write and run Jest tests before claiming done',
+        'evidence_gap',
+      );
     }
 
     const text = `${item.title} ${item.acceptance?.join(' ') || ''}`.toLowerCase();
@@ -409,7 +424,11 @@ function judgeBackend(item: BacklogItem, evidence: EvidenceRecord): JudgeResult 
     // Soft runtime check: at least one successful 2xx/3xx runtime tool call.
     const anyRuntimeOk = toolCalls(evidence).some((c) => /^curl\s/.test(c.name) && c.ok);
     if (!anyRuntimeOk) {
-      return rejected(item, 'backend core item needs at least one successful HTTP probe against the shipped route');
+      return rejected(
+        item,
+        'backend core item needs at least one successful HTTP probe against the shipped route',
+        'evidence_gap',
+      );
     }
   }
   return matchOrEscalate(item, evidence);
@@ -419,57 +438,24 @@ function judgeTask(item: BacklogItem, evidence: EvidenceRecord): JudgeResult {
   const constraintHit = rejectUnmatchedConstraints(item, evidence);
   if (constraintHit) return constraintHit;
   if (toolCalls(evidence).length === 0) {
-    return rejected(item, 'task judge requires at least one tool-call. Next: invoke at least one relevant tool and leave it in evidence.');
+    return rejected(
+      item,
+      'task judge requires at least one tool-call. Next: invoke at least one relevant tool and leave it in evidence.',
+      'evidence_gap',
+    );
   }
   return matchOrEscalate(item, evidence);
 }
 
 function judgeAutomation(item: BacklogItem, evidence: EvidenceRecord): JudgeResult {
   if (!hasToolCall(evidence, (c) => /run|execute|cron|schedule|webhook/i.test(c.name))) {
-    return rejected(item, 'automation judge requires a runtime invocation. Next: execute the automation (run/cron/webhook) once and record the call.');
+    return rejected(
+      item,
+      'automation judge requires a runtime invocation. Next: execute the automation (run/cron/webhook) once and record the call.',
+      'evidence_gap',
+    );
   }
   return matchOrEscalate(item, evidence);
-}
-
-function rejected(item: BacklogItem, reason: string): JudgeResult {
-  return {
-    verdict: 'rejected',
-    reason,
-    matched_acceptance: [],
-    unmatched_acceptance: defaultUnmatched(item),
-  };
-}
-
-function matchOrEscalate(item: BacklogItem, evidence: EvidenceRecord): JudgeResult {
-  const { matched, unmatched } = matchAcceptanceByKeywords(item.acceptance ?? [], evidenceHaystack(evidence));
-  if (unmatched.length === 0) {
-    return { verdict: 'approved', reason: 'all acceptance entries matched in evidence', matched_acceptance: matched, unmatched_acceptance: [] };
-  }
-  
-  // Create a sample of unmatched criteria for the reason string (max 3, truncated)
-  const totalAcceptance = item.acceptance?.length ?? 0;
-  const sampleUnmatched = unmatched.slice(0, 3).map(u => {
-    const text = u.length > 120 ? u.slice(0, 117) + '...' : u;
-    return `"${text}"`;
-  });
-  const unmatchedSampleStr = sampleUnmatched.length > 0 
-    ? ` Unmatched: ${sampleUnmatched.join('; ')}${unmatched.length > 3 ? ' (and more)' : ''}. Produce evidence (tool call / route / test) that proves those criteria.` 
-    : '';
-
-  if ((item.attempts ?? 0) >= 3) {
-    return {
-      verdict: 'escalate',
-      reason: `attempts=${item.attempts ?? 0} with ${unmatched.length}/${totalAcceptance} unmatched acceptance — escalating to self-heal/needs_review.${unmatchedSampleStr}`,
-      matched_acceptance: matched,
-      unmatched_acceptance: unmatched,
-    };
-  }
-  return {
-    verdict: 'rejected',
-    reason: `${unmatched.length}/${totalAcceptance} acceptance entries lack matching evidence.${unmatchedSampleStr}`,
-    matched_acceptance: matched,
-    unmatched_acceptance: unmatched,
-  };
 }
 
 const JUDGE_BY_FLOW: Record<RequirementKind, (item: BacklogItem, evidence: EvidenceRecord) => JudgeResult> = {
@@ -486,6 +472,7 @@ const JUDGE_BY_FLOW: Record<RequirementKind, (item: BacklogItem, evidence: Evide
 function judgeOverrideForKind(kind: BacklogItemKind | undefined): ((item: BacklogItem, evidence: EvidenceRecord) => JudgeResult) | null {
   if (!kind) return null;
   if (kind === 'auth' || kind === 'crud' || kind === 'integration') return judgeBackend;
+  if (kind === 'doc') return judgeDoc;
   return null;
 }
 

@@ -24,7 +24,25 @@ export async function GET() {
   }
 }
 
-export async function POST() {
+export async function POST(request: Request) {
+  const authorization = request.headers.get('authorization');
+  const apiKey = request.headers.get('x-api-key');
+  const serviceKey = process.env.SERVICE_API_KEY?.trim();
+  const cronSecret = process.env.CRON_SECRET?.trim();
+  const authorized = Boolean(
+    (serviceKey && (
+      apiKey === serviceKey
+      || authorization === `Bearer ${serviceKey}`
+    ))
+    || (cronSecret && authorization === `Bearer ${cronSecret}`),
+  );
+  if (!authorized) {
+    return NextResponse.json(
+      { success: false, error: 'Internal authentication required' },
+      { status: 401 },
+    );
+  }
+
   try {
     const summary = await getPublicSummary();
     const published = await publishSystemStatus(summary);

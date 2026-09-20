@@ -57,6 +57,32 @@ describe('detectUnhealthyOnReview', () => {
     expect(plan.itemsToReopen[0].targetStatus).toBe('pending');
   });
 
+  it('retries durable cancellation requests after the status already committed', () => {
+    const plan = detectUnhealthyOnReview({
+      backlog: {
+        items: [
+          item({
+            status: 'needs_review',
+            plan_cancellation_pending: {
+              reason: 'cancel stale plan steps',
+              requested_at: '2026-09-20T01:00:00.000Z',
+            },
+          }),
+        ],
+      },
+    });
+
+    expect(plan).toMatchObject({
+      needsSanitization: true,
+      itemsToReopen: [{
+        id: 'item-1',
+        previousStatus: 'needs_review',
+        targetStatus: 'needs_review',
+        cancellationRetry: true,
+      }],
+    });
+  });
+
   it('parks the requirement on-review when nothing is left runnable', () => {
     expect(requirementStatusAfterSaneo([{ status: 'needs_review' }, { status: 'done' }])).toEqual({
       status: 'on-review',

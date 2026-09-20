@@ -19,10 +19,96 @@ export async function getChannelConnection(siteId: string, channelId: string | u
   return connections.find((c: any) => c.id === channelId) || null;
 }
 
+function replaceSenderReferences(
+  connections: any[],
+  previousSenderId: string,
+  replacementSenderId: string
+): { changed: boolean; connections: any[] } {
+  let changed = false;
+  const nextConnections = connections.map((connection: any) => {
+    const metadata = connection.metadata || {};
+    const routing = metadata.routing || {};
+    const referencesPreviousSender =
+      connection.zavu_sender_id === previousSenderId ||
+      metadata.sender_id === previousSenderId ||
+      routing.sender_id === previousSenderId;
+    if (!referencesPreviousSender) return connection;
+
+    changed = true;
+    return {
+      ...connection,
+      ...(connection.zavu_sender_id === previousSenderId
+        ? { zavu_sender_id: replacementSenderId }
+        : {}),
+      metadata: {
+        ...metadata,
+        ...(metadata.sender_id === previousSenderId
+          ? { sender_id: replacementSenderId }
+          : {}),
+        ...(metadata.routing
+          ? {
+              routing: {
+                ...routing,
+                ...(routing.sender_id === previousSenderId
+                  ? { sender_id: replacementSenderId }
+                  : {}),
+              },
+            }
+          : {}),
+      },
+      updated_at: new Date().toISOString(),
+    };
+  });
+
+  return { changed, connections: nextConnections };
+}
+
+export async function replaceChannelSenderReferences(
+  siteId: string,
+  previousSenderId: string,
+  replacementSenderId: string
+): Promise<void> {
+  const { data: settingsRow, error: settingsError } = await supabaseAdmin
+    .from("settings")
+    .select("channels")
+    .eq("site_id", siteId)
+    .maybeSingle();
+
+  if (settingsError) {
+    throw new Error("Failed to fetch site settings");
+  }
+  if (!settingsRow) return;
+
+  const currentChannels = settingsRow.channels || {};
+  const currentConnections = Array.isArray((currentChannels as any).connections)
+    ? (currentChannels as any).connections
+    : [];
+  const { changed, connections } = replaceSenderReferences(
+    currentConnections,
+    previousSenderId,
+    replacementSenderId
+  );
+
+  if (!changed) return;
+  const { error: updateError } = await supabaseAdmin
+    .from("settings")
+    .update({ channels: { ...currentChannels, connections } })
+    .eq("site_id", siteId);
+  if (updateError) {
+    throw new Error("Failed to replace obsolete sender references");
+  }
+}
+
 export async function upsertChannelConnection(
   siteId: string,
   existingChannelId: string | undefined,
-  patch: Record<string, any>
+  patch: Record<string, any>,
+  options?: {
+    replaceSender?: {
+      previousSenderId: string;
+      replacementSenderId: string;
+    };
+  }
 ) {
   const { data: settingsRow, error: settingsError } = await supabaseAdmin
     .from("settings")
@@ -35,9 +121,16 @@ export async function upsertChannelConnection(
   }
 
   const currentChannels = settingsRow?.channels || {};
-  const connections = Array.isArray((currentChannels as any).connections)
+  let connections = Array.isArray((currentChannels as any).connections)
     ? [...(currentChannels as any).connections]
     : [];
+  if (options?.replaceSender) {
+    connections = replaceSenderReferences(
+      connections,
+      options.replaceSender.previousSenderId,
+      options.replaceSender.replacementSenderId
+    ).connections;
+  }
 
   const now = new Date().toISOString();
   const existingIndex = existingChannelId
@@ -78,5 +171,5 @@ export async function upsertChannelConnection(
     throw new Error("Failed to save connection in database");
   }
 
-  return { channelId, connection: nextConnection };
+  return { channelId, connection: nextConnection, connections };
 }

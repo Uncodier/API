@@ -21,13 +21,16 @@
 
 const VERB_RE = /\b(GET|POST|PUT|DELETE|PATCH)\b/;
 const STATUS_CODE_RE = /\b([1-5]xx|[1-5]\d\d)\b/;
-const ROUTE_RE = /(^|\s)\/[a-z0-9_\-/\[\]\.]+/i;
+const ROUTE_RE = /(^|\s)\/[a-z0-9_:\-/\[\]\.]+/i;
+const FILE_PATH_RE =
+  /\b(?:src|app|docs|public|supabase|migrations|tests?|__tests__)\/[a-z0-9_./*[\]-]+\.[a-z0-9]{1,10}\b/gi;
 const OBSERVABLE_VERB_RE = /\b(returns?|renders?|inserts?|creates?|deletes?|updates?|redirects?|emits?|saves?|stores?|accepts?|rejects?|responds?|loads?|shows? the (form|table|list|dialog|modal|row)|opens? (a )?(modal|dialog|form)|dispatches?|persists?)\b/i;
 
 export type AcceptanceAnchor =
   | { kind: 'http_verb'; value: string }
   | { kind: 'status_code'; value: string }
   | { kind: 'route'; value: string }
+  | { kind: 'file_path'; value: string }
   | { kind: 'observable_verb'; value: string };
 
 export interface AcceptanceAnalysis {
@@ -47,6 +50,10 @@ export function analyzeAcceptanceEntry(text: string): AcceptanceAnalysis {
 
   const route = text.match(ROUTE_RE);
   if (route) anchors.push({ kind: 'route', value: route[0].trim() });
+
+  for (const path of text.match(FILE_PATH_RE) || []) {
+    anchors.push({ kind: 'file_path', value: path });
+  }
 
   const obs = text.match(OBSERVABLE_VERB_RE);
   if (obs) anchors.push({ kind: 'observable_verb', value: obs[1] });
@@ -86,7 +93,7 @@ export function validateAcceptance(acceptance: string[] | undefined | null): Acc
 export function routesFromAcceptance(acceptance: string[] | undefined | null): string[] {
   const out = new Set<string>();
   for (const line of acceptance ?? []) {
-    const routePattern = /(^|[\s("'`])((?:\/[a-z0-9_\-/\[\]\.]+))/gi;
+    const routePattern = /(^|[\s("'`])((?:\/[a-z0-9_:\-/\[\]\.]+))/gi;
     let match: RegExpExecArray | null;
     while ((match = routePattern.exec(line))) {
       const cleaned = match[2].replace(/[.,)\]]+$/, '');

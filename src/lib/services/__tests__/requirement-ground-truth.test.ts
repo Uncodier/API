@@ -217,4 +217,29 @@ describe('syncGroundTruthBeforeCommit', () => {
 
     expect(mergeEvidenceRecords(previous, next).tests).toEqual(previous.tests);
   });
+
+  it('does not erase prior evidence with undefined fields during re-adjudication', async () => {
+    const { mergeEvidenceRecords } = await import('../requirement-ground-truth');
+    const previous = {
+      schema_version: 1 as const,
+      item_id: 'item-1',
+      evidence_run_id: 'run-1',
+      captured_at: '2026-09-18T00:00:00.000Z',
+      critic_passes: 0,
+      build: {
+        command: 'npm run build',
+        exit_code: 0,
+        duration_ms: 100,
+      },
+    };
+
+    expect(mergeEvidenceRecords(previous, {
+      schema_version: 1,
+      item_id: 'item-1',
+      evidence_run_id: 'run-1',
+      captured_at: '2026-09-18T00:02:00.000Z',
+      build: undefined,
+      critic_passes: 1,
+    }).build).toEqual(previous.build);
+  });
 });

@@ -156,6 +156,7 @@ describe('runJudge constraint rejection', () => {
     const verdict = runJudge({ item, evidence, flow: 'app' });
 
     expect(verdict.verdict).toBe('rejected');
+    expect(verdict.failure_kind).toBe('product_defect');
   });
 
   it('rejects missing expected API routes and failed kind requirements', () => {
@@ -192,5 +193,298 @@ describe('runJudge constraint rejection', () => {
 
     expect(verdict.verdict).toBe('rejected');
     expect(verdict.reason).toContain('at_least_one_route_file');
+  });
+
+  it('approves a non-empty declared report instead of matching tool prose', () => {
+    const path = 'docs/reports/final_execution_report.md';
+    const item = {
+      id: 'report-1',
+      title: 'Generate final execution report',
+      kind: 'doc',
+      phase_id: 'report',
+      status: 'in_progress',
+      scope_level: 'full',
+      acceptance: [
+        `Creates ${path} containing the implemented MVP status.`,
+      ],
+      touches: [path],
+      attempts: 3,
+      tier: 'ornamental',
+    } as BacklogItem;
+    const evidence: EvidenceRecord = {
+      schema_version: 1,
+      item_id: item.id,
+      captured_at: new Date().toISOString(),
+      critic_passes: 0,
+      changed_files: [path],
+      feature_coverage: {
+        ok: true,
+        declared_touches: [path],
+        present_touches: [path],
+        artifact_proofs: [{
+          path,
+          exists: true,
+          bytes: 240,
+          content_excerpt: '# MVP status\nImplemented screens and infrastructure fixes.',
+        }],
+      },
+    };
+
+    expect(runJudge({ item, evidence, flow: 'app' })).toMatchObject({
+      verdict: 'approved',
+      unmatched_acceptance: [],
+    });
+  });
+
+  it('accepts route-specific passing tests as corroborating evidence', () => {
+    const item = {
+      id: 'approval-1',
+      title: 'Screen: Approval Workflow',
+      kind: 'page',
+      phase_id: 'build',
+      status: 'in_progress',
+      scope_level: 'full',
+      acceptance: [
+        'GET /dashboard/approvals renders the pending approvals list.',
+        'PATCH /api/assets/:id/approve returns 200 and updates asset status.',
+      ],
+      attempts: 3,
+      tier: 'core',
+    } as BacklogItem;
+    const evidence: EvidenceRecord = {
+      schema_version: 1,
+      item_id: item.id,
+      captured_at: new Date().toISOString(),
+      critic_passes: 0,
+      build: { command: 'npm run build', exit_code: 0, duration_ms: 1 },
+      tests: [{
+        command: 'npm test -- approvals',
+        exit_code: 0,
+        output_tail:
+          'PASS tests/integration/approvals-ui.test.tsx\n' +
+          'PASS tests/integration/approvals-api.test.ts',
+        ran_after_changes: true,
+      }],
+      changed_files: [
+        'src/app/dashboard/approvals/page.tsx',
+        'src/app/api/assets/[id]/approve/route.ts',
+      ],
+      observations: [
+        {
+          kind: 'page',
+          disposition: 'pass',
+          source: 'contract',
+          target: 'GET /dashboard/approvals',
+          detail: 'HTTP 200',
+        },
+        {
+          kind: 'api',
+          disposition: 'pass',
+          source: 'contract',
+          target: 'PATCH /api/assets/asset-1/approve',
+          detail: 'HTTP 200',
+        },
+      ],
+      feature_coverage: {
+        ok: true,
+        present_page_files: ['src/app/dashboard/approvals/page.tsx'],
+        present_api_files: ['src/app/api/assets/[id]/approve/route.ts'],
+        missing_touches: [],
+        kind_requirements: [{
+          kind: 'page',
+          requirement: 'at_least_one_page_file',
+          satisfied: true,
+        }],
+      },
+    };
+
+    expect(runJudge({ item, evidence, flow: 'app' })).toMatchObject({
+      verdict: 'approved',
+      unmatched_acceptance: [],
+    });
+  });
+
+  it('labels missing proof as an evidence gap', () => {
+    const item = {
+      id: 'report-2',
+      title: 'Generate report',
+      kind: 'doc',
+      phase_id: 'report',
+      status: 'in_progress',
+      scope_level: 'full',
+      acceptance: ['Creates docs/report.md'],
+      attempts: 0,
+      tier: 'ornamental',
+    } as BacklogItem;
+    const evidence: EvidenceRecord = {
+      schema_version: 1,
+      item_id: item.id,
+      captured_at: new Date().toISOString(),
+      critic_passes: 0,
+      judge_reason: 'Creates docs/report.md',
+    };
+
+    expect(runJudge({ item, evidence, flow: 'app' })).toMatchObject({
+      verdict: 'rejected',
+      failure_kind: 'evidence_gap',
+    });
+  });
+
+  it('does not let GET 200 prove POST 201 on the same route', () => {
+    const item = {
+      id: 'api-method-status',
+      title: 'Create asset API',
+      kind: 'api',
+      phase_id: 'build',
+      status: 'in_progress',
+      scope_level: 'full',
+      acceptance: ['POST /api/assets returns 201'],
+      attempts: 0,
+      tier: 'core',
+    } as BacklogItem;
+    const evidence: EvidenceRecord = {
+      schema_version: 1,
+      item_id: item.id,
+      captured_at: new Date().toISOString(),
+      critic_passes: 0,
+      tests: [{
+        command: 'npm test -- assets',
+        exit_code: 0,
+        output_tail: 'PASS assets API',
+        ran_after_changes: true,
+      }],
+      observations: [{
+        kind: 'api',
+        disposition: 'pass',
+        source: 'contract',
+        target: 'GET /api/assets',
+        detail: 'HTTP 200',
+      }],
+      changed_files: ['src/app/api/assets/route.ts'],
+    };
+
+    expect(runJudge({ item, evidence, flow: 'app' })).toMatchObject({
+      verdict: 'rejected',
+      failure_kind: 'evidence_gap',
+    });
+  });
+
+  it('requires the accepted status for the correct HTTP method', () => {
+    const item = {
+      id: 'api-status',
+      title: 'Create asset API',
+      kind: 'api',
+      phase_id: 'build',
+      status: 'in_progress',
+      scope_level: 'full',
+      acceptance: ['POST /api/assets returns 201'],
+      attempts: 0,
+      tier: 'core',
+    } as BacklogItem;
+    const evidence: EvidenceRecord = {
+      schema_version: 1,
+      item_id: item.id,
+      captured_at: new Date().toISOString(),
+      critic_passes: 0,
+      tests: [{
+        command: 'npm test -- assets',
+        exit_code: 0,
+        output_tail: 'PASS POST /api/assets 200',
+        ran_after_changes: true,
+      }],
+      observations: [{
+        kind: 'api',
+        disposition: 'pass',
+        source: 'contract',
+        target: '/api/assets',
+        detail: 'legacy detail omitted',
+        method: 'POST',
+        http_status: 200,
+      }],
+      changed_files: ['src/app/api/assets/route.ts'],
+    };
+
+    expect(runJudge({ item, evidence, flow: 'app' })).toMatchObject({
+      verdict: 'rejected',
+      failure_kind: 'evidence_gap',
+    });
+  });
+
+  it('does not let an unchanged file prove an update criterion', () => {
+    const path = 'docs/report.md';
+    const item = {
+      id: 'stale-file',
+      title: 'Update report',
+      kind: 'doc',
+      phase_id: 'report',
+      status: 'in_progress',
+      scope_level: 'full',
+      acceptance: [`Updates ${path} with current release status`],
+      attempts: 0,
+      tier: 'ornamental',
+    } as BacklogItem;
+    const evidence: EvidenceRecord = {
+      schema_version: 1,
+      item_id: item.id,
+      captured_at: new Date().toISOString(),
+      critic_passes: 0,
+      feature_coverage: {
+        ok: true,
+        artifact_proofs: [{
+          path,
+          exists: true,
+          outcome: 'pass',
+          bytes: 100,
+          content_excerpt: 'Current release status',
+        }],
+      },
+    };
+
+    expect(runJudge({ item, evidence, flow: 'doc' })).toMatchObject({
+      verdict: 'rejected',
+      failure_kind: 'evidence_gap',
+    });
+  });
+
+  it('does not classify an unavailable file probe as a product defect', () => {
+    const item = {
+      id: 'page-unavailable',
+      title: 'Dashboard page',
+      kind: 'page',
+      phase_id: 'build',
+      status: 'in_progress',
+      scope_level: 'full',
+      acceptance: ['GET /dashboard returns 200'],
+      attempts: 0,
+      tier: 'core',
+    } as BacklogItem;
+    const evidence: EvidenceRecord = {
+      schema_version: 1,
+      item_id: item.id,
+      captured_at: new Date().toISOString(),
+      critic_passes: 0,
+      feature_coverage: {
+        ok: false,
+        evaluable: false,
+        expected_page_routes: ['/dashboard'],
+        present_page_files: [],
+        not_evaluable_page_routes: ['/dashboard'],
+        kind_requirements: [{
+          kind: 'page',
+          requirement: 'at_least_one_page_file',
+          satisfied: false,
+          outcome: 'not_evaluable',
+        }],
+        probe_errors: [{
+          target: '/dashboard',
+          detail: 'sandbox transport unavailable',
+        }],
+      },
+    };
+
+    expect(runJudge({ item, evidence, flow: 'app' })).toMatchObject({
+      verdict: 'rejected',
+      failure_kind: 'evidence_gap',
+    });
   });
 });

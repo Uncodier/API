@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/database/supabase-server'
 import { headers } from 'next/headers'
 import { recordTelemetry } from '@/lib/status/telemetry'
+import {
+  claimProviderWebhookEvent,
+  finishProviderWebhookEvent,
+  type ProviderWebhookClaim,
+} from '@/lib/services/provider-webhook-claims'
 
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY)
 
@@ -59,23 +64,61 @@ export async function POST(request: NextRequest) {
   }
 
   console.log('✅ Stripe webhook event received:', event.type)
+  let claim: ProviderWebhookClaim
+  try {
+    claim = await claimProviderWebhookEvent('stripe', event.id, event.type)
+  } catch (error) {
+    console.error('❌ Stripe webhook durable admission failed:', error)
+    return NextResponse.json(
+      { error: 'Webhook admission unavailable' },
+      { status: 503, headers: { 'Retry-After': '5' } },
+    )
+  }
+  if (claim.state === 'completed') {
+    return NextResponse.json({ received: true, duplicate: true })
+  }
+  if (claim.state === 'busy') {
+    return NextResponse.json(
+      { error: 'Webhook event is already processing' },
+      { status: 503, headers: { 'Retry-After': '5' } },
+    )
+  }
 
   try {
     // Handle different event types
     switch (event.type) {
       case 'checkout.session.completed':
-        await handleCheckoutSessionCompleted(event.data.object, request)
+        await handleCheckoutSessionCompleted(event.data.object)
         break
       case 'payment_intent.succeeded':
-        await handlePaymentIntentSucceeded(event.data.object, request)
+        await handlePaymentIntentSucceeded(event.data.object)
         break
       default:
         console.log(`Unhandled event type: ${event.type}`)
     }
 
+    const completed = await finishProviderWebhookEvent(
+      'stripe',
+      event.id,
+      claim.token,
+      'completed',
+    )
+    if (!completed) {
+      throw new Error('Stripe webhook claim ownership was lost before completion')
+    }
     recordTelemetry('integrations', 'up', `Processed Stripe Webhook: ${event.type}`).catch(console.error)
     return NextResponse.json({ received: true })
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    await finishProviderWebhookEvent(
+      'stripe',
+      event.id,
+      claim.token,
+      'failed',
+      message,
+    ).catch((finishError) => {
+      console.error('❌ Failed to record Stripe webhook failure:', finishError)
+    })
     console.error('❌ Error processing webhook:', error)
     recordTelemetry('integrations', 'down', 'Error processing Stripe webhook').catch(console.error)
     return NextResponse.json(
@@ -85,7 +128,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-async function handleCheckoutSessionCompleted(session: any, request: NextRequest) {
+async function handleCheckoutSessionCompleted(session: any) {
   console.log('💰 Processing checkout.session.completed:', session.id)
 
   const supabase = supabaseAdmin
@@ -100,8 +143,7 @@ async function handleCheckoutSessionCompleted(session: any, request: NextRequest
   } = session.metadata
 
   if (!site_id) {
-    console.error('❌ Missing site_id in session metadata')
-    return
+    throw new Error('Missing site_id in Stripe checkout session metadata')
   }
 
   // Create payment record
@@ -126,10 +168,14 @@ async function handleCheckoutSessionCompleted(session: any, request: NextRequest
     updated_at: new Date().toISOString()
   }
 
-  // Insert payment record
+  // The unique transaction_id index makes payment creation independently
+  // idempotent even if a stale webhook worker resumes after losing its claim.
   const { error: paymentError } = await supabase
     .from('payments')
-    .insert(paymentData)
+    .upsert(paymentData, {
+      onConflict: 'transaction_id',
+      ignoreDuplicates: true,
+    })
 
   if (paymentError) {
     console.error('❌ Error inserting payment record:', paymentError)
@@ -148,7 +194,7 @@ async function handleCheckoutSessionCompleted(session: any, request: NextRequest
   }
 }
 
-async function handlePaymentIntentSucceeded(paymentIntent: any, request: NextRequest) {
+async function handlePaymentIntentSucceeded(paymentIntent: any) {
   console.log('💰 Processing payment_intent.succeeded:', paymentIntent.id)
 
   const supabase = supabaseAdmin
@@ -162,8 +208,7 @@ async function handlePaymentIntentSucceeded(paymentIntent: any, request: NextReq
   } = paymentIntent.metadata
 
   if (!site_id) {
-    console.error('❌ Missing site_id in payment intent metadata')
-    return
+    throw new Error('Missing site_id in Stripe payment intent metadata')
   }
 
   // Only process if it's from outsource checkout
@@ -172,45 +217,39 @@ async function handlePaymentIntentSucceeded(paymentIntent: any, request: NextReq
     return
   }
 
-  // Create payment record if not already exists
-  const { data: existingPayment } = await supabase
-    .from('payments')
-    .select('id')
-    .eq('transaction_id', paymentIntent.id)
-    .single()
-
-  if (!existingPayment) {
-    const paymentData = {
-      site_id,
-      transaction_id: paymentIntent.id,
-      transaction_type: task_id ? 'task_outsourcing' : 'campaign_outsourcing',
-      amount: paymentIntent.amount / 100, // Convert from cents
-      currency: paymentIntent.currency.toUpperCase(),
-      status: 'completed',
-      payment_method: 'stripe_payment_intent',
-      details: {
-        stripe_payment_intent_id: paymentIntent.id,
-        payment_method_id: paymentIntent.payment_method,
-        customer_id: paymentIntent.customer,
-        charges: paymentIntent.charges,
-        metadata: paymentIntent.metadata,
-        created_at: new Date(paymentIntent.created * 1000).toISOString()
-      },
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    }
-
-    const { error: paymentError } = await supabase
-      .from('payments')
-      .insert(paymentData)
-
-    if (paymentError) {
-      console.error('❌ Error inserting payment record:', paymentError)
-      throw paymentError
-    }
-
-    console.log('✅ Payment record created successfully')
+  const paymentData = {
+    site_id,
+    transaction_id: paymentIntent.id,
+    transaction_type: task_id ? 'task_outsourcing' : 'campaign_outsourcing',
+    amount: paymentIntent.amount / 100, // Convert from cents
+    currency: paymentIntent.currency.toUpperCase(),
+    status: 'completed',
+    payment_method: 'stripe_payment_intent',
+    details: {
+      stripe_payment_intent_id: paymentIntent.id,
+      payment_method_id: paymentIntent.payment_method,
+      customer_id: paymentIntent.customer,
+      charges: paymentIntent.charges,
+      metadata: paymentIntent.metadata,
+      created_at: new Date(paymentIntent.created * 1000).toISOString()
+    },
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
   }
+
+  const { error: paymentError } = await supabase
+    .from('payments')
+    .upsert(paymentData, {
+      onConflict: 'transaction_id',
+      ignoreDuplicates: true,
+    })
+
+  if (paymentError) {
+    console.error('❌ Error inserting payment record:', paymentError)
+    throw paymentError
+  }
+
+  console.log('✅ Payment record created successfully')
 
   // Update campaign or requirement metadata
   if (campaign_id) {
@@ -242,7 +281,7 @@ async function updateCampaignPaymentMetadata(supabase: any, campaignId: string, 
 
   if (fetchError) {
     console.error('❌ Error fetching campaign:', fetchError)
-    return
+    throw fetchError
   }
 
   // Update metadata with payment information
@@ -268,6 +307,8 @@ async function updateCampaignPaymentMetadata(supabase: any, campaignId: string, 
       updated_at: new Date().toISOString()
     })
     .eq('id', campaignId)
+    .select('id')
+    .single()
 
   if (updateError) {
     console.error('❌ Error updating campaign metadata:', updateError)
@@ -287,7 +328,7 @@ async function updateRequirementPaymentMetadata(supabase: any, taskId: string, p
 
   if (fetchError) {
     console.error('❌ Error fetching requirement:', fetchError)
-    return
+    throw fetchError
   }
 
   // Update metadata with payment information
@@ -313,6 +354,8 @@ async function updateRequirementPaymentMetadata(supabase: any, taskId: string, p
       updated_at: new Date().toISOString()
     })
     .eq('id', taskId)
+    .select('id')
+    .single()
 
   if (updateError) {
     console.error('❌ Error updating requirement metadata:', updateError)

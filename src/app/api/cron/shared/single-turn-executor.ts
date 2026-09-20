@@ -22,6 +22,7 @@ import { extractSingleTurnBackgroundState } from './single-turn-background-task'
 import type { SingleTurnResult } from './single-turn-types';
 import {
   captureInteractionBaseline,
+  captureWorkspaceProgressFingerprint,
   getStepTerminalRequest,
   withActionLoopGuard,
   withExecuteStepNoop,
@@ -54,11 +55,12 @@ export async function executeSingleTurnStep(params: {
   requirementType: string;
   validateDeployment?: boolean;
   provisionedEnvKeys?: string[];
+  cycleId: string;
   executionEventId: string;
   executionGeneration: number;
 }): Promise<SingleTurnResult> {
   'use step';
-  const { sandboxId, plan, step, requirementId, instanceId, siteId, userId, title, gitRepoKind, requirementType, validateDeployment = true, provisionedEnvKeys, executionEventId, executionGeneration } = params;
+  const { sandboxId, plan, step, requirementId, instanceId, siteId, userId, title, gitRepoKind, requirementType, validateDeployment = true, provisionedEnvKeys, cycleId, executionEventId, executionGeneration } = params;
   const audit: CronAuditContext = {
     instanceId: instanceId,
     siteId: siteId,
@@ -67,11 +69,8 @@ export async function executeSingleTurnStep(params: {
     planId: plan.id,
     stepId: step.id,
   };
-
-  // 1. Connect to Sandbox
   const instanceType = gitRepoKind === 'automation' ? 'automation' : 'applications';
-  let infrastructureGeneration =
-    Number(step.infrastructure_generation || 0);
+  let infrastructureGeneration = Number(step.infrastructure_generation || 0);
   let connected;
   try {
     connected = await connectOrRecreateRequirementSandbox({
@@ -99,7 +98,6 @@ export async function executeSingleTurnStep(params: {
   let sandbox = connected.sandbox;
   let effectiveSandboxId = connected.sandboxId;
 
-  // 2. Mark step in_progress if pending
   try {
     let persistedStep = step;
     const { data: planRow, error: planReadError } = await supabaseAdmin
@@ -165,6 +163,8 @@ export async function executeSingleTurnStep(params: {
       persistedMetadata: persistedStep.metadata,
       interactionBaselineSha,
       backlogItemId: effectiveBacklogItemId,
+      cycleId,
+      executionGeneration,
     });
     const startMutation = await patchPlanStepAtomically({
       planId: plan.id,
@@ -174,7 +174,7 @@ export async function executeSingleTurnStep(params: {
       patch: {
         status: 'in_progress',
         ...(persistedStep.started_at ? {} : { started_at: cycleBaselineAt }),
-        ...(nextMetadata ? { metadata: nextMetadata } : {}),
+        metadata: nextMetadata,
       },
     });
     if (!startMutation.persisted) {
@@ -192,7 +192,7 @@ export async function executeSingleTurnStep(params: {
     persistedStep = {
       ...persistedStep,
       status: 'in_progress',
-      ...(nextMetadata ? { metadata: nextMetadata } : {}),
+      metadata: nextMetadata,
       infrastructure_generation: infrastructureGeneration,
     };
     const noProgressAdjudication =
@@ -201,7 +201,6 @@ export async function executeSingleTurnStep(params: {
         executionGeneration,
       );
 
-    // 3. Build Prompt & Context
     const effectiveRole =
       persistedStep.role || inferRoleFromStep(persistedStep) || 'general';
     const skillName =
@@ -305,7 +304,6 @@ export async function executeSingleTurnStep(params: {
       });
     }
 
-    // 5. Call Executor (Max 1 turn)
     const activeSandboxRef = { current: sandbox };
     const sandboxTools = getSandboxTools(sandbox, requirementId, {
       site_id: siteId,
@@ -345,6 +343,8 @@ export async function executeSingleTurnStep(params: {
       });
     }
 
+    const workspaceFingerprintBefore =
+      await captureWorkspaceProgressFingerprint(sandbox);
     const result = await executeAssistantStep(messages, { id: instanceId, site_id: siteId, user_id: userId, requirement_id: requirementId }, {
       instance_id: instanceId,
       site_id: siteId,
@@ -358,6 +358,12 @@ export async function executeSingleTurnStep(params: {
     });
     sandbox = activeSandboxRef.current;
     effectiveSandboxId = sandboxIdentity(sandbox);
+    const workspaceFingerprintAfter =
+      await captureWorkspaceProgressFingerprint(sandbox);
+    const durableProductProgress =
+      !!workspaceFingerprintBefore &&
+      !!workspaceFingerprintAfter &&
+      workspaceFingerprintBefore !== workspaceFingerprintAfter;
     const visualFeedbackMutation = await markVisualFeedbackDelivered({
       planId: plan.id,
       instanceId,
@@ -382,6 +388,7 @@ export async function executeSingleTurnStep(params: {
           effectiveSandboxId,
           infrastructureGeneration: visualFeedbackMutation.generation,
           concurrencyHalt: true,
+          durableProductProgress,
         };
       }
       infrastructureGeneration =
@@ -410,6 +417,7 @@ export async function executeSingleTurnStep(params: {
          error: 'Sandbox Gone 410',
          effectiveSandboxId,
          infrastructureGeneration,
+         durableProductProgress,
        };
     }
 
@@ -429,6 +437,7 @@ export async function executeSingleTurnStep(params: {
         sleepRequested,
         backgroundTask,
         infrastructureGeneration,
+        durableProductProgress,
       };
     }
     const completionRequested = terminalRequest?.status === 'completed';
@@ -441,7 +450,7 @@ export async function executeSingleTurnStep(params: {
     }
 
     if (shouldRunGate) {
-      return await runSingleTurnGate({
+      const gateResult = await runSingleTurnGate({
         sandbox,
         effectiveSandboxId,
         plan,
@@ -463,6 +472,7 @@ export async function executeSingleTurnStep(params: {
         sleepRequested,
         backgroundTask,
       });
+      return { ...gateResult, durableProductProgress };
     }
     return {
       ok: true,
@@ -471,6 +481,7 @@ export async function executeSingleTurnStep(params: {
       sleepRequested,
       backgroundTask,
       infrastructureGeneration,
+      durableProductProgress,
     };
   } catch (e: any) {
     console.error('[SingleTurn] Executor wrapper failed:', e);

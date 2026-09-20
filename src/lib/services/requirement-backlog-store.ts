@@ -13,6 +13,7 @@ import {
   type RequirementBacklog,
 } from './requirement-backlog-types';
 import type { FlowDefinition } from './requirement-flows';
+import { reconcileBacklogBlockedBy } from './requirement-backlog-blockers';
 
 export interface RequirementRow {
   id: string;
@@ -47,7 +48,9 @@ export function toBacklog(backlogData: Record<string, any> | null, defaultPhase:
   if (!raw) return emptyBacklog(defaultPhase);
   return {
     schema_version: 1,
-    items: Array.isArray(raw.items) ? raw.items : [],
+    items: reconcileBacklogBlockedBy(
+      Array.isArray(raw.items) ? raw.items : [],
+    ),
     current_phase_id: raw.current_phase_id || defaultPhase,
     completion_ratio: typeof raw.completion_ratio === 'number' ? raw.completion_ratio : 0,
     cycles_spent_total: typeof raw.cycles_spent_total === 'number' ? raw.cycles_spent_total : 0,

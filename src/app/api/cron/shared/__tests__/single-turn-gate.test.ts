@@ -271,7 +271,7 @@ describe('runSingleTurnGate', () => {
     expect(mockSetItemStatus).not.toHaveBeenCalled();
   });
 
-  it('runs the Judge against the full step contract during adjudication', async () => {
+  it('runs the Judge against explicit step criteria during adjudication', async () => {
     mockMaybeSingle.mockResolvedValue({
       data: {
         steps: [
@@ -307,12 +307,15 @@ describe('runSingleTurnGate', () => {
     expect(mockRunArchetypePostGate).toHaveBeenCalledWith(
       expect.objectContaining({
         contractAcceptance: expect.arrayContaining([
-          'Do it',
-          'GET /orders returns 200',
           'The orders page renders',
           'npm test succeeds',
         ]),
       }),
+    );
+    const postGateInput = mockRunArchetypePostGate.mock.calls.at(-1)?.[0];
+    expect(postGateInput?.contractAcceptance).not.toContain('Do it');
+    expect(postGateInput?.contractAcceptance).not.toContain(
+      'GET /orders returns 200',
     );
   });
 
@@ -433,6 +436,38 @@ describe('runSingleTurnGate', () => {
     });
     expect(result.remediationScheduled).toBeUndefined();
     expect(mockSetItemStatus).not.toHaveBeenCalled();
+  });
+
+  it('keeps missing origin preconditions non-terminal', async () => {
+    mockRunGateForFlow.mockResolvedValueOnce({
+      ok: false,
+      failureKind: 'missing_precondition',
+      signals: [{
+        name: 'origin',
+        ok: false,
+        disposition: 'unknown',
+        failureKind: 'missing_precondition',
+      }],
+      richSignals: {},
+    });
+    mockUpdatePlanStepStatus.mockResolvedValueOnce({
+      persisted: true,
+      state: 'applied',
+      generation: 4,
+    });
+
+    const result = await runSingleTurnGate(input());
+
+    expect(mockUpdatePlanStepStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'in_progress' }),
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      isDone: true,
+      gatePassed: false,
+      gateFailureKind: 'missing_precondition',
+    });
+    expect(result.persistedTerminalStatus).toBeUndefined();
   });
 
   it('provides automation gates the context required to persist origin', async () => {

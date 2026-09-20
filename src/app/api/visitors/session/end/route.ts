@@ -2,6 +2,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { supabaseAdmin } from '@/lib/database/supabase-client'
 import { v4 as uuidv4 } from 'uuid'
+import { hasAuthenticatedPrincipal } from '@/lib/security/request-rate-limit'
+import {
+  canAccessSite,
+} from '@/lib/security/site-access'
+import {
+  verifyVisitorSessionToken,
+  visitorSessionTokenFromRequest,
+} from '@/lib/security/visitor-session-token'
 
 export const dynamic = 'force-dynamic';
 
@@ -15,10 +23,10 @@ export const dynamic = 'force-dynamic';
 
 // Esquema para validar el cierre de sesión
 const EndSessionSchema = z.object({
-  exit_url: z.string().url("exit_url debe ser una URL válida").optional(),
+  exit_url: z.string().url("exit_url debe ser una URL válida").max(2_048).optional(),
   exit_type: z.enum(["exit", "bounce", "timeout"]).optional(),
-  duration: z.number().int().optional(),
-  page_views: z.number().int().optional()
+  duration: z.number().int().nonnegative().max(7 * 24 * 60 * 60 * 1_000).optional(),
+  page_views: z.number().int().nonnegative().max(1_000_000).optional()
 });
 
 // Función auxiliar para generar respuesta de error
@@ -41,29 +49,26 @@ function errorResponse(message: string, status: number = 400, details: any = nul
  */
 export async function POST(request: NextRequest) {
   try {
-    // Extraer el ID de sesión de la URL
     const url = new URL(request.url);
-    const pathSegments = url.pathname.split('/');
-    const sessionIndex = pathSegments.findIndex(segment => segment === 'session') + 1;
-    const sessionId = pathSegments[sessionIndex];
+    const sessionId = url.searchParams.get('session_id');
     
-    // Verificar API key en el encabezado
-    const apiKey = request.headers.get('X-SA-API-KEY');
-    if (!apiKey) {
-      return errorResponse('API Key no proporcionada', 401);
-    }
-    
-    // TODO: Validar API key contra la base de datos
-    
-    // Validar el ID de sesión en la URL
-    if (!sessionId) {
+    if (!sessionId || !z.string().uuid().safeParse(sessionId).success) {
       return errorResponse('ID de sesión no proporcionado', 400);
     }
     
     // Obtener el site_id de los parámetros de la consulta
     const siteId = url.searchParams.get('site_id');
-    if (!siteId) {
+    if (!siteId || !z.string().uuid().safeParse(siteId).success) {
       return errorResponse('site_id es requerido como parámetro de consulta', 400);
+    }
+    const authorized = hasAuthenticatedPrincipal(request)
+      ? await canAccessSite(request, siteId)
+      : await verifyVisitorSessionToken(
+          visitorSessionTokenFromRequest(request),
+          { siteId, sessionId },
+        );
+    if (!authorized) {
+      return errorResponse('Site access denied', 403);
     }
     
     // Validar el cuerpo de la solicitud
@@ -83,6 +88,7 @@ export async function POST(request: NextRequest) {
       .select('*')
       .eq('id', sessionId)
       .eq('site_id', siteId)
+      .eq('is_active', true)
       .single();
     
     if (findError || !session) {
@@ -116,6 +122,7 @@ export async function POST(request: NextRequest) {
       .update(updates)
       .eq('id', sessionId)
       .eq('site_id', siteId)
+      .eq('is_active', true)
       .select()
       .single();
     

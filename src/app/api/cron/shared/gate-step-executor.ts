@@ -196,6 +196,7 @@ export async function runGateStep(params: {
                  : [],
                flow: requirementType,
                signals: gateRes.signals,
+               failureKind: gateRes.failureKind,
                skipAttemptBump: gateRes.skipAttemptBump,
                remediationScheduled: gateRes.remediationScheduled,
                logPrefix: '[GateStep]',

@@ -11,10 +11,10 @@ describe('Failure Classification', () => {
     expect(res.countsTowardAttempts).toBe(false);
   });
 
-  it('classifies judge verdicts as judge', () => {
+  it('classifies missing Judge receipts as evidence gaps', () => {
     const res = classifyFailure('judge_verdict=rejected: Missing evidence');
-    expect(res.failureClass).toBe('judge');
-    expect(res.countsTowardAttempts).toBe(true);
+    expect(res.failureClass).toBe('evidence');
+    expect(res.countsTowardAttempts).toBe(false);
   });
 
   it('classifies build failures as product', () => {
@@ -60,13 +60,34 @@ describe('Failure Classification', () => {
     expect(res.toolName?.toLowerCase()).not.toBe('unknown');
   });
 
-  it('classifies origin-only gate signals as origin', () => {
+  it('classifies origin-only gate signals as plumbing', () => {
     const res = classifyFailure('rebase conflict', undefined, {
       flow: 'task',
       signals: [{ name: 'origin', ok: false }],
     });
-    expect(res.failureClass).toBe('product');
+    expect(res.failureClass).toBe('plumbing');
     expect(res.toolName).toBe('origin');
+    expect(res.countsTowardAttempts).toBe(false);
+  });
+
+  it('does not let a generic product label override origin-only evidence', () => {
+    const res = classifyFailure('Origin push not verified', undefined, {
+      flow: 'app',
+      failureKind: 'product_defect',
+      signals: [{ name: 'origin', ok: false }],
+    });
+    expect(res.failureClass).toBe('plumbing');
+    expect(res.countsTowardAttempts).toBe(false);
+  });
+
+  it('uses typed precondition failures without consuming attempts', () => {
+    const res = classifyFailure('Gate failed', undefined, {
+      flow: 'app',
+      failureKind: 'missing_precondition',
+      signals: [],
+    });
+    expect(res.failureClass).toBe('precondition');
+    expect(res.countsTowardAttempts).toBe(false);
   });
 
   it('never persists tool=unknown for a generic execute_step error', () => {

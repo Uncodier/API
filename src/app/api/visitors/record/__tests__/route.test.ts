@@ -27,6 +27,14 @@ jest.mock('@/lib/services/session-recording-admission', () => ({
 jest.mock('@/lib/services/session-recording-queue', () => ({
   enqueueRecordingMetadata: mockEnqueue,
 }));
+jest.mock('@/lib/security/site-access', () => ({
+  canAccessSite: jest.fn(async () => true),
+  originBelongsToSite: jest.fn(async () => true),
+}));
+jest.mock('@/lib/security/visitor-session-token', () => ({
+  verifyVisitorSessionToken: jest.fn(async () => true),
+  visitorSessionTokenFromRequest: jest.fn(() => 'session-token'),
+}));
 
 import { POST } from '../route';
 
@@ -42,7 +50,10 @@ describe('visitor recording route', () => {
     mockRemove.mockResolvedValue({ error: null });
     mockAdmission.mockResolvedValue({ accepted: true, reason: 'accepted' });
     mockEnqueue.mockResolvedValue('1-0');
-    mockMaybeSingle.mockResolvedValue({ data: { id: sessionId }, error: null });
+    mockMaybeSingle.mockResolvedValue({
+      data: { id: sessionId, visitor_id: visitorId, is_active: true },
+      error: null,
+    });
   });
 
   it('uses a stable storage path and queues chunk metadata', async () => {
@@ -285,7 +296,7 @@ describe('visitor recording route', () => {
       }),
     }) as never);
 
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(403);
     expect(mockUpload).not.toHaveBeenCalled();
     expect(mockAdmission).not.toHaveBeenCalled();
     expect(mockEnqueue).not.toHaveBeenCalled();

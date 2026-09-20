@@ -1,13 +1,17 @@
+import { assertSafeRemoteUrl } from '@/lib/security/safe-remote-url';
+import { readResponseWithLimit } from '@/lib/security/limited-response';
+
 export async function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export async function convertUrlToBase64(url: string): Promise<{ data: string; mimeType: string } | null> {
   try {
+    const safeUrl = await assertSafeRemoteUrl(url);
     const headers: Record<string, string> = {};
     
     // Add authentication for Twilio Media URLs
-    if (url.includes('api.twilio.com')) {
+    if (safeUrl.hostname === 'api.twilio.com') {
       const accountSid = process.env.GEAR_TWILIO_ACCOUNT_SID || process.env.TWILIO_ACCOUNT_SID;
       const authToken = process.env.GEAR_TWILIO_AUTH_TOKEN || process.env.TWILIO_AUTH_TOKEN;
       
@@ -20,16 +24,17 @@ export async function convertUrlToBase64(url: string): Promise<{ data: string; m
       }
     }
 
-    const response = await fetch(url, { 
+    const response = await fetch(safeUrl, {
       headers,
+      redirect: 'error',
       signal: AbortSignal.timeout(10_000) 
     });
     if (!response.ok) {
       console.warn(`[Video API] Failed to fetch reference image: ${response.status} ${response.statusText}`);
       return null;
     }
-    const buffer = await response.arrayBuffer();
-    const base64Data = Buffer.from(buffer).toString('base64');
+    const buffer = await readResponseWithLimit(response, 15 * 1024 * 1024);
+    const base64Data = buffer.toString('base64');
     const mimeType = response.headers.get('content-type') || 'image/png';
     return { data: base64Data, mimeType };
   } catch (error: any) {

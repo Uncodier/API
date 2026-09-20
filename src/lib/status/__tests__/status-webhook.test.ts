@@ -23,12 +23,19 @@ const summary: PublicStatusSummary = {
   systems: [],
   slaBySystem: {},
 };
+const originalServiceApiKey = process.env.SERVICE_API_KEY;
 
 describe('GET/POST /api/status/webhook', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.SERVICE_API_KEY = 'test-service-key';
     (getPublicSummary as jest.Mock).mockResolvedValue(summary);
     (publishSystemStatus as jest.Mock).mockResolvedValue(true);
+  });
+
+  afterAll(() => {
+    if (originalServiceApiKey === undefined) delete process.env.SERVICE_API_KEY;
+    else process.env.SERVICE_API_KEY = originalServiceApiKey;
   });
 
   it('GET returns the last sanitized snapshot without publishing', async () => {
@@ -40,11 +47,22 @@ describe('GET/POST /api/status/webhook', () => {
   });
 
   it('POST re-emits the snapshot on the public channel', async () => {
-    const res = await POST();
+    const res = await POST(new Request('http://localhost/api/status/webhook', {
+      method: 'POST',
+      headers: { 'x-api-key': 'test-service-key' },
+    }));
     const body = await res.json();
     expect(res.status).toBe(200);
     expect(body.published).toBe(true);
     expect(publishSystemStatus).toHaveBeenCalledWith(summary);
+  });
+
+  it('rejects unauthenticated publication requests', async () => {
+    const res = await POST(new Request('http://localhost/api/status/webhook', {
+      method: 'POST',
+    }));
+    expect(res.status).toBe(401);
+    expect(publishSystemStatus).not.toHaveBeenCalled();
   });
 
   it('GET returns 500 when summary load fails', async () => {

@@ -17,7 +17,17 @@ export async function downloadVideoFromCache(hash: string): Promise<{ buffer: Bu
   const path = `prompt_cache/${hash}`;
   const { data, error } = await supabaseAdmin.storage.from('generative_videos').download(path);
   
-  if (error || !data) {
+  if (error) {
+    const storageError = error as { statusCode?: string | number; message?: string };
+    if (
+      String(storageError.statusCode) === '404'
+      || /not found|does not exist/i.test(storageError.message || '')
+    ) {
+      return null;
+    }
+    throw new Error(`Video cache lookup failed: ${error.message}`);
+  }
+  if (!data) {
     return null;
   }
   

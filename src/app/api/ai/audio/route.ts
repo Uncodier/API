@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { synthesizeWithVercel, synthesizeWithGemini, TTSProvider as Provider } from '@/lib/services/ai/tts-service';
+import {
+  enforceRequestRateLimit,
+  getAuthenticatedRateIdentity,
+  isInternalServiceRequest,
+} from '@/lib/security/request-rate-limit';
 
 interface AudioRequestBody {
   text: string;
@@ -11,6 +16,15 @@ interface AudioRequestBody {
 
 export async function POST(request: NextRequest) {
   try {
+    const limited = await enforceRequestRateLimit(request, {
+      namespace: 'ai-audio-principal',
+      identity: getAuthenticatedRateIdentity(request),
+      limit: isInternalServiceRequest(request) ? 120 : 20,
+      windowSeconds: 60,
+      failClosed: true,
+    });
+    if (limited) return limited;
+
     const body = (await request.json()) as AudioRequestBody;
     let { text, voice, format, provider, model } = body || {};
 
@@ -32,6 +46,9 @@ export async function POST(request: NextRequest) {
 
     if (!text || typeof text !== 'string') {
       return NextResponse.json({ error: 'Parameter "text" is required' }, { status: 400 });
+    }
+    if (text.length > 20_000) {
+      return NextResponse.json({ error: 'Parameter "text" is too long' }, { status: 413 });
     }
 
     if (provider === 'vercel') {

@@ -17,6 +17,7 @@ export type BacklogItemStatus =
 export type BacklogItemKind =
   | 'page' | 'component' | 'crud' | 'api' | 'auth' | 'integration'
   | 'section' | 'chapter' | 'glossary'
+  | 'doc'
   | 'slide' | 'chart' | 'asset'
   | 'clause' | 'schedule' | 'annex'
   | 'subtask' | 'script'
@@ -42,6 +43,41 @@ export type BacklogItemScope = 'full' | 'mvp' | 'minimal';
  */
 export type BacklogItemTier = 'core' | 'ornamental';
 
+export type BacklogBlockerCategory =
+  | 'dependency'
+  | 'product_defect'
+  | 'infrastructure_unavailable'
+  | 'missing_precondition'
+  | 'evidence_gap'
+  | 'contract_error'
+  | 'user_decision';
+
+export type BacklogBlockerResolutionActor =
+  | 'executor'
+  | 'verifier'
+  | 'platform'
+  | 'user';
+
+/**
+ * A scoped impediment attached to one backlog item.
+ *
+ * Direct blockers omit `propagated_from_item_id`. Dependency descendants
+ * receive materialized copies with that field populated so callers can render
+ * why an item is waiting without traversing the graph themselves.
+ */
+export interface BacklogBlocker {
+  blocker_id: string;
+  category: BacklogBlockerCategory;
+  reason: string;
+  resolution_actor: BacklogBlockerResolutionActor;
+  source_item_id?: string;
+  source_step_id?: string;
+  propagated_from_item_id?: string;
+  user_action_required?: boolean;
+  retry_after?: string;
+  created_at?: string;
+}
+
 export interface BacklogItem {
   id: string;
   title: string;
@@ -60,6 +96,13 @@ export interface BacklogItem {
   scope_level: BacklogItemScope;
   tier?: BacklogItemTier;
   depends_on?: string[];
+  /** Current direct and dependency-propagated impediments for this item. */
+  blocked_by?: BacklogBlocker[];
+  /** Durable outbox entry cleared only after bound plan steps are cancelled. */
+  plan_cancellation_pending?: {
+    reason: string;
+    requested_at: string;
+  };
   evidence?: EvidenceRecord;
   created_at?: string;
   updated_at?: string;

@@ -113,6 +113,23 @@ describe('mandatory backlog remediation', () => {
     }));
   });
 
+  it('does not hide a failed terminal-step cancellation', async () => {
+    mockCancelPlanSteps.mockResolvedValueOnce({
+      plansTouched: 0,
+      plansCancelled: 0,
+      stepsCancelled: 0,
+      planIds: [],
+      errors: ['cancel_plan_steps: database unavailable'],
+    });
+
+    await expect(setItemStatus({
+      requirementId: 'requirement',
+      itemId: 'parent',
+      status: 'needs_review',
+      reason: 'acceptance failed',
+    })).rejects.toThrow(/database unavailable/);
+  });
+
   it('rejects an unknown dependency during upsert', async () => {
     await expect(upsertBacklogItem({
       requirementId: 'requirement',

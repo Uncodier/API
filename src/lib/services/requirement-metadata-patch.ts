@@ -20,6 +20,8 @@ export interface CronCycleAccountingResult {
   cron_attempts: number;
   no_progress_cycles: number;
   infrastructure_failure_cycles: number;
+  plan_id?: string | null;
+  step_id?: string | null;
 }
 
 export interface RequirementBlockResult {
@@ -81,8 +83,10 @@ export async function recordRequirementCronCycleOutcome(params: {
   outcome: CronCycleOutcome;
   expectedExecutionGeneration: number;
   runnerInstanceId?: string;
+  planId?: string;
+  stepId?: string;
 }): Promise<CronCycleAccountingResult> {
-  const { data, error } = await supabaseAdmin.rpc(
+  let { data, error } = await supabaseAdmin.rpc(
     'record_requirement_cron_cycle_outcome',
     {
       p_requirement_id: params.requirementId,
@@ -91,8 +95,30 @@ export async function recordRequirementCronCycleOutcome(params: {
       p_outcome: params.outcome,
       p_expected_execution_generation: params.expectedExecutionGeneration,
       p_runner_instance_id: params.runnerInstanceId ?? null,
+      p_plan_id: params.planId ?? null,
+      p_step_id: params.stepId ?? null,
     },
   );
+  if (
+    error &&
+    (
+      error.code === 'PGRST202' ||
+      /record_requirement_cron_cycle_outcome/i.test(error.message) &&
+        /not find|does not exist|schema cache/i.test(error.message)
+    )
+  ) {
+    ({ data, error } = await supabaseAdmin.rpc(
+      'record_requirement_cron_cycle_outcome',
+      {
+        p_requirement_id: params.requirementId,
+        p_cycle_id: params.cycleId,
+        p_cycle_started_at: params.cycleStartedAt,
+        p_outcome: params.outcome,
+        p_expected_execution_generation: params.expectedExecutionGeneration,
+        p_runner_instance_id: params.runnerInstanceId ?? null,
+      },
+    ));
+  }
   if (error) {
     throw new Error(
       `Failed to record cron cycle outcome: ${error.message}`,

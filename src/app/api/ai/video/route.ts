@@ -1,670 +1,169 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { CreditService, InsufficientCreditsError } from '@/lib/services/billing/CreditService';
-import { promises as fs } from 'fs';
-import os from 'os';
-import path from 'path';
-import { GoogleGenAI } from '@google/genai';
-import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { bufferFromDownload, convertUrlToBase64, sleep } from './utils';
+import { CreditService } from '@/lib/services/billing/CreditService';
+import {
+  enforceRequestRateLimit,
+  getAuthenticatedRateIdentity,
+  isInternalServiceRequest,
+} from '@/lib/security/request-rate-limit';
+import { canAccessSite } from '@/lib/security/site-access';
+import {
+  acquireLock,
+  releaseLock,
+  sha256,
+} from '@/lib/security/upstash-rest';
+import { assertSafeRemoteUrl } from '@/lib/security/safe-remote-url';
+import {
+  generateVideoWithGemini,
+  normalizeVideoDuration,
+} from './generate-video';
+import type { VideoRequestBody } from './video-types';
 
-type Provider = 'gemini';
-type AspectRatio = '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '3:2' | '2:3';
-type VideoQuality = 'preview' | 'standard' | 'pro';
-interface VideoRequestBody {
-  prompt: string;
-  site_id: string;
-  instance_id?: string;
-  provider?: Provider;
-  duration_seconds?: number;
-  aspect_ratio?: AspectRatio;
-  reference_images?: string[];
-  quality?: VideoQuality;
-  model?: string;
-}
-interface VideoGenerationResult {
-  provider: Provider;
-  videos: Array<{ url: string; mimeType: string }>;
-  metadata: {
-    model: string;
-    duration_seconds?: number;
-    aspect_ratio?: AspectRatio;
-    quality?: VideoQuality;
-    resolution?: '720p' | '1080p';
-    generated_at: string;
-    fallbackFrom?: Provider;
-  };
-}
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const VALID_RATIOS = new Set(['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3']);
 
-const DEFAULT_VIDEO_MODEL = 'veo-3.1-generate-preview';
-const VIDEO_BUCKET = 'generative_videos';
-const MAX_REFERENCE_IMAGES = 3;
-const MAX_DURATION_SECONDS = 60;
-const POLL_INTERVAL_MS = 10_000;
-const MAX_WAIT_MS = 10 * 60 * 1000; // 10 minutes
-function getEnv(name: string) {
-  const value = process.env[name];
-  if (!value) {
-    console.warn(`[video api] Missing environment variable ${name}`);
+async function validateReferences(value: unknown): Promise<string[] | undefined> {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > 3) {
+    throw new Error('reference_images must contain at most 3 URLs');
+  }
+  for (const url of value) {
+    if (typeof url !== 'string') throw new Error('Invalid reference image URL');
+    await assertSafeRemoteUrl(url);
   }
   return value;
 }
-async function uploadVideoToStorage(
-  buffer: Buffer,
-  mimeType: string,
-  siteId: string,
-  provider: string,
-  prompt: string
-): Promise<{ path: string; url: string; size: number; mimeType: string }> {
-  try {
-    let ext = 'mp4';
-    if (mimeType.includes('webm')) {
-      ext = 'webm';
-    } else if (mimeType.includes('mov')) {
-      ext = 'mov';
-    }
-
-    const timestamp = Date.now();
-    const randomSuffix = Math.random().toString(36).slice(2, 8);
-    const path = `${siteId}/${timestamp}-${randomSuffix}.${ext}`;
-
-    const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
-      .from(VIDEO_BUCKET)
-      .upload(path, buffer, {
-        contentType: mimeType,
-        upsert: false,
-      });
-
-    if (uploadError || !uploadData?.path) {
-      throw new Error(uploadError?.message || 'Unknown storage upload error');
-    }
-
-    const { data: urlData } = supabaseAdmin.storage.from(VIDEO_BUCKET).getPublicUrl(path);
-    let url = urlData?.publicUrl || '';
-
-    if (!url) {
-      const { data: signedData, error: signError } = await supabaseAdmin.storage
-        .from(VIDEO_BUCKET)
-        .createSignedUrl(path, 60 * 60 * 24 * 7);
-
-      if (signError || !signedData?.signedUrl) {
-        throw new Error(signError?.message || 'Failed to create signed URL');
-      }
-
-      url = signedData.signedUrl;
-    }
-
-    return {
-      path: uploadData.path,
-      url,
-      size: buffer.length,
-      mimeType,
-    };
-  } catch (error: any) {
-    console.error('[Video Storage] Upload error:', error);
-    throw new Error(`Failed to upload video to storage: ${error.message || error}`);
-  }
-}
-
-async function saveFileRecord(
-  siteId: string,
-  path: string,
-  url: string,
-  size: number,
-  mimeType: string,
-  provider: string,
-  prompt: string,
-  model: string,
-  metadata: Record<string, unknown>,
-  userId?: string,
-  instanceId?: string
-) {
-  try {
-    let ownerUserId = userId;
-
-    if (!ownerUserId) {
-      const { data: ownershipData, error: ownershipError } = await supabaseAdmin
-        .from('site_ownership')
-        .select('user_id')
-        .eq('site_id', siteId)
-        .single();
-
-      if (ownershipError) {
-        console.warn('[Video File Record] Could not resolve site owner:', ownershipError.message);
-      } else {
-        ownerUserId = ownershipData?.user_id;
-      }
-    }
-
-    const filename = `${provider}_video_${Date.now()}.${mimeType.split('/')[1] || 'mp4'}`;
-
-    const insertData: any = {
-      site_id: siteId,
-      name: filename,
-      file_path: url,
-      file_type: mimeType,
-      file_size: size,
-      metadata: {
-        provider,
-        prompt,
-        generated_at: new Date().toISOString(),
-        model,
-        storage_path: path,
-        bucket: VIDEO_BUCKET,
-        ...metadata,
-      },
-      is_public: true,
-    };
-
-    if (ownerUserId) {
-      insertData.user_id = ownerUserId;
-    }
-
-    if (instanceId) {
-      insertData.instance_id = instanceId;
-    }
-
-    const { error: insertError } = await supabaseAdmin.from('assets').insert(insertData);
-
-    if (insertError) {
-      throw new Error(insertError.message || 'Unknown database error');
-    }
-  } catch (error: any) {
-    console.warn('[Video File Record] Save error:', error.message || error);
-    throw error;
-  }
-}
-
-/**
- * Maps duration_seconds to valid Gemini API values: 4, 6, or 8
- * Rounds up to the nearest valid value (e.g., 20 → 8, 5 → 6, 3 → 4)
- * When using reference_images, duration must be 8 seconds
- */
-function mapDurationToValidValue(
-  seconds: number | undefined,
-  hasReferenceImages: boolean
-): number | undefined {
-  if (seconds === undefined) {
-    return undefined;
-  }
-
-  // Remove the strict 8 seconds constraint for reference images
-  // Let the Gemini API decide if it accepts other durations like 4 or 6.
-  return seconds;
-}
-
-/**
- * Maps quality parameter to resolution
- * - "preview" → "720p"
- * - "standard" → "720p"
- * - "pro" → "1080p" (with constraints: requires duration 8 and aspect_ratio 16:9)
- */
-function mapQualityToResolution(
-  quality: VideoQuality | undefined,
-  duration: number | undefined,
-  aspectRatio: AspectRatio | undefined
-): '720p' | '1080p' {
-  if (quality === 'pro') {
-    // 1080p only works with duration 8 and aspect_ratio 16:9
-    if (duration === 8 && (!aspectRatio || aspectRatio === '16:9')) {
-      return '1080p';
-    }
-    // Fallback to 720p if constraints not met
-    return '720p';
-  }
-  // preview and standard both use 720p
-  return '720p';
-}
-
-/**
- * Validates that aspect ratio is compatible with Gemini API
- * Gemini only supports "16:9" and "9:16"
- */
-function validateAspectRatioForGemini(aspectRatio: AspectRatio | undefined): '16:9' | '9:16' | undefined {
-  if (!aspectRatio) {
-    return undefined;
-  }
-
-  // Gemini only supports 16:9 and 9:16
-  if (aspectRatio === '16:9' || aspectRatio === '9:16') {
-    return aspectRatio;
-  }
-
-  // For other aspect ratios, we'll use 16:9 as default
-  // This could be logged as a warning
-  console.warn(`[Gemini Video] Aspect ratio ${aspectRatio} not supported by Gemini, using 16:9 as default`);
-  return '16:9';
-}
-
-function buildPrompt(prompt: string, aspectRatio?: AspectRatio, durationSeconds?: number, quality?: VideoQuality) {
-  const hints: string[] = [];
-
-  if (aspectRatio) {
-    hints.push(`Aspect ratio: ${aspectRatio}.`);
-  }
-
-  if (durationSeconds) {
-    hints.push(`Target duration: approximately ${durationSeconds} seconds.`);
-  }
-
-  if (quality) {
-    hints.push(`Quality preference: ${quality}.`);
-  }
-
-  if (!hints.length) {
-    return prompt;
-  }
-
-  return `${prompt}\n\n${hints.join(' ')}`;
-}
-
-async function generateWithGemini(options: {
-  prompt: string;
-  siteId: string;
-  instanceId?: string;
-  aspectRatio?: AspectRatio;
-  durationSeconds?: number;
-  referenceImages?: string[];
-  quality?: VideoQuality;
-  model?: string;
-}): Promise<VideoGenerationResult> {
-  const apiKey = getEnv('GEMINI_API_KEY') || getEnv('GOOGLE_CLOUD_API_KEY');
-  const model = options.model || getEnv('GOOGLE_CLOUD_VIDEOS_MODEL') || DEFAULT_VIDEO_MODEL;
-
-  if (!apiKey) {
-    throw new Error('Gemini API key is not configured. Set GEMINI_API_KEY or GOOGLE_CLOUD_API_KEY.');
-  }
-
-  const ai = new GoogleGenAI({ apiKey });
-  const finalPrompt = buildPrompt(options.prompt, options.aspectRatio, options.durationSeconds, options.quality);
-
-  const references: Array<{ data: string; mimeType: string }> = [];
-  for (const url of options.referenceImages?.slice(0, MAX_REFERENCE_IMAGES) || []) {
-    const converted = await convertUrlToBase64(url);
-    if (converted) {
-      references.push(converted);
-    }
-  }
-
-  const hasReferenceImages = references.length > 0;
-
-  // Map duration to valid Gemini values
-  const mappedDuration = mapDurationToValidValue(options.durationSeconds, hasReferenceImages);
-
-  // Validate and map aspect ratio (Gemini only supports 16:9 and 9:16)
-  const mappedAspectRatio = validateAspectRatioForGemini(options.aspectRatio);
-
-  // Map quality to resolution
-  const mappedResolution = mapQualityToResolution(options.quality, mappedDuration, mappedAspectRatio);
-
-  // Log warning if quality "pro" was requested but couldn't use 1080p
-  if (options.quality === 'pro' && mappedResolution === '720p') {
-    const reasons: string[] = [];
-    if (mappedDuration !== 8) {
-      reasons.push(`duration must be 8 seconds (got ${mappedDuration})`);
-    }
-    if (mappedAspectRatio && mappedAspectRatio !== '16:9') {
-      reasons.push(`aspect_ratio must be "16:9" (got "${mappedAspectRatio}")`);
-    }
-    if (reasons.length > 0) {
-      console.warn(
-        `[Gemini Video] Quality "pro" requested but degraded to 720p. Reasons: ${reasons.join(', ')}. 1080p requires duration=8 and aspect_ratio="16:9".`
-      );
-    }
-  }
-
-  // Validate resolution constraints
-  if (mappedResolution === '1080p') {
-    if (mappedDuration !== 8) {
-      throw new Error('1080p resolution requires duration of 8 seconds');
-    }
-    if (mappedAspectRatio && mappedAspectRatio !== '16:9') {
-      throw new Error('1080p resolution only supports aspect ratio 16:9');
-    }
-  }
-
-  console.log('[Gemini Video] Starting generation', {
-    model,
-    siteId: options.siteId,
-    originalAspectRatio: options.aspectRatio,
-    mappedAspectRatio,
-    originalDuration: options.durationSeconds,
-    mappedDuration,
-    quality: options.quality,
-    resolution: mappedResolution,
-    references: references.length,
-  });
-
-  // Build config object for Gemini API
-  const config: any = {};
-  if (mappedAspectRatio) {
-    config.aspectRatio = mappedAspectRatio;
-  }
-  if (mappedResolution) {
-    config.resolution = mappedResolution;
-  }
-  if (mappedDuration) {
-    config.durationSeconds = mappedDuration;
-  }
-
-  // Store mapped values for later use in metadata
-  const videoConfig = {
-    mappedDuration,
-    mappedAspectRatio,
-    mappedResolution,
-  };
-
-  let operation: any = await ai.models.generateVideos({
-    model,
-    prompt: finalPrompt,
-    ...(Object.keys(config).length > 0 ? { config } : {}),
-    ...(references[0]
-      ? {
-          image: {
-            imageBytes: references[0].data,
-            mimeType: references[0].mimeType,
-          },
-        }
-      : {}),
-  });
-
-  const startTime = Date.now();
-
-  while (!operation?.done) {
-    if (Date.now() - startTime > MAX_WAIT_MS) {
-      throw new Error('Gemini video generation timed out after 10 minutes.');
-    }
-
-    await sleep(POLL_INTERVAL_MS);
-    operation = await ai.operations.getVideosOperation({ operation });
-  }
-
-  const operationError = (operation as any)?.error;
-  if (operationError) {
-    const errorMessage =
-      typeof operationError.message === 'string' && operationError.message.length > 0
-        ? operationError.message
-        : 'Gemini video generation failed.';
-    throw new Error(errorMessage);
-  }
-
-  const generatedVideo = operation?.response?.generatedVideos?.[0];
-  console.log('[Gemini Video] Operation finished', {
-    videosCount: operation?.response?.generatedVideos?.length || 0,
-    hasVideo: Boolean(generatedVideo?.video),
-    videoMeta: generatedVideo?.video
-      ? {
-          name: (generatedVideo.video as any)?.name,
-          uri: (generatedVideo.video as any)?.uri,
-          mimeType: generatedVideo.video.mimeType,
-        }
-      : null,
-  });
-  console.log('[Gemini Video] Raw operation payload:', JSON.stringify(operation, null, 2));
-
-  if (!generatedVideo?.video) {
-    throw new Error('Gemini video generation did not return any video data.');
-  }
-
-  const videoUri = (generatedVideo.video as any)?.uri;
-  console.log('[Gemini Video] Downloading video payload', {
-    hasUri: Boolean(videoUri),
-    hasName: Boolean((generatedVideo.video as any)?.name),
-    mimeType: generatedVideo.video?.mimeType,
-  });
-
-  let videoBuffer: Buffer | null = null;
-  let mimeType = generatedVideo.video?.mimeType || 'video/mp4';
-
-  // Try SDK download exactly as docs suggest (write to temp file)
-  const tmpFilePath = path.join(os.tmpdir(), `gemini-video-${Date.now()}-${Math.random().toString(36).slice(2)}.mp4`);
-  try {
-    await ai.files.download({
-      file: generatedVideo.video,
-      downloadPath: tmpFilePath,
-    });
-    const fileData = await fs.readFile(tmpFilePath).catch(() => null);
-    await fs.unlink(tmpFilePath).catch(() => {});
-    if (fileData && fileData.length > 0) {
-      videoBuffer = fileData;
-      console.log('[Gemini Video] SDK download completed', {
-        size: videoBuffer.length,
-      });
-    } else {
-      console.warn('[Gemini Video] SDK download appeared empty after read, falling back to signed URI');
-    }
-  } catch (sdkErr) {
-    console.warn('[Gemini Video] SDK download failed, falling back to signed URI', sdkErr);
-    await fs.unlink(tmpFilePath).catch(() => {});
-  }
-
-  if (!videoBuffer && videoUri) {
-    const downloadResp = await fetch(`${videoUri}&key=${apiKey}`, {
-      signal: AbortSignal.timeout(240_000),
-    });
-
-    if (!downloadResp.ok) {
-      const errorBody = await downloadResp.text().catch(() => '');
-      throw new Error(`Gemini video download failed: ${downloadResp.status} ${downloadResp.statusText} ${errorBody}`);
-    }
-
-    const arr = await downloadResp.arrayBuffer();
-    videoBuffer = Buffer.from(arr);
-    mimeType = downloadResp.headers.get('content-type') || mimeType;
-    console.log('[Gemini Video] Downloaded via signed URI', {
-      size: videoBuffer.length,
-      mimeType,
-    });
-  }
-
-  if (!videoBuffer) {
-    throw new Error('Gemini video download produced an empty buffer.');
-  }
-
-  const uploadResult = await uploadVideoToStorage(videoBuffer, mimeType, options.siteId, 'gemini', options.prompt);
-
-  try {
-    await saveFileRecord(
-      options.siteId,
-      uploadResult.path,
-      uploadResult.url,
-      uploadResult.size,
-      uploadResult.mimeType,
-      'gemini',
-      options.prompt,
-      model,
-      {
-        duration_seconds: videoConfig.mappedDuration ?? options.durationSeconds,
-        aspect_ratio: videoConfig.mappedAspectRatio || options.aspectRatio,
-        quality: options.quality,
-        resolution: videoConfig.mappedResolution,
-        original_duration_seconds: options.durationSeconds,
-        original_aspect_ratio: options.aspectRatio,
-      },
-      undefined,
-      options.instanceId
-    );
-  } catch (error) {
-    console.warn('[Gemini Video] Failed to save file record:', (error as Error).message);
-  }
-
-  return {
-    provider: 'gemini',
-    videos: [
-      {
-        url: uploadResult.url,
-        mimeType: uploadResult.mimeType,
-      },
-    ],
-    metadata: {
-      model,
-      duration_seconds: videoConfig.mappedDuration ?? options.durationSeconds,
-      aspect_ratio: videoConfig.mappedAspectRatio || options.aspectRatio,
-      quality: options.quality,
-      resolution: videoConfig.mappedResolution,
-      generated_at: new Date().toISOString(),
-    },
-  };
-}
-
-function isValidUUID(value: string) {
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  return uuidRegex.test(value);
-}
-
-function isValidUrl(value: string) {
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-  } catch {
-    return false;
-  }
-}
 
 export async function POST(request: NextRequest) {
+  let generationLock: { key: string; token: string } | null = null;
   try {
-    const body = (await request.json().catch(() => null)) as VideoRequestBody | null;
-    const {
-      prompt,
-      site_id,
-      instance_id,
-      provider = 'gemini',
-      duration_seconds,
-      aspect_ratio,
-      reference_images,
-      quality,
-      model,
-    } = body || {};
-
-    if (!prompt || typeof prompt !== 'string') {
-      return NextResponse.json({ error: 'Parameter "prompt" is required' }, { status: 400 });
-    }
-
-    if (!site_id || typeof site_id !== 'string') {
-      return NextResponse.json({ error: 'Parameter "site_id" is required' }, { status: 400 });
-    }
-
-    if (!isValidUUID(site_id)) {
-      return NextResponse.json({ error: 'Parameter "site_id" must be a valid UUID' }, { status: 400 });
-    }
-
-    if (aspect_ratio && !['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3'].includes(aspect_ratio)) {
-      return NextResponse.json({ error: 'Invalid aspect_ratio value' }, { status: 400 });
-    }
-
-    if (duration_seconds !== undefined) {
-      if (typeof duration_seconds !== 'number' || Number.isNaN(duration_seconds) || duration_seconds <= 0) {
-        return NextResponse.json({ error: 'Parameter "duration_seconds" must be a positive number' }, { status: 400 });
-      }
-    }
-
-    // Note: Quality "pro" will automatically degrade to 720p if constraints aren't met
-    // (duration must be 8 and aspect_ratio must be 16:9 for 1080p)
-    // This is handled in mapQualityToResolution function
-
-    if (reference_images !== undefined) {
-      if (!Array.isArray(reference_images)) {
-        return NextResponse.json({ error: 'Parameter "reference_images" must be an array of URLs' }, { status: 400 });
-      }
-
-      if (reference_images.length > MAX_REFERENCE_IMAGES) {
-        return NextResponse.json(
-          { error: `A maximum of ${MAX_REFERENCE_IMAGES} reference_images are supported` },
-          { status: 400 }
-        );
-      }
-
-      for (const url of reference_images) {
-        if (typeof url !== 'string' || !isValidUrl(url)) {
-          return NextResponse.json({ error: 'All reference_images must be valid HTTP/HTTPS URLs' }, { status: 400 });
-        }
-      }
-    }
-
-    if (provider !== 'gemini') {
-      return NextResponse.json({ error: `Unsupported provider: ${provider}` }, { status: 400 });
-    }
-
-    // Validate credits for Video Generation
-    try {
-      const duration = duration_seconds || 8;
-      const requiredCredits = (duration / 60) * CreditService.PRICING.VIDEO_GENERATION_MINUTE;
-      const hasCredits = await CreditService.validateCredits(site_id, requiredCredits);
-      if (!hasCredits) {
-        return NextResponse.json(
-          { success: false, error: { code: 'INSUFFICIENT_CREDITS', message: 'Insufficient credits for video generation' } },
-          { status: 402 }
-        );
-      }
-    } catch (e: any) {
-      return NextResponse.json({ error: e.message }, { status: 402 });
-    }
-
-    // Duration will be mapped to valid values (4, 6, 8) in generateWithGemini
-    // No need to sanitize here, just pass through
-    const result = await generateWithGemini({
-      prompt,
-      siteId: site_id,
-      instanceId: instance_id,
-      aspectRatio: aspect_ratio,
-      durationSeconds: duration_seconds,
-      referenceImages: reference_images,
-      quality,
-      model,
+    const identity = getAuthenticatedRateIdentity(request);
+    const limited = await enforceRequestRateLimit(request, {
+      namespace: 'ai-video-principal',
+      identity,
+      limit: isInternalServiceRequest(request) ? 30 : 3,
+      windowSeconds: 60,
+      failClosed: true,
     });
+    if (limited) return limited;
 
-    if (result && Array.isArray(result.videos) && result.videos.length > 0) {
-      try {
-        const duration = duration_seconds || 8;
-        const requiredCredits = (duration / 60) * CreditService.PRICING.VIDEO_GENERATION_MINUTE;
-        await CreditService.deductCredits(
-          site_id, 
-          requiredCredits * result.videos.length, 
-          'video_generation', 
-          `Video generation (${result.videos.length} videos)`,
-          { prompt, provider }
-        );
-      } catch (e) {
-        console.error('Failed to deduct credits for video generation:', e);
-      }
+    const body = await request.json() as VideoRequestBody;
+    if (
+      typeof body?.prompt !== 'string'
+      || body.prompt.length === 0
+      || body.prompt.length > 10_000
+    ) {
+      return NextResponse.json(
+        { error: 'prompt must contain between 1 and 10000 characters' },
+        { status: 400 },
+      );
+    }
+    if (typeof body.site_id !== 'string' || !UUID_PATTERN.test(body.site_id)) {
+      return NextResponse.json({ error: 'site_id must be a valid UUID' }, { status: 400 });
+    }
+    if (!await canAccessSite(request, body.site_id)) {
+      return NextResponse.json({ error: 'Site access denied' }, { status: 403 });
+    }
+    if (body.provider && body.provider !== 'gemini') {
+      return NextResponse.json({ error: 'Unsupported video provider' }, { status: 400 });
+    }
+    if (
+      body.duration_seconds !== undefined
+      && (
+        !Number.isFinite(body.duration_seconds)
+        || body.duration_seconds <= 0
+        || body.duration_seconds > 60
+      )
+    ) {
+      return NextResponse.json(
+        { error: 'duration_seconds must be between 1 and 60' },
+        { status: 400 },
+      );
+    }
+    if (body.aspect_ratio && !VALID_RATIOS.has(body.aspect_ratio)) {
+      return NextResponse.json({ error: 'Invalid aspect_ratio' }, { status: 400 });
     }
 
-    return NextResponse.json(result);
-  } catch (error: any) {
-    console.error('[video api] Error:', error);
-    return NextResponse.json(
-      { error: error?.message || 'Failed to process request' },
-      { status: 500 }
+    let referenceImages: string[] | undefined;
+    try {
+      referenceImages = await validateReferences(body.reference_images);
+    } catch (error) {
+      return NextResponse.json(
+        { error: error instanceof Error ? error.message : 'Invalid reference image' },
+        { status: 400 },
+      );
+    }
+
+    const duration = normalizeVideoDuration(body.duration_seconds);
+    const requiredCredits =
+      (duration / 60) * CreditService.PRICING.VIDEO_GENERATION_MINUTE;
+    if (!await CreditService.validateCredits(body.site_id, requiredCredits)) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'INSUFFICIENT_CREDITS',
+            message: 'Insufficient credits for video generation',
+          },
+        },
+        { status: 402 },
+      );
+    }
+
+    const lockKey = `lock:ai-video:${await sha256(body.site_id)}`;
+    const lock = await acquireLock(lockKey, 11 * 60);
+    if (lock.state === 'contended') {
+      return NextResponse.json(
+        { error: 'Another video generation is already running' },
+        { status: 409, headers: { 'Retry-After': '10' } },
+      );
+    }
+    if (lock.state !== 'acquired') {
+      return NextResponse.json(
+        { error: 'Video generation admission is unavailable' },
+        { status: 503, headers: { 'Retry-After': '10' } },
+      );
+    }
+    generationLock = { key: lockKey, token: lock.token };
+
+    const result = await generateVideoWithGemini({
+      prompt: body.prompt,
+      siteId: body.site_id,
+      instanceId: body.instance_id,
+      aspectRatio: body.aspect_ratio,
+      durationSeconds: duration,
+      referenceImages,
+      quality: body.quality,
+      model: body.model,
+    });
+    const deduction = await CreditService.deductCredits(
+      body.site_id,
+      requiredCredits * result.videos.length,
+      'video_generation',
+      `Video generation (${result.videos.length} videos)`,
+      { prompt: body.prompt, provider: 'gemini' },
     );
+    if (!deduction.success) {
+      throw new Error(deduction.error || 'Unable to deduct video credits');
+    }
+    return NextResponse.json(result);
+  } catch (error) {
+    console.error('[Video API] Request failed:', error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Video generation failed' },
+      { status: 500 },
+    );
+  } finally {
+    if (generationLock) {
+      await releaseLock(generationLock.key, generationLock.token);
+    }
   }
 }
 
 export async function GET() {
   return NextResponse.json({
     message: 'AI Video Generation API',
-    usage: {
-      method: 'POST',
-      body: {
-        prompt: 'string (required)',
-        site_id: 'string (required) - UUID of the site',
-        provider: "'gemini' (default)",
-        duration_seconds: 'number (optional, max 60)',
-        aspect_ratio: "'1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '3:2' | '2:3'",
-        reference_images: 'string[] (optional, max 3)',
-        quality: "'preview' | 'standard' | 'pro'",
-      },
-    },
     providers: ['gemini'],
-    env: {
-      required: ['GEMINI_API_KEY or GOOGLE_CLOUD_API_KEY'],
-      optional: ['GOOGLE_CLOUD_VIDEOS_MODEL (default: veo-3.1-generate-preview)'],
-    },
-    notes: {
-      generation: 'Video generation is asynchronous. The API polls Gemini every 10 seconds (max 10 minutes).',
-      storage: `Videos are uploaded to Supabase Storage bucket "${VIDEO_BUCKET}" and asset records are created automatically.`,
-      references: `You can supply up to ${MAX_REFERENCE_IMAGES} reference images via publicly accessible URLs.`,
-    },
+    duration_seconds: '1-60, normalized to a supported 4, 6, or 8 seconds',
   });
 }
-
-
-

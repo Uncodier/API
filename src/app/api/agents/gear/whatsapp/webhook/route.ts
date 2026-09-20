@@ -9,42 +9,29 @@ import { normalizePhoneForSearch, normalizePhoneForStorage } from '@/lib/utils/p
 import { handleTwilioMediaAndCreateTask, TwilioMediaDownload } from '@/lib/services/twilio/TwilioMediaTaskService';
 import { replaceTwilioMediaUrls } from '@/lib/services/twilio/fetchTwilioMedia';
 import { fetchAudioBuffer, transcribeAudioBuffer } from '@/lib/services/ai/transcribeAudio';
+import {
+  authenticateGearWebhook,
+  finishGearWebhookClaim,
+  type GearWebhookClaim,
+} from './twilio-webhook-auth';
 
-// Helper para extraer número
 function extractPhoneNumber(twilioPhoneFormat: string): string {
   return twilioPhoneFormat.replace('whatsapp:', '');
 }
 
-// GET /api/agents/gear/whatsapp/webhook
 export async function GET() {
   // Twilio no requiere un challenge riguroso como Meta, pero responde con 200
   return new NextResponse('Gear Agent Twilio Webhook is running', { status: 200 });
 }
 
-// POST /api/agents/gear/whatsapp/webhook
-// Handle incoming Twilio messages
 export async function POST(request: NextRequest) {
+  let webhookClaim: GearWebhookClaim | null = null;
   try {
     console.log('📩 Webhook de Twilio WhatsApp (Gear) recibido');
-    
-    const contentType = request.headers.get('content-type') || '';
-    let webhookData: any;
-    
-    if (contentType.includes('application/x-www-form-urlencoded')) {
-      const formData = await request.formData();
-      webhookData = Object.fromEntries(formData.entries());
-    } else if (contentType.includes('application/json')) {
-      webhookData = await request.json();
-    } else {
-      console.error('❌ Tipo de contenido no soportado:', contentType);
-      return NextResponse.json({ success: false, error: 'Unsupported content type' }, { status: 400 });
-    }
-    
-    // Validar payload de Twilio
-    if (!webhookData.From || !webhookData.To) {
-      console.error('❌ Datos incompletos en el webhook de Twilio');
-      return NextResponse.json({ success: false, error: 'Missing required webhook data' }, { status: 400 });
-    }
+    const authentication = await authenticateGearWebhook(request);
+    if (!authentication.ok) return authentication.response;
+    const { webhookData } = authentication;
+    webhookClaim = authentication.claim;
     
     const rawPhoneNumber = extractPhoneNumber(webhookData.From);
     const phoneNumber = normalizePhoneForStorage(rawPhoneNumber) || rawPhoneNumber;
@@ -274,7 +261,7 @@ export async function POST(request: NextRequest) {
     
     if (!siteId) {
       console.error('❌ No se pudo encontrar un site_id válido para inicializar el agente');
-      return NextResponse.json({ success: true }); // Twilio siempre espera 200
+      throw new Error('No site is available for the Gear WhatsApp message');
     }
     
     // Si tenemos systemPromptOverride y no incluimos esta advertencia, se la agregamos al final para mayor seguridad:
@@ -301,6 +288,7 @@ export async function POST(request: NextRequest) {
         profileName // Pasamos el profileName por si lo necesita para crear el lead
       }]);
       console.log('✅ Unregistered/Lobby Workflow iniciado');
+      await finishGearWebhookClaim(webhookClaim, 'completed');
       return NextResponse.json({ success: true }, { status: 200 });
     }
 
@@ -407,7 +395,7 @@ export async function POST(request: NextRequest) {
     
     if (!instanceId) {
       console.error('❌ No se pudo obtener/crear una instancia');
-      return NextResponse.json({ success: true });
+      throw new Error('No instance is available for the Gear WhatsApp message');
     }
 
     // 4.1 PROCESAR MEDIOS (IMÁGENES, ARCHIVOS) SI LOS HAY
@@ -483,8 +471,18 @@ export async function POST(request: NextRequest) {
     }]);
     
     console.log('✅ Workflow iniciado');
+    await finishGearWebhookClaim(webhookClaim, 'completed');
     return NextResponse.json({ success: true }, { status: 200 });
   } catch (error: any) {
+    if (webhookClaim) {
+      await finishGearWebhookClaim(
+        webhookClaim,
+        'failed',
+        error instanceof Error ? error.message : String(error),
+      ).catch((finishError) => {
+        console.error('❌ Failed to record Gear WhatsApp webhook failure:', finishError);
+      });
+    }
     console.error('❌ Error al procesar webhook de Twilio WhatsApp (Gear):', error);
     
     if (error?.name === 'InsufficientCreditsError' || error?.message?.includes('Insufficient credits')) {

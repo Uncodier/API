@@ -366,10 +366,15 @@ export async function runSingleTurnGate(
     }
   } else {
     console.log(`[SingleTurn] Gate FAILED for step ${step.order}`);
+    const missingPrecondition =
+      gateRes.failureKind === 'missing_precondition';
     const failureMutation = await updatePlanStepStatusAtomically({
       planId: plan.id,
       stepId: step.id,
-      status: gateRes.remediationScheduled ? 'in_progress' : 'failed',
+      status:
+        gateRes.remediationScheduled || missingPrecondition
+          ? 'in_progress'
+          : 'failed',
       errorMessage: gateErrorExcerpt,
       expectedGeneration: infrastructureGeneration,
     });
@@ -385,7 +390,7 @@ export async function runSingleTurnGate(
     }
     infrastructureGeneration =
       failureMutation.generation ?? infrastructureGeneration;
-    if (!gateRes.remediationScheduled) {
+    if (!gateRes.remediationScheduled && !missingPrecondition) {
       persistedTerminalStatus = 'failed';
     }
     await logCronInfrastructureEvent(audit, {
@@ -409,6 +414,7 @@ export async function runSingleTurnGate(
           categories: gateFeedback.categories,
           flow: requirementType,
           signals: gateRes.signals,
+          failureKind: gateRes.failureKind,
           skipAttemptBump: gateRes.skipAttemptBump,
           remediationScheduled: gateRes.remediationScheduled,
           logPrefix: '[SingleTurn]',
@@ -432,17 +438,23 @@ export async function runSingleTurnGate(
     backgroundTask,
     remediationScheduled: gateRes.remediationScheduled,
     infrastructureGeneration,
+    ...(gateRes.ok ? {} : { gateFailureKind: gateRes.failureKind }),
     ...(persistedTerminalStatus ? { persistedTerminalStatus } : {}),
   };
 }
 
 function stepContractAcceptance(step: any): string[] {
-  return Array.from(new Set([
-    step.instructions,
-    step.expected_output,
+  const explicitCriteria = [
     ...(Array.isArray(step.success_criteria) ? step.success_criteria : []),
     ...(Array.isArray(step.validation_rules) ? step.validation_rules : []),
   ].filter((value): value is string =>
     typeof value === 'string' && value.trim().length > 0,
-  )));
+  );
+  const fallback = typeof step.expected_output === 'string' &&
+    step.expected_output.trim().length > 0
+    ? [step.expected_output]
+    : [];
+  return Array.from(new Set(
+    explicitCriteria.length > 0 ? explicitCriteria : fallback,
+  ));
 }

@@ -2,6 +2,7 @@ import { supabaseAdmin } from "@/lib/database/supabase-server";
 import { encryptToken } from "@/lib/utils/token-encryption";
 import { WorkflowService } from "@/lib/services/workflow-service";
 import { ensureProjectWebhook, ensureSenderWebhook, mapInvitationStatus } from "./client";
+import { getCachedJson, setCachedJson, sha256 } from "@/lib/security/upstash-rest";
 
 async function findSettingsForDomain(domainId: string) {
   const { data, error } = await supabaseAdmin
@@ -13,7 +14,7 @@ async function findSettingsForDomain(domainId: string) {
 
   if (error) {
     console.error("[Zavu Webhook] DB error finding domain:", error);
-    return [];
+    throw error;
   }
   return data || [];
 }
@@ -28,12 +29,16 @@ async function findSettingsForInvitation(invitationId: string) {
 
   if (error) {
     console.error("[Zavu Webhook] DB error finding invitation:", error);
-    return [];
+    throw error;
   }
   return data || [];
 }
 
 export async function findSettingsForSender(senderId: string) {
+  if (!/^[a-zA-Z0-9_-]{1,128}$/.test(senderId)) return [];
+  const cacheKey = `zavu:sender-settings:${await sha256(senderId)}`;
+  const cached = await getCachedJson<any[]>(cacheKey);
+  if (cached) return cached;
   const { data, error } = await supabaseAdmin
     .from("settings")
     .select("id, site_id, channels")
@@ -43,13 +48,22 @@ export async function findSettingsForSender(senderId: string) {
 
   if (error) {
     console.error("[Zavu Webhook] DB error finding sender:", error);
-    return [];
+    throw error;
   }
-  return data || [];
+  const settings = data || [];
+  await setCachedJson(cacheKey, settings, settings.length ? 300 : 30);
+  return settings;
 }
 
 async function getUserIdFromSite(siteId: string): Promise<string | undefined> {
-  const { data } = await supabaseAdmin.from("sites").select("user_id").eq("id", siteId).maybeSingle();
+  const { data, error } = await supabaseAdmin
+    .from("sites")
+    .select("user_id")
+    .eq("id", siteId)
+    .maybeSingle();
+  if (error) {
+    throw error;
+  }
   return data?.user_id || undefined;
 }
 
@@ -125,6 +139,9 @@ export async function handleInboundMessage(event: any) {
     console.log(`[Zavu Webhook] customerSupport workflow started: ${workflowResult.workflowId}`);
   } else {
     console.error("[Zavu Webhook] customerSupport workflow failed:", workflowResult.error);
+    throw new Error(
+      `Zavu customer support workflow failed: ${String(workflowResult.error)}`,
+    );
   }
 }
 
@@ -174,6 +191,7 @@ export async function handleDomainStatusChanged(data: any, eventType: string) {
 
     if (updateError) {
       console.error("[Zavu Webhook] Error updating domain status:", updateError);
+      throw updateError;
     }
   }
 }
@@ -228,7 +246,7 @@ export async function handleInvitationStatusChanged(data: any) {
 
   if (updateError) {
     console.error("[Zavu Webhook] Error updating connection status:", updateError);
-    return;
+    throw updateError;
   }
 
   if (currentStatus === "completed" && senderId) {
@@ -238,7 +256,7 @@ export async function handleInvitationStatusChanged(data: any) {
       if (webhook) {
         const channelConn = connections.find((c: any) => c.zavu_sender_id === senderId || c.zavu_invitation_id === invitationId);
         if (channelConn) {
-          await supabaseAdmin
+          const { error: webhookUpdateError } = await supabaseAdmin
             .from("settings")
             .update({
               channels: {
@@ -258,10 +276,14 @@ export async function handleInvitationStatusChanged(data: any) {
               },
             })
             .eq("site_id", site.site_id);
+          if (webhookUpdateError) {
+            throw webhookUpdateError;
+          }
         }
       }
     } catch (senderError) {
       console.error(`[Zavu Webhook] Failed to configure webhook for sender ${senderId}:`, senderError);
+      throw senderError;
     }
 
     try {

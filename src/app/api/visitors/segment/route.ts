@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { supabaseAdmin } from '@/lib/database/supabase-client'
+import { authorizeVisitorSession } from '@/lib/security/authorize-visitor-session'
 
 /**
  * API DE SEGMENTACIÓN DE VISITANTES Y CAMPAÑAS
@@ -18,19 +19,19 @@ import { supabaseAdmin } from '@/lib/database/supabase-client'
 
 // Esquema para validar el cuerpo de la solicitud
 const segmentSchema = z.object({
-  segment_id: z.string().optional(),
-  site_id: z.string(),
+  segment_id: z.string().uuid().optional(),
+  site_id: z.string().uuid(),
   url: z.string().url(),
-  visitor_id: z.string(),
-  lead_id: z.string().optional(),
+  visitor_id: z.string().uuid(),
+  lead_id: z.string().uuid().optional(),
   // Parámetros de campaña - puede ser c, campaign o campaign_id
-  c: z.string().optional(),
-  campaign: z.string().optional(),
-  campaign_id: z.string().optional(),
+  c: z.string().uuid().optional(),
+  campaign: z.string().uuid().optional(),
+  campaign_id: z.string().uuid().optional(),
   // Parámetros de experimento - puede ser e, experiment o experiment_id
-  e: z.string().optional(),
-  experiment: z.string().optional(),
-  experiment_id: z.string().optional()
+  e: z.string().uuid().optional(),
+  experiment: z.string().uuid().optional(),
+  experiment_id: z.string().uuid().optional()
 });
 
 export async function POST(request: NextRequest) {
@@ -43,6 +44,21 @@ export async function POST(request: NextRequest) {
     
     const validatedData = segmentSchema.parse(body);
     console.log("[POST /api/visitors/segment] Validated data:", validatedData);
+    if (!await authorizeVisitorSession(request, {
+      siteId: validatedData.site_id,
+      visitorId: validatedData.visitor_id,
+    })) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'forbidden',
+            message: 'Site access is required',
+          },
+        },
+        { status: 403 },
+      );
+    }
 
     // Check if site exists
     console.log("[POST /api/visitors/segment] Checking site:", validatedData.site_id);
@@ -69,8 +85,27 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check if visitor exists
+    // Establish visitor tenancy through visitor_sessions; visitors has no site_id.
     console.log("[POST /api/visitors/segment] Checking visitor:", validatedData.visitor_id);
+    const { data: visitorSession, error: visitorSessionError } = await supabaseAdmin
+      .from('visitor_sessions')
+      .select('id')
+      .eq('site_id', validatedData.site_id)
+      .eq('visitor_id', validatedData.visitor_id)
+      .limit(1)
+      .maybeSingle();
+    if (visitorSessionError || !visitorSession) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'visitor_not_found',
+            message: `Visitor with ID ${validatedData.visitor_id} was not found for this site`,
+          },
+        },
+        { status: 400 },
+      );
+    }
     const { data: visitor, error: visitorError } = await supabaseAdmin
       .from('visitors')
       .select('*')
@@ -114,6 +149,7 @@ export async function POST(request: NextRequest) {
         .from('segments')
         .select('*')
         .eq('id', validatedData.segment_id)
+        .eq('site_id', validatedData.site_id)
         .eq('is_active', true)
         .single();
 
@@ -299,6 +335,7 @@ export async function POST(request: NextRequest) {
           .from('leads')
           .select('id')
           .eq('id', validatedData.lead_id)
+          .eq('site_id', validatedData.site_id)
           .maybeSingle();
 
         console.log("[POST /api/visitors/segment] Lead existence check result:", {
@@ -330,6 +367,7 @@ export async function POST(request: NextRequest) {
             .from('leads')
             .update(leadUpdateData)
             .eq('id', validatedData.lead_id)
+            .eq('site_id', validatedData.site_id)
             .select()
             .single();
 

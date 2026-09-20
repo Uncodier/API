@@ -1,5 +1,9 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { computeOverallSla, computeSlaBySystem } from '@/lib/status/compute-sla';
+import {
+  computeOverallSla,
+  computeSlaBySystem,
+  type SlaWindow,
+} from '@/lib/status/compute-sla';
 import type { PublicStatusSummary } from '@/lib/status/get-public-summary';
 import { publishSystemStatus } from '@/lib/status/publish-status';
 import { SYSTEM_LABELS } from '@/lib/status/system-labels';
@@ -14,7 +18,7 @@ function toPublicSummary(
   trigger: ProbeTrigger,
   overallStatus: 'healthy' | 'degraded' | 'down',
   systems: SystemHealthResponse[],
-  slaSnapshot: Record<string, { uptime24h: number; uptime7d: number; uptime30d: number }>,
+  slaSnapshot: Record<string, SlaWindow>,
 ): PublicStatusSummary {
   const overallMap = {
     healthy: 'operational',

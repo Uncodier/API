@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { POST } from "@/app/api/integrations/zavu/webhook/route";
 import * as zavuService from "@/lib/services/zavu";
 import * as webhookHandlers from "@/lib/services/zavu/webhook-handlers";
+import * as webhookClaims from "@/lib/services/provider-webhook-claims";
 
 // Mock the imports
 jest.mock("@/lib/services/zavu", () => ({
@@ -13,6 +14,11 @@ jest.mock("@/lib/services/zavu/webhook-handlers", () => ({
   handleInboundMessage: jest.fn().mockResolvedValue(undefined),
   handleInvitationStatusChanged: jest.fn().mockResolvedValue(undefined),
   handleDomainStatusChanged: jest.fn().mockResolvedValue(undefined),
+}));
+
+jest.mock("@/lib/services/provider-webhook-claims", () => ({
+  claimProviderWebhookEvent: jest.fn(),
+  finishProviderWebhookEvent: jest.fn(),
 }));
 
 // Mock process.env
@@ -28,18 +34,16 @@ afterAll(() => {
   process.env = originalEnv;
 });
 
-// Mock Next.js after() to immediately execute
-jest.mock("next/server", () => {
-  const original = jest.requireActual("next/server");
-  return {
-    ...original,
-    after: jest.fn((cb) => cb()),
-  };
-});
-
 describe("Zavu Webhook Dispatch", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    (webhookClaims.claimProviderWebhookEvent as jest.Mock).mockResolvedValue({
+      state: "claimed",
+      token: "claim-token",
+      expiresAt: "2026-09-20T08:00:00.000Z",
+    });
+    (webhookClaims.finishProviderWebhookEvent as jest.Mock)
+      .mockResolvedValue(true);
   });
 
   const createRequest = (body: any) => {
@@ -70,6 +74,12 @@ describe("Zavu Webhook Dispatch", () => {
     expect(webhookHandlers.handleInboundMessage).toHaveBeenCalledTimes(1);
     expect(webhookHandlers.handleInboundMessage).toHaveBeenCalledWith(
       expect.objectContaining({ type: "message.inbound" })
+    );
+    expect(webhookClaims.finishProviderWebhookEvent).toHaveBeenCalledWith(
+      "zavu",
+      expect.any(String),
+      "claim-token",
+      "completed",
     );
   });
 
@@ -139,5 +149,31 @@ describe("Zavu Webhook Dispatch", () => {
 
     expect(res.status).toBe(200);
     expect(webhookHandlers.handleInboundMessage).not.toHaveBeenCalled();
+  });
+
+  it("records a failed claim and requests a retry on processing errors", async () => {
+    (webhookHandlers.handleInboundMessage as jest.Mock)
+      .mockRejectedValueOnce(new Error("database unavailable"));
+    const req = createRequest({
+      id: "evt_failed",
+      type: "message.inbound",
+      senderId: "snd_123",
+      data: {
+        channel: "telegram",
+        from: "user123",
+        text: "hello",
+      },
+    });
+
+    const res = await POST(req);
+
+    expect(res.status).toBe(500);
+    expect(webhookClaims.finishProviderWebhookEvent).toHaveBeenCalledWith(
+      "zavu",
+      "evt_failed",
+      "claim-token",
+      "failed",
+      "database unavailable",
+    );
   });
 });

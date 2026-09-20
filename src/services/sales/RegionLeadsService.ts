@@ -1,10 +1,6 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { v4 as uuidv4 } from 'uuid';
-import { 
-  Client, 
-  Language,
-  PlaceType1
-} from '@googlemaps/google-maps-services-js';
+import axios from 'axios';
 
 // Interfaces para la búsqueda de negocios
 export interface Business {
@@ -45,8 +41,34 @@ export interface SearchParams {
   limit?: number;
 }
 
-// Inicializa el cliente de Google Maps Places API
-const googleMapsClient = new Client({});
+const googleMapsClient = axios.create({
+  baseURL: 'https://maps.googleapis.com/maps/api',
+});
+
+interface GooglePlaceResult {
+  place_id?: string;
+  name?: string;
+  formatted_address?: string;
+  vicinity?: string;
+  formatted_phone_number?: string;
+  international_phone_number?: string;
+  website?: string;
+  rating?: number;
+  types?: string[];
+  geometry?: {
+    location?: {
+      lat?: number;
+      lng?: number;
+    };
+  };
+  opening_hours?: {
+    open_now?: boolean;
+  };
+}
+
+interface GooglePlacesResponse {
+  results: GooglePlaceResult[];
+}
 
 /**
  * Servicio para buscar negocios en una región y generar leads
@@ -112,7 +134,7 @@ export class RegionLeadsService {
         const searchQuery = `${query} in ${region}`;
         console.log(`🎯 [FINAL SEARCH PATH] Google Maps Text Search: https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(searchQuery)}&key=[API_KEY_HIDDEN]`);
         
-        const searchResponse = await googleMapsClient.textSearch({
+        const searchResponse = await googleMapsClient.get<GooglePlacesResponse>('/place/textsearch/json', {
           params: {
             query: searchQuery,
             key: apiKey,
@@ -137,14 +159,15 @@ export class RegionLeadsService {
           // Para nearby search necesitamos coordenadas, así que primero geocodificamos la región
           console.log(`🎯 [FINAL SEARCH PATH] Google Maps Geocoding: https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(region)}&key=[API_KEY_HIDDEN]`);
           
-          const geocodeResponse = await googleMapsClient.geocode({
+          const geocodeResponse = await googleMapsClient.get<GooglePlacesResponse>('/geocode/json', {
             params: {
               address: region,
               key: apiKey,
             }
           });
           
-          if (geocodeResponse.status !== 200 || !geocodeResponse.data.results[0]) {
+          const geocodeResult = geocodeResponse.data.results[0];
+          if (geocodeResponse.status !== 200 || !geocodeResult) {
             console.error('Error geocoding region:', region);
             return {
               success: false,
@@ -152,15 +175,25 @@ export class RegionLeadsService {
             };
           }
           
-          const location = geocodeResponse.data.results[0].geometry.location;
+          const location = geocodeResult.geometry?.location;
+          if (
+            typeof location?.lat !== 'number' ||
+            typeof location.lng !== 'number'
+          ) {
+            console.error('Google geocoding response did not include coordinates:', region);
+            return {
+              success: false,
+              error: 'Could not find coordinates for the specified region'
+            };
+          }
           
           // Ahora hacemos la búsqueda cercana
           const nearbyKeyword = keywords.join(' ') || undefined;
           console.log(`🎯 [FINAL SEARCH PATH] Google Maps Nearby Search: https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${location.lat},${location.lng}&radius=50000&keyword=${encodeURIComponent(nearbyKeyword || '')}&key=[API_KEY_HIDDEN]`);
           
-          const nearbyResponse = await googleMapsClient.placesNearby({
+          const nearbyResponse = await googleMapsClient.get<GooglePlacesResponse>('/place/nearbysearch/json', {
             params: {
-              location: location,
+              location: `${location.lat},${location.lng}`,
               radius: 50000, // 50km radio
               keyword: nearbyKeyword,
               key: apiKey,
@@ -208,7 +241,7 @@ export class RegionLeadsService {
   /**
    * Convierte un lugar de Google a nuestro modelo de negocio
    */
-  private mapGooglePlaceToBusinessModel(place: any): Business {
+  private mapGooglePlaceToBusinessModel(place: GooglePlaceResult): Business {
     return {
       id: place.place_id || `place_${uuidv4().substring(0, 8)}`,
       name: place.name || 'Unknown Business',

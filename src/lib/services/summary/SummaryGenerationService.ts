@@ -81,8 +81,8 @@ export class SummaryGenerationService {
     }
   }
 
-  static async loadSourceText(collection: string, id: string): Promise<string> {
-    return loadSourceText(collection, id);
+  static async loadSourceText(collection: string, id: string, siteId?: string): Promise<string> {
+    return loadSourceText(collection, id, siteId);
   }
 
   /**
@@ -90,7 +90,11 @@ export class SummaryGenerationService {
    */
   static async summarizeSource(params: SummarizeSourceParams): Promise<SummaryResult> {
     try {
-      const text = await loadSourceText(params.collection, params.id);
+      const text = await loadSourceText(
+        params.collection,
+        params.id,
+        params.site_id,
+      );
       return await this.summarize({ text, site_id: params.site_id });
     } catch (error: any) {
       console.error('[SummaryGenerationService] summarizeSource error:', error);

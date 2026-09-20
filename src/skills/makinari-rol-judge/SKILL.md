@@ -16,16 +16,19 @@ been processed. Its verdict drives self-heal and item status transitions.
 
 - Input: `{ item: BacklogItem, evidence: EvidenceRecord, flow }`.
 - Output: `{ verdict: 'approved' | 'rejected' | 'escalate', reason,
-  matched_acceptance[], unmatched_acceptance[] }`.
+  matched_acceptance[], unmatched_acceptance[], failure_kind? }`.
 - Implemented deterministically in
   `src/app/api/cron/shared/archetype-runner.ts:runJudge`.
 
 ## Hard rules
 
-1. **Evidence-or-bust**. The Judge ignores free-text claims. It only
-   approves when each acceptance entry has matching tool-call evidence
-   (typed: build, test, runtime, scenario). The matcher is a 4+-character
-   token AND-match against the haystack (tool names + outputs + signals).
+1. **Typed proof, not tool-call counting**. Match acceptance against the
+   strongest available receipt:
+   - file criteria → a non-empty artifact proof or a present declared touch;
+   - route criteria → a passing exact probe, or the route artifact plus a
+     route-relevant passing test;
+   - behavioral criteria → current passing test/runtime/scenario receipts.
+   Free-text claims alone never prove completion.
 2. **Per-flow guardrails (delegated)**:
    - app/site → build OK + runtime OK + scenarios OK.
    - doc/contract → markdown lint or remark tool-call present.
@@ -34,23 +37,32 @@ been processed. Its verdict drives self-heal and item status transitions.
      probe or test command.
    - automation → at least one runtime invocation (cron / webhook / run).
    - task / makinari → at least one tool-call.
-3. **Escalation**. When `attempts ≥ 3` and acceptance is still unmatched
-   the Judge returns `escalate` instead of `rejected`, so self-heal can
-   downgrade the scope or log assumptions instead of looping.
+3. **Typed failure**. Missing proof is `failure_kind='evidence_gap'`;
+   malformed or narrative-only acceptance is `contract_error`; an observed
+   broken behavior is `product_defect`.
+4. **Attempt accounting**. Evidence and contract gaps do not consume product
+   attempts and cannot independently force `needs_review`. Product defects
+   still use the bounded self-heal policy.
+5. **Step-scoped adjudication**. A no-progress adjudication evaluates only
+   the current step contract. It must not reject the step for acceptance
+   intentionally assigned to later steps.
 
 ## Outputs flow
 
 - `approved` → runner marks the item `done`, pushes a checkpoint commit
   including the updated `evidence/<id>.json`.
-- `rejected` → runner triggers `self-heal`: rotate strategy, downgrade
-  scope, log assumption, or finally `mark_needs_review`.
-- `escalate` → runner skips retry, advances `self-heal` straight to
-  `log_assumption_and_continue` or `mark_needs_review`.
+- `rejected/escalate` + `product_defect` → runner triggers bounded
+  self-heal and may eventually mark the item `needs_review`.
+- `rejected/escalate` + `evidence_gap` → collect a current receipt without
+  charging the product attempt budget.
+- `rejected/escalate` + `contract_error` → repair the acceptance contract
+  without charging the product attempt budget.
 
 ## Anti-patterns
 
-- LLM-tone subjective approval. The Judge is rule-based; resist the urge to
-  soften it.
+- Approving because a tool was called. The receipt must prove the criterion.
+- Rejecting because a receipt is represented as an artifact or relevant test
+  instead of a literal route probe.
 - Approving with `unmatched_acceptance.length > 0`. Always `rejected` or
   `escalate`.
 - Overriding flow rules per item. File a per-flow Judge variant skill (e.g.

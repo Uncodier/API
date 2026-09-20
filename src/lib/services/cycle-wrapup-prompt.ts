@@ -1,6 +1,15 @@
 import type { DigestFileEntry } from '@/lib/services/docs-cycle-digest';
 import { formatDigestForPrompt } from '@/lib/services/docs-cycle-digest';
 import { PLAN_STEP_MAX_RETRIES } from '@/lib/helpers/plan-status';
+import {
+  isBacklogItemRunnable,
+  requiresUserAction,
+} from './requirement-backlog-blockers';
+import type {
+  BacklogBlocker,
+  BacklogItemStatus,
+  BacklogItemTier,
+} from './requirement-backlog-types';
 
 export interface CycleWrapUpPromptInput {
   title: string;
@@ -45,11 +54,12 @@ export function countPendingPlanSteps(steps: Array<RunnablePlanStep | null> | nu
 
 type FeedbackBacklogItem = {
   id?: string;
-  status?: string;
+  status?: BacklogItemStatus;
   attempts?: number;
-  tier?: 'core' | 'ornamental';
+  tier?: BacklogItemTier;
   phase_id?: string;
   depends_on?: string[];
+  blocked_by?: BacklogBlocker[];
 };
 
 export function hasRunnableBacklogWork(
@@ -62,19 +72,19 @@ export function hasRunnableBacklogWork(
       .map((item) => item.id)
       .filter((id): id is string => !!id),
   );
-  return items.some((item) => {
-    if (item.status !== 'pending' && item.status !== 'in_progress') {
-      return false;
-    }
-    const maxAttempts =
-      (item.tier ?? 'core') === 'ornamental'
-        ? limits.ornamental
-        : limits.core;
-    if ((item.attempts || 0) >= maxAttempts) return false;
-    return (item.depends_on || []).every((dependencyId) =>
-      completedIds.has(dependencyId),
-    );
-  });
+  return items.some((item) =>
+    isBacklogItemRunnable(
+      {
+        status: item.status ?? 'pending',
+        attempts: item.attempts ?? 0,
+        tier: item.tier,
+        depends_on: item.depends_on,
+        blocked_by: item.blocked_by,
+      },
+      completedIds,
+      limits,
+    ),
+  );
 }
 
 export function activeBacklogItemIdsFromPlanSteps(
@@ -111,12 +121,32 @@ export function feedbackRequiredBacklogItems(
     : scope?.currentPhaseId
       ? items.filter((item) => item.phase_id === scope.currentPhaseId)
       : items;
+  const priorUserBlockedItems = items.filter(
+    (item) =>
+      (
+        requiresUserAction(item) ||
+        (item.status === 'needs_review' && !item.blocked_by?.length)
+      ) &&
+      !scopedItems.some((scoped) => scoped.id === item.id),
+  );
 
   const isRunnable = (item: FeedbackBacklogItem) => {
-    if (item.status !== 'pending' && item.status !== 'in_progress') return false;
-    const maxAttempts =
-      (item.tier ?? 'core') === 'ornamental' ? limits.ornamental : limits.core;
-    return (item.attempts || 0) < maxAttempts;
+    return isBacklogItemRunnable(
+      {
+        status: item.status ?? 'pending',
+        attempts: item.attempts ?? 0,
+        tier: item.tier,
+        depends_on: item.depends_on,
+        blocked_by: item.blocked_by,
+      },
+      new Set(
+        items
+          .filter((candidate) => candidate.status === 'done')
+          .map((candidate) => candidate.id)
+          .filter((id): id is string => !!id),
+      ),
+      limits,
+    );
   };
 
   // A review item is phase-terminal and must not pause unrelated executable
@@ -124,13 +154,16 @@ export function feedbackRequiredBacklogItems(
   // item left.
   if (scopedItems.some(isRunnable)) return [];
 
-  return scopedItems.filter((item) => {
-    if (item.status === 'needs_review') return true;
+  const feedbackItems = scopedItems.filter((item) => {
+    if (requiresUserAction(item)) return true;
+    if (item.status === 'needs_review' && !item.blocked_by?.length) return true;
     if (item.status !== 'pending' && item.status !== 'in_progress') return false;
+    if (item.blocked_by?.length) return false;
     const maxAttempts =
       (item.tier ?? 'core') === 'ornamental' ? limits.ornamental : limits.core;
     return (item.attempts || 0) >= maxAttempts;
   });
+  return [...priorUserBlockedItems, ...feedbackItems];
 }
 
 /** Routine cycles may skip queued work; terminal reporting can explicitly override that suppression. */

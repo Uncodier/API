@@ -38,13 +38,13 @@ export async function buildPreviousWorkContext(
     }
     if (!latestStatus.preview_url) {
       blockers.push(
-        'No preview URL available yet. Ensure code changes are meaningful so the deployment works.',
+        'DELIVERY CHECK PENDING: No preview URL is available. This blocks only deployment/browser validation; continue any source, test, or documentation work that does not require the preview.',
       );
     }
   }
 
   const blockerContext = blockers.length
-    ? `\n⚠️ BLOCKERS FROM LAST CYCLE (MUST ADDRESS FIRST):\n${blockers.map((blocker) => `- ${blocker}`).join('\n')}\n`
+    ? `\n⚠️ SCOPED ISSUES FROM LAST CYCLE:\n${blockers.map((blocker) => `- ${blocker}`).join('\n')}\n`
     : '';
   const historyContext = statuses?.length || plans?.length
     ? `\nPREVIOUS WORK:\n${statuses?.length ? `- Latest stage: ${latestStatus?.stage} — ${latestStatus?.message || 'no message'}` : ''}\n${plans?.length ? `- Recent plans: ${plans.map((plan: any) => `${plan.title} (${plan.status})`).join(', ')}` : ''}\n`

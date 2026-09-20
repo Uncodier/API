@@ -39,6 +39,13 @@ import type {
   ProbeObservation,
 } from '../step-probe-policy';
 
+export type FlowGateFailureKind =
+  | 'product_defect'
+  | 'infrastructure_unavailable'
+  | 'missing_precondition'
+  | 'evidence_gap'
+  | 'contract_error';
+
 /** Extras the heavy `app`/`site` gate needs (build + runtime + deploy + origin push). */
 export interface AppGateContext {
   planTitle: string;
@@ -81,6 +88,7 @@ export interface FlowGateSignal {
   ok: boolean;
   detail?: string;
   disposition?: ProbeDisposition;
+  failureKind?: FlowGateFailureKind;
 }
 
 /** Rich signals the app/site gate returns (build+runtime+visual+deploy+origin). */
@@ -112,6 +120,7 @@ export interface VercelDeployInfo {
 export interface FlowGateResult {
   ok: boolean;
   disposition?: 'pass' | 'hard_fail' | 'unknown' | 'advisory';
+  failureKind?: FlowGateFailureKind;
   flow: RequirementKind;
   signals: FlowGateSignal[];
   reason?: string;

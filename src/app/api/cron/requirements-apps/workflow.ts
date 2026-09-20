@@ -24,7 +24,11 @@ import { applyDatabaseMigrationsStep } from '../shared/step-db-migrations';
 import { bootstrapRequirementSpecStep } from '../shared/bootstrap-spec-step';
 import { provisionTrackingScriptStep } from '../shared/tracking-script-step';
 import { ensureSourceArchiveStep } from '../shared/ensure-source-archive-step';
-import { classifyRequirementType, getFlow } from '@/lib/services/requirement-flows';
+import {
+  classifyRequirementType,
+  getFlow,
+  productAttemptLimits,
+} from '@/lib/services/requirement-flows';
 import {
   activeBacklogItemIdsFromPlanSteps,
   countPendingPlanSteps,
@@ -38,13 +42,15 @@ import {
   logCronInfrastructureEventStep,
   recordStepInfraTransientStep,
   clearStepInfrastructureStateStep,
-  blockRequirementForInfrastructureCircuitStep,
   blockRequirementForCronInfrastructureCyclesStep,
-  blockRequirementForProductNoProgressStep,
   requestNoProgressStepAdjudicationStep,
   selectPlanStepsForExecution,
   shouldDeferNoProgressBlock,
 } from '../shared/cron-execute-steps-phase';
+import {
+  scopeInfrastructureCircuitStep,
+  scopeProductNoProgressCircuitStep,
+} from '../shared/cron-blocker-scope-steps';
 import { executeSingleTurnStep, type SingleTurnResult } from '../shared/single-turn-executor';
 import { runGateStep } from '../shared/gate-step-executor';
 import { runOrchestratorStep } from '../shared/cron-orchestrator-step';
@@ -72,7 +78,11 @@ import {
   DEPLOYMENT_INFRASTRUCTURE_PROVENANCE,
 } from '@/lib/services/cron-infrastructure-state';
 import type { GitRepoKind } from '../shared/cron-commit-helpers';
-import { finalizePlanCycleOutcome } from '../shared/plan-cycle-outcome';
+import {
+  finalizePlanCycleOutcome,
+  selectCycleAccountingScope,
+  shouldPersistCycleWorkspace,
+} from '../shared/plan-cycle-outcome';
 import { shouldHoldNoProgressBlock } from '../shared/no-progress-adjudication';
 
 export interface CronAppsWorkflowInput {
@@ -126,15 +136,16 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   let cycleOutcome: CronCycleOutcome = 'idle';
   let preservePausedState = false;
   let hasRunnableBacklog = false;
+  let attemptedPlanId: string | undefined;
+  let attemptedStepId: string | undefined;
+  let progressPlanId: string | undefined;
+  let progressStepId: string | undefined;
   const requirementKind = classifyRequirementType(type);
   const requirementFlow = getFlow(requirementKind);
   const gitRepoKind: GitRepoKind =
     input.gitRepoKind ??
     (requirementKind === 'automation' ? 'automation' : 'applications');
-  const feedbackAttemptLimits = {
-    core: requirementFlow.cost_envelope.max_cycles_per_item,
-    ornamental: parseInt(process.env.CRON_ORNAMENTAL_MAX_ATTEMPTS || '2', 10),
-  };
+  const feedbackAttemptLimits = productAttemptLimits(requirementFlow);
 
   try {
   // Step 0: Check if instance or plan is paused
@@ -190,13 +201,20 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
         wrapUpReason = wrapUpRequiresUserFeedback
           ? 'Infrastructure retry budget exhausted. User or operator intervention is required before execution can resume.'
           : 'Deployment infrastructure retry budget exhausted. Waiting for the correlated deployment recovery signal.';
+        const blockedBacklogItemId =
+          actionableSteps[0]?.metadata?.backlog_item_id ||
+          actionableSteps[0]?.backlog_item_id;
         const blockResult =
-          await blockRequirementForInfrastructureCircuitStep({
+          await scopeInfrastructureCircuitStep({
           requirementId: reqId,
           siteId: site_id,
           instanceId,
           planId: existingPlan.id,
           stepId: actionableSteps[0].id,
+          backlogItemId:
+            typeof blockedBacklogItemId === 'string'
+              ? blockedBacklogItemId
+              : undefined,
           expectedGeneration:
             preflightGate.infrastructureGeneration || 0,
           provenance,
@@ -204,8 +222,14 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
           eventId:
             `${cronLockRunId}:${actionableSteps[0].id}:preflight-circuit`,
           expectedExecutionGeneration: executionGeneration,
+          attemptLimits: feedbackAttemptLimits,
         });
-        if (!blockResult.blocked) {
+        if (blockResult.itemIsolated) {
+          cycleOutcome = 'remediation_handoff';
+          wrapUpReason =
+            'Infrastructure failure was isolated to the current item; independent backlog work remains runnable.';
+          wrapUpRequiresUserFeedback = false;
+        } else if (!blockResult.requirementBlocked) {
           cycleOutcome = 'idle';
           wrapUpReason = null;
           wrapUpRequiresUserFeedback = false;
@@ -228,7 +252,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
         reqId,
         branch: null,
         previewUrl: null,
-        status: preflightGate.reason,
+        status: cycleOutcome,
       };
     }
   }
@@ -540,7 +564,9 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   let pushResult: { branch: string; pushed: boolean; commitCount: number } | null = null;
   let stepsPhase: any = null;
   let infrastructureHalt = false;
+  let persistWorkspaceOnInfrastructureHalt = false;
   let attemptedProductWork = false;
+  let durableProductProgress = false;
   let executionPhaseCompleted = false;
 
   try {
@@ -604,6 +630,8 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
             
             lastTouchedStepId = workingStep.id;
             attemptedProductWork = true;
+            attemptedPlanId = activePlan.id;
+            attemptedStepId = workingStep.id;
             
             const turnRes = await executeSingleTurnStep({
                sandboxId: sandboxId!,
@@ -619,12 +647,20 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
                validateDeployment:
                  requirementFlow.delivery.validate_deployment,
                provisionedEnvKeys,
+               cycleId: cronLockRunId,
                executionEventId:
                  `${cronLockRunId}:${workingStep.id}:turn:${turnCount}`,
                executionGeneration,
             });
             
             if (turnRes.effectiveSandboxId) sandboxId = turnRes.effectiveSandboxId;
+            durableProductProgress =
+              durableProductProgress ||
+              turnRes.durableProductProgress === true;
+            if (turnRes.durableProductProgress === true) {
+              progressPlanId = activePlan.id;
+              progressStepId = workingStep.id;
+            }
             if (typeof turnRes.infrastructureGeneration === 'number') {
               workingStep.infrastructure_generation =
                 turnRes.infrastructureGeneration;
@@ -673,23 +709,50 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
                    wrapUpReason = wrapUpRequiresUserFeedback
                      ? 'Infrastructure retry budget exhausted. User or operator intervention is required before execution can resume.'
                      : 'Deployment infrastructure retry budget exhausted. Waiting for the correlated deployment recovery signal.';
-                   const blockResult =
-                     await blockRequirementForInfrastructureCircuitStep({
-                     requirementId: reqId,
-                     siteId: site_id,
-                     instanceId,
-                     planId: activePlan.id,
-                     stepId: workingStep.id,
-                     expectedGeneration:
-                       infra.generation ??
-                       Number(workingStep.infrastructure_generation || 0),
-                     provenance,
-                     message: wrapUpReason,
-                     eventId:
-                       `${cronLockRunId}:${workingStep.id}:turn:${turnCount}:circuit`,
-                     expectedExecutionGeneration: executionGeneration,
-                   });
-                   if (!blockResult.blocked) {
+                   const blockedBacklogItemId =
+                     workingStep?.metadata?.backlog_item_id ||
+                     workingStep?.backlog_item_id;
+                   const scopedCircuit =
+                     await scopeInfrastructureCircuitStep({
+                       requirementId: reqId,
+                       siteId: site_id,
+                       instanceId,
+                       planId: activePlan.id,
+                       stepId: workingStep.id,
+                       backlogItemId:
+                         typeof blockedBacklogItemId === 'string'
+                           ? blockedBacklogItemId
+                           : undefined,
+                       expectedGeneration:
+                         infra.generation ??
+                         Number(workingStep.infrastructure_generation || 0),
+                       provenance,
+                       message: wrapUpReason,
+                       eventId:
+                         `${cronLockRunId}:${workingStep.id}:turn:${turnCount}:circuit`,
+                       expectedExecutionGeneration: executionGeneration,
+                       retryAfter: infra.retryAt,
+                       attemptLimits: feedbackAttemptLimits,
+                     });
+                   if (scopedCircuit.itemIsolated) {
+                     cycleOutcome = 'remediation_handoff';
+                     wrapUpRequiresUserFeedback = false;
+                     wrapUpReason =
+                       'Infrastructure failure was isolated to the current item; independent backlog work remains runnable.';
+                     await logCronInfrastructureEventStep(cronAudit, {
+                       event: 'cron_infra_item_isolated',
+                       level: 'warn',
+                       message: wrapUpReason,
+                       details: {
+                         plan_id: activePlan.id,
+                         step_id: workingStep.id,
+                         backlog_item_id: blockedBacklogItemId,
+                         affected_item_ids: scopedCircuit.affectedItemIds,
+                       },
+                     });
+                     break outer;
+                   }
+                   if (!scopedCircuit.requirementBlocked) {
                      cycleOutcome = 'idle';
                      wrapUpReason = null;
                      wrapUpRequiresUserFeedback = false;
@@ -772,6 +835,19 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
                );
                break outer;
             }
+            if (turnRes.gateFailureKind === 'missing_precondition') {
+               infrastructureHalt = true;
+               persistWorkspaceOnInfrastructureHalt = true;
+               cycleOutcome = 'infrastructure_wait';
+               wrapUpReason =
+                 turnRes.gateErrorExcerpt ||
+                 'Origin validation is waiting for a required external precondition.';
+               wrapUpRequiresUserFeedback = false;
+               console.warn(
+                 `[CronAppsWorkflow] Step ${workingStep.order} is waiting on an origin precondition.`,
+               );
+               break outer;
+            }
             if (turnRes.sleepRequested && !turnRes.backgroundTask) {
                console.log(`[CronAppsWorkflow] Turn requested sleep for ${turnRes.sleepRequested}s (generic)`);
                await sleep(turnRes.sleepRequested * 1000);
@@ -824,23 +900,50 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
                        wrapUpRequiresUserFeedback = true;
                        wrapUpReason =
                          'Infrastructure retry budget exhausted while monitoring a background command. User or operator intervention is required.';
-                       const blockResult =
-                         await blockRequirementForInfrastructureCircuitStep({
-                         requirementId: reqId,
-                         siteId: site_id,
-                         instanceId,
-                         planId: activePlan.id,
-                         stepId: workingStep.id,
-                         expectedGeneration:
-                           infra.generation ??
-                           Number(workingStep.infrastructure_generation || 0),
-                         provenance: CRON_INFRASTRUCTURE_PROVENANCE,
-                         message: wrapUpReason,
-                         eventId:
-                           `${cronLockRunId}:${workingStep.id}:turn:${turnCount}:background-circuit`,
-                         expectedExecutionGeneration: executionGeneration,
-                       });
-                       if (!blockResult.blocked) {
+                       const blockedBacklogItemId =
+                         workingStep?.metadata?.backlog_item_id ||
+                         workingStep?.backlog_item_id;
+                       const scopedCircuit =
+                         await scopeInfrastructureCircuitStep({
+                           requirementId: reqId,
+                           siteId: site_id,
+                           instanceId,
+                           planId: activePlan.id,
+                           stepId: workingStep.id,
+                           backlogItemId:
+                             typeof blockedBacklogItemId === 'string'
+                               ? blockedBacklogItemId
+                               : undefined,
+                           expectedGeneration:
+                             infra.generation ??
+                             Number(workingStep.infrastructure_generation || 0),
+                           provenance: CRON_INFRASTRUCTURE_PROVENANCE,
+                           message: wrapUpReason,
+                           eventId:
+                             `${cronLockRunId}:${workingStep.id}:turn:${turnCount}:background-circuit`,
+                           expectedExecutionGeneration: executionGeneration,
+                           retryAfter: infra.retryAt,
+                           attemptLimits: feedbackAttemptLimits,
+                         });
+                       if (scopedCircuit.itemIsolated) {
+                         cycleOutcome = 'remediation_handoff';
+                         wrapUpRequiresUserFeedback = false;
+                         wrapUpReason =
+                           'Background infrastructure failure was isolated to the current item; independent backlog work remains runnable.';
+                         await logCronInfrastructureEventStep(cronAudit, {
+                           event: 'cron_infra_item_isolated',
+                           level: 'warn',
+                           message: wrapUpReason,
+                           details: {
+                             plan_id: activePlan.id,
+                             step_id: workingStep.id,
+                             backlog_item_id: blockedBacklogItemId,
+                             affected_item_ids: scopedCircuit.affectedItemIds,
+                           },
+                         });
+                         break outer;
+                       }
+                       if (!scopedCircuit.requirementBlocked) {
                          cycleOutcome = 'idle';
                          wrapUpReason = null;
                          wrapUpRequiresUserFeedback = false;
@@ -866,7 +969,9 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
             if (turnRes.persistedTerminalStatus === 'completed') {
               stepCompleted = true;
               executed++;
-              continue;
+              progressPlanId = activePlan.id;
+              progressStepId = workingStep.id;
+              break outer;
             }
             if (turnRes.persistedTerminalStatus === 'failed') {
               anyStepFailed = true;
@@ -904,7 +1009,11 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
                     Number(workingStep.infrastructure_generation || 0),
                   );
                   stepCompleted = completionMutation.persisted;
-                  if (completionMutation.persisted) executed++;
+                  if (completionMutation.persisted) {
+                    executed++;
+                    progressPlanId = activePlan.id;
+                    progressStepId = workingStep.id;
+                  }
                   if (!completionMutation.persisted) {
                     infrastructureHalt = true;
                     cycleOutcome = 'idle';
@@ -929,6 +1038,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
                   // For now, if the gate fails, we mark the step failed and break to let the next cron orchestrate adaptation
                   break outer;
                }
+               if (stepCompleted) break outer;
             }
          }
          
@@ -975,6 +1085,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
         completedStepsBefore,
         completedStepsAfter,
         attemptedProductWork,
+        durableProductProgress,
         infrastructureHalt,
         currentOutcome: cycleOutcome,
       });
@@ -1030,7 +1141,10 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       }
     }
 
-    if (!infrastructureHalt) {
+    if (shouldPersistCycleWorkspace({
+      infrastructureHalt,
+      persistWorkspaceOnInfrastructureHalt,
+    })) {
       // Save product work even when a product gate failed.
       const commitMsg = anyFail
         ? `Cron cycle complete (with failures): ${title}`
@@ -1049,6 +1163,14 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
         },
       );
       pushResult = pushed;
+      cycleOutcome = finalizePlanCycleOutcome({
+        completedStepsBefore: 0,
+        completedStepsAfter: 0,
+        attemptedProductWork,
+        durableProductProgress,
+        infrastructureHalt,
+        currentOutcome: cycleOutcome,
+      });
       if (pushed?.effectiveSandboxId) {
         sandboxId = pushed.effectiveSandboxId;
       }
@@ -1152,8 +1274,6 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       audit: cronAudit,
     });
     
-    wrapUpRequiresUserFeedback = false;
-    wrapUpReason = null;
     const pendingPlanSteps = countPendingPlanSteps(latestPlanSteps);
     const finalRequirementContext = await getRequirementFullContextStep(
       reqId,
@@ -1348,6 +1468,13 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       }
     }
 
+    const accountingScope = selectCycleAccountingScope({
+      outcome: cycleOutcome,
+      attemptedPlanId,
+      attemptedStepId,
+      progressPlanId,
+      progressStepId,
+    });
     const accounting = await recordCronCycleOutcomeStep({
       requirementId: reqId,
       cycleId: cronLockRunId,
@@ -1355,20 +1482,20 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       outcome: cycleOutcome,
       expectedExecutionGeneration: executionGeneration,
       runnerInstanceId: instanceId,
+      planId: accountingScope.planId,
+      stepId: accountingScope.stepId,
     });
     if (
       accounting.is_latest &&
       accounting.recorded_outcome === 'product_no_progress' &&
       accounting.no_progress_cycles === 2
     ) {
-      const recoveryPlan = await getActiveInstancePlanStep(
-        instanceId,
-        site_id,
-        reqId,
-      );
-      const recoveryStep = selectPlanStepsForExecution(
-        Array.isArray(recoveryPlan?.steps) ? recoveryPlan.steps : [],
-      )[0];
+      const recoveryPlan = attemptedPlanId
+        ? await getInstancePlanByIdStep(attemptedPlanId)
+        : null;
+      const recoveryStep = Array.isArray(recoveryPlan?.steps)
+        ? recoveryPlan.steps.find((step: any) => step.id === attemptedStepId)
+        : undefined;
       if (recoveryPlan && recoveryStep) {
         try {
           const request = await requestNoProgressStepAdjudicationStep({
@@ -1410,17 +1537,19 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     ) {
       // Re-read after accounting to avoid blocking a plan completed by a
       // concurrent assistant or webhook between reconciliation and teardown.
-      const stillActivePlan = await getActiveInstancePlanStep(
-        instanceId,
-        site_id,
-        reqId,
-      );
-      const stillActiveStep = stillActivePlan
-        ? selectPlanStepsForExecution(
-            Array.isArray(stillActivePlan.steps) ? stillActivePlan.steps : [],
-          )[0]
+      const stillActivePlan = attemptedPlanId
+        ? await getInstancePlanByIdStep(attemptedPlanId)
+        : null;
+      const stillActiveStep = Array.isArray(stillActivePlan?.steps)
+        ? stillActivePlan.steps.find((step: any) =>
+            step.id === attemptedStepId &&
+            ['pending', 'in_progress', 'failed'].includes(step.status))
         : undefined;
       if (stillActivePlan && stillActiveStep) {
+        const message =
+          `The plan failed to complete a step after a bounded no-progress adjudication ` +
+          `(${accounting.no_progress_cycles} accepted no-progress cycles since the last completed step). ` +
+          'Circuit breaker triggered to avoid an infinite loop.';
         const adjudication =
           stillActiveStep?.metadata?.no_progress_adjudication;
         const adjudicationState =
@@ -1460,26 +1589,46 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
             );
           }
         }
+        const backlogItemId =
+          stillActiveStep?.metadata?.backlog_item_id ||
+          stillActiveStep?.backlog_item_id;
         if (!blockerDeferred) {
-          const message =
-            `The plan failed to complete a step after a bounded no-progress adjudication ` +
-            `(${accounting.no_progress_cycles} accepted no-progress cycles since the last completed step). ` +
-            'Circuit breaker triggered to avoid an infinite loop.';
-          console.warn(`[CronAppsWorkflow] ${message}`);
-          await blockRequirementForProductNoProgressStep({
-            requirementId: reqId,
-            siteId: site_id,
-            instanceId,
-            planId: stillActivePlan.id,
-            stepId: stillActiveStep.id,
-            expectedStepGeneration: Number(
-              stillActiveStep.infrastructure_generation || 0,
-            ),
-            cycleId: cronLockRunId,
-            minimumFailures: 3,
-            message,
-            expectedExecutionGeneration: executionGeneration,
-          });
+          const scopedCircuit =
+            await scopeProductNoProgressCircuitStep({
+              requirementId: reqId,
+              siteId: site_id,
+              instanceId,
+              planId: stillActivePlan.id,
+              stepId: stillActiveStep.id,
+              backlogItemId:
+                typeof backlogItemId === 'string'
+                  ? backlogItemId
+                  : undefined,
+              expectedStepGeneration: Number(
+                stillActiveStep.infrastructure_generation || 0,
+              ),
+              cycleId: cronLockRunId,
+              minimumFailures: 3,
+              message,
+              expectedExecutionGeneration: executionGeneration,
+              attemptLimits: feedbackAttemptLimits,
+            });
+          if (scopedCircuit.itemIsolated) {
+            await logCronInfrastructureEventStep(cronAudit, {
+              event: 'cron_product_no_progress_item_isolated',
+              level: 'warn',
+              message:
+                `Isolated backlog item ${backlogItemId}; independent work remains runnable.`,
+              details: {
+                plan_id: stillActivePlan.id,
+                step_id: stillActiveStep.id,
+                backlog_item_id: backlogItemId,
+                affected_item_ids: scopedCircuit.affectedItemIds,
+              },
+            });
+          } else if (scopedCircuit.requirementBlocked) {
+            console.warn(`[CronAppsWorkflow] ${message}`);
+          }
         }
       } else {
         console.log(

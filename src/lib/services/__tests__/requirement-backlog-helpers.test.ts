@@ -1,3 +1,4 @@
+import { describe, expect, it } from '@jest/globals';
 import {
   isItemTerminal,
   gatingItems,
@@ -6,6 +7,7 @@ import {
   hasOutstandingWork,
   hasApprovedJudgeEvidence,
   isOrnamentalOnlyOutstanding,
+  pendingInPhase,
   type BacklogItem
 } from '../requirement-backlog';
 
@@ -181,6 +183,46 @@ describe('Requirement Backlog Helpers', () => {
         evidence: { judge_verdict: 'rejected' } as any,
       })).toBe(false);
       expect(hasApprovedJudgeEvidence({ evidence: undefined })).toBe(false);
+    });
+  });
+
+  describe('pendingInPhase', () => {
+    it('returns only items whose dependencies and blockers are clear', () => {
+      const done = createItem('done', 'core', 'done');
+      const runnable = {
+        ...createItem('runnable', 'core', 'pending'),
+        depends_on: ['done'],
+      };
+      const dependencyBlocked = {
+        ...createItem('dependency-blocked', 'core', 'pending'),
+        depends_on: ['unfinished'],
+      };
+      const explicitlyBlocked = {
+        ...createItem('explicitly-blocked', 'core', 'pending'),
+        blocked_by: [{
+          blocker_id: 'preview',
+          category: 'missing_precondition' as const,
+          reason: 'Preview URL unavailable.',
+          resolution_actor: 'platform' as const,
+        }],
+      };
+
+      expect(pendingInPhase({
+        schema_version: 1,
+        items: [
+          done,
+          runnable,
+          dependencyBlocked,
+          explicitlyBlocked,
+          createItem('unfinished', 'core', 'pending'),
+        ],
+        current_phase_id: 'phase1',
+        completion_ratio: 0,
+        cycles_spent_total: 0,
+      }, 'phase1').map((item) => item.id)).toEqual([
+        'runnable',
+        'unfinished',
+      ]);
     });
   });
 });

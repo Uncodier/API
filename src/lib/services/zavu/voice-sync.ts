@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "@/lib/database/supabase-server";
+import { updateAgent } from "./agent-client";
 import { syncCustomerSupportVoiceAgent } from "./voice-agent";
 import { syncVoiceTools } from "./voice-tools";
 
@@ -34,18 +35,48 @@ export async function getConnectedVoiceSenderIds(siteId: string): Promise<string
     .map((connection) => connection.zavu_sender_id);
 }
 
+export async function syncCustomerSupportVoiceAgentWithTools(params: {
+  siteId: string;
+  senderIds: string[];
+  activate?: boolean;
+}) {
+  const synced = await syncCustomerSupportVoiceAgent({
+    siteId: params.siteId,
+    senderIds: params.senderIds,
+    deferActivation: true,
+  });
+  try {
+    await syncVoiceTools({
+      agentId: synced.agent.id,
+      siteId: params.siteId,
+      webhookSecret: synced.webhookSecret,
+    });
+    if (params.activate === false) return synced;
+
+    const agent = await updateAgent(synced.agent.id, {
+      enabled: synced.shouldEnable,
+    });
+    return { ...synced, agent };
+  } catch (error) {
+    try {
+      await updateAgent(synced.agent.id, { enabled: synced.previousEnabled });
+    } catch (rollbackError) {
+      console.error(
+        `[Zavu Voice] Failed to restore agent ${synced.agent.id} after tool synchronization failure:`,
+        rollbackError
+      );
+    }
+    throw error;
+  }
+}
+
 export async function syncConnectedCustomerSupportVoiceAgent(
   siteId: string
 ): Promise<boolean> {
   const senderIds = await getConnectedVoiceSenderIds(siteId);
   if (senderIds.length === 0) return false;
 
-  const synced = await syncCustomerSupportVoiceAgent({ siteId, senderIds });
-  await syncVoiceTools({
-    agentId: synced.agent.id,
-    siteId,
-    webhookSecret: synced.webhookSecret,
-  });
+  await syncCustomerSupportVoiceAgentWithTools({ siteId, senderIds });
   return true;
 }
 

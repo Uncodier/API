@@ -43,10 +43,18 @@ describe('recordCronCycleOutcomeStep', () => {
       outcome: 'progress',
       expectedExecutionGeneration: 3,
       runnerInstanceId: 'instance-1',
+      planId: 'plan-1',
+      stepId: 'step-1',
     })).resolves.toMatchObject({
       accepted: true,
       recorded_outcome: 'progress',
     });
+    expect(mockRecordOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({
+        planId: 'plan-1',
+        stepId: 'step-1',
+      }),
+    );
   });
 
   it('does not swallow accounting persistence failures', async () => {

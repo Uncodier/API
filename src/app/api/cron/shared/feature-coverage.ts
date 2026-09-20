@@ -15,111 +15,49 @@
  */
 
 import type { Sandbox } from '@vercel/sandbox';
-import { SandboxService } from '@/lib/services/sandbox-service';
 import type { BacklogItem, BacklogItemKind } from '@/lib/services/requirement-backlog-types';
 import { routesFromAcceptance, routesFromTouches } from '@/lib/services/requirement-acceptance';
+import {
+  apiFileDeclaresHandlers,
+  findApiFile,
+  findPageFile,
+  globCount,
+  normalizeTouchPath,
+  readArtifactProof,
+  type ArtifactProof,
+  type CoverageProbeOutcome,
+} from './feature-coverage-probes';
 
 export interface FeatureCoverageSignal {
   ok: boolean;
+  evaluable: boolean;
   declared_touches: string[];
   present_touches: string[];
   missing_touches: string[];
+  not_evaluable_touches: string[];
   expected_page_routes: string[];
   expected_api_routes: string[];
   present_page_files: string[];
   present_api_files: string[];
+  not_evaluable_page_routes: string[];
+  not_evaluable_api_routes: string[];
   /**
    * Acceptance anchors that reference a route (e.g. `/api/bookings returns 201`)
    * — used by the judge to cross-check that the item did ship the route it
    * promised, not just "a route".
    */
   acceptance_route_anchors: string[];
+  artifact_proofs: ArtifactProof[];
   kind_requirements: KindRequirementResult[];
+  probe_errors: Array<{ target: string; detail: string }>;
 }
 
 export interface KindRequirementResult {
   kind: BacklogItemKind;
   requirement: string;
   satisfied: boolean;
+  outcome: CoverageProbeOutcome;
   detail?: string;
-}
-
-async function existsInSandbox(sandbox: Sandbox, relPath: string): Promise<boolean> {
-  const wd = SandboxService.WORK_DIR;
-  try {
-    const r = await sandbox.runCommand({
-      cmd: 'sh',
-      args: ['-c', `[ -e "${wd}/${relPath}" ] && echo __OK__ || echo __MISS__`],
-    });
-    const out = (await r.stdout()).toString();
-    return out.trim() === '__OK__';
-  } catch {
-    return false;
-  }
-}
-
-async function globCount(sandbox: Sandbox, pattern: string): Promise<number> {
-  const wd = SandboxService.WORK_DIR;
-  try {
-    const r = await sandbox.runCommand({
-      cmd: 'sh',
-      args: ['-c', `cd "${wd}" && ls -1 ${pattern} 2>/dev/null | wc -l | awk '{print $1}'`],
-    });
-    const out = (await r.stdout()).toString();
-    return Number(out.trim()) || 0;
-  } catch {
-    return 0;
-  }
-}
-
-/**
- * For a page route like `/app/bookings`, check that either:
- *   - src/app/app/bookings/page.tsx exists, OR
- *   - src/app/app/bookings/page.jsx/ts/js exists (Next App Router).
- */
-async function findPageFile(sandbox: Sandbox, route: string): Promise<string | null> {
-  const clean = route.replace(/^\//, '').replace(/\/$/, '');
-  const rel = clean ? `src/app/${clean}/page` : `src/app/page`;
-  const exts = ['tsx', 'jsx', 'ts', 'js'];
-  for (const ext of exts) {
-    if (await existsInSandbox(sandbox, `${rel}.${ext}`)) return `${rel}.${ext}`;
-  }
-  return null;
-}
-
-async function findApiFile(sandbox: Sandbox, route: string): Promise<string | null> {
-  const clean = route.replace(/^\/api\//, '').replace(/\/$/, '');
-  if (!clean) return null;
-  const rel = `src/app/api/${clean}/route`;
-  const exts = ['ts', 'js'];
-  for (const ext of exts) {
-    if (await existsInSandbox(sandbox, `${rel}.${ext}`)) return `${rel}.${ext}`;
-  }
-  return null;
-}
-
-async function apiFileDeclaresHandlers(
-  sandbox: Sandbox,
-  relFile: string,
-  handlers: string[],
-): Promise<{ [k: string]: boolean }> {
-  const wd = SandboxService.WORK_DIR;
-  const out: Record<string, boolean> = Object.fromEntries(handlers.map((h) => [h, false]));
-  try {
-    const r = await sandbox.runCommand({
-      cmd: 'sh',
-      args: ['-c', `cat "${wd}/${relFile}" 2>/dev/null || true`],
-    });
-    const src = (await r.stdout()).toString();
-    for (const h of handlers) {
-      // Accept: `export async function GET` / `export const GET =` / `export { GET }`
-      const re = new RegExp(`export\\s+(async\\s+)?function\\s+${h}\\b|export\\s+(const|let|var)\\s+${h}\\b|export\\s*\\{[^}]*\\b${h}\\b`);
-      out[h] = re.test(src);
-    }
-  } catch {
-    /* leave all false */
-  }
-  return out;
 }
 
 async function evaluateKindRequirements(
@@ -128,6 +66,8 @@ async function evaluateKindRequirements(
   presence: {
     presentPageFiles: string[];
     presentApiFiles: string[];
+    pageProbeUnknown: boolean;
+    apiProbeUnknown: boolean;
     apiTargets: Array<{
       route: string;
       file: string;
@@ -141,10 +81,17 @@ async function evaluateKindRequirements(
 
   switch (item.kind) {
     case 'page': {
+      const outcome: CoverageProbeOutcome =
+        presence.presentPageFiles.length > 0
+          ? 'pass'
+          : presence.pageProbeUnknown
+            ? 'not_evaluable'
+            : 'fail';
       out.push({
         kind: 'page',
         requirement: 'at_least_one_page_file',
-        satisfied: presence.presentPageFiles.length > 0,
+        satisfied: outcome === 'pass',
+        outcome,
         detail: presence.presentPageFiles.join(', ') || 'no matching page.tsx found',
       });
       break;
@@ -152,10 +99,17 @@ async function evaluateKindRequirements(
     case 'crud':
     case 'api': {
       const apis = presence.presentApiFiles;
+      const routeOutcome: CoverageProbeOutcome =
+        apis.length > 0
+          ? 'pass'
+          : presence.apiProbeUnknown
+            ? 'not_evaluable'
+            : 'fail';
       out.push({
         kind: item.kind,
         requirement: 'at_least_one_route_file',
-        satisfied: apis.length > 0,
+        satisfied: routeOutcome === 'pass',
+        outcome: routeOutcome,
         detail: apis.join(', ') || 'no matching src/app/api/*/route.ts found',
       });
       for (const target of presence.apiTargets) {
@@ -170,28 +124,47 @@ async function evaluateKindRequirements(
           handlers,
         );
         for (const handler of handlers) {
+          const outcome: CoverageProbeOutcome =
+            declared.outcome === 'not_evaluable'
+              ? 'not_evaluable'
+              : declared.handlers[handler]
+                ? 'pass'
+                : 'fail';
           out.push({
             kind: item.kind,
             requirement: `${handler} ${target.route} exports_${handler}`,
-            satisfied: !!declared[handler],
-            detail: target.file,
+            satisfied: outcome === 'pass',
+            outcome,
+            detail: declared.detail || target.file,
           });
         }
       }
       break;
     }
     case 'auth': {
-      const loginPresent = await findPageFile(sandbox, '/login');
-      const authApiCount = await globCount(sandbox, 'src/app/api/auth/*/route.ts');
+      const login = await findPageFile(sandbox, '/login');
+      const authApis = await globCount(
+        sandbox,
+        'src/app/api/auth/*/route.ts',
+      );
+      const outcome: CoverageProbeOutcome =
+        !!login.file || authApis.count > 0
+          ? 'pass'
+          : login.outcome === 'not_evaluable' ||
+              authApis.outcome === 'not_evaluable'
+            ? 'not_evaluable'
+            : 'fail';
       out.push({
         kind: 'auth',
         requirement: 'login_page_or_auth_api',
-        satisfied: !!loginPresent || authApiCount > 0,
-        detail: loginPresent
-          ? `page: ${loginPresent}`
-          : authApiCount > 0
-            ? `api: ${authApiCount} auth route handler(s)`
-            : 'no /login page and no src/app/api/auth/**/route.ts',
+        satisfied: outcome === 'pass',
+        outcome,
+        detail: login.file
+          ? `page: ${login.file}`
+          : authApis.count > 0
+            ? `api: ${authApis.count} auth route handler(s)`
+            : login.detail || authApis.detail ||
+              'no /login page and no src/app/api/auth/**/route.ts',
       });
       break;
     }
@@ -200,13 +173,30 @@ async function evaluateKindRequirements(
       // (platform SDK) or a route under /api that ships a server action. We cannot
       // run the integration here, so this is a structural check only; the Judge
       // still demands a curl/fetch tool-call in evidence.
-      const integrationFiles = await globCount(sandbox, 'src/app/api/*/route.ts');
-      const serviceFiles = await globCount(sandbox, 'src/lib/services/*.ts');
+      const integrationFiles = await globCount(
+        sandbox,
+        'src/app/api/*/route.ts',
+      );
+      const serviceFiles = await globCount(
+        sandbox,
+        'src/lib/services/*.ts',
+      );
+      const outcome: CoverageProbeOutcome =
+        integrationFiles.count + serviceFiles.count > 0
+          ? 'pass'
+          : integrationFiles.outcome === 'not_evaluable' ||
+              serviceFiles.outcome === 'not_evaluable'
+            ? 'not_evaluable'
+            : 'fail';
       out.push({
         kind: 'integration',
         requirement: 'server_side_artifact',
-        satisfied: integrationFiles + serviceFiles > 0,
-        detail: `api_routes=${integrationFiles} service_files=${serviceFiles}`,
+        satisfied: outcome === 'pass',
+        outcome,
+        detail:
+          integrationFiles.detail ||
+          serviceFiles.detail ||
+          `api_routes=${integrationFiles.count} service_files=${serviceFiles.count}`,
       });
       break;
     }
@@ -237,20 +227,37 @@ export async function computeFeatureCoverage(params: {
   ]));
 
   const presentPageFiles: string[] = [];
+  const notEvaluablePageRoutes: string[] = [];
+  const probeErrors: Array<{ target: string; detail: string }> = [];
   for (const route of expectedPageRoutes) {
-    const found = await findPageFile(sandbox, route);
-    if (found) presentPageFiles.push(found);
+    const result = await findPageFile(sandbox, route);
+    if (result.file) presentPageFiles.push(result.file);
+    if (result.outcome === 'not_evaluable') {
+      notEvaluablePageRoutes.push(route);
+      probeErrors.push({
+        target: route,
+        detail: result.detail || 'Page-file probe failed.',
+      });
+    }
   }
   const presentApiFiles: string[] = [];
+  const notEvaluableApiRoutes: string[] = [];
   const apiTargets: Array<{
     route: string;
     file: string;
     methods: string[];
   }> = [];
   for (const route of expectedApiRoutes) {
-    const found = await findApiFile(sandbox, route);
-    if (!found) continue;
-    presentApiFiles.push(found);
+    const result = await findApiFile(sandbox, route);
+    if (result.outcome === 'not_evaluable') {
+      notEvaluableApiRoutes.push(route);
+      probeErrors.push({
+        target: route,
+        detail: result.detail || 'API-file probe failed.',
+      });
+    }
+    if (!result.file) continue;
+    presentApiFiles.push(result.file);
     const methods = Array.from(new Set(
       acceptance
         .filter((line) => line.includes(route))
@@ -260,50 +267,95 @@ export async function computeFeatureCoverage(params: {
             (match) => match[1].toUpperCase(),
           )),
     ));
-    apiTargets.push({ route, file: found, methods });
+    apiTargets.push({ route, file: result.file, methods });
   }
 
   const presentTouches: string[] = [];
   const missingTouches: string[] = [];
+  const notEvaluableTouches: string[] = [];
+  const artifactProofs: FeatureCoverageSignal['artifact_proofs'] = [];
   for (const t of touches) {
-    if (await existsInSandbox(sandbox, t)) presentTouches.push(t);
-    else missingTouches.push(t);
+    const proof = await readArtifactProof(sandbox, t);
+    artifactProofs.push(proof);
+    if (proof.outcome === 'pass') {
+      presentTouches.push(proof.path);
+    } else if (proof.outcome === 'not_evaluable') {
+      notEvaluableTouches.push(proof.path);
+      probeErrors.push({
+        target: proof.path,
+        detail: proof.error || 'Artifact probe failed.',
+      });
+    } else {
+      missingTouches.push(normalizeTouchPath(t));
+    }
   }
 
   const kindResults = await evaluateKindRequirements(sandbox, item, {
     presentPageFiles,
     presentApiFiles,
+    pageProbeUnknown: notEvaluablePageRoutes.length > 0,
+    apiProbeUnknown: notEvaluableApiRoutes.length > 0,
     apiTargets,
   });
+  for (const requirement of kindResults) {
+    if (requirement.outcome !== 'not_evaluable') continue;
+    probeErrors.push({
+      target: requirement.requirement,
+      detail: requirement.detail || 'Kind requirement probe failed.',
+    });
+  }
 
   const kindOk = kindResults.every((r) => r.satisfied);
   const touchesOk = missingTouches.length === 0;
   const routesOk =
     expectedPageRoutes.length === presentPageFiles.length &&
     expectedApiRoutes.length === presentApiFiles.length;
+  const evaluable =
+    notEvaluableTouches.length === 0 &&
+    notEvaluablePageRoutes.length === 0 &&
+    notEvaluableApiRoutes.length === 0 &&
+    kindResults.every((result) => result.outcome !== 'not_evaluable');
 
   return {
-    ok: kindOk && touchesOk && routesOk,
+    ok: evaluable && kindOk && touchesOk && routesOk,
+    evaluable,
     declared_touches: touches,
     present_touches: presentTouches,
     missing_touches: missingTouches,
+    not_evaluable_touches: notEvaluableTouches,
     expected_page_routes: expectedPageRoutes,
     expected_api_routes: expectedApiRoutes,
     present_page_files: presentPageFiles,
     present_api_files: presentApiFiles,
+    not_evaluable_page_routes: notEvaluablePageRoutes,
+    not_evaluable_api_routes: notEvaluableApiRoutes,
     acceptance_route_anchors: acceptanceRouteAnchors,
+    artifact_proofs: artifactProofs,
     kind_requirements: kindResults,
+    probe_errors: probeErrors,
   };
 }
 
 export function summarizeFeatureCoverage(sig: FeatureCoverageSignal): string {
   const parts: string[] = [];
+  if (!sig.evaluable) {
+    parts.push(`probe_errors=${sig.probe_errors.length}`);
+  }
   if (sig.missing_touches.length) parts.push(`missing_touches=${sig.missing_touches.length}`);
-  const missingPages = sig.expected_page_routes.length - sig.present_page_files.length;
-  const missingApis = sig.expected_api_routes.length - sig.present_api_files.length;
+  const missingPages =
+    sig.expected_page_routes.length -
+    sig.present_page_files.length -
+    sig.not_evaluable_page_routes.length;
+  const missingApis =
+    sig.expected_api_routes.length -
+    sig.present_api_files.length -
+    sig.not_evaluable_api_routes.length;
   if (missingPages > 0) parts.push(`missing_pages=${missingPages}`);
   if (missingApis > 0) parts.push(`missing_apis=${missingApis}`);
-  const failedKind = sig.kind_requirements.filter((r) => !r.satisfied);
+  const failedKind = sig.kind_requirements.filter(
+    (result) =>
+      !result.satisfied && result.outcome !== 'not_evaluable',
+  );
   if (failedKind.length) parts.push(`kind_failures=${failedKind.map((r) => r.requirement).join(',')}`);
   return parts.length ? parts.join(' ') : 'coverage_ok';
 }
