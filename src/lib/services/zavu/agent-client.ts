@@ -49,7 +49,15 @@ function unwrapAgent(payload: any): ZavuAgent {
 }
 
 export async function getSenderAgent(senderId: string): Promise<ZavuAgent> {
-  return unwrapAgent(await zavuFetch(`/senders/${encodeURIComponent(senderId)}/agent`));
+  const payload = await zavuFetch<any>(
+    `/senders/${encodeURIComponent(senderId)}/agent`
+  );
+  if (payload?.agent === null) {
+    const error = new Error("Zavu agent not found");
+    (error as Error & { status: number }).status = 404;
+    throw error;
+  }
+  return unwrapAgent(payload);
 }
 
 export async function getAgent(agentId: string): Promise<ZavuAgent> {

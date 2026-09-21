@@ -12,7 +12,11 @@ import {
   ZAVU_SENDER_WEBHOOK_EVENTS,
   sendChannelMessage,
 } from "../client";
-import { createStandaloneAgent, upsertAgentTool } from "../agent-client";
+import {
+  createStandaloneAgent,
+  getSenderAgent,
+  upsertAgentTool,
+} from "../agent-client";
 
 function mockJson(status: number, body: unknown) {
   return {
@@ -301,6 +305,17 @@ describe("Zavu client webhook contract", () => {
       "https://api.zavu.dev/v1/agents",
       expect.objectContaining({ method: "POST" })
     );
+  });
+
+  it("treats an explicitly empty sender agent as not found", async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce(
+      mockJson(200, { agent: null })
+    );
+
+    await expect(getSenderAgent("sender_1")).rejects.toMatchObject({
+      message: "Zavu agent not found",
+      status: 404,
+    });
   });
 
   it("attaches a sender to the requested agent instead of the legacy global agent", async () => {
