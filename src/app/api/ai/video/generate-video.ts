@@ -86,6 +86,8 @@ export async function generateVideoWithGemini(options: {
   aspectRatio?: VideoAspectRatio;
   durationSeconds?: number;
   referenceImages?: string[];
+  firstFrameUrl?: string;
+  lastFrameUrl?: string;
   quality?: VideoQuality;
   model?: string;
 }): Promise<VideoGenerationResult> {
@@ -94,12 +96,22 @@ export async function generateVideoWithGemini(options: {
     options.model || process.env.GOOGLE_CLOUD_VIDEOS_MODEL || DEFAULT_MODEL;
   if (!apiKey) throw new Error('Gemini video generation is not configured');
 
-  const duration = normalizeVideoDuration(options.durationSeconds);
+  const duration = options.lastFrameUrl
+    ? 8
+    : normalizeVideoDuration(options.durationSeconds);
   const aspectRatio = geminiAspectRatio(options.aspectRatio);
   const videoResolution = resolution(options.quality, duration, aspectRatio);
-  const reference = options.referenceImages?.[0]
-    ? await convertUrlToBase64(options.referenceImages[0])
-    : null;
+  const firstFrameUrl = options.firstFrameUrl ?? options.referenceImages?.[0];
+  const [firstFrame, lastFrame] = await Promise.all([
+    firstFrameUrl ? convertUrlToBase64(firstFrameUrl) : null,
+    options.lastFrameUrl ? convertUrlToBase64(options.lastFrameUrl) : null,
+  ]);
+  if (firstFrameUrl && !firstFrame) {
+    throw new Error('Unable to load the requested first frame');
+  }
+  if (options.lastFrameUrl && !lastFrame) {
+    throw new Error('Unable to load the requested last frame');
+  }
   const ai = new GoogleGenAI({ apiKey });
   let operation: any = await ai.models.generateVideos({
     model,
@@ -113,12 +125,20 @@ export async function generateVideoWithGemini(options: {
       aspectRatio,
       resolution: videoResolution,
       durationSeconds: duration,
+      ...(lastFrame
+        ? {
+            lastFrame: {
+              imageBytes: lastFrame.data,
+              mimeType: lastFrame.mimeType,
+            },
+          }
+        : {}),
     },
-    ...(reference
+    ...(firstFrame
       ? {
           image: {
-            imageBytes: reference.data,
-            mimeType: reference.mimeType,
+            imageBytes: firstFrame.data,
+            mimeType: firstFrame.mimeType,
           },
         }
       : {}),

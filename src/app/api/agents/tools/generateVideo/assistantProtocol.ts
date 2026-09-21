@@ -17,6 +17,8 @@ export interface GenerateVideoToolParams {
   duration?: number;
   aspect_ratio?: '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '3:2' | '2:3';
   reference_images?: string[];
+  first_frame_url?: string;
+  last_frame_url?: string;
   quality?: 'preview' | 'standard' | 'pro';
   model?: string;
 }
@@ -67,6 +69,14 @@ export function generateVideoTool(site_id: string, instance_id?: string) {
           },
           description: 'Array of image URLs (up to 3) to use as reference/context for generation. IMPORTANT: If there are Image URLs for reference provided in the context, you MUST include them here as strings.'
         },
+        first_frame_url: {
+          type: 'string',
+          description: 'Authoritative first frame URL for image-to-video generation. UI node bindings may force this value.'
+        },
+        last_frame_url: {
+          type: 'string',
+          description: 'Authoritative last frame URL. When provided, generation uses an 8-second first-to-last-frame transition.'
+        },
         quality: {
           type: 'string',
           enum: ['preview', 'standard', 'pro'],
@@ -116,6 +126,8 @@ export function generateVideoTool(site_id: string, instance_id?: string) {
           duration_seconds: actualDuration,
           aspect_ratio: args.aspect_ratio,
           reference_images: args.reference_images,
+          first_frame_url: args.first_frame_url,
+          last_frame_url: args.last_frame_url,
           quality: args.quality,
           model: args.model
         };
@@ -230,6 +242,8 @@ export function generateVideoToolScrapybara(instance: UbuntuInstance, site_id: s
       duration: z.number().min(1).max(60).optional().describe('Desired duration of the video in seconds.'),
       aspect_ratio: z.enum(['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3']).optional().describe('Aspect ratio of the generated video. Note: Gemini only supports 16:9 and 9:16, other ratios will be mapped to 16:9. Defaults to 16:9.'),
       reference_images: z.array(z.string()).optional().describe('Array of image URLs (up to 3) to use as reference/context for generation. IMPORTANT: If there are Image URLs for reference provided in the context, you MUST include them here as strings.'),
+      first_frame_url: z.string().optional().describe('Authoritative first frame URL for image-to-video generation.'),
+      last_frame_url: z.string().optional().describe('Authoritative last frame URL. Uses an 8-second first-to-last-frame transition.'),
       quality: z.enum(['preview', 'standard', 'pro']).optional().describe('Quality of the generated video. "preview" and "standard" use 720p. "pro" uses 1080p but requires duration=8 and aspect_ratio=16:9. Defaults to standard.'),
       model: z.string().optional().describe('Override the Gemini model to use (default: veo-3.1-generate-preview).')
     }),
@@ -269,6 +283,8 @@ export function generateVideoToolScrapybara(instance: UbuntuInstance, site_id: s
           duration_seconds: actualDuration,
           aspect_ratio: args.aspect_ratio,
           reference_images: args.reference_images,
+          first_frame_url: args.first_frame_url,
+          last_frame_url: args.last_frame_url,
           quality: args.quality,
           model: args.model
         };

@@ -1,3 +1,5 @@
+import type { UiMediaOutputType } from './ui-media-contract';
+
 export interface AssistantContext {
   instance: any;
   systemPrompt: string;
@@ -27,4 +29,5 @@ export interface AssistantContext {
   instanceNodeId?: string;
   expectedResultsAmount: number;
   toolOverrides?: Record<string, any>;
+  uiMediaOutputType?: UiMediaOutputType;
 }

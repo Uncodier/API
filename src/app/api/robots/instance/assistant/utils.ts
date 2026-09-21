@@ -86,6 +86,7 @@ import { activateCodingAgentsTool } from '@/app/api/agents/tools/activate_coding
 import { updateRepoTool } from '@/app/api/agents/tools/update_repo/assistantProtocol';
 import { showArtifactTool } from '@/app/api/agents/tools/show_artifact/assistantProtocol';
 import { composioActionTool } from '@/app/api/agents/tools/composio/assistantProtocol';
+import type { UiMediaOutputType } from './ui-media-contract';
 
 /**
  * Fetch relevant memories for assistant context (site_id, user_id, instance_id)
@@ -312,14 +313,37 @@ export const getAssistantTools = (
   agentType?: string,
   userPhone?: string,
   requirementId?: string,
+  uiMediaOutputType?: UiMediaOutputType,
 ) => {
-  const tools = [
-    ...customTools,
+  const allowedMediaTool = uiMediaOutputType === 'image'
+    ? 'generate_image'
+    : uiMediaOutputType === 'video'
+      ? 'generate_video'
+      : uiMediaOutputType === 'audio'
+        ? 'generate_audio'
+        : null;
+  const mediaToolNames = new Set(['generate_image', 'generate_video', 'generate_audio']);
+  const filteredCustomTools = uiMediaOutputType
+    ? customTools.filter((customTool) =>
+        !mediaToolNames.has(customTool?.name) || customTool.name === allowedMediaTool)
+    : customTools;
+  const mediaTools = [
     generateImageTool(siteId, instanceId),
     generateVideoTool(siteId, instanceId),
     generateAudioTool(siteId, instanceId, {
       forceWhatsAppCompatible: agentType === 'gear' && !userPhone?.includes('@'),
     }),
+  ].filter((mediaTool) => {
+    if (!uiMediaOutputType) return true;
+    if (uiMediaOutputType === 'image') return mediaTool.name === 'generate_image';
+    if (uiMediaOutputType === 'video') return mediaTool.name === 'generate_video';
+    if (uiMediaOutputType === 'audio') return mediaTool.name === 'generate_audio';
+    return false;
+  });
+
+  const tools = [
+    ...filteredCustomTools,
+    ...mediaTools,
     instanceTool(siteId, instanceId, userId),
     updateSiteSettingsTool(siteId),
     webSearchTool(siteId),
@@ -424,6 +448,7 @@ export async function getInstanceAssistantTools(
   agentType?: string,
   userPhone?: string,
   requirementId?: string,
+  uiMediaOutputType?: UiMediaOutputType,
 ) {
   const composioKey = await getComposioApiKeyForSite(siteId);
   const instanceTools = composioKey
@@ -438,5 +463,6 @@ export async function getInstanceAssistantTools(
     agentType,
     userPhone,
     requirementId,
+    uiMediaOutputType,
   );
 }

@@ -34,6 +34,15 @@ async function validateReferences(value: unknown): Promise<string[] | undefined>
   return value;
 }
 
+async function validateFrameUrl(value: unknown, field: string): Promise<string | undefined> {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error(`${field} must be a valid URL`);
+  }
+  await assertSafeRemoteUrl(value);
+  return value;
+}
+
 export async function POST(request: NextRequest) {
   let generationLock: { key: string; token: string } | null = null;
   try {
@@ -85,16 +94,26 @@ export async function POST(request: NextRequest) {
     }
 
     let referenceImages: string[] | undefined;
+    let firstFrameUrl: string | undefined;
+    let lastFrameUrl: string | undefined;
     try {
       referenceImages = await validateReferences(body.reference_images);
+      firstFrameUrl = await validateFrameUrl(body.first_frame_url, 'first_frame_url');
+      lastFrameUrl = await validateFrameUrl(body.last_frame_url, 'last_frame_url');
     } catch (error) {
       return NextResponse.json(
         { error: error instanceof Error ? error.message : 'Invalid reference image' },
         { status: 400 },
       );
     }
+    if (lastFrameUrl && !firstFrameUrl && !referenceImages?.[0]) {
+      return NextResponse.json(
+        { error: 'last_frame_url requires first_frame_url or a reference image' },
+        { status: 400 },
+      );
+    }
 
-    const duration = normalizeVideoDuration(body.duration_seconds);
+    const duration = lastFrameUrl ? 8 : normalizeVideoDuration(body.duration_seconds);
     const requiredCredits =
       (duration / 60) * CreditService.PRICING.VIDEO_GENERATION_MINUTE;
     if (!await CreditService.validateCredits(body.site_id, requiredCredits)) {
@@ -133,6 +152,8 @@ export async function POST(request: NextRequest) {
       aspectRatio: body.aspect_ratio,
       durationSeconds: duration,
       referenceImages,
+      firstFrameUrl,
+      lastFrameUrl,
       quality: body.quality,
       model: body.model,
     });

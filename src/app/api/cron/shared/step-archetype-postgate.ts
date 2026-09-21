@@ -30,6 +30,17 @@ import { computeFeatureCoverage, summarizeFeatureCoverage } from './feature-cove
 import { inferTargetRoutesFromDiff } from './step-runtime-targets';
 import type { TestSignal } from './step-test-evidence';
 import type { ProbeObservation } from './step-probe-policy';
+import type { InteractionSignal } from './step-interaction-audit';
+import {
+  formatJudgeRepairFeedback,
+  judgeVerificationAttemptLimit,
+  verificationAttemptCount,
+  verificationToolName,
+} from './judge-verification-policy';
+import type {
+  JudgeFailureKind,
+  JudgeVerdict,
+} from './archetype-judge-result';
 
 export interface PostGateGateSignals {
   build?: { ok: boolean };
@@ -46,6 +57,7 @@ export interface PostGateGateSignals {
   };
   tests?: TestSignal;
   observations?: ProbeObservation[];
+  interaction?: InteractionSignal;
   /**
    * Files actually modified by the producer in this cycle (sourced from
    * `git diff` inside the runtime probe). Passed to the archetype runner so
@@ -68,8 +80,15 @@ export interface RunArchetypePostGateInput {
 
 export interface RunArchetypePostGateResult {
   ran: boolean;
-  judge_verdict?: 'approved' | 'rejected' | 'escalate';
+  judge_verdict?: JudgeVerdict;
+  judge_reason?: string;
+  judge_failure_kind?: JudgeFailureKind;
+  matched_acceptance?: string[];
+  unmatched_acceptance?: string[];
+  repair_feedback?: string;
   healing_applied?: string;
+  verification_exhausted?: boolean;
+  terminal_step_status?: 'cancelled';
   error?: string;
 }
 
@@ -105,10 +124,10 @@ export async function runArchetypePostGate(
     try {
       coverage = await computeFeatureCoverage({
         sandbox: input.sandbox,
-        // Structural coverage is derived only from the canonical backlog
-        // contract. Plan-step prose can contain file paths and slash-separated
-        // words that are useful context but are not required application URLs.
-        item,
+        item: adjudicatedItem,
+        // Intermediate adjudications must not enforce touches or kind-wide
+        // deliverables assigned to later steps in the same backlog item.
+        contractScoped: !!input.contractAcceptance?.length,
       });
     } catch (e: unknown) {
       throw new Error(
@@ -134,6 +153,7 @@ export async function runArchetypePostGate(
       !!signalsWithDiff.runtime ||
       !!signalsWithDiff.scenarios ||
       !!signalsWithDiff.tests ||
+      !!signalsWithDiff.interaction ||
       (signalsWithDiff.changed_files?.length ?? 0) > 0 ||
       (signalsWithDiff.observations?.length ?? 0) > 0;
     const evidenceRunId =
@@ -156,6 +176,7 @@ export async function runArchetypePostGate(
       cwd: SandboxService.WORK_DIR,
       requirementId: input.requirementId,
       itemId: item.id,
+      requireCanonicalPersistence: true,
       record: evidenceRecord,
     });
 
@@ -172,43 +193,53 @@ export async function runArchetypePostGate(
       cwd: SandboxService.WORK_DIR,
       requirementId: input.requirementId,
       itemId: item.id,
+      requireCanonicalPersistence: true,
       record: {
         ...evidenceRecord,
         critic_passes: critic.iterations,
         judge_verdict: judge.verdict,
         judge_reason: judge.reason,
         judge_failure_kind: judge.failure_kind,
+        judge_matched_acceptance: judge.matched_acceptance,
+        judge_unmatched_acceptance: judge.unmatched_acceptance,
       },
     });
 
     let healingApplied: string | undefined;
+    let verificationExhausted = false;
+    let terminalStepStatus: 'cancelled' | undefined;
     if (judge.verdict !== 'approved') {
-      if (
-        judge.failure_kind === 'evidence_gap' ||
-        judge.failure_kind === 'contract_error'
-      ) {
-        const toolName =
-          judge.failure_kind === 'evidence_gap'
-            ? 'evidence_collector'
-            : 'acceptance_contract';
-        await recordToolFailure({
+      const toolName = verificationToolName(judge.failure_kind);
+      if (toolName) {
+        const updatedItem = await recordToolFailure({
           requirementId: input.requirementId,
           itemId: item.id,
           toolName,
           reason:
             `[${judge.failure_kind}] ${judge.reason}`.slice(0, 400),
         });
-        await logAssumption({
-          requirementId: input.requirementId,
-          itemId: item.id,
-          assumption:
-            `[${judge.failure_kind}] Retry verification without consuming ` +
-            `the product attempt budget: ${judge.reason}`.slice(0, 800),
-        });
-        healingApplied =
-          judge.failure_kind === 'evidence_gap'
+        const verificationAttempts = verificationAttemptCount(
+          updatedItem?.tool_failures,
+          toolName,
+        );
+        const attemptLimit = judgeVerificationAttemptLimit();
+        if (verificationAttempts >= attemptLimit) {
+          const reason =
+            `${judge.failure_kind} verification exhausted after ` +
+            `${verificationAttempts} attempts: ${judge.reason}`;
+          await markNeedsReview({
+            requirementId: input.requirementId,
+            itemId: item.id,
+            reason,
+          });
+          healingApplied = 'mark_needs_review';
+          verificationExhausted = true;
+          terminalStepStatus = 'cancelled';
+        } else {
+          healingApplied = judge.failure_kind === 'evidence_gap'
             ? 'collect_evidence'
             : 'repair_contract';
+        }
       } else {
         // Product defects use the bounded self-heal policy.
         const bumped = await bumpItemAttempts({
@@ -256,6 +287,8 @@ export async function runArchetypePostGate(
               itemId: item.id,
               reason: action.reason,
             });
+            verificationExhausted = true;
+            terminalStepStatus = 'cancelled';
             break;
         }
       }
@@ -276,10 +309,25 @@ export async function runArchetypePostGate(
         unmatched_acceptance: judge.unmatched_acceptance.length,
         feature_coverage: coverage ? summarizeFeatureCoverage(coverage) : 'n/a',
         healing_applied: healingApplied,
+        verification_exhausted: verificationExhausted,
       },
     });
 
-    return { ran: true, judge_verdict: judge.verdict, healing_applied: healingApplied };
+    return {
+      ran: true,
+      judge_verdict: judge.verdict,
+      judge_reason: judge.reason,
+      judge_failure_kind: judge.failure_kind,
+      matched_acceptance: judge.matched_acceptance,
+      unmatched_acceptance: judge.unmatched_acceptance,
+      repair_feedback:
+        judge.verdict === 'approved'
+          ? undefined
+          : formatJudgeRepairFeedback(judge),
+      healing_applied: healingApplied,
+      verification_exhausted: verificationExhausted,
+      terminal_step_status: terminalStepStatus,
+    };
   } catch (e: unknown) {
     const error = e instanceof Error ? e.message : String(e);
     console.warn(
@@ -327,6 +375,20 @@ function buildEvidenceRecord(
     })),
     changed_files: signals.changed_files,
     observations: signals.observations,
+    interaction: signals.interaction
+      ? {
+          ok: signals.interaction.ok,
+          evaluable: signals.interaction.evaluable,
+          audited_files: signals.interaction.audited_files,
+          links: signals.interaction.links,
+          unresolved_links: signals.interaction.unresolved_links,
+          findings: signals.interaction.findings,
+          blocking_count: signals.interaction.blocking_count,
+          deferred_count: signals.interaction.deferred_count,
+          warning_count: signals.interaction.warning_count,
+          summary: signals.interaction.summary,
+        }
+      : undefined,
     feature_coverage: coverage
       ? {
           ok: coverage.ok,

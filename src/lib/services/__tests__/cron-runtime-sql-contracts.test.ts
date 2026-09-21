@@ -30,6 +30,12 @@ const recoveryLeaseSql = workspaceFile(
 const userRecoverySql = workspaceFile(
   'supabase/migrations/20260917203600_atomic_instance_execution_resume.sql',
 );
+const legacyGlobalBlockRecoverySql = workspaceFile(
+  'supabase/migrations/20260921143000_recover_legacy_global_requirement_blocks.sql',
+);
+const legacyVerificationCounterSql = workspaceFile(
+  'supabase/migrations/20260921143100_reset_legacy_unbounded_verification_counters.sql',
+);
 const singleTurnSource = workspaceFile(
   'src/app/api/cron/shared/single-turn-executor.ts',
 );
@@ -111,6 +117,56 @@ describe('cron runtime SQL contracts', () => {
     );
   });
 
+  it('recovers only active legacy global blocks with runnable alternatives', () => {
+    expect(legacyGlobalBlockRecoverySql).toContain(
+      "requirement.status = 'blocked'",
+    );
+    expect(legacyGlobalBlockRecoverySql).toContain(
+      "instance.status = 'running'",
+    );
+    expect(legacyGlobalBlockRecoverySql).toContain(
+      'requirement.cron IS NULL',
+    );
+    expect(legacyGlobalBlockRecoverySql).toContain(
+      "metadata ? 'cron_blocker_provenance'",
+    );
+    expect(legacyGlobalBlockRecoverySql).toContain(
+      "item.value->>'status' IN ('pending', 'in_progress')",
+    );
+    expect(legacyGlobalBlockRecoverySql).toContain(
+      "item.value->'depends_on'",
+    );
+    expect(legacyGlobalBlockRecoverySql).toContain(
+      "step.value->'metadata'->>'backlog_item_id'",
+    );
+    expect(legacyGlobalBlockRecoverySql).toContain(
+      "IN ('pending', 'in_progress', 'failed')",
+    );
+    expect(legacyGlobalBlockRecoverySql).toContain(
+      "'status', 'cancelled'",
+    );
+    expect(legacyGlobalBlockRecoverySql).toContain(
+      'resume_instance_execution_on_user_action',
+    );
+    expect(legacyGlobalBlockRecoverySql).not.toContain(
+      "instance.status = 'paused'",
+    );
+  });
+
+  it('resets active legacy verification counters at or above the new cap', () => {
+    expect(legacyVerificationCounterSql).toContain(
+      "IN ('pending', 'in_progress')",
+    );
+    expect(legacyVerificationCounterSql).toContain(
+      "'{tool_failures,evidence_collector}'",
+    );
+    expect(legacyVerificationCounterSql).toContain(
+      "'{tool_failures,acceptance_contract}'",
+    );
+    expect(legacyVerificationCounterSql).toContain('::integer >= 3');
+    expect(legacyVerificationCounterSql).not.toContain('::integer > 3');
+  });
+
   it('requires an approved post-gate result before persisting completion', () => {
     const postGateGuard = singleTurnGateSource.indexOf(
       "postGate.judge_verdict !== 'approved'",
@@ -147,7 +203,7 @@ describe('cron runtime SQL contracts', () => {
       'active_step_id: persistedStep.id',
     );
     expect(postGateSource).toMatch(
-      /computeFeatureCoverage\(\{[\s\S]*?item,\s*\}\)/,
+      /computeFeatureCoverage\(\{[\s\S]*?item: adjudicatedItem,[\s\S]*?contractScoped:/,
     );
   });
 

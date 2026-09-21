@@ -44,6 +44,7 @@ Before calling `instance_plan action="create"`, verify:
 - [ ] Each step specifies `expected_output` defining exactly what artifact or state change proves the step succeeded.
 - [ ] Each step specifies `success_criteria` (array of strings) with concrete, observable checks for the step.
 - [ ] Each step specifies `validation_rules` (array of strings) to prevent regressions or anti-patterns during the step.
+- [ ] Any plan that creates or materially redesigns UI includes a `ui-ux-design` step before `makinari-rol-frontend`; the design step creates or updates project-root `DESIGN.md`.
 - [ ] `instructions` on each step is concrete (specific files, specific endpoints, exact UI screens, navigation flows, specific assertions). For frontend steps, explicitly describe the UI layout, components to use (e.g., Shadcn UI Cards, Dialogs, Tables), and responsive behavior — no "implement the feature" or "build the UI". Eliminate ambiguity.
 
 ### 3. Plan templates by requirement type
@@ -57,7 +58,7 @@ Before calling `instance_plan action="create"`, verify:
   "description": "End-to-end plan to deliver the backlog item.",
   "expected_output": "Working feature deployed to preview URL.",
   "success_criteria": ["All acceptance criteria met", "QA scenarios pass", "Build succeeds"],
-  "validation_rules": ["No mocked data", "Must use Shadcn UI"],
+  "validation_rules": ["No mocked data", "UI must follow project-root DESIGN.md"],
   "steps": [
     { 
       "id": "step_base", 
@@ -69,41 +70,51 @@ Before calling `instance_plan action="create"`, verify:
       "success_criteria": ["git status shows clean working tree on feature branch"],
       "validation_rules": ["Do not overwrite existing BASE if present"]
     },
-    { 
-      "id": "step_fe", 
-      "order": 2, 
-      "title": "Frontend", 
-      "skill": "makinari-rol-frontend", 
-      "instructions": "Inspect the named existing files once, then implement routes <list>, expose data-testids per req section 6.4, and wire real handlers. Explicitly describe the UI layout, components to use (e.g., Shadcn UI Cards, Magic UI animations), and responsive behavior. Enforce Modern Elite Design aesthetics (dark-mode-first, glassmorphism, no flat generic corporate UI).",
-      "expected_output": "UI components and pages created and wired to real endpoints.",
-      "success_criteria": ["Pages render without 500 errors", "Shadcn/MagicUI components used for layout", "Responsive on mobile"],
-      "validation_rules": ["No mocked data", "Must use Tailwind classes", "No generic flat colors"]
+    {
+      "id": "step_design",
+      "order": 2,
+      "title": "Creative Direction & UX/UI",
+      "skill": "ui-ux-design",
+      "instructions": "Inspect the current interface and brand context. Create or update project-root DESIGN.md with the Design Read, exact semantic tokens, typography, responsive composition, complete interaction states, and justified dependencies. Do not force dark mode, glassmorphism, animation, or a component library unless the brief supports it.",
+      "expected_output": "DESIGN.md and applicable theme files define an implementable visual contract.",
+      "success_criteria": ["DESIGN.md covers desktop and mobile behavior", "Theme tokens match the documented visual direction"],
+      "validation_rules": ["Preserve explicit brand constraints", "No unrequested product or navigation changes"]
     },
-    { 
-      "id": "step_qa", 
-      "order": 3, 
-      "title": "QA", 
-      "skill": "makinari-rol-qa", 
+    {
+      "id": "step_fe",
+      "order": 3,
+      "title": "Frontend",
+      "skill": "makinari-rol-frontend",
+      "instructions": "Inspect the named existing files once, then read project-root DESIGN.md and the Art Director step_output. Implement routes <list>, expose data-testids per req section 6.4, wire real handlers, and follow the documented layout, components, interaction states, and responsive behavior.",
+      "expected_output": "UI components and pages created and wired to real endpoints.",
+      "success_criteria": ["Pages render without 500 errors", "Implementation matches DESIGN.md", "Responsive on mobile"],
+      "validation_rules": ["No mocked data", "Use semantic design tokens", "Do not add unjustified visual dependencies"]
+    },
+    {
+      "id": "step_qa",
+      "order": 4,
+      "title": "QA",
+      "skill": "makinari-rol-qa",
       "instructions": "Author .qa/scenarios per req section 6.5, triage gate signals, write qa_results.json.",
       "expected_output": "qa_results.json written with passing scenarios.",
       "success_criteria": ["All scenarios pass", "No 503 errors on boot"],
       "validation_rules": ["Scenarios must target real DOM test-ids"]
     },
-    { 
-      "id": "step_val", 
-      "order": 4, 
-      "title": "Validation", 
-      "skill": "makinari-fase-validacion", 
+    {
+      "id": "step_val",
+      "order": 5,
+      "title": "Validation",
+      "skill": "makinari-fase-validacion",
       "instructions": "npm run build, verify preview, write test_results.json.",
       "expected_output": "test_results.json written with build success.",
       "success_criteria": ["npm run build exits with 0"],
       "validation_rules": ["Must not skip type checking"]
     },
-    { 
-      "id": "step_report", 
-      "order": 5, 
-      "title": "Report", 
-      "skill": "makinari-fase-reporteado", 
+    {
+      "id": "step_report",
+      "order": 6,
+      "title": "Report",
+      "skill": "makinari-fase-reporteado",
       "instructions": "Create requirement_status with preview URL.",
       "expected_output": "requirement_status created in DB.",
       "success_criteria": ["Preview URL is valid and reachable"],

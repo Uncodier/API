@@ -25,9 +25,10 @@ Implement UI pages and components in Next.js (App Router) that satisfy the requi
 
 ### 2. Phase 0.5: Creative Direction & Config Reading (Mandatory)
 Before writing any UI components, you MUST read the exact design directives left by the Art Director (`ui-ux-design`):
-- Read the `step_output` from the previous plan step, or the Orchestrator's `instructions`.
-- Check `tailwind.config.ts`, `globals.css` (or equivalent). The Art Director should have configured the HSL tokens and fonts. If they missed it, you must configure it based on the Brand Guidelines.
-- **For Landing Pages / Marketing Sites (Mandatory Advanced UI Install):** If the instructions dictate the use of advanced layouts or animations (e.g., Magic UI, Aceternity, or Framer Motion), you MUST NOT ignore this. You MUST proactively install the core dependencies (e.g., `sandbox_run_command npm i framer-motion clsx tailwind-merge`) and run the necessary component CLI commands (e.g., `sandbox_run_command npx magic-ui-cli add [component]`) BEFORE you write the page. Do NOT fallback to basic Shadcn components.
+- Read the complete project-root `DESIGN.md` first, then the previous Art Director `step_output` and the Orchestrator's instructions. Explicit requirement and brand constraints take precedence over all generated design guidance.
+- Check `globals.css`, `layout.tsx`, and the applicable theme configuration. Verify that implementation tokens match `DESIGN.md`; update both together if a correction is required.
+- If the plan includes a completed `ui-ux-design` step but `DESIGN.md` is missing, reconstruct it from the Art Director's `step_output` before writing UI components and report the missing artifact with `[CONTRACT ADEQUATION]`.
+- **Design-specified dependencies:** Install Magic UI, Aceternity UI, Motion, or another visual dependency only when `DESIGN.md` names the exact component and purpose. When specified, install it before implementation and provide its documented reduced-motion or static fallback. Do not add a library merely because the surface is a landing page.
 
 ### 3. Data-testid contract (mandatory when requirement defines one)
 The requirement's section 6.4 lists `data-testid` attributes the frontend must expose. Treat this list as **immutable**:
@@ -131,7 +132,8 @@ Copy/paste this and verify every box before marking the step completed:
 - [ ] All interactive elements have accessible names
 - [ ] Real event handlers wired (no empty onClicks)
 - [ ] No placeholder / lorem ipsum copy
-- [ ] Design avoids generic corporate SaaS look (uses Modern Elite Design constraints)
+- [ ] Implementation matches project-root `DESIGN.md` and uses its semantic tokens
+- [ ] Visual choices fit the brief instead of defaulting to dark mode, glassmorphism, gradients, or generic SaaS patterns
 ```
 
 ### 7. Git, delivery and iframes

@@ -1,9 +1,16 @@
 import {
   validateAcceptance,
+  type AcceptanceAnchor,
   type AcceptanceAnalysis,
 } from '@/lib/services/requirement-acceptance';
 import type { EvidenceRecord } from '@/lib/services/requirement-ground-truth';
-import { evidenceHaystack } from './archetype-evidence';
+import {
+  genericEvidenceReceipts,
+  genericProofTerms,
+} from './archetype-generic-evidence';
+import { evaluateInternalLinkIntegrity } from './archetype-link-evidence';
+
+type RouteAnchor = Extract<AcceptanceAnchor, { kind: 'route' }>;
 
 function normalized(value: string): string {
   return value.toLowerCase().replace(/\/+$/, '');
@@ -11,16 +18,40 @@ function normalized(value: string): string {
 
 function expectedHttpMethod(
   analysis: AcceptanceAnalysis,
+  route?: string,
+  explicitAnchor?: RouteAnchor,
 ): string | undefined {
-  return analysis.anchors.find((anchor) => anchor.kind === 'http_verb')
-    ?.value.toUpperCase();
+  const routeAnchor = explicitAnchor || analysis.anchors.find(
+    (anchor) => anchor.kind === 'route' && anchor.value === route,
+  );
+  if (routeAnchor?.kind === 'route' && routeAnchor.method) {
+    return routeAnchor.method.toUpperCase();
+  }
+  const methods = Array.from(new Set(
+    analysis.anchors
+      .filter((anchor) => anchor.kind === 'http_verb')
+      .map((anchor) => anchor.value.toUpperCase()),
+  ));
+  return methods.length === 1 ? methods[0] : undefined;
 }
 
 function expectedStatus(
   analysis: AcceptanceAnalysis,
+  route?: string,
+  explicitAnchor?: RouteAnchor,
 ): string | undefined {
-  return analysis.anchors.find((anchor) => anchor.kind === 'status_code')
-    ?.value.toLowerCase();
+  const routeAnchor = explicitAnchor || analysis.anchors.find(
+    (anchor) => anchor.kind === 'route' && anchor.value === route,
+  );
+  if (routeAnchor?.kind === 'route' && routeAnchor.status) {
+    return routeAnchor.status.toLowerCase();
+  }
+  const statuses = Array.from(new Set(
+    analysis.anchors
+      .filter((anchor) => anchor.kind === 'status_code')
+      .map((anchor) => anchor.value.toLowerCase()),
+  ));
+  return statuses.length === 1 ? statuses[0] : undefined;
 }
 
 function statusMatchesExpected(
@@ -99,11 +130,16 @@ function hasRelevantPassingTest(
   analysis: AcceptanceAnalysis,
   route: string,
   evidence: EvidenceRecord,
+  routeAnchor?: RouteAnchor,
 ): boolean {
   const terms = significantRouteTerms(route);
   if (terms.length === 0) return false;
-  const method = expectedHttpMethod(analysis)?.toLowerCase();
-  const status = expectedStatus(analysis);
+  const method = expectedHttpMethod(
+    analysis,
+    route,
+    routeAnchor,
+  )?.toLowerCase();
+  const status = expectedStatus(analysis, route, routeAnchor);
   return (evidence.tests || []).some((test) => {
     if (test.exit_code !== 0 || !test.ran_after_changes) return false;
     const receipt = `${test.command}\n${test.output_tail}`.toLowerCase();
@@ -150,8 +186,9 @@ function hasRouteContradiction(
   analysis: AcceptanceAnalysis,
   route: string,
   evidence: EvidenceRecord,
+  routeAnchor?: RouteAnchor,
 ): boolean {
-  const method = expectedHttpMethod(analysis);
+  const method = expectedHttpMethod(analysis, route, routeAnchor);
   return (evidence.observations || []).some(
     (observation) =>
       observation.disposition === 'hard_fail' &&
@@ -173,10 +210,15 @@ function hasRouteProof(
   analysis: AcceptanceAnalysis,
   route: string,
   evidence: EvidenceRecord,
+  routeAnchor?: RouteAnchor,
 ): boolean {
-  if (hasRouteContradiction(analysis, route, evidence)) return false;
-  const method = expectedHttpMethod(analysis);
-  const status = expectedStatus(analysis);
+  if (
+    hasRouteContradiction(analysis, route, evidence, routeAnchor)
+  ) {
+    return false;
+  }
+  const method = expectedHttpMethod(analysis, route, routeAnchor);
+  const status = expectedStatus(analysis, route, routeAnchor);
   if (
     (!method || method === 'GET') &&
     evidence.runtime &&
@@ -219,7 +261,12 @@ function hasRouteProof(
   const routeExists = routeFileCandidates(route).some((path) =>
     files.has(normalized(path)),
   );
-  return routeExists && hasRelevantPassingTest(analysis, route, evidence);
+  return routeExists && hasRelevantPassingTest(
+    analysis,
+    route,
+    evidence,
+    routeAnchor,
+  );
 }
 
 function hasFileProof(
@@ -262,41 +309,94 @@ function hasFileProof(
   return hits >= Math.min(2, semanticTerms.length);
 }
 
+function hasCommandProof(
+  command: string,
+  evidence: EvidenceRecord,
+): boolean {
+  if (command === 'build') return evidence.build?.exit_code === 0;
+  const expectedCommand = command.toLowerCase().replace(/\s+/g, ' ').trim();
+  return (evidence.tests || []).some((test) =>
+    test.exit_code === 0 &&
+    test.ran_after_changes &&
+    (
+      command === 'test' ||
+      test.command.toLowerCase().replace(/\s+/g, ' ')
+        .includes(expectedCommand)
+    ),
+  );
+}
+
+function hasCommandContradiction(
+  command: string,
+  evidence: EvidenceRecord,
+): boolean {
+  if (command === 'build') {
+    return !!evidence.build && evidence.build.exit_code !== 0;
+  }
+  const expectedCommand = command.toLowerCase().replace(/\s+/g, ' ').trim();
+  return (evidence.tests || []).some((test) =>
+    test.exit_code !== 0 &&
+    (
+      command === 'test' ||
+      test.command.toLowerCase().replace(/\s+/g, ' ')
+        .includes(expectedCommand)
+    ),
+  );
+}
+
 function hasTypedProof(
   analysis: AcceptanceAnalysis,
   evidence: EvidenceRecord,
 ): boolean {
+  const proofGroups: boolean[] = [];
   const fileAnchors = analysis.anchors.filter(
     (anchor) => anchor.kind === 'file_path',
   );
-  if (
-    fileAnchors.length > 0 &&
-    fileAnchors.every((anchor) =>
+  if (fileAnchors.length > 0) {
+    proofGroups.push(fileAnchors.every((anchor) =>
       hasFileProof(anchor.value, analysis, evidence),
-    )
-  ) {
-    return true;
+    ));
   }
   const routeAnchors = analysis.anchors.filter(
-    (anchor) => anchor.kind === 'route',
+    (
+      anchor,
+    ): anchor is RouteAnchor =>
+      anchor.kind === 'route',
   );
-  return (
-    routeAnchors.length > 0 &&
-    routeAnchors.every((anchor) =>
-      hasRouteProof(analysis, anchor.value, evidence),
-    )
+  if (routeAnchors.length > 0) {
+    proofGroups.push(routeAnchors.every((anchor) =>
+      hasRouteProof(analysis, anchor.value, evidence, anchor),
+    ));
+  }
+  const commandAnchors = analysis.anchors.filter(
+    (anchor) => anchor.kind === 'command',
   );
+  if (commandAnchors.length > 0) {
+    proofGroups.push(commandAnchors.every((anchor) =>
+      hasCommandProof(anchor.value, evidence),
+    ));
+  }
+  return proofGroups.length > 0 && proofGroups.every(Boolean);
 }
 
 function hasTypedContradiction(
   analysis: AcceptanceAnalysis,
   evidence: EvidenceRecord,
 ): boolean {
-  return analysis.anchors
-    .filter((anchor) => anchor.kind === 'route')
-    .some((anchor) =>
-      hasRouteContradiction(analysis, anchor.value, evidence),
-    );
+  return analysis.anchors.some((anchor) => {
+    if (anchor.kind === 'route') {
+      return hasRouteContradiction(
+        analysis,
+        anchor.value,
+        evidence,
+        anchor,
+      );
+    }
+    if (anchor.kind === 'command') {
+      return hasCommandContradiction(anchor.value, evidence);
+    }
+    return false;
+  });
 }
 
 export function matchAcceptanceAgainstEvidence(
@@ -310,13 +410,34 @@ export function matchAcceptanceAgainstEvidence(
   const analysisByText = new Map(
     validation.analyses.map((analysis) => [analysis.text, analysis]),
   );
-  const haystackLower = evidenceHaystack(evidence).map((entry) =>
+  const haystackLower = genericEvidenceReceipts(evidence).map((entry) =>
     entry.toLowerCase(),
   );
 
   for (const criterion of acceptance) {
     const analysis = analysisByText.get(criterion);
     if (!analysis?.executable) {
+      unmatched.push(criterion);
+      continue;
+    }
+    const linkIntegrity = evaluateInternalLinkIntegrity(
+      analysis,
+      evidence,
+      {
+        proves: (route) => hasRouteProof(analysis, route, evidence),
+        contradicts: (route) =>
+          hasRouteContradiction(analysis, route, evidence),
+      },
+    );
+    if (linkIntegrity === 'pass') {
+      matched.push(criterion);
+      continue;
+    }
+    if (linkIntegrity === 'fail') {
+      contradicted.push(criterion);
+      continue;
+    }
+    if (linkIntegrity === 'unknown') {
       unmatched.push(criterion);
       continue;
     }
@@ -330,23 +451,27 @@ export function matchAcceptanceAgainstEvidence(
     }
     if (
       analysis.anchors.some(
-        (anchor) => anchor.kind === 'route' || anchor.kind === 'file_path',
+        (anchor) =>
+          anchor.kind === 'route' ||
+          anchor.kind === 'file_path' ||
+          anchor.kind === 'command',
       )
     ) {
       unmatched.push(criterion);
       continue;
     }
-    const anchors = analysis.anchors.map((anchor) =>
-      anchor.value.toLowerCase(),
-    );
-    const minimumHits = Math.min(2, anchors.length);
+    const proofTerms = genericProofTerms(analysis);
+    if (proofTerms.length < 2) {
+      unmatched.push(criterion);
+      continue;
+    }
     const matchedByReceipt = haystackLower.some((haystack) => {
       let hits = 0;
-      for (const anchor of anchors) {
-        if (haystack.includes(anchor)) hits++;
-        if (hits >= minimumHits) return true;
+      for (const term of proofTerms) {
+        if (haystack.includes(term)) hits++;
+        if (hits >= 2) return true;
       }
-      return hits >= minimumHits;
+      return false;
     });
     if (matchedByReceipt) matched.push(criterion);
     else unmatched.push(criterion);

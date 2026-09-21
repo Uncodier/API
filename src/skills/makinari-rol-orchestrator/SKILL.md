@@ -41,10 +41,11 @@ If `memories` does NOT return an established Brand Guideline, you MUST invent a 
 Your requirements, backlog items, and plans MUST align with the company's core objectives, tone, and target audience. 
 **Delegation:** You MUST inject a summary of these Brand Guidelines/Design Tokens directly into the `instructions` field of the plan steps delegated to `makinari-rol-frontend` and `ui-ux-design`. Never assume the sub-agents know the brand colors; you provide them.
 
-### 5. CRITICAL: Landing Pages & Marketing Sites (Dynamic UI Mandate)
+### 5. CRITICAL: Landing Pages & Marketing Sites (Contextual Art Direction)
 If the Requirement is a Landing Page or Marketing Site, you MUST explicitly insert a `ui-ux-design` step in your plan before the `makinari-rol-frontend` step. The Design step acts as the Art Director.
-- **NEVER** request basic "Shadcn cards" for marketing sites.
-- **Mandate Animation:** Explicitly request interactions in the `ui-ux-design` step `instructions` (e.g., "Define the brand, configure globals.css with HSL tokens, and create a layout specification using Magic UI Marquee for testimonials and Grid Pattern for the Hero to prevent a flat color").
+- Ask the Art Director to infer a `Design Read`, create or update the project-root `DESIGN.md`, configure semantic tokens, and define the responsive composition.
+- Do not preselect dark mode, glassmorphism, bento grids, gradients, Magic UI, Aceternity UI, or animation. The Art Director must choose them only when they serve the brief, audience, brand, and surface mode.
+- When motion or a third-party visual component is justified, require the Art Director to name the exact component, placement, behavior, accessibility fallback, and reason.
 
 ### 6. Use sibling skills for the heavy lifting
 Each step MUST set **`skill`** (preferred) or **`role`** so the executor loads the right playbook. Available skills:
@@ -54,8 +55,8 @@ Each step MUST set **`skill`** (preferred) or **`role`** so the executor loads t
 | `makinari-obj-template-selection` | Pick Vitrina vs generic app baseline (usually step 1). |
 | `makinari-fase-investigacion` | Gather context before planning. |
 | `makinari-fase-planeacion` | Turn requirement + investigation into `instance_plan`. |
-| `ui-ux-design` | **Art Director.** Defines HSL variables, Tailwind config, fonts, and animation strategies BEFORE development. |
-| `makinari-rol-frontend` | UI pages, components. Consumes design tokens. |
+| `ui-ux-design` | **Art Director.** Creates `DESIGN.md`, defines semantic tokens, typography, responsive composition, and justified interaction strategy BEFORE development. |
+| `makinari-rol-frontend` | UI pages and components. Reads `DESIGN.md` and consumes its design tokens and directives. |
 | `makinari-rol-backend` | Endpoints, webhooks. |
 | `makinari-rol-content` | Copy, articles, emails. |
 | `makinari-rol-qa` | E2E scenarios + gate triage. |
@@ -165,14 +166,14 @@ You are responsible for delivering a working, high-quality feature. Do NOT write
       "order": 2, 
       "title": "Creative Direction & UX/UI", 
       "skill": "ui-ux-design", 
-      "instructions": "Act as the Art Director. Define the brand's HSL color palette, typography (Google Fonts), and UI animation strategy. Write the exact CSS variables to `src/app/globals.css` and configure `tailwind.config.ts`. If it is a landing page, explicitly dictate which MagicUI/Aceternity components the frontend MUST use."
+      "instructions": "Act as the Art Director. Infer the Design Read from the brand, audience, surface, and existing product. Create or update project-root DESIGN.md, define exact semantic tokens and typography, and configure the applicable theme files. Specify responsive layouts and complete interaction states. Prescribe motion or third-party visual components only when justified by the brief, naming their purpose and accessibility fallback."
     },
     { 
       "id": "step_dev", 
       "order": 3, 
       "title": "Development", 
       "skill": "makinari-rol-frontend", 
-      "instructions": "Inspect the named existing files once, then implement <specific files + exact UI screens + navigation flows>. Consume the design tokens created in the prior step. Build the UI layout. For marketing pages, MUST install and use the animated components (Framer Motion, Magic UI) dictated by the Art Director. Do NOT use flat backgrounds."
+      "instructions": "Inspect the named existing files once, then read project-root DESIGN.md and the prior Art Director step_output. Implement <specific files + exact UI screens + navigation flows> using the documented semantic tokens, responsive composition, states, and justified dependencies. Do not introduce an unrelated aesthetic or install visual libraries that DESIGN.md does not require."
     },
     { 
       "id": "step_backend", 

@@ -178,6 +178,13 @@ describe('plan execution gate', () => {
     });
   });
 
+  it('never selects a cancelled exhaustion step for another retry', () => {
+    expect(selectPlanStepsForExecution([
+      { id: 'exhausted', order: 1, status: 'cancelled', retry_count: 0 },
+      { id: 'next', order: 2, status: 'pending' },
+    ]).map((step) => step.id)).toEqual(['next']);
+  });
+
   it('stops automatic execution when the infrastructure circuit is open', async () => {
     mockedSupabase.maybeSingle.mockResolvedValue({
       data: {

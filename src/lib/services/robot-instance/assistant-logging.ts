@@ -411,7 +411,10 @@ export function createNodeStreamingCallbacks(
  * Fetch context nodes for a given target node from instance_node_contexts.
  * Returns the referenced nodes with their type, ordered by creation.
  */
-export async function fetchNodeContexts(targetNodeId: string): Promise<{
+export async function fetchNodeContexts(
+  targetNodeId: string,
+  scope?: { instanceId: string; siteId: string },
+): Promise<{
   context_node_id: string;
   type: string;
   node: any;
@@ -425,10 +428,16 @@ export async function fetchNodeContexts(targetNodeId: string): Promise<{
   if (error || !refs || refs.length === 0) return [];
 
   const nodeIds = refs.map(r => r.context_node_id);
-  const { data: nodes } = await supabaseAdmin
+  let nodesQuery = supabaseAdmin
     .from('instance_nodes')
     .select('*')
     .in('id', nodeIds);
+  if (scope) {
+    nodesQuery = nodesQuery
+      .eq('instance_id', scope.instanceId)
+      .eq('site_id', scope.siteId);
+  }
+  const { data: nodes } = await nodesQuery;
 
   if (!nodes) return [];
 

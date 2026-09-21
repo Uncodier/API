@@ -71,7 +71,7 @@ export async function runAssistantWorkflow(
   
   // Attach image assets as short HTTP URLs only. processAssistantTurn hydrates
   // them to data:image inside the LLM step (avoids huge workflow payloads).
-  if (context.imageAssets && context.imageAssets.length > 0) {
+  if (!context.instanceNodeId && context.imageAssets && context.imageAssets.length > 0) {
     const refUrls = context.imageAssets
       .map((img: any) => img.publicUrl || (!String(img.url || '').startsWith('data:') ? img.url : null))
       .filter(Boolean);

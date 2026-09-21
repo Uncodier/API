@@ -22,10 +22,10 @@ export async function runGateOnlyNoProgressAdjudication(params: {
   });
   if (result.transient || result.concurrencyHalt) return result;
 
-  const gateCompletedStep =
-    result.gatePassed === true &&
-    result.persistedTerminalStatus === 'completed';
-  const persistAdjudication = gateCompletedStep
+  const adjudicationCompleted =
+    result.ok === true &&
+    result.judgeAdjudicated === true;
+  const persistAdjudication = adjudicationCompleted
     ? markNoProgressAdjudicationConsumed
     : markNoProgressAdjudicationRetryable;
   const mutation = await persistAdjudication({
@@ -33,7 +33,7 @@ export async function runGateOnlyNoProgressAdjudication(params: {
     stepId: gateInput.step.id,
     expectedGeneration:
       result.infrastructureGeneration ?? gateInput.infrastructureGeneration,
-    eventId: gateCompletedStep
+    eventId: adjudicationCompleted
       ? `${executionEventId}:no-progress-consumed`
       : `${executionEventId}:no-progress-retryable`,
     persistedMetadata: gateInput.persistedStep.metadata,

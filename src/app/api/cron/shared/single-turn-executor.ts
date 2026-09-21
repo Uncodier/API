@@ -62,12 +62,8 @@ export async function executeSingleTurnStep(params: {
   'use step';
   const { sandboxId, plan, step, requirementId, instanceId, siteId, userId, title, gitRepoKind, requirementType, validateDeployment = true, provisionedEnvKeys, cycleId, executionEventId, executionGeneration } = params;
   const audit: CronAuditContext = {
-    instanceId: instanceId,
-    siteId: siteId,
-    userId: userId,
-    requirementId: requirementId,
-    planId: plan.id,
-    stepId: step.id,
+    instanceId, siteId, userId, requirementId,
+    planId: plan.id, stepId: step.id,
   };
   const instanceType = gitRepoKind === 'automation' ? 'automation' : 'applications';
   let infrastructureGeneration = Number(step.infrastructure_generation || 0);
@@ -338,7 +334,7 @@ export async function executeSingleTurnStep(params: {
           requirementId, instanceId, siteId, userId, requirementType,
           gitRepoKind, backlogItemId: effectiveBacklogItemId,
           interactionBaselineSha, systemPrompt, fullTools, audit,
-          infrastructureGeneration, result: {},
+          infrastructureGeneration, executionEventId, result: {},
         },
       });
     }
@@ -467,8 +463,7 @@ export async function executeSingleTurnStep(params: {
         systemPrompt,
         result,
         fullTools,
-        audit,
-        infrastructureGeneration,
+        audit, infrastructureGeneration, executionEventId,
         sleepRequested,
         backgroundTask,
       });

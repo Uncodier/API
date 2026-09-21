@@ -17,6 +17,8 @@ export interface VideoRequestBody {
   duration_seconds?: number;
   aspect_ratio?: VideoAspectRatio;
   reference_images?: string[];
+  first_frame_url?: string;
+  last_frame_url?: string;
   quality?: VideoQuality;
   model?: string;
 }

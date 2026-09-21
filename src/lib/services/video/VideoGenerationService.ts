@@ -14,6 +14,8 @@ export interface VideoGenerationParams {
   duration_seconds?: number;
   aspect_ratio?: AspectRatio;
   reference_images?: string[];
+  first_frame_url?: string;
+  last_frame_url?: string;
   quality?: VideoQuality;
   model?: string;
 }
@@ -52,6 +54,8 @@ export class VideoGenerationService {
       duration_seconds,
       aspect_ratio,
       reference_images,
+      first_frame_url,
+      last_frame_url,
       quality,
       model
     } = params;
@@ -71,6 +75,8 @@ export class VideoGenerationService {
           duration_seconds,
           aspect_ratio,
           reference_images,
+          first_frame_url,
+          last_frame_url,
           quality,
           model
         });
@@ -114,6 +120,8 @@ export class VideoGenerationService {
     duration_seconds?: number;
     aspect_ratio?: AspectRatio;
     reference_images?: string[];
+    first_frame_url?: string;
+    last_frame_url?: string;
     quality?: VideoQuality;
     model?: string;
   }): Promise<VideoGenerationResult> {
@@ -134,6 +142,8 @@ export class VideoGenerationService {
     if (params.duration_seconds !== undefined) requestBody.duration_seconds = params.duration_seconds;
     if (params.aspect_ratio) requestBody.aspect_ratio = params.aspect_ratio;
     if (params.reference_images) requestBody.reference_images = params.reference_images;
+    if (params.first_frame_url) requestBody.first_frame_url = params.first_frame_url;
+    if (params.last_frame_url) requestBody.last_frame_url = params.last_frame_url;
     if (params.quality) requestBody.quality = params.quality;
     if (params.model) requestBody.model = params.model;
 

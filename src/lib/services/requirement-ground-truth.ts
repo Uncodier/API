@@ -2,6 +2,12 @@ import { Sandbox } from '@vercel/sandbox';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { mutateBacklogAtomically } from './requirement-backlog-mutation';
 import { patchRequirementMetadataKeys } from './requirement-metadata-patch';
+import type { EvidenceRecord } from './requirement-evidence-types';
+export type {
+  EvidenceRecord,
+  FeatureCoverageEvidence,
+  InteractionEvidence,
+} from './requirement-evidence-types';
 
 /**
  * Ground-truth file helpers.
@@ -18,83 +24,6 @@ import { patchRequirementMetadataKeys } from './requirement-metadata-patch';
  * Everything here is idempotent — we never fail a commit because a ground-truth
  * file did not write.
  */
-
-export interface FeatureCoverageEvidence {
-  ok: boolean;
-  evaluable?: boolean;
-  declared_touches?: string[];
-  present_touches?: string[];
-  missing_touches?: string[];
-  not_evaluable_touches?: string[];
-  expected_page_routes?: string[];
-  expected_api_routes?: string[];
-  present_page_files?: string[];
-  present_api_files?: string[];
-  not_evaluable_page_routes?: string[];
-  not_evaluable_api_routes?: string[];
-  acceptance_route_anchors?: string[];
-  artifact_proofs?: Array<{
-    path: string;
-    exists: boolean;
-    outcome?: 'pass' | 'fail' | 'not_evaluable';
-    bytes?: number;
-    content_excerpt?: string;
-    error?: string;
-  }>;
-  kind_requirements?: Array<{
-    kind: string;
-    requirement: string;
-    satisfied: boolean;
-    outcome?: 'pass' | 'fail' | 'not_evaluable';
-    detail?: string;
-  }>;
-  probe_errors?: Array<{ target: string; detail: string }>;
-  summary?: string;
-}
-
-export interface EvidenceRecord {
-  schema_version: 1;
-  item_id: string;
-  evidence_run_id?: string;
-  captured_at: string;
-  tests?: {
-    command: string;
-    exit_code: number;
-    output_tail: string;
-    ran_after_changes: boolean;
-    captured_at?: string;
-  }[];
-  build?: { command: string; exit_code: number; duration_ms: number };
-  runtime?: { route: string; http_status: number; screenshot_url?: string };
-  scenarios?: { name: string; pass: boolean; duration_ms: number }[];
-  /**
-   * Files the producer actually changed in the commit that triggered this
-   * evidence capture. Used by the Critic's `admin-only-commit` /
-   * `admin-only-landing` rules and by feature-coverage cross-checks.
-   */
-  changed_files?: string[];
-  /**
-   * Structural proof that the item shipped the files / routes its contract
-   * promised. Computed by `computeFeatureCoverage` in Phase 10.
-   */
-  feature_coverage?: FeatureCoverageEvidence;
-  commit_sha?: string;
-  assumptions_logged?: string[];
-  observations?: Array<{
-    kind: string;
-    disposition: 'pass' | 'hard_fail' | 'unknown' | 'advisory';
-    source: string;
-    target?: string;
-    detail: string;
-    method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
-    http_status?: number;
-    expected_statuses?: number[];
-  }>;
-  critic_passes: number;
-  judge_verdict?: 'approved' | 'rejected' | 'escalate';
-  judge_reason?: string;
-  judge_failure_kind?: 'product_defect' | 'evidence_gap' | 'contract_error';
-}
 
 export interface ProgressEntry {
   ts: string;
@@ -166,6 +95,7 @@ export async function writeEvidence(params: {
   cwd?: string;
   requirementId: string;
   itemId: string;
+  requireCanonicalPersistence?: boolean;
   record: Partial<Omit<EvidenceRecord, 'item_id' | 'schema_version'>> &
     Partial<Pick<EvidenceRecord, 'schema_version'>>;
 }): Promise<EvidenceRecord> {
@@ -181,7 +111,14 @@ export async function writeEvidence(params: {
   try {
     full = await mutateBacklogAtomically(params.requirementId, ({ backlog }) => {
       const idx = backlog.items.findIndex((item) => item.id === params.itemId);
-      if (idx < 0) return { result: full, write: false };
+      if (idx < 0) {
+        if (params.requireCanonicalPersistence) {
+          throw new Error(
+            `Backlog item ${params.itemId} is missing during evidence persistence`,
+          );
+        }
+        return { result: full, write: false };
+      }
       const merged = mergeEvidenceRecords(
         backlog.items[idx].evidence,
         incoming,
@@ -190,6 +127,13 @@ export async function writeEvidence(params: {
       return { result: merged };
     });
   } catch (e: unknown) {
+    if (params.requireCanonicalPersistence) {
+      throw new Error(
+        `Canonical evidence persistence failed: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
     console.warn('[GroundTruth.writeEvidence] DB persist failed:', e instanceof Error ? e.message : e);
   }
 

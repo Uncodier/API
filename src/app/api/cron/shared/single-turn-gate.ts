@@ -35,6 +35,8 @@ import {
 import type { SingleTurnResult } from './single-turn-types';
 import { writeEvidence } from '@/lib/services/requirement-ground-truth';
 import { extractTestEvidenceFromResult } from './step-test-evidence';
+import { persistJudgeRejection } from './single-turn-judge-rejection';
+import { adjudicationContractAcceptance } from './single-turn-judge-contract';
 
 interface RunSingleTurnGateInput {
   sandbox: Sandbox;
@@ -55,6 +57,7 @@ interface RunSingleTurnGateInput {
   fullTools: any;
   audit: CronAuditContext;
   infrastructureGeneration: number;
+  executionEventId: string;
   requireContractJudge?: boolean;
   sleepRequested?: number;
   backgroundTask?: SingleTurnResult['backgroundTask'];
@@ -83,6 +86,7 @@ export async function runSingleTurnGate(
     result,
     fullTools,
     audit,
+    executionEventId,
     sleepRequested,
     backgroundTask,
     requireContractJudge = false,
@@ -205,6 +209,7 @@ export async function runSingleTurnGate(
   }
 
   let persistedTerminalStatus: 'completed' | 'failed' | undefined;
+  let judgeAdjudicated = false;
   if (gateRes.ok) {
     console.log(`[SingleTurn] Gate PASSED for step ${step.order}`);
     const { data: latestPlan, error: latestPlanError } = await supabaseAdmin
@@ -260,6 +265,11 @@ export async function runSingleTurnGate(
       console.log(
         `[SingleTurn] Running Post-Gate Archetypes (Critic/Judge) for step ${step.order}.`,
       );
+      const contractAcceptance = adjudicationContractAcceptance({
+        step,
+        requireContractJudge,
+        isLastStep,
+      });
       const postGate = await runArchetypePostGate({
         sandbox,
         requirementId,
@@ -282,8 +292,8 @@ export async function runSingleTurnGate(
         capturedAt: new Date().toISOString(),
         evidenceRunId,
         audit,
-        ...(requireContractJudge
-          ? { contractAcceptance: stepContractAcceptance(step) }
+        ...(contractAcceptance
+          ? { contractAcceptance }
           : {}),
       });
       if (!postGate.ran) {
@@ -301,19 +311,18 @@ export async function runSingleTurnGate(
         };
       }
       if (postGate.judge_verdict !== 'approved') {
-        return {
-          ok: true,
-          isDone: false,
+        return persistJudgeRejection({
+          planId: plan.id,
+          stepId: step.id,
+          postGate,
           effectiveSandboxId,
-          gatePassed: false,
-          gateErrorExcerpt:
-            `Post-gate judge returned ${postGate.judge_verdict}.`,
+          infrastructureGeneration,
+          executionEventId,
           sleepRequested,
           backgroundTask,
-          remediationScheduled: true,
-          infrastructureGeneration,
-        };
+        });
       }
+      judgeAdjudicated = true;
       finalGateApproved = true;
     }
 
@@ -440,21 +449,6 @@ export async function runSingleTurnGate(
     infrastructureGeneration,
     ...(gateRes.ok ? {} : { gateFailureKind: gateRes.failureKind }),
     ...(persistedTerminalStatus ? { persistedTerminalStatus } : {}),
+    ...(judgeAdjudicated ? { judgeAdjudicated: true } : {}),
   };
-}
-
-function stepContractAcceptance(step: any): string[] {
-  const explicitCriteria = [
-    ...(Array.isArray(step.success_criteria) ? step.success_criteria : []),
-    ...(Array.isArray(step.validation_rules) ? step.validation_rules : []),
-  ].filter((value): value is string =>
-    typeof value === 'string' && value.trim().length > 0,
-  );
-  const fallback = typeof step.expected_output === 'string' &&
-    step.expected_output.trim().length > 0
-    ? [step.expected_output]
-    : [];
-  return Array.from(new Set(
-    explicitCriteria.length > 0 ? explicitCriteria : fallback,
-  ));
 }

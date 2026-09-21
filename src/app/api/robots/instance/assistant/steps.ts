@@ -1,12 +1,7 @@
 'use step';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { findAssistantManagedPlan } from '@/lib/services/workflow-robot/plan-ownership';
-import { executeAssistantStep } from '@/lib/services/robot-instance/assistant-executor';
 import { InstanceAssetsService } from '@/lib/services/robot-instance/InstanceAssetsService';
-import {
-  dehydrateMessageImages,
-  hydrateMessageImages,
-} from '@/lib/services/robot-instance/vision-message-images';
 import {
   fetchMemoriesContext,
   generateAgentBackground,
@@ -21,6 +16,8 @@ import {
 } from './utils';
 import type { AssistantContext } from './types';
 import { loadAssistantRequirementContext } from './requirement-context';
+import { resolveUiMediaContract } from './ui-media-contract';
+export { processAssistantTurn } from './assistant-turn';
 export async function prepareAssistantContext(
   instanceId: string,
   message: string,
@@ -221,6 +218,13 @@ export async function prepareAssistantContext(
   }
 
   const hasLinkedRequirement = Boolean(activeRequirementId);
+  const uiMediaContract = await resolveUiMediaContract({
+    instanceNodeId,
+    instanceId,
+    siteId,
+    contextString,
+    toolOverrides,
+  });
 
   // Generate prompts
   const agentBackground = await generateAgentBackground(siteId, userId);
@@ -236,6 +240,7 @@ export async function prepareAssistantContext(
     agentType,
     userPhone,
     activeRequirementId ?? undefined,
+    uiMediaContract?.outputType,
   );
   
   const assetsData = await InstanceAssetsService.getAssetsContext(instanceId);
@@ -322,6 +327,10 @@ CRITICAL: Your primary task is to CREATE a persistent audience.
           : `\nCRITICAL: Even if the user asks you to "improve the prompt", "write a script", or "rewrite", you MUST NOT stop at just returning text. You MUST take that improved text and IMMEDIATELY pass it into the appropriate generation tool (via \`tools\`) within this exact same response. Your final output MUST include calling the tool to generate the actual asset (video, image, audio, etc).`
       }${extraContextInstruction}`
     : extraContextInstruction;
+  const reinforcedNodeModeInstruction = [
+    nodeModeInstruction,
+    uiMediaContract?.instruction,
+  ].filter(Boolean).join('\n');
 
   // When system prompt is "plan", instruct the assistant to always use instance_plan (indication only, not deterministic code)
   const planModeInstruction =
@@ -398,7 +407,7 @@ Follow the loaded SKILL.md playbooks before calling tools via \`tools\`. \`skill
     : [
     agentBackground,
     instanceContext,
-    nodeModeInstruction,
+    reinforcedNodeModeInstruction,
     baseSystemPrompt,
     toolsContext,
     systemPrompt || '',
@@ -410,12 +419,12 @@ Follow the loaded SKILL.md playbooks before calling tools via \`tools\`. \`skill
     whatsappInstruction,
     generationInstruction,
     memoriesContext,
-    historyContext,
+    instanceNodeId ? '' : historyContext,
     requirementStatusContext,
     progressContext,
     backlogContext,
     getRequirementWorkflowInstruction(hasLinkedRequirement),
-    assetsContext,
+    instanceNodeId ? '' : assetsContext,
     ICP_CATEGORY_IDS_INSTRUCTION,
     BOOKING_ROUTING_INSTRUCTION,
     EXPENSES_VS_PURCHASES_INSTRUCTION,
@@ -451,48 +460,7 @@ Follow the loaded SKILL.md playbooks before calling tools via \`tools\`. \`skill
     hasLinkedRequirement,
     instanceNodeId,
     expectedResultsAmount: expectedResultsAmount || 1,
-    toolOverrides,
+    toolOverrides: uiMediaContract?.toolOverrides ?? toolOverrides,
+    uiMediaOutputType: uiMediaContract?.outputType,
   };
-}
-
-// Step 2: Execute one turn of the assistant
-export async function processAssistantTurn(
-  context: AssistantContext,
-  messages: any[]
-): Promise<any> {
-  'use step';
-
-  // Re-instantiate tools here inside the step where they will be used
-  const fullTools = await getInstanceAssistantTools(
-    context.executionOptions.site_id,
-    context.executionOptions.user_id,
-    context.executionOptions.instance_id,
-    context.customTools,
-    context.agentType,
-    context.userPhone,
-    context.executionOptions.requirement_id,
-  );
-
-  // Re-assemble execution options
-  const options = {
-    ...context.executionOptions,
-    system_prompt: context.systemPrompt,
-    custom_tools: fullTools,
-    instance_node_id: context.instanceNodeId,
-    expected_results_amount: context.expectedResultsAmount,
-    tool_overrides: context.toolOverrides,
-  };
-
-  // Hydrate HTTP image_url → data URLs inside THIS step (same process as the LLM).
-  // Large base64 must not cross Vercel Workflow step boundaries.
-  const hydratedMessages = await hydrateMessageImages(messages);
-
-  const result = await executeAssistantStep(hydratedMessages, context.instance, options);
-
-  // Shrink payload before returning across the workflow step boundary
-  if (result?.messages) {
-    result.messages = dehydrateMessageImages(result.messages);
-  }
-
-  return result;
 }

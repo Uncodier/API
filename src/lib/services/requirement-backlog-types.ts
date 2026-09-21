@@ -90,7 +90,10 @@ export interface BacklogItem {
   status: BacklogItemStatus;
   /** Number of product verification / judge failures. */
   attempts: number;
-  /** Counter of plumbing failures by tool name. Informational, does not scale to needs_review. */
+  /**
+   * Failure counters by verifier/tool name. Infrastructure keys are telemetry;
+   * Judge evidence/contract keys also enforce the bounded review handoff.
+   */
   tool_failures?: Record<string, number>;
   assumptions?: string[];
   scope_level: BacklogItemScope;

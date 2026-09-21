@@ -16,7 +16,11 @@
 
 import type { Sandbox } from '@vercel/sandbox';
 import type { BacklogItem, BacklogItemKind } from '@/lib/services/requirement-backlog-types';
-import { routesFromAcceptance, routesFromTouches } from '@/lib/services/requirement-acceptance';
+import {
+  analyzeAcceptanceEntry,
+  routesFromAcceptance,
+  routesFromTouches,
+} from '@/lib/services/requirement-acceptance';
 import {
   apiFileDeclaresHandlers,
   findApiFile,
@@ -209,10 +213,19 @@ async function evaluateKindRequirements(
 export async function computeFeatureCoverage(params: {
   sandbox: Sandbox;
   item: BacklogItem;
+  contractScoped?: boolean;
 }): Promise<FeatureCoverageSignal> {
-  const { sandbox, item } = params;
+  const { sandbox, item, contractScoped = false } = params;
   const acceptance = item.acceptance ?? [];
-  const touches = item.touches ?? [];
+  const acceptanceAnalyses = acceptance.map(analyzeAcceptanceEntry);
+  const acceptanceFileAnchors = acceptanceAnalyses.flatMap((analysis) =>
+    analysis.anchors
+      .filter((anchor) => anchor.kind === 'file_path')
+      .map((anchor) => anchor.value),
+  );
+  const touches = contractScoped
+    ? Array.from(new Set(acceptanceFileAnchors))
+    : item.touches ?? [];
 
   const acceptanceRouteAnchors = routesFromAcceptance(acceptance);
   const { pages: pagesFromTouches, apis: apisFromTouches } = routesFromTouches(touches);
@@ -259,13 +272,16 @@ export async function computeFeatureCoverage(params: {
     if (!result.file) continue;
     presentApiFiles.push(result.file);
     const methods = Array.from(new Set(
-      acceptance
-        .filter((line) => line.includes(route))
-        .flatMap((line) =>
-          Array.from(
-            line.matchAll(/\b(GET|POST|PUT|PATCH|DELETE)\b/gi),
-            (match) => match[1].toUpperCase(),
-          )),
+      acceptanceAnalyses.flatMap((analysis) =>
+        analysis.anchors
+          .filter(
+            (anchor) =>
+              anchor.kind === 'route' &&
+              anchor.value === route &&
+              !!anchor.method,
+          )
+          .map((anchor) => anchor.method!.toUpperCase()),
+      ),
     ));
     apiTargets.push({ route, file: result.file, methods });
   }
@@ -290,13 +306,15 @@ export async function computeFeatureCoverage(params: {
     }
   }
 
-  const kindResults = await evaluateKindRequirements(sandbox, item, {
-    presentPageFiles,
-    presentApiFiles,
-    pageProbeUnknown: notEvaluablePageRoutes.length > 0,
-    apiProbeUnknown: notEvaluableApiRoutes.length > 0,
-    apiTargets,
-  });
+  const kindResults = contractScoped
+    ? []
+    : await evaluateKindRequirements(sandbox, item, {
+        presentPageFiles,
+        presentApiFiles,
+        pageProbeUnknown: notEvaluablePageRoutes.length > 0,
+        apiProbeUnknown: notEvaluableApiRoutes.length > 0,
+        apiTargets,
+      });
   for (const requirement of kindResults) {
     if (requirement.outcome !== 'not_evaluable') continue;
     probeErrors.push({

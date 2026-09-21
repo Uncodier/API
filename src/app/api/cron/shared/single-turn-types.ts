@@ -15,8 +15,10 @@ export interface SingleTurnResult {
   remediationScheduled?: boolean;
   infrastructureWait?: CronInfrastructureWait;
   infrastructureGeneration?: number;
-  persistedTerminalStatus?: 'completed' | 'failed';
+  persistedTerminalStatus?: 'completed' | 'failed' | 'cancelled';
   gateFailureKind?: FlowGateFailureKind;
+  /** True only when the contract Judge actually returned a verdict. */
+  judgeAdjudicated?: boolean;
   concurrencyHalt?: boolean;
   /** True when this turn changed the Git worktree fingerprint. */
   durableProductProgress?: boolean;

@@ -1,6 +1,22 @@
-import { runInteractionAudit } from '../step-interaction-runner';
+import {
+  resolveLinkImportBindings,
+  runInteractionAudit,
+} from '../step-interaction-runner';
 
 describe('interaction audit sandbox runner', () => {
+  it('source-qualifies aliased navigation imports', () => {
+    expect(resolveLinkImportBindings(
+      'src/components/Nav.tsx',
+      "import { navigation as links } from '@/config/navigation';",
+      new Set([
+        'src/components/Nav.tsx',
+        'src/config/navigation.ts',
+      ]),
+    )).toEqual({
+      links: 'src/config/navigation.ts#navigation',
+    });
+  });
+
   it('uses the persisted baseline and reports only changed interaction lines', async () => {
     const sha = 'a'.repeat(40);
     const stdout = [
@@ -37,5 +53,17 @@ describe('interaction audit sandbox runner', () => {
       target: '/pricing',
       introduced_by_step: true,
     }));
+    expect(result.evaluable).toBe(true);
+    expect(result.audited_files).toEqual([
+      'src/app/page.tsx',
+      'src/components/Header.tsx',
+    ]);
+    expect(result.links).toEqual([
+      expect.objectContaining({
+        file: 'src/components/Header.tsx',
+        target: '/pricing',
+        route_exists: false,
+      }),
+    ]);
   });
 });
