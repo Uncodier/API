@@ -15,27 +15,45 @@ export function getPromptHash(prompt: string, width: number, height: number): st
  */
 export async function downloadFromCache(hash: string): Promise<{ buffer: Buffer; mimeType: string } | null> {
   const path = `prompt_cache/${hash}`;
-  const { data, error } = await supabaseAdmin.storage.from('generative_images').download(path);
-  
-  if (error) {
-    const storageError = error as { statusCode?: string | number; message?: string };
-    if (
-      String(storageError.statusCode) === '404'
-      || /not found|does not exist/i.test(storageError.message || '')
-    ) {
-      return null;
+  const { data: urlData } = supabaseAdmin.storage
+    .from('generative_images')
+    .getPublicUrl(path);
+
+  try {
+    const response = await fetch(urlData.publicUrl, {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null) as {
+        statusCode?: string | number;
+        code?: string;
+        error?: string;
+        message?: string;
+      } | null;
+      const missing = response.status === 404
+        || String(payload?.statusCode) === '404'
+        || payload?.code === 'NoSuchKey'
+        || payload?.error === 'not_found';
+      if (missing) return null;
+
+      throw new Error(
+        `Storage returned ${response.status}: ${payload?.message || response.statusText}`,
+      );
     }
-    throw new Error(`Image cache lookup failed: ${error.message}`);
+
+    const arrayBuffer = await response.arrayBuffer();
+    return {
+      buffer: Buffer.from(arrayBuffer),
+      mimeType: response.headers.get('content-type') || 'image/jpeg',
+    };
+  } catch (error) {
+    throw new Error(
+      `Image cache lookup failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
   }
-  if (!data) {
-    return null;
-  }
-  
-  const arrayBuffer = await data.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
-  const mimeType = data.type || 'image/jpeg';
-  
-  return { buffer, mimeType };
 }
 
 /**
