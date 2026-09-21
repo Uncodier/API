@@ -3,7 +3,10 @@ import { start } from 'workflow/api';
 import { generatePromptImageWorkflow, GeneratePromptImageInput } from '../workflow';
 import { getPromptHash, downloadFromCache } from '@/lib/services/image/promptImageCache';
 import { resolveSiteFromRequirementUrl } from '@/lib/services/image/resolveSiteFromRequirementUrl';
-import { hasAuthenticatedPrincipal } from '@/lib/security/request-rate-limit';
+import {
+  enforceRequestRateLimit,
+  hasAuthenticatedPrincipal,
+} from '@/lib/security/request-rate-limit';
 import { canAccessSite } from '@/lib/security/site-access';
 import { acquireLock, releaseLock } from '@/lib/security/upstash-rest';
 
@@ -20,6 +23,44 @@ function jsonError(error: string, status: number, details?: string) {
     details ? { error, details } : { error },
     { status, headers: NO_STORE_HEADERS }
   );
+}
+
+function cachedImageResponse(cached: { buffer: Buffer; mimeType: string }) {
+  return new NextResponse(cached.buffer as unknown as BodyInit, {
+    headers: {
+      'Content-Type': cached.mimeType,
+      'Cache-Control': 'public, max-age=31536000, s-maxage=31536000, immutable',
+      'Access-Control-Allow-Origin': '*',
+    },
+  });
+}
+
+function positiveIntegerSetting(name: string, fallback: number): number {
+  const parsed = Number(process.env[name]);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+async function enforceImageGenerationRateLimit(
+  request: NextRequest,
+): Promise<NextResponse | null> {
+  const perClient = await enforceRequestRateLimit(request, {
+    namespace: 'expensive',
+    limit: 20,
+    windowSeconds: 60,
+    failClosed: true,
+  });
+  if (perClient) return perClient;
+
+  return enforceRequestRateLimit(request, {
+    namespace: 'public-generation-global',
+    identity: 'global',
+    limit: positiveIntegerSetting(
+      'PUBLIC_GENERATION_GLOBAL_REQUESTS_PER_HOUR',
+      200,
+    ),
+    windowSeconds: 60 * 60,
+    failClosed: true,
+  });
 }
 
 function safeDecode(str: string): string {
@@ -97,36 +138,32 @@ export async function GET(
     else if (ar < 0.85) ratio = '3:4';
     else ratio = '1:1';
 
-    if (!hasAuthenticatedPrincipal(request)) {
-      return jsonError('Authentication is required to access generated images', 401);
-    }
-
+    const authenticated = hasAuthenticatedPrincipal(request);
     const origin = request.headers.get('origin');
     const referer = request.headers.get('referer');
     const originOrReferer = origin || referer;
-
-    const siteId = expectedSiteId
-      || (originOrReferer
-        ? await resolveSiteFromRequirementUrl(originOrReferer)
-        : null);
+    const resolvedSiteId = originOrReferer
+      ? await resolveSiteFromRequirementUrl(originOrReferer, expectedSiteId)
+      : null;
+    const siteId = resolvedSiteId || (authenticated ? expectedSiteId : null);
 
     if (!siteId) {
+      if (!authenticated) {
+        return jsonError('Authentication is required to access generated images', 401);
+      }
       return jsonError('A site_id is required for image generation', 400);
     }
-    if (!await canAccessSite(request, siteId)) {
+    if (authenticated && !await canAccessSite(request, siteId)) {
       return jsonError('Site access denied', 403);
     }
 
     const hash = getPromptHash(`v2:${siteId}:${promptStr}`, width, height);
     const cached = await downloadFromCache(hash);
     if (cached) {
-      return new NextResponse(cached.buffer as unknown as BodyInit, {
-        headers: {
-          'Content-Type': cached.mimeType,
-          'Cache-Control': 'private, max-age=31536000, immutable',
-          'Access-Control-Allow-Origin': '*',
-        },
-      });
+      return cachedImageResponse(cached);
+    }
+    if (!authenticated) {
+      return jsonError('Authentication is required to generate images', 401);
     }
 
     const lockKey = `lock:public-image:${hash}`;
@@ -140,14 +177,15 @@ export async function GET(
     try {
       const rechecked = await downloadFromCache(hash);
       if (rechecked) {
-        return new NextResponse(rechecked.buffer as unknown as BodyInit, {
-          headers: {
-            'Content-Type': rechecked.mimeType,
-            'Cache-Control': 'private, max-age=31536000, immutable',
-            'Access-Control-Allow-Origin': '*',
-          },
-        });
+        return cachedImageResponse(rechecked);
       }
+
+      const limited = await enforceImageGenerationRateLimit(request);
+      if (limited) {
+        limited.headers.set('Access-Control-Allow-Origin', '*');
+        return limited;
+      }
+
       const workflowInput: GeneratePromptImageInput = {
         prompt: promptStr,
         siteId,
@@ -169,13 +207,7 @@ export async function GET(
 
       const finalCached = await downloadFromCache(hash);
       if (finalCached) {
-        return new NextResponse(finalCached.buffer as unknown as BodyInit, {
-          headers: {
-            'Content-Type': finalCached.mimeType,
-            'Cache-Control': 'private, max-age=31536000, immutable',
-            'Access-Control-Allow-Origin': '*',
-          },
-        });
+        return cachedImageResponse(finalCached);
       }
       return jsonError('Image generation completed but image was not found in cache', 502);
     } finally {

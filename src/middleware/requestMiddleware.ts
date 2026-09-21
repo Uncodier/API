@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAllowedHeaders, getAllowedOrigins } from '../../cors.config.js';
 import { apiKeyAuth } from './apiKeyAuth';
+import { enforceRequestRateLimit } from '@/lib/security/request-rate-limit';
 import {
-  enforceRequestRateLimit,
-  type RequestRateLimitPolicy,
-} from '@/lib/security/request-rate-limit';
+  isExpensivePath,
+  limitPublicImageDelivery,
+  requestRatePolicy,
+  usesRouteLevelGenerationRateLimit,
+} from './requestRateLimits';
 import {
   getCachedJson,
   setCachedJson,
@@ -59,82 +62,6 @@ export function isPublicRequest(pathname: string, method: string): boolean {
   return PUBLIC_VISITOR_PATHS.some((path) => (
     pathname === path || pathname.startsWith(`${path}/`)
   ));
-}
-
-function isExpensivePath(pathname: string): boolean {
-  return (
-    (pathname.startsWith('/api/ai/') && !pathname.endsWith('/health'))
-    || pathname === '/api/analyze'
-    || pathname.startsWith('/api/site/analyze')
-    || pathname.startsWith('/api/site/tester')
-    || pathname.startsWith('/api/finder/')
-    || pathname.startsWith('/api/agents/')
-    || pathname.startsWith('/api/robots/')
-    || pathname.startsWith('/api/public/image/prompt/')
-    || pathname.startsWith('/api/public/video/prompt/')
-    || pathname.startsWith('/api/public/icon/prompt/')
-    || pathname.startsWith('/api/public/summary/prompt/')
-    || pathname.startsWith('/api/workflow/')
-    || pathname.startsWith('/api/workflows/')
-  );
-}
-
-function ratePolicy(pathname: string): RequestRateLimitPolicy {
-  if (pathname === '/api/status' || pathname.startsWith('/api/status/')) {
-    return {
-      namespace: 'status',
-      limit: 60,
-      windowSeconds: 60,
-    };
-  }
-  if (isWebhookPath(pathname)) {
-    return {
-      namespace: 'webhook',
-      limit: 120,
-      windowSeconds: 60,
-      failClosed: true,
-    };
-  }
-  if (isExpensivePath(pathname)) {
-    return {
-      namespace: 'expensive',
-      limit: 20,
-      windowSeconds: 60,
-      failClosed: true,
-    };
-  }
-  if (pathname.startsWith('/api/public/')) {
-    return {
-      namespace: 'public-read',
-      limit: 60,
-      windowSeconds: 60,
-      failClosed: true,
-    };
-  }
-  if (
-    pathname.startsWith('/api/visitors/')
-    || pathname === '/api/tracking/email'
-  ) {
-    return {
-      namespace: 'tracking',
-      limit: 300,
-      windowSeconds: 60,
-      failClosed: true,
-    };
-  }
-  if (pathname.startsWith('/api/cron/')) {
-    return {
-      namespace: 'cron',
-      limit: 120,
-      windowSeconds: 60,
-    };
-  }
-  return {
-    namespace: 'api',
-    limit: 300,
-    windowSeconds: 60,
-    failClosed: true,
-  };
 }
 
 function positiveIntegerSetting(name: string, fallback: number): number {
@@ -293,6 +220,10 @@ export default async function requestMiddleware(request: NextRequest) {
   const origin = request.headers.get('origin');
   const publicRequest = isPublicRequest(pathname, method);
   const webhookRequest = isWebhookPath(pathname);
+  const routeLevelGenerationLimit = usesRouteLevelGenerationRateLimit(
+    pathname,
+    method,
+  );
 
   const contentLength = Number(request.headers.get('content-length'));
   const maxRequestBytes = pathname === '/api/visitors/upload'
@@ -310,11 +241,16 @@ export default async function requestMiddleware(request: NextRequest) {
     );
   }
 
-  const limited = await enforceRequestRateLimit(
-    request,
-    ratePolicy(pathname),
-  );
-  if (limited) return withCors(limited, origin);
+  if (routeLevelGenerationLimit) {
+    const limited = await limitPublicImageDelivery(request);
+    if (limited) return withCors(limited, origin);
+  } else {
+    const limited = await enforceRequestRateLimit(
+      request,
+      requestRatePolicy(pathname, webhookRequest),
+    );
+    if (limited) return withCors(limited, origin);
+  }
 
   const publicGeneration = (
     pathname.startsWith('/api/public/image/prompt/')
@@ -322,7 +258,7 @@ export default async function requestMiddleware(request: NextRequest) {
     || pathname.startsWith('/api/public/icon/prompt/')
     || pathname.startsWith('/api/public/summary/prompt/')
   );
-  if (publicGeneration) {
+  if (publicGeneration && !routeLevelGenerationLimit) {
     const globallyLimited = await enforceRequestRateLimit(request, {
       namespace: 'public-generation-global',
       identity: 'global',
@@ -346,7 +282,10 @@ export default async function requestMiddleware(request: NextRequest) {
       failClosed: true,
     });
     if (globallyLimited) return withCors(globallyLimited, origin);
-  } else if (isExpensivePath(pathname)) {
+  } else if (
+    !routeLevelGenerationLimit
+    && isExpensivePath(pathname)
+  ) {
     const globallyLimited = await enforceRequestRateLimit(request, {
       namespace: 'expensive-global',
       identity: 'global',
@@ -359,9 +298,12 @@ export default async function requestMiddleware(request: NextRequest) {
     });
     if (globallyLimited) return withCors(globallyLimited, origin);
   } else if (
-    pathname.startsWith('/api/public/')
-    || pathname === '/api/status'
-    || pathname.startsWith('/api/status/')
+    !routeLevelGenerationLimit
+    && (
+      pathname.startsWith('/api/public/')
+      || pathname === '/api/status'
+      || pathname.startsWith('/api/status/')
+    )
   ) {
     const globallyLimited = await enforceRequestRateLimit(request, {
       namespace: 'public-read-global',
