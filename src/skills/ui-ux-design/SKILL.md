@@ -148,7 +148,7 @@ Choose composition from content and user intent:
 
 Real media is part of the composition, not an afterthought. Prefer supplied brand assets, real product captures, or Makinari-generated media. Do not fabricate product screenshots with decorative rectangles or invent social-proof logos.
 
-- Image: `https://backend.makinari.com/api/public/image/prompt/[url_encoded_prompt]?width=800&height=600`
+- Image: request a signed URL with authenticated `POST https://backend.makinari.com/api/public/image/sign` using `{ site_id, prompt, width, height }`; use the returned `url` as the image source. Direct prompt URLs are for pre-generated assets only and must include `site_id`.
 - Icon: `https://backend.makinari.com/api/public/icon/prompt/[url_encoded_prompt]?width=64&height=64&bg=transparent`
 - Video: `https://backend.makinari.com/api/public/video/prompt/[url_encoded_prompt]?duration=5&ratio=16:9`
 

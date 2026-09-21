@@ -27,6 +27,7 @@ export function requiredApiKeyScope(
     || pathname === '/api/analyze'
     || pathname.startsWith('/api/site/analyze')
     || pathname.startsWith('/api/site/tester')
+    || pathname === '/api/public/image/sign'
     || /^\/api\/public\/(image|video|icon|summary)\/prompt\//.test(pathname)
   ) {
     return 'ai:generate';

@@ -57,6 +57,8 @@ describe('apiKeyAuth', () => {
     expect(requiredApiKeyScope('/api/ai/image', 'POST')).toBe('ai:generate');
     expect(requiredApiKeyScope('/api/public/video/prompt/demo', 'GET'))
       .toBe('ai:generate');
+    expect(requiredApiKeyScope('/api/public/image/sign', 'POST'))
+      .toBe('ai:generate');
     expect(requiredApiKeyScope('/api/public/posts', 'GET')).toBeNull();
   });
 

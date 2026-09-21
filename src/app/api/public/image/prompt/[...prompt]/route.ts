@@ -7,6 +7,7 @@ import {
   enforceRequestRateLimit,
   hasAuthenticatedPrincipal,
 } from '@/lib/security/request-rate-limit';
+import { verifyPublicImageSignature } from '@/lib/security/public-image-signature';
 import { canAccessSite } from '@/lib/security/site-access';
 import { acquireLock, releaseLock } from '@/lib/security/upstash-rest';
 
@@ -120,6 +121,8 @@ export async function GET(
     let width = parseInt(searchParams.get('width') || '1024', 10);
     let height = parseInt(searchParams.get('height') || '1024', 10);
     const expectedSiteId = searchParams.get('site_id');
+    const expires = searchParams.get('expires');
+    const suppliedSignature = searchParams.get('signature');
 
     if (isNaN(width) || width <= 0) width = 1024;
     if (isNaN(height) || height <= 0) height = 1024;
@@ -139,13 +142,28 @@ export async function GET(
     else ratio = '1:1';
 
     const authenticated = hasAuthenticatedPrincipal(request);
+    const signedGeneration = Boolean(
+      expectedSiteId
+      && verifyPublicImageSignature(
+        {
+          siteId: expectedSiteId,
+          prompt: promptStr,
+          width,
+          height,
+        },
+        expires,
+        suppliedSignature,
+      ),
+    );
     const origin = request.headers.get('origin');
     const referer = request.headers.get('referer');
     const originOrReferer = origin || referer;
-    const resolvedSiteId = originOrReferer
+    const resolvedSiteId = !signedGeneration && originOrReferer
       ? await resolveSiteFromRequirementUrl(originOrReferer, expectedSiteId)
       : null;
-    const siteId = resolvedSiteId || (authenticated ? expectedSiteId : null);
+    const siteId = signedGeneration
+      ? expectedSiteId
+      : resolvedSiteId || (authenticated ? expectedSiteId : null);
 
     if (!siteId) {
       if (!authenticated) {
@@ -153,7 +171,7 @@ export async function GET(
       }
       return jsonError('A site_id is required for image generation', 400);
     }
-    if (authenticated && !await canAccessSite(request, siteId)) {
+    if (!signedGeneration && authenticated && !await canAccessSite(request, siteId)) {
       return jsonError('Site access denied', 403);
     }
 
@@ -162,7 +180,7 @@ export async function GET(
     if (cached) {
       return cachedImageResponse(cached);
     }
-    if (!authenticated) {
+    if (!authenticated && !signedGeneration) {
       return jsonError('Authentication is required to generate images', 401);
     }
 

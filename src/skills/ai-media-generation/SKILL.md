@@ -18,16 +18,31 @@ Create visual and multimedia assets by interacting with Artificial Intelligence 
 3. **Effective Prompting (Brand Injection):** Be specific and descriptive. You MUST inject the brand's exact aesthetic into the prompt (e.g., "incorporating deep blue and safety orange accents", "shot in a gritty, high-contrast industrial style", "flat vector illustration matching #FF5500"). For photorealistic images, specify lens type, camera angle, and lighting conditions that align with the brand.
 3. **Makinari Media Generation API (Preferred for UI embeds):**
    - Base URL (always absolute — this API lives on the Makinari backend, NOT on the app being built). Use `image`, `icon`, or `video` in the path.
-   - Images: `https://backend.makinari.com/api/public/image/prompt/[url_encoded_prompt]?width=1024&height=1024`
+   - Cached images: `https://backend.makinari.com/api/public/image/prompt/[url_encoded_prompt]?site_id=[site_id]&width=1024&height=1024`
+   - Image cache misses require a signed URL. Obtain one with an authenticated `POST https://backend.makinari.com/api/public/image/sign` request containing `{ site_id, prompt, width, height }`, then assign the returned `url` to the image `src`.
    - Icons: `https://backend.makinari.com/api/public/icon/prompt/[url_encoded_prompt]?width=256&height=256&bg=transparent` (Icons have no background by default, optionally pass a `bg` param like `bg=solid+white` or `bg=dark+blue`)
    - Video: `https://backend.makinari.com/api/public/video/prompt/[url_encoded_prompt]?duration=5&ratio=16:9`
    - `prompt` must be URL-encoded.
    - Example Image:
      ```tsx
-     <img
-       src="https://backend.makinari.com/api/public/image/prompt/a%20futuristic%20cityscape?width=800&height=400"
-       alt="Futuristic cityscape at sunset"
-     />
+     const response = await fetch(
+       'https://backend.makinari.com/api/public/image/sign',
+       {
+         method: 'POST',
+         headers: {
+           Authorization: `Bearer ${accessToken}`,
+           'Content-Type': 'application/json',
+         },
+         body: JSON.stringify({
+           site_id: siteId,
+           prompt: 'a futuristic cityscape',
+           width: 800,
+           height: 400,
+         }),
+       },
+     );
+     const { url } = await response.json();
+     // Render <img src={url} alt="Futuristic cityscape at sunset" />
      ```
    - Example Icon:
      ```tsx
@@ -43,7 +58,7 @@ Create visual and multimedia assets by interacting with Artificial Intelligence 
      </video>
      ```
    - Never use a relative `/api/public/...` path inside sandbox apps — that route does not exist there.
-   - Auth: the browser sends `Referer` from the preview/deployed hostname; that hostname must match `requirement_status.preview_url` or `endpoint_url`. Do not call this from curl/scripts without Origin/Referer unless the image is already cached.
+   - Never rely on `Origin` or `Referer` to authorize a cache miss. They are only hints for locating already-public cached media and do not authorize billable generation.
 4. **Code Integration:**
    - When generating SVGs directly in code (e.g., React components), ensure they are responsive (use `viewBox` instead of fixed `width`/`height`).
    - Optimize generated SVGs by removing unnecessary tags, grouping elements logically (`<g>`), and using CSS classes for repetitive styles.

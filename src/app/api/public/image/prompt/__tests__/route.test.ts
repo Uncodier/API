@@ -7,6 +7,7 @@ const downloadFromCache = jest.fn();
 const resolveSiteFromRequirementUrl = jest.fn();
 const hasAuthenticatedPrincipal = jest.fn();
 const enforceRequestRateLimit = jest.fn();
+const verifyPublicImageSignature = jest.fn();
 const canAccessSite = jest.fn();
 const acquireLock = jest.fn();
 const releaseLock = jest.fn();
@@ -22,6 +23,9 @@ jest.mock('@/lib/services/image/resolveSiteFromRequirementUrl', () => ({
 jest.mock('@/lib/security/request-rate-limit', () => ({
   hasAuthenticatedPrincipal,
   enforceRequestRateLimit,
+}));
+jest.mock('@/lib/security/public-image-signature', () => ({
+  verifyPublicImageSignature,
 }));
 jest.mock('@/lib/security/site-access', () => ({ canAccessSite }));
 jest.mock('@/lib/security/upstash-rest', () => ({
@@ -54,6 +58,7 @@ describe('public prompt image route caching', () => {
     } as never);
     releaseLock.mockResolvedValue({ state: 'released' } as never);
     enforceRequestRateLimit.mockResolvedValue(null as never);
+    verifyPublicImageSignature.mockReturnValue(false as never);
   });
 
   it('serves a cached image for a resolved site before authentication or limiting', async () => {
@@ -95,6 +100,35 @@ describe('public prompt image route caching', () => {
     });
     expect(enforceRequestRateLimit).not.toHaveBeenCalled();
     expect(acquireLock).not.toHaveBeenCalled();
+  });
+
+  it('allows a valid signed request to enter the generation flow', async () => {
+    verifyPublicImageSignature.mockReturnValue(true as never);
+    downloadFromCache
+      .mockResolvedValueOnce(null as never)
+      .mockResolvedValueOnce({
+        buffer: Buffer.from('generated-by-peer'),
+        mimeType: 'image/jpeg',
+      } as never);
+
+    const response = await GET(request(
+      '?site_id=site-id&expires=123&signature=signed',
+    ), context);
+
+    expect(response.status).toBe(200);
+    expect(verifyPublicImageSignature).toHaveBeenCalledWith(
+      {
+        siteId: 'site-id',
+        prompt: 'a cat',
+        width: 1024,
+        height: 1024,
+      },
+      '123',
+      'signed',
+    );
+    expect(resolveSiteFromRequirementUrl).not.toHaveBeenCalled();
+    expect(canAccessSite).not.toHaveBeenCalled();
+    expect(acquireLock).toHaveBeenCalled();
   });
 
   it('rechecks the cache under the generation lock before consuming quota', async () => {
