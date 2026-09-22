@@ -25,6 +25,7 @@ const ValidationTargetSchema = z.object({
   method: z.enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH']).optional(),
   expected_statuses: z.array(z.number().int().min(100).max(599)).optional(),
   payload: z.unknown().optional(),
+  auth_required: z.boolean().optional(),
 });
 
 const CreateInstancePlanSchema = z.object({

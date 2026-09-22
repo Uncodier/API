@@ -70,6 +70,10 @@ async function evaluateKindRequirements(
   presence: {
     presentPageFiles: string[];
     presentApiFiles: string[];
+    hasPageContract: boolean;
+    hasApiContract: boolean;
+    changedPageFiles: string[];
+    changedApiFiles: string[];
     pageProbeUnknown: boolean;
     apiProbeUnknown: boolean;
     apiTargets: Array<{
@@ -85,8 +89,21 @@ async function evaluateKindRequirements(
 
   switch (item.kind) {
     case 'page': {
+      if (!presence.hasPageContract && presence.changedPageFiles.length === 0) {
+        out.push({
+          kind: 'page',
+          requirement: 'at_least_one_page_file',
+          satisfied: false,
+          outcome: 'not_evaluable',
+          detail: 'no explicit route or changed page.tsx artifact was available',
+        });
+        break;
+      }
+      const pages = presence.hasPageContract
+        ? presence.presentPageFiles
+        : presence.changedPageFiles;
       const outcome: CoverageProbeOutcome =
-        presence.presentPageFiles.length > 0
+        pages.length > 0
           ? 'pass'
           : presence.pageProbeUnknown
             ? 'not_evaluable'
@@ -96,13 +113,25 @@ async function evaluateKindRequirements(
         requirement: 'at_least_one_page_file',
         satisfied: outcome === 'pass',
         outcome,
-        detail: presence.presentPageFiles.join(', ') || 'no matching page.tsx found',
+        detail: pages.join(', ') || 'no matching page.tsx found',
       });
       break;
     }
     case 'crud':
     case 'api': {
-      const apis = presence.presentApiFiles;
+      if (!presence.hasApiContract && presence.changedApiFiles.length === 0) {
+        out.push({
+          kind: item.kind,
+          requirement: 'at_least_one_route_file',
+          satisfied: false,
+          outcome: 'not_evaluable',
+          detail: 'no explicit endpoint or changed route.ts artifact was available',
+        });
+        break;
+      }
+      const apis = presence.hasApiContract
+        ? presence.presentApiFiles
+        : presence.changedApiFiles;
       const routeOutcome: CoverageProbeOutcome =
         apis.length > 0
           ? 'pass'
@@ -116,7 +145,14 @@ async function evaluateKindRequirements(
         outcome: routeOutcome,
         detail: apis.join(', ') || 'no matching src/app/api/*/route.ts found',
       });
-      for (const target of presence.apiTargets) {
+      const apiTargets = presence.hasApiContract
+        ? presence.apiTargets
+        : presence.changedApiFiles.map((file) => ({
+            route: file,
+            file,
+            methods: [] as string[],
+          }));
+      for (const target of apiTargets) {
         const handlers = target.methods.length > 0
           ? target.methods
           : item.kind === 'crud'
@@ -214,8 +250,9 @@ export async function computeFeatureCoverage(params: {
   sandbox: Sandbox;
   item: BacklogItem;
   contractScoped?: boolean;
+  changedFiles?: string[];
 }): Promise<FeatureCoverageSignal> {
-  const { sandbox, item, contractScoped = false } = params;
+  const { sandbox, item, contractScoped = false, changedFiles = [] } = params;
   const acceptance = item.acceptance ?? [];
   const acceptanceAnalyses = acceptance.map(analyzeAcceptanceEntry);
   const acceptanceFileAnchors = acceptanceAnalyses.flatMap((analysis) =>
@@ -223,9 +260,13 @@ export async function computeFeatureCoverage(params: {
       .filter((anchor) => anchor.kind === 'file_path')
       .map((anchor) => anchor.value),
   );
-  const touches = contractScoped
-    ? Array.from(new Set(acceptanceFileAnchors))
-    : item.touches ?? [];
+  const rawTouches = contractScoped
+    ? acceptanceFileAnchors
+    : [
+        ...(item.touches ?? []),
+        ...acceptanceFileAnchors,
+      ];
+  const touches = Array.from(new Set(rawTouches.map(normalizeTouchPath)));
 
   const acceptanceRouteAnchors = routesFromAcceptance(acceptance);
   const { pages: pagesFromTouches, apis: apisFromTouches } = routesFromTouches(touches);
@@ -306,11 +347,41 @@ export async function computeFeatureCoverage(params: {
     }
   }
 
+  const changedPageFiles: string[] = [];
+  const changedApiFiles: string[] = [];
+  const needsChangedPageProof =
+    !contractScoped &&
+    item.kind === 'page' &&
+    expectedPageRoutes.length === 0;
+  const needsChangedApiProof =
+    !contractScoped &&
+    (item.kind === 'api' || item.kind === 'crud') &&
+    expectedApiRoutes.length === 0;
+  for (const changedFile of Array.from(
+    new Set(changedFiles.map(normalizeTouchPath)),
+  )) {
+    const isPage =
+      needsChangedPageProof &&
+      /^(?:src\/)?app\/(?!api\/)(?:.*\/)?page\.[cm]?[jt]sx?$/.test(changedFile);
+    const isApi =
+      needsChangedApiProof &&
+      /^(?:src\/)?app\/api\/(?:.*\/)?route\.[cm]?[jt]s$/.test(changedFile);
+    if (!isPage && !isApi) continue;
+    const proof = await readArtifactProof(sandbox, changedFile);
+    if (proof.outcome !== 'pass') continue;
+    if (isPage) changedPageFiles.push(changedFile);
+    if (isApi) changedApiFiles.push(changedFile);
+  }
+
   const kindResults = contractScoped
     ? []
     : await evaluateKindRequirements(sandbox, item, {
         presentPageFiles,
         presentApiFiles,
+        hasPageContract: expectedPageRoutes.length > 0,
+        hasApiContract: expectedApiRoutes.length > 0,
+        changedPageFiles,
+        changedApiFiles,
         pageProbeUnknown: notEvaluablePageRoutes.length > 0,
         apiProbeUnknown: notEvaluableApiRoutes.length > 0,
         apiTargets,

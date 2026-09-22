@@ -84,7 +84,19 @@ export async function canAccessSite(
     .eq('site_id', siteId)
     .eq('user_id', userId)
     .maybeSingle();
-  const allowed = Boolean(ownership);
+  if (ownership) {
+    await setCachedJson(cacheKey, { allowed: true }, 60);
+    return true;
+  }
+
+  const { data: membership } = await supabaseAdmin
+    .from('site_members')
+    .select('site_id')
+    .eq('site_id', siteId)
+    .eq('user_id', userId)
+    .eq('status', 'active')
+    .maybeSingle();
+  const allowed = Boolean(membership);
   await setCachedJson(cacheKey, { allowed }, allowed ? 60 : 10);
   return allowed;
 }

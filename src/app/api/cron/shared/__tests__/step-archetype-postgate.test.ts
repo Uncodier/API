@@ -226,6 +226,7 @@ describe('runArchetypePostGate verification budget', () => {
         acceptance: ['GET /current-step returns 200'],
       }),
       contractScoped: true,
+      changedFiles: ['src/app/layout.tsx'],
     });
   });
 

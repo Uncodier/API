@@ -5,6 +5,7 @@ import type {
   RuntimeProbeResult,
 } from './step-runtime-probe';
 import {
+  authRequiredFromAcceptance,
   expectedStatusesFromAcceptance,
   reconcileAcceptanceStatuses,
 } from './step-probe-acceptance';
@@ -30,6 +31,7 @@ export interface StepValidationTarget {
   method?: HttpMethod;
   expected_statuses?: number[];
   payload?: unknown;
+  auth_required?: boolean;
 }
 
 export interface RuntimePageTarget {
@@ -48,6 +50,7 @@ export interface RuntimeApiTarget {
   required: boolean;
   expected_statuses?: number[];
   payload?: unknown;
+  auth_required?: boolean;
 }
 
 export interface ProbeObservation {
@@ -122,6 +125,9 @@ export function normalizeStepValidationTargets(
         ? { expected_statuses: normalizeStatuses(raw.expected_statuses) }
         : {}),
       ...(raw.payload !== undefined ? { payload: raw.payload } : {}),
+      ...(typeof raw.auth_required === 'boolean'
+        ? { auth_required: raw.auth_required }
+        : {}),
     });
   }
   return targets;
@@ -227,12 +233,20 @@ export function buildRuntimeTargetPlan(input: {
       acceptance: input.acceptance,
       observations,
     });
+    const authRequired =
+      target.auth_required ??
+      authRequiredFromAcceptance({
+        acceptance: input.acceptance,
+        method: target.method || 'GET',
+        path: target.path,
+      });
     upsertApi(apis, {
       ...target,
       kind: 'api',
       method: target.method || 'GET',
       source: 'contract',
       required: true,
+      auth_required: authRequired,
       ...(expectedStatuses
         ? { expected_statuses: expectedStatuses }
         : {}),
@@ -372,19 +386,29 @@ export function evaluateRuntimeProbe(
     const failed =
       !unavailable &&
       !statusMatches(probe.http_status, target?.expected_statuses);
-    const disposition: ProbeDisposition = unavailable
-      ? 'unknown'
-      : failed
-        ? target?.required
-          ? 'hard_fail'
-          : 'advisory'
-        : 'pass';
+    const unauthenticatedBoundary =
+      failed &&
+      target?.auth_required === true &&
+      (probe.http_status === 401 || probe.http_status === 403);
+    let disposition: ProbeDisposition = 'pass';
+    if (unavailable) {
+      disposition = 'unknown';
+    } else if (failed) {
+      disposition =
+        unauthenticatedBoundary || !target?.required
+          ? 'advisory'
+          : 'hard_fail';
+    }
     observations.push({
       kind: 'api',
       disposition,
       source,
       target: key,
-      detail: `HTTP ${probe.http_status}`,
+      detail:
+        `HTTP ${probe.http_status}` +
+        (unauthenticatedBoundary
+          ? ' (unauthenticated probe reached an authentication boundary; require authenticated test or scenario evidence)'
+          : ''),
       method: probe.method,
       http_status: probe.http_status,
       expected_statuses: target?.expected_statuses,

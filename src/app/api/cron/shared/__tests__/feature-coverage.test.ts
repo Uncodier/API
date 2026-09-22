@@ -178,6 +178,193 @@ describe('feature coverage', () => {
     ]);
   });
 
+  it('uses acceptance file anchors as artifact evidence without duplicate probes', async () => {
+    const runCommand = jest.fn(async (input: { cmd?: string }) => ({
+      exitCode: 0,
+      stdout: jest.fn(async () => Buffer.from(
+        input.cmd === 'stat'
+          ? '256\n'
+          : '# Technical design\n\nArchitecture details.\n',
+      )),
+    }));
+
+    const coverage = await computeFeatureCoverage({
+      sandbox: { runCommand } as any,
+      item: {
+        id: 'doc-acceptance-anchor',
+        title: 'Write technical design',
+        kind: 'doc',
+        phase_id: 'report',
+        status: 'in_progress',
+        scope_level: 'full',
+        attempts: 0,
+        tier: 'core',
+        acceptance: [
+          'Creates docs/architecture/technical_design.md with the system design.',
+        ],
+      },
+    });
+
+    expect(coverage.declared_touches).toEqual([
+      'docs/architecture/technical_design.md',
+    ]);
+    expect(coverage.artifact_proofs).toHaveLength(1);
+    expect(coverage.present_touches).toEqual([
+      'docs/architecture/technical_design.md',
+    ]);
+  });
+
+  it('supports safe recursive and non-recursive touch globs', async () => {
+    const runCommand = jest.fn(async (input: { cmd?: string; args?: string[] }) => ({
+      exitCode: input.cmd === 'find' ? 0 : 1,
+      stdout: jest.fn(async () => Buffer.from([
+        '/vercel/sandbox/supabase/migrations/001_core.sql',
+        '/vercel/sandbox/src/app/api/assets/route.ts',
+        '/vercel/sandbox/src/app/api/assets/upload/route.ts',
+      ].join('\n'))),
+    }));
+
+    const coverage = await computeFeatureCoverage({
+      sandbox: { runCommand } as any,
+      item: {
+        id: 'glob-touches',
+        title: 'Validate repository files',
+        kind: 'content',
+        phase_id: 'build',
+        status: 'in_progress',
+        scope_level: 'full',
+        attempts: 0,
+        tier: 'core',
+        acceptance: ['Updates the required repository files.'],
+        touches: [
+          'supabase/migrations/*',
+          'src/app/api/**/*.ts',
+        ],
+      },
+    });
+
+    expect(coverage.missing_touches).toEqual([]);
+    expect(coverage.present_touches).toEqual([
+      'supabase/migrations/*',
+      'src/app/api/**/*.ts',
+    ]);
+    expect(coverage.artifact_proofs).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        path: 'supabase/migrations/*',
+        exists: true,
+      }),
+      expect.objectContaining({
+        path: 'src/app/api/**/*.ts',
+        exists: true,
+      }),
+    ]));
+    const findCalls = runCommand.mock.calls
+      .map(([input]) => input)
+      .filter((input) => input.cmd === 'find');
+    expect(findCalls.map((input) => input.args?.[0])).toEqual([
+      '/vercel/sandbox/supabase/migrations',
+      '/vercel/sandbox/src/app/api',
+    ]);
+    for (const input of findCalls) {
+      expect(input.args).toEqual(expect.arrayContaining([
+        'node_modules',
+        '.next',
+        '.git',
+        '-prune',
+      ]));
+    }
+  });
+
+  it.each([
+    {
+      kind: 'page' as const,
+      acceptance: ['Renders the mobile-first camera upload view.'],
+    },
+    {
+      kind: 'api' as const,
+      acceptance: ['Stores uploaded assets using the configured provider.'],
+    },
+  ])('does not invent a missing structural target for an underspecified $kind contract', async ({
+    kind,
+    acceptance,
+  }) => {
+    const runCommand = jest.fn();
+    const coverage = await computeFeatureCoverage({
+      sandbox: { runCommand } as any,
+      item: {
+        id: `underspecified-${kind}`,
+        title: 'Under-specified contract',
+        kind,
+        phase_id: 'build',
+        status: 'in_progress',
+        scope_level: 'full',
+        attempts: 0,
+        tier: 'core',
+        acceptance,
+      },
+    });
+
+    expect(coverage.kind_requirements).toEqual([
+      expect.objectContaining({
+        satisfied: false,
+        outcome: 'not_evaluable',
+      }),
+    ]);
+    expect(coverage.evaluable).toBe(false);
+    expect(coverage.ok).toBe(false);
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      kind: 'page' as const,
+      changedFile: 'src/app/camera/page.tsx',
+      requirement: 'at_least_one_page_file',
+    },
+    {
+      kind: 'api' as const,
+      changedFile: 'src/app/api/assets/upload/route.ts',
+      requirement: 'at_least_one_route_file',
+    },
+  ])('uses a concrete changed artifact for an underspecified $kind contract', async ({
+    kind,
+    changedFile,
+    requirement,
+  }) => {
+    const runCommand = jest.fn(async (input: { cmd?: string }) => ({
+      exitCode: 0,
+      stdout: jest.fn(async () => Buffer.from(
+        input.cmd === 'stat' ? '128\n' : 'export default function Handler() {}',
+      )),
+    }));
+    const coverage = await computeFeatureCoverage({
+      sandbox: { runCommand } as any,
+      changedFiles: [changedFile],
+      item: {
+        id: `changed-${kind}`,
+        title: 'Under-specified contract with changed artifact',
+        kind,
+        phase_id: 'build',
+        status: 'in_progress',
+        scope_level: 'full',
+        attempts: 0,
+        tier: 'core',
+        acceptance: ['Implements the requested behavior.'],
+      },
+    });
+
+    expect(coverage.kind_requirements).toEqual([
+      expect.objectContaining({
+        requirement,
+        satisfied: true,
+        outcome: 'pass',
+        detail: changedFile,
+      }),
+    ]);
+    expect(coverage.evaluable).toBe(true);
+    expect(coverage.ok).toBe(true);
+  });
+
   it('resolves colon parameters to App Router dynamic segments', async () => {
     const runCommand = jest.fn(async (input: { args?: string[] }) => {
       const command = input.args?.join(' ') || '';

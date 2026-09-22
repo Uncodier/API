@@ -58,13 +58,122 @@ export function normalizeTouchPath(path: string): string {
     : normalized;
 }
 
+function globPatternToRegExp(pattern: string): RegExp {
+  let source = '^';
+  for (let index = 0; index < pattern.length; index++) {
+    const char = pattern[index];
+    if (char === '*') {
+      const isGlobstar = pattern[index + 1] === '*';
+      if (isGlobstar) {
+        index += 1;
+        if (pattern[index + 1] === '/') {
+          index += 1;
+          source += '(?:.*/)?';
+        } else {
+          source += '.*';
+        }
+      } else {
+        source += '[^/]*';
+      }
+      continue;
+    }
+    if (char === '?') {
+      source += '[^/]';
+      continue;
+    }
+    source += char.replace(/[\\^$+?.()|{}[\]]/g, '\\$&');
+  }
+  return new RegExp(`${source}$`);
+}
+
+function globSearchRoot(pattern: string): string | null {
+  if (pattern.split('/').some((segment) => segment === '..')) return null;
+  const wildcardIndex = pattern.search(/[*?]/);
+  const staticPart = wildcardIndex >= 0
+    ? pattern.slice(0, wildcardIndex)
+    : pattern;
+  const slashIndex = staticPart.lastIndexOf('/');
+  return slashIndex >= 0 ? staticPart.slice(0, slashIndex) : '';
+}
+
+async function readGlobArtifactProof(
+  sandbox: Sandbox,
+  pattern: string,
+): Promise<ArtifactProof> {
+  const wd = SandboxService.WORK_DIR;
+  const relativeRoot = globSearchRoot(pattern);
+  if (relativeRoot === null) {
+    return {
+      path: pattern,
+      exists: false,
+      outcome: 'not_evaluable',
+      error: `Unsafe glob pattern: ${pattern}`,
+    };
+  }
+  const searchRoot = relativeRoot ? `${wd}/${relativeRoot}` : wd;
+  try {
+    const listed = await sandbox.runCommand({
+      cmd: 'find',
+      args: [
+        searchRoot,
+        '(',
+        '-name', 'node_modules',
+        '-o', '-name', '.next',
+        '-o', '-name', '.git',
+        '-o', '-name', '.turbo',
+        '-o', '-name', 'dist',
+        '-o', '-name', 'coverage',
+        ')',
+        '-prune',
+        '-o',
+        '-type', 'f',
+        '-print',
+      ],
+    });
+    if (listed.exitCode !== 0) {
+      return {
+        path: pattern,
+        exists: false,
+        outcome: 'not_evaluable',
+        error: `Could not list files for ${pattern}`,
+      };
+    }
+    const matcher = globPatternToRegExp(pattern);
+    const prefix = `${wd}/`;
+    const matches = (await listed.stdout()).toString()
+      .split('\n')
+      .map((path) => path.trim())
+      .filter(Boolean)
+      .map((path) => path.startsWith(prefix) ? path.slice(prefix.length) : path)
+      .filter((path) => matcher.test(path))
+      .sort();
+    if (matches.length === 0) {
+      return { path: pattern, exists: false, outcome: 'fail' };
+    }
+    return {
+      path: pattern,
+      exists: true,
+      outcome: 'pass',
+      content_excerpt:
+        `matched_files:\n${matches.slice(0, 100).join('\n')}`.slice(0, 4000),
+    };
+  } catch (error: unknown) {
+    return {
+      path: pattern,
+      exists: false,
+      outcome: 'not_evaluable',
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 export async function readArtifactProof(
   sandbox: Sandbox,
   relPath: string,
 ): Promise<ArtifactProof> {
   const normalized = normalizeTouchPath(relPath);
-  if (/[*?[\]]/.test(normalized)) {
-    return { path: normalized, exists: false, outcome: 'fail' };
+  if (/[*?]/.test(normalized)) {
+    return readGlobArtifactProof(sandbox, normalized);
   }
   const absolutePath = `${SandboxService.WORK_DIR}/${normalized}`;
   try {

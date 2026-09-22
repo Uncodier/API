@@ -217,4 +217,98 @@ describe('runtime probe policy', () => {
       validation_disposition: 'pass',
     }));
   });
+
+  it('keeps a declared protected API boundary advisory for an unauthenticated probe', () => {
+    const plan = buildRuntimeTargetPlan({
+      acceptance: [
+        'POST /api/assets/upload returns 200 and stores the asset.',
+      ],
+      validationTargets: [{
+        kind: 'api',
+        path: '/api/assets/upload',
+        method: 'POST',
+        payload: { name: 'asset.png' },
+        expected_statuses: [200],
+        auth_required: true,
+      }],
+    });
+
+    const result = evaluateRuntimeProbe(probe({
+      apis: [{
+        path: '/api/assets/upload',
+        method: 'POST',
+        payload_source: 'scenario',
+        http_status: 401,
+      }],
+    }), plan);
+
+    expect(result.hardFailure).toBe(false);
+    expect(result.apis[0]).toEqual(expect.objectContaining({
+      validation_required: true,
+      validation_disposition: 'advisory',
+    }));
+    expect(result.observations).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        target: 'POST /api/assets/upload',
+        disposition: 'advisory',
+        detail: expect.stringContaining('authentication boundary'),
+      }),
+    ]));
+  });
+
+  it('hard-fails a public API that unexpectedly returns an authentication status', () => {
+    const plan = buildRuntimeTargetPlan({
+      acceptance: ['GET /api/catalog returns 200 for public requests.'],
+      validationTargets: [{
+        kind: 'api',
+        path: '/api/catalog',
+        method: 'GET',
+        expected_statuses: [200],
+      }],
+    });
+
+    const result = evaluateRuntimeProbe(probe({
+      apis: [{
+        path: '/api/catalog',
+        method: 'GET',
+        http_status: 403,
+      }],
+    }), plan);
+
+    expect(result.hardFailure).toBe(true);
+    expect(result.apis[0]).toEqual(expect.objectContaining({
+      validation_required: true,
+      validation_disposition: 'hard_fail',
+    }));
+  });
+
+  it('infers an authentication boundary from the matching API contract', () => {
+    const plan = buildRuntimeTargetPlan({
+      acceptance: [
+        'Authenticated users can GET /api/account and receive status 200.',
+      ],
+      validationTargets: [{
+        kind: 'api',
+        path: '/api/account',
+        method: 'GET',
+        expected_statuses: [200],
+      }],
+    });
+
+    const result = evaluateRuntimeProbe(probe({
+      apis: [{
+        path: '/api/account',
+        method: 'GET',
+        http_status: 401,
+      }],
+    }), plan);
+
+    expect(plan.apis[0]).toEqual(expect.objectContaining({
+      auth_required: true,
+    }));
+    expect(result.hardFailure).toBe(false);
+    expect(result.apis[0]).toEqual(expect.objectContaining({
+      validation_disposition: 'advisory',
+    }));
+  });
 });

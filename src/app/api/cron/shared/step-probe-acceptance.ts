@@ -58,6 +58,30 @@ export function expectedStatusesFromAcceptance(params: {
   return statuses.size ? Array.from(statuses) : undefined;
 }
 
+export function authRequiredFromAcceptance(params: {
+  acceptance?: string[];
+  method: HttpMethod;
+  path: string;
+}): boolean {
+  return (params.acceptance || []).some((statement) => {
+    const routeMatch = statement.match(
+      /\b(GET|POST|PUT|DELETE|PATCH)\s+(\/[^\s"'`<>]+)/i,
+    );
+    const method = routeMatch?.[1]?.toUpperCase() as HttpMethod | undefined;
+    const route = normalizeAcceptancePath(routeMatch?.[2]);
+    if (
+      method !== params.method ||
+      route == null ||
+      !routeTemplateMatches(route, params.path)
+    ) {
+      return false;
+    }
+    return /\b(?:requires?\s+auth(?:entication)?|auth(?:entication)?\s+required|authenticated\s+(?:users?|requests?)|authorized\s+(?:users?|requests?)|signed[- ]in\s+users?|protected\s+(?:api|endpoint|route))\b/i.test(
+      statement,
+    );
+  });
+}
+
 function isAuthenticationBoundaryStatus(
   kind: ProbeKind,
   status: number,

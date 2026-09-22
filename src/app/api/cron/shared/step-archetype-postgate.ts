@@ -117,27 +117,9 @@ export async function runArchetypePostGate(
         }
       : item;
 
-    // Phase 10: structural coverage check before the archetype pass. Runs
-    // cheap `test -f` probes in the sandbox; any failure turns into a judge
-    // rejection through the evidence.feature_coverage slice.
-    let coverage: Awaited<ReturnType<typeof computeFeatureCoverage>> | null = null;
-    try {
-      coverage = await computeFeatureCoverage({
-        sandbox: input.sandbox,
-        item: adjudicatedItem,
-        // Intermediate adjudications must not enforce touches or kind-wide
-        // deliverables assigned to later steps in the same backlog item.
-        contractScoped: !!input.contractAcceptance?.length,
-      });
-    } catch (e: unknown) {
-      throw new Error(
-        `Feature coverage unavailable: ${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
-
-    // Reuse the diff-inference helper to enrich evidence with the list of
-    // files this cycle actually changed. Critic / Judge use it to detect
-    // admin-only commits and landing-only diffs.
+    // Reuse diff inference for both structural coverage and archetype evidence.
+    // Underspecified page/API contracts may use concrete changed route files;
+    // otherwise coverage records an evidence gap instead of inventing a target.
     let changedFiles: string[] = input.signals.changed_files ?? [];
     if (changedFiles.length === 0) {
       try {
@@ -147,6 +129,24 @@ export async function runArchetypePostGate(
         console.warn(`[CronStep] changed_files inference failed: ${e instanceof Error ? e.message : e}`);
       }
     }
+
+    // Phase 10: structural coverage check before the archetype pass.
+    let coverage: Awaited<ReturnType<typeof computeFeatureCoverage>> | null = null;
+    try {
+      coverage = await computeFeatureCoverage({
+        sandbox: input.sandbox,
+        item: adjudicatedItem,
+        // Intermediate adjudications must not enforce touches or kind-wide
+        // deliverables assigned to later steps in the same backlog item.
+        contractScoped: !!input.contractAcceptance?.length,
+        changedFiles,
+      });
+    } catch (e: unknown) {
+      throw new Error(
+        `Feature coverage unavailable: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+
     const signalsWithDiff: PostGateGateSignals = { ...input.signals, changed_files: changedFiles };
     const hasFreshProducerEvidence =
       !!signalsWithDiff.build ||

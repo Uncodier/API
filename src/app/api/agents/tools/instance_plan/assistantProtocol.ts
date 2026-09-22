@@ -252,7 +252,7 @@ export function instancePlanTool(
                 protected_routes: { type: 'array', items: { type: 'string' }, description: 'Application routes that are expected to redirect unauthenticated visual probes to a local login page (for example, ["/dashboard/orders"]). Declare these explicitly so the gate skips login screenshots without hiding unexpected auth redirects.' },
                 validation_targets: {
                   type: 'array',
-                  description: 'Explicit deterministic targets. Only these targets may hard-fail route/API validation; inferred paths remain advisory. Non-GET APIs require a real payload.',
+                  description: 'Explicit deterministic targets. Only these targets may hard-fail route/API validation; inferred paths remain advisory. Non-GET APIs require a real payload. Set auth_required=true only for APIs that are expected to reject this unauthenticated probe.',
                   items: {
                     type: 'object',
                     properties: {
@@ -261,6 +261,7 @@ export function instancePlanTool(
                       method: { type: 'string', enum: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'] },
                       expected_statuses: { type: 'array', items: { type: 'number' } },
                       payload: { description: 'Real request payload when a non-GET API target can be exercised safely.' },
+                      auth_required: { type: 'boolean', description: 'API only. True when authentication is part of the contract and an unauthenticated 401/403 is an expected boundary. Omit or set false for public APIs.' },
                     },
                     required: ['kind', 'path'],
                   },

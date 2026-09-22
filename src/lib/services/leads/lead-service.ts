@@ -296,7 +296,7 @@ async function findLeadBySocialHandle(siteId: string, handle: string, network: s
     // Use proper escaping to avoid syntax errors with PostgREST
     // This safely escapes double quotes in the handle if they exist
     const safeHandle = handle.replace(/"/g, '\\"');
-    const filterStr = `custom_data->>social_handle.eq."${safeHandle}",social_networks->>${networkKey}.eq."${safeHandle}"`;
+    const filterStr = `metadata->>social_handle.eq."${safeHandle}",social_networks->>${networkKey}.eq."${safeHandle}"`;
     
     const { data, error } = await query
       .or(filterStr)
@@ -315,20 +315,32 @@ async function findLeadBySocialHandle(siteId: string, handle: string, network: s
   }
 }
 
-async function mergeSocialHandleIfMissing(leadId: string, socialHandle: string, origin: string): Promise<void> {
+async function mergeSocialIdentity(leadId: string, socialHandle: string, origin: string): Promise<void> {
   const networkKey = origin === "x" ? "twitter" : origin;
   const { data: currentLead } = await supabaseAdmin
     .from('leads')
-    .select('social_networks')
+    .select('social_networks, metadata')
     .eq('id', leadId)
     .single();
 
   const currentNetworks = currentLead?.social_networks || {};
-  if (currentNetworks[networkKey]) return;
+  const currentMetadata = currentLead?.metadata || {};
+  if (
+    currentNetworks[networkKey] === socialHandle &&
+    currentMetadata.social_handle === socialHandle &&
+    currentMetadata.social_network === origin
+  ) {
+    return;
+  }
 
   await supabaseAdmin
     .from('leads')
     .update({
+      metadata: {
+        ...currentMetadata,
+        social_handle: socialHandle,
+        social_network: origin
+      },
       social_networks: {
         ...currentNetworks,
         [networkKey]: socialHandle
@@ -372,7 +384,7 @@ export async function manageLeadCreation({
     const socialLeadId = await findLeadBySocialHandle(siteId, socialHandle, origin);
     if (socialLeadId) {
       console.log(`✅ Lead existente encontrado por handle ${socialHandle} (${origin}): ${socialLeadId}`);
-      await mergeSocialHandleIfMissing(socialLeadId, socialHandle, origin);
+      await mergeSocialIdentity(socialLeadId, socialHandle, origin);
       return { leadId: socialLeadId, isNewLead: false, taskId: null };
     }
   }
@@ -392,7 +404,7 @@ export async function manageLeadCreation({
       console.log(`✅ Lead existente encontrado con ID: ${foundLeadId}`);
       
       if (socialHandle && origin) {
-        await mergeSocialHandleIfMissing(foundLeadId, socialHandle, origin);
+        await mergeSocialIdentity(foundLeadId, socialHandle, origin);
       }
       
       return { leadId: foundLeadId, isNewLead: false, taskId: null };
@@ -407,19 +419,7 @@ export async function manageLeadCreation({
       const newLeadId = await createLead(leadName, email, phone, siteId, visitorId, origin);
 
       if (newLeadId && socialHandle) {
-        const networkKey = origin === "x" ? "twitter" : origin;
-        await supabaseAdmin
-          .from('leads')
-          .update({
-            custom_data: {
-              social_handle: socialHandle,
-              social_network: origin,
-            },
-            social_networks: {
-              [networkKey]: socialHandle
-            }
-          })
-          .eq('id', newLeadId);
+        await mergeSocialIdentity(newLeadId, socialHandle, origin);
       }
       
       if (newLeadId) {
