@@ -1,4 +1,8 @@
-import { handleInboundMessage } from "../webhook-handlers";
+import {
+  handleInboundMessage,
+  handleVoiceCallEvent,
+  resolveVoiceCallWebhookStatus,
+} from "../webhook-handlers";
 import { supabaseAdmin } from "@/lib/database/supabase-server";
 import { WorkflowService } from "@/lib/services/workflow-service";
 
@@ -22,6 +26,9 @@ jest.mock("../client", () => ({
   attachSenderToAgent: jest.fn(),
   ensureSenderWebhook: jest.fn(),
   mapInvitationStatus: jest.fn((status) => (status === "completed" ? "connected" : status)),
+}));
+jest.mock("../voice-call-client", () => ({
+  getVoiceCall: jest.fn(),
 }));
 
 function mockSettingsForSender(siteId = "site-1") {
@@ -109,5 +116,111 @@ describe("handleInboundMessage", () => {
       }),
       expect.any(Object)
     );
+  });
+});
+
+describe("handleVoiceCallEvent", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("treats call.completed without a provider status as completed", () => {
+    expect(resolveVoiceCallWebhookStatus(
+      "call.completed",
+      undefined,
+      undefined,
+      "in_progress"
+    )).toBe("completed");
+  });
+
+  it("does not regress a terminal delivery on an out-of-order event", () => {
+    expect(resolveVoiceCallWebhookStatus(
+      "call.ringing",
+      "ringing",
+      undefined,
+      "completed"
+    )).toBe("completed");
+  });
+
+  it("preserves prior fields when a sparse completion event arrives", async () => {
+    const deliveryUpdates: Record<string, unknown>[] = [];
+    const messageUpdates: Array<Record<string, any>> = [];
+    (supabaseAdmin.from as jest.Mock).mockImplementation((table: string) => {
+      if (table === "voice_call_deliveries") {
+        return {
+          select: jest.fn().mockReturnValue({
+            limit: jest.fn().mockReturnValue({
+              eq: jest.fn().mockResolvedValue({
+                data: [{
+                  id: "delivery-1",
+                  message_id: "message-1",
+                  status: "answered",
+                  answered_at: "2026-09-21T12:00:00.000Z",
+                }],
+                error: null,
+              }),
+            }),
+          }),
+          update: jest.fn().mockImplementation((payload) => {
+            deliveryUpdates.push(payload);
+            const updateQuery = {
+              not: jest.fn(),
+              neq: jest.fn(),
+              select: jest.fn(),
+            };
+            updateQuery.not.mockReturnValue(updateQuery);
+            updateQuery.neq.mockReturnValue(updateQuery);
+            updateQuery.select.mockReturnValue({
+              maybeSingle: jest.fn().mockResolvedValue({
+                data: { status: "completed" },
+                error: null,
+              }),
+            });
+            return { eq: jest.fn().mockReturnValue(updateQuery) };
+          }),
+        };
+      }
+      if (table === "messages") {
+        return {
+          select: jest.fn().mockReturnValue({
+            eq: jest.fn().mockReturnValue({
+              maybeSingle: jest.fn().mockResolvedValue({
+                data: {
+                  custom_data: {
+                    status: "sending",
+                    duration_seconds: 42,
+                    transcript_available: true,
+                  },
+                },
+              }),
+            }),
+          }),
+          update: jest.fn().mockImplementation((payload) => {
+            messageUpdates.push(payload);
+            return { eq: jest.fn().mockResolvedValue({ error: null }) };
+          }),
+        };
+      }
+      throw new Error(`Unexpected table ${table}`);
+    });
+
+    await handleVoiceCallEvent({
+      type: "call.completed",
+      data: { callId: "call-1" },
+    });
+
+    expect(deliveryUpdates[0]).toMatchObject({
+      zavu_call_id: "call-1",
+      status: "completed",
+    });
+    expect(deliveryUpdates[0]).not.toHaveProperty("answered_at");
+    expect(deliveryUpdates[0]).not.toHaveProperty("transcript");
+    expect(deliveryUpdates[0]).not.toHaveProperty("cost");
+    expect(messageUpdates[0].custom_data).toMatchObject({
+      status: "sent",
+      call_status: "completed",
+      duration_seconds: 42,
+      transcript_available: true,
+    });
   });
 });

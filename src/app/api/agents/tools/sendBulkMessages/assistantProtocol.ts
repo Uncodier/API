@@ -1,11 +1,3 @@
-/**
- * Assistant Protocol for Send Bulk Messages Tool
- *
- * Sends a message to every lead in an audience via WhatsApp or email.
- * Iterates through all pages, tracks per-lead send status, and returns
- * a summary with totals.
- */
-
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import {
   getAudienceById,
@@ -30,12 +22,10 @@ import {
 } from './definition';
 import {
   findActiveSalesAgent,
+  resolveNumberedTemplate,
   resolvePlaceholderPolicy,
 } from './support';
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+import { getVoiceCallEligibility } from '@/lib/services/zavu/voice-call-consent';
 
 export interface SendBulkMessagesToolParams {
   audience_id: string;
@@ -52,10 +42,6 @@ export interface SendBulkMessagesToolParams {
   /** Voice only: one-way TTS (default) or a two-way Zavu agent call. */
   voice_mode?: 'tts' | 'agent_call';
 }
-
-// ---------------------------------------------------------------------------
-// Tool factory
-// ---------------------------------------------------------------------------
 
 export function sendBulkMessagesTool(siteId: string) {
   const execute = async (args: SendBulkMessagesToolParams) => {
@@ -105,7 +91,6 @@ export function sendBulkMessagesTool(siteId: string) {
 
     const placeholderPolicyResolved = await resolvePlaceholderPolicy(contentIdArg, placeholder_policy);
 
-    // Immediate send with open/click tracking (sendEmail pipeline); no conversation rows.
     if (channel === 'email' && audience_email_mode === 'newsletter') {
       const agent = await findActiveSalesAgent(siteId);
       const agentId = agent?.agentId ?? undefined;
@@ -120,10 +105,11 @@ export function sendBulkMessagesTool(siteId: string) {
         if (leads.length === 0) continue;
 
         for (const lead of leads) {
-          const leadId = lead.id as string;
+          const leadRow = lead as unknown as DbLead;
+          const leadId = leadRow.id;
 
           try {
-            if (!lead.email) {
+            if (!leadRow.email) {
               await updateAudienceLeadStatus(audience_id, leadId, 'skipped', 'No email address');
               totalSkipped++;
               continue;
@@ -131,7 +117,7 @@ export function sendBulkMessagesTool(siteId: string) {
 
             const result = await sendEmailCore({
               site_id: siteId,
-              email: lead.email,
+              email: leadRow.email,
               subject: subject || '',
               message,
               from,
@@ -194,18 +180,14 @@ export function sendBulkMessagesTool(siteId: string) {
     let totalFailed = 0;
     let totalSkipped = 0;
 
-    // Buscar agente activo una sola vez por campaña
     const agent = await findActiveSalesAgent(siteId);
-    // Usaremos un ID nulo si no hay agente de ventas (se asignará al sistema o quedará nulo)
     const agentId = agent?.agentId || null;
     const userId = agent?.userId || null;
 
-    // -------------------------------------------------------------------------
     // WhatsApp/Telegram/SMS/Voice path: create/reuse ONE template with numeric placeholders and
     // queue per-lead ContentVariables. The template body is kept abstract
     // (e.g. "Hi {{1}}, ..."); personalization happens via Twilio variables at
     // delivery time (for whatsapp), so a single approved template serves the whole campaign.
-    // -------------------------------------------------------------------------
     if (channel === 'whatsapp' || channel === 'telegram' || channel === 'sms' || channel === 'voice') {
       const { templated: abstractBody, tokens: campaignTokens } = extractMergeTokens(message);
 
@@ -261,7 +243,6 @@ export function sendBulkMessagesTool(siteId: string) {
           const leadId = lead.id as string;
 
           try {
-            // For whatsapp/sms/voice we need a phone number
             if (['whatsapp', 'sms', 'voice'].includes(channel) && !lead.phone) {
               await updateAudienceLeadStatus(audience_id, leadId, 'skipped', 'No phone number');
               totalSkipped++;
@@ -269,6 +250,19 @@ export function sendBulkMessagesTool(siteId: string) {
             }
 
             const leadRow = lead as unknown as DbLead;
+            if (channel === 'voice') {
+              const eligibility = getVoiceCallEligibility(leadRow);
+              if (!eligibility.allowed) {
+                await updateAudienceLeadStatus(
+                  audience_id,
+                  leadId,
+                  'skipped',
+                  eligibility.reason,
+                );
+                totalSkipped++;
+                continue;
+              }
+            }
             const built = buildContentVariablesForLead(placeholderMap, leadRow, siteName, mergePolicy);
             if (built.aborted) {
               await updateAudienceLeadStatus(
@@ -314,9 +308,9 @@ export function sendBulkMessagesTool(siteId: string) {
 
             const messageData: any = {
               conversation_id: conversation.id,
-              // Store the abstract body (with {{1}}, {{2}}, ...) so the delivery worker
-              // can reconstruct/log the final text deterministically from ContentVariables.
-              content: abstractBody,
+              content: channel === 'whatsapp'
+                ? abstractBody
+                : resolveNumberedTemplate(abstractBody, built.variables),
               role: 'assistant',
               lead_id: leadId,
               custom_data: {
@@ -372,10 +366,8 @@ export function sendBulkMessagesTool(siteId: string) {
       };
     }
 
-    // -------------------------------------------------------------------------
     // Email `mail` mode (default): pre-merge body/subject per lead and queue
     // an accepted message row for the background email delivery worker.
-    // -------------------------------------------------------------------------
     for (let page = 1; page <= totalPages; page++) {
       const { leads } = await getAudiencePageForSending(audience_id, page);
       if (leads.length === 0) continue;

@@ -46,3 +46,13 @@ export async function resolvePlaceholderPolicy(
   }
   return "strip_tokens";
 }
+
+export function resolveNumberedTemplate(
+  template: string,
+  variables: Record<string, string>
+): string {
+  return template.replace(
+    /\{\{(\d+)\}\}/g,
+    (_token, index: string) => variables[index] ?? ""
+  );
+}

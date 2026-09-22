@@ -4,6 +4,12 @@ import type {
   RuntimePageProbe,
   RuntimeProbeResult,
 } from './step-runtime-probe';
+import {
+  expectedStatusesFromAcceptance,
+  reconcileAcceptanceStatuses,
+} from './step-probe-acceptance';
+
+export { expectedStatusesFromAcceptance } from './step-probe-acceptance';
 
 export type ProbeDisposition =
   | 'pass'
@@ -92,42 +98,6 @@ function normalizeStatuses(value: unknown): number[] | undefined {
   return statuses.length ? statuses : undefined;
 }
 
-function routeTemplateMatches(template: string, concretePath: string): boolean {
-  const templateParts = template.split('/');
-  const concreteParts = concretePath.split('/');
-  if (templateParts.length !== concreteParts.length) return false;
-  return templateParts.every((part, index) =>
-    part === concreteParts[index] ||
-    /^:[a-z0-9_]+$/i.test(part) ||
-    /^\[[^\]]+\]$/.test(part),
-  );
-}
-
-export function expectedStatusesFromAcceptance(params: {
-  acceptance?: string[];
-  method: HttpMethod;
-  path: string;
-}): number[] | undefined {
-  const statuses = new Set<number>();
-  for (const statement of params.acceptance || []) {
-    const routeMatch = statement.match(
-      /\b(GET|POST|PUT|DELETE|PATCH)\s+(\/[^\s"'`<>]+)/i,
-    );
-    const method = routeMatch?.[1]?.toUpperCase() as HttpMethod | undefined;
-    const route = normalizePath(routeMatch?.[2]);
-    if (
-      method !== params.method ||
-      route == null ||
-      !routeTemplateMatches(route, params.path)
-    ) continue;
-    const statusMatch = statement.match(
-      /\b(?:returns?|responds?(?:\s+with)?|http)\s+(?:http\s+)?([1-5]\d{2})\b/i,
-    );
-    if (statusMatch?.[1]) statuses.add(Number(statusMatch[1]));
-  }
-  return statuses.size ? Array.from(statuses) : undefined;
-}
-
 export function normalizeStepValidationTargets(
   value: unknown,
 ): StepValidationTarget[] {
@@ -178,6 +148,44 @@ function upsertApi(
   }
 }
 
+function resolveContractStatuses(params: {
+  kind: 'page' | 'api';
+  path: string;
+  method: HttpMethod;
+  declared?: number[];
+  acceptance?: string[];
+  observations: ProbeObservation[];
+}): number[] | undefined {
+  const acceptanceStatuses = expectedStatusesFromAcceptance({
+    acceptance: params.acceptance,
+    method: params.method,
+    path: params.path,
+  });
+  const resolved = reconcileAcceptanceStatuses({
+    kind: params.kind,
+    declared: params.declared,
+    acceptance: acceptanceStatuses,
+  });
+  if (resolved.authenticatedEvidenceRequired) {
+    params.observations.push({
+      kind: params.kind,
+      disposition: 'advisory',
+      source: 'contract',
+      target:
+        params.kind === 'api'
+          ? `${params.method} ${params.path}`
+          : params.path,
+      detail:
+        `Backlog acceptance expects HTTP ${acceptanceStatuses?.join(', ')}, ` +
+        `but this unauthenticated probe permits HTTP ${params.declared?.join(', ')}. ` +
+        'Verify the success response with authenticated scenario or test evidence.',
+      method: params.method,
+      expected_statuses: acceptanceStatuses,
+    });
+  }
+  return resolved.expected;
+}
+
 export function buildRuntimeTargetPlan(input: {
   validationTargets?: unknown;
   acceptance?: string[];
@@ -192,26 +200,32 @@ export function buildRuntimeTargetPlan(input: {
 
   for (const target of normalizeStepValidationTargets(input.validationTargets)) {
     if (target.kind === 'page') {
-      const acceptanceStatuses = expectedStatusesFromAcceptance({
-        acceptance: input.acceptance,
-        method: 'GET',
+      const expectedStatuses = resolveContractStatuses({
+        kind: 'page',
         path: target.path,
+        method: 'GET',
+        declared: target.expected_statuses,
+        acceptance: input.acceptance,
+        observations,
       });
       upsertPage(pages, {
         ...target,
         kind: 'page',
         source: 'contract',
         required: true,
-        ...(acceptanceStatuses
-          ? { expected_statuses: acceptanceStatuses }
+        ...(expectedStatuses
+          ? { expected_statuses: expectedStatuses }
           : {}),
       });
       continue;
     }
-    const acceptanceStatuses = expectedStatusesFromAcceptance({
-      acceptance: input.acceptance,
-      method: target.method || 'GET',
+    const expectedStatuses = resolveContractStatuses({
+      kind: 'api',
       path: target.path,
+      method: target.method || 'GET',
+      declared: target.expected_statuses,
+      acceptance: input.acceptance,
+      observations,
     });
     upsertApi(apis, {
       ...target,
@@ -219,8 +233,8 @@ export function buildRuntimeTargetPlan(input: {
       method: target.method || 'GET',
       source: 'contract',
       required: true,
-      ...(acceptanceStatuses
-        ? { expected_statuses: acceptanceStatuses }
+      ...(expectedStatuses
+        ? { expected_statuses: expectedStatuses }
         : {}),
     });
   }

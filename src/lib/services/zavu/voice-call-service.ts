@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { supabaseAdmin } from "@/lib/database/supabase-server";
 import { placeVoiceCall, type ZavuVoiceCall } from "./voice-call-client";
+import { getVoiceCallEligibility } from "./voice-call-consent";
 
 const E164_PHONE = /^\+[1-9]\d{6,14}$/;
 const CONNECTED_STATUSES = new Set(["connected", "active", "synced"]);
@@ -110,16 +111,55 @@ async function existingDelivery(messageId: string) {
   return data;
 }
 
+export async function assertVoiceCallAllowed(
+  siteId: string,
+  leadId: string | undefined,
+  recipient: string
+): Promise<void> {
+  if (!leadId) {
+    throw Object.assign(
+      new Error("Voice calls require a lead with explicit consent"),
+      { status: 403 }
+    );
+  }
+  const { data, error } = await supabaseAdmin
+    .from("leads")
+    .select("phone, do_not_call, voice_call_consent_status, voice_call_consent_at")
+    .eq("id", leadId)
+    .eq("site_id", siteId)
+    .maybeSingle();
+  if (error) throw new Error("Failed to validate Voice call consent");
+  if (!data) {
+    throw Object.assign(new Error("Voice call lead was not found"), { status: 404 });
+  }
+
+  const normalizedPhone =
+    typeof data.phone === "string" ? data.phone.replace(/[^\d+]/g, "") : "";
+  if (normalizedPhone !== recipient) {
+    throw Object.assign(
+      new Error("Voice call recipient does not match the consented lead phone"),
+      { status: 403 }
+    );
+  }
+  const eligibility = getVoiceCallEligibility(data);
+  if (!eligibility.allowed) {
+    throw Object.assign(new Error(eligibility.reason), { status: 403 });
+  }
+}
+
 async function markMessagePlaced(
   messageId: string,
   call: ZavuVoiceCall,
   deliveryId: string
 ): Promise<void> {
-  const { data } = await supabaseAdmin
+  const { data, error: readError } = await supabaseAdmin
     .from("messages")
     .select("custom_data")
     .eq("id", messageId)
     .maybeSingle();
+  if (readError) {
+    throw new Error("Failed to read Voice call message state");
+  }
   const customData =
     data?.custom_data && typeof data.custom_data === "object"
       ? data.custom_data as Record<string, unknown>
@@ -140,9 +180,8 @@ async function markMessagePlaced(
     })
     .eq("id", messageId);
   if (error) {
-    console.error(
-      `[Zavu Voice] Call ${call.id} was placed but message ${messageId} could not be updated:`,
-      error
+    throw new Error(
+      `Call ${call.id} was placed but message ${messageId} could not be updated`
     );
   }
 }
@@ -171,17 +210,19 @@ export async function placeTrackedVoiceCall(
   const messageContext = await loadMessageContext(input.messageId, input.siteId);
   const previous = await existingDelivery(input.messageId);
   if (previous?.zavu_call_id) {
+    const call = {
+      id: previous.zavu_call_id,
+      direction: "outbound",
+      from: "",
+      to: previous.recipient_phone,
+      status: previous.status,
+      createdAt: "",
+    } as ZavuVoiceCall;
+    await markMessagePlaced(input.messageId, call, previous.id);
     return {
       deliveryId: previous.id,
       duplicate: true,
-      call: {
-        id: previous.zavu_call_id,
-        direction: "outbound",
-        from: "",
-        to: previous.recipient_phone,
-        status: previous.status,
-        createdAt: "",
-      } as ZavuVoiceCall,
+      call,
     };
   }
   if (previous) {
@@ -195,6 +236,11 @@ export async function placeTrackedVoiceCall(
     );
   }
 
+  await assertVoiceCallAllowed(
+    input.siteId,
+    messageContext.leadId,
+    input.to
+  );
   const senderId = await resolveVoiceSenderId(input.siteId);
   const deliveryId = randomUUID();
   const attemptToken = randomUUID();
@@ -215,24 +261,33 @@ export async function placeTrackedVoiceCall(
   if (insertError) {
     const raced = await existingDelivery(input.messageId);
     if (raced?.zavu_call_id) {
+      const call = {
+        id: raced.zavu_call_id,
+        direction: "outbound",
+        from: "",
+        to: raced.recipient_phone,
+        status: raced.status,
+        createdAt: "",
+      } as ZavuVoiceCall;
+      await markMessagePlaced(input.messageId, call, raced.id);
       return {
         deliveryId: raced.id,
         duplicate: true,
-        call: {
-          id: raced.zavu_call_id,
-          direction: "outbound",
-          from: "",
-          to: raced.recipient_phone,
-          status: raced.status,
-          createdAt: "",
-        } as ZavuVoiceCall,
+        call,
       };
+    }
+    if (insertError.message?.includes("VOICE_CALL_CONCURRENCY_LIMIT")) {
+      throw Object.assign(
+        new Error("Voice call concurrency limit reached"),
+        { status: 429 }
+      );
     }
     throw new Error("Failed to claim Voice call delivery");
   }
 
+  let call: ZavuVoiceCall;
   try {
-    const call = await placeVoiceCall({
+    call = await placeVoiceCall({
       to: input.to,
       senderId,
       greeting: input.greeting,
@@ -249,24 +304,6 @@ export async function placeTrackedVoiceCall(
         ...(messageContext.leadId ? { leadId: messageContext.leadId } : {}),
       },
     });
-    const { error: updateError } = await supabaseAdmin
-      .from("voice_call_deliveries")
-      .update({
-        zavu_call_id: call.id,
-        status: call.status,
-        provider_created_at: call.createdAt || null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", deliveryId)
-      .eq("placement_attempt_token", attemptToken);
-    if (updateError) {
-      console.error(
-        `[Zavu Voice] Call ${call.id} was placed but delivery ${deliveryId} could not be updated:`,
-        updateError
-      );
-    }
-    await markMessagePlaced(input.messageId, call, deliveryId);
-    return { deliveryId, call, duplicate: false };
   } catch (error) {
     const status = providerStatus(error);
     const terminal =
@@ -288,4 +325,23 @@ export async function placeTrackedVoiceCall(
       .eq("placement_attempt_token", attemptToken);
     throw error;
   }
+
+  const { error: updateError } = await supabaseAdmin
+    .from("voice_call_deliveries")
+    .update({
+      zavu_call_id: call.id,
+      status: call.status,
+      provider_created_at: call.createdAt || null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", deliveryId)
+    .eq("placement_attempt_token", attemptToken);
+  if (updateError) {
+    console.error(
+      `[Zavu Voice] Call ${call.id} was placed but delivery ${deliveryId} could not be updated:`,
+      updateError
+    );
+  }
+  await markMessagePlaced(input.messageId, call, deliveryId);
+  return { deliveryId, call, duplicate: false };
 }

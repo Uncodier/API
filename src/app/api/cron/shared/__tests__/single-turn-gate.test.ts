@@ -102,7 +102,7 @@ describe('runSingleTurnGate', () => {
     mockRunGateForFlow.mockResolvedValue({ ok: true, richSignals: {} });
     mockGetBacklogItem.mockResolvedValue({
       kind: 'app',
-      item: { acceptance: [] },
+      item: { acceptance: ['PATCH /api/assets/:id returns 200.'] },
     });
     mockMaybeSingle.mockResolvedValue({
       data: { steps: [{ id: 'step-1', status: 'in_progress' }] },
@@ -473,6 +473,7 @@ describe('runSingleTurnGate', () => {
         flow: 'automation',
         appContext: expect.objectContaining({
           gitRepoKind: 'automation',
+          stepContext: expect.objectContaining({ acceptance: ['PATCH /api/assets/:id returns 200.'] }),
         }),
       }),
     );

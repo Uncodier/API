@@ -156,6 +156,51 @@ function voiceEventMetadata(data: any): Record<string, string> {
   );
 }
 
+const TERMINAL_VOICE_STATUSES = new Set([
+  "completed",
+  "failed",
+  "busy",
+  "no_answer",
+  "canceled",
+  "cancelled",
+]);
+const VALID_VOICE_STATUSES = new Set([
+  "placing",
+  "placement_unknown",
+  "queued",
+  "initiated",
+  "ringing",
+  "answered",
+  "in_progress",
+  "completed",
+  "failed",
+  "busy",
+  "no_answer",
+  "canceled",
+  "cancelled",
+]);
+
+export function resolveVoiceCallWebhookStatus(
+  eventType: string,
+  reportedStatus: unknown,
+  fetchedStatus: unknown,
+  currentStatus: string
+): string {
+  if (TERMINAL_VOICE_STATUSES.has(currentStatus)) return currentStatus;
+  if (eventType === "call.completed") return "completed";
+  if (eventType === "call.failed") {
+    return typeof reportedStatus === "string"
+      && TERMINAL_VOICE_STATUSES.has(reportedStatus)
+      ? reportedStatus
+      : "failed";
+  }
+  const candidate =
+    typeof reportedStatus === "string" ? reportedStatus : fetchedStatus;
+  return typeof candidate === "string" && VALID_VOICE_STATUSES.has(candidate)
+    ? candidate
+    : "in_progress";
+}
+
 export async function handleVoiceCallEvent(event: any): Promise<void> {
   const data = event?.data;
   const callId = [data?.callId, data?.call_id, data?.id, data?.call?.id]
@@ -167,7 +212,10 @@ export async function handleVoiceCallEvent(event: any): Promise<void> {
   const metadata = voiceEventMetadata(data);
   let query = supabaseAdmin
     .from("voice_call_deliveries")
-    .select("id, message_id")
+    .select(
+      "id, message_id, status, duration_seconds, end_reason, turn_count, "
+      + "cost, currency, transcript, answered_at, ended_at"
+    )
     .limit(1);
   query = metadata.voiceCallDeliveryId
     ? query.eq("id", metadata.voiceCallDeliveryId)
@@ -176,48 +224,80 @@ export async function handleVoiceCallEvent(event: any): Promise<void> {
   if (deliveryError) {
     throw new Error(`Failed to find Voice call delivery: ${deliveryError.message}`);
   }
-  const delivery = deliveries?.[0];
+  const delivery = deliveries?.[0] as unknown as {
+    id: string;
+    message_id: string;
+    status: string;
+  } | undefined;
   if (!delivery) {
     console.warn(`[Zavu Webhook] No local Voice delivery found for ${callId}`);
     return;
   }
+  if (
+    TERMINAL_VOICE_STATUSES.has(delivery.status)
+    && event.type !== "call.completed"
+    && event.type !== "call.failed"
+  ) {
+    return;
+  }
 
-  const terminal = event.type === "call.completed" || event.type === "call.failed";
-  const failed =
-    event.type === "call.failed"
-    || ["failed", "busy", "no_answer", "canceled", "cancelled"].includes(
-      data?.status ?? data?.call?.status
-    );
   let callDetails: Awaited<ReturnType<typeof getVoiceCall>> | undefined;
   if (event.type === "call.completed" && data?.transcriptAvailable === true) {
     callDetails = await getVoiceCall(callId);
   }
 
-  const status =
-    typeof (data?.status ?? data?.call?.status) === "string"
-      ? (data.status ?? data.call.status)
-      : callDetails?.status || (failed ? "failed" : "in_progress");
+  const status = resolveVoiceCallWebhookStatus(
+    event.type,
+    data?.status ?? data?.call?.status,
+    callDetails?.status,
+    delivery.status
+  );
+  const terminal = TERMINAL_VOICE_STATUSES.has(status);
+  const failed = terminal && status !== "completed";
   const now = new Date().toISOString();
-  const { error: updateError } = await supabaseAdmin
+  const deliveryUpdate: Record<string, unknown> = {
+    zavu_call_id: callId,
+    status,
+    updated_at: now,
+  };
+  const durationSeconds = data?.durationSeconds ?? callDetails?.durationSeconds;
+  const endReason = data?.endReason ?? callDetails?.endReason;
+  const turnCount = callDetails?.turnCount;
+  const cost = data?.cost ?? callDetails?.cost;
+  const currency = data?.currency;
+  const transcript = callDetails?.transcript;
+  const answeredAt =
+    callDetails?.answeredAt ?? (event.type === "call.answered" ? now : undefined);
+  const endedAt = callDetails?.endedAt ?? (terminal ? now : undefined);
+  if (durationSeconds != null) deliveryUpdate.duration_seconds = durationSeconds;
+  if (endReason != null) deliveryUpdate.end_reason = endReason;
+  if (turnCount != null) deliveryUpdate.turn_count = turnCount;
+  if (cost != null) deliveryUpdate.cost = cost;
+  if (typeof currency === "string") deliveryUpdate.currency = currency;
+  if (transcript != null) deliveryUpdate.transcript = transcript;
+  if (answeredAt != null) deliveryUpdate.answered_at = answeredAt;
+  if (endedAt != null) deliveryUpdate.ended_at = endedAt;
+  let deliveryUpdateQuery = supabaseAdmin
     .from("voice_call_deliveries")
-    .update({
-      zavu_call_id: callId,
-      status,
-      duration_seconds: data?.durationSeconds ?? callDetails?.durationSeconds ?? null,
-      end_reason: data?.endReason ?? callDetails?.endReason ?? null,
-      turn_count: callDetails?.turnCount ?? null,
-      cost: data?.cost ?? callDetails?.cost ?? null,
-      currency: typeof data?.currency === "string" ? data.currency : null,
-      transcript: callDetails?.transcript ?? null,
-      answered_at: callDetails?.answeredAt ?? (
-        event.type === "call.answered" ? now : null
-      ),
-      ended_at: callDetails?.endedAt ?? (terminal ? now : null),
-      updated_at: now,
-    })
+    .update(deliveryUpdate)
     .eq("id", delivery.id);
+  if (!terminal) {
+    deliveryUpdateQuery = deliveryUpdateQuery.not(
+      "status",
+      "in",
+      "(completed,failed,busy,no_answer,canceled,cancelled)"
+    );
+  } else if (failed) {
+    deliveryUpdateQuery = deliveryUpdateQuery.neq("status", "completed");
+  }
+  const { data: updatedDelivery, error: updateError } = await deliveryUpdateQuery
+    .select("status")
+    .maybeSingle();
   if (updateError) {
     throw new Error(`Failed to update Voice call delivery: ${updateError.message}`);
+  }
+  if (!updatedDelivery) {
+    return;
   }
 
   const { data: message } = await supabaseAdmin
@@ -229,25 +309,26 @@ export async function handleVoiceCallEvent(event: any): Promise<void> {
     message?.custom_data && typeof message.custom_data === "object"
       ? message.custom_data as Record<string, unknown>
       : {};
+  const messageCustomData: Record<string, unknown> = {
+    ...customData,
+    status: failed ? "failed" : terminal ? "sent" : "sending",
+    voice_mode: "agent_call",
+    voice_call_delivery_id: delivery.id,
+    provider_call_id: callId,
+    call_status: status,
+  };
+  if (durationSeconds != null) messageCustomData.duration_seconds = durationSeconds;
+  if (endReason != null) messageCustomData.end_reason = endReason;
+  if (data?.transcriptAvailable === true || (transcript?.length ?? 0) > 0) {
+    messageCustomData.transcript_available = true;
+  }
+  if (failed) {
+    messageCustomData.error_message = endReason || `Voice call ${status}`;
+  }
   const { error: messageError } = await supabaseAdmin
     .from("messages")
     .update({
-      custom_data: {
-        ...customData,
-        status: failed ? "failed" : terminal ? "sent" : "sending",
-        voice_mode: "agent_call",
-        voice_call_delivery_id: delivery.id,
-        provider_call_id: callId,
-        call_status: status,
-        duration_seconds: data?.durationSeconds ?? callDetails?.durationSeconds ?? null,
-        end_reason: data?.endReason ?? callDetails?.endReason ?? null,
-        transcript_available:
-          data?.transcriptAvailable === true
-          || (callDetails?.transcript?.length ?? 0) > 0,
-        ...(failed
-          ? { error_message: data?.endReason || `Voice call ${status}` }
-          : {}),
-      },
+      custom_data: messageCustomData,
       updated_at: now,
     })
     .eq("id", delivery.message_id);

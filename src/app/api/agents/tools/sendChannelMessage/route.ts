@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { ChannelSendService } from '@/lib/services/channels/ChannelSendService';
+import { assertVoiceCallAllowed } from '@/lib/services/zavu/voice-call-service';
 
 /**
  * Sends an outbound message on a connected channel (telegram, messenger).
@@ -25,6 +26,10 @@ export async function POST(request: NextRequest) {
         { success: false, error: 'channel, to, message and site_id are required' },
         { status: 400 }
       );
+    }
+
+    if (String(channel).toLowerCase() === 'voice') {
+      await assertVoiceCallAllowed(site_id, lead_id, to);
     }
 
     const sendResult = await ChannelSendService.sendMessage({
@@ -79,9 +84,14 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error('[sendChannelMessage] Unhandled error:', error);
+    const status =
+      error && typeof error === 'object' && 'status' in error
+      && typeof error.status === 'number'
+        ? error.status
+        : 500;
     return NextResponse.json(
       { success: false, error: error instanceof Error ? error.message : 'Unknown error' },
-      { status: 500 }
+      { status }
     );
   }
 }

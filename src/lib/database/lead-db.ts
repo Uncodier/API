@@ -36,6 +36,9 @@ export interface DbLead {
   metadata: Record<string, unknown> | null;
   assignee_id: string | null;
   referral_lead_id: string | null;
+  do_not_call: boolean;
+  voice_call_consent_status: 'unknown' | 'granted' | 'revoked';
+  voice_call_consent_at: string | null;
 }
 
 export interface LeadFilters {

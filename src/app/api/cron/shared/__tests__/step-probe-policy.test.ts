@@ -133,7 +133,17 @@ describe('runtime probe policy', () => {
     ]));
   });
 
-  it('uses backlog acceptance statuses over a permissive plan contract', () => {
+  it('parses template routes and multiple acceptance statuses', () => {
+    expect(expectedStatusesFromAcceptance({
+      acceptance: [
+        'PATCH /api/assets/[id]/approve responds with status 200 or 204.',
+      ],
+      method: 'PATCH',
+      path: '/api/assets/1/approve',
+    })).toEqual([200, 204]);
+  });
+
+  it('uses backlog acceptance over unrelated permissive statuses', () => {
     const acceptance = [
       'PATCH /api/assets/:id/approve returns 200 and updates asset status.',
     ];
@@ -149,7 +159,7 @@ describe('runtime probe policy', () => {
         path: '/api/assets/1/approve',
         method: 'PATCH',
         payload: { status: 'approved' },
-        expected_statuses: [200, 401],
+        expected_statuses: [200, 500],
       }],
     });
 
@@ -161,12 +171,50 @@ describe('runtime probe policy', () => {
         path: '/api/assets/1/approve',
         method: 'PATCH',
         payload_source: 'scenario',
-        http_status: 401,
+        http_status: 500,
       }],
     }), plan);
     expect(result.hardFailure).toBe(true);
     expect(result.apis[0]).toEqual(expect.objectContaining({
       validation_disposition: 'hard_fail',
+    }));
+  });
+
+  it('keeps unauthenticated statuses while requiring authenticated evidence', () => {
+    const plan = buildRuntimeTargetPlan({
+      acceptance: [
+        'PATCH /api/assets/:id/approve returns 200 and updates asset status.',
+      ],
+      validationTargets: [{
+        kind: 'api',
+        path: '/api/assets/1/approve',
+        method: 'PATCH',
+        payload: { status: 'approved' },
+        expected_statuses: [200, 401],
+      }],
+    });
+
+    expect(plan.apis[0]).toEqual(expect.objectContaining({
+      expected_statuses: [200, 401],
+    }));
+    expect(plan.observations).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        target: 'PATCH /api/assets/1/approve',
+        disposition: 'advisory',
+        expected_statuses: [200],
+      }),
+    ]));
+    const result = evaluateRuntimeProbe(probe({
+      apis: [{
+        path: '/api/assets/1/approve',
+        method: 'PATCH',
+        payload_source: 'scenario',
+        http_status: 401,
+      }],
+    }), plan);
+    expect(result.hardFailure).toBe(false);
+    expect(result.apis[0]).toEqual(expect.objectContaining({
+      validation_disposition: 'pass',
     }));
   });
 });
