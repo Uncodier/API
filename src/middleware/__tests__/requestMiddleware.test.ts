@@ -36,6 +36,7 @@ describe('request middleware route classification', () => {
   it('allows public delivery routes without making private AI routes public', () => {
     expect(isPublicRequest('/api/public/posts', 'GET')).toBe(true);
     expect(isPublicRequest('/api/tracking/email', 'GET')).toBe(true);
+    expect(isPublicRequest('/record', 'POST')).toBe(true);
     expect(isPublicRequest('/api/visitors/segment', 'POST')).toBe(true);
     expect(isPublicRequest('/api/ai/text', 'POST')).toBe(false);
     expect(isPublicRequest('/api/ai/image/health', 'GET')).toBe(true);

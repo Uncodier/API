@@ -9,14 +9,6 @@ jest.mock('@/lib/security/request-rate-limit', () => ({
 jest.mock('@/lib/security/site-access', () => ({
   canAccessSite: jest.fn(async () => true),
 }));
-jest.mock('@/lib/security/upstash-rest', () => ({
-  acquireLock: jest.fn(async () => ({
-    state: 'acquired',
-    token: 'lock-token',
-  })),
-  releaseLock: jest.fn(async () => undefined),
-  sha256: jest.fn(async () => 'site-hash'),
-}));
 jest.mock('@/lib/services/billing/CreditService', () => ({
   CreditService: {
     PRICING: { IMAGE_GENERATION: 0.1 },

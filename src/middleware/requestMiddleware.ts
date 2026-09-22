@@ -27,6 +27,7 @@ const WEBHOOK_PATHS = new Set([
 ]);
 
 const PUBLIC_VISITOR_PATHS = [
+  '/record',
   '/api/visitors/track',
   '/api/visitors/track-batch',
   '/api/visitors/record',

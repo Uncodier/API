@@ -5,11 +5,6 @@ import {
   getAuthenticatedRateIdentity,
   isInternalServiceRequest,
 } from '@/lib/security/request-rate-limit';
-import {
-  acquireLock,
-  releaseLock,
-  sha256,
-} from '@/lib/security/upstash-rest';
 import { assertSafeRemoteUrl } from '@/lib/security/safe-remote-url';
 import { canAccessSite } from '@/lib/security/site-access';
 import type {
@@ -68,7 +63,6 @@ async function generate(
 }
 
 export async function POST(request: NextRequest) {
-  let generationLock: { key: string; token: string } | null = null;
   try {
     const identity = getAuthenticatedRateIdentity(request);
     const internal = isInternalServiceRequest(request);
@@ -123,21 +117,6 @@ export async function POST(request: NextRequest) {
     )
       ? body.provider as ImageProvider
       : 'gemini';
-    const lockKey = `lock:ai-image:${await sha256(body.site_id)}`;
-    const lock = await acquireLock(lockKey, 120);
-    if (lock.state === 'contended') {
-      return NextResponse.json(
-        { error: 'Another image generation is already running' },
-        { status: 409, headers: { 'Retry-After': '5' } },
-      );
-    }
-    if (lock.state !== 'acquired') {
-      return NextResponse.json(
-        { error: 'Image generation admission is unavailable' },
-        { status: 503, headers: { 'Retry-After': '5' } },
-      );
-    }
-    generationLock = { key: lockKey, token: lock.token };
 
     const requiredCredits = CreditService.PRICING.IMAGE_GENERATION * count;
     if (!systemRequest && !await CreditService.validateCredits(
@@ -185,10 +164,6 @@ export async function POST(request: NextRequest) {
       { error: error instanceof Error ? error.message : 'Image generation failed' },
       { status: 500 },
     );
-  } finally {
-    if (generationLock) {
-      await releaseLock(generationLock.key, generationLock.token);
-    }
   }
 }
 
