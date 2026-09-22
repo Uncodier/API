@@ -20,10 +20,34 @@ export async function authenticateGearWebhook(
 ): Promise<AuthenticationResult> {
   const contentType = request.headers.get('content-type') || '';
   let webhookData: any;
+  let rawJsonBody: string | null = null;
+  let formSignatureData: Record<string, string | string[]> | null = null;
   if (contentType.includes('application/x-www-form-urlencoded')) {
-    webhookData = Object.fromEntries((await request.formData()).entries());
+    const formData = new URLSearchParams(await request.text());
+    webhookData = {};
+    formSignatureData = {};
+    formData.forEach((value, key) => {
+      webhookData[key] = value;
+      const existing = formSignatureData[key];
+      formSignatureData[key] = existing === undefined
+        ? value
+        : Array.isArray(existing)
+          ? [...existing, value]
+          : [existing, value];
+    });
   } else if (contentType.includes('application/json')) {
-    webhookData = await request.json();
+    rawJsonBody = await request.text();
+    try {
+      webhookData = JSON.parse(rawJsonBody);
+    } catch {
+      return {
+        ok: false,
+        response: NextResponse.json(
+          { success: false, error: 'Invalid JSON' },
+          { status: 400 },
+        ),
+      };
+    }
   } else {
     return {
       ok: false,
@@ -36,15 +60,27 @@ export async function authenticateGearWebhook(
 
   const signature = request.headers.get('x-twilio-signature');
   const authToken = process.env.GEAR_TWILIO_AUTH_TOKEN;
-  if (
-    !signature
-    || !authToken
-    || !TwilioValidationService.validateSignature(
-      request.url,
-      webhookData,
-      signature,
-      authToken,
+  const validSignature = Boolean(
+    signature
+    && authToken
+    && (
+      rawJsonBody !== null
+        ? TwilioValidationService.validateJsonSignature(
+          request.url,
+          rawJsonBody,
+          signature,
+          authToken,
+        )
+        : TwilioValidationService.validateSignature(
+          request.url,
+          formSignatureData || {},
+          signature,
+          authToken,
+        )
     )
+  );
+  if (
+    !validSignature
   ) {
     return {
       ok: false,

@@ -153,7 +153,7 @@ export class TwilioValidationService {
    */
   static validateSignature(
     url: string,
-    postData: Record<string, any>,
+    postData: Record<string, string | string[]>,
     twilioSignature: string,
     authToken: string
   ): boolean {
@@ -164,7 +164,13 @@ export class TwilioValidationService {
       // Ordenar las claves alfabéticamente y concatenar
       const sortedKeys = Object.keys(postData).sort();
       for (const key of sortedKeys) {
-        dataString += key + postData[key];
+        const value = postData[key];
+        const values = Array.isArray(value)
+          ? Array.from(new Set(value)).sort()
+          : [value];
+        for (const value of values) {
+          dataString += key + value;
+        }
       }
 
       console.log('[TwilioValidation] Data string para validación:', dataString.substring(0, 100) + '...');
@@ -183,6 +189,51 @@ export class TwilioValidationService {
 
     } catch (error) {
       console.error('[TwilioValidation] Error al validar firma:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Validates Twilio application/json webhooks. Twilio signs the full URL,
+   * including bodySHA256, and separately requires that query value to match
+   * the exact raw request body.
+   */
+  static validateJsonSignature(
+    url: string,
+    rawBody: string,
+    twilioSignature: string,
+    authToken: string
+  ): boolean {
+    try {
+      const bodyHash = new URL(url).searchParams.get('bodySHA256');
+      if (!bodyHash || !/^[a-f0-9]{64}$/i.test(bodyHash)) {
+        return false;
+      }
+
+      const expectedBodyHash = crypto
+        .createHash('sha256')
+        .update(rawBody, 'utf-8')
+        .digest('hex');
+      if (!crypto.timingSafeEqual(
+        Buffer.from(expectedBodyHash),
+        Buffer.from(bodyHash.toLowerCase())
+      )) {
+        return false;
+      }
+
+      const expectedSignature = crypto
+        .createHmac('sha1', authToken)
+        .update(url, 'utf-8')
+        .digest('base64');
+      if (expectedSignature.length !== twilioSignature.length) {
+        return false;
+      }
+      return crypto.timingSafeEqual(
+        Buffer.from(expectedSignature),
+        Buffer.from(twilioSignature)
+      );
+    } catch (error) {
+      console.error('[TwilioValidation] Error validating JSON signature:', error);
       return false;
     }
   }

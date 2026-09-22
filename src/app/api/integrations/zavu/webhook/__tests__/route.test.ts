@@ -1,12 +1,13 @@
+import crypto from "crypto";
 import { NextRequest } from "next/server";
 import { POST } from "@/app/api/integrations/zavu/webhook/route";
-import * as zavuService from "@/lib/services/zavu";
 import * as webhookHandlers from "@/lib/services/zavu/webhook-handlers";
 import * as webhookClaims from "@/lib/services/provider-webhook-claims";
 
-// Mock the imports
 jest.mock("@/lib/services/zavu", () => ({
-  verifyZavuSignature: jest.fn().mockReturnValue(true),
+  verifyZavuSignature: jest.requireActual(
+    "@/lib/services/zavu/signature"
+  ).verifyZavuSignature,
 }));
 
 jest.mock("@/lib/services/zavu/webhook-handlers", () => ({
@@ -48,12 +49,19 @@ describe("Zavu Webhook Dispatch", () => {
   });
 
   const createRequest = (body: any) => {
+    const rawBody = JSON.stringify(body);
+    const timestamp = Math.floor(Date.now() / 1000);
+    const signature = crypto
+      .createHmac("sha256", "test-secret")
+      .update(`${timestamp}.${rawBody}`)
+      .digest("hex");
+
     return new NextRequest("http://localhost:3000/api/integrations/zavu/webhook", {
       method: "POST",
       headers: {
-        "x-zavu-signature": "v2=fake_signature",
+        "x-zavu-signature": `t=${timestamp},v2=${signature}`,
       },
-      body: JSON.stringify(body),
+      body: rawBody,
     });
   };
 
