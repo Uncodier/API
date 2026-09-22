@@ -1,6 +1,7 @@
 'use workflow';
 
-import { prepareAssistantContext, processAssistantTurn } from './steps';
+import { processAssistantTurn } from './assistant-turn';
+import { prepareAssistantContext } from './steps';
 import { getActiveInstancePlan, executePlanStep, acquirePlanExecutionLockStep, releasePlanExecutionLockStep } from './plan-steps';
 import { persistUserMessageStep, markAssistantFailedStep, completeUserMessageStep } from './persist-and-fail-steps';
 import {

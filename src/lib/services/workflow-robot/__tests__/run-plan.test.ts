@@ -33,6 +33,8 @@ jest.mock('@/app/api/agents/tools/instance_plan/update/route', () => ({
 }));
 jest.mock('@/app/api/robots/instance/assistant/steps', () => ({
   prepareAssistantContext: jest.fn(),
+}));
+jest.mock('@/app/api/robots/instance/assistant/assistant-turn', () => ({
   processAssistantTurn: jest.fn(),
 }));
 jest.mock('@/app/api/cron/shared/step-history-builder', () => ({

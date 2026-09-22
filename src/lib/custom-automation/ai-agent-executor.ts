@@ -182,9 +182,17 @@ export interface ActOptions {
   verbosity?: 'low' | 'medium' | 'high';
   stream?: boolean;
   onStreamStart?: () => Promise<string>;
-  onStreamChunk?: (logId: string, accumulatedText: string) => Promise<void>;
+  onStreamChunk?: (
+    logId: string,
+    accumulatedText: string,
+    final?: boolean,
+  ) => Promise<void>;
   onThinkingStreamStart?: () => Promise<string>;
-  onThinkingStreamChunk?: (logId: string, accumulatedText: string) => Promise<void>;
+  onThinkingStreamChunk?: (
+    logId: string,
+    accumulatedText: string,
+    final?: boolean,
+  ) => Promise<void>;
   onReasoningTokensUsed?: (reasoningTokensCount: number) => Promise<void>;
   /** If strictly true, stops the LLM turn loop immediately after the first pass (even if tools are called) */
   enforceSingleTurn?: boolean;
@@ -660,9 +668,17 @@ export class AIAgentExecutor {
     completionOptions: Record<string, any>,
     callbacks: {
       onStreamStart: () => Promise<string>;
-      onStreamChunk: (logId: string, text: string) => Promise<void>;
+      onStreamChunk: (
+        logId: string,
+        text: string,
+        final?: boolean,
+      ) => Promise<void>;
       onThinkingStreamStart?: () => Promise<string>;
-      onThinkingStreamChunk?: (logId: string, text: string) => Promise<void>;
+      onThinkingStreamChunk?: (
+        logId: string,
+        text: string,
+        final?: boolean,
+      ) => Promise<void>;
       onReasoningTokensUsed?: (count: number) => Promise<void>;
     },
     totalUsage: { promptTokens: number; completionTokens: number; totalTokens: number }
@@ -785,10 +801,10 @@ export class AIAgentExecutor {
     }
 
     if (streamingLogId && content) {
-      await callbacks.onStreamChunk(streamingLogId, content);
+      await callbacks.onStreamChunk(streamingLogId, content, true);
     }
     if (thinkingLogId && reasoningContent && callbacks.onThinkingStreamChunk) {
-      await callbacks.onThinkingStreamChunk(thinkingLogId, reasoningContent);
+      await callbacks.onThinkingStreamChunk(thinkingLogId, reasoningContent, true);
     }
 
     if (!thinkingLogId && callbacks.onReasoningTokensUsed && usage) {
@@ -1158,7 +1174,7 @@ export class AIAgentExecutor {
 
             if (choice.message.content) {
               const streamingLogId = await onStreamStart!();
-              await onStreamChunk!(streamingLogId, choice.message.content);
+              await onStreamChunk!(streamingLogId, choice.message.content, true);
             }
           }
         } else {

@@ -1,6 +1,6 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/route';
-import { processAssistantTurn } from './steps';
+import { processAssistantTurn } from './assistant-turn';
 import { AssistantContext } from './types';
 import { SkillsService } from '@/lib/services/skills-service';
 import { getStepCheckpointPromptFragment, getFileFreshnessPromptFragment } from '@/app/api/cron/shared/step-git-prompts';

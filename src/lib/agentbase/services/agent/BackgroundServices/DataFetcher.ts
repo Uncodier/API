@@ -211,7 +211,7 @@ export class DataFetcher {
         }
         
         // Guardar en caché para futuras consultas
-        this.agentCache.setAgentData(agentId, agentData);
+        await this.agentCache.setAgentData(agentId, agentData);
         console.log(`✅ [DataFetcher] Información del agente guardada en caché: ${agentId}`);
         
         return this.extractDataFromAgentObject(agentData, processor);

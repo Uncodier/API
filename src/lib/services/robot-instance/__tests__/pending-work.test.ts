@@ -5,6 +5,7 @@ import {
   isInstanceIdleFromLogs,
   processPendingWorkTick,
   sendPendingWorkNow,
+  type PendingWorkRow,
 } from '../pending-work';
 
 jest.mock('@/lib/database/supabase-client', () => ({
@@ -45,7 +46,7 @@ function createChain(result: { data?: any; error?: any } = { data: null, error: 
   return chain;
 }
 
-const pendingRow = {
+const pendingRow: PendingWorkRow = {
   id: 'pending-1',
   instance_id: 'inst-1',
   site_id: 'site-1',
@@ -90,7 +91,7 @@ describe('processPendingWorkTick', () => {
     jest.clearAllMocks();
   });
 
-  it('skips busy instances without claiming or starting', async () => {
+  it('omits busy instances without claiming or starting', async () => {
     (supabaseAdmin.from as jest.Mock)
       .mockReturnValueOnce(createChain({ data: [pendingRow], error: null }))
       .mockReturnValueOnce(createChain({
@@ -100,7 +101,7 @@ describe('processPendingWorkTick', () => {
 
     const results = await processPendingWorkTick();
 
-    expect(results).toEqual([{ instance_id: 'inst-1', status: 'busy' }]);
+    expect(results).toEqual([]);
     expect(start).not.toHaveBeenCalled();
   });
 

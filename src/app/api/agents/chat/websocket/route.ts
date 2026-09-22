@@ -16,6 +16,24 @@ import {
   visitorSessionAuthorizationService
 } from '@/lib/services/visitor-identity/VisitorSessionAuthorizationService';
 
+function realtimeCorsHeaders(request: NextRequest): Record<string, string> {
+  return {
+    'Access-Control-Allow-Origin': request.headers.get('origin') || '*',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers':
+      'Content-Type, X-Visitor-Session-Token, Accept',
+    'Access-Control-Allow-Credentials': 'true',
+    Vary: 'Origin',
+  };
+}
+
+export async function OPTIONS(request: NextRequest) {
+  return new Response(null, {
+    status: 204,
+    headers: realtimeCorsHeaders(request),
+  });
+}
+
 // Verificar si estamos ejecutando en un entorno de desarrollo
 const IS_DEVELOPMENT = process.env.NODE_ENV === 'development';
 console.log(`🌍 Entorno: ${IS_DEVELOPMENT ? 'Desarrollo' : 'Producción'}`);
@@ -481,14 +499,17 @@ export async function GET(req: NextRequest) {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache, no-transform',
         'Connection': 'keep-alive',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        ...realtimeCorsHeaders(req),
       }
     });
   } catch (error) {
     const authorizationResponse = visitorAuthorizationErrorResponse(error);
-    if (authorizationResponse) return authorizationResponse;
+    if (authorizationResponse) {
+      Object.entries(realtimeCorsHeaders(req)).forEach(([name, value]) => {
+        authorizationResponse.headers.set(name, value);
+      });
+      return authorizationResponse;
+    }
     console.error('❌ Error al establecer conexión SSE:', error);
     return new Response('Error al establecer conexión SSE', { status: 500 });
   }
@@ -601,7 +622,13 @@ export async function POST(req: NextRequest) {
               message: `Suscripción procesada para ${user_type}. Usa SSE GET para recibir mensajes en tiempo real.`
             }
           }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } }
+          {
+            status: 200,
+            headers: {
+              'Content-Type': 'application/json',
+              ...realtimeCorsHeaders(req),
+            },
+          }
         );
       }
       
@@ -808,11 +835,22 @@ export async function POST(req: NextRequest) {
           messages
         }
       }),
-      { status: 200, headers: { 'Content-Type': 'application/json' } }
+      {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+          ...realtimeCorsHeaders(req),
+        },
+      }
     );
   } catch (error) {
     const authorizationResponse = visitorAuthorizationErrorResponse(error);
-    if (authorizationResponse) return authorizationResponse;
+    if (authorizationResponse) {
+      Object.entries(realtimeCorsHeaders(req)).forEach(([name, value]) => {
+        authorizationResponse.headers.set(name, value);
+      });
+      return authorizationResponse;
+    }
     console.error('❌ [POST] Error inesperado:', {
       name: (error as Error).name,
       message: (error as Error).message,

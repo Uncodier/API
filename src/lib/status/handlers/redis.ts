@@ -106,7 +106,9 @@ export const redisHandler: SystemHealthHandler = {
     const now = Date.now();
     const tracking = queueCheck(trackingTelemetry, now);
     const recordings = queueCheck(recordingTelemetry, now);
-    const configured = !!process.env.REDIS_URL?.trim();
+    const configured = Boolean(
+      process.env.REDIS_STREAMS_URL?.trim() || process.env.REDIS_URL?.trim(),
+    );
     const status = aggregateStatus(configured, tracking, recordings);
     const observedLatency = Math.max(
       tracking.latencyMs ?? 0,

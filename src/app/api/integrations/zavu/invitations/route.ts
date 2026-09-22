@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createPartnerInvitation, ConnectionType, ensureProjectWebhook } from "@/lib/services/zavu";
 import { supabaseAdmin } from "@/lib/database/supabase-server";
+import { refreshSiteConfigurationCaches } from "@/lib/services/site-configuration-cache";
 import { v4 as uuidv4 } from "uuid";
 
 /**
@@ -106,6 +107,7 @@ export async function POST(request: NextRequest) {
       console.error("[Zavu] Error updating settings:", updateError);
       return NextResponse.json({ error: "Failed to save connection in database" }, { status: 500 });
     }
+    await refreshSiteConfigurationCaches(siteId);
 
     return NextResponse.json({
       success: true,

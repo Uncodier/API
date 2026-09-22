@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { getRedisClient } from '@/lib/utils/redis-client';
+import { getTrackingRedisClient } from '@/lib/utils/tracking-redis-client';
 
 const STREAM_KEY = 'recording:{metadata}:pending';
 const DEAD_LETTER_STREAM_KEY = 'recording:{metadata}:dead-letter';
@@ -138,7 +138,7 @@ async function addDeadLetter(
     error,
   ];
   if (errorCode) fields.push('error_code', errorCode);
-  await getRedisClient().xadd(
+  await getTrackingRedisClient().xadd(
     DEAD_LETTER_STREAM_KEY,
     'MAXLEN',
     '~',
@@ -169,7 +169,7 @@ function groupEntries(entries: StreamEntry[]): StreamEntry[][] {
 }
 
 async function releaseWorkerLock(token: string): Promise<void> {
-  const redis = getRedisClient();
+  const redis = getTrackingRedisClient();
   await redis.eval(
     `
       if redis.call('GET', KEYS[1]) == ARGV[1] then
@@ -186,13 +186,15 @@ async function releaseWorkerLock(token: string): Promise<void> {
 export async function enqueueRecordingMetadata(
   chunks: RecordingMetadataChunk[],
 ): Promise<string | null> {
-  if (!process.env.REDIS_URL?.trim()) {
-    throw new Error('REDIS_URL is required for recording metadata');
+  if (!process.env.REDIS_STREAMS_URL?.trim() && !process.env.REDIS_URL?.trim()) {
+    throw new Error(
+      'REDIS_STREAMS_URL or REDIS_URL is required for recording metadata',
+    );
   }
   if (chunks.length < 1 || chunks.length > 3) {
     throw new Error('Recording metadata messages must contain 1-3 chunks');
   }
-  const messageId = await getRedisClient().eval(
+  const messageId = await getTrackingRedisClient().eval(
     ENQUEUE_SCRIPT,
     1,
     STREAM_KEY,
@@ -212,11 +214,13 @@ export async function enqueueRecordingMetadata(
 export async function drainRecordingMetadataQueue(
   client: SupabaseClient = supabaseAdmin,
 ): Promise<RecordingQueueDrainResult> {
-  if (!process.env.REDIS_URL?.trim()) {
-    throw new Error('REDIS_URL is required for recording metadata');
+  if (!process.env.REDIS_STREAMS_URL?.trim() && !process.env.REDIS_URL?.trim()) {
+    throw new Error(
+      'REDIS_STREAMS_URL or REDIS_URL is required for recording metadata',
+    );
   }
 
-  const redis = getRedisClient();
+  const redis = getTrackingRedisClient();
   const lockToken = randomUUID();
   const lock = await redis.set(
     WORKER_LOCK_KEY,

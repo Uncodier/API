@@ -1,6 +1,9 @@
-import { createClient } from '@supabase/supabase-js';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { decryptToken } from '@/lib/utils/token-decryption';
+import {
+  readRedisJson,
+  writeRedisJson,
+} from '@/lib/services/redis-json-cache';
 
 export interface EmailConfig {
   user?: string;
@@ -28,12 +31,19 @@ export class EmailConfigService {
    */
   static async getEmailConfig(siteId: string): Promise<EmailConfig> {
     try {
-      // Obtener settings del sitio
-      const { data: settings, error: settingsError } = await supabaseAdmin
-        .from('settings')
-        .select('channels')
-        .eq('site_id', siteId)
-        .single();
+      const settingsKey = `cache:site-email-settings:${siteId}`;
+      let settings = await readRedisJson<any>(settingsKey);
+      let settingsError: { message: string } | null = null;
+      if (!settings) {
+        const result = await supabaseAdmin
+          .from('settings')
+          .select('channels')
+          .eq('site_id', siteId)
+          .single();
+        settings = result.data;
+        settingsError = result.error;
+        if (settings) await writeRedisJson(settingsKey, settings, 300);
+      }
         
       if (settingsError) {
         throw new Error(`Failed to retrieve site settings: ${settingsError.message}`);
@@ -44,7 +54,10 @@ export class EmailConfigService {
       }
 
       // Obtener el token de email
-      const tokenValue = await this.getEmailToken(siteId);
+      const tokenValue = await this.getEmailToken(
+        siteId,
+        settings.channels?.email?.email,
+      );
       
       if (!tokenValue) {
         throw new Error(`No se encontró token de email para el sitio ${siteId}. Por favor almacena un token de email usando el endpoint /api/secure-tokens`);
@@ -96,19 +109,17 @@ export class EmailConfigService {
   /**
    * Obtiene y desencripta el token de email
    */
-  private static async getEmailToken(siteId: string): Promise<string | null> {
+  private static async getEmailToken(
+    siteId: string,
+    email?: string,
+  ): Promise<string | null> {
     try {
-      // 1. PRIMERO: Intentar obtener directamente de la base de datos (MÁS RÁPIDO)
-      const { data: settings } = await supabaseAdmin
-        .from('settings')
-        .select('channels')
-        .eq('site_id', siteId)
-        .single();
-
-      const email = settings?.channels?.email?.email;
+      const cacheKey = `cache:email-token-encrypted:${siteId}`;
+      const cached = await readRedisJson<{ encryptedValue: string }>(cacheKey);
+      if (cached?.encryptedValue) return this.decryptToken(cached.encryptedValue);
       
       // Consulta base para el token
-      let query = supabaseAdmin
+      const baseTokenQuery = () => supabaseAdmin
         .from('secure_tokens')
         .select('*')
         .eq('site_id', siteId)
@@ -116,8 +127,15 @@ export class EmailConfigService {
       
       // Si tenemos email, primero intentar con identifier
       if (email) {
-        const { data: withIdentifier } = await query.eq('identifier', email).maybeSingle();
+        const { data: withIdentifier } = await baseTokenQuery()
+          .eq('identifier', email)
+          .maybeSingle();
         if (withIdentifier?.encrypted_value) {
+          await writeRedisJson(
+            cacheKey,
+            { encryptedValue: withIdentifier.encrypted_value },
+            60,
+          );
           console.log(`[EmailConfigService] ✅ Token encontrado con identifier, desencriptando localmente...`);
           const decryptedToken = this.decryptToken(withIdentifier.encrypted_value);
           if (decryptedToken) {
@@ -128,8 +146,16 @@ export class EmailConfigService {
       }
 
       // Si no se encontró con identifier o no hay email, intentar sin identifier
-      const { data: withoutIdentifier } = await query.maybeSingle();
+      const { data: withoutIdentifier } = await baseTokenQuery()
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
       if (withoutIdentifier?.encrypted_value) {
+        await writeRedisJson(
+          cacheKey,
+          { encryptedValue: withoutIdentifier.encrypted_value },
+          60,
+        );
         console.log(`[EmailConfigService] ✅ Token encontrado sin identifier, desencriptando localmente...`);
         const decryptedToken = this.decryptToken(withoutIdentifier.encrypted_value);
         if (decryptedToken) {

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { getRedisClient } from '@/lib/utils/redis-client';
+import { getTrackingRedisClient } from '@/lib/utils/tracking-redis-client';
 
 const ADMISSION_SCRIPT = `
 local decision = redis.call('GET', KEYS[1])
@@ -54,6 +54,8 @@ end
 
 redis.call('ZADD', KEYS[2], active_until, ARGV[5])
 redis.call('ZADD', KEYS[3], active_until, ARGV[5])
+redis.call('EXPIRE', KEYS[2], ARGV[2])
+redis.call('EXPIRE', KEYS[3], ARGV[2])
 redis.call('INCRBY', KEYS[4], request_bytes)
 redis.call('EXPIRE', KEYS[4], ARGV[12])
 redis.call('INCRBY', KEYS[5], request_bytes)
@@ -116,8 +118,13 @@ export async function admitRecordingRequest(params: {
   requestBytes: number;
   now?: number;
 }): Promise<RecordingAdmissionResult> {
-  if (!process.env.REDIS_URL?.trim()) {
-    console.error('[Session Recording] REDIS_URL is missing; recording dropped');
+  if (
+    !process.env.REDIS_STREAMS_URL?.trim()
+    && !process.env.REDIS_URL?.trim()
+  ) {
+    console.error(
+      '[Session Recording] durable Redis URL is missing; recording dropped',
+    );
     return { accepted: false, reason: 'admission_unavailable' };
   }
 
@@ -142,7 +149,7 @@ export async function admitRecordingRequest(params: {
     : '0';
 
   try {
-    const redis = getRedisClient();
+    const redis = getTrackingRedisClient();
     const backlog = await redis.xlen(RECORDING_QUEUE_KEY);
     if (
       backlog >= numberSetting(

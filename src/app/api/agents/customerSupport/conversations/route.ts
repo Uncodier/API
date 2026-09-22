@@ -4,6 +4,10 @@ import {
   visitorAuthorizationErrorResponse,
   visitorSessionAuthorizationService
 } from '@/lib/services/visitor-identity/VisitorSessionAuthorizationService';
+import {
+  readRedisJson,
+  writeRedisJson,
+} from '@/lib/services/redis-json-cache';
 
 export async function GET(request: Request) {
   try {
@@ -27,7 +31,7 @@ export async function GET(request: Request) {
       visitorId = identity.leadId ? null : identity.visitorId;
     }
 
-    const result = await getConversationsCore({
+    const queryParams = {
       lead_id: leadId ?? undefined,
       visitor_id: visitorId ?? undefined,
       user_id: userId ?? undefined,
@@ -36,9 +40,16 @@ export async function GET(request: Request) {
       status: url.searchParams.get('status') ?? undefined,
       channel: url.searchParams.get('channel') ?? undefined,
       custom_data_status: url.searchParams.get('custom_data_status') ?? undefined,
+      summary_only: url.searchParams.get('summary_only') === 'true',
       limit,
       offset
-    });
+    };
+    const cacheKey = `cache:conversation-list:${Buffer.from(
+      JSON.stringify(queryParams),
+    ).toString('base64url')}`;
+    const cached = await readRedisJson<Record<string, unknown>>(cacheKey);
+    const result = cached ?? await getConversationsCore(queryParams);
+    if (!cached) await writeRedisJson(cacheKey, result, 3);
 
     return NextResponse.json({
       ...result,

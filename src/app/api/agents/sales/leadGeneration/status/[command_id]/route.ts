@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { CommandFactory, ProcessorInitializer } from '@/lib/agentbase';
+import { ProcessorInitializer } from '@/lib/agentbase';
+import {
+  readRedisJson,
+  writeRedisJson,
+} from '@/lib/services/redis-json-cache';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,6 +43,12 @@ export async function GET(request: NextRequest) {
         },
         { status: 400 }
       );
+    }
+
+    const cacheKey = `cache:lead-generation-command-status:${command_id}`;
+    const cached = await readRedisJson<Record<string, unknown>>(cacheKey);
+    if (cached) {
+      return NextResponse.json(cached);
     }
     
     // Query the command from the database
@@ -131,7 +141,7 @@ export async function GET(request: NextRequest) {
     }
     
     // Return the command status
-    return NextResponse.json({
+    const responseBody = {
       success: true,
       data: {
         command_id: commandData.id,
@@ -145,9 +155,17 @@ export async function GET(request: NextRequest) {
           estimated_time_remaining
         },
         created_at: commandData.created_at,
-        updated_at: commandData.updated_at
+        updated_at: commandData.updated_at,
+        retry_after_ms: ['pending', 'running'].includes(commandData.status)
+          ? 2_000
+          : null,
       }
-    });
+    };
+    const isTerminal = ['completed', 'failed', 'cancelled'].includes(
+      commandData.status,
+    );
+    await writeRedisJson(cacheKey, responseBody, isTerminal ? 600 : 2);
+    return NextResponse.json(responseBody);
     
   } catch (error) {
     console.error('Error in lead generation status endpoint:', error);

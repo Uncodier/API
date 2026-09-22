@@ -328,6 +328,7 @@ export class CommandCache {
 }
 
 // Iniciar limpieza automática cada 5 minutos
-setInterval(() => {
+const cleanupTimer = setInterval(() => {
   CommandCache.cleanupCache();
-}, 5 * 60 * 1000); 
+}, 5 * 60 * 1000);
+cleanupTimer.unref();

@@ -1,4 +1,5 @@
 import { supabaseAdmin } from "@/lib/database/supabase-server";
+import { refreshSiteConfigurationCaches } from "@/lib/services/site-configuration-cache";
 import { v4 as uuidv4 } from "uuid";
 
 export async function getChannelConnection(siteId: string, channelId: string | undefined) {
@@ -97,6 +98,7 @@ export async function replaceChannelSenderReferences(
   if (updateError) {
     throw new Error("Failed to replace obsolete sender references");
   }
+  await refreshSiteConfigurationCaches(siteId);
 }
 
 export async function upsertChannelConnection(
@@ -170,6 +172,7 @@ export async function upsertChannelConnection(
   if (updateError) {
     throw new Error("Failed to save connection in database");
   }
+  await refreshSiteConfigurationCaches(siteId);
 
   return { channelId, connection: nextConnection, connections };
 }

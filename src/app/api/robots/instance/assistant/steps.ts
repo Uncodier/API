@@ -17,7 +17,7 @@ import {
 import type { AssistantContext } from './types';
 import { loadAssistantRequirementContext } from './requirement-context';
 import { resolveUiMediaContract } from './ui-media-contract';
-export { processAssistantTurn } from './assistant-turn';
+
 export async function prepareAssistantContext(
   instanceId: string,
   message: string,

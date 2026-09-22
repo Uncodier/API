@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getTasks, getTaskStats } from '@/lib/database/task-db';
+import {
+  readRedisJson,
+  writeRedisJson,
+} from '@/lib/services/redis-json-cache';
 
 /**
  * Esquema para validar los filtros de búsqueda de tareas
@@ -63,6 +67,9 @@ const VALID_TASK_TYPES = [
 export async function getTaskCore(filters: Record<string, unknown>) {
   const validatedFilters = GetTasksSchema.parse(filters);
   const filterObj = { ...validatedFilters };
+  const cacheKey = `cache:task-list:${Buffer.from(
+    JSON.stringify(filterObj),
+  ).toString('base64url')}`;
 
   if (!validatedFilters.include_archived && filterObj.status === 'archived') {
     throw new Error('No se pueden obtener tareas archivadas cuando include_archived es false');
@@ -71,12 +78,15 @@ export async function getTaskCore(filters: Record<string, unknown>) {
     throw new Error('No se pueden obtener tareas completadas cuando include_completed es false');
   }
 
+  const cached = await readRedisJson<Record<string, unknown>>(cacheKey);
+  if (cached) return cached;
+
   const [tasksResult, stats] = await Promise.all([
     getTasks(filterObj),
     getTaskStats(filterObj),
   ]);
 
-  return {
+  const result = {
     success: true,
     data: {
       tasks: tasksResult.tasks,
@@ -110,6 +120,8 @@ export async function getTaskCore(filters: Record<string, unknown>) {
       },
     },
   };
+  await writeRedisJson(cacheKey, result, 5);
+  return result;
 }
 
 /**

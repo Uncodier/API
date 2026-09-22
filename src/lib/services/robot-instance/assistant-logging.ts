@@ -1,5 +1,12 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { type NodeResult, buildInitialNodeResult } from './node-result-collector';
+import type { NodeContextRef } from './assistant-streaming-logs';
+export {
+  createNodeStreamingCallbacks,
+  createStreamingLogCallbacks,
+  createThinkingStreamLogCallbacks,
+} from './assistant-streaming-logs';
+export type { NodeContextRef } from './assistant-streaming-logs';
 
 /**
  * Create onStep callback handler for assistant execution
@@ -204,210 +211,6 @@ export function createAssistantOnStepHandler(
 }
 
 /**
- * Create streaming callbacks for real-time instance_log updates.
- */
-export function createStreamingLogCallbacks(
-  instance_id: string,
-  site_id: string,
-  user_id: string | undefined,
-  provider: string,
-  plan_id?: string,
-  step_id?: string,
-  requirement_id?: string
-): { onStreamStart: () => Promise<string>; onStreamChunk: (logId: string, accumulatedText: string) => Promise<void> } {
-  return {
-    onStreamStart: async () => {
-      const { data, error } = await supabaseAdmin
-        .from('instance_logs')
-        .insert({
-          log_type: 'agent_action',
-          level: 'info',
-          message: '',
-          details: { 
-            provider, 
-            response_type: 'assistant_step', 
-            streaming: true,
-            ...(plan_id ? { plan_id } : {}),
-            ...(step_id ? { step_id } : {}),
-            ...(requirement_id ? { requirement_id } : {}),
-          },
-          instance_id,
-          site_id,
-          user_id,
-        })
-        .select('id')
-        .single();
-      if (error) {
-        console.error('❌ Error creating streaming log:', error);
-        throw new Error(`Failed to create streaming log: ${error.message}`);
-      }
-      console.log(`₍ᐢ•(ܫ)•ᐢ₎ [STREAM] Created log ${data.id} for instance ${instance_id}`);
-      return data.id;
-    },
-    onStreamChunk: async (logId: string, accumulatedText: string) => {
-      const { error } = await supabaseAdmin
-        .from('instance_logs')
-        .update({ message: accumulatedText })
-        .eq('id', logId);
-      if (error) {
-        console.error('❌ Error updating streaming log chunk:', error);
-      }
-    },
-  };
-}
-
-export interface NodeContextRef {
-  context_node_id: string;
-  type: string; // 'result' | 'prompt' | 'summary' | custom
-}
-
-/**
- * Create streaming callbacks for instance_nodes (graph/workflow responses).
- * Creates a new response node as child of the prompt node,
- * then streams the LLM result into it.
- * Optionally links context nodes via instance_node_contexts.
- */
-export function createNodeStreamingCallbacks(
-  promptNodeId: string,
-  promptNode: any,
-  contextRefs?: NodeContextRef[]
-): {
-  onNodeStreamStart: () => Promise<string>;
-  onNodeStreamChunk: (nodeId: string, accumulatedText: string) => Promise<void>;
-  onNodeStreamEnd: (nodeId: string, result: NodeResult) => Promise<void>;
-  onNodeStreamError: (nodeId: string | null, errorMessage: string) => Promise<void>;
-} {
-  const initialResult = buildInitialNodeResult(promptNode);
-
-  return {
-    onNodeStreamStart: async () => {
-      const { data, error } = await supabaseAdmin
-        .from('instance_nodes')
-        .insert({
-          instance_id: promptNode.instance_id,
-          parent_node_id: promptNodeId,
-          parent_instance_log_id: promptNode.parent_instance_log_id,
-          type: 'response',
-          prompt: promptNode.prompt,
-          settings: promptNode.settings || {},
-          status: 'running',
-          result: initialResult,
-          site_id: promptNode.site_id,
-          user_id: promptNode.user_id,
-        })
-        .select('id')
-        .single();
-      if (error) {
-        console.error('[Node Executor] Error creating response node:', error);
-        throw new Error(`Failed to create response node: ${error.message}`);
-      }
-
-      const responseNodeId = data.id;
-      console.log(`[Node Executor] Created response node ${responseNodeId} for prompt node ${promptNodeId}`);
-
-      // Insert context relations (instance_node_contexts)
-      if (contextRefs && contextRefs.length > 0) {
-        const rows = contextRefs.map(ref => ({
-          target_node_id: responseNodeId,
-          context_node_id: ref.context_node_id,
-          type: ref.type,
-          site_id: promptNode.site_id,
-          user_id: promptNode.user_id,
-        }));
-        const { error: ctxError } = await supabaseAdmin
-          .from('instance_node_contexts')
-          .insert(rows);
-        if (ctxError) {
-          console.error('[Node Executor] Error inserting context refs:', ctxError);
-        } else {
-          console.log(`[Node Executor] Linked ${rows.length} context nodes to response ${responseNodeId}`);
-        }
-      }
-
-      return responseNodeId;
-    },
-    onNodeStreamChunk: async (nodeId: string, accumulatedText: string) => {
-      const chunkResult: NodeResult = { text: accumulatedText, status: 'streaming' };
-      if (initialResult.outputs) chunkResult.outputs = initialResult.outputs;
-      const { error } = await supabaseAdmin
-        .from('instance_nodes')
-        .update({ result: chunkResult, updated_at: new Date().toISOString() })
-        .eq('id', nodeId);
-      if (error) console.error('[Node Executor] Stream chunk update error:', error);
-    },
-    onNodeStreamEnd: async (nodeId: string, result: NodeResult) => {
-      const { error } = await supabaseAdmin
-        .from('instance_nodes')
-        .update({
-          status: 'completed',
-          result,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', nodeId);
-      if (error) {
-        console.error('[Node Executor] Final update error:', error);
-      } else {
-        console.log(`[Node Executor] Completed response node ${nodeId}, text: ${result.text?.length || 0}, outputs: ${result.outputs?.length || 0}`);
-        
-        // Update parent instance log to completed
-        if (promptNode.parent_instance_log_id) {
-          const { data: parentLog } = await supabaseAdmin
-            .from('instance_logs')
-            .select('details')
-            .eq('id', promptNode.parent_instance_log_id)
-            .single();
-            
-          if (parentLog) {
-            await supabaseAdmin
-              .from('instance_logs')
-              .update({
-                details: {
-                  ...(parentLog.details as any || {}),
-                  status: 'completed'
-                }
-              })
-              .eq('id', promptNode.parent_instance_log_id);
-          }
-        }
-      }
-    },
-    onNodeStreamError: async (nodeId: string | null, errorMessage: string) => {
-      if (!nodeId) return;
-      await supabaseAdmin
-        .from('instance_nodes')
-        .update({
-          status: 'failed',
-          result: { error: errorMessage },
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', nodeId);
-      console.error(`[Node Executor] Node ${nodeId} failed: ${errorMessage}`);
-      
-      // Update parent instance log to failed
-      if (promptNode.parent_instance_log_id) {
-        const { data: parentLog } = await supabaseAdmin
-          .from('instance_logs')
-          .select('details')
-          .eq('id', promptNode.parent_instance_log_id)
-          .single();
-          
-        if (parentLog) {
-          await supabaseAdmin
-            .from('instance_logs')
-            .update({
-              details: {
-                ...(parentLog.details as any || {}),
-                status: 'failed'
-              }
-            })
-            .eq('id', promptNode.parent_instance_log_id);
-        }
-      }
-    },
-  };
-}
-
-/**
  * Fetch context nodes for a given target node from instance_node_contexts.
  * Returns the referenced nodes with their type, ordered by creation.
  */
@@ -551,7 +354,6 @@ export async function updateNodeResult(nodeId: string, result: NodeResult) {
     }
   }
 }
-
 /**
  * Mark a response node as failed.
  */
@@ -591,84 +393,4 @@ export async function failNode(nodeId: string, errorMessage: string) {
         .eq('id', node.parent_instance_log_id);
     }
   }
-}
-
-/**
- * Create streaming callbacks for reasoning/thinking content (o-series, etc).
- */
-export function createThinkingStreamLogCallbacks(
-  instance_id: string,
-  site_id: string,
-  user_id: string | undefined,
-  provider: string,
-  plan_id?: string,
-  step_id?: string,
-  requirement_id?: string
-): {
-  onThinkingStreamStart: () => Promise<string>;
-  onThinkingStreamChunk: (logId: string, accumulatedText: string) => Promise<void>;
-  onReasoningTokensUsed: (reasoningTokensCount: number) => Promise<void>;
-} {
-  return {
-    onThinkingStreamStart: async () => {
-      const { data, error } = await supabaseAdmin
-        .from('instance_logs')
-        .insert({
-          log_type: 'thinking',
-          level: 'info',
-          message: '',
-          details: { 
-            provider, 
-            response_type: 'reasoning', 
-            streaming: true,
-            ...(plan_id ? { plan_id } : {}),
-            ...(step_id ? { step_id } : {}),
-            ...(requirement_id ? { requirement_id } : {}),
-          },
-          instance_id,
-          site_id,
-          user_id,
-        })
-        .select('id')
-        .single();
-      if (error) {
-        console.error('❌ Error creating thinking streaming log:', error);
-        throw new Error(`Failed to create thinking streaming log: ${error.message}`);
-      }
-      console.log(`₍ᐢ•(ܫ)•ᐢ₎ [THINKING] Created log ${data.id} for instance ${instance_id}`);
-      return data.id;
-    },
-    onThinkingStreamChunk: async (logId: string, accumulatedText: string) => {
-      const { error } = await supabaseAdmin
-        .from('instance_logs')
-        .update({ message: accumulatedText })
-        .eq('id', logId);
-      if (error) {
-        console.error('❌ Error updating thinking streaming log chunk:', error);
-      }
-    },
-    onReasoningTokensUsed: async (reasoningTokensCount: number) => {
-      const { error } = await supabaseAdmin.from('instance_logs').insert({
-        log_type: 'thinking',
-        level: 'info',
-        message: `Model used ${reasoningTokensCount} reasoning tokens.`,
-        details: {
-          provider,
-          response_type: 'reasoning_tokens_fallback',
-          reasoning_tokens: reasoningTokensCount,
-          ...(plan_id ? { plan_id } : {}),
-          ...(step_id ? { step_id } : {}),
-          ...(requirement_id ? { requirement_id } : {}),
-        },
-        instance_id,
-        site_id,
-        user_id,
-      });
-      if (error) {
-        console.error('❌ Error creating reasoning tokens fallback log:', error);
-      } else {
-        console.log(`₍ᐢ•(ܫ)•ᐢ₎ [THINKING] Created fallback log: ${reasoningTokensCount} reasoning tokens used`);
-      }
-    },
-  };
 }

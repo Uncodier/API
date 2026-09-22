@@ -30,49 +30,6 @@ function currentPeriodKey(): string {
   return `${y}-${m}-${day}`;
 }
 
-async function loadUsage(params: { site_id: string; capability: string; period: string }): Promise<{ used: number; limit: number; rowId?: string }> {
-  const { data } = await supabaseAdmin
-    .from('platform_quotas')
-    .select('id, used, quota_override')
-    .eq('site_id', params.site_id)
-    .eq('capability', params.capability)
-    .eq('period', params.period)
-    .maybeSingle();
-  const defaultLimit = DEFAULT_DAILY_QUOTAS[params.capability] ?? 1000;
-  return {
-    used: (data?.used as number | undefined) ?? 0,
-    limit: (data?.quota_override as number | undefined) ?? defaultLimit,
-    rowId: (data?.id as string | undefined) ?? undefined,
-  };
-}
-
-async function incrementUsage(params: { site_id: string; capability: string; period: string; by?: number }): Promise<void> {
-  const { data: existing } = await supabaseAdmin
-    .from('platform_quotas')
-    .select('id, used')
-    .eq('site_id', params.site_id)
-    .eq('capability', params.capability)
-    .eq('period', params.period)
-    .maybeSingle();
-
-  const by = params.by ?? 1;
-  if (existing?.id) {
-    await supabaseAdmin
-      .from('platform_quotas')
-      .update({ used: (existing.used || 0) + by, updated_at: new Date().toISOString() })
-      .eq('id', existing.id);
-  } else {
-    await supabaseAdmin.from('platform_quotas').insert({
-      site_id: params.site_id,
-      capability: params.capability,
-      period: params.period,
-      used: by,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    });
-  }
-}
-
 /**
  * Checks if a capability call is within quota. Increments usage when `allowed`
  * is true — callers should only consume one token per logical call.
@@ -80,27 +37,48 @@ async function incrementUsage(params: { site_id: string; capability: string; per
 export async function reserveQuota(params: { site_id: string; capability: string; cost?: number }): Promise<QuotaDecision> {
   try {
     const period = currentPeriodKey();
-    const usage = await loadUsage({ site_id: params.site_id, capability: params.capability, period });
     const cost = Math.max(1, Math.round(params.cost ?? 1));
-    if (usage.used + cost > usage.limit) {
+    const defaultLimit = DEFAULT_DAILY_QUOTAS[params.capability] ?? 1000;
+    const { data, error } = await supabaseAdmin.rpc(
+      'reserve_platform_quota',
+      {
+        p_site_id: params.site_id,
+        p_capability: params.capability,
+        p_period: period,
+        p_cost: cost,
+        p_default_limit: defaultLimit,
+      },
+    );
+    if (!error && data?.[0]) {
+      const result = data[0] as {
+        allowed: boolean;
+        used: number;
+        quota_limit: number;
+      };
       return {
-        allowed: false,
-        used: usage.used,
-        limit: usage.limit,
-        softWarn: false,
-        reason: `Daily quota exhausted for capability "${params.capability}" (used=${usage.used}, limit=${usage.limit}).`,
+        allowed: result.allowed,
+        used: result.used,
+        limit: result.quota_limit,
+        softWarn: result.used >= Math.floor(
+          result.quota_limit * SOFT_WARN_RATIO,
+        ),
+        ...(!result.allowed ? {
+          reason: `Daily quota exhausted for capability "${params.capability}" (used=${result.used}, limit=${result.quota_limit}).`,
+        } : {}),
       };
     }
-    await incrementUsage({ site_id: params.site_id, capability: params.capability, period, by: cost });
-    const nextUsed = usage.used + cost;
-    return {
-      allowed: true,
-      used: nextUsed,
-      limit: usage.limit,
-      softWarn: nextUsed >= Math.floor(usage.limit * SOFT_WARN_RATIO),
-    };
+    throw new Error(error?.message || 'Atomic quota reservation returned no data');
   } catch (e: unknown) {
-    console.warn('[PlatformQuota] failed, allowing call by default:', e instanceof Error ? e.message : e);
-    return { allowed: true, used: 0, limit: DEFAULT_DAILY_QUOTAS[params.capability] ?? 0, softWarn: false };
+    console.error(
+      '[PlatformQuota] reservation unavailable:',
+      e instanceof Error ? e.message : e,
+    );
+    return {
+      allowed: false,
+      used: 0,
+      limit: DEFAULT_DAILY_QUOTAS[params.capability] ?? 0,
+      softWarn: false,
+      reason: 'Quota service is temporarily unavailable.',
+    };
   }
 }

@@ -3,6 +3,7 @@ import { encryptToken } from "@/lib/utils/token-encryption";
 import { WorkflowService } from "@/lib/services/workflow-service";
 import { ensureProjectWebhook, ensureSenderWebhook, mapInvitationStatus } from "./client";
 import { getCachedJson, setCachedJson, sha256 } from "@/lib/security/upstash-rest";
+import { refreshSiteConfigurationCaches } from "@/lib/services/site-configuration-cache";
 
 async function findSettingsForDomain(domainId: string) {
   const { data, error } = await supabaseAdmin
@@ -193,6 +194,7 @@ export async function handleDomainStatusChanged(data: any, eventType: string) {
       console.error("[Zavu Webhook] Error updating domain status:", updateError);
       throw updateError;
     }
+    await refreshSiteConfigurationCaches(site.site_id);
   }
 }
 
@@ -248,6 +250,7 @@ export async function handleInvitationStatusChanged(data: any) {
     console.error("[Zavu Webhook] Error updating connection status:", updateError);
     throw updateError;
   }
+  await refreshSiteConfigurationCaches(site.site_id);
 
   if (currentStatus === "completed" && senderId) {
     try {
@@ -279,6 +282,7 @@ export async function handleInvitationStatusChanged(data: any) {
           if (webhookUpdateError) {
             throw webhookUpdateError;
           }
+          await refreshSiteConfigurationCaches(site.site_id);
         }
       }
     } catch (senderError) {

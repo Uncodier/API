@@ -14,8 +14,8 @@ const mockXdel: any = jest.fn();
 const mockXlen: any = jest.fn();
 const mockEval: any = jest.fn();
 
-jest.mock('@/lib/utils/redis-client', () => ({
-  getRedisClient: () => ({
+jest.mock('@/lib/utils/tracking-redis-client', () => ({
+  getTrackingRedisClient: () => ({
     set: mockSet,
     xadd: mockXadd,
     xrange: mockXrange,

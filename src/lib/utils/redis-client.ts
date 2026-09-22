@@ -1,19 +1,26 @@
 import Redis from 'ioredis';
 
-// Read Redis connection string from environment variables
-const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
-
 // Create a Redis client
 let redisClient: Redis | null = null;
 let isConnecting = false;
 
+function getCacheRedisUrl(): string {
+  return process.env.REDIS_CACHE_URL?.trim()
+    || process.env.REDIS_URL?.trim()
+    || 'redis://localhost:6379';
+}
+
 /**
- * Get a singleton Redis client instance
+ * Get the singleton used for expendable caches, counters, and locks.
+ *
+ * Durable streams use tracking-redis-client so deployments can isolate queue
+ * memory from evictable cache memory with REDIS_STREAMS_URL.
  */
 export function getRedisClient(): Redis {
   if (!redisClient && !isConnecting) {
     isConnecting = true;
     try {
+      const redisUrl = getCacheRedisUrl();
       console.log(`[Redis Client] Attempting to connect to Redis at ${redisUrl.replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}`);
       
       redisClient = new Redis(redisUrl, {

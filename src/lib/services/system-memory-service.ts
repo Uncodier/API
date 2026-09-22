@@ -1,5 +1,23 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { v4 as uuidv4 } from 'uuid';
+import { createHash } from 'node:crypto';
+import {
+  deleteRedisKeys,
+  readRedisJson,
+  writeRedisJson,
+} from './redis-json-cache';
+import { getRedisClient } from '@/lib/utils/redis-client';
+
+const MEMORY_CACHE_TTL_SECONDS = 5 * 60;
+const MEMORY_MISS_TTL_SECONDS = 30;
+const ACCESS_CHECKPOINT_SIZE = 25;
+
+function memoryCacheKey(params: SystemMemoryQueryParams): string {
+  const identity = createHash('sha256')
+    .update(`${params.siteId}\0${params.systemType}\0${params.key}`)
+    .digest('hex');
+  return `cache:system-memory:${identity}`;
+}
 
 export interface SystemMemory {
   id: string;
@@ -62,6 +80,15 @@ export class SystemMemoryService {
   async findMemory(params: SystemMemoryQueryParams): Promise<SystemMemoryResult> {
     try {
       const { siteId, systemType, key } = params;
+      const cacheKey = memoryCacheKey(params);
+      const cached = await readRedisJson<{
+        found: boolean;
+        memory?: SystemMemory;
+      }>(cacheKey);
+      if (cached) {
+        if (cached.memory) void this.incrementAccessCount(cached.memory.id);
+        return { success: true, memory: cached.memory };
+      }
       
       const { data, error } = await supabaseAdmin
         .from('system_memories')
@@ -80,18 +107,28 @@ export class SystemMemoryService {
       }
       
       if (!data) {
+        await writeRedisJson(
+          cacheKey,
+          { found: false },
+          MEMORY_MISS_TTL_SECONDS,
+        );
         return {
           success: true,
           memory: undefined
         };
       }
       
-      // Incrementar contador de acceso
-      await this.incrementAccessCount(data.id);
+      const memory = this.mapDatabaseToMemory(data);
+      await writeRedisJson(
+        cacheKey,
+        { found: true, memory },
+        MEMORY_CACHE_TTL_SECONDS,
+      );
+      void this.incrementAccessCount(data.id);
       
       return {
         success: true,
-        memory: this.mapDatabaseToMemory(data)
+        memory,
       };
     } catch (error) {
       console.error('Error in findMemory:', error);
@@ -135,6 +172,26 @@ export class SystemMemoryService {
           error: 'Failed to create system memory'
         };
       }
+      const memory: SystemMemory = {
+        id,
+        siteId: params.siteId,
+        systemType: params.systemType,
+        key: params.key,
+        data: params.data,
+        rawData: params.rawData,
+        metadata: params.metadata || {},
+        createdAt: now,
+        updatedAt: now,
+        accessCount: 0,
+        lastAccessed: now,
+        expiresAt: params.expiresAt?.toISOString(),
+        commandId: params.commandId,
+      };
+      await writeRedisJson(
+        memoryCacheKey(params),
+        { found: true, memory },
+        MEMORY_CACHE_TTL_SECONDS,
+      );
       
       return {
         success: true,
@@ -184,6 +241,7 @@ export class SystemMemoryService {
           error: 'Failed to update system memory'
         };
       }
+      await deleteRedisKeys(memoryCacheKey(params));
       
       return {
         success: true
@@ -334,23 +392,26 @@ export class SystemMemoryService {
    */
   private async incrementAccessCount(memoryId: string): Promise<void> {
     try {
-      // Primero obtenemos el conteo actual
-      const { data: currentData } = await supabaseAdmin
-        .from('system_memories')
-        .select('access_count')
-        .eq('id', memoryId)
-        .single();
-      
-      // Incrementamos el contador
-      const newCount = (currentData?.access_count || 0) + 1;
-      
-      await supabaseAdmin
-        .from('system_memories')
-        .update({
-          access_count: newCount,
-          last_accessed: new Date().toISOString()
-        })
-        .eq('id', memoryId);
+      if (!process.env.REDIS_CACHE_URL?.trim() && !process.env.REDIS_URL?.trim()) {
+        await supabaseAdmin.rpc('increment_system_memory_access', {
+          p_memory_id: memoryId,
+          p_amount: 1,
+        });
+        return;
+      }
+      const redis = getRedisClient();
+      const key = `counter:system-memory-access:${memoryId}`;
+      const pending = await redis.incr(key);
+      await redis.expire(key, 24 * 60 * 60);
+      if (pending < ACCESS_CHECKPOINT_SIZE) return;
+
+      const amount = Number(await redis.getset(key, '0')) || 0;
+      if (amount === 0) return;
+      const { error } = await supabaseAdmin.rpc(
+        'increment_system_memory_access',
+        { p_memory_id: memoryId, p_amount: amount },
+      );
+      if (error) await redis.incrby(key, amount);
     } catch (error) {
       console.error('Error incrementing access count:', error);
     }

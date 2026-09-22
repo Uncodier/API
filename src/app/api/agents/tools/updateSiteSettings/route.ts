@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { trySyncConnectedCustomerSupportVoiceAgent } from '@/lib/services/zavu/voice-sync';
+import {
+  deleteRedisKeys,
+  readRedisJson,
+  writeRedisJson,
+} from '@/lib/services/redis-json-cache';
+import { refreshSiteConfigurationCaches } from '@/lib/services/site-configuration-cache';
 
 export interface SiteSettingsParams {
   action: 'get' | 'update';
@@ -41,9 +47,20 @@ export interface SiteSettingsParams {
 export async function siteSettingsCore(site_id: string, params: SiteSettingsParams) {
   try {
     const { action, ...updatesParams } = params;
+    const settingsCacheKey = `cache:site-settings:${site_id}`;
 
     if (action === 'get') {
       console.log(`[SiteSettings] 🔍 Getting settings for site: ${site_id}`);
+      const cached = await readRedisJson<Record<string, unknown>>(
+        settingsCacheKey,
+      );
+      if (cached) {
+        return {
+          success: true,
+          data: cached,
+          message: 'Settings retrieved successfully',
+        };
+      }
       
       const { data: settings, error: fetchError } = await supabaseAdmin
         .from('settings')
@@ -56,6 +73,7 @@ export async function siteSettingsCore(site_id: string, params: SiteSettingsPara
         throw new Error(`Failed to fetch settings: ${fetchError.message}`);
       }
 
+      if (settings) await writeRedisJson(settingsCacheKey, settings, 300);
       return {
         success: true,
         data: settings || {},
@@ -143,6 +161,8 @@ export async function siteSettingsCore(site_id: string, params: SiteSettingsPara
       }
 
       console.log(`[SiteSettings] ✅ Settings updated successfully`);
+      await refreshSiteConfigurationCaches(site_id, result);
+      await deleteRedisKeys(`cache:email-token-encrypted:${site_id}`);
       await trySyncConnectedCustomerSupportVoiceAgent(site_id);
       
       return {

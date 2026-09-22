@@ -6,6 +6,12 @@ import {
   sessionErrorResponse,
   updateSessionSchema,
 } from './session-shared';
+import {
+  cacheVisitorSession,
+  readCachedVisitorSession,
+  readVisitorHeartbeat,
+  recordVisitorHeartbeat,
+} from '@/lib/services/visitor-session-live-state';
 
 export async function GET(request: NextRequest) {
   try {
@@ -27,20 +33,29 @@ export async function GET(request: NextRequest) {
     }
 
     const startTime = Date.now();
-    const { data: session, error } = await supabaseAdmin
-      .from('visitor_sessions')
-      .select('*, visitors(fingerprint)')
-      .eq('id', sessionId)
-      .eq('site_id', siteId)
-      .eq('is_active', true)
-      .single();
-    if (error || !session) {
-      return sessionErrorResponse(
-        'Session not found or expired',
-        404,
-        { session_id: sessionId, site_id: siteId },
-      );
+    let session = await readCachedVisitorSession<any>(siteId, sessionId);
+    if (!session) {
+      const { data, error } = await supabaseAdmin
+        .from('visitor_sessions')
+        .select('*, visitors(fingerprint)')
+        .eq('id', sessionId)
+        .eq('site_id', siteId)
+        .eq('is_active', true)
+        .single();
+      if (error || !data) {
+        return sessionErrorResponse(
+          'Session not found or expired',
+          404,
+          { session_id: sessionId, site_id: siteId },
+        );
+      }
+      session = data;
+      await cacheVisitorSession(siteId, sessionId, session);
     }
+    session = {
+      ...session,
+      ...await readVisitorHeartbeat(siteId, sessionId),
+    };
 
     const { data: events, error: eventsError } = await supabaseAdmin
       .from('visitor_events')
@@ -107,15 +122,23 @@ export async function PUT(request: NextRequest) {
     }
 
     const startTime = Date.now();
-    const { data: existing, error: findError } = await supabaseAdmin
-      .from('visitor_sessions')
-      .select('*, visitors(fingerprint)')
-      .eq('id', update.session_id)
-      .eq('site_id', update.site_id)
-      .eq('is_active', true)
-      .single();
-    if (findError || !existing) {
-      return sessionErrorResponse('Session not found or expired', 404);
+    let existing = await readCachedVisitorSession<any>(
+      update.site_id,
+      update.session_id,
+    );
+    if (!existing) {
+      const { data, error } = await supabaseAdmin
+        .from('visitor_sessions')
+        .select('*, visitors(fingerprint)')
+        .eq('id', update.session_id)
+        .eq('site_id', update.site_id)
+        .eq('is_active', true)
+        .single();
+      if (error || !data) {
+        return sessionErrorResponse('Session not found or expired', 404);
+      }
+      existing = data;
+      await cacheVisitorSession(update.site_id, update.session_id, existing);
     }
 
     const updates: Record<string, unknown> = {
@@ -133,18 +156,37 @@ export async function PUT(request: NextRequest) {
     if (update.active_time !== undefined) updates.active_time = update.active_time;
     if (update.custom_data !== undefined) updates.custom_data = update.custom_data;
 
-    const { error } = await supabaseAdmin
-      .from('visitor_sessions')
-      .update(updates)
-      .eq('id', update.session_id)
-      .eq('site_id', update.site_id)
-      .eq('is_active', true);
-    if (error) {
-      return sessionErrorResponse(
-        `Unable to update session: ${error.message}`,
-        500,
-      );
+    const heartbeat = await recordVisitorHeartbeat(
+      update.site_id,
+      update.session_id,
+      updates,
+    );
+    if (heartbeat?.closed) {
+      return sessionErrorResponse('Session not found or expired', 404);
     }
+    const persistedUpdates = heartbeat?.state ?? updates;
+    if (!heartbeat || heartbeat.shouldPersist) {
+      const { data: persisted, error } = await supabaseAdmin
+        .from('visitor_sessions')
+        .update(persistedUpdates)
+        .eq('id', update.session_id)
+        .eq('site_id', update.site_id)
+        .eq('is_active', true)
+        .select('id')
+        .maybeSingle();
+      if (error || !persisted) {
+        return sessionErrorResponse(
+          error
+            ? `Unable to update session: ${error.message}`
+            : 'Session not found or expired',
+          error ? 500 : 404,
+        );
+      }
+    }
+    await cacheVisitorSession(update.site_id, update.session_id, {
+      ...existing,
+      ...persistedUpdates,
+    });
 
     const ttl = 1_800;
     return NextResponse.json({

@@ -55,6 +55,32 @@ export async function loadPendingRows(): Promise<PendingWorkRow[]> {
   return (data || []) as PendingWorkRow[];
 }
 
+export async function loadReadyPendingRows(): Promise<PendingWorkRow[]> {
+  try {
+    const { data, error } = await supabaseAdmin.rpc(
+      'load_ready_pending_work',
+      { p_limit: 200 },
+    );
+    if (!error) return (data || []) as PendingWorkRow[];
+    console.warn(
+      '[Pending Work] Ready-work RPC unavailable; using query fallback:',
+      error.message,
+    );
+  } catch {
+    // Older deployments and test doubles use the query fallback.
+  }
+  const pending = groupOldestPendingByInstance(
+    (await loadPendingRows()).filter((row) => row.status === 'pending'),
+  );
+  const readiness = await Promise.all(
+    pending.map(async (row) => ({
+      row,
+      idle: await isInstanceIdle(row.instance_id),
+    })),
+  );
+  return readiness.filter(({ idle }) => idle).map(({ row }) => row);
+}
+
 export async function isInstanceIdle(instanceId: string): Promise<boolean> {
   const { data, error } = await supabaseAdmin
     .from('instance_logs')
@@ -240,18 +266,11 @@ export async function cancelCurrentAssistantRun(instanceId: string): Promise<{ c
 }
 
 export async function processPendingWorkTick(): Promise<Array<{ instance_id: string; status: string }>> {
-  const pending = await loadPendingRows();
-  const oldestByInstance = groupOldestPendingByInstance(pending);
+  const oldestByInstance = await loadReadyPendingRows();
   const results: Array<{ instance_id: string; status: string }> = [];
 
   for (const row of oldestByInstance) {
     try {
-      const idle = await isInstanceIdle(row.instance_id);
-      if (!idle) {
-        results.push({ instance_id: row.instance_id, status: 'busy' });
-        continue;
-      }
-
       const claimed = row.status === 'claimed' ? row : await claimPendingWork(row.id);
       if (!claimed) {
         results.push({ instance_id: row.instance_id, status: 'claim_failed' });

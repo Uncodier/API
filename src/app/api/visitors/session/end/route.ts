@@ -10,6 +10,10 @@ import {
   verifyVisitorSessionToken,
   visitorSessionTokenFromRequest,
 } from '@/lib/security/visitor-session-token'
+import {
+  closeVisitorLiveState,
+  readVisitorHeartbeat,
+} from '@/lib/services/visitor-session-live-state'
 
 export const dynamic = 'force-dynamic';
 
@@ -105,7 +109,9 @@ export async function POST(request: NextRequest) {
     }
     
     // Preparar datos para la actualización
+    const heartbeat = await readVisitorHeartbeat(siteId, sessionId);
     const updates: any = {
+      ...heartbeat,
       is_active: false,
       closed_at: Date.now(),
       updated_at: new Date().toISOString()
@@ -130,6 +136,7 @@ export async function POST(request: NextRequest) {
       console.error('Error al cerrar la sesión:', error);
       return errorResponse(`Error al cerrar la sesión: ${error.message}`, 500);
     }
+    await closeVisitorLiveState(siteId, sessionId);
     
     // Devolver respuesta exitosa
     return NextResponse.json({

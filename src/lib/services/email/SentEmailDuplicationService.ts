@@ -3,9 +3,9 @@
  * Maneja tanto la validación a nivel de base de datos como la validación temporal/semántica
  */
 
-import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { SyncedObjectsService } from '@/lib/services/synced-objects/SyncedObjectsService';
 import { StableEmailDeduplicationService } from '@/lib/utils/stable-email-deduplication';
+import { findExistingSentMessage } from './find-existing-sent-message';
 
 interface EmailValidationResult {
   isDuplicate: boolean;
@@ -246,99 +246,72 @@ export class SentEmailDuplicationService {
     const debugInfo: any[] = [];
 
     console.log(`[SENT_EMAIL_DEDUP] 🔍 Iniciando filtrado de ${emails.length} emails enviados para site: ${siteId}`);
-
-    for (let i = 0; i < emails.length; i++) {
-      const email = emails[i];
+    const valid = emails.flatMap((email, index) => {
+      const standardEmailId = this.extractStandardEmailId(email);
       const debugItem: DebugItem = {
-        index: i,
+        index,
         emailTo: email.to,
         emailSubject: email.subject,
         emailDate: email.date,
         rawIds: {
           messageId: email.messageId,
           id: email.id,
-          uid: email.uid
-        }
+          uid: email.uid,
+        },
+        standardEmailId,
       };
-
-
-
-      // PASO 1: Extraer ID estándar
-      const standardEmailId = this.extractStandardEmailId(email);
-      debugItem.standardEmailId = standardEmailId;
-
       if (!standardEmailId) {
-        console.log(`[SENT_EMAIL_DEDUP] ⚠️ Email sin ID válido, incluyendo en unprocessed`);
         debugItem.decision = 'unprocessed_no_id';
         debugInfo.push(debugItem);
         unprocessed.push(email);
-        continue;
+        return [];
       }
-
-
-
-      // PASO 2: Verificar en SyncedObjectsService si ya fue procesado
-      try {
-        const isProcessed = await SyncedObjectsService.objectIsProcessed(
-          standardEmailId, 
-          siteId, 
-          'sent_email'
-        );
-
-        debugItem.existsInSyncedObjects = isProcessed;
-
-        if (isProcessed) {
-
-          debugItem.decision = 'already_processed_synced_objects';
-          debugInfo.push(debugItem);
-          alreadyProcessed.push(email);
-          continue;
-        } else {
-
-        }
-
-      } catch (error) {
-        console.error(`[SENT_EMAIL_DEDUP] ❌ Error verificando en synced_objects para "${standardEmailId}":`, error);
-        debugItem.syncedObjectsError = error instanceof Error ? error.message : String(error);
-        // En caso de error, incluir en unprocessed para no bloquear
-      }
-
-      // PASO 3: Si no existe en synced_objects, crearlo como pendiente
-      try {
-        const created = await SyncedObjectsService.createObject({
-          external_id: standardEmailId,
-          site_id: siteId,
-          object_type: 'sent_email',
-          status: 'pending',
-          provider: email.provider || 'unknown',
-          metadata: {
-            subject: email.subject,
-            to: email.to,
-            from: email.from,
-            date: email.date,
-            sync_source: 'sent_email_dedup_filter'
-          }
-        });
-
-        if (created) {
-
-          debugItem.decision = 'unprocessed_new';
-          debugInfo.push(debugItem);
-          unprocessed.push(email);
-        } else {
-
-          debugItem.decision = 'unprocessed_create_failed';
-          debugInfo.push(debugItem);
-          unprocessed.push(email);
-        }
-
-      } catch (error) {
-        console.error(`[SENT_EMAIL_DEDUP] ❌ Error creando registro para "${standardEmailId}":`, error);
-        debugItem.createError = error instanceof Error ? error.message : String(error);
-        debugItem.decision = 'unprocessed_create_error';
+      return [{ email, standardEmailId, debugItem }];
+    });
+    const seenIds = new Set<string>();
+    const unique = valid.filter(({ email, standardEmailId, debugItem }) => {
+      if (seenIds.has(standardEmailId)) {
+        debugItem.existsInSyncedObjects = true;
+        debugItem.decision = 'already_processed_synced_objects';
         debugInfo.push(debugItem);
-        unprocessed.push(email);
+        alreadyProcessed.push(email);
+        return false;
       }
+      seenIds.add(standardEmailId);
+      return true;
+    });
+
+    const statuses = await SyncedObjectsService.claimObjectsBatch(
+      unique.map(({ email, standardEmailId }) => ({
+        external_id: standardEmailId,
+        site_id: siteId,
+        object_type: 'sent_email',
+        status: 'pending',
+        provider: email.provider || 'unknown',
+        metadata: {
+          subject: email.subject,
+          to: email.to,
+          from: email.from,
+          date: email.date,
+          sync_source: 'sent_email_dedup_filter',
+        },
+      })),
+      siteId,
+      'sent_email',
+    );
+
+    for (const { email, standardEmailId, debugItem } of unique) {
+      const claimed = statuses.has(standardEmailId);
+      debugItem.existsInSyncedObjects = !claimed;
+      debugItem.decision = claimed
+        ? 'unprocessed_new'
+        : 'already_processed_synced_objects';
+      debugInfo.push(debugItem);
+      (claimed ? unprocessed : alreadyProcessed).push(
+        claimed
+          ? { ...email, _sync_claim_token: statuses.get(standardEmailId) }
+          : email,
+      );
     }
 
     const summary = {
@@ -383,7 +356,8 @@ export class SentEmailDuplicationService {
             sync_source: 'sent_email_processing'
           }
         },
-        'sent_email'
+        'sent_email',
+        email._sync_claim_token,
       );
 
       if (result) {
@@ -430,7 +404,8 @@ export class SentEmailDuplicationService {
             sync_source: 'sent_email_processing'
           }
         },
-        'sent_email'
+        'sent_email',
+        email._sync_claim_token,
       );
 
       return !!result;
@@ -448,57 +423,7 @@ export class SentEmailDuplicationService {
     leadId: string,
     standardEmailId: string
   ): Promise<string | null> {
-    if (!standardEmailId) return null;
-    
-
-    
-    try {
-      const searchQueries = [
-        // Campo principal actual
-        supabaseAdmin
-          .from('messages')
-          .select('id')
-          .eq('conversation_id', conversationId)
-          .eq('lead_id', leadId)
-          .filter('custom_data->>email_id', 'eq', standardEmailId)
-          .limit(1),
-        
-        // Campo en delivery.details (formato actual)
-        supabaseAdmin
-          .from('messages')
-          .select('id')
-          .eq('conversation_id', conversationId)
-          .eq('lead_id', leadId)
-          .filter('custom_data->delivery->>details->>api_messageId', 'eq', standardEmailId)
-          .limit(1),
-        
-        // Campo legacy external_message_id
-        supabaseAdmin
-          .from('messages')
-          .select('id')
-          .eq('conversation_id', conversationId)
-          .eq('lead_id', leadId)
-          .filter('custom_data->delivery->>external_message_id', 'eq', standardEmailId)
-          .limit(1)
-      ];
-      
-      // Ejecutar todas las búsquedas en paralelo
-      const results = await Promise.allSettled(searchQueries);
-      
-      for (const result of results) {
-        if (result.status === 'fulfilled' && result.value.data && result.value.data.length > 0) {
-          const foundMessageId = result.value.data[0].id;
-
-          return foundMessageId;
-        }
-      }
-      
-
-      return null;
-    } catch (error) {
-      console.error('[SENT_EMAIL_DEDUP] Error buscando por ID estándar:', error);
-      return null;
-    }
+    return findExistingSentMessage(conversationId, leadId, standardEmailId);
   }
 
   /**

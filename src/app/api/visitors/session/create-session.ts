@@ -10,6 +10,7 @@ import {
   prepareSessionData,
   sessionErrorResponse,
 } from './session-shared';
+import { closeVisitorLiveState } from '@/lib/services/visitor-session-live-state';
 
 async function closePreviousSession(
   visitorId: string,
@@ -42,6 +43,7 @@ async function closePreviousSession(
     if (error) {
       throw new Error(`Unable to close previous session: ${error.message}`);
     }
+    await closeVisitorLiveState(siteId, previous.id);
   }
   return previous.id;
 }

@@ -35,7 +35,9 @@ export async function downloadFromCache(hash: string): Promise<{ buffer: Buffer;
         || String(payload?.statusCode) === '404'
         || payload?.code === 'NoSuchKey'
         || payload?.error === 'not_found';
-      if (missing) return null;
+      if (missing) {
+        return null;
+      }
 
       throw new Error(
         `Storage returned ${response.status}: ${payload?.message || response.statusText}`,

@@ -10,8 +10,8 @@ import {
 const mockEval: any = jest.fn();
 const mockXlen: any = jest.fn();
 
-jest.mock('@/lib/utils/redis-client', () => ({
-  getRedisClient: () => ({ eval: mockEval, xlen: mockXlen }),
+jest.mock('@/lib/utils/tracking-redis-client', () => ({
+  getTrackingRedisClient: () => ({ eval: mockEval, xlen: mockXlen }),
 }));
 
 import {

@@ -17,8 +17,11 @@ import {
 
 const originalEnv = {
   redisUrl: process.env.REDIS_URL,
+  cacheRedisUrl: process.env.REDIS_CACHE_URL,
   restUrl: process.env.UPSTASH_REDIS_REST_URL,
   restToken: process.env.UPSTASH_REDIS_REST_TOKEN,
+  cacheRestUrl: process.env.CACHE_UPSTASH_REDIS_REST_URL,
+  cacheRestToken: process.env.CACHE_UPSTASH_REDIS_REST_TOKEN,
 };
 
 describe('Upstash REST security primitives', () => {
@@ -26,16 +29,25 @@ describe('Upstash REST security primitives', () => {
     process.env.UPSTASH_REDIS_REST_URL = 'https://redis.example.test';
     process.env.UPSTASH_REDIS_REST_TOKEN = 'test-token';
     delete process.env.REDIS_URL;
+    delete process.env.REDIS_CACHE_URL;
+    delete process.env.CACHE_UPSTASH_REDIS_REST_URL;
+    delete process.env.CACHE_UPSTASH_REDIS_REST_TOKEN;
     global.fetch = jest.fn() as typeof fetch;
   });
 
   afterEach(() => {
     if (originalEnv.redisUrl === undefined) delete process.env.REDIS_URL;
     else process.env.REDIS_URL = originalEnv.redisUrl;
+    if (originalEnv.cacheRedisUrl === undefined) delete process.env.REDIS_CACHE_URL;
+    else process.env.REDIS_CACHE_URL = originalEnv.cacheRedisUrl;
     if (originalEnv.restUrl === undefined) delete process.env.UPSTASH_REDIS_REST_URL;
     else process.env.UPSTASH_REDIS_REST_URL = originalEnv.restUrl;
     if (originalEnv.restToken === undefined) delete process.env.UPSTASH_REDIS_REST_TOKEN;
     else process.env.UPSTASH_REDIS_REST_TOKEN = originalEnv.restToken;
+    if (originalEnv.cacheRestUrl === undefined) delete process.env.CACHE_UPSTASH_REDIS_REST_URL;
+    else process.env.CACHE_UPSTASH_REDIS_REST_URL = originalEnv.cacheRestUrl;
+    if (originalEnv.cacheRestToken === undefined) delete process.env.CACHE_UPSTASH_REDIS_REST_TOKEN;
+    else process.env.CACHE_UPSTASH_REDIS_REST_TOKEN = originalEnv.cacheRestToken;
     jest.restoreAllMocks();
   });
 
@@ -110,6 +122,15 @@ describe('Upstash REST security primitives', () => {
     delete process.env.UPSTASH_REDIS_REST_TOKEN;
     await expect(claimKey('claim:test', 60))
       .resolves.toEqual({ state: 'unconfigured' });
+  });
+
+  it('does not mix partial specialized credentials with legacy credentials', async () => {
+    process.env.CACHE_UPSTASH_REDIS_REST_URL = 'https://cache.example.test';
+    delete process.env.CACHE_UPSTASH_REDIS_REST_TOKEN;
+
+    await expect(claimKey('claim:test', 60))
+      .resolves.toEqual({ state: 'unconfigured' });
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 
   it('acquires and conditionally releases owner-token locks', async () => {

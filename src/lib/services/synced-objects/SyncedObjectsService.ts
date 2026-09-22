@@ -17,6 +17,8 @@ export interface SyncedObject {
   process_count: number;
   metadata: Record<string, any>;
   error_message?: string;
+  claim_token?: string | null;
+  claim_expires_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -234,6 +236,38 @@ export class SyncedObjectsService {
     }
   }
 
+  static async claimObjectsBatch(
+    inputs: CreateSyncedObjectInput[],
+    siteId: string,
+    objectType: string = this.DEFAULT_OBJECT_TYPE,
+  ): Promise<Map<string, string>> {
+    if (inputs.length === 0) return new Map();
+    const { data, error } = await supabaseAdmin.rpc(
+      'claim_synced_objects_batch',
+      {
+        p_site_id: siteId,
+        p_object_type: objectType,
+        p_objects: inputs.map((input) => ({
+          external_id: input.external_id,
+          provider: input.provider,
+          metadata: input.metadata || {},
+        })),
+      },
+    );
+    if (error) {
+      throw new Error(`Batch claim failed: ${error.message}`);
+    }
+    return new Map(
+      (data || []).map((row: {
+        external_id: string;
+        claimed_token: string;
+      }) => [
+        row.external_id,
+        row.claimed_token,
+      ]),
+    );
+  }
+
   /**
    * Actualiza un objeto sincronizado
    */
@@ -241,7 +275,8 @@ export class SyncedObjectsService {
     externalId: string, 
     siteId: string, 
     updates: UpdateSyncedObjectInput,
-    objectType: string = this.DEFAULT_OBJECT_TYPE
+    objectType: string = this.DEFAULT_OBJECT_TYPE,
+    claimToken?: string,
   ): Promise<SyncedObject | null> {
     try {
       const updateData: any = {
@@ -251,6 +286,8 @@ export class SyncedObjectsService {
 
       // Si se está actualizando el status, incrementar process_count
       if (updates.status) {
+        updateData.claim_token = null;
+        updateData.claim_expires_at = null;
         const { data: currentData } = await supabaseAdmin
           .from('synced_objects')
           .select('process_count')
@@ -264,12 +301,16 @@ export class SyncedObjectsService {
         }
       }
 
-      const { data, error } = await supabaseAdmin
+      let updateQuery = supabaseAdmin
         .from('synced_objects')
         .update(updateData)
         .eq('external_id', externalId)
         .eq('site_id', siteId)
-        .eq('object_type', objectType)
+        .eq('object_type', objectType);
+      if (claimToken) {
+        updateQuery = updateQuery.eq('claim_token', claimToken);
+      }
+      const { data, error } = await updateQuery
         .select()
         .single();
 
@@ -339,63 +380,48 @@ export class SyncedObjectsService {
   ): Promise<{ unprocessed: any[], alreadyProcessed: any[] }> {
     const unprocessed: any[] = [];
     const alreadyProcessed: any[] = [];
-
-    for (const email of emails) {
-      const emailId = this.extractValidEmailId(email);
-      
-      // Validar que el ID sea válido y suficientemente único
-      if (!emailId) {
-        console.warn(`[SYNCED_OBJECTS] Email with invalid/insufficient ID found: "${email.id || email.messageId || email.uid}", including in unprocessed list`);
+    const validEmails = emails.flatMap((email) => {
+      const externalId = this.extractValidEmailId(email);
+      if (!externalId) {
         unprocessed.push(email);
-        continue;
+        return [];
       }
+      return [{ email, externalId }];
+    });
+    const seenIds = new Set<string>();
+    const uniqueEmails = validEmails.filter(({ email, externalId }) => {
+      if (seenIds.has(externalId)) {
+        alreadyProcessed.push(email);
+        return false;
+      }
+      seenIds.add(externalId);
+      return true;
+    });
+    const statuses = await this.claimObjectsBatch(
+      uniqueEmails.map(({ email, externalId }) => ({
+        external_id: externalId,
+        site_id: siteId,
+        object_type: objectType,
+        provider: email.provider || 'unknown',
+        metadata: {
+          subject: email.subject,
+          from: email.from,
+          to: email.to,
+          date: email.date || email.received_date,
+        },
+      })),
+      siteId,
+      objectType,
+    );
 
-      try {
-        // SOLUCIÓN al race condition: Usar upsert en lugar de check + create
-        const { data: syncedObject, error } = await supabaseAdmin
-          .from('synced_objects')
-          .upsert({
-            external_id: emailId,
-            site_id: siteId,
-            object_type: objectType,
-            status: 'pending',
-            provider: email.provider || 'unknown',
-            // hash opcional: otros flujos lo rellenan
-            metadata: {
-              subject: email.subject,
-              from: email.from,
-              to: email.to,
-              date: email.date || email.received_date
-            },
-            first_seen_at: new Date().toISOString(),
-            process_count: 0
-          }, {
-            onConflict: 'external_id,site_id,object_type'
-          })
-          .select('id, first_seen_at, status')
-          .single();
-
-        if (error) {
-          console.error(`[SYNCED_OBJECTS] Error upserting email ${emailId}:`, error);
-          // En caso de error, incluir en unprocessed para no bloquear el proceso
-          unprocessed.push(email);
-          continue;
-        }
-
-        // CORREGIDO: Verificar solo el estado del email, no cuándo fue creado
-        // Esto previene duplicados entre syncs separados por tiempo (ej: 1 hora)
-        if (syncedObject.status === 'pending') {
-          console.log(`[SYNCED_OBJECTS] ✅ Email ${emailId} not processed yet (status: pending), including`);
-          unprocessed.push(email);
-        } else {
-          console.log(`[SYNCED_OBJECTS] 🔄 Email ${emailId} already processed (status: ${syncedObject.status}), skipping`);
-          alreadyProcessed.push(email);
-        }
-
-      } catch (error) {
-        console.error(`[SYNCED_OBJECTS] Unexpected error processing email ${emailId}:`, error);
-        // En caso de error, incluir en unprocessed para no bloquear el proceso
-        unprocessed.push(email);
+    for (const { email, externalId } of uniqueEmails) {
+      if (statuses.has(externalId)) {
+        unprocessed.push({
+          ...email,
+          _sync_claim_token: statuses.get(externalId),
+        });
+      } else {
+        alreadyProcessed.push(email);
       }
     }
 

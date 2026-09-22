@@ -12,6 +12,10 @@ import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
 import { parse } from 'url';
 import { createClient } from '@supabase/supabase-js';
+import {
+  authorizeWebSocketUpgrade,
+  selectVisitorSessionProtocol,
+} from './wsServerAuth.cjs';
 
 // Función para validar UUIDs
 function isValidUUID(uuid) {
@@ -169,7 +173,10 @@ const PORT = 3002;
 const server = createServer();
 
 // Crear WebSocketServer
-const wss = new WebSocketServer({ noServer: true });
+const wss = new WebSocketServer({
+  noServer: true,
+  handleProtocols: selectVisitorSessionProtocol,
+});
 
 // Mapa para guardar las conexiones WebSocket activas
 const activeConnections = new Map();
@@ -878,9 +885,19 @@ server.on('upgrade', (request, socket, head) => {
   // Aceptar tanto /ws como la ruta completa /api/agents/chat/websocket
   if (pathname === '/ws' || pathname === '/api/agents/chat/websocket') {
     console.log(`🔌 [${upgradeNow}] Conexión WebSocket entrante en ruta: ${pathname}`);
+    const authorizedClaims = authorizeWebSocketUpgrade(request, {
+      siteId: query.site_id,
+      sessionId: query.session_id,
+      visitorId: query.visitor_id,
+    });
+    if (!authorizedClaims) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+      socket.destroy();
+      return;
+    }
     wss.handleUpgrade(request, socket, head, (ws) => {
       const params = {
-        visitor_id: query.visitor_id,
+        visitor_id: authorizedClaims.visitorId,
         site_id: query.site_id,
         session_id: query.session_id,
         conversation_id: query.conversation_id

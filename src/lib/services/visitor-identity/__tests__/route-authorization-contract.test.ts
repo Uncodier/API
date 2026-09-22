@@ -45,6 +45,8 @@ describe('browser route authorization contract', () => {
 
   it('native WebSocket validates session ownership and forbids conversation switching', () => {
     const source = readFileSync(resolve(process.cwd(), 'wsServer.js'), 'utf8');
+    expect(source).toContain('authorizeWebSocketUpgrade(request');
+    expect(source).toContain('selectVisitorSessionProtocol');
     expect(source).toContain('authorizeConnection({ site_id, session_id, conversation_id })');
     expect(source).toContain("code: 'REALTIME_AUTH_UNAVAILABLE'");
     expect(source).toContain('subConvId !== conversation_id');
@@ -57,6 +59,8 @@ describe('browser route authorization contract', () => {
       'utf8'
     );
     expect(source).toContain("query.get('session_id')");
+    expect(source).toContain('X-Visitor-Session-Token');
+    expect(source).toContain('export async function OPTIONS');
     expect(source).toContain("type: 'message_history'");
     expect(source).toContain("type: 'connection_established'");
   });

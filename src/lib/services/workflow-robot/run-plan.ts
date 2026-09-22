@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/route';
-import { prepareAssistantContext, processAssistantTurn } from '@/app/api/robots/instance/assistant/steps';
+import { processAssistantTurn } from '@/app/api/robots/instance/assistant/assistant-turn';
+import { prepareAssistantContext } from '@/app/api/robots/instance/assistant/steps';
 import { fetchStepLogHistoryText } from '@/app/api/cron/shared/step-history-builder';
 import { SkillsService } from '@/lib/services/skills-service';
 import { ensureWorkflowSandbox, stopWorkflowSandbox } from './sandbox-workspace';

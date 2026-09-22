@@ -54,16 +54,28 @@ export type LockReleaseResult =
   | { state: 'unconfigured' };
 
 function getConfig(): UpstashConfig | null {
-  const restUrl = process.env.UPSTASH_REDIS_REST_URL?.trim();
-  const restToken = process.env.UPSTASH_REDIS_REST_TOKEN?.trim();
-  if (restUrl && restToken) {
+  const cacheRestUrl = process.env.CACHE_UPSTASH_REDIS_REST_URL?.trim();
+  const cacheRestToken = process.env.CACHE_UPSTASH_REDIS_REST_TOKEN?.trim();
+  if (cacheRestUrl || cacheRestToken) {
+    if (!cacheRestUrl || !cacheRestToken) return null;
     return {
-      url: restUrl.replace(/\/+$/, ''),
-      token: restToken,
+      url: cacheRestUrl.replace(/\/+$/, ''),
+      token: cacheRestToken,
     };
   }
 
-  const redisUrl = process.env.REDIS_URL?.trim();
+  const cacheRedisUrl = process.env.REDIS_CACHE_URL?.trim();
+  const legacyRestUrl = process.env.UPSTASH_REDIS_REST_URL?.trim();
+  const legacyRestToken = process.env.UPSTASH_REDIS_REST_TOKEN?.trim();
+  if (!cacheRedisUrl && (legacyRestUrl || legacyRestToken)) {
+    if (!legacyRestUrl || !legacyRestToken) return null;
+    return {
+      url: legacyRestUrl.replace(/\/+$/, ''),
+      token: legacyRestToken,
+    };
+  }
+
+  const redisUrl = cacheRedisUrl || process.env.REDIS_URL?.trim();
   if (!redisUrl) return null;
 
   try {

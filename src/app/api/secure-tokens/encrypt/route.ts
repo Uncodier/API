@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { encryptToken } from '@/lib/utils/token-encryption';
+import { deleteRedisKeys } from '@/lib/services/redis-json-cache';
 
 // Validation schema
 const EncryptTokenSchema = z.object({
@@ -126,6 +127,11 @@ export async function POST(request: NextRequest) {
           if (result.error) {
             console.error(`[ENCRYPT_API] Error al guardar token:`, result.error);
             throw new Error(`Database error: ${result.error.message}`);
+          }
+          if (token_type === 'email') {
+            await deleteRedisKeys(
+              `cache:email-token-encrypted:${site_id}`,
+            );
           }
           
           console.log(`[ENCRYPT_API] Token guardado correctamente en base de datos`);

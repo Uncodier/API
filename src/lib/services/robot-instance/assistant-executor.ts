@@ -8,14 +8,16 @@ import { CreditService, InsufficientCreditsError } from '@/lib/services/billing/
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import {
   createAssistantOnStepHandler,
-  createStreamingLogCallbacks,
-  createThinkingStreamLogCallbacks,
-  createNodeStreamingCallbacks,
   fetchNodeContexts,
   batchCreateResponseNodes,
   updateNodeResult,
   failNode,
 } from './assistant-logging';
+import {
+  createNodeStreamingCallbacks,
+  createStreamingLogCallbacks,
+  createThinkingStreamLogCallbacks,
+} from './assistant-streaming-logs';
 import { buildNodeResult, buildInitialNodeResult } from './node-result-collector';
 import { hydrateMessageImages } from './vision-message-images';
 
@@ -407,7 +409,11 @@ Do NOT use general conversational history to infer which image/asset to edit. Us
         // Also run the primary instance_log streaming for the first result
         if (streamingCallbacks && firstValid) {
           const logId = await streamingCallbacks.onStreamStart();
-          await streamingCallbacks.onStreamChunk(logId, firstValid.text || '');
+          await streamingCallbacks.onStreamChunk(
+            logId,
+            firstValid.text || '',
+            true,
+          );
         }
 
         // Return the first valid result to maintain compatibility
@@ -438,12 +444,22 @@ Do NOT use general conversational history to infer which image/asset to edit. Us
           return logId;
         } : undefined;
 
-        const wrappedOnStreamChunk = (streamingCallbacks || nodeCallbacks) ? async (logId: string, accumulatedText: string) => {
+        const wrappedOnStreamChunk = (streamingCallbacks || nodeCallbacks) ? async (
+          logId: string,
+          accumulatedText: string,
+          final = false,
+        ) => {
           if (streamingCallbacks) {
-            await streamingCallbacks.onStreamChunk(logId, accumulatedText);
+            await streamingCallbacks.onStreamChunk(logId, accumulatedText, final);
           }
           if (nodeCallbacks && nodeResponseId) {
-            try { await nodeCallbacks.onNodeStreamChunk(nodeResponseId, accumulatedText); } catch (e) { /* throttle errors */ }
+            try {
+              await nodeCallbacks.onNodeStreamChunk(
+                nodeResponseId,
+                accumulatedText,
+                final,
+              );
+            } catch (e) { /* checkpoint errors are non-fatal */ }
           }
         } : undefined;
 

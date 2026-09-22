@@ -17,6 +17,8 @@ export interface GetConversationsParams {
   channel?: string;
   /** Filter by custom_data->>'status' (JSONB key inside custom_data) */
   custom_data_status?: string;
+  /** Return only the persisted last-message summary instead of message history. */
+  summary_only?: boolean;
   limit?: number;
   offset?: number;
 }
@@ -36,6 +38,7 @@ export async function getConversationsCore(params: GetConversationsParams): Prom
   const status = params.status;
   const channel = params.channel;
   const customDataStatus = params.custom_data_status;
+  const summaryOnly = params.summary_only === true;
   const limit = params.limit ?? 10;
   const offset = params.offset ?? 0;
 
@@ -51,8 +54,10 @@ export async function getConversationsCore(params: GetConversationsParams): Prom
   let query = supabaseAdmin
     .from('conversations')
     .select(
-      `*, messages:messages(content, role, created_at, id)`,
-      { count: 'exact' }
+      summaryOnly
+        ? '*'
+        : '*, messages:messages(content, role, created_at, id)',
+      { count: 'exact' },
     )
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1);
@@ -74,15 +79,25 @@ export async function getConversationsCore(params: GetConversationsParams): Prom
   const list = data ?? [];
 
   const processedConversations = list.map((conversation: any) => {
-    const sortedMessages = conversation.messages
-      ? [...conversation.messages].sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
-      : [];
-    const lastMessage = sortedMessages.length > 0 ? sortedMessages[sortedMessages.length - 1] : null;
+    const sortedMessages = summaryOnly
+      ? []
+      : [...(conversation.messages || [])].sort(
+        (a: any, b: any) =>
+          new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+      );
+    const lastMessage = summaryOnly
+      ? conversation.last_message_preview || null
+      : sortedMessages[sortedMessages.length - 1] || null;
+    const { last_message_preview: _preview, ...rest } = conversation;
     return {
-      ...conversation,
-      messages: sortedMessages,
+      ...rest,
+      messages: summaryOnly
+        ? (lastMessage ? [lastMessage] : [])
+        : sortedMessages,
       last_message: lastMessage,
-      message_count: sortedMessages.length
+      message_count: summaryOnly
+        ? Number(conversation.message_count || 0)
+        : sortedMessages.length,
     };
   });
 

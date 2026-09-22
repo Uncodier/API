@@ -1,5 +1,9 @@
 import { NextResponse } from 'next/server';
 import { ProcessorInitializer } from '@/lib/agentbase';
+import {
+  readRedisJson,
+  writeRedisJson,
+} from '@/lib/services/redis-json-cache';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,9 +43,15 @@ export async function GET(request: Request) {
         { status: 400 }
       );
     }
+
+    const cacheKey = `cache:customer-support-command-status:${commandId}`;
+    const cached = await readRedisJson<Record<string, unknown>>(cacheKey);
+    if (cached) return NextResponse.json(cached);
     
     // Get the command from the service
-    const command = await commandService.getCommandById(commandId);
+    const command = await commandService.getCommandById(commandId, {
+      fresh: true,
+    });
     
     if (!command) {
       return NextResponse.json(
@@ -51,16 +61,24 @@ export async function GET(request: Request) {
     }
     
     // Return the command status and results if available
-    return NextResponse.json({
+    const responseBody = {
       success: true,
       data: {
         commandId: command.id,
         status: command.status,
         results: command.results || [],
         created_at: command.created_at,
-        updated_at: command.updated_at
+        updated_at: command.updated_at,
+        retry_after_ms: ['pending', 'running'].includes(command.status)
+          ? 2_000
+          : null,
       }
-    });
+    };
+    const isTerminal = ['completed', 'failed', 'cancelled'].includes(
+      command.status,
+    );
+    await writeRedisJson(cacheKey, responseBody, isTerminal ? 600 : 2);
+    return NextResponse.json(responseBody);
     
   } catch (error: any) {
     console.error('Error checking command status:', error);
