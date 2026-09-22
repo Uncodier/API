@@ -80,6 +80,7 @@ export async function runRuntimeAndVisualProbes(params: {
     brand_context?: string;
     protected_routes?: string[];
     validation_targets?: unknown;
+    acceptance?: string[];
   };
 }): Promise<{
   ok: boolean;
@@ -134,6 +135,7 @@ export async function runRuntimeAndVisualProbes(params: {
     : inferred.recentPageRoutes;
   const targetPlan = buildRuntimeTargetPlan({
     validationTargets: stepContext?.validation_targets,
+    acceptance: stepContext?.acceptance,
     protectedRoutes: stepContext?.protected_routes,
     proseRoutes: extractPageRoutesFromStepContext(stepContext),
     inferredPageRoutes,

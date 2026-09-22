@@ -55,6 +55,10 @@ export function normalizePublishToolOverrides(
   const audienceEmailMode =
     stringValue(existingPublish.audience_email_mode)
     ?? stringValue(legacyBulk.audience_email_mode);
+  const voiceMode =
+    stringValue(existingPublish.voice_mode)
+    ?? stringValue(legacyBulk.voice_mode)
+    ?? stringValue(context.publish_voice_mode);
   const testLeadId =
     stringValue(existingPublish.test_lead_id)
     ?? stringValue(destination?.lead_id);
@@ -66,6 +70,7 @@ export function normalizePublishToolOverrides(
   const publishOverride: Record<string, unknown> = {
     ...(channel ? { channel } : {}),
     ...(audienceEmailMode ? { audience_email_mode: audienceEmailMode } : {}),
+    ...(voiceMode ? { voice_mode: voiceMode } : {}),
     is_test:
       typeof existingPublish.is_test === 'boolean'
         ? existingPublish.is_test

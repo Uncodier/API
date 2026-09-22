@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/database/supabase-server";
 import { updateAgent } from "./agent-client";
+import { ensureSenderWebhook } from "./client";
 import { syncCustomerSupportVoiceAgent } from "./voice-agent";
 import { syncVoiceTools } from "./voice-tools";
 
@@ -76,6 +77,7 @@ export async function syncConnectedCustomerSupportVoiceAgent(
   const senderIds = await getConnectedVoiceSenderIds(siteId);
   if (senderIds.length === 0) return false;
 
+  await Promise.all(senderIds.map((senderId) => ensureSenderWebhook(senderId)));
   await syncCustomerSupportVoiceAgentWithTools({ siteId, senderIds });
   return true;
 }

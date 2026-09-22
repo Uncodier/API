@@ -39,10 +39,13 @@ const context = {
   params: Promise.resolve({ prompt: ['a cat'] }),
 };
 
-function request(query = '') {
+function request(
+  query = '',
+  referer = 'https://preview.example.com/page',
+) {
   return new NextRequest(
     `https://backend.makinari.com/api/public/image/prompt/a%20cat${query}`,
-    { headers: { referer: 'https://preview.example.com/page' } },
+    { headers: { referer } },
   );
 }
 
@@ -100,6 +103,63 @@ describe('public prompt image route caching', () => {
     });
     expect(enforceRequestRateLimit).not.toHaveBeenCalled();
     expect(acquireLock).not.toHaveBeenCalled();
+  });
+
+  it('uses platform billing for unsigned requests from app.makinari.com', async () => {
+    downloadFromCache
+      .mockResolvedValueOnce(null as never)
+      .mockResolvedValueOnce(null as never)
+      .mockResolvedValueOnce({
+        buffer: Buffer.from('platform-funded-image'),
+        mimeType: 'image/jpeg',
+      } as never);
+    start.mockReturnValue({
+      returnValue: Promise.resolve({ status: 'completed' }),
+    } as never);
+
+    const response = await GET(request(
+      '',
+      'https://app.makinari.com/sites/site-id/instances/instance-id',
+    ), context);
+
+    expect(response.status).toBe(200);
+    expect(getPromptHash).toHaveBeenCalledWith(
+      'v2:00000000-0000-0000-0000-000000000000:a cat',
+      1024,
+      1024,
+    );
+    expect(resolveSiteFromRequirementUrl).not.toHaveBeenCalled();
+    expect(verifyPublicImageSignature).not.toHaveBeenCalled();
+    expect(canAccessSite).not.toHaveBeenCalled();
+    expect(start).toHaveBeenCalledWith(
+      expect.any(Function),
+      [expect.objectContaining({
+        siteId: '00000000-0000-0000-0000-000000000000',
+        prompt: 'a cat',
+      })],
+    );
+  });
+
+  it('does not regenerate site-scoped catalog images requested from the app', async () => {
+    downloadFromCache.mockResolvedValue(null as never);
+
+    const response = await GET(request(
+      '?site_id=catalog-site&width=400&height=400',
+      'https://app.makinari.com/sites/catalog-site/point-of-sale',
+    ), context);
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({
+      error: 'Cached image not found',
+    });
+    expect(getPromptHash).toHaveBeenCalledWith(
+      'v2:catalog-site:a cat',
+      400,
+      400,
+    );
+    expect(acquireLock).not.toHaveBeenCalled();
+    expect(enforceRequestRateLimit).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
   });
 
   it('allows a valid signed request to enter the generation flow', async () => {

@@ -22,6 +22,10 @@ export const ZAVU_SENDER_WEBHOOK_EVENTS = [
   "message.read",
   "message.failed",
   "template.status_changed",
+  "call.initiated",
+  "call.answered",
+  "call.completed",
+  "call.failed",
   "domain.verified",
   "domain.failed"
 ];

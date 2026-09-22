@@ -1,6 +1,7 @@
 import {
   buildRuntimeTargetPlan,
   evaluateRuntimeProbe,
+  expectedStatusesFromAcceptance,
 } from '../step-probe-policy';
 
 function probe(overrides: Record<string, unknown> = {}) {
@@ -130,5 +131,42 @@ describe('runtime probe policy', () => {
         expected_statuses: [201],
       }),
     ]));
+  });
+
+  it('uses backlog acceptance statuses over a permissive plan contract', () => {
+    const acceptance = [
+      'PATCH /api/assets/:id/approve returns 200 and updates asset status.',
+    ];
+    expect(expectedStatusesFromAcceptance({
+      acceptance,
+      method: 'PATCH',
+      path: '/api/assets/1/approve',
+    })).toEqual([200]);
+    const plan = buildRuntimeTargetPlan({
+      acceptance,
+      validationTargets: [{
+        kind: 'api',
+        path: '/api/assets/1/approve',
+        method: 'PATCH',
+        payload: { status: 'approved' },
+        expected_statuses: [200, 401],
+      }],
+    });
+
+    expect(plan.apis[0]).toEqual(expect.objectContaining({
+      expected_statuses: [200],
+    }));
+    const result = evaluateRuntimeProbe(probe({
+      apis: [{
+        path: '/api/assets/1/approve',
+        method: 'PATCH',
+        payload_source: 'scenario',
+        http_status: 401,
+      }],
+    }), plan);
+    expect(result.hardFailure).toBe(true);
+    expect(result.apis[0]).toEqual(expect.objectContaining({
+      validation_disposition: 'hard_fail',
+    }));
   });
 });

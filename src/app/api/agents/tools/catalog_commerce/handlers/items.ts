@@ -6,6 +6,10 @@ import {
   buildCatalogSearchClauses,
   catalogSearchFallbackHint,
 } from './catalog-search';
+import {
+  scopeCatalogItemPromptImage,
+  scopeCatalogPromptImageUrl,
+} from '@/lib/services/catalog-prompt-image-url';
 
 const CONTENT_FIELDS = [
   'name',
@@ -181,13 +185,20 @@ export async function handleItemAction(body: Record<string, unknown>) {
     if (!payload.currency) {
       payload.currency = await resolveSiteCurrency(site_id);
     }
+    if (payload.image_url !== undefined) {
+      payload.image_url = scopeCatalogPromptImageUrl(payload.image_url, site_id);
+    }
 
     const { data, error } = await supabaseAdmin.from('catalog_items').insert(payload).select().single();
 
     if (error) throw new Error(error.message);
 
     const hint = await reservationHint(data.id, Boolean(payload.is_reservation));
-    return NextResponse.json({ success: true, item: data, hint });
+    return NextResponse.json({
+      success: true,
+      item: scopeCatalogItemPromptImage(data),
+      hint,
+    });
   }
 
   if (action === 'update') {
@@ -198,6 +209,9 @@ export async function handleItemAction(body: Record<string, unknown>) {
     const payload: Record<string, unknown> = {
       ...pickDefined(updates, [...CONTENT_FIELDS, ...COMMERCE_FIELDS]),
     };
+    if (payload.image_url !== undefined && site_id) {
+      payload.image_url = scopeCatalogPromptImageUrl(payload.image_url, site_id);
+    }
 
     if (Object.keys(payload).length > 0) {
       payload.updated_at = new Date().toISOString();
@@ -211,7 +225,11 @@ export async function handleItemAction(body: Record<string, unknown>) {
     if (error) throw new Error(error.message);
 
     const hint = await reservationHint(id, Boolean(payload.is_reservation));
-    return NextResponse.json({ success: true, item: data, hint });
+    return NextResponse.json({
+      success: true,
+      item: scopeCatalogItemPromptImage(data),
+      hint,
+    });
   }
 
   if (action === 'get') {
@@ -239,7 +257,11 @@ export async function handleItemAction(body: Record<string, unknown>) {
     if (include_specs) extras.specs = await loadItemSpecs(data.id);
     if (include_taxes) extras.taxes = await loadItemTaxes(data.site_id, data.id);
 
-    return NextResponse.json({ success: true, item: data, ...extras });
+    return NextResponse.json({
+      success: true,
+      item: scopeCatalogItemPromptImage(data),
+      ...extras,
+    });
   }
 
   if (action === 'list') {
@@ -281,7 +303,7 @@ export async function handleItemAction(body: Record<string, unknown>) {
 
     return NextResponse.json({
       success: true,
-      items: data,
+      items: data?.map(scopeCatalogItemPromptImage),
       count,
       ...(search_hint ? { search_hint } : {}),
     });

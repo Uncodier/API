@@ -14,6 +14,7 @@ Equip the agent with operational protocols to manage the entire commercial lifec
 
 1. **Marketplace & Catalog Management**
    - Create products with `catalog_commerce` `action="create"` (requires `name`; set `target_sale_price`, `currency`, `kind`, and `is_purchasable=true` for sellable items). Use `image_url` for product photos (HTTP URLs from uploaded assets).
+   - Product images shown in Shop, Marketplace, and POS are pre-generated assets. When `image_url` uses the Makinari prompt image endpoint, it MUST include the seller `site_id`. These catalog surfaces use that URL as cache-only and MUST NOT trigger regeneration.
    - Products are only visible in the marketplace if `is_marketplace_listed = true` AND `status = 'active'` AND `availability_status = 'available'`.
    - Use `catalog_commerce` `action="update"` to change name/pricing/listing flags, or `list`/`get` to inspect items.
    - For recurring plans, ensure `is_recurring = true`.

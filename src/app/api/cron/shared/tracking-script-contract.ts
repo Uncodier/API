@@ -1,7 +1,7 @@
 import ts from 'typescript';
 
 export const HARNESS_TRACKING_SCRIPT_URL =
-  'https://backend.makinari.com/tracking.min.js';
+  'https://files.uncodie.com/tracking.min.js?v=1.959';
 
 export const LEGACY_TRACKING_SCRIPT_URL =
   'https://files.uncodie.com/tracking.min.js';

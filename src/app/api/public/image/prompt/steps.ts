@@ -13,7 +13,7 @@ export async function generateAndCacheImageStep(
 ) {
   'use step';
   
-  // 1. Generate image (this will internally charge credits to the siteId)
+  // Platform requests use the system site; signed site requests charge that site.
   const result = await ImageGenerationService.generateImage({
     prompt,
     site_id: siteId,

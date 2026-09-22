@@ -37,6 +37,8 @@ export interface PublishToolParams {
   // Audience Params
   audience_id?: string;
   channel?: 'whatsapp' | 'email' | 'telegram' | 'sms' | 'voice';
+  /** Voice only: one-way TTS or a two-way Zavu voice-agent call. */
+  voice_mode?: 'tts' | 'agent_call';
   /** When channel is email: `mail` (default) queues via conversations; `newsletter` sends immediately with open/click tracking and no conversations. */
   audience_email_mode?: 'mail' | 'newsletter';
   subject?: string;
@@ -61,6 +63,7 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
       scheduledAt,
       audience_id,
       channel,
+      voice_mode,
       audience_email_mode,
       subject,
       from,
@@ -103,6 +106,12 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
         return {
           success: false,
           error: 'audience_email_mode "newsletter" is only valid when channel is "email".',
+        };
+      }
+      if (voice_mode === 'agent_call' && channel !== 'voice') {
+        return {
+          success: false,
+          error: 'voice_mode "agent_call" is only valid when channel is "voice".',
         };
       }
     }
@@ -310,6 +319,7 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
             ...(finalSubject ? { subject: finalSubject } : {}),
             ...(from ? { from } : {}),
             ...(audience_email_mode ? { audience_email_mode } : {}),
+            ...(voice_mode ? { voice_mode } : {}),
             ...(finalContentId ? { content_id: finalContentId } : {}),
           });
 
@@ -333,6 +343,7 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
 1. Create/Update Content in DB: Requires 'title' and 'type' (to create) OR 'content_id' (to update).
 2. Publish to Social Media: Requires 'social_accounts' array (e.g. ['linkedin', 'x', 'facebook', 'instagram', 'tiktok', 'youtube', 'threads', 'pinterest', 'bluesky']). DO NOT hallucinate parameters like 'networks'.
 3. Send to Audience: Requires 'audience_id' and 'channel' ('whatsapp', 'telegram', 'sms', 'voice', or 'email'). (Newsletters MUST use channel: "email" and audience_email_mode: "newsletter".)
+For Voice, voice_mode "tts" sends a one-way spoken message and "agent_call" starts a two-way Zavu voice-agent call.
 
 You MUST provide at least valid 'text', 'assets' (array of media IDs), or 'urls'. DO NOT hallucinate parameters like 'media_urls'.
 If sending email to audience, 'subject' is required.
@@ -380,6 +391,11 @@ The tool will return an object detailing the success/failure of each attempted a
         // Audience
         audience_id: { type: 'string', description: 'Audience UUID to send to.' },
         channel: { type: 'string', enum: ['whatsapp', 'email', 'telegram', 'sms', 'voice'], description: 'Channel for audience send.' },
+        voice_mode: {
+          type: 'string',
+          enum: ['tts', 'agent_call'],
+          description: 'Voice only. tts is a one-way spoken message; agent_call starts a two-way Zavu voice-agent call.',
+        },
         audience_email_mode: {
           type: 'string',
           enum: ['mail', 'newsletter'],

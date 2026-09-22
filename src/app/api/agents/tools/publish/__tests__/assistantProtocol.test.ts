@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { getLeadById } from '@/lib/database/lead-db';
 import { sendEmailCore } from '../../sendEmail/route';
+import { sendBulkMessagesTool } from '../../sendBulkMessages/assistantProtocol';
 import { publishTool } from '../assistantProtocol';
 
 jest.mock('../../content/create/core', () => ({
@@ -29,6 +30,9 @@ const siteId = '00000000-0000-4000-8000-000000000001';
 const leadId = '00000000-0000-4000-8000-000000000002';
 const mockedGetLeadById = getLeadById as jest.MockedFunction<typeof getLeadById>;
 const mockedSendEmailCore = sendEmailCore as jest.MockedFunction<typeof sendEmailCore>;
+const mockedSendBulkMessagesTool =
+  sendBulkMessagesTool as jest.MockedFunction<typeof sendBulkMessagesTool>;
+const bulkExecuteMock = jest.fn(async (_args: unknown) => ({ success: true }));
 
 describe('publish test delivery', () => {
   beforeEach(() => {
@@ -41,6 +45,9 @@ describe('publish test delivery', () => {
       phone: '+15551234567',
     } as Awaited<ReturnType<typeof getLeadById>>);
     mockedSendEmailCore.mockResolvedValue({ success: true, status: 'sent' });
+    mockedSendBulkMessagesTool.mockReturnValue({
+      execute: bulkExecuteMock,
+    } as unknown as ReturnType<typeof sendBulkMessagesTool>);
   });
 
   it('uses test_lead_id for personalization while honoring an explicit recipient', async () => {
@@ -122,5 +129,20 @@ describe('publish test delivery', () => {
 
     expect(result.success).toBe(false);
     expect(mockedSendEmailCore).not.toHaveBeenCalled();
+  });
+
+  it('passes the conversational Voice mode to the bulk sender', async () => {
+    const result = await publishTool(siteId).execute({
+      audience_id: '00000000-0000-4000-8000-000000000003',
+      channel: 'voice',
+      voice_mode: 'agent_call',
+      text: 'Hello, this is Acme calling about your appointment.',
+    });
+
+    expect(result.success).toBe(true);
+    expect(bulkExecuteMock).toHaveBeenCalledWith(expect.objectContaining({
+      channel: 'voice',
+      voice_mode: 'agent_call',
+    }));
   });
 });

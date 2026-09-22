@@ -1,7 +1,10 @@
 import type { Sandbox } from '@vercel/sandbox';
 import { randomUUID } from 'node:crypto';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { setItemStatus } from '@/lib/services/requirement-backlog';
+import {
+  getBacklogItem,
+  setItemStatus,
+} from '@/lib/services/requirement-backlog';
 import { classifyRequirementType } from '@/lib/services/requirement-flows';
 import type { GitRepoKind } from './cron-commit-helpers';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
@@ -93,6 +96,18 @@ export async function runSingleTurnGate(
   } = input;
   let { sandbox, effectiveSandboxId, infrastructureGeneration } = input;
   const flow = classifyRequirementType(requirementType);
+  let backlogAcceptance: string[] | undefined;
+  if (backlogItemId) {
+    try {
+      const { item } = await getBacklogItem(requirementId, backlogItemId);
+      backlogAcceptance = item?.acceptance;
+    } catch (error: unknown) {
+      console.warn(
+        '[SingleTurn] Could not load backlog acceptance for runtime probes:',
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
 
   let appContext: AppGateContext | undefined;
   if (flow === 'app' || flow === 'site' || flow === 'automation') {
@@ -108,6 +123,7 @@ export async function runSingleTurnGate(
         expected_output: step.expected_output,
         protected_routes: getDeclaredProtectedRoutes(step),
         validation_targets: getDeclaredValidationTargets(step),
+        acceptance: backlogAcceptance,
         test_command: getDeclaredTestCommand(step),
       },
       currentMessages: result.messages,
@@ -143,10 +159,12 @@ export async function runSingleTurnGate(
     workDir: SandboxService.WORK_DIR,
     requirementId,
     item: {
-      id: step.id,
+      id: backlogItemId || step.id,
       title: step.title,
       order: step.order,
-      acceptance: step.instructions ? [String(step.instructions)] : [],
+      acceptance:
+        backlogAcceptance ||
+        (step.instructions ? [String(step.instructions)] : []),
     } as any,
     appContext,
     audit,

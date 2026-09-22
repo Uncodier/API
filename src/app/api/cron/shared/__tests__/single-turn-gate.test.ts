@@ -15,6 +15,9 @@ const mockCompletePlanStepAfterGate = jest.fn() as jest.MockedFunction<
 const mockSetItemStatus = jest.fn() as jest.MockedFunction<
   (...args: any[]) => Promise<any>
 >;
+const mockGetBacklogItem = jest.fn() as jest.MockedFunction<
+  (...args: any[]) => Promise<any>
+>;
 const mockMaybeSingle = jest.fn() as jest.MockedFunction<
   (...args: any[]) => Promise<any>
 >;
@@ -34,6 +37,7 @@ jest.mock('@/lib/database/supabase-client', () => ({
 }));
 
 jest.mock('@/lib/services/requirement-backlog', () => ({
+  getBacklogItem: mockGetBacklogItem,
   setItemStatus: mockSetItemStatus,
 }));
 
@@ -96,6 +100,10 @@ describe('runSingleTurnGate', () => {
     jest.clearAllMocks();
     mockClassifyRequirementType.mockReturnValue('task');
     mockRunGateForFlow.mockResolvedValue({ ok: true, richSignals: {} });
+    mockGetBacklogItem.mockResolvedValue({
+      kind: 'app',
+      item: { acceptance: [] },
+    });
     mockMaybeSingle.mockResolvedValue({
       data: { steps: [{ id: 'step-1', status: 'in_progress' }] },
       error: null,

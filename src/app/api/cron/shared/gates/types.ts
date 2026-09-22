@@ -60,6 +60,7 @@ export interface AppGateContext {
     brand_context?: string;
     protected_routes?: string[];
     validation_targets?: unknown;
+    acceptance?: string[];
     test_command?: string;
   };
   currentMessages: any[];

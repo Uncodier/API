@@ -5,6 +5,8 @@ export * from "./phone-ownership";
 export * from "./signature";
 export * from "./site-access";
 export * from "./voice-agent";
+export * from "./voice-call-client";
+export * from "./voice-call-service";
 export * from "./voice-sync";
 export * from "./voice-tools";
 export * from "./webhook-handlers";

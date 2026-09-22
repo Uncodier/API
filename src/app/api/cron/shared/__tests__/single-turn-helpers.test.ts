@@ -6,6 +6,7 @@ import {
   getDeclaredTestCommand,
   getDeclaredValidationTargets,
   getStepTerminalRequest,
+  hasSandboxGoneToolFailure,
   hasStepCompletionRequest,
   isTransientGateFailure,
   withActionLoopGuard,
@@ -209,6 +210,58 @@ describe('single-turn interaction helpers', () => {
       ok: false,
       error: 'The acceptance criteria are not met.',
     } as any)).toBe(false);
+  });
+
+  it('ignores 410 errors returned by non-sandbox business tools', () => {
+    expect(hasSandboxGoneToolFailure({
+      steps: [{
+        toolResults: [{
+          toolName: 'requirement_backlog',
+          isError: true,
+          result: { error: 'Status code 410 is not ok' },
+        }],
+      }],
+    })).toBe(false);
+  });
+
+  it('detects explicit Sandbox Gone failures from sandbox tools', () => {
+    expect(hasSandboxGoneToolFailure({
+      steps: [{
+        toolResults: [{
+          toolName: 'sandbox_run_command',
+          isError: true,
+          result: { error: 'Sandbox has stopped execution (410 Gone).' },
+        }],
+      }],
+    })).toBe(true);
+    expect(hasSandboxGoneToolFailure({
+      steps: [{
+        toolResults: [{
+          toolName: 'sandbox_read_file',
+          isError: false,
+          result: {
+            success: false,
+            status: 410,
+            message: 'Gone',
+          },
+        }],
+      }],
+    })).toBe(true);
+  });
+
+  it('does not treat successful sandbox output containing 410 as VM loss', () => {
+    expect(hasSandboxGoneToolFailure({
+      steps: [{
+        toolResults: [{
+          toolName: 'sandbox_run_command',
+          isError: false,
+          result: {
+            success: true,
+            output: 'Processed 410 records',
+          },
+        }],
+      }],
+    })).toBe(false);
   });
 
   it('keeps git infrastructure failures out of the product failure path', () => {

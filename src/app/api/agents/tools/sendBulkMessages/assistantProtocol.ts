@@ -12,7 +12,6 @@ import {
   getAudiencePageForSending,
   updateAudienceLeadStatus,
 } from '@/lib/database/audience-db';
-import { getContentById } from '@/lib/database/content-db';
 import type { DbLead } from '@/lib/database/lead-db';
 import type { ContentPlaceholderPolicy } from '@/lib/messaging/lead-merge-fields';
 import {
@@ -25,41 +24,14 @@ import {
 import { sendEmailCore } from '../sendEmail/route';
 import { WhatsAppSendService } from '@/lib/services/whatsapp/WhatsAppSendService';
 import { WhatsAppTemplateService } from '@/lib/services/whatsapp/WhatsAppTemplateService';
-
-// Función para validar UUIDs
-function isValidUUID(uuid: string): boolean {
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  return uuidRegex.test(uuid);
-}
-
-// Función para encontrar un agente de ventas activo para un sitio
-async function findActiveSalesAgent(siteId: string): Promise<{agentId: string, userId: string} | null> {
-  try {
-    if (!siteId || !isValidUUID(siteId)) {
-      return null;
-    }
-    
-    const { data, error } = await supabaseAdmin
-      .from('agents')
-      .select('id, user_id')
-      .eq('site_id', siteId)
-      .eq('role', 'Sales')
-      .eq('status', 'active')
-      .order('created_at', { ascending: false })
-      .limit(1);
-    
-    if (error || !data || data.length === 0) {
-      return null;
-    }
-    
-    return {
-      agentId: data[0].id,
-      userId: data[0].user_id
-    };
-  } catch (error) {
-    return null;
-  }
-}
+import {
+  SEND_BULK_MESSAGES_DESCRIPTION,
+  SEND_BULK_MESSAGES_PARAMETERS,
+} from './definition';
+import {
+  findActiveSalesAgent,
+  resolvePlaceholderPolicy,
+} from './support';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -77,23 +49,8 @@ export interface SendBulkMessagesToolParams {
   content_id?: string;
   /** Override policy when content_id is absent or has no placeholders config. Default: strip_tokens. */
   placeholder_policy?: ContentPlaceholderPolicy;
-}
-
-async function resolvePlaceholderPolicy(
-  contentId: string | undefined,
-  override: ContentPlaceholderPolicy | undefined,
-): Promise<ContentPlaceholderPolicy> {
-  if (override) return override;
-  if (!contentId) return 'strip_tokens';
-  const row = await getContentById(contentId);
-  const w = row?.metadata && typeof row.metadata === 'object'
-    ? (row.metadata as Record<string, unknown>).placeholders
-    : undefined;
-  if (w && typeof w === 'object' && w !== null && 'when_unresolved' in w) {
-    const v = (w as { when_unresolved?: string }).when_unresolved;
-    if (v === 'skip_recipient' || v === 'strip_tokens') return v;
-  }
-  return 'strip_tokens';
+  /** Voice only: one-way TTS (default) or a two-way Zavu agent call. */
+  voice_mode?: 'tts' | 'agent_call';
 }
 
 // ---------------------------------------------------------------------------
@@ -102,7 +59,16 @@ async function resolvePlaceholderPolicy(
 
 export function sendBulkMessagesTool(siteId: string) {
   const execute = async (args: SendBulkMessagesToolParams) => {
-    const { audience_id, channel, message, subject, from, content_id: contentIdArg, placeholder_policy } = args;
+    const {
+      audience_id,
+      channel,
+      message,
+      subject,
+      from,
+      content_id: contentIdArg,
+      placeholder_policy,
+      voice_mode = 'tts',
+    } = args;
     const audience_email_mode = args.audience_email_mode ?? 'mail';
 
     if (!audience_id) return { success: false, error: 'Missing required field: audience_id' };
@@ -115,6 +81,18 @@ export function sendBulkMessagesTool(siteId: string) {
       return {
         success: false,
         error: 'audience_email_mode "newsletter" is only valid when channel is "email".',
+      };
+    }
+    if (voice_mode === 'agent_call' && channel !== 'voice') {
+      return {
+        success: false,
+        error: 'voice_mode "agent_call" is only valid when channel is "voice".',
+      };
+    }
+    if (voice_mode === 'agent_call' && message.length > 1_000) {
+      return {
+        success: false,
+        error: 'Voice agent call greeting must not exceed 1000 characters.',
       };
     }
 
@@ -311,6 +289,7 @@ export function sendBulkMessagesTool(siteId: string) {
               custom_data: {
                 source: 'sendBulkMessages',
                 audience_id,
+                ...(channel === 'voice' ? { voice_mode } : {}),
               },
             };
             if (userId) conversationData.user_id = userId;
@@ -344,6 +323,7 @@ export function sendBulkMessagesTool(siteId: string) {
                 status: 'accepted',
                 channel: channel,
                 audience_id,
+                ...(channel === 'voice' ? { voice_mode } : {}),
                 ...(templateSid ? { template_sid: templateSid } : {}),
                 ...(templateStatus ? { template_status: templateStatus } : {}),
                 templated_body: abstractBody,
@@ -512,69 +492,8 @@ export function sendBulkMessagesTool(siteId: string) {
 
   return {
     name: 'sendBulkMessages',
-    description: `Send a message to all leads in an audience via WhatsApp, email, telegram, sms or voice.
-
-Required: audience_id, channel ("whatsapp", "email", "telegram", "sms", or "voice"), message.
-For email: subject is also required.
-Optional: from, content_id (content UUID whose metadata.placeholders.when_unresolved controls unknown merge tokens), placeholder_policy (override), audience_email_mode.
-
-Merge fields — use only double braces: {{lead.name}}, {{lead.first_name}}, {{lead.email}}, {{lead.phone}}, {{lead.position}}, {{lead.company}}, {{lead.notes}}, {{lead.metadata.<key>}}, {{site.name}}. Common aliases (e.g. {{lead.correo}}, {{lead.full_name}}) are normalized. Other syntaxes ([Name], {name}) are not supported.
-
-For email only: audience_email_mode — "mail" (default) or "newsletter".
-
-The tool iterates through every lead in the audience:
-- WhatsApp/SMS/Voice: requires lead.phone (international format). Leads without phone are skipped.
-- Email: requires lead.email. Leads without email are skipped.
-- Telegram: requires lead.phone or telegram ID (currently uses phone logic).
-
-WhatsApp delivery:
-- Creates (or reuses) ONE Twilio Content Template per campaign whose body uses numeric placeholders ({{1}}, {{2}}, ...). Merge tokens in the message are mapped to those placeholders.
-- For each lead, queues one conversation + accepted message row that stores template_sid and the per-lead content_variables map; a background worker delivers via ContentVariables so a single approved template serves the whole audience.
-- Returns template_sid, template_status, and placeholder_map alongside the counters.
-
-Email delivery modes:
-- mail (default): queues one conversation plus an accepted message per lead (body/subject personalized per lead); a background workflow delivers and tracks. total_sent counts queued handoffs.
-- newsletter: sends immediately via sendEmail (open/click tracking), **no** HTML signature appended, no conversation rows. Large audiences may hit server timeouts — prefer smaller batches if needed.
-
-Each lead's send_status is tracked (sent, failed, skipped) so the tool can be re-run safely — already processed leads are not re-queued.
-
-Returns a summary: total_sent, total_failed, total_skipped, total_remaining.
-
-IMPORTANT:
-- First create an audience using the "audience" tool, then pass its audience_id here.
-- The audience must have status "ready" before sending.
-- Review the audience contents with audience(get) before sending to confirm the target list.`,
-    parameters: {
-      type: 'object',
-      properties: {
-        audience_id: { type: 'string', description: 'Audience UUID to send messages to.' },
-        channel: {
-          type: 'string',
-          enum: ['whatsapp', 'email', 'telegram', 'sms', 'voice'],
-          description: 'Delivery channel.',
-        },
-        message: { type: 'string', description: 'Message text (plain text or HTML for email).' },
-        subject: { type: 'string', description: 'Email subject (required when channel is "email").' },
-        from: { type: 'string', description: 'Sender display name (optional).' },
-        audience_email_mode: {
-          type: 'string',
-          enum: ['mail', 'newsletter'],
-          description: 'Email only. mail (default): queue via conversations. newsletter: send immediately with tracking, no conversations.',
-        },
-        content_id: {
-          type: 'string',
-          description:
-            'Optional content UUID. When set, metadata.placeholders.when_unresolved (strip_tokens | skip_recipient) controls unknown {{...}} tokens unless placeholder_policy overrides.',
-        },
-        placeholder_policy: {
-          type: 'string',
-          enum: ['strip_tokens', 'skip_recipient'],
-          description:
-            'Override for unresolved merge tokens. strip_tokens: remove unknown tokens. skip_recipient: skip that lead when unknown tokens remain.',
-        },
-      },
-      required: ['audience_id', 'channel', 'message'],
-    },
+    description: SEND_BULK_MESSAGES_DESCRIPTION,
+    parameters: SEND_BULK_MESSAGES_PARAMETERS,
     execute,
   };
 }

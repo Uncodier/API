@@ -27,6 +27,9 @@ const legacyCycleIdentitySql = workspaceFile(
 const atomicPlanCancellationSql = workspaceFile(
   'supabase/migrations/20260919235500_atomic_backlog_plan_step_cancellation.sql',
 );
+const infrastructureRetryStreakSql = workspaceFile(
+  'supabase/migrations/20260922041000_reset_infrastructure_retry_streak_on_remediation.sql',
+);
 
 describe('atomic cron SQL contracts', () => {
   const cycleSql = workspaceFile(
@@ -79,6 +82,7 @@ describe('atomic cron SQL contracts', () => {
     scopedCompatibilitySql,
     legacyCycleIdentitySql,
     atomicPlanCancellationSql,
+    infrastructureRetryStreakSql,
   ];
 
   it('uses a unique version prefix for every Supabase migration', () => {
@@ -156,6 +160,26 @@ describe('atomic cron SQL contracts', () => {
     expect(cycleSql).toContain(
       "'cron_infrastructure_failure_cycles'",
     );
+  });
+
+  it('resets infrastructure retry streaks after successful remediation', () => {
+    expect(infrastructureRetryStreakSql).toMatch(
+      /outcome IN \(\s*'progress',\s*'product_no_progress',\s*'product_failure',\s*'remediation_handoff'\s*\)/,
+    );
+    expect(infrastructureRetryStreakSql).toContain(
+      "'cron_infrastructure_failure_cycles'",
+    );
+    expect(infrastructureRetryStreakSql).toContain(
+      "'infrastructure-counter-normalization-v2'",
+    );
+    expect(infrastructureRetryStreakSql).toContain(
+      "pg_catalog.set_config(\n    'request.jwt.claims'",
+    );
+    expect(infrastructureRetryStreakSql).toContain(
+      `'{"role":"service_role"}'`,
+    );
+    expect(infrastructureRetryStreakSql.trimEnd().split(/\r?\n/).length)
+      .toBeLessThan(500);
   });
 
   it('scopes no-progress accounting and blocking to one plan step', () => {

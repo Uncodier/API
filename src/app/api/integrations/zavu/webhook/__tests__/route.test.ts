@@ -14,6 +14,7 @@ jest.mock("@/lib/services/zavu/webhook-handlers", () => ({
   handleInboundMessage: jest.fn().mockResolvedValue(undefined),
   handleInvitationStatusChanged: jest.fn().mockResolvedValue(undefined),
   handleDomainStatusChanged: jest.fn().mockResolvedValue(undefined),
+  handleVoiceCallEvent: jest.fn().mockResolvedValue(undefined),
 }));
 
 jest.mock("@/lib/services/provider-webhook-claims", () => ({
@@ -119,6 +120,24 @@ describe("Zavu Webhook Dispatch", () => {
     expect(webhookHandlers.handleInvitationStatusChanged).toHaveBeenCalledWith(
       expect.objectContaining({ invitationId: "inv_123" })
     );
+  });
+
+  it("dispatches Voice lifecycle events to handleVoiceCallEvent", async () => {
+    const payload = {
+      id: "evt_call_1",
+      type: "call.completed",
+      senderId: "snd_123",
+      data: {
+        callId: "call_123",
+        status: "completed",
+        transcriptAvailable: true,
+      },
+    };
+
+    const res = await POST(createRequest(payload));
+
+    expect(res.status).toBe(200);
+    expect(webhookHandlers.handleVoiceCallEvent).toHaveBeenCalledWith(payload);
   });
 
   it("should ignore conversation.new and log without throwing", async () => {

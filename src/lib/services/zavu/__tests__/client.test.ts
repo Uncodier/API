@@ -17,6 +17,7 @@ import {
   getSenderAgent,
   upsertAgentTool,
 } from "../agent-client";
+import { getVoiceCall, hangupVoiceCall, placeVoiceCall } from "../voice-call-client";
 
 function mockJson(status: number, body: unknown) {
   return {
@@ -37,6 +38,15 @@ describe("Zavu client webhook contract", () => {
       API_SERVER_URL: "https://backend.makinari.com",
     };
     global.fetch = jest.fn();
+  });
+
+  it("subscribes sender webhooks to the complete Voice call lifecycle", () => {
+    expect(ZAVU_SENDER_WEBHOOK_EVENTS).toEqual(expect.arrayContaining([
+      "call.initiated",
+      "call.answered",
+      "call.completed",
+      "call.failed",
+    ]));
   });
 
   afterEach(() => {
@@ -254,6 +264,77 @@ describe("Zavu client webhook contract", () => {
             content: { mediaUrl: "https://audio.mp3" }
           })
         })
+      );
+    });
+  });
+
+  describe("voice calls", () => {
+    it("places a conversational call with per-call overrides", async () => {
+      (global.fetch as jest.Mock).mockResolvedValueOnce(
+        mockJson(202, {
+          call: {
+            id: "call_123",
+            direction: "outbound",
+            from: "+14155550100",
+            to: "+5215551234567",
+            status: "queued",
+            createdAt: "2026-09-21T00:00:00.000Z",
+          },
+        })
+      );
+
+      await placeVoiceCall({
+        to: "+5215551234567",
+        senderId: "sender_1",
+        greeting: "Hello from Makinari",
+        language: "en-US",
+        maxDurationMinutes: 5,
+        metadata: { messageId: "message_1" },
+      });
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        "https://api.zavu.dev/v1/calls",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            to: "+5215551234567",
+            senderId: "sender_1",
+            greeting: "Hello from Makinari",
+            language: "en-US",
+            maxDurationMinutes: 5,
+            metadata: { messageId: "message_1" },
+          }),
+        })
+      );
+    });
+
+    it("retrieves and hangs up a call", async () => {
+      const call = {
+        call: {
+          id: "call/123",
+          direction: "outbound",
+          from: "+14155550100",
+          to: "+5215551234567",
+          status: "in_progress",
+          createdAt: "2026-09-21T00:00:00.000Z",
+        },
+      };
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce(mockJson(200, call))
+        .mockResolvedValueOnce(mockJson(202, call));
+
+      await getVoiceCall("call/123");
+      await hangupVoiceCall("call/123");
+
+      expect(global.fetch).toHaveBeenNthCalledWith(
+        1,
+        "https://api.zavu.dev/v1/calls/call%2F123",
+        expect.any(Object)
+      );
+      expect(global.fetch).toHaveBeenNthCalledWith(
+        2,
+        "https://api.zavu.dev/v1/calls/call%2F123/hangup",
+        expect.objectContaining({ method: "POST" })
       );
     });
   });

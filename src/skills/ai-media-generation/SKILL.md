@@ -18,8 +18,9 @@ Create visual and multimedia assets by interacting with Artificial Intelligence 
 3. **Effective Prompting (Brand Injection):** Be specific and descriptive. You MUST inject the brand's exact aesthetic into the prompt (e.g., "incorporating deep blue and safety orange accents", "shot in a gritty, high-contrast industrial style", "flat vector illustration matching #FF5500"). For photorealistic images, specify lens type, camera angle, and lighting conditions that align with the brand.
 3. **Makinari Media Generation API (Preferred for UI embeds):**
    - Base URL (always absolute — this API lives on the Makinari backend, NOT on the app being built). Use `image`, `icon`, or `video` in the path.
+   - Inside the first-party `app.makinari.com` application only, direct image prompt URLs may generate without a signature; Makinari funds those requests.
    - Cached images: `https://backend.makinari.com/api/public/image/prompt/[url_encoded_prompt]?site_id=[site_id]&width=1024&height=1024`
-   - Image cache misses require a signed URL. Obtain one with an authenticated `POST https://backend.makinari.com/api/public/image/sign` request containing `{ site_id, prompt, width, height }`, then assign the returned `url` to the image `src`.
+   - Images embedded in an agent-generated site, preview, or deployment require a signed URL for cache-miss generation. Obtain one with an authenticated `POST https://backend.makinari.com/api/public/image/sign` request containing `{ site_id, prompt, width, height }`, then assign the returned `url` to the image `src`.
    - Icons: `https://backend.makinari.com/api/public/icon/prompt/[url_encoded_prompt]?width=256&height=256&bg=transparent` (Icons have no background by default, optionally pass a `bg` param like `bg=solid+white` or `bg=dark+blue`)
    - Video: `https://backend.makinari.com/api/public/video/prompt/[url_encoded_prompt]?duration=5&ratio=16:9`
    - `prompt` must be URL-encoded.

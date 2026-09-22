@@ -70,4 +70,25 @@ describe('normalizePublishToolOverrides', () => {
       ),
     ).toBe(overrides);
   });
+
+  it('forces the selected conversational Voice mode into publish', () => {
+    const result = normalizePublishToolOverrides(
+      JSON.stringify({
+        nodeType: 'publish',
+        publish_channels: ['voice'],
+        publish_voice_mode: 'agent_call',
+      }),
+      {
+        publish: {
+          channel: 'voice',
+          voice_mode: 'agent_call',
+        },
+      },
+    );
+
+    expect(result?.publish).toMatchObject({
+      channel: 'voice',
+      voice_mode: 'agent_call',
+    });
+  });
 });

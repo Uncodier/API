@@ -2,6 +2,7 @@ const mockMaybeSingle = jest.fn();
 const mockSyncAgent = jest.fn();
 const mockSyncTools = jest.fn();
 const mockUpdateAgent = jest.fn();
+const mockEnsureSenderWebhook = jest.fn();
 
 jest.mock("@/lib/database/supabase-server", () => ({
   supabaseAdmin: {
@@ -21,6 +22,9 @@ jest.mock("../voice-tools", () => ({
 jest.mock("../agent-client", () => ({
   updateAgent: mockUpdateAgent,
 }));
+jest.mock("../client", () => ({
+  ensureSenderWebhook: mockEnsureSenderWebhook,
+}));
 
 import {
   syncConnectedCustomerSupportVoiceAgent,
@@ -38,6 +42,7 @@ describe("syncConnectedCustomerSupportVoiceAgent", () => {
     });
     mockSyncTools.mockResolvedValue(undefined);
     mockUpdateAgent.mockResolvedValue({ id: "agent_1", enabled: true });
+    mockEnsureSenderWebhook.mockResolvedValue({ id: "sender_1" });
   });
 
   it("syncs the agent and restores tools for connected Voice senders", async () => {
@@ -67,6 +72,7 @@ describe("syncConnectedCustomerSupportVoiceAgent", () => {
       siteId: "site-1",
       webhookSecret: "whsec_test",
     });
+    expect(mockEnsureSenderWebhook).toHaveBeenCalledWith("sender_1");
     expect(mockUpdateAgent).toHaveBeenCalledWith("agent_1", { enabled: true });
     expect(mockSyncTools.mock.invocationCallOrder[0])
       .toBeLessThan(mockUpdateAgent.mock.invocationCallOrder[0]);

@@ -92,6 +92,42 @@ function normalizeStatuses(value: unknown): number[] | undefined {
   return statuses.length ? statuses : undefined;
 }
 
+function routeTemplateMatches(template: string, concretePath: string): boolean {
+  const templateParts = template.split('/');
+  const concreteParts = concretePath.split('/');
+  if (templateParts.length !== concreteParts.length) return false;
+  return templateParts.every((part, index) =>
+    part === concreteParts[index] ||
+    /^:[a-z0-9_]+$/i.test(part) ||
+    /^\[[^\]]+\]$/.test(part),
+  );
+}
+
+export function expectedStatusesFromAcceptance(params: {
+  acceptance?: string[];
+  method: HttpMethod;
+  path: string;
+}): number[] | undefined {
+  const statuses = new Set<number>();
+  for (const statement of params.acceptance || []) {
+    const routeMatch = statement.match(
+      /\b(GET|POST|PUT|DELETE|PATCH)\s+(\/[^\s"'`<>]+)/i,
+    );
+    const method = routeMatch?.[1]?.toUpperCase() as HttpMethod | undefined;
+    const route = normalizePath(routeMatch?.[2]);
+    if (
+      method !== params.method ||
+      route == null ||
+      !routeTemplateMatches(route, params.path)
+    ) continue;
+    const statusMatch = statement.match(
+      /\b(?:returns?|responds?(?:\s+with)?|http)\s+(?:http\s+)?([1-5]\d{2})\b/i,
+    );
+    if (statusMatch?.[1]) statuses.add(Number(statusMatch[1]));
+  }
+  return statuses.size ? Array.from(statuses) : undefined;
+}
+
 export function normalizeStepValidationTargets(
   value: unknown,
 ): StepValidationTarget[] {
@@ -144,6 +180,7 @@ function upsertApi(
 
 export function buildRuntimeTargetPlan(input: {
   validationTargets?: unknown;
+  acceptance?: string[];
   protectedRoutes?: string[];
   proseRoutes?: string[];
   inferredPageRoutes?: string[];
@@ -155,20 +192,36 @@ export function buildRuntimeTargetPlan(input: {
 
   for (const target of normalizeStepValidationTargets(input.validationTargets)) {
     if (target.kind === 'page') {
+      const acceptanceStatuses = expectedStatusesFromAcceptance({
+        acceptance: input.acceptance,
+        method: 'GET',
+        path: target.path,
+      });
       upsertPage(pages, {
         ...target,
         kind: 'page',
         source: 'contract',
         required: true,
+        ...(acceptanceStatuses
+          ? { expected_statuses: acceptanceStatuses }
+          : {}),
       });
       continue;
     }
+    const acceptanceStatuses = expectedStatusesFromAcceptance({
+      acceptance: input.acceptance,
+      method: target.method || 'GET',
+      path: target.path,
+    });
     upsertApi(apis, {
       ...target,
       kind: 'api',
       method: target.method || 'GET',
       source: 'contract',
       required: true,
+      ...(acceptanceStatuses
+        ? { expected_statuses: acceptanceStatuses }
+        : {}),
     });
   }
 

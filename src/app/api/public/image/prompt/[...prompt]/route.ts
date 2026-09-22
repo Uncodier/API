@@ -11,6 +11,8 @@ import { verifyPublicImageSignature } from '@/lib/security/public-image-signatur
 import { canAccessSite } from '@/lib/security/site-access';
 import { acquireLock, releaseLock } from '@/lib/security/upstash-rest';
 
+const PLATFORM_SITE_ID = '00000000-0000-0000-0000-000000000000';
+
 const NO_STORE_HEADERS = {
   'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
   Pragma: 'no-cache',
@@ -62,6 +64,17 @@ async function enforceImageGenerationRateLimit(
     windowSeconds: 60 * 60,
     failClosed: true,
   });
+}
+
+function isPlatformAppRequest(request: NextRequest): boolean {
+  const source = request.headers.get('origin') || request.headers.get('referer');
+  if (!source) return false;
+  try {
+    const url = new URL(source);
+    return url.protocol === 'https:' && url.hostname === 'app.makinari.com';
+  } catch {
+    return false;
+  }
 }
 
 function safeDecode(str: string): string {
@@ -142,8 +155,11 @@ export async function GET(
     else ratio = '1:1';
 
     const authenticated = hasAuthenticatedPrincipal(request);
+    const platformRequest = isPlatformAppRequest(request);
+    const platformCacheOnly = platformRequest && Boolean(expectedSiteId);
     const signedGeneration = Boolean(
-      expectedSiteId
+      !platformRequest
+      && expectedSiteId
       && verifyPublicImageSignature(
         {
           siteId: expectedSiteId,
@@ -158,12 +174,16 @@ export async function GET(
     const origin = request.headers.get('origin');
     const referer = request.headers.get('referer');
     const originOrReferer = origin || referer;
-    const resolvedSiteId = !signedGeneration && originOrReferer
+    const resolvedSiteId = !platformRequest && !signedGeneration && originOrReferer
       ? await resolveSiteFromRequirementUrl(originOrReferer, expectedSiteId)
       : null;
-    const siteId = signedGeneration
+    const siteId = platformCacheOnly
       ? expectedSiteId
-      : resolvedSiteId || (authenticated ? expectedSiteId : null);
+      : platformRequest
+        ? PLATFORM_SITE_ID
+      : signedGeneration
+        ? expectedSiteId
+        : resolvedSiteId || (authenticated ? expectedSiteId : null);
 
     if (!siteId) {
       if (!authenticated) {
@@ -171,7 +191,12 @@ export async function GET(
       }
       return jsonError('A site_id is required for image generation', 400);
     }
-    if (!signedGeneration && authenticated && !await canAccessSite(request, siteId)) {
+    if (
+      !platformRequest
+      && !signedGeneration
+      && authenticated
+      && !await canAccessSite(request, siteId)
+    ) {
       return jsonError('Site access denied', 403);
     }
 
@@ -180,7 +205,10 @@ export async function GET(
     if (cached) {
       return cachedImageResponse(cached);
     }
-    if (!authenticated && !signedGeneration) {
+    if (platformCacheOnly) {
+      return jsonError('Cached image not found', 404);
+    }
+    if (!platformRequest && !authenticated && !signedGeneration) {
       return jsonError('Authentication is required to generate images', 401);
     }
 

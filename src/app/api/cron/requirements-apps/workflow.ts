@@ -1641,7 +1641,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       accounting.infrastructure_failure_cycles >= 4
     ) {
       const message =
-        `Infrastructure persistence failed for ${accounting.infrastructure_failure_cycles} consecutive cycles. Automatic execution is blocked pending operator intervention.`;
+        `Infrastructure persistence failed for ${accounting.infrastructure_failure_cycles} consecutive retry attempts without a successful remediation handoff. Automatic execution is blocked pending operator intervention.`;
       console.warn(`[CronAppsWorkflow] ${message}`);
       await blockRequirementForCronInfrastructureCyclesStep({
         requirementId: reqId,

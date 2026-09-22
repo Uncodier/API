@@ -2,6 +2,7 @@ import { supabaseAdmin } from "@/lib/database/supabase-server";
 import { encryptToken } from "@/lib/utils/token-encryption";
 import { WorkflowService } from "@/lib/services/workflow-service";
 import { ensureProjectWebhook, ensureSenderWebhook, mapInvitationStatus } from "./client";
+import { getVoiceCall } from "./voice-call-client";
 import { getCachedJson, setCachedJson, sha256 } from "@/lib/security/upstash-rest";
 import { refreshSiteConfigurationCaches } from "@/lib/services/site-configuration-cache";
 
@@ -143,6 +144,115 @@ export async function handleInboundMessage(event: any) {
     throw new Error(
       `Zavu customer support workflow failed: ${String(workflowResult.error)}`,
     );
+  }
+}
+
+function voiceEventMetadata(data: any): Record<string, string> {
+  const rawMetadata = data?.metadata ?? data?.call?.metadata;
+  if (!rawMetadata || typeof rawMetadata !== "object") return {};
+  return Object.fromEntries(
+    Object.entries(rawMetadata)
+      .filter((entry): entry is [string, string] => typeof entry[1] === "string")
+  );
+}
+
+export async function handleVoiceCallEvent(event: any): Promise<void> {
+  const data = event?.data;
+  const callId = [data?.callId, data?.call_id, data?.id, data?.call?.id]
+    .find((value): value is string => typeof value === "string");
+  if (!callId) {
+    throw new Error("Voice call webhook is missing data.callId");
+  }
+
+  const metadata = voiceEventMetadata(data);
+  let query = supabaseAdmin
+    .from("voice_call_deliveries")
+    .select("id, message_id")
+    .limit(1);
+  query = metadata.voiceCallDeliveryId
+    ? query.eq("id", metadata.voiceCallDeliveryId)
+    : query.eq("zavu_call_id", callId);
+  const { data: deliveries, error: deliveryError } = await query;
+  if (deliveryError) {
+    throw new Error(`Failed to find Voice call delivery: ${deliveryError.message}`);
+  }
+  const delivery = deliveries?.[0];
+  if (!delivery) {
+    console.warn(`[Zavu Webhook] No local Voice delivery found for ${callId}`);
+    return;
+  }
+
+  const terminal = event.type === "call.completed" || event.type === "call.failed";
+  const failed =
+    event.type === "call.failed"
+    || ["failed", "busy", "no_answer", "canceled", "cancelled"].includes(
+      data?.status ?? data?.call?.status
+    );
+  let callDetails: Awaited<ReturnType<typeof getVoiceCall>> | undefined;
+  if (event.type === "call.completed" && data?.transcriptAvailable === true) {
+    callDetails = await getVoiceCall(callId);
+  }
+
+  const status =
+    typeof (data?.status ?? data?.call?.status) === "string"
+      ? (data.status ?? data.call.status)
+      : callDetails?.status || (failed ? "failed" : "in_progress");
+  const now = new Date().toISOString();
+  const { error: updateError } = await supabaseAdmin
+    .from("voice_call_deliveries")
+    .update({
+      zavu_call_id: callId,
+      status,
+      duration_seconds: data?.durationSeconds ?? callDetails?.durationSeconds ?? null,
+      end_reason: data?.endReason ?? callDetails?.endReason ?? null,
+      turn_count: callDetails?.turnCount ?? null,
+      cost: data?.cost ?? callDetails?.cost ?? null,
+      currency: typeof data?.currency === "string" ? data.currency : null,
+      transcript: callDetails?.transcript ?? null,
+      answered_at: callDetails?.answeredAt ?? (
+        event.type === "call.answered" ? now : null
+      ),
+      ended_at: callDetails?.endedAt ?? (terminal ? now : null),
+      updated_at: now,
+    })
+    .eq("id", delivery.id);
+  if (updateError) {
+    throw new Error(`Failed to update Voice call delivery: ${updateError.message}`);
+  }
+
+  const { data: message } = await supabaseAdmin
+    .from("messages")
+    .select("custom_data")
+    .eq("id", delivery.message_id)
+    .maybeSingle();
+  const customData =
+    message?.custom_data && typeof message.custom_data === "object"
+      ? message.custom_data as Record<string, unknown>
+      : {};
+  const { error: messageError } = await supabaseAdmin
+    .from("messages")
+    .update({
+      custom_data: {
+        ...customData,
+        status: failed ? "failed" : terminal ? "sent" : "sending",
+        voice_mode: "agent_call",
+        voice_call_delivery_id: delivery.id,
+        provider_call_id: callId,
+        call_status: status,
+        duration_seconds: data?.durationSeconds ?? callDetails?.durationSeconds ?? null,
+        end_reason: data?.endReason ?? callDetails?.endReason ?? null,
+        transcript_available:
+          data?.transcriptAvailable === true
+          || (callDetails?.transcript?.length ?? 0) > 0,
+        ...(failed
+          ? { error_message: data?.endReason || `Voice call ${status}` }
+          : {}),
+      },
+      updated_at: now,
+    })
+    .eq("id", delivery.message_id);
+  if (messageError) {
+    throw new Error(`Failed to update Voice call message: ${messageError.message}`);
   }
 }
 

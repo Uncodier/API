@@ -2,6 +2,7 @@ import {
   buildHarnessTrackingScriptTag,
   buildLegacyTrackingScriptTag,
   HARNESS_TRACKING_ATTRIBUTE,
+  HARNESS_TRACKING_SCRIPT_URL,
   rollbackHarnessTrackingScript,
   transformHarnessTrackingScript,
 } from '../tracking-script-contract';
@@ -32,7 +33,7 @@ describe('tracking script contract', () => {
 
     expect(result.reason).toBe('inserted');
     expect(result.source).toContain(
-      '<script src="https://files.uncodie.com/tracking.min.js" data-site-id="site-1" data-uncodie-harness="tracking"></script>',
+      `<script src="${HARNESS_TRACKING_SCRIPT_URL}" data-site-id="site-1" data-uncodie-harness="tracking"></script>`,
     );
     expect(result.source).not.toContain('src=https://');
     const parsed = ts.createSourceFile(
@@ -101,7 +102,7 @@ describe('tracking script contract', () => {
     const result = transformHarnessTrackingScript(source, 'site-1');
 
     expect(result.reason).toBe('repaired');
-    expect(result.source).toContain('src="https://files.uncodie.com/tracking.min.js"');
+    expect(result.source).toContain(`src="${HARNESS_TRACKING_SCRIPT_URL}"`);
     expect(result.source).not.toContain('src=https://');
   });
 
@@ -259,7 +260,7 @@ describe('tracking script contract', () => {
     expect(rolledBack).not.toContain('tracking.min.js');
   });
 
-  it('recognizes an already-marked formatter-expanded harness tag', () => {
+  it('upgrades a formatter-expanded unversioned harness tag', () => {
     const source = [
       '<html><body>Content',
       '<script',
@@ -270,8 +271,9 @@ describe('tracking script contract', () => {
       '</body></html>',
     ].join('\n');
 
-    expect(transformHarnessTrackingScript(source, 'site-1').reason).toBe(
-      'already_marked',
-    );
+    const result = transformHarnessTrackingScript(source, 'site-1');
+
+    expect(result.reason).toBe('upgraded');
+    expect(result.source).toContain(HARNESS_TRACKING_SCRIPT_URL);
   });
 });

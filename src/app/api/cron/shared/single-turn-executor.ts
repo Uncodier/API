@@ -24,6 +24,7 @@ import {
   captureInteractionBaseline,
   captureWorkspaceProgressFingerprint,
   getStepTerminalRequest,
+  hasSandboxGoneToolFailure,
   withActionLoopGuard,
   withExecuteStepNoop,
 } from './single-turn-helpers';
@@ -399,22 +400,19 @@ export async function executeSingleTurnStep(params: {
       };
     }
 
-    // Check if the LLM attempted to execute tools and failed due to sandbox gone
-    const hasSandboxGoneError = result.messages?.some((m: any) => 
-      m.role === 'tool' && isSandboxGoneError(typeof m.content === 'string' ? m.content : JSON.stringify(m.content))
-    );
-    
-    if (hasSandboxGoneError) {
-       console.warn(`[SingleTurn] Sandbox gone detected. Will retry next workflow cycle.`);
-       return {
-         ok: false,
-         isDone: false,
-         transient: true,
-         error: 'Sandbox Gone 410',
-         effectiveSandboxId,
-         infrastructureGeneration,
-         durableProductProgress,
-       };
+    // Only failed sandbox tools can report VM loss. Business-tool payloads may
+    // legitimately contain HTTP 410 values and must not open an infra circuit.
+    if (hasSandboxGoneToolFailure(result)) {
+      console.warn(`[SingleTurn] Sandbox gone detected. Will retry next workflow cycle.`);
+      return {
+        ok: false,
+        isDone: false,
+        transient: true,
+        error: 'Sandbox Gone 410',
+        effectiveSandboxId,
+        infrastructureGeneration,
+        durableProductProgress,
+      };
     }
 
     const { sleepRequested, backgroundTask } = extractSingleTurnBackgroundState(result);

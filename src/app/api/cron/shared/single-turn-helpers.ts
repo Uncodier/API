@@ -133,6 +133,66 @@ export function isTransientGateFailure(
   );
 }
 
+type AssistantToolResult = {
+  toolName?: unknown;
+  result?: unknown;
+  cleanedResult?: unknown;
+  isError?: unknown;
+};
+
+function explicitToolFailurePayload(
+  toolResult: AssistantToolResult,
+): unknown {
+  const payload = toolResult.cleanedResult ?? toolResult.result;
+  if (toolResult.isError === true) return payload;
+  if (!payload || typeof payload !== 'object') return undefined;
+  const record = payload as Record<string, unknown>;
+  const status = Number(record.status ?? record.statusCode);
+  if (
+    record.success === false ||
+    record.failed === true ||
+    record.error != null ||
+    status === 404 ||
+    status === 410
+  ) {
+    return record.error ?? payload;
+  }
+  return undefined;
+}
+
+function isSandboxGoneFailurePayload(payload: unknown): boolean {
+  if (typeof payload === 'string') return isSandboxGoneError(payload);
+  if (!payload || typeof payload !== 'object') return false;
+  const record = payload as Record<string, unknown>;
+  if (isSandboxGoneError({
+    message: typeof record.message === 'string' ? record.message : undefined,
+    status: typeof record.status === 'number' ? record.status : undefined,
+    statusCode:
+      typeof record.statusCode === 'number' ? record.statusCode : undefined,
+  })) {
+    return true;
+  }
+  try {
+    return isSandboxGoneError(JSON.stringify(payload));
+  } catch {
+    return false;
+  }
+}
+
+export function hasSandboxGoneToolFailure(result: {
+  steps?: Array<{ toolResults?: AssistantToolResult[] }>;
+}): boolean {
+  return (result.steps || []).some((step) =>
+    (step.toolResults || []).some((toolResult) => {
+      const toolName =
+        typeof toolResult.toolName === 'string' ? toolResult.toolName : '';
+      if (!toolName.startsWith('sandbox_')) return false;
+      const failure = explicitToolFailurePayload(toolResult);
+      return failure !== undefined && isSandboxGoneFailurePayload(failure);
+    }),
+  );
+}
+
 export function getDeclaredProtectedRoutes(step: {
   protected_routes?: unknown;
   metadata?: { protected_routes?: unknown };

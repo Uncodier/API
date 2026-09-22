@@ -5,7 +5,8 @@ import {
   findSettingsForSender, 
   handleDomainStatusChanged, 
   handleInboundMessage, 
-  handleInvitationStatusChanged 
+  handleInvitationStatusChanged,
+  handleVoiceCallEvent,
 } from "@/lib/services/zavu/webhook-handlers";
 import { sha256 } from "@/lib/security/upstash-rest";
 import {
@@ -138,6 +139,12 @@ async function processEventAsync(event: any) {
       break;
     case "message.failed":
       console.error(`[Zavu Webhook] Message delivery failed for ${event.data?.messageId}: [${event.data?.errorCode}] ${event.data?.errorMessage}`);
+      break;
+    case "call.initiated":
+    case "call.answered":
+    case "call.completed":
+    case "call.failed":
+      await handleVoiceCallEvent(event);
       break;
     case "template.status_changed":
       console.log(`[Zavu Webhook] Template status changed: ${event.data?.templateName} is now ${event.data?.currentStatus}`);
