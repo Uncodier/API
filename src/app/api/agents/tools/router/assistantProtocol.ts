@@ -536,6 +536,7 @@ export const DEFAULT_ALWAYS_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
   'requirement_status',
   'requirement_backlog',
   'requirements',
+  'plan_result',
   
   // direct ui feedback surface
   'show_artifact',

@@ -37,6 +37,13 @@ describe('sandbox harness phase 0 / create params', () => {
     expect((params.source as { type: string }).type).toBe('snapshot');
   });
 
+  it('supports a workflow-specific network policy override', () => {
+    const params = buildSandboxCreateParams({
+      networkPolicy: 'allow-all',
+    });
+    expect(params.networkPolicy).toBe('allow-all');
+  });
+
   it('names sandboxes req-<8>-<8>', () => {
     expect(requirementSandboxName('21c35450-1234-5678-9abc-def012345678', 'abcd1234-5678-4012-8abc-def012345678'))
       .toBe('req-21c35450-abcd1234');

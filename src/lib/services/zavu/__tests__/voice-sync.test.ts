@@ -3,6 +3,13 @@ const mockSyncAgent = jest.fn();
 const mockSyncTools = jest.fn();
 const mockUpdateAgent = jest.fn();
 const mockEnsureSenderWebhook = jest.fn();
+const mockEnsureVoiceSender = jest.fn();
+const mockUpdateSender = jest.fn();
+const mockUpdatePrompt = jest.fn();
+const mockRollbackAgent = jest.fn();
+const mockAttachAgentSenders = jest.fn();
+const mockUpsertConnection = jest.fn();
+const mockRestoreConnections = jest.fn();
 
 jest.mock("@/lib/database/supabase-server", () => ({
   supabaseAdmin: {
@@ -15,6 +22,9 @@ jest.mock("@/lib/database/supabase-server", () => ({
 }));
 jest.mock("../voice-agent", () => ({
   syncCustomerSupportVoiceAgent: mockSyncAgent,
+  updateCustomerSupportVoicePrompt: mockUpdatePrompt,
+  rollbackVoiceAgentSynchronization: mockRollbackAgent,
+  attachCustomerSupportVoiceSenders: mockAttachAgentSenders,
 }));
 jest.mock("../voice-tools", () => ({
   syncVoiceTools: mockSyncTools,
@@ -24,6 +34,12 @@ jest.mock("../agent-client", () => ({
 }));
 jest.mock("../client", () => ({
   ensureSenderWebhook: mockEnsureSenderWebhook,
+  ensureVoiceSender: mockEnsureVoiceSender,
+  updateSender: mockUpdateSender,
+}));
+jest.mock("../persist", () => ({
+  upsertChannelConnection: mockUpsertConnection,
+  restoreChannelConnections: mockRestoreConnections,
 }));
 
 import {
@@ -39,10 +55,38 @@ describe("syncConnectedCustomerSupportVoiceAgent", () => {
       webhookSecret: "whsec_test",
       shouldEnable: true,
       previousEnabled: true,
+      previousAgentInput: {
+        systemPrompt: "Previous prompt",
+        enabled: true,
+      },
+      attachedSenderIds: [],
     });
-    mockSyncTools.mockResolvedValue(undefined);
+    mockSyncTools.mockResolvedValue([
+      {
+        id: "tool_1",
+        name: "capture_lead",
+        description: "Capture a lead",
+        parameters: {},
+        enabled: true,
+      },
+    ]);
+    mockUpdatePrompt.mockResolvedValue({ id: "agent_1", enabled: false });
+    mockAttachAgentSenders.mockImplementation(async (synced) => synced);
     mockUpdateAgent.mockResolvedValue({ id: "agent_1", enabled: true });
-    mockEnsureSenderWebhook.mockResolvedValue({ id: "sender_1" });
+    mockEnsureSenderWebhook.mockResolvedValue({
+      id: "sender_1",
+      channels: [],
+      webhook: { events: ["voice.call.completed"] },
+    });
+    mockEnsureVoiceSender.mockResolvedValue({
+      id: "sender_1",
+      channels: ["voice"],
+      webhook: { events: ["voice.call.completed"] },
+    });
+    mockUpdateSender.mockResolvedValue({ id: "sender_1" });
+    mockUpsertConnection.mockResolvedValue({});
+    mockRestoreConnections.mockResolvedValue({ connections: [] });
+    mockRollbackAgent.mockResolvedValue(undefined);
   });
 
   it("syncs the agent and restores tools for connected Voice senders", async () => {
@@ -50,9 +94,11 @@ describe("syncConnectedCustomerSupportVoiceAgent", () => {
       data: {
         channels: JSON.stringify({
           connections: [{
+            id: "connection_1",
             type: "voice",
             status: "connected",
             zavu_sender_id: "sender_1",
+            metadata: {},
           }],
         }),
       },
@@ -66,6 +112,8 @@ describe("syncConnectedCustomerSupportVoiceAgent", () => {
       siteId: "site-1",
       senderIds: ["sender_1"],
       deferActivation: true,
+      deferSenderAttachment: true,
+      voicePreferences: undefined,
     });
     expect(mockSyncTools).toHaveBeenCalledWith({
       agentId: "agent_1",
@@ -73,9 +121,23 @@ describe("syncConnectedCustomerSupportVoiceAgent", () => {
       webhookSecret: "whsec_test",
     });
     expect(mockEnsureSenderWebhook).toHaveBeenCalledWith("sender_1");
+    expect(mockEnsureVoiceSender).toHaveBeenCalledWith("sender_1");
     expect(mockUpdateAgent).toHaveBeenCalledWith("agent_1", { enabled: true });
+    expect(mockUpsertConnection).toHaveBeenCalledWith(
+      "site-1",
+      "connection_1",
+      expect.objectContaining({
+        status: "connected",
+        metadata: expect.objectContaining({
+          agent_enabled: true,
+          activation_pending: false,
+        }),
+      })
+    );
     expect(mockSyncTools.mock.invocationCallOrder[0])
       .toBeLessThan(mockUpdateAgent.mock.invocationCallOrder[0]);
+    expect(mockSyncTools.mock.invocationCallOrder[0])
+      .toBeLessThan(mockAttachAgentSenders.mock.invocationCallOrder[0]);
   });
 
   it("does nothing when the site has no connected Voice sender", async () => {
@@ -102,7 +164,13 @@ describe("syncConnectedCustomerSupportVoiceAgent", () => {
       })
     ).rejects.toThrow("Tool registration failed");
 
-    expect(mockUpdateAgent).toHaveBeenCalledWith("agent_1", { enabled: true });
+    expect(mockRollbackAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        previousAgentInput: expect.objectContaining({
+          systemPrompt: "Previous prompt",
+        }),
+      })
+    );
   });
 
   it("leaves the staged agent disabled until the caller finalizes activation", async () => {
@@ -117,5 +185,65 @@ describe("syncConnectedCustomerSupportVoiceAgent", () => {
     });
 
     expect(mockUpdateAgent).not.toHaveBeenCalled();
+    expect(mockUpdatePrompt).toHaveBeenCalled();
+  });
+
+  it("activates a pending Voice connection after its prerequisites are ready", async () => {
+    mockMaybeSingle.mockResolvedValue({
+      data: {
+        channels: {
+          connections: [{
+            id: "connection_pending",
+            type: "voice",
+            status: "pending",
+            zavu_sender_id: "sender_1",
+            metadata: { regulatory_status: "approved" },
+          }],
+        },
+      },
+      error: null,
+    });
+
+    await expect(
+      syncConnectedCustomerSupportVoiceAgent("site-1")
+    ).resolves.toBe(true);
+
+    expect(mockEnsureVoiceSender).toHaveBeenCalledWith("sender_1");
+    expect(mockUpsertConnection).toHaveBeenCalledWith(
+      "site-1",
+      "connection_pending",
+      expect.objectContaining({ status: "connected" })
+    );
+  });
+
+  it("keeps regulatory-pending connections deferred without enabling Voice", async () => {
+    mockMaybeSingle.mockResolvedValue({
+      data: {
+        channels: {
+          connections: [{
+            id: "connection_pending",
+            type: "voice",
+            status: "in_progress",
+            zavu_sender_id: "sender_1",
+            metadata: { regulatory_status: "pending_review" },
+          }],
+        },
+      },
+      error: null,
+    });
+
+    await expect(
+      syncConnectedCustomerSupportVoiceAgent("site-1")
+    ).resolves.toBe(true);
+
+    expect(mockEnsureVoiceSender).not.toHaveBeenCalled();
+    expect(mockUpsertConnection).toHaveBeenCalledWith(
+      "site-1",
+      "connection_pending",
+      expect.objectContaining({
+        status: "in_progress",
+        metadata: expect.objectContaining({ activation_pending: true }),
+      })
+    );
   });
 });

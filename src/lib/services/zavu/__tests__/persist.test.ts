@@ -15,6 +15,8 @@ jest.mock("@/lib/database/supabase-server", () => ({
 
 import {
   replaceChannelSenderReferences,
+  restoreChannelConnections,
+  updateAllVoiceConnectionPreferences,
   upsertChannelConnection,
 } from "../persist";
 
@@ -75,6 +77,88 @@ describe("replaceChannelSenderReferences", () => {
       },
     ]);
     expect(mockUpdateEq).toHaveBeenCalledWith("site_id", "site-1");
+  });
+
+  it("writes canonical Voice preferences to every Voice connection", async () => {
+    mockMaybeSingle.mockResolvedValue({
+      data: {
+        channels: {
+          connections: [
+            {
+              id: "voice-1",
+              type: "voice",
+              metadata: { voice_language: "auto" },
+            },
+            {
+              id: "voice-2",
+              type: "voice",
+              metadata: { voice_language: "fr", tts_voice_id: "old" },
+            },
+            {
+              id: "sms-1",
+              type: "sms",
+              metadata: { voice_language: "unchanged" },
+            },
+          ],
+        },
+      },
+      error: null,
+    });
+
+    const result = await updateAllVoiceConnectionPreferences("site-1", {
+      language: "es",
+      ttsVoiceId: "voice-es",
+    });
+
+    expect(result.connections).toEqual([
+      expect.objectContaining({
+        id: "voice-1",
+        metadata: expect.objectContaining({
+          voice_language: "es",
+          tts_voice_id: "voice-es",
+        }),
+      }),
+      expect.objectContaining({
+        id: "voice-2",
+        metadata: expect.objectContaining({
+          voice_language: "es",
+          tts_voice_id: "voice-es",
+        }),
+      }),
+      expect.objectContaining({
+        id: "sms-1",
+        metadata: { voice_language: "unchanged" },
+      }),
+    ]);
+  });
+
+  it("restores connection snapshots without retaining partial metadata", async () => {
+    const snapshot = {
+      id: "voice-1",
+      type: "voice",
+      status: "in_progress",
+      metadata: { regulatory_status: "approved" },
+    };
+    mockMaybeSingle.mockResolvedValue({
+      data: {
+        channels: {
+          connections: [{
+            ...snapshot,
+            status: "connected",
+            metadata: {
+              ...snapshot.metadata,
+              zavu_agent_id: "agent_partial",
+              activation_pending: false,
+            },
+          }],
+        },
+      },
+      error: null,
+    });
+
+    await restoreChannelConnections("site-1", [snapshot]);
+
+    expect(mockUpdate.mock.calls[0][0].channels.connections).toEqual([snapshot]);
   });
 
   it("replaces sibling sender references in the same write that finalizes Voice", async () => {

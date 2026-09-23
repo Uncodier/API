@@ -194,7 +194,12 @@ export class SandboxService {
   /**
    * Runs a command in the sandbox.
    */
-  static async runCommandInSandbox(sandbox: Sandbox, command: string, args: string[] = [], cwd: string = SandboxService.WORK_DIR) {
+  static async runCommandInSandbox(
+    sandbox: Sandbox,
+    command: string,
+    args: string[] = [],
+    cwd: string = SandboxService.WORK_DIR,
+  ) {
     const result = await sandbox.runCommand({ cmd: command, args, cwd });
 
     return {

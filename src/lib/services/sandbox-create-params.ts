@@ -29,6 +29,7 @@ export function buildSandboxCreateParams(opts?: {
   exposePreviewPort?: boolean;
   persistent?: boolean;
   tags?: Record<string, string>;
+  networkPolicy?: 'allow-all' | 'deny-all' | { allow: string[] | Record<string, unknown[]> };
   /** Failover only on cold create — snapshots are region-bound. */
   coldCreate?: boolean;
   githubToken?: string;
@@ -45,7 +46,9 @@ export function buildSandboxCreateParams(opts?: {
   if (ports.length) params.ports = ports;
   if (opts?.name) params.name = opts.name;
   if (opts?.tags) params.tags = opts.tags;
-  params.networkPolicy = buildRequirementNetworkPolicy(opts?.githubToken || process.env.GITHUB_TOKEN);
+  params.networkPolicy =
+    opts?.networkPolicy ??
+    buildRequirementNetworkPolicy(opts?.githubToken || process.env.GITHUB_TOKEN);
   if (opts?.snapshotId) {
     params.source = { type: 'snapshot', snapshotId: opts.snapshotId };
   } else if (opts?.git) {

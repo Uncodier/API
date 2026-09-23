@@ -1,4 +1,5 @@
 import type { UiMediaOutputType } from './ui-media-contract';
+import type { WorkflowToolExecutionTracker } from '@/lib/services/workflow-robot/execution-tracker';
 
 export interface AssistantContext {
   instance: any;
@@ -30,4 +31,5 @@ export interface AssistantContext {
   expectedResultsAmount: number;
   toolOverrides?: Record<string, any>;
   uiMediaOutputType?: UiMediaOutputType;
+  toolExecutionTracker?: WorkflowToolExecutionTracker;
 }

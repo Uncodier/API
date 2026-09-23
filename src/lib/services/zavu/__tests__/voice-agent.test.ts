@@ -10,6 +10,7 @@ const mockGetSenderAgent = jest.fn();
 const mockCreateStandaloneAgent = jest.fn();
 const mockUpdateAgent = jest.fn();
 const mockAttachSenderToAgent = jest.fn();
+const mockDetachSenderFromAgent = jest.fn();
 
 jest.mock(
   "@/lib/agentbase/services/agent/BackgroundServices/BackgroundBuilder",
@@ -65,6 +66,7 @@ jest.mock("../agent-client", () => ({
 }));
 jest.mock("../client", () => ({
   attachSenderToAgent: mockAttachSenderToAgent,
+  detachSenderFromAgent: mockDetachSenderFromAgent,
 }));
 
 import {
@@ -107,6 +109,25 @@ describe("fitZavuSystemPrompt", () => {
     );
   });
 
+  it("applies persisted language and speaking voice preferences", () => {
+    const input = buildZavuAgentInput({
+      ...localAgent,
+      configuration: {
+        zavu: {
+          voice: {
+            language: "es",
+            ttsVoiceId: "aura-2-celeste-es",
+          },
+        },
+      },
+    }, "System prompt");
+
+    expect(input.voice).toMatchObject({
+      language: "es",
+      ttsVoiceId: "aura-2-celeste-es",
+    });
+  });
+
   it("adds linked and configured files to the synchronized background", async () => {
     mockGetSiteInfo.mockResolvedValue({ site: {}, settings: {} });
     mockGetActiveCampaigns.mockResolvedValue([]);
@@ -128,6 +149,11 @@ describe("fitZavuSystemPrompt", () => {
       { id: "asset-2", name: "Policy.txt", path: "policy.txt", file_path: "policy.txt" },
     ]);
     expect(background).toContain("FAQ content");
+    expect(background).toContain("# Voice Call Runtime");
+    expect(background).toContain("`capture_lead`");
+    expect(background.indexOf("# Voice Call Runtime")).toBeLessThan(
+      background.indexOf("Base background")
+    );
   });
 });
 
@@ -139,6 +165,8 @@ describe("syncCustomerSupportVoiceAgent", () => {
     mockBuildAgentPrompt.mockReturnValue("Base background");
     mockGetAgentFiles.mockResolvedValue([]);
     mockPersistAgent.mockResolvedValue({ error: null });
+    mockAttachSenderToAgent.mockResolvedValue({});
+    mockDetachSenderFromAgent.mockResolvedValue({});
     mockMaybeSingle.mockResolvedValue({
       data: {
         ...localAgent,
@@ -150,7 +178,18 @@ describe("syncCustomerSupportVoiceAgent", () => {
       id: "agent_1",
       enabled: true,
       name: "Customer Support",
+      provider: "zavu",
+      model: "gpt-4o-mini",
       systemPrompt: "Old prompt",
+      contextWindowMessages: 20,
+      includeContactMetadata: true,
+      triggerOnChannels: ["voice"],
+      triggerOnMessageTypes: ["voice_call"],
+      voice: {
+        enabled: true,
+        language: "en",
+        ttsVoiceId: "voice-en",
+      },
     });
     mockUpdateAgent
       .mockResolvedValueOnce({
@@ -191,7 +230,22 @@ describe("syncCustomerSupportVoiceAgent", () => {
     expect(mockUpdateAgent).toHaveBeenNthCalledWith(
       2,
       "agent_1",
-      { enabled: true }
+      expect.objectContaining({
+        name: "Customer Support",
+        provider: "zavu",
+        model: "gpt-4o-mini",
+        systemPrompt: "Old prompt",
+        enabled: true,
+        contextWindowMessages: 20,
+        includeContactMetadata: true,
+        triggerOnChannels: ["voice"],
+        triggerOnMessageTypes: ["voice_call"],
+        voice: {
+          enabled: true,
+          language: "en",
+          ttsVoiceId: "voice-en",
+        },
+      })
     );
     expect(mockPersistAgent).not.toHaveBeenCalled();
   });
@@ -227,5 +281,37 @@ describe("syncCustomerSupportVoiceAgent", () => {
     );
     expect(mockUpdateAgent.mock.invocationCallOrder[0])
       .toBeLessThan(mockAttachSenderToAgent.mock.invocationCallOrder[0]);
+  });
+
+  it("detaches newly attached senders and restores full agent state on failure", async () => {
+    mockGetSenderAgent.mockRejectedValueOnce(
+      Object.assign(new Error("Sender not found"), { status: 404 })
+    );
+    mockPersistAgent.mockResolvedValueOnce({
+      error: new Error("Failed to persist mapping"),
+    });
+
+    await expect(syncCustomerSupportVoiceAgent({
+      siteId: "site-1",
+      senderIds: ["sender_1"],
+      deferActivation: true,
+    })).rejects.toThrow("Failed to persist the Zavu agent mapping");
+
+    expect(mockDetachSenderFromAgent).toHaveBeenCalledWith(
+      "sender_1",
+      "agent_1"
+    );
+    expect(mockUpdateAgent).toHaveBeenLastCalledWith(
+      "agent_1",
+      expect.objectContaining({
+        systemPrompt: "Old prompt",
+        enabled: true,
+        voice: {
+          enabled: true,
+          language: "en",
+          ttsVoiceId: "voice-en",
+        },
+      })
+    );
   });
 });

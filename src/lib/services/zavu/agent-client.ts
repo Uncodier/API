@@ -1,4 +1,21 @@
 import { zavuFetch } from "./client";
+import type { ZavuAgentVoiceCatalog } from "./voice-preferences";
+
+export type ZavuAgentProvider =
+  | "openai"
+  | "anthropic"
+  | "google"
+  | "mistral"
+  | "zavu";
+
+export interface ZavuAgentVoiceConfig {
+  enabled: boolean;
+  greeting?: string;
+  language?: string;
+  ttsVoiceId?: string;
+  interruptible?: boolean;
+  maxCallDurationMinutes?: number;
+}
 
 export interface ZavuAgent {
   id: string;
@@ -7,25 +24,30 @@ export interface ZavuAgent {
   senderId?: string;
   senderIds?: string[];
   systemPrompt: string;
+  provider?: ZavuAgentProvider;
+  model?: string;
+  contextWindowMessages?: number;
+  includeContactMetadata?: boolean;
+  maxTokens?: number | null;
+  temperature?: number | null;
+  triggerOnChannels?: string[];
+  triggerOnMessageTypes?: string[];
+  voice?: ZavuAgentVoiceConfig;
 }
 
 export interface ZavuAgentInput {
   name: string;
-  provider: "zavu";
+  provider: ZavuAgentProvider;
   model: string;
   systemPrompt: string;
   enabled?: boolean;
   contextWindowMessages?: number;
   includeContactMetadata?: boolean;
+  maxTokens?: number | null;
+  temperature?: number | null;
   triggerOnChannels?: string[];
   triggerOnMessageTypes?: string[];
-  voice?: {
-    enabled: boolean;
-    greeting?: string;
-    language?: string;
-    interruptible?: boolean;
-    maxCallDurationMinutes?: number;
-  };
+  voice?: ZavuAgentVoiceConfig;
 }
 
 export interface ZavuAgentToolInput {
@@ -83,6 +105,22 @@ export async function updateAgent(
       body: JSON.stringify(params),
     })
   );
+}
+
+export async function listAgentVoices(
+  language?: string
+): Promise<ZavuAgentVoiceCatalog> {
+  const search = new URLSearchParams();
+  if (language) search.set("language", language);
+  const query = search.size ? `?${search.toString()}` : "";
+  const payload = await zavuFetch<ZavuAgentVoiceCatalog>(
+    `/agents/voices${query}`
+  );
+  return {
+    items: Array.isArray(payload?.items) ? payload.items : [],
+    languages: Array.isArray(payload?.languages) ? payload.languages : [],
+    ...(typeof payload?.total === "number" ? { total: payload.total } : {}),
+  };
 }
 
 export async function listAgentTools(agentId: string): Promise<ZavuAgentTool[]> {

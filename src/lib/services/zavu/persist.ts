@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "@/lib/database/supabase-server";
 import { refreshSiteConfigurationCaches } from "@/lib/services/site-configuration-cache";
 import { v4 as uuidv4 } from "uuid";
+import type { VoiceAgentPreferences } from "./voice-preferences";
 
 export async function getChannelConnection(siteId: string, channelId: string | undefined) {
   if (!channelId) return null;
@@ -175,4 +176,98 @@ export async function upsertChannelConnection(
   await refreshSiteConfigurationCaches(siteId);
 
   return { channelId, connection: nextConnection, connections };
+}
+
+export async function updateAllVoiceConnectionPreferences(
+  siteId: string,
+  preferences: VoiceAgentPreferences
+): Promise<{ connections: any[] }> {
+  const { data: settingsRow, error: settingsError } = await supabaseAdmin
+    .from("settings")
+    .select("channels")
+    .eq("site_id", siteId)
+    .maybeSingle();
+  if (settingsError) {
+    throw new Error("Failed to fetch site settings");
+  }
+  if (!settingsRow) {
+    throw new Error("Site settings not found");
+  }
+
+  const currentChannels = settingsRow.channels || {};
+  const currentConnections = Array.isArray((currentChannels as any).connections)
+    ? (currentChannels as any).connections
+    : [];
+  const now = new Date().toISOString();
+  const connections = currentConnections.map((connection: any) =>
+    connection.type === "voice"
+      ? {
+          ...connection,
+          metadata: {
+            ...(connection.metadata || {}),
+            voice_language: preferences.language,
+            tts_voice_id: preferences.ttsVoiceId || null,
+          },
+          updated_at: now,
+        }
+      : connection
+  );
+
+  const { error: updateError } = await supabaseAdmin
+    .from("settings")
+    .update({
+      channels: {
+        ...(currentChannels as Record<string, unknown>),
+        connections,
+      },
+    })
+    .eq("site_id", siteId);
+  if (updateError) {
+    throw new Error("Failed to save Voice preferences on channel connections");
+  }
+  await refreshSiteConfigurationCaches(siteId);
+  return { connections };
+}
+
+export async function restoreChannelConnections(
+  siteId: string,
+  snapshots: any[]
+): Promise<{ connections: any[] }> {
+  if (snapshots.length === 0) return { connections: [] };
+  const { data: settingsRow, error: settingsError } = await supabaseAdmin
+    .from("settings")
+    .select("channels")
+    .eq("site_id", siteId)
+    .maybeSingle();
+  if (settingsError || !settingsRow) {
+    throw new Error("Failed to fetch site settings");
+  }
+
+  const currentChannels = settingsRow.channels || {};
+  const currentConnections = Array.isArray((currentChannels as any).connections)
+    ? (currentChannels as any).connections
+    : [];
+  const snapshotsById = new Map(
+    snapshots
+      .filter((connection) => connection?.id)
+      .map((connection) => [connection.id, connection])
+  );
+  const connections = currentConnections.map(
+    (connection: any) => snapshotsById.get(connection.id) || connection
+  );
+
+  const { error: updateError } = await supabaseAdmin
+    .from("settings")
+    .update({
+      channels: {
+        ...(currentChannels as Record<string, unknown>),
+        connections,
+      },
+    })
+    .eq("site_id", siteId);
+  if (updateError) {
+    throw new Error("Failed to restore Voice channel connections");
+  }
+  await refreshSiteConfigurationCaches(siteId);
+  return { connections };
 }

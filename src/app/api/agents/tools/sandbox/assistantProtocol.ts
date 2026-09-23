@@ -24,6 +24,7 @@ import { sandboxReadLogsTool } from '@/app/api/agents/tools/sandbox_read_logs/as
 import { getQaSandboxTools } from '@/app/api/agents/tools/sandbox/qa-tools';
 import { sandboxDbMigrateTool } from '@/app/api/agents/tools/sandbox/sandbox-db-migrate';
 import { sandboxDbInspectTool } from '@/app/api/agents/tools/sandbox/sandbox-db-inspect';
+import { sandboxBrowserTool } from './sandbox-browser-tool';
 import {
   sandboxWriteFileTool,
   sandboxReadLargeFileTool,
@@ -114,6 +115,10 @@ export type SandboxToolsContext = {
   cycle_baseline_at?: string;
   /** Updated when sandbox_push_checkpoint snapshots the VM (SDK stops the old sandbox). */
   activeSandboxRef?: { current: Sandbox };
+  /** Enables the pre-provisioned agent-browser wrapper for workflow steps. */
+  browser_enabled?: boolean;
+  browser_session?: string;
+  browser_allowed_domains?: string[];
 };
 
 export async function deductSandboxToolCredits(
@@ -177,7 +182,12 @@ export function sandboxRunCommandTool(sandbox: Sandbox, toolsCtx?: SandboxToolsC
       }
 
       const s0 = liveSandbox(sandbox, toolsCtx);
-      return SandboxService.runCommandInSandbox(s0, cmdToRun, cmdArgs, resolvePath(args.cwd, WORK_DIR));
+      return SandboxService.runCommandInSandbox(
+        s0,
+        cmdToRun,
+        cmdArgs,
+        resolvePath(args.cwd, WORK_DIR),
+      );
     }
   };
 }
@@ -446,9 +456,17 @@ export function getSandboxTools(
   sandbox: Sandbox,
   requirementId?: string,
   toolsCtx?: SandboxToolsContext,
+  browserSecrets?: Record<string, string>,
 ) {
   return [
     skillLookupTool({ requirement_type: toolsCtx?.requirement_type, toolsCtx }),
+    ...(toolsCtx?.browser_enabled
+      ? [sandboxBrowserTool(sandbox, {
+        secretEnvironment: browserSecrets,
+        session: toolsCtx.browser_session,
+        allowedDomains: toolsCtx.browser_allowed_domains,
+      })]
+      : []),
     sandboxCodeSearchTool(sandbox, toolsCtx),
     sandboxRunCommandTool(sandbox, toolsCtx),
     sandboxStartBackgroundCommandTool(sandbox, toolsCtx),

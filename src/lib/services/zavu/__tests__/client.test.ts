@@ -15,6 +15,7 @@ import {
 import {
   createStandaloneAgent,
   getSenderAgent,
+  listAgentVoices,
   upsertAgentTool,
 } from "../agent-client";
 import { getVoiceCall, hangupVoiceCall, placeVoiceCall } from "../voice-call-client";
@@ -437,6 +438,23 @@ describe("Zavu client webhook contract", () => {
       2,
       "https://api.zavu.dev/v1/agents/agent_1/tools/tool_1",
       expect.objectContaining({ method: "PATCH" })
+    );
+  });
+
+  it("lists voices using the documented language filter", async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce(mockJson(200, {
+      items: [{ id: "voice-es", name: "Celeste", language: "es" }],
+      languages: ["auto", "es"],
+      total: 1,
+    }));
+
+    await expect(listAgentVoices("es")).resolves.toMatchObject({
+      items: [{ id: "voice-es" }],
+      languages: ["auto", "es"],
+    });
+    expect(global.fetch).toHaveBeenCalledWith(
+      "https://api.zavu.dev/v1/agents/voices?language=es",
+      expect.any(Object)
     );
   });
 

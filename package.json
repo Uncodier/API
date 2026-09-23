@@ -32,6 +32,7 @@
     "mcp": "tsx mcp-server/index.ts"
   },
   "dependencies": {
+    "@agent-browser/sandbox": "0.38.1",
     "@ai-sdk/openai": "4.0.16",
     "@breezystack/lamejs": "1.2.7",
     "@google/genai": "1.25.0",

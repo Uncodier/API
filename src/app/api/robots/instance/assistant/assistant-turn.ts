@@ -7,6 +7,7 @@ import {
 } from '@/lib/services/robot-instance/vision-message-images';
 import { getInstanceAssistantTools } from './utils';
 import type { AssistantContext } from './types';
+import { instrumentWorkflowTools } from '@/lib/services/workflow-robot/execution-tracker';
 
 export async function processAssistantTurn(
   context: AssistantContext,
@@ -14,7 +15,7 @@ export async function processAssistantTurn(
 ): Promise<any> {
   'use step';
 
-  const fullTools = await getInstanceAssistantTools(
+  const availableTools = await getInstanceAssistantTools(
     context.executionOptions.site_id,
     context.executionOptions.user_id,
     context.executionOptions.instance_id,
@@ -24,6 +25,9 @@ export async function processAssistantTurn(
     context.executionOptions.requirement_id,
     context.uiMediaOutputType,
   );
+  const fullTools = context.toolExecutionTracker
+    ? instrumentWorkflowTools(availableTools, context.toolExecutionTracker)
+    : availableTools;
   const options = {
     ...context.executionOptions,
     system_prompt: context.systemPrompt,

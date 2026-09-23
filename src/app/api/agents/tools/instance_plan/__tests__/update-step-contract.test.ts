@@ -93,6 +93,9 @@ describe('updateInstancePlanCore step contracts', () => {
         title: 'Implement contact form',
         type: 'task',
         instructions: 'Implement the real contact form.',
+        requires_browser: true,
+        browser_allowed_domains: ['example.com'],
+        browser_secret_names: ['SERVICE_USER'],
       }],
     });
 
@@ -103,6 +106,10 @@ describe('updateInstancePlanCore step contracts', () => {
             expected_output: expect.stringContaining('Implement contact form'),
             success_criteria: expect.any(Array),
             validation_rules: expect.any(Array),
+            requires_browser: true,
+            requires_sandbox: true,
+            browser_allowed_domains: ['example.com'],
+            browser_secret_names: ['SERVICE_USER'],
             metadata: expect.objectContaining({
               backlog_item_id: 'item-1',
             }),
@@ -174,6 +181,54 @@ describe('updateInstancePlanCore step contracts', () => {
             validation_rules: [],
           }),
         ],
+      }),
+    );
+  });
+
+  it('persists the runner-owned structured step result', async () => {
+    const runningStep = {
+      id: 'step-1',
+      order: 1,
+      title: 'Collect opportunities',
+      status: 'in_progress',
+      metadata: { backlog_item_id: 'item-1' },
+    };
+    single
+      .mockResolvedValueOnce({
+        data: existingPlan([runningStep]),
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        data: { id: PLAN_ID },
+        error: null,
+      });
+
+    await updateInstancePlanCore({
+      plan_id: PLAN_ID,
+      instance_id: INSTANCE_ID,
+      site_id: SITE_ID,
+      steps: [{
+        id: 'step-1',
+        status: 'completed',
+        actual_output: '{"total_opportunities":1}',
+        result: {
+          status: 'completed',
+          summary: 'Collected one opportunity.',
+          data: { total_opportunities: 1 },
+          evidence: [{ type: 'url', reference: 'https://example.com/job/1' }],
+        },
+      }],
+    }, { trustedRunner: true });
+
+    expect(builder.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        steps: [expect.objectContaining({
+          status: 'completed',
+          result: expect.objectContaining({
+            status: 'completed',
+            data: { total_opportunities: 1 },
+          }),
+        })],
       }),
     );
   });

@@ -53,6 +53,9 @@ export function buildRunSteps(nodes: WorkflowGraphNode[]) {
   return ordered.map((node, index) => {
     const settings = stepSettings(node);
     const title = (node.settings?.title as string) || promptText(node).slice(0, 80) || `Workflow ${node.type}`;
+    const hasBrowserFlag = typeof settings.requires_browser === 'boolean';
+    const requiresBrowser = settings.requires_browser === true;
+    const requiresSandbox = Boolean(settings.requires_sandbox || requiresBrowser);
     return {
       id: `step_${index + 1}`,
       title,
@@ -65,6 +68,7 @@ export function buildRunSteps(nodes: WorkflowGraphNode[]) {
       success_criteria: settings.success_criteria || [],
       validation_rules: settings.validation_rules || [],
       actual_output: null,
+      result: null,
       started_at: null,
       completed_at: null,
       retry_count: 0,
@@ -73,10 +77,16 @@ export function buildRunSteps(nodes: WorkflowGraphNode[]) {
       error_message: null,
       artifacts: [],
       skill: settings.skill || 'makinari-rol-workflow-step',
-      requires_sandbox: Boolean(settings.requires_sandbox),
+      requires_sandbox: requiresSandbox,
+      ...(hasBrowserFlag ? { requires_browser: requiresBrowser } : {}),
+      browser_allowed_domains: settings.browser_allowed_domains || [],
+      browser_secret_names: settings.browser_secret_names || [],
       metadata: {
         node_id: node.id,
-        requires_sandbox: Boolean(settings.requires_sandbox),
+        requires_sandbox: requiresSandbox,
+        ...(hasBrowserFlag ? { requires_browser: requiresBrowser } : {}),
+        browser_allowed_domains: settings.browser_allowed_domains || [],
+        browser_secret_names: settings.browser_secret_names || [],
         mcp_actions: settings.mcp_actions || [],
         workflow_step: true,
       },

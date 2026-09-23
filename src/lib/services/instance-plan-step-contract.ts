@@ -8,6 +8,10 @@ export type PlanStepContractInput = {
   expected_output?: string;
   success_criteria?: unknown[];
   validation_rules?: unknown[];
+  requires_sandbox?: boolean;
+  requires_browser?: boolean;
+  browser_allowed_domains?: string[];
+  browser_secret_names?: string[];
   test_command?: string | null;
   protected_routes?: unknown[];
   validation_targets?: unknown[];
@@ -122,6 +126,9 @@ export function normalizePlanStepContract<T extends PlanStepContractInput>(
   const research = isResearchPlanStep(step);
   const title = String(step.title || step.description || 'Plan step').trim();
   const normalized = { ...step } as T & PlanStepContractInput;
+  if (step.requires_browser === true) {
+    normalized.requires_sandbox = true;
+  }
 
   if (research) {
     normalized.role = 'investigate';

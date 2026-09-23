@@ -238,14 +238,18 @@ export async function attachSenderToAgent(senderId: string, requestedAgentId?: s
   });
 }
 
-export async function detachSenderFromAgent(senderId: string) {
-  const agentId = process.env.ZAVUDEV_AGENT_ID;
+export async function detachSenderFromAgent(
+  senderId: string,
+  requestedAgentId?: string
+) {
+  const agentId = requestedAgentId || process.env.ZAVUDEV_AGENT_ID;
   if (!agentId) return null;
 
   try {
-    return await zavuFetch(`/agents/${agentId}/senders/${senderId}`, {
-      method: "DELETE",
-    });
+    return await zavuFetch(
+      `/agents/${encodeURIComponent(agentId)}/senders/${encodeURIComponent(senderId)}`,
+      { method: "DELETE" }
+    );
   } catch (error: any) {
     if (error?.status === 404 || error?.status === 400) return null;
     throw error;

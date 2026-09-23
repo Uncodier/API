@@ -61,6 +61,10 @@ const CreateInstancePlanSchema = z.object({
     artifacts: z.preprocess(parseIfString, z.array(z.any())).optional().nullable(),
     role: z.string().optional(),
     skill: z.string().optional(),
+    requires_sandbox: z.boolean().optional(),
+    requires_browser: z.boolean().optional(),
+    browser_allowed_domains: z.preprocess(parseIfString, z.array(z.string())).optional(),
+    browser_secret_names: z.preprocess(parseIfString, z.array(z.string())).optional(),
     test_command: z.string().optional(),
     protected_routes: z.preprocess(parseIfString, z.array(z.string())).optional(),
     validation_targets: z.preprocess(

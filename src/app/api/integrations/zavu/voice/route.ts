@@ -10,24 +10,50 @@ import {
   ensureSenderWebhook,
   ensureVoiceSender,
   getChannelConnection,
+  getCustomerSupportVoicePreferences,
   getOwnedNumbers,
+  listAgentVoices,
+  mergeVoiceAgentPreferences,
   purchaseNumber,
   requireZavuSiteAccess,
   requireZavuSiteManager,
+  restoreChannelConnections,
+  rollbackConnectedVoiceAgentSync,
+  rollbackVoiceAgentSynchronization,
   syncConnectedCustomerSupportVoiceAgent,
+  syncConnectedCustomerSupportVoiceAgentDetailed,
   syncCustomerSupportVoiceAgentWithTools,
   updateAgent,
+  updateAllVoiceConnectionPreferences,
+  updateCustomerSupportVoicePreferences,
   updateSender,
   upsertChannelConnection,
+  validateVoiceAgentPreferences,
 } from "@/lib/services/zavu";
+import {
+  hasVoicePreferencesPatch,
+  voiceRequestSchema,
+  voiceSyncRequestSchema,
+} from "@/lib/services/zavu/voice-route-preferences";
 
-const voiceRequestSchema = z.object({
-  siteId: z.string().uuid(),
-  channelId: z.string().uuid().optional(),
-  name: z.string().trim().max(100).optional(),
-  phoneNumber: z.string().trim().min(5).max(30),
-  active: z.boolean().optional(),
-}).strict();
+async function resolveVoicePreferences(
+  siteId: string,
+  patch: { language?: string; ttsVoiceId?: string | null }
+) {
+  const current = await getCustomerSupportVoicePreferences(siteId);
+  if (!hasVoicePreferencesPatch(patch)) {
+    return { current, desired: current, changed: false };
+  }
+  const desired = mergeVoiceAgentPreferences(current, patch);
+  validateVoiceAgentPreferences(desired, await listAgentVoices());
+  return {
+    current,
+    desired,
+    changed:
+      current.language !== desired.language ||
+      current.ttsVoiceId !== desired.ttsVoiceId,
+  };
+}
 
 function unwrapPhoneNumbers(payload: any): any[] {
   return payload?.items || payload?.results || (Array.isArray(payload) ? payload : []);
@@ -162,10 +188,22 @@ export async function POST(request: NextRequest) {
     let resolved: Awaited<ReturnType<typeof resolveSender>> | undefined;
     let synced: Awaited<ReturnType<typeof syncCustomerSupportVoiceAgentWithTools>> | undefined;
     let staged: Awaited<ReturnType<typeof upsertChannelConnection>> | undefined;
+    let preferencesState: Awaited<ReturnType<typeof resolveVoicePreferences>> | undefined;
+    let preferencesPersisted = false;
+    let finalConnectionPersisted = false;
     let voiceActivationAttempted = false;
     try {
+      preferencesState = await resolveVoicePreferences(input.siteId, input);
+      const { current: currentPreferences, desired: voicePreferences } =
+        preferencesState;
       resolved = await resolveSender(input);
       const regulatoryStatus = getRegulatoryStatus(resolved.phone);
+      const regulatoryDeferred = [
+        "pending",
+        "pending_review",
+        "in_review",
+        "under_review",
+      ].includes(regulatoryStatus || "");
       const stagedPatch = {
         type: "voice",
         name: input.name || "Voice Channel",
@@ -177,6 +215,8 @@ export async function POST(request: NextRequest) {
           activation_pending: true,
           webhook_events: resolved.sender.webhook?.events || [],
           previous_sender_id: resolved.replacedSenderId,
+          voice_language: currentPreferences.language,
+          tts_voice_id: currentPreferences.ttsVoiceId || null,
         },
       };
       staged = await upsertChannelConnection(input.siteId, input.channelId, {
@@ -188,21 +228,33 @@ export async function POST(request: NextRequest) {
         siteId: input.siteId,
         senderIds: [resolved.sender.id],
         activate: false,
+        voicePreferences,
       });
       const connectionPatch = {
         ...stagedPatch,
         metadata: {
           ...stagedPatch.metadata,
           zavu_agent_id: synced.agent.id,
+          voice_language: voicePreferences.language,
+          tts_voice_id: voicePreferences.ttsVoiceId || null,
         },
       };
       const agent = await updateAgent(synced.agent.id, {
         enabled: synced.shouldEnable,
       });
-      voiceActivationAttempted = synced.shouldEnable && !resolved.voiceWasEnabled;
-      const sender = synced.shouldEnable
+      const shouldActivateSender = synced.shouldEnable && !regulatoryDeferred;
+      voiceActivationAttempted =
+        shouldActivateSender && !resolved.voiceWasEnabled;
+      const sender = shouldActivateSender
         ? await ensureVoiceSender(resolved.sender.id)
         : resolved.sender;
+      if (preferencesState.changed) {
+        await updateCustomerSupportVoicePreferences(input.siteId, {
+          language: voicePreferences.language,
+          ttsVoiceId: voicePreferences.ttsVoiceId || null,
+        });
+        preferencesPersisted = true;
+      }
       let persisted = staged;
       if (synced.shouldEnable) {
         persisted = await upsertChannelConnection(
@@ -210,10 +262,11 @@ export async function POST(request: NextRequest) {
           staged.channelId,
           {
             ...connectionPatch,
-            status: regulatoryStatus === "pending_review" ? "in_progress" : "connected",
+            status: regulatoryDeferred ? "in_progress" : "connected",
             metadata: {
               ...connectionPatch.metadata,
-              activation_pending: false,
+              agent_enabled: true,
+              activation_pending: regulatoryDeferred,
               webhook_events: sender.webhook?.events || [],
               previous_sender_id: undefined,
             },
@@ -234,6 +287,11 @@ export async function POST(request: NextRequest) {
           {
             ...connectionPatch,
             status: "pending",
+            metadata: {
+              ...connectionPatch.metadata,
+              agent_enabled: false,
+              activation_pending: true,
+            },
           },
           resolved.replacedSenderId
             ? {
@@ -245,6 +303,19 @@ export async function POST(request: NextRequest) {
             : undefined
         );
       }
+      finalConnectionPersisted = true;
+      const canonical = await updateAllVoiceConnectionPreferences(
+        input.siteId,
+        voicePreferences
+      );
+      persisted = {
+        ...persisted,
+        connections: canonical.connections,
+        connection:
+          canonical.connections.find(
+            (connection) => connection.id === persisted.channelId
+          ) || persisted.connection,
+      };
 
       return NextResponse.json({
         success: true,
@@ -256,8 +327,31 @@ export async function POST(request: NextRequest) {
         regulatoryStatus,
         zavuAgentId: agent.id,
         agentEnabled: agent.enabled,
+        voiceLanguage: voicePreferences.language,
+        ttsVoiceId: voicePreferences.ttsVoiceId || null,
       });
     } catch (zavuError: any) {
+      if (preferencesPersisted && preferencesState) {
+        try {
+          await updateCustomerSupportVoicePreferences(
+            input.siteId,
+            preferencesState.current
+          );
+          await updateAllVoiceConnectionPreferences(
+            input.siteId,
+            preferencesState.current
+          );
+        } catch (rollbackError) {
+          console.error("[Zavu Voice] Failed to restore Voice preferences:", rollbackError);
+        }
+      }
+      if (finalConnectionPersisted && staged) {
+        try {
+          await restoreChannelConnections(input.siteId, [staged.connection]);
+        } catch (rollbackError) {
+          console.error("[Zavu Voice] Failed to restore staged connection:", rollbackError);
+        }
+      }
       if (voiceActivationAttempted && resolved && !resolved.voiceWasEnabled) {
         try {
           await updateSender(resolved.sender.id, { enableVoice: false });
@@ -270,7 +364,7 @@ export async function POST(request: NextRequest) {
       }
       if (synced) {
         try {
-          await updateAgent(synced.agent.id, { enabled: synced.previousEnabled });
+          await rollbackVoiceAgentSynchronization(synced);
         } catch (rollbackError) {
           console.error(
             `[Zavu Voice] Failed to restore agent ${synced.agent.id} during rollback:`,
@@ -305,17 +399,82 @@ export async function POST(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   try {
-    const body = z.object({ siteId: z.string().uuid() }).safeParse(await request.json());
+    const body = voiceSyncRequestSchema.safeParse(await request.json());
     if (!body.success) {
-      return NextResponse.json({ error: "Invalid siteId" }, { status: 400 });
+      return NextResponse.json({ error: "Invalid Voice configuration" }, { status: 400 });
     }
-    await requireZavuSiteAccess(request, body.data.siteId);
+    const updatesPreferences = hasVoicePreferencesPatch(body.data);
+    if (!updatesPreferences) {
+      await requireZavuSiteAccess(request, body.data.siteId);
+      const synced = await syncConnectedCustomerSupportVoiceAgent(body.data.siteId);
+      return NextResponse.json({
+        success: true,
+        synced,
+      });
+    }
 
-    const synced = await syncConnectedCustomerSupportVoiceAgent(body.data.siteId);
-    return NextResponse.json({
-      success: true,
-      synced,
-    });
+    await requireZavuSiteManager(request, body.data.siteId);
+    const channel = await getChannelConnection(
+      body.data.siteId,
+      body.data.channelId
+    );
+    if (!channel || channel.type !== "voice") {
+      return NextResponse.json(
+        { error: "Voice channel not found" },
+        { status: 404 }
+      );
+    }
+    const preferences = await resolveVoicePreferences(
+      body.data.siteId,
+      body.data
+    );
+    const syncResult = await syncConnectedCustomerSupportVoiceAgentDetailed(
+      body.data.siteId,
+      { voicePreferences: preferences.desired }
+    );
+    let preferencesPersisted = false;
+    try {
+      await updateCustomerSupportVoicePreferences(body.data.siteId, {
+        language: preferences.desired.language,
+        ttsVoiceId: preferences.desired.ttsVoiceId || null,
+      });
+      preferencesPersisted = true;
+      const persisted = await updateAllVoiceConnectionPreferences(
+        body.data.siteId,
+        preferences.desired
+      );
+      return NextResponse.json({
+        success: true,
+        synced: syncResult.synced,
+        connection: persisted.connections.find(
+          (connection) => connection.id === body.data.channelId
+        ),
+        connections: persisted.connections,
+        voiceLanguage: preferences.desired.language,
+        ttsVoiceId: preferences.desired.ttsVoiceId || null,
+      });
+    } catch (persistenceError) {
+      try {
+        await rollbackConnectedVoiceAgentSync(body.data.siteId, syncResult);
+      } catch (rollbackError) {
+        console.error("[Zavu Voice] Failed to restore synchronized agent:", rollbackError);
+      }
+      if (preferencesPersisted) {
+        try {
+          await updateCustomerSupportVoicePreferences(
+            body.data.siteId,
+            preferences.current
+          );
+          await updateAllVoiceConnectionPreferences(
+            body.data.siteId,
+            preferences.current
+          );
+        } catch (rollbackError) {
+          console.error("[Zavu Voice] Failed to restore Voice preferences:", rollbackError);
+        }
+      }
+      throw persistenceError;
+    }
   } catch (error: any) {
     console.error("[Zavu Voice] Agent sync failed:", error);
     return NextResponse.json(

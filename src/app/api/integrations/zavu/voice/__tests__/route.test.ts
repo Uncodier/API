@@ -5,6 +5,7 @@ const mockSyncCustomerSupportVoiceAgentWithTools = jest.fn();
 const mockSyncConnectedCustomerSupportVoiceAgent = jest.fn();
 const mockUpsertChannelConnection = jest.fn();
 const mockGetChannelConnection = jest.fn();
+const mockGetCustomerSupportVoicePreferences = jest.fn();
 const mockGetOwnedNumbers = jest.fn();
 const mockPurchaseNumber = jest.fn();
 const mockCreateSender = jest.fn();
@@ -16,6 +17,9 @@ const mockRequireZavuSiteAccess = jest.fn();
 const mockAssertPhoneResourcesAvailable = jest.fn();
 const mockUpdateAgent = jest.fn();
 const mockUpdateSender = jest.fn();
+const mockUpdateAllVoiceConnectionPreferences = jest.fn();
+const mockRollbackVoiceAgentSynchronization = jest.fn();
+const mockRestoreChannelConnections = jest.fn();
 
 jest.mock("@/lib/services/zavu", () => ({
   ensureProjectWebhook: mockEnsureProjectWebhook,
@@ -25,6 +29,7 @@ jest.mock("@/lib/services/zavu", () => ({
   syncConnectedCustomerSupportVoiceAgent: mockSyncConnectedCustomerSupportVoiceAgent,
   upsertChannelConnection: mockUpsertChannelConnection,
   getChannelConnection: mockGetChannelConnection,
+  getCustomerSupportVoicePreferences: mockGetCustomerSupportVoicePreferences,
   getOwnedNumbers: mockGetOwnedNumbers,
   purchaseNumber: mockPurchaseNumber,
   createSender: mockCreateSender,
@@ -36,12 +41,13 @@ jest.mock("@/lib/services/zavu", () => ({
   assertPhoneResourcesAvailable: mockAssertPhoneResourcesAvailable,
   updateAgent: mockUpdateAgent,
   updateSender: mockUpdateSender,
+  updateAllVoiceConnectionPreferences: mockUpdateAllVoiceConnectionPreferences,
+  rollbackVoiceAgentSynchronization: mockRollbackVoiceAgentSynchronization,
+  restoreChannelConnections: mockRestoreChannelConnections,
 }));
-
 import { NextRequest } from "next/server";
 import { PATCH, POST } from "../route";
 const SITE_ID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
-
 function createVoiceRequest(body: Record<string, unknown>, headers?: HeadersInit) {
   return new NextRequest("https://backend.example.com/api/integrations/zavu/voice", {
     method: "POST",
@@ -58,6 +64,7 @@ describe("Zavu Voice setup", () => {
     mockAssertPhoneResourcesAvailable.mockResolvedValue(undefined);
     mockEnsureProjectWebhook.mockResolvedValue({});
     mockGetChannelConnection.mockResolvedValue(null);
+    mockGetCustomerSupportVoicePreferences.mockResolvedValue({ language: "auto" });
     mockGetOwnedNumbers.mockResolvedValue({
       items: [{
         id: "phone_1",
@@ -81,9 +88,16 @@ describe("Zavu Voice setup", () => {
       webhookSecret: "whsec_test",
       shouldEnable: true,
       previousEnabled: true,
+      previousAgentInput: {
+        systemPrompt: "Previous prompt",
+        enabled: true,
+      },
+      attachedSenderIds: [],
     });
     mockUpdateAgent.mockResolvedValue({ id: "agent_1", enabled: true });
     mockUpdateSender.mockResolvedValue({ id: "sender_1", channels: ["sms_oneway"] });
+    mockRollbackVoiceAgentSynchronization.mockResolvedValue(undefined);
+    mockRestoreChannelConnections.mockResolvedValue({ connections: [] });
     mockSyncConnectedCustomerSupportVoiceAgent.mockResolvedValue(true);
     mockCreateVoiceSender.mockResolvedValue({
       id: "sender_new",
@@ -97,11 +111,13 @@ describe("Zavu Voice setup", () => {
     });
     mockAssignPhoneNumberToSender.mockResolvedValue({});
     mockDeleteSender.mockResolvedValue(undefined);
+    let persistedConnections: Array<Record<string, any>> = [];
     mockUpsertChannelConnection.mockImplementation(
       async (_siteId: string, channelId: string | undefined, patch: Record<string, any>) => {
         const persistedChannelId =
           channelId || "11111111-2222-4333-8444-555555555555";
         const connection = { id: persistedChannelId, ...patch };
+        persistedConnections = [connection];
         return {
           channelId: persistedChannelId,
           connection,
@@ -109,6 +125,9 @@ describe("Zavu Voice setup", () => {
         };
       }
     );
+    mockUpdateAllVoiceConnectionPreferences.mockImplementation(async () => ({
+      connections: persistedConnections,
+    }));
   });
 
   it("persists an in-progress connection before enabling the agent and Voice", async () => {
@@ -136,6 +155,7 @@ describe("Zavu Voice setup", () => {
       siteId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
       senderIds: ["sender_1"],
       activate: false,
+      voicePreferences: { language: "auto" },
     });
     expect(mockEnsureSenderWebhook).toHaveBeenCalledWith("sender_1");
     expect(mockEnsureVoiceSender).toHaveBeenCalledWith("sender_1");
@@ -206,6 +226,7 @@ describe("Zavu Voice setup", () => {
       siteId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
       senderIds: ["sender_new"],
       activate: false,
+      voicePreferences: { language: "auto" },
     });
   });
 
@@ -238,6 +259,7 @@ describe("Zavu Voice setup", () => {
       siteId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
       senderIds: ["sender_replacement"],
       activate: false,
+      voicePreferences: { language: "auto" },
     });
     expect(mockUpsertChannelConnection).toHaveBeenLastCalledWith(
       "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
@@ -285,6 +307,7 @@ describe("Zavu Voice setup", () => {
         }),
       })
     );
+    expect(mockEnsureVoiceSender).not.toHaveBeenCalled();
     await expect(response.json()).resolves.toMatchObject({
       regulatoryStatus: "pending_review",
     });
@@ -418,9 +441,9 @@ describe("Zavu Voice setup", () => {
       })
       .mockRejectedValueOnce(new Error("Final persistence failed"));
     mockUpdateSender.mockRejectedValueOnce(new Error("Sender rollback failed"));
-    mockUpdateAgent
-      .mockResolvedValueOnce({ id: "agent_1", enabled: true })
-      .mockRejectedValueOnce(new Error("Agent rollback failed"));
+    mockRollbackVoiceAgentSynchronization.mockRejectedValueOnce(
+      new Error("Agent rollback failed")
+    );
 
     const response = await POST(
       new NextRequest("https://backend.example.com/api/integrations/zavu/voice", {
@@ -462,9 +485,14 @@ describe("Zavu Voice setup", () => {
     expect(mockUpdateSender).toHaveBeenCalledWith("sender_1", {
       enableVoice: false,
     });
-    expect(mockUpdateAgent).toHaveBeenLastCalledWith("agent_1", {
-      enabled: true,
-    });
+    expect(mockRollbackVoiceAgentSynchronization).toHaveBeenCalledWith(
+      expect.objectContaining({
+        previousAgentInput: expect.objectContaining({
+          systemPrompt: "Previous prompt",
+          enabled: true,
+        }),
+      })
+    );
     expect(mockUpsertChannelConnection).toHaveBeenCalledTimes(1);
     expect(mockUpsertChannelConnection).toHaveBeenCalledWith(
       "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
@@ -484,9 +512,7 @@ describe("Zavu Voice setup", () => {
         }),
       }
     );
-
     const response = await PATCH(request);
-
     expect(response.status).toBe(200);
     expect(mockSyncConnectedCustomerSupportVoiceAgent).toHaveBeenCalledWith(
       "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"

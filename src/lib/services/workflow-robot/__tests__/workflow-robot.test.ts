@@ -82,6 +82,34 @@ describe('buildRunSteps', () => {
     ];
     expect(buildRunSteps(nodes)[0].max_retries).toBe(0);
   });
+
+  test('makes requires_browser an explicit sandbox capability', () => {
+    const steps = buildRunSteps([
+      node({
+        id: 'browser',
+        type: 'wf-step',
+        settings: {
+          title: 'Open marketplace',
+          step: {
+            requires_browser: true,
+            browser_allowed_domains: ['freelancer.com', '*.freelancer.com'],
+            browser_secret_names: ['FREELANCER_EMAIL'],
+          },
+        },
+      }),
+    ]);
+
+    expect(steps[0]).toMatchObject({
+      requires_browser: true,
+      requires_sandbox: true,
+      browser_allowed_domains: ['freelancer.com', '*.freelancer.com'],
+      browser_secret_names: ['FREELANCER_EMAIL'],
+      metadata: {
+        requires_browser: true,
+        requires_sandbox: true,
+      },
+    });
+  });
 });
 
 describe('canRetryStep', () => {
