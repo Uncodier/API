@@ -63,6 +63,7 @@ const CreateInstancePlanSchema = z.object({
     skill: z.string().optional(),
     requires_sandbox: z.boolean().optional(),
     requires_browser: z.boolean().optional(),
+    browser_interaction_required: z.boolean().optional(),
     browser_allowed_domains: z.preprocess(parseIfString, z.array(z.string())).optional(),
     browser_secret_names: z.preprocess(parseIfString, z.array(z.string())).optional(),
     test_command: z.string().optional(),
@@ -304,6 +305,20 @@ export async function createInstancePlanCore(params: any) {
         artifacts: [],
         role: step.role || null,
         skill: step.skill || null,
+        ...(typeof step.requires_sandbox === 'boolean'
+          ? { requires_sandbox: step.requires_sandbox }
+          : {}),
+        ...(typeof step.requires_browser === 'boolean'
+          ? { requires_browser: step.requires_browser }
+          : {}),
+        ...(typeof step.browser_interaction_required === 'boolean'
+          ? {
+              browser_interaction_required:
+                step.browser_interaction_required,
+            }
+          : {}),
+        browser_allowed_domains: step.browser_allowed_domains || [],
+        browser_secret_names: step.browser_secret_names || [],
         test_command: step.test_command || null,
         metadata: stepMetadata,
       };

@@ -92,6 +92,7 @@ describe('buildRunSteps', () => {
           title: 'Open marketplace',
           step: {
             requires_browser: true,
+            browser_interaction_required: true,
             browser_allowed_domains: ['freelancer.com', '*.freelancer.com'],
             browser_secret_names: ['FREELANCER_EMAIL'],
           },
@@ -102,11 +103,40 @@ describe('buildRunSteps', () => {
     expect(steps[0]).toMatchObject({
       requires_browser: true,
       requires_sandbox: true,
+      browser_interaction_required: true,
       browser_allowed_domains: ['freelancer.com', '*.freelancer.com'],
       browser_secret_names: ['FREELANCER_EMAIL'],
       metadata: {
         requires_browser: true,
         requires_sandbox: true,
+        browser_interaction_required: true,
+      },
+    });
+  });
+
+  test('makes browser interaction imply browser and sandbox capabilities', () => {
+    const [step] = buildRunSteps([
+      node({
+        id: 'interactive-browser',
+        type: 'wf-step',
+        settings: {
+          title: 'Choose an option',
+          step: {
+            requires_browser: false,
+            browser_interaction_required: true,
+          },
+        },
+      }),
+    ]);
+
+    expect(step).toMatchObject({
+      requires_browser: true,
+      requires_sandbox: true,
+      browser_interaction_required: true,
+      metadata: {
+        requires_browser: true,
+        requires_sandbox: true,
+        browser_interaction_required: true,
       },
     });
   });

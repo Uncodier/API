@@ -173,6 +173,259 @@ describe('createWorkflowPlanResultCapture', () => {
     ]);
   });
 
+  test('rejects browser completion when instructed interaction never happened', async () => {
+    const tracker = createWorkflowToolExecutionTracker();
+    const capture = createWorkflowPlanResultCapture(
+      {
+        type: 'task',
+        title: 'CRM opportunities',
+        instructions:
+          'Navega a Freelancer, selecciónar el filtro y devuelve las oportunidades.',
+        expected_output:
+          '{[{url:"url", summary:"opportunity", value:"bid range"}], total-opportuinies:x}',
+      },
+      {
+        executionTracker: tracker,
+        requireToolExecution: true,
+        requiresBrowser: true,
+      },
+    );
+    await tracker.track(
+      'sandbox_browser',
+      { action: 'open' },
+      async () => ({ ok: true }),
+    );
+    await tracker.track(
+      'sandbox_browser',
+      { action: 'snapshot' },
+      async () => ({ ok: true }),
+    );
+    await tracker.track(
+      'sandbox_run_command',
+      { command: 'curl' },
+      async () => ({ exitCode: 0 }),
+    );
+
+    const response = await capture.tool.execute({
+      status: 'completed',
+      summary: 'Fetched opportunities through an API.',
+      data: {
+        opportunities: [{
+          url: 'https://www.freelancer.com/projects/1',
+          summary: 'Project',
+          value: '$100',
+        }],
+        'total-opportuinies': 5671,
+      },
+      evidence: [],
+      criteria: [],
+      validation: [],
+    });
+
+    expect(response).toMatchObject({
+      accepted: false,
+      terminal: false,
+      gate: {
+        passed: false,
+        signals: expect.arrayContaining([
+          expect.objectContaining({
+            name: 'browser-interaction',
+            ok: false,
+          }),
+          expect.objectContaining({
+            name: 'contract-normalized',
+            ok: false,
+            detail: expect.stringContaining('total_opportunities'),
+          }),
+          expect.objectContaining({
+            name: 'output-shape',
+            ok: false,
+            detail: expect.stringContaining('data.total_opportunities'),
+          }),
+        ]),
+      },
+    });
+    expect(capture.getResult()).toBeNull();
+  });
+
+  test('accepts an interaction followed by a fresh browser observation', async () => {
+    const tracker = createWorkflowToolExecutionTracker();
+    const capture = createWorkflowPlanResultCapture(
+      {
+        type: 'task',
+        instructions:
+          'Open Freelancer, select the project filter, and return the results.',
+        expected_output:
+          '{"opportunities":[{"url":"url","summary":"text","value":"range"}]}',
+      },
+      {
+        executionTracker: tracker,
+        requireToolExecution: true,
+        requiresBrowser: true,
+      },
+    );
+    for (const action of ['open', 'snapshot', 'click', 'snapshot']) {
+      await tracker.track(
+        'sandbox_browser',
+        { action },
+        async () => ({ ok: true }),
+      );
+    }
+
+    const response = await capture.tool.execute({
+      status: 'completed',
+      summary: 'Selected the filter and observed the resulting list.',
+      data: {
+        opportunities: [{
+          url: 'https://www.freelancer.com/projects/1',
+          summary: 'Project',
+          value: '$100',
+        }],
+      },
+      evidence: [],
+      criteria: [],
+      validation: [],
+    });
+
+    expect(response).toMatchObject({ accepted: true, terminal: true });
+    expect(capture.getResult()?.gate).toMatchObject({
+      passed: true,
+      signals: expect.arrayContaining([
+        expect.objectContaining({
+          name: 'browser-post-interaction-observation',
+          ok: true,
+        }),
+      ]),
+    });
+  });
+
+  test('requires observation after the final browser interaction', async () => {
+    const tracker = createWorkflowToolExecutionTracker();
+    const capture = createWorkflowPlanResultCapture(
+      {
+        type: 'task',
+        instructions: 'Select a filter and apply it.',
+        expected_output: '{ results: [] }',
+      },
+      {
+        executionTracker: tracker,
+        requireToolExecution: true,
+        requiresBrowser: true,
+      },
+    );
+    for (const action of ['open', 'snapshot', 'click', 'snapshot', 'click']) {
+      await tracker.track(
+        'sandbox_browser',
+        { action },
+        async () => ({ ok: true }),
+      );
+    }
+    const args = {
+      status: 'completed',
+      summary: 'Applied the filter.',
+      data: { results: [] },
+      evidence: [],
+      criteria: [],
+      validation: [],
+    };
+
+    await expect(capture.tool.execute(args)).resolves.toMatchObject({
+      accepted: false,
+      gate: {
+        signals: expect.arrayContaining([
+          expect.objectContaining({
+            name: 'browser-post-interaction-observation',
+            ok: false,
+          }),
+        ]),
+      },
+    });
+
+    await tracker.track(
+      'sandbox_browser',
+      { action: 'snapshot' },
+      async () => ({ ok: true }),
+    );
+    await expect(capture.tool.execute(args)).resolves.toMatchObject({
+      accepted: true,
+    });
+  });
+
+  test('allows the contract to disable inferred browser interaction', async () => {
+    const tracker = createWorkflowToolExecutionTracker();
+    const capture = createWorkflowPlanResultCapture(
+      {
+        type: 'task',
+        instructions: 'Read the currently selected filter without changing it.',
+        browser_interaction_required: false,
+      },
+      {
+        executionTracker: tracker,
+        requireToolExecution: true,
+        requiresBrowser: true,
+      },
+    );
+    await tracker.track(
+      'sandbox_browser',
+      { action: 'open' },
+      async () => ({ ok: true }),
+    );
+    await tracker.track(
+      'sandbox_browser',
+      { action: 'snapshot' },
+      async () => ({ ok: true }),
+    );
+
+    await expect(capture.tool.execute({
+      status: 'completed',
+      summary: 'Read the current filter.',
+      data: { filter: 'Current' },
+      evidence: [],
+      criteria: [],
+      validation: [],
+    })).resolves.toMatchObject({ accepted: true });
+  });
+
+  test('rejects structured output missing fields declared in expected_output', async () => {
+    const capture = createWorkflowPlanResultCapture({
+      type: 'task',
+      expected_output:
+        '{"opportunities":[{"url":"url","summary":"text","value":"range"}],"total_opportunities":0}',
+    });
+
+    const response = await capture.tool.execute({
+      status: 'completed',
+      summary: 'Returned incomplete data.',
+      data: {
+        opportunities: [{
+          url: 'https://example.com/project',
+          summary: 'Project',
+          value: '$100',
+        }, {
+          url: 'https://example.com/project-2',
+          summary: 'Incomplete project',
+        }],
+        total_opportunities: 2,
+      },
+      evidence: [],
+      criteria: [],
+      validation: [],
+    });
+
+    expect(response).toMatchObject({
+      accepted: false,
+      gate: {
+        signals: expect.arrayContaining([
+          expect.objectContaining({
+            name: 'output-shape',
+            ok: false,
+            detail: expect.stringContaining('data.opportunities[1].value'),
+          }),
+        ]),
+      },
+    });
+  });
+
   test('enforces declared MCP tool and action receipts', async () => {
     const tracker = createWorkflowToolExecutionTracker();
     const capture = createWorkflowPlanResultCapture(

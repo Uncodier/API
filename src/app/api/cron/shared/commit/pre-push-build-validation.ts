@@ -17,18 +17,18 @@ const WORKSPACE_FINGERPRINT_SCRIPT = [
   "const fs=require('fs');",
   "const path=require('path');",
   "const crypto=require('crypto');",
+  "const cp=require('child_process');",
   'const root=process.argv[1];',
-  "const ignored=new Set(['.git','.next','node_modules','.vercel','coverage']);",
-  'const files=[];',
-  'function walk(dir,relative){',
-  'for(const entry of fs.readdirSync(dir,{withFileTypes:true}).sort((a,b)=>a.name.localeCompare(b.name))){',
-  'if(ignored.has(entry.name))continue;',
-  'const nextRelative=relative?relative+path.sep+entry.name:entry.name;',
-  'const absolute=path.join(dir,entry.name);',
-  'if(entry.isDirectory())walk(absolute,nextRelative);',
-  'else if(entry.isFile()||entry.isSymbolicLink())files.push([absolute,nextRelative]);',
-  '}}',
-  'walk(root,"");',
+  "const ignoredFiles=new Set(['progress.md','qa_results.json','test_results.json','feature_list.json','requirement.spec.md','DECISIONS.md','README.md','AGENTS.md','.instructions','.npm-lock-hash']);",
+  "const ignoredDirs=new Set(['evidence']);",
+  "const listed=cp.spawnSync('git',['-C',root,'ls-files','--cached','--others','--exclude-standard','-z'],{encoding:'utf8'});",
+  'if(listed.status!==0)process.exit(listed.status||1);',
+  "const relativeFiles=listed.stdout.split('\\0').filter(Boolean);",
+  "for(const name of ['.env','.env.local','.env.development','.env.production','.npmrc','.yarnrc.yml'])if(fs.existsSync(path.join(root,name)))relativeFiles.push(name);",
+  'const files=[...new Set(relativeFiles)].sort().filter(relative=>{',
+  'const normalized=relative.split(path.sep).join("/");',
+  'return !ignoredFiles.has(normalized)&&!ignoredDirs.has(normalized.split("/",1)[0]);',
+  '}).map(relative=>[path.join(root,relative),relative]).filter(([absolute])=>fs.existsSync(absolute));',
   "const hash=crypto.createHash('sha256');",
   'for(const [absolute,relative] of files){',
   "hash.update(relative);hash.update('\\0');",
@@ -123,7 +123,7 @@ async function removeTrackingBackup(sandbox: Sandbox): Promise<void> {
   await sandbox.fs.rm(HARNESS_TRACKING_BACKUP_PATH, { force: true });
 }
 
-async function computeWorkspaceFingerprint(
+export async function computeApplicationBuildFingerprint(
   sandbox: Sandbox,
   cwd: string,
 ): Promise<string | null> {
@@ -137,11 +137,14 @@ async function computeWorkspaceFingerprint(
   return /^[a-f0-9]{64}$/.test(fingerprint) ? fingerprint : null;
 }
 
-async function markPrePushBuildPassed(
+export async function recordSuccessfulApplicationBuild(
   sandbox: Sandbox,
   cwd: string,
+  knownFingerprint?: string | null,
 ): Promise<void> {
-  const workspaceFingerprint = await computeWorkspaceFingerprint(sandbox, cwd);
+  const workspaceFingerprint =
+    knownFingerprint ||
+    await computeApplicationBuildFingerprint(sandbox, cwd);
   if (!workspaceFingerprint) return;
   await sandbox.writeFiles([
     {
@@ -175,7 +178,8 @@ export async function consumePrePushBuildMarker(
     const marker = JSON.parse(await result.stdout()) as {
       workspaceFingerprint?: unknown;
     };
-    const currentFingerprint = await computeWorkspaceFingerprint(sandbox, cwd);
+    const currentFingerprint =
+      await computeApplicationBuildFingerprint(sandbox, cwd);
     return (
       typeof marker.workspaceFingerprint === 'string' &&
       marker.workspaceFingerprint === currentFingerprint
@@ -193,7 +197,7 @@ export async function validateApplicationBeforePush(params: {
   await clearPrePushBuildMarker(params.sandbox);
   if (!await hasPendingPushWork(params.sandbox, params.cwd)) {
     await removeTrackingBackup(params.sandbox);
-    await markPrePushBuildPassed(params.sandbox, params.cwd);
+    await recordSuccessfulApplicationBuild(params.sandbox, params.cwd);
     await logCronInfrastructureEvent(params.audit, {
       event: CronInfraEvent.PRE_PUSH_BUILD,
       message: 'Pre-push build skipped because the workspace is clean',
@@ -205,7 +209,7 @@ export async function validateApplicationBeforePush(params: {
   const firstError = await runBuild(params.sandbox, params.cwd);
   if (!firstError) {
     await removeTrackingBackup(params.sandbox);
-    await markPrePushBuildPassed(params.sandbox, params.cwd);
+    await recordSuccessfulApplicationBuild(params.sandbox, params.cwd);
     await logCronInfrastructureEvent(params.audit, {
       event: CronInfraEvent.PRE_PUSH_BUILD,
       message: 'Pre-push npm run build passed',
@@ -234,7 +238,7 @@ export async function validateApplicationBeforePush(params: {
       : await runBuild(params.sandbox, params.cwd);
     finalError = afterRollbackError || firstError;
     if (rolledBackSource !== null && !afterRollbackError) {
-      await markPrePushBuildPassed(params.sandbox, params.cwd);
+      await recordSuccessfulApplicationBuild(params.sandbox, params.cwd);
       await logCronInfrastructureEvent(params.audit, {
         event: CronInfraEvent.PRE_PUSH_BUILD,
         level: 'warn',
@@ -276,7 +280,7 @@ export async function ensureApplicationBuildCurrent(params: {
   audit?: CronAuditContext;
 }): Promise<ApplicationBuildValidation> {
   if (await consumePrePushBuildMarker(params.sandbox, params.cwd)) {
-    await markPrePushBuildPassed(params.sandbox, params.cwd);
+    await recordSuccessfulApplicationBuild(params.sandbox, params.cwd);
     await logCronInfrastructureEvent(params.audit, {
       event: CronInfraEvent.PRE_PUSH_BUILD,
       message: 'Pre-push validation reused an unchanged successful build',

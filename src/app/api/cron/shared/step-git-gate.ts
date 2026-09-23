@@ -19,7 +19,6 @@ import {
   pollGitHubDeploymentForSha,
 } from '@/lib/services/github-deployment-status';
 import { MAX_PUSH_RECOVERY_TURNS } from './step-git-prompts';
-import { validateNpmRepoForVercelDeploy } from './vercel-npm-repo-guard';
 import {
   CronInfraEvent,
   logCronInfrastructureEvent,
@@ -49,13 +48,13 @@ import type {
   VisualSignal,
   InteractionSignal,
 } from './step-iteration-signals';
-import {
-  runDeclaredTestCommand,
-  type TestSignal,
-} from './step-test-evidence';
+import type { TestSignal } from './step-test-evidence';
 import type { ProbeObservation } from './step-probe-policy';
+import type { ReusableGateValidation } from './gate-validation-cache';
+import { runLocalGateValidation } from './step-local-validation';
 
 export { MAX_PUSH_RECOVERY_TURNS } from './step-git-prompts';
+export { validateBuildForStep } from './step-local-validation';
 export { runGateForFlow } from './gates';
 export type { FlowGateInput, FlowGateResult, FlowGateSignal } from './gates';
 
@@ -141,34 +140,16 @@ async function persistOrVerifyOrigin(
   }
 }
 
-/** Tail size for sandbox `npm run build` output (combined stdout+stderr) sent to the agent on retry. */
-const SANDBOX_BUILD_OUTPUT_MAX = 6000;
-
-export async function validateBuildForStep(sandbox: Sandbox): Promise<string | null> {
-  const wd = SandboxService.WORK_DIR;
-  // Merge stdout+stderr so the agent sees Next.js compile errors (most go to stdout)
-  // alongside any stderr noise. Keep the TAIL — Next.js prints the actionable error last.
-  const buildRes = await sandbox.runCommand('sh', ['-c', `cd ${wd} && npm run build 2>&1`]);
-  if (buildRes.exitCode !== 0) {
-    const stdout = await buildRes.stdout().catch(() => '');
-    const stderr = await buildRes.stderr().catch(() => '');
-    const combined = (stdout || '') + (stderr ? `\n${stderr}` : '');
-    const tail =
-      combined.length > SANDBOX_BUILD_OUTPUT_MAX
-        ? `…(truncated ${combined.length - SANDBOX_BUILD_OUTPUT_MAX} earlier chars)\n${combined.slice(-SANDBOX_BUILD_OUTPUT_MAX)}`
-        : combined;
-    return `Build failed (npm run build, exit ${buildRes.exitCode}):\n${tail}`;
-  }
-  return null;
-}
-
 export type OriginGateParams = {
   sandbox: Sandbox;
   planTitle: string;
   requirementId: string;
+  stepId?: string;
   stepOrder: number;
   backlogItemId?: string | null;
   interactionBaselineSha?: string | null;
+  workspaceFingerprint?: string;
+  reusableValidation?: ReusableGateValidation;
   stepPrompt: string;
   /** Plan step context used to ground visual-critic + iteration signals. */
   stepContext?: {
@@ -207,6 +188,7 @@ export type VercelDeployGateInfo = {
 
 export type GateSignals = {
   build?: BuildSignal;
+  workspace_fingerprint?: string;
   interaction?: InteractionSignal;
   runtime?: RuntimeSignal;
   api?: ApiSignal;
@@ -466,117 +448,28 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
   const signals: GateSignals = {};
 
   const cwd = SandboxService.WORK_DIR;
-  try {
-    // Wrong LLM layout: duplicate or misplaced `app/src/app` — canonical routes are ONLY under repo `src/app/`.
-    // Run this BEFORE validateBuildForStep so the gate build tests the same file tree we will push.
-    const fixLayout = await sandbox.runCommand('sh', [
-      '-c',
-      `cd "${cwd}" || exit 0
-if [ -d src/app ] && [ -d app/src/app ] && [ ! -f app/package.json ]; then
-  rm -rf app
-  echo FIX_RM_DUP
-fi
-if [ -f package.json ] && [ ! -f app/package.json ] && [ -d app/src/app ] && [ ! -d src/app ]; then
-  mkdir -p src
-  mv app/src/app src/app
-  rm -rf app
-  echo FIX_MV_APP
-fi
-if [ -d src/app ] && [ -d app ] && [ ! -f app/package.json ] && [ ! -d app/src/app ]; then
-  rm -rf app
-  echo FIX_RM_ORPHAN
-fi`,
-    ]);
-    const fixMsg = (await fixLayout.stdout()).trim();
-    if (fixMsg.includes('FIX_RM_DUP')) console.log('[GateStep] Removed mistaken root app/ (duplicate app/src/app vs src/app)');
-    if (fixMsg.includes('FIX_MV_APP')) console.log('[GateStep] Moved app/src/app → src/app');
-    if (fixMsg.includes('FIX_RM_ORPHAN')) console.log('[GateStep] Removed orphan root app/ (routes live in src/app/ only)');
-  } catch (e: unknown) {
-    console.warn('[GateStep] layout fix script failed:', e instanceof Error ? e.message : e);
-  }
-
-  const vercelLayoutErr = await validateNpmRepoForVercelDeploy(sandbox, gitRepoKind);
-  if (vercelLayoutErr) {
-    const msg = `Vercel/npm layout: ${vercelLayoutErr}`;
-    signals.build = { ok: false, layout_error: vercelLayoutErr };
-    const gone = isSandboxGoneError(msg);
-    await logCronInfrastructureEvent(audit, {
-      event: CronInfraEvent.GATE_BUILD,
-      level: gone ? 'warn' : 'error',
-      message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}gate: ${msg.slice(0, 500)}`,
-      details: { stepOrder, error: msg.slice(0, 1200), sandbox_unavailable: gone },
-    });
-    return { ok: false, lastResult, error: msg, signals, ...(gone ? { sandboxUnavailable: true } : {}) };
-  }
-
-  const buildError = await validateBuildForStep(sandbox);
-  if (buildError) {
-    signals.build = { ok: false, error_tail: buildError };
-    const gone = isSandboxGoneError(buildError);
-    await logCronInfrastructureEvent(audit, {
-      event: CronInfraEvent.GATE_BUILD,
-      level: gone ? 'warn' : 'error',
-      message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}gate: npm run build failed`,
-      details: { stepOrder, error: buildError.slice(0, 1200), sandbox_unavailable: gone },
-    });
+  const localValidation = await runLocalGateValidation({
+    sandbox,
+    stepId: params.stepId,
+    stepOrder,
+    testCommand: stepContext?.test_command,
+    gitRepoKind,
+    audit,
+    workspaceFingerprint: params.workspaceFingerprint,
+    reusableValidation: params.reusableValidation,
+  });
+  Object.assign(signals, localValidation.signals);
+  if (!localValidation.ok) {
     return {
       ok: false,
       lastResult,
-      error: buildError,
+      error: localValidation.error,
+      infrastructureFailure: localValidation.infrastructureFailure,
       signals,
-      ...(gone ? { sandboxUnavailable: true } : {}),
+      ...(localValidation.sandboxUnavailable
+        ? { sandboxUnavailable: true }
+        : {}),
     };
-  }
-
-  signals.build = { ok: true };
-  await logCronInfrastructureEvent(audit, {
-    event: CronInfraEvent.GATE_BUILD,
-    message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}gate: npm run build passed`,
-    details: { stepOrder },
-  });
-
-  if (stepContext?.test_command?.trim()) {
-    try {
-      const tests = await runDeclaredTestCommand(
-        sandbox,
-        stepContext.test_command.trim(),
-      );
-      signals.tests = tests;
-      await logCronInfrastructureEvent(audit, {
-        event: CronInfraEvent.STEP_STATUS,
-        level: tests.ok ? 'info' : 'error',
-        message:
-          `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}` +
-          `declared test command ${tests.ok ? 'passed' : 'failed'}`,
-        details: {
-          stepOrder,
-          command: stepContext.test_command.trim(),
-          exit_code: tests.tests[0]?.exit_code,
-          output_tail: tests.tests[0]?.output_tail.slice(-1_200),
-        },
-      });
-      if (!tests.ok) {
-        return {
-          ok: false,
-          lastResult,
-          error:
-            `Declared test command failed: ${stepContext.test_command.trim()}\n` +
-            `${tests.tests[0]?.output_tail || ''}`,
-          signals,
-        };
-      }
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      const gone = isSandboxGoneError(message);
-      return {
-        ok: false,
-        lastResult,
-        error: `Declared test command unavailable: ${message}`,
-        infrastructureFailure: true,
-        signals,
-        ...(gone ? { sandboxUnavailable: true } : {}),
-      };
-    }
   }
 
   try {

@@ -25,6 +25,7 @@ import {
 import { workflowStepRequiresBrowser } from './browser';
 import { createWorkflowToolExecutionTracker } from './execution-tracker';
 import { workflowStepStringList } from './step-config';
+import { parseWorkflowExpectedOutputContract } from './result-shape';
 
 function buildWorkflowStepPrompt(params: {
   plan: any;
@@ -333,6 +334,7 @@ export async function runWorkflowPlan(runPlanId: string): Promise<{
         }
 
         const executionTracker = createWorkflowToolExecutionTracker();
+        step.expected_output = parseWorkflowExpectedOutputContract(step.expected_output, step).suggestion || step.expected_output;
         const resultCapture = createWorkflowPlanResultCapture(step, {
           executionTracker,
           requireToolExecution: step.type !== 'condition',

@@ -17,6 +17,7 @@ It is intended for navigating URLs, exploring the DOM, taking visual screenshots
 - The runner provisions and validates `agent-browser` before your turn starts.
 - Use the direct `sandbox_browser` tool. Do not install `agent-browser`, Chrome, Playwright, or system packages during a workflow step.
 - Browser steps must declare `requires_browser: true`.
+- Steps that must change UI state should declare `browser_interaction_required: true`.
 - Before using credentials, declare `browser_allowed_domains` for the trusted destination (for example, both `example.com` and `*.example.com` when needed).
 - Declare only the required environment-variable names in `browser_secret_names`; undeclared variables are unavailable.
 - Credential values are never placed in `process.env`. Use `value_env` with the variable name; the tool resolves it only on an allowed current origin. Never read, print, or return the secret value.

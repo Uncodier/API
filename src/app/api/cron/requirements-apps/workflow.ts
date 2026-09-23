@@ -82,6 +82,7 @@ import {
   finalizePlanCycleOutcome,
   selectCycleAccountingScope,
   shouldPersistCycleWorkspace,
+  shouldUseLightweightCycleFinalization,
 } from '../shared/plan-cycle-outcome';
 import { shouldHoldNoProgressBlock } from '../shared/no-progress-adjudication';
 
@@ -140,6 +141,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   let attemptedStepId: string | undefined;
   let progressPlanId: string | undefined;
   let progressStepId: string | undefined;
+  let lightweightCycleFinalization = false;
   const requirementKind = classifyRequirementType(type);
   const requirementFlow = getFlow(requirementKind);
   const gitRepoKind: GitRepoKind =
@@ -561,7 +563,12 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   latestPlanSteps = activePlan?.steps;
 
   let smokeError: string | null = null;
-  let pushResult: { branch: string; pushed: boolean; commitCount: number } | null = null;
+  let pushResult: {
+    ok: boolean;
+    branch: string;
+    pushed: boolean;
+    commitCount: number;
+  } | null = null;
   let stepsPhase: any = null;
   let infrastructureHalt = false;
   let persistWorkspaceOnInfrastructureHalt = false;
@@ -866,7 +873,19 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
                   await sleep(15000);
                   
                   try {
-                     const checkRes = await checkBackgroundCommandStep(sandboxId!, turnRes.backgroundTask.pid, turnRes.backgroundTask.logFile, cronAudit);
+                     const checkRes = await checkBackgroundCommandStep(
+                       sandboxId!,
+                       turnRes.backgroundTask.pid,
+                       turnRes.backgroundTask.logFile,
+                       {
+                         ...cronAudit,
+                         planId: activePlan.id,
+                         stepId: workingStep.id,
+                       },
+                       workingStep.metadata?.backlog_item_id ||
+                         workingStep.backlog_item_id ||
+                         undefined,
+                     );
                      isRunning = checkRes.isRunning;
                      if (!isRunning) {
                          console.log(`[CronAppsWorkflow] Background task completed. Output length: ${checkRes.output.length}`);
@@ -1124,6 +1143,12 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     executionPhaseCompleted = true;
   } finally {
     const anyFail = stepsPhase?.anyStepFailed ?? false;
+    lightweightCycleFinalization = shouldUseLightweightCycleFinalization({
+      planCompleted,
+      anyStepFailed: anyFail,
+      infrastructureHalt,
+      cycleOutcome,
+    });
     
     // Application database migrations only run on a successful app/site cycle.
     if (
@@ -1135,6 +1160,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       const dbMig = await applyDatabaseMigrationsStep(sandboxId!, reqId, instanceType, title, cronAudit);
       sandboxId = dbMig.effectiveSandboxId;
       if (dbMig.errors.length > 0) {
+         lightweightCycleFinalization = false;
          console.warn(`[CronAppsWorkflow] DB Migrations had errors:`, dbMig.errors);
       } else if (dbMig.applied.length > 0) {
          console.log(`[CronAppsWorkflow] Applied ${dbMig.applied.length} DB migrations.`);
@@ -1160,6 +1186,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
         {
           validateDeployment:
             requirementFlow.delivery.validate_deployment,
+          lightweightCheckpoint: lightweightCycleFinalization,
         },
       );
       pushResult = pushed;
@@ -1186,11 +1213,24 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     };
   }
 
+  if (
+    lightweightCycleFinalization &&
+    pushResult?.ok === true
+  ) {
+    wrapUpAttempted = true;
+    return {
+      reqId,
+      branch: pushResult?.branch || branchName,
+      previewUrl: null,
+      status: 'in-progress' as const,
+    };
+  }
+
   await extendRunLockStep(reqId, cronLockRunId);
 
   let postFinallyBuildError: string | undefined;
   if (
-    pushResult &&
+    pushResult?.ok === true &&
     !(stepsPhase?.anyStepFailed) &&
     requirementFlow.delivery.validate_deployment
   ) {

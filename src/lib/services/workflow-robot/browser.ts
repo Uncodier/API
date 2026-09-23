@@ -3,6 +3,7 @@ import {
   installWorkflowAgentBrowser,
   runWorkflowAgentBrowserCommand,
 } from './agent-browser-runtime';
+import { workflowStepSuggestsBrowserInteraction } from './browser-interaction';
 
 const READY_MARKER = '/vercel/sandbox/.makinari-agent-browser-ready-v1';
 const BROWSER_LANGUAGE =
@@ -10,6 +11,7 @@ const BROWSER_LANGUAGE =
 const URL_PATTERN = /https?:\/\/[^\s]+/i;
 
 export function workflowStepRequiresBrowser(step: Record<string, any>): boolean {
+  if (workflowStepSuggestsBrowserInteraction(step)) return true;
   if (typeof step.requires_browser === 'boolean') return step.requires_browser;
   if (typeof step.metadata?.requires_browser === 'boolean') {
     return step.metadata.requires_browser;

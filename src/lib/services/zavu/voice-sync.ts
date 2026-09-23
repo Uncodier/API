@@ -76,8 +76,13 @@ export async function getVoiceConnectionsForSync(
 }
 
 export async function getConnectedVoiceSenderIds(siteId: string): Promise<string[]> {
-  return (await getVoiceConnectionsForSync(siteId))
-    .map((connection) => connection.zavu_sender_id as string);
+  return Array.from(
+    new Set(
+      (await getVoiceConnectionsForSync(siteId)).map(
+        (connection) => connection.zavu_sender_id as string
+      )
+    )
+  );
 }
 
 export async function syncCustomerSupportVoiceAgentWithTools(params: {

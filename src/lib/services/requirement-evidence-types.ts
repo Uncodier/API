@@ -70,6 +70,8 @@ export interface EvidenceRecord {
   schema_version: 1;
   item_id: string;
   evidence_run_id?: string;
+  producer_step_id?: string;
+  workspace_fingerprint?: string;
   captured_at: string;
   tests?: {
     command: string;
@@ -77,6 +79,8 @@ export interface EvidenceRecord {
     output_tail: string;
     ran_after_changes: boolean;
     captured_at?: string;
+    step_id?: string;
+    workspace_fingerprint?: string;
   }[];
   build?: { command: string; exit_code: number; duration_ms: number };
   runtime?: { route: string; http_status: number; screenshot_url?: string };
@@ -102,4 +106,10 @@ export interface EvidenceRecord {
   judge_failure_kind?: 'product_defect' | 'evidence_gap' | 'contract_error';
   judge_matched_acceptance?: string[];
   judge_unmatched_acceptance?: string[];
+  gate_resume?: {
+    status: 'pending';
+    step_id: string;
+    workspace_fingerprint: string;
+    captured_at: string;
+  } | null;
 }

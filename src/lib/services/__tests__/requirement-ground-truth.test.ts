@@ -218,6 +218,74 @@ describe('syncGroundTruthBeforeCommit', () => {
     expect(mergeEvidenceRecords(previous, next).tests).toEqual(previous.tests);
   });
 
+  it('deduplicates receipts by step, command, and workspace fingerprint', async () => {
+    const { mergeEvidenceRecords } = await import('../requirement-ground-truth');
+    const base = {
+      schema_version: 1 as const,
+      item_id: 'item-1',
+      evidence_run_id: 'run-1',
+      captured_at: '2026-09-18T00:00:00.000Z',
+      critic_passes: 0,
+      tests: [{
+        command: 'npm test',
+        exit_code: 0,
+        output_tail: 'first run',
+        ran_after_changes: true,
+        captured_at: '2026-09-18T00:00:00.000Z',
+        step_id: 'step-1',
+        workspace_fingerprint: 'a'.repeat(40),
+      }],
+    };
+    const merged = mergeEvidenceRecords(base, {
+      schema_version: 1,
+      item_id: 'item-1',
+      evidence_run_id: 'run-1',
+      captured_at: '2026-09-18T00:01:00.000Z',
+      tests: [{
+        ...base.tests[0],
+        output_tail: 'reused run',
+        captured_at: '2026-09-18T00:01:00.000Z',
+      }],
+    });
+
+    expect(merged.tests).toEqual([
+      expect.objectContaining({ output_tail: 'reused run' }),
+    ]);
+  });
+
+  it('invalidates cached gates when a tool receipt has a new fingerprint', async () => {
+    const { mergeEvidenceRecords } = await import('../requirement-ground-truth');
+    const merged = mergeEvidenceRecords({
+      schema_version: 1,
+      item_id: 'item-1',
+      workspace_fingerprint: 'a'.repeat(40),
+      captured_at: '2026-09-18T00:00:00.000Z',
+      critic_passes: 0,
+      build: {
+        command: 'npm run build',
+        exit_code: 0,
+        duration_ms: 1,
+      },
+    }, {
+      schema_version: 1,
+      item_id: 'item-1',
+      producer_step_id: 'step-1',
+      workspace_fingerprint: 'b'.repeat(40),
+      captured_at: '2026-09-18T00:01:00.000Z',
+      tests: [{
+        command: 'npm test',
+        exit_code: 0,
+        output_tail: 'PASS',
+        ran_after_changes: true,
+        step_id: 'step-1',
+        workspace_fingerprint: 'b'.repeat(40),
+      }],
+    });
+
+    expect(merged.build).toBeUndefined();
+    expect(merged.tests).toHaveLength(1);
+  });
+
   it('does not erase prior evidence with undefined fields during re-adjudication', async () => {
     const { mergeEvidenceRecords } = await import('../requirement-ground-truth');
     const previous = {

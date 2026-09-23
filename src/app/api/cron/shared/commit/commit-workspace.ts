@@ -24,7 +24,6 @@ import {
 import { uploadSandboxSourceArchiveToRepository } from '@/app/api/agents/tools/sandbox/sandbox-source-upload';
 import {
   ensureApplicationBuildCurrent,
-  validateApplicationBeforePush,
 } from './pre-push-build-validation';
 import { clearStuckGitOperationState } from '@/lib/services/sandbox-git-push';
 
@@ -48,6 +47,7 @@ export async function commitWorkspaceToOrigin(
     gitRepoKind?: GitRepoKind;
     deferRequirementStatusPersist?: boolean;
     validateDeployment?: boolean;
+    lightweightCheckpoint?: boolean;
   },
 ): Promise<{
   branch: string;
@@ -172,7 +172,7 @@ fi`,
     }
 
     if (validateDeployment && gitKind === 'applications') {
-      const validation = await validateApplicationBeforePush({
+      const validation = await ensureApplicationBuildCurrent({
         sandbox: activeSandbox,
         cwd,
         audit,
@@ -238,14 +238,16 @@ fi`,
     }
 
     const gitRepoKind = options?.gitRepoKind ?? 'applications';
-    const persistStatus = !options?.deferRequirementStatusPersist;
+    const persistStatus =
+      !options?.deferRequirementStatusPersist &&
+      !options?.lightweightCheckpoint;
     let snapshotId: string | undefined;
     const token = process.env.GITHUB_TOKEN;
     
     // Upload the source code archive BEFORE recreating the sandbox from snapshot
     // to ensure we capture the exact state the agent left (including untracked files like .env.local).
     let source_code: string | undefined;
-    if (result) {
+    if (result && !options?.lightweightCheckpoint) {
       try {
         const up = await uploadSandboxSourceArchiveToRepository(activeSandbox, reqId);
         if (up.ok) {
@@ -296,7 +298,11 @@ fi`,
     }
 
     let requirementStatusSync: Awaited<ReturnType<typeof syncLatestRequirementStatusWithPreview>> | null = null;
-    if (audit?.siteId && result?.branch) {
+    if (
+      audit?.siteId &&
+      result?.branch &&
+      !options?.lightweightCheckpoint
+    ) {
       try {
         requirementStatusSync = await syncLatestRequirementStatusWithPreview({
           requirementId: reqId,

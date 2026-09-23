@@ -20,6 +20,10 @@ describe('declared test evidence', () => {
     const result = await runDeclaredTestCommand(
       sandbox as any,
       'npm test -- assets.test.ts',
+      {
+        stepId: 'step-1',
+        workspaceFingerprint: 'a'.repeat(40),
+      },
     );
 
     expect(result).toEqual({
@@ -29,6 +33,8 @@ describe('declared test evidence', () => {
         exit_code: 0,
         output_tail: expect.stringContaining('PASS'),
         ran_after_changes: true,
+        step_id: 'step-1',
+        workspace_fingerprint: 'a'.repeat(40),
       })],
     });
     expect(sandbox.runCommand).toHaveBeenCalledWith(

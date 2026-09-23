@@ -9,6 +9,7 @@ import type { GitRepoKind } from './cron-commit-helpers';
 import { connectOrRecreateRequirementSandbox } from '@/lib/services/sandbox-recovery';
 import { type CronAuditContext } from '@/lib/services/cron-audit-log';
 import { isSandboxGoneError } from '@/lib/services/sandbox-gone-error';
+import { SandboxService } from '@/lib/services/sandbox-service';
 import { getSandboxTools } from '@/app/api/agents/tools/sandbox/assistantProtocol';
 import { sandboxIdentity } from '@/lib/services/sandbox-sdk';
 import {
@@ -23,6 +24,7 @@ import type { SingleTurnResult } from './single-turn-types';
 import {
   captureInteractionBaseline,
   captureWorkspaceProgressFingerprint,
+  getDeclaredTestCommand,
   getStepTerminalRequest,
   hasSandboxGoneToolFailure,
   withActionLoopGuard,
@@ -41,6 +43,10 @@ import {
 import { runSingleTurnGate } from './single-turn-gate';
 import { isNoProgressAdjudicationRequested } from './no-progress-adjudication';
 import { runGateOnlyNoProgressAdjudication } from './no-progress-gate-adjudicator';
+import { shouldResumeGateFromEvidence } from './gate-validation-cache';
+import { getBacklogItem } from '@/lib/services/requirement-backlog';
+import { classifyRequirementType } from '@/lib/services/requirement-flows';
+import { computeApplicationBuildFingerprint } from './commit/pre-push-build-validation';
 export { inferRoleFromStep } from './single-turn-prompt';
 export type { SingleTurnResult };
 export async function executeSingleTurnStep(params: {
@@ -310,6 +316,7 @@ export async function executeSingleTurnStep(params: {
       validate_deployment: validateDeployment,
       plan_id: plan.id,
       active_step_id: persistedStep.id,
+      backlog_item_id: effectiveBacklogItemId || undefined,
       cycle_baseline_at: cycleBaselineAt,
       activeSandboxRef,
     });
@@ -342,6 +349,62 @@ export async function executeSingleTurnStep(params: {
 
     const workspaceFingerprintBefore =
       await captureWorkspaceProgressFingerprint(sandbox);
+    const flow = classifyRequirementType(requirementType);
+    const validationFingerprint =
+      flow === 'app' || flow === 'site'
+        ? await computeApplicationBuildFingerprint(
+            sandbox,
+            SandboxService.WORK_DIR,
+          ) || undefined
+        : undefined;
+    if (
+      effectiveBacklogItemId &&
+      validationFingerprint &&
+      (flow === 'app' || flow === 'site')
+    ) {
+      try {
+        const { item } = await getBacklogItem(
+          requirementId,
+          effectiveBacklogItemId,
+        );
+        if (shouldResumeGateFromEvidence({
+          evidence: item?.evidence,
+          stepId: persistedStep.id,
+          workspaceFingerprint: validationFingerprint,
+          testCommand: getDeclaredTestCommand(persistedStep),
+        })) {
+          console.log(
+            `[SingleTurn] Resuming unchanged gate for step ${persistedStep.order} without another assistant turn.`,
+          );
+          return runSingleTurnGate({
+            sandbox,
+            effectiveSandboxId,
+            plan,
+            step: persistedStep,
+            persistedStep,
+            requirementId,
+            instanceId,
+            siteId,
+            userId,
+            requirementType,
+            gitRepoKind,
+            backlogItemId: effectiveBacklogItemId,
+            interactionBaselineSha,
+            systemPrompt,
+            result: {},
+            fullTools,
+            audit,
+            infrastructureGeneration,
+            executionEventId,
+          });
+        }
+      } catch (error: unknown) {
+        console.warn(
+          '[SingleTurn] Could not evaluate the cached gate resume:',
+          error instanceof Error ? error.message : error,
+        );
+      }
+    }
     const result = await executeAssistantStep(messages, { id: instanceId, site_id: siteId, user_id: userId, requirement_id: requirementId }, {
       instance_id: instanceId,
       site_id: siteId,

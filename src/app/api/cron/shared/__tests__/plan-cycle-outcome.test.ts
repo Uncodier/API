@@ -3,6 +3,7 @@ import {
   finalizePlanCycleOutcome,
   selectCycleAccountingScope,
   shouldPersistCycleWorkspace,
+  shouldUseLightweightCycleFinalization,
 } from '../plan-cycle-outcome';
 
 describe('finalizePlanCycleOutcome', () => {
@@ -57,6 +58,27 @@ describe('finalizePlanCycleOutcome', () => {
       infrastructureHalt: false,
       currentOutcome: 'product_no_progress',
     })).toBe('progress');
+  });
+
+  it('uses lightweight finalization only for healthy unfinished progress', () => {
+    expect(shouldUseLightweightCycleFinalization({
+      planCompleted: false,
+      anyStepFailed: false,
+      infrastructureHalt: false,
+      cycleOutcome: 'progress',
+    })).toBe(true);
+    expect(shouldUseLightweightCycleFinalization({
+      planCompleted: false,
+      anyStepFailed: true,
+      infrastructureHalt: false,
+      cycleOutcome: 'product_failure',
+    })).toBe(false);
+    expect(shouldUseLightweightCycleFinalization({
+      planCompleted: true,
+      anyStepFailed: false,
+      infrastructureHalt: false,
+      cycleOutcome: 'progress',
+    })).toBe(false);
   });
 
   it('classifies an otherwise healthy attempted cycle as product no-progress', () => {

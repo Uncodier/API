@@ -14,6 +14,7 @@ export interface WorkflowStepSettings {
   skill?: string;
   requires_sandbox?: boolean;
   requires_browser?: boolean;
+  browser_interaction_required?: boolean;
   browser_allowed_domains?: string[];
   browser_secret_names?: string[];
   mcp_actions?: Array<{ tool: string; action?: string; hint?: string }>;

@@ -194,6 +194,40 @@ describe('createInstancePlanCore requirement lock', () => {
     expect(completeInProgressPlans).not.toHaveBeenCalled();
   });
 
+  it('persists normalized browser capabilities on created steps', async () => {
+    mockSuccessfulInsert();
+
+    await createInstancePlanCore({
+      instance_id: INSTANCE_ID,
+      site_id: SITE_ID,
+      user_id: USER_ID,
+      title: 'Interactive workflow',
+      is_template: true,
+      steps: [{
+        title: 'Choose an option',
+        instructions: 'Select the first option.',
+        requires_browser: false,
+        browser_interaction_required: true,
+        browser_allowed_domains: ['example.com'],
+        browser_secret_names: ['SERVICE_USER'],
+      }],
+    });
+
+    expect(builder.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        steps: [
+          expect.objectContaining({
+            requires_sandbox: true,
+            requires_browser: true,
+            browser_interaction_required: true,
+            browser_allowed_domains: ['example.com'],
+            browser_secret_names: ['SERVICE_USER'],
+          }),
+        ],
+      }),
+    );
+  });
+
   it('does not auto-bind backlog context from another requirement', async () => {
     resolveBacklogContextForInstance.mockResolvedValueOnce({
       requirementId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',

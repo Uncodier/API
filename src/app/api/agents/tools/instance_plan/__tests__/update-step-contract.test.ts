@@ -93,7 +93,8 @@ describe('updateInstancePlanCore step contracts', () => {
         title: 'Implement contact form',
         type: 'task',
         instructions: 'Implement the real contact form.',
-        requires_browser: true,
+        requires_browser: false,
+        browser_interaction_required: true,
         browser_allowed_domains: ['example.com'],
         browser_secret_names: ['SERVICE_USER'],
       }],
@@ -108,6 +109,7 @@ describe('updateInstancePlanCore step contracts', () => {
             validation_rules: expect.any(Array),
             requires_browser: true,
             requires_sandbox: true,
+            browser_interaction_required: true,
             browser_allowed_domains: ['example.com'],
             browser_secret_names: ['SERVICE_USER'],
             metadata: expect.objectContaining({

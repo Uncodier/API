@@ -1,6 +1,9 @@
 import type { Sandbox } from '@vercel/sandbox';
 import { SandboxService } from '@/lib/services/sandbox-service';
 
+const DEFAULT_BACKGROUND_TEST_TIMEOUT_MS = 3 * 60_000;
+const MAX_BACKGROUND_TEST_TIMEOUT_MS = 15 * 60_000;
+
 type BackgroundToolsContext = {
   activeSandboxRef?: { current: Sandbox };
 };
@@ -16,10 +19,35 @@ interface BackgroundToolDependencies {
     toolName: string,
     args: unknown,
   ) => Promise<{ success: boolean; error?: string }>;
+  isTestCommand?: (command: string) => boolean;
+  captureTestFingerprint?: (
+    sandbox: Sandbox,
+  ) => Promise<string | undefined>;
+  persistCompletedTest?: (params: {
+    sandbox: Sandbox;
+    command: string;
+    exitCode: number;
+    output: string;
+    workspaceFingerprint?: string;
+    ranAfterChanges: boolean;
+  }) => Promise<void>;
 }
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function backgroundTestTimeoutMs(): number {
+  const configured = Number.parseInt(
+    process.env.BACKGROUND_TEST_COMMAND_TIMEOUT_MS || '',
+    10,
+  );
+  return Math.min(
+    Number.isFinite(configured) && configured > 0
+      ? configured
+      : DEFAULT_BACKGROUND_TEST_TIMEOUT_MS,
+    MAX_BACKGROUND_TEST_TIMEOUT_MS,
+  );
 }
 
 export function createSandboxStartBackgroundCommandTool(
@@ -57,15 +85,32 @@ export function createSandboxStartBackgroundCommandTool(
       const logFile = `/tmp/bg_cmd_${Date.now()}.log`;
       const exitFile = `${logFile}.exit`;
       const commandFile = `${logFile}.command`;
+      const fingerprintFile = `${logFile}.fingerprint`;
       const cwd = dependencies.resolvePath(
         args.cwd,
         SandboxService.WORK_DIR,
       );
+      const isTestCommand =
+        dependencies.isTestCommand?.(args.command) === true;
+      const timeoutMs = isTestCommand
+        ? backgroundTestTimeoutMs()
+        : undefined;
+      const commandBody = isTestCommand
+        ? `if command -v timeout >/dev/null 2>&1; then timeout ${Math.ceil(timeoutMs! / 1_000)}s sh -c ${shellQuote(args.command)}; else sh -c ${shellQuote(args.command)}; fi`
+        : args.command;
       const wrappedCommand =
-        `( ${args.command} ) > ${shellQuote(logFile)} 2>&1; ` +
+        `( ${commandBody} ) > ${shellQuote(logFile)} 2>&1; ` +
         `CODE=$?; printf '%s' "$CODE" > ${shellQuote(exitFile)}; exit "$CODE"`;
+      const testFingerprint =
+        isTestCommand
+          ? await dependencies.captureTestFingerprint?.(activeSandbox)
+              .catch(() => undefined)
+          : undefined;
       await activeSandbox.writeFiles([
         { path: commandFile, content: args.command },
+        ...(testFingerprint
+          ? [{ path: fingerprintFile, content: testFingerprint }]
+          : []),
       ]);
 
       try {
@@ -80,6 +125,7 @@ export function createSandboxStartBackgroundCommandTool(
           args: ['-c', wrappedCommand],
           cwd,
           detached: true,
+          ...(timeoutMs ? { timeoutMs: timeoutMs + 10_000 } : {}),
         });
         const commandId = String(
           detached?.id || detached?.cmdId || '',
@@ -92,6 +138,9 @@ export function createSandboxStartBackgroundCommandTool(
             log_file: logFile,
             exit_file: exitFile,
             command_file: commandFile,
+            fingerprint_file: testFingerprint
+              ? fingerprintFile
+              : undefined,
             message: `Command started detached (${commandId}). Use sandbox_check_background_command to check status and read logs.`,
           };
         }
@@ -113,6 +162,7 @@ export function createSandboxStartBackgroundCommandTool(
         log_file: logFile,
         exit_file: exitFile,
         command_file: commandFile,
+        fingerprint_file: testFingerprint ? fingerprintFile : undefined,
         message: `Command started in background with PID ${pid}. Use sandbox_check_background_command to check status and read logs.`,
       };
     },
@@ -156,6 +206,7 @@ export function createSandboxCheckBackgroundCommandTool(
       const activeSandbox = dependencies.liveSandbox(sandbox, toolsCtx);
       const commandId = String(args.command_id || args.pid || '').trim();
       let originalCommand = '';
+      let startingFingerprint: string | undefined;
       try {
         const value = await activeSandbox.fs.readFile(
           `${args.log_file}.command`,
@@ -166,6 +217,47 @@ export function createSandboxCheckBackgroundCommandTool(
         // Commands started before command receipts were introduced have no
         // sidecar; callers can still inspect status and logs.
       }
+      try {
+        const value = await activeSandbox.fs.readFile(
+          `${args.log_file}.fingerprint`,
+          'utf8',
+        );
+        startingFingerprint = String(value || '').trim() || undefined;
+      } catch {
+        // Non-test commands and legacy receipts do not have a fingerprint.
+      }
+      const persistCompletedTest = async (
+        exitCode: number | null | undefined,
+        output: string,
+      ) => {
+        if (
+          typeof exitCode !== 'number' ||
+          !originalCommand ||
+          !dependencies.isTestCommand?.(originalCommand) ||
+          !dependencies.persistCompletedTest
+        ) {
+          return;
+        }
+        try {
+          const currentFingerprint =
+            await dependencies.captureTestFingerprint?.(activeSandbox);
+          await dependencies.persistCompletedTest({
+            sandbox: activeSandbox,
+            command: originalCommand,
+            exitCode,
+            output,
+            workspaceFingerprint: currentFingerprint,
+            ranAfterChanges:
+              !!startingFingerprint &&
+              startingFingerprint === currentFingerprint,
+          });
+        } catch (error: unknown) {
+          console.warn(
+            '[SandboxBackground] Could not persist test receipt:',
+            error instanceof Error ? error.message : error,
+          );
+        }
+      };
       const getCommand = (
         activeSandbox as unknown as {
           getCommand?: (
@@ -182,6 +274,12 @@ export function createSandboxCheckBackgroundCommandTool(
             'tail',
             ['-n', '200', args.log_file],
           );
+          if (!running) {
+            await persistCompletedTest(
+              command?.exitCode,
+              logResult.stdout,
+            );
+          }
           return {
             status: running ? 'RUNNING' : 'STOPPED',
             is_running: running,
@@ -220,6 +318,7 @@ export function createSandboxCheckBackgroundCommandTool(
         );
         const parsed = Number.parseInt(exitResult.stdout.trim(), 10);
         if (Number.isInteger(parsed)) exitCode = parsed;
+        await persistCompletedTest(exitCode, logResult.stdout);
       }
       return {
         status,

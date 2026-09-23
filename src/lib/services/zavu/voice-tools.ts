@@ -34,13 +34,14 @@ export interface VoicePromptTool {
 }
 
 function describeToolInputs(tool: VoicePromptTool): string {
+  const parameters = tool.parameters || {};
   const required = new Set<string>(
-    Array.isArray(tool.parameters.required) ? tool.parameters.required : []
+    Array.isArray(parameters.required) ? parameters.required : []
   );
   const properties =
-    tool.parameters.properties &&
-    typeof tool.parameters.properties === "object"
-      ? tool.parameters.properties
+    parameters.properties &&
+    typeof parameters.properties === "object"
+      ? parameters.properties
       : {};
   const inputs = Object.entries(properties).map(
     ([name, schema]: [string, any]) =>

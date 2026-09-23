@@ -71,6 +71,35 @@ describe('instance plan step contracts', () => {
     ]);
   });
 
+  it('makes browser interaction imply browser and sandbox capabilities', () => {
+    const step = normalizePlanStepContract({
+      title: 'Choose an option',
+      requires_browser: false,
+      browser_interaction_required: true,
+    });
+
+    expect(step.requires_browser).toBe(true);
+    expect(step.requires_sandbox).toBe(true);
+  });
+
+  it('normalizes recognizable legacy structured output contracts', () => {
+    expect(() => normalizePlanStepContract({
+      title: 'List opportunities',
+      expected_output:
+        '{ opportunities: [{ url: "url", summary: "text" }], total_opportunities: 0 }',
+    })).not.toThrow();
+
+    const normalized = normalizePlanStepContract({
+      title: 'CRM opportunities',
+      expected_output:
+        '{[{url:"url", summary:"opportunity", value:"bid range"}], total-opportuinies:x}',
+    });
+
+    expect(normalized.expected_output).toBe(
+      '{ opportunities: [{ url: string, summary: string, value: string }], total_opportunities: number }',
+    );
+  });
+
   it('normalizes an exact validation command into the deterministic gate field', () => {
     const step = normalizePlanStepContract({
       title: 'Verify the full Jest suite',

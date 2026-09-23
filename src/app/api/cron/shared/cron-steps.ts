@@ -333,12 +333,17 @@ export async function commitAndPushStep(
   message?: string,
   audit?: CronAuditContext,
   gitRepoKind?: GitRepoKind,
-  options?: { validateDeployment?: boolean },
+  options?: {
+    validateDeployment?: boolean;
+    lightweightCheckpoint?: boolean;
+  },
 ): Promise<{
+  ok: boolean;
   branch: string;
   pushed: boolean;
   commitCount: number;
   effectiveSandboxId: string;
+  error?: string;
 } | null> {
   'use step';
   const instanceType = gitRepoKind === 'automation' ? 'automation' : 'applications';
@@ -360,6 +365,7 @@ export async function commitAndPushStep(
       {
         gitRepoKind,
         validateDeployment: options?.validateDeployment,
+        lightweightCheckpoint: options?.lightweightCheckpoint,
       },
     );
     const sand = r.sandboxReplacement ?? connected.sandbox;
@@ -370,6 +376,7 @@ export async function commitAndPushStep(
       `[CronPersist] commitAndPushStep finally branch=${r.branch} pushed=${r.pushed} commitCount=${r.commitCount}`,
     );
     return {
+      ok: true,
       branch: r.branch,
       pushed: r.pushed,
       commitCount: r.commitCount,
@@ -379,10 +386,12 @@ export async function commitAndPushStep(
     console.error('[CronPersist] commitAndPushStep FAILED:', err?.message || err, err?.stack);
     if (err.sandboxReplacement) {
       return {
+        ok: false,
         branch: err.branch || '',
         pushed: false,
         commitCount: 0,
         effectiveSandboxId: sandboxIdentity(err.sandboxReplacement),
+        error: err?.message || String(err),
       };
     }
     return null;

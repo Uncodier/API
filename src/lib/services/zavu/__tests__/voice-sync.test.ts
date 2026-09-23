@@ -120,6 +120,14 @@ describe("syncConnectedCustomerSupportVoiceAgent", () => {
       siteId: "site-1",
       webhookSecret: "whsec_test",
     });
+    expect(mockUpdatePrompt).toHaveBeenCalledWith({
+      siteId: "site-1",
+      agentId: "agent_1",
+      voicePreferences: undefined,
+      voiceTools: expect.arrayContaining([
+        expect.objectContaining({ name: "capture_lead" }),
+      ]),
+    });
     expect(mockEnsureSenderWebhook).toHaveBeenCalledWith("sender_1");
     expect(mockEnsureVoiceSender).toHaveBeenCalledWith("sender_1");
     expect(mockUpdateAgent).toHaveBeenCalledWith("agent_1", { enabled: true });

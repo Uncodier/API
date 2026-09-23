@@ -1,4 +1,5 @@
 import {
+  computeApplicationBuildFingerprint,
   consumePrePushBuildMarker,
   ensureApplicationBuildCurrent,
   validateApplicationBeforePush,
@@ -60,6 +61,22 @@ describe('pre-push build validation', () => {
       rolledBackHarnessMutation: false,
     });
     expect(sandbox.fs.rm).toHaveBeenCalled();
+  });
+
+  it('includes QA scenarios in the validation fingerprint', async () => {
+    const sandbox = {
+      runCommand: jest.fn().mockResolvedValue(
+        commandResult(0, FINGERPRINT),
+      ),
+    };
+
+    await expect(computeApplicationBuildFingerprint(
+      sandbox as any,
+      '/vercel/sandbox',
+    )).resolves.toBe(FINGERPRINT);
+    const script = sandbox.runCommand.mock.calls[0][1][1];
+    expect(script).toContain("const ignoredDirs=new Set(['evidence']);");
+    expect(script).not.toContain("'evidence','.qa'");
   });
 
   it('rolls back a harness mutation and retries before allowing push', async () => {

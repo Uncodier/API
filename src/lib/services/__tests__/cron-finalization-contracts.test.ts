@@ -24,6 +24,9 @@ describe('atomic requirement finalization contracts', () => {
   const commitWorkspaceSource = workspaceFile(
     'src/app/api/cron/shared/commit/commit-workspace.ts',
   );
+  const cronStepsSource = workspaceFile(
+    'src/app/api/cron/shared/cron-steps.ts',
+  );
 
   it('checks the generation under lock before any finalization mutation', () => {
     const lock = sql.indexOf('FOR UPDATE;');
@@ -106,6 +109,14 @@ describe('atomic requirement finalization contracts', () => {
     );
     expect(workflowSource).toContain(
       'previewUrl = requirementFlow.delivery.validate_deployment',
+    );
+  });
+
+  it('requires confirmed persistence before lightweight finalization', () => {
+    expect(workflowSource).toContain('pushResult?.ok === true');
+    expect(cronStepsSource).toContain('ok: true');
+    expect(cronStepsSource).toMatch(
+      /if \(err\.sandboxReplacement\)[\s\S]*?ok: false/,
     );
   });
 

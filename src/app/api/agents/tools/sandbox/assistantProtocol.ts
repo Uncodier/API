@@ -34,6 +34,13 @@ import {
   sandboxReadLintsTool,
   sandboxListFilesTool,
 } from './sandbox-fs-tools';
+import { sandboxReadFilesTool } from './sandbox-batch-read-tool';
+import {
+  captureSandboxTestFingerprint,
+  isSandboxTestCommand,
+  persistSandboxTestReceipt,
+} from './sandbox-test-receipt';
+import { createSandboxRunCommandTool } from './sandbox-run-command-tool';
 
 const WORK_DIR = SandboxService.WORK_DIR;
 
@@ -111,6 +118,7 @@ export type SandboxToolsContext = {
   /** When set (cron executor), sandbox_push_checkpoint updates this plan step for auditing */
   plan_id?: string;
   active_step_id?: string;
+  backlog_item_id?: string;
   /** ISO timestamp for classifying if files were updated this cycle (step.started_at or plan.started_at) */
   cycle_baseline_at?: string;
   /** Updated when sandbox_push_checkpoint snapshots the VM (SDK stops the old sandbox). */
@@ -132,79 +140,53 @@ export async function deductSandboxToolCredits(
   return { success: true };
 }
 
-export function sandboxRunCommandTool(sandbox: Sandbox, toolsCtx?: SandboxToolsContext) {
-  return {
-    name: 'sandbox_run_command',
-    description: `Execute a shell command inside the Vercel Sandbox microVM. The default working directory is ${WORK_DIR} which contains the cloned repository. DO NOT USE for long-running commands like 'npm run build' or tests—use sandbox_start_background_command instead to avoid timeouts.`,
-    parameters: {
-      type: 'object',
-      properties: {
-        command: { type: 'string', description: 'The command to run (e.g., "npm", "ls", "git")' },
-        args: { type: 'array', items: { type: 'string' }, description: 'Array of arguments for the command' },
-        cwd: { type: 'string', description: `Optional working directory. Defaults to ${WORK_DIR}` }
-      },
-      required: ['command']
+export function sandboxRunCommandTool(
+  sandbox: Sandbox,
+  toolsCtx?: SandboxToolsContext,
+  requirementId?: string,
+) {
+  return createSandboxRunCommandTool(
+    sandbox,
+    toolsCtx,
+    requirementId,
+    {
+      liveSandbox,
+      resolvePath,
+      deductCredits: deductSandboxToolCredits,
     },
-    execute: async (args: { command: string, args?: string[], cwd?: string }) => {
-      const creditCheck = await deductSandboxToolCredits(toolsCtx, 'sandbox_run_command', args);
-      if (!creditCheck.success) {
-        return {
-          stdout: '',
-          stderr: `BLOCKED: ${creditCheck.error}`,
-          exitCode: 1,
-        };
-      }
-
-      const fullCmd = [args.command, ...(args.args || [])].join(' ');
-      const blocked = /create-next-app|create-react-app|create-vite|npm init|yarn init|pnpm init/i;
-      if (blocked.test(fullCmd)) {
-        return {
-          stdout: '',
-          stderr: 'BLOCKED: Scaffolding commands are forbidden. The project already exists at the repository root. Write files directly instead.',
-          exitCode: 1,
-        };
-      }
-
-      let cmdToRun = args.command;
-      let cmdArgs = args.args || [];
-
-      // Vercel Sandbox expects the cmd argument to be a single executable name.
-      // If the model passes a full string like "npm run build" into the command field,
-      // the Vercel API will throw a 400 "Status code 400 is not ok" error.
-      if (cmdToRun.includes(' ')) {
-        if (cmdArgs.length === 0) {
-          cmdArgs = ['-c', cmdToRun];
-          cmdToRun = 'sh';
-        } else {
-          cmdArgs = ['-c', fullCmd];
-          cmdToRun = 'sh';
-        }
-      }
-
-      const s0 = liveSandbox(sandbox, toolsCtx);
-      return SandboxService.runCommandInSandbox(
-        s0,
-        cmdToRun,
-        cmdArgs,
-        resolvePath(args.cwd, WORK_DIR),
-      );
-    }
-  };
+  );
 }
 
-export function sandboxStartBackgroundCommandTool(sandbox: Sandbox, toolsCtx?: SandboxToolsContext) {
+export function sandboxStartBackgroundCommandTool(
+  sandbox: Sandbox,
+  toolsCtx?: SandboxToolsContext,
+) {
   return createSandboxStartBackgroundCommandTool(sandbox, toolsCtx, {
     liveSandbox,
     resolvePath,
     deductCredits: deductSandboxToolCredits,
+    isTestCommand: isSandboxTestCommand,
+    captureTestFingerprint: captureSandboxTestFingerprint,
   });
 }
 
-export function sandboxCheckBackgroundCommandTool(sandbox: Sandbox, toolsCtx?: SandboxToolsContext) {
+export function sandboxCheckBackgroundCommandTool(
+  sandbox: Sandbox,
+  toolsCtx?: SandboxToolsContext,
+  requirementId?: string,
+) {
   return createSandboxCheckBackgroundCommandTool(sandbox, toolsCtx, {
     liveSandbox,
     resolvePath,
     deductCredits: deductSandboxToolCredits,
+    isTestCommand: isSandboxTestCommand,
+    captureTestFingerprint: captureSandboxTestFingerprint,
+    persistCompletedTest: (receipt) => persistSandboxTestReceipt({
+      ...receipt,
+      requirementId,
+      backlogItemId: toolsCtx?.backlog_item_id,
+      stepId: toolsCtx?.active_step_id,
+    }),
   });
 }
 
@@ -218,6 +200,7 @@ export {
   sandboxReadLintsTool,
   sandboxListFilesTool,
 };
+export { sandboxReadFilesTool } from './sandbox-batch-read-tool';
 
 /**
  * Commits and pushes workspace to origin using the same path as automated cron checkpoints
@@ -468,13 +451,14 @@ export function getSandboxTools(
       })]
       : []),
     sandboxCodeSearchTool(sandbox, toolsCtx),
-    sandboxRunCommandTool(sandbox, toolsCtx),
+    sandboxRunCommandTool(sandbox, toolsCtx, requirementId),
     sandboxStartBackgroundCommandTool(sandbox, toolsCtx),
-    sandboxCheckBackgroundCommandTool(sandbox, toolsCtx),
+    sandboxCheckBackgroundCommandTool(sandbox, toolsCtx, requirementId),
     sandboxWriteFileTool(sandbox, toolsCtx),
     sandboxEditFileTool(sandbox, toolsCtx),
     sandboxDeleteFileTool(sandbox, toolsCtx),
     sandboxReadFileTool(sandbox, toolsCtx),
+    sandboxReadFilesTool(sandbox, toolsCtx),
     sandboxReadLargeFileTool(sandbox, toolsCtx),
     sandboxListFilesTool(sandbox, toolsCtx),
     sandboxReadLintsTool(sandbox, toolsCtx),

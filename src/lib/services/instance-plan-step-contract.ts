@@ -1,3 +1,5 @@
+import { parseWorkflowExpectedOutputContract } from './workflow-robot/result-shape';
+
 export type PlanStepContractInput = {
   title?: string;
   description?: string;
@@ -10,6 +12,7 @@ export type PlanStepContractInput = {
   validation_rules?: unknown[];
   requires_sandbox?: boolean;
   requires_browser?: boolean;
+  browser_interaction_required?: boolean;
   browser_allowed_domains?: string[];
   browser_secret_names?: string[];
   test_command?: string | null;
@@ -190,7 +193,27 @@ export function normalizePlanStepContract<T extends PlanStepContractInput>(
   if (!normalized.test_command && testCommand) {
     normalized.test_command = testCommand;
   }
-  if (step.requires_browser === true) {
+  const outputContract = parseWorkflowExpectedOutputContract(
+    step.expected_output,
+    {
+      title: step.title,
+      description: step.description,
+      instructions: step.instructions,
+    },
+  );
+  if (outputContract.error) {
+    throw new Error(
+      `Step "${title}" has invalid structured expected_output: ` +
+        outputContract.error,
+    );
+  }
+  if (outputContract.suggestion) {
+    normalized.expected_output = outputContract.suggestion;
+  }
+  if (step.browser_interaction_required === true) {
+    normalized.requires_browser = true;
+  }
+  if (normalized.requires_browser === true) {
     normalized.requires_sandbox = true;
   }
 

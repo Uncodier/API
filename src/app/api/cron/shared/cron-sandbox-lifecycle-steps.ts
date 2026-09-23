@@ -16,6 +16,12 @@ import {
   extendRunLock as _extendRunLockImpl,
   CRON_RUN_LOCK_TTL_MS,
 } from './cron-run-lock';
+import {
+  captureSandboxTestFingerprint,
+  isSandboxTestCommand,
+  persistSandboxTestReceipt,
+} from '@/app/api/agents/tools/sandbox/sandbox-test-receipt';
+import { sanitizeRuntimeLog } from './runtime-log-context';
 
 export interface SandboxInfo {
   sandboxId: string;
@@ -29,14 +35,100 @@ export async function checkBackgroundCommandStep(
   sandboxId: string,
   pid: string,
   logFile: string,
-  _audit?: CronAuditContext,
-): Promise<{ isRunning: boolean; output: string }> {
+  audit?: CronAuditContext,
+  backlogItemId?: string,
+): Promise<{
+  isRunning: boolean;
+  output: string;
+  exitCode?: number | null;
+}> {
   'use step';
   const sandbox = await getSandboxHandle(sandboxId);
-  const checkResult = await SandboxService.runCommandInSandbox(sandbox, 'sh', ['-c', `kill -0 ${pid} 2>/dev/null && echo "RUNNING" || echo "STOPPED"`]);
-  const status = checkResult.stdout.trim();
+  let isRunning: boolean | undefined;
+  let exitCode: number | null | undefined;
+  const getCommand = (
+    sandbox as unknown as {
+      getCommand?: (
+        commandId: string,
+      ) => Promise<{ exitCode?: number | null }>;
+    }
+  ).getCommand;
+  if (typeof getCommand === 'function') {
+    try {
+      const command = await getCommand.call(sandbox, pid);
+      isRunning = command.exitCode == null;
+      exitCode = command.exitCode;
+    } catch {
+      // Legacy process ids are handled below.
+    }
+  }
+  if (isRunning === undefined) {
+    const checkResult = await SandboxService.runCommandInSandbox(
+      sandbox,
+      'sh',
+      ['-c', `kill -0 ${pid} 2>/dev/null && echo "RUNNING" || echo "STOPPED"`],
+    );
+    isRunning = checkResult.stdout.trim() === 'RUNNING';
+    if (!isRunning) {
+      try {
+        const rawExitCode = await sandbox.fs.readFile(
+          `${logFile}.exit`,
+          'utf8',
+        );
+        const parsed = Number.parseInt(String(rawExitCode).trim(), 10);
+        exitCode = Number.isInteger(parsed) ? parsed : null;
+      } catch {
+        exitCode = null;
+      }
+    }
+  }
   const logResult = await SandboxService.runCommandInSandbox(sandbox, 'tail', ['-n', '200', logFile]);
-  return { isRunning: status === 'RUNNING', output: logResult.stdout };
+  if (!isRunning && typeof exitCode === 'number') {
+    try {
+      const command = String(
+        await sandbox.fs.readFile(`${logFile}.command`, 'utf8'),
+      ).trim();
+      if (isSandboxTestCommand(command)) {
+        const startingFingerprint = String(
+          await sandbox.fs.readFile(`${logFile}.fingerprint`, 'utf8'),
+        ).trim();
+        const currentFingerprint =
+          await captureSandboxTestFingerprint(sandbox);
+        await persistSandboxTestReceipt({
+          sandbox,
+          requirementId: audit?.requirementId,
+          backlogItemId,
+          stepId: audit?.stepId,
+          command,
+          exitCode,
+          output: logResult.stdout,
+          workspaceFingerprint: currentFingerprint,
+          ranAfterChanges:
+            !!startingFingerprint &&
+            startingFingerprint === currentFingerprint,
+        });
+        await logCronInfrastructureEvent(audit, {
+          event: CronInfraEvent.STEP_STATUS,
+          level: exitCode === 0 ? 'info' : 'warn',
+          message:
+            `Background test command finished with exit code ${exitCode}: ${command}`,
+          details: {
+            command,
+            exit_code: exitCode,
+            output_tail:
+              sanitizeRuntimeLog(logResult.stdout).slice(-1_200),
+            workspace_fingerprint: currentFingerprint,
+          },
+        });
+      }
+    } catch (error: unknown) {
+      console.warn(
+        '[CronSandbox] Could not persist background test receipt:',
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+  return { isRunning, output: logResult.stdout, exitCode };
 }
 
 export async function createSandboxStep(

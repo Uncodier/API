@@ -12,6 +12,8 @@ export interface TestEvidenceSignal {
   output_tail: string;
   ran_after_changes: boolean;
   captured_at: string;
+  step_id?: string;
+  workspace_fingerprint?: string;
 }
 
 export interface TestSignal {
@@ -191,7 +193,11 @@ export function extractTestEvidenceFromResult(
 export async function runDeclaredTestCommand(
   sandbox: Sandbox,
   command: string,
-  options: { timeoutMs?: number } = {},
+  options: {
+    timeoutMs?: number;
+    stepId?: string;
+    workspaceFingerprint?: string;
+  } = {},
 ): Promise<TestSignal> {
   const timeoutMs = declaredTestTimeoutMs(options.timeoutMs);
   const signal = AbortSignal.timeout(timeoutMs);
@@ -222,6 +228,10 @@ export async function runDeclaredTestCommand(
         // step baseline was captured, so this receipt is current by construction.
         ran_after_changes: true,
         captured_at: capturedAt,
+        ...(options.stepId ? { step_id: options.stepId } : {}),
+        ...(options.workspaceFingerprint
+          ? { workspace_fingerprint: options.workspaceFingerprint }
+          : {}),
       }],
     };
   } catch (error: unknown) {
@@ -235,6 +245,10 @@ export async function runDeclaredTestCommand(
           `Declared test command timed out after ${timeoutMs}ms before exiting.`,
         ran_after_changes: true,
         captured_at: capturedAt,
+        ...(options.stepId ? { step_id: options.stepId } : {}),
+        ...(options.workspaceFingerprint
+          ? { workspace_fingerprint: options.workspaceFingerprint }
+          : {}),
       }],
     };
   }

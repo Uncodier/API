@@ -22,6 +22,9 @@ const mockMaybeSingle = jest.fn() as jest.MockedFunction<
   (...args: any[]) => Promise<any>
 >;
 const mockClassifyRequirementType = jest.fn(() => 'task');
+const mockComputeFingerprint = jest.fn() as jest.MockedFunction<
+  (...args: any[]) => Promise<string | null>
+>;
 
 jest.mock('@/lib/database/supabase-client', () => ({
   supabaseAdmin: {
@@ -58,6 +61,10 @@ jest.mock('@/lib/services/instance-plan-infrastructure-state', () => ({
 
 jest.mock('@/lib/services/cron-infrastructure-state', () => ({
   buildGateInfrastructureWait: jest.fn(() => ({ kind: 'gate' })),
+}));
+
+jest.mock('../commit/pre-push-build-validation', () => ({
+  computeApplicationBuildFingerprint: mockComputeFingerprint,
 }));
 
 jest.mock('@/lib/services/requirement-ground-truth', () => ({
@@ -99,6 +106,7 @@ describe('runSingleTurnGate', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockClassifyRequirementType.mockReturnValue('task');
+    mockComputeFingerprint.mockResolvedValue('a'.repeat(64));
     mockRunGateForFlow.mockResolvedValue({ ok: true, richSignals: {} });
     mockGetBacklogItem.mockResolvedValue({
       kind: 'app',
@@ -451,6 +459,63 @@ describe('runSingleTurnGate', () => {
       gateFailureKind: 'missing_precondition',
     });
     expect(result.persistedTerminalStatus).toBeUndefined();
+  });
+
+  it('carries a matching cross-turn test receipt into the final Judge', async () => {
+    const fingerprint = 'a'.repeat(64);
+    mockClassifyRequirementType.mockReturnValue('app');
+    mockGetBacklogItem.mockResolvedValueOnce({
+      item: {
+        acceptance: ['The test suite passes.'],
+        evidence: {
+          schema_version: 1,
+          item_id: 'item-1',
+          producer_step_id: 'step-1',
+          workspace_fingerprint: fingerprint,
+          captured_at: '2026-09-22T12:00:00.000Z',
+          critic_passes: 0,
+          tests: [{
+            command: 'npm test',
+            exit_code: 0,
+            output_tail: 'PASS',
+            ran_after_changes: true,
+            captured_at: '2026-09-22T12:00:00.000Z',
+            step_id: 'step-1',
+            workspace_fingerprint: fingerprint,
+          }],
+        },
+      },
+    });
+    mockRunGateForFlow.mockResolvedValueOnce({
+      ok: true,
+      signals: [],
+      richSignals: {
+        build: { ok: true },
+        workspace_fingerprint: fingerprint,
+      },
+    });
+    mockUpdatePlanStepStatus.mockResolvedValueOnce({
+      persisted: true,
+      state: 'applied',
+      generation: 4,
+    });
+    mockSetItemStatus.mockResolvedValue({ id: 'item-1', status: 'done' });
+
+    await runSingleTurnGate(input());
+
+    expect(mockRunArchetypePostGate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        signals: expect.objectContaining({
+          tests: {
+            ok: true,
+            tests: [expect.objectContaining({
+              command: 'npm test',
+              workspace_fingerprint: fingerprint,
+            })],
+          },
+        }),
+      }),
+    );
   });
 
   it('provides automation gates the context required to persist origin', async () => {

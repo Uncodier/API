@@ -134,7 +134,8 @@ Success Criteria: ${JSON.stringify(step.success_criteria || [])}
 Validation Rules: ${JSON.stringify(step.validation_rules || [])}
 
 Cycle baseline: ${cycleBaselineAt || 'unknown'}
-File freshness: sandbox_list_files / sandbox_read_file report updated_this_cycle vs this baseline.
+File freshness: sandbox_list_files / sandbox_read_file / sandbox_read_files report updated_this_cycle vs this baseline.
+When you need several known files, use one sandbox_read_files call instead of spending one turn per file.
 
 ${p.noProgressAdjudication
   ? ''

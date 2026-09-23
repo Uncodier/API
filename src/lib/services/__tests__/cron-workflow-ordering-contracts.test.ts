@@ -39,7 +39,8 @@ describe('requirements workflow ordering contracts', () => {
       'getInstancePlanByIdStep(activePlan.id)',
     );
     const progressAssignment = workflowSource.indexOf(
-      "cycleOutcome = 'progress'",
+      'cycleOutcome = finalizePlanCycleOutcome({',
+      finalPlanRead,
     );
     expect(finalPlanRead).toBeGreaterThan(-1);
     expect(progressAssignment).toBeGreaterThan(finalPlanRead);
@@ -79,7 +80,8 @@ describe('requirements workflow ordering contracts', () => {
       'const result = await runSingleTurnGate({',
     );
     const consumeCall = noProgressGateSource.indexOf(
-      'markNoProgressAdjudicationConsumed({',
+      'const mutation = await persistAdjudication({',
+      gateCall,
     );
     expect(gateCall).toBeGreaterThan(-1);
     expect(consumeCall).toBeGreaterThan(gateCall);

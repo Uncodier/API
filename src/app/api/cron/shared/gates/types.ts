@@ -34,6 +34,7 @@ import type {
   VisualSignal,
 } from '../step-iteration-signals';
 import type { TestSignal } from '../step-test-evidence';
+import type { ReusableGateValidation } from '../gate-validation-cache';
 import type {
   ProbeDisposition,
   ProbeObservation,
@@ -49,9 +50,12 @@ export type FlowGateFailureKind =
 /** Extras the heavy `app`/`site` gate needs (build + runtime + deploy + origin push). */
 export interface AppGateContext {
   planTitle: string;
+  stepId: string;
   stepOrder: number;
   backlogItemId?: string | null;
   interactionBaselineSha?: string | null;
+  workspaceFingerprint?: string;
+  reusableValidation?: ReusableGateValidation;
   stepPrompt: string;
   stepContext?: {
     title?: string;
@@ -95,6 +99,7 @@ export interface FlowGateSignal {
 /** Rich signals the app/site gate returns (build+runtime+visual+deploy+origin). */
 export interface AppRichSignals {
   build?: BuildSignal;
+  workspace_fingerprint?: string;
   interaction?: InteractionSignal;
   runtime?: RuntimeSignal;
   api?: ApiSignal;

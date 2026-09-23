@@ -40,6 +40,9 @@ import { writeEvidence } from '@/lib/services/requirement-ground-truth';
 import { extractTestEvidenceFromResult } from './step-test-evidence';
 import { persistJudgeRejection } from './single-turn-judge-rejection';
 import { adjudicationContractAcceptance } from './single-turn-judge-contract';
+import { selectReusableGateValidation } from './gate-validation-cache';
+import type { EvidenceRecord } from '@/lib/services/requirement-evidence-types';
+import { computeApplicationBuildFingerprint } from './commit/pre-push-build-validation';
 
 interface RunSingleTurnGateInput {
   sandbox: Sandbox;
@@ -97,10 +100,12 @@ export async function runSingleTurnGate(
   let { sandbox, effectiveSandboxId, infrastructureGeneration } = input;
   const flow = classifyRequirementType(requirementType);
   let backlogAcceptance: string[] | undefined;
+  let backlogEvidence: EvidenceRecord | undefined;
   if (backlogItemId) {
     try {
       const { item } = await getBacklogItem(requirementId, backlogItemId);
       backlogAcceptance = item?.acceptance;
+      backlogEvidence = item?.evidence;
     } catch (error: unknown) {
       console.warn(
         '[SingleTurn] Could not load backlog acceptance for runtime probes:',
@@ -109,13 +114,31 @@ export async function runSingleTurnGate(
     }
   }
 
+  const testCommand = getDeclaredTestCommand(step);
+  const workspaceFingerprint =
+    flow === 'app' || flow === 'site'
+      ? await computeApplicationBuildFingerprint(
+          sandbox,
+          SandboxService.WORK_DIR,
+        ) || undefined
+      : undefined;
+  const reusableValidation = selectReusableGateValidation({
+    evidence: backlogEvidence,
+    stepId: step.id,
+    workspaceFingerprint,
+    testCommand,
+  });
+
   let appContext: AppGateContext | undefined;
   if (flow === 'app' || flow === 'site' || flow === 'automation') {
     appContext = {
       planTitle: plan.title,
+      stepId: step.id,
       stepOrder: step.order,
       backlogItemId,
       interactionBaselineSha,
+      workspaceFingerprint,
+      reusableValidation,
       stepPrompt: systemPrompt,
       stepContext: {
         title: step.title,
@@ -124,7 +147,7 @@ export async function runSingleTurnGate(
         protected_routes: getDeclaredProtectedRoutes(step),
         validation_targets: getDeclaredValidationTargets(step),
         acceptance: backlogAcceptance,
-        test_command: getDeclaredTestCommand(step),
+        test_command: testCommand,
       },
       currentMessages: result.messages,
       assistantContext: {
@@ -175,16 +198,72 @@ export async function runSingleTurnGate(
     persistedStep,
   });
   const gateErrorExcerpt = gateFeedback.excerpt;
-  const tests = [
-    ...extractTestEvidenceFromResult(result),
-    ...(gateRes.richSignals?.tests?.tests || []),
+  const validatedFingerprint =
+    gateRes.richSignals?.workspace_fingerprint || workspaceFingerprint;
+  const persistedTests = validatedFingerprint
+    ? (backlogEvidence?.tests || [])
+        .filter((test) =>
+          test.step_id === step.id &&
+          test.workspace_fingerprint === validatedFingerprint
+        )
+        .map((test) => ({
+          ...test,
+          captured_at:
+            test.captured_at || backlogEvidence!.captured_at,
+        }))
+    : [];
+  const currentResultTests = extractTestEvidenceFromResult(result).map(
+    (test) => ({
+      ...test,
+      step_id: step.id,
+      ...(workspaceFingerprint
+        ? { workspace_fingerprint: workspaceFingerprint }
+        : {}),
+      ran_after_changes:
+        test.ran_after_changes &&
+        !(
+          workspaceFingerprint &&
+          validatedFingerprint &&
+          workspaceFingerprint !== validatedFingerprint
+        ),
+    }),
+  );
+  const gateTests = (gateRes.richSignals?.tests?.tests || []).map(
+    (test) => ({
+      ...test,
+      step_id: test.step_id || step.id,
+      ...(test.workspace_fingerprint || !validatedFingerprint
+        ? {}
+        : { workspace_fingerprint: validatedFingerprint }),
+    }),
+  );
+  const testCandidates = [
+    ...persistedTests,
+    ...currentResultTests,
+    ...gateTests,
   ];
+  const tests = Array.from(new Map(testCandidates.map((test) => [
+    [
+      test.step_id || step.id,
+      test.command,
+      test.workspace_fingerprint || '',
+    ].join(':'),
+    test,
+  ])).values());
   const observations = gateRes.richSignals?.observations || [];
   const evidenceRunId = randomUUID();
+  const transientGateFailure = isTransientGateFailure(gateRes);
+  const build = gateRes.richSignals?.build
+    ? {
+        command: 'npm run build',
+        exit_code: gateRes.richSignals.build.ok ? 0 : 1,
+        duration_ms: 0,
+      }
+    : undefined;
 
   if (
     backlogItemId &&
-    (tests.length > 0 || observations.length > 0)
+    (tests.length > 0 || observations.length > 0 || build)
   ) {
     await writeEvidence({
       sandbox,
@@ -193,9 +272,23 @@ export async function runSingleTurnGate(
       itemId: backlogItemId,
       record: {
         evidence_run_id: evidenceRunId,
+        producer_step_id: step.id,
+        workspace_fingerprint: validatedFingerprint,
         captured_at: new Date().toISOString(),
         tests,
+        build,
         observations,
+        gate_resume:
+          transientGateFailure &&
+          build?.exit_code === 0 &&
+          validatedFingerprint
+            ? {
+                status: 'pending',
+                step_id: step.id,
+                workspace_fingerprint: validatedFingerprint,
+                captured_at: new Date().toISOString(),
+              }
+            : null,
       },
     });
   }
@@ -205,7 +298,7 @@ export async function runSingleTurnGate(
     sandbox = gateRes.sandboxReplacement;
   }
 
-  if (isTransientGateFailure(gateRes)) {
+  if (transientGateFailure) {
     console.warn(
       `[SingleTurn] Gate infrastructure unavailable for step ${step.order}: ${gateRes.error || 'unknown error'}`,
     );

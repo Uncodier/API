@@ -36,6 +36,9 @@ describe('workflowStepRequiresBrowser', () => {
     expect(workflowStepRequiresBrowser({
       instructions: 'Usa vista computacional para navegar a Freelancer.',
     })).toBe(true);
+    expect(workflowStepRequiresBrowser({
+      instructions: 'Select the first option and apply the filter.',
+    })).toBe(true);
   });
 
   test('lets an explicit false flag override legacy keyword inference', () => {
@@ -45,10 +48,22 @@ describe('workflowStepRequiresBrowser', () => {
     })).toBe(false);
   });
 
+  test('lets an interaction contract override requires_browser=false', () => {
+    expect(workflowStepRequiresBrowser({
+      requires_browser: false,
+      browser_interaction_required: true,
+      instructions: 'Select the first option.',
+    })).toBe(true);
+  });
+
   test('does not provision a browser for ordinary sandbox work', () => {
     expect(workflowStepRequiresBrowser({
       title: 'Transform a CSV',
       instructions: 'Read the file and calculate totals.',
+    })).toBe(false);
+    expect(workflowStepRequiresBrowser({
+      title: 'Complete report',
+      instructions: 'Classify the opportunity type and complete the report.',
     })).toBe(false);
   });
 });

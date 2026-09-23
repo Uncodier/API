@@ -10,6 +10,20 @@ export function shouldPersistCycleWorkspace(params: {
   );
 }
 
+export function shouldUseLightweightCycleFinalization(params: {
+  planCompleted: boolean;
+  anyStepFailed: boolean;
+  infrastructureHalt: boolean;
+  cycleOutcome: CronCycleOutcome;
+}): boolean {
+  return (
+    !params.planCompleted &&
+    !params.anyStepFailed &&
+    !params.infrastructureHalt &&
+    params.cycleOutcome === 'progress'
+  );
+}
+
 export function finalizePlanCycleOutcome(params: {
   completedStepsBefore: number;
   completedStepsAfter: number;

@@ -165,14 +165,28 @@ export function mergeEvidenceRecords(
     !incoming.evidence_run_id &&
     Array.isArray(incoming.changed_files) &&
     incoming.changed_files.length > 0;
-  const startsNewChangeSet = startsNewEvidenceRun || startsLegacyChangeSet;
+  const startsNewWorkspaceFingerprint =
+    typeof incoming.workspace_fingerprint === 'string' &&
+    incoming.workspace_fingerprint.length > 0 &&
+    incoming.workspace_fingerprint !== existing?.workspace_fingerprint;
+  const startsNewChangeSet =
+    startsNewEvidenceRun ||
+    startsLegacyChangeSet ||
+    startsNewWorkspaceFingerprint;
   const prior = startsNewChangeSet ? undefined : existing;
   const tests = new Map<string, NonNullable<EvidenceRecord['tests']>[number]>();
   const testCandidates = startsNewChangeSet
     ? incoming.tests || []
     : [...(prior?.tests || []), ...(incoming.tests || [])];
   for (const test of testCandidates) {
-    tests.set(`${test.command}:${test.captured_at || ''}`, test);
+    tests.set(
+      [
+        test.step_id || '',
+        test.command,
+        test.workspace_fingerprint || test.captured_at || '',
+      ].join(':'),
+      test,
+    );
   }
   const observations = new Map<
     string,

@@ -2,6 +2,10 @@ import type {
   WorkflowToolExecution,
   WorkflowToolExecutionTracker,
 } from './execution-tracker';
+import {
+  runWorkflowResultGate,
+  type WorkflowResultGateSignal,
+} from './result-gate';
 
 export type WorkflowPlanResultStatus = 'completed' | 'failed' | 'skipped';
 
@@ -26,6 +30,10 @@ export interface WorkflowPlanResult {
   criteria: WorkflowPlanResultCheck[];
   validation: WorkflowPlanResultCheck[];
   executions: WorkflowToolExecution[];
+  gate?: {
+    passed: boolean;
+    signals: WorkflowResultGateSignal[];
+  };
   error?: {
     code?: string;
     message: string;
@@ -124,9 +132,14 @@ function meaningfulValidationCount(value: unknown): number {
 
 export function createWorkflowPlanResultCapture(step: {
   type?: string;
+  title?: unknown;
+  description?: unknown;
+  instructions?: unknown;
   expected_output?: unknown;
   success_criteria?: unknown;
   validation_rules?: unknown;
+  browser_interaction_required?: unknown;
+  metadata?: Record<string, unknown>;
 }, options: WorkflowPlanResultCaptureOptions = {}): WorkflowPlanResultCapture {
   let submitted: WorkflowPlanResult | null = null;
   const criteriaCount = meaningfulCriteriaCount(step.success_criteria);
@@ -139,7 +152,7 @@ export function createWorkflowPlanResultCapture(step: {
       'This is the only valid way to complete, fail, or skip a workflow step. ' +
       'Call it once after the required actions finish. Never include passwords, tokens, cookies, or other secret values. ' +
       'For completed results, report every success criterion and validation rule by its 1-based index. ' +
-      'The runner independently attaches the actual tool execution receipts.',
+      'The runner independently attaches tool receipts and gates output shape, required actions, and browser state transitions.',
     parameters: {
       type: 'object',
       properties: {
@@ -265,17 +278,8 @@ export function createWorkflowPlanResultCapture(step: {
             `${execution.tool}${execution.action ? `:${execution.action}` : ''} succeeded`,
           verified: true,
         }));
+      let completedGate: ReturnType<typeof runWorkflowResultGate> | undefined;
       if (status === 'completed') {
-        if (
-          String(step.expected_output ?? '').trim() &&
-          Object.keys(data).length === 0
-        ) {
-          return {
-            accepted: false,
-            terminal: false,
-            error: 'Cannot complete: data is empty but expected_output is defined.',
-          };
-        }
         const missingCriteria = missingOrFailedIndexes(criteriaCount, criteria);
         const missingValidation = missingOrFailedIndexes(validationCount, validation);
         if (missingCriteria.length || missingValidation.length) {
@@ -298,55 +302,25 @@ export function createWorkflowPlanResultCapture(step: {
             error: 'Completed results with declared checks require at least one evidence entry.',
           };
         }
-        if (options.requireToolExecution && successfulExecutions.length === 0) {
-          return {
-            accepted: false,
-            terminal: false,
-            error: 'Cannot complete: no substantive tool execution succeeded.',
-          };
-        }
-        const lastExecution = executions.at(-1);
-        if (lastExecution && lastExecution.status !== 'succeeded') {
-          return {
-            accepted: false,
-            terminal: false,
-            error: `Cannot complete: latest tool execution ${lastExecution.id} did not succeed.`,
-          };
-        }
-        if (options.requiresBrowser) {
-          const browserActions = new Set(
-            successfulExecutions
-              .filter((execution) => execution.tool === 'sandbox_browser')
-              .map((execution) => execution.action),
-          );
-          const missingBrowserActions = ['open', 'snapshot'].filter(
-            (action) => !browserActions.has(action),
-          );
-          if (missingBrowserActions.length > 0) {
-            return {
-              accepted: false,
-              terminal: false,
-              error:
-                `Cannot complete browser step: missing successful actions ` +
-                `[${missingBrowserActions.join(', ')}].`,
-            };
-          }
-        }
-        const missingRequiredTools = (options.requiredToolExecutions || [])
-          .filter((required) =>
-            required && typeof required.tool === 'string' && required.tool.trim())
-          .filter((required) => !successfulExecutions.some((execution) =>
-            execution.tool === required.tool &&
-            (!required.action || execution.action === required.action)))
-          .map((required) =>
-            `${required.tool}${required.action ? `:${required.action}` : ''}`);
-        if (missingRequiredTools.length > 0) {
+        completedGate = runWorkflowResultGate({
+          step,
+          data,
+          executions,
+          requireToolExecution: options.requireToolExecution,
+          requiresBrowser: options.requiresBrowser,
+          requiredToolExecutions: options.requiredToolExecutions,
+        });
+        if (!completedGate.ok) {
           return {
             accepted: false,
             terminal: false,
             error:
-              `Cannot complete: missing successful required tool executions ` +
-              `[${missingRequiredTools.join(', ')}].`,
+              completedGate.reason ||
+              'Workflow result gate rejected completion.',
+            gate: {
+              passed: false,
+              signals: completedGate.signals,
+            },
           };
         }
       }
@@ -381,6 +355,12 @@ export function createWorkflowPlanResultCapture(step: {
         criteria,
         validation,
         executions,
+        ...(completedGate ? {
+          gate: {
+            passed: completedGate.ok,
+            signals: completedGate.signals,
+          },
+        } : {}),
         ...(error ? { error } : {}),
         submitted_at: new Date().toISOString(),
       };
