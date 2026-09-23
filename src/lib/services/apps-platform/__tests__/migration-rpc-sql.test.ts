@@ -2,6 +2,13 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
+const bootstrapMigration = readFileSync(
+  resolve(
+    process.cwd(),
+    'supabase/migrations/20260923193900_create_apps_platform_tables.sql',
+  ),
+  'utf8',
+);
 const migration = readFileSync(
   resolve(
     process.cwd(),
@@ -18,6 +25,24 @@ const provisioningMigration = readFileSync(
 );
 
 describe('atomic tenant migration SQL', () => {
+  it('versions the RLS-protected registry before dependent RPCs', () => {
+    expect(bootstrapMigration).toMatch(
+      /CREATE TABLE IF NOT EXISTS public\.apps_tenants/i,
+    );
+    expect(bootstrapMigration).toMatch(
+      /ALTER TABLE public\.apps_tenants ENABLE ROW LEVEL SECURITY/i,
+    );
+    expect(bootstrapMigration).toMatch(
+      /CREATE TABLE IF NOT EXISTS public\.tenant_users/i,
+    );
+    expect(bootstrapMigration).toMatch(
+      /GRANT EXECUTE ON FUNCTION public\.apps_exec_sql\(text\)\s+TO service_role/i,
+    );
+    expect(migration).toContain(
+      'Missing public.apps_tenants; apply migration 20260923193900 first',
+    );
+  });
+
   it('keeps tenant registry creation and schema bootstrap in one lock', () => {
     expect(provisioningMigration).toContain(
       "hashtextextended('tenant:' || p_requirement_id::text, 0)",
@@ -29,7 +54,40 @@ describe('atomic tenant migration SQL', () => {
 
   it('runs tenant SQL as a constrained non-login role', () => {
     expect(migration).toMatch(
-      /CREATE ROLE %I NOLOGIN NOINHERIT NOSUPERUSER/i,
+      /CREATE ROLE %I NOLOGIN NOINHERIT NOCREATEDB NOCREATEROLE/i,
+    );
+    expect(migration).toContain(
+      'AND (rolsuper OR rolreplication OR rolbypassrls)',
+    );
+    expect(provisioningMigration).toContain(
+      'AND (rolsuper OR rolreplication OR rolbypassrls)',
+    );
+    expect(migration).not.toMatch(
+      /ALTER ROLE[^;]*(?:NOSUPERUSER|NOREPLICATION|NOBYPASSRLS)/i,
+    );
+    expect(provisioningMigration).not.toMatch(
+      /ALTER ROLE[^;]*(?:NOSUPERUSER|NOREPLICATION|NOBYPASSRLS)/i,
+    );
+    expect(migration).toMatch(
+      /GRANT apps_migration_coordinator TO %I\s+WITH INHERIT FALSE, SET TRUE/i,
+    );
+    expect(migration).toMatch(
+      /GRANT %I TO %I WITH INHERIT FALSE, SET TRUE/i,
+    );
+    expect(provisioningMigration).toMatch(
+      /GRANT %I TO %I WITH INHERIT FALSE, SET TRUE/i,
+    );
+    expect(migration).toMatch(
+      /GRANT USAGE, CREATE ON SCHEMA public TO apps_migration_coordinator/i,
+    );
+    expect(migration).toMatch(
+      /REVOKE CREATE ON SCHEMA public FROM apps_migration_coordinator/i,
+    );
+    expect(provisioningMigration).toMatch(
+      /GRANT USAGE, CREATE ON SCHEMA %I[\s\S]*?TO apps_migration_coordinator/i,
+    );
+    expect(provisioningMigration).toMatch(
+      /REVOKE CREATE ON SCHEMA %I FROM apps_migration_coordinator/i,
     );
     expect(migration).toMatch(
       /ALTER FUNCTION %I\._execute_tenant_migration\(text\) OWNER TO %I/i,

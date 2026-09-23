@@ -4,6 +4,15 @@
 -- Reassign each tenant schema before dropping its app_owner_<schema suffix>
 -- role. The per-tenant executor is intentionally not restored.
 
+DO $prerequisites$
+BEGIN
+  IF to_regclass('public.apps_tenants') IS NULL THEN
+    RAISE EXCEPTION
+      'Missing public.apps_tenants; apply migration 20260923193900 first';
+  END IF;
+END;
+$prerequisites$;
+
 DO $coordinator_role$
 BEGIN
   IF NOT EXISTS (
@@ -12,17 +21,44 @@ BEGIN
     WHERE rolname = 'apps_migration_coordinator'
   ) THEN
     CREATE ROLE apps_migration_coordinator
-      NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB
-      NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+      NOLOGIN NOINHERIT NOCREATEDB NOCREATEROLE;
+  END IF;
+
+  -- Supabase's managed postgres role has CREATEROLE but is not a true
+  -- superuser. It may harden ordinary role attributes, but PostgreSQL
+  -- reserves changing SUPERUSER, REPLICATION, and BYPASSRLS for superusers.
+  -- Those attributes default to false for a newly created role; reject an
+  -- unexpectedly privileged pre-existing role instead of attempting to
+  -- downgrade it with an ALTER ROLE that hosted Supabase cannot execute.
+  IF EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_roles
+    WHERE rolname = 'apps_migration_coordinator'
+      AND (rolsuper OR rolreplication OR rolbypassrls)
+  ) THEN
+    RAISE EXCEPTION
+      'apps_migration_coordinator has unsafe managed role attributes';
   END IF;
 END;
 $coordinator_role$;
 
 ALTER ROLE apps_migration_coordinator
-  NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB
-  NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+  NOLOGIN NOINHERIT NOCREATEDB NOCREATEROLE;
 
-GRANT USAGE ON SCHEMA public TO apps_migration_coordinator;
+-- PostgreSQL 16+ no longer makes a CREATEROLE user able to SET ROLE to every
+-- role it creates. Ownership transfers require SET ROLE, so grant that option
+-- explicitly without inheriting the coordinator's privileges.
+DO $coordinator_membership$
+BEGIN
+  EXECUTE format(
+    'GRANT apps_migration_coordinator TO %I
+     WITH INHERIT FALSE, SET TRUE',
+    current_user
+  );
+END;
+$coordinator_membership$;
+
+GRANT USAGE, CREATE ON SCHEMA public TO apps_migration_coordinator;
 GRANT SELECT ON TABLE public.apps_tenants TO apps_migration_coordinator;
 
 -- Existing tenant objects were created by the unrestricted bootstrap RPC.
@@ -47,15 +83,38 @@ BEGIN
       WHERE rolname = owner_role
     ) THEN
       EXECUTE format(
-        'CREATE ROLE %I NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB
-         NOCREATEROLE NOREPLICATION NOBYPASSRLS',
+        'CREATE ROLE %I NOLOGIN NOINHERIT NOCREATEDB NOCREATEROLE',
         owner_role
       );
     END IF;
+    IF EXISTS (
+      SELECT 1
+      FROM pg_catalog.pg_roles
+      WHERE rolname = owner_role
+        AND (rolsuper OR rolreplication OR rolbypassrls)
+    ) THEN
+      RAISE EXCEPTION
+        'Tenant owner role % has unsafe managed role attributes',
+        owner_role;
+    END IF;
     EXECUTE format(
-      'ALTER ROLE %I NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB
-       NOCREATEROLE NOREPLICATION NOBYPASSRLS',
+      'ALTER ROLE %I NOLOGIN NOINHERIT NOCREATEDB NOCREATEROLE',
       owner_role
+    );
+    EXECUTE format(
+      'GRANT %I TO %I WITH INHERIT FALSE, SET TRUE',
+      owner_role,
+      current_user
+    );
+    EXECUTE format(
+      'GRANT USAGE, CREATE ON SCHEMA %I TO %I',
+      tenant_schema.nspname,
+      owner_role
+    );
+    EXECUTE format(
+      'GRANT USAGE, CREATE ON SCHEMA %I
+       TO apps_migration_coordinator',
+      tenant_schema.nspname
     );
 
     FOR tenant_object IN
@@ -66,6 +125,19 @@ BEGIN
         AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f', 'c')
         AND c.relname <> '_meta'
     LOOP
+      IF tenant_object.relkind = 'v' THEN
+        EXECUTE format(
+          'ALTER VIEW %I.%I SET (security_invoker = true)',
+          tenant_schema.nspname,
+          tenant_object.relname
+        );
+      ELSIF tenant_object.relkind = 'm' THEN
+        EXECUTE format(
+          'REVOKE ALL ON TABLE %I.%I FROM anon, authenticated',
+          tenant_schema.nspname,
+          tenant_object.relname
+        );
+      END IF;
       EXECUTE format(
         CASE tenant_object.relkind
           WHEN 'v' THEN 'ALTER VIEW %I.%I OWNER TO %I'
@@ -80,19 +152,6 @@ BEGIN
         tenant_object.relname,
         owner_role
       );
-      IF tenant_object.relkind = 'v' THEN
-        EXECUTE format(
-          'ALTER VIEW %I.%I SET (security_invoker = true)',
-          tenant_schema.nspname,
-          tenant_object.relname
-        );
-      ELSIF tenant_object.relkind = 'm' THEN
-        EXECUTE format(
-          'REVOKE ALL ON TABLE %I.%I FROM anon, authenticated',
-          tenant_schema.nspname,
-          tenant_object.relname
-        );
-      END IF;
     END LOOP;
 
     FOR tenant_routine IN
@@ -105,13 +164,6 @@ BEGIN
       WHERE n.nspname = tenant_schema.nspname
         AND p.prokind IN ('f', 'p')
     LOOP
-      EXECUTE format(
-        'ALTER ROUTINE %I.%I(%s) OWNER TO %I',
-        tenant_schema.nspname,
-        tenant_routine.proname,
-        tenant_routine.arguments,
-        owner_role
-      );
       IF tenant_routine.prosecdef THEN
         EXECUTE format(
           'ALTER ROUTINE %I.%I(%s) SECURITY INVOKER',
@@ -120,6 +172,13 @@ BEGIN
           tenant_routine.arguments
         );
       END IF;
+      EXECUTE format(
+        'ALTER ROUTINE %I.%I(%s) OWNER TO %I',
+        tenant_schema.nspname,
+        tenant_routine.proname,
+        tenant_routine.arguments,
+        owner_role
+      );
     END LOOP;
 
     FOR tenant_type IN
@@ -160,15 +219,6 @@ BEGIN
       tenant_schema.nspname
     );
     EXECUTE format(
-      'ALTER SCHEMA %I OWNER TO %I',
-      tenant_schema.nspname,
-      owner_role
-    );
-    EXECUTE format(
-      'GRANT USAGE ON SCHEMA %I TO apps_migration_coordinator',
-      tenant_schema.nspname
-    );
-    EXECUTE format(
       'ALTER TABLE %I._meta OWNER TO apps_migration_coordinator',
       tenant_schema.nspname
     );
@@ -193,11 +243,6 @@ BEGIN
       tenant_schema.nspname
     );
     EXECUTE format(
-      'ALTER FUNCTION %I._execute_tenant_migration(text) OWNER TO %I',
-      tenant_schema.nspname,
-      owner_role
-    );
-    EXECUTE format(
       'GRANT EXECUTE ON FUNCTION %I._execute_tenant_migration(text)
        TO apps_migration_coordinator',
       tenant_schema.nspname
@@ -206,6 +251,20 @@ BEGIN
       'REVOKE ALL ON FUNCTION %I._execute_tenant_migration(text)
        FROM PUBLIC, anon, authenticated, service_role',
       tenant_schema.nspname
+    );
+    EXECUTE format(
+      'ALTER FUNCTION %I._execute_tenant_migration(text) OWNER TO %I',
+      tenant_schema.nspname,
+      owner_role
+    );
+    EXECUTE format(
+      'REVOKE CREATE ON SCHEMA %I FROM apps_migration_coordinator',
+      tenant_schema.nspname
+    );
+    EXECUTE format(
+      'ALTER SCHEMA %I OWNER TO %I',
+      tenant_schema.nspname,
+      owner_role
     );
   END LOOP;
 END;
@@ -253,12 +312,6 @@ BEGIN
 END;
 $function$;
 
-ALTER FUNCTION public.apps_get_migration_receipt(
-  text,
-  uuid,
-  text
-) OWNER TO apps_migration_coordinator;
-
 REVOKE ALL ON FUNCTION public.apps_get_migration_receipt(
   text,
   uuid,
@@ -270,6 +323,12 @@ GRANT EXECUTE ON FUNCTION public.apps_get_migration_receipt(
   uuid,
   text
 ) TO service_role;
+
+ALTER FUNCTION public.apps_get_migration_receipt(
+  text,
+  uuid,
+  text
+) OWNER TO apps_migration_coordinator;
 
 CREATE OR REPLACE FUNCTION public.apps_apply_migration(
   p_target_schema text,
@@ -384,14 +443,6 @@ BEGIN
 END;
 $function$;
 
-ALTER FUNCTION public.apps_apply_migration(
-  text,
-  uuid,
-  text,
-  text,
-  text
-) OWNER TO apps_migration_coordinator;
-
 REVOKE ALL ON FUNCTION public.apps_apply_migration(
   text,
   uuid,
@@ -407,3 +458,13 @@ GRANT EXECUTE ON FUNCTION public.apps_apply_migration(
   text,
   text
 ) TO service_role;
+
+ALTER FUNCTION public.apps_apply_migration(
+  text,
+  uuid,
+  text,
+  text,
+  text
+) OWNER TO apps_migration_coordinator;
+
+REVOKE CREATE ON SCHEMA public FROM apps_migration_coordinator;

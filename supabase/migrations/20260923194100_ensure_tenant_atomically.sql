@@ -86,15 +86,30 @@ BEGIN
     SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = owner_role
   ) THEN
     EXECUTE format(
-      'CREATE ROLE %I NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB
-       NOCREATEROLE NOREPLICATION NOBYPASSRLS',
+      'CREATE ROLE %I NOLOGIN NOINHERIT NOCREATEDB NOCREATEROLE',
       owner_role
     );
   END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_roles
+    WHERE rolname = owner_role
+      AND (rolsuper OR rolreplication OR rolbypassrls)
+  ) THEN
+    RAISE EXCEPTION
+      'Tenant owner role % has unsafe managed role attributes',
+      owner_role;
+  END IF;
   EXECUTE format(
-    'ALTER ROLE %I NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB
-     NOCREATEROLE NOREPLICATION NOBYPASSRLS',
+    'ALTER ROLE %I NOLOGIN NOINHERIT NOCREATEDB NOCREATEROLE',
     owner_role
+  );
+  -- Ownership changes require the SECURITY DEFINER owner to be able to
+  -- assume the constrained tenant role. Do not inherit its privileges.
+  EXECUTE format(
+    'GRANT %I TO %I WITH INHERIT FALSE, SET TRUE',
+    owner_role,
+    current_user
   );
 
   IF NOT EXISTS (
@@ -115,7 +130,8 @@ BEGIN
     owner_role
   );
   EXECUTE format(
-    'GRANT USAGE ON SCHEMA %I TO apps_migration_coordinator',
+    'GRANT USAGE, CREATE ON SCHEMA %I
+     TO apps_migration_coordinator',
     target_schema
   );
   EXECUTE format(
@@ -177,11 +193,6 @@ BEGIN
     target_schema
   );
   EXECUTE format(
-    'ALTER SCHEMA %I OWNER TO %I',
-    target_schema,
-    owner_role
-  );
-  EXECUTE format(
     $executor$
     CREATE OR REPLACE FUNCTION %I._execute_tenant_migration(p_sql text)
     RETURNS void
@@ -201,11 +212,6 @@ BEGIN
     target_schema
   );
   EXECUTE format(
-    'ALTER FUNCTION %I._execute_tenant_migration(text) OWNER TO %I',
-    target_schema,
-    owner_role
-  );
-  EXECUTE format(
     'GRANT EXECUTE ON FUNCTION %I._execute_tenant_migration(text)
      TO apps_migration_coordinator',
     target_schema
@@ -214,6 +220,20 @@ BEGIN
     'REVOKE ALL ON FUNCTION %I._execute_tenant_migration(text)
      FROM PUBLIC, anon, authenticated, service_role',
     target_schema
+  );
+  EXECUTE format(
+    'ALTER FUNCTION %I._execute_tenant_migration(text) OWNER TO %I',
+    target_schema,
+    owner_role
+  );
+  EXECUTE format(
+    'REVOKE CREATE ON SCHEMA %I FROM apps_migration_coordinator',
+    target_schema
+  );
+  EXECUTE format(
+    'ALTER SCHEMA %I OWNER TO %I',
+    target_schema,
+    owner_role
   );
 
   RETURN jsonb_build_object(

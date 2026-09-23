@@ -48,6 +48,9 @@ create policy apps_tenants_service_only on public.apps_tenants
   using (auth.role() = 'service_role')
   with check (auth.role() = 'service_role');
 
+revoke all on table public.apps_tenants from anon, authenticated;
+grant all on table public.apps_tenants to service_role;
+
 create table if not exists public.tenant_users (
   tenant_id uuid not null references public.apps_tenants(tenant_id) on delete cascade,
   user_id uuid not null,
@@ -67,11 +70,15 @@ create policy tenant_users_self_read on public.tenant_users
   for select
   using (auth.uid() = user_id);
 
+revoke all on table public.tenant_users from anon, authenticated;
+grant select on table public.tenant_users to authenticated;
+grant all on table public.tenant_users to service_role;
+
 create or replace function public.apps_exec_sql(sql text)
 returns void
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, pg_temp
 as $$
 begin
   if sql is null or length(trim(sql)) = 0 then
@@ -83,11 +90,13 @@ $$;
 
 revoke all on function public.apps_exec_sql(text) from public;
 revoke all on function public.apps_exec_sql(text) from anon, authenticated;
+grant execute on function public.apps_exec_sql(text) to service_role;
 
 create or replace function public.tenant_id_from_jwt()
 returns uuid
 language sql
 stable
+set search_path = pg_catalog
 as $$
   select nullif(current_setting('request.jwt.claims', true)::jsonb->>'tenant_id', '')::uuid;
 $$;

@@ -331,21 +331,46 @@ export async function updateCustomerSupportVoicePrompt(params: {
   return updateAgent(params.agentId, { systemPrompt });
 }
 
+async function ensureSenderUsesAgent(
+  senderId: string,
+  agentId: string,
+  attachIfMissing = true
+): Promise<boolean> {
+  try {
+    const current = await getSenderAgent(senderId);
+    if (current.id === agentId) return false;
+    throw new Error(`Sender ${senderId} already belongs to another Zavu agent`);
+  } catch (error: any) {
+    if (error?.status !== 404) throw error;
+  }
+
+  if (!attachIfMissing) return false;
+
+  try {
+    await attachSenderToAgent(senderId, agentId);
+    return true;
+  } catch (attachError) {
+    // The attach endpoint is not idempotent and can report that an agent
+    // already exists after a successful concurrent or previously retried call.
+    // Re-read the sender before treating that response as a failed save.
+    try {
+      const current = await getSenderAgent(senderId);
+      if (current.id === agentId) return false;
+      throw new Error(`Sender ${senderId} already belongs to another Zavu agent`);
+    } catch (readError: any) {
+      if (readError?.status !== 404) throw readError;
+      throw attachError;
+    }
+  }
+}
+
 export async function attachCustomerSupportVoiceSenders(
   synced: CustomerSupportVoiceSyncResult,
   senderIds: string[]
 ): Promise<CustomerSupportVoiceSyncResult> {
   for (const senderId of Array.from(new Set(senderIds.filter(Boolean)))) {
-    try {
-      const current = await getSenderAgent(senderId);
-      if (current.id !== synced.agent.id) {
-        throw new Error(
-          `Sender ${senderId} already belongs to another Zavu agent`
-        );
-      }
-    } catch (error: any) {
-      if (error?.status !== 404) throw error;
-      await attachSenderToAgent(senderId, synced.agent.id);
+    const attached = await ensureSenderUsesAgent(senderId, synced.agent.id);
+    if (attached) {
       synced.attachedSenderIds.push(senderId);
     }
   }
@@ -422,17 +447,13 @@ export async function syncCustomerSupportVoiceAgent(params: {
     });
 
     for (const senderId of senderIds) {
-      try {
-        const current = await getSenderAgent(senderId);
-        if (current.id !== zavuAgent.id) {
-          throw new Error(`Sender ${senderId} already belongs to another Zavu agent`);
-        }
-      } catch (error: any) {
-        if (error?.status !== 404) throw error;
-        if (!params.deferSenderAttachment) {
-          await attachSenderToAgent(senderId, zavuAgent.id);
-          attachedSenderIds.push(senderId);
-        }
+      const attached = await ensureSenderUsesAgent(
+        senderId,
+        zavuAgent.id,
+        !params.deferSenderAttachment
+      );
+      if (attached) {
+        attachedSenderIds.push(senderId);
       }
     }
 

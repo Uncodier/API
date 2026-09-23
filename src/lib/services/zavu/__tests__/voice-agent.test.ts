@@ -295,6 +295,36 @@ describe("syncCustomerSupportVoiceAgent", () => {
       .toBeLessThan(mockAttachSenderToAgent.mock.invocationCallOrder[0]);
   });
 
+  it("treats an already-attached response as success after reconciliation", async () => {
+    mockGetSenderAgent
+      .mockReset()
+      .mockRejectedValueOnce(
+        Object.assign(new Error("Zavu agent not found"), { status: 404 })
+      )
+      .mockResolvedValueOnce({
+        id: "agent_1",
+        enabled: true,
+        name: "Customer Support",
+        systemPrompt: "Base background",
+      });
+    mockAttachSenderToAgent.mockRejectedValueOnce(
+      Object.assign(new Error("An agent was already created for this sender"), {
+        status: 400,
+      })
+    );
+
+    const result = await syncCustomerSupportVoiceAgent({
+      siteId: "site-1",
+      senderIds: ["sender_1"],
+      deferActivation: true,
+    });
+
+    expect(result.agent.id).toBe("agent_1");
+    expect(result.attachedSenderIds).toEqual([]);
+    expect(mockGetSenderAgent).toHaveBeenCalledTimes(2);
+    expect(mockPersistAgent).toHaveBeenCalled();
+  });
+
   it("detaches newly attached senders and restores full agent state on failure", async () => {
     mockGetSenderAgent.mockRejectedValueOnce(
       Object.assign(new Error("Sender not found"), { status: 404 })
