@@ -210,12 +210,25 @@ export async function POST(request: Request) {
       const conversationInfo = await getConversationChannel(savedMessages.conversationId);
 
       if (conversationInfo && conversationInfo.channel) {
-        const { channel, leadPhone, leadEmail, visitorPhone, channelDelivery } = conversationInfo;
+        const {
+          channel,
+          leadId: conversationLeadId,
+          leadPhone,
+          leadEmail,
+          visitorPhone,
+          channelDelivery,
+        } = conversationInfo;
 
         channelSendResult = await sendMessageByChannel(
           channel,
           message,
-          { leadPhone, leadEmail, visitorPhone, channelDelivery },
+          {
+            leadId: conversationLeadId,
+            leadPhone,
+            leadEmail,
+            visitorPhone,
+            channelDelivery,
+          },
           site_id,
           agentId,
           savedMessages.conversationId,
@@ -262,6 +275,7 @@ export async function POST(request: Request) {
         success: channelSendResult.success,
         method: channelSendResult.method,
         workflowId: channelSendResult.workflowId,
+        callId: channelSendResult.callId,
         error: channelSendResult.error
       };
     }

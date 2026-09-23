@@ -52,6 +52,10 @@ export interface AppGateContext {
   planTitle: string;
   stepId: string;
   stepOrder: number;
+  /** Intermediate steps stop after local validation and interaction checks. */
+  validationScope?: 'intermediate' | 'final';
+  /** Final gates may persist origin without waiting for a deployment. */
+  validateDeployment?: boolean;
   backlogItemId?: string | null;
   interactionBaselineSha?: string | null;
   workspaceFingerprint?: string;

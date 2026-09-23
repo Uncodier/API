@@ -137,12 +137,16 @@ describe('publish test delivery', () => {
       channel: 'voice',
       voice_mode: 'agent_call',
       text: 'Hello, this is Acme calling about your appointment.',
+      objective: 'Confirm the appointment',
+      additional_context: 'Offer a morning or afternoon slot.',
     });
 
     expect(result.success).toBe(true);
     expect(bulkExecuteMock).toHaveBeenCalledWith(expect.objectContaining({
       channel: 'voice',
       voice_mode: 'agent_call',
+      objective: 'Confirm the appointment',
+      additional_context: 'Offer a morning or afternoon slot.',
     }));
   });
 });

@@ -39,7 +39,8 @@ describe('judge verification policy', () => {
 
     expect(feedback).toContain('Failure kind: evidence_gap');
     expect(feedback).toContain('Footer links resolve without errors');
-    expect(feedback).toContain('repair the product');
+    expect(feedback).toContain('evidence-collection turn is read-only');
+    expect(feedback).toContain('report it as a product defect');
     expect(feedback).toContain('Do not repeat an identical probe');
   });
 });

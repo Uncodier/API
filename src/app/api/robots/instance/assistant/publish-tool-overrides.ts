@@ -59,6 +59,14 @@ export function normalizePublishToolOverrides(
     stringValue(existingPublish.voice_mode)
     ?? stringValue(legacyBulk.voice_mode)
     ?? stringValue(context.publish_voice_mode);
+  const objective =
+    stringValue(existingPublish.objective)
+    ?? stringValue(legacyBulk.objective)
+    ?? stringValue(context.publish_voice_objective);
+  const additionalContext =
+    stringValue(existingPublish.additional_context)
+    ?? stringValue(legacyBulk.additional_context)
+    ?? stringValue(context.publish_voice_additional_context);
   const testLeadId =
     stringValue(existingPublish.test_lead_id)
     ?? stringValue(destination?.lead_id);
@@ -71,6 +79,8 @@ export function normalizePublishToolOverrides(
     ...(channel ? { channel } : {}),
     ...(audienceEmailMode ? { audience_email_mode: audienceEmailMode } : {}),
     ...(voiceMode ? { voice_mode: voiceMode } : {}),
+    ...(objective ? { objective } : {}),
+    ...(additionalContext ? { additional_context: additionalContext } : {}),
     is_test:
       typeof existingPublish.is_test === 'boolean'
         ? existingPublish.is_test

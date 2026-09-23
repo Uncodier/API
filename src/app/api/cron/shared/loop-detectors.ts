@@ -149,6 +149,9 @@ export interface CycleGitChange {
 
 const ADMIN_FILE_PATTERNS = [
   /\.md$/i,
+  /(?:^|\/)__tests__\//i,
+  /(?:^|\/)tests?\//i,
+  /\.(?:test|spec)\.[^.]+$/i,
   /^evidence\//i,
   /^\.qa\//i,
   /^(?:qa|test)_results\.json$/i,
@@ -177,9 +180,9 @@ export function detectAdminLoop(history: CycleGitChange[]): LoopDetectorVerdict 
   return {
     triggered: true,
     kind: 'admin',
-    reason: 'admin loop: 2 consecutive cycles touched only docs / evidence / backlog files',
+    reason: 'admin loop: 2 consecutive cycles touched only tests, docs, evidence, or backlog files',
     feedback:
-      'STOP: admin loop. The last two cycles produced no code changes — only docs / evidence updates. Mark the active item needs_review and downgrade its scope on the next cycle.',
+      'STOP: admin loop. The last two cycles produced no product changes — only tests, docs, or evidence updates. Mark the active item needs_review and downgrade its scope on the next cycle.',
     metrics: { cycles_inspected: lastTwo.length },
   };
 }

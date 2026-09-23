@@ -33,6 +33,7 @@ export const maxDuration = 800; // Approximately 13 minutes (Pro plan maximum).
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: Request) {
+  const startedAt = Date.now();
   const authHeader = req.headers.get('authorization');
   const cronSecret = process.env.CRON_SECRET?.trim();
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
@@ -463,7 +464,12 @@ export async function GET(req: Request) {
       });
     }
 
-    recordTelemetry('cron', 'up', `Processed apps cron with ${results.length} results`, 100).catch(console.error);
+    recordTelemetry(
+      'cron',
+      'up',
+      `Processed apps cron with ${results.length} results`,
+      Date.now() - startedAt,
+    ).catch(console.error);
 
     return NextResponse.json({
       message: `Processed ${results.length} requirements`,
@@ -475,7 +481,12 @@ export async function GET(req: Request) {
 
   } catch (e: any) {
     console.error(`[Cron Apps] Top-level error:`, e?.message || e);
-    recordTelemetry('cron', 'down', `Cron failed: ${e?.message || 'Unknown error'}`, 0).catch(console.error);
+    recordTelemetry(
+      'cron',
+      'down',
+      `Cron failed: ${e?.message || 'Unknown error'}`,
+      Date.now() - startedAt,
+    ).catch(console.error);
     return NextResponse.json({ error: e?.message || 'Internal error' }, { status: 500 });
   }
 }

@@ -120,7 +120,10 @@ function flattenAppSignals(rich: GateSignals): FlowGateSignal[] {
   }
   if (rich.deploy) {
     const state = rich.deploy.deployState ?? 'unknown';
-    const ok = state === 'success' || state === 'skipped_default_branch';
+    const ok =
+      state === 'success' ||
+      state === 'skipped_default_branch' ||
+      state === 'skipped_not_required';
     out.push({ name: 'deploy', ok, detail: rich.deploy.detail ? `${state} — ${rich.deploy.detail}` : state });
   }
   for (const observation of rich.observations || []) {
@@ -151,6 +154,8 @@ export async function runAppGate(input: FlowGateInput): Promise<FlowGateResult> 
     requirementId: input.requirementId,
     stepId: ac.stepId,
     stepOrder: ac.stepOrder,
+    validationScope: ac.validationScope,
+    validateDeployment: ac.validateDeployment,
     backlogItemId: ac.backlogItemId,
     interactionBaselineSha: ac.interactionBaselineSha,
     workspaceFingerprint: ac.workspaceFingerprint,

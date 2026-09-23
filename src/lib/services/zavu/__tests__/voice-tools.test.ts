@@ -26,6 +26,7 @@ describe("syncVoiceTools", () => {
     };
     mockListAgentTools.mockResolvedValue([
       { id: "tool_old", name: "order_status" },
+      { id: "tool_context", name: "get_call_context" },
       { id: "tool_keep", name: "custom_tool" },
     ]);
     mockDeleteAgentTool.mockResolvedValue(undefined);
@@ -36,7 +37,7 @@ describe("syncVoiceTools", () => {
     process.env = originalEnv;
   });
 
-  it("removes retired mock tools and upserts capture_lead", async () => {
+  it("removes retired mock tools and upserts managed Voice tools", async () => {
     const tools = await syncVoiceTools({
       agentId: "agent_1",
       siteId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
@@ -44,6 +45,7 @@ describe("syncVoiceTools", () => {
     });
 
     expect(mockDeleteAgentTool).toHaveBeenCalledWith("agent_1", "tool_old");
+    expect(mockDeleteAgentTool).toHaveBeenCalledWith("agent_1", "tool_context");
     expect(mockDeleteAgentTool).not.toHaveBeenCalledWith("agent_1", "tool_keep");
     expect(mockUpsertAgentTool).toHaveBeenCalledWith(
       "agent_1",
@@ -67,6 +69,9 @@ describe("syncVoiceTools", () => {
     expect(prompt).toContain("override conflicting presentation or tool-use instructions");
     expect(prompt).toContain("configured for es");
     expect(prompt).toContain("`capture_lead`");
+    expect(prompt).toContain("makinari_voice_call_objective");
+    expect(prompt).toContain("makinari_voice_follow_up_context");
+    expect(prompt).toContain("private call-specific guidance");
     expect(prompt).toContain("Never provide, spell out, read aloud, or offer to send links or URLs");
     expect(prompt).toContain("content that requires a screen");
     expect(prompt).toContain("silently check the listed tools");

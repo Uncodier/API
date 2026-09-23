@@ -215,6 +215,47 @@ describe('runtime and visual probe gate', () => {
     );
   });
 
+  it('runs declared-only contracts without diff inference or visual probes', async () => {
+    asMock(runRuntimeProbe).mockResolvedValueOnce({
+      ok: true,
+      port: 3000,
+      duration_ms: 10,
+      server_log_tail: '',
+      server_errors: [],
+      pages: [],
+      apis: [{ path: '/api/assets', method: 'POST', http_status: 204 }],
+      server_log_path: '/tmp/server.log',
+    });
+
+    const result = await runRuntimeAndVisualProbes({
+      sandbox: {} as any,
+      stepOrder: 1,
+      requirementId: 'req-1',
+      gitRepoKind: 'applications',
+      declaredOnly: true,
+      stepContext: {
+        validation_targets: [{
+          kind: 'api',
+          path: '/api/assets',
+          method: 'POST',
+          expected_statuses: [204],
+        }],
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(inferTargetRoutesFromDiff).not.toHaveBeenCalled();
+    expect(runVisualProbe).not.toHaveBeenCalled();
+    expect(runRuntimeProbe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiRoutes: [expect.objectContaining({
+          path: '/api/assets',
+          method: 'POST',
+        })],
+      }),
+    );
+  });
+
   it('blocks on console failure without converting visual evidence into a defect', async () => {
     asMock(runVisualProbe).mockResolvedValue({
       ok: false,

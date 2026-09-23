@@ -23,16 +23,16 @@ const verdict = {
 };
 
 describe('requirement self-healing', () => {
-  it('keeps core acceptance mandatory on the third failure', () => {
+  it('requires root-cause diagnosis after the second failure', () => {
     const action = planNextHealingAction({
       item: item('core'),
       verdict,
-      attempts: 3,
+      attempts: 2,
     });
 
     expect(action).toEqual(expect.objectContaining({
       kind: 'rotate_strategy',
-      hint: expect.stringContaining('Core acceptance remains mandatory'),
+      hint: expect.stringContaining('ROOT-CAUSE DIAGNOSIS REQUIRED'),
     }));
   });
 
@@ -46,11 +46,11 @@ describe('requirement self-healing', () => {
     expect(action.kind).toBe('log_assumption_and_continue');
   });
 
-  it('still escalates unresolved core work for human review after four failures', () => {
+  it('stops unresolved core work for human review after three failures', () => {
     const action = planNextHealingAction({
       item: item('core'),
       verdict,
-      attempts: 4,
+      attempts: 3,
     });
 
     expect(action.kind).toBe('mark_needs_review');

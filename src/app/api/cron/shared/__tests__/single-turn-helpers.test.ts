@@ -9,6 +9,7 @@ import {
   hasSandboxGoneToolFailure,
   hasStepCompletionRequest,
   isTransientGateFailure,
+  restrictToolsForEvidenceCollection,
   withActionLoopGuard,
   withExecuteStepNoop,
 } from '../single-turn-helpers';
@@ -151,15 +152,38 @@ describe('single-turn interaction helpers', () => {
       captureWorkspaceProgressFingerprint(sandbox as any),
     ).resolves.toBe(fingerprint);
     expect(sandbox.runCommand).toHaveBeenCalledWith(
-      'sh',
-      expect.arrayContaining(['-c']),
+      'node',
+      expect.arrayContaining(['-e']),
     );
-    const script = sandbox.runCommand.mock.calls[0][1][1];
-    expect(script).toContain(
-      'progress.md|evidence/*|.qa/*|qa_results.json|test_results.json',
-    );
-    expect(script).toContain('feature_list.json|requirement.spec.md');
+    const script = sandbox.runCommand.mock.calls[0][1][1] as string;
+    expect(script).toContain('__tests__|tests?|evidence|\\.qa');
+    expect(script).toContain('progress\\.md|qa_results\\.json');
+    expect(script).toContain('withoutComments');
     expect(script).not.toContain('git rev-parse HEAD');
+  });
+
+  it('removes mutating tools during an evidence-only retry', () => {
+    const tools = [
+      { name: 'sandbox_read_file' },
+      { name: 'sandbox_probe_api' },
+      { name: 'sandbox_edit_file' },
+      { name: 'sandbox_run_command' },
+      { name: 'sandbox_push_checkpoint' },
+      { name: 'instance_plan' },
+    ];
+
+    expect(restrictToolsForEvidenceCollection(
+      tools,
+      'JUDGE VERIFICATION FAILED\nFailure kind: evidence_gap',
+    ).map((tool) => tool.name)).toEqual([
+      'sandbox_read_file',
+      'sandbox_probe_api',
+      'instance_plan',
+    ]);
+    expect(restrictToolsForEvidenceCollection(
+      tools,
+      'Failure kind: product_defect',
+    )).toEqual(tools);
   });
 
   it('recognizes a completed execute_step call as a gate request', () => {

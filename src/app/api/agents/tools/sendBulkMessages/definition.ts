@@ -1,9 +1,26 @@
+import type { ContentPlaceholderPolicy } from '@/lib/messaging/lead-merge-fields';
+
+export interface SendBulkMessagesToolParams {
+  audience_id: string;
+  channel: 'whatsapp' | 'email' | 'telegram' | 'sms' | 'voice';
+  message: string;
+  subject?: string;
+  from?: string;
+  audience_email_mode?: 'mail' | 'newsletter';
+  content_id?: string;
+  placeholder_policy?: ContentPlaceholderPolicy;
+  voice_mode?: 'tts' | 'agent_call';
+  objective?: string;
+  additional_context?: string;
+}
+
 export const SEND_BULK_MESSAGES_DESCRIPTION = `Send a message to all leads in an audience via WhatsApp, email, telegram, sms or voice.
 
 Required: audience_id, channel ("whatsapp", "email", "telegram", "sms", or "voice"), message.
 For email: subject is also required.
 Optional: from, content_id (content UUID whose metadata.placeholders.when_unresolved controls unknown merge tokens), placeholder_policy (override), audience_email_mode.
 For Voice: voice_mode is "tts" (default, one-way message) or "agent_call" (two-way Zavu voice agent call).
+For Voice agent calls, objective and additional_context are private call instructions. They support the same merge fields as message and are not spoken as part of the greeting.
 
 Merge fields — use only double braces: {{lead.name}}, {{lead.first_name}}, {{lead.email}}, {{lead.phone}}, {{lead.position}}, {{lead.company}}, {{lead.notes}}, {{lead.metadata.<key>}}, {{site.name}}. Common aliases (e.g. {{lead.correo}}, {{lead.full_name}}) are normalized. Other syntaxes ([Name], {name}) are not supported.
 
@@ -65,6 +82,18 @@ export const SEND_BULK_MESSAGES_PARAMETERS = {
       enum: ['tts', 'agent_call'],
       description:
         'Voice only. tts sends a one-way spoken message; agent_call starts a two-way Zavu voice-agent call.',
+    },
+    objective: {
+      type: 'string',
+      maxLength: 500,
+      description:
+        'Voice agent calls only. Private per-call goal that guides the agent and is not spoken as the greeting.',
+    },
+    additional_context: {
+      type: 'string',
+      maxLength: 4000,
+      description:
+        'Voice agent calls only. Private supporting context for the agent. Supports lead and site merge fields.',
     },
   },
   required: ['audience_id', 'channel', 'message'],

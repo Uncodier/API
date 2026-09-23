@@ -14,6 +14,97 @@ import { inferPlanStepTestCommand } from '@/lib/services/instance-plan-step-cont
 import { normalizeStepValidationTargets } from './step-probe-policy';
 
 const WORK_DIR = '/vercel/sandbox';
+const EVIDENCE_COLLECTION_TOOLS = new Set([
+  'skill_lookup',
+  'sandbox_browser',
+  'sandbox_code_search',
+  'sandbox_read_file',
+  'sandbox_read_files',
+  'sandbox_read_large_file',
+  'sandbox_list_files',
+  'sandbox_read_lints',
+  'sandbox_db_inspect',
+  'sandbox_read_logs',
+  'sandbox_probe_routes',
+  'sandbox_probe_api',
+  'sandbox_run_scenario',
+  'sandbox_capture_screenshots',
+  'sandbox_visual_critique',
+  'sandbox_tail_server_log',
+  'sandbox_tail_api_log',
+  'sandbox_check_background_command',
+  'instance_plan',
+]);
+const PROGRESS_FINGERPRINT_SCRIPT = String.raw`
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const { execFileSync } = require('node:child_process');
+process.chdir(process.argv[1]);
+const files = execFileSync(
+  'git',
+  ['ls-files', '--cached', '--others', '--exclude-standard', '-z'],
+).toString().split('\0').filter(Boolean).sort();
+const excluded = /(^|\/)(?:__tests__|tests?|evidence|\.qa)(?:\/|$)|\.(?:test|spec)\.[^.]+$|^(?:progress\.md|qa_results\.json|test_results\.json|feature_list\.json|requirement\.spec\.md|DECISIONS\.md|README\.md|AGENTS\.md|\.instructions)$/i;
+const stripsComments = /\.(?:[cm]?[jt]sx?|css|scss|sql)$/i;
+function withoutComments(text, sql) {
+  let out = '';
+  let state = 'code';
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    const next = text[i + 1];
+    if (state === 'line') {
+      if (char === '\n') { out += char; state = 'code'; }
+      continue;
+    }
+    if (state === 'block') {
+      if (char === '*' && next === '/') { i++; state = 'code'; }
+      continue;
+    }
+    if (state !== 'code') {
+      out += char;
+      if (char === '\\') out += text[++i] || '';
+      else if (char === state) state = 'code';
+      continue;
+    }
+    if (char === '/' && next === '/') { i++; state = 'line'; continue; }
+    if (char === '/' && next === '*') { i++; state = 'block'; continue; }
+    if (sql && char === '-' && next === '-') { i++; state = 'line'; continue; }
+    if (char === "'" || char === '"' || char === String.fromCharCode(96)) {
+      state = char;
+    }
+    out += char;
+  }
+  return out;
+}
+const hash = crypto.createHash('sha256');
+for (const file of files) {
+  if (excluded.test(file)) continue;
+  const data = fs.readFileSync(file);
+  const text = data.toString('utf8');
+  const normalized = stripsComments.test(file)
+    ? withoutComments(text, /\.sql$/i.test(file))
+    : text;
+  hash.update(file).update('\0').update(normalized).update('\0');
+}
+process.stdout.write(hash.digest('hex'));
+`;
+
+export function restrictToolsForEvidenceCollection<
+  T extends { name?: string },
+>(tools: T[], previousError?: string | null): T[] {
+  if (!isEvidenceCollectionRetry(previousError)) {
+    return tools;
+  }
+  return tools.filter(
+    (tool) => !!tool.name && EVIDENCE_COLLECTION_TOOLS.has(tool.name),
+  );
+}
+
+export function isEvidenceCollectionRetry(
+  previousError?: string | null,
+): boolean {
+  return /\bFailure kind:\s*evidence_gap\b/i.test(previousError || '');
+}
 
 export async function captureInteractionBaseline(
   sandbox: Sandbox,
@@ -48,20 +139,10 @@ export async function captureWorkspaceProgressFingerprint(
   sandbox: Sandbox,
 ): Promise<string | undefined> {
   try {
-    const result = await sandbox.runCommand('sh', [
-      '-c',
-      [
-        `cd "${WORK_DIR}"`,
-        '{',
-        'git ls-files --cached --others --exclude-standard | sort -u | while IFS= read -r file; do',
-        '  case "$file" in',
-        '    progress.md|evidence/*|.qa/*|qa_results.json|test_results.json|feature_list.json|requirement.spec.md|DECISIONS.md|README.md|AGENTS.md|.instructions) continue ;;',
-        '  esac',
-        '  printf "%s " "$file"',
-        '  git hash-object "$file" 2>/dev/null || true',
-        'done',
-        '} | git hash-object --stdin',
-      ].join('\n'),
+    const result = await sandbox.runCommand('node', [
+      '-e',
+      PROGRESS_FINGERPRINT_SCRIPT,
+      WORK_DIR,
     ]);
     const fingerprint = (await result.stdout().catch(() => '')).trim();
     return result.exitCode === 0 && /^[0-9a-f]{40,64}$/i.test(fingerprint)

@@ -104,6 +104,110 @@ describe('interaction audit', () => {
     expect(findings).toHaveLength(0);
   });
 
+  it('reports a form whose submit handler only prevents submission', () => {
+    const findings = audit(`
+      export const Contact = () => (
+        <form onSubmit={(event) => event.preventDefault()}>
+          <input name="email" />
+          <button type="submit">Send</button>
+        </form>
+      );
+    `);
+
+    expect(findings).toEqual([
+      expect.objectContaining({
+        kind: 'inert_control',
+        element: 'form',
+        confidence: 'high',
+        disposition: 'repair',
+        reason: expect.stringContaining('performs no transaction'),
+      }),
+    ]);
+  });
+
+  it('reports an empty submit handler', () => {
+    const findings = audit(`
+      export const Contact = () => (
+        <form onSubmit={() => {}}>
+          <input name="email" />
+          <button type="submit">Send</button>
+        </form>
+      );
+    `);
+
+    expect(findings).toEqual([
+      expect.objectContaining({
+        kind: 'inert_control',
+        element: 'form',
+        confidence: 'high',
+        reason: expect.stringContaining('no observable action'),
+      }),
+    ]);
+  });
+
+  it('reports a referenced empty submit handler', () => {
+    const findings = audit(`
+      export const Contact = () => {
+        const handleSubmit = () => {};
+        return (
+          <form onSubmit={handleSubmit}>
+            <button type="submit">Send</button>
+          </form>
+        );
+      };
+    `);
+
+    expect(findings).toEqual([
+      expect.objectContaining({
+        kind: 'inert_control',
+        element: 'form',
+        confidence: 'high',
+        reason: expect.stringContaining('no observable action'),
+      }),
+    ]);
+  });
+
+  it('reports a submit-capable form with no handler or action', () => {
+    const findings = audit(`
+      export const Contact = () => (
+        <form>
+          <input name="email" />
+          <button>Send</button>
+        </form>
+      );
+    `);
+
+    expect(findings).toEqual([
+      expect.objectContaining({
+        kind: 'inert_control',
+        element: 'form',
+        confidence: 'high',
+        reason: expect.stringContaining('cannot complete a transaction'),
+      }),
+    ]);
+  });
+
+  it('warns when a native form action would omit unnamed controls', () => {
+    const findings = audit(`
+      export const Contact = () => (
+        <form action="/api/contact" method="post">
+          <input type="email" />
+          <button type="submit">Send</button>
+        </form>
+      );
+    `);
+
+    expect(findings).toEqual([
+      expect.objectContaining({
+        kind: 'inert_control',
+        element: 'form',
+        confidence: 'medium',
+        disposition: 'warning',
+        reason: expect.stringContaining('omits name attributes'),
+      }),
+    ]);
+  });
+
   it('accepts reset controls and controls nested in actionable parents', () => {
     const findings = audit(`
       export const Controls = () => <>
@@ -113,6 +217,58 @@ describe('interaction audit', () => {
     `);
 
     expect(findings).toHaveLength(0);
+  });
+
+  it('reports submit controls that are not associated with a form', () => {
+    const findings = audit(
+      `export const Submit = () => <button type="submit">Send</button>;`,
+    );
+
+    expect(findings[0]).toEqual(expect.objectContaining({
+      kind: 'inert_control',
+      element: 'button',
+      confidence: 'high',
+    }));
+  });
+
+  it('accepts a submit control associated to a form by id', () => {
+    const findings = audit(`
+      export const Contact = () => <>
+        <form id="contact" action="/api/contact" />
+        <button type="submit" form="contact">Send</button>
+      </>;
+    `);
+
+    expect(findings).toHaveLength(0);
+  });
+
+  it('reports a submit control whose form id does not exist', () => {
+    const findings = audit(`
+      export const Contact = () => <>
+        <form id="contact" action="/api/contact" />
+        <button type="submit" form="missing">Send</button>
+      </>;
+    `);
+
+    expect(findings).toEqual([
+      expect.objectContaining({
+        kind: 'inert_control',
+        element: 'button',
+        confidence: 'high',
+      }),
+    ]);
+  });
+
+  it('does not treat href on a button as a valid action', () => {
+    const findings = audit(
+      `export const Invalid = () => <button href="/dashboard">Open</button>;`,
+    );
+
+    expect(findings[0]).toEqual(expect.objectContaining({
+      kind: 'inert_control',
+      element: 'button',
+      confidence: 'high',
+    }));
   });
 
   it('does not block compositional triggers or buttons receiving spread props', () => {

@@ -5,7 +5,6 @@ import {
   updateAudienceLeadStatus,
 } from '@/lib/database/audience-db';
 import type { DbLead } from '@/lib/database/lead-db';
-import type { ContentPlaceholderPolicy } from '@/lib/messaging/lead-merge-fields';
 import {
   buildContentVariablesForLead,
   extractMergeTokens,
@@ -19,29 +18,17 @@ import { WhatsAppTemplateService } from '@/lib/services/whatsapp/WhatsAppTemplat
 import {
   SEND_BULK_MESSAGES_DESCRIPTION,
   SEND_BULK_MESSAGES_PARAMETERS,
+  type SendBulkMessagesToolParams,
 } from './definition';
 import {
   findActiveSalesAgent,
   resolveNumberedTemplate,
   resolvePlaceholderPolicy,
 } from './support';
-import { getVoiceCallEligibility } from '@/lib/services/zavu/voice-call-consent';
-
-export interface SendBulkMessagesToolParams {
-  audience_id: string;
-  channel: 'whatsapp' | 'email' | 'telegram' | 'sms' | 'voice';
-  message: string;
-  subject?: string;
-  from?: string;
-  /** Email only: `mail` (default) queues via conversations; `newsletter` sends immediately with tracking, no conversations. */
-  audience_email_mode?: 'mail' | 'newsletter';
-  /** Optional content row whose metadata.placeholders.when_unresolved controls unknown {{...}} tokens. */
-  content_id?: string;
-  /** Override policy when content_id is absent or has no placeholders config. Default: strip_tokens. */
-  placeholder_policy?: ContentPlaceholderPolicy;
-  /** Voice only: one-way TTS (default) or a two-way Zavu agent call. */
-  voice_mode?: 'tts' | 'agent_call';
-}
+import {
+  prepareVoiceRecipient,
+  validateVoiceGuidance,
+} from './voice-context';
 
 export function sendBulkMessagesTool(siteId: string) {
   const execute = async (args: SendBulkMessagesToolParams) => {
@@ -54,6 +41,8 @@ export function sendBulkMessagesTool(siteId: string) {
       content_id: contentIdArg,
       placeholder_policy,
       voice_mode = 'tts',
+      objective,
+      additional_context,
     } = args;
     const audience_email_mode = args.audience_email_mode ?? 'mail';
 
@@ -75,12 +64,14 @@ export function sendBulkMessagesTool(siteId: string) {
         error: 'voice_mode "agent_call" is only valid when channel is "voice".',
       };
     }
-    if (voice_mode === 'agent_call' && message.length > 1_000) {
-      return {
-        success: false,
-        error: 'Voice agent call greeting must not exceed 1000 characters.',
-      };
-    }
+    const voiceGuidanceError = validateVoiceGuidance({
+      channel,
+      voiceMode: voice_mode,
+      greeting: message,
+      objective,
+      additionalContext: additional_context,
+    });
+    if (voiceGuidanceError) return { success: false, error: voiceGuidanceError };
 
     const audience = await getAudienceById(audience_id);
     if (!audience) return { success: false, error: 'Audience not found' };
@@ -250,19 +241,6 @@ export function sendBulkMessagesTool(siteId: string) {
             }
 
             const leadRow = lead as unknown as DbLead;
-            if (channel === 'voice') {
-              const eligibility = getVoiceCallEligibility(leadRow);
-              if (!eligibility.allowed) {
-                await updateAudienceLeadStatus(
-                  audience_id,
-                  leadId,
-                  'skipped',
-                  eligibility.reason,
-                );
-                totalSkipped++;
-                continue;
-              }
-            }
             const built = buildContentVariablesForLead(placeholderMap, leadRow, siteName, mergePolicy);
             if (built.aborted) {
               await updateAudienceLeadStatus(
@@ -274,6 +252,26 @@ export function sendBulkMessagesTool(siteId: string) {
               totalSkipped++;
               continue;
             }
+            const voiceRecipient = prepareVoiceRecipient({
+              channel,
+              voiceMode: voice_mode,
+              lead: leadRow,
+              siteName,
+              policy: mergePolicy,
+              objective,
+              additionalContext: additional_context,
+            });
+            if (voiceRecipient.skipReason) {
+              await updateAudienceLeadStatus(
+                audience_id,
+                leadId,
+                'skipped',
+                voiceRecipient.skipReason,
+              );
+              totalSkipped++;
+              continue;
+            }
+            const voiceContextData = voiceRecipient.customData;
 
             const conversationData: any = {
               site_id: siteId,
@@ -284,6 +282,7 @@ export function sendBulkMessagesTool(siteId: string) {
                 source: 'sendBulkMessages',
                 audience_id,
                 ...(channel === 'voice' ? { voice_mode } : {}),
+                ...voiceContextData,
               },
             };
             if (userId) conversationData.user_id = userId;
@@ -318,6 +317,7 @@ export function sendBulkMessagesTool(siteId: string) {
                 channel: channel,
                 audience_id,
                 ...(channel === 'voice' ? { voice_mode } : {}),
+                ...voiceContextData,
                 ...(templateSid ? { template_sid: templateSid } : {}),
                 ...(templateStatus ? { template_status: templateStatus } : {}),
                 templated_body: abstractBody,

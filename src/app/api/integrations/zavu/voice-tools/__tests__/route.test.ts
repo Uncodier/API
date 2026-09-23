@@ -3,6 +3,7 @@ import crypto from "crypto";
 const mockDecryptToken = jest.fn();
 const mockManageLeadCreation = jest.fn();
 const mockMaybeSingle = jest.fn();
+const mockFrom = jest.fn();
 
 jest.mock("@/lib/utils/token-decryption", () => ({
   decryptToken: mockDecryptToken,
@@ -14,17 +15,7 @@ jest.mock("@/lib/services/leads/lead-service", () => ({
 
 jest.mock("@/lib/database/supabase-server", () => ({
   getSupabaseAdmin: () => ({
-    from: () => ({
-      select: () => ({
-        eq: () => ({
-          eq: () => ({
-            order: () => ({
-              limit: () => ({ maybeSingle: mockMaybeSingle }),
-            }),
-          }),
-        }),
-      }),
-    }),
+    from: mockFrom,
   }),
 }));
 
@@ -33,7 +24,7 @@ import { POST } from "../route";
 
 const SITE_ID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 
-function request(body: unknown, signature?: string) {
+function request(body: unknown, signature?: string, toolName = "capture_lead") {
   const rawBody = JSON.stringify(body);
   return new NextRequest(
     `https://backend.example.com/api/integrations/zavu/voice-tools?siteId=${SITE_ID}`,
@@ -41,7 +32,7 @@ function request(body: unknown, signature?: string) {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-zavu-tool": "capture_lead",
+        "x-zavu-tool": toolName,
         "x-zavu-signature":
           signature ||
           crypto.createHmac("sha256", "whsec_test").update(rawBody).digest("hex"),
@@ -54,6 +45,20 @@ function request(body: unknown, signature?: string) {
 describe("Zavu Voice tools webhook", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockFrom.mockImplementation((table: string) => {
+      if (table !== "agents") throw new Error(`Unexpected table ${table}`);
+      return {
+        select: () => ({
+          eq: () => ({
+            eq: () => ({
+              order: () => ({
+                limit: () => ({ maybeSingle: mockMaybeSingle }),
+              }),
+            }),
+          }),
+        }),
+      };
+    });
     mockMaybeSingle.mockResolvedValue({
       data: { configuration: { zavu: { tool_webhook_secret: "encrypted" } } },
       error: null,
@@ -98,4 +103,5 @@ describe("Zavu Voice tools webhook", () => {
     expect(response.status).toBe(401);
     expect(mockManageLeadCreation).not.toHaveBeenCalled();
   });
+
 });

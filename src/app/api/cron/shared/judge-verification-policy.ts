@@ -35,7 +35,8 @@ function requiredAction(failureKind: JudgeFailureKind | undefined): string {
     return [
       'Inspect any relevant repository file, test, route, and runtime receipt.',
       'If the implementation already satisfies the criterion, collect the exact missing proof.',
-      'If inspection reveals a real defect, repair the product before requesting another Judge pass.',
+      'This evidence-collection turn is read-only: do not edit files, push, or deploy.',
+      'If inspection reveals a real defect, report it as a product defect so the next product turn can repair it.',
       'Do not repeat an identical probe without producing new evidence.',
     ].join(' ');
   }

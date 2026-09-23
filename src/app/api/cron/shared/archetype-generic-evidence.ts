@@ -21,18 +21,23 @@ export function genericEvidenceReceipts(
   evidence: EvidenceRecord,
 ): string[] {
   return [
-    ...(evidence.tests || [])
-      .filter((test) => test.exit_code === 0 && test.ran_after_changes)
-      .map((test) => `${test.command}\n${test.output_tail}`),
-    ...(evidence.scenarios || [])
-      .filter((scenario) => scenario.pass)
-      .map((scenario) => scenario.name),
+    ...(evidence.scenario_assertions || [])
+      .filter((assertion) => assertion.pass)
+      .map((assertion) =>
+        assertion.kind === 'http_response'
+          ? [
+              assertion.method,
+              assertion.target,
+              assertion.actual_status,
+            ].join('\n')
+          : [
+              assertion.assertion,
+              assertion.actual ?? '',
+            ].join('\n'),
+      ),
     ...(evidence.observations || [])
       .filter((observation) => observation.disposition === 'pass')
       .map((observation) =>
         `${observation.target || ''}\n${observation.detail}`),
-    ...(evidence.feature_coverage?.artifact_proofs || [])
-      .filter((proof) => proof.exists && proof.outcome === 'pass')
-      .map((proof) => proof.content_excerpt || ''),
   ].filter(Boolean);
 }

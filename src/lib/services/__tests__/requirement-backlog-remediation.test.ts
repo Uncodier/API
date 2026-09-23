@@ -203,7 +203,7 @@ describe('mandatory backlog remediation', () => {
     expect(mockWriteBacklog).not.toHaveBeenCalled();
   });
 
-  it('resets product and tool attempts in the same reopen mutation', async () => {
+  it('preserves retry budgets when an item is reopened automatically', async () => {
     const reviewBacklog = backlog();
     reviewBacklog.items[0].status = 'needs_review';
     reviewBacklog.items[0].attempts = 4;
@@ -218,8 +218,8 @@ describe('mandatory backlog remediation', () => {
 
     expect(reopened).toEqual(expect.objectContaining({
       status: 'pending',
-      attempts: 0,
-      tool_failures: {},
+      attempts: 4,
+      tool_failures: { runtime: 3 },
     }));
     expect(mockWriteBacklog).toHaveBeenCalledWith(
       'requirement',
@@ -228,12 +228,37 @@ describe('mandatory backlog remediation', () => {
           expect.objectContaining({
             id: 'parent',
             status: 'pending',
-            attempts: 0,
+            attempts: 4,
+            tool_failures: { runtime: 3 },
           }),
         ]),
       }),
       0,
     );
+  });
+
+  it('invalidates approved evidence when completed work is explicitly reopened', async () => {
+    const completedBacklog = backlog();
+    completedBacklog.items[0].status = 'done';
+    completedBacklog.items[0].evidence = {
+      schema_version: 1,
+      item_id: 'parent',
+      captured_at: '2026-09-23T00:00:00.000Z',
+      critic_passes: 1,
+      judge_verdict: 'approved',
+    };
+    mockToBacklog.mockReturnValueOnce(completedBacklog);
+
+    const reopened = await setItemStatus({
+      requirementId: 'requirement',
+      itemId: 'parent',
+      status: 'pending',
+      allowDoneReopen: true,
+    });
+
+    expect(reopened.status).toBe('pending');
+    expect(reopened.evidence).toBeUndefined();
+    expect(reopened.attempts).toBe(2);
   });
 
   it('prevents setItemStatus from bypassing WIP across review states', async () => {

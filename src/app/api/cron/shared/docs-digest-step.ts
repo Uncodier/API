@@ -42,8 +42,9 @@ export async function emitDocsDigestStep(params: {
 cd "${cwd}" || exit 0
 find docs -type f \\( -name '*.md' -o -name '*.mdx' -o -name '*.json' -o -name '*.csv' \\) 2>/dev/null | while IFS= read -r f; do
   ts=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo 0)
-  printf '%s\\t%s\\n' "$ts" "$f"
-done | sort -nr | head -40 | cut -f2-
+  size=$(stat -c %s "$f" 2>/dev/null || stat -f %z "$f" 2>/dev/null || echo 0)
+  printf '%s\\t%s\\t%s\\n' "$ts" "$size" "$f"
+done | sort -nr | head -40
 `;
 
     const findRes = await liveSandbox.runCommand({
@@ -52,19 +53,28 @@ done | sort -nr | head -40 | cut -f2-
     });
 
     const findStdout = await findRes.stdout();
-    const filePaths = findStdout
+    const files = findStdout
       .split('\n')
       .map((s) => s.trim())
-      .filter(Boolean);
+      .filter(Boolean)
+      .map((line) => {
+        const [mtimeText, sizeText, ...pathParts] = line.split('\t');
+        return {
+          path: pathParts.join('\t'),
+          mtime: Number.parseInt(mtimeText || '0', 10) || 0,
+          sizeBytes: Number.parseInt(sizeText || '0', 10) || 0,
+        };
+      })
+      .filter((file) => file.path);
 
-    if (filePaths.length === 0) {
+    if (files.length === 0) {
       console.log(`[DocsDigestStep] No matching docs found for ${requirementId}`);
       return null;
     }
 
     const rawFiles: RawDocFile[] = [];
 
-    for (const path of filePaths) {
+    for (const { path, mtime, sizeBytes } of files) {
       const catRes = await liveSandbox.runCommand({
         cmd: 'sh',
         args: [
@@ -73,17 +83,6 @@ done | sort -nr | head -40 | cut -f2-
         ],
       });
       let content = await catRes.stdout();
-
-      const metaRes = await liveSandbox.runCommand({
-        cmd: 'sh',
-        args: [
-          '-c',
-          `cd "${cwd}" && echo "$(stat -c %Y "${path}" 2>/dev/null || stat -f %m "${path}" 2>/dev/null || echo 0) $(stat -c %s "${path}" 2>/dev/null || stat -f %z "${path}" 2>/dev/null || echo 0)"`,
-        ],
-      });
-      const metaParts = (await metaRes.stdout()).trim().split(/\s+/);
-      const mtime = parseInt(metaParts[0] || '0', 10) || 0;
-      const sizeBytes = parseInt(metaParts[1] || '0', 10) || 0;
 
       if (sizeBytes > RAW_READ_CAP_BYTES) {
         content = `${content}\n\n... [raw read capped at ${RAW_READ_CAP_BYTES} of ${sizeBytes} bytes] ...\n`;

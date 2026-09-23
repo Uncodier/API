@@ -1,7 +1,9 @@
 import {
   buildToolActionKey,
   detectActionLoop,
+  detectAdminLoop,
 } from '../loop-detectors';
+import { isAdminOnlyDiff } from '../archetype-evidence';
 
 describe('action loop detector', () => {
   it('canonicalizes arguments and ignores reasoning noise', () => {
@@ -35,5 +37,39 @@ describe('action loop detector', () => {
       kind: 'action',
       blockedAction: repeated,
     });
+  });
+});
+
+describe('admin loop detector', () => {
+  it('does not count test-only commits as product progress', () => {
+    const verdict = detectAdminLoop([
+      { files: ['src/components/__tests__/contact.test.tsx'] },
+      { files: ['.qa/scenarios/contact.json', 'qa_results.json'] },
+    ]);
+
+    expect(verdict).toMatchObject({
+      triggered: true,
+      kind: 'admin',
+    });
+  });
+
+  it('accepts an implementation change as product progress', () => {
+    const verdict = detectAdminLoop([
+      { files: ['src/components/__tests__/contact.test.tsx'] },
+      { files: ['src/components/contact-form.tsx'] },
+    ]);
+
+    expect(verdict.triggered).toBe(false);
+  });
+
+  it('classifies test-only evidence as an admin-only diff', () => {
+    expect(isAdminOnlyDiff([
+      'src/app/api/contact/__tests__/route.test.ts',
+      'qa_results.json',
+    ])).toBe(true);
+    expect(isAdminOnlyDiff([
+      'src/app/api/contact/route.ts',
+      'src/app/api/contact/__tests__/route.test.ts',
+    ])).toBe(false);
   });
 });

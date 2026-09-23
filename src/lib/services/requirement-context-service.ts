@@ -3,6 +3,7 @@ import { listBacklog } from '@/lib/services/requirement-backlog';
 import type { RequirementBacklog } from '@/lib/services/requirement-backlog-types';
 import { fetchMemoriesContext, generateAgentBackground } from '@/app/api/robots/instance/assistant/utils';
 import { loadUserActionHistory } from '@/lib/services/instance-user-history';
+import { formatRunnerExecutionHistory } from './requirement-context-history';
 
 export interface FullRequirementContext {
   backlog: RequirementBacklog | null;
@@ -32,56 +33,71 @@ export class RequirementContextService {
     let progress: string[] | null = null;
     let requirementDetailsContext = '';
     
-    try {
-      const snap = await listBacklog(reqId);
-      backlog = snap.backlog;
-    } catch (e: unknown) {
-      console.warn(`[RequirementContext] backlog snapshot unavailable for req ${reqId}:`, e);
-    }
-
-    try {
-      const { data: reqData } = await supabaseAdmin
-        .from('requirements')
-        .select('id, title, description, instructions, type, priority, status, progress')
-        .eq('id', reqId)
-        .single();
-        
-      if (reqData) {
-        if (reqData.progress && Array.isArray(reqData.progress)) {
-          progress = reqData.progress;
+    const [backlogSnapshot, requirementSnapshot] = await Promise.all([
+      listBacklog(reqId)
+        .then((snap) => snap.backlog)
+        .catch((error: unknown) => {
+          console.warn(
+            `[RequirementContext] backlog snapshot unavailable for req ${reqId}:`,
+            error,
+          );
+          return null;
+        }),
+      (async () => {
+        try {
+          const { data } = await supabaseAdmin
+            .from('requirements')
+            .select('id, title, description, instructions, type, priority, status, progress')
+            .eq('id', reqId)
+            .single();
+          return data;
+        } catch (error: unknown) {
+          console.warn(
+            `[RequirementContext] progress snapshot unavailable for req ${reqId}:`,
+            error,
+          );
+          return null;
         }
-        
-        requirementDetailsContext = '\n\n📋 CURRENT REQUIREMENT DETAILS:\n';
-        requirementDetailsContext += JSON.stringify({
-          id: reqData.id,
-          title: reqData.title,
-          description: reqData.description,
-          instructions: reqData.instructions,
-          type: reqData.type,
-          priority: reqData.priority,
-          status: reqData.status
-        }, null, 2);
+      })(),
+    ]);
+    backlog = backlogSnapshot;
+    if (requirementSnapshot) {
+      if (
+        requirementSnapshot.progress &&
+        Array.isArray(requirementSnapshot.progress)
+      ) {
+        progress = requirementSnapshot.progress;
       }
-    } catch (e: unknown) {
-      console.warn(`[RequirementContext] progress snapshot unavailable for req ${reqId}:`, e);
+
+      requirementDetailsContext = '\n\n📋 CURRENT REQUIREMENT DETAILS:\n';
+      requirementDetailsContext += JSON.stringify({
+        id: requirementSnapshot.id,
+        title: requirementSnapshot.title,
+        description: requirementSnapshot.description,
+        instructions: requirementSnapshot.instructions,
+        type: requirementSnapshot.type,
+        priority: requirementSnapshot.priority,
+        status: requirementSnapshot.status,
+      }, null, 2);
     }
 
     // 2. Build Previous Work Context (Blockers, Past Stages, Past Plans)
     let previousWorkContext = '';
     try {
-      const { data: prevStatuses } = await supabaseAdmin
-        .from('requirement_status')
-        .select('stage, message, preview_url, repo_url, created_at')
-        .eq('requirement_id', reqId)
-        .order('created_at', { ascending: false })
-        .limit(10);
-
-      const { data: prevPlans } = await supabaseAdmin
-        .from('instance_plans')
-        .select('id, title, status, steps')
-        .eq('instance_id', instanceId)
-        .order('created_at', { ascending: false })
-        .limit(3);
+      const [{ data: prevStatuses }, { data: prevPlans }] = await Promise.all([
+        supabaseAdmin
+          .from('requirement_status')
+          .select('stage, message, preview_url, repo_url, created_at')
+          .eq('requirement_id', reqId)
+          .order('created_at', { ascending: false })
+          .limit(10),
+        supabaseAdmin
+          .from('instance_plans')
+          .select('id, title, status, steps')
+          .eq('instance_id', instanceId)
+          .order('created_at', { ascending: false })
+          .limit(3),
+      ]);
 
       const latestStatus = prevStatuses?.[0];
       let blockerContext = '';
@@ -119,12 +135,22 @@ export class RequirementContextService {
     // 3. Instance Plan Context
     let instanceContext = '';
     try {
-      const { data: lastPlans } = await supabaseAdmin
-        .from('instance_plans')
-        .select('*')
-        .eq('instance_id', instanceId)
-        .order('created_at', { ascending: false })
-        .limit(1);
+      const [{ data: lastPlans }, { data: lastCompletedPlans }] =
+        await Promise.all([
+          supabaseAdmin
+            .from('instance_plans')
+            .select('*')
+            .eq('instance_id', instanceId)
+            .order('created_at', { ascending: false })
+            .limit(1),
+          supabaseAdmin
+            .from('instance_plans')
+            .select('title')
+            .eq('instance_id', instanceId)
+            .eq('status', 'completed')
+            .order('completed_at', { ascending: false })
+            .limit(1),
+        ]);
 
       let instance_plan_id = null;
       let activeStepContext = '';
@@ -157,14 +183,6 @@ export class RequirementContextService {
          activeStepContext = `\n\n⚠️ IMPORTANT: There is NO ACTIVE PLAN. If you need a plan, you MUST call instance_plan with action="create". DO NOT call action="list" searching for a plan that doesn't exist.`;
       }
       
-      const { data: lastCompletedPlans } = await supabaseAdmin
-        .from('instance_plans')
-        .select('title')
-        .eq('instance_id', instanceId)
-        .eq('status', 'completed')
-        .order('completed_at', { ascending: false })
-        .limit(1);
-
       if (lastCompletedPlans && lastCompletedPlans.length > 0) {
         lastCompletedPlanContext = `\n- Last Completed Plan: "${lastCompletedPlans[0].title}"`;
       }
@@ -176,76 +194,45 @@ export class RequirementContextService {
     }
 
     // 4. Background, Memories, History
-    let agentBackground = '';
-    let memoriesContext = '';
     let historyContext = '';
-    
-    try {
-      agentBackground = await generateAgentBackground(siteId);
-    } catch(e) {}
-    
-    try {
-      memoriesContext = await fetchMemoriesContext(siteId, userId, instanceId);
-    } catch(e) {}
-    
-    try {
-      const userHistory = await loadUserActionHistory(instanceId, {
+    const [
+      agentBackground,
+      memoriesContext,
+      userHistory,
+      historicalLogResult,
+    ] = await Promise.all([
+      generateAgentBackground(siteId).catch(() => ''),
+      fetchMemoriesContext(siteId, userId, instanceId).catch(() => ''),
+      loadUserActionHistory(instanceId, {
         requirementId: reqId,
         maxTotalBytes: 12 * 1024,
         headN: 5,
         tailN: 10,
         hardCap: 150,
         maxMessageBytes: 2 * 1024,
-      });
-      if (userHistory.mode !== 'empty') {
-        historyContext = `\n\n${userHistory.promptText}`;
-      }
+      }).catch(() => null),
+      (async () => {
+        try {
+          return await supabaseAdmin
+            .from('instance_logs')
+            .select('log_type, message, created_at, tool_name, tool_result')
+            .eq('instance_id', instanceId)
+            .in('log_type', ['agent_action', 'execution_summary', 'tool_call'])
+            .order('created_at', { ascending: false })
+            .limit(50);
+        } catch {
+          return { data: null };
+        }
+      })(),
+    ]);
 
-      const { data: rawHistoricalLogs } = await supabaseAdmin
-        .from('instance_logs')
-        .select('log_type, message, created_at, tool_name, tool_result')
-        .eq('instance_id', instanceId)
-        .in('log_type', ['agent_action', 'execution_summary', 'tool_call'])
-        .order('created_at', { ascending: false })
-        .limit(50);
+    if (userHistory?.mode !== 'empty' && userHistory?.promptText) {
+      historyContext = `\n\n${userHistory.promptText}`;
+    }
 
-      const historicalLogs = rawHistoricalLogs ? [...rawHistoricalLogs].reverse() : [];
-      if (historicalLogs && historicalLogs.length > 0) {
-        historyContext += '\n\n📋 RUNNER EXECUTION HISTORY:\n';
-        historicalLogs.forEach((log) => {
-          const createdAt = new Date(log.created_at);
-          const timestamp = Number.isNaN(createdAt.getTime())
-            ? 'unknown time'
-            : createdAt.toLocaleTimeString();
-          const role = log.log_type === 'user_action' ? 'User' : 'Assistant';
-          const rawMessage = String(log.message || '');
-          const message =
-            `${rawMessage.substring(0, 150)}` +
-            `${rawMessage.length > 150 ? '...' : ''}`;
-          
-          if (log.log_type === 'tool_call' && log.tool_name && log.tool_result) {
-            if (['generate_image', 'generate_video'].includes(log.tool_name)) {
-                const toolResult = log.tool_result;
-                const outputKey = log.tool_name === 'generate_image' ? 'images' : 'videos';
-                if (toolResult.success && toolResult.output && toolResult.output[outputKey]) {
-                  const urls = toolResult.output[outputKey].map((item: any) => item.url).filter(Boolean);
-                  if (urls.length > 0) {
-                    historyContext += `[${timestamp}] ${role}: Generated ${log.tool_name} - URLs: ${urls.join(', ')}\n`;
-                  } else {
-                    historyContext += `[${timestamp}] ${role}: ${message}\n`;
-                  }
-                } else {
-                  historyContext += `[${timestamp}] ${role}: ${message}\n`;
-                }
-            } else {
-              historyContext += `[${timestamp}] ${role}: ${message}\n`;
-            }
-          } else {
-            historyContext += `[${timestamp}] ${role}: ${message}\n`;
-          }
-        });
-      }
-    } catch(e) {}
+    historyContext += formatRunnerExecutionHistory(
+      historicalLogResult.data,
+    );
 
     return {
       backlog,

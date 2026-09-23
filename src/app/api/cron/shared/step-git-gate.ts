@@ -49,7 +49,10 @@ import type {
   InteractionSignal,
 } from './step-iteration-signals';
 import type { TestSignal } from './step-test-evidence';
-import type { ProbeObservation } from './step-probe-policy';
+import {
+  normalizeStepValidationTargets,
+  type ProbeObservation,
+} from './step-probe-policy';
 import type { ReusableGateValidation } from './gate-validation-cache';
 import { runLocalGateValidation } from './step-local-validation';
 
@@ -99,13 +102,30 @@ async function persistOrVerifyOrigin(
   label: string,
   audit?: CronAuditContext,
   gitRepoKind?: GitRepoKind,
+  lightweightCheckpoint: boolean = false,
 ): Promise<PersistOriginResult & { sandbox?: Sandbox }> {
   try {
     const r = await commitWorkspaceToOrigin(sandbox, planTitle, requirementId, label, audit, {
       gitRepoKind,
+      lightweightCheckpoint,
     });
+    if (!r.pushed) {
+      const triage = triageGitPushError(
+        `Origin checkpoint was not verified on branch ${r.branch}`,
+      );
+      return {
+        ok: false,
+        branch: r.branch,
+        error: triage.operatorMessage,
+        errorForAgent: triage.agentMessage,
+        failureKind: triage.failureKind,
+        agentActionable: true,
+        infrastructureFailure: triage.infrastructureFailure,
+        ...(r.sandboxReplacement ? { sandbox: r.sandboxReplacement } : {}),
+      };
+    }
     return {
-      ok: true, // If commitWorkspaceToOrigin succeeds (even with pushed: false), it means the tree is clean and synced
+      ok: true,
       branch: r.branch,
       ...(r.sandboxReplacement ? { sandbox: r.sandboxReplacement } : {}),
     };
@@ -146,6 +166,8 @@ export type OriginGateParams = {
   requirementId: string;
   stepId?: string;
   stepOrder: number;
+  validationScope?: 'intermediate' | 'final';
+  validateDeployment?: boolean;
   backlogItemId?: string | null;
   interactionBaselineSha?: string | null;
   workspaceFingerprint?: string;
@@ -230,6 +252,7 @@ export async function verifyOriginAndRecover(params: OriginGateParams): Promise<
   let lastResult = initialLastResult;
   const signals: GateSignals = {};
   let didPushRecovery = false;
+  const lightweightCheckpoint = params.validationScope === 'intermediate';
 
   const commitTitle = stepContext?.title || planTitle;
   let persist = await persistOrVerifyOrigin(
@@ -239,6 +262,7 @@ export async function verifyOriginAndRecover(params: OriginGateParams): Promise<
     `Cron step ${stepOrder}: ${commitTitle} (${requirementId})`,
     audit,
     gitRepoKind,
+    lightweightCheckpoint,
   );
   if (persist.sandbox) sandbox = persist.sandbox;
 
@@ -319,6 +343,7 @@ export async function verifyOriginAndRecover(params: OriginGateParams): Promise<
           `Cron step ${stepOrder} recovery ${t + 1}: ${commitTitle} (${requirementId})`,
           audit,
           gitRepoKind,
+          lightweightCheckpoint,
         );
         if (persist.sandbox) sandbox = persist.sandbox;
         if (persist.ok) break;
@@ -523,45 +548,73 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
     };
   }
 
-  // Runtime probe: starts `next start` inside the sandbox, hits changed pages
-  // + API routes, captures server stdout/stderr.
-  // Visual checks are selected inside step-gate-probes.ts only when the diff
-  // touches frontend code; explicit QA runs can still force the full suite.
-  const runtimeOutcome = await runRuntimeAndVisualProbes({
-    sandbox,
-    stepOrder,
-    requirementId,
-    gitRepoKind,
-    audit,
-    stepContext,
-    changeBaselineSha: interactionBaselineSha,
-  });
-  if (runtimeOutcome.signals.runtime) signals.runtime = runtimeOutcome.signals.runtime;
-  if (runtimeOutcome.signals.api) signals.api = runtimeOutcome.signals.api;
-  if (runtimeOutcome.signals.console) signals.console = runtimeOutcome.signals.console;
-  if (runtimeOutcome.signals.visual) signals.visual = runtimeOutcome.signals.visual;
-  if (runtimeOutcome.signals.scenarios) signals.scenarios = runtimeOutcome.signals.scenarios;
-  if (runtimeOutcome.signals.observations) {
-    signals.observations = runtimeOutcome.signals.observations;
-  }
-  if (!runtimeOutcome.ok) {
-    const gone = isSandboxGoneError(runtimeOutcome.error);
-    if (gone) {
-      await logCronInfrastructureEvent(audit, {
-        event: CronInfraEvent.RUNTIME_PROBE,
-        level: 'warn',
-        message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}gate: runtime probe failed — sandbox unavailable (will reprovision)`,
-        details: { stepOrder, error: runtimeOutcome.error?.slice(0, 800), sandbox_unavailable: true },
-      });
+  const intermediateGate = params.validationScope === 'intermediate';
+  const hasDeclaredRuntimeContract =
+    normalizeStepValidationTargets(stepContext?.validation_targets).length > 0 ||
+    (stepContext?.protected_routes || []).some(
+      (route) => typeof route === 'string' && route.trim().length > 0,
+    );
+
+  if (!intermediateGate || hasDeclaredRuntimeContract) {
+    // Final gates probe the changed surface. Intermediate gates probe only
+    // explicit contracts so declared API/page obligations cannot be skipped.
+    const runtimeOutcome = await runRuntimeAndVisualProbes({
+      sandbox,
+      stepOrder,
+      requirementId,
+      gitRepoKind,
+      audit,
+      stepContext,
+      declaredOnly: intermediateGate,
+      changeBaselineSha: interactionBaselineSha,
+    });
+    if (runtimeOutcome.signals.runtime) signals.runtime = runtimeOutcome.signals.runtime;
+    if (runtimeOutcome.signals.api) signals.api = runtimeOutcome.signals.api;
+    if (runtimeOutcome.signals.console) signals.console = runtimeOutcome.signals.console;
+    if (runtimeOutcome.signals.visual) signals.visual = runtimeOutcome.signals.visual;
+    if (runtimeOutcome.signals.scenarios) signals.scenarios = runtimeOutcome.signals.scenarios;
+    if (runtimeOutcome.signals.observations) {
+      signals.observations = runtimeOutcome.signals.observations;
     }
-    return {
-      ok: false,
-      lastResult,
-      error: runtimeOutcome.error,
-      infrastructureFailure: runtimeOutcome.infrastructureFailure,
-      signals,
-      ...(gone ? { sandboxUnavailable: true } : {}),
-    };
+    const unavailableDeclaredTargets = intermediateGate
+      ? (runtimeOutcome.signals.observations || []).filter(
+          (observation) =>
+            observation.source === 'contract' &&
+            observation.disposition === 'unknown',
+        )
+      : [];
+    if (unavailableDeclaredTargets.length > 0) {
+      return {
+        ok: false,
+        lastResult,
+        error:
+          'Declared runtime validation did not produce conclusive evidence: ' +
+          unavailableDeclaredTargets
+            .map((observation) => observation.target || observation.detail)
+            .join(', '),
+        infrastructureFailure: true,
+        signals,
+      };
+    }
+    if (!runtimeOutcome.ok) {
+      const gone = isSandboxGoneError(runtimeOutcome.error);
+      if (gone) {
+        await logCronInfrastructureEvent(audit, {
+          event: CronInfraEvent.RUNTIME_PROBE,
+          level: 'warn',
+          message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}gate: runtime probe failed — sandbox unavailable (will reprovision)`,
+          details: { stepOrder, error: runtimeOutcome.error?.slice(0, 800), sandbox_unavailable: true },
+        });
+      }
+      return {
+        ok: false,
+        lastResult,
+        error: runtimeOutcome.error,
+        infrastructureFailure: runtimeOutcome.infrastructureFailure,
+        signals,
+        ...(gone ? { sandboxUnavailable: true } : {}),
+      };
+    }
   }
 
   if (!requirementId) {
@@ -587,6 +640,42 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
       infrastructureFailure: recovery.infrastructureFailure,
       signals,
       sandboxUnavailable: recovery.sandboxUnavailable,
+      sandboxReplacement: sandbox !== initialSandbox ? sandbox : undefined,
+    };
+  }
+
+  if (intermediateGate) {
+    await logCronInfrastructureEvent(audit, {
+      event: CronInfraEvent.STEP_STATUS,
+      message:
+        `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}` +
+        'intermediate gate passed with an origin checkpoint; broad runtime and deployment checks deferred',
+      details: {
+        stepOrder,
+        validation_scope: 'intermediate',
+        declared_runtime_contract: hasDeclaredRuntimeContract,
+        branch: signals.origin?.branch,
+      },
+    });
+    return {
+      ok: true,
+      lastResult,
+      signals,
+      sandboxReplacement: sandbox !== initialSandbox ? sandbox : undefined,
+    };
+  }
+
+  if (params.validateDeployment === false) {
+    const deploy = {
+      previewUrl: null,
+      deployState: 'skipped_not_required',
+    };
+    signals.deploy = deploy;
+    return {
+      ok: true,
+      lastResult,
+      vercelDeploy: deploy,
+      signals,
       sandboxReplacement: sandbox !== initialSandbox ? sandbox : undefined,
     };
   }

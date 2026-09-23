@@ -97,8 +97,8 @@ export async function connectOrRecreateRequirementSandbox(params: {
   if (sandbox) {
     const ping = await inspectSandboxWorkspace(sandbox);
     if (!ping.fatal) {
-      await warmStartNamedSandbox(sandbox, requirementId, instanceType, { syncToOrigin: false }).catch((e) => {
-        console.warn('[Sandbox] connect warm-start skipped:', e instanceof Error ? e.message : e);
+      await warmStartNamedSandbox(sandbox, requirementId, instanceType, {
+        syncToOrigin: false,
       });
       try {
         const branchName = await SandboxService.getCurrentBranch(sandbox);
@@ -130,8 +130,8 @@ export async function connectOrRecreateRequirementSandbox(params: {
       if (dbSandbox) {
         const dbPing = await inspectSandboxWorkspace(dbSandbox);
         if (!dbPing.fatal) {
-          await warmStartNamedSandbox(dbSandbox, requirementId, instanceType, { syncToOrigin: false }).catch((e) => {
-            console.warn('[Sandbox] connect warm-start skipped:', e instanceof Error ? e.message : e);
+          await warmStartNamedSandbox(dbSandbox, requirementId, instanceType, {
+            syncToOrigin: false,
           });
           try {
             const branchName = await SandboxService.getCurrentBranch(dbSandbox);

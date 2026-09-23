@@ -62,8 +62,8 @@ export async function POST(request: NextRequest) {
     }
 
     if (
-      toolName !== "capture_lead" ||
-      (parsed.data.tool && parsed.data.tool !== toolName)
+      toolName !== "capture_lead"
+      || (parsed.data.tool && parsed.data.tool !== toolName)
     ) {
       return NextResponse.json({ error: "Unknown tool" }, { status: 400 });
     }

@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { withPlatformScope, type PlatformHandler, type PlatformHandlerResult } from './with-platform-scope';
 import { lintMigration } from '@/lib/services/apps-platform/migration-linter';
 import { getAppsAdminClient } from '@/lib/database/apps-supabase';
+import { createHash } from 'node:crypto';
 
 /**
  * Platform API handlers. Each handler is a thin gateway over an existing
@@ -223,19 +224,38 @@ const applyMigration: PlatformHandler = async (req, ctx): Promise<PlatformHandle
   const body = await jsonBody(req);
   const sql = typeof body.sql === 'string' ? body.sql : null;
   if (!sql || sql.trim().length === 0) {
-    return { status: 400, body: { error: 'Required: { sql: string }.' } };
+    return {
+      status: 400,
+      body: { error: 'Required: { name: string, sql: string }.' },
+    };
+  }
+  const requestedName =
+    typeof body.name === 'string' ? body.name.trim() : '';
+  if (
+    !/^[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,126}[A-Za-z0-9])?$/.test(
+      requestedName,
+    ) ||
+    requestedName.includes('..')
+  ) {
+    return {
+      status: 400,
+      body: {
+        error:
+          'Required: a stable migration name using letters, numbers, ".", "_", or "-".',
+      },
+    };
   }
   const requirementId = ctx.requirement_id;
   if (!requirementId) {
     return { status: 403, body: { error: 'API key not bound to a requirement; cannot resolve tenant schema.' } };
   }
   const apps = getAppsAdminClient();
-  const { data: tenant } = await apps
+  const { data: tenant, error: tenantError } = await apps
     .from('apps_tenants')
     .select('tenant_id, schema, bucket')
     .eq('requirement_id', requirementId)
     .maybeSingle();
-  if (!tenant) {
+  if (tenantError || !tenant) {
     return { status: 409, body: { error: 'Tenant not provisioned. Run ensureTenant from the workflow first.' } };
   }
   const lint = lintMigration({
@@ -252,23 +272,51 @@ const applyMigration: PlatformHandler = async (req, ctx): Promise<PlatformHandle
     };
   }
   try {
-    const { error } = await apps.rpc('apps_exec_sql', { sql });
+    const checksum = createHash('sha256').update(sql).digest('hex');
+    const migrationFile = requestedName.endsWith('.sql')
+      ? requestedName
+      : `${requestedName}.sql`;
+    const { data: applied, error } = await apps.rpc(
+      'apps_apply_migration',
+      {
+        p_target_schema: tenant.schema,
+        p_expected_tenant_id: tenant.tenant_id,
+        p_migration_key: `migration:platform/${migrationFile}`,
+        p_migration_checksum: checksum,
+        p_migration_sql: sql,
+      },
+    );
     if (error) {
       return { status: 502, body: { error: `Migration apply failed: ${error.message}` } };
     }
+    if (applied !== true && applied !== false) {
+      return {
+        status: 502,
+        body: { error: 'Migration apply failed: invalid atomic receipt.' },
+      };
+    }
+    return {
+      status: 200,
+      body: {
+        applied: applied === true,
+        schema: tenant.schema,
+        checksum,
+        warnings: lint.warnings,
+      },
+      response_summary: {
+        schema: tenant.schema,
+        applied: applied === true,
+        statements: sql.split(';').filter((s) => s.trim()).length,
+      },
+    };
   } catch (e: unknown) {
     return {
       status: 501,
       body: {
-        error: `apps_exec_sql RPC not available in this project: ${e instanceof Error ? e.message : 'unknown'}.`,
+        error: `apps_apply_migration RPC not available in this project: ${e instanceof Error ? e.message : 'unknown'}.`,
       },
     };
   }
-  return {
-    status: 200,
-    body: { applied: true, schema: tenant.schema, warnings: lint.warnings },
-    response_summary: { schema: tenant.schema, statements: sql.split(';').filter((s) => s.trim()).length },
-  };
 };
 
 const TABLE: Record<HandlerKey, { scope: string; handler: PlatformHandler; endpoint: string }> = {

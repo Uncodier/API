@@ -125,7 +125,7 @@ export async function runLocalGateValidation(params: {
   let workspaceFingerprint = params.workspaceFingerprint;
 
   if (params.reusableValidation?.buildPassed && workspaceFingerprint) {
-    signals.build = { ok: true };
+    signals.build = { ok: true, duration_ms: 0 };
     await recordBuildMarker(params.sandbox, workspaceFingerprint);
     await logCronInfrastructureEvent(params.audit, {
       event: CronInfraEvent.GATE_BUILD,
@@ -154,9 +154,15 @@ export async function runLocalGateValidation(params: {
       };
     }
 
+    const buildStartedAt = Date.now();
     const buildError = await validateBuildForStep(params.sandbox);
+    const buildDurationMs = Date.now() - buildStartedAt;
     if (buildError) {
-      signals.build = { ok: false, error_tail: buildError };
+      signals.build = {
+        ok: false,
+        duration_ms: buildDurationMs,
+        error_tail: buildError,
+      };
       const gone = isSandboxGoneError(buildError);
       await logCronInfrastructureEvent(params.audit, {
         event: CronInfraEvent.GATE_BUILD,
@@ -164,6 +170,7 @@ export async function runLocalGateValidation(params: {
         message: `${params.stepOrder !== undefined ? `Step ${params.stepOrder} ` : ''}gate: npm run build failed`,
         details: {
           stepOrder: params.stepOrder,
+          duration_ms: buildDurationMs,
           error: buildError.slice(0, 1_200),
           sandbox_unavailable: gone,
         },
@@ -176,7 +183,7 @@ export async function runLocalGateValidation(params: {
       };
     }
 
-    signals.build = { ok: true };
+    signals.build = { ok: true, duration_ms: buildDurationMs };
     workspaceFingerprint =
       await computeApplicationBuildFingerprint(
         params.sandbox,
@@ -188,6 +195,7 @@ export async function runLocalGateValidation(params: {
       message: `${params.stepOrder !== undefined ? `Step ${params.stepOrder} ` : ''}gate: npm run build passed`,
       details: {
         stepOrder: params.stepOrder,
+        duration_ms: buildDurationMs,
         workspace_fingerprint: workspaceFingerprint,
       },
     });

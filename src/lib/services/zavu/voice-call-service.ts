@@ -2,6 +2,13 @@ import { randomUUID } from "node:crypto";
 import { supabaseAdmin } from "@/lib/database/supabase-server";
 import { placeVoiceCall, type ZavuVoiceCall } from "./voice-call-client";
 import { getVoiceCallEligibility } from "./voice-call-consent";
+import {
+  clearVoiceCallContactContext,
+  setVoiceCallContactContext,
+} from "./contact-client";
+import { buildVoiceFollowUpContext } from "./voice-follow-up-context";
+import { normalizeVoiceDeliveryStatus } from "./voice-status";
+import { ensureVoiceContactMetadataEnabled } from "./voice-agent-context";
 
 const E164_PHONE = /^\+[1-9]\d{6,14}$/;
 const CONNECTED_STATUSES = new Set(["connected", "active", "synced"]);
@@ -16,6 +23,9 @@ export interface PlaceTrackedVoiceCallInput {
   conversationId?: string;
   leadId?: string;
   audienceId?: string;
+  objective?: string;
+  additionalContext?: string;
+  includeCurrentMessageInFollowUp?: boolean;
   language?: string;
   maxDurationMinutes?: number;
 }
@@ -74,6 +84,9 @@ async function loadMessageContext(messageId: string, siteId: string): Promise<{
   conversationId: string;
   leadId?: string;
   audienceId?: string;
+  objective?: string;
+  additionalContext?: string;
+  customData: Record<string, unknown>;
 }> {
   const { data, error } = await supabaseAdmin
     .from("messages")
@@ -94,11 +107,43 @@ async function loadMessageContext(messageId: string, siteId: string): Promise<{
       : {};
   return {
     conversationId: data.conversation_id,
+    customData,
     ...(typeof data.lead_id === "string" ? { leadId: data.lead_id } : {}),
     ...(typeof customData.audience_id === "string"
       ? { audienceId: customData.audience_id }
       : {}),
+    ...(typeof customData.voice_objective === "string"
+      ? { objective: customData.voice_objective }
+      : {}),
+    ...(typeof customData.voice_additional_context === "string"
+      ? { additionalContext: customData.voice_additional_context }
+      : {}),
   };
+}
+
+async function persistCallGuidance(
+  messageId: string,
+  customData: Record<string, unknown>,
+  objective: string | undefined,
+  additionalContext: string | undefined,
+  followUpContext: string,
+  followUpSources: Record<string, unknown>
+): Promise<void> {
+  const { error } = await supabaseAdmin
+    .from("messages")
+    .update({
+      custom_data: {
+        ...customData,
+        ...(objective ? { voice_objective: objective } : {}),
+        ...(additionalContext
+          ? { voice_additional_context: additionalContext }
+          : {}),
+        voice_follow_up_context: followUpContext,
+        voice_follow_up_context_sources: followUpSources,
+      },
+    })
+    .eq("id", messageId);
+  if (error) throw new Error("Failed to persist Voice call guidance");
 }
 
 async function existingDelivery(messageId: string) {
@@ -186,6 +231,41 @@ async function markMessagePlaced(
   }
 }
 
+async function markMessagePlacementError(
+  messageId: string,
+  status: "failed" | "placement_unknown",
+  error: unknown
+): Promise<void> {
+  const { data } = await supabaseAdmin
+    .from("messages")
+    .select("custom_data")
+    .eq("id", messageId)
+    .maybeSingle();
+  const customData =
+    data?.custom_data && typeof data.custom_data === "object"
+      ? data.custom_data as Record<string, unknown>
+      : {};
+  const { error: updateError } = await supabaseAdmin
+    .from("messages")
+    .update({
+      custom_data: {
+        ...customData,
+        status,
+        voice_mode: "agent_call",
+        call_status: status,
+        error_message: error instanceof Error ? error.message : String(error),
+      },
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", messageId);
+  if (updateError) {
+    console.error(
+      `[Zavu Voice] Failed to mark message ${messageId} as ${status}:`,
+      updateError
+    );
+  }
+}
+
 function providerStatus(error: unknown): number | undefined {
   if (!error || typeof error !== "object" || !("status" in error)) return undefined;
   return typeof error.status === "number" ? error.status : undefined;
@@ -208,6 +288,10 @@ export async function placeTrackedVoiceCall(
   }
 
   const messageContext = await loadMessageContext(input.messageId, input.siteId);
+  const objective = input.objective || messageContext.objective;
+  const additionalContext =
+    input.additionalContext || messageContext.additionalContext;
+  const leadId = messageContext.leadId || input.leadId;
   const previous = await existingDelivery(input.messageId);
   if (previous?.zavu_call_id) {
     const call = {
@@ -238,10 +322,27 @@ export async function placeTrackedVoiceCall(
 
   await assertVoiceCallAllowed(
     input.siteId,
-    messageContext.leadId,
+    leadId,
     input.to
   );
+  const followUp = await buildVoiceFollowUpContext({
+    siteId: input.siteId,
+    leadId,
+    phone: input.to,
+    ...(input.includeCurrentMessageInFollowUp
+      ? {}
+      : { excludeMessageId: input.messageId }),
+  });
+  await persistCallGuidance(
+    input.messageId,
+    messageContext.customData,
+    objective,
+    additionalContext,
+    followUp.context,
+    followUp.sources
+  );
   const senderId = await resolveVoiceSenderId(input.siteId);
+  await ensureVoiceContactMetadataEnabled(senderId);
   const deliveryId = randomUUID();
   const attemptToken = randomUUID();
   const { error: insertError } = await supabaseAdmin
@@ -251,7 +352,7 @@ export async function placeTrackedVoiceCall(
       site_id: input.siteId,
       message_id: input.messageId,
       conversation_id: messageContext.conversationId,
-      lead_id: messageContext.leadId || null,
+      lead_id: leadId || null,
       audience_id: messageContext.audienceId || null,
       zavu_sender_id: senderId,
       recipient_phone: input.to,
@@ -276,9 +377,14 @@ export async function placeTrackedVoiceCall(
         call,
       };
     }
-    if (insertError.message?.includes("VOICE_CALL_CONCURRENCY_LIMIT")) {
+    if (
+      insertError.message?.includes("VOICE_CALL_CONCURRENCY_LIMIT")
+      || insertError.message?.includes(
+        "voice_call_deliveries_one_active_recipient_idx"
+      )
+    ) {
       throw Object.assign(
-        new Error("Voice call concurrency limit reached"),
+        new Error("An active Voice call already exists for this recipient"),
         { status: 429 }
       );
     }
@@ -286,7 +392,19 @@ export async function placeTrackedVoiceCall(
   }
 
   let call: ZavuVoiceCall;
+  let contactContextMayExist = false;
+  let callPlacementAttempted = false;
   try {
+    contactContextMayExist = true;
+    await setVoiceCallContactContext({
+      phone: input.to,
+      deliveryId,
+      siteId: input.siteId,
+      objective,
+      additionalContext,
+      followUpContext: followUp.context,
+    });
+    callPlacementAttempted = true;
     call = await placeVoiceCall({
       to: input.to,
       senderId,
@@ -298,31 +416,51 @@ export async function placeTrackedVoiceCall(
       metadata: {
         voiceCallDeliveryId: deliveryId,
         messageId: input.messageId,
+        ...(objective ? { objective } : {}),
+        ...(additionalContext ? { additionalContext } : {}),
         ...(messageContext.audienceId
           ? { audienceId: messageContext.audienceId }
           : {}),
-        ...(messageContext.leadId ? { leadId: messageContext.leadId } : {}),
+        ...(leadId ? { leadId } : {}),
       },
     });
   } catch (error) {
     const status = providerStatus(error);
     const terminal =
-      status !== undefined
-      && status >= TERMINAL_CLIENT_ERROR_MIN
-      && status <= TERMINAL_CLIENT_ERROR_MAX
-      && status !== 408
-      && status !== 409
-      && status !== 425
-      && status !== 429;
+      !callPlacementAttempted
+      || (
+        status !== undefined
+        && status >= TERMINAL_CLIENT_ERROR_MIN
+        && status <= TERMINAL_CLIENT_ERROR_MAX
+        && status !== 408
+        && status !== 409
+        && status !== 425
+        && status !== 429
+      );
+    const deliveryStatus = terminal ? "failed" : "placement_unknown";
     await supabaseAdmin
       .from("voice_call_deliveries")
       .update({
-        status: terminal ? "failed" : "placement_unknown",
+        status: deliveryStatus,
         error_message: error instanceof Error ? error.message : String(error),
         updated_at: new Date().toISOString(),
       })
       .eq("id", deliveryId)
       .eq("placement_attempt_token", attemptToken);
+    await markMessagePlacementError(input.messageId, deliveryStatus, error);
+    if (terminal && contactContextMayExist) {
+      try {
+        await clearVoiceCallContactContext({
+          phone: input.to,
+          deliveryId,
+        });
+      } catch (cleanupError) {
+        console.error(
+          `[Zavu Voice] Failed to clear context for delivery ${deliveryId}:`,
+          cleanupError
+        );
+      }
+    }
     throw error;
   }
 
@@ -330,7 +468,7 @@ export async function placeTrackedVoiceCall(
     .from("voice_call_deliveries")
     .update({
       zavu_call_id: call.id,
-      status: call.status,
+      status: normalizeVoiceDeliveryStatus(call.status, "queued"),
       provider_created_at: call.createdAt || null,
       updated_at: new Date().toISOString(),
     })

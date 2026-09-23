@@ -16,6 +16,8 @@ const VALID_BODY = {
   agent_id: "55555555-6666-4777-8888-999999999999",
   conversation_id: "22222222-3333-4444-8555-666666666666",
   lead_id: "33333333-4444-4555-8666-777777777777",
+  objective: "Confirm the appointment",
+  additional_context: "The appointment is tomorrow at 10 AM.",
 };
 
 function request(body: unknown, service = true) {
@@ -68,6 +70,8 @@ describe("placeVoiceCall internal route", () => {
       messageId: VALID_BODY.message_id,
       conversationId: VALID_BODY.conversation_id,
       leadId: VALID_BODY.lead_id,
+      objective: VALID_BODY.objective,
+      additionalContext: VALID_BODY.additional_context,
     });
   });
 });

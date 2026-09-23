@@ -42,13 +42,70 @@ describe('generic semantic acceptance proof', () => {
     });
   });
 
-  it('accepts a receipt containing multiple criterion-specific terms', () => {
+  it('does not accept criterion-specific words from test output', () => {
     expect(matchAcceptanceAgainstEvidence(
       item.acceptance,
       evidence('PASS customer profile form account details'),
     )).toMatchObject({
+      matched: [],
+      unmatched: item.acceptance,
+    });
+  });
+
+  it('does not accept criterion-specific words from a scenario name', () => {
+    const scenarioEvidence = evidence('PASS unrelated test');
+    scenarioEvidence.scenarios = [{
+      name: 'customer profile form account details',
+      pass: true,
+      duration_ms: 5,
+    }];
+
+    expect(matchAcceptanceAgainstEvidence(
+      item.acceptance,
+      scenarioEvidence,
+    )).toMatchObject({
+      matched: [],
+      unmatched: item.acceptance,
+    });
+  });
+
+  it('accepts a browser-backed structured assertion', () => {
+    const browserEvidence = evidence('PASS unrelated test');
+    browserEvidence.scenario_assertions = [{
+      kind: 'dom_assertion',
+      pass: true,
+      selector: '[data-testid="customer-profile-form"]',
+      assertion: 'text_contains',
+      expected: 'Account details',
+      actual: 'Customer profile Account details',
+    }];
+
+    expect(matchAcceptanceAgainstEvidence(
+      item.acceptance,
+      browserEvidence,
+    )).toMatchObject({
       matched: item.acceptance,
       unmatched: [],
+    });
+  });
+
+  it('does not trust authored expected text when the browser observed something else', () => {
+    const browserEvidence = evidence('PASS unrelated test');
+    browserEvidence.scenario_assertions = [{
+      kind: 'dom_assertion',
+      pass: true,
+      selector: '[data-testid="customer-profile-form-account-details"]',
+      assertion: 'text_contains',
+      expected: 'Customer profile account details',
+      actual: 'Loading',
+    }];
+
+    expect(matchAcceptanceAgainstEvidence(
+      item.acceptance,
+      browserEvidence,
+    )).toMatchObject({
+      matched: [],
+      unmatched: item.acceptance,
     });
   });
 
@@ -153,6 +210,19 @@ describe('generic semantic acceptance proof', () => {
     )).toMatchObject({
       matched: [criterion],
       unmatched: [],
+    });
+  });
+
+  it('does not accept an API route from matching test output alone', () => {
+    const routeEvidence = evidence('PASS POST /api/contact 201');
+    routeEvidence.changed_files = ['src/app/api/contact/route.ts'];
+
+    expect(matchAcceptanceAgainstEvidence(
+      ['POST /api/contact returns 201.'],
+      routeEvidence,
+    )).toMatchObject({
+      matched: [],
+      unmatched: ['POST /api/contact returns 201.'],
     });
   });
 });

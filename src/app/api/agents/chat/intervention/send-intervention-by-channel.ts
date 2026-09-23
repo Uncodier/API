@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { WorkflowService } from '@/lib/services/workflow-service';
 import { sanitizeZavuRecipient } from '@/lib/services/channels/ChannelSendService';
+import { placeTrackedVoiceCall } from '@/lib/services/zavu/voice-call-service';
 
 function isValidUUID(uuid: string): boolean {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -10,6 +11,7 @@ function isValidUUID(uuid: string): boolean {
 export type ChannelContactInfo = {
   channel?: string;
   channelDelivery?: boolean;
+  leadId?: string;
   leadPhone?: string;
   leadEmail?: string;
   visitorPhone?: string;
@@ -22,6 +24,7 @@ export type ChannelSendResult = {
   method?: string;
   error?: string;
   workflowId?: string;
+  callId?: string;
   workflowStarted?: boolean;
   reason?: ChannelSendReason;
 };
@@ -97,6 +100,7 @@ export async function getConversationChannel(
     return {
       channel,
       channelDelivery: conversation.custom_data?.channel_delivery === true,
+      leadId: conversation.lead_id || undefined,
       leadPhone,
       leadEmail,
       visitorPhone
@@ -148,7 +152,7 @@ async function getRelevantMessageId(conversationId: string): Promise<string | nu
 export async function sendMessageByChannel(
   channel: string,
   message: string,
-  contactInfo: { leadPhone?: string; leadEmail?: string; visitorPhone?: string; channelDelivery?: boolean },
+  contactInfo: ChannelContactInfo,
   siteId: string,
   agentId: string | null | undefined,
   conversationId: string,
@@ -164,6 +168,38 @@ export async function sendMessageByChannel(
     if (!effectiveMessageId) {
       const dbMessageId = await getRelevantMessageId(conversationId);
       effectiveMessageId = dbMessageId || undefined;
+    }
+
+    if (channel === 'voice') {
+      const recipient = contactInfo.leadPhone?.replace(/[^\d+]/g, '');
+      const effectiveLeadId = leadId || contactInfo.leadId;
+      if (!recipient || !effectiveMessageId) {
+        return {
+          success: false,
+          workflowStarted: false,
+          reason: 'missing_contact',
+          error: 'Voice follow-up requires a lead phone number and saved message',
+        };
+      }
+      const result = await placeTrackedVoiceCall({
+        siteId,
+        to: recipient,
+        greeting: message,
+        messageId: effectiveMessageId,
+        conversationId,
+        leadId: effectiveLeadId,
+        objective:
+          'Continue the customer conversation after the team-authored opening message and resolve the remaining request.',
+        additionalContext:
+          'This follow-up was initiated by a Makinari team member. Use the private follow-up snapshot for continuity.',
+        includeCurrentMessageInFollowUp: true,
+      });
+      return {
+        success: true,
+        method: 'voice_agent_call',
+        workflowStarted: false,
+        callId: result.call.id,
+      };
     }
 
     const OUTSTAND_CHANNELS = ['facebook', 'instagram', 'threads', 'linkedin', 'x', 'twitter', 'youtube'];

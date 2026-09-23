@@ -2,9 +2,10 @@ import { getAppsAdminClient } from '@/lib/database/apps-supabase';
 import { lintMigration } from './migration-linter';
 import { Sandbox } from '@vercel/sandbox';
 import { syncPostgrestSchemas } from './postgrest-config';
+import { createHash } from 'node:crypto';
 
-function schemaForRequirement(requirementId: string): string {
-  return `app_${requirementId.replace(/-/g, '').slice(0, 24)}`;
+function migrationChecksum(sql: string): string {
+  return createHash('sha256').update(sql).digest('hex');
 }
 
 export async function applyPendingMigrations(
@@ -12,26 +13,46 @@ export async function applyPendingMigrations(
   requirementId: string
 ): Promise<{ applied: string[]; errors: string[] }> {
   const client = getAppsAdminClient();
-  const schema = schemaForRequirement(requirementId);
 
-  // Get tenant_id
-  const { data: tenantRow } = await client
+  const { data: tenantRow, error: tenantError } = await client
     .from('apps_tenants')
-    .select('tenant_id')
+    .select('tenant_id, schema')
     .eq('requirement_id', requirementId)
     .maybeSingle();
 
-  if (!tenantRow?.tenant_id) {
+  if (tenantError) {
+    return {
+      applied: [],
+      errors: [`Could not load tenant registry: ${tenantError.message}`],
+    };
+  }
+  if (
+    !tenantRow?.tenant_id ||
+    typeof tenantRow.schema !== 'string' ||
+    !/^app_[a-f0-9]{24}$/.test(tenantRow.schema)
+  ) {
     return { applied: [], errors: ['Tenant not provisioned for this requirement.'] };
   }
   const tenantId = tenantRow.tenant_id;
+  const schema = tenantRow.schema;
 
   // Find migration files in the sandbox
   // Check both migrations/ and supabase/migrations/
   const findCmd = await sandbox.runCommand('sh', [
     '-c',
-    `find migrations supabase/migrations src/db/migrations -name "*.sql" -type f 2>/dev/null | sort`
+    'for dir in migrations supabase/migrations src/db/migrations; do ' +
+      'if [ -d "$dir" ]; then find "$dir" -name "*.sql" -type f; fi; ' +
+      'done | sort',
   ]);
+  if (findCmd.exitCode !== 0) {
+    const stderr = await findCmd.stderr().catch(() => '');
+    return {
+      applied: [],
+      errors: [
+        `Could not list migration files: ${stderr.trim() || `exit ${findCmd.exitCode}`}`,
+      ],
+    };
+  }
   const stdout = await findCmd.stdout();
   const files = stdout.trim().split('\n').filter(Boolean);
 
@@ -41,31 +62,90 @@ export async function applyPendingMigrations(
 
   const applied: string[] = [];
   const errors: string[] = [];
+  let shouldSyncExposure = false;
 
   for (const file of files) {
-    // Check if already applied
     const migrationKey = `migration:${file}`;
-    let metaRow = null;
-    try {
-      const res = await client
-        .from(`${schema}._meta` as any) // bypass type checking for dynamic schema
-        .select('key')
-        .eq('key', migrationKey)
-        .maybeSingle();
-      metaRow = res.data;
-    } catch (e) {
-      // If _meta doesn't exist yet, it will fail
-    }
-
-    if (metaRow) {
-      continue; // Already applied
-    }
 
     // Read file content
     const catCmd = await sandbox.runCommand('cat', [file]);
+    if (catCmd.exitCode !== 0) {
+      const stderr = await catCmd.stderr().catch(() => '');
+      errors.push(
+        `Could not read migration ${file}: ` +
+        (stderr.trim() || `exit ${catCmd.exitCode}`),
+      );
+      break;
+    }
     const sql = await catCmd.stdout();
 
     if (!sql.trim()) {
+      continue;
+    }
+    const checksum = migrationChecksum(sql);
+
+    const { data: receipt, error: metaError } = await client.rpc(
+      'apps_get_migration_receipt',
+      {
+        p_target_schema: schema,
+        p_expected_tenant_id: tenantId,
+        p_migration_key: migrationKey,
+      },
+    );
+    if (metaError) {
+      errors.push(
+        `Could not read migration ledger for ${file}: ${metaError.message}`,
+      );
+      break;
+    }
+    if (
+      !receipt ||
+      typeof receipt !== 'object' ||
+      typeof receipt.found !== 'boolean'
+    ) {
+      errors.push(`Could not validate migration ledger receipt for ${file}.`);
+      break;
+    }
+    if (receipt.found) {
+      shouldSyncExposure = true;
+      const recordedChecksum =
+        receipt.value &&
+        typeof receipt.value === 'object' &&
+        'checksum' in receipt.value
+          ? String(receipt.value.checksum)
+          : null;
+      if (recordedChecksum && recordedChecksum !== checksum) {
+        errors.push(
+          `Migration ${file} changed after it was applied. ` +
+          'Create a new migration instead of editing applied SQL.',
+        );
+        break;
+      }
+      if (!recordedChecksum) {
+        const { data: backfilled, error: backfillError } = await client.rpc(
+          'apps_apply_migration',
+          {
+            p_target_schema: schema,
+            p_expected_tenant_id: tenantId,
+            p_migration_key: migrationKey,
+            p_migration_checksum: checksum,
+            p_migration_sql: sql,
+          },
+        );
+        if (backfillError) {
+          errors.push(
+            `Could not backfill migration checksum for ${file}: ` +
+            backfillError.message,
+          );
+          break;
+        }
+        if (backfilled !== false) {
+          errors.push(
+            `Could not confirm checksum backfill for ${file}.`,
+          );
+          break;
+        }
+      }
       continue;
     }
 
@@ -79,36 +159,38 @@ export async function applyPendingMigrations(
     if (!lintResult.ok) {
       const errorMsgs = lintResult.errors.map(e => `Line ${e.line}: ${e.message}`).join('\n');
       errors.push(`File ${file} failed linting:\n${errorMsgs}`);
-      continue;
+      break;
     }
 
-    // Execute
-    // We need to set search_path to the tenant schema so that unqualified table names go there
-    const wrappedSql = `
-      set search_path to "${schema}";
-      ${sql}
-    `;
-
-    const { error: execError } = await client.rpc('apps_exec_sql', { sql: wrappedSql });
+    const { data: didApply, error: execError } = await client.rpc(
+      'apps_apply_migration',
+      {
+        p_target_schema: schema,
+        p_expected_tenant_id: tenantId,
+        p_migration_key: migrationKey,
+        p_migration_checksum: checksum,
+        p_migration_sql: sql,
+      },
+    );
 
     if (execError) {
       errors.push(`File ${file} failed to execute: ${execError.message}`);
-      continue;
+      break;
     }
-
-    // Record as applied
-    await client.rpc('apps_exec_sql', {
-      sql: `
-        insert into "${schema}"."_meta" (key, value)
-        values ('${migrationKey}', '{"applied_at": "${new Date().toISOString()}"}'::jsonb)
-        on conflict (key) do nothing;
-      `
-    });
-
-    applied.push(file);
+    if (didApply === true) {
+      applied.push(file);
+      shouldSyncExposure = true;
+    } else if (didApply === false) {
+      shouldSyncExposure = true;
+    } else {
+      errors.push(
+        `File ${file} did not return an atomic migration receipt.`,
+      );
+      break;
+    }
   }
 
-  if (applied.length > 0) {
+  if (shouldSyncExposure) {
     // Automatically expose schemas to PostgREST to ensure new tables/schemas are visible
     // and reload the schema cache so introspection works immediately.
     const syncResult = await syncPostgrestSchemas();

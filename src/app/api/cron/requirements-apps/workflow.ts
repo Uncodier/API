@@ -586,6 +586,15 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       let lastTouchedStepId: string | null = null;
       const startTime = Date.now();
       const MAX_EXECUTION_TIME_MS = 11 * 60 * 1000; // 11 minutes
+      const MIN_NEXT_STEP_BUDGET_MS = 4 * 60 * 1000;
+      const configuredStepsPerCycle = Number.parseInt(
+        process.env.CRON_MAX_STEPS_PER_CYCLE || '4',
+        10,
+      );
+      const MAX_STEPS_PER_CYCLE =
+        Number.isFinite(configuredStepsPerCycle) && configuredStepsPerCycle > 0
+          ? configuredStepsPerCycle
+          : 4;
 
       const completedStepsBefore = allSteps.filter((s) => s.status === 'completed').length;
 
@@ -863,6 +872,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
             if (turnRes.backgroundTask) {
                console.log(`[CronAppsWorkflow] Background task detected (PID: ${turnRes.backgroundTask.pid}). Workflow will poll until completion.`);
                let isRunning = true;
+               let pollDelayMs = 2000;
                while (isRunning) {
                   // Check if we approach timeout before sleeping
                   if (Date.now() - startTime > MAX_EXECUTION_TIME_MS) {
@@ -870,7 +880,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
                       break outer;
                   }
                   
-                  await sleep(15000);
+                  await sleep(pollDelayMs);
                   
                   try {
                      const checkRes = await checkBackgroundCommandStep(
@@ -889,6 +899,11 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
                      isRunning = checkRes.isRunning;
                      if (!isRunning) {
                          console.log(`[CronAppsWorkflow] Background task completed. Output length: ${checkRes.output.length}`);
+                     } else {
+                         pollDelayMs = Math.min(
+                           15000,
+                           Math.ceil(pollDelayMs * 1.75),
+                         );
                      }
                   } catch (e: unknown) {
                      console.warn(`[CronAppsWorkflow] Failed to check background command:`, e instanceof Error ? e.message : e);
@@ -990,7 +1005,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
               executed++;
               progressPlanId = activePlan.id;
               progressStepId = workingStep.id;
-              break outer;
+              break;
             }
             if (turnRes.persistedTerminalStatus === 'failed') {
               anyStepFailed = true;
@@ -1057,8 +1072,31 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
                   // For now, if the gate fails, we mark the step failed and break to let the next cron orchestrate adaptation
                   break outer;
                }
-               if (stepCompleted) break outer;
+               if (stepCompleted) break;
             }
+         }
+
+         if (stepCompleted) {
+            activePlan.steps = (activePlan.steps as any[]).map((candidate) =>
+              candidate.id === workingStep.id
+                ? { ...candidate, status: 'completed' }
+                : candidate,
+            );
+            if (executed >= MAX_STEPS_PER_CYCLE) {
+              console.log(
+                `[CronAppsWorkflow] Completed ${executed} step(s); reached per-cycle cap ${MAX_STEPS_PER_CYCLE}.`,
+              );
+              break outer;
+            }
+            const remainingExecutionMs =
+              MAX_EXECUTION_TIME_MS - (Date.now() - startTime);
+            if (remainingExecutionMs < MIN_NEXT_STEP_BUDGET_MS) {
+              console.log(
+                `[CronAppsWorkflow] Completed ${executed} step(s); reserving ${MIN_NEXT_STEP_BUDGET_MS}ms instead of starting another step.`,
+              );
+              break outer;
+            }
+            continue outer;
          }
          
          if (!stepCompleted && !anyStepFailed) {

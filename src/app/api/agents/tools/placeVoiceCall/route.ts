@@ -12,6 +12,8 @@ const requestSchema = z.object({
   conversation_id: z.string().uuid().optional(),
   lead_id: z.string().uuid().optional(),
   audience_id: z.string().uuid().optional(),
+  objective: z.string().trim().min(1).max(500).optional(),
+  additional_context: z.string().trim().min(1).max(4_000).optional(),
   language: z.string().trim().min(2).max(15).optional(),
   max_duration_minutes: z.number().int().min(1).max(120).optional(),
 }).strict();
@@ -47,6 +49,8 @@ export async function POST(request: NextRequest) {
       conversationId: parsed.data.conversation_id,
       leadId: parsed.data.lead_id,
       audienceId: parsed.data.audience_id,
+      objective: parsed.data.objective,
+      additionalContext: parsed.data.additional_context,
       language: parsed.data.language,
       maxDurationMinutes: parsed.data.max_duration_minutes,
     });

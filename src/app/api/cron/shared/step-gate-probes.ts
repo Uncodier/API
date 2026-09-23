@@ -72,6 +72,8 @@ export async function runRuntimeAndVisualProbes(params: {
   gitRepoKind: GitRepoKind;
   audit?: CronAuditContext;
   shouldRunVisual?: boolean;
+  /** Probe only declared validation targets/protected routes, without diff inference or visuals. */
+  declaredOnly?: boolean;
   changeBaselineSha?: string | null;
   stepContext?: {
     title?: string;
@@ -98,16 +100,11 @@ export async function runRuntimeAndVisualProbes(params: {
     changeBaselineSha,
   } = params;
   const out: ProbeSignals = {};
-  const explicitVisual = params.shouldRunVisual === true;
+  const explicitVisual =
+    params.declaredOnly !== true && params.shouldRunVisual === true;
 
   let inferred: Awaited<ReturnType<typeof inferTargetRoutesFromDiff>>;
-  try {
-    inferred = await inferTargetRoutesFromDiff(sandbox, {
-      baselineSha: changeBaselineSha,
-    });
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.warn('[GateProbes] inferTargetRoutesFromDiff threw:', msg);
+  if (params.declaredOnly) {
     inferred = {
       pageRoutes: [],
       apiRoutes: [],
@@ -115,10 +112,26 @@ export async function runRuntimeAndVisualProbes(params: {
       recentPageRoutes: [],
       recentChangedFiles: [],
     };
+  } else {
+    try {
+      inferred = await inferTargetRoutesFromDiff(sandbox, {
+        baselineSha: changeBaselineSha,
+      });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn('[GateProbes] inferTargetRoutesFromDiff threw:', msg);
+      inferred = {
+        pageRoutes: [],
+        apiRoutes: [],
+        changedFiles: [],
+        recentPageRoutes: [],
+        recentChangedFiles: [],
+      };
+    }
   }
 
   const visualPlan = buildVisualProbePlan({
-    explicit: params.shouldRunVisual,
+    explicit: params.declaredOnly ? false : params.shouldRunVisual,
     gitRepoKind,
     changedFiles: inferred.recentChangedFiles,
     inferredPageRoutes:
@@ -137,7 +150,9 @@ export async function runRuntimeAndVisualProbes(params: {
     validationTargets: stepContext?.validation_targets,
     acceptance: stepContext?.acceptance,
     protectedRoutes: stepContext?.protected_routes,
-    proseRoutes: extractPageRoutesFromStepContext(stepContext),
+    proseRoutes: params.declaredOnly
+      ? []
+      : extractPageRoutesFromStepContext(stepContext),
     inferredPageRoutes,
     inferredApiRoutes: inferred.apiRoutes,
   });

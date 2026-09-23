@@ -1,17 +1,13 @@
-/**
- * Declarative E2E scenario runner for per-step QA validation. Reads
- * `.qa/scenarios/*.json` from the sandbox working dir, drives puppeteer on the
- * host against sandbox.domain(VISUAL_PROBE_PORT), and returns typed results.
- *
- * Scenarios are intentionally small and composable — the QA persona authors
- * them and the gate runs them on every attempt.
- */
-
 import type { Sandbox } from '@vercel/sandbox';
 import type { Browser, Page } from 'puppeteer-core';
 import { launchPuppeteerForGate } from '@/lib/puppeteer/launch-gate-browser';
 import { SandboxService } from '@/lib/services/sandbox-service';
+import type { ScenarioAssertionReceipt } from '@/lib/services/requirement-evidence-types';
 import type { ScenarioOutcome, ScenarioSignal, ScenarioStepOutcome } from './step-iteration-signals';
+import {
+  runE2eSubmitStep,
+  type E2eSubmitStep,
+} from './step-e2e-submit';
 
 export type E2eGotoStep = {
   action: 'goto';
@@ -59,6 +55,7 @@ export type E2eStep =
   | E2eWaitForStep
   | E2eClickStep
   | E2eFillStep
+  | E2eSubmitStep
   | E2eExpectStep
   | E2eSleepStep;
 
@@ -162,7 +159,12 @@ async function runStep(
   page: Page,
   step: E2eStep,
   ctx: { baseUrl: string; defaultTimeoutMs: number; responseStatuses: number[] },
-): Promise<{ ok: boolean; error?: string; dom_snippet?: string }> {
+): Promise<{
+  ok: boolean;
+  error?: string;
+  dom_snippet?: string;
+  receipt?: ScenarioAssertionReceipt;
+}> {
   try {
     switch (step.action) {
       case 'goto': {
@@ -220,6 +222,14 @@ async function runStep(
         await page.type(step.selector, step.value, { delay: 10 });
         return { ok: true };
       }
+      case 'submit': {
+        return await runE2eSubmitStep(
+          page,
+          step,
+          ctx.baseUrl,
+          ctx.defaultTimeoutMs,
+        );
+      }
       case 'expect':
         return await runExpect(page, step, ctx);
       default:
@@ -235,7 +245,12 @@ async function runExpect(
   page: Page,
   step: E2eExpectStep,
   ctx: { responseStatuses: number[] },
-): Promise<{ ok: boolean; error?: string; dom_snippet?: string }> {
+): Promise<{
+  ok: boolean;
+  error?: string;
+  dom_snippet?: string;
+  receipt?: ScenarioAssertionReceipt;
+}> {
   if (step.status) {
     const last = ctx.responseStatuses[ctx.responseStatuses.length - 1];
     if (last == null) return { ok: false, error: 'no response status recorded yet' };
@@ -256,7 +271,16 @@ async function runExpect(
   const handles = await page.$$(step.selector);
   if (step.exists === false) {
     if (handles.length) return { ok: false, error: `selector ${step.selector} found ${handles.length} (expected none)` };
-    return { ok: true };
+    return {
+      ok: true,
+      receipt: {
+        kind: 'dom_assertion',
+        pass: true,
+        selector: step.selector,
+        assertion: 'not_exists',
+        actual: handles.length,
+      },
+    };
   }
   if (step.min_count != null && handles.length < step.min_count) {
     return { ok: false, error: `selector ${step.selector} count=${handles.length} < min ${step.min_count}` };
@@ -267,8 +291,10 @@ async function runExpect(
   if (!handles.length) {
     return { ok: false, error: `selector ${step.selector} not found` };
   }
+  let actualText: string | undefined;
   if (step.text_contains || step.text_equals) {
     const text = await page.$eval(step.selector, (el) => el.textContent || '').catch(() => '');
+    actualText = text.slice(0, 200);
     if (step.text_contains && !text.includes(step.text_contains)) {
       return { ok: false, error: `text did not contain "${step.text_contains}"; got "${text.slice(0, 160)}"` };
     }
@@ -276,12 +302,14 @@ async function runExpect(
       return { ok: false, error: `text != "${step.text_equals}"; got "${text.slice(0, 160)}"` };
     }
   }
+  let actualAttribute: string | null | undefined;
   if (step.attribute) {
     const v = await page.$eval(
       step.selector,
       (el, name) => (el as Element).getAttribute(name as string),
       step.attribute.name,
     ).catch(() => null);
+    actualAttribute = v;
     if (step.attribute.equals != null && v !== step.attribute.equals) {
       return { ok: false, error: `attr ${step.attribute.name} != "${step.attribute.equals}"; got "${v}"` };
     }
@@ -289,7 +317,37 @@ async function runExpect(
       return { ok: false, error: `attr ${step.attribute.name} did not contain "${step.attribute.contains}"; got "${v}"` };
     }
   }
-  return { ok: true };
+  const assertion = step.text_equals
+    ? 'text_equals'
+    : step.text_contains
+      ? 'text_contains'
+      : step.attribute?.equals
+        ? 'attribute_equals'
+        : step.attribute?.contains
+          ? 'attribute_contains'
+          : step.min_count != null
+            ? 'min_count'
+            : step.max_count != null
+              ? 'max_count'
+              : 'exists';
+  const expected =
+    step.text_equals ??
+    step.text_contains ??
+    step.attribute?.equals ??
+    step.attribute?.contains ??
+    step.min_count ??
+    step.max_count;
+  return {
+    ok: true,
+    receipt: {
+      kind: 'dom_assertion',
+      pass: true,
+      selector: step.selector,
+      assertion,
+      expected,
+      actual: actualText ?? actualAttribute ?? handles.length,
+    },
+  };
 }
 
 export async function runE2eScenarios(params: E2eRunnerParams): Promise<E2eRunnerResult> {
@@ -363,6 +421,7 @@ export async function runE2eScenarios(params: E2eRunnerParams): Promise<E2eRunne
           action: step.action,
           ok: res.ok,
           error: res.error,
+          receipt: res.receipt,
         };
         if (!res.ok) {
           pass = false;

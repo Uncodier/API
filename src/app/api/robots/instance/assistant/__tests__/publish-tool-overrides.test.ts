@@ -77,6 +77,8 @@ describe('normalizePublishToolOverrides', () => {
         nodeType: 'publish',
         publish_channels: ['voice'],
         publish_voice_mode: 'agent_call',
+        publish_voice_objective: 'Confirm the appointment',
+        publish_voice_additional_context: 'Offer the afternoon slot first.',
       }),
       {
         publish: {
@@ -89,6 +91,8 @@ describe('normalizePublishToolOverrides', () => {
     expect(result?.publish).toMatchObject({
       channel: 'voice',
       voice_mode: 'agent_call',
+      objective: 'Confirm the appointment',
+      additional_context: 'Offer the afternoon slot first.',
     });
   });
 });

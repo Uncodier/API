@@ -54,6 +54,7 @@ export const TOOL_CATEGORIES: Record<string, ToolCategory> = {
   sendWhatsApp: 'messaging',
   whatsappTemplate: 'messaging',
   sendBulkMessages: 'messaging',
+  placeVoiceCall: 'messaging',
   configure_email: 'messaging',
   configure_whatsapp: 'messaging',
   conversations: 'messaging',

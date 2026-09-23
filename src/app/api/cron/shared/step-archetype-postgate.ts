@@ -13,7 +13,6 @@ import { runCritic, runJudge } from './archetype-runner';
 import {
   bumpItemAttempts,
   getBacklogItem,
-  downgradeScope,
   logAssumption,
   markNeedsReview,
   recordToolFailure,
@@ -31,6 +30,7 @@ import { inferTargetRoutesFromDiff } from './step-runtime-targets';
 import type { TestSignal } from './step-test-evidence';
 import type { ProbeObservation } from './step-probe-policy';
 import type { InteractionSignal } from './step-interaction-audit';
+import type { ScenarioSignal } from './step-iteration-signals';
 import {
   formatJudgeRepairFeedback,
   judgeVerificationAttemptLimit,
@@ -43,7 +43,7 @@ import type {
 } from './archetype-judge-result';
 
 export interface PostGateGateSignals {
-  build?: { ok: boolean };
+  build?: { ok: boolean; duration_ms?: number };
   runtime?: {
     pages?: Array<{
       path?: string;
@@ -52,9 +52,7 @@ export interface PostGateGateSignals {
       validation_disposition?: 'pass' | 'hard_fail' | 'unknown' | 'advisory';
     }>;
   };
-  scenarios?: {
-    scenarios?: Array<{ scenario: string; pass: boolean; duration_ms: number }>;
-  };
+  scenarios?: ScenarioSignal;
   tests?: TestSignal;
   observations?: ProbeObservation[];
   interaction?: InteractionSignal;
@@ -263,17 +261,6 @@ export async function runArchetypePostGate(
               assumption: `[rotate] ${action.hint}`,
             });
             break;
-          case 'downgrade_scope':
-            await downgradeScope({
-              requirementId: input.requirementId,
-              itemId: item.id,
-            });
-            await logAssumption({
-              requirementId: input.requirementId,
-              itemId: item.id,
-              assumption: `[downgrade ${action.from}→${action.to}] ${action.reason}`,
-            });
-            break;
           case 'log_assumption_and_continue':
             await logAssumption({
               requirementId: input.requirementId,
@@ -355,11 +342,32 @@ function buildEvidenceRecord(
         page.http_status >= 200 &&
         page.http_status < 400,
     );
+  const scenarioAssertions = signals.scenarios?.scenarios.flatMap(
+    (scenario) =>
+      scenario.steps.flatMap((step) => step.receipt ? [step.receipt] : []),
+  ) || [];
+  const responseObservations = scenarioAssertions
+    .filter((receipt) => receipt.kind === 'http_response')
+    .map((receipt) => ({
+      kind: 'api',
+      disposition: receipt.pass ? 'pass' as const : 'hard_fail' as const,
+      source: 'e2e_scenario',
+      target: receipt.target,
+      detail:
+        `${receipt.method} ${receipt.target} returned ${receipt.actual_status}`,
+      method: receipt.method,
+      http_status: receipt.actual_status,
+      expected_statuses: receipt.expected_statuses,
+    }));
   return {
     evidence_run_id: evidenceRunId,
     captured_at: capturedAt,
     build: signals.build
-      ? { command: 'npm run build', exit_code: signals.build.ok ? 0 : 1, duration_ms: 0 }
+      ? {
+          command: 'npm run build',
+          exit_code: signals.build.ok ? 0 : 1,
+          duration_ms: signals.build.duration_ms ?? 0,
+        }
       : undefined,
     tests: signals.tests?.tests,
     runtime: runtimePage
@@ -373,8 +381,13 @@ function buildEvidenceRecord(
       pass: s.pass,
       duration_ms: s.duration_ms,
     })),
+    scenario_assertions:
+      scenarioAssertions.length > 0 ? scenarioAssertions : undefined,
     changed_files: signals.changed_files,
-    observations: signals.observations,
+    observations: [
+      ...(signals.observations || []),
+      ...responseObservations,
+    ],
     interaction: signals.interaction
       ? {
           ok: signals.interaction.ok,

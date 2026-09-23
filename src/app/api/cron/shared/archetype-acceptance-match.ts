@@ -65,92 +65,6 @@ function statusMatchesExpected(
   return status === Number(expected);
 }
 
-function filePaths(evidence: EvidenceRecord): Set<string> {
-  return new Set([
-    ...(evidence.changed_files || []),
-    ...(evidence.feature_coverage?.present_touches || []),
-    ...(evidence.feature_coverage?.present_page_files || []),
-    ...(evidence.feature_coverage?.present_api_files || []),
-    ...(evidence.feature_coverage?.artifact_proofs || [])
-      .filter(
-        (proof) =>
-          proof.exists &&
-          proof.outcome !== 'not_evaluable' &&
-          (proof.bytes ?? 1) > 0,
-      )
-      .map((proof) => proof.path),
-  ].map((path) => normalized(path.replace(/^\.?\//, ''))));
-}
-
-function routeFileCandidates(route: string): string[] {
-  const clean = normalized(route)
-    .replace(/^\/+/, '')
-    .split('/')
-    .map((segment) =>
-      segment.startsWith(':') && segment.length > 1
-        ? `[${segment.slice(1)}]`
-        : segment,
-    )
-    .join('/');
-  if (!clean) return ['src/app/page.tsx', 'app/page.tsx'];
-  if (clean.startsWith('api/')) {
-    return [
-      `src/app/${clean}/route.ts`,
-      `src/app/${clean}/route.js`,
-      `app/${clean}/route.ts`,
-      `app/${clean}/route.js`,
-    ];
-  }
-  return [
-    `src/app/${clean}/page.tsx`,
-    `src/app/${clean}/page.jsx`,
-    `app/${clean}/page.tsx`,
-    `app/${clean}/page.jsx`,
-  ];
-}
-
-function significantRouteTerms(route: string): string[] {
-  return route
-    .toLowerCase()
-    .split('/')
-    .filter(
-      (segment) =>
-        segment.length >= 4 &&
-        !segment.startsWith(':') &&
-        !['api', 'dashboard'].includes(segment),
-    )
-    .flatMap((segment) => [
-      segment,
-      segment.endsWith('s') ? segment.slice(0, -1) : segment,
-      segment.length >= 5 ? segment.replace(/(?:e|s)$/, '') : segment,
-    ]);
-}
-
-function hasRelevantPassingTest(
-  analysis: AcceptanceAnalysis,
-  route: string,
-  evidence: EvidenceRecord,
-  routeAnchor?: RouteAnchor,
-): boolean {
-  const terms = significantRouteTerms(route);
-  if (terms.length === 0) return false;
-  const method = expectedHttpMethod(
-    analysis,
-    route,
-    routeAnchor,
-  )?.toLowerCase();
-  const status = expectedStatus(analysis, route, routeAnchor);
-  return (evidence.tests || []).some((test) => {
-    if (test.exit_code !== 0 || !test.ran_after_changes) return false;
-    const receipt = `${test.command}\n${test.output_tail}`.toLowerCase();
-    return (
-      terms.some((term) => receipt.includes(term)) &&
-      (!method || receipt.includes(method)) &&
-      (!status || receipt.includes(status))
-    );
-  });
-}
-
 function observationMatchesRoute(
   target: string | undefined,
   route: string,
@@ -257,16 +171,7 @@ function hasRouteProof(
   ) {
     return true;
   }
-  const files = filePaths(evidence);
-  const routeExists = routeFileCandidates(route).some((path) =>
-    files.has(normalized(path)),
-  );
-  return routeExists && hasRelevantPassingTest(
-    analysis,
-    route,
-    evidence,
-    routeAnchor,
-  );
+  return false;
 }
 
 function hasFileProof(

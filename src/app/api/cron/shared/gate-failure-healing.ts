@@ -1,6 +1,5 @@
 import {
   bumpItemAttempts,
-  downgradeScope,
   getBacklogItem,
   logAssumption,
   markNeedsReview,
@@ -103,17 +102,6 @@ export async function applyGateFailureHealing(params: {
         requirementId: params.requirementId,
         itemId: item.id,
         assumption: `[rotate] ${action.hint}`,
-      });
-      break;
-    case 'downgrade_scope':
-      await downgradeScope({
-        requirementId: params.requirementId,
-        itemId: item.id,
-      });
-      await logAssumption({
-        requirementId: params.requirementId,
-        itemId: item.id,
-        assumption: `[downgrade ${action.from}→${action.to}] ${action.reason}`,
       });
       break;
     case 'log_assumption_and_continue':

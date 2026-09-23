@@ -27,6 +27,8 @@ import {
   getDeclaredTestCommand,
   getStepTerminalRequest,
   hasSandboxGoneToolFailure,
+  isEvidenceCollectionRetry,
+  restrictToolsForEvidenceCollection,
   withActionLoopGuard,
   withExecuteStepNoop,
 } from './single-turn-helpers';
@@ -47,6 +49,7 @@ import { shouldResumeGateFromEvidence } from './gate-validation-cache';
 import { getBacklogItem } from '@/lib/services/requirement-backlog';
 import { classifyRequirementType } from '@/lib/services/requirement-flows';
 import { computeApplicationBuildFingerprint } from './commit/pre-push-build-validation';
+import { loadConstraintSourceBlocks } from '@/lib/services/requirement-constraints-persist';
 export { inferRoleFromStep } from './single-turn-prompt';
 export type { SingleTurnResult };
 export async function executeSingleTurnStep(params: {
@@ -150,18 +153,24 @@ export async function executeSingleTurnStep(params: {
     // (that is often hours/days old and would mark every file updated_this_cycle).
     const nowIso = new Date().toISOString();
     const cycleBaselineAt = persistedStep.started_at || nowIso;
-    const interactionBaselineSha = await captureInteractionBaseline(sandbox, persistedStep);
-    const effectiveBacklogItemId = await resolveSingleTurnBacklogItemId({
-      instanceId,
-      requirementId,
-      persistedStep,
-      step,
-    });
-    const retryFeedback = await buildStepRetryFeedback(
-      persistedStep.error_message || step.error_message,
-      persistedStep.metadata?.visual_feedback_image_id,
-      requirementId,
-    );
+    const [
+      interactionBaselineSha,
+      effectiveBacklogItemId,
+      retryFeedback,
+    ] = await Promise.all([
+      captureInteractionBaseline(sandbox, persistedStep),
+      resolveSingleTurnBacklogItemId({
+        instanceId,
+        requirementId,
+        persistedStep,
+        step,
+      }),
+      buildStepRetryFeedback(
+        persistedStep.error_message || step.error_message,
+        persistedStep.metadata?.visual_feedback_image_id,
+        requirementId,
+      ),
+    ]);
     const nextMetadata = buildSingleTurnStartMetadata({
       persistedMetadata: persistedStep.metadata,
       interactionBaselineSha,
@@ -218,49 +227,60 @@ export async function executeSingleTurnStep(params: {
       skillContext += `\n\n--- QA SPECIFIC MANDATORY RULES ---\n1. ROOT CLEANUP & REPO HEALTH: You MUST always delete unnecessary files from the repository root (e.g., test.js, temp.json, dummy files) or move them to their correct locations. Maintain the repository in a pristine, professional state.\n2. NAMING & VARIABLES REVIEW: You MUST review variables, functions, and classes for clear, consistent, and descriptive English naming conventions. Rename them if they are ambiguous, misleading, or poorly named.\n--- END QA RULES ---\n`;
     }
 
-    let progressContext = '';
-    if (requirementId) {
-      const { data: reqData } = await supabaseAdmin
-        .from('requirements')
-        .select('progress')
-        .eq('id', requirementId)
-        .single();
-        
-      if (reqData && reqData.progress && Array.isArray(reqData.progress) && reqData.progress.length > 0) {
-        const recentProgress = reqData.progress.slice(-5);
-        progressContext = '\n\n📋 RECENT REQUIREMENT PROGRESS:\n';
-        progressContext += JSON.stringify(recentProgress, null, 2);
-      }
-    }
-
-    // Get instance context for background/memories
-    const agentBackground = await generateAgentBackground(siteId);
-    const memoriesContext = await fetchMemoriesContext(
-      siteId,
-      userId,
-      instanceId,
-    );
-    let historyContext = '';
-    try {
-      const userHistory = await loadUserActionHistory(instanceId, {
-        requirementId,
-        maxTotalBytes: 8 * 1024,
-        headN: 3,
-        tailN: 8,
-        hardCap: 100,
-        maxMessageBytes: 2 * 1024,
+    const historyContextPromise = loadUserActionHistory(instanceId, {
+      requirementId,
+      maxTotalBytes: 8 * 1024,
+      headN: 3,
+      tailN: 8,
+      hardCap: 100,
+      maxMessageBytes: 2 * 1024,
+    })
+      .then((userHistory) => `\n\n${userHistory.promptText}`)
+      .catch((error: unknown) => {
+        console.warn(
+          '[SingleTurn] Could not load requirement user history:',
+          error instanceof Error ? error.message : error,
+        );
+        return '';
       });
-      historyContext = `\n\n${userHistory.promptText}`;
-    } catch (error: unknown) {
-      console.warn(
-        '[SingleTurn] Could not load requirement user history:',
-        error instanceof Error ? error.message : error,
-      );
+    const progressPromise = requirementId
+      ? supabaseAdmin
+          .from('requirements')
+          .select('progress')
+          .eq('id', requirementId)
+          .single()
+      : Promise.resolve({ data: null });
+    const [
+      progressResult,
+      agentBackground,
+      memoriesContext,
+      historyContext,
+      constraintSources,
+      historyText,
+    ] = await Promise.all([
+      progressPromise,
+      generateAgentBackground(siteId),
+      fetchMemoriesContext(siteId, userId, instanceId),
+      historyContextPromise,
+      requirementId
+        ? loadConstraintSourceBlocks(requirementId)
+        : Promise.resolve([]),
+      fetchStepLogHistoryText(instanceId, plan.id, persistedStep.id),
+    ]);
+
+    let progressContext = '';
+    const reqData = progressResult.data;
+    if (
+      reqData?.progress &&
+      Array.isArray(reqData.progress) &&
+      reqData.progress.length > 0
+    ) {
+      const recentProgress = reqData.progress.slice(-5);
+      progressContext = '\n\n📋 RECENT REQUIREMENT PROGRESS:\n';
+      progressContext += JSON.stringify(recentProgress, null, 2);
     }
     const retryContext = retryFeedback.promptFragment;
 
-    const { loadConstraintSourceBlocks } = await import('@/lib/services/requirement-constraints-persist');
-    const constraintSources = requirementId ? await loadConstraintSourceBlocks(requirementId) : [];
     const systemPrompt = buildSingleTurnSystemPrompt({
       instanceId,
       siteId,
@@ -280,11 +300,6 @@ export async function executeSingleTurnStep(params: {
       noProgressAdjudication,
     });
 
-    const historyText = await fetchStepLogHistoryText(
-      instanceId,
-      plan.id,
-      persistedStep.id,
-    );
     const messages: any[] = [];
     if (historyContext) {
       messages.push({
@@ -332,7 +347,13 @@ export async function executeSingleTurnStep(params: {
         requirementId,
       ),
     ), historyText);
-    const fullTools = guardedTools;
+    const evidenceCollectionOnly = isEvidenceCollectionRetry(
+      persistedStep.error_message,
+    );
+    const fullTools = restrictToolsForEvidenceCollection(
+      guardedTools,
+      persistedStep.error_message,
+    );
 
     if (noProgressAdjudication) {
       return runGateOnlyNoProgressAdjudication({
@@ -388,6 +409,8 @@ export async function executeSingleTurnStep(params: {
             userId,
             requirementType,
             gitRepoKind,
+            validateDeployment:
+              validateDeployment && !evidenceCollectionOnly,
             backlogItemId: effectiveBacklogItemId,
             interactionBaselineSha,
             systemPrompt,
@@ -519,6 +542,8 @@ export async function executeSingleTurnStep(params: {
         userId,
         requirementType,
         gitRepoKind,
+        validateDeployment:
+          validateDeployment && !evidenceCollectionOnly,
         backlogItemId: effectiveBacklogItemId,
         interactionBaselineSha,
         systemPrompt,

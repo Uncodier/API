@@ -544,6 +544,82 @@ describe('runSingleTurnGate', () => {
     );
   });
 
+  it('uses the lightweight app gate for a non-final plan step', async () => {
+    mockClassifyRequirementType.mockReturnValue('app');
+    mockMaybeSingle.mockResolvedValue({
+      data: {
+        steps: [
+          { id: 'step-1', status: 'in_progress' },
+          { id: 'step-2', status: 'pending' },
+        ],
+      },
+      error: null,
+    });
+    mockUpdatePlanStepStatus.mockResolvedValueOnce({
+      persisted: true,
+      state: 'applied',
+      generation: 4,
+    });
+    mockCompletePlanStepAfterGate.mockResolvedValueOnce({
+      persisted: true,
+      state: 'applied',
+      generation: 5,
+      final: false,
+    });
+
+    await runSingleTurnGate({
+      ...input(),
+      plan: {
+        ...input().plan,
+        steps: [
+          { id: 'step-1', status: 'in_progress' },
+          { id: 'step-2', status: 'pending' },
+        ],
+      },
+      validateDeployment: false,
+    });
+
+    expect(mockRunGateForFlow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        appContext: expect.objectContaining({
+          validationScope: 'intermediate',
+          validateDeployment: false,
+        }),
+      }),
+    );
+  });
+
+  it('retries with the final gate when a lightweight step becomes final', async () => {
+    mockClassifyRequirementType.mockReturnValue('app');
+    mockMaybeSingle.mockResolvedValue({
+      data: {
+        steps: [{ id: 'step-1', status: 'in_progress' }],
+      },
+      error: null,
+    });
+
+    const result = await runSingleTurnGate({
+      ...input(),
+      plan: {
+        ...input().plan,
+        steps: [
+          { id: 'step-1', status: 'in_progress' },
+          { id: 'step-2', status: 'pending' },
+        ],
+      },
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        ok: false,
+        concurrencyHalt: true,
+        error: expect.stringContaining('full final gate'),
+      }),
+    );
+    expect(mockRunArchetypePostGate).not.toHaveBeenCalled();
+    expect(mockCompletePlanStepAfterGate).not.toHaveBeenCalled();
+  });
+
   it('reports backlog completion failures with the committed generation', async () => {
     mockUpdatePlanStepStatus.mockResolvedValueOnce({
       persisted: true,

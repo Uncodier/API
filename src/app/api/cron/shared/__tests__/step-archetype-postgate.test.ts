@@ -230,6 +230,61 @@ describe('runArchetypePostGate verification budget', () => {
     });
   });
 
+  it('persists scenario receipts as structured acceptance observations', async () => {
+    recordToolFailure.mockResolvedValue({
+      ...item,
+      tool_failures: { judge_evidence_collector: 1 },
+    });
+
+    await runArchetypePostGate({
+      ...input(),
+      signals: {
+        ...input().signals,
+        scenarios: {
+          ok: true,
+          scenarios: [{
+            scenario: 'contact submit',
+            pass: true,
+            duration_ms: 25,
+            steps: [{
+              index: 0,
+              action: 'submit',
+              ok: true,
+              receipt: {
+                kind: 'http_response',
+                pass: true,
+                method: 'POST',
+                target: '/api/contact',
+                actual_status: 201,
+                expected_statuses: [201],
+              },
+            }],
+          }],
+        },
+      },
+    });
+
+    expect(writeEvidence).toHaveBeenCalledWith(expect.objectContaining({
+      record: expect.objectContaining({
+        scenario_assertions: [
+          expect.objectContaining({
+            kind: 'http_response',
+            target: '/api/contact',
+            actual_status: 201,
+          }),
+        ],
+        observations: [
+          expect.objectContaining({
+            source: 'e2e_scenario',
+            target: '/api/contact',
+            method: 'POST',
+            http_status: 201,
+          }),
+        ],
+      }),
+    }));
+  });
+
   it('treats missing canonical evidence persistence as unavailable', async () => {
     writeEvidence.mockRejectedValueOnce(
       new Error('Canonical evidence persistence failed'),

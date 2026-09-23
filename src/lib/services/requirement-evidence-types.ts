@@ -66,6 +66,32 @@ export interface InteractionEvidence {
   summary?: string;
 }
 
+export type ScenarioAssertionReceipt =
+  | {
+      kind: 'http_response';
+      pass: boolean;
+      method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
+      target: string;
+      actual_status: number;
+      expected_statuses: number[];
+    }
+  | {
+      kind: 'dom_assertion';
+      pass: boolean;
+      selector: string;
+      assertion:
+        | 'exists'
+        | 'not_exists'
+        | 'text_contains'
+        | 'text_equals'
+        | 'min_count'
+        | 'max_count'
+        | 'attribute_equals'
+        | 'attribute_contains';
+      expected?: string | number;
+      actual?: string | number;
+    };
+
 export interface EvidenceRecord {
   schema_version: 1;
   item_id: string;
@@ -85,6 +111,7 @@ export interface EvidenceRecord {
   build?: { command: string; exit_code: number; duration_ms: number };
   runtime?: { route: string; http_status: number; screenshot_url?: string };
   scenarios?: { name: string; pass: boolean; duration_ms: number }[];
+  scenario_assertions?: ScenarioAssertionReceipt[];
   changed_files?: string[];
   feature_coverage?: FeatureCoverageEvidence;
   interaction?: InteractionEvidence;

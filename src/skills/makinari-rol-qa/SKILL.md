@@ -89,19 +89,29 @@ Scenarios live at `.qa/scenarios/*.json` in the repo root. Create the folder if 
   "viewport": { "width": 1280, "height": 800 },
   "steps": [
     { "action": "goto", "path": "/" },
-    { "action": "waitFor", "selector": "header nav", "timeoutMs": 5000 },
-    { "action": "expect", "kind": "visible", "selector": "[data-testid='nav-contact']" },
+    { "action": "waitFor", "selector": "header nav", "timeout_ms": 5000 },
+    { "action": "expect", "selector": "[data-testid='nav-contact']", "exists": true },
     { "action": "click", "selector": "[data-testid='nav-contact']" },
-    { "action": "waitFor", "url": "/contact" },
+    { "action": "waitFor", "selector": "[data-testid='contact-form']" },
     { "action": "fill", "selector": "[data-testid='contact-email']", "value": "qa@example.com" },
     { "action": "fill", "selector": "[data-testid='contact-message']", "value": "Hi" },
-    { "action": "click", "selector": "[data-testid='contact-submit']" },
-    { "action": "expect", "kind": "text_contains", "selector": "[data-testid='contact-success']", "value": "Thanks" }
+    {
+      "action": "submit",
+      "selector": "[data-testid='contact-submit']",
+      "response": {
+        "path": "/api/contact",
+        "method": "POST",
+        "expected_statuses": [200, 201, 202]
+      }
+    },
+    { "action": "expect", "selector": "[data-testid='contact-success']", "text_contains": "Thanks" }
   ]
 }
 ```
 
-- Supported `action` values: `goto`, `click`, `fill`, `waitFor` (by `selector` or `url`), `expect` (`kind`: `visible`, `text_contains`, `url_matches`, `count_equals`).
+- Supported `action` values: `goto`, `click`, `fill`, `submit`, `waitFor`, `expect`, and `sleep`.
+- Use `submit` for every transactional form. It clicks the selector, waits for the matching real network response, verifies method/status, and emits a structured receipt for the Judge.
+- `expect` supports `exists`, `text_contains`, `text_equals`, `min_count`, `max_count`, `attribute`, and `status`. Successful assertions emit structured browser receipts; scenario names and test output do not count as acceptance proof.
 - Prefer stable selectors: `[data-testid="..."]`, roles, semantic `a[href="..."]`. Avoid brittle CSS like nth-child chains.
 
 ### 2. Triage gate signals

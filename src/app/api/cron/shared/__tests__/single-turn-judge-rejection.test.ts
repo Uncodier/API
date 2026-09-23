@@ -33,21 +33,23 @@ describe('persistJudgeRejection', () => {
       generation: 5,
     });
 
-    await expect(persistJudgeRejection({
+    const result = await persistJudgeRejection({
       planId: 'plan-1',
       stepId: 'step-1',
       postGate,
       effectiveSandboxId: 'sandbox-1',
       infrastructureGeneration: 4,
       executionEventId: 'cycle-1:step-1:turn-1',
-    })).resolves.toMatchObject({
+    });
+
+    expect(result).toMatchObject({
       ok: true,
       isDone: false,
-      remediationScheduled: true,
       gateFailureKind: 'evidence_gap',
       gateErrorExcerpt: postGate.repair_feedback,
       infrastructureGeneration: 5,
     });
+    expect(result.remediationScheduled).toBeUndefined();
     expect(patchPlanStepAtomically).toHaveBeenCalledWith({
       planId: 'plan-1',
       stepId: 'step-1',

@@ -12,6 +12,7 @@ import type {
   RuntimeProbeServerError,
 } from './step-runtime-probe';
 import type { GitPushFailureKind } from '@/lib/services/git-push-error-triage';
+import type { ScenarioAssertionReceipt } from '@/lib/services/requirement-evidence-types';
 import type { TestSignal } from './step-test-evidence';
 import {
   sanitizeTelemetryText,
@@ -33,6 +34,7 @@ export type GateFailureCategory =
 
 export type BuildSignal = {
   ok: boolean;
+  duration_ms?: number;
   error_tail?: string;
   layout_error?: string;
 };
@@ -84,6 +86,7 @@ export type ScenarioStepOutcome = {
   action: string;
   ok: boolean;
   error?: string;
+  receipt?: ScenarioAssertionReceipt;
   artifacts?: {
     screenshot_url?: string;
     dom_snippet?: string;

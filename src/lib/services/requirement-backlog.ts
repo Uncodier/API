@@ -348,20 +348,14 @@ export async function setItemStatus(params: {
           `Cannot mark backlog item ${params.itemId} done without an approved Judge verdict`,
         );
       }
-      const reopeningReviewItem =
-        (backlog.items[idx].status === 'needs_review' ||
-          backlog.items[idx].status === 'rejected') &&
+      const reopeningCompletedItem =
+        backlog.items[idx].status === 'done' &&
         params.status === 'pending';
       backlog.items[idx] = {
         ...backlog.items[idx],
         status: params.status,
         ...(params.status === 'done' ? { blocked_by: undefined } : {}),
-        ...(reopeningReviewItem
-          ? {
-              attempts: 0,
-              tool_failures: {},
-            }
-          : {}),
+        ...(reopeningCompletedItem ? { evidence: undefined } : {}),
         updated_at: new Date().toISOString(),
       };
       if (params.reason && params.status !== 'done') {

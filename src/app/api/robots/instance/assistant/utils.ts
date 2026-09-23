@@ -85,6 +85,7 @@ import { socialMediaAnalyticsTool } from '@/app/api/agents/tools/socialMediaAnal
 import { audienceTool } from '@/app/api/agents/tools/audience/assistantProtocol';
 import { sendBulkMessagesTool } from '@/app/api/agents/tools/sendBulkMessages/assistantProtocol';
 import { publishTool } from '@/app/api/agents/tools/publish/assistantProtocol';
+import { placeVoiceCallTool } from '@/app/api/agents/tools/placeVoiceCall/assistantProtocol';
 import { activateCodingAgentsTool } from '@/app/api/agents/tools/activate_coding_agents/assistantProtocol';
 import { updateRepoTool } from '@/app/api/agents/tools/update_repo/assistantProtocol';
 import { showArtifactTool } from '@/app/api/agents/tools/show_artifact/assistantProtocol';
@@ -413,6 +414,7 @@ export const getAssistantToolDefinitions = (
     socialMediaAnalyticsTool(siteId),
     audienceTool(siteId, userId ?? '', instanceId),
     sendBulkMessagesTool(siteId),
+    placeVoiceCallTool(siteId, userId),
     publishTool(siteId, userId ?? '', instanceId),
     skillLookupTool(),
     activateCodingAgentsTool(),

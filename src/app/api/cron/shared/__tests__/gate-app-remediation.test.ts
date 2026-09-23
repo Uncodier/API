@@ -17,6 +17,7 @@ const input = {
   requirementId: 'requirement-1',
   appContext: {
     planTitle: 'Plan',
+    stepId: 'step-1',
     stepOrder: 1,
     stepPrompt: 'Implement the page',
     currentMessages: [],
@@ -57,6 +58,51 @@ describe('app gate remediation handoff', () => {
       remediationScheduled: true,
       skipAttemptBump: true,
     }));
+  });
+
+  it('forwards the validation scope and deployment policy', async () => {
+    mockRunBuildAndOriginGate.mockResolvedValue({
+      ok: true,
+      signals: { build: { ok: true } },
+    });
+
+    await runAppGate({
+      ...input,
+      appContext: {
+        ...input.appContext,
+        validationScope: 'intermediate',
+        validateDeployment: false,
+      },
+    });
+
+    expect(mockRunBuildAndOriginGate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        validationScope: 'intermediate',
+        validateDeployment: false,
+      }),
+    );
+  });
+
+  it('treats an intentionally skipped deployment as successful', async () => {
+    mockRunBuildAndOriginGate.mockResolvedValue({
+      ok: true,
+      signals: {
+        build: { ok: true },
+        deploy: {
+          previewUrl: null,
+          deployState: 'skipped_not_required',
+        },
+      },
+    });
+
+    const result = await runAppGate(input);
+
+    expect(result.signals).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: 'deploy',
+        ok: true,
+      }),
+    ]));
   });
 
   it('preserves the remediation handoff when other interaction findings block', async () => {

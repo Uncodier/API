@@ -5,11 +5,16 @@ import type {
   UnresolvedInternalLink,
 } from './step-interaction-links';
 import type { AddedLines } from './step-interaction-diff';
+import { auditFormElement } from './step-form-audit';
 export { routeFromAppFile } from './step-app-route';
 export {
   parseAddedLines,
   parseChangedTargets,
 } from './step-interaction-diff';
+export {
+  formatInteractionFailure,
+  summarizeInteractionFindings,
+} from './step-interaction-report';
 export type InteractionFindingKind = 'broken_link' | 'inert_control';
 export type InteractionConfidence = 'high' | 'medium';
 export type InteractionDisposition = 'repair' | 'create_backlog' | 'deferred' | 'warning';
@@ -87,9 +92,18 @@ function literalAttr(attr?: ts.JsxAttribute): string | null {
 }
 
 function hasMeaningfulAction(node: ts.JsxOpeningLikeElement): boolean {
+  const tag = node.tagName.getText().toLowerCase();
   for (const attr of node.attributes.properties) {
     const name = attrName(attr);
     if (!ACTION_ATTRS.has(name)) continue;
+    if (
+      name === 'href' &&
+      tag !== 'a' &&
+      tag !== 'link' &&
+      !tag.endsWith('.link')
+    ) {
+      continue;
+    }
     if (!ts.isJsxAttribute(attr) || name !== 'onclick') return true;
     const text = attr.initializer?.getText() || '';
     if (/^\{\s*(?:undefined|null|false)\s*\}$/.test(text)) continue;
@@ -132,6 +146,30 @@ function isInsideForm(node: ts.Node): boolean {
     current = current.parent;
   }
   return false;
+}
+
+function collectLiteralFormIds(source: ts.SourceFile): Set<string> {
+  const ids = new Set<string>();
+  const visit = (node: ts.Node) => {
+    if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
+      if (node.tagName.getText(source).toLowerCase() === 'form') {
+        const id = literalAttr(findAttr(node, 'id'))?.trim();
+        if (id) ids.add(id);
+      }
+    }
+    node.forEachChild(visit);
+  };
+  source.forEachChild(visit);
+  return ids;
+}
+
+function hasFormAssociation(
+  node: ts.JsxOpeningLikeElement,
+  formIds: Set<string>,
+): boolean {
+  if (isInsideForm(node)) return true;
+  const formId = literalAttr(findAttr(node, 'form'))?.trim();
+  return !!formId && formIds.has(formId);
 }
 
 function hasActionDescendant(node: ts.Node): boolean {
@@ -206,13 +244,21 @@ export function collectActionClassNames(file: string, content: string): Set<stri
     file.endsWith('x') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
   );
   const classes = new Set<string>();
+  const formIds = collectLiteralFormIds(source);
   const visit = (node: ts.Node) => {
     if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
       const tag = node.tagName.getText(source).toLowerCase();
       const type = literalAttr(findAttr(node, 'type'))?.toLowerCase();
       const href = literalAttr(findAttr(node, 'href'));
       const placeholderHref = href === '' || href === '#' || /^javascript:/i.test(href || '');
-      const submits = type === 'submit' || (tag === 'button' && isInsideForm(node) && type !== 'button');
+      const associatedForm = hasFormAssociation(node, formIds);
+      const submits =
+        associatedForm &&
+        (
+          type === 'submit' ||
+          type === 'reset' ||
+          (tag === 'button' && type !== 'button')
+        );
       if ((hasMeaningfulAction(node) && !placeholderHref) || submits) {
         for (const token of classTokens(node)) {
           if (isReusableInteractionClass(token)) classes.add(token);
@@ -264,6 +310,7 @@ export function auditInteractionSource(params: {
     params.file.endsWith('x') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
   );
   const findings: InteractionFinding[] = [];
+  const formIds = collectLiteralFormIds(source);
 
   const addBrokenLink = (
     node: ts.Node,
@@ -328,6 +375,27 @@ export function auditInteractionSource(params: {
       const lowerTag = tag.toLowerCase();
       const href = literalAttr(findAttr(node, 'href'));
       if (href !== null && href !== '') addBrokenLink(node, tag, href);
+      if (lowerTag === 'form') {
+        const formNode = ts.isJsxElement(node.parent) ? node.parent : node;
+        for (const issue of auditFormElement(node, source)) {
+          findings.push(makeFinding({
+            kind: 'inert_control',
+            file: params.file,
+            line: lineOf(source, node),
+            element: tag,
+            label: compactLabel(formNode, source),
+            reason: issue.reason,
+            confidence: issue.confidence,
+            introduced_by_step: wasIntroduced(
+              params.file,
+              formNode,
+              source,
+              params.addedLines,
+            ),
+            disposition: issue.confidence === 'high' ? 'repair' : 'warning',
+          }));
+        }
+      }
 
       const className = literalAttr(findAttr(node, 'classname')) || '';
       const role = literalAttr(findAttr(node, 'role'))?.toLowerCase();
@@ -356,9 +424,12 @@ export function auditInteractionSource(params: {
         semanticInteractionClass ||
         /(?:^|\s)(?:btn(?:-\S+)?|cursor-pointer)(?:\s|$)/.test(className);
       const submit =
-        type === 'submit' ||
-        type === 'reset' ||
-        (semanticButton && isInsideForm(node) && type !== 'button');
+        hasFormAssociation(node, formIds) &&
+        (
+          type === 'submit' ||
+          type === 'reset' ||
+          (semanticButton && type !== 'button')
+        );
       const composedAction = !!findAttr(node, 'aschild') && hasActionDescendant(node.parent);
 
       if (
@@ -404,63 +475,4 @@ export function auditInteractionSource(params: {
   };
   source.forEachChild(visit);
   return findings;
-}
-
-export function summarizeInteractionFindings(findings: InteractionFinding[]): InteractionSignal {
-  const blocking = findings.filter(
-    (finding) =>
-      finding.introduced_by_step &&
-      finding.confidence === 'high' &&
-      finding.disposition !== 'deferred',
-  );
-  const deferred = findings.filter((finding) => finding.disposition === 'deferred');
-  const warnings = findings.filter((finding) => !blocking.includes(finding) && !deferred.includes(finding));
-  const remediationItemIds = Array.from(new Set(
-    deferred
-      .map((finding) => finding.backlog_item_id)
-      .filter((id): id is string => typeof id === 'string' && id.length > 0),
-  ));
-  return {
-    ok: blocking.length === 0 && deferred.length === 0,
-    findings,
-    blocking_count: blocking.length,
-    deferred_count: deferred.length,
-    warning_count: warnings.length,
-    remediation_required: deferred.length > 0,
-    remediation_item_ids: remediationItemIds,
-    summary: `${blocking.length} blocking, ${deferred.length} scheduled remediation, ${warnings.length} warning interaction finding(s)`,
-  };
-}
-
-export function formatInteractionFailure(signal: InteractionSignal): string {
-  const lines = signal.findings
-    .filter(
-      (finding) =>
-        finding.disposition === 'deferred' ||
-        finding.introduced_by_step,
-    )
-    .slice(0, 20)
-    .map((finding) => {
-      const target = finding.target ? ` target=${finding.target}` : '';
-      const backlog = finding.backlog_item_id
-        ? ` remediation=${finding.backlog_item_id}`
-        : '';
-      return `- ${finding.file}:${finding.line} [${finding.kind}/${finding.confidence}] ${finding.reason}${target}${backlog}`;
-    });
-  if (signal.remediation_required) {
-    const handoff = signal.active_item_suspended
-      ? 'The active item is suspended until the remediation backlog item passes its own gates.'
-      : 'Remediation backlog work was scheduled, while the active item remains responsible for its other blocking findings.';
-    return [
-      `Interaction remediation scheduled: ${signal.summary}.`,
-      ...lines,
-      handoff,
-    ].join('\n');
-  }
-  return [
-    `Interaction audit failed: ${signal.summary}.`,
-    ...lines,
-    'Repair these local defects in this cycle. Implement a missing route only when the active item contract requires it; otherwise remove the invalid navigation.',
-    'Out-of-contract missing routes are handled as deduplicated backlog work and must not expand this item.',
-  ].join('\n');
 }

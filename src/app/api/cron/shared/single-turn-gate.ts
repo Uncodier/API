@@ -56,6 +56,7 @@ interface RunSingleTurnGateInput {
   userId?: string;
   requirementType: string;
   gitRepoKind: GitRepoKind;
+  validateDeployment?: boolean;
   backlogItemId: string | null;
   interactionBaselineSha?: string;
   systemPrompt: string;
@@ -86,6 +87,7 @@ export async function runSingleTurnGate(
     userId,
     requirementType,
     gitRepoKind,
+    validateDeployment = true,
     backlogItemId,
     interactionBaselineSha,
     systemPrompt,
@@ -99,6 +101,14 @@ export async function runSingleTurnGate(
   } = input;
   let { sandbox, effectiveSandboxId, infrastructureGeneration } = input;
   const flow = classifyRequirementType(requirementType);
+  const hasPlanSnapshot =
+    Array.isArray(plan.steps) && plan.steps.length > 0;
+  const validationScope: 'intermediate' | 'final' =
+    !requireContractJudge &&
+    hasPlanSnapshot &&
+    !isStrictFinalPlanStep(plan.steps, step.id)
+      ? 'intermediate'
+      : 'final';
   let backlogAcceptance: string[] | undefined;
   let backlogEvidence: EvidenceRecord | undefined;
   if (backlogItemId) {
@@ -135,6 +145,8 @@ export async function runSingleTurnGate(
       planTitle: plan.title,
       stepId: step.id,
       stepOrder: step.order,
+      validationScope,
+      validateDeployment,
       backlogItemId,
       interactionBaselineSha,
       workspaceFingerprint,
@@ -257,7 +269,7 @@ export async function runSingleTurnGate(
     ? {
         command: 'npm run build',
         exit_code: gateRes.richSignals.build.ok ? 0 : 1,
-        duration_ms: 0,
+        duration_ms: gateRes.richSignals.build.duration_ms ?? 0,
       }
     : undefined;
 
@@ -341,6 +353,17 @@ export async function runSingleTurnGate(
       latestPlan.steps,
       step.id,
     );
+    if (isLastStep && validationScope === 'intermediate') {
+      return {
+        ok: false,
+        isDone: false,
+        error:
+          'Step became final while a lightweight gate was running; retry with the full final gate',
+        effectiveSandboxId,
+        infrastructureGeneration,
+        concurrencyHalt: true,
+      };
+    }
     if ((isLastStep || requireContractJudge) && !backlogItemId) {
       return {
         ok: false,

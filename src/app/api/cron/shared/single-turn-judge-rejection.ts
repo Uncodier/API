@@ -105,7 +105,6 @@ export async function persistJudgeRejection(params: {
     gateErrorExcerpt: feedback,
     sleepRequested: params.sleepRequested,
     backgroundTask: params.backgroundTask,
-    remediationScheduled: true,
     gateFailureKind: failureKind,
     judgeAdjudicated: true,
     infrastructureGeneration:

@@ -11,13 +11,11 @@
  *     adapter (Supabase Auth or Auth0) is configured.
  *
  * Notes:
- *   - SQL DDL is dispatched via the service-role client. Supabase JS does not
- *     expose `query()`; we rely on RPC `exec_sql` (created by
- *     `create_apps_platform_tables.sql`). If RPC is unavailable in the target
- *     project, the function logs a warning and exits early — the SQL bundle
- *     can be applied manually from the dashboard.
- *   - All side effects are guarded by try/catch and idempotent checks (the
- *     existence query in `apps_tenants` plus `if not exists` in the DDL).
+ *   - Registry creation and schema bootstrap are one atomic
+ *     `apps_ensure_tenant` RPC. Tenant-authored migrations use the
+ *     constrained `apps_apply_migration` RPC.
+ *   - Provisioning is serialized per requirement and committed atomically by
+ *     the database function.
  */
 import { getAppsAdminClient, issueTenantJWT } from '@/lib/database/apps-supabase';
 import { syncPostgrestSchemas } from './postgrest-config';
@@ -42,11 +40,8 @@ export interface EnsureTenantResult {
   created: boolean;
 }
 
-function schemaForRequirement(requirementId: string): string {
-  return `app_${requirementId.replace(/-/g, '').slice(0, 24)}`;
-}
-function bucketForRequirement(requirementId: string): string {
-  return `tenant-${requirementId.replace(/-/g, '').slice(0, 24)}`;
+function ownerRoleForSchema(schema: string): string {
+  return `app_owner_${schema.slice(4)}`;
 }
 
 async function execSql(sql: string): Promise<{ ok: boolean; error?: string }> {
@@ -60,134 +55,81 @@ async function execSql(sql: string): Promise<{ ok: boolean; error?: string }> {
   }
 }
 
-const BASELINE_MIGRATION = (schema: string, tenantId: string) => `
-do $$
-begin
-  if not exists (select 1 from pg_namespace where nspname = '${schema}') then
-    execute 'create schema "${schema}"';
-  end if;
-end $$;
-
--- Grant usage to API roles so PostgREST can access the schema
-grant usage on schema "${schema}" to anon, authenticated;
-grant all privileges on all tables in schema "${schema}" to anon, authenticated;
-grant all privileges on all routines in schema "${schema}" to anon, authenticated;
-grant all privileges on all sequences in schema "${schema}" to anon, authenticated;
-
-alter default privileges in schema "${schema}" grant all privileges on tables to anon, authenticated;
-alter default privileges in schema "${schema}" grant all privileges on routines to anon, authenticated;
-alter default privileges in schema "${schema}" grant all privileges on sequences to anon, authenticated;
-
-create table if not exists "${schema}"."_meta" (
-  key text primary key,
-  value jsonb not null,
-  updated_at timestamptz not null default now()
-);
-
-alter table "${schema}"."_meta" enable row level security;
-
-drop policy if exists tenant_isolation on "${schema}"."_meta";
-create policy tenant_isolation on "${schema}"."_meta"
-  using (false);
-
-
-insert into "${schema}"."_meta" (key, value)
-values ('provisioned', jsonb_build_object('at', now()::text, 'tenant_id', '${tenantId}'))
-on conflict (key) do update set value = excluded.value, updated_at = now();
-`;
-
-const APP_TENANT_TABLE_BOOTSTRAP = `
-create table if not exists public.apps_tenants (
-  tenant_id uuid primary key,
-  requirement_id uuid not null,
-  user_id uuid not null,
-  site_id uuid not null,
-  schema text not null,
-  bucket text not null,
-  auth_provider text not null default 'supabase',
-  status text not null default 'active',
-  requires_isolation boolean not null default false,
-  limits jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-
-create unique index if not exists apps_tenants_requirement_unique
-  on public.apps_tenants (requirement_id);
-`;
-
 export async function ensureTenant(input: EnsureTenantInput): Promise<EnsureTenantResult> {
   const { requirement_id, user_id, site_id, auth_provider = 'supabase' } = input;
   const client = getAppsAdminClient();
-  const schema = schemaForRequirement(requirement_id);
-  const bucket = bucketForRequirement(requirement_id);
-
-  await execSql(APP_TENANT_TABLE_BOOTSTRAP).catch(() => undefined);
-
-  const { data: existing } = await client
-    .from('apps_tenants')
-    .select('tenant_id, schema, bucket, auth_provider')
-    .eq('requirement_id', requirement_id)
-    .maybeSingle();
-
-  let tenantId: string;
-  let created = false;
-  if (existing?.tenant_id) {
-    tenantId = existing.tenant_id as string;
-  } else {
-    tenantId = (globalThis.crypto?.randomUUID?.() ?? requirement_id) as string;
-    const { error } = await client.from('apps_tenants').insert({
-      tenant_id: tenantId,
-      requirement_id,
-      user_id,
-      site_id,
-      schema,
-      bucket,
-      auth_provider,
-      status: 'active',
-    });
-    if (error) {
-      throw new Error(`tenant-provisioner: insert apps_tenants failed: ${error.message}`);
-    }
-    created = true;
-  }
-
-  const baseline = await execSql(BASELINE_MIGRATION(schema, tenantId));
-  if (!baseline.ok) {
-    console.warn(
-      `[tenant-provisioner] baseline migration skipped (${baseline.error}). Apply manually with create_apps_platform_tables.sql.`,
+  const candidateTenantId =
+    (globalThis.crypto?.randomUUID?.() ?? requirement_id) as string;
+  const { data: tenant, error: tenantError } = await client.rpc(
+    'apps_ensure_tenant',
+    {
+      p_requirement_id: requirement_id,
+      p_candidate_tenant_id: candidateTenantId,
+      p_user_id: user_id,
+      p_site_id: site_id,
+      p_auth_provider: auth_provider,
+    },
+  );
+  if (tenantError) {
+    throw new Error(
+      `tenant-provisioner: atomic provisioning failed: ${tenantError.message}`,
     );
-  } else {
-    // Automatically expose the new schema to PostgREST
-    const syncResult = await syncPostgrestSchemas();
-    if (!syncResult.ok) {
-      console.warn(`[tenant-provisioner] failed to sync schemas with Supabase Management API: ${syncResult.error}`);
-    }
-    const exposeSql = `
-      notify pgrst, 'reload config';
-      notify pgrst, 'reload schema';
-    `;
-    const exposeResult = await execSql(exposeSql);
-    if (!exposeResult.ok) {
-      console.warn(`[tenant-provisioner] failed to auto-expose schema to PostgREST: ${exposeResult.error}`);
-    } else {
-      console.log(`[tenant-provisioner] auto-exposed schemas to PostgREST.`);
-    }
+  }
+  if (!tenant || typeof tenant !== 'object') {
+    throw new Error(
+      'tenant-provisioner: atomic provisioning returned no receipt.',
+    );
+  }
+  const tenantId = tenant.tenant_id;
+  const resolvedSchema = tenant.schema;
+  const resolvedBucket = tenant.bucket;
+  const resolvedAuthProvider = tenant.auth_provider;
+  const created = tenant.created === true;
+  if (
+    typeof tenantId !== 'string' ||
+    typeof resolvedSchema !== 'string' ||
+    !/^app_[a-f0-9]{24}$/.test(resolvedSchema) ||
+    typeof resolvedBucket !== 'string' ||
+    (
+      resolvedAuthProvider !== 'supabase' &&
+      resolvedAuthProvider !== 'auth0'
+    )
+  ) {
+    throw new Error(
+      'tenant-provisioner: atomic provisioning returned an invalid receipt.',
+    );
+  }
+  // Automatically expose the new schema to PostgREST
+  const syncResult = await syncPostgrestSchemas();
+  if (!syncResult.ok) {
+    throw new Error(
+      `tenant-provisioner: failed to sync schemas: ${syncResult.error}`,
+    );
+  }
+  const exposeSql = `
+    notify pgrst, 'reload config';
+    notify pgrst, 'reload schema';
+  `;
+  const exposeResult = await execSql(exposeSql);
+  if (!exposeResult.ok) {
+    throw new Error(
+      `tenant-provisioner: failed to reload PostgREST: ${exposeResult.error}`,
+    );
   }
 
   const { token, expires_at } = await issueTenantJWT({
     tenant_id: tenantId,
-    schema,
+    schema: resolvedSchema,
     user_id,
   });
 
   return {
     tenant_id: tenantId,
-    schema,
-    bucket,
+    schema: resolvedSchema,
+    bucket: resolvedBucket,
     jwt: token,
     jwt_expires_at: expires_at,
-    auth_provider,
+    auth_provider: resolvedAuthProvider,
     created,
   };
 }
@@ -200,8 +142,27 @@ export async function destroyTenant(requirement_id: string): Promise<{ ok: boole
     .eq('requirement_id', requirement_id)
     .maybeSingle();
   if (!row) return { ok: true };
+  if (
+    typeof row.schema !== 'string' ||
+    !/^app_[a-f0-9]{24}$/.test(row.schema)
+  ) {
+    return { ok: false, error: 'Tenant registry contains an invalid schema.' };
+  }
+  const ownerRole = ownerRoleForSchema(row.schema);
 
-  const drop = await execSql(`drop schema if exists "${row.schema}" cascade;`);
+  const drop = await execSql(`
+    drop schema if exists "${row.schema}" cascade;
+    do $cleanup$
+    begin
+      if exists (
+        select 1 from pg_catalog.pg_roles where rolname = '${ownerRole}'
+      ) then
+        execute 'drop owned by "${ownerRole}"';
+        execute 'drop role "${ownerRole}"';
+      end if;
+    end
+    $cleanup$;
+  `);
   if (!drop.ok) return { ok: false, error: drop.error };
 
   // Update exposed schemas after dropping

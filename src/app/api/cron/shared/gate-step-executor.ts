@@ -159,7 +159,6 @@ export async function runGateStep(params: {
            gateErrorExcerpt:
              `Post-gate judge returned ${postGate.judge_verdict}.`,
            effectiveSandboxId,
-           remediationScheduled: true,
          };
        }
 

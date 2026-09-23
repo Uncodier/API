@@ -5,6 +5,9 @@ import {
 } from "../webhook-handlers";
 import { supabaseAdmin } from "@/lib/database/supabase-server";
 import { WorkflowService } from "@/lib/services/workflow-service";
+import { clearVoiceCallContactContext } from "../contact-client";
+
+const mockHandleUntrackedInboundVoiceEvent = jest.fn();
 
 jest.mock("@/lib/database/supabase-server", () => ({
   supabaseAdmin: {
@@ -29,6 +32,13 @@ jest.mock("../client", () => ({
 }));
 jest.mock("../voice-call-client", () => ({
   getVoiceCall: jest.fn(),
+}));
+jest.mock("../contact-client", () => ({
+  clearVoiceCallContactContext: jest.fn(),
+}));
+jest.mock("../inbound-voice-context", () => ({
+  handleUntrackedInboundVoiceEvent: (...args: unknown[]) =>
+    mockHandleUntrackedInboundVoiceEvent(...args),
 }));
 
 function mockSettingsForSender(siteId = "site-1") {
@@ -122,6 +132,7 @@ describe("handleInboundMessage", () => {
 describe("handleVoiceCallEvent", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockHandleUntrackedInboundVoiceEvent.mockResolvedValue({ handled: false });
   });
 
   it("treats call.completed without a provider status as completed", () => {
@@ -131,6 +142,53 @@ describe("handleVoiceCallEvent", () => {
       undefined,
       "in_progress"
     )).toBe("completed");
+  });
+
+  it("maps provider-only statuses to database-safe active statuses", () => {
+    expect(resolveVoiceCallWebhookStatus(
+      "call.initiated",
+      "initiated",
+      undefined,
+      "queued"
+    )).toBe("ringing");
+    expect(resolveVoiceCallWebhookStatus(
+      "call.answered",
+      "answered",
+      undefined,
+      "ringing"
+    )).toBe("in_progress");
+  });
+
+  it("hydrates an untracked inbound call instead of dropping it", async () => {
+    (supabaseAdmin.from as jest.Mock).mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        limit: jest.fn().mockReturnValue({
+          eq: jest.fn().mockResolvedValue({ data: [], error: null }),
+        }),
+      }),
+    });
+    mockHandleUntrackedInboundVoiceEvent.mockResolvedValue({
+      handled: true,
+      call: {
+        id: "call-inbound",
+        direction: "inbound",
+        from: "+14155550100",
+        to: "+14155550999",
+        status: "initiated",
+        createdAt: "2026-09-23T12:00:00.000Z",
+      },
+    });
+
+    await handleVoiceCallEvent({
+      type: "call.initiated",
+      senderId: "sender-1",
+      data: { callId: "call-inbound" },
+    });
+
+    expect(mockHandleUntrackedInboundVoiceEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "call.initiated" }),
+      "call-inbound"
+    );
   });
 
   it("does not regress a terminal delivery on an out-of-order event", () => {
@@ -154,6 +212,7 @@ describe("handleVoiceCallEvent", () => {
                 data: [{
                   id: "delivery-1",
                   message_id: "message-1",
+                  recipient_phone: "+14155550100",
                   status: "answered",
                   answered_at: "2026-09-21T12:00:00.000Z",
                 }],
@@ -221,6 +280,10 @@ describe("handleVoiceCallEvent", () => {
       call_status: "completed",
       duration_seconds: 42,
       transcript_available: true,
+    });
+    expect(clearVoiceCallContactContext).toHaveBeenCalledWith({
+      phone: "+14155550100",
+      deliveryId: "delivery-1",
     });
   });
 });

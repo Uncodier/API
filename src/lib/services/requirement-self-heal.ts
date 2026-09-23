@@ -4,20 +4,18 @@
  * and gets a deterministic next action:
  *
  *   attempt 1 → rotate_strategy      (keep scope, try a different approach)
- *   attempt 2 → downgrade_scope      (full → mvp → minimal)
- *   attempt 3 → retry mandatory core work; ornamental work may be deferred
- *   attempt 4 → mark_needs_review    (non-blocking; human triage if desired)
+ *   attempt 2 → root-cause diagnosis (keep the requested behavior intact)
+ *   attempt 3 → stop core work for review; ornamental work may be deferred
  *
  * `needs_review` releases the scheduler but does not count as successful
  * requirement completion.
  */
 
-import type { BacklogItem, BacklogItemScope } from './requirement-backlog-types';
+import type { BacklogItem } from './requirement-backlog-types';
 import type { JudgeResult } from '@/app/api/cron/shared/archetype-runner';
 
 export type HealingAction =
   | { kind: 'rotate_strategy'; hint: string }
-  | { kind: 'downgrade_scope'; from: BacklogItemScope; to: BacklogItemScope; reason: string }
   | { kind: 'log_assumption_and_continue'; assumption: string; relaxed_acceptance: string[] }
   | { kind: 'mark_needs_review'; reason: string };
 
@@ -26,14 +24,6 @@ export interface HealingContext {
   verdict: JudgeResult;
   /** Total attempts including the one that just failed. */
   attempts: number;
-}
-
-const SCOPE_CHAIN: BacklogItemScope[] = ['full', 'mvp', 'minimal'];
-
-function nextScope(current: BacklogItemScope): BacklogItemScope | null {
-  const i = SCOPE_CHAIN.indexOf(current);
-  if (i < 0 || i === SCOPE_CHAIN.length - 1) return null;
-  return SCOPE_CHAIN[i + 1];
 }
 
 /**
@@ -86,21 +76,19 @@ export function planNextHealingAction(ctx: HealingContext): HealingAction {
   }
 
   if (attempts === 2) {
-    const next = nextScope(ctx.item.scope_level);
-    if (next) {
-      const hintReason = `Two attempts failed at scope=${ctx.item.scope_level} (Last: ${baseReason}).${unmatchedContext} Downgrading to ${next}. Focus ONLY on the critical path; defer polish to unblock the phase.`;
-      return {
-        kind: 'downgrade_scope',
-        from: ctx.item.scope_level,
-        to: next,
-        reason: hintReason.length > 800 ? hintReason.slice(0, 797) + '...' : hintReason,
-      };
-    }
-    // Already minimal → fall through to assumption path.
+    const hint =
+      `ROOT-CAUSE DIAGNOSIS REQUIRED after two failed attempts. ` +
+      `Do not deploy, rename tests, edit comments, or retry the same probe. ` +
+      `Trace the failing request and persisted state, identify the first false assumption, ` +
+      `then make one product-code repair. Last failure: ${baseReason}.${unmatchedContext}`;
+    return {
+      kind: 'rotate_strategy',
+      hint: hint.length > 800 ? hint.slice(0, 797) + '...' : hint,
+    };
   }
 
   if (
-    (attempts === 3 || (attempts === 2 && ctx.item.scope_level === 'minimal')) &&
+    attempts >= 3 &&
     ctx.item.tier === 'ornamental'
   ) {
     const assumption = deriveAssumption(ctx);
@@ -111,18 +99,11 @@ export function planNextHealingAction(ctx: HealingContext): HealingAction {
     };
   }
 
-  if (attempts <= 3) {
-    return {
-      kind: 'rotate_strategy',
-      hint:
-        `Core acceptance remains mandatory after ${attempts} failed attempts. ` +
-        `${nextAction} Do not defer, weaken, or replace the required behavior with an assumption.`,
-    };
-  }
-
   return {
     kind: 'mark_needs_review',
-    reason: `Item "${ctx.item.title}" exhausted ${attempts} attempts (last verdict: ${ctx.verdict.reason}). Flagging for human review; phase continues with remaining items.`,
+    reason:
+      `Item "${ctx.item.title}" exhausted the three-attempt product budget ` +
+      `(last verdict: ${ctx.verdict.reason}). Automatic retries are stopped for human review.`,
   };
 }
 

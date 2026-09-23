@@ -117,6 +117,9 @@ export function isAdminOnlyDiff(files: string[]): boolean {
   if (!files.length) return false;
   return files.every((file) =>
     /\.md$/i.test(file) ||
+    /(?:^|\/)__tests__\//i.test(file) ||
+    /(?:^|\/)tests?\//i.test(file) ||
+    /\.(?:test|spec)\.[^.]+$/i.test(file) ||
     /^evidence\//.test(file) ||
     /^\.qa\//.test(file) ||
     /^(?:qa|test)_results\.json$/i.test(file) ||

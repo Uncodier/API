@@ -33,6 +33,9 @@ describe('requirements workflow ordering contracts', () => {
   const noProgressGateSource = workspaceFile(
     'src/app/api/cron/shared/no-progress-gate-adjudicator.ts',
   );
+  const stepGitGateSource = workspaceFile(
+    'src/app/api/cron/shared/step-git-gate.ts',
+  );
 
   it('derives progress from the persisted final plan delta', () => {
     const finalPlanRead = workflowSource.indexOf(
@@ -93,6 +96,57 @@ describe('requirements workflow ordering contracts', () => {
     expect(workflowSource).toContain("clearResult.state !== 'applied'");
     expect(workflowSource).toContain('if (!completionMutation.persisted)');
     expect(workflowSource).toContain('turnRes.infrastructureGeneration ??');
+  });
+
+  it('continues completed plan steps within the bounded cycle budget', () => {
+    const completionBranch = workflowSource.indexOf(
+      "if (turnRes.persistedTerminalStatus === 'completed')",
+    );
+    const nextTerminalBranch = workflowSource.indexOf(
+      "if (turnRes.persistedTerminalStatus === 'failed')",
+      completionBranch,
+    );
+    const branchSource = workflowSource.slice(
+      completionBranch,
+      nextTerminalBranch,
+    );
+
+    expect(branchSource).toContain('break;');
+    expect(branchSource).not.toContain('break outer;');
+    expect(workflowSource).toContain('CRON_MAX_STEPS_PER_CYCLE');
+    expect(workflowSource).toContain('MIN_NEXT_STEP_BUDGET_MS');
+    expect(workflowSource).toContain(
+      'remainingExecutionMs < MIN_NEXT_STEP_BUDGET_MS',
+    );
+    expect(workflowSource).toContain('continue outer;');
+  });
+
+  it('checkpoints intermediate steps after any declared runtime contract', () => {
+    const runtimeGate = stepGitGateSource.indexOf(
+      'const runtimeOutcome = await runRuntimeAndVisualProbes',
+    );
+    const originGate = stepGitGateSource.indexOf(
+      'const recovery = await verifyOriginAndRecover(params)',
+    );
+    const intermediateReturn = stepGitGateSource.indexOf(
+      'if (intermediateGate)',
+      originGate,
+    );
+
+    expect(runtimeGate).toBeGreaterThan(-1);
+    expect(originGate).toBeGreaterThan(runtimeGate);
+    expect(intermediateReturn).toBeGreaterThan(originGate);
+    expect(stepGitGateSource).toContain(
+      'declaredOnly: intermediateGate',
+    );
+    expect(stepGitGateSource).toContain(
+      "params.validationScope === 'intermediate'",
+    );
+    expect(stepGitGateSource).toContain('lightweightCheckpoint');
+    expect(stepGitGateSource).toContain('if (!r.pushed)');
+    expect(stepGitGateSource).toContain(
+      'unavailableDeclaredTargets.length > 0',
+    );
   });
 
   it('checks execution generation before final status side effects', () => {

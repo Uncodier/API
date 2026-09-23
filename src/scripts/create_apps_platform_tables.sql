@@ -6,8 +6,9 @@
 --   1. public.apps_tenants  — registry of provisioned tenants.
 --   2. public.tenant_users  — bridge between auth.users and tenants.
 --   3. public.apps_exec_sql — SECURITY DEFINER RPC used by the
---      tenant-provisioner and migration endpoint to apply DDL inside the
---      tenant schema. NEVER expose this RPC to the anon role.
+--      trusted tenant-provisioner bootstrap only. Tenant-authored migrations
+--      use apps_apply_migration under the constrained apps_migrator role.
+--      NEVER expose this RPC to tenant API roles.
 --   4. Strict GRANTs/REVOKEs aligned with the harness rules.
 -- =====================================================================
 
