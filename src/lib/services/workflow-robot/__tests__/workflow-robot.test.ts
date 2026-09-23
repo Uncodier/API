@@ -27,16 +27,7 @@ describe('buildRunSteps', () => {
         prompt: { text: 'Update the lead' },
         settings: {
           title: 'Update lead',
-          step: {
-            requires_sandbox: false,
-            mcp_actions: [
-              {
-                tool: 'leads',
-                action: 'update',
-                args: { lead_id: '{{trigger.lead_id}}' },
-              },
-            ],
-          },
+          step: { requires_sandbox: false, mcp_actions: [{ tool: 'leads', action: 'update' }] },
         },
       }),
       node({
@@ -57,13 +48,7 @@ describe('buildRunSteps', () => {
     expect(steps[0].requires_sandbox).toBe(true);
     expect(steps[0].metadata.node_id).toBe('a');
     expect(steps[1].title).toBe('Update lead');
-    expect(steps[1].metadata.mcp_actions).toEqual([
-      {
-        tool: 'leads',
-        action: 'update',
-        args: { lead_id: '{{trigger.lead_id}}' },
-      },
-    ]);
+    expect(steps[1].metadata.mcp_actions).toEqual([{ tool: 'leads', action: 'update' }]);
     expect(steps[0].max_retries).toBe(2);
     expect(steps[0].recovery_plan).toBe('');
     expect(steps[1].max_retries).toBe(2);
@@ -257,7 +242,7 @@ describe('matchesFilter', () => {
 describe('listMcpCatalog', () => {
   const execute = jest.fn();
 
-  test('returns real descriptions, actions, and parameter schemas', () => {
+  test('returns human-readable tool labels and real actions', () => {
     const tools: RoutedTool[] = [
       {
         name: 'leads',
@@ -289,17 +274,17 @@ describe('listMcpCatalog', () => {
     expect(listMcpCatalog(tools)).toEqual([
       expect.objectContaining({
         name: 'leads',
-        description: 'Manage leads in the CRM.',
+        label: 'Leads',
         actions: ['create', 'list'],
-        parameters: tools[0].parameters,
       }),
       expect.objectContaining({
         name: 'webSearch',
-        description: 'Search the live web.',
+        label: 'Web Search',
         actions: [],
-        parameters: tools[1].parameters,
       }),
     ]);
+    expect(listMcpCatalog(tools)[0]).not.toHaveProperty('description');
+    expect(listMcpCatalog(tools)[0]).not.toHaveProperty('parameters');
   });
 
   test('excludes tools that are not part of the workflow catalog', () => {

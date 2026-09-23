@@ -1,42 +1,54 @@
 import {
   TOOL_CATEGORIES,
   type RoutedTool,
-  type ToolCategory,
 } from '@/app/api/agents/tools/router/assistantProtocol';
-
-export interface McpCatalogSchema {
-  type?: string;
-  properties?: Record<string, Record<string, unknown>>;
-  required?: string[];
-}
 
 export interface McpCatalogEntry {
   name: string;
-  category: ToolCategory | 'other';
+  label: string;
   actions: string[];
-  description: string;
-  parameters: McpCatalogSchema;
 }
 
-function actionValues(parameters: McpCatalogSchema): string[] {
+interface ToolParameters {
+  properties?: {
+    action?: {
+      enum?: unknown[];
+    };
+  };
+}
+
+function actionValues(parameters: ToolParameters): string[] {
   const values = parameters.properties?.action?.enum;
   return Array.isArray(values)
     ? values.filter((value): value is string => typeof value === 'string')
     : [];
 }
 
+function toolLabel(name: string): string {
+  const words = name
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+  const acronyms: Record<string, string> = {
+    api: 'API',
+    icp: 'ICP',
+    id: 'ID',
+    url: 'URL',
+  };
+  return words
+    .map((word) => acronyms[word.toLowerCase()]
+      || word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
 export function listMcpCatalog(tools: RoutedTool[]): McpCatalogEntry[] {
   return tools
     .filter((tool) => Object.hasOwn(TOOL_CATEGORIES, tool.name))
-    .map((tool) => {
-      const parameters = (tool.parameters || {}) as McpCatalogSchema;
-      return {
-        name: tool.name,
-        category: TOOL_CATEGORIES[tool.name] || 'other',
-        actions: actionValues(parameters),
-        description: tool.description,
-        parameters,
-      };
-    })
+    .map((tool) => ({
+      name: tool.name,
+      label: toolLabel(tool.name),
+      actions: actionValues(tool.parameters || {}),
+    }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
