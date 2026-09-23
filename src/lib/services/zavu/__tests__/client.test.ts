@@ -8,6 +8,7 @@ import {
   ensureProjectWebhook,
   ensureSenderWebhook,
   ensureVoiceSender,
+  regenerateSenderWebhookSecret,
   ZAVU_PROJECT_WEBHOOK_EVENTS,
   ZAVU_SENDER_WEBHOOK_EVENTS,
   sendChannelMessage,
@@ -113,6 +114,20 @@ describe("Zavu client webhook contract", () => {
     expect(sender.id).toBe("snd_3");
     const body = JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body);
     expect(body.webhookEvents).toEqual(ZAVU_SENDER_WEBHOOK_EVENTS);
+  });
+
+  it("regenerates and returns a sender webhook secret", async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce(
+      mockJson(200, { secret: "whsec_regenerated" })
+    );
+
+    await expect(
+      regenerateSenderWebhookSecret("snd/voice")
+    ).resolves.toBe("whsec_regenerated");
+    expect(global.fetch).toHaveBeenCalledWith(
+      "https://api.zavu.dev/v1/senders/snd%2Fvoice/webhook/secret",
+      expect.objectContaining({ method: "POST" })
+    );
   });
 
   it("enables Voice and verifies the sender channel", async () => {

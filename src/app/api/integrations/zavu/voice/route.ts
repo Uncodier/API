@@ -6,6 +6,7 @@ import {
   createSender,
   createVoiceSender,
   deleteSender,
+  ensureEncryptedSenderWebhookSecret,
   ensureProjectWebhook,
   ensureSenderWebhook,
   ensureVoiceSender,
@@ -67,6 +68,7 @@ type ResolvedVoiceSender = {
   sender: any;
   phone: any;
   createdSender: boolean;
+  encryptedWebhookSecret?: string;
   replacedSenderId?: string;
   voiceWasEnabled: boolean;
 };
@@ -120,6 +122,11 @@ async function resolveSender(
         sender,
         phone,
         createdSender: false,
+        encryptedWebhookSecret:
+          existingSenderId === phone.senderId
+          && typeof existingConnection?.metadata?.zavu_webhook_secret === "string"
+            ? existingConnection.metadata.zavu_webhook_secret
+            : undefined,
         replacedSenderId: staleSenderId,
         voiceWasEnabled:
           Array.isArray(sender.channels) && sender.channels.includes("voice"),
@@ -197,6 +204,12 @@ export async function POST(request: NextRequest) {
       const { current: currentPreferences, desired: voicePreferences } =
         preferencesState;
       resolved = await resolveSender(input);
+      const encryptedWebhookSecret =
+        await ensureEncryptedSenderWebhookSecret({
+          senderId: resolved.sender.id,
+          returnedSecret: resolved.sender.webhook?.secret,
+          encryptedSecret: resolved.encryptedWebhookSecret,
+        });
       const regulatoryStatus = getRegulatoryStatus(resolved.phone);
       const regulatoryDeferred = [
         "pending",
@@ -213,6 +226,7 @@ export async function POST(request: NextRequest) {
           phone_number_id: resolved.phone?.id,
           regulatory_status: regulatoryStatus,
           activation_pending: true,
+          zavu_webhook_secret: encryptedWebhookSecret,
           webhook_events: resolved.sender.webhook?.events || [],
           previous_sender_id: resolved.replacedSenderId,
           voice_language: currentPreferences.language,

@@ -18,6 +18,7 @@ import {
 } from "./agent-client";
 import {
   buildVoiceRuntimePrompt,
+  VOICE_RUNTIME_REMINDER,
   type VoicePromptTool,
 } from "./voice-tools";
 import {
@@ -51,10 +52,22 @@ function enabledNames(values: Record<string, any> | null): string[] {
     .map(([key, value]) => value?.name || key);
 }
 
-export function fitZavuSystemPrompt(prompt: string): string {
-  if (prompt.length <= MAX_SYSTEM_PROMPT_LENGTH) return prompt;
-  const suffix = "\n\n[Additional business context omitted due to provider limits.]";
-  return `${prompt.slice(0, MAX_SYSTEM_PROMPT_LENGTH - suffix.length)}${suffix}`;
+export function fitZavuSystemPrompt(
+  prompt: string,
+  preservedSuffix = ""
+): string {
+  const requiredSuffix = preservedSuffix
+    ? `\n\n${preservedSuffix}`
+    : "";
+  const completePrompt = `${prompt}${requiredSuffix}`;
+  if (completePrompt.length <= MAX_SYSTEM_PROMPT_LENGTH) return completePrompt;
+
+  const omission = "\n\n[Additional business context omitted due to provider limits.]";
+  const reserved = `${omission}${requiredSuffix}`;
+  if (reserved.length >= MAX_SYSTEM_PROMPT_LENGTH) {
+    return reserved.slice(reserved.length - MAX_SYSTEM_PROMPT_LENGTH);
+  }
+  return `${prompt.slice(0, MAX_SYSTEM_PROMPT_LENGTH - reserved.length)}${reserved}`;
 }
 
 async function loadCustomerSupportAgent(siteId: string): Promise<CustomerSupportAgent> {
@@ -129,7 +142,10 @@ export async function buildCustomerSupportBackground(
     options?.voicePreferences || readVoiceAgentPreferences(agent.configuration),
     options?.voiceTools
   );
-  return fitZavuSystemPrompt(`${runtimePrompt}\n\n${background}`);
+  return fitZavuSystemPrompt(
+    `${runtimePrompt}\n\n${background}`,
+    VOICE_RUNTIME_REMINDER
+  );
 }
 
 function storedZavuAgentId(agent: CustomerSupportAgent): string | undefined {

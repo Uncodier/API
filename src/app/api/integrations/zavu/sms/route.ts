@@ -5,6 +5,7 @@ import {
   assignNumberToSender,
   attachSenderToAgent,
   createSender,
+  ensureEncryptedSenderWebhookSecret,
   ensureProjectWebhook,
   purchaseNumber,
   requireZavuSiteManager,
@@ -64,6 +65,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const encryptedWebhookSecret =
+      await ensureEncryptedSenderWebhookSecret({
+        senderId: sender.id,
+        returnedSecret: sender.webhook?.secret,
+      });
     const { channelId: persistedChannelId } = await upsertChannelConnection(
       siteId,
       channelId,
@@ -74,6 +80,7 @@ export async function POST(request: NextRequest) {
         zavu_sender_id: sender.id,
         metadata: {
           phone_number: phoneNumber,
+          zavu_webhook_secret: encryptedWebhookSecret,
           webhook_events: sender.webhook?.events || [],
         },
       }

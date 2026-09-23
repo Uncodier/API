@@ -4,6 +4,7 @@ const mockSyncTools = jest.fn();
 const mockUpdateAgent = jest.fn();
 const mockEnsureSenderWebhook = jest.fn();
 const mockEnsureVoiceSender = jest.fn();
+const mockEnsureEncryptedSenderWebhookSecret = jest.fn();
 const mockUpdateSender = jest.fn();
 const mockUpdatePrompt = jest.fn();
 const mockRollbackAgent = jest.fn();
@@ -41,6 +42,9 @@ jest.mock("../persist", () => ({
   upsertChannelConnection: mockUpsertConnection,
   restoreChannelConnections: mockRestoreConnections,
 }));
+jest.mock("../sender-webhook-secret", () => ({
+  ensureEncryptedSenderWebhookSecret: mockEnsureEncryptedSenderWebhookSecret,
+}));
 
 import {
   syncConnectedCustomerSupportVoiceAgent,
@@ -50,6 +54,9 @@ import {
 describe("syncConnectedCustomerSupportVoiceAgent", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockEnsureEncryptedSenderWebhookSecret.mockResolvedValue(
+      "encrypted-webhook-secret"
+    );
     mockSyncAgent.mockResolvedValue({
       agent: { id: "agent_1", enabled: false },
       webhookSecret: "whsec_test",
@@ -130,6 +137,11 @@ describe("syncConnectedCustomerSupportVoiceAgent", () => {
     });
     expect(mockEnsureSenderWebhook).toHaveBeenCalledWith("sender_1");
     expect(mockEnsureVoiceSender).toHaveBeenCalledWith("sender_1");
+    expect(mockEnsureEncryptedSenderWebhookSecret).toHaveBeenCalledWith({
+      senderId: "sender_1",
+      returnedSecret: undefined,
+      encryptedSecret: undefined,
+    });
     expect(mockUpdateAgent).toHaveBeenCalledWith("agent_1", { enabled: true });
     expect(mockUpsertConnection).toHaveBeenCalledWith(
       "site-1",
@@ -139,6 +151,7 @@ describe("syncConnectedCustomerSupportVoiceAgent", () => {
         metadata: expect.objectContaining({
           agent_enabled: true,
           activation_pending: false,
+          zavu_webhook_secret: "encrypted-webhook-secret",
         }),
       })
     );

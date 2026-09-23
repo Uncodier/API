@@ -103,6 +103,15 @@ describe("fitZavuSystemPrompt", () => {
     );
   });
 
+  it("preserves a final Voice guardrail when business context is truncated", () => {
+    const reminder = "# Final Voice Response Check\nKeep responses speech-only.";
+    const prompt = fitZavuSystemPrompt("a".repeat(12_000), reminder);
+
+    expect(prompt).toHaveLength(10_000);
+    expect(prompt).toContain("Additional business context omitted");
+    expect(prompt.endsWith(reminder)).toBe(true);
+  });
+
   it("omits language so Zavu uses automatic detection", () => {
     expect(buildZavuAgentInput(localAgent, "System prompt").voice).not.toHaveProperty(
       "language"
@@ -149,9 +158,12 @@ describe("fitZavuSystemPrompt", () => {
       { id: "asset-2", name: "Policy.txt", path: "policy.txt", file_path: "policy.txt" },
     ]);
     expect(background).toContain("FAQ content");
-    expect(background).toContain("# Voice Call Runtime");
+    expect(background).toContain("# Voice Runtime Rules — Highest Priority");
     expect(background).toContain("`capture_lead`");
-    expect(background.indexOf("# Voice Call Runtime")).toBeLessThan(
+    expect(background.indexOf("# Voice Runtime Rules — Highest Priority")).toBeLessThan(
+      background.indexOf("Base background")
+    );
+    expect(background.indexOf("# Final Voice Response Check")).toBeGreaterThan(
       background.indexOf("Base background")
     );
   });

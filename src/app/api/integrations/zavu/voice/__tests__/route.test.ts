@@ -1,6 +1,7 @@
 const mockEnsureProjectWebhook = jest.fn();
 const mockEnsureSenderWebhook = jest.fn();
 const mockEnsureVoiceSender = jest.fn();
+const mockEnsureEncryptedSenderWebhookSecret = jest.fn();
 const mockSyncCustomerSupportVoiceAgentWithTools = jest.fn();
 const mockSyncConnectedCustomerSupportVoiceAgent = jest.fn();
 const mockUpsertChannelConnection = jest.fn();
@@ -25,6 +26,7 @@ jest.mock("@/lib/services/zavu", () => ({
   ensureProjectWebhook: mockEnsureProjectWebhook,
   ensureSenderWebhook: mockEnsureSenderWebhook,
   ensureVoiceSender: mockEnsureVoiceSender,
+  ensureEncryptedSenderWebhookSecret: mockEnsureEncryptedSenderWebhookSecret,
   syncCustomerSupportVoiceAgentWithTools: mockSyncCustomerSupportVoiceAgentWithTools,
   syncConnectedCustomerSupportVoiceAgent: mockSyncConnectedCustomerSupportVoiceAgent,
   upsertChannelConnection: mockUpsertChannelConnection,
@@ -63,6 +65,7 @@ describe("Zavu Voice setup", () => {
     mockRequireZavuSiteAccess.mockResolvedValue("member");
     mockAssertPhoneResourcesAvailable.mockResolvedValue(undefined);
     mockEnsureProjectWebhook.mockResolvedValue({});
+    mockEnsureEncryptedSenderWebhookSecret.mockResolvedValue("encrypted-webhook-secret");
     mockGetChannelConnection.mockResolvedValue(null);
     mockGetCustomerSupportVoicePreferences.mockResolvedValue({ language: "auto" });
     mockGetOwnedNumbers.mockResolvedValue({
@@ -148,6 +151,7 @@ describe("Zavu Voice setup", () => {
       metadata: {
         activation_pending: false,
         zavu_agent_id: "agent_1",
+        zavu_webhook_secret: "encrypted-webhook-secret",
       },
     });
     expect(body.connections).toEqual([body.connection]);
@@ -159,6 +163,11 @@ describe("Zavu Voice setup", () => {
     });
     expect(mockEnsureSenderWebhook).toHaveBeenCalledWith("sender_1");
     expect(mockEnsureVoiceSender).toHaveBeenCalledWith("sender_1");
+    expect(mockEnsureEncryptedSenderWebhookSecret).toHaveBeenCalledWith({
+      senderId: "sender_1",
+      returnedSecret: undefined,
+      encryptedSecret: undefined,
+    });
     expect(mockEnsureSenderWebhook.mock.invocationCallOrder[0])
       .toBeLessThan(mockUpsertChannelConnection.mock.invocationCallOrder[0]);
     expect(mockUpsertChannelConnection).toHaveBeenNthCalledWith(
@@ -206,16 +215,10 @@ describe("Zavu Voice setup", () => {
       items: [{ id: "phone_1", phoneNumber: "+14155550100" }],
     });
 
-    const response = await POST(
-      new NextRequest("https://backend.example.com/api/integrations/zavu/voice", {
-        method: "POST",
-        body: JSON.stringify({
-          siteId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
-          phoneNumber: "+14155550100",
-          name: "Voice Support",
-        }),
-      })
-    );
+    const response = await POST(createVoiceRequest({
+      phoneNumber: "+14155550100",
+      name: "Voice Support",
+    }));
 
     expect(response.status).toBe(200);
     expect(mockCreateVoiceSender).toHaveBeenCalledWith({
@@ -235,15 +238,9 @@ describe("Zavu Voice setup", () => {
       Object.assign(new Error("Sender not found"), { status: 404 })
     );
 
-    const response = await POST(
-      new NextRequest("https://backend.example.com/api/integrations/zavu/voice", {
-        method: "POST",
-        body: JSON.stringify({
-          siteId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
-          phoneNumber: "+14155550100",
-        }),
-      })
-    );
+    const response = await POST(createVoiceRequest({
+      phoneNumber: "+14155550100",
+    }));
 
     expect(response.status).toBe(200);
     expect(mockCreateSender).toHaveBeenCalledWith({
@@ -286,15 +283,9 @@ describe("Zavu Voice setup", () => {
       }],
     });
 
-    const response = await POST(
-      new NextRequest("https://backend.example.com/api/integrations/zavu/voice", {
-        method: "POST",
-        body: JSON.stringify({
-          siteId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
-          phoneNumber: "+14155550100",
-        }),
-      })
-    );
+    const response = await POST(createVoiceRequest({
+      phoneNumber: "+14155550100",
+    }));
 
     expect(response.status).toBe(200);
     expect(mockUpsertChannelConnection).toHaveBeenCalledWith(
@@ -321,15 +312,9 @@ describe("Zavu Voice setup", () => {
       new Error("Tool registration failed")
     );
 
-    const response = await POST(
-      new NextRequest("https://backend.example.com/api/integrations/zavu/voice", {
-        method: "POST",
-        body: JSON.stringify({
-          siteId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
-          phoneNumber: "+14155550100",
-        }),
-      })
-    );
+    const response = await POST(createVoiceRequest({
+      phoneNumber: "+14155550100",
+    }));
 
     expect(response.status).toBe(502);
     expect(mockEnsureVoiceSender).not.toHaveBeenCalled();
@@ -342,15 +327,9 @@ describe("Zavu Voice setup", () => {
       new Error("Failed to save connection in database")
     );
 
-    const response = await POST(
-      new NextRequest("https://backend.example.com/api/integrations/zavu/voice", {
-        method: "POST",
-        body: JSON.stringify({
-          siteId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
-          phoneNumber: "+14155550100",
-        }),
-      })
-    );
+    const response = await POST(createVoiceRequest({
+      phoneNumber: "+14155550100",
+    }));
 
     expect(response.status).toBe(502);
     expect(mockSyncCustomerSupportVoiceAgentWithTools).not.toHaveBeenCalled();
@@ -368,15 +347,9 @@ describe("Zavu Voice setup", () => {
     });
     mockUpdateAgent.mockResolvedValueOnce({ id: "agent_1", enabled: false });
 
-    const response = await POST(
-      new NextRequest("https://backend.example.com/api/integrations/zavu/voice", {
-        method: "POST",
-        body: JSON.stringify({
-          siteId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
-          phoneNumber: "+14155550100",
-        }),
-      })
-    );
+    const response = await POST(createVoiceRequest({
+      phoneNumber: "+14155550100",
+    }));
 
     expect(response.status).toBe(200);
     expect(mockEnsureVoiceSender).not.toHaveBeenCalled();
@@ -410,15 +383,9 @@ describe("Zavu Voice setup", () => {
     });
     mockUpdateAgent.mockResolvedValueOnce({ id: "agent_1", enabled: false });
 
-    const response = await POST(
-      new NextRequest("https://backend.example.com/api/integrations/zavu/voice", {
-        method: "POST",
-        body: JSON.stringify({
-          siteId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
-          phoneNumber: "+14155550100",
-        }),
-      })
-    );
+    const response = await POST(createVoiceRequest({
+      phoneNumber: "+14155550100",
+    }));
 
     expect(response.status).toBe(200);
     expect(mockUpsertChannelConnection).toHaveBeenLastCalledWith(
@@ -445,15 +412,9 @@ describe("Zavu Voice setup", () => {
       new Error("Agent rollback failed")
     );
 
-    const response = await POST(
-      new NextRequest("https://backend.example.com/api/integrations/zavu/voice", {
-        method: "POST",
-        body: JSON.stringify({
-          siteId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
-          phoneNumber: "+14155550100",
-        }),
-      })
-    );
+    const response = await POST(createVoiceRequest({
+      phoneNumber: "+14155550100",
+    }));
 
     expect(response.status).toBe(502);
     expect(mockUpsertChannelConnection).toHaveBeenNthCalledWith(
@@ -471,15 +432,9 @@ describe("Zavu Voice setup", () => {
       new Error("Zavu did not enable the Voice channel for the sender")
     );
 
-    const response = await POST(
-      new NextRequest("https://backend.example.com/api/integrations/zavu/voice", {
-        method: "POST",
-        body: JSON.stringify({
-          siteId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
-          phoneNumber: "+14155550100",
-        }),
-      })
-    );
+    const response = await POST(createVoiceRequest({
+      phoneNumber: "+14155550100",
+    }));
 
     expect(response.status).toBe(502);
     expect(mockUpdateSender).toHaveBeenCalledWith("sender_1", {

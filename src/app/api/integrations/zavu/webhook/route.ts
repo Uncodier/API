@@ -35,11 +35,15 @@ export async function POST(request: NextRequest) {
     let verified = verifyZavuSignature(signature, rawBody, secret);
     const senderId = event.senderId || event.data?.senderId || event.sender?.id;
     if (!verified && typeof senderId === "string") {
-      const sites = await findSettingsForSender(senderId);
+      const sites = await findSettingsForSender(senderId, { skipCache: true });
       if (sites.length > 0) {
         const site = sites[0];
         const connections = (site.channels as any)?.connections || [];
-        const conn = connections.find((c: any) => c.zavu_sender_id === senderId);
+        const conn = connections.find(
+          (c: any) =>
+            c.zavu_sender_id === senderId
+            && typeof c.metadata?.zavu_webhook_secret === "string"
+        );
         if (conn?.metadata?.zavu_webhook_secret) {
           const decrypted = decryptToken(conn.metadata.zavu_webhook_secret);
           secret = decrypted || conn.metadata.zavu_webhook_secret;

@@ -36,11 +36,16 @@ async function findSettingsForInvitation(invitationId: string) {
   return data || [];
 }
 
-export async function findSettingsForSender(senderId: string) {
+export async function findSettingsForSender(
+  senderId: string,
+  options?: { skipCache?: boolean }
+) {
   if (!/^[a-zA-Z0-9_-]{1,128}$/.test(senderId)) return [];
   const cacheKey = `zavu:sender-settings:${await sha256(senderId)}`;
-  const cached = await getCachedJson<any[]>(cacheKey);
-  if (cached) return cached;
+  if (!options?.skipCache) {
+    const cached = await getCachedJson<any[]>(cacheKey);
+    if (cached) return cached;
+  }
   const { data, error } = await supabaseAdmin
     .from("settings")
     .select("id, site_id, channels")

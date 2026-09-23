@@ -9,6 +9,7 @@ import {
   restoreChannelConnections,
   upsertChannelConnection,
 } from "./persist";
+import { ensureEncryptedSenderWebhookSecret } from "./sender-webhook-secret";
 import {
   attachCustomerSupportVoiceSenders,
   rollbackVoiceAgentSynchronization,
@@ -219,6 +220,7 @@ export async function syncConnectedCustomerSupportVoiceAgentDetailed(
       voicePreferences: options?.voicePreferences,
     });
 
+    const encryptedWebhookSecrets = new Map<string, string>();
     if (agentSync.shouldEnable) {
       for (const senderId of senderIds) {
         const senderConnections = connections.filter(
@@ -231,6 +233,17 @@ export async function syncConnectedCustomerSupportVoiceAgentDetailed(
           previous.channels.includes("voice");
         const sender = await ensureVoiceSender(senderId);
         senderStates.set(senderId, sender);
+        const storedSecret = senderConnections
+          .map((connection) => connection.metadata?.zavu_webhook_secret)
+          .find((secret) => typeof secret === "string" && secret.length > 0);
+        encryptedWebhookSecrets.set(
+          senderId,
+          await ensureEncryptedSenderWebhookSecret({
+            senderId,
+            returnedSecret: sender.webhook?.secret,
+            encryptedSecret: storedSecret,
+          })
+        );
         if (!wasEnabled) newlyEnabledSenderIds.push(senderId);
       }
     }
@@ -254,6 +267,13 @@ export async function syncConnectedCustomerSupportVoiceAgentDetailed(
           agent_enabled: agentSync.shouldEnable,
           activation_pending: !activated && !regulatoryRejected,
           zavu_agent_id: agentSync.agent.id,
+          ...(encryptedWebhookSecrets.has(connection.zavu_sender_id as string)
+            ? {
+                zavu_webhook_secret: encryptedWebhookSecrets.get(
+                  connection.zavu_sender_id as string
+                ),
+              }
+            : {}),
           webhook_events:
             sender?.webhook?.events ||
             connection.metadata?.webhook_events ||

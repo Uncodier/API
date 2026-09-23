@@ -168,6 +168,19 @@ export async function ensureSenderWebhook(senderId: string) {
   return unwrapSender(payload);
 }
 
+export async function regenerateSenderWebhookSecret(
+  senderId: string
+): Promise<string> {
+  const payload = await zavuFetch<{ secret?: string }>(
+    `/senders/${encodeURIComponent(senderId)}/webhook/secret`,
+    { method: "POST" }
+  );
+  if (!payload.secret) {
+    throw new Error("Zavu did not return the regenerated webhook secret");
+  }
+  return payload.secret;
+}
+
 export async function ensureVoiceSender(senderId: string): Promise<any> {
   const payload = await zavuFetch(`/senders/${encodeURIComponent(senderId)}`, {
     method: "PATCH",

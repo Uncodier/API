@@ -2,6 +2,7 @@ export * from "./client";
 export * from "./agent-client";
 export * from "./persist";
 export * from "./phone-ownership";
+export * from "./sender-webhook-secret";
 export * from "./signature";
 export * from "./site-access";
 export * from "./voice-agent";

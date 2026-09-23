@@ -17,6 +17,9 @@ jest.mock("@/lib/services/zavu/webhook-handlers", () => ({
   handleDomainStatusChanged: jest.fn().mockResolvedValue(undefined),
   handleVoiceCallEvent: jest.fn().mockResolvedValue(undefined),
 }));
+jest.mock("@/lib/utils/token-decryption", () => ({
+  decryptToken: (value: string) => value.replace("encrypted:", ""),
+}));
 
 jest.mock("@/lib/services/provider-webhook-claims", () => ({
   claimProviderWebhookEvent: jest.fn(),
@@ -48,11 +51,11 @@ describe("Zavu Webhook Dispatch", () => {
       .mockResolvedValue(true);
   });
 
-  const createRequest = (body: any) => {
+  const createRequest = (body: any, secret = "test-secret") => {
     const rawBody = JSON.stringify(body);
     const timestamp = Math.floor(Date.now() / 1000);
     const signature = crypto
-      .createHmac("sha256", "test-secret")
+      .createHmac("sha256", secret)
       .update(`${timestamp}.${rawBody}`)
       .digest("hex");
 
@@ -145,6 +148,32 @@ describe("Zavu Webhook Dispatch", () => {
     const res = await POST(createRequest(payload));
 
     expect(res.status).toBe(200);
+    expect(webhookHandlers.handleVoiceCallEvent).toHaveBeenCalledWith(payload);
+  });
+
+  it("uses a secret-bearing connection when a sender has multiple channels", async () => {
+    (webhookHandlers.findSettingsForSender as jest.Mock).mockResolvedValueOnce([{
+      channels: {
+        connections: [
+          { type: "voice", zavu_sender_id: "snd_123", metadata: {} },
+          {
+            type: "sms",
+            zavu_sender_id: "snd_123",
+            metadata: { zavu_webhook_secret: "encrypted:sender-secret" },
+          },
+        ],
+      },
+    }]);
+    const payload = {
+      id: "evt_shared_sender",
+      type: "call.completed",
+      senderId: "snd_123",
+      data: { callId: "call_123" },
+    };
+
+    const response = await POST(createRequest(payload, "sender-secret"));
+
+    expect(response.status).toBe(200);
     expect(webhookHandlers.handleVoiceCallEvent).toHaveBeenCalledWith(payload);
   });
 
