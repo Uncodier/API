@@ -3,6 +3,8 @@ import { SandboxService } from '@/lib/services/sandbox-service';
 import { sanitizeRuntimeLog } from './runtime-log-context';
 
 const OUTPUT_TAIL_LIMIT = 6_000;
+const DEFAULT_TEST_TIMEOUT_MS = 3 * 60_000;
+const MAX_TEST_TIMEOUT_MS = 15 * 60_000;
 
 export interface TestEvidenceSignal {
   command: string;
@@ -15,6 +17,23 @@ export interface TestEvidenceSignal {
 export interface TestSignal {
   ok: boolean;
   tests: TestEvidenceSignal[];
+}
+
+function declaredTestTimeoutMs(configured?: number): number {
+  const fromEnvironment = Number.parseInt(
+    process.env.DECLARED_TEST_COMMAND_TIMEOUT_MS || '',
+    10,
+  );
+  const explicit =
+    Number.isFinite(configured) && Number(configured) > 0
+      ? Number(configured)
+      : undefined;
+  const requested = explicit ?? (
+    Number.isFinite(fromEnvironment) && fromEnvironment > 0
+      ? fromEnvironment
+      : DEFAULT_TEST_TIMEOUT_MS
+  );
+  return Math.min(Math.max(requested, 1), MAX_TEST_TIMEOUT_MS);
 }
 
 function outputTail(value: string): string {
@@ -172,26 +191,51 @@ export function extractTestEvidenceFromResult(
 export async function runDeclaredTestCommand(
   sandbox: Sandbox,
   command: string,
+  options: { timeoutMs?: number } = {},
 ): Promise<TestSignal> {
-  const result = await sandbox.runCommand('sh', [
-    '-c',
-    `cd "${SandboxService.WORK_DIR}" && ${command} 2>&1`,
-  ]);
-  const stdout = await result.stdout().catch(() => '');
-  const stderr = await result.stderr().catch(() => '');
-  const exitCode = result.exitCode ?? -1;
-  return {
-    ok: exitCode === 0,
-    tests: [{
-      command,
-      exit_code: exitCode,
-      output_tail: outputTail(
-        [stdout, stderr].filter(Boolean).join('\n'),
-      ),
-      // The deterministic gate runs after the producer turn and after the
-      // step baseline was captured, so this receipt is current by construction.
-      ran_after_changes: true,
-      captured_at: new Date().toISOString(),
-    }],
-  };
+  const timeoutMs = declaredTestTimeoutMs(options.timeoutMs);
+  const signal = AbortSignal.timeout(timeoutMs);
+  const capturedAt = new Date().toISOString();
+  try {
+    const result = await sandbox.runCommand(
+      'sh',
+      [
+        '-c',
+        `cd "${SandboxService.WORK_DIR}" && ${command} 2>&1`,
+      ],
+      { signal },
+    );
+    const [stdout, stderr] = await Promise.all([
+      result.stdout().catch(() => ''),
+      result.stderr().catch(() => ''),
+    ]);
+    const exitCode = result.exitCode ?? -1;
+    return {
+      ok: exitCode === 0,
+      tests: [{
+        command,
+        exit_code: exitCode,
+        output_tail: outputTail(
+          [stdout, stderr].filter(Boolean).join('\n'),
+        ),
+        // The deterministic gate runs after the producer turn and after the
+        // step baseline was captured, so this receipt is current by construction.
+        ran_after_changes: true,
+        captured_at: capturedAt,
+      }],
+    };
+  } catch (error: unknown) {
+    if (!signal.aborted) throw error;
+    return {
+      ok: false,
+      tests: [{
+        command,
+        exit_code: 124,
+        output_tail:
+          `Declared test command timed out after ${timeoutMs}ms before exiting.`,
+        ran_after_changes: true,
+        captured_at: capturedAt,
+      }],
+    };
+  }
 }

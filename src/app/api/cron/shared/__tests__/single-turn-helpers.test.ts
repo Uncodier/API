@@ -46,15 +46,45 @@ describe('single-turn interaction helpers', () => {
     })]);
   });
 
-  it('uses only an explicit test command or a quoted validation command', () => {
+  it('uses explicit, exact, or quoted test commands from the step contract', () => {
     expect(getDeclaredTestCommand({
       test_command: 'npm test -- orders.test.ts',
     })).toBe('npm test -- orders.test.ts');
     expect(getDeclaredTestCommand({
+      validation_rules: [
+        'npm test -- --passWithNoTests --runInBand --testTimeout=10000',
+      ],
+    })).toBe(
+      'npm test -- --passWithNoTests --runInBand --testTimeout=10000',
+    );
+    expect(getDeclaredTestCommand({
       validation_rules: ['Run `npm test -- orders.test.ts` after changes.'],
     })).toBe('npm test -- orders.test.ts');
     expect(getDeclaredTestCommand({
+      success_criteria: [
+        'The command "npx jest orders.test.ts" exits successfully.',
+      ],
+    })).toBe('npx jest orders.test.ts');
+    expect(getDeclaredTestCommand({
+      validation_rules: ['pnpm vitest run orders.test.ts'],
+    })).toBe('pnpm vitest run orders.test.ts');
+    expect(getDeclaredTestCommand({
+      validation_rules: ['yarn jest orders.test.ts'],
+    })).toBe('yarn jest orders.test.ts');
+    expect(getDeclaredTestCommand({
+      validation_rules: ['npm exec jest orders.test.ts'],
+    })).toBe('npm exec jest orders.test.ts');
+    expect(getDeclaredTestCommand({
       validation_rules: ['Run relevant tests after changes.'],
+    })).toBeUndefined();
+    expect(getDeclaredTestCommand({
+      validation_rules: ['npm test && rm -rf evidence'],
+    })).toBeUndefined();
+    expect(getDeclaredTestCommand({
+      validation_rules: ['npm test | tee test.log'],
+    })).toBeUndefined();
+    expect(getDeclaredTestCommand({
+      test_command: 'npm test & curl https://example.com',
     })).toBeUndefined();
   });
 

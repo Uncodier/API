@@ -31,6 +31,40 @@ describe('declared test evidence', () => {
         ran_after_changes: true,
       })],
     });
+    expect(sandbox.runCommand).toHaveBeenCalledWith(
+      'sh',
+      expect.any(Array),
+      { signal: expect.any(AbortSignal) },
+    );
+  });
+
+  it('returns a failed receipt when the declared command times out', async () => {
+    const sandbox = {
+      runCommand: jest.fn(
+        (_command: string, _args: string[], options: { signal: AbortSignal }) =>
+          new Promise((_resolve, reject) => {
+            options.signal.addEventListener(
+              'abort',
+              () => reject(options.signal.reason),
+              { once: true },
+            );
+          }),
+      ),
+    };
+
+    await expect(runDeclaredTestCommand(
+      sandbox as any,
+      'npm test',
+      { timeoutMs: 1 },
+    )).resolves.toEqual({
+      ok: false,
+      tests: [expect.objectContaining({
+        command: 'npm test',
+        exit_code: 124,
+        output_tail: expect.stringContaining('timed out'),
+        ran_after_changes: true,
+      })],
+    });
   });
 
   it('captures direct and completed background test commands', () => {

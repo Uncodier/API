@@ -4,6 +4,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-server';
 import { WorkflowService } from '@/lib/services/workflow-service';
 import { findMessageByAgentMailId } from '@/lib/integrations/agentmail/message-updater';
 import { ConversationService } from '@/lib/services/conversation-service';
+import { resolveAgentMailWebhookVerificationContext } from '@/lib/integrations/agentmail/site-webhook-secret';
 
 /**
  * POST handler for AgentMail message.received webhook event
@@ -15,10 +16,25 @@ export async function POST(request: NextRequest) {
 
     // Get raw body for signature verification
     const body = await request.text();
+    if (body.length > 1_000_000) {
+      return NextResponse.json(
+        { success: false, error: 'Webhook payload is too large' },
+        { status: 413 },
+      );
+    }
 
     // Verify the Svix signature before parsing or processing the payload.
-    const webhookSecret = process.env.AGENTMAIL_WEBHOOK_SECRET_MESSAGE_RECEIVED;
-    const payload = await verifySvixWebhook(body, webhookSecret);
+    const verificationContext = await resolveAgentMailWebhookVerificationContext(
+      body,
+      process.env.AGENTMAIL_WEBHOOK_SECRET_MESSAGE_RECEIVED,
+    );
+    if (verificationContext.secret === null) {
+      return NextResponse.json(
+        { success: false, error: 'Webhook verification is unavailable' },
+        { status: 503 },
+      );
+    }
+    const payload = await verifySvixWebhook(body, verificationContext.secret);
     
     if (!payload) {
       return NextResponse.json(
@@ -120,11 +136,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Get site_id from inbox_id or domain
-    let siteId: string | undefined;
+    let siteId: string | undefined = verificationContext.siteId || undefined;
     let userId: string | undefined;
 
     // First try to find by inbox_id
-    if (message.inbox_id) {
+    if (!siteId && message.inbox_id) {
       const { data: settings, error: settingsError } = await supabaseAdmin
         .from('settings')
         .select('site_id')

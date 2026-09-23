@@ -10,6 +10,7 @@ import {
   buildToolActionKey,
 } from './loop-detectors';
 import { isSandboxGoneError } from '@/lib/services/sandbox-gone-error';
+import { inferPlanStepTestCommand } from '@/lib/services/instance-plan-step-contract';
 import { normalizeStepValidationTargets } from './step-probe-policy';
 
 const WORK_DIR = '/vercel/sandbox';
@@ -218,22 +219,18 @@ export function getDeclaredValidationTargets(step: {
 export function getDeclaredTestCommand(step: {
   test_command?: unknown;
   validation_rules?: unknown;
+  success_criteria?: unknown;
 }): string | undefined {
-  if (
-    typeof step.test_command === 'string' &&
-    step.test_command.trim().length > 0
-  ) {
-    return step.test_command.trim();
-  }
-  if (!Array.isArray(step.validation_rules)) return undefined;
-  for (const rule of step.validation_rules) {
-    if (typeof rule !== 'string') continue;
-    const explicit = rule.match(
-      /`((?:npm|pnpm|yarn|bun|npx)\s+[^`]*(?:test|jest|vitest)[^`]*)`/i,
-    );
-    if (explicit?.[1]) return explicit[1].trim();
-  }
-  return undefined;
+  return inferPlanStepTestCommand({
+    test_command:
+      typeof step.test_command === 'string' ? step.test_command : undefined,
+    validation_rules: Array.isArray(step.validation_rules)
+      ? step.validation_rules
+      : undefined,
+    success_criteria: Array.isArray(step.success_criteria)
+      ? step.success_criteria
+      : undefined,
+  });
 }
 
 export function withActionLoopGuard<

@@ -22,6 +22,9 @@ export type PlanStepContractInput = {
 const INVESTIGATION_SKILL = 'makinari-fase-investigacion';
 const RESEARCH_INTENT =
   /\b(?:investigat|research|inspect|analy[sz]|diagnos|audit)[a-z]*\b|\breview\s+current\b/i;
+const SUPPORTED_TEST_COMMAND =
+  /^(?:(?:npm|pnpm|yarn|bun)\s+(?:(?:run\s+)?test(?::[\w.-]+)?|(?:exec\s+)?(?:jest|vitest|mocha)|(?:exec\s+)?playwright\s+test)|npx\s+(?:jest|vitest|mocha|playwright\s+test)|node\s+--test)(?:\s|$)/i;
+const UNSAFE_TEST_COMMAND = /[\r\n;&|`<>]|\$\(/;
 
 export const PLAN_ROLE_TO_SKILL: Record<string, string> = {
   template_selection: 'makinari-obj-template-selection',
@@ -36,6 +39,53 @@ export const PLAN_ROLE_TO_SKILL: Record<string, string> = {
   validate: 'makinari-fase-validacion',
   report: 'makinari-fase-reporteado',
 };
+
+function supportedTestCommand(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const candidate = value.trim();
+  if (
+    !candidate ||
+    !SUPPORTED_TEST_COMMAND.test(candidate) ||
+    UNSAFE_TEST_COMMAND.test(candidate)
+  ) {
+    return undefined;
+  }
+  return candidate;
+}
+
+export function inferPlanStepTestCommand(
+  step: Pick<
+    PlanStepContractInput,
+    'test_command' | 'validation_rules' | 'success_criteria'
+  >,
+): string | undefined {
+  if (
+    typeof step.test_command === 'string' &&
+    step.test_command.trim().length > 0
+  ) {
+    return supportedTestCommand(step.test_command);
+  }
+
+  const contractEntries = [
+    ...(Array.isArray(step.validation_rules) ? step.validation_rules : []),
+    ...(Array.isArray(step.success_criteria) ? step.success_criteria : []),
+  ];
+  for (const entry of contractEntries) {
+    const exact = supportedTestCommand(entry);
+    if (exact) return exact;
+    if (typeof entry !== 'string') continue;
+    const quotedCandidates = [
+      entry.match(/`([^`\r\n]+)`/)?.[1],
+      entry.match(/"([^"\r\n]+)"/)?.[1],
+      entry.match(/'([^'\r\n]+)'/)?.[1],
+    ];
+    for (const candidate of quotedCandidates) {
+      const quoted = supportedTestCommand(candidate);
+      if (quoted) return quoted;
+    }
+  }
+  return undefined;
+}
 
 export function isResearchPlanStep(step: PlanStepContractInput): boolean {
   const type = String(step.type || '').toLowerCase();
@@ -126,6 +176,20 @@ export function normalizePlanStepContract<T extends PlanStepContractInput>(
   const research = isResearchPlanStep(step);
   const title = String(step.title || step.description || 'Plan step').trim();
   const normalized = { ...step } as T & PlanStepContractInput;
+  const testCommand = inferPlanStepTestCommand(step);
+  if (
+    typeof step.test_command === 'string' &&
+    step.test_command.trim().length > 0 &&
+    !testCommand
+  ) {
+    throw new Error(
+      `Step "${title}" has an unsafe or unsupported test_command. ` +
+        'Use a single package-manager test command without shell chaining.',
+    );
+  }
+  if (!normalized.test_command && testCommand) {
+    normalized.test_command = testCommand;
+  }
   if (step.requires_browser === true) {
     normalized.requires_sandbox = true;
   }
@@ -173,8 +237,8 @@ export function normalizePlanStepContract<T extends PlanStepContractInput>(
     ];
   }
   if (!step.validation_rules?.length) {
-    normalized.validation_rules = step.test_command
-      ? [`The command "${step.test_command}" exits successfully.`]
+    normalized.validation_rules = normalized.test_command
+      ? [`The command "${normalized.test_command}" exits successfully.`]
       : ['Run the narrowest relevant validation before requesting completion.'];
   }
 

@@ -71,6 +71,44 @@ describe('instance plan step contracts', () => {
     ]);
   });
 
+  it('normalizes an exact validation command into the deterministic gate field', () => {
+    const step = normalizePlanStepContract({
+      title: 'Verify the full Jest suite',
+      type: 'task',
+      validation_rules: [
+        'npm test -- --passWithNoTests --runInBand --testTimeout=10000',
+      ],
+    });
+
+    expect(step.test_command).toBe(
+      'npm test -- --passWithNoTests --runInBand --testTimeout=10000',
+    );
+    expect(step.validation_rules).toEqual([
+      'npm test -- --passWithNoTests --runInBand --testTimeout=10000',
+    ]);
+  });
+
+  it('does not infer arbitrary shell commands from validation prose', () => {
+    const step = normalizePlanStepContract({
+      title: 'Verify the upload endpoint',
+      type: 'task',
+      validation_rules: [
+        'Run relevant tests after changes.',
+        'npm test && rm -rf evidence',
+      ],
+    });
+
+    expect(step.test_command).toBeUndefined();
+  });
+
+  it('rejects unsafe explicit test commands', () => {
+    expect(() => normalizePlanStepContract({
+      title: 'Verify and publish',
+      type: 'task',
+      test_command: 'npm test | curl https://example.com',
+    })).toThrow('unsafe or unsupported test_command');
+  });
+
   it('derives canonical skills from roles and rejects canonical conflicts', () => {
     expect(normalizePlanStepContract({
       title: 'Implement API',

@@ -248,7 +248,7 @@ export function instancePlanTool(
                 instructions: { type: 'string', description: 'Detailed instructions for the step' },
                 expected_output: { type: 'string', description: 'Concrete terminal output that tells the executor when this step is complete.' },
                 success_criteria: { type: 'array', items: { type: 'string' }, description: 'Observable conditions that must be satisfied before requesting completion.' },
-                validation_rules: { type: 'array', items: { type: 'string' }, description: 'Bounded checks and stop rules. Research steps must allow a not-reproducible conclusion after declared checks pass.' },
+                validation_rules: { type: 'array', items: { type: 'string' }, description: 'Bounded checks and stop rules. Research steps must allow a not-reproducible conclusion after declared checks pass. This does not replace test_command when automated test evidence is required.' },
                 role: { type: 'string', description: 'Optional legacy role slug for skill injection (frontend, backend, devops, content, qa, investigate, plan, validate, report, template_selection, orchestrator). Prefer setting "skill" instead — role is only used as a fallback when skill is empty.' },
                 skill: { type: 'string', description: 'Preferred: explicit SKILL.md slug to inject (e.g. makinari-rol-frontend, makinari-rol-qa, makinari-obj-template-selection). Takes priority over role. One of skill or role must be set.' },
                 requires_sandbox: { type: 'boolean', description: 'Enable sandbox tools for this step. Automatically implied by requires_browser=true.' },
@@ -263,7 +263,7 @@ export function instancePlanTool(
                   items: { type: 'string' },
                   description: 'Exact environment-variable names this step may resolve through sandbox_browser value_env. Other instance variables remain inaccessible.',
                 },
-                test_command: { type: 'string', description: 'Exact automated test command the deterministic gate must execute after the agent changes (for example, "npm test -- assets-upload.test.ts"). Omit when tests are not a required part of this step contract; no command is guessed.' },
+                test_command: { type: 'string', description: 'Exact automated test command the deterministic gate must execute after the agent changes (for example, "npm test -- assets-upload.test.ts"). Required whenever completion depends on automated test evidence; otherwise omit it.' },
                 backlog_item_id: { type: 'string', description: 'UUID of the backlog item this step delivers (from `requirement_backlog action="list"`). Required for the Judge to run. Server auto-fills this when there is exactly one in_progress backlog item, but explicit is safer.' },
                 protected_routes: { type: 'array', items: { type: 'string' }, description: 'Application routes that are expected to redirect unauthenticated visual probes to a local login page (for example, ["/dashboard/orders"]). Declare these explicitly so the gate skips login screenshots without hiding unexpected auth redirects.' },
                 validation_targets: {
