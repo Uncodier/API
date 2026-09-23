@@ -1,39 +1,42 @@
-import { TOOL_CATEGORIES, type ToolCategory } from '@/app/api/agents/tools/router/assistantProtocol';
+import {
+  TOOL_CATEGORIES,
+  type RoutedTool,
+  type ToolCategory,
+} from '@/app/api/agents/tools/router/assistantProtocol';
 
-const ACTION_HINTS: Record<string, string[]> = {
-  leads: ['create', 'update', 'list', 'get', 'qualify'],
-  deals: ['create', 'update', 'list'],
-  sales: ['create', 'update', 'list'],
-  quotations: ['create', 'update', 'list'],
-  quotation_items: ['create', 'update', 'list'],
-  conversations: ['list', 'get'],
-  messages: ['list', 'send'],
-  tasks: ['create', 'update', 'list'],
-  reservations: ['create', 'update', 'list'],
-  content: ['create', 'update', 'list'],
-  webSearch: ['search'],
-  url_to_markdown: ['fetch'],
-  sendEmail: ['send'],
-  sendWhatsApp: ['send'],
-  campaigns: ['create', 'update', 'list'],
-  promotions: ['create', 'list', 'get', 'update', 'delete'],
-  segments: ['create', 'update', 'list'],
-  assets: ['create', 'list'],
-  memories: ['list', 'save'],
-};
+export interface McpCatalogSchema {
+  type?: string;
+  properties?: Record<string, Record<string, unknown>>;
+  required?: string[];
+}
 
-export function listMcpCatalog(): Array<{
+export interface McpCatalogEntry {
   name: string;
   category: ToolCategory | 'other';
   actions: string[];
   description: string;
-}> {
-  return Object.entries(TOOL_CATEGORIES)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([name, category]) => ({
-      name,
-      category,
-      actions: ACTION_HINTS[name] || ['call'],
-      description: `MCP tool "${name}" (${category})`,
-    }));
+  parameters: McpCatalogSchema;
+}
+
+function actionValues(parameters: McpCatalogSchema): string[] {
+  const values = parameters.properties?.action?.enum;
+  return Array.isArray(values)
+    ? values.filter((value): value is string => typeof value === 'string')
+    : [];
+}
+
+export function listMcpCatalog(tools: RoutedTool[]): McpCatalogEntry[] {
+  return tools
+    .filter((tool) => Object.hasOwn(TOOL_CATEGORIES, tool.name))
+    .map((tool) => {
+      const parameters = (tool.parameters || {}) as McpCatalogSchema;
+      return {
+        name: tool.name,
+        category: TOOL_CATEGORIES[tool.name] || 'other',
+        actions: actionValues(parameters),
+        description: tool.description,
+        parameters,
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
 }

@@ -14,7 +14,10 @@ import { generateAudioTool } from '@/app/api/agents/tools/generateAudio/assistan
 import { instanceTool } from '@/app/api/agents/tools/instance/assistantProtocol';
 import { updateSiteSettingsTool } from '@/app/api/agents/tools/updateSiteSettings/assistantProtocol';
 import { webSearchTool } from '@/app/api/agents/tools/webSearch/assistantProtocol';
-import { routeTools } from '@/app/api/agents/tools/router/assistantProtocol';
+import {
+  routeTools,
+  type RoutedTool,
+} from '@/app/api/agents/tools/router/assistantProtocol';
 import { skillLookupTool } from '@/app/api/agents/tools/sandbox/skill-lookup-tool';
 import { memoriesTool } from '@/app/api/agents/tools/memories/assistantProtocol';
 import { tasksTool } from '@/app/api/agents/tools/tasks/assistantProtocol';
@@ -305,7 +308,7 @@ export function determineInstanceCapabilities(instance: any, use_sdk_tools: bool
 /**
  * Helper to get all assistant tools including custom ones
  */
-export const getAssistantTools = (
+export const getAssistantToolDefinitions = (
   siteId: string,
   userId: string | undefined,
   instanceId: string,
@@ -433,7 +436,31 @@ export const getAssistantTools = (
     );
   }
 
-  return routeTools(tools as any[]);
+  return tools as RoutedTool[];
+};
+
+export const getAssistantTools = (
+  siteId: string,
+  userId: string | undefined,
+  instanceId: string,
+  customTools: any[] = [],
+  agentType?: string,
+  userPhone?: string,
+  requirementId?: string,
+  uiMediaOutputType?: UiMediaOutputType,
+) => {
+  return routeTools(
+    getAssistantToolDefinitions(
+      siteId,
+      userId,
+      instanceId,
+      customTools,
+      agentType,
+      userPhone,
+      requirementId,
+      uiMediaOutputType,
+    ),
+  );
 };
 
 /**

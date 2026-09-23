@@ -4,6 +4,7 @@ import { listMcpCatalog } from '../mcp-catalog';
 import { isCronDueInWindow } from '../cron-window';
 import { buildWorkflowRetryContext, canRetryStep, formatWorkflowValidationPrompt } from '../retry';
 import type { WorkflowGraphNode } from '../types';
+import type { RoutedTool } from '@/app/api/agents/tools/router/assistantProtocol';
 
 function node(partial: Partial<WorkflowGraphNode> & { id: string; type: string }): WorkflowGraphNode {
   return {
@@ -26,7 +27,16 @@ describe('buildRunSteps', () => {
         prompt: { text: 'Update the lead' },
         settings: {
           title: 'Update lead',
-          step: { requires_sandbox: false, mcp_actions: [{ tool: 'leads', action: 'update' }] },
+          step: {
+            requires_sandbox: false,
+            mcp_actions: [
+              {
+                tool: 'leads',
+                action: 'update',
+                args: { lead_id: '{{trigger.lead_id}}' },
+              },
+            ],
+          },
         },
       }),
       node({
@@ -47,7 +57,13 @@ describe('buildRunSteps', () => {
     expect(steps[0].requires_sandbox).toBe(true);
     expect(steps[0].metadata.node_id).toBe('a');
     expect(steps[1].title).toBe('Update lead');
-    expect(steps[1].metadata.mcp_actions).toEqual([{ tool: 'leads', action: 'update' }]);
+    expect(steps[1].metadata.mcp_actions).toEqual([
+      {
+        tool: 'leads',
+        action: 'update',
+        args: { lead_id: '{{trigger.lead_id}}' },
+      },
+    ]);
     expect(steps[0].max_retries).toBe(2);
     expect(steps[0].recovery_plan).toBe('');
     expect(steps[1].max_retries).toBe(2);
@@ -239,10 +255,62 @@ describe('matchesFilter', () => {
 });
 
 describe('listMcpCatalog', () => {
-  test('includes leads and webSearch', () => {
-    const names = listMcpCatalog().map((t) => t.name);
-    expect(names).toContain('leads');
-    expect(names).toContain('webSearch');
+  const execute = jest.fn();
+
+  test('returns real descriptions, actions, and parameter schemas', () => {
+    const tools: RoutedTool[] = [
+      {
+        name: 'leads',
+        description: 'Manage leads in the CRM.',
+        parameters: {
+          type: 'object',
+          properties: {
+            action: { type: 'string', enum: ['create', 'list'] },
+            email: { type: 'string', description: 'Lead email address' },
+          },
+          required: ['action'],
+        },
+        execute,
+      },
+      {
+        name: 'webSearch',
+        description: 'Search the live web.',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: 'Search query' },
+          },
+          required: ['query'],
+        },
+        execute,
+      },
+    ];
+
+    expect(listMcpCatalog(tools)).toEqual([
+      expect.objectContaining({
+        name: 'leads',
+        description: 'Manage leads in the CRM.',
+        actions: ['create', 'list'],
+        parameters: tools[0].parameters,
+      }),
+      expect.objectContaining({
+        name: 'webSearch',
+        description: 'Search the live web.',
+        actions: [],
+        parameters: tools[1].parameters,
+      }),
+    ]);
+  });
+
+  test('excludes tools that are not part of the workflow catalog', () => {
+    const hidden: RoutedTool = {
+      name: 'not_in_catalog',
+      description: 'Internal tool.',
+      parameters: { type: 'object', properties: {} },
+      execute,
+    };
+
+    expect(listMcpCatalog([hidden])).toEqual([]);
   });
 });
 

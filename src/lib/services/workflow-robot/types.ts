@@ -17,7 +17,12 @@ export interface WorkflowStepSettings {
   browser_interaction_required?: boolean;
   browser_allowed_domains?: string[];
   browser_secret_names?: string[];
-  mcp_actions?: Array<{ tool: string; action?: string; hint?: string }>;
+  mcp_actions?: Array<{
+    tool: string;
+    action?: string;
+    args?: Record<string, unknown>;
+    hint?: string;
+  }>;
   expected_output?: string;
   success_criteria?: unknown[];
   validation_rules?: unknown[];

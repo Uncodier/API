@@ -45,15 +45,26 @@ function buildWorkflowStepPrompt(params: {
   const skillBlock = matched
     ? `\n\n--- SKILL: ${matched.name} ---\n${matched.content}\n--- END SKILL ---\n`
     : '';
-  const mcpHints = (params.step.metadata?.mcp_actions || [])
-    .map((a: { tool: string; action?: string; hint?: string }) =>
-      `- ${a.tool}${a.action ? ` action=${a.action}` : ''}${a.hint ? `: ${a.hint}` : ''}`)
-    .join('\n');
-
   const ctx = {
     trigger: params.triggerPayload,
     steps: params.previousOutputs,
   };
+  const mcpHints = (params.step.metadata?.mcp_actions || [])
+    .map((a: {
+      tool: string;
+      action?: string;
+      args?: Record<string, unknown>;
+      hint?: string;
+    }) => {
+      const rawArgs = a.args && Object.keys(a.args).length > 0
+        ? interpolateWorkflowText(JSON.stringify(a.args), ctx)
+        : '';
+      return `- ${a.tool}${a.action ? ` action=${a.action}` : ''}${
+        rawArgs ? ` args=${rawArgs}` : ''
+      }${a.hint ? `: ${a.hint}` : ''}`;
+    })
+    .join('\n');
+
   const instructions = interpolateWorkflowText(params.step.instructions || '', ctx);
   const expected = interpolateWorkflowText(params.step.expected_output || '', ctx);
   const validationBlock = formatWorkflowValidationPrompt(params.step, (text) =>
