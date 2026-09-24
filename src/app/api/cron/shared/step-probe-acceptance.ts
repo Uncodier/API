@@ -1,26 +1,20 @@
 import type { HttpMethod } from './step-runtime-probe';
+import type {
+  AcceptanceContract,
+} from '@/lib/services/requirement-acceptance-contract';
+import {
+  analyzeAcceptanceRoutePath,
+  routeTemplateMatches,
+} from '@/lib/services/acceptance-route-path';
+import {
+  expandExpectedHttpStatus,
+} from '@/lib/services/acceptance-http-status';
 
 type ProbeKind = 'page' | 'api';
 
 function normalizeAcceptancePath(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const path = value.trim().replace(/[),.;]+$/, '');
-  if (!path.startsWith('/') || path.startsWith('//')) return null;
-  return path.length > 1 ? path.replace(/\/+$/, '') : '/';
-}
-
-function routeTemplateMatches(
-  template: string,
-  concretePath: string,
-): boolean {
-  const templateParts = template.split('/');
-  const concreteParts = concretePath.split('/');
-  if (templateParts.length !== concreteParts.length) return false;
-  return templateParts.every((part, index) =>
-    part === concreteParts[index] ||
-    /^:[a-z0-9_]+$/i.test(part) ||
-    /^\[[^\]]+\]$/.test(part),
-  );
+  const route = analyzeAcceptanceRoutePath(value);
+  return route.valid ? route.normalized || null : null;
 }
 
 function statusesFromStatement(statement: string): number[] {
@@ -34,10 +28,34 @@ function statusesFromStatement(statement: string): number[] {
 
 export function expectedStatusesFromAcceptance(params: {
   acceptance?: string[];
+  acceptanceContract?: AcceptanceContract;
   method: HttpMethod;
   path: string;
 }): number[] | undefined {
   const statuses = new Set<number>();
+  if (params.acceptanceContract) {
+    for (const criterion of params.acceptanceContract.criteria) {
+      for (const claim of criterion.all_of) {
+        const method = claim.kind === 'http_response' ? claim.method : 'GET';
+        if (
+          (claim.kind !== 'http_response' &&
+            claim.kind !== 'page_response') ||
+          method !== params.method ||
+          !routeTemplateMatches(claim.path, params.path)
+        ) {
+          continue;
+        }
+        for (
+          const status of expandExpectedHttpStatus(
+            claim.expected_status,
+          ) || []
+        ) {
+          statuses.add(status);
+        }
+      }
+    }
+    return statuses.size ? Array.from(statuses) : undefined;
+  }
   for (const statement of params.acceptance || []) {
     const routeMatch = statement.match(
       /\b(GET|POST|PUT|DELETE|PATCH)\s+(\/[^\s"'`<>]+)/i,
@@ -60,9 +78,20 @@ export function expectedStatusesFromAcceptance(params: {
 
 export function authRequiredFromAcceptance(params: {
   acceptance?: string[];
+  acceptanceContract?: AcceptanceContract;
   method: HttpMethod;
   path: string;
 }): boolean {
+  if (params.acceptanceContract) {
+    return params.acceptanceContract.criteria.some((criterion) =>
+      criterion.all_of.some((claim) =>
+        claim.kind === 'http_response' &&
+        claim.method === params.method &&
+        claim.auth === 'required' &&
+        routeTemplateMatches(claim.path, params.path),
+      ),
+    );
+  }
   return (params.acceptance || []).some((statement) => {
     const routeMatch = statement.match(
       /\b(GET|POST|PUT|DELETE|PATCH)\s+(\/[^\s"'`<>]+)/i,

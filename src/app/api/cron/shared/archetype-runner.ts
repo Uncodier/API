@@ -3,7 +3,10 @@
 import type { BacklogItem, BacklogItemKind } from '@/lib/services/requirement-backlog-types';
 import type { RequirementKind } from '@/lib/services/requirement-flows';
 import type { EvidenceRecord } from '@/lib/services/requirement-ground-truth';
-import { validateAcceptance } from '@/lib/services/requirement-acceptance';
+import {
+  acceptanceValidation,
+  requiresSuccessfulTestEvidence,
+} from './archetype-acceptance-policy';
 import { extractRequirementConstraints, findConstraintViolations } from '@/lib/services/requirement-constraints';
 import {
   commitSummary,
@@ -52,15 +55,6 @@ function isTier(item: BacklogItem, tier: 'core' | 'ornamental'): boolean {
   return (item.tier ?? 'core') === tier;
 }
 
-function requiresSuccessfulTestEvidence(item: BacklogItem): boolean {
-  if (item.kind === 'api' || item.kind === 'crud') return true;
-  const contract = `${item.title} ${(item.acceptance || []).join(' ')}`;
-  return (
-    /\b(?:jest|vitest|unit test|integration test|test suite)\b/i.test(contract) ||
-    /\b(?:POST|PUT|PATCH|DELETE)\s+\/api\//i.test(contract)
-  );
-}
-
 // ─── Critic rules ───────────────────────────────────────────────────────
 
 function criticGenericRules(ctx: ArchetypeContext): CriticSuggestion[] {
@@ -73,18 +67,18 @@ function criticGenericRules(ctx: ArchetypeContext): CriticSuggestion[] {
       fix_hint: 'Backlog item has no acceptance criteria. Add at least one observable acceptance line via requirement_backlog upsert.',
     });
   } else {
-    const v = validateAcceptance(item.acceptance);
-    if (!v.has_any_executable && isTier(item, 'core')) {
+    const validation = acceptanceValidation(item);
+    if (!validation.has_any_executable && isTier(item, 'core')) {
       out.push({
         rule: 'narrative-acceptance',
         severity: 'blocker',
         fix_hint: `All ${item.acceptance.length} acceptance entr${item.acceptance.length === 1 ? 'y is' : 'ies are'} narrative. Rewrite at least one with a concrete anchor: HTTP verb (GET/POST), route (starting with /), status code, or observable verb (returns, renders, inserts, redirects). Narrative acceptance cannot be verified against evidence.`,
       });
-    } else if (v.narrative.length > 0 && isTier(item, 'core')) {
+    } else if (validation.unsupported.length > 0 && isTier(item, 'core')) {
       out.push({
         rule: 'partially-narrative-acceptance',
         severity: 'minor',
-        fix_hint: `${v.narrative.length}/${item.acceptance.length} acceptance entries lack concrete anchors — judge will ignore them when matching evidence.`,
+        fix_hint: `${validation.unsupported.length}/${item.acceptance.length} acceptance entries lack executable typed claims — judge will keep them unmatched.`,
       });
     }
   }
@@ -249,7 +243,7 @@ function judgeApp(item: BacklogItem, evidence: EvidenceRecord): JudgeResult {
     if (coverageFailure) {
       return rejected(item, coverageFailure);
     }
-    const narrative = !validateAcceptance(item.acceptance).has_any_executable;
+    const narrative = !acceptanceValidation(item).has_any_executable;
     if (narrative) {
       return rejected(
         item,
@@ -386,7 +380,7 @@ function judgeBackend(item: BacklogItem, evidence: EvidenceRecord): JudgeResult 
     if (coverageFailure) {
       return rejected(item, coverageFailure);
     }
-    if (!validateAcceptance(item.acceptance).has_any_executable) {
+    if (!acceptanceValidation(item).has_any_executable) {
       return rejected(
         item,
         'backend core item has narrative-only acceptance — add a concrete anchor (route/verb/status)',

@@ -39,6 +39,9 @@ import type {
   ProbeDisposition,
   ProbeObservation,
 } from '../step-probe-policy';
+import type {
+  AcceptanceContract,
+} from '@/lib/services/requirement-acceptance-contract';
 
 export type FlowGateFailureKind =
   | 'product_defect'
@@ -70,6 +73,7 @@ export interface AppGateContext {
     protected_routes?: string[];
     validation_targets?: unknown;
     acceptance?: string[];
+    acceptance_contract?: AcceptanceContract;
     test_command?: string;
   };
   currentMessages: any[];

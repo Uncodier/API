@@ -35,6 +35,11 @@ const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const RECOVERY_SCAN_LEASE_KEY = 'deployment-infrastructure';
 const RECOVERY_SCAN_LEASE_TTL_SECONDS = 900;
+const ACTIVE_DEPLOYMENT_WAIT_FILTER = JSON.stringify([{
+  infrastructure_kind: 'deployment',
+  infrastructure_failure_provenance:
+    DEPLOYMENT_INFRASTRUCTURE_PROVENANCE,
+}]);
 
 async function acquireRecoveryScanLease(ownerId: string): Promise<boolean> {
   const { data, error } = await supabaseAdmin.rpc(
@@ -224,11 +229,9 @@ async function* streamActiveDeploymentCandidatePages(
       .from('instance_plans')
       .select('id, instance_id, site_id, status, metadata, steps')
       .in('status', ['pending', 'in_progress', 'active', 'paused', 'failed', 'blocked'])
-      .contains('steps', [{
-        infrastructure_kind: 'deployment',
-        infrastructure_failure_provenance:
-          DEPLOYMENT_INFRASTRUCTURE_PROVENANCE,
-      }])
+      // PostgREST expects a JSON literal for jsonb array containment.
+      // Passing an array directly is encoded as `{[object Object]}`.
+      .contains('steps', ACTIVE_DEPLOYMENT_WAIT_FILTER)
       .order('id', { ascending: true });
     if (cursorId) {
       query = query.gt('id', cursorId);

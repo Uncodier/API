@@ -12,16 +12,28 @@ import {
 import { sanitizeRuntimeLog } from './runtime-log-context';
 import { deriveAcceptanceProbeTargets } from './step-probe-contract-targets';
 import type {
+  AcceptanceContract,
+} from '@/lib/services/requirement-acceptance-contract';
+import {
+  analyzeProbeRoutePath,
+} from '@/lib/services/acceptance-route-path';
+import {
+  inspectStepValidationTargets,
+  stepTargetResolution,
+} from './step-probe-validation-targets';
+import type {
   ProbeDisposition,
   ProbeObservation,
   ProbeTargetSource,
   RuntimeApiTarget,
   RuntimePageTarget,
   RuntimeTargetPlan,
-  StepValidationTarget,
 } from './step-probe-types';
 
 export { expectedStatusesFromAcceptance } from './step-probe-acceptance';
+export {
+  normalizeStepValidationTargets,
+} from './step-probe-validation-targets';
 export type {
   ProbeDisposition,
   ProbeObservation,
@@ -33,67 +45,11 @@ export type {
   StepValidationTarget,
 } from './step-probe-types';
 
-const METHODS = new Set<HttpMethod>(['GET', 'POST', 'PUT', 'DELETE', 'PATCH']);
-
 function normalizePath(value: unknown, kind?: 'page' | 'api'): string | null {
-  if (typeof value !== 'string') return null;
-  const path = value.trim().replace(/[),.;:]+$/, '');
-  if (!path.startsWith('/') || path.startsWith('//') || path.includes('[')) {
-    return null;
-  }
-  if (
-    path.startsWith('/src/') ||
-    path.startsWith('/public/') ||
-    /\.[a-z0-9]{2,8}$/i.test(path)
-  ) {
-    return null;
-  }
-  if (kind === 'api' && !path.startsWith('/api/')) return null;
-  if (kind === 'page' && path.startsWith('/api/')) return null;
+  const route = analyzeProbeRoutePath(value, kind);
+  if (!route.valid || !route.executable || !route.normalized) return null;
+  const path = route.normalized;
   return path.length > 1 ? path.replace(/\/+$/, '') : '/';
-}
-
-function normalizeStatuses(value: unknown): number[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const statuses = Array.from(new Set(
-    value.filter(
-      (status): status is number =>
-        Number.isInteger(status) && status >= 100 && status <= 599,
-    ),
-  ));
-  return statuses.length ? statuses : undefined;
-}
-
-export function normalizeStepValidationTargets(
-  value: unknown,
-): StepValidationTarget[] {
-  if (!Array.isArray(value)) return [];
-  const targets: StepValidationTarget[] = [];
-  for (const candidate of value) {
-    if (!candidate || typeof candidate !== 'object') continue;
-    const raw = candidate as Record<string, unknown>;
-    if (raw.kind !== 'page' && raw.kind !== 'api') continue;
-    const path = normalizePath(raw.path, raw.kind);
-    if (!path) continue;
-    const methodRaw =
-      typeof raw.method === 'string' ? raw.method.toUpperCase() : 'GET';
-    const method = METHODS.has(methodRaw as HttpMethod)
-      ? methodRaw as HttpMethod
-      : 'GET';
-    targets.push({
-      kind: raw.kind,
-      path,
-      ...(raw.kind === 'api' ? { method } : {}),
-      ...(normalizeStatuses(raw.expected_statuses)
-        ? { expected_statuses: normalizeStatuses(raw.expected_statuses) }
-        : {}),
-      ...(raw.payload !== undefined ? { payload: raw.payload } : {}),
-      ...(typeof raw.auth_required === 'boolean'
-        ? { auth_required: raw.auth_required }
-        : {}),
-    });
-  }
-  return targets;
 }
 
 function upsertPage(
@@ -101,8 +57,24 @@ function upsertPage(
   target: RuntimePageTarget,
 ): void {
   const existing = targetMap.get(target.path);
-  if (!existing || (!existing.required && target.required)) {
+  if (!existing) {
     targetMap.set(target.path, target);
+    return;
+  }
+  const incomingDeclared =
+    target.target_resolution?.strategy === 'declared_contract';
+  const existingDeclared =
+    existing.target_resolution?.strategy === 'declared_contract';
+  if (
+    (!existing.required && target.required) ||
+    (incomingDeclared && !existingDeclared)
+  ) {
+    targetMap.set(target.path, {
+      ...existing,
+      ...target,
+      expected_statuses:
+        target.expected_statuses || existing.expected_statuses,
+    });
   }
 }
 
@@ -112,8 +84,25 @@ function upsertApi(
 ): void {
   const key = `${target.method} ${target.path}`;
   const existing = targetMap.get(key);
-  if (!existing || (!existing.required && target.required)) {
+  if (!existing) {
     targetMap.set(key, target);
+    return;
+  }
+  const incomingDeclared =
+    target.target_resolution?.strategy === 'declared_contract';
+  const existingDeclared =
+    existing.target_resolution?.strategy === 'declared_contract';
+  if (
+    (!existing.required && target.required) ||
+    (incomingDeclared && !existingDeclared)
+  ) {
+    targetMap.set(key, {
+      ...existing,
+      ...target,
+      expected_statuses:
+        target.expected_statuses || existing.expected_statuses,
+      payload: target.payload ?? existing.payload,
+    });
   }
 }
 
@@ -123,10 +112,12 @@ function resolveContractStatuses(params: {
   method: HttpMethod;
   declared?: number[];
   acceptance?: string[];
+  acceptanceContract?: AcceptanceContract;
   observations: ProbeObservation[];
 }): number[] | undefined {
   const acceptanceStatuses = expectedStatusesFromAcceptance({
     acceptance: params.acceptance,
+    acceptanceContract: params.acceptanceContract,
     method: params.method,
     path: params.path,
   });
@@ -158,16 +149,23 @@ function resolveContractStatuses(params: {
 export function buildRuntimeTargetPlan(input: {
   validationTargets?: unknown;
   acceptance?: string[];
+  acceptanceContract?: AcceptanceContract;
   protectedRoutes?: string[];
   proseRoutes?: string[];
   inferredPageRoutes?: string[];
   inferredApiRoutes?: Array<{ path: string; method?: HttpMethod }>;
+  restrictContractTargetsToValidation?: boolean;
 }): RuntimeTargetPlan {
   const pages = new Map<string, RuntimePageTarget>();
   const apis = new Map<string, RuntimeApiTarget>();
   const observations: ProbeObservation[] = [];
 
-  for (const target of normalizeStepValidationTargets(input.validationTargets)) {
+  const declaredTargets = inspectStepValidationTargets(
+    input.validationTargets,
+  );
+  observations.push(...declaredTargets.observations);
+  for (const target of declaredTargets.targets) {
+    const resolution = stepTargetResolution(target);
     if (target.kind === 'page') {
       const expectedStatuses = resolveContractStatuses({
         kind: 'page',
@@ -175,6 +173,7 @@ export function buildRuntimeTargetPlan(input: {
         method: 'GET',
         declared: target.expected_statuses,
         acceptance: input.acceptance,
+        acceptanceContract: input.acceptanceContract,
         observations,
       });
       upsertPage(pages, {
@@ -182,6 +181,8 @@ export function buildRuntimeTargetPlan(input: {
         kind: 'page',
         source: 'contract',
         required: true,
+        criterion_id: resolution.criterion_id,
+        target_resolution: resolution,
         ...(expectedStatuses
           ? { expected_statuses: expectedStatuses }
           : {}),
@@ -194,12 +195,14 @@ export function buildRuntimeTargetPlan(input: {
       method: target.method || 'GET',
       declared: target.expected_statuses,
       acceptance: input.acceptance,
+      acceptanceContract: input.acceptanceContract,
       observations,
     });
     const authRequired =
       target.auth_required ??
       authRequiredFromAcceptance({
         acceptance: input.acceptance,
+        acceptanceContract: input.acceptanceContract,
         method: target.method || 'GET',
         path: target.path,
       });
@@ -209,6 +212,8 @@ export function buildRuntimeTargetPlan(input: {
       method: target.method || 'GET',
       source: 'contract',
       required: true,
+      criterion_id: resolution.criterion_id,
+      target_resolution: resolution,
       auth_required: authRequired,
       ...(expectedStatuses
         ? { expected_statuses: expectedStatuses }
@@ -218,7 +223,11 @@ export function buildRuntimeTargetPlan(input: {
 
   const acceptanceTargets = deriveAcceptanceProbeTargets({
     acceptance: input.acceptance,
-    declaredApiKeys: new Set(apis.keys()),
+    acceptanceContract: input.acceptanceContract,
+    declaredPages: Array.from(pages.values()),
+    declaredApis: Array.from(apis.values()),
+    restrictToDeclaredTargets:
+      input.restrictContractTargetsToValidation,
   });
   acceptanceTargets.pages.forEach((target) => upsertPage(pages, target));
   acceptanceTargets.apis.forEach((target) => upsertApi(apis, target));
@@ -340,6 +349,8 @@ export function evaluateRuntimeProbe(
       method: 'GET',
       http_status: probe.http_status,
       expected_statuses: target?.expected_statuses,
+      criterion_id: target?.criterion_id,
+      target_resolution: target?.target_resolution,
     });
     return {
       ...probe,
@@ -388,6 +399,8 @@ export function evaluateRuntimeProbe(
       method: probe.method,
       http_status: probe.http_status,
       expected_statuses: target?.expected_statuses,
+      criterion_id: target?.criterion_id,
+      target_resolution: target?.target_resolution,
     });
     return {
       ...probe,
@@ -407,6 +420,8 @@ export function evaluateRuntimeProbe(
       detail: 'The planned page probe produced no result.',
       method: 'GET',
       expected_statuses: target.expected_statuses,
+      criterion_id: target.criterion_id,
+      target_resolution: target.target_resolution,
     });
   }
   for (const target of plan.apis) {
@@ -426,6 +441,8 @@ export function evaluateRuntimeProbe(
       detail: 'The planned API probe produced no result.',
       method: target.method,
       expected_statuses: target.expected_statuses,
+      criterion_id: target.criterion_id,
+      target_resolution: target.target_resolution,
     });
   }
 

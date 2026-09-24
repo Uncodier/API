@@ -36,12 +36,23 @@ describe('Redis offload durability contracts', () => {
     const sql = migration(
       '20260921181500_claim_synced_objects_batch.sql',
     );
+    const ambiguityFix = migration(
+      '20260924223000_resolve_synced_object_claim_ambiguity.sql',
+    );
     expect(sql).toContain('ON CONFLICT');
     expect(sql).toContain('DO NOTHING');
     expect(sql).toContain("status = 'processing'");
     expect(sql).toContain('claim_expires_at');
     expect(sql).toContain('synced.claim_token');
     expect(sql).toContain('TO service_role');
+    expect(ambiguityFix).toContain(
+      'CREATE OR REPLACE FUNCTION public.claim_synced_objects_batch',
+    );
+    expect(ambiguityFix).toContain('#variable_conflict use_column');
+    expect(ambiguityFix).toContain(
+      'ON CONFLICT (external_id, site_id, object_type) DO NOTHING',
+    );
+    expect(ambiguityFix).toContain('TO service_role');
   });
 
   it('buffers system-memory access counts behind an atomic increment', () => {

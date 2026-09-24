@@ -1,5 +1,11 @@
 import type { Sandbox } from '@vercel/sandbox';
 import { SandboxService } from '@/lib/services/sandbox-service';
+import {
+  analyzeAcceptanceArtifactPath,
+} from '@/lib/services/acceptance-artifact-path';
+import {
+  analyzeProbeRoutePath,
+} from '@/lib/services/acceptance-route-path';
 
 export type CoverageProbeOutcome = 'pass' | 'fail' | 'not_evaluable';
 
@@ -28,21 +34,21 @@ async function existsInSandbox(
   relPath: string,
 ): Promise<ExistenceProbe> {
   const wd = SandboxService.WORK_DIR;
-  try {
-    const result = await sandbox.runCommand({
-      cmd: 'sh',
-      args: [
-        '-c',
-        `[ -e "${wd}/${relPath}" ] && echo __OK__ || echo __MISS__`,
-      ],
-    });
-    const output = (await result.stdout()).toString().trim();
-    if (output === '__OK__') return { outcome: 'pass' };
-    if (output === '__MISS__') return { outcome: 'fail' };
+  const analyzed = analyzeAcceptanceArtifactPath(relPath);
+  if (!analyzed.valid || !analyzed.normalized) {
     return {
       outcome: 'not_evaluable',
-      detail: `Unexpected existence-probe output for ${relPath}`,
+      detail: analyzed.reason || `Unsafe repository path: ${relPath}`,
     };
+  }
+  try {
+    const result = await sandbox.runCommand({
+      cmd: 'stat',
+      args: ['-c', '%s', `${wd}/${analyzed.normalized}`],
+    });
+    return result.exitCode === 0
+      ? { outcome: 'pass' }
+      : { outcome: 'fail' };
   } catch (error: unknown) {
     return {
       outcome: 'not_evaluable',
@@ -52,7 +58,8 @@ async function existsInSandbox(
 }
 
 export function normalizeTouchPath(path: string): string {
-  const normalized = path.trim().replace(/^\.?\//, '');
+  const analyzed = analyzeAcceptanceArtifactPath(path);
+  const normalized = analyzed.normalized || path.trim();
   return normalized.startsWith('app/')
     ? `src/${normalized}`
     : normalized;
@@ -171,6 +178,15 @@ export async function readArtifactProof(
   sandbox: Sandbox,
   relPath: string,
 ): Promise<ArtifactProof> {
+  const analyzed = analyzeAcceptanceArtifactPath(relPath);
+  if (!analyzed.valid || !analyzed.normalized) {
+    return {
+      path: relPath.trim(),
+      exists: false,
+      outcome: 'not_evaluable',
+      error: analyzed.reason || 'Unsafe repository artifact path.',
+    };
+  }
   const normalized = normalizeTouchPath(relPath);
   if (/[*?]/.test(normalized)) {
     return readGlobArtifactProof(sandbox, normalized);
@@ -275,7 +291,15 @@ export async function findPageFile(
   sandbox: Sandbox,
   route: string,
 ): Promise<FileProbeResult> {
-  const clean = route
+  const analyzed = analyzeProbeRoutePath(route, 'page');
+  if (!analyzed.valid || !analyzed.normalized) {
+    return {
+      file: null,
+      outcome: 'not_evaluable',
+      detail: analyzed.reason || `Invalid page route: ${route}`,
+    };
+  }
+  const clean = analyzed.normalized.split('?')[0]
     .replace(/^\//, '')
     .replace(/\/$/, '')
     .split('/')
@@ -294,7 +318,15 @@ export async function findApiFile(
   sandbox: Sandbox,
   route: string,
 ): Promise<FileProbeResult> {
-  const clean = route
+  const analyzed = analyzeProbeRoutePath(route, 'api');
+  if (!analyzed.valid || !analyzed.normalized) {
+    return {
+      file: null,
+      outcome: 'not_evaluable',
+      detail: analyzed.reason || `Invalid API route: ${route}`,
+    };
+  }
+  const clean = analyzed.normalized.split('?')[0]
     .replace(/^\/api\//, '')
     .replace(/\/$/, '')
     .split('/')

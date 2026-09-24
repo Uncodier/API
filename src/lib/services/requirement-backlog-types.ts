@@ -4,7 +4,7 @@
  */
 
 import type { EvidenceRecord } from './requirement-ground-truth';
-import type { AcceptanceContractV1 } from './requirement-acceptance-contract';
+import type { AcceptanceContract } from './requirement-acceptance-contract';
 
 export type BacklogItemStatus =
   | 'pending'
@@ -96,7 +96,7 @@ export interface BacklogItem {
   phase_id: string;
   acceptance: string[];
   /** Versioned executable interpretation of `acceptance`. */
-  acceptance_contract?: AcceptanceContractV1;
+  acceptance_contract?: AcceptanceContract;
   /** MUST NOT / hard rules extracted from the spec (negative acceptance). */
   constraints?: string[];
   touches?: string[];

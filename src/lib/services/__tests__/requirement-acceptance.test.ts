@@ -2,6 +2,10 @@ import {
   analyzeAcceptanceEntry,
   routesFromAcceptance,
 } from '../requirement-acceptance';
+import {
+  analyzeAcceptanceRoutePath,
+  routeTemplateMatches,
+} from '../acceptance-route-path';
 
 describe('acceptance route extraction', () => {
   it('extracts standalone application routes only', () => {
@@ -33,6 +37,19 @@ describe('acceptance route extraction', () => {
     expect(routesFromAcceptance([
       'Users can choose login / signup from the landing page.',
     ])).toEqual([]);
+  });
+
+  it('does not interpret a self-closing JSX tag as a route', () => {
+    expect(routesFromAcceptance([
+      'Render <input type="file" capture="environment" /> for evidence.',
+    ])).toEqual([]);
+  });
+
+  it('rejects markup-like and malformed route candidates', () => {
+    expect(routesFromAcceptance([
+      'Render <Component /> and keep /valid/path available.',
+      'Do not probe /broken//path or /bad>target.',
+    ])).toEqual(['/valid/path']);
   });
 
   it('associates each route with its own HTTP method and status', () => {
@@ -94,5 +111,26 @@ describe('acceptance command extraction', () => {
       kind: 'command',
       value: 'npm test -- critical.test.ts',
     });
+  });
+});
+
+describe('acceptance route templates', () => {
+  it('matches Next.js catch-all route segments', () => {
+    expect(routeTemplateMatches(
+      '/docs/[...slug]',
+      '/docs/guides/getting-started',
+    )).toBe(true);
+    expect(routeTemplateMatches('/docs/[...slug]', '/docs')).toBe(false);
+    expect(routeTemplateMatches('/docs/[[...slug]]', '/docs')).toBe(true);
+  });
+
+  it('rejects traversal and non-terminal catch-all segments', () => {
+    expect(analyzeAcceptanceRoutePath('/docs/../admin').valid).toBe(false);
+    expect(analyzeAcceptanceRoutePath('/docs/[...slug]/edit').valid)
+      .toBe(false);
+    expect(routeTemplateMatches(
+      '/docs/[...slug]/edit',
+      '/docs/guide/edit',
+    )).toBe(false);
   });
 });

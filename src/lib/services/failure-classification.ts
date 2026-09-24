@@ -136,6 +136,7 @@ export function classifyFailure(
   if (
     error.includes('narrative-only acceptance') ||
     error.includes('invalid validation target') ||
+    error.includes('invalid acceptance target') ||
     error.includes('malformed acceptance')
   ) {
     return {

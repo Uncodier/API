@@ -9,6 +9,9 @@ import {
   type RequirementScopePolicy,
 } from '@/lib/services/requirement-scope-policy';
 import type { BacklogItem } from '@/lib/services/requirement-backlog-types';
+import {
+  resolveAcceptanceContract,
+} from '@/lib/services/requirement-acceptance-contract';
 
 const routeMarker = (target: string) => `[interaction-route:${target}]`;
 const resolutionMarker = (resolution: 'implement' | 'remove') =>
@@ -53,13 +56,33 @@ export async function applyInteractionBacklogPolicy(params: {
     actionableRouteItems.set(route, item);
   };
   for (const item of backlog.backlog.items) {
-    const contractRoutes = extractContractRoutes([
-      ...(item.acceptance || []),
-      ...(item.constraints || []),
-    ].join('\n'));
-    for (const route of Array.from(contractRoutes)) {
-      if (!historicalContractOwners.has(route)) {
-        historicalContractOwners.set(route, item);
+    const contract = resolveAcceptanceContract(
+      item.acceptance || [],
+      item.acceptance_contract,
+    );
+    const contractRoutes = new Set(
+      contract.criteria.flatMap((criterion) =>
+        criterion.all_of.flatMap((claim) => {
+          if (
+            claim.kind === 'http_response' ||
+            claim.kind === 'page_response'
+          ) {
+            return [claim.path];
+          }
+          return claim.kind === 'internal_link' && claim.path
+            ? [claim.path]
+            : [];
+        }),
+      ),
+    );
+    extractContractRoutes((item.constraints || []).join('\n')).forEach(
+      (route) => contractRoutes.add(route),
+    );
+    if (!isRemovalItem(item)) {
+      for (const route of Array.from(contractRoutes)) {
+        if (!historicalContractOwners.has(route)) {
+          historicalContractOwners.set(route, item);
+        }
       }
     }
     if (!isActionableRouteOwner(item)) continue;
@@ -283,6 +306,11 @@ function mergeRemovalItem(params: {
     ...params.existingItem,
     touches,
     acceptance,
+    acceptance_contract: removalAcceptanceContract(
+      acceptance,
+      touches,
+      params.route.split('/').filter(Boolean).join(' > ') || 'home',
+    ),
     assumptions,
   };
 }
@@ -334,6 +362,10 @@ function implementationItem(params: {
 }) {
   const pageFile = `src/app${params.route === '/' ? '' : params.route}/page.tsx`;
   const sourceLabel = params.finding.file.split('/').pop() || 'source component';
+  const acceptance = [
+    `Route ${params.route} renders successfully without a soft 404 or application error.`,
+    `${sourceLabel} navigation to ${params.route} renders the destination screen.`,
+  ];
   return {
     id: uuidv5(
       `interaction-missing-screen:${params.requirementId}:${params.route}`,
@@ -345,10 +377,31 @@ function implementationItem(params: {
     tier: 'core' as const,
     status: 'pending' as const,
     touches: [pageFile],
-    acceptance: [
-      `Route ${params.route} renders successfully without a soft 404 or application error.`,
-      `${sourceLabel} navigation to ${params.route} renders the destination screen.`,
-    ],
+    acceptance,
+    acceptance_contract: {
+      schema_version: 2 as const,
+      source: 'declared' as const,
+      criteria: [
+        {
+          id: 'destination-route',
+          text: acceptance[0],
+          all_of: [{
+            kind: 'page_response' as const,
+            path: params.route,
+            expected_status: '2xx',
+          }],
+        },
+        {
+          id: 'source-navigation',
+          text: acceptance[1],
+          all_of: [{
+            kind: 'internal_link' as const,
+            path: params.route,
+            requires_content: true,
+          }],
+        },
+      ],
+    },
     assumptions: [
       routeMarker(params.route),
       resolutionMarker('implement'),
@@ -369,6 +422,13 @@ function removalItem(params: {
   );
   const destinationLabel =
     params.route.split('/').filter(Boolean).join(' > ') || 'home';
+  const acceptance = [
+    ...sourceFiles.map(
+      (file) =>
+        `${file.split('/').pop() || 'Source component'} updates navigation so destination "${destinationLabel}" is no longer interactive.`,
+    ),
+    `Navigation rejects attempts to reach the unimplemented destination "${destinationLabel}" from the current site.`,
+  ];
   return {
     id: uuidv5(
       `interaction-remove-navigation:${params.requirementId}:${params.route}`,
@@ -380,13 +440,12 @@ function removalItem(params: {
     tier: 'core' as const,
     status: 'pending' as const,
     touches: sourceFiles,
-    acceptance: [
-      ...sourceFiles.map(
-        (file) =>
-          `${file.split('/').pop() || 'Source component'} updates navigation so destination "${destinationLabel}" is no longer interactive.`,
-      ),
-      `Navigation rejects attempts to reach the unimplemented destination "${destinationLabel}" from the current site.`,
-    ],
+    acceptance,
+    acceptance_contract: removalAcceptanceContract(
+      acceptance,
+      sourceFiles,
+      destinationLabel,
+    ),
     assumptions: [
       routeMarker(params.route),
       resolutionMarker('remove'),
@@ -395,5 +454,43 @@ function removalItem(params: {
         (finding) => `Detected from ${finding.file}:${finding.line}`,
       ),
     ],
+  };
+}
+
+function removalAcceptanceContract(
+  acceptance: string[],
+  sourceFiles: string[],
+  destinationLabel: string,
+) {
+  return {
+    schema_version: 2 as const,
+    source: 'declared' as const,
+    criteria: acceptance.map((text, index) => {
+      const sourceFile = sourceFiles.find((file) =>
+        text.startsWith(file.split('/').pop() || 'Source component'));
+      return {
+        id: `remove-navigation-${index + 1}`,
+        text,
+        all_of: [
+          ...(sourceFile
+            ? [{
+                kind: 'file_artifact' as const,
+                path: sourceFile,
+              }]
+            : []),
+          {
+            kind: 'semantic_assertion' as const,
+            text,
+          },
+        ],
+        discovery: {
+          query:
+            `non-interactive navigation for ${destinationLabel} in ` +
+            (sourceFile || 'site navigation'),
+          hypothetical_code:
+            `return <span>${destinationLabel}</span>; // no link or click handler`,
+        },
+      };
+    }),
   };
 }

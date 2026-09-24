@@ -227,6 +227,10 @@ describe('runtime and visual probe gate', () => {
       server_log_path: '/tmp/server.log',
     });
 
+    const acceptance = [
+      'POST /api/assets returns 204.',
+      'GET /api/future returns 200.',
+    ];
     const result = await runRuntimeAndVisualProbes({
       sandbox: {} as any,
       stepOrder: 1,
@@ -234,6 +238,22 @@ describe('runtime and visual probe gate', () => {
       gitRepoKind: 'applications',
       declaredOnly: true,
       stepContext: {
+        acceptance,
+        acceptance_contract: {
+          schema_version: 2,
+          source: 'declared',
+          criteria: acceptance.map((text, index) => ({
+            id: `route-${index}`,
+            text,
+            all_of: [{
+              kind: 'http_response' as const,
+              path: index === 0 ? '/api/assets' : '/api/future',
+              method: index === 0 ? 'POST' as const : 'GET' as const,
+              expected_status: index === 0 ? '204' : '200',
+              auth: 'unspecified' as const,
+            }],
+          })),
+        },
         validation_targets: [{
           kind: 'api',
           path: '/api/assets',
@@ -252,6 +272,13 @@ describe('runtime and visual probe gate', () => {
           path: '/api/assets',
           method: 'POST',
         })],
+      }),
+    );
+    expect(runRuntimeProbe).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiRoutes: expect.arrayContaining([
+          expect.objectContaining({ path: '/api/future' }),
+        ]),
       }),
     );
   });

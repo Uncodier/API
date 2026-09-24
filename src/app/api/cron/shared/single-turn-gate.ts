@@ -1,6 +1,5 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import {
-  getBacklogItem,
   setItemStatus,
 } from '@/lib/services/requirement-backlog';
 import { classifyRequirementType } from '@/lib/services/requirement-flows';
@@ -35,12 +34,12 @@ import type { SingleTurnResult } from './single-turn-types';
 import { persistJudgeRejection } from './single-turn-judge-rejection';
 import { adjudicationContractAcceptance } from './single-turn-judge-contract';
 import { selectReusableGateValidation } from './gate-validation-cache';
-import type { EvidenceRecord } from '@/lib/services/requirement-evidence-types';
 import { computeApplicationBuildFingerprint } from './commit/pre-push-build-validation';
 import {
   prepareSingleTurnGateEvidence,
 } from './single-turn-gate-evidence';
 import type { RunSingleTurnGateInput } from './single-turn-gate-types';
+import { loadBacklogGateContext } from './single-turn-gate-context';
 
 /**
  * Runs and persists the gate phase after the one-tool assistant turn.
@@ -81,20 +80,13 @@ export async function runSingleTurnGate(
     !isStrictFinalPlanStep(plan.steps, step.id)
       ? 'intermediate'
       : 'final';
-  let backlogAcceptance: string[] | undefined;
-  let backlogEvidence: EvidenceRecord | undefined;
-  if (backlogItemId) {
-    try {
-      const { item } = await getBacklogItem(requirementId, backlogItemId);
-      backlogAcceptance = item?.acceptance;
-      backlogEvidence = item?.evidence;
-    } catch (error: unknown) {
-      console.warn(
-        '[SingleTurn] Could not load backlog acceptance for runtime probes:',
-        error instanceof Error ? error.message : error,
-      );
-    }
-  }
+  const backlogContext = await loadBacklogGateContext(
+    requirementId,
+    backlogItemId,
+  );
+  const backlogAcceptance = backlogContext.acceptance;
+  const backlogAcceptanceContract = backlogContext.acceptanceContract;
+  const backlogEvidence = backlogContext.evidence;
 
   const testCommand = getDeclaredTestCommand(step);
   const workspaceFingerprint =
@@ -131,6 +123,7 @@ export async function runSingleTurnGate(
         protected_routes: getDeclaredProtectedRoutes(step),
         validation_targets: getDeclaredValidationTargets(step),
         acceptance: backlogAcceptance,
+        acceptance_contract: backlogAcceptanceContract,
         test_command: testCommand,
       },
       currentMessages: result.messages,
@@ -172,6 +165,7 @@ export async function runSingleTurnGate(
       acceptance:
         backlogAcceptance ||
         (step.instructions ? [String(step.instructions)] : []),
+      acceptance_contract: backlogAcceptanceContract,
     } as any,
     appContext,
     audit,

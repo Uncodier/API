@@ -33,6 +33,33 @@ export type RequirementRunPreparation = {
   skipReason?: string;
 };
 
+const CRON_ITERATION_ACCEPTANCE = [
+  'Analyze the current application and record concrete missing or regressed behavior.',
+  'Implement the requested behavior and verify its observable result.',
+  'Push the verified changes to the repository.',
+];
+
+function cronIterationAcceptanceContract() {
+  return {
+    schema_version: 2 as const,
+    source: 'declared' as const,
+    criteria: CRON_ITERATION_ACCEPTANCE.map((text, index) => ({
+      id: `cron-iteration-${index + 1}`,
+      text,
+      all_of: [{
+        kind: 'semantic_assertion' as const,
+        text,
+      }],
+      discovery: {
+        query: text,
+        hypothetical_code:
+          `// Evidence expected for cron iteration criterion ${index + 1}\n` +
+          `verify(${JSON.stringify(text)});`,
+      },
+    })),
+  };
+}
+
 export type CronRequirementCandidate = RequirementRow & {
   user_id: string;
   title: string;
@@ -205,11 +232,9 @@ export async function prepareRequirementForCronRun(params: {
               kind: 'subtask',
               phase_id: latestBacklog.current_phase_id || 'default',
               status: 'pending',
-              acceptance: [
-                'Analyze the current application and record concrete missing or regressed behavior.',
-                'Implement the requested behavior and verify its observable result.',
-                'Push the verified changes to the repository.',
-              ],
+              tier: 'core',
+              acceptance: [...CRON_ITERATION_ACCEPTANCE],
+              acceptance_contract: cronIterationAcceptanceContract(),
               attempts: 0,
               scope_level: 'full',
               created_at: new Date().toISOString(),

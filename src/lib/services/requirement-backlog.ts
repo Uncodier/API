@@ -38,7 +38,11 @@ import {
 } from './requirement-backlog-invariants';
 import { mutateBacklogAtomically } from './requirement-backlog-mutation';
 import { validateAcceptance } from './requirement-acceptance';
-import { compileAcceptanceContract } from './requirement-acceptance-contract';
+import {
+  acceptanceContractIsExecutable,
+  isDeclaredAcceptanceContract,
+  normalizeAcceptanceContractForPersistence,
+} from './requirement-acceptance-contract';
 import { cancelPlanStepsForBacklogItem } from '@/lib/helpers/plan-lifecycle';
 import { isBacklogItemRunnable } from './requirement-backlog-blockers';
 import {
@@ -126,13 +130,17 @@ function generateUUID(): string {
 
 function ensureItemDefaults(partial: Partial<BacklogItem> & { title: string; kind: BacklogItemKind; phase_id: string; acceptance: string[] }): BacklogItem {
   const now = new Date().toISOString();
+  const acceptanceContract = normalizeAcceptanceContractForPersistence(
+    partial.acceptance,
+    partial.acceptance_contract,
+  );
   return {
     id: partial.id || generateUUID(),
     title: partial.title.trim(),
     kind: partial.kind,
     phase_id: partial.phase_id,
     acceptance: partial.acceptance,
-    acceptance_contract: compileAcceptanceContract(partial.acceptance),
+    acceptance_contract: acceptanceContract,
     touches: partial.touches,
     status: (partial.status as BacklogItemStatus) || 'pending',
     attempts: typeof partial.attempts === 'number' ? partial.attempts : 0,
@@ -170,6 +178,7 @@ export async function getBacklogItem(requirementId: string, itemId: string): Pro
 export async function upsertBacklogItem(params: {
   requirementId: string;
   item: Partial<BacklogItem> & { title: string; kind: BacklogItemKind; phase_id: string; acceptance: string[] };
+  allowLegacyContract?: boolean;
 }): Promise<BacklogItem> {
   return mutateBacklogAtomically(
     params.requirementId,
@@ -177,22 +186,48 @@ export async function upsertBacklogItem(params: {
       const idx = params.item.id
         ? backlog.items.findIndex((item) => item.id === params.item.id)
         : -1;
+      const requestedTier =
+        params.item.tier ??
+        (idx >= 0 ? backlog.items[idx].tier : undefined) ??
+        'core';
+      if (
+        idx < 0 &&
+        requestedTier === 'core' &&
+        !isDeclaredAcceptanceContract(params.item.acceptance_contract) &&
+        !params.allowLegacyContract
+      ) {
+        throw new Error(
+          'New tier=core backlog items require a declared ' +
+          'AcceptanceContractV2. Legacy contract compilation must be ' +
+          'explicitly authorized for migration-only producers.',
+        );
+      }
       const next = ensureItemDefaults(
         idx >= 0 ? { ...backlog.items[idx], ...params.item } : params.item,
       );
 
       if ((next.tier ?? 'core') === 'core') {
-        const validation = validateAcceptance(next.acceptance);
-        if (
-          !validation.has_any_executable ||
-          validation.narrative.length > 0
-        ) {
+        const declaredContract = isDeclaredAcceptanceContract(
+          next.acceptance_contract,
+        );
+        const validation = declaredContract
+          ? null
+          : validateAcceptance(next.acceptance);
+        const invalid =
+          declaredContract
+            ? !acceptanceContractIsExecutable(next.acceptance_contract!)
+            : !validation!.has_any_executable ||
+              validation!.narrative.length > 0;
+        if (invalid) {
           throw new Error(
             `Backlog upsert rejected: tier=core item "${next.title}" has ` +
-              `${validation.narrative.length}/${next.acceptance.length} narrative acceptance entries. ` +
-              'Add at least one executable anchor per entry — HTTP verb (GET/POST/...), route ' +
-              '(/api/...), status code (2xx/200) or observable verb (returns, renders, inserts, ' +
-              'creates, updates, deletes, redirects, persists). Or set tier=ornamental.',
+              (
+                declaredContract
+                  ? 'an incomplete declared acceptance contract. '
+                  : `${validation!.narrative.length}/${next.acceptance.length} narrative acceptance entries. `
+              ) +
+              'Provide one typed executable claim per criterion. Legacy entries must include an HTTP verb, ' +
+              'route, status code, or observable behavior. Or set tier=ornamental.',
           );
         }
       }

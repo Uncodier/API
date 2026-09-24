@@ -89,7 +89,7 @@ HARD RULES:
 2. CONCRETE WORK ONLY: Only add items that represent concrete execution work (e.g. building a component, creating an API, adding a page). Do not add vague or purely narrative tasks.
 3. UPSERT ONLY: Only use the \`requirement_backlog\` tool with \`action="upsert"\`. Do not try to start, complete, or list items.
 4. HIGHLY SELECTIVE: It is perfectly fine to do nothing if the docs don't reveal any new missing actionable work. Just finish your turn.
-5. ACCEPTANCE CRITERIA: Any new items MUST have concrete, executable acceptance criteria (e.g. "GET /api/foo returns 200").
+5. ACCEPTANCE CONTRACT: Every new core item MUST include both concrete acceptance[] text and acceptance_contract with schema_version=2, source="declared", and one typed executable all_of claim per criterion. Route behavior must use page_response or http_response claims. Semantic-only claims also require discovery.query and discovery.hypothetical_code.
 
 === REQUIREMENT INFO ===
 Title: ${req.title}

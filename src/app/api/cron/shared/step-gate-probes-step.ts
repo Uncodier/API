@@ -7,6 +7,9 @@ import { runInteractionAudit } from './step-interaction-runner';
 import { applyInteractionBacklogPolicy } from './step-interaction-backlog';
 import { formatInteractionFailure } from './step-interaction-audit';
 import { SandboxService } from '@/lib/services/sandbox-service';
+import type {
+  AcceptanceContract,
+} from '@/lib/services/requirement-acceptance-contract';
 
 export async function runGateProbesStep(params: {
   sandboxId: string;
@@ -21,6 +24,9 @@ export async function runGateProbesStep(params: {
     expected_output?: string;
     brand_context?: string;
     protected_routes?: string[];
+    validation_targets?: unknown;
+    acceptance?: string[];
+    acceptance_contract?: AcceptanceContract;
   };
   instanceType: string;
   title: string;

@@ -58,6 +58,34 @@ describe('runtime probe policy', () => {
       validation_required: true,
       validation_disposition: 'hard_fail',
     }));
+    expect(result.observations).toContainEqual(expect.objectContaining({
+      target: '/checkout',
+      target_resolution: expect.objectContaining({
+        strategy: 'step_validation_target',
+        required: true,
+      }),
+    }));
+  });
+
+  it('records an invalid declared target instead of probing it', () => {
+    const plan = buildRuntimeTargetPlan({
+      validationTargets: [{
+        kind: 'page',
+        path: '/>',
+        expected_statuses: [200],
+      }],
+    });
+
+    expect(plan.pages).toEqual([]);
+    expect(plan.observations).toContainEqual(expect.objectContaining({
+      kind: 'contract',
+      disposition: 'unknown',
+      detail: expect.stringContaining('Invalid validation target'),
+      target_resolution: expect.objectContaining({
+        status: 'invalid',
+        required: false,
+      }),
+    }));
   });
 
   it('executes required non-GET APIs without inventing payloads', () => {
@@ -312,7 +340,7 @@ describe('runtime probe policy', () => {
     }));
   });
 
-  it('derives safe GET targets directly from backlog acceptance', () => {
+  it('keeps targets inferred from legacy prose advisory', () => {
     const plan = buildRuntimeTargetPlan({
       acceptance: [
         'GET /api/campaigns returns 200 and lists campaigns created by the user.',
@@ -323,11 +351,185 @@ describe('runtime probe policy', () => {
       expect.objectContaining({
         path: '/api/campaigns',
         method: 'GET',
-        required: true,
+        required: false,
+        source: 'contract_inferred',
         expected_statuses: [200],
         auth_required: true,
       }),
     ]);
+  });
+
+  it('hardens targets from a declared structured contract', () => {
+    const acceptance = [
+      'GET /api/campaigns returns 200 for authenticated users.',
+    ];
+    const plan = buildRuntimeTargetPlan({
+      acceptance,
+      acceptanceContract: {
+        schema_version: 2,
+        source: 'declared',
+        criteria: [{
+          id: 'campaign-list',
+          text: acceptance[0],
+          all_of: [{
+            kind: 'http_response',
+            path: '/api/campaigns',
+            method: 'GET',
+            expected_status: '200',
+            auth: 'required',
+          }],
+        }],
+      },
+    });
+
+    expect(plan.apis).toEqual([
+      expect.objectContaining({
+        path: '/api/campaigns',
+        method: 'GET',
+        required: true,
+        source: 'contract',
+        criterion_id: 'campaign-list',
+      }),
+    ]);
+  });
+
+  it('expands wildcard contract statuses before runtime evaluation', () => {
+    const acceptance = ['GET /api/missing returns 4xx.'];
+    const plan = buildRuntimeTargetPlan({
+      acceptance,
+      acceptanceContract: {
+        schema_version: 2,
+        source: 'declared',
+        criteria: [{
+          id: 'missing-api',
+          text: acceptance[0],
+          all_of: [{
+            kind: 'http_response',
+            path: '/api/missing',
+            method: 'GET',
+            expected_status: '4xx',
+            auth: 'unspecified',
+          }],
+        }],
+      },
+    });
+    const result = evaluateRuntimeProbe(probe({
+      apis: [{
+        path: '/api/missing',
+        method: 'GET',
+        http_status: 404,
+      }],
+    }), plan);
+
+    expect(plan.apis[0].expected_statuses).toEqual(
+      expect.arrayContaining([400, 404, 499]),
+    );
+    expect(result.hardFailure).toBe(false);
+  });
+
+  it('binds a Next.js route template to a concrete validation target', () => {
+    const acceptance = ['GET /api/assets/[id] returns 200.'];
+    const plan = buildRuntimeTargetPlan({
+      acceptance,
+      acceptanceContract: {
+        schema_version: 2,
+        source: 'declared',
+        criteria: [{
+          id: 'asset-detail',
+          text: acceptance[0],
+          all_of: [{
+            kind: 'http_response',
+            path: '/api/assets/[id]',
+            method: 'GET',
+            expected_status: '200',
+            auth: 'unspecified',
+          }],
+        }],
+      },
+      validationTargets: [{
+        kind: 'api',
+        path: '/api/assets/123',
+        method: 'GET',
+      }],
+      restrictContractTargetsToValidation: true,
+    });
+
+    expect(plan.apis).toEqual([
+      expect.objectContaining({
+        path: '/api/assets/123',
+        criterion_id: 'asset-detail',
+        expected_statuses: [200],
+      }),
+    ]);
+    expect(plan.observations).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        target_resolution: expect.objectContaining({
+          status: 'template_unresolved',
+        }),
+      }),
+    ]));
+  });
+
+  it('excludes future contract routes from a restricted step plan', () => {
+    const acceptance = [
+      'GET /api/current returns 200.',
+      'GET /api/future returns 200.',
+    ];
+    const plan = buildRuntimeTargetPlan({
+      acceptance,
+      acceptanceContract: {
+        schema_version: 2,
+        source: 'declared',
+        criteria: acceptance.map((text, index) => ({
+          id: `route-${index}`,
+          text,
+          all_of: [{
+            kind: 'http_response' as const,
+            path: index === 0 ? '/api/current' : '/api/future',
+            method: 'GET' as const,
+            expected_status: '200',
+            auth: 'unspecified' as const,
+          }],
+        })),
+      },
+      validationTargets: [{
+        kind: 'api',
+        path: '/api/current',
+        method: 'GET',
+      }],
+      restrictContractTargetsToValidation: true,
+    });
+
+    expect(plan.apis.map((target) => target.path)).toEqual(['/api/current']);
+  });
+
+  it('records malformed legacy targets as contract gaps without probing', () => {
+    const acceptance = ['Render the evidence input.'];
+    const plan = buildRuntimeTargetPlan({
+      acceptance,
+      acceptanceContract: {
+        schema_version: 1,
+        criteria: [{
+          id: 'criterion-1',
+          text: acceptance[0],
+          all_of: [{
+            kind: 'page_response',
+            path: '/>',
+          }],
+        }],
+      },
+    });
+
+    expect(plan.pages).toEqual([]);
+    expect(plan.observations).toContainEqual(expect.objectContaining({
+      kind: 'contract',
+      target: '/>',
+      disposition: 'unknown',
+      target_resolution: expect.objectContaining({
+        status: 'invalid',
+        required: false,
+      }),
+    }));
   });
 
   it('records a typed gap instead of calling an undeclared non-GET target', () => {

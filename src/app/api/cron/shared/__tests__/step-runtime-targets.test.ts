@@ -1,4 +1,5 @@
 import {
+  httpMethodsFromRouteSource,
   inferTargetRoutesFromDiff,
   pageRouteFromFile,
 } from '../step-runtime-targets';
@@ -231,5 +232,15 @@ describe('runtime target inference', () => {
     expect(result.apiRoutes).toEqual([
       { path: '/api/assets', method: 'POST' },
     ]);
+  });
+
+  it('uses the TypeScript AST for route handlers', () => {
+    expect(httpMethodsFromRouteSource(`
+      // export async function DELETE() {}
+      const handler = async () => Response.json({});
+      export const POST = handler;
+      export { handler as PATCH };
+      const example = "export function PUT() {}";
+    `)).toEqual(['POST', 'PATCH']);
   });
 });

@@ -186,6 +186,7 @@ async function seedOne(reqId: string, dryRun: boolean): Promise<boolean> {
       : [`Delivers "${r.title}" as described in the instructions`];
     await upsertBacklogItem({
       requirementId: reqId,
+      allowLegacyContract: true,
       item: {
         title: r.title,
         kind: itemKind,

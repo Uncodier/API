@@ -1,5 +1,9 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { computeFeatureCoverage } from '../feature-coverage';
+import {
+  findPageFile,
+  readArtifactProof,
+} from '../feature-coverage-probes';
 
 jest.mock('@/lib/services/sandbox-service', () => ({
   SandboxService: { WORK_DIR: '/vercel/sandbox' },
@@ -7,15 +11,19 @@ jest.mock('@/lib/services/sandbox-service', () => ({
 
 describe('feature coverage', () => {
   it('checks the HTTP method declared for each API route', async () => {
-    const runCommand = jest.fn(async (input: { args?: string[] }) => {
+    const runCommand = jest.fn(async (input: {
+      cmd?: string;
+      args?: string[];
+    }) => {
       const command = input.args?.join(' ') || '';
-      const output = command.includes('[ -e')
-        ? command.includes('src/app/api/assets/route.ts')
-          ? '__OK__\n'
-          : '__MISS__\n'
-        : 'export async function POST() { return new Response(null); }\n';
+      const exists =
+        input.cmd === 'stat' &&
+        command.includes('src/app/api/assets/route.ts');
+      const output = input.cmd === 'cat'
+        ? 'export async function POST() { return new Response(null); }\n'
+        : '128\n';
       return {
-        exitCode: 0,
+        exitCode: input.cmd === 'stat' && !exists ? 1 : 0,
         stdout: jest.fn(async () => Buffer.from(output)),
       };
     });
@@ -47,21 +55,25 @@ describe('feature coverage', () => {
   });
 
   it('does not assign every method to every route in a grouped criterion', async () => {
-    const runCommand = jest.fn(async (input: { args?: string[] }) => {
+    const runCommand = jest.fn(async (input: {
+      cmd?: string;
+      args?: string[];
+    }) => {
       const command = input.args?.join(' ') || '';
-      let output = '__MISS__\n';
-      if (command.includes('[ -e')) {
-        output = command.includes('src/app/api/users/route.ts') ||
-          command.includes('src/app/api/orders/route.ts')
-          ? '__OK__\n'
-          : '__MISS__\n';
-      } else if (command.includes('src/app/api/users/route.ts')) {
+      const exists =
+        command.includes('src/app/api/users/route.ts') ||
+        command.includes('src/app/api/orders/route.ts');
+      let output = '128\n';
+      if (input.cmd === 'cat' && command.includes('src/app/api/users/route.ts')) {
         output = 'export async function GET() { return Response.json([]); }\n';
-      } else if (command.includes('src/app/api/orders/route.ts')) {
+      } else if (
+        input.cmd === 'cat' &&
+        command.includes('src/app/api/orders/route.ts')
+      ) {
         output = 'export async function POST() { return Response.json({}); }\n';
       }
       return {
-        exitCode: 0,
+        exitCode: input.cmd === 'stat' && !exists ? 1 : 0,
         stdout: jest.fn(async () => Buffer.from(output)),
       };
     });
@@ -100,14 +112,17 @@ describe('feature coverage', () => {
   });
 
   it('does not enforce item-wide touches during a step-scoped adjudication', async () => {
-    const runCommand = jest.fn(async (input: { args?: string[] }) => {
+    const runCommand = jest.fn(async (input: {
+      cmd?: string;
+      args?: string[];
+    }) => {
       const command = input.args?.join(' ') || '';
-      const output = command.includes('[ -e') &&
-        command.includes('src/app/api/current/route.ts')
-        ? '__OK__\n'
-        : 'export async function GET() { return Response.json({}); }\n';
+      const exists = command.includes('src/app/api/current/route.ts');
+      const output = input.cmd === 'cat'
+        ? 'export async function GET() { return Response.json({}); }\n'
+        : '128\n';
       return {
-        exitCode: 0,
+        exitCode: input.cmd === 'stat' && !exists ? 1 : 0,
         stdout: jest.fn(async () => Buffer.from(output)),
       };
     });
@@ -366,15 +381,18 @@ describe('feature coverage', () => {
   });
 
   it('resolves colon parameters to App Router dynamic segments', async () => {
-    const runCommand = jest.fn(async (input: { args?: string[] }) => {
+    const runCommand = jest.fn(async (input: {
+      cmd?: string;
+      args?: string[];
+    }) => {
       const command = input.args?.join(' ') || '';
-      const output = command.includes('[ -e')
-        ? command.includes('src/app/api/assets/[id]/approve/route.ts')
-          ? '__OK__\n'
-          : '__MISS__\n'
-        : 'export async function PATCH() { return new Response(null); }\n';
+      const exists =
+        command.includes('src/app/api/assets/[id]/approve/route.ts');
+      const output = input.cmd === 'cat'
+        ? 'export async function PATCH() { return new Response(null); }\n'
+        : '128\n';
       return {
-        exitCode: 0,
+        exitCode: input.cmd === 'stat' && !exists ? 1 : 0,
         stdout: jest.fn(async () => Buffer.from(output)),
       };
     });
@@ -439,5 +457,42 @@ describe('feature coverage', () => {
         outcome: 'not_evaluable',
       }),
     ]));
+  });
+
+  it('rejects artifact traversal without reading outside the workspace', async () => {
+    const runCommand = jest.fn();
+    const proof = await readArtifactProof(
+      { runCommand } as any,
+      '../../etc/passwd',
+    );
+
+    expect(proof).toEqual(expect.objectContaining({
+      exists: false,
+      outcome: 'not_evaluable',
+      error: expect.stringContaining('parent'),
+    }));
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+
+  it('never sends route-derived paths through a shell', async () => {
+    const runCommand = jest.fn(async (_input: {
+      cmd?: string;
+      args?: string[];
+    }) => ({
+      exitCode: 1,
+      stdout: jest.fn(async () => Buffer.from('')),
+    }));
+
+    await findPageFile(
+      { runCommand } as any,
+      '/reports/$(touch${IFS}/tmp/pwned)',
+    );
+
+    expect(runCommand).toHaveBeenCalled();
+    expect(runCommand.mock.calls.every(([input]) => input.cmd === 'stat'))
+      .toBe(true);
+    expect(runCommand.mock.calls[0][0].args).toContain(
+      '/vercel/sandbox/src/app/reports/$(touch${IFS}/tmp/pwned)/page.tsx',
+    );
   });
 });

@@ -1,31 +1,21 @@
 /**
- * sandbox_code_search — multi-action navigation/search tool for the coding agent.
- *
- * Replaces the noisy combo of `ls`/`grep`/`find` shelled out via sandbox_run_command
- * with structured, capped, agent-friendly results. Two backends are bootstrapped
- * lazily on first call (cached per Sandbox instance):
- *   - ripgrep (rg)        → exact text + file listing, respects .gitignore
- *   - ast-grep (sg)       → structural / AST-aware symbol search (tree-sitter)
- *
- * Actions:
- *   - find_files   : list files by glob (e.g. "src/app/api/**\/route.ts")
- *   - grep         : regex content search with file/line/snippet results
- *   - find_symbol  : structural pattern search (function/class/component/...)
- *   - tree         : compact directory summary (depth-limited)
- *
- * All outputs are capped (`max_results`) and tag `truncated: true` when results
- * were cut, so the LLM context never explodes on large monorepos.
+ * Structured, capped repository navigation backed by ripgrep, ast-grep, and
+ * a fingerprinted local vector index.
  */
 import type { Sandbox } from '@vercel/sandbox';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import { liveSandbox, type SandboxToolsContext, deductSandboxToolCredits } from '@/app/api/agents/tools/sandbox/assistantProtocol';
+import { actionVectorSearch } from './code-search-vector';
+import {
+  ensureSearchBinaries,
+  RG_BIN,
+  SG_BIN,
+  type EnsureSearchBinariesResult,
+} from './code-search-binaries';
 
 type RunResult = { stdout: string; stderr: string; exitCode: number };
 
 const WORK_DIR = SandboxService.WORK_DIR;
-const BIN_DIR = '/tmp/agent-bin';
-const RG_BIN = `${BIN_DIR}/rg`;
-const RG_VERSION = '14.1.1';
 
 const DEFAULT_EXCLUDES = [
   'node_modules',
@@ -60,9 +50,6 @@ const SUPPORTED_LANGS = [
 ] as const;
 type SupportedLang = (typeof SUPPORTED_LANGS)[number];
 
-type EnsureBins = { rg: boolean; sg: boolean; install_log?: string };
-const ensureCache = new WeakMap<Sandbox, Promise<EnsureBins>>();
-
 async function shRun(sandbox: Sandbox, script: string, cwd?: string): Promise<RunResult> {
   const res = await sandbox.runCommand({
     cmd: 'sh',
@@ -74,79 +61,6 @@ async function shRun(sandbox: Sandbox, script: string, cwd?: string): Promise<Ru
     stderr: await res.stderr(),
     exitCode: res.exitCode,
   };
-}
-
-/**
- * Detect rg/sg in PATH (or our local bin dir) and install when missing.
- * Result is cached per Sandbox so subsequent tool calls in the same VM are no-ops.
- */
-async function ensureSearchBinaries(sandbox: Sandbox): Promise<EnsureBins> {
-  const cached = ensureCache.get(sandbox);
-  if (cached) return cached;
-
-  const job = (async (): Promise<EnsureBins> => {
-    const installLog: string[] = [];
-    await shRun(sandbox, `mkdir -p ${BIN_DIR}`);
-
-    // ripgrep ---------------------------------------------------------------
-    let rg = false;
-    const rgProbe = await shRun(
-      sandbox,
-      `if [ -x "${RG_BIN}" ]; then echo "${RG_BIN}"; else command -v rg || true; fi`,
-    );
-    if (rgProbe.stdout.trim().length > 0) {
-      rg = true;
-    } else {
-      const url = `https://github.com/BurntSushi/ripgrep/releases/download/${RG_VERSION}/ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl.tar.gz`;
-      const dirName = `ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl`;
-      const install = await shRun(
-        sandbox,
-        [
-          'set -e',
-          `cd /tmp`,
-          `curl -fsSL "${url}" -o rg.tar.gz`,
-          `tar -xzf rg.tar.gz`,
-          `cp ${dirName}/rg ${RG_BIN}`,
-          `chmod +x ${RG_BIN}`,
-          `rm -rf rg.tar.gz ${dirName}`,
-        ].join(' && '),
-      );
-      if (install.exitCode === 0) {
-        rg = true;
-      } else {
-        installLog.push(`rg install failed: ${install.stderr.trim() || install.stdout.trim()}`);
-      }
-    }
-
-    // ast-grep --------------------------------------------------------------
-    let sg = false;
-    const sgProbe = await shRun(sandbox, `command -v sg || command -v ast-grep || true`);
-    if (sgProbe.stdout.trim().length > 0) {
-      sg = true;
-    } else {
-      // @ast-grep/cli is the official npm distribution. npm is always present
-      // in the node24 sandbox runtime, so this is the most reliable path.
-      const install = await shRun(
-        sandbox,
-        `npm install -g @ast-grep/cli >/tmp/sg-install.log 2>&1 && command -v sg`,
-      );
-      if (install.exitCode === 0) {
-        sg = true;
-      } else {
-        const log = await shRun(sandbox, `tail -c 4000 /tmp/sg-install.log 2>/dev/null || true`);
-        installLog.push(`sg install failed: ${log.stdout.trim() || install.stderr.trim()}`);
-      }
-    }
-
-    return {
-      rg,
-      sg,
-      ...(installLog.length ? { install_log: installLog.join(' | ') } : {}),
-    };
-  })();
-
-  ensureCache.set(sandbox, job);
-  return job;
 }
 
 function clampInt(value: number | undefined, fallback: number, min: number, max: number): number {
@@ -280,7 +194,7 @@ async function actionGrep(
 async function actionFindSymbol(
   sandbox: Sandbox,
   args: { pattern?: string; lang?: string; path?: string; max_results?: number },
-  bins: EnsureBins,
+  bins: EnsureSearchBinariesResult,
 ) {
   if (!bins.sg) {
     return {
@@ -307,7 +221,7 @@ async function actionFindSymbol(
   }
   const limit = clampInt(args.max_results, 50, 1, 300);
   const scope = resolveScope(args.path);
-  const cmd = `sg run --pattern ${shellEscape(pattern)} --lang ${lang} --json=stream ${shellEscape(scope)}`;
+  const cmd = `${SG_BIN} run --pattern ${shellEscape(pattern)} --lang ${lang} --json=stream ${shellEscape(scope)}`;
   const res = await shRun(sandbox, cmd);
   if (res.exitCode !== 0 && res.exitCode !== 1) {
     return { ok: false, error: `sg failed (exit ${res.exitCode}): ${res.stderr.trim() || res.stdout.trim()}` };
@@ -395,157 +309,6 @@ async function actionTree(sandbox: Sandbox, args: { path?: string; max_depth?: n
     directories: entries,
     ...(entries.length === 0 ? { hint: 'No files found in scope (or all excluded).' } : {}),
   };
-}
-
-// ---- vector_search --------------------------------------------------------
-
-const VECTOR_SCRIPT = `
-const Module = require('module');
-const originalRequire = Module.prototype.require;
-Module.prototype.require = function(request) {
-  if (request === 'sharp') {
-    return {};
-  }
-  return originalRequire.apply(this, arguments);
-};
-
-const fs = require('fs');
-const { execSync } = require('child_process');
-
-const WORK_DIR = process.argv[2];
-const QUERY = process.argv[3];
-const MAX_RESULTS = parseInt(process.argv[4] || '10', 10);
-const CACHE_FILE = '/tmp/vector_index.json';
-const RG_BIN = '/tmp/agent-bin/rg';
-
-process.env.HF_HUB_DISABLE_PROGRESS_BARS = '1';
-
-async function main() {
-  try {
-    require.resolve('/tmp/node_modules/@xenova/transformers');
-  } catch (e) {
-    execSync('npm install @xenova/transformers onnxruntime-node --omit=optional', { cwd: '/tmp', stdio: 'ignore' });
-  }
-
-  const { pipeline, cos_sim, env } = require('/tmp/node_modules/@xenova/transformers');
-  
-  env.cacheDir = '/tmp/.cache/transformers';
-
-  const extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
-
-  let index = [];
-
-  if (fs.existsSync(CACHE_FILE)) {
-    index = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
-  } else {
-    const rgCmd = RG_BIN + " --files --hidden --no-messages -g '!node_modules/**' -g '!.git/**' -g '!.next/**' -g '!.turbo/**' -g '!.vercel/**' -g '!dist/**' -g '!build/**' -g '!coverage/**' -g '!.cache/**' " + WORK_DIR;
-    let files = [];
-    try {
-      files = execSync(rgCmd, { encoding: 'utf8' }).split('\\n').filter(Boolean);
-    } catch (e) {
-      // rg might fail if no files found
-    }
-
-    for (const file of files) {
-      try {
-        const content = fs.readFileSync(file, 'utf8');
-        if (content.length > 1000000) continue;
-        if (content.includes('\\0')) continue;
-
-        const lines = content.split('\\n');
-        const chunkSize = 50;
-        for (let i = 0; i < lines.length; i += chunkSize) {
-          const chunk = lines.slice(i, i + chunkSize).join('\\n');
-          if (chunk.trim().length < 10) continue;
-          
-          const output = await extractor(chunk, { pooling: 'mean', normalize: true });
-          const embedding = Array.from(output.data);
-          
-          index.push({
-            file: file.replace(WORK_DIR + '/', ''),
-            line: i + 1,
-            text: chunk.length > 400 ? chunk.slice(0, 400) + '...' : chunk,
-            embedding
-          });
-        }
-      } catch (e) {
-        // ignore unreadable files
-      }
-    }
-    fs.writeFileSync(CACHE_FILE, JSON.stringify(index));
-  }
-
-  const queryOutput = await extractor(QUERY, { pooling: 'mean', normalize: true });
-  const queryEmbedding = Array.from(queryOutput.data);
-
-  const results = index.map(item => {
-    const score = cos_sim(queryEmbedding, item.embedding);
-    return { file: item.file, line: item.line, text: item.text, score };
-  });
-
-  results.sort((a, b) => b.score - a.score);
-  const topResults = results.slice(0, MAX_RESULTS);
-
-  console.log('VECTOR_SEARCH_RESULT:' + JSON.stringify({ ok: true, results: topResults }));
-}
-
-main().catch(err => {
-  console.log('VECTOR_SEARCH_RESULT:' + JSON.stringify({ ok: false, error: err.message }));
-});
-`;
-
-async function actionVectorSearch(
-  sandbox: Sandbox,
-  args: { pattern?: string; path?: string; max_results?: number },
-  bins: EnsureBins,
-) {
-  if (!bins.rg) {
-    return {
-      ok: false,
-      error: 'ripgrep (rg) is required for vector_search to list files, but it is not available.',
-    };
-  }
-  const query = (args.pattern ?? '').trim();
-  if (!query) {
-    return { ok: false, error: 'pattern (query) is required for vector_search.' };
-  }
-  const limit = clampInt(args.max_results, 10, 1, 50);
-  const scope = resolveScope(args.path);
-
-  const writeRes = await shRun(
-    sandbox,
-    `cat << 'EOF' > /tmp/vector_search.js\n${VECTOR_SCRIPT}\nEOF`
-  );
-  if (writeRes.exitCode !== 0) {
-    return { ok: false, error: `Failed to write vector_search.js: ${writeRes.stderr}` };
-  }
-
-  const cmd = `node /tmp/vector_search.js ${shellEscape(scope)} ${shellEscape(query)} ${limit}`;
-  const res = await shRun(sandbox, cmd);
-
-  const match = res.stdout.match(/VECTOR_SEARCH_RESULT:(.*)/);
-  if (!match) {
-    return {
-      ok: false,
-      error: `Vector search script failed or produced no valid output. Exit code: ${res.exitCode}. Stderr: ${res.stderr.trim() || res.stdout.trim()}`,
-    };
-  }
-
-  try {
-    const parsed = JSON.parse(match[1]);
-    if (!parsed.ok) {
-      return { ok: false, error: parsed.error };
-    }
-    return {
-      ok: true,
-      query,
-      scope,
-      count: parsed.results.length,
-      results: parsed.results,
-    };
-  } catch (e) {
-    return { ok: false, error: `Failed to parse vector search results: ${String(e)}` };
-  }
 }
 
 // ---- tool factory ---------------------------------------------------------

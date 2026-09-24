@@ -25,6 +25,10 @@ import type {
   BacklogBlockerCategory,
   BacklogBlockerResolutionActor,
 } from '@/lib/services/requirement-backlog-types';
+import {
+  parseDeclaredAcceptanceContract,
+  type AcceptanceContract,
+} from '@/lib/services/requirement-acceptance-contract';
 
 export type BacklogAction =
   | 'list'
@@ -46,6 +50,7 @@ export interface BacklogCoreParams {
   kind?: BacklogItemKind;
   phase_id?: string;
   acceptance?: string[];
+  acceptance_contract?: AcceptanceContract;
   touches?: string[];
   scope_level?: 'full' | 'mvp' | 'minimal';
   tier?: BacklogItemTier;
@@ -114,6 +119,23 @@ export async function executeBacklogCore(params: BacklogCoreParams) {
       const existingItem = params.item_id
         ? backlog?.items?.find((item: any) => item.id === params.item_id)
         : undefined;
+      let declaredContract: AcceptanceContract | undefined;
+      if (params.acceptance_contract !== undefined) {
+        let rawContract: unknown = params.acceptance_contract;
+        if (typeof rawContract === 'string') {
+          try {
+            rawContract = JSON.parse(rawContract);
+          } catch {
+            throw new Error(
+              'upsert acceptance_contract must be valid JSON.',
+            );
+          }
+        }
+        declaredContract = parseDeclaredAcceptanceContract(
+          params.acceptance,
+          rawContract,
+        );
+      }
       if (
         existingItem &&
         ['done', 'needs_review', 'rejected'].includes(existingItem.status)
@@ -124,6 +146,8 @@ export async function executeBacklogCore(params: BacklogCoreParams) {
           'tools. Create a new remediation item instead.',
         );
       }
+      const effectiveTier =
+        params.tier ?? existingItem?.tier ?? 'core';
       if (isBacklogComplete(backlog?.items || [])) {
         const userRequested = await hasUserRequestedMoreWork(requirement_id);
         if (!userRequested) {
@@ -135,6 +159,12 @@ export async function executeBacklogCore(params: BacklogCoreParams) {
           );
         }
       }
+      if (!existingItem && effectiveTier === 'core' && !declaredContract) {
+        throw new Error(
+          'New tier=core backlog items require a declared ' +
+          'AcceptanceContractV2.',
+        );
+      }
       
       const item = await upsertBacklogItem({
         requirementId: requirement_id,
@@ -144,6 +174,9 @@ export async function executeBacklogCore(params: BacklogCoreParams) {
           kind: params.kind,
           phase_id: params.phase_id,
           acceptance: params.acceptance,
+          ...(declaredContract
+            ? { acceptance_contract: declaredContract }
+            : {}),
           touches: params.touches,
           scope_level: params.scope_level,
           tier: params.tier,

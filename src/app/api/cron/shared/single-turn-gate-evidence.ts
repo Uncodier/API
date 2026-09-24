@@ -90,6 +90,20 @@ export async function prepareSingleTurnGateEvidence(params: {
     ...(params.gateObservations || []),
     ...agentEvidence.observations,
   ];
+  const targetResolutions = Array.from(new Map(
+    observations
+      .map((observation) => observation.target_resolution)
+      .filter((resolution) => !!resolution)
+      .map((resolution) => [
+        [
+          resolution!.criterion_id,
+          resolution!.kind,
+          resolution!.method || 'GET',
+          resolution!.path,
+        ].join(':'),
+        resolution!,
+      ]),
+  ).values());
   const evidenceRunId =
     isEvidenceGapRetry(params.persistedErrorMessage) &&
     params.backlogEvidence?.evidence_run_id
@@ -125,6 +139,7 @@ export async function prepareSingleTurnGateEvidence(params: {
         tests,
         build,
         observations,
+        target_resolutions: targetResolutions,
         scenario_assertions: agentEvidence.scenario_assertions,
         gate_resume:
           params.transientGateFailure &&

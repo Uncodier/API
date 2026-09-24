@@ -24,7 +24,7 @@ export type RuntimePageProbe = {
   ttfb_ms?: number;
   content_type?: string;
   body_snippet?: string;
-  validation_source?: 'contract' | 'protected_route' | 'diff' | 'prose' | 'default';
+  validation_source?: 'contract' | 'contract_inferred' | 'protected_route' | 'diff' | 'prose' | 'default';
   validation_disposition?: 'pass' | 'hard_fail' | 'unknown' | 'advisory';
   validation_required?: boolean;
 };
@@ -38,7 +38,7 @@ export type RuntimeApiProbe = {
   content_type?: string;
   body_snippet?: string;
   payload_excerpt?: string;
-  validation_source?: 'contract' | 'protected_route' | 'diff' | 'prose' | 'default';
+  validation_source?: 'contract' | 'contract_inferred' | 'protected_route' | 'diff' | 'prose' | 'default';
   validation_disposition?: 'pass' | 'hard_fail' | 'unknown' | 'advisory';
   validation_required?: boolean;
 };

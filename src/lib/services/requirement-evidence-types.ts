@@ -8,6 +8,9 @@ export type AcceptanceGapCode =
   | 'missing_request_payload'
   | 'authentication_context_missing'
   | 'http_status_mismatch'
+  | 'invalid_target'
+  | 'inferred_target_unconfirmed'
+  | 'route_template_unresolved'
   | 'missing_interaction_audit'
   | 'missing_internal_link'
   | 'missing_link_content'
@@ -109,6 +112,24 @@ export interface InteractionEvidence {
   summary?: string;
 }
 
+export interface AcceptanceTargetResolution {
+  criterion_id: string;
+  kind: 'page' | 'api';
+  path: string;
+  method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
+  status:
+    | 'declared'
+    | 'legacy_inferred'
+    | 'invalid'
+    | 'template_unresolved';
+  strategy:
+    | 'declared_contract'
+    | 'step_validation_target'
+    | 'legacy_parser';
+  required: boolean;
+  detail?: string;
+}
+
 export type ScenarioAssertionReceipt =
   | {
       kind: 'http_response';
@@ -156,6 +177,7 @@ export interface EvidenceRecord {
   scenarios?: { name: string; pass: boolean; duration_ms: number }[];
   scenario_assertions?: ScenarioAssertionReceipt[];
   changed_files?: string[];
+  target_resolutions?: AcceptanceTargetResolution[];
   feature_coverage?: FeatureCoverageEvidence;
   interaction?: InteractionEvidence;
   commit_sha?: string;
@@ -169,6 +191,8 @@ export interface EvidenceRecord {
     method?: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
     http_status?: number;
     expected_statuses?: number[];
+    criterion_id?: string;
+    target_resolution?: AcceptanceTargetResolution;
   }>;
   critic_passes: number;
   judge_verdict?: 'approved' | 'rejected' | 'escalate';

@@ -11,7 +11,6 @@ import {
 } from './loop-detectors';
 import { isSandboxGoneError } from '@/lib/services/sandbox-gone-error';
 import { inferPlanStepTestCommand } from '@/lib/services/instance-plan-step-contract';
-import { normalizeStepValidationTargets } from './step-probe-policy';
 
 const WORK_DIR = '/vercel/sandbox';
 const EVIDENCE_COLLECTION_TOOLS = new Set([
@@ -291,10 +290,9 @@ export function getDeclaredValidationTargets(step: {
   validation_targets?: unknown;
   metadata?: { validation_targets?: unknown };
 }) {
-  const targets = normalizeStepValidationTargets(
-    step.validation_targets ?? step.metadata?.validation_targets,
-  );
-  return targets.length ? targets : undefined;
+  const targets =
+    step.validation_targets ?? step.metadata?.validation_targets;
+  return Array.isArray(targets) && targets.length ? targets : undefined;
 }
 
 export function getDeclaredTestCommand(step: {

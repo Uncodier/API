@@ -5,6 +5,7 @@
  */
 
 import type { Sandbox } from '@vercel/sandbox';
+import ts from 'typescript';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import { routeFromAppFile } from './step-app-route';
 import { inferAffectedPageFilesForChangeSets } from './step-visual-route-dependencies';
@@ -18,8 +19,71 @@ export type InferredTargetRoutes = {
 };
 
 const DEFAULT_METHOD: InferredTargetRoutes['apiRoutes'][number]['method'] = 'GET';
-const HTTP_METHOD_PATTERN =
-  /\b(?:export\s+(?:async\s+)?function|export\s+const)\s+(GET|POST|PUT|DELETE|PATCH)\b/g;
+const HTTP_METHODS = new Set([
+  'GET',
+  'POST',
+  'PUT',
+  'DELETE',
+  'PATCH',
+] as const);
+
+type ApiMethod = InferredTargetRoutes['apiRoutes'][number]['method'];
+
+function hasExportModifier(node: ts.Node): boolean {
+  return !!(
+    ts.canHaveModifiers(node) &&
+    ts.getModifiers(node)?.some(
+    (modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword,
+    )
+  );
+}
+
+export function httpMethodsFromRouteSource(source: string): ApiMethod[] {
+  const sourceFile = ts.createSourceFile(
+    'route.ts',
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const methods = new Set<ApiMethod>();
+
+  for (const statement of sourceFile.statements) {
+    if (
+      ts.isFunctionDeclaration(statement) &&
+      hasExportModifier(statement) &&
+      statement.name &&
+      HTTP_METHODS.has(statement.name.text as ApiMethod)
+    ) {
+      methods.add(statement.name.text as ApiMethod);
+    }
+    if (
+      ts.isVariableStatement(statement) &&
+      hasExportModifier(statement)
+    ) {
+      for (const declaration of statement.declarationList.declarations) {
+        if (
+          ts.isIdentifier(declaration.name) &&
+          HTTP_METHODS.has(declaration.name.text as ApiMethod)
+        ) {
+          methods.add(declaration.name.text as ApiMethod);
+        }
+      }
+    }
+    if (
+      ts.isExportDeclaration(statement) &&
+      statement.exportClause &&
+      ts.isNamedExports(statement.exportClause)
+    ) {
+      for (const element of statement.exportClause.elements) {
+        if (HTTP_METHODS.has(element.name.text as ApiMethod)) {
+          methods.add(element.name.text as ApiMethod);
+        }
+      }
+    }
+  }
+  return Array.from(methods);
+}
 
 export function pageRouteFromFile(rel: string): string | null {
   if (!/^src\/app\/.*page\.(?:tsx|jsx|ts|js)$/.test(rel)) return null;
@@ -49,17 +113,8 @@ async function methodsFromApiFile(
       'utf8',
     );
     const text = typeof source === 'string' ? source : String(source ?? '');
-    const methods = new Set<
-      InferredTargetRoutes['apiRoutes'][number]['method']
-    >();
-    let match: RegExpExecArray | null;
-    HTTP_METHOD_PATTERN.lastIndex = 0;
-    while ((match = HTTP_METHOD_PATTERN.exec(text))) {
-      methods.add(
-        match[1] as InferredTargetRoutes['apiRoutes'][number]['method'],
-      );
-    }
-    return methods.size ? Array.from(methods) : [DEFAULT_METHOD];
+    const methods = httpMethodsFromRouteSource(text);
+    return methods.length ? methods : [DEFAULT_METHOD];
   } catch {
     return [DEFAULT_METHOD];
   }

@@ -49,12 +49,10 @@ import type {
   InteractionSignal,
 } from './step-iteration-signals';
 import type { TestSignal } from './step-test-evidence';
-import {
-  normalizeStepValidationTargets,
-  type ProbeObservation,
-} from './step-probe-policy';
+import type { ProbeObservation } from './step-probe-policy';
 import type { ReusableGateValidation } from './gate-validation-cache';
 import { runLocalGateValidation } from './step-local-validation';
+import type { FlowGateFailureKind } from './gates/types';
 
 export { MAX_PUSH_RECOVERY_TURNS } from './step-git-prompts';
 export { validateBuildForStep } from './step-local-validation';
@@ -445,6 +443,7 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
   ok: boolean;
   lastResult: any;
   error?: string;
+  failureKind?: FlowGateFailureKind;
   infrastructureFailure?: boolean;
   vercelDeploy?: VercelDeployGateInfo;
   signals: GateSignals;
@@ -550,7 +549,10 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
 
   const intermediateGate = params.validationScope === 'intermediate';
   const hasDeclaredRuntimeContract =
-    normalizeStepValidationTargets(stepContext?.validation_targets).length > 0 ||
+    (
+      Array.isArray(stepContext?.validation_targets) &&
+      stepContext.validation_targets.length > 0
+    ) ||
     (stepContext?.protected_routes || []).some(
       (route) => typeof route === 'string' && route.trim().length > 0,
     );
@@ -584,6 +586,12 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
         )
       : [];
     if (unavailableDeclaredTargets.length > 0) {
+      const failureKind: FlowGateFailureKind =
+        unavailableDeclaredTargets.some((observation) =>
+          observation.target_resolution?.status === 'invalid' ||
+          observation.target_resolution?.status === 'template_unresolved')
+          ? 'contract_error'
+          : 'evidence_gap';
       return {
         ok: false,
         lastResult,
@@ -592,7 +600,8 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
           unavailableDeclaredTargets
             .map((observation) => observation.target || observation.detail)
             .join(', '),
-        infrastructureFailure: true,
+        failureKind,
+        infrastructureFailure: false,
         signals,
       };
     }

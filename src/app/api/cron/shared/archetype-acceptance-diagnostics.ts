@@ -1,17 +1,27 @@
 import type {
   AcceptanceClaim,
-  AcceptanceContractV1,
+  AcceptanceContract,
 } from '@/lib/services/requirement-acceptance-contract';
 import type {
   AcceptanceCriterionDiagnostic,
   AcceptanceEvidenceGap,
   EvidenceRecord,
 } from '@/lib/services/requirement-evidence-types';
+import {
+  routeTemplateMatches,
+} from '@/lib/services/acceptance-route-path';
 
 type CriterionStatus = AcceptanceCriterionDiagnostic['status'];
 
 function normalizedRoute(value: string): string {
-  return value.toLowerCase().replace(/\/+$/, '') || '/';
+  return value.trim().toLowerCase().replace(/\/+$/, '') || '/';
+}
+
+function routePathMatches(expected: string, observed: string): boolean {
+  const normalizedExpected = normalizedRoute(expected);
+  const normalizedObserved = normalizedRoute(observed);
+  return normalizedObserved === normalizedExpected ||
+    routeTemplateMatches(normalizedExpected, normalizedObserved);
 }
 
 function observationMatches(
@@ -27,18 +37,11 @@ function observationMatches(
     match?.[1]?.toUpperCase() ||
     'GET';
   if (observedMethod !== method.toUpperCase()) return false;
-  const observedPath = normalizedRoute(
-    target.replace(/^(?:GET|POST|PUT|PATCH|DELETE)\s+/i, ''),
+  const observedPath = target.replace(
+    /^(?:GET|POST|PUT|PATCH|DELETE)\s+/i,
+    '',
   );
-  const expectedPath = normalizedRoute(path);
-  const observedParts = observedPath.split('/');
-  const expectedParts = expectedPath.split('/');
-  return observedParts.length === expectedParts.length &&
-    expectedParts.every((part, index) =>
-      part.startsWith(':') ||
-      /^\[[^\]]+\]$/.test(part) ||
-      part === observedParts[index],
-    );
+  return routePathMatches(path, observedPath);
 }
 
 function statusMatches(status: number, expected?: string): boolean {
@@ -73,7 +76,7 @@ function routeGaps(
   if (
     claim.kind === 'page_response' &&
     evidence.runtime &&
-    normalizedRoute(evidence.runtime.route) === normalizedRoute(claim.path)
+    routePathMatches(claim.path, evidence.runtime.route)
   ) {
     observations.push({
       kind: 'page',
@@ -103,6 +106,55 @@ function routeGaps(
     `${observation.target || claim.path} ${observation.http_status ?? ''} ` +
     `${observation.detail}`.trim(),
   );
+  const invalidTarget = observations.find(
+    (observation) =>
+      observation.target_resolution?.status === 'invalid',
+  );
+  if (invalidTarget) {
+    return [{
+      code: 'invalid_target',
+      class: 'contract',
+      message:
+        invalidTarget.target_resolution?.detail ||
+        'The acceptance contract contains an invalid runtime target.',
+      required: expectedRouteText(claim),
+      observed,
+      suggested_action:
+        'Repair the typed acceptance contract; do not change product code or consume its attempt budget.',
+    }];
+  }
+  const unresolvedTemplate = observations.find(
+    (observation) =>
+      observation.target_resolution?.status === 'template_unresolved',
+  );
+  if (unresolvedTemplate) {
+    return [{
+      code: 'route_template_unresolved',
+      class: 'evidence',
+      message:
+        'The route contract contains path parameters but no concrete fixture was declared.',
+      required: expectedRouteText(claim),
+      observed,
+      suggested_action:
+        'Provide concrete path parameters in a validation target or deterministic scenario.',
+    }];
+  }
+  const unconfirmedInference = observations.find(
+    (observation) =>
+      observation.target_resolution?.status === 'legacy_inferred',
+  );
+  if (unconfirmedInference) {
+    return [{
+      code: 'inferred_target_unconfirmed',
+      class: 'contract',
+      message:
+        'A route inferred from legacy prose did not pass and is not authoritative.',
+      required: expectedRouteText(claim),
+      observed,
+      suggested_action:
+        'Replace the legacy inference with a declared contract target or a semantic discovery specimen.',
+    }];
+  }
   const authBoundary = observations.find((observation) =>
     observation.http_status === 401 || observation.http_status === 403,
   );
@@ -206,7 +258,7 @@ function linkGaps(
     }];
   }
   const candidates = (interaction.links || []).filter((link) =>
-    (!claim.path || normalizedRoute(link.target) === normalizedRoute(claim.path)) &&
+    (!claim.path || routePathMatches(claim.path, link.target)) &&
     (
       !claim.region ||
       link.region === claim.region ||
@@ -330,7 +382,7 @@ function gapsForClaim(
 }
 
 export function buildAcceptanceDiagnostics(params: {
-  contract: AcceptanceContractV1;
+  contract: AcceptanceContract;
   evidence: EvidenceRecord;
   matched: string[];
   contradicted: string[];

@@ -168,6 +168,7 @@ describe('mandatory backlog remediation', () => {
   it('rejects an unknown dependency during upsert', async () => {
     await expect(upsertBacklogItem({
       requirementId: 'requirement',
+      allowLegacyContract: true,
       item: {
         id: 'new-item',
         title: 'Build account page',
@@ -177,6 +178,21 @@ describe('mandatory backlog remediation', () => {
         depends_on: ['missing-item'],
       },
     })).rejects.toThrow(/depends on unknown item "missing-item"/);
+
+    expect(mockWriteBacklog).not.toHaveBeenCalled();
+  });
+
+  it('rejects silent V1 compilation for a new core item', async () => {
+    await expect(upsertBacklogItem({
+      requirementId: 'requirement',
+      item: {
+        id: 'new-core',
+        title: 'Build account page',
+        kind: 'page',
+        phase_id: 'build',
+        acceptance: ['GET /account returns 200'],
+      },
+    })).rejects.toThrow('require a declared AcceptanceContractV2');
 
     expect(mockWriteBacklog).not.toHaveBeenCalled();
   });

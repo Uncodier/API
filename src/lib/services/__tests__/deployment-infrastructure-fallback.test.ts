@@ -122,10 +122,13 @@ describe('deployment infrastructure fallback pagination', () => {
       reconcilePendingDeploymentInfrastructureWaits(1),
     ).resolves.toEqual({ checked: 2, recovered: 0 });
 
-    expect(query.contains).toHaveBeenCalledWith('steps', [{
-      infrastructure_kind: 'deployment',
-      infrastructure_failure_provenance: 'deployment_infrastructure',
-    }]);
+    expect(query.contains).toHaveBeenCalledWith(
+      'steps',
+      JSON.stringify([{
+        infrastructure_kind: 'deployment',
+        infrastructure_failure_provenance: 'deployment_infrastructure',
+      }]),
+    );
     expect(limit).toHaveBeenCalledTimes(3);
     expect(query.gt).toHaveBeenNthCalledWith(1, 'id', 'plan-1');
     expect(query.gt).toHaveBeenNthCalledWith(2, 'id', 'plan-2');

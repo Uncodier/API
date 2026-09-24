@@ -17,10 +17,11 @@
 import type { Sandbox } from '@vercel/sandbox';
 import type { BacklogItem, BacklogItemKind } from '@/lib/services/requirement-backlog-types';
 import {
-  analyzeAcceptanceEntry,
-  routesFromAcceptance,
   routesFromTouches,
 } from '@/lib/services/requirement-acceptance';
+import {
+  resolveAcceptanceContract,
+} from '@/lib/services/requirement-acceptance-contract';
 import {
   apiFileDeclaresHandlers,
   findApiFile,
@@ -254,11 +255,13 @@ export async function computeFeatureCoverage(params: {
 }): Promise<FeatureCoverageSignal> {
   const { sandbox, item, contractScoped = false, changedFiles = [] } = params;
   const acceptance = item.acceptance ?? [];
-  const acceptanceAnalyses = acceptance.map(analyzeAcceptanceEntry);
-  const acceptanceFileAnchors = acceptanceAnalyses.flatMap((analysis) =>
-    analysis.anchors
-      .filter((anchor) => anchor.kind === 'file_path')
-      .map((anchor) => anchor.value),
+  const contract = resolveAcceptanceContract(
+    acceptance,
+    item.acceptance_contract,
+  );
+  const claims = contract.criteria.flatMap((criterion) => criterion.all_of);
+  const acceptanceFileAnchors = claims.flatMap((claim) =>
+    claim.kind === 'file_artifact' ? [claim.path] : [],
   );
   const rawTouches = contractScoped
     ? acceptanceFileAnchors
@@ -268,7 +271,17 @@ export async function computeFeatureCoverage(params: {
       ];
   const touches = Array.from(new Set(rawTouches.map(normalizeTouchPath)));
 
-  const acceptanceRouteAnchors = routesFromAcceptance(acceptance);
+  const acceptanceRouteAnchors = claims.flatMap((claim) => {
+    if (
+      claim.kind === 'http_response' ||
+      claim.kind === 'page_response'
+    ) {
+      return [claim.path];
+    }
+    return claim.kind === 'internal_link' && claim.path
+      ? [claim.path]
+      : [];
+  });
   const { pages: pagesFromTouches, apis: apisFromTouches } = routesFromTouches(touches);
 
   const expectedPageRoutes = Array.from(new Set([
@@ -313,15 +326,10 @@ export async function computeFeatureCoverage(params: {
     if (!result.file) continue;
     presentApiFiles.push(result.file);
     const methods = Array.from(new Set(
-      acceptanceAnalyses.flatMap((analysis) =>
-        analysis.anchors
-          .filter(
-            (anchor) =>
-              anchor.kind === 'route' &&
-              anchor.value === route &&
-              !!anchor.method,
-          )
-          .map((anchor) => anchor.method!.toUpperCase()),
+      claims.flatMap((claim) =>
+        claim.kind === 'http_response' && claim.path === route
+          ? [claim.method]
+          : [],
       ),
     ));
     apiTargets.push({ route, file: result.file, methods });

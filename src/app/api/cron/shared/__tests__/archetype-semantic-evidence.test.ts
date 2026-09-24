@@ -225,4 +225,162 @@ describe('generic semantic acceptance proof', () => {
       unmatched: ['POST /api/contact returns 201.'],
     });
   });
+
+  it('requires every claim in an all_of criterion', () => {
+    const criterion = 'Footer links to docs and creates docs/index.md.';
+    const linkEvidence = evidence('PASS unrelated test');
+    linkEvidence.interaction = {
+      evaluable: true,
+      links: [{
+        target: '/docs',
+        region: 'footer',
+        route_exists: true,
+        content_excerpt: 'Documentation',
+      }],
+      unresolved_links: [],
+      findings: [],
+    } as any;
+    linkEvidence.observations = [{
+      kind: 'page',
+      disposition: 'pass',
+      source: 'contract',
+      target: '/docs',
+      detail: 'HTTP 200',
+      http_status: 200,
+    }];
+    linkEvidence.feature_coverage = {
+      artifact_proofs: [],
+    } as any;
+
+    expect(matchAcceptanceAgainstEvidence(
+      [criterion],
+      linkEvidence,
+      {
+        schema_version: 2,
+        source: 'declared',
+        criteria: [{
+          id: 'docs-link-and-file',
+          text: criterion,
+          all_of: [
+            {
+              kind: 'internal_link',
+              path: '/docs',
+              region: 'footer',
+              requires_content: true,
+            },
+            {
+              kind: 'file_artifact',
+              path: 'docs/index.md',
+            },
+          ],
+        }],
+      },
+    )).toMatchObject({
+      matched: [],
+      unmatched: [criterion],
+    });
+  });
+
+  it('does not treat a blank command as proof from any passing test', () => {
+    const criterion = 'Run the required verification.';
+
+    expect(matchAcceptanceAgainstEvidence(
+      [criterion],
+      evidence('PASS unrelated test'),
+      {
+        schema_version: 1,
+        criteria: [{
+          id: 'blank-command',
+          text: criterion,
+          all_of: [{ kind: 'command', command: '   ' }],
+        }],
+      },
+    )).toMatchObject({
+      matched: [],
+      unmatched: [criterion],
+    });
+  });
+
+  it('matches a concrete internal link against a route template', () => {
+    const criterion = 'Navigation links to a documentation page.';
+    const linkEvidence = evidence('PASS unrelated test');
+    linkEvidence.interaction = {
+      evaluable: true,
+      links: [{
+        target: '/docs/getting-started',
+        region: 'navigation',
+        route_exists: true,
+        content_excerpt: 'Getting started',
+      }],
+      unresolved_links: [],
+      findings: [],
+    } as any;
+    linkEvidence.observations = [{
+      kind: 'page',
+      disposition: 'pass',
+      source: 'contract',
+      target: '/docs/getting-started',
+      detail: 'HTTP 200',
+      http_status: 200,
+    }];
+
+    expect(matchAcceptanceAgainstEvidence(
+      [criterion],
+      linkEvidence,
+      {
+        schema_version: 2,
+        source: 'declared',
+        criteria: [{
+          id: 'documentation-link',
+          text: criterion,
+          all_of: [{
+            kind: 'internal_link',
+            path: '/docs/[slug]',
+            region: 'navigation',
+            requires_content: true,
+          }],
+        }],
+      },
+    )).toMatchObject({
+      matched: [criterion],
+      unmatched: [],
+    });
+  });
+
+  it('matches concrete evidence against a Next.js route template', () => {
+    const criterion = 'GET /api/assets/[id] returns 200.';
+    const routeEvidence = evidence('PASS unrelated test');
+    routeEvidence.observations = [{
+      kind: 'api',
+      disposition: 'pass',
+      source: 'contract',
+      target: 'GET /api/assets/123',
+      method: 'GET',
+      http_status: 200,
+      detail: 'HTTP 200',
+    }];
+
+    expect(matchAcceptanceAgainstEvidence(
+      [criterion],
+      routeEvidence,
+      {
+        schema_version: 2,
+        source: 'declared',
+        criteria: [{
+          id: 'asset-detail',
+          text: criterion,
+          all_of: [{
+            kind: 'http_response',
+            path: '/api/assets/[id]',
+            method: 'GET',
+            expected_status: '200',
+            auth: 'unspecified',
+          }],
+        }],
+      },
+    )).toMatchObject({
+      matched: [criterion],
+      unmatched: [],
+    });
+  });
 });

@@ -96,6 +96,11 @@ describe('prepareRequirementForCronRun', () => {
       expect.objectContaining({
         kind: 'subtask',
         status: 'pending',
+        tier: 'core',
+        acceptance_contract: expect.objectContaining({
+          schema_version: 2,
+          source: 'declared',
+        }),
       }),
     ]));
     expect(mockMutateBacklogAtomically).toHaveBeenCalledTimes(1);

@@ -255,7 +255,13 @@ describe('fallback discovery contracts', () => {
     expect(fallbackSource).toContain(
       ".eq('instance_id', runnerInstanceId)",
     );
-    expect(fallbackSource).toContain(".contains('steps', [{");
+    expect(fallbackSource).toContain(
+      ".contains('steps', ACTIVE_DEPLOYMENT_WAIT_FILTER)",
+    );
+    expect(fallbackSource).toContain(
+      'const ACTIVE_DEPLOYMENT_WAIT_FILTER = JSON.stringify([{',
+    );
+    expect(fallbackSource).not.toContain(".contains('steps', [{");
     expect(fallbackSource).not.toContain(
       'CRON_DEPLOYMENT_RECOVERY_MAX_PAGES',
     );

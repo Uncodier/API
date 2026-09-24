@@ -72,7 +72,86 @@ describe('model-facing requirement backlog terminal transitions', () => {
     expect(properties.action.enum).toEqual(
       expect.arrayContaining(['report_blocker', 'resolve_blocker']),
     );
+    expect(properties.acceptance_contract.properties.schema_version.enum)
+      .toEqual([2]);
+    expect(JSON.stringify(properties.acceptance_contract))
+      .not.toContain('"oneOf"');
     expect(properties.confirm_reopen).toBeUndefined();
+  });
+
+  it('passes a declared acceptance contract to backlog persistence', async () => {
+    const acceptance = ['The campaigns experience is available.'];
+    const acceptanceContract = {
+      schema_version: 2 as const,
+      source: 'declared' as const,
+      criteria: [{
+        id: 'campaign-page',
+        text: acceptance[0],
+        all_of: [{
+          kind: 'page_response' as const,
+          path: '/campaigns',
+          expected_status: '200',
+        }],
+      }],
+    };
+    listBacklog.mockResolvedValue({
+      kind: 'app',
+      backlog: { items: [] },
+    });
+    upsertBacklogItem.mockResolvedValue({ id: 'item-1' });
+
+    await executeBacklogCore({
+      action: 'upsert',
+      requirement_id: 'req-1',
+      title: 'Campaigns',
+      kind: 'page',
+      phase_id: 'build',
+      acceptance,
+      acceptance_contract: acceptanceContract,
+    });
+
+    expect(upsertBacklogItem).toHaveBeenCalledWith(expect.objectContaining({
+      item: expect.objectContaining({
+        acceptance_contract: acceptanceContract,
+      }),
+    }));
+  });
+
+  it('requires a declared V2 contract for a new core item', async () => {
+    listBacklog.mockResolvedValue({
+      kind: 'app',
+      backlog: { items: [] },
+    });
+
+    await expect(executeBacklogCore({
+      action: 'upsert',
+      requirement_id: 'req-1',
+      title: 'Campaigns',
+      kind: 'page',
+      phase_id: 'build',
+      acceptance: ['GET /campaigns returns 200'],
+    })).rejects.toThrow('require a declared AcceptanceContractV2');
+
+    expect(upsertBacklogItem).not.toHaveBeenCalled();
+  });
+
+  it('rejects malformed serialized contracts instead of downgrading', async () => {
+    listBacklog.mockResolvedValue({
+      kind: 'app',
+      backlog: { items: [] },
+    });
+
+    await expect(executeBacklogCore({
+      action: 'upsert',
+      requirement_id: 'req-1',
+      title: 'Campaigns',
+      kind: 'page',
+      phase_id: 'build',
+      acceptance: ['GET /campaigns returns 200'],
+      acceptance_contract: '{broken-json' as any,
+    })).rejects.toThrow('must be valid JSON');
+
+    expect(upsertBacklogItem).not.toHaveBeenCalled();
   });
 
   it.each(['needs_review', 'rejected'] as const)(

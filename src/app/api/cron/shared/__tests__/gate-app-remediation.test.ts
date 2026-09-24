@@ -179,6 +179,32 @@ describe('app gate remediation handoff', () => {
     );
   });
 
+  it('keeps inconclusive contract evidence out of the product budget', async () => {
+    mockRunBuildAndOriginGate.mockResolvedValue({
+      ok: false,
+      error: 'Declared runtime validation was inconclusive',
+      failureKind: 'evidence_gap',
+      infrastructureFailure: false,
+      signals: {
+        observations: [{
+          kind: 'api',
+          disposition: 'unknown',
+          source: 'contract',
+          target: 'POST /api/assets',
+          detail: 'No request payload fixture was declared.',
+        }],
+      },
+    });
+
+    await expect(runAppGate(input)).resolves.toEqual(
+      expect.objectContaining({
+        failureKind: 'evidence_gap',
+        infrastructureFailure: false,
+        disposition: 'unknown',
+      }),
+    );
+  });
+
   it('keeps origin failures out of the product attempt budget', async () => {
     mockRunBuildAndOriginGate.mockResolvedValue({
       ok: false,

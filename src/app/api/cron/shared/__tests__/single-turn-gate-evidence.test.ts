@@ -1,7 +1,12 @@
 import { describe, expect, it } from '@jest/globals';
 
+const mockWriteEvidence = jest.fn();
+
 jest.mock('@/lib/services/sandbox-service', () => ({
   SandboxService: { WORK_DIR: '/vercel/sandbox' },
+}));
+jest.mock('@/lib/services/requirement-ground-truth', () => ({
+  writeEvidence: mockWriteEvidence,
 }));
 
 import { prepareSingleTurnGateEvidence } from '../single-turn-gate-evidence';
@@ -42,5 +47,39 @@ describe('single-turn gate evidence preparation', () => {
     const result = await prepareSingleTurnGateEvidence(baseInput());
 
     expect(result.evidenceRunId).not.toBe('evidence-run-1');
+  });
+
+  it('persists target resolution provenance with probe evidence', async () => {
+    await prepareSingleTurnGateEvidence({
+      ...baseInput(),
+      backlogItemId: 'item-1',
+      gateObservations: [{
+        kind: 'page',
+        disposition: 'pass',
+        source: 'contract',
+        target: '/campaigns',
+        detail: 'HTTP 200',
+        criterion_id: 'campaign-page',
+        target_resolution: {
+          criterion_id: 'campaign-page',
+          kind: 'page',
+          path: '/campaigns',
+          status: 'declared',
+          strategy: 'declared_contract',
+          required: true,
+        },
+      }],
+    });
+
+    expect(mockWriteEvidence).toHaveBeenCalledWith(expect.objectContaining({
+      record: expect.objectContaining({
+        target_resolutions: [
+          expect.objectContaining({
+            criterion_id: 'campaign-page',
+            strategy: 'declared_contract',
+          }),
+        ],
+      }),
+    }));
   });
 });

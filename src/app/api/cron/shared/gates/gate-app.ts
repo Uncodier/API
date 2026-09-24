@@ -182,19 +182,23 @@ export async function runAppGate(input: FlowGateInput): Promise<FlowGateResult> 
     gate.sandboxUnavailable ||
     originFailureKind === 'infrastructure_unavailable',
   );
+  const inconclusiveContract =
+    gate.failureKind === 'contract_error' ||
+    gate.failureKind === 'evidence_gap';
 
   return {
     ok: gate.ok,
     disposition: gate.ok
       ? 'pass'
-      : infrastructureFailure
+      : infrastructureFailure || inconclusiveContract
         ? 'unknown'
         : remediationScheduled
           ? 'advisory'
           : 'hard_fail',
     failureKind: gate.ok || remediationScheduled
       ? undefined
-      : originFailureKind ||
+      : gate.failureKind ||
+        originFailureKind ||
         (infrastructureFailure
           ? 'infrastructure_unavailable'
           : 'product_defect'),

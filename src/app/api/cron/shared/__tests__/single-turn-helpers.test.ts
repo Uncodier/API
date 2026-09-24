@@ -47,6 +47,14 @@ describe('single-turn interaction helpers', () => {
     })]);
   });
 
+  it('preserves malformed targets for downstream contract diagnostics', () => {
+    expect(getDeclaredValidationTargets({
+      metadata: {
+        validation_targets: [{ kind: 'page', path: '/>' }],
+      },
+    })).toEqual([{ kind: 'page', path: '/>' }]);
+  });
+
   it('uses explicit, exact, or quoted test commands from the step contract', () => {
     expect(getDeclaredTestCommand({
       test_command: 'npm test -- orders.test.ts',

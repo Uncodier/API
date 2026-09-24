@@ -17,6 +17,15 @@ describe('Failure Classification', () => {
     expect(res.countsTowardAttempts).toBe(false);
   });
 
+  it('keeps invalid acceptance targets outside the product budget', () => {
+    const res = classifyFailure(
+      'Invalid acceptance target: route contains markup.',
+    );
+    expect(res.failureClass).toBe('contract');
+    expect(res.toolName).toBe('acceptance_contract');
+    expect(res.countsTowardAttempts).toBe(false);
+  });
+
   it('classifies build failures as product', () => {
     const res = classifyFailure('gate_failed: npm run build failed');
     expect(res.failureClass).toBe('product');

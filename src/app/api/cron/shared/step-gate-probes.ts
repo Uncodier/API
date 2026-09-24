@@ -54,6 +54,9 @@ import {
   evaluateRuntimeProbe,
   type ProbeObservation,
 } from './step-probe-policy';
+import type {
+  AcceptanceContract,
+} from '@/lib/services/requirement-acceptance-contract';
 
 export type ProbeSignals = {
   interaction?: InteractionSignal;
@@ -83,6 +86,7 @@ export async function runRuntimeAndVisualProbes(params: {
     protected_routes?: string[];
     validation_targets?: unknown;
     acceptance?: string[];
+    acceptance_contract?: AcceptanceContract;
   };
 }): Promise<{
   ok: boolean;
@@ -149,6 +153,8 @@ export async function runRuntimeAndVisualProbes(params: {
   const targetPlan = buildRuntimeTargetPlan({
     validationTargets: stepContext?.validation_targets,
     acceptance: stepContext?.acceptance,
+    acceptanceContract: stepContext?.acceptance_contract,
+    restrictContractTargetsToValidation: params.declaredOnly,
     protectedRoutes: stepContext?.protected_routes,
     proseRoutes: params.declaredOnly
       ? []

@@ -1,6 +1,52 @@
 import { executeBacklogCore, type BacklogAction, type BacklogCoreParams } from './route';
 import type { BacklogItemKind, BacklogItemStatus, BacklogItemTier } from '@/lib/services/requirement-backlog';
 
+const acceptanceClaimSchema = {
+  type: 'object',
+  description:
+    'Typed acceptance claim. Required fields by kind: http_response => path, method, auth; ' +
+    'page_response => path; internal_link => requires_content; file_artifact => path; ' +
+    'command => command; semantic_assertion => text.',
+  properties: {
+    kind: {
+      type: 'string',
+      enum: [
+        'http_response',
+        'page_response',
+        'internal_link',
+        'file_artifact',
+        'command',
+        'semantic_assertion',
+      ],
+    },
+    path: {
+      type: 'string',
+      description:
+        'Application route for response/link claims or repository-relative path for file_artifact.',
+    },
+    method: {
+      type: 'string',
+      enum: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+    },
+    expected_status: {
+      type: 'string',
+      description: 'Exact status such as 200 or class such as 2xx.',
+    },
+    auth: {
+      type: 'string',
+      enum: ['required', 'unspecified'],
+    },
+    region: {
+      type: 'string',
+      enum: ['header', 'footer', 'navigation', 'other'],
+    },
+    requires_content: { type: 'boolean' },
+    command: { type: 'string' },
+    text: { type: 'string' },
+  },
+  required: ['kind'],
+};
+
 export function requirementBacklogTool(_siteId: string, defaultRequirementId?: string) {
   return {
     name: 'requirement_backlog',
@@ -38,16 +84,50 @@ export function requirementBacklogTool(_siteId: string, defaultRequirementId?: s
           type: 'array',
           items: { type: 'string' },
           description:
-            'Observable acceptance statements the Judge checks against evidence. ' +
-            'For tier=core items, EVERY entry must contain at least one EXECUTABLE anchor — ' +
-            'otherwise the upsert is rejected (narrative-only acceptance is the #1 cause of ' +
-            'infinite Judge-reject loops). Anchors recognized: HTTP verb (GET/POST/PUT/PATCH/DELETE), ' +
-            'route starting with `/` (e.g. `/api/studios`), status code (`200`, `2xx`, `404`), ' +
-            'or observable verb (returns, renders, inserts, creates, updates, deletes, ' +
-            'redirects, persists, saves, responds, opens modal, shows the form/table/list). ' +
-            'BAD: "Admin can configure max_capacity on studios". ' +
-            'GOOD: "PATCH /api/studios/:id with { max_capacity: number } returns 200 and persists the value." ' +
-            'If the work is genuinely narrative (landing copy, marketing polish), set tier=ornamental.',
+            'Human-readable acceptance statements. For tier=core items, also provide ' +
+            'acceptance_contract with one typed executable claim for every entry. ' +
+            'Do not embed implementation snippets and expect slash-based route inference; ' +
+            'declare known routes in claims and use discovery for semantic behavior.',
+        },
+        acceptance_contract: {
+          type: 'object',
+          description:
+            'Preferred typed interpretation of acceptance[]. Use schema_version=2 and source="declared". ' +
+            'criteria must match acceptance[] in the same order. Explicit route claims are authoritative. ' +
+            'For behavior without an explicit route, use semantic_assertion and include discovery.query plus ' +
+            'a small hypothetical_code specimen; semantic retrieval only discovers candidates and never proves acceptance.',
+          properties: {
+            schema_version: { type: 'number', enum: [2] },
+            source: { type: 'string', enum: ['declared'] },
+            criteria: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string' },
+                  text: { type: 'string' },
+                  all_of: {
+                    type: 'array',
+                    items: acceptanceClaimSchema,
+                  },
+                  discovery: {
+                    type: 'object',
+                    properties: {
+                      query: { type: 'string' },
+                      hypothetical_code: { type: 'string' },
+                      expected_symbols: {
+                        type: 'array',
+                        items: { type: 'string' },
+                      },
+                    },
+                    required: ['query', 'hypothetical_code'],
+                  },
+                },
+                required: ['id', 'text', 'all_of'],
+              },
+            },
+          },
+          required: ['schema_version', 'source', 'criteria'],
         },
         touches: { type: 'array', items: { type: 'string' }, description: 'Files or file globs this item is expected to touch.' },
         scope_level: { type: 'string', enum: ['full', 'mvp', 'minimal'], description: 'Requested scope. Default full.' },
@@ -105,6 +185,7 @@ export function requirementBacklogTool(_siteId: string, defaultRequirementId?: s
         kind: args.kind as BacklogItemKind | undefined,
         phase_id: args.phase_id,
         acceptance: args.acceptance,
+        acceptance_contract: args.acceptance_contract,
         touches: args.touches,
         scope_level: args.scope_level,
         tier: args.tier as BacklogItemTier | undefined,

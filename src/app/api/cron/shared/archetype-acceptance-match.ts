@@ -1,13 +1,16 @@
 import {
-  validateAcceptance,
   type AcceptanceAnchor,
   type AcceptanceAnalysis,
 } from '@/lib/services/requirement-acceptance';
 import type { EvidenceRecord } from '@/lib/services/requirement-ground-truth';
 import {
   resolveAcceptanceContract,
-  type AcceptanceContractV1,
+  type AcceptanceClaim,
+  type AcceptanceContract,
 } from '@/lib/services/requirement-acceptance-contract';
+import {
+  routeTemplateMatches,
+} from '@/lib/services/acceptance-route-path';
 import type {
   AcceptanceCriterionDiagnostic,
 } from '@/lib/services/requirement-evidence-types';
@@ -15,13 +18,66 @@ import {
   genericEvidenceReceipts,
   genericProofTerms,
 } from './archetype-generic-evidence';
-import { evaluateInternalLinkIntegrity } from './archetype-link-evidence';
+import {
+  evaluateContractLinkClaims,
+} from './archetype-contract-link-evidence';
 import { buildAcceptanceDiagnostics } from './archetype-acceptance-diagnostics';
 
 type RouteAnchor = Extract<AcceptanceAnchor, { kind: 'route' }>;
+type ContractCriterion = AcceptanceContract['criteria'][number];
+
+function analysisFromClaims(
+  text: string,
+  claims: AcceptanceClaim[],
+): AcceptanceAnalysis {
+  const anchors: AcceptanceAnchor[] = [];
+  for (const claim of claims) {
+    if (claim.kind === 'http_response') {
+      anchors.push({ kind: 'http_verb', value: claim.method });
+      anchors.push({
+        kind: 'route',
+        value: claim.path,
+        method: claim.method,
+        status: claim.expected_status,
+      });
+    }
+    if (claim.kind === 'page_response') {
+      anchors.push({
+        kind: 'route',
+        value: claim.path,
+        method: 'GET',
+        status: claim.expected_status,
+      });
+    }
+    if (claim.kind === 'internal_link' && claim.path) {
+      anchors.push({ kind: 'route', value: claim.path });
+    }
+    if (claim.kind === 'file_artifact') {
+      anchors.push({ kind: 'file_path', value: claim.path });
+    }
+    if (claim.kind === 'command') {
+      anchors.push({ kind: 'command', value: claim.command });
+    }
+  }
+  return {
+    text,
+    anchors,
+    executable:
+      claims.length > 0 &&
+      !claims.some(
+        (claim) => claim.kind === 'unsupported_obligation',
+      ),
+  };
+}
+
+function analysisFromContract(
+  criterion: ContractCriterion,
+): AcceptanceAnalysis {
+  return analysisFromClaims(criterion.text, criterion.all_of);
+}
 
 function normalized(value: string): string {
-  return value.toLowerCase().replace(/\/+$/, '');
+  return value.trim().toLowerCase().replace(/\/+$/, '');
 }
 
 function expectedHttpMethod(
@@ -92,16 +148,7 @@ function observationMatchesRoute(
     target.replace(/^(?:GET|POST|PUT|PATCH|DELETE)\s+/i, ''),
   );
   const expected = normalized(route);
-  if (targetPath === expected) return true;
-  const targetSegments = targetPath.split('/');
-  const expectedSegments = expected.split('/');
-  return (
-    targetSegments.length === expectedSegments.length &&
-    expectedSegments.every(
-      (segment, index) =>
-        segment.startsWith(':') || segment === targetSegments[index],
-    )
-  );
+  return targetPath === expected || routeTemplateMatches(expected, targetPath);
 }
 
 function hasRouteContradiction(
@@ -228,6 +275,7 @@ function hasCommandProof(
 ): boolean {
   if (command === 'build') return evidence.build?.exit_code === 0;
   const expectedCommand = command.toLowerCase().replace(/\s+/g, ' ').trim();
+  if (!expectedCommand) return false;
   return (evidence.tests || []).some((test) =>
     test.exit_code === 0 &&
     test.ran_after_changes &&
@@ -247,6 +295,7 @@ function hasCommandContradiction(
     return !!evidence.build && evidence.build.exit_code !== 0;
   }
   const expectedCommand = command.toLowerCase().replace(/\s+/g, ' ').trim();
+  if (!expectedCommand) return false;
   return (evidence.tests || []).some((test) =>
     test.exit_code !== 0 &&
     (
@@ -257,65 +306,85 @@ function hasCommandContradiction(
   );
 }
 
-function hasTypedProof(
-  analysis: AcceptanceAnalysis,
-  evidence: EvidenceRecord,
-): boolean {
-  const proofGroups: boolean[] = [];
-  const fileAnchors = analysis.anchors.filter(
-    (anchor) => anchor.kind === 'file_path',
-  );
-  if (fileAnchors.length > 0) {
-    proofGroups.push(fileAnchors.every((anchor) =>
-      hasFileProof(anchor.value, analysis, evidence),
-    ));
-  }
-  const routeAnchors = analysis.anchors.filter(
-    (
-      anchor,
-    ): anchor is RouteAnchor =>
-      anchor.kind === 'route',
-  );
-  if (routeAnchors.length > 0) {
-    proofGroups.push(routeAnchors.every((anchor) =>
-      hasRouteProof(analysis, anchor.value, evidence, anchor),
-    ));
-  }
-  const commandAnchors = analysis.anchors.filter(
-    (anchor) => anchor.kind === 'command',
-  );
-  if (commandAnchors.length > 0) {
-    proofGroups.push(commandAnchors.every((anchor) =>
-      hasCommandProof(anchor.value, evidence),
-    ));
-  }
-  return proofGroups.length > 0 && proofGroups.every(Boolean);
-}
+type ClaimEvidenceResult = 'pass' | 'fail' | 'unknown';
 
-function hasTypedContradiction(
-  analysis: AcceptanceAnalysis,
-  evidence: EvidenceRecord,
+function semanticAssertionHasProof(
+  text: string,
+  haystacks: string[],
 ): boolean {
-  return analysis.anchors.some((anchor) => {
-    if (anchor.kind === 'route') {
-      return hasRouteContradiction(
-        analysis,
-        anchor.value,
-        evidence,
-        anchor,
-      );
-    }
-    if (anchor.kind === 'command') {
-      return hasCommandContradiction(anchor.value, evidence);
+  const proofTerms = genericProofTerms({
+    text,
+    anchors: [],
+    executable: true,
+  });
+  return proofTerms.length >= 2 && haystacks.some((haystack) => {
+    let hits = 0;
+    for (const term of proofTerms) {
+      if (haystack.includes(term)) hits++;
+      if (hits >= 2) return true;
     }
     return false;
   });
 }
 
+function evaluateClaimEvidence(params: {
+  claim: AcceptanceClaim;
+  criterionAnalysis: AcceptanceAnalysis;
+  evidence: EvidenceRecord;
+  haystacks: string[];
+}): ClaimEvidenceResult {
+  const { claim, criterionAnalysis, evidence, haystacks } = params;
+  if (claim.kind === 'internal_link') {
+    return evaluateContractLinkClaims([claim], evidence) || 'unknown';
+  }
+  if (claim.kind === 'file_artifact') {
+    return hasFileProof(claim.path, criterionAnalysis, evidence)
+      ? 'pass'
+      : 'unknown';
+  }
+  if (claim.kind === 'command') {
+    if (hasCommandContradiction(claim.command, evidence)) return 'fail';
+    return hasCommandProof(claim.command, evidence) ? 'pass' : 'unknown';
+  }
+  if (claim.kind === 'semantic_assertion') {
+    return semanticAssertionHasProof(claim.text, haystacks)
+      ? 'pass'
+      : 'unknown';
+  }
+  if (claim.kind === 'unsupported_obligation') return 'unknown';
+
+  const claimAnalysis = analysisFromClaims(
+    criterionAnalysis.text,
+    [claim],
+  );
+  const routeAnchor = claimAnalysis.anchors.find(
+    (anchor): anchor is RouteAnchor => anchor.kind === 'route',
+  );
+  if (!routeAnchor) return 'unknown';
+  if (
+    hasRouteContradiction(
+      claimAnalysis,
+      routeAnchor.value,
+      evidence,
+      routeAnchor,
+    )
+  ) {
+    return 'fail';
+  }
+  return hasRouteProof(
+    claimAnalysis,
+    routeAnchor.value,
+    evidence,
+    routeAnchor,
+  )
+    ? 'pass'
+    : 'unknown';
+}
+
 export function matchAcceptanceAgainstEvidence(
   acceptance: string[],
   evidence: EvidenceRecord,
-  persistedContract?: AcceptanceContractV1,
+  persistedContract?: AcceptanceContract,
 ): {
   matched: string[];
   unmatched: string[];
@@ -325,78 +394,39 @@ export function matchAcceptanceAgainstEvidence(
   const matched: string[] = [];
   const unmatched: string[] = [];
   const contradicted: string[] = [];
-  const validation = validateAcceptance(acceptance);
-  const analysisByText = new Map(
-    validation.analyses.map((analysis) => [analysis.text, analysis]),
-  );
+  const contract = resolveAcceptanceContract(acceptance, persistedContract);
   const haystackLower = genericEvidenceReceipts(evidence).map((entry) =>
     entry.toLowerCase(),
   );
 
-  for (const criterion of acceptance) {
-    const analysis = analysisByText.get(criterion);
-    if (!analysis?.executable) {
+  for (const contractCriterion of contract.criteria) {
+    const criterion = contractCriterion.text;
+    const analysis = analysisFromContract(contractCriterion);
+    if (!analysis.executable) {
       unmatched.push(criterion);
       continue;
     }
-    const linkIntegrity = evaluateInternalLinkIntegrity(
-      analysis,
-      evidence,
-      {
-        proves: (route) => hasRouteProof(analysis, route, evidence),
-        contradicts: (route) =>
-          hasRouteContradiction(analysis, route, evidence),
-      },
-    );
-    if (linkIntegrity === 'pass') {
-      matched.push(criterion);
-      continue;
-    }
-    if (linkIntegrity === 'fail') {
+    const claimResults = contractCriterion.all_of.map((claim) =>
+      evaluateClaimEvidence({
+        claim,
+        criterionAnalysis: analysis,
+        evidence,
+        haystacks: haystackLower,
+      }));
+    if (claimResults.some((result) => result === 'fail')) {
       contradicted.push(criterion);
-      continue;
-    }
-    if (linkIntegrity === 'unknown') {
-      unmatched.push(criterion);
-      continue;
-    }
-    if (hasTypedContradiction(analysis, evidence)) {
-      contradicted.push(criterion);
-      continue;
-    }
-    if (hasTypedProof(analysis, evidence)) {
-      matched.push(criterion);
       continue;
     }
     if (
-      analysis.anchors.some(
-        (anchor) =>
-          anchor.kind === 'route' ||
-          anchor.kind === 'file_path' ||
-          anchor.kind === 'command',
-      )
+      claimResults.length > 0 &&
+      claimResults.every((result) => result === 'pass')
     ) {
-      unmatched.push(criterion);
+      matched.push(criterion);
       continue;
     }
-    const proofTerms = genericProofTerms(analysis);
-    if (proofTerms.length < 2) {
-      unmatched.push(criterion);
-      continue;
-    }
-    const matchedByReceipt = haystackLower.some((haystack) => {
-      let hits = 0;
-      for (const term of proofTerms) {
-        if (haystack.includes(term)) hits++;
-        if (hits >= 2) return true;
-      }
-      return false;
-    });
-    if (matchedByReceipt) matched.push(criterion);
-    else unmatched.push(criterion);
+    unmatched.push(criterion);
   }
 
-  const contract = resolveAcceptanceContract(acceptance, persistedContract);
   return {
     matched,
     unmatched,

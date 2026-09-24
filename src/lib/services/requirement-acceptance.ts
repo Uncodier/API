@@ -19,6 +19,10 @@
  * functional deliverable.
  */
 
+import {
+  analyzeAcceptanceRoutePath,
+} from './acceptance-route-path';
+
 const VERB_GLOBAL_RE = /\b(GET|POST|PUT|DELETE|PATCH)\b/g;
 const STATUS_CODE_GLOBAL_RE = /\b([1-5]xx|[1-5]\d\d)\b/gi;
 const ROUTE_RE = /(^|[\s("'`])(\/[^\s,;"'`)]*)/gi;
@@ -58,7 +62,7 @@ interface RouteMatch {
 function routeMatchesInText(text: string): RouteMatch[] {
   const routes: RouteMatch[] = [];
   for (const match of Array.from(text.matchAll(ROUTE_RE))) {
-    const route = (match[2] || '').replace(/[.,;)]+$/, '');
+    const candidate = (match[2] || '').replace(/[.,;)]+$/, '');
     const start = (match.index ?? 0) + (match[1]?.length ?? 0);
     const rootHasRouteSyntax =
       start === 0 ||
@@ -67,17 +71,21 @@ function routeMatchesInText(text: string): RouteMatch[] {
       ) ||
       /["'`(]/.test(text[start - 1] || '');
     if (
-      !route ||
-      route.startsWith('//') ||
-      route.startsWith('/src/') ||
-      route.startsWith('/public/') ||
-      /\.[a-z0-9]{2,8}$/i.test(route) ||
-      (route === '/' && !rootHasRouteSyntax)
+      !candidate ||
+      candidate.startsWith('/src/') ||
+      candidate.startsWith('/public/') ||
+      /\.[a-z0-9]{2,8}$/i.test(candidate) ||
+      (candidate === '/' && !rootHasRouteSyntax)
     ) {
       continue;
     }
-    const value = route.length > 1 ? route.replace(/\/+$/, '') : route;
-    routes.push({ value, start, end: start + route.length });
+    const route = analyzeAcceptanceRoutePath(candidate);
+    if (!route.valid || !route.normalized) continue;
+    routes.push({
+      value: route.normalized,
+      start,
+      end: start + candidate.length,
+    });
   }
   return routes;
 }

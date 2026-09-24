@@ -1,4 +1,7 @@
 import type { HttpMethod } from './step-runtime-probe';
+import type {
+  AcceptanceTargetResolution,
+} from '@/lib/services/requirement-evidence-types';
 
 export type ProbeDisposition =
   | 'pass'
@@ -8,6 +11,7 @@ export type ProbeDisposition =
 
 export type ProbeTargetSource =
   | 'contract'
+  | 'contract_inferred'
   | 'protected_route'
   | 'diff'
   | 'prose'
@@ -30,6 +34,8 @@ export interface RuntimePageTarget {
   source: ProbeTargetSource;
   required: boolean;
   expected_statuses?: number[];
+  criterion_id?: string;
+  target_resolution?: AcceptanceTargetResolution;
 }
 
 export interface RuntimeApiTarget {
@@ -41,10 +47,20 @@ export interface RuntimeApiTarget {
   expected_statuses?: number[];
   payload?: unknown;
   auth_required?: boolean;
+  criterion_id?: string;
+  target_resolution?: AcceptanceTargetResolution;
 }
 
 export interface ProbeObservation {
-  kind: 'runtime' | 'page' | 'api' | 'visual' | 'console' | 'copy' | 'scenario';
+  kind:
+    | 'runtime'
+    | 'page'
+    | 'api'
+    | 'visual'
+    | 'console'
+    | 'copy'
+    | 'scenario'
+    | 'contract';
   disposition: ProbeDisposition;
   source: ProbeObservationSource;
   target?: string;
@@ -52,6 +68,8 @@ export interface ProbeObservation {
   method?: HttpMethod;
   http_status?: number;
   expected_statuses?: number[];
+  criterion_id?: string;
+  target_resolution?: AcceptanceTargetResolution;
 }
 
 export interface RuntimeTargetPlan {
