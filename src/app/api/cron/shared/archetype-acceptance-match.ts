@@ -5,10 +5,18 @@ import {
 } from '@/lib/services/requirement-acceptance';
 import type { EvidenceRecord } from '@/lib/services/requirement-ground-truth';
 import {
+  resolveAcceptanceContract,
+  type AcceptanceContractV1,
+} from '@/lib/services/requirement-acceptance-contract';
+import type {
+  AcceptanceCriterionDiagnostic,
+} from '@/lib/services/requirement-evidence-types';
+import {
   genericEvidenceReceipts,
   genericProofTerms,
 } from './archetype-generic-evidence';
 import { evaluateInternalLinkIntegrity } from './archetype-link-evidence';
+import { buildAcceptanceDiagnostics } from './archetype-acceptance-diagnostics';
 
 type RouteAnchor = Extract<AcceptanceAnchor, { kind: 'route' }>;
 
@@ -307,7 +315,13 @@ function hasTypedContradiction(
 export function matchAcceptanceAgainstEvidence(
   acceptance: string[],
   evidence: EvidenceRecord,
-): { matched: string[]; unmatched: string[]; contradicted: string[] } {
+  persistedContract?: AcceptanceContractV1,
+): {
+  matched: string[];
+  unmatched: string[];
+  contradicted: string[];
+  diagnostics: AcceptanceCriterionDiagnostic[];
+} {
   const matched: string[] = [];
   const unmatched: string[] = [];
   const contradicted: string[] = [];
@@ -382,5 +396,16 @@ export function matchAcceptanceAgainstEvidence(
     else unmatched.push(criterion);
   }
 
-  return { matched, unmatched, contradicted };
+  const contract = resolveAcceptanceContract(acceptance, persistedContract);
+  return {
+    matched,
+    unmatched,
+    contradicted,
+    diagnostics: buildAcceptanceDiagnostics({
+      contract,
+      evidence,
+      matched,
+      contradicted,
+    }),
+  };
 }

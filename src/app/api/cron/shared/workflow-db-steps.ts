@@ -244,6 +244,7 @@ export async function unblockRequirementStep(
     instanceId,
     true,
     actionId,
+    true,
   );
   console.log(
     `[WorkflowDbStep] Atomically resumed requirement ${requirementId}`,

@@ -178,6 +178,54 @@ describe('runArchetypePostGate verification budget', () => {
     }));
   });
 
+  it('quarantines a harness capability gap without product retries', async () => {
+    runJudge.mockReturnValueOnce({
+      verdict: 'escalate',
+      reason: 'Authenticated evidence cannot be collected.',
+      matched_acceptance: [],
+      unmatched_acceptance: ['GET /api/account returns 200'],
+      failure_kind: 'capability_gap',
+      acceptance_diagnostics: [{
+        criterion_id: 'criterion-1',
+        criterion: 'GET /api/account returns 200',
+        status: 'missing',
+        claims: [],
+        gaps: [{
+          code: 'authentication_context_missing',
+          class: 'capability',
+          message: 'No authenticated context.',
+          required: 'GET /api/account returns 200',
+          suggested_action: 'Configure an auth profile.',
+        }],
+      }],
+    });
+    recordToolFailure.mockResolvedValue({
+      ...item,
+      tool_failures: { judge_capability_resolver: 1 },
+    });
+    markNeedsReview.mockResolvedValue({
+      ...item,
+      status: 'needs_review',
+    });
+
+    await expect(runArchetypePostGate(input())).resolves.toMatchObject({
+      judge_failure_kind: 'capability_gap',
+      healing_applied: 'mark_needs_review',
+      verification_exhausted: true,
+      terminal_step_status: 'cancelled',
+      repair_feedback: expect.stringContaining(
+        'authentication_context_missing',
+      ),
+    });
+    expect(recordToolFailure).toHaveBeenCalledWith(expect.objectContaining({
+      toolName: 'judge_capability_resolver',
+    }));
+    expect(markNeedsReview).toHaveBeenCalledTimes(1);
+    expect(markNeedsReview).toHaveBeenCalledWith(expect.objectContaining({
+      reason: expect.stringContaining('authentication_context_missing'),
+    }));
+  });
+
   it('treats the cancellation performed by review handoff as terminal', async () => {
     recordToolFailure.mockResolvedValue({
       ...item,

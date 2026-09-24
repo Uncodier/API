@@ -10,6 +10,7 @@ import {
   ensureVoiceSender,
   regenerateSenderWebhookSecret,
   ZAVU_PROJECT_WEBHOOK_EVENTS,
+  ZAVU_SENDER_MESSAGE_WEBHOOK_EVENTS,
   ZAVU_SENDER_WEBHOOK_EVENTS,
   sendChannelMessage,
 } from "../client";
@@ -72,7 +73,7 @@ describe("Zavu client webhook contract", () => {
             id: "snd_1",
             webhook: {
               url: "https://backend.makinari.com/api/integrations/zavu/webhook",
-              events: ZAVU_SENDER_WEBHOOK_EVENTS,
+              events: ZAVU_SENDER_MESSAGE_WEBHOOK_EVENTS,
               active: true,
             },
           },
@@ -83,7 +84,7 @@ describe("Zavu client webhook contract", () => {
 
     expect(sender.id).toBe("snd_1");
     expect(sender.webhook.secret).toBe("whsec_create");
-    expect(sender.webhook.events).toEqual(ZAVU_SENDER_WEBHOOK_EVENTS);
+    expect(sender.webhook.events).toEqual(ZAVU_SENDER_MESSAGE_WEBHOOK_EVENTS);
 
     const createBody = JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body);
     expect(createBody.webhookEvents).toEqual(ZAVU_SENDER_WEBHOOK_EVENTS);
@@ -101,19 +102,102 @@ describe("Zavu client webhook contract", () => {
       .mockResolvedValueOnce(mockJson(200, { id: "snd_2", webhook: { events: [] } }));
 
     await expect(createSender({ name: "Broken" })).rejects.toThrow(
-      "Zavu sender webhook events were not persisted"
+      "Zavu sender required webhook events were not persisted"
     );
   });
 
   it("ensureSenderWebhook PATCHes the sender event list", async () => {
     (global.fetch as jest.Mock).mockResolvedValueOnce(
-      mockJson(200, { id: "snd_3", webhook: { events: ["message.inbound"], active: true } })
+      mockJson(200, {
+        id: "snd_3",
+        webhook: { events: ZAVU_SENDER_MESSAGE_WEBHOOK_EVENTS, active: true },
+      })
     );
 
     const sender = await ensureSenderWebhook("snd_3");
     expect(sender.id).toBe("snd_3");
     const body = JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body);
     expect(body.webhookEvents).toEqual(ZAVU_SENDER_WEBHOOK_EVENTS);
+  });
+
+  it("rejects a sender when Zavu omits required message webhook events", async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce(
+      mockJson(200, {
+        id: "snd_partial",
+        webhook: { events: ["message.inbound"], active: true },
+      })
+    );
+
+    await expect(ensureSenderWebhook("snd_partial")).rejects.toThrow(
+      "Zavu sender required webhook events were not persisted"
+    );
+  });
+
+  it("accepts message-only senders when Voice events are omitted", async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce(
+      mockJson(200, {
+        id: "snd_message",
+        channels: ["telegram"],
+        webhook: {
+          events: ZAVU_SENDER_MESSAGE_WEBHOOK_EVENTS,
+          active: true,
+        },
+      })
+    );
+
+    await expect(ensureSenderWebhook("snd_message")).resolves.toMatchObject({
+      id: "snd_message",
+    });
+  });
+
+  it("requires Voice events when explicitly requested", async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce(
+      mockJson(200, {
+        id: "snd_voice",
+        webhook: { events: ZAVU_SENDER_WEBHOOK_EVENTS, active: true },
+      })
+    );
+
+    await expect(ensureSenderWebhook("snd_voice", {
+      includeVoiceEvents: true,
+    })).resolves.toMatchObject({ id: "snd_voice" });
+    const body = JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body);
+    expect(body.webhookEvents).toEqual(ZAVU_SENDER_WEBHOOK_EVENTS);
+  });
+
+  it("rejects a Voice sender when Zavu omits Voice webhook events", async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce(
+      mockJson(200, {
+        id: "snd_voice_partial",
+        webhook: {
+          events: ZAVU_SENDER_MESSAGE_WEBHOOK_EVENTS,
+          active: true,
+        },
+      })
+    );
+
+    await expect(ensureSenderWebhook("snd_voice_partial", {
+      includeVoiceEvents: true,
+    })).rejects.toThrow(
+      "Zavu sender required webhook events were not persisted"
+    );
+  });
+
+  it("detects Voice capability from the persisted sender channels", async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce(
+      mockJson(200, {
+        id: "snd_voice_detected",
+        channels: ["voice"],
+        webhook: {
+          events: ZAVU_SENDER_MESSAGE_WEBHOOK_EVENTS,
+          active: true,
+        },
+      })
+    );
+
+    await expect(ensureSenderWebhook("snd_voice_detected")).rejects.toThrow(
+      "Zavu sender required webhook events were not persisted"
+    );
   });
 
   it("regenerates and returns a sender webhook secret", async () => {
@@ -164,7 +248,7 @@ describe("Zavu client webhook contract", () => {
             id: "snd_voice",
             channels: [],
             webhook: {
-              events: ZAVU_SENDER_WEBHOOK_EVENTS,
+              events: ZAVU_SENDER_MESSAGE_WEBHOOK_EVENTS,
               secret: "whsec_sender",
             },
           },
@@ -175,7 +259,7 @@ describe("Zavu client webhook contract", () => {
           sender: {
             id: "snd_voice",
             channels: [],
-            webhook: { events: ZAVU_SENDER_WEBHOOK_EVENTS },
+            webhook: { events: ZAVU_SENDER_MESSAGE_WEBHOOK_EVENTS },
           },
         })
       );

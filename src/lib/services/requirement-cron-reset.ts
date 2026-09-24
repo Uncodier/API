@@ -1,10 +1,4 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { computeRatio } from './requirement-backlog-store';
-import type {
-  BacklogItem,
-  RequirementBacklog,
-} from './requirement-backlog-types';
-import { mutateBacklogAtomically } from './requirement-backlog-mutation';
 import { resumeRequirementExecutionOnUserAction } from './requirement-execution-recovery';
 
 async function findLatestUserActionId(
@@ -17,6 +11,7 @@ async function findLatestUserActionId(
     .select('id')
     .eq('instance_id', instanceId)
     .eq('log_type', 'user_action')
+    .eq('trusted_user_action', true)
     .filter('details->>requirement_id', 'eq', requirementId);
   if (createdAfter) {
     query = query.gt('created_at', createdAfter);
@@ -35,17 +30,25 @@ async function findLatestUserActionId(
 
 async function tagUserActionWithRequirement(
   actionId: string,
+  instanceId: string,
   requirementId: string,
 ): Promise<boolean> {
   const { data, error } = await supabaseAdmin
     .from('instance_logs')
-    .select('details')
+    .select('details, instance_id, log_type, trusted_user_action')
     .eq('id', actionId)
     .maybeSingle();
   if (error) {
     throw new Error(`Failed to load user action ${actionId}: ${error.message}`);
   }
-  if (!data) return false;
+  if (
+    !data ||
+    data.instance_id !== instanceId ||
+    data.log_type !== 'user_action' ||
+    data.trusted_user_action !== true
+  ) {
+    return false;
+  }
   const details =
     data.details && typeof data.details === 'object' ? data.details : {};
   const existingRequirementId =
@@ -71,44 +74,6 @@ async function tagUserActionWithRequirement(
   return true;
 }
 
-export function reopenReviewBacklogOnUserAction(
-  backlogValue: unknown,
-): { backlog?: RequirementBacklog; reopenedItemIds: string[] } {
-  if (!backlogValue || typeof backlogValue !== 'object') {
-    return { reopenedItemIds: [] };
-  }
-  const backlog = backlogValue as RequirementBacklog;
-  if (!Array.isArray(backlog.items)) return { reopenedItemIds: [] };
-
-  const reopenedItemIds: string[] = [];
-  const items = backlog.items.map((item: BacklogItem) => {
-    if (item.status !== 'needs_review') return item;
-    reopenedItemIds.push(item.id);
-    return {
-      ...item,
-      status: 'pending' as const,
-      attempts: 0,
-      assumptions: Array.from(new Set([
-        ...(item.assumptions || []),
-        '[user-feedback] Reopened for mandatory execution and validation.',
-      ])).slice(-20),
-      updated_at: new Date().toISOString(),
-    };
-  });
-  if (reopenedItemIds.length === 0) return { reopenedItemIds };
-
-  const firstReopened = items.find((item) => reopenedItemIds.includes(item.id));
-  return {
-    backlog: {
-      ...backlog,
-      items,
-      current_phase_id: firstReopened?.phase_id || backlog.current_phase_id,
-      completion_ratio: computeRatio(items),
-    },
-    reopenedItemIds,
-  };
-}
-
 /**
  * Checks if there has been a recent user action (e.g. within 15 minutes) for the given requirement,
  * and if so, resets the `cron_attempts` to 0 to unblock the cron job.
@@ -132,32 +97,18 @@ export async function checkAndResetCronAttempts(
       fifteenMinutesAgo,
     );
     if (actionId) {
-      if (metadata?.requirement_last_resume_action_id === actionId) {
-        return false;
-      }
-      const recovery = await mutateBacklogAtomically(
+      const recovery = await resumeRequirementExecutionOnUserAction(
         requirementId,
-        ({ backlog }) => {
-          const reopened = reopenReviewBacklogOnUserAction(backlog);
-          return {
-            result: reopened.reopenedItemIds,
-            backlog: reopened.backlog,
-            write: !!reopened.backlog,
-          };
-        },
-        { onMissing: () => [] as string[] },
+        instanceId,
+        true,
+        actionId,
       );
       console.log(
         `[CronReset] Recent user action detected for requirement ${requirementId}. ` +
-        `Resetting cron attempts and reopening ${recovery.length} review item(s).`,
+        `Resetting cron attempts and reopening ` +
+        `${recovery.reopened_item_ids.length} review item(s).`,
       );
-      const resume = await resumeRequirementExecutionOnUserAction(
-        requirementId,
-        instanceId,
-        recovery.length > 0,
-        actionId,
-      );
-      return resume.state === 'applied';
+      return recovery.state === 'applied';
     }
   } catch (error) {
     console.error(`[CronReset] Unexpected error:`, error);
@@ -214,6 +165,7 @@ export async function resetRequirementOnUserAction(
       try {
         const scoped = await tagUserActionWithRequirement(
           actionId,
+          instanceId,
           requirementId,
         );
         if (!scoped) {
@@ -229,44 +181,18 @@ export async function resetRequirementOnUserAction(
         );
         return;
       }
-      const recovery = await mutateBacklogAtomically(
-        requirementId,
-        ({ requirement, backlog }) => {
-          const reopened = ['blocked', 'on-review'].includes(
-            requirement.status || '',
-          )
-            ? reopenReviewBacklogOnUserAction(backlog)
-            : { reopenedItemIds: [] };
-          return {
-            result: {
-              found: true,
-              status: requirement.status,
-              metadata: requirement.metadata,
-              reopenedItemIds: reopened.reopenedItemIds,
-            },
-            backlog: reopened.backlog,
-            write: !!reopened.backlog,
-          };
-        },
-        {
-          onMissing: () => ({
-            found: false,
-            status: null,
-            metadata: null,
-            reopenedItemIds: [],
-          }),
-        },
-      );
-      if (!recovery.found) return;
-      await resumeRequirementExecutionOnUserAction(
+      const recovery = await resumeRequirementExecutionOnUserAction(
         requirementId,
         instanceId,
-        recovery.status === 'blocked' || recovery.status === 'on-review',
+        true,
         actionId,
       );
+      if (recovery.state === 'missing' || recovery.state === 'untrusted') {
+        return;
+      }
 
       console.log(
-        `[CronReset] User action on instance ${instanceId} -> Reset requirement ${requirementId} to in-progress (cron_attempts=0, reopened=${recovery.reopenedItemIds.length})`,
+        `[CronReset] User action on instance ${instanceId} -> Reset requirement ${requirementId} to in-progress (cron_attempts=0, reopened=${recovery.reopened_item_ids.length})`,
       );
     }
   } catch (error) {

@@ -9,6 +9,7 @@ import type {
   BacklogBlocker,
   BacklogItemStatus,
   BacklogItemTier,
+  BacklogReviewQuarantine,
 } from './requirement-backlog-types';
 
 export interface CycleWrapUpPromptInput {
@@ -60,6 +61,7 @@ type FeedbackBacklogItem = {
   phase_id?: string;
   depends_on?: string[];
   blocked_by?: BacklogBlocker[];
+  review_quarantine?: BacklogReviewQuarantine;
 };
 
 export function hasRunnableBacklogWork(
@@ -80,6 +82,7 @@ export function hasRunnableBacklogWork(
         tier: item.tier,
         depends_on: item.depends_on,
         blocked_by: item.blocked_by,
+        review_quarantine: item.review_quarantine,
       },
       completedIds,
       limits,
@@ -138,6 +141,7 @@ export function feedbackRequiredBacklogItems(
         tier: item.tier,
         depends_on: item.depends_on,
         blocked_by: item.blocked_by,
+        review_quarantine: item.review_quarantine,
       },
       new Set(
         items

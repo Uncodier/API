@@ -22,9 +22,41 @@ import {
   sandboxCaptureScreenshotsTool,
   sandboxVisualCritiqueTool,
 } from '@/app/api/agents/tools/sandbox/visual-tools';
+import { writeEvidence } from '@/lib/services/requirement-ground-truth';
+import {
+  evidenceFromQaToolResult,
+} from '@/app/api/cron/shared/step-agent-probe-evidence';
 
 const WD = SandboxService.WORK_DIR;
 const PROBE_PORT = SandboxService.VISUAL_PROBE_PORT;
+
+async function persistQaToolEvidence(
+  toolName: string,
+  payload: unknown,
+  requirementId?: string,
+  toolsCtx?: SandboxToolsContext,
+): Promise<boolean> {
+  if (!requirementId || !toolsCtx?.backlog_item_id) return false;
+  const extracted = evidenceFromQaToolResult(toolName, payload);
+  if (
+    extracted.observations.length === 0 &&
+    extracted.scenario_assertions.length === 0
+  ) {
+    return false;
+  }
+  await writeEvidence({
+    requirementId,
+    itemId: toolsCtx.backlog_item_id,
+    requireCanonicalPersistence: true,
+    record: {
+      producer_step_id: toolsCtx.active_step_id,
+      captured_at: new Date().toISOString(),
+      observations: extracted.observations,
+      scenario_assertions: extracted.scenario_assertions,
+    },
+  });
+  return true;
+}
 
 async function readTail(sandbox: Sandbox, path: string, maxBytes: number): Promise<string> {
   try {
@@ -38,11 +70,15 @@ async function readTail(sandbox: Sandbox, path: string, maxBytes: number): Promi
   }
 }
 
-export function sandboxProbeRoutesTool(sandbox: Sandbox, toolsCtx?: SandboxToolsContext) {
+export function sandboxProbeRoutesTool(
+  sandbox: Sandbox,
+  toolsCtx?: SandboxToolsContext,
+  requirementId?: string,
+) {
   return {
     name: 'sandbox_probe_routes',
     description:
-      'Boot `next start` inside the sandbox and probe one or more HTTP page routes with curl. Returns per-route status, content-type, body snippet, server error summary, and server log tail. Use this to verify a page renders at runtime before marking a step as done.',
+      'Boot `next start` inside the sandbox and probe one or more HTTP page routes with curl. Returns per-route status, content-type, body snippet, server error summary, and server log tail. When a backlog item is bound, typed receipts are persisted for the Judge. Use this to verify a page renders at runtime before marking a step as done.',
     parameters: {
       type: 'object',
       properties: {
@@ -72,7 +108,7 @@ export function sandboxProbeRoutesTool(sandbox: Sandbox, toolsCtx?: SandboxTools
         port: PROBE_PORT,
         keepServerAlive: false,
       });
-      return {
+      const payload = {
         ok: result.ok,
         port: result.port,
         duration_ms: result.duration_ms,
@@ -82,15 +118,26 @@ export function sandboxProbeRoutesTool(sandbox: Sandbox, toolsCtx?: SandboxTools
         server_log_tail: result.server_log_tail.slice(-4000),
         summary: summarizeRuntimeProbe(result),
       };
+      const evidencePersisted = await persistQaToolEvidence(
+        'sandbox_probe_routes',
+        payload,
+        requirementId,
+        toolsCtx,
+      );
+      return { ...payload, evidence_persisted: evidencePersisted };
     },
   };
 }
 
-export function sandboxProbeApiTool(sandbox: Sandbox, toolsCtx?: SandboxToolsContext) {
+export function sandboxProbeApiTool(
+  sandbox: Sandbox,
+  toolsCtx?: SandboxToolsContext,
+  requirementId?: string,
+) {
   return {
     name: 'sandbox_probe_api',
     description:
-      'Boot `next start` inside the sandbox and probe API routes (src/app/api/**) with curl. Each target can include method + JSON payload. Use this to verify a server action or API route works at runtime.',
+      'Boot `next start` inside the sandbox and probe API routes (src/app/api/**) with curl. Each target can include method + JSON payload. When a backlog item is bound, typed receipts are persisted for the Judge. Use this to verify a server action or API route works at runtime.',
     parameters: {
       type: 'object',
       properties: {
@@ -149,7 +196,7 @@ export function sandboxProbeApiTool(sandbox: Sandbox, toolsCtx?: SandboxToolsCon
         port: PROBE_PORT,
         keepServerAlive: false,
       });
-      return {
+      const payload = {
         ok: result.ok,
         port: result.port,
         duration_ms: result.duration_ms,
@@ -158,15 +205,26 @@ export function sandboxProbeApiTool(sandbox: Sandbox, toolsCtx?: SandboxToolsCon
         server_errors: result.server_errors.slice(0, 20),
         server_log_tail: result.server_log_tail.slice(-4000),
       };
+      const evidencePersisted = await persistQaToolEvidence(
+        'sandbox_probe_api',
+        payload,
+        requirementId,
+        toolsCtx,
+      );
+      return { ...payload, evidence_persisted: evidencePersisted };
     },
   };
 }
 
-export function sandboxRunScenarioTool(sandbox: Sandbox, toolsCtx?: SandboxToolsContext) {
+export function sandboxRunScenarioTool(
+  sandbox: Sandbox,
+  toolsCtx?: SandboxToolsContext,
+  requirementId?: string,
+) {
   return {
     name: 'sandbox_run_scenario',
     description:
-      'Run declarative E2E scenarios from `.qa/scenarios/*.json` against a freshly booted `next start` server. Returns per-scenario outcomes (pass/fail, step index of first failure, console errors, network failures). Use this after authoring or editing scenarios to verify coverage before marking the QA step done.',
+      'Run declarative E2E scenarios from `.qa/scenarios/*.json` against a freshly booted `next start` server. Returns per-scenario outcomes and persists typed assertion receipts for the bound backlog item. Use this after authoring or editing scenarios to verify coverage before marking the QA step done.',
     parameters: {
       type: 'object',
       properties: {
@@ -223,7 +281,7 @@ export function sandboxRunScenarioTool(sandbox: Sandbox, toolsCtx?: SandboxTools
           ? result.scenarios.filter((s) => args.only!.some((n) => s.scenario.startsWith(n) || s.scenario === n))
           : result.scenarios;
         const allPassed = filtered.every((s) => s.pass);
-        return {
+        const payload = {
           ok: allPassed,
           server_booted: true,
           base_url: result.base_url,
@@ -242,6 +300,13 @@ export function sandboxRunScenarioTool(sandbox: Sandbox, toolsCtx?: SandboxTools
           }),
           error: result.error,
         };
+        const evidencePersisted = await persistQaToolEvidence(
+          'sandbox_run_scenario',
+          payload,
+          requirementId,
+          toolsCtx,
+        );
+        return { ...payload, evidence_persisted: evidencePersisted };
       } finally {
         await stopProbeServer(s0, rt.port);
       }
@@ -343,9 +408,9 @@ export { sandboxCaptureScreenshotsTool, sandboxVisualCritiqueTool };
 
 export function getQaSandboxTools(sandbox: Sandbox, requirementId?: string, toolsCtx?: SandboxToolsContext) {
   return [
-    sandboxProbeRoutesTool(sandbox, toolsCtx),
-    sandboxProbeApiTool(sandbox, toolsCtx),
-    sandboxRunScenarioTool(sandbox, toolsCtx),
+    sandboxProbeRoutesTool(sandbox, toolsCtx, requirementId),
+    sandboxProbeApiTool(sandbox, toolsCtx, requirementId),
+    sandboxRunScenarioTool(sandbox, toolsCtx, requirementId),
     sandboxTailServerLogTool(sandbox, toolsCtx),
     sandboxTailApiLogTool(sandbox, toolsCtx),
     sandboxCaptureScreenshotsTool(sandbox, requirementId, toolsCtx),

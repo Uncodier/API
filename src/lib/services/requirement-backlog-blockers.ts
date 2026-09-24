@@ -100,12 +100,18 @@ export function isBacklogItemBlocked(
 export function isBacklogItemRunnable(
   item: Pick<
     BacklogItem,
-    'status' | 'attempts' | 'tier' | 'depends_on' | 'blocked_by'
+    | 'status'
+    | 'attempts'
+    | 'tier'
+    | 'depends_on'
+    | 'blocked_by'
+    | 'review_quarantine'
   >,
   completedIds: ReadonlySet<string>,
   limits?: { core: number; ornamental: number },
 ): boolean {
   if (item.status !== 'pending' && item.status !== 'in_progress') return false;
+  if (item.review_quarantine?.active === true) return false;
   if (isBacklogItemBlocked(item)) return false;
   if (
     limits &&

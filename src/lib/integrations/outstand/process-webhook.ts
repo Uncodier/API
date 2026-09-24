@@ -1,5 +1,6 @@
 import type { OutstandWebhookPayload } from './webhook-types';
 import { supabaseAdmin } from '../../database/supabase-client';
+import { syncOutstandInboxWebhook } from './inbox-sync';
 
 /**
  * Handles verified Outstand webhook events. Keep side effects async-friendly
@@ -8,6 +9,15 @@ import { supabaseAdmin } from '../../database/supabase-client';
 export async function processOutstandWebhookPayload(
   payload: OutstandWebhookPayload
 ): Promise<void> {
+  if (
+    payload.event === 'conversation.started'
+    || payload.event === 'message.received'
+    || payload.event === 'message.sent'
+    || payload.event === 'message.failed'
+  ) {
+    await syncOutstandInboxWebhook(payload);
+  }
+
   switch (payload.event) {
     case 'post.published':
       console.log('[Outstand webhook] post.published', {
@@ -87,6 +97,46 @@ export async function processOutstandWebhookPayload(
         accountId: payload.data.accountId,
         network: payload.data.network,
         username: payload.data.username,
+        error: payload.data.error,
+        timestamp: payload.timestamp,
+      });
+      break;
+    case 'conversation.started':
+      console.log('[Outstand webhook] conversation.started', {
+        conversationId: payload.data.conversationId,
+        orgId: payload.data.orgId,
+        network: payload.data.network,
+        participantId: payload.data.participantId,
+        timestamp: payload.timestamp,
+      });
+      break;
+    case 'message.received':
+      console.log('[Outstand webhook] message.received', {
+        conversationId: payload.data.conversationId,
+        messageId: payload.data.messageId,
+        orgId: payload.data.orgId,
+        network: payload.data.network,
+        senderId: payload.data.senderId,
+        sentAt: payload.data.sentAt,
+        timestamp: payload.timestamp,
+      });
+      break;
+    case 'message.sent':
+      console.log('[Outstand webhook] message.sent', {
+        conversationId: payload.data.conversationId,
+        messageId: payload.data.messageId,
+        orgId: payload.data.orgId,
+        network: payload.data.network,
+        platformMessageId: payload.data.platformMessageId,
+        timestamp: payload.timestamp,
+      });
+      break;
+    case 'message.failed':
+      console.error('[Outstand webhook] message.failed', {
+        conversationId: payload.data.conversationId,
+        messageId: payload.data.messageId,
+        orgId: payload.data.orgId,
+        network: payload.data.network,
         error: payload.data.error,
         timestamp: payload.timestamp,
       });

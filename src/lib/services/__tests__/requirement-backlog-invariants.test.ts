@@ -108,4 +108,15 @@ describe('backlog graph invariants', () => {
       'in_progress',
     )).toThrow(/blocked_by is not empty/);
   });
+
+  it('keeps needs-review items quarantined in application transitions', () => {
+    const reviewItem = item('review', [], 'needs_review');
+
+    expect(() => assertBacklogStatusTransition(
+      [reviewItem],
+      'review',
+      'pending',
+    )).toThrow(/new external user action must reopen it/);
+
+  });
 });

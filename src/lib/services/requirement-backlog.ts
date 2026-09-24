@@ -14,6 +14,7 @@ import {
   classifyRequirementType,
   getFlow,
   advancePhaseIfReadyInMemory,
+  productAttemptLimits,
   type RequirementKind,
 } from './requirement-flows';
 import {
@@ -37,8 +38,14 @@ import {
 } from './requirement-backlog-invariants';
 import { mutateBacklogAtomically } from './requirement-backlog-mutation';
 import { validateAcceptance } from './requirement-acceptance';
+import { compileAcceptanceContract } from './requirement-acceptance-contract';
 import { cancelPlanStepsForBacklogItem } from '@/lib/helpers/plan-lifecycle';
 import { isBacklogItemRunnable } from './requirement-backlog-blockers';
+import {
+  fulfillPlanCancellationRequests,
+  pendingPlanCancellation,
+} from './requirement-plan-cancellation';
+import { applyBacklogStatusLifecycle } from './requirement-review-quarantine';
 
 export type { BacklogItem, BacklogItemStatus, BacklogItemKind, BacklogItemScope, BacklogItemTier, RequirementBacklog };
 
@@ -97,25 +104,6 @@ export function pendingCoreItems(items: BacklogItem[]): BacklogItem[] {
   return outstandingGatingItems(items);
 }
 
-const TERMINAL_REQUIREMENT_STAGES = new Set(['done', 'completed', 'cancelled', 'failed']);
-
-export async function isRequirementReopened(requirementId: string): Promise<boolean> {
-  const { supabaseAdmin } = await import('@/lib/database/supabase-server');
-  const { data } = await supabaseAdmin
-    .from('requirement_status')
-    .select('stage, created_at')
-    .eq('requirement_id', requirementId)
-    .order('created_at', { ascending: false })
-    .limit(50);
-  if (!data || data.length === 0) return false;
-  const latest = String(data[0].stage || '').toLowerCase();
-  if (TERMINAL_REQUIREMENT_STAGES.has(latest)) return false;
-  for (let i = 1; i < data.length; i++) {
-    if (TERMINAL_REQUIREMENT_STAGES.has(String(data[i].stage || '').toLowerCase())) return true;
-  }
-  return false;
-}
-
 // Web Crypto UUID generator. Avoids importing the Node `crypto` module so this
 // file can be safely bundled inside workflow functions (useworkflow.dev), which
 // reject Node.js modules. `globalThis.crypto.randomUUID` is available in Node
@@ -144,6 +132,7 @@ function ensureItemDefaults(partial: Partial<BacklogItem> & { title: string; kin
     kind: partial.kind,
     phase_id: partial.phase_id,
     acceptance: partial.acceptance,
+    acceptance_contract: compileAcceptanceContract(partial.acceptance),
     touches: partial.touches,
     status: (partial.status as BacklogItemStatus) || 'pending',
     attempts: typeof partial.attempts === 'number' ? partial.attempts : 0,
@@ -194,9 +183,13 @@ export async function upsertBacklogItem(params: {
 
       if ((next.tier ?? 'core') === 'core') {
         const validation = validateAcceptance(next.acceptance);
-        if (!validation.has_any_executable) {
+        if (
+          !validation.has_any_executable ||
+          validation.narrative.length > 0
+        ) {
           throw new Error(
-            `Backlog upsert rejected: tier=core item "${next.title}" has narrative-only acceptance. ` +
+            `Backlog upsert rejected: tier=core item "${next.title}" has ` +
+              `${validation.narrative.length}/${next.acceptance.length} narrative acceptance entries. ` +
               'Add at least one executable anchor per entry — HTTP verb (GET/POST/...), route ' +
               '(/api/...), status code (2xx/200) or observable verb (returns, renders, inserts, ' +
               'creates, updates, deletes, redirects, persists). Or set tier=ornamental.',
@@ -300,12 +293,28 @@ export async function suspendItemForRemediation(params: {
   return suspended;
 }
 
+function assertProductAttemptAvailable(
+  item: BacklogItem,
+  limits: { core: number; ornamental: number },
+): void {
+  const limit = (item.tier ?? 'core') === 'ornamental'
+    ? limits.ornamental
+    : limits.core;
+  if ((item.attempts || 0) >= limit) {
+    throw new Error(`Item ${item.id} exhausted its ${limit} product attempts`);
+  }
+}
+
 export async function markInProgress(params: { requirementId: string; itemId: string }): Promise<BacklogItem> {
   return mutateBacklogAtomically(
     params.requirementId,
     ({ backlog, flow }) => {
       const idx = backlog.items.findIndex((item) => item.id === params.itemId);
       if (idx < 0) throw new Error(`Item ${params.itemId} not found`);
+      const item = backlog.items[idx];
+      if (item.status === 'pending') {
+        assertProductAttemptAvailable(item, productAttemptLimits(flow));
+      }
       assertBacklogStatusTransition(backlog.items, params.itemId, 'in_progress');
       backlog.items[idx] = {
         ...backlog.items[idx],
@@ -334,34 +343,39 @@ export async function setItemStatus(params: {
 }): Promise<BacklogItem> {
   const item = await mutateBacklogAtomically(
     params.requirementId,
-    ({ backlog, flow }) => {
+    ({ requirement, backlog, flow }) => {
       const idx = backlog.items.findIndex((candidate) => candidate.id === params.itemId);
       if (idx < 0) throw new Error(`Item ${params.itemId} not found`);
+      if (
+        params.status === 'in_progress' &&
+        backlog.items[idx].status === 'pending'
+      ) {
+        assertProductAttemptAvailable(
+          backlog.items[idx],
+          productAttemptLimits(flow),
+        );
+      }
       assertBacklogStatusTransition(
         backlog.items,
         params.itemId,
         params.status,
-        { allowDoneReopen: params.allowDoneReopen },
+        {
+          allowDoneReopen: params.allowDoneReopen,
+        },
       );
       if (params.status === 'done' && !hasApprovedJudgeEvidence(backlog.items[idx])) {
         throw new Error(
           `Cannot mark backlog item ${params.itemId} done without an approved Judge verdict`,
         );
       }
-      const reopeningCompletedItem =
-        backlog.items[idx].status === 'done' &&
-        params.status === 'pending';
-      backlog.items[idx] = {
-        ...backlog.items[idx],
+      backlog.items[idx] = applyBacklogStatusLifecycle({
+        item: backlog.items[idx],
         status: params.status,
-        ...(params.status === 'done' ? { blocked_by: undefined } : {}),
-        ...(reopeningCompletedItem ? { evidence: undefined } : {}),
-        updated_at: new Date().toISOString(),
-      };
-      if (params.reason && params.status !== 'done') {
-        const assumptions = backlog.items[idx].assumptions || [];
-        backlog.items[idx].assumptions = [...assumptions, params.reason].slice(-20);
-      }
+        reason: params.reason,
+        externalActionRevision:
+          Number(requirement.external_user_action_revision) || 0,
+        now: new Date().toISOString(),
+      });
       assertBacklogInvariants(
         backlog.items,
         flow.phases.map((phase) => phase.id),
@@ -380,22 +394,11 @@ export async function setItemStatus(params: {
   // (For `done` we leave the plan alone — its steps should already be
   // completing naturally as the work lands.)
   if (params.status === 'needs_review' || params.status === 'rejected') {
-    const cancellation = await cancelPlanStepsForBacklogItem({
+    const request = pendingPlanCancellation(item);
+    await fulfillPlanCancellationRequests({
       requirementId: params.requirementId,
-      itemId: params.itemId,
-      reason: `setItemStatus → ${params.status}: ${params.reason ?? 'no reason provided'}`.slice(0, 240),
+      requests: request ? [request] : [],
     });
-    if (cancellation.errors.length > 0) {
-      throw new Error(
-        `Failed to cancel plans for ${params.itemId} after ` +
-        `status=${params.status}: ${cancellation.errors.join('; ')}`,
-      );
-    }
-    if (cancellation.stepsCancelled > 0) {
-      console.warn(
-        `[backlog] cancelled ${cancellation.stepsCancelled} plan step(s) bound to item ${params.itemId} after status=${params.status} (plansTouched=${cancellation.plansTouched}, plansCancelled=${cancellation.plansCancelled})`,
-      );
-    }
   }
 
   return item;

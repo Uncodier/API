@@ -1,14 +1,9 @@
-const mockMutateBacklogAtomically = jest.fn();
 const mockRequirementStatusSingle = jest.fn();
 const mockUserActionLimit = jest.fn();
 const mockUserActionSingle = jest.fn();
 const mockUserActionUpdate = jest.fn();
 const mockUserActionFilter = jest.fn();
 const mockResumeRequirementExecution = jest.fn();
-
-jest.mock('../requirement-backlog-mutation', () => ({
-  mutateBacklogAtomically: mockMutateBacklogAtomically,
-}));
 
 jest.mock(
   '../requirement-execution-recovery',
@@ -73,66 +68,30 @@ describe('resetRequirementOnUserAction concurrency', () => {
       state: 'applied',
       plans_updated: 1,
       steps_cleared: 1,
+      reopened_item_ids: ['review-item'],
+      external_user_action_revision: 2,
     });
     mockUserActionLimit.mockResolvedValue({
       data: [{ id: 'user-action-1' }],
       error: null,
     });
     mockUserActionSingle.mockResolvedValue({
-      data: { details: { prompt_source: 'assistant_route' } },
+      data: {
+        details: { prompt_source: 'assistant_route' },
+        instance_id: 'instance-1',
+        log_type: 'user_action',
+        trusted_user_action: true,
+      },
       error: null,
     });
   });
 
-  it('reopens review items through the atomic backlog mutator', async () => {
-    mockMutateBacklogAtomically.mockImplementation(
-      async (_requirementId, mutate) => {
-        const outcome = await mutate({
-          requirement: {
-            id: 'requirement-1',
-            type: 'app',
-            status: 'blocked',
-            metadata: { cron_attempts: 9 },
-            backlog_revision: 4,
-            backlog: {},
-          },
-          backlog: {
-            schema_version: 1,
-            current_phase_id: 'review',
-            completion_ratio: 0,
-            cycles_spent_total: 0,
-            items: [{
-              id: 'review-item',
-              title: 'Repair checkout',
-              kind: 'page',
-              phase_id: 'build',
-              acceptance: ['GET /checkout renders the checkout page'],
-              status: 'needs_review',
-              attempts: 4,
-              scope_level: 'full',
-            }],
-          },
-          flow: { phases: [] },
-        });
-        expect(outcome.write).toBe(true);
-        expect(outcome.backlog?.items[0]).toEqual(expect.objectContaining({
-          status: 'pending',
-          attempts: 0,
-        }));
-        return outcome.result;
-      },
-    );
-
+  it('delegates review release to the atomic recovery RPC', async () => {
     await resetRequirementOnUserAction(
       'instance-1',
       'inserted-user-action',
     );
 
-    expect(mockMutateBacklogAtomically).toHaveBeenCalledWith(
-      'requirement-1',
-      expect.any(Function),
-      expect.any(Object),
-    );
     expect(mockResumeRequirementExecution).toHaveBeenCalledWith(
       'requirement-1',
       'instance-1',
@@ -149,8 +108,6 @@ describe('resetRequirementOnUserAction concurrency', () => {
   });
 
   it('reports when recent user feedback was applied', async () => {
-    mockMutateBacklogAtomically.mockResolvedValue([]);
-
     await expect(checkAndResetCronAttempts('requirement-1', {
       runner_instance_id: 'instance-1',
     })).resolves.toBe(true);
@@ -158,7 +115,7 @@ describe('resetRequirementOnUserAction concurrency', () => {
     expect(mockResumeRequirementExecution).toHaveBeenCalledWith(
       'requirement-1',
       'instance-1',
-      false,
+      true,
       'user-action-1',
     );
     expect(mockUserActionFilter).toHaveBeenCalledWith(
@@ -169,11 +126,12 @@ describe('resetRequirementOnUserAction concurrency', () => {
   });
 
   it('does not report duplicate feedback as a new recovery', async () => {
-    mockMutateBacklogAtomically.mockResolvedValue([]);
     mockResumeRequirementExecution.mockResolvedValueOnce({
       state: 'duplicate',
       plans_updated: 0,
       steps_cleared: 0,
+      reopened_item_ids: [],
+      external_user_action_revision: 2,
     });
 
     await expect(checkAndResetCronAttempts('requirement-1', {
@@ -181,19 +139,23 @@ describe('resetRequirementOnUserAction concurrency', () => {
     })).resolves.toBe(false);
   });
 
-  it('does not reopen backlog items for an already consumed action', async () => {
+  it('does not trust model-writable recovery metadata for deduplication', async () => {
     await expect(checkAndResetCronAttempts('requirement-1', {
       runner_instance_id: 'instance-1',
       requirement_last_resume_action_id: 'user-action-1',
-    })).resolves.toBe(false);
+    })).resolves.toBe(true);
 
-    expect(mockMutateBacklogAtomically).not.toHaveBeenCalled();
-    expect(mockResumeRequirementExecution).not.toHaveBeenCalled();
+    expect(mockResumeRequirementExecution).toHaveBeenCalled();
   });
 
   it('does not recover a requirement from an action tagged to another one', async () => {
     mockUserActionSingle.mockResolvedValueOnce({
-      data: { details: { requirement_id: 'requirement-2' } },
+      data: {
+        details: { requirement_id: 'requirement-2' },
+        instance_id: 'instance-1',
+        log_type: 'user_action',
+        trusted_user_action: true,
+      },
       error: null,
     });
 
@@ -202,7 +164,35 @@ describe('resetRequirementOnUserAction concurrency', () => {
       'foreign-user-action',
     );
 
-    expect(mockMutateBacklogAtomically).not.toHaveBeenCalled();
     expect(mockResumeRequirementExecution).not.toHaveBeenCalled();
+  });
+
+  it('rejects an untrusted user-action row before recovery', async () => {
+    mockUserActionSingle.mockResolvedValueOnce({
+      data: {
+        details: {},
+        instance_id: 'instance-1',
+        log_type: 'user_action',
+        trusted_user_action: false,
+      },
+      error: null,
+    });
+
+    await resetRequirementOnUserAction('instance-1', 'forged-action');
+
+    expect(mockResumeRequirementExecution).not.toHaveBeenCalled();
+  });
+
+  it('lets the RPC release review items while the requirement is active', async () => {
+    await expect(checkAndResetCronAttempts('requirement-1', {
+      runner_instance_id: 'instance-1',
+    })).resolves.toBe(true);
+
+    expect(mockResumeRequirementExecution).toHaveBeenCalledWith(
+      'requirement-1',
+      'instance-1',
+      true,
+      'user-action-1',
+    );
   });
 });

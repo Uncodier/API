@@ -1,9 +1,11 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 
 export interface RequirementExecutionRecoveryResult {
-  state: 'applied' | 'duplicate' | 'guarded' | 'missing';
+  state: 'applied' | 'duplicate' | 'guarded' | 'missing' | 'untrusted';
   plans_updated: number;
   steps_cleared: number;
+  reopened_item_ids: string[];
+  external_user_action_revision: number;
 }
 
 export async function resumeRequirementExecutionOnUserAction(
@@ -30,9 +32,13 @@ export async function resumeRequirementExecutionOnUserAction(
   }
   if (
     !data ||
-    !['applied', 'duplicate', 'guarded', 'missing'].includes(data.state) ||
+    !['applied', 'duplicate', 'guarded', 'missing', 'untrusted'].includes(
+      data.state,
+    ) ||
     typeof data.plans_updated !== 'number' ||
-    typeof data.steps_cleared !== 'number'
+    typeof data.steps_cleared !== 'number' ||
+    !Array.isArray(data.reopened_item_ids) ||
+    typeof data.external_user_action_revision !== 'number'
   ) {
     throw new Error('Instance execution recovery RPC returned an invalid result');
   }

@@ -8,7 +8,6 @@ import {
   markNeedsReview,
   setItemStatus,
   upsertBacklogItem,
-  isRequirementReopened,
   isBacklogComplete,
   hasUserRequestedMoreWork,
   type BacklogItemStatus,
@@ -60,7 +59,6 @@ export interface BacklogCoreParams {
   source_step_id?: string;
   user_action_required?: boolean;
   retry_after?: string;
-  confirm_reopen?: boolean;
 }
 
 export async function executeBacklogCore(params: BacklogCoreParams) {
@@ -113,17 +111,27 @@ export async function executeBacklogCore(params: BacklogCoreParams) {
         throw new Error('upsert requires title, kind, phase_id, acceptance[]');
       }
       const { backlog } = await listBacklog(requirement_id);
+      const existingItem = params.item_id
+        ? backlog?.items?.find((item: any) => item.id === params.item_id)
+        : undefined;
+      if (
+        existingItem &&
+        ['done', 'needs_review', 'rejected'].includes(existingItem.status)
+      ) {
+        throw new Error(
+          `Backlog item ${params.item_id} is terminal in ` +
+          `"${existingItem.status}" and cannot be rewritten by model-facing ` +
+          'tools. Create a new remediation item instead.',
+        );
+      }
       if (isBacklogComplete(backlog?.items || [])) {
-        const reopened = await isRequirementReopened(requirement_id);
         const userRequested = await hasUserRequestedMoreWork(requirement_id);
-        if (!reopened && !userRequested) {
+        if (!userRequested) {
           throw new Error(
-            'Backlog cerrado: el requirement está en cooldown (todos los items entregables están completados y nunca fue reabierto). ' +
-            'Llama `requirement_status stage=\'on-review\' message=\'Project complete\'` y termina el turno. ' +
-            'Si el usuario pidió trabajo extra, reabre explícitamente el proyecto usando: ' +
-            'requirements.update(requirement_id=..., completion_status=\'pending\', status=\'in-progress\') + ' +
-            'requirement_status(stage=\'in-progress\', message=\'reopen: <motivo>\'). ' +
-            'NO crees un requirement nuevo ni agregues items sin reabrir.'
+            'The backlog is closed: all deliverable items are complete and ' +
+            'there is no newer trusted external user action. Report the ' +
+            'requirement as complete; only a new user message can authorize ' +
+            'additional backlog work.'
           );
         }
       }
@@ -205,22 +213,33 @@ export async function executeBacklogCore(params: BacklogCoreParams) {
         itemId: params.item_id,
         blockerId: params.blocker_id,
         reason: params.reason,
+        resolver: 'agent',
       });
       return { action, requirement_id, item };
     }
     case 'set_status': {
       if (!params.item_id || !params.status) throw new Error('set_status requires item_id + status');
       
-      // Fix #4: Protect done items from silent reopens
       const { backlog } = await listBacklog(requirement_id);
       const existingItem = backlog?.items?.find((i: any) => i.id === params.item_id);
-      if (existingItem?.status === 'done' && params.status !== 'done' && !params.confirm_reopen) {
+      if (
+        (existingItem?.status === 'done' ||
+          existingItem?.status === 'needs_review' ||
+          existingItem?.status === 'rejected') &&
+        params.status !== existingItem.status
+      ) {
         throw new Error(
-          'Reapertura bloqueada: este item está en estado "done". ' +
-          'Si realmente necesitas reabrirlo por un bug o cambio, debes reabrir explícitamente el requirement ' +
-          'usando requirements.update(completion_status=\'pending\', status=\'in-progress\') y luego ' +
-          'llamar a set_status pasando confirm_reopen=true y un reason detallado.'
+          `Backlog item ${params.item_id} is quarantined in ` +
+          `"${existingItem.status}". Model-facing tools cannot reopen terminal ` +
+          'items. A new external user action or a new remediation item is required.',
         );
+      }
+      if (params.status === 'in_progress') {
+        const item = await markInProgress({
+          requirementId: requirement_id,
+          itemId: params.item_id,
+        });
+        return { action, requirement_id, item };
       }
       
       const item = await setItemStatus({
@@ -228,7 +247,6 @@ export async function executeBacklogCore(params: BacklogCoreParams) {
         itemId: params.item_id,
         status: params.status,
         reason: params.reason,
-        allowDoneReopen: params.confirm_reopen,
       });
       return { action, requirement_id, item };
     }

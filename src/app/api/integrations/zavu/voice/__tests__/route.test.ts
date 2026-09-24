@@ -161,7 +161,9 @@ describe("Zavu Voice setup", () => {
       activate: false,
       voicePreferences: { language: "auto" },
     });
-    expect(mockEnsureSenderWebhook).toHaveBeenCalledWith("sender_1");
+    expect(mockEnsureSenderWebhook).toHaveBeenCalledWith("sender_1", {
+      includeVoiceEvents: true,
+    });
     expect(mockEnsureVoiceSender).toHaveBeenCalledWith("sender_1");
     expect(mockEnsureEncryptedSenderWebhookSecret).toHaveBeenCalledWith({
       senderId: "sender_1",

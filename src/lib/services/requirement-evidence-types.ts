@@ -1,3 +1,45 @@
+import type { AcceptanceClaim } from './requirement-acceptance-contract';
+
+export type AcceptanceGapCode =
+  | 'criterion_not_executable'
+  | 'unsupported_compound_obligation'
+  | 'missing_http_observation'
+  | 'missing_page_observation'
+  | 'missing_request_payload'
+  | 'authentication_context_missing'
+  | 'http_status_mismatch'
+  | 'missing_interaction_audit'
+  | 'missing_internal_link'
+  | 'missing_link_content'
+  | 'route_not_reachable'
+  | 'missing_file_artifact'
+  | 'file_not_changed'
+  | 'missing_command_receipt'
+  | 'missing_semantic_receipt';
+
+export type AcceptanceGapClass =
+  | 'product'
+  | 'evidence'
+  | 'contract'
+  | 'capability';
+
+export interface AcceptanceEvidenceGap {
+  code: AcceptanceGapCode;
+  class: AcceptanceGapClass;
+  message: string;
+  required: string;
+  observed?: string[];
+  suggested_action: string;
+}
+
+export interface AcceptanceCriterionDiagnostic {
+  criterion_id: string;
+  criterion: string;
+  status: 'matched' | 'contradicted' | 'missing';
+  claims: AcceptanceClaim[];
+  gaps: AcceptanceEvidenceGap[];
+}
+
 export interface FeatureCoverageEvidence {
   ok: boolean;
   evaluable?: boolean;
@@ -43,6 +85,7 @@ export interface InteractionEvidence {
     region: 'header' | 'footer' | 'navigation' | 'other';
     route_exists: boolean;
     source_binding?: string;
+    content_excerpt?: string;
   }>;
   unresolved_links?: Array<{
     file: string;
@@ -130,9 +173,14 @@ export interface EvidenceRecord {
   critic_passes: number;
   judge_verdict?: 'approved' | 'rejected' | 'escalate';
   judge_reason?: string;
-  judge_failure_kind?: 'product_defect' | 'evidence_gap' | 'contract_error';
+  judge_failure_kind?:
+    | 'product_defect'
+    | 'evidence_gap'
+    | 'contract_error'
+    | 'capability_gap';
   judge_matched_acceptance?: string[];
   judge_unmatched_acceptance?: string[];
+  judge_acceptance_diagnostics?: AcceptanceCriterionDiagnostic[];
   gate_resume?: {
     status: 'pending';
     step_id: string;

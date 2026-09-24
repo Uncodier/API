@@ -1,7 +1,14 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
-const mockMutateBacklogAtomically = jest.fn();
-const mockFulfillPlanCancellationRequests = jest.fn();
+const mockMutateBacklogAtomically = jest.fn<
+  (
+    requirementId: string,
+    mutate: (context: any) => any,
+  ) => Promise<any>
+>();
+const mockFulfillPlanCancellationRequests = jest.fn<
+  (params: any) => Promise<void>
+>();
 
 jest.mock('../requirement-backlog-mutation', () => ({
   mutateBacklogAtomically: mockMutateBacklogAtomically,
@@ -36,7 +43,10 @@ jest.mock('../requirement-metadata-patch', () => ({
   patchRequirementMetadataKeys: jest.fn(),
 }));
 
-import { escalateStaleInProgressItems } from '../requirement-backlog-watchdog';
+import {
+  ensureInProgressItem,
+  escalateStaleInProgressItems,
+} from '../requirement-backlog-watchdog';
 
 describe('watchdog plan cancellation retry', () => {
   beforeEach(() => {
@@ -72,6 +82,74 @@ describe('watchdog plan cancellation retry', () => {
         reason: 'watchdog cancellation',
         requestedAt: '2026-09-20T01:00:00.000Z',
       }],
+    });
+  });
+
+  it('records a quarantine watermark before cancelling stale work', async () => {
+    const backlog = {
+      items: [{
+        id: 'item-1',
+        status: 'in_progress',
+        tier: 'core',
+        attempts: 4,
+        updated_at: '2026-09-20T01:00:00.000Z',
+      }],
+    };
+    mockMutateBacklogAtomically.mockImplementation(
+      async (_requirementId: string, mutate: any) => (
+        await mutate({
+          requirement: { external_user_action_revision: 5 },
+          backlog,
+          flow: {},
+        })
+      ).result,
+    );
+
+    const result = await escalateStaleInProgressItems({
+      requirementId: 'requirement-1',
+      maxIdleMs: 1,
+      maxAttempts: 4,
+    });
+
+    expect(result.escalated[0]).toEqual(expect.objectContaining({
+      status: 'needs_review',
+      review_quarantine: expect.objectContaining({
+        active: true,
+        kind: 'stale',
+        external_action_revision: 5,
+      }),
+      plan_cancellation_pending: expect.any(Object),
+    }));
+    expect(mockFulfillPlanCancellationRequests).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requirementId: 'requirement-1',
+        requests: [expect.objectContaining({ itemId: 'item-1' })],
+      }),
+    );
+  });
+
+  it('does not promote exhausted core work', async () => {
+    const backlog = {
+      current_phase_id: 'build',
+      items: [{
+        id: 'item-1',
+        phase_id: 'build',
+        status: 'pending',
+        tier: 'core',
+        attempts: 4,
+      }],
+    };
+    mockMutateBacklogAtomically.mockImplementation(
+      async (_requirementId: string, mutate: any) => (
+        await mutate({ backlog, flow: { phases: [{ id: 'build' }] } })
+      ).result,
+    );
+
+    await expect(ensureInProgressItem({
+      requirementId: 'requirement-1',
+    })).resolves.toEqual({
+      promoted: null,
+      reason: 'no_pending_unblocked',
     });
   });
 });

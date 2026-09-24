@@ -115,6 +115,19 @@ describe('backlog blocker propagation', () => {
     ]);
   });
 
+  it('never schedules an item with an active review quarantine', () => {
+    const quarantined = item('quarantined');
+    quarantined.review_quarantine = {
+      active: true,
+      kind: 'verification_exhausted',
+      reason: 'Judge retry budget exhausted',
+      quarantined_at: '2026-09-23T20:00:00.000Z',
+      external_action_revision: 2,
+    };
+
+    expect(isBacklogItemRunnable(quarantined, new Set())).toBe(false);
+  });
+
   it('releases only due platform blockers for an automatic retry', () => {
     const platform = item('platform');
     const executor = item('executor');

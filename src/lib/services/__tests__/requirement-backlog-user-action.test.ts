@@ -13,6 +13,7 @@ describe('hasUserRequestedMoreWork', () => {
   let singleMock: jest.Mock;
   let limitMock: jest.Mock;
   let orderMock: jest.Mock;
+  let logsChain: any;
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -39,7 +40,7 @@ describe('hasUserRequestedMoreWork', () => {
     };
 
     const reqChain = createChain();
-    const logsChain = createChain();
+    logsChain = createChain();
 
     (supabaseAdmin.from as jest.Mock).mockImplementation((table: string) => {
       if (table === 'requirements') return reqChain;
@@ -108,6 +109,10 @@ describe('hasUserRequestedMoreWork', () => {
 
     const result = await hasUserRequestedMoreWork('req-1');
     expect(result).toBe(true);
+    expect(logsChain.eq).toHaveBeenCalledWith(
+      'details->>requirement_id',
+      'req-1',
+    );
   });
 
   it('ignores non-core items when finding the last completion time', async () => {

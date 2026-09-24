@@ -136,3 +136,93 @@ export interface OutstandError {
   details?: any;
   message?: string;
 }
+
+export type OutstandConversationStatus = 'active' | 'archived';
+export type OutstandMessageDirection = 'inbound' | 'outbound';
+export type OutstandMessageStatus =
+  | 'received'
+  | 'pending'
+  | 'sent'
+  | 'read'
+  | 'failed';
+
+export interface OutstandConversation {
+  id: string;
+  orgId: string;
+  socialAccountId: string;
+  network: 'instagram';
+  platformConversationId: string;
+  participantId: string;
+  participantDisplayName: string | null;
+  participantProfilePicture: string | null;
+  lastMessageAt: string;
+  lastInboundAt: string;
+  unreadCount: number;
+  status: OutstandConversationStatus;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OutstandConversationMessage {
+  id: string;
+  conversationId: string;
+  platformMessageId: string | null;
+  direction: OutstandMessageDirection;
+  senderId: string | null;
+  content: string | null;
+  mediaUrls: string[];
+  status: OutstandMessageStatus;
+  error: string | null;
+  scheduledAt: string | null;
+  platformSentAt: string | null;
+  createdAt: string;
+}
+
+export interface CursorPagination {
+  hasMore: boolean;
+  nextCursor: string | number | null;
+  limit: number;
+}
+
+export interface ListConversationsParams {
+  social_account_id?: string;
+  network?: 'instagram';
+  status?: OutstandConversationStatus;
+  cursor?: string | number;
+  limit?: number;
+}
+
+export interface ListConversationMessagesParams {
+  direction?: OutstandMessageDirection;
+  cursor?: string | number;
+  limit?: number;
+}
+
+export interface SendConversationMessageParams {
+  content?: string;
+  media_urls?: string[];
+  scheduled_at?: string;
+}
+
+export interface ListConversationsResponse {
+  success: boolean;
+  data: OutstandConversation[];
+  pagination: CursorPagination;
+}
+
+export interface GetConversationResponse {
+  success: boolean;
+  conversation: OutstandConversation;
+}
+
+export interface ListConversationMessagesResponse {
+  success: boolean;
+  data: OutstandConversationMessage[];
+  pagination: CursorPagination;
+}
+
+export interface SendConversationMessageResponse {
+  success: boolean;
+  message: OutstandConversationMessage;
+}

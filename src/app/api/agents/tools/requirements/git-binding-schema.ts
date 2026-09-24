@@ -25,20 +25,45 @@ export const GitBindingSchema = z.object({
 export const PartialGitBindingSchema = GitBindingSchema.partial();
 
 export const RequirementMetadataSchema = z
-  .record(z.unknown())
-  .and(
-    z.object({
-      git: GitBindingSchema.optional(),
-    }),
-  );
+  .object({
+    git: GitBindingSchema.optional(),
+  })
+  .catchall(z.unknown());
+
+const RUNNER_OWNED_METADATA_KEYS = [
+  'runner_instance_id',
+  'requirement_execution_generation',
+  'requirement_last_resume_action_id',
+  'requirement_last_resume_reopened_plans',
+  'cron_attempts',
+  'no_progress_cycles',
+  'cron_infrastructure_failure_cycles',
+  'cron_blocker_provenance',
+  'cron_blocker_version',
+  'cron_blocker_event_id',
+  'cron_blocker_plan_id',
+  'cron_blocker_step_id',
+  'cron_blocker_generation',
+  'all_done_cycles',
+  'has_completed_backlog',
+] as const;
 
 export const PartialRequirementMetadataSchema = z
-  .record(z.unknown())
-  .and(
-    z.object({
-      git: PartialGitBindingSchema.optional(),
-    }),
-  );
+  .object({
+    git: PartialGitBindingSchema.optional(),
+  })
+  .catchall(z.unknown())
+  .superRefine((metadata, context) => {
+    for (const key of RUNNER_OWNED_METADATA_KEYS) {
+      if (Object.prototype.hasOwnProperty.call(metadata, key)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [key],
+          message: `${key} is runner-owned`,
+        });
+      }
+    }
+  });
 
 /**
  * Optional GitHub existence check behind the `REQUIREMENT_GIT_STRICT` flag.

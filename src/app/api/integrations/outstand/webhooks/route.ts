@@ -13,6 +13,10 @@ const KNOWN_EVENTS = new Set([
   'post.published',
   'post.error',
   'account.token_expired',
+  'conversation.started',
+  'message.received',
+  'message.sent',
+  'message.failed',
   'test',
 ]);
 
@@ -28,7 +32,7 @@ function isOutstandWebhookPayload(body: unknown): body is OutstandWebhookPayload
 /**
  * POST https://backend.makinari.com/api/integrations/outstand/webhooks
  *
- * Events: post.published, post.error, account.token_expired (plus test from dashboard).
+ * Events: publishing, account, and Conversations API lifecycle events.
  * Optional: set OUTSTAND_WEBHOOK_SECRET and the same signing secret in Outstand.
  */
 export async function POST(request: NextRequest) {

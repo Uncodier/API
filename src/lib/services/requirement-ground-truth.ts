@@ -207,6 +207,19 @@ export function mergeEvidenceRecords(
       observation,
     );
   }
+  const assertions = new Map<
+    string,
+    NonNullable<EvidenceRecord['scenario_assertions']>[number]
+  >();
+  const assertionCandidates = startsNewChangeSet
+    ? incoming.scenario_assertions || []
+    : [
+        ...(prior?.scenario_assertions || []),
+        ...(incoming.scenario_assertions || []),
+      ];
+  for (const assertion of assertionCandidates) {
+    assertions.set(JSON.stringify(assertion), assertion);
+  }
   const definedIncoming = Object.fromEntries(
     Object.entries(incoming).filter(([, value]) => value !== undefined),
   ) as EvidenceRecordInput;
@@ -216,6 +229,9 @@ export function mergeEvidenceRecords(
     tests: tests.size ? Array.from(tests.values()).slice(-20) : undefined,
     observations: observations.size
       ? Array.from(observations.values()).slice(-100)
+      : undefined,
+    scenario_assertions: assertions.size
+      ? Array.from(assertions.values()).slice(-100)
       : undefined,
     critic_passes:
       incoming.critic_passes ?? prior?.critic_passes ?? 0,

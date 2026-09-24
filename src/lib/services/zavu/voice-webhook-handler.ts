@@ -1,8 +1,20 @@
 import { supabaseAdmin } from "@/lib/database/supabase-server";
 import { clearVoiceCallContactContext } from "./contact-client";
 import { getVoiceCall } from "./voice-call-client";
-import { handleUntrackedInboundVoiceEvent } from "./inbound-voice-context";
+import {
+  handleUntrackedInboundVoiceEvent,
+  queueInboundVoiceResponse,
+  type InboundDelivery,
+} from "./inbound-voice-context";
 import { normalizeVoiceDeliveryStatus } from "./voice-status";
+
+function tenantDatabase() {
+  return supabaseAdmin.schema(
+    process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA
+    || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA
+    || "public"
+  );
+}
 
 function voiceEventMetadata(data: any): Record<string, string> {
   const rawMetadata = data?.metadata ?? data?.call?.metadata;
@@ -54,7 +66,8 @@ export async function handleVoiceCallEvent(event: any): Promise<void> {
   let query = supabaseAdmin
     .from("voice_call_deliveries")
     .select(
-      "id, message_id, recipient_phone, status, duration_seconds, end_reason, turn_count, "
+      "id, message_id, site_id, conversation_id, lead_id, zavu_sender_id, "
+      + "recipient_phone, status, duration_seconds, end_reason, turn_count, "
       + "cost, currency, transcript, answered_at, ended_at"
     )
     .limit(1);
@@ -65,12 +78,7 @@ export async function handleVoiceCallEvent(event: any): Promise<void> {
   if (deliveryError) {
     throw new Error(`Failed to find Voice call delivery: ${deliveryError.message}`);
   }
-  let delivery = deliveries?.[0] as unknown as {
-    id: string;
-    message_id: string;
-    recipient_phone: string;
-    status: string;
-  } | undefined;
+  let delivery = deliveries?.[0] as unknown as InboundDelivery | undefined;
   let callDetails: Awaited<ReturnType<typeof getVoiceCall>> | undefined;
   if (!delivery) {
     const inbound = await handleUntrackedInboundVoiceEvent(event, callId);
@@ -160,18 +168,26 @@ export async function handleVoiceCallEvent(event: any): Promise<void> {
   }
   if (!updatedDelivery) return;
 
-  const { data: message } = await supabaseAdmin
+  const { data: message, error: messageReadError } = await tenantDatabase()
     .from("messages")
     .select("custom_data")
     .eq("id", delivery.message_id)
     .maybeSingle();
+  if (messageReadError) {
+    throw new Error(`Failed to read Voice call message: ${messageReadError.message}`);
+  }
   const customData =
     message?.custom_data && typeof message.custom_data === "object"
       ? message.custom_data as Record<string, unknown>
       : {};
+  const inbound = customData.call_direction === "inbound";
   const messageCustomData: Record<string, unknown> = {
     ...customData,
-    status: failed ? "failed" : terminal ? "sent" : "sending",
+    status: failed
+      ? "failed"
+      : terminal
+        ? (inbound ? "received" : "sent")
+        : "sending",
     voice_mode: "agent_call",
     voice_call_delivery_id: delivery.id,
     provider_call_id: callId,
@@ -185,7 +201,7 @@ export async function handleVoiceCallEvent(event: any): Promise<void> {
   if (failed) {
     messageCustomData.error_message = endReason || `Voice call ${status}`;
   }
-  const { error: messageError } = await supabaseAdmin
+  const { error: messageError } = await tenantDatabase()
     .from("messages")
     .update({
       custom_data: messageCustomData,
@@ -194,5 +210,16 @@ export async function handleVoiceCallEvent(event: any): Promise<void> {
     .eq("id", delivery.message_id);
   if (messageError) {
     throw new Error(`Failed to update Voice call message: ${messageError.message}`);
+  }
+  if (
+    inbound
+    && terminal
+    && customData.voice_response_workflow_status !== "queued"
+  ) {
+    const completedCall = callDetails || await getVoiceCall(callId);
+    await queueInboundVoiceResponse({
+      call: completedCall,
+      delivery,
+    });
   }
 }

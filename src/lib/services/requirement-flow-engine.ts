@@ -9,6 +9,7 @@ import {
   classifyRequirementType,
   getFlow,
   advancePhaseIfReadyInMemory,
+  productAttemptLimits,
   type FlowDefinition,
   type FlowPhase,
   type RequirementKind,
@@ -67,7 +68,11 @@ export async function nextPendingItems(requirementId: string, limit: number = 3)
   const pending = backlog.items.filter(
     (item) =>
       item.phase_id === phase.id &&
-      isBacklogItemRunnable(item, completedIds),
+      isBacklogItemRunnable(
+        item,
+        completedIds,
+        productAttemptLimits(flow),
+      ),
   );
   const inProgress = backlog.items.find((i) => i.status === 'in_progress') ?? null;
   return {
@@ -107,7 +112,10 @@ export async function shouldAdvancePhase(requirementId: string): Promise<{ advan
 }
 
 export async function advancePhaseIfReady(requirementId: string): Promise<{ advanced: boolean; to: FlowPhase | null }> {
-  return mutateBacklogAtomically(requirementId, ({ backlog, flow }) => {
+  return mutateBacklogAtomically<{
+    advanced: boolean;
+    to: FlowPhase | null;
+  }>(requirementId, ({ backlog, flow }) => {
     const advance = advancePhaseIfReadyInMemory(backlog, flow);
     if (!advance) {
       return {

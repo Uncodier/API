@@ -189,6 +189,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     const preflightGate = await getPlanExecutionGateStep(
       existingPlan.id,
       actionableSteps[0].id,
+      reqId,
     );
     if (!preflightGate.runnable) {
       if (preflightGate.reason === 'infrastructure_circuit_open') {
@@ -616,6 +617,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
             const gate = await getPlanExecutionGateStep(
               activePlan.id,
               workingStep.id,
+              reqId,
             );
             if (!gate.runnable) {
                console.log(`[CronAppsWorkflow] Plan execution halted (reason=${gate.reason})`);

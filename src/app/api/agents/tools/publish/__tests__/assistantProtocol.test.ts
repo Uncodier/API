@@ -3,6 +3,9 @@ import { getLeadById } from '@/lib/database/lead-db';
 import { sendEmailCore } from '../../sendEmail/route';
 import { sendBulkMessagesTool } from '../../sendBulkMessages/assistantProtocol';
 import { publishTool } from '../assistantProtocol';
+import { getOutstandClient } from '@/lib/integrations/outstand/client';
+import { authorizeOutstandConversation } from '@/lib/integrations/outstand/conversation-access';
+import { recordOutstandMessage } from '@/lib/integrations/outstand/inbox-sync';
 
 jest.mock('../../content/create/core', () => ({
   createContentCore: jest.fn(),
@@ -12,6 +15,12 @@ jest.mock('../../content/update/route', () => ({
 }));
 jest.mock('@/lib/integrations/outstand/client', () => ({
   getOutstandClient: jest.fn(),
+}));
+jest.mock('@/lib/integrations/outstand/conversation-access', () => ({
+  authorizeOutstandConversation: jest.fn(),
+}));
+jest.mock('@/lib/integrations/outstand/inbox-sync', () => ({
+  recordOutstandMessage: jest.fn(),
 }));
 jest.mock('../../sendBulkMessages/assistantProtocol', () => ({
   sendBulkMessagesTool: jest.fn(),
@@ -32,7 +41,15 @@ const mockedGetLeadById = getLeadById as jest.MockedFunction<typeof getLeadById>
 const mockedSendEmailCore = sendEmailCore as jest.MockedFunction<typeof sendEmailCore>;
 const mockedSendBulkMessagesTool =
   sendBulkMessagesTool as jest.MockedFunction<typeof sendBulkMessagesTool>;
+const mockedGetOutstandClient =
+  getOutstandClient as jest.MockedFunction<typeof getOutstandClient>;
+const mockedAuthorizeOutstandConversation =
+  authorizeOutstandConversation as jest.MockedFunction<typeof authorizeOutstandConversation>;
+const mockedRecordOutstandMessage =
+  recordOutstandMessage as jest.MockedFunction<typeof recordOutstandMessage>;
 const bulkExecuteMock = jest.fn(async (_args: unknown) => ({ success: true }));
+const sendConversationMessageMock = jest.fn();
+const getMediaMock = jest.fn();
 
 describe('publish test delivery', () => {
   beforeEach(() => {
@@ -48,6 +65,19 @@ describe('publish test delivery', () => {
     mockedSendBulkMessagesTool.mockReturnValue({
       execute: bulkExecuteMock,
     } as unknown as ReturnType<typeof sendBulkMessagesTool>);
+    mockedGetOutstandClient.mockReturnValue({
+      sendConversationMessage: sendConversationMessageMock,
+      getMedia: getMediaMock,
+    } as unknown as ReturnType<typeof getOutstandClient>);
+    sendConversationMessageMock.mockResolvedValue({
+      success: true,
+      message: { id: 'outstand-message-1', status: 'pending' },
+    } as never);
+    mockedAuthorizeOutstandConversation.mockResolvedValue({
+      success: true,
+      conversation: { id: 'outstand-conversation-1' },
+    } as never);
+    mockedRecordOutstandMessage.mockResolvedValue();
   });
 
   it('uses test_lead_id for personalization while honoring an explicit recipient', async () => {
@@ -148,5 +178,73 @@ describe('publish test delivery', () => {
       objective: 'Confirm the appointment',
       additional_context: 'Offer a morning or afternoon slot.',
     }));
+  });
+
+  it('sends a scheduled Instagram DM through the Conversations API', async () => {
+    const scheduledAt = new Date(Date.now() + 60_000).toISOString();
+
+    const result = await publishTool(siteId).execute({
+      text: 'Your order is ready.',
+      instagram_dm: {
+        conversation_id: 'outstand-conversation-1',
+        media_urls: ['https://cdn.example.com/order.jpg'],
+        scheduled_at: scheduledAt,
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.actions_attempted).toContain('instagram_dm');
+    expect(sendConversationMessageMock).toHaveBeenCalledWith(
+      'outstand-conversation-1',
+      {
+        content: 'Your order is ready.',
+        media_urls: ['https://cdn.example.com/order.jpg'],
+        scheduled_at: scheduledAt,
+      },
+    );
+  });
+
+  it('resolves uploaded assets to public URLs for an Instagram DM', async () => {
+    getMediaMock.mockResolvedValueOnce({
+      success: true,
+      data: { url: 'https://media.outstand.so/image.jpg' },
+    } as never);
+
+    await publishTool(siteId).execute({
+      assets: ['media-1'],
+      instagram_dm: { conversation_id: 'outstand-conversation-1' },
+    });
+
+    expect(sendConversationMessageMock).toHaveBeenCalledWith(
+      'outstand-conversation-1',
+      { media_urls: ['https://media.outstand.so/image.jpg'] },
+    );
+  });
+
+  it('uses urls as Instagram DM text content', async () => {
+    const result = await publishTool(siteId).execute({
+      urls: ['https://example.com/order'],
+      instagram_dm: { conversation_id: 'outstand-conversation-1' },
+    });
+
+    expect(result.success).toBe(true);
+    expect(sendConversationMessageMock).toHaveBeenCalledWith(
+      'outstand-conversation-1',
+      { content: 'https://example.com/order' },
+    );
+  });
+
+  it('rejects an Instagram DM scheduled in the past', async () => {
+    const result = await publishTool(siteId).execute({
+      text: 'Too late',
+      instagram_dm: {
+        conversation_id: 'outstand-conversation-1',
+        scheduled_at: new Date(Date.now() - 60_000).toISOString(),
+      },
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('future ISO 8601');
+    expect(sendConversationMessageMock).not.toHaveBeenCalled();
   });
 });

@@ -113,6 +113,26 @@ describe('mandatory backlog remediation', () => {
     }));
   });
 
+  it.each([
+    ['markInProgress', () => markInProgress({
+      requirementId: 'requirement',
+      itemId: 'parent',
+    })],
+    ['setItemStatus', () => setItemStatus({
+      requirementId: 'requirement',
+      itemId: 'parent',
+      status: 'in_progress',
+    })],
+  ])('blocks exhausted pending work through %s', async (_name, start) => {
+    const exhaustedBacklog = backlog();
+    exhaustedBacklog.items[0].status = 'pending';
+    exhaustedBacklog.items[0].attempts = 10_000;
+    mockToBacklog.mockReturnValueOnce(exhaustedBacklog);
+
+    await expect(start()).rejects.toThrow(/exhausted its .* product attempts/);
+    expect(mockWriteBacklog).not.toHaveBeenCalled();
+  });
+
   it('does not hide a failed terminal-step cancellation', async () => {
     mockCancelPlanSteps.mockResolvedValueOnce({
       plansTouched: 0,
@@ -128,6 +148,21 @@ describe('mandatory backlog remediation', () => {
       status: 'needs_review',
       reason: 'acceptance failed',
     })).rejects.toThrow(/database unavailable/);
+    expect(mockWriteBacklog).toHaveBeenCalledWith(
+      'requirement',
+      expect.objectContaining({
+        items: expect.arrayContaining([
+          expect.objectContaining({
+            id: 'parent',
+            status: 'needs_review',
+            plan_cancellation_pending: expect.objectContaining({
+              reason: expect.stringContaining('acceptance failed'),
+            }),
+          }),
+        ]),
+      }),
+      0,
+    );
   });
 
   it('rejects an unknown dependency during upsert', async () => {
@@ -203,38 +238,19 @@ describe('mandatory backlog remediation', () => {
     expect(mockWriteBacklog).not.toHaveBeenCalled();
   });
 
-  it('preserves retry budgets when an item is reopened automatically', async () => {
+  it('does not allow application code to reopen a review quarantine', async () => {
     const reviewBacklog = backlog();
     reviewBacklog.items[0].status = 'needs_review';
     reviewBacklog.items[0].attempts = 4;
     reviewBacklog.items[0].tool_failures = { runtime: 3 };
     mockToBacklog.mockReturnValueOnce(reviewBacklog);
 
-    const reopened = await setItemStatus({
+    await expect(setItemStatus({
       requirementId: 'requirement',
       itemId: 'parent',
       status: 'pending',
-    });
-
-    expect(reopened).toEqual(expect.objectContaining({
-      status: 'pending',
-      attempts: 4,
-      tool_failures: { runtime: 3 },
-    }));
-    expect(mockWriteBacklog).toHaveBeenCalledWith(
-      'requirement',
-      expect.objectContaining({
-        items: expect.arrayContaining([
-          expect.objectContaining({
-            id: 'parent',
-            status: 'pending',
-            attempts: 4,
-            tool_failures: { runtime: 3 },
-          }),
-        ]),
-      }),
-      0,
-    );
+    })).rejects.toThrow(/new external user action/);
+    expect(mockWriteBacklog).not.toHaveBeenCalled();
   });
 
   it('invalidates approved evidence when completed work is explicitly reopened', async () => {

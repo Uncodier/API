@@ -29,6 +29,8 @@ export async function hasUserRequestedMoreWork(
     .select('created_at')
     .eq('instance_id', instanceId)
     .eq('log_type', 'user_action')
+    .eq('trusted_user_action', true)
+    .eq('details->>requirement_id', requirementId)
     .order('created_at', { ascending: false })
     .limit(1);
   if (!actions?.length) return false;

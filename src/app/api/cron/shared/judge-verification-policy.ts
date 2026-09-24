@@ -7,9 +7,14 @@ export const DEFAULT_JUDGE_VERIFICATION_ATTEMPTS = 3;
 
 export function verificationToolName(
   failureKind: JudgeFailureKind | undefined,
-): 'judge_evidence_collector' | 'judge_acceptance_contract' | null {
+):
+  | 'judge_evidence_collector'
+  | 'judge_acceptance_contract'
+  | 'judge_capability_resolver'
+  | null {
   if (failureKind === 'evidence_gap') return 'judge_evidence_collector';
   if (failureKind === 'contract_error') return 'judge_acceptance_contract';
+  if (failureKind === 'capability_gap') return 'judge_capability_resolver';
   return null;
 }
 
@@ -47,10 +52,33 @@ function requiredAction(failureKind: JudgeFailureKind | undefined): string {
       'Do not weaken the intended product behavior.',
     ].join(' ');
   }
+  if (failureKind === 'capability_gap') {
+    return [
+      'Do not modify product code to compensate for a verifier limitation.',
+      'Keep this item quarantined for review and continue with another independent item.',
+      'The harness needs the capability named in the structured evidence gap.',
+    ].join(' ');
+  }
   return [
     'Inspect the cited repository behavior, repair the actual product defect,',
     'run the relevant validation, and then request another Judge pass.',
   ].join(' ');
+}
+
+export function summarizeJudgeEvidenceGaps(
+  judge: Pick<JudgeResult, 'acceptance_diagnostics'>,
+): string {
+  return (judge.acceptance_diagnostics || [])
+    .flatMap((diagnostic) =>
+      diagnostic.gaps.map((gap) => {
+        const observed = gap.observed?.[0]
+          ? ` observed=${gap.observed[0]}`
+          : '';
+        return `${gap.code}: required=${gap.required}${observed}`;
+      }),
+    )
+    .slice(0, 3)
+    .join('; ');
 }
 
 export function formatJudgeRepairFeedback(
@@ -61,6 +89,7 @@ export function formatJudgeRepairFeedback(
     | 'failure_kind'
     | 'matched_acceptance'
     | 'unmatched_acceptance'
+    | 'acceptance_diagnostics'
   >,
 ): string {
   const matched = judge.matched_acceptance.length > 0
@@ -69,6 +98,20 @@ export function formatJudgeRepairFeedback(
   const unmatched = judge.unmatched_acceptance.length > 0
     ? judge.unmatched_acceptance.map((criterion) => `- ${criterion}`).join('\n')
     : '- None';
+  const diagnostics = (judge.acceptance_diagnostics || [])
+    .filter((diagnostic) => diagnostic.status !== 'matched')
+    .map((diagnostic) => ({
+      criterion_id: diagnostic.criterion_id,
+      criterion: diagnostic.criterion,
+      status: diagnostic.status,
+      gaps: diagnostic.gaps.map((gap) => ({
+        code: gap.code,
+        class: gap.class,
+        required: gap.required,
+        observed: gap.observed,
+        suggested_action: gap.suggested_action,
+      })),
+    }));
   return [
     'JUDGE VERIFICATION FAILED',
     `Verdict: ${judge.verdict}`,
@@ -78,6 +121,10 @@ export function formatJudgeRepairFeedback(
     matched,
     'Unmatched acceptance:',
     unmatched,
+    'Structured evidence gaps:',
+    diagnostics.length > 0
+      ? JSON.stringify(diagnostics, null, 2)
+      : '[]',
     `Required next action: ${requiredAction(judge.failure_kind)}`,
   ].join('\n').slice(0, 8_000);
 }

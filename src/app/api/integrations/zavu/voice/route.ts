@@ -117,7 +117,9 @@ async function resolveSender(
 
   if (phone?.senderId) {
     try {
-      const sender = await ensureSenderWebhook(phone.senderId);
+      const sender = await ensureSenderWebhook(phone.senderId, {
+        includeVoiceEvents: true,
+      });
       return {
         sender,
         phone,

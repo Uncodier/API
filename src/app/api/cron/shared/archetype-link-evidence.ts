@@ -1,5 +1,8 @@
 import type { AcceptanceAnalysis } from '@/lib/services/requirement-acceptance';
 import type { EvidenceRecord } from '@/lib/services/requirement-ground-truth';
+import {
+  hasIndependentCompoundObligation,
+} from '@/lib/services/requirement-acceptance-contract';
 
 export type LinkIntegrityResult = 'pass' | 'fail' | 'unknown' | null;
 
@@ -26,12 +29,6 @@ function isInternalLinkIntegrityCriterion(text: string): boolean {
   );
 }
 
-function hasUnsupportedCompoundObligation(text: string): boolean {
-  return /\b(?:icons?|iconos?|styles?|styling|estilos?|text|texto|copy|content|contenido|logos?|colors?|colores?|spacing|typography|tipograf[ií]a|images?|im[aá]genes?)\b/i.test(
-    text,
-  );
-}
-
 export function evaluateInternalLinkIntegrity(
   analysis: AcceptanceAnalysis,
   evidence: EvidenceRecord,
@@ -45,6 +42,11 @@ export function evaluateInternalLinkIntegrity(
   if (!interaction?.evaluable) return 'unknown';
 
   const criterion = analysis.text.toLowerCase();
+  const requiresWrappedContent =
+    /\b(?:logo|title|t[ií]tulo|image|imagen|icon|icono)\b/.test(criterion) &&
+    /\b(?:wraps?|wrapped|contains?|inside|within|envuelve|contenido)\b/.test(
+      criterion,
+    );
   const requiresNavigation =
     /\b(?:navigation|navbar|header|navegaci[oó]n|men[uú]|cabecera)\b/.test(
       criterion,
@@ -152,6 +154,12 @@ export function evaluateInternalLinkIntegrity(
     targets.includes(link.target),
   );
   if (
+    requiresWrappedContent &&
+    !targetLinks.some((link) => !!link.content_excerpt?.trim())
+  ) {
+    return 'unknown';
+  }
+  if (
     targetLinks.some((link) => !link.route_exists) ||
     (interaction.findings || []).some(
       (finding) =>
@@ -167,5 +175,5 @@ export function evaluateInternalLinkIntegrity(
   // Link evidence proves only link integrity. A criterion that also requires
   // visual/content deliverables must remain unmatched until those obligations
   // have their own evidence instead of inheriting the link verdict.
-  return hasUnsupportedCompoundObligation(analysis.text) ? 'unknown' : 'pass';
+  return hasIndependentCompoundObligation(analysis.text) ? 'unknown' : 'pass';
 }

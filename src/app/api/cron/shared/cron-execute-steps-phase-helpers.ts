@@ -21,6 +21,11 @@ import {
   recordPlanStepInfrastructureFailure,
   updatePlanStepStatusAtomically,
 } from '@/lib/services/instance-plan-infrastructure-state';
+import { cancelPlanStepsForBacklogItem } from '@/lib/helpers/plan-lifecycle';
+import {
+  evaluatePlanBacklogGate,
+} from '@/lib/services/requirement-plan-backlog-gate';
+import type { BacklogItem } from '@/lib/services/requirement-backlog-types';
 
 export type PlanGate =
   | { runnable: true; dbStatus: string }
@@ -30,6 +35,7 @@ export type PlanGate =
       infrastructureKind?: string;
       infrastructureProvenance?: string;
       infrastructureGeneration?: number;
+      backlogItemId?: string;
     };
 
 export function getPlanExecutionGateFromStatus(status: string | undefined | null): PlanGate {
@@ -69,11 +75,12 @@ export function selectPlanStepsForExecution(steps: any[]): any[] {
 export async function getPlanExecutionGateStep(
   planId: string,
   expectedStepId?: string,
+  requirementId?: string,
 ): Promise<PlanGate> {
   'use step';
   const { data, error } = await supabaseAdmin
     .from('instance_plans')
-    .select('status, steps')
+    .select('status, steps, metadata')
     .eq('id', planId)
     .maybeSingle();
   if (error) {
@@ -93,6 +100,59 @@ export async function getPlanExecutionGateStep(
   )[0];
   if (expectedStepId && activeStep?.id !== expectedStepId) {
     return { runnable: false, reason: 'step_changed' };
+  }
+  const ownedRequirementId =
+    requirementId ||
+    (
+      typeof data.metadata?.requirement_id === 'string'
+        ? data.metadata.requirement_id
+        : undefined
+    );
+  if (ownedRequirementId && activeStep) {
+    const { data: requirement, error: requirementError } = await supabaseAdmin
+      .from('requirements')
+      .select('backlog')
+      .eq('id', ownedRequirementId)
+      .maybeSingle();
+    if (requirementError) {
+      throw new InfrastructureStateDatabaseError(
+        `Failed to load backlog gate for plan ${planId}`,
+        requirementError,
+      );
+    }
+    const items = Array.isArray(requirement?.backlog?.items)
+      ? requirement.backlog.items as BacklogItem[]
+      : [];
+    const backlogGate = evaluatePlanBacklogGate(activeStep, items);
+    if (!backlogGate.runnable) {
+      if (backlogGate.itemId) {
+        const cancellation = await cancelPlanStepsForBacklogItem({
+          requirementId: ownedRequirementId,
+          itemId: backlogGate.itemId,
+          reason: `Runtime gate: ${backlogGate.reason}`,
+        });
+        if (cancellation.errors.length > 0) {
+          throw new Error(
+            `Failed to cancel stale plan ${planId}: ` +
+            cancellation.errors.join('; '),
+          );
+        }
+      } else {
+        await updatePlanStepStatusAtomically({
+          planId,
+          stepId: activeStep.id,
+          status: 'cancelled',
+          errorMessage: `Runtime gate: ${backlogGate.reason}`,
+          expectedGeneration:
+            Number(activeStep.infrastructure_generation) || 0,
+        });
+      }
+      return {
+        runnable: false,
+        reason: backlogGate.reason,
+        backlogItemId: backlogGate.itemId,
+      };
+    }
   }
   if (
     activeStep?.infrastructure_circuit_open === true ||

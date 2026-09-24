@@ -41,15 +41,15 @@ import {
 } from './requirement-backlog-invariants';
 import { patchRequirementMetadataKeys } from './requirement-metadata-patch';
 import {
-  isBacklogItemBlocked,
+  isBacklogItemRunnable,
   releaseDueAutomaticBlockers,
 } from './requirement-backlog-blockers';
 import {
   fulfillPlanCancellationRequests,
   pendingPlanCancellation,
-  requestPlanCancellation,
   type PendingPlanCancellation,
 } from './requirement-plan-cancellation';
+import { applyBacklogStatusLifecycle } from './requirement-review-quarantine';
 
 export async function bumpItemAttempts(params: {
   requirementId: string;
@@ -141,7 +141,7 @@ export async function escalateStaleInProgressItems(params: {
   const idleMs = params.maxIdleMs ?? DEFAULT_STALE_IN_PROGRESS_MS;
   const result = await mutateBacklogAtomically(
     params.requirementId,
-    ({ backlog, flow }) => {
+    ({ requirement, backlog, flow }) => {
       const attemptLimits = productAttemptLimits(flow);
       const escalated: BacklogItem[] = [];
       const cancellationRequests: PendingPlanCancellation[] = backlog.items
@@ -169,22 +169,20 @@ export async function escalateStaleInProgressItems(params: {
           continue;
         }
         const note = `[watchdog] auto-escalated to needs_review after idle=${Math.round(idle / 60000)}m attempts=${item.attempts ?? 0} (thresholds idle_min=${Math.round(idleMs / 60000)} max_attempts=${maxAttempts})`;
-        const cancellationReason =
-          'watchdog escalated backlog item to needs_review ' +
-          '(idle/attempts envelope exhausted)';
-        const cancellationRequestedAt = new Date().toISOString();
-        backlog.items[i] = requestPlanCancellation({
-          ...item,
+        const nowIso = new Date().toISOString();
+        backlog.items[i] = applyBacklogStatusLifecycle({
+          item,
           status: 'needs_review',
-          updated_at: new Date().toISOString(),
-          assumptions: [...(item.assumptions || []), note].slice(-20),
-        }, cancellationReason, cancellationRequestedAt);
-        escalated.push(backlog.items[i]);
-        cancellationRequests.push({
-          itemId: item.id,
-          reason: cancellationReason,
-          requestedAt: cancellationRequestedAt,
+          reason: note,
+          externalActionRevision:
+            Number(requirement.external_user_action_revision) || 0,
+          now: nowIso,
         });
+        escalated.push(backlog.items[i]);
+        const cancellationRequest = pendingPlanCancellation(backlog.items[i]);
+        if (cancellationRequest) {
+          cancellationRequests.push(cancellationRequest);
+        }
       }
       if (escalated.length === 0) {
         return {
@@ -225,6 +223,7 @@ export async function ensureInProgressItem(params: {
   }>(
     params.requirementId,
     ({ backlog, flow }) => {
+      const attemptLimits = productAttemptLimits(flow);
       const releasedBlockers = releaseDueAutomaticBlockers(backlog.items);
       const active = backlog.items.find((item) =>
         isBacklogActiveStatus(item.status),
@@ -251,26 +250,9 @@ export async function ensureInProgressItem(params: {
       );
       const candidates = workingBacklog.items
         .map((item, idx) => ({ item, idx }))
-        .filter(({ item }) => {
-          const unblocked = (item.depends_on || []).every((dependencyId) =>
-            completedIds.has(dependencyId),
-          );
-          if (
-            item.status !== 'pending' ||
-            !unblocked ||
-            isBacklogItemBlocked(item)
-          ) {
-            return false;
-          }
-          if ((item.tier ?? 'core') === 'ornamental') {
-            const maxAttempts = parseInt(
-              process.env.CRON_ORNAMENTAL_MAX_ATTEMPTS || '2',
-              10,
-            );
-            if ((item.attempts || 0) >= maxAttempts) return false;
-          }
-          return true;
-        });
+        .filter(({ item }) =>
+          isBacklogItemRunnable(item, completedIds, attemptLimits),
+        );
 
       if (candidates.length === 0) {
         return {

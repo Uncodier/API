@@ -12,7 +12,7 @@ export interface ZavuInvitation {
   failureReason?: string | null;
 }
 
-export const ZAVU_SENDER_WEBHOOK_EVENTS = [
+export const ZAVU_SENDER_MESSAGE_WEBHOOK_EVENTS = [
   "message.inbound",
   "conversation.new",
   "message.unsupported",
@@ -22,12 +22,20 @@ export const ZAVU_SENDER_WEBHOOK_EVENTS = [
   "message.read",
   "message.failed",
   "template.status_changed",
+  "domain.verified",
+  "domain.failed",
+];
+
+export const ZAVU_VOICE_WEBHOOK_EVENTS = [
   "call.initiated",
   "call.answered",
   "call.completed",
   "call.failed",
-  "domain.verified",
-  "domain.failed"
+];
+
+export const ZAVU_SENDER_WEBHOOK_EVENTS = [
+  ...ZAVU_SENDER_MESSAGE_WEBHOOK_EVENTS,
+  ...ZAVU_VOICE_WEBHOOK_EVENTS,
 ];
 
 export const ZAVU_PROJECT_WEBHOOK_EVENTS = [
@@ -130,8 +138,13 @@ export function mapInvitationStatus(status: string | undefined): string {
   return status || "pending";
 }
 
-function hasWebhookEvents(sender: any): boolean {
-  return Array.isArray(sender?.webhook?.events) && sender.webhook.events.length > 0;
+function hasRequiredWebhookEvents(
+  sender: any,
+  requiredEvents: readonly string[]
+): boolean {
+  const events = sender?.webhook?.events;
+  return Array.isArray(events)
+    && requiredEvents.every((event) => events.includes(event));
 }
 
 function hasVoiceChannel(sender: any): boolean {
@@ -160,12 +173,23 @@ export function mergeSenderWebhook(created: any, patched: any) {
   return next;
 }
 
-export async function ensureSenderWebhook(senderId: string) {
+export async function ensureSenderWebhook(
+  senderId: string,
+  options?: { includeVoiceEvents?: boolean }
+) {
+  const includeVoiceEvents = options?.includeVoiceEvents === true;
   const payload = await zavuFetch(`/senders/${encodeURIComponent(senderId)}`, {
     method: "PATCH",
     body: JSON.stringify(senderWebhookConfiguration()),
   });
-  return unwrapSender(payload);
+  const sender = unwrapSender(payload);
+  const requiredEvents = includeVoiceEvents || hasVoiceChannel(sender)
+    ? ZAVU_SENDER_WEBHOOK_EVENTS
+    : ZAVU_SENDER_MESSAGE_WEBHOOK_EVENTS;
+  if (!hasRequiredWebhookEvents(sender, requiredEvents)) {
+    throw new Error("Zavu sender required webhook events were not persisted");
+  }
+  return sender;
 }
 
 export async function regenerateSenderWebhookSecret(
@@ -193,8 +217,8 @@ export async function ensureVoiceSender(senderId: string): Promise<any> {
   if (!hasVoiceChannel(sender)) {
     throw new Error("Zavu did not enable the Voice channel for the sender");
   }
-  if (!hasWebhookEvents(sender)) {
-    throw new Error("Zavu sender webhook events were not persisted");
+  if (!hasRequiredWebhookEvents(sender, ZAVU_SENDER_WEBHOOK_EVENTS)) {
+    throw new Error("Zavu sender required webhook events were not persisted");
   }
   return sender;
 }
@@ -290,11 +314,16 @@ export async function createSender(params: {
   });
   
   const created = unwrapSender(payload);
-  const patched = await ensureSenderWebhook(created.id);
+  const patched = await ensureSenderWebhook(created.id, {
+    includeVoiceEvents: params.enableVoice === true,
+  });
   const sender = mergeSenderWebhook(created, patched);
+  const requiredEvents = params.enableVoice || hasVoiceChannel(sender)
+    ? ZAVU_SENDER_WEBHOOK_EVENTS
+    : ZAVU_SENDER_MESSAGE_WEBHOOK_EVENTS;
 
-  if (!hasWebhookEvents(sender)) {
-    throw new Error("Zavu sender webhook events were not persisted");
+  if (!hasRequiredWebhookEvents(sender, requiredEvents)) {
+    throw new Error("Zavu sender required webhook events were not persisted");
   }
 
   return sender;

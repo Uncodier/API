@@ -2,6 +2,10 @@ import { ChannelSendService, sanitizeZavuRecipient } from '../ChannelSendService
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import * as zavuClient from '@/lib/services/zavu/client';
 import * as longReplyAudio from '../long-reply-audio';
+import { getOutstandClient } from '@/lib/integrations/outstand/client';
+import { authorizeOutstandConversation } from '@/lib/integrations/outstand/conversation-access';
+
+const mockedSupabase = supabaseAdmin as any;
 
 // Mock dependencias
 jest.mock('@/lib/database/supabase-client', () => ({
@@ -16,6 +20,12 @@ jest.mock('@/lib/database/supabase-client', () => ({
 jest.mock('@/lib/services/zavu/client', () => ({
   sendChannelMessage: jest.fn()
 }));
+jest.mock('@/lib/integrations/outstand/client', () => ({
+  getOutstandClient: jest.fn(),
+}));
+jest.mock('@/lib/integrations/outstand/conversation-access', () => ({
+  authorizeOutstandConversation: jest.fn(),
+}));
 
 jest.mock('../long-reply-audio', () => ({
   tryPrepareLongReplyAudio: jest.fn().mockResolvedValue(null)
@@ -29,11 +39,18 @@ describe('ChannelSendService', () => {
   
   beforeEach(() => {
     jest.clearAllMocks();
+    (authorizeOutstandConversation as jest.Mock).mockResolvedValue({
+      success: true,
+      conversation: {
+        id: 'outstand-conversation-1',
+        socialAccountId: 'account-1',
+      },
+    } as never);
   });
 
   it('should successfully send a telegram message when settings exist', async () => {
     // Setup mock supabase response
-    (supabaseAdmin.single as jest.Mock).mockResolvedValue({
+    (mockedSupabase.single as jest.Mock).mockResolvedValue({
       data: {
         channels: {
           connections: [
@@ -60,9 +77,9 @@ describe('ChannelSendService', () => {
     expect(result.messageId).toBe('msg_123');
     
     // Verify DB query
-    expect(supabaseAdmin.from).toHaveBeenCalledWith('settings');
-    expect(supabaseAdmin.select).toHaveBeenCalledWith('channels');
-    expect(supabaseAdmin.eq).toHaveBeenCalledWith('site_id', mockSiteId);
+    expect(mockedSupabase.from).toHaveBeenCalledWith('settings');
+    expect(mockedSupabase.select).toHaveBeenCalledWith('channels');
+    expect(mockedSupabase.eq).toHaveBeenCalledWith('site_id', mockSiteId);
     
     // Verify Zavu call with correct senderId
     expect(zavuClient.sendChannelMessage).toHaveBeenCalledWith({
@@ -75,7 +92,7 @@ describe('ChannelSendService', () => {
   });
 
   it('should successfully send a long message as audio if tryPrepareLongReplyAudio returns an audio URL', async () => {
-    (supabaseAdmin.single as jest.Mock).mockResolvedValue({
+    (mockedSupabase.single as jest.Mock).mockResolvedValue({
       data: {
         channels: {
           connections: [
@@ -117,7 +134,7 @@ describe('ChannelSendService', () => {
   });
 
   it('should return error if no sender is configured for the channel', async () => {
-    (supabaseAdmin.single as jest.Mock).mockResolvedValue({
+    (mockedSupabase.single as jest.Mock).mockResolvedValue({
       data: {
         channels: {
           connections: []
@@ -139,7 +156,7 @@ describe('ChannelSendService', () => {
   });
 
   it('should return error if site settings fetch fails', async () => {
-    (supabaseAdmin.single as jest.Mock).mockResolvedValue({
+    (mockedSupabase.single as jest.Mock).mockResolvedValue({
       data: null,
       error: new Error('DB Error')
     });
@@ -166,12 +183,12 @@ describe('ChannelSendService', () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain('required');
-    expect(supabaseAdmin.from).not.toHaveBeenCalled();
+    expect(mockedSupabase.from).not.toHaveBeenCalled();
     expect(zavuClient.sendChannelMessage).not.toHaveBeenCalled();
   });
 
   it('should resolve whatsapp sender and send with subject omitted', async () => {
-    (supabaseAdmin.single as jest.Mock).mockResolvedValue({
+    (mockedSupabase.single as jest.Mock).mockResolvedValue({
       data: {
         channels: {
           connections: [{ type: 'whatsapp', zavu_sender_id: mockSenderId }],
@@ -203,7 +220,7 @@ describe('ChannelSendService', () => {
   });
 
   it('should resolve email sender and pass subject', async () => {
-    (supabaseAdmin.single as jest.Mock).mockResolvedValue({
+    (mockedSupabase.single as jest.Mock).mockResolvedValue({
       data: {
         channels: {
           connections: [{ type: 'email', zavu_sender_id: mockSenderId }],
@@ -236,7 +253,7 @@ describe('ChannelSendService', () => {
   });
 
   it('should return error if whatsapp sender is missing', async () => {
-    (supabaseAdmin.single as jest.Mock).mockResolvedValue({
+    (mockedSupabase.single as jest.Mock).mockResolvedValue({
       data: {
         channels: {
           connections: [{ type: 'telegram', zavu_sender_id: mockSenderId }],
@@ -258,7 +275,7 @@ describe('ChannelSendService', () => {
   });
 
   it('should return error if zavu API throws', async () => {
-    (supabaseAdmin.single as jest.Mock).mockResolvedValue({
+    (mockedSupabase.single as jest.Mock).mockResolvedValue({
       data: {
         channels: { connections: [{ type: 'telegram', zavu_sender_id: mockSenderId }] }
       },
@@ -276,6 +293,50 @@ describe('ChannelSendService', () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toBe('Zavu API failed');
+  });
+
+  it('sends an Instagram DM when the conversation has Outstand DM metadata', async () => {
+    const conversationQuery: Record<string, jest.Mock> = {};
+    conversationQuery.select = jest.fn(() => conversationQuery);
+    conversationQuery.eq = jest.fn(() => conversationQuery);
+    conversationQuery.maybeSingle = jest.fn(async () => ({
+      data: {
+        custom_data: {
+          source: 'outstand_dm',
+          outstand_conversation_id: 'outstand-conversation-1',
+        },
+      },
+      error: null,
+    }));
+    (mockedSupabase.from as jest.Mock).mockReturnValueOnce(conversationQuery);
+
+    const sendConversationMessage = jest.fn(async () => ({
+      success: true,
+      message: { id: 'outstand-message-1' },
+    }));
+    (getOutstandClient as jest.Mock).mockReturnValue({ sendConversationMessage });
+
+    const result = await ChannelSendService.sendMessage({
+      site_id: mockSiteId,
+      channel: 'instagram',
+      to: 'instagram-user',
+      message: 'Reply by DM',
+      conversation_id: 'local-conversation-id',
+    });
+
+    expect(result).toEqual({
+      success: true,
+      messageId: 'outstand-message-1',
+    });
+    expect(sendConversationMessage).toHaveBeenCalledWith(
+      'outstand-conversation-1',
+      { content: 'Reply by DM' },
+    );
+    expect(authorizeOutstandConversation).toHaveBeenCalledWith(
+      expect.anything(),
+      'outstand-conversation-1',
+      mockSiteId,
+    );
   });
 });
 

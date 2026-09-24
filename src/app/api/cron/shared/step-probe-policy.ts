@@ -9,66 +9,29 @@ import {
   expectedStatusesFromAcceptance,
   reconcileAcceptanceStatuses,
 } from './step-probe-acceptance';
+import { sanitizeRuntimeLog } from './runtime-log-context';
+import { deriveAcceptanceProbeTargets } from './step-probe-contract-targets';
+import type {
+  ProbeDisposition,
+  ProbeObservation,
+  ProbeTargetSource,
+  RuntimeApiTarget,
+  RuntimePageTarget,
+  RuntimeTargetPlan,
+  StepValidationTarget,
+} from './step-probe-types';
 
 export { expectedStatusesFromAcceptance } from './step-probe-acceptance';
-
-export type ProbeDisposition =
-  | 'pass'
-  | 'hard_fail'
-  | 'unknown'
-  | 'advisory';
-
-export type ProbeTargetSource =
-  | 'contract'
-  | 'protected_route'
-  | 'diff'
-  | 'prose'
-  | 'default';
-
-export interface StepValidationTarget {
-  kind: 'page' | 'api';
-  path: string;
-  method?: HttpMethod;
-  expected_statuses?: number[];
-  payload?: unknown;
-  auth_required?: boolean;
-}
-
-export interface RuntimePageTarget {
-  kind: 'page';
-  path: string;
-  source: ProbeTargetSource;
-  required: boolean;
-  expected_statuses?: number[];
-}
-
-export interface RuntimeApiTarget {
-  kind: 'api';
-  path: string;
-  method: HttpMethod;
-  source: ProbeTargetSource;
-  required: boolean;
-  expected_statuses?: number[];
-  payload?: unknown;
-  auth_required?: boolean;
-}
-
-export interface ProbeObservation {
-  kind: 'runtime' | 'page' | 'api' | 'visual' | 'console' | 'copy' | 'scenario';
-  disposition: ProbeDisposition;
-  source: ProbeTargetSource;
-  target?: string;
-  detail: string;
-  method?: HttpMethod;
-  http_status?: number;
-  expected_statuses?: number[];
-}
-
-export interface RuntimeTargetPlan {
-  pages: RuntimePageTarget[];
-  apis: RuntimeApiTarget[];
-  observations: ProbeObservation[];
-}
+export type {
+  ProbeDisposition,
+  ProbeObservation,
+  ProbeObservationSource,
+  ProbeTargetSource,
+  RuntimeApiTarget,
+  RuntimePageTarget,
+  RuntimeTargetPlan,
+  StepValidationTarget,
+} from './step-probe-types';
 
 const METHODS = new Set<HttpMethod>(['GET', 'POST', 'PUT', 'DELETE', 'PATCH']);
 
@@ -253,6 +216,14 @@ export function buildRuntimeTargetPlan(input: {
     });
   }
 
+  const acceptanceTargets = deriveAcceptanceProbeTargets({
+    acceptance: input.acceptance,
+    declaredApiKeys: new Set(apis.keys()),
+  });
+  acceptanceTargets.pages.forEach((target) => upsertPage(pages, target));
+  acceptanceTargets.apis.forEach((target) => upsertApi(apis, target));
+  observations.push(...acceptanceTargets.observations);
+
   for (const pathValue of input.protectedRoutes || []) {
     const path = normalizePath(pathValue, 'page');
     if (!path) continue;
@@ -399,6 +370,10 @@ export function evaluateRuntimeProbe(
           ? 'advisory'
           : 'hard_fail';
     }
+    const bodyExcerpt = sanitizeRuntimeLog(probe.body_snippet)
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 300);
     observations.push({
       kind: 'api',
       disposition,
@@ -408,7 +383,8 @@ export function evaluateRuntimeProbe(
         `HTTP ${probe.http_status}` +
         (unauthenticatedBoundary
           ? ' (unauthenticated probe reached an authentication boundary; require authenticated test or scenario evidence)'
-          : ''),
+          : '') +
+        (bodyExcerpt ? `; body=${bodyExcerpt}` : ''),
       method: probe.method,
       http_status: probe.http_status,
       expected_statuses: target?.expected_statuses,

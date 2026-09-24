@@ -10,6 +10,11 @@ import {
   personalizeMergeTemplate,
   placeholderPolicyToMergePolicy,
 } from '@/lib/messaging/lead-merge-fields';
+import {
+  type InstagramDirectMessageParams,
+  publishInstagramDirectMessage,
+  validateInstagramDirectMessage,
+} from './instagram-dm';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MERGE_TOKEN_RE = /\{\{[^{}]+\}\}/;
@@ -33,6 +38,7 @@ export interface PublishToolParams {
   // Social Media Params
   social_accounts?: string[];
   scheduledAt?: string;
+  instagram_dm?: InstagramDirectMessageParams;
 
   // Audience Params
   audience_id?: string;
@@ -65,6 +71,7 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
       urls,
       social_accounts,
       scheduledAt,
+      instagram_dm,
       audience_id,
       channel,
       voice_mode,
@@ -77,7 +84,12 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
     } = args;
 
     // Validation 1: Must have at least some content
-    if (!text && (!assets || assets.length === 0) && (!urls || urls.length === 0)) {
+    if (
+      !text
+      && (!assets || assets.length === 0)
+      && (!urls || urls.length === 0)
+      && (!instagram_dm?.media_urls || instagram_dm.media_urls.length === 0)
+    ) {
       return { success: false, error: 'Must provide at least text, assets, or urls.' };
     }
 
@@ -85,16 +97,25 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
     const willSaveContent = !!title && !!type;
     const willUpdateContent = !!content_id;
     const willPublishSocial = !!social_accounts && social_accounts.length > 0;
+    const willSendInstagramDm = !!instagram_dm;
     const willSendAudience =
       (!!audience_id && !!channel)
       || (Boolean(is_test) && Boolean(test_recipient || test_lead_id) && !!channel);
 
-    if (!willSaveContent && !willUpdateContent && !willPublishSocial && !willSendAudience) {
+    if (!willSaveContent && !willUpdateContent && !willPublishSocial && !willSendInstagramDm && !willSendAudience) {
       return { 
         success: false, 
-        error: 'Must specify parameters for at least one action: create/update content (title+type or content_id), publish social (social_accounts), or send audience (audience_id+channel).' 
+        error: 'Must specify parameters for at least one action: create/update content, publish social, reply to an Instagram DM, or send an audience.'
       };
     }
+
+    const instagramDmError = validateInstagramDirectMessage(
+      instagram_dm,
+      text,
+      assets,
+      urls,
+    );
+    if (instagramDmError) return { success: false, error: instagramDmError };
 
     // Validation 3: Channel specific
     let finalSubject = subject;
@@ -141,7 +162,7 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
     const results: any = { success: true, actions_attempted: [] };
     if (is_test) {
       results.test_mode = true;
-      results.note = "Running in TEST MODE. No real DB changes, social posts, or bulk sends were made.";
+      results.note = "Running in TEST MODE. No real DB changes, social posts, direct messages, or bulk sends were made.";
     }
     
     let finalContentId = content_id;
@@ -200,7 +221,9 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
     // Prepare text with urls/assets for publishing if needed
     let publishText = text || '';
     if (urls && urls.length > 0) {
-      publishText += '\n\n' + urls.join('\n');
+      publishText = [publishText.trim(), urls.join('\n')]
+        .filter(Boolean)
+        .join('\n\n');
     }
     
     // For social media, Outstand handles media directly if we pass containers, but we'll try to map assets
@@ -241,7 +264,29 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
       }
     }
 
-    // --- 3. Audience Send ---
+    // --- 3. Instagram Direct Message ---
+    if (willSendInstagramDm) {
+      results.actions_attempted.push('instagram_dm');
+      try {
+        results.instagram_dm = is_test
+          ? {
+              success: true,
+              simulated: true,
+              message: `Would have replied to Instagram conversation ${instagram_dm.conversation_id}`,
+            }
+          : await publishInstagramDirectMessage({
+              siteId,
+              text: publishText,
+              assetIds: assets,
+              params: instagram_dm,
+            });
+      } catch (error: any) {
+        results.instagram_dm = { success: false, error: error.message };
+        results.success = false;
+      }
+    }
+
+    // --- 4. Audience Send ---
     if (willSendAudience) {
       results.actions_attempted.push('audience');
       try {
@@ -356,10 +401,11 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
     description: `Consolidated tool to publish content. Can perform one or more of the following actions simultaneously:
 1. Create/Update Content in DB: Requires 'title' and 'type' (to create) OR 'content_id' (to update).
 2. Publish to Social Media: Requires 'social_accounts' array (e.g. ['linkedin', 'x', 'facebook', 'instagram', 'tiktok', 'youtube', 'threads', 'pinterest', 'bluesky']). DO NOT hallucinate parameters like 'networks'.
-3. Send to Audience: Requires 'audience_id' and 'channel' ('whatsapp', 'telegram', 'sms', 'voice', or 'email'). (Newsletters MUST use channel: "email" and audience_email_mode: "newsletter".)
+3. Reply to an Instagram DM: Requires 'instagram_dm.conversation_id'. Supports text, public HTTPS media URLs, uploaded asset IDs, and native scheduling with 'instagram_dm.scheduled_at'.
+4. Send to Audience: Requires 'audience_id' and 'channel' ('whatsapp', 'telegram', 'sms', 'voice', or 'email'). (Newsletters MUST use channel: "email" and audience_email_mode: "newsletter".)
 For Voice, voice_mode "tts" sends a one-way spoken message and "agent_call" starts a two-way Zavu voice-agent call. agent_call also accepts a private objective and additional_context; these guide the conversation and are not spoken as the greeting.
 
-You MUST provide at least valid 'text', 'assets' (array of media IDs), or 'urls'. DO NOT hallucinate parameters like 'media_urls'.
+You MUST provide at least valid 'text', 'assets' (array of uploaded media IDs), 'urls', or 'instagram_dm.media_urls'. Use media_urls only inside instagram_dm.
 If sending email to audience, 'subject' is required.
 
 **TEST MODE (HIGHLY RECOMMENDED FOR DRAFTS/PREVIEWS):**
@@ -401,6 +447,16 @@ The tool will return an object detailing the success/failure of each attempted a
         // Social
         social_accounts: { type: 'array', items: { type: 'string' }, description: 'Social account identifiers to publish to (e.g. ["linkedin", "x", "facebook", "instagram", "tiktok", "youtube", "threads", "pinterest", "bluesky"]).' },
         scheduledAt: { type: 'string', description: 'ISO 8601 date to schedule social post (optional).' },
+        instagram_dm: {
+          type: 'object',
+          description: 'Reply to an existing Instagram conversation. Instagram does not allow initiating arbitrary DMs.',
+          properties: {
+            conversation_id: { type: 'string', description: 'Outstand conversation ID returned by the Conversations API or webhook.' },
+            media_urls: { type: 'array', items: { type: 'string' }, description: 'Optional public HTTPS media URLs.' },
+            scheduled_at: { type: 'string', description: 'Optional future ISO 8601 delivery time. It must remain inside Instagram’s 24-hour reply window.' },
+          },
+          required: ['conversation_id'],
+        },
 
         // Audience
         audience_id: { type: 'string', description: 'Audience UUID to send to.' },

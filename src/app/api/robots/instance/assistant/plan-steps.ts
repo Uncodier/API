@@ -6,6 +6,10 @@ import { SkillsService } from '@/lib/services/skills-service';
 import { getStepCheckpointPromptFragment, getFileFreshnessPromptFragment } from '@/app/api/cron/shared/step-git-prompts';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import { getRedisClient } from '@/lib/utils/redis-client';
+import { cancelPlanStepsForBacklogItem } from '@/lib/helpers/plan-lifecycle';
+import {
+  evaluatePlanBacklogGate,
+} from '@/lib/services/requirement-plan-backlog-gate';
 
 const RELEASE_PLAN_LOCK_SCRIPT = `
 if redis.call('GET', KEYS[1]) == ARGV[1] then
@@ -93,6 +97,53 @@ export async function executePlanStep(
 ) {
   'use step';
   console.log(`[PlanSteps] Executing step ${step.order}: ${step.title}`);
+  const requirementId =
+    context.executionOptions.requirement_id ||
+    plan?.metadata?.requirement_id ||
+    context.instance?.requirement_id ||
+    '';
+  if (requirementId) {
+    const { loadRequirement, toBacklog } = await import(
+      '@/lib/services/requirement-backlog-store'
+    );
+    const requirement = await loadRequirement(requirementId);
+    const backlog = requirement
+      ? toBacklog(requirement.backlog, 'default')
+      : { items: [] };
+    const backlogGate = evaluatePlanBacklogGate(step, backlog.items);
+    if (!backlogGate.runnable) {
+      const reason = `Runtime gate: ${backlogGate.reason}`;
+      if (backlogGate.itemId) {
+        const cancellation = await cancelPlanStepsForBacklogItem({
+          requirementId,
+          itemId: backlogGate.itemId,
+          reason,
+        });
+        if (cancellation.errors.length > 0) {
+          throw new Error(
+            `${reason}; plan cancellation failed: ` +
+            cancellation.errors.join('; '),
+          );
+        }
+      } else {
+        await updateInstancePlanCore({
+          plan_id: plan.id,
+          instance_id: context.executionOptions.instance_id,
+          site_id: context.executionOptions.site_id,
+          requirement_id: requirementId,
+          steps: [{
+            id: step.id,
+            status: 'cancelled',
+            error_message: reason,
+            completed_at: new Date().toISOString(),
+          }],
+        }, { trustedRunner: true });
+      }
+      throw new Error(
+        `Refusing to execute plan step ${step.id}: ${backlogGate.reason}`,
+      );
+    }
+  }
 
     // 1. Update step status to in_progress
     // Baseline = first time THIS step started (not plan.created_at).
@@ -138,7 +189,6 @@ BEFORE starting to code or execute any commands, you MUST:
 
   // 3. Build a dedicated system prompt for this sub-agent step
   const { instance_id, site_id } = context.executionOptions;
-  const requirementId = context.instance?.requirement_id || '';
 
   let progressContext = '';
   if (requirementId) {

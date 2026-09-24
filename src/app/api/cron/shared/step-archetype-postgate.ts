@@ -31,9 +31,14 @@ import type { TestSignal } from './step-test-evidence';
 import type { ProbeObservation } from './step-probe-policy';
 import type { InteractionSignal } from './step-interaction-audit';
 import type { ScenarioSignal } from './step-iteration-signals';
+import type {
+  AcceptanceCriterionDiagnostic,
+  ScenarioAssertionReceipt,
+} from '@/lib/services/requirement-evidence-types';
 import {
   formatJudgeRepairFeedback,
   judgeVerificationAttemptLimit,
+  summarizeJudgeEvidenceGaps,
   verificationAttemptCount,
   verificationToolName,
 } from './judge-verification-policy';
@@ -53,6 +58,7 @@ export interface PostGateGateSignals {
     }>;
   };
   scenarios?: ScenarioSignal;
+  scenario_assertions?: ScenarioAssertionReceipt[];
   tests?: TestSignal;
   observations?: ProbeObservation[];
   interaction?: InteractionSignal;
@@ -83,6 +89,7 @@ export interface RunArchetypePostGateResult {
   judge_failure_kind?: JudgeFailureKind;
   matched_acceptance?: string[];
   unmatched_acceptance?: string[];
+  acceptance_diagnostics?: AcceptanceCriterionDiagnostic[];
   repair_feedback?: string;
   healing_applied?: string;
   verification_exhausted?: boolean;
@@ -150,6 +157,7 @@ export async function runArchetypePostGate(
       !!signalsWithDiff.build ||
       !!signalsWithDiff.runtime ||
       !!signalsWithDiff.scenarios ||
+      (signalsWithDiff.scenario_assertions?.length ?? 0) > 0 ||
       !!signalsWithDiff.tests ||
       !!signalsWithDiff.interaction ||
       (signalsWithDiff.changed_files?.length ?? 0) > 0 ||
@@ -200,6 +208,7 @@ export async function runArchetypePostGate(
         judge_failure_kind: judge.failure_kind,
         judge_matched_acceptance: judge.matched_acceptance,
         judge_unmatched_acceptance: judge.unmatched_acceptance,
+        judge_acceptance_diagnostics: judge.acceptance_diagnostics,
       },
     });
 
@@ -207,6 +216,7 @@ export async function runArchetypePostGate(
     let verificationExhausted = false;
     let terminalStepStatus: 'cancelled' | undefined;
     if (judge.verdict !== 'approved') {
+      const gapSummary = summarizeJudgeEvidenceGaps(judge);
       const toolName = verificationToolName(judge.failure_kind);
       if (toolName) {
         const updatedItem = await recordToolFailure({
@@ -214,17 +224,23 @@ export async function runArchetypePostGate(
           itemId: item.id,
           toolName,
           reason:
-            `[${judge.failure_kind}] ${judge.reason}`.slice(0, 400),
+            (
+              `[${judge.failure_kind}] ${judge.reason}` +
+              `${gapSummary ? ` Gaps: ${gapSummary}` : ''}`
+            ).slice(0, 400),
         });
         const verificationAttempts = verificationAttemptCount(
           updatedItem?.tool_failures,
           toolName,
         );
-        const attemptLimit = judgeVerificationAttemptLimit();
+        const attemptLimit = judge.failure_kind === 'capability_gap'
+          ? 1
+          : judgeVerificationAttemptLimit();
         if (verificationAttempts >= attemptLimit) {
           const reason =
             `${judge.failure_kind} verification exhausted after ` +
-            `${verificationAttempts} attempts: ${judge.reason}`;
+            `${verificationAttempts} attempts: ${judge.reason}` +
+            `${gapSummary ? ` Gaps: ${gapSummary}` : ''}`;
           await markNeedsReview({
             requirementId: input.requirementId,
             itemId: item.id,
@@ -294,6 +310,7 @@ export async function runArchetypePostGate(
         judge_reason: judge.reason,
         matched_acceptance: judge.matched_acceptance.length,
         unmatched_acceptance: judge.unmatched_acceptance.length,
+        acceptance_diagnostics: judge.acceptance_diagnostics,
         feature_coverage: coverage ? summarizeFeatureCoverage(coverage) : 'n/a',
         healing_applied: healingApplied,
         verification_exhausted: verificationExhausted,
@@ -307,6 +324,7 @@ export async function runArchetypePostGate(
       judge_failure_kind: judge.failure_kind,
       matched_acceptance: judge.matched_acceptance,
       unmatched_acceptance: judge.unmatched_acceptance,
+      acceptance_diagnostics: judge.acceptance_diagnostics,
       repair_feedback:
         judge.verdict === 'approved'
           ? undefined
@@ -342,10 +360,13 @@ function buildEvidenceRecord(
         page.http_status >= 200 &&
         page.http_status < 400,
     );
-  const scenarioAssertions = signals.scenarios?.scenarios.flatMap(
-    (scenario) =>
-      scenario.steps.flatMap((step) => step.receipt ? [step.receipt] : []),
-  ) || [];
+  const scenarioAssertions = [
+    ...(signals.scenario_assertions || []),
+    ...(signals.scenarios?.scenarios.flatMap(
+      (scenario) =>
+        scenario.steps.flatMap((step) => step.receipt ? [step.receipt] : []),
+    ) || []),
+  ];
   const responseObservations = scenarioAssertions
     .filter((receipt) => receipt.kind === 'http_response')
     .map((receipt) => ({

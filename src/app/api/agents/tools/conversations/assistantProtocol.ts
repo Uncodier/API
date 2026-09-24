@@ -18,7 +18,7 @@ export interface ConversationsToolParams {
   offset?: number;
 }
 
-export function conversationsTool(site_id: string, user_id?: string) {
+export function conversationsTool(site_id: string, _user_id?: string) {
   return {
     name: 'conversations',
     description:
@@ -54,7 +54,7 @@ export function conversationsTool(site_id: string, user_id?: string) {
         site_id,
         lead_id: params.lead_id,
         visitor_id: params.visitor_id,
-        user_id: params.user_id ?? user_id,
+        user_id: params.user_id,
         agent_id: params.agent_id,
         status: params.status,
         channel: params.channel,

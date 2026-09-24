@@ -218,6 +218,33 @@ describe('syncGroundTruthBeforeCommit', () => {
     expect(mergeEvidenceRecords(previous, next).tests).toEqual(previous.tests);
   });
 
+  it('preserves QA scenario assertions across the same evidence run', async () => {
+    const { mergeEvidenceRecords } = await import('../requirement-ground-truth');
+    const previous = {
+      schema_version: 1 as const,
+      item_id: 'item-1',
+      evidence_run_id: 'run-1',
+      captured_at: '2026-09-18T00:00:00.000Z',
+      critic_passes: 0,
+      scenario_assertions: [{
+        kind: 'http_response' as const,
+        pass: true,
+        method: 'POST' as const,
+        target: '/api/campaigns',
+        actual_status: 200,
+        expected_statuses: [200],
+      }],
+    };
+
+    expect(mergeEvidenceRecords(previous, {
+      schema_version: 1,
+      item_id: 'item-1',
+      evidence_run_id: 'run-1',
+      captured_at: '2026-09-18T00:01:00.000Z',
+      scenario_assertions: [],
+    }).scenario_assertions).toEqual(previous.scenario_assertions);
+  });
+
   it('deduplicates receipts by step, command, and workspace fingerprint', async () => {
     const { mergeEvidenceRecords } = await import('../requirement-ground-truth');
     const base = {

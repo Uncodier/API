@@ -350,6 +350,14 @@ async function ensureSenderUsesAgent(
     await attachSenderToAgent(senderId, agentId);
     return true;
   } catch (attachError) {
+    if (
+      attachError instanceof Error &&
+      (attachError as Error & { status?: number }).status === 400 &&
+      /sender is already connected to this agent/i.test(attachError.message)
+    ) {
+      return false;
+    }
+
     // The attach endpoint is not idempotent and can report that an agent
     // already exists after a successful concurrent or previously retried call.
     // Re-read the sender before treating that response as a failed save.

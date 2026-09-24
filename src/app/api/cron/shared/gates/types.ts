@@ -45,7 +45,8 @@ export type FlowGateFailureKind =
   | 'infrastructure_unavailable'
   | 'missing_precondition'
   | 'evidence_gap'
-  | 'contract_error';
+  | 'contract_error'
+  | 'capability_gap';
 
 /** Extras the heavy `app`/`site` gate needs (build + runtime + deploy + origin push). */
 export interface AppGateContext {

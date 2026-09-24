@@ -66,6 +66,9 @@ export function buildSingleTurnSystemPrompt(p: SingleTurnPromptParams): string {
     skillContext, progressContext, agentBackground, memoriesContext, retryContext,
     constraintSources,
   } = p;
+  const verificationOnly =
+    p.noProgressAdjudication ||
+    /\bFailure kind:\s*evidence_gap\b/i.test(retryContext);
 
   const constraintBlock = formatConstraintsPromptBlock(extractRequirementConstraints(
     ...(constraintSources || []),
@@ -107,10 +110,14 @@ WORKSPACE — READ THIS CAREFULLY:
 - To add a new page, write files under src/app/<route>/page.tsx only.
 - To add components, write under src/components/.
 - All relative paths in sandbox tools resolve from ${SandboxService.WORK_DIR}.
-${p.noProgressAdjudication
-  ? '- GATE-ONLY ADJUDICATION MODE: normal executor actions are skipped; the runner is validating the existing workspace evidence directly.'
+${verificationOnly
+  ? p.noProgressAdjudication
+    ? '- GATE-ONLY ADJUDICATION MODE: normal executor actions are skipped; the runner is validating the existing workspace evidence directly.'
+    : '- EVIDENCE-ONLY MODE: inspect and collect fresh proof. QA probe receipts are persisted automatically. Do not modify files, push, deploy, or create cosmetic changes.'
   : firstActionsPromptLine(effectiveRole)}
-- LAST ACTION BEFORE STOPPING: Call sandbox_push_checkpoint (title_hint = this step's title) after your work builds — mandatory if you modified files; see CHECKPOINTS section below.
+${verificationOnly
+  ? ''
+  : '- LAST ACTION BEFORE STOPPING: Call sandbox_push_checkpoint (title_hint = this step\'s title) after your work builds — mandatory if you modified files; see CHECKPOINTS section below.'}
 
 COMPANY BACKGROUND & MEMORIES:
 ${agentBackground}
@@ -133,11 +140,13 @@ Expected Output: ${step.expected_output || 'Complete the step successfully.'}${r
 Success Criteria: ${JSON.stringify(step.success_criteria || [])}
 Validation Rules: ${JSON.stringify(step.validation_rules || [])}
 
-Cycle baseline: ${cycleBaselineAt || 'unknown'}
+${verificationOnly
+  ? ''
+  : `Cycle baseline: ${cycleBaselineAt || 'unknown'}
 File freshness: sandbox_list_files / sandbox_read_file / sandbox_read_files report updated_this_cycle vs this baseline.
-When you need several known files, use one sandbox_read_files call instead of spending one turn per file.
+When you need several known files, use one sandbox_read_files call instead of spending one turn per file.`}
 
-${p.noProgressAdjudication
+${verificationOnly
   ? ''
   : skillContext
   ? skillContext
@@ -163,10 +172,10 @@ SHELL LIMITATIONS:
 - RIGHT: mkdir -p src/app/community src/app/guests src/app/booking — list each path separately.
 - FOR LONG COMMANDS (like npm run build, tests, or servers), ALWAYS use sandbox_start_background_command. Never use sandbox_run_command for them.
 
-${p.noProgressAdjudication ? '' : TOOL_LOOKUP_HINT}
-${p.noProgressAdjudication ? '' : effectiveRole === 'investigate' ? RESEARCH_WEBSEARCH_HINT : ''}
-${getFileFreshnessPromptFragment(cycleBaselineAt)}
-${getStepCheckpointPromptFragment(requirementId, instanceId)}`;
+${verificationOnly ? '' : TOOL_LOOKUP_HINT}
+${verificationOnly ? '' : effectiveRole === 'investigate' ? RESEARCH_WEBSEARCH_HINT : ''}
+${verificationOnly ? '' : getFileFreshnessPromptFragment(cycleBaselineAt)}
+${verificationOnly ? '' : getStepCheckpointPromptFragment(requirementId, instanceId)}`;
 }
 
 export function buildUntrustedHistoryMessage(historyContext: string): string {

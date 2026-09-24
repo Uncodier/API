@@ -30,6 +30,18 @@ const atomicPlanCancellationSql = workspaceFile(
 const infrastructureRetryStreakSql = workspaceFile(
   'supabase/migrations/20260922041000_reset_infrastructure_retry_streak_on_remediation.sql',
 );
+const durableReviewQuarantineSql = workspaceFile(
+  'supabase/migrations/20260923230000_durable_review_quarantine.sql',
+);
+const reviewQuarantineBackfillSql = workspaceFile(
+  'supabase/migrations/20260923230050_backfill_review_quarantine.sql',
+);
+const reviewQuarantineReceiptsSql = workspaceFile(
+  'supabase/migrations/20260923225900_review_quarantine_receipts.sql',
+);
+const reviewQuarantineStampSql = workspaceFile(
+  'supabase/migrations/20260923230100_stamp_review_quarantine.sql',
+);
 
 describe('atomic cron SQL contracts', () => {
   const cycleSql = workspaceFile(
@@ -180,6 +192,60 @@ describe('atomic cron SQL contracts', () => {
     );
     expect(infrastructureRetryStreakSql.trimEnd().split(/\r?\n/).length)
       .toBeLessThan(500);
+  });
+
+  it('releases review quarantine only through a newer trusted user action', () => {
+    expect(durableReviewQuarantineSql).toContain(
+      'trusted_user_action boolean NOT NULL DEFAULT false',
+    );
+    expect(durableReviewQuarantineSql).toContain(
+      'external_user_action_revision bigint NOT NULL DEFAULT 0',
+    );
+    expect(reviewQuarantineReceiptsSql).toContain(
+      'PRIMARY KEY (requirement_id, action_id)',
+    );
+    expect(reviewQuarantineReceiptsSql).toContain(
+      'ENABLE ROW LEVEL SECURITY',
+    );
+    expect(reviewQuarantineReceiptsSql).toContain(
+      'CREATE POLICY requirement_user_action_receipts_service_role',
+    );
+    expect(durableReviewQuarantineSql).toContain(
+      'CREATE TRIGGER requirements_review_quarantine_guard',
+    );
+    expect(durableReviewQuarantineSql).toContain(
+      'log.trusted_user_action = true',
+    );
+    expect(durableReviewQuarantineSql).toMatch(
+      /v_action_created_at\s*>\s*public\.requirement_quarantine_timestamp\(v_item\)/,
+    );
+    expect(durableReviewQuarantineSql).toContain(
+      "'released_by_action_id', p_action_id",
+    );
+    expect(durableReviewQuarantineSql).toContain('FOR UPDATE');
+    expect(durableReviewQuarantineSql).toContain(
+      'FROM PUBLIC, anon, authenticated;',
+    );
+    expect(durableReviewQuarantineSql.trimEnd().split(/\r?\n/).length)
+      .toBeLessThan(500);
+    expect(reviewQuarantineBackfillSql).toContain(
+      "'request.jwt.claims'",
+    );
+    expect(reviewQuarantineBackfillSql).toContain(
+      `'{"role":"service_role"}'`,
+    );
+    expect(reviewQuarantineBackfillSql).toContain(
+      'ADD COLUMN IF NOT EXISTS external_user_action_revision',
+    );
+    expect(reviewQuarantineBackfillSql).toContain(
+      "'Backfilled review quarantine'",
+    );
+    expect(reviewQuarantineStampSql).toContain(
+      'CREATE TRIGGER requirements_review_quarantine_stamp',
+    );
+    expect(reviewQuarantineStampSql).toContain(
+      "'plan_cancellation_pending'",
+    );
   });
 
   it('scopes no-progress accounting and blocking to one plan step', () => {

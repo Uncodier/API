@@ -208,7 +208,9 @@ export async function syncConnectedCustomerSupportVoiceAgentDetailed(
 
   const senderStates = new Map<string, any>();
   for (const senderId of senderIds) {
-    senderStates.set(senderId, await ensureSenderWebhook(senderId));
+    senderStates.set(senderId, await ensureSenderWebhook(senderId, {
+      includeVoiceEvents: true,
+    }));
   }
 
   let agentSync: CustomerSupportVoiceSyncResult | undefined;

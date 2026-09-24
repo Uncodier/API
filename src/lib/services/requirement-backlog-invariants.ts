@@ -133,7 +133,9 @@ export function assertBacklogStatusTransition(
   items: BacklogItem[],
   itemId: string,
   nextStatus: BacklogItemStatus,
-  options: { allowDoneReopen?: boolean } = {},
+  options: {
+    allowDoneReopen?: boolean;
+  } = {},
 ): void {
   const item = items.find((candidate) => candidate.id === itemId);
   if (!item) {
@@ -147,6 +149,22 @@ export function assertBacklogStatusTransition(
         `Cannot transition completed backlog item "${itemId}" from done to ${nextStatus}; explicitly reopen it to pending first`,
       );
     }
+  }
+  if (
+    (
+      currentStatus === 'needs_review' ||
+      item.review_quarantine?.active === true
+    ) &&
+    nextStatus !== currentStatus
+  ) {
+    throw new Error(
+      `Cannot transition quarantined backlog item "${itemId}" from ${currentStatus} to ${nextStatus}; a new external user action must reopen it`,
+    );
+  }
+  if (currentStatus === 'rejected' && nextStatus !== 'rejected') {
+    throw new Error(
+      `Cannot transition rejected backlog item "${itemId}" to ${nextStatus}; create a remediation item instead`,
+    );
   }
 
   const allowedSources: Partial<

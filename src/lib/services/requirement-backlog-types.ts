@@ -4,6 +4,7 @@
  */
 
 import type { EvidenceRecord } from './requirement-ground-truth';
+import type { AcceptanceContractV1 } from './requirement-acceptance-contract';
 
 export type BacklogItemStatus =
   | 'pending'
@@ -78,12 +79,24 @@ export interface BacklogBlocker {
   created_at?: string;
 }
 
+export interface BacklogReviewQuarantine {
+  active: boolean;
+  kind: 'verification_exhausted' | 'capability_gap' | 'stale' | 'manual';
+  reason: string;
+  quarantined_at: string;
+  external_action_revision: number;
+  released_at?: string;
+  released_by_action_id?: string;
+}
+
 export interface BacklogItem {
   id: string;
   title: string;
   kind: BacklogItemKind;
   phase_id: string;
   acceptance: string[];
+  /** Versioned executable interpretation of `acceptance`. */
+  acceptance_contract?: AcceptanceContractV1;
   /** MUST NOT / hard rules extracted from the spec (negative acceptance). */
   constraints?: string[];
   touches?: string[];
@@ -106,6 +119,8 @@ export interface BacklogItem {
     reason: string;
     requested_at: string;
   };
+  /** Released only by the trusted external-user-action recovery RPC. */
+  review_quarantine?: BacklogReviewQuarantine;
   evidence?: EvidenceRecord;
   created_at?: string;
   updated_at?: string;

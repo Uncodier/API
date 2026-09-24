@@ -6,12 +6,15 @@ import {
 import { supabaseAdmin } from "@/lib/database/supabase-server";
 import { WorkflowService } from "@/lib/services/workflow-service";
 import { clearVoiceCallContactContext } from "../contact-client";
+import { getVoiceCall } from "../voice-call-client";
 
 const mockHandleUntrackedInboundVoiceEvent = jest.fn();
+const mockQueueInboundVoiceResponse = jest.fn();
 
 jest.mock("@/lib/database/supabase-server", () => ({
   supabaseAdmin: {
     from: jest.fn(),
+    schema: jest.fn(),
   },
 }));
 
@@ -39,6 +42,8 @@ jest.mock("../contact-client", () => ({
 jest.mock("../inbound-voice-context", () => ({
   handleUntrackedInboundVoiceEvent: (...args: unknown[]) =>
     mockHandleUntrackedInboundVoiceEvent(...args),
+  queueInboundVoiceResponse: (...args: unknown[]) =>
+    mockQueueInboundVoiceResponse(...args),
 }));
 
 function mockSettingsForSender(siteId = "site-1") {
@@ -132,7 +137,11 @@ describe("handleInboundMessage", () => {
 describe("handleVoiceCallEvent", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    (supabaseAdmin.schema as jest.Mock).mockReturnValue({
+      from: supabaseAdmin.from,
+    });
     mockHandleUntrackedInboundVoiceEvent.mockResolvedValue({ handled: false });
+    mockQueueInboundVoiceResponse.mockResolvedValue(undefined);
   });
 
   it("treats call.completed without a provider status as completed", () => {
@@ -249,6 +258,8 @@ describe("handleVoiceCallEvent", () => {
                     status: "sending",
                     duration_seconds: 42,
                     transcript_available: true,
+                    call_direction: "inbound",
+                    voice_response_workflow_status: "queued",
                   },
                 },
               }),
@@ -276,7 +287,7 @@ describe("handleVoiceCallEvent", () => {
     expect(deliveryUpdates[0]).not.toHaveProperty("transcript");
     expect(deliveryUpdates[0]).not.toHaveProperty("cost");
     expect(messageUpdates[0].custom_data).toMatchObject({
-      status: "sent",
+      status: "received",
       call_status: "completed",
       duration_seconds: 42,
       transcript_available: true,
@@ -284,6 +295,90 @@ describe("handleVoiceCallEvent", () => {
     expect(clearVoiceCallContactContext).toHaveBeenCalledWith({
       phone: "+14155550100",
       deliveryId: "delivery-1",
+    });
+  });
+
+  it("retries an inbound response workflow that was not marked queued", async () => {
+    const delivery = {
+      id: "delivery-1",
+      message_id: "message-1",
+      site_id: "site-1",
+      conversation_id: "conversation-1",
+      lead_id: "lead-1",
+      zavu_sender_id: "sender-1",
+      recipient_phone: "+14155550100",
+      status: "completed",
+    };
+    const call = {
+      id: "call-1",
+      direction: "inbound",
+      from: "+14155550100",
+      to: "+14155550999",
+      status: "completed",
+      transcript: [{ seq: 1, role: "user", text: "Please follow up." }],
+      createdAt: "2026-09-23T12:00:00.000Z",
+    };
+    (getVoiceCall as jest.Mock).mockResolvedValue(call);
+    (supabaseAdmin.from as jest.Mock).mockImplementation((table: string) => {
+      if (table === "voice_call_deliveries") {
+        return {
+          select: jest.fn().mockReturnValue({
+            limit: jest.fn().mockReturnValue({
+              eq: jest.fn().mockResolvedValue({
+                data: [delivery],
+                error: null,
+              }),
+            }),
+          }),
+          update: jest.fn().mockImplementation(() => {
+            const updateQuery: any = {
+              not: jest.fn(),
+              neq: jest.fn(),
+              select: jest.fn(),
+            };
+            updateQuery.not.mockReturnValue(updateQuery);
+            updateQuery.neq.mockReturnValue(updateQuery);
+            updateQuery.select.mockReturnValue({
+              maybeSingle: jest.fn().mockResolvedValue({
+                data: { status: "completed" },
+                error: null,
+              }),
+            });
+            return { eq: jest.fn().mockReturnValue(updateQuery) };
+          }),
+        };
+      }
+      if (table === "messages") {
+        return {
+          select: jest.fn().mockReturnValue({
+            eq: jest.fn().mockReturnValue({
+              maybeSingle: jest.fn().mockResolvedValue({
+                data: {
+                  custom_data: {
+                    call_direction: "inbound",
+                    voice_response_workflow_status: "pending",
+                  },
+                },
+                error: null,
+              }),
+            }),
+          }),
+          update: jest.fn().mockReturnValue({
+            eq: jest.fn().mockResolvedValue({ error: null }),
+          }),
+        };
+      }
+      throw new Error(`Unexpected table ${table}`);
+    });
+
+    await handleVoiceCallEvent({
+      type: "call.completed",
+      data: { callId: "call-1" },
+    });
+
+    expect(mockQueueInboundVoiceResponse).toHaveBeenCalledWith({
+      call,
+      delivery,
     });
   });
 });

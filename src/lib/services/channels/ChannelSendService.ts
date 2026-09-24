@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { sendChannelMessage } from '@/lib/services/zavu/client';
 import { getOutstandClient } from '@/lib/integrations/outstand/client';
+import { authorizeOutstandConversation } from '@/lib/integrations/outstand/conversation-access';
 import { tryPrepareLongReplyAudio } from './long-reply-audio';
 
 export interface SendChannelMessageParams {
@@ -56,6 +57,35 @@ export class ChannelSendService {
         if (!params.message_id && !params.conversation_id) {
           throw new Error(`Outstand replies require message_id or conversation_id to find the parent comment`);
         }
+
+        if (params.channel === 'instagram' && params.conversation_id) {
+          const { data: conversation, error: conversationError } = await supabaseAdmin
+            .from('conversations')
+            .select('custom_data')
+            .eq('id', params.conversation_id)
+            .eq('site_id', params.site_id)
+            .maybeSingle();
+          if (conversationError) throw conversationError;
+
+          const outstandConversationId =
+            conversation?.custom_data?.outstand_conversation_id;
+          if (typeof outstandConversationId === 'string') {
+            const client = getOutstandClient();
+            await authorizeOutstandConversation(
+              client,
+              outstandConversationId,
+              params.site_id,
+            );
+            const result = await client.sendConversationMessage(
+              outstandConversationId,
+              { content: params.message },
+            );
+            return {
+              success: result.success !== false,
+              messageId: result.message?.id || `outstand-dm-${Date.now()}`,
+            };
+          }
+        }
         
         let customData: any = {};
         
@@ -83,6 +113,24 @@ export class ChannelSendService {
           customData.origin_message_id ||
           customData.parent_comment_id;
         const accountUsername = customData.account_username;
+        const outstandConversationId = customData.outstand_conversation_id;
+
+        if (params.channel === 'instagram' && outstandConversationId) {
+          const client = getOutstandClient();
+          await authorizeOutstandConversation(
+            client,
+            outstandConversationId,
+            params.site_id,
+          );
+          const result = await client.sendConversationMessage(
+            outstandConversationId,
+            { content: params.message },
+          );
+          return {
+            success: result.success !== false,
+            messageId: result.message?.id || `outstand-dm-${Date.now()}`,
+          };
+        }
         
         if (!outstandPostId) {
           throw new Error(`No outstand_post_id found for conversation ${params.conversation_id}`);

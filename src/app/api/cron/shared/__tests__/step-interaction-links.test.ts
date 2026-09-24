@@ -23,6 +23,7 @@ describe('auditInternalLinks', () => {
         target: '/',
         region: 'header',
         route_exists: true,
+        content_excerpt: 'Home',
       }),
       expect.objectContaining({
         target: '/services',

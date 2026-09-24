@@ -74,9 +74,13 @@ describe('insertUserActionLog', () => {
     expect(insertChain.insert).toHaveBeenCalledWith(
       expect.objectContaining({
         log_type: 'user_action',
+        trusted_user_action: true,
         message: 'hello',
         instance_id: 'inst-1',
         site_id: 'site-1',
+        details: expect.objectContaining({
+          prompt_source: 'assistant_route',
+        }),
       })
     );
   });

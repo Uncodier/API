@@ -23,6 +23,7 @@ export interface RequirementRow {
   metadata: Record<string, any> | null;
   backlog: Record<string, any> | null;
   backlog_revision: number;
+  external_user_action_revision?: number;
 }
 
 export async function loadRequirement(requirementId: string): Promise<RequirementRow | null> {
@@ -32,7 +33,9 @@ export async function loadRequirement(requirementId: string): Promise<Requiremen
   // `Requirement <id> not found`, masking the real problem at the caller.
   const { data, error } = await supabaseAdmin
     .from('requirements')
-    .select('id, site_id, type, status, metadata, backlog, backlog_revision')
+    .select(
+      'id, site_id, type, status, metadata, backlog, backlog_revision, external_user_action_revision',
+    )
     .eq('id', requirementId)
     .maybeSingle();
   if (error) {

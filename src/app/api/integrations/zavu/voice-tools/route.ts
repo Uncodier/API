@@ -3,19 +3,17 @@ import { z } from "zod";
 import { verifyZavuSignature } from "@/lib/services/zavu/signature";
 import { decryptToken } from "@/lib/utils/token-decryption";
 import { getSupabaseAdmin } from "@/lib/database/supabase-server";
-import { manageLeadCreation } from "@/lib/services/leads/lead-service";
+import { executeCustomerSupportVoiceTool } from "@/lib/services/zavu/voice-tool-executor";
 
 const requestSchema = z.object({
   tool: z.string().optional(),
   arguments: z.record(z.unknown()),
-  context: z.record(z.unknown()).optional(),
+  context: z.object({
+    contactPhone: z.string().optional(),
+    messageId: z.string().optional(),
+    sessionId: z.string().optional(),
+  }).passthrough().optional(),
   timestamp: z.number().optional(),
-});
-
-const captureLeadSchema = z.object({
-  name: z.string().trim().min(1).max(200),
-  phone: z.string().trim().min(5).max(30),
-  email: z.string().trim().email().max(320).optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -61,36 +59,30 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Invalid tool payload" }, { status: 400 });
     }
 
-    if (
-      toolName !== "capture_lead"
-      || (parsed.data.tool && parsed.data.tool !== toolName)
-    ) {
-      return NextResponse.json({ error: "Unknown tool" }, { status: 400 });
+    if (parsed.data.tool && parsed.data.tool !== toolName) {
+      return NextResponse.json({ error: "Tool name mismatch" }, { status: 400 });
     }
 
-    const lead = captureLeadSchema.safeParse(parsed.data.arguments);
-    if (!lead.success) {
-      return NextResponse.json({ error: "Invalid lead information" }, { status: 400 });
+    try {
+      const result = await executeCustomerSupportVoiceTool({
+        toolName,
+        arguments: parsed.data.arguments,
+        context: parsed.data.context,
+        siteId,
+        rawPayload: rawBody,
+      });
+      return NextResponse.json(result ?? { success: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Tool execution failed";
+      const unknownTool = message.startsWith("Unknown Customer Support tool");
+      return NextResponse.json(
+        {
+          error: message,
+          code: unknownTool ? "UNKNOWN_TOOL" : "TOOL_EXECUTION_FAILED",
+        },
+        { status: unknownTool ? 400 : 422 }
+      );
     }
-
-    const result = await manageLeadCreation({
-      ...lead.data,
-      siteId,
-      origin: "voice",
-      createTask: true,
-    });
-    if (!result.leadId) {
-      return NextResponse.json({ error: "Lead could not be captured" }, { status: 500 });
-    }
-
-    return NextResponse.json({
-      success: true,
-      leadId: result.leadId,
-      created: result.isNewLead,
-      message: result.isNewLead
-        ? "Lead captured successfully."
-        : "Lead already exists and was matched successfully.",
-    });
   } catch (error: any) {
     console.error("[Zavu Voice Webhook] Error:", error);
     return NextResponse.json(

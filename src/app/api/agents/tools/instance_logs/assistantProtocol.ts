@@ -26,7 +26,7 @@ export function instanceLogsTool(site_id: string, user_id?: string, instance_id?
         action: { type: 'string', enum: ['create', 'list'], description: 'Action to perform. Default is "create"' },
         instance_id: { type: 'string', description: 'ID of the related instance (optional). Defaults to the current instance.' },
         user_id: { type: 'string', description: 'ID of the related user (optional). Defaults to the current user.' },
-        log_type: { type: 'string', description: 'Type of log (e.g. system, user_action, agent_action, tool_call) (required for create)' },
+        log_type: { type: 'string', description: 'Type of log (e.g. system, agent_action, tool_call). user_action is reserved for authenticated external input. (required for create)' },
         level: { type: 'string', enum: ['info', 'warn', 'error'], description: 'Severity level (e.g. info, warn, error) (required for create)' },
         message: { type: 'string', description: 'Message or detail of the log (required for create)' },
         details: { type: 'string', description: 'Additional context or metadata in JSON format (optional, as string). Pass a `usage` object (e.g. {"usage": {"prompt_tokens": 10, "completion_tokens": 5}}) to deduct credits.' },
@@ -73,6 +73,11 @@ export function instanceLogsTool(site_id: string, user_id?: string, instance_id?
         if (action === 'create') {
           if (!args.log_type || !args.level || !args.message) {
             throw new Error('log_type, level, and message are required to create an instance log');
+          }
+          if (args.log_type === 'user_action') {
+            throw new Error(
+              'user_action is reserved for authenticated external user input',
+            );
           }
           
           const result = await createInstanceLogCore({

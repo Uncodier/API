@@ -7,6 +7,11 @@ export type PlanExecutionHaltReason =
   | 'infrastructure_wait'
   | 'infrastructure_circuit_open'
   | 'step_changed'
+  | 'unlinked_backlog_item'
+  | 'backlog_item_missing'
+  | 'backlog_item_not_active'
+  | 'backlog_item_blocked'
+  | 'backlog_item_quarantined'
   | 'missing';
 
 export function buildPlanAdaptationUserMessage(
@@ -44,6 +49,7 @@ export type PlanGate =
       infrastructureKind?: string;
       infrastructureProvenance?: string;
       infrastructureGeneration?: number;
+      backlogItemId?: string;
     };
 
 import { 

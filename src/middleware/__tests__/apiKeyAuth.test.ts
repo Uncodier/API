@@ -59,6 +59,22 @@ describe('apiKeyAuth', () => {
       .toBe('ai:generate');
     expect(requiredApiKeyScope('/api/public/image/sign', 'POST'))
       .toBe('ai:generate');
+    expect(requiredApiKeyScope(
+      '/api/integrations/outstand/conversations',
+      'GET',
+    )).toBe('read');
+    expect(requiredApiKeyScope(
+      '/api/integrations/outstand/conversations/conversation-1/messages',
+      'POST',
+    )).toBe('write');
+    expect(requiredApiKeyScope(
+      '/api/integrations/outstand/conversations/conversation-1/messages/message-1',
+      'DELETE',
+    )).toBe('write');
+    expect(requiredApiKeyScope(
+      '/api/agents/tools/sendChannelMessage',
+      'POST',
+    )).toBe('write');
     expect(requiredApiKeyScope('/api/public/posts', 'GET')).toBeNull();
   });
 
@@ -76,6 +92,26 @@ describe('apiKeyAuth', () => {
 
     const response = await apiKeyAuth(new NextRequest(
       'https://api.makinari.com/api/ai/image',
+      { method: 'POST', headers: { 'x-api-key': 'key_secret' } },
+    ));
+
+    expect(response.status).toBe(403);
+  });
+
+  it('rejects a read-only key that attempts to send an Outstand DM', async () => {
+    (validateApiKey as any).mockResolvedValue({
+      isValid: true,
+      keyData: {
+        id: 'key-id',
+        name: 'Read-only key',
+        user_id: 'user-id',
+        site_id: '00000000-0000-4000-8000-000000000001',
+        scopes: ['read'],
+      },
+    });
+
+    const response = await apiKeyAuth(new NextRequest(
+      'https://api.makinari.com/api/integrations/outstand/conversations/conversation-1/messages',
       { method: 'POST', headers: { 'x-api-key': 'key_secret' } },
     ));
 

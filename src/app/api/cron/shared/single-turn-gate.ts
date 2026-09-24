@@ -1,13 +1,9 @@
-import type { Sandbox } from '@vercel/sandbox';
-import { randomUUID } from 'node:crypto';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import {
   getBacklogItem,
   setItemStatus,
 } from '@/lib/services/requirement-backlog';
 import { classifyRequirementType } from '@/lib/services/requirement-flows';
-import type { GitRepoKind } from './cron-commit-helpers';
-import type { CronAuditContext } from '@/lib/services/cron-audit-log';
 import {
   CronInfraEvent,
   logCronInfrastructureEvent,
@@ -36,39 +32,15 @@ import {
   isTransientGateFailure,
 } from './single-turn-helpers';
 import type { SingleTurnResult } from './single-turn-types';
-import { writeEvidence } from '@/lib/services/requirement-ground-truth';
-import { extractTestEvidenceFromResult } from './step-test-evidence';
 import { persistJudgeRejection } from './single-turn-judge-rejection';
 import { adjudicationContractAcceptance } from './single-turn-judge-contract';
 import { selectReusableGateValidation } from './gate-validation-cache';
 import type { EvidenceRecord } from '@/lib/services/requirement-evidence-types';
 import { computeApplicationBuildFingerprint } from './commit/pre-push-build-validation';
-
-interface RunSingleTurnGateInput {
-  sandbox: Sandbox;
-  effectiveSandboxId: string;
-  plan: any;
-  step: any;
-  persistedStep: any;
-  requirementId: string;
-  instanceId: string;
-  siteId: string;
-  userId?: string;
-  requirementType: string;
-  gitRepoKind: GitRepoKind;
-  validateDeployment?: boolean;
-  backlogItemId: string | null;
-  interactionBaselineSha?: string;
-  systemPrompt: string;
-  result: any;
-  fullTools: any;
-  audit: CronAuditContext;
-  infrastructureGeneration: number;
-  executionEventId: string;
-  requireContractJudge?: boolean;
-  sleepRequested?: number;
-  backgroundTask?: SingleTurnResult['backgroundTask'];
-}
+import {
+  prepareSingleTurnGateEvidence,
+} from './single-turn-gate-evidence';
+import type { RunSingleTurnGateInput } from './single-turn-gate-types';
 
 /**
  * Runs and persists the gate phase after the one-tool assistant turn.
@@ -212,98 +184,29 @@ export async function runSingleTurnGate(
   const gateErrorExcerpt = gateFeedback.excerpt;
   const validatedFingerprint =
     gateRes.richSignals?.workspace_fingerprint || workspaceFingerprint;
-  const persistedTests = validatedFingerprint
-    ? (backlogEvidence?.tests || [])
-        .filter((test) =>
-          test.step_id === step.id &&
-          test.workspace_fingerprint === validatedFingerprint
-        )
-        .map((test) => ({
-          ...test,
-          captured_at:
-            test.captured_at || backlogEvidence!.captured_at,
-        }))
-    : [];
-  const currentResultTests = extractTestEvidenceFromResult(result).map(
-    (test) => ({
-      ...test,
-      step_id: step.id,
-      ...(workspaceFingerprint
-        ? { workspace_fingerprint: workspaceFingerprint }
-        : {}),
-      ran_after_changes:
-        test.ran_after_changes &&
-        !(
-          workspaceFingerprint &&
-          validatedFingerprint &&
-          workspaceFingerprint !== validatedFingerprint
-        ),
-    }),
-  );
-  const gateTests = (gateRes.richSignals?.tests?.tests || []).map(
-    (test) => ({
-      ...test,
-      step_id: test.step_id || step.id,
-      ...(test.workspace_fingerprint || !validatedFingerprint
-        ? {}
-        : { workspace_fingerprint: validatedFingerprint }),
-    }),
-  );
-  const testCandidates = [
-    ...persistedTests,
-    ...currentResultTests,
-    ...gateTests,
-  ];
-  const tests = Array.from(new Map(testCandidates.map((test) => [
-    [
-      test.step_id || step.id,
-      test.command,
-      test.workspace_fingerprint || '',
-    ].join(':'),
-    test,
-  ])).values());
-  const observations = gateRes.richSignals?.observations || [];
-  const evidenceRunId = randomUUID();
   const transientGateFailure = isTransientGateFailure(gateRes);
-  const build = gateRes.richSignals?.build
-    ? {
-        command: 'npm run build',
-        exit_code: gateRes.richSignals.build.ok ? 0 : 1,
-        duration_ms: gateRes.richSignals.build.duration_ms ?? 0,
-      }
-    : undefined;
-
-  if (
-    backlogItemId &&
-    (tests.length > 0 || observations.length > 0 || build)
-  ) {
-    await writeEvidence({
-      sandbox,
-      cwd: SandboxService.WORK_DIR,
-      requirementId,
-      itemId: backlogItemId,
-      record: {
-        evidence_run_id: evidenceRunId,
-        producer_step_id: step.id,
-        workspace_fingerprint: validatedFingerprint,
-        captured_at: new Date().toISOString(),
-        tests,
-        build,
-        observations,
-        gate_resume:
-          transientGateFailure &&
-          build?.exit_code === 0 &&
-          validatedFingerprint
-            ? {
-                status: 'pending',
-                step_id: step.id,
-                workspace_fingerprint: validatedFingerprint,
-                captured_at: new Date().toISOString(),
-              }
-            : null,
-      },
-    });
-  }
+  const preparedEvidence = await prepareSingleTurnGateEvidence({
+    sandbox,
+    cwd: SandboxService.WORK_DIR,
+    requirementId,
+    backlogItemId,
+    stepId: step.id,
+    persistedErrorMessage: persistedStep.error_message,
+    result,
+    backlogEvidence,
+    workspaceFingerprint,
+    validatedFingerprint,
+    gateTests: gateRes.richSignals?.tests?.tests,
+    gateBuild: gateRes.richSignals?.build,
+    gateObservations: gateRes.richSignals?.observations,
+    transientGateFailure,
+  });
+  const {
+    tests,
+    observations,
+    scenarioAssertions,
+    evidenceRunId,
+  } = preparedEvidence;
 
   if (gateRes.sandboxReplacement) {
     effectiveSandboxId = sandboxIdentity(gateRes.sandboxReplacement);
@@ -419,6 +322,11 @@ export async function runSingleTurnGate(
                   ),
                   tests,
                 },
+              }
+            : {}),
+          ...(scenarioAssertions.length > 0
+            ? {
+                scenario_assertions: scenarioAssertions,
               }
             : {}),
           observations,

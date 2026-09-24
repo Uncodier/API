@@ -18,6 +18,8 @@ describe('judge verification policy', () => {
       .toBe('judge_evidence_collector');
     expect(verificationToolName('contract_error'))
       .toBe('judge_acceptance_contract');
+    expect(verificationToolName('capability_gap'))
+      .toBe('judge_capability_resolver');
     expect(verificationToolName('product_defect')).toBeNull();
     expect(verificationAttemptCount(
       {
@@ -42,5 +44,33 @@ describe('judge verification policy', () => {
     expect(feedback).toContain('evidence-collection turn is read-only');
     expect(feedback).toContain('report it as a product defect');
     expect(feedback).toContain('Do not repeat an identical probe');
+  });
+
+  it('includes machine-readable gap diagnostics in retry feedback', () => {
+    const feedback = formatJudgeRepairFeedback({
+      verdict: 'escalate',
+      failure_kind: 'capability_gap',
+      reason: 'Authenticated evidence is unavailable.',
+      matched_acceptance: [],
+      unmatched_acceptance: ['GET /api/account returns 200'],
+      acceptance_diagnostics: [{
+        criterion_id: 'criterion-1',
+        criterion: 'GET /api/account returns 200',
+        status: 'missing',
+        claims: [],
+        gaps: [{
+          code: 'authentication_context_missing',
+          class: 'capability',
+          message: 'No authenticated context.',
+          required: 'GET /api/account returns 200',
+          observed: ['GET /api/account returned 401'],
+          suggested_action: 'Configure an auth profile.',
+        }],
+      }],
+    });
+
+    expect(feedback).toContain('Structured evidence gaps:');
+    expect(feedback).toContain('"code": "authentication_context_missing"');
+    expect(feedback).toContain('Keep this item quarantined');
   });
 });

@@ -249,7 +249,7 @@ Whenever the user asks for a web app, site, landing page, presentation or deck (
 📋 BACKLOG MANAGEMENT (CRITICAL FOR PLANS):
 - Before creating or executing an \`instance_plan\`, you MUST use the \`requirement_backlog\` tool to check the status of items.
 - Plans linked to \`done\` backlog items will be AUTOMATICALLY CANCELLED by the system.
-- If you need to rework or rewrite something that is already "done", you MUST either reopen the existing item (\`set_status\` to \`in_progress\` with \`confirm_reopen: true\`) or \`upsert\` a new \`core\` tier item. Only then can you create a new \`instance_plan\` for it.`;
+- Model-facing tools cannot reopen \`done\` or \`needs_review\` items. For genuinely new scope, \`upsert\` a new \`core\` remediation item. A quarantined item may be reopened only by the external user-action recovery path.`;
 }
 
 export const GEAR_PROJECT_SWITCH_INSTRUCTION = `

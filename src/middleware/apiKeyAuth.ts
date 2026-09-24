@@ -22,6 +22,12 @@ export function requiredApiKeyScope(
   method: string,
 ): string | null {
   if (method === 'GET' && pathname.endsWith('/health')) return null;
+  if (pathname.startsWith('/api/integrations/outstand/conversations')) {
+    return method === 'GET' ? 'read' : 'write';
+  }
+  if (pathname === '/api/agents/tools/sendChannelMessage') {
+    return 'write';
+  }
   if (
     pathname.startsWith('/api/ai/')
     || pathname === '/api/analyze'

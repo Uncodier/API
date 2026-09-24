@@ -3,6 +3,10 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { WorkflowService } from '@/lib/services/workflow-service';
 import { fireWorkflowDispatch } from '@/lib/services/workflow-robot/dispatch';
 import { DB_EVENT_TABLES } from '@/lib/services/workflow-robot/types';
+import {
+  buildWebhookEventNames,
+  type WebhookMutationEvent,
+} from '@/lib/webhooks/event-names';
 
 type TableRecord<T = any> = T & { id?: string };
 
@@ -32,7 +36,7 @@ type DeletePayload<T = any> = {
 
 type DbChangePayload = InsertPayload | UpdatePayload | DeletePayload;
 
-function toEventType(changeType: DbChangePayload['type']): 'created' | 'updated' | 'deleted' {
+function toEventType(changeType: DbChangePayload['type']): WebhookMutationEvent {
   switch (changeType) {
     case 'INSERT':
       return 'created';
@@ -41,15 +45,6 @@ function toEventType(changeType: DbChangePayload['type']): 'created' | 'updated'
     case 'DELETE':
       return 'deleted';
   }
-}
-
-function buildSubscriptionEvent(table: string, eventType: ReturnType<typeof toEventType>): { primary: string; aliases: string[] } {
-  const primary = `${table}.${eventType}`;
-  const aliases: string[] = [];
-  if (table.endsWith('s') && table.length > 1) {
-    aliases.push(`${table.slice(0, -1)}.${eventType}`);
-  }
-  return { primary, aliases };
 }
 
 export async function POST(request: NextRequest) {
@@ -64,7 +59,7 @@ export async function POST(request: NextRequest) {
     }
 
     const eventType = toEventType(body.type);
-    const { primary: event, aliases } = buildSubscriptionEvent(body.table, eventType);
+    const { canonical: event, aliases } = buildWebhookEventNames(body.table, eventType);
 
     const currentRecord = body.type === 'DELETE' ? body.old_record : body.record;
     const site_id = (currentRecord as any)?.site_id as string | undefined;
@@ -152,6 +147,7 @@ export async function POST(request: NextRequest) {
       object_id: object_id || null,
       event_type: body.type === 'INSERT' ? 'CREATE' : body.type,
       event,
+      record: currentRecord,
       subscription_ids: subscriptions.map((s: any) => s.id),
     };
 

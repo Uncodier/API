@@ -1,58 +1,37 @@
-jest.mock('@/lib/database/supabase-client', () => ({
-  supabaseAdmin: {},
-}));
+import { applyBacklogStatusLifecycle } from '../requirement-review-quarantine';
 
-import { reopenReviewBacklogOnUserAction } from '../requirement-cron-reset';
-
-describe('requirement recovery after user feedback', () => {
-  it('requeues review items with a fresh failure budget', () => {
-    const result = reopenReviewBacklogOnUserAction({
-      schema_version: 1,
-      current_phase_id: 'report',
-      completion_ratio: 0,
-      cycles_spent_total: 0,
-      items: [
-        {
-          id: 'review-item',
-          title: 'Landing page',
-          kind: 'page',
-          phase_id: 'build',
-          acceptance: ['GET / returns 200'],
-          status: 'needs_review',
-          attempts: 4,
-          scope_level: 'minimal',
-          tier: 'core',
-        },
-        {
-          id: 'done-item',
-          title: 'Setup',
-          kind: 'component',
-          phase_id: 'setup',
-          acceptance: ['Setup renders'],
-          status: 'done',
-          attempts: 1,
-          scope_level: 'full',
-          tier: 'core',
-        },
-      ],
+describe('review quarantine lifecycle', () => {
+  it('records the release watermark and durable cancellation request', () => {
+    const result = applyBacklogStatusLifecycle({
+      item: {
+        id: 'review-item',
+        title: 'Landing page',
+        kind: 'page',
+        phase_id: 'build',
+        acceptance: ['GET / returns 200'],
+        status: 'judge_review',
+        attempts: 4,
+        scope_level: 'minimal',
+      },
+      status: 'needs_review',
+      reason: 'Capability gap: no authenticated probe profile',
+      externalActionRevision: 7,
+      now: '2026-09-23T22:00:00.000Z',
     });
 
-    expect(result.reopenedItemIds).toEqual(['review-item']);
-    expect(result.backlog).toEqual(expect.objectContaining({
-      current_phase_id: 'build',
-      completion_ratio: 0.5,
-      items: expect.arrayContaining([
-        expect.objectContaining({
-          id: 'review-item',
-          status: 'pending',
-          attempts: 0,
-        }),
-        expect.objectContaining({
-          id: 'done-item',
-          status: 'done',
-          attempts: 1,
-        }),
-      ]),
+    expect(result).toEqual(expect.objectContaining({
+      status: 'needs_review',
+      review_quarantine: {
+        active: true,
+        kind: 'capability_gap',
+        reason: 'Capability gap: no authenticated probe profile',
+        quarantined_at: '2026-09-23T22:00:00.000Z',
+        external_action_revision: 7,
+      },
+      plan_cancellation_pending: {
+        reason: expect.stringContaining('needs_review'),
+        requested_at: '2026-09-23T22:00:00.000Z',
+      },
     }));
   });
 });

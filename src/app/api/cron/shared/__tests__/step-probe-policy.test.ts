@@ -311,4 +311,37 @@ describe('runtime probe policy', () => {
       validation_disposition: 'advisory',
     }));
   });
+
+  it('derives safe GET targets directly from backlog acceptance', () => {
+    const plan = buildRuntimeTargetPlan({
+      acceptance: [
+        'GET /api/campaigns returns 200 and lists campaigns created by the user.',
+      ],
+    });
+
+    expect(plan.apis).toEqual([
+      expect.objectContaining({
+        path: '/api/campaigns',
+        method: 'GET',
+        required: true,
+        expected_statuses: [200],
+        auth_required: true,
+      }),
+    ]);
+  });
+
+  it('records a typed gap instead of calling an undeclared non-GET target', () => {
+    const plan = buildRuntimeTargetPlan({
+      acceptance: [
+        'POST /api/campaigns returns 200 and creates a campaign.',
+      ],
+    });
+
+    expect(plan.apis).toEqual([]);
+    expect(plan.observations).toContainEqual(expect.objectContaining({
+      target: 'POST /api/campaigns',
+      disposition: 'unknown',
+      detail: expect.stringContaining('payload fixture'),
+    }));
+  });
 });

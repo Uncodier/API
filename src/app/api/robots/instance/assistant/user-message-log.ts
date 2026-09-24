@@ -20,6 +20,7 @@ export async function insertUserActionLog(params: {
       .select('id')
       .eq('instance_id', params.instanceId)
       .eq('log_type', 'user_action')
+      .eq('trusted_user_action', true)
       .eq('message', params.message)
       .gte('created_at', since)
       .limit(1);
@@ -39,9 +40,10 @@ export async function insertUserActionLog(params: {
       level: 'info',
       message: params.message,
       details: {
-        prompt_source: 'assistant_route',
         ...(params.details || {}),
+        prompt_source: 'assistant_route',
       },
+      trusted_user_action: true,
       instance_id: params.instanceId,
       site_id: params.siteId,
       user_id: params.userId || null,

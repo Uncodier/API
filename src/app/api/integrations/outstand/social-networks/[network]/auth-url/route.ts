@@ -20,11 +20,17 @@ export async function POST(
     const { searchParams } = new URL(request.url);
     const tenantId = searchParams.get('siteId') || searchParams.get('tenant_id') || body.tenant_id || body.siteId;
     const redirectUri = body.redirect_uri;
+    const scopes = Array.isArray(body.scopes)
+      ? body.scopes.filter((scope: unknown) => typeof scope === 'string').join(',')
+      : typeof body.scopes === 'string'
+        ? body.scopes
+        : undefined;
 
     const client = getOutstandClient();
     const result = await client.getSocialAuthUrl(outstandNetwork, {
       redirect_uri: redirectUri,
       tenant_id: tenantId || undefined,
+      scopes,
     });
 
     return NextResponse.json({

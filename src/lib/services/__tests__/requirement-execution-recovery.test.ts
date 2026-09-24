@@ -14,7 +14,13 @@ describe('resumeRequirementExecutionOnUserAction', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockRpc.mockResolvedValue({
-      data: { state: 'applied', plans_updated: 1, steps_cleared: 1 },
+      data: {
+        state: 'applied',
+        plans_updated: 1,
+        steps_cleared: 1,
+        reopened_item_ids: ['item-1'],
+        external_user_action_revision: 4,
+      },
       error: null,
     });
   });
@@ -29,6 +35,8 @@ describe('resumeRequirementExecutionOnUserAction', () => {
       state: 'applied',
       plans_updated: 1,
       steps_cleared: 1,
+      reopened_item_ids: ['item-1'],
+      external_user_action_revision: 4,
     });
 
     expect(mockRpc).toHaveBeenCalledWith(

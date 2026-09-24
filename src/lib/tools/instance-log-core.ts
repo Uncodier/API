@@ -90,6 +90,11 @@ export async function createInstanceLogCore(params: CreateInstanceLogParams) {
   if (!site_id || !log_type || !level || !message) {
     throw new Error('site_id, log_type, level, and message are required');
   }
+  if (log_type === 'user_action') {
+    throw new Error(
+      'user_action is reserved for authenticated external user input',
+    );
+  }
 
   let inputTokens = 0;
   let outputTokens = 0;

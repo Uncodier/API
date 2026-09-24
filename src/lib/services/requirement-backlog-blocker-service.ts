@@ -1,4 +1,3 @@
-import { cancelPlanStepsForBacklogItem } from '@/lib/helpers/plan-lifecycle';
 import {
   addDirectBacklogBlocker,
   directBacklogBlockers,
@@ -15,6 +14,15 @@ import type {
   BacklogBlockerResolutionActor,
   BacklogItem,
 } from './requirement-backlog-types';
+import {
+  assertBacklogBlockerCanBeResolved,
+  assertBacklogItemCanBeBlocked,
+  type BacklogBlockerResolver,
+} from './requirement-backlog-blocker-policy';
+import {
+  fulfillPlanCancellationRequests,
+  requestPlanCancellation,
+} from './requirement-plan-cancellation';
 
 export interface BlockBacklogItemInput {
   requirementId: string;
@@ -64,9 +72,7 @@ export async function blockBacklogItem(
     ({ backlog, flow }) => {
       const index = backlog.items.findIndex((item) => item.id === input.itemId);
       if (index < 0) throw new Error(`Item ${input.itemId} not found`);
-      if (backlog.items[index].status === 'done') {
-        throw new Error(`Cannot block completed backlog item ${input.itemId}`);
-      }
+      assertBacklogItemCanBeBlocked(backlog.items[index]);
 
       const item = {
         ...backlog.items[index],
@@ -95,6 +101,25 @@ export async function blockBacklogItem(
           return { result: null, write: false };
         }
       }
+      const affectedItemIds = backlog.items
+        .filter((candidate) =>
+          candidate.blocked_by?.some(
+            (candidateBlocker) =>
+              candidateBlocker.blocker_id === blocker.blocker_id,
+          ),
+        )
+        .map((candidate) => candidate.id);
+      const cancellationReason =
+        `Blocked by ${blocker.blocker_id}: ${blocker.reason}`.slice(0, 240);
+      backlog.items = backlog.items.map((candidate) =>
+        affectedItemIds.includes(candidate.id)
+          ? requestPlanCancellation(
+              candidate,
+              cancellationReason,
+              createdAt,
+            )
+          : candidate,
+      );
       assertBacklogInvariants(
         backlog.items,
         flow.phases.map((phase) => phase.id),
@@ -104,33 +129,24 @@ export async function blockBacklogItem(
         result: {
           item: backlog.items[index],
           blocker,
-          affectedItemIds: backlog.items
-            .filter((candidate) =>
-              candidate.blocked_by?.some(
-                (candidateBlocker) =>
-                  candidateBlocker.blocker_id === blocker.blocker_id,
-              ),
-            )
-            .map((candidate) => candidate.id),
+          affectedItemIds,
         },
       };
     },
   );
 
   if (!result) return null;
-  const cancellation = await cancelPlanStepsForBacklogItem({
+  await fulfillPlanCancellationRequests({
     requirementId: input.requirementId,
-    itemId: input.itemId,
-    affectedItemIds: result.affectedItemIds,
-    reason:
-      `Blocked by ${blocker.blocker_id}: ${blocker.reason}`.slice(0, 240),
+    requests: result.affectedItemIds.map((itemId) => ({
+      itemId,
+      reason: `Blocked by ${blocker.blocker_id}: ${blocker.reason}`.slice(
+        0,
+        240,
+      ),
+      requestedAt: createdAt,
+    })),
   });
-  if (cancellation.errors.length > 0) {
-    throw new Error(
-      `Blocker ${blocker.blocker_id} persisted, but plan cancellation failed: ` +
-      cancellation.errors.join('; '),
-    );
-  }
   return result;
 }
 
@@ -139,6 +155,7 @@ export async function resolveBacklogItemBlocker(params: {
   itemId: string;
   blockerId: string;
   reason?: string;
+  resolver: BacklogBlockerResolver;
 }): Promise<BacklogItem> {
   return mutateBacklogAtomically(
     params.requirementId,
@@ -146,15 +163,15 @@ export async function resolveBacklogItemBlocker(params: {
       const index = backlog.items.findIndex((item) => item.id === params.itemId);
       if (index < 0) throw new Error(`Item ${params.itemId} not found`);
       const item = { ...backlog.items[index] };
-      if (
-        !directBacklogBlockers(item).some(
-          (blocker) => blocker.blocker_id === params.blockerId,
-        )
-      ) {
+      const blocker = directBacklogBlockers(item).find(
+        (candidate) => candidate.blocker_id === params.blockerId,
+      );
+      if (!blocker) {
         throw new Error(
           `Direct blocker ${params.blockerId} was not found on item ${params.itemId}`,
         );
       }
+      assertBacklogBlockerCanBeResolved(blocker, params.resolver);
       removeDirectBacklogBlocker(item, params.blockerId);
       if (params.reason) {
         item.assumptions = [

@@ -6,7 +6,14 @@ import {
   CreateCommentParams, 
   CommentResponse, 
   UploadUrlResponse, 
-  ConfirmUploadResponse 
+  ConfirmUploadResponse,
+  GetConversationResponse,
+  ListConversationMessagesParams,
+  ListConversationMessagesResponse,
+  ListConversationsParams,
+  ListConversationsResponse,
+  SendConversationMessageParams,
+  SendConversationMessageResponse,
 } from './types';
 import { mergeCommentResults, networksFromPost, usernameFromPost, emptyDegradedCommentsResult } from './comments';
 
@@ -127,13 +134,14 @@ export class OutstandClient {
 
   async listAccounts(
     tenantId?: string,
-    params: { network?: string; tenantId?: string; limit?: number } = {}
+    params: { network?: string; tenantId?: string; limit?: number; offset?: number } = {}
   ): Promise<any> {
     const query = new URLSearchParams();
     const resolvedTenant = params.tenantId || tenantId;
     if (resolvedTenant) query.append('tenantId', resolvedTenant);
     if (params.network) query.append('network', params.network);
     if (params.limit) query.append('limit', String(params.limit));
+    if (params.offset !== undefined) query.append('offset', String(params.offset));
 
     const headers: Record<string, string> = {};
     if (tenantId) {
@@ -149,11 +157,12 @@ export class OutstandClient {
 
   async getSocialAuthUrl(
     network: string,
-    params: { redirect_uri?: string; tenant_id?: string } = {}
+    params: { redirect_uri?: string; tenant_id?: string; scopes?: string } = {}
   ): Promise<{ success: boolean; data?: { auth_url?: string } }> {
     const body: Record<string, unknown> = {};
     if (params.redirect_uri) body.redirect_uri = params.redirect_uri;
     if (params.tenant_id) body.tenant_id = params.tenant_id;
+    if (params.scopes) body.scopes = params.scopes;
 
     return this.request(`/social-networks/${network}/auth-url`, {
       method: 'POST',
@@ -273,6 +282,78 @@ export class OutstandClient {
     return this.request(`/posts/${postId}/replies?${query.toString()}`, {
       method: 'GET',
       headers,
+    });
+  }
+
+  // --- Conversations ---
+
+  async listConversations(
+    params: ListConversationsParams = {}
+  ): Promise<ListConversationsResponse> {
+    const query = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined) query.append(key, String(value));
+    });
+
+    const qs = query.toString();
+    return this.request(`/conversations${qs ? `?${qs}` : ''}`, {
+      method: 'GET',
+    });
+  }
+
+  async getConversation(
+    id: string
+  ): Promise<GetConversationResponse> {
+    return this.request(`/conversations/${encodeURIComponent(id)}`, {
+      method: 'GET',
+    });
+  }
+
+  async listConversationMessages(
+    id: string,
+    params: ListConversationMessagesParams = {}
+  ): Promise<ListConversationMessagesResponse> {
+    const query = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined) query.append(key, String(value));
+    });
+
+    const qs = query.toString();
+    return this.request(
+      `/conversations/${encodeURIComponent(id)}/messages${qs ? `?${qs}` : ''}`,
+      {
+        method: 'GET',
+      }
+    );
+  }
+
+  async sendConversationMessage(
+    id: string,
+    params: SendConversationMessageParams
+  ): Promise<SendConversationMessageResponse> {
+    return this.request(`/conversations/${encodeURIComponent(id)}/messages`, {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  }
+
+  async cancelScheduledConversationMessage(
+    conversationId: string,
+    messageId: string
+  ): Promise<{ success: boolean; message: string }> {
+    return this.request(
+      `/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}`,
+      {
+        method: 'DELETE',
+      }
+    );
+  }
+
+  async markConversationRead(
+    id: string
+  ): Promise<{ success: boolean; id: string; unreadCount: number }> {
+    return this.request(`/conversations/${encodeURIComponent(id)}/read`, {
+      method: 'POST',
     });
   }
 

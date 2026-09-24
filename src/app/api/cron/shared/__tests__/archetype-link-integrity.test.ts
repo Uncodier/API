@@ -116,7 +116,40 @@ describe('internal-link acceptance evidence', () => {
       flow: 'app',
     })).toMatchObject({
       verdict: 'rejected',
-      failure_kind: 'evidence_gap',
+      failure_kind: 'contract_error',
+    });
+  });
+
+  it('accepts a header brand wrapped by a link to the dashboard', () => {
+    const branded = evidence();
+    branded.observations?.push({
+      kind: 'page',
+      disposition: 'pass',
+      source: 'contract',
+      target: '/dashboard',
+      method: 'GET',
+      http_status: 200,
+      detail: 'HTTP 200',
+    });
+    branded.interaction!.links?.push({
+      file: 'src/components/ui/header.tsx',
+      line: 8,
+      element: 'Link',
+      target: '/dashboard',
+      region: 'header',
+      route_exists: true,
+      content_excerpt: '<Logo /> <span>Visualgv</span>',
+    });
+
+    expect(runJudge({
+      item: item(
+        'The dashboard header logo or title wraps a Next.js Link that navigates to /dashboard.',
+      ),
+      evidence: branded,
+      flow: 'app',
+    })).toMatchObject({
+      verdict: 'approved',
+      unmatched_acceptance: [],
     });
   });
 

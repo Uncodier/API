@@ -14,6 +14,7 @@ export interface AuditedInternalLink {
   region: InteractionLinkRegion;
   route_exists: boolean;
   source_binding?: string;
+  content_excerpt?: string;
 }
 
 export interface UnresolvedInternalLink {
@@ -67,6 +68,21 @@ function normalizeInternalTarget(raw: string): string | null {
 
 function lineOf(source: ts.SourceFile, node: ts.Node): number {
   return source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1;
+}
+
+function linkContentExcerpt(
+  source: ts.SourceFile,
+  node: ts.JsxOpeningLikeElement,
+): string | undefined {
+  if (!ts.isJsxOpeningElement(node) || !ts.isJsxElement(node.parent)) {
+    return undefined;
+  }
+  const excerpt = node.parent.children
+    .map((child) => child.getText(source))
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return excerpt ? excerpt.slice(0, 240) : undefined;
 }
 
 function linkRegion(node: ts.Node): InteractionLinkRegion {
@@ -229,6 +245,7 @@ export function auditInternalLinks(params: {
               route_exists:
                 params.publicFiles.has(target) ||
                 params.routePatterns.some((pattern) => pattern.test(target)),
+              content_excerpt: linkContentExcerpt(source, node),
             });
           }
         }

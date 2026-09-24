@@ -159,7 +159,8 @@ describe("fitZavuSystemPrompt", () => {
     ]);
     expect(background).toContain("FAQ content");
     expect(background).toContain("# Voice Runtime Rules — Highest Priority");
-    expect(background).toContain("`capture_lead`");
+    expect(background).toContain("`reservations`");
+    expect(background).toContain("`IDENTIFY_LEAD`");
     expect(background.indexOf("# Voice Runtime Rules — Highest Priority")).toBeLessThan(
       background.indexOf("Base background")
     );
@@ -322,6 +323,31 @@ describe("syncCustomerSupportVoiceAgent", () => {
     expect(result.agent.id).toBe("agent_1");
     expect(result.attachedSenderIds).toEqual([]);
     expect(mockGetSenderAgent).toHaveBeenCalledTimes(2);
+    expect(mockPersistAgent).toHaveBeenCalled();
+  });
+
+  it("accepts Zavu's same-agent attachment response as idempotent success", async () => {
+    mockGetSenderAgent
+      .mockReset()
+      .mockRejectedValueOnce(
+        Object.assign(new Error("Zavu agent not found"), { status: 404 })
+      );
+    mockAttachSenderToAgent.mockRejectedValueOnce(
+      Object.assign(
+        new Error("That sender is already connected to this agent"),
+        { status: 400 }
+      )
+    );
+
+    const result = await syncCustomerSupportVoiceAgent({
+      siteId: "site-1",
+      senderIds: ["sender_1"],
+      deferActivation: true,
+    });
+
+    expect(result.agent.id).toBe("agent_1");
+    expect(result.attachedSenderIds).toEqual([]);
+    expect(mockGetSenderAgent).toHaveBeenCalledTimes(1);
     expect(mockPersistAgent).toHaveBeenCalled();
   });
 

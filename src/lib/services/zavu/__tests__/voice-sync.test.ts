@@ -71,8 +71,8 @@ describe("syncConnectedCustomerSupportVoiceAgent", () => {
     mockSyncTools.mockResolvedValue([
       {
         id: "tool_1",
-        name: "capture_lead",
-        description: "Capture a lead",
+        name: "reservations",
+        description: "Manage reservations",
         parameters: {},
         enabled: true,
       },
@@ -83,12 +83,12 @@ describe("syncConnectedCustomerSupportVoiceAgent", () => {
     mockEnsureSenderWebhook.mockResolvedValue({
       id: "sender_1",
       channels: [],
-      webhook: { events: ["voice.call.completed"] },
+      webhook: { events: ["call.completed", "call.failed"] },
     });
     mockEnsureVoiceSender.mockResolvedValue({
       id: "sender_1",
       channels: ["voice"],
-      webhook: { events: ["voice.call.completed"] },
+      webhook: { events: ["call.completed", "call.failed"] },
     });
     mockUpdateSender.mockResolvedValue({ id: "sender_1" });
     mockUpsertConnection.mockResolvedValue({});
@@ -132,10 +132,12 @@ describe("syncConnectedCustomerSupportVoiceAgent", () => {
       agentId: "agent_1",
       voicePreferences: undefined,
       voiceTools: expect.arrayContaining([
-        expect.objectContaining({ name: "capture_lead" }),
+        expect.objectContaining({ name: "reservations" }),
       ]),
     });
-    expect(mockEnsureSenderWebhook).toHaveBeenCalledWith("sender_1");
+    expect(mockEnsureSenderWebhook).toHaveBeenCalledWith("sender_1", {
+      includeVoiceEvents: true,
+    });
     expect(mockEnsureVoiceSender).toHaveBeenCalledWith("sender_1");
     expect(mockEnsureEncryptedSenderWebhookSecret).toHaveBeenCalledWith({
       senderId: "sender_1",
@@ -152,6 +154,7 @@ describe("syncConnectedCustomerSupportVoiceAgent", () => {
           agent_enabled: true,
           activation_pending: false,
           zavu_webhook_secret: "encrypted-webhook-secret",
+          webhook_events: ["call.completed", "call.failed"],
         }),
       })
     );

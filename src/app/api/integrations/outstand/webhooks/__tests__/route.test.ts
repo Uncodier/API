@@ -43,13 +43,13 @@ describe('Outstand webhook durable processing', () => {
     (finishProviderWebhookEvent as jest.Mock).mockResolvedValue(true);
   });
 
-  function request() {
+  function request(body: object = payload) {
     return new NextRequest(
       'http://localhost/api/integrations/outstand/webhooks',
       {
         method: 'POST',
         headers: { 'x-outstand-signature': 'valid' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(body),
       },
     );
   }
@@ -81,5 +81,30 @@ describe('Outstand webhook durable processing', () => {
       'failed',
       'database unavailable',
     );
+  });
+
+  it('accepts Conversations API lifecycle events', async () => {
+    const dmPayload = {
+      event: 'message.received',
+      timestamp: '2026-09-23T21:00:01.000Z',
+      data: {
+        conversationId: 'conversation-1',
+        messageId: 'message-1',
+        orgId: 'outstand-org-1',
+        network: 'instagram',
+        content: 'Hello',
+        senderId: 'instagram-user-1',
+        sentAt: '2026-09-23T21:00:00.000Z',
+      },
+    };
+
+    const response = await POST(request(dmPayload));
+
+    expect(response.status).toBe(200);
+    expect(processOutstandWebhookPayload).toHaveBeenCalledWith(dmPayload);
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      event: 'message.received',
+    });
   });
 });

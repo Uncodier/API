@@ -11,9 +11,13 @@ import {
   recordPlanStepInfrastructureFailure,
   updatePlanStepStatusAtomically,
 } from '../instance-plan-infrastructure-state';
+import { cancelPlanStepsForBacklogItem } from '@/lib/helpers/plan-lifecycle';
 
 jest.mock('@vercel/sandbox', () => ({}));
 jest.mock('workflow', () => ({}));
+jest.mock('@/lib/helpers/plan-lifecycle', () => ({
+  cancelPlanStepsForBacklogItem: jest.fn(),
+}));
 jest.mock('../instance-plan-infrastructure-state', () => ({
   InfrastructureStateDatabaseError: class InfrastructureStateDatabaseError
     extends Error {
@@ -51,10 +55,19 @@ const mockedRecordFailure =
   recordPlanStepInfrastructureFailure as jest.Mock;
 const mockedUpdateStatus =
   updatePlanStepStatusAtomically as jest.Mock;
+const mockedCancelPlanSteps =
+  cancelPlanStepsForBacklogItem as jest.Mock;
 
 describe('atomic infrastructure step mutations', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockedCancelPlanSteps.mockResolvedValue({
+      plansTouched: 1,
+      plansCancelled: 1,
+      stepsCancelled: 1,
+      planIds: ['plan_1'],
+      errors: [],
+    });
   });
 
   it('passes a durable event identity and generation to the RPC wrapper', async () => {
@@ -206,6 +219,49 @@ describe('plan execution gate', () => {
       infrastructureKind: 'deployment',
       infrastructureProvenance: 'deployment_infrastructure',
       infrastructureGeneration: 0,
+    });
+  });
+
+  it('cancels a stale plan before it can execute quarantined work', async () => {
+    const steps = [{
+      id: 'step_1',
+      order: 1,
+      status: 'pending',
+      metadata: { backlog_item_id: 'item-1' },
+    }];
+    mockedSupabase.maybeSingle
+      .mockResolvedValueOnce({
+        data: {
+          status: 'in_progress',
+          steps,
+          metadata: { requirement_id: 'requirement-1' },
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          backlog: {
+            items: [{
+              id: 'item-1',
+              status: 'needs_review',
+              review_quarantine: { active: true },
+            }],
+          },
+        },
+      });
+
+    await expect(getPlanExecutionGateStep(
+      'plan_1',
+      'step_1',
+      'requirement-1',
+    )).resolves.toEqual({
+      runnable: false,
+      reason: 'backlog_item_quarantined',
+      backlogItemId: 'item-1',
+    });
+    expect(mockedCancelPlanSteps).toHaveBeenCalledWith({
+      requirementId: 'requirement-1',
+      itemId: 'item-1',
+      reason: 'Runtime gate: backlog_item_quarantined',
     });
   });
 

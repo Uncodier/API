@@ -224,5 +224,18 @@ describe('Requirement Backlog Helpers', () => {
         'unfinished',
       ]);
     });
+
+    it('skips quarantined review work and continues with pending items', () => {
+      expect(pendingInPhase({
+        schema_version: 1,
+        items: [
+          createItem('review', 'core', 'needs_review'),
+          createItem('next', 'core', 'pending'),
+        ],
+        current_phase_id: 'phase1',
+        completion_ratio: 0,
+        cycles_spent_total: 0,
+      }, 'phase1').map((item) => item.id)).toEqual(['next']);
+    });
   });
 });
