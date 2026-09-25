@@ -6,6 +6,24 @@ import type {
   RunArchetypePostGateResult,
 } from './step-archetype-postgate';
 import type { SingleTurnResult } from './single-turn-types';
+import type { JudgeRepairRun } from './judge-repair-controller';
+
+function repairRunToPersist(params: {
+  proposed?: JudgeRepairRun;
+  persistedMetadata?: Record<string, unknown>;
+}): JudgeRepairRun | undefined {
+  const existing = params.persistedMetadata?.repair_run as
+    | JudgeRepairRun
+    | undefined;
+  if (
+    existing &&
+    (existing.status === 'planned' || existing.status === 'in_progress') &&
+    params.proposed?.repair_run_id !== existing.repair_run_id
+  ) {
+    return existing;
+  }
+  return params.proposed || existing;
+}
 
 export async function persistJudgeRejection(params: {
   planId: string;
@@ -14,6 +32,7 @@ export async function persistJudgeRejection(params: {
   effectiveSandboxId: string;
   infrastructureGeneration: number;
   executionEventId: string;
+  persistedStepMetadata?: Record<string, unknown>;
   sleepRequested?: number;
   backgroundTask?: SingleTurnResult['backgroundTask'];
 }): Promise<SingleTurnResult> {
@@ -23,6 +42,10 @@ export async function persistJudgeRejection(params: {
   const failureKind =
     (params.postGate.judge_failure_kind ||
       'product_defect') as FlowGateFailureKind;
+  const repairRun = repairRunToPersist({
+    proposed: params.postGate.repair_planned,
+    persistedMetadata: params.persistedStepMetadata,
+  });
 
   if (params.postGate.verification_exhausted) {
     if (params.postGate.terminal_step_status !== 'cancelled') {
@@ -48,6 +71,14 @@ export async function persistJudgeRejection(params: {
         status: 'cancelled',
         error_message: feedback,
         completed_at: new Date().toISOString(),
+        ...(repairRun
+          ? {
+              metadata: {
+                ...(params.persistedStepMetadata || {}),
+                repair_run: repairRun,
+              },
+            }
+          : {}),
       },
     });
     if (!terminalMutation.persisted) {
@@ -84,6 +115,14 @@ export async function persistJudgeRejection(params: {
     patch: {
       status: 'in_progress',
       error_message: feedback,
+      ...(repairRun
+        ? {
+            metadata: {
+              ...(params.persistedStepMetadata || {}),
+              repair_run: repairRun,
+            },
+          }
+        : {}),
     },
   });
   if (!mutation.persisted) {

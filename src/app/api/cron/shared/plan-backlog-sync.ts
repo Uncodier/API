@@ -6,6 +6,7 @@ import {
 } from '@/lib/services/requirement-backlog';
 import { runArchetypePostGate, type PostGateGateSignals } from './step-archetype-postgate';
 import { logCronInfrastructureEvent, CronInfraEvent, type CronAuditContext } from '@/lib/services/cron-audit-log';
+import { appendPlanRepairStepAtomically } from '@/lib/services/instance-plan-infrastructure-state';
 
 export interface SyncBacklogAfterPlanCompletedParams {
   requirementId: string;
@@ -32,15 +33,15 @@ export async function syncBacklogAfterPlanCompleted(params: SyncBacklogAfterPlan
 
   // 1. Collect distinct bound backlog items
   const itemIds = new Set<string>();
-  let lastCompletedStepId: string | undefined;
+  const completedStepByItemId = new Map<string, any>();
 
   for (const step of plan.steps) {
     const id = step.metadata?.backlog_item_id || step.backlog_item_id;
     if (id) itemIds.add(id);
     
-    // We'll need a step id to pass to the archetype runner. We can use the last completed one.
+    // Keep the completed producer step scoped to its own backlog item.
     if (step.status === 'completed') {
-      lastCompletedStepId = step.id;
+      if (id) completedStepByItemId.set(id, step);
     }
   }
 
@@ -80,17 +81,19 @@ export async function syncBacklogAfterPlanCompleted(params: SyncBacklogAfterPlan
       }
 
       // 4. Evaluate open items
-      if (sandbox && lastCompletedStepId) {
+      const completedStep = completedStepByItemId.get(itemId);
+      if (sandbox && completedStep?.id) {
         console.log(`[PlanBacklogSync] Running Archetype Post-Gate for open item ${itemId} (plan ${plan.id} completed)`);
         
         const evalResult = await runArchetypePostGate({
           sandbox,
           requirementId,
           backlogItemId: itemId,
-          stepId: lastCompletedStepId,
+          stepId: completedStep.id,
           signals: signals || {},
           capturedAt: new Date().toISOString(),
           audit: audit || {} as any,
+          repairRun: completedStep.metadata?.repair_run,
         });
 
         if (!evalResult.ran) {
@@ -102,6 +105,54 @@ export async function syncBacklogAfterPlanCompleted(params: SyncBacklogAfterPlan
           await setItemStatus({ requirementId, itemId, status: 'done' });
           results.push({ itemId, action: 'completed', verdict: 'approved' });
         } else {
+          if (
+            evalResult.repair_planned &&
+            evalResult.repair_planned.status !== 'exhausted' &&
+            !Number.isInteger(completedStep.infrastructure_generation)
+          ) {
+            throw new Error(
+              'Cannot persist repair run without infrastructure generation',
+            );
+          }
+          if (
+            evalResult.repair_planned &&
+            evalResult.repair_planned.status !== 'exhausted' &&
+            Number.isInteger(completedStep.infrastructure_generation)
+          ) {
+            const repairRun = evalResult.repair_planned;
+            const repairStepId =
+              `repair_${repairRun.repair_run_id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+            const mutation = await appendPlanRepairStepAtomically({
+              planId: plan.id,
+              sourceStepId: completedStep.id,
+              expectedSourceGeneration: completedStep.infrastructure_generation,
+              repairRunId: repairRun.repair_run_id,
+              repairStep: {
+                id: repairStepId,
+                order: Math.max(
+                  0,
+                  ...(plan.steps || []).map((step) => Number(step.order || 0)),
+                ) + 1,
+                title: `Repair rejected acceptance for ${completedStep.title || itemId}`,
+                instructions: repairRun.actions
+                  .map((action) => action.instruction)
+                  .join('\n'),
+                role: completedStep.role || 'qa',
+                skill: completedStep.skill,
+                requires_sandbox: true,
+                metadata: {
+                  backlog_item_id: itemId,
+                  repair_source_step_id: completedStep.id,
+                  repair_run: repairRun,
+                },
+              },
+            });
+            if (!mutation.persisted) {
+              throw new Error(
+                `Repair run persistence rejected (${mutation.state})`,
+              );
+            }
+          }
           results.push({
             itemId,
             action: 'evaluated',

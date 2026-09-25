@@ -46,6 +46,12 @@ import type {
   JudgeFailureKind,
   JudgeVerdict,
 } from './archetype-judge-result';
+import {
+  formatRepairRunFeedback,
+  materialHealingApplied,
+  planJudgeRepair,
+  type JudgeRepairRun,
+} from './judge-repair-controller';
 
 export interface PostGateGateSignals {
   build?: { ok: boolean; duration_ms?: number };
@@ -80,6 +86,7 @@ export interface RunArchetypePostGateInput {
   evidenceRunId?: string;
   audit: CronAuditContext;
   contractAcceptance?: string[];
+  repairRun?: JudgeRepairRun;
 }
 
 export interface RunArchetypePostGateResult {
@@ -91,6 +98,7 @@ export interface RunArchetypePostGateResult {
   unmatched_acceptance?: string[];
   acceptance_diagnostics?: AcceptanceCriterionDiagnostic[];
   repair_feedback?: string;
+  repair_planned?: JudgeRepairRun;
   healing_applied?: string;
   verification_exhausted?: boolean;
   terminal_step_status?: 'cancelled';
@@ -171,12 +179,35 @@ export async function runArchetypePostGate(
           : randomUUID()
       );
 
-    const evidenceRecord = buildEvidenceRecord(
+    const baseEvidenceRecord = buildEvidenceRecord(
       signalsWithDiff,
       input.capturedAt,
       coverage,
       evidenceRunId,
     );
+    const successfulRepairReceipts = (input.repairRun?.action_receipts || [])
+      .filter((receipt) =>
+        receipt.repair_run_id === input.repairRun?.repair_run_id &&
+        receipt.status === 'succeeded')
+      .map((receipt) => receipt.receipt_id);
+    const evidenceRecord = {
+      ...baseEvidenceRecord,
+      ...(input.repairRun?.status === 'materialized' &&
+      successfulRepairReceipts.length > 0
+        ? {
+            repair_provenance: {
+              diagnostic_id: input.repairRun.diagnostic_id,
+              repair_run_id: input.repairRun.repair_run_id,
+              source_evidence_run_id:
+                input.repairRun.source_evidence_run_id,
+              action_ids: input.repairRun.actions.map(
+                (action) => action.action_id,
+              ),
+              receipt_ids: successfulRepairReceipts,
+            },
+          }
+        : {}),
+    };
     const persisted = await writeEvidence({
       sandbox: input.sandbox,
       cwd: SandboxService.WORK_DIR,
@@ -193,6 +224,49 @@ export async function runArchetypePostGate(
     };
     const critic = runCritic(archetypeCtx);
     const judge = runJudge(archetypeCtx);
+    const healingApplied = judge.verdict === 'approved'
+      ? materialHealingApplied({
+          run: input.repairRun,
+          newEvidenceRunId: evidenceRunId,
+          sourceEvidenceRunId: input.repairRun?.source_evidence_run_id,
+          workspaceChanged: input.repairRun?.workspace_changed,
+          contractRevisionChanged:
+            !!input.repairRun?.materialized_contract_revision,
+          evidenceCaptured: hasFreshProducerEvidence,
+        })
+      : undefined;
+    const newlyPlanned = planJudgeRepair({
+      judge,
+      evidenceRunId,
+      acceptanceContract: adjudicatedItem.acceptance_contract,
+      createdAt: input.capturedAt,
+      repairRunId: input.repairRun?.repair_run_id,
+    });
+    let repairPlanned = judge.verdict === 'approved'
+      ? input.repairRun
+      : input.repairRun && newlyPlanned
+        ? {
+            ...newlyPlanned,
+            created_at: input.repairRun.created_at,
+            max_attempts: input.repairRun.max_attempts,
+            attempt_count: input.repairRun.attempt_count || 0,
+            action_receipts: input.repairRun.action_receipts || [],
+            source_evidence_run_id:
+              input.repairRun.source_evidence_run_id || evidenceRunId,
+            actions: newlyPlanned.actions.map((action) => ({
+              ...action,
+              action_id:
+                `${action.action_id}:round:${(input.repairRun!.attempt_count || 0) + 1}`,
+            })),
+          }
+        : newlyPlanned;
+    if (
+      judge.verdict !== 'approved' &&
+      repairPlanned &&
+      (repairPlanned.attempt_count || 0) >= repairPlanned.max_attempts
+    ) {
+      repairPlanned = { ...repairPlanned, status: 'exhausted' };
+    }
 
     await writeEvidence({
       sandbox: input.sandbox,
@@ -212,7 +286,6 @@ export async function runArchetypePostGate(
       },
     });
 
-    let healingApplied: string | undefined;
     let verificationExhausted = false;
     let terminalStepStatus: 'cancelled' | undefined;
     if (judge.verdict !== 'approved') {
@@ -246,13 +319,9 @@ export async function runArchetypePostGate(
             itemId: item.id,
             reason,
           });
-          healingApplied = 'mark_needs_review';
+          if (repairPlanned) repairPlanned = { ...repairPlanned, status: 'exhausted' };
           verificationExhausted = true;
           terminalStepStatus = 'cancelled';
-        } else {
-          healingApplied = judge.failure_kind === 'evidence_gap'
-            ? 'collect_evidence'
-            : 'repair_contract';
         }
       } else {
         // Product defects use the bounded self-heal policy.
@@ -268,7 +337,6 @@ export async function runArchetypePostGate(
           verdict: judge,
           attempts: attemptsForHeal,
         });
-        healingApplied = action.kind;
         switch (action.kind) {
           case 'rotate_strategy':
             await logAssumption({
@@ -290,6 +358,7 @@ export async function runArchetypePostGate(
               itemId: item.id,
               reason: action.reason,
             });
+            if (repairPlanned) repairPlanned = { ...repairPlanned, status: 'exhausted' };
             verificationExhausted = true;
             terminalStepStatus = 'cancelled';
             break;
@@ -311,6 +380,9 @@ export async function runArchetypePostGate(
         matched_acceptance: judge.matched_acceptance.length,
         unmatched_acceptance: judge.unmatched_acceptance.length,
         acceptance_diagnostics: judge.acceptance_diagnostics,
+        diagnostic_id: repairPlanned?.diagnostic_id,
+        repair_run_id: repairPlanned?.repair_run_id,
+        repair_status: repairPlanned?.status,
         feature_coverage: coverage ? summarizeFeatureCoverage(coverage) : 'n/a',
         healing_applied: healingApplied,
         verification_exhausted: verificationExhausted,
@@ -328,7 +400,11 @@ export async function runArchetypePostGate(
       repair_feedback:
         judge.verdict === 'approved'
           ? undefined
-          : formatJudgeRepairFeedback(judge),
+          : [
+              formatJudgeRepairFeedback(judge),
+              repairPlanned ? formatRepairRunFeedback(repairPlanned) : '',
+            ].filter(Boolean).join('\n\n'),
+      repair_planned: repairPlanned,
       healing_applied: healingApplied,
       verification_exhausted: verificationExhausted,
       terminal_step_status: terminalStepStatus,

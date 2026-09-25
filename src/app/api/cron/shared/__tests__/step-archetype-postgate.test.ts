@@ -136,17 +136,82 @@ describe('runArchetypePostGate verification budget', () => {
       tool_failures: { judge_evidence_collector: 2 },
     });
 
-    await expect(runArchetypePostGate(input())).resolves.toMatchObject({
+    const result = await runArchetypePostGate(input());
+    expect(result).toMatchObject({
       ran: true,
       judge_verdict: 'rejected',
       judge_failure_kind: 'evidence_gap',
-      healing_applied: 'collect_evidence',
       verification_exhausted: false,
       repair_feedback: expect.stringContaining('Footer links resolve'),
+      repair_planned: expect.objectContaining({
+        status: 'planned',
+        failure_kind: 'evidence_gap',
+        source_evidence_run_id: 'evidence-run-1',
+        actions: [expect.objectContaining({ kind: 'collect_evidence' })],
+      }),
     });
+    expect(result.healing_applied).toBeUndefined();
+    expect(result.repair_feedback).toContain('Repair run: planned (not yet applied)');
     expect(markNeedsReview).not.toHaveBeenCalled();
     expect(recordToolFailure).toHaveBeenCalledWith(expect.objectContaining({
       toolName: 'judge_evidence_collector',
+    }));
+  });
+
+  it('preserves a materialized repair identity when the new Judge rejects it', async () => {
+    recordToolFailure.mockResolvedValue({
+      ...item,
+      tool_failures: { judge_evidence_collector: 2 },
+    });
+    const result = await runArchetypePostGate({
+      ...input(),
+      repairRun: {
+        schema_version: 1,
+        diagnostic_id: 'diagnostic-old',
+        repair_run_id: 'repair-stable',
+        status: 'materialized',
+        failure_kind: 'evidence_gap',
+        source_evidence_run_id: 'evidence-old',
+        contract_revision: 'contract-1',
+        created_at: '2026-09-25T00:00:00.000Z',
+        max_attempts: 3,
+        attempt_count: 1,
+        actions: [{
+          action_id: 'action-old',
+          kind: 'collect_evidence',
+          instruction: 'Capture proof.',
+          verification: 'Run probe.',
+        }],
+        action_receipts: [{
+          receipt_id: 'receipt-old',
+          repair_run_id: 'repair-stable',
+          action_id: 'action-old',
+          attempt: 1,
+          tool_call_id: 'call-old',
+          tool_name: 'sandbox_run_command',
+          status: 'succeeded',
+          attempted_at: '2026-09-25T00:01:00.000Z',
+        }],
+      },
+    });
+
+    expect(result.repair_planned).toMatchObject({
+      repair_run_id: 'repair-stable',
+      status: 'planned',
+      attempt_count: 1,
+      action_receipts: [expect.objectContaining({ receipt_id: 'receipt-old' })],
+    });
+    expect(result.repair_planned?.actions[0].action_id).toContain(':round:2');
+    expect(writeEvidence).toHaveBeenCalledWith(expect.objectContaining({
+      record: expect.objectContaining({
+        repair_provenance: {
+          diagnostic_id: 'diagnostic-old',
+          repair_run_id: 'repair-stable',
+          source_evidence_run_id: 'evidence-old',
+          action_ids: ['action-old'],
+          receipt_ids: ['receipt-old'],
+        },
+      }),
     }));
   });
 
@@ -167,7 +232,7 @@ describe('runArchetypePostGate verification budget', () => {
 
     await expect(runArchetypePostGate(input())).resolves.toMatchObject({
       ran: true,
-      healing_applied: 'mark_needs_review',
+      repair_planned: expect.objectContaining({ status: 'exhausted' }),
       verification_exhausted: true,
       terminal_step_status: 'cancelled',
     });
@@ -210,7 +275,7 @@ describe('runArchetypePostGate verification budget', () => {
 
     await expect(runArchetypePostGate(input())).resolves.toMatchObject({
       judge_failure_kind: 'capability_gap',
-      healing_applied: 'mark_needs_review',
+      repair_planned: expect.objectContaining({ status: 'exhausted' }),
       verification_exhausted: true,
       terminal_step_status: 'cancelled',
       repair_feedback: expect.stringContaining(

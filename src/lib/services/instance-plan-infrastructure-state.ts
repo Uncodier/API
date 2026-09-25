@@ -34,6 +34,10 @@ export interface PlanStepPatchMutation {
   generation?: number;
 }
 
+export interface PlanRepairStepMutation extends PlanStepPatchMutation {
+  step_id?: string;
+}
+
 export interface PlanStepCompletionMutation {
   state: PlanStepStatusMutation['state'] | 'guarded';
   persisted: boolean;
@@ -242,6 +246,39 @@ export async function patchPlanStepAtomically(params: {
     throw new Error('Plan step patch RPC returned an invalid result');
   }
   return data as PlanStepPatchMutation;
+}
+
+export async function appendPlanRepairStepAtomically(params: {
+  planId: string;
+  sourceStepId: string;
+  expectedSourceGeneration: number;
+  repairRunId: string;
+  repairStep: Record<string, unknown>;
+}): Promise<PlanRepairStepMutation> {
+  const { data, error } = await supabaseAdmin.rpc(
+    'append_instance_plan_repair_step_atomic',
+    {
+      p_plan_id: params.planId,
+      p_source_step_id: params.sourceStepId,
+      p_expected_source_generation: params.expectedSourceGeneration,
+      p_repair_run_id: params.repairRunId,
+      p_repair_step: params.repairStep,
+    },
+  );
+  if (error) {
+    throw new InfrastructureStateDatabaseError(
+      'Failed to atomically append plan repair step',
+      error,
+    );
+  }
+  if (
+    !data ||
+    typeof data.state !== 'string' ||
+    typeof data.persisted !== 'boolean'
+  ) {
+    throw new Error('Plan repair step RPC returned an invalid result');
+  }
+  return data as PlanRepairStepMutation;
 }
 
 export async function blockRequirementForInfrastructureCircuit(params: {

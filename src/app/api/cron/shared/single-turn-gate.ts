@@ -40,6 +40,7 @@ import {
 } from './single-turn-gate-evidence';
 import type { RunSingleTurnGateInput } from './single-turn-gate-types';
 import { loadBacklogGateContext } from './single-turn-gate-context';
+import type { JudgeRepairRun } from './judge-repair-controller';
 
 /**
  * Runs and persists the gate phase after the one-tool assistant turn.
@@ -194,6 +195,9 @@ export async function runSingleTurnGate(
     gateBuild: gateRes.richSignals?.build,
     gateObservations: gateRes.richSignals?.observations,
     transientGateFailure,
+    repairRun: persistedStep.metadata?.repair_run as
+      | JudgeRepairRun
+      | undefined,
   });
   const {
     tests,
@@ -328,6 +332,9 @@ export async function runSingleTurnGate(
         capturedAt: new Date().toISOString(),
         evidenceRunId,
         audit,
+        repairRun: persistedStep.metadata?.repair_run as
+          | JudgeRepairRun
+          | undefined,
         ...(contractAcceptance
           ? { contractAcceptance }
           : {}),
@@ -354,6 +361,7 @@ export async function runSingleTurnGate(
           effectiveSandboxId,
           infrastructureGeneration,
           executionEventId,
+          persistedStepMetadata: persistedStep.metadata,
           sleepRequested,
           backgroundTask,
         });

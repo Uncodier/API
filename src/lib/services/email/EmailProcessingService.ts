@@ -352,22 +352,6 @@ export class EmailProcessingService {
       console.log(`[EMAIL_PROCESSING]   ${idx + 1}. analysis_id: ${email.analysis_id || email.id}, isAlias: ${email.isAlias}, isAILead: ${email.isAILead}, contact: ${email.contact_info?.email}`);
     });
     
-    const toPgSignedBigintString = (value: unknown): string | null => {
-      try {
-        // Normalize any input to a signed 64-bit range acceptable by Postgres BIGINT
-        const n = BigInt(value as any);
-        const signed64 = (BigInt as any).asIntN ? (BigInt as any).asIntN(64, n) : n; // Fallback if not available
-        return signed64.toString();
-      } catch {
-        try {
-          // Fallback: stringify if not coercible
-          return String(value);
-        } catch {
-          return null;
-        }
-      }
-    };
-
     const processedEmailsWithEnvelopes = emailsToSave.map((emailObj, index) => {
       const emailId = emailObj.email ? emailObj.email.id : (emailObj.analysis_id || emailObj.id);
       console.log(`[EMAIL_PROCESSING] 🔍 [${index + 1}/${emailsToSave.length}] Buscando email original con ID: ${emailId}`);
@@ -460,8 +444,7 @@ export class EmailProcessingService {
           return '';
         }
       })();
-      const contentHash = TextHashService.hash64(rawTextForHash);
-      const hashForDb = toPgSignedBigintString(contentHash);
+      const hashForDb = TextHashService.hash64String(rawTextForHash);
       
       return { email: emailObj, originalEmail: originalEmail || {} as any, envelopeId, contentHash: hashForDb };
     });

@@ -63,6 +63,31 @@ describe('single-turn step state', () => {
     });
   });
 
+  it('marks a persisted repair run in progress when its executor turn starts', () => {
+    expect(buildSingleTurnStartMetadata({
+      persistedMetadata: {
+        repair_run: {
+          schema_version: 1,
+          diagnostic_id: 'diagnostic-1',
+          repair_run_id: 'repair-1',
+          status: 'planned',
+          failure_kind: 'evidence_gap',
+          contract_revision: 'contract-1',
+          created_at: '2026-09-25T00:00:00.000Z',
+          max_attempts: 3,
+          actions: [],
+        },
+      },
+      cycleId: 'cycle-2',
+      executionGeneration: 3,
+    })).toMatchObject({
+      repair_run: {
+        repair_run_id: 'repair-1',
+        status: 'in_progress',
+      },
+    });
+  });
+
   it('rejects a fallback binding from another requirement', async () => {
     const backlogItemId = await resolveSingleTurnBacklogItemId({
       instanceId: 'instance-1',

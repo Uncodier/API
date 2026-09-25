@@ -33,14 +33,13 @@ function baseInput() {
 }
 
 describe('single-turn gate evidence preparation', () => {
-  it('keeps the evidence run while collecting a rejected proof gap', async () => {
-    await expect(prepareSingleTurnGateEvidence({
+  it('starts a fresh evidence run while collecting a rejected proof gap', async () => {
+    const result = await prepareSingleTurnGateEvidence({
       ...baseInput(),
       persistedErrorMessage:
         '[judge:evidence_gap] Failure kind: evidence_gap',
-    })).resolves.toMatchObject({
-      evidenceRunId: 'evidence-run-1',
     });
+    expect(result.evidenceRunId).not.toBe('evidence-run-1');
   });
 
   it('starts a new evidence run for a normal product cycle', async () => {
@@ -79,6 +78,75 @@ describe('single-turn gate evidence preparation', () => {
             strategy: 'declared_contract',
           }),
         ],
+      }),
+    }));
+  });
+
+  it('links materialized repair receipts and identifies reused evidence', async () => {
+    await prepareSingleTurnGateEvidence({
+      ...baseInput(),
+      backlogItemId: 'item-1',
+      validatedFingerprint: 'workspace-1',
+      backlogEvidence: {
+        ...existingEvidence,
+        tests: [{
+          command: 'npm test',
+          exit_code: 0,
+          output_tail: 'PASS',
+          ran_after_changes: true,
+          step_id: 'step-1',
+          workspace_fingerprint: 'workspace-1',
+        }],
+      },
+      gateObservations: [{
+        kind: 'page',
+        disposition: 'pass',
+        source: 'contract',
+        detail: 'fresh HTTP observation',
+      }],
+      repairRun: {
+        schema_version: 1,
+        diagnostic_id: 'diagnostic-1',
+        repair_run_id: 'repair-1',
+        status: 'materialized',
+        failure_kind: 'evidence_gap',
+        source_evidence_run_id: 'evidence-run-1',
+        contract_revision: 'contract-1',
+        created_at: '2026-09-25T00:00:00.000Z',
+        max_attempts: 3,
+        attempt_count: 1,
+        actions: [{
+          action_id: 'action-1',
+          kind: 'collect_evidence',
+          instruction: 'Capture proof.',
+          verification: 'Re-run probe.',
+        }],
+        action_receipts: [{
+          receipt_id: 'receipt-1',
+          repair_run_id: 'repair-1',
+          action_id: 'action-1',
+          attempt: 1,
+          tool_call_id: 'call-1',
+          tool_name: 'sandbox_run_command',
+          status: 'succeeded',
+          attempted_at: '2026-09-25T00:01:00.000Z',
+        }],
+      },
+    });
+
+    expect(mockWriteEvidence).toHaveBeenCalledWith(expect.objectContaining({
+      record: expect.objectContaining({
+        evidence_provenance: {
+          mode: 'mixed',
+          reused_from_evidence_run_ids: ['evidence-run-1'],
+        },
+        repair_provenance: {
+          diagnostic_id: 'diagnostic-1',
+          repair_run_id: 'repair-1',
+          source_evidence_run_id: 'evidence-run-1',
+          action_ids: ['action-1'],
+          receipt_ids: ['receipt-1'],
+        },
       }),
     }));
   });

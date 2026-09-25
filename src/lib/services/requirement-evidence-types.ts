@@ -163,6 +163,17 @@ export interface EvidenceRecord {
   producer_step_id?: string;
   workspace_fingerprint?: string;
   captured_at: string;
+  evidence_provenance?: {
+    mode: 'captured' | 'reused' | 'mixed';
+    reused_from_evidence_run_ids: string[];
+  };
+  repair_provenance?: {
+    diagnostic_id: string;
+    repair_run_id: string;
+    source_evidence_run_id?: string;
+    action_ids: string[];
+    receipt_ids: string[];
+  };
   tests?: {
     command: string;
     exit_code: number;

@@ -35,8 +35,13 @@ import {
 import {
   buildSingleTurnStartMetadata,
   markVisualFeedbackDelivered,
+  recordSingleTurnRepairAttempt,
   resolveSingleTurnBacklogItemId,
 } from './single-turn-step-state';
+import {
+  contractRevisionFor,
+  type JudgeRepairRun,
+} from './judge-repair-controller';
 import { CRON_INFRASTRUCTURE_PROVENANCE } from '@/lib/services/cron-infrastructure-state';
 import {
   InfrastructureStateDatabaseError,
@@ -50,6 +55,11 @@ import { getBacklogItem } from '@/lib/services/requirement-backlog';
 import { classifyRequirementType } from '@/lib/services/requirement-flows';
 import { computeApplicationBuildFingerprint } from './commit/pre-push-build-validation';
 import { loadConstraintSourceBlocks } from '@/lib/services/requirement-constraints-persist';
+import {
+  canResumeCachedGate,
+  shouldEnterRepairGateOnlyPhase,
+  shouldRunGateAfterTurn,
+} from './repair-execution-policy';
 export { inferRoleFromStep } from './single-turn-prompt';
 export type { SingleTurnResult };
 export async function executeSingleTurnStep(params: {
@@ -321,6 +331,33 @@ export async function executeSingleTurnStep(params: {
         content: `${historyText}\n\nReview the previous actions including any gate failures. Decide the next single tool call to advance the step, or finish the step if completed. REMEMBER: MAXIMUM 1 TOOL CALL.`
       });
     }
+    const activeRepairRun = persistedStep.metadata?.repair_run as
+      | JudgeRepairRun
+      | undefined;
+    const succeededRepairActions = new Set(
+      (activeRepairRun?.action_receipts || [])
+        .filter((receipt) => receipt.status === 'succeeded')
+        .map((receipt) => receipt.action_id),
+    );
+    const activeRepairAction = activeRepairRun?.status === 'in_progress'
+      ? activeRepairRun.actions.find(
+          (action) => !succeededRepairActions.has(action.action_id),
+        )
+      : undefined;
+    if (activeRepairRun && activeRepairAction) {
+      messages.push({
+        role: 'user' as const,
+        content: [
+          'ACTIVE STRUCTURED REPAIR ACTION (execute only this action this turn):',
+          `repair_run_id: ${activeRepairRun.repair_run_id}`,
+          `action_id: ${activeRepairAction.action_id}`,
+          `kind: ${activeRepairAction.kind}`,
+          `instruction: ${activeRepairAction.instruction}`,
+          `verification: ${activeRepairAction.verification}`,
+          'Use one concrete tool call. Do not merely describe the repair.',
+        ].join('\n'),
+      });
+    }
 
     const activeSandboxRef = { current: sandbox };
     const sandboxTools = getSandboxTools(sandbox, requirementId, {
@@ -368,6 +405,35 @@ export async function executeSingleTurnStep(params: {
       });
     }
 
+    if (shouldEnterRepairGateOnlyPhase(activeRepairRun)) {
+      console.log(
+        `[SingleTurn] Repair run ${activeRepairRun!.repair_run_id} is materialized; entering gate-only validation.`,
+      );
+      return runSingleTurnGate({
+        sandbox,
+        effectiveSandboxId,
+        plan,
+        step: persistedStep,
+        persistedStep,
+        requirementId,
+        instanceId,
+        siteId,
+        userId,
+        requirementType,
+        gitRepoKind,
+        validateDeployment:
+          validateDeployment && !evidenceCollectionOnly,
+        backlogItemId: effectiveBacklogItemId,
+        interactionBaselineSha,
+        systemPrompt,
+        result: {},
+        fullTools,
+        audit,
+        infrastructureGeneration,
+        executionEventId,
+      });
+    }
+
     const workspaceFingerprintBefore =
       await captureWorkspaceProgressFingerprint(sandbox);
     const flow = classifyRequirementType(requirementType);
@@ -379,6 +445,7 @@ export async function executeSingleTurnStep(params: {
           ) || undefined
         : undefined;
     if (
+      canResumeCachedGate(activeRepairRun, activeRepairAction) &&
       effectiveBacklogItemId &&
       validationFingerprint &&
       (flow === 'app' || flow === 'site')
@@ -447,6 +514,63 @@ export async function executeSingleTurnStep(params: {
       !!workspaceFingerprintBefore &&
       !!workspaceFingerprintAfter &&
       workspaceFingerprintBefore !== workspaceFingerprintAfter;
+    if (activeRepairRun && activeRepairAction) {
+      let contractRevision = activeRepairRun.contract_revision;
+      if (
+        activeRepairAction.kind === 'repair_contract' &&
+        effectiveBacklogItemId
+      ) {
+        const { item } = await getBacklogItem(
+          requirementId,
+          effectiveBacklogItemId,
+        );
+        contractRevision = contractRevisionFor(item?.acceptance_contract);
+      }
+      const repairAttempt = await recordSingleTurnRepairAttempt({
+        planId: plan.id,
+        stepId: persistedStep.id,
+        expectedGeneration: infrastructureGeneration,
+        executionEventId,
+        persistedMetadata: persistedStep.metadata,
+        result,
+        actionId: activeRepairAction.action_id,
+        workspaceChanged: durableProductProgress,
+        contractRevision,
+      });
+      if (repairAttempt && !repairAttempt.mutation.persisted) {
+        return {
+          ok: false,
+          isDone: false,
+          error:
+            `Repair attempt persistence rejected (${repairAttempt.mutation.state})`,
+          effectiveSandboxId,
+          infrastructureGeneration: repairAttempt.mutation.generation,
+          concurrencyHalt: true,
+          durableProductProgress,
+        };
+      }
+      if (repairAttempt) {
+        infrastructureGeneration =
+          repairAttempt.mutation.generation ?? infrastructureGeneration;
+        persistedStep = {
+          ...persistedStep,
+          metadata: repairAttempt.metadata,
+          infrastructure_generation: infrastructureGeneration,
+        };
+        if (repairAttempt.repairRun.status === 'exhausted') {
+          return {
+            ok: true,
+            isDone: true,
+            effectiveSandboxId,
+            persistedTerminalStatus: 'cancelled',
+            infrastructureGeneration,
+            durableProductProgress,
+            error:
+              `Repair run ${repairAttempt.repairRun.repair_run_id} exhausted.`,
+          };
+        }
+      }
+    }
     const visualFeedbackMutation = await markVisualFeedbackDelivered({
       planId: plan.id,
       instanceId,
@@ -521,7 +645,14 @@ export async function executeSingleTurnStep(params: {
       };
     }
     const completionRequested = terminalRequest?.status === 'completed';
-    const shouldRunGate = result.isDone || completionRequested;
+    const currentRepairRun = persistedStep.metadata?.repair_run as
+      | JudgeRepairRun
+      | undefined;
+    const shouldRunGate = shouldRunGateAfterTurn({
+      repairRun: currentRepairRun,
+      assistantDone: !!result.isDone,
+      completionRequested,
+    });
 
     if (completionRequested && !result.isDone) {
       console.log(

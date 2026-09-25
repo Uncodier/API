@@ -344,8 +344,7 @@ export class ComprehensiveEmailFilterService {
       try {
         const hashes = emails.map(e => {
           const text = `${e.from||''}\n${e.to||''}\n${e.subject||''}\n${e.date||e.received_date||''}\n\n${e.body||''}`;
-          const h = TextHashService.hash64(text);
-          return String(h);
+          return TextHashService.hash64String(text);
         }).filter(Boolean) as string[];
 
         if (hashes.length > 0) {
@@ -426,8 +425,7 @@ export class ComprehensiveEmailFilterService {
       // 🎯 PRIMERO verificar duplicados (para TODOS los emails, incluyendo leads IA)
       const emailEnvelopeId = emailToEnvelopeMap.get(email);
       const textForHash = `${email.from||''}\n${email.to||''}\n${email.subject||''}\n${email.date||email.received_date||''}\n\n${email.body||''}`;
-      const hashVal = TextHashService.hash64(textForHash);
-      const hashKey = String(hashVal);
+      const hashKey = TextHashService.hash64String(textForHash);
       if ((emailEnvelopeId && processed.byEnvelope.has(emailEnvelopeId)) || (hashKey && processed.byHash.has(hashKey))) {
         console.log(`[COMPREHENSIVE_FILTER] 🚨 Email duplicado filtrado: ${emailFrom} → ${emailTo} (ID: ${emailEnvelopeId})`);
         basicStats.duplicateFiltered = (basicStats.duplicateFiltered || 0) + 1;

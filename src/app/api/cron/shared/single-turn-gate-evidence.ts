@@ -4,6 +4,7 @@ import type { EvidenceRecord } from '@/lib/services/requirement-evidence-types';
 import { writeEvidence } from '@/lib/services/requirement-ground-truth';
 import { extractTestEvidenceFromResult } from './step-test-evidence';
 import { extractAgentProbeEvidence } from './step-agent-probe-evidence';
+import type { JudgeRepairRun } from './judge-repair-controller';
 
 interface GateTest {
   command: string;
@@ -13,10 +14,6 @@ interface GateTest {
   captured_at: string;
   step_id?: string;
   workspace_fingerprint?: string;
-}
-
-function isEvidenceGapRetry(previousError?: string): boolean {
-  return /\bFailure kind:\s*evidence_gap\b/i.test(previousError || '');
 }
 
 export async function prepareSingleTurnGateEvidence(params: {
@@ -34,6 +31,7 @@ export async function prepareSingleTurnGateEvidence(params: {
   gateBuild?: { ok: boolean; duration_ms?: number };
   gateObservations?: NonNullable<EvidenceRecord['observations']>;
   transientGateFailure: boolean;
+  repairRun?: JudgeRepairRun;
 }): Promise<{
   tests: GateTest[];
   observations: NonNullable<EvidenceRecord['observations']>;
@@ -104,11 +102,37 @@ export async function prepareSingleTurnGateEvidence(params: {
         resolution!,
       ]),
   ).values());
-  const evidenceRunId =
-    isEvidenceGapRetry(params.persistedErrorMessage) &&
+  // Every gate attempt gets its own identity. Reusing the rejected run made it
+  // impossible to prove that a repair produced fresh evidence.
+  const evidenceRunId = randomUUID();
+  const reusedEvidenceRunIds = persistedTests.length > 0 &&
     params.backlogEvidence?.evidence_run_id
-      ? params.backlogEvidence.evidence_run_id
-      : randomUUID();
+      ? [params.backlogEvidence.evidence_run_id]
+      : [];
+  const capturedEvidence = currentTests.length > 0 || gateTests.length > 0 ||
+    observations.length > 0 || agentEvidence.scenario_assertions.length > 0 ||
+    !!params.gateBuild;
+  const evidenceProvenance: NonNullable<EvidenceRecord['evidence_provenance']> = {
+    mode: reusedEvidenceRunIds.length > 0
+      ? capturedEvidence ? 'mixed' : 'reused'
+      : 'captured',
+    reused_from_evidence_run_ids: reusedEvidenceRunIds,
+  };
+  const successfulReceipts = (params.repairRun?.action_receipts || [])
+    .filter((receipt) =>
+      receipt.repair_run_id === params.repairRun?.repair_run_id &&
+      receipt.status === 'succeeded')
+    .map((receipt) => receipt.receipt_id);
+  const repairProvenance =
+    params.repairRun?.status === 'materialized' && successfulReceipts.length > 0
+      ? {
+          diagnostic_id: params.repairRun.diagnostic_id,
+          repair_run_id: params.repairRun.repair_run_id,
+          source_evidence_run_id: params.repairRun.source_evidence_run_id,
+          action_ids: params.repairRun.actions.map((action) => action.action_id),
+          receipt_ids: successfulReceipts,
+        }
+      : undefined;
   const build = params.gateBuild
     ? {
         command: 'npm run build',
@@ -136,6 +160,8 @@ export async function prepareSingleTurnGateEvidence(params: {
         producer_step_id: params.stepId,
         workspace_fingerprint: params.validatedFingerprint,
         captured_at: new Date().toISOString(),
+        evidence_provenance: evidenceProvenance,
+        repair_provenance: repairProvenance,
         tests,
         build,
         observations,

@@ -19,6 +19,15 @@ export class TextHashService {
     }
     return hash < BigInt(0) ? -hash : hash;
   }
+
+  /**
+   * Return the canonical unsigned decimal representation used by Postgres.
+   * PostgreSQL numeric(20, 0) can store the complete uint64 range without
+   * losing precision, unlike JavaScript numbers or PostgreSQL bigint.
+   */
+  static hash64String(input: string): string {
+    return this.hash64(input).toString();
+  }
 }
 
 

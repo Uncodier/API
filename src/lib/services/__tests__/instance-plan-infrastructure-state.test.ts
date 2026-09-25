@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import {
   InfrastructureStateDatabaseError,
+  appendPlanRepairStepAtomically,
   blockRequirementForInfrastructureCircuit,
   blockRequirementForCronInfrastructureCycles,
   blockRequirementForProductNoProgress,
@@ -140,6 +141,43 @@ describe('instance plan infrastructure state RPC wrappers', () => {
         p_expected_generation: 4,
         p_event_id: 'cycle-1:step-1:start',
       }),
+    );
+  });
+
+  it('appends a repair step with producer generation and run identity', async () => {
+    mockRpc.mockResolvedValue({
+      data: {
+        state: 'applied',
+        persisted: true,
+        step_id: 'repair-1',
+        generation: 0,
+      },
+      error: null,
+    });
+    const repairStep = {
+      id: 'repair-1',
+      metadata: { repair_run: { repair_run_id: 'run-1' } },
+    };
+
+    await expect(appendPlanRepairStepAtomically({
+      planId: 'plan-1',
+      sourceStepId: 'step-1',
+      expectedSourceGeneration: 7,
+      repairRunId: 'run-1',
+      repairStep,
+    })).resolves.toMatchObject({
+      persisted: true,
+      step_id: 'repair-1',
+    });
+    expect(mockRpc).toHaveBeenCalledWith(
+      'append_instance_plan_repair_step_atomic',
+      {
+        p_plan_id: 'plan-1',
+        p_source_step_id: 'step-1',
+        p_expected_source_generation: 7,
+        p_repair_run_id: 'run-1',
+        p_repair_step: repairStep,
+      },
     );
   });
 

@@ -3,6 +3,12 @@ import {
   type PlanStepPatchMutation,
 } from '@/lib/services/instance-plan-infrastructure-state';
 import { NO_PROGRESS_ADJUDICATION_METADATA_KEY } from './no-progress-adjudication';
+import {
+  extractRepairActionReceipts,
+  recordJudgeRepairAttempt,
+  startJudgeRepairRun,
+  type JudgeRepairRun,
+} from './judge-repair-controller';
 
 type BacklogResolver = (instanceId: string) => Promise<{
   requirementId: string | null;
@@ -53,8 +59,18 @@ export function buildSingleTurnStartMetadata(params: {
   cycleId: string;
   executionGeneration: number;
 }): Record<string, unknown> {
+  const repairRun = params.persistedMetadata?.repair_run as
+    | JudgeRepairRun
+    | undefined;
   return {
     ...(params.persistedMetadata || {}),
+    ...(repairRun?.status === 'planned'
+      ? {
+          repair_run: {
+            ...startJudgeRepairRun(repairRun),
+          },
+        }
+      : {}),
     cron_cycle_id: params.cycleId,
     cron_execution_generation: params.executionGeneration,
     ...(params.interactionBaselineSha
@@ -64,6 +80,58 @@ export function buildSingleTurnStartMetadata(params: {
       ? { backlog_item_id: params.backlogItemId }
       : {}),
   };
+}
+
+export async function recordSingleTurnRepairAttempt(params: {
+  planId: string;
+  stepId: string;
+  expectedGeneration: number;
+  executionEventId: string;
+  persistedMetadata?: Record<string, unknown>;
+  result: Parameters<typeof extractRepairActionReceipts>[0]['result'];
+  actionId: string;
+  workspaceChanged: boolean;
+  contractRevision: string;
+}): Promise<{
+  mutation: PlanStepPatchMutation;
+  metadata: Record<string, unknown>;
+  repairRun: JudgeRepairRun;
+} | undefined> {
+  const run = params.persistedMetadata?.repair_run as JudgeRepairRun | undefined;
+  if (!run || run.status !== 'in_progress') return undefined;
+  const receipts = extractRepairActionReceipts({
+    run,
+    actionId: params.actionId,
+    result: params.result,
+  });
+  const repairRun = recordJudgeRepairAttempt({
+    run,
+    receipts,
+    workspaceChanged: params.workspaceChanged,
+    contractRevision: params.contractRevision,
+  });
+  const metadata = {
+    ...(params.persistedMetadata || {}),
+    repair_run: repairRun,
+  };
+  const mutation = await patchPlanStepAtomically({
+    planId: params.planId,
+    stepId: params.stepId,
+    expectedGeneration: params.expectedGeneration,
+    eventId: `${params.executionEventId}:repair:${run.repair_run_id}:${repairRun.attempt_count}`,
+    patch: {
+      metadata,
+      ...(repairRun.status === 'exhausted'
+        ? {
+            status: 'cancelled',
+            completed_at: new Date().toISOString(),
+            error_message:
+              `Repair run ${repairRun.repair_run_id} exhausted after ${repairRun.attempt_count} attempts.`,
+          }
+        : {}),
+    },
+  });
+  return { mutation, metadata, repairRun };
 }
 
 export async function markVisualFeedbackDelivered(params: {

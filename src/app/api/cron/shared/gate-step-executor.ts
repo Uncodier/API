@@ -10,6 +10,8 @@ import { sandboxIdentity } from '@/lib/services/sandbox-sdk';
 import { deriveCategoriesFailed } from './step-iteration-signals';
 import { applyGateFailureHealing } from './gate-failure-healing';
 import { isStrictFinalPlanStep } from '@/lib/helpers/plan-status';
+import { patchPlanStepAtomically } from '@/lib/services/instance-plan-infrastructure-state';
+import type { JudgeRepairRun } from './judge-repair-controller';
 
 export interface GateStepResult {
   ok: boolean;
@@ -19,6 +21,7 @@ export interface GateStepResult {
   effectiveSandboxId: string;
   infrastructureFailure?: boolean;
   remediationScheduled?: boolean;
+  repairRun?: JudgeRepairRun;
 }
 
 export async function runGateStep(params: {
@@ -142,9 +145,10 @@ export async function runGateStep(params: {
           signals: gateRes.richSignals as any,
           capturedAt: new Date().toISOString(),
           audit,
+          repairRun: step.metadata?.repair_run,
        });
        if (!postGate.ran) {
-         return {
+          return {
            ok: false,
            passed: false,
            error: postGate.error || 'Post-gate evaluation was unavailable.',
@@ -153,12 +157,51 @@ export async function runGateStep(params: {
          };
        }
        if (postGate.judge_verdict !== 'approved') {
+          if (
+            postGate.repair_planned &&
+            !Number.isInteger(step.infrastructure_generation)
+          ) {
+            return {
+              ok: false,
+              passed: false,
+              error: 'Cannot persist repair run without infrastructure generation',
+              effectiveSandboxId,
+              repairRun: postGate.repair_planned,
+            };
+          }
+          if (
+            postGate.repair_planned &&
+            Number.isInteger(step.infrastructure_generation)
+          ) {
+            const mutation = await patchPlanStepAtomically({
+              planId: plan.id,
+              stepId: step.id,
+              expectedGeneration: step.infrastructure_generation,
+              eventId:
+                `gate-step:${step.id}:repair:${postGate.repair_planned.repair_run_id}`,
+              patch: {
+                metadata: {
+                  ...(step.metadata || {}),
+                  repair_run: postGate.repair_planned,
+                },
+              },
+            });
+            if (!mutation.persisted) {
+              return {
+                ok: false,
+                passed: false,
+                error: `Repair run persistence rejected (${mutation.state})`,
+                effectiveSandboxId,
+              };
+            }
+          }
          return {
            ok: true,
            passed: false,
            gateErrorExcerpt:
              `Post-gate judge returned ${postGate.judge_verdict}.`,
            effectiveSandboxId,
+            repairRun: postGate.repair_planned,
          };
        }
 

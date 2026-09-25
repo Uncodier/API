@@ -18,7 +18,23 @@ const postGate = {
   matched_acceptance: ['GET / returns 200'],
   unmatched_acceptance: ['Footer links resolve'],
   repair_feedback: 'Inspect and repair the footer link evidence.',
-  healing_applied: 'collect_evidence',
+  repair_planned: {
+    schema_version: 1 as const,
+    diagnostic_id: 'diagnostic-1',
+    repair_run_id: 'repair-1',
+    status: 'planned' as const,
+    failure_kind: 'evidence_gap' as const,
+    source_evidence_run_id: 'evidence-1',
+    contract_revision: 'contract-1',
+    created_at: '2026-09-25T00:00:00.000Z',
+    max_attempts: 3,
+    actions: [{
+      action_id: 'criterion-1:missing_semantic_receipt:1',
+      kind: 'collect_evidence' as const,
+      instruction: 'Capture a typed DOM receipt.',
+      verification: 'Re-run the affected browser assertion.',
+    }],
+  },
 };
 
 describe('persistJudgeRejection', () => {
@@ -40,6 +56,7 @@ describe('persistJudgeRejection', () => {
       effectiveSandboxId: 'sandbox-1',
       infrastructureGeneration: 4,
       executionEventId: 'cycle-1:step-1:turn-1',
+      persistedStepMetadata: { existing: true },
     });
 
     expect(result).toMatchObject({
@@ -58,6 +75,10 @@ describe('persistJudgeRejection', () => {
       patch: {
         status: 'in_progress',
         error_message: postGate.repair_feedback,
+        metadata: {
+          existing: true,
+          repair_run: postGate.repair_planned,
+        },
       },
     });
   });
@@ -74,6 +95,10 @@ describe('persistJudgeRejection', () => {
       stepId: 'step-1',
       postGate: {
         ...postGate,
+        repair_planned: {
+          ...postGate.repair_planned,
+          status: 'exhausted',
+        },
         healing_applied: 'mark_needs_review',
         verification_exhausted: true,
         terminal_step_status: 'cancelled',
@@ -99,6 +124,12 @@ describe('persistJudgeRejection', () => {
         status: 'cancelled',
         error_message: postGate.repair_feedback,
         completed_at: expect.any(String),
+        metadata: {
+          repair_run: {
+            ...postGate.repair_planned,
+            status: 'exhausted',
+          },
+        },
       },
     });
   });
