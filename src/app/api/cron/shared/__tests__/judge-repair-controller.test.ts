@@ -1,5 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import {
+  continueJudgeRepairRun,
+  hasAttemptedJudgeRepair,
   extractRepairActionReceipts,
   formatRepairRunFeedback,
   materialHealingApplied,
@@ -9,6 +11,87 @@ import {
 } from '../judge-repair-controller';
 
 describe('judge repair controller', () => {
+  it('only treats an attempt from the current diagnostic as executed', () => {
+    const run = {
+      schema_version: 1 as const,
+      diagnostic_id: 'diagnostic-1',
+      repair_run_id: 'repair-1',
+      status: 'in_progress' as const,
+      failure_kind: 'capability_gap' as const,
+      contract_revision: 'contract-1',
+      created_at: '2026-09-25T00:00:00.000Z',
+      max_attempts: 1,
+      attempt_count: 1,
+      action_receipts: [],
+      actions: [],
+    };
+
+    expect(hasAttemptedJudgeRepair(run, 'diagnostic-1')).toBe(true);
+    expect(hasAttemptedJudgeRepair(run, 'diagnostic-2')).toBe(false);
+    expect(hasAttemptedJudgeRepair({ ...run, attempt_count: 0 }, 'diagnostic-1'))
+      .toBe(false);
+  });
+
+  it('resets attempts and receipts when the diagnostic changes', () => {
+    const previous = {
+      schema_version: 1 as const,
+      diagnostic_id: 'diagnostic-old',
+      repair_run_id: 'repair-1',
+      status: 'in_progress' as const,
+      failure_kind: 'evidence_gap' as const,
+      contract_revision: 'contract-1',
+      created_at: '2026-09-25T00:00:00.000Z',
+      max_attempts: 3,
+      attempt_count: 2,
+      action_receipts: [{
+        receipt_id: 'receipt-old',
+        repair_run_id: 'repair-1',
+        action_id: 'action-old',
+        attempt: 2,
+        tool_call_id: 'call-old',
+        tool_name: 'sandbox_run_command',
+        status: 'failed' as const,
+        attempted_at: '2026-09-25T00:01:00.000Z',
+      }],
+      actions: [],
+    };
+    const planned = {
+      ...previous,
+      diagnostic_id: 'diagnostic-new',
+      status: 'planned' as const,
+      failure_kind: 'capability_gap' as const,
+      max_attempts: 1,
+      attempt_count: 0,
+      action_receipts: [],
+    };
+
+    expect(continueJudgeRepairRun({
+      previous,
+      planned,
+      evidenceRunId: 'evidence-new',
+    })).toEqual(planned);
+  });
+
+  it('does not consume the repair budget without an action receipt', () => {
+    const run = startJudgeRepairRun(planJudgeRepair({
+      judge: {
+        verdict: 'escalate',
+        reason: 'Capability unavailable.',
+        matched_acceptance: [],
+        unmatched_acceptance: ['Authenticated request'],
+        failure_kind: 'capability_gap',
+      },
+      repairRunId: 'repair-1',
+    })!);
+
+    expect(recordJudgeRepairAttempt({
+      run,
+      receipts: [],
+      workspaceChanged: false,
+      contractRevision: run.contract_revision,
+    })).toEqual(run);
+  });
+
   it('turns mixed diagnostics into scoped typed actions', () => {
     const run = planJudgeRepair({
       judge: {
@@ -233,7 +316,7 @@ describe('judge repair controller', () => {
     ]);
   });
 
-  it('does not attribute an unrelated read-only tool to an evidence action', () => {
+  it('counts an unrelated read-only tool as a failed concrete attempt', () => {
     const run = startJudgeRepairRun(planJudgeRepair({
       judge: {
         verdict: 'rejected',
@@ -257,7 +340,12 @@ describe('judge repair controller', () => {
           }],
         }],
       },
-    })).toEqual([]);
+    })).toEqual([
+      expect.objectContaining({
+        tool_name: 'sandbox_read_file',
+        status: 'failed',
+      }),
+    ]);
   });
 
   it('rejects ambiguous multi-tool attribution for one repair action', () => {

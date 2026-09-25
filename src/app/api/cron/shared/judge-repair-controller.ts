@@ -192,6 +192,44 @@ export function startJudgeRepairRun(run: JudgeRepairRun): JudgeRepairRun {
   };
 }
 
+/**
+ * A verifier failure is not itself a repair attempt. A newly planned repair
+ * must reach its executor before the post-gate is allowed to exhaust it.
+ */
+export function hasAttemptedJudgeRepair(
+  run: JudgeRepairRun | undefined,
+  diagnosticId?: string,
+): boolean {
+  return !!run &&
+    !!diagnosticId &&
+    run.diagnostic_id === diagnosticId &&
+    (run.attempt_count || 0) > 0;
+}
+
+export function continueJudgeRepairRun(params: {
+  previous: JudgeRepairRun;
+  planned: JudgeRepairRun;
+  evidenceRunId: string;
+}): JudgeRepairRun {
+  if (params.previous.diagnostic_id !== params.planned.diagnostic_id) {
+    return params.planned;
+  }
+  return {
+    ...params.planned,
+    created_at: params.previous.created_at,
+    max_attempts: params.previous.max_attempts,
+    attempt_count: params.previous.attempt_count || 0,
+    action_receipts: params.previous.action_receipts || [],
+    source_evidence_run_id:
+      params.previous.source_evidence_run_id || params.evidenceRunId,
+    actions: params.planned.actions.map((action) => ({
+      ...action,
+      action_id:
+        `${action.action_id}:round:${(params.previous.attempt_count || 0) + 1}`,
+    })),
+  };
+}
+
 function resultExcerpt(value: unknown): string | undefined {
   if (value == null) return undefined;
   try {
@@ -276,7 +314,11 @@ export function extractRepairActionReceipts(params: {
       if (!callId) continue;
       const result = results.get(callId);
       if (!result) continue;
-      const status = toolResultSucceeded(result) ? 'succeeded' : 'failed';
+      const status =
+        toolCanExecuteRepair(action.kind, call.toolName || 'unknown') &&
+        toolResultSucceeded(result)
+          ? 'succeeded'
+          : 'failed';
       receipts.push({
         receipt_id: createHash('sha256')
           .update(`${params.run.repair_run_id}:${attempt}:${params.actionId}:${callId}:${status}`)
@@ -298,14 +340,10 @@ export function extractRepairActionReceipts(params: {
       });
     }
   }
-  // One receipt is an unambiguous action attribution boundary. A multi-call
-  // result or a tool incapable of this repair kind cannot satisfy the action.
-  if (
-    receipts.length !== 1 ||
-    !toolCanExecuteRepair(action.kind, receipts[0].tool_name)
-  ) {
-    return [];
-  }
+  // One matched call is an unambiguous action attribution boundary. A tool
+  // incapable of this repair kind is retained as a failed concrete attempt;
+  // ambiguous multi-call results cannot be attributed and are discarded.
+  if (receipts.length !== 1) return [];
   return receipts;
 }
 
@@ -315,6 +353,9 @@ export function recordJudgeRepairAttempt(params: {
   workspaceChanged: boolean;
   contractRevision: string;
 }): JudgeRepairRun {
+  // A model turn without one attributable tool result is not a concrete
+  // repair attempt. Failed tool receipts do count, successful or otherwise.
+  if (params.receipts.length === 0) return params.run;
   const attemptCount = (params.run.attempt_count || 0) + 1;
   const existing = params.run.action_receipts || [];
   const receipts = Array.from(new Map(

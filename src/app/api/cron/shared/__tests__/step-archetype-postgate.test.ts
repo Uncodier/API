@@ -158,7 +158,7 @@ describe('runArchetypePostGate verification budget', () => {
     }));
   });
 
-  it('preserves a materialized repair identity when the new Judge rejects it', async () => {
+  it('resets repair state when the new Judge produces a different diagnostic', async () => {
     recordToolFailure.mockResolvedValue({
       ...item,
       tool_failures: { judge_evidence_collector: 2 },
@@ -198,10 +198,10 @@ describe('runArchetypePostGate verification budget', () => {
     expect(result.repair_planned).toMatchObject({
       repair_run_id: 'repair-stable',
       status: 'planned',
-      attempt_count: 1,
-      action_receipts: [expect.objectContaining({ receipt_id: 'receipt-old' })],
+      attempt_count: 0,
+      action_receipts: [],
     });
-    expect(result.repair_planned?.actions[0].action_id).toContain(':round:2');
+    expect(result.repair_planned?.actions[0].action_id).not.toContain(':round:');
     expect(writeEvidence).toHaveBeenCalledWith(expect.objectContaining({
       record: expect.objectContaining({
         repair_provenance: {
@@ -243,7 +243,7 @@ describe('runArchetypePostGate verification budget', () => {
     }));
   });
 
-  it('quarantines a harness capability gap without product retries', async () => {
+  it('plans a harness capability repair before quarantine', async () => {
     runJudge.mockReturnValueOnce({
       verdict: 'escalate',
       reason: 'Authenticated evidence cannot be collected.',
@@ -268,16 +268,13 @@ describe('runArchetypePostGate verification budget', () => {
       ...item,
       tool_failures: { judge_capability_resolver: 1 },
     });
-    markNeedsReview.mockResolvedValue({
-      ...item,
-      status: 'needs_review',
-    });
-
     await expect(runArchetypePostGate(input())).resolves.toMatchObject({
       judge_failure_kind: 'capability_gap',
-      repair_planned: expect.objectContaining({ status: 'exhausted' }),
-      verification_exhausted: true,
-      terminal_step_status: 'cancelled',
+      repair_planned: expect.objectContaining({
+        status: 'planned',
+        attempt_count: 0,
+      }),
+      verification_exhausted: false,
       repair_feedback: expect.stringContaining(
         'authentication_context_missing',
       ),
@@ -285,10 +282,7 @@ describe('runArchetypePostGate verification budget', () => {
     expect(recordToolFailure).toHaveBeenCalledWith(expect.objectContaining({
       toolName: 'judge_capability_resolver',
     }));
-    expect(markNeedsReview).toHaveBeenCalledTimes(1);
-    expect(markNeedsReview).toHaveBeenCalledWith(expect.objectContaining({
-      reason: expect.stringContaining('authentication_context_missing'),
-    }));
+    expect(markNeedsReview).not.toHaveBeenCalled();
   });
 
   it('treats the cancellation performed by review handoff as terminal', async () => {

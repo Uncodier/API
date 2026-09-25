@@ -47,7 +47,9 @@ import type {
   JudgeVerdict,
 } from './archetype-judge-result';
 import {
+  continueJudgeRepairRun,
   formatRepairRunFeedback,
+  hasAttemptedJudgeRepair,
   materialHealingApplied,
   planJudgeRepair,
   type JudgeRepairRun,
@@ -245,20 +247,11 @@ export async function runArchetypePostGate(
     let repairPlanned = judge.verdict === 'approved'
       ? input.repairRun
       : input.repairRun && newlyPlanned
-        ? {
-            ...newlyPlanned,
-            created_at: input.repairRun.created_at,
-            max_attempts: input.repairRun.max_attempts,
-            attempt_count: input.repairRun.attempt_count || 0,
-            action_receipts: input.repairRun.action_receipts || [],
-            source_evidence_run_id:
-              input.repairRun.source_evidence_run_id || evidenceRunId,
-            actions: newlyPlanned.actions.map((action) => ({
-              ...action,
-              action_id:
-                `${action.action_id}:round:${(input.repairRun!.attempt_count || 0) + 1}`,
-            })),
-          }
+        ? continueJudgeRepairRun({
+            previous: input.repairRun,
+            planned: newlyPlanned,
+            evidenceRunId,
+          })
         : newlyPlanned;
     if (
       judge.verdict !== 'approved' &&
@@ -309,7 +302,13 @@ export async function runArchetypePostGate(
         const attemptLimit = judge.failure_kind === 'capability_gap'
           ? 1
           : judgeVerificationAttemptLimit();
-        if (verificationAttempts >= attemptLimit) {
+        const canExhaustVerification =
+          judge.failure_kind !== 'capability_gap' ||
+          hasAttemptedJudgeRepair(
+            input.repairRun,
+            repairPlanned?.diagnostic_id,
+          );
+        if (verificationAttempts >= attemptLimit && canExhaustVerification) {
           const reason =
             `${judge.failure_kind} verification exhausted after ` +
             `${verificationAttempts} attempts: ${judge.reason}` +

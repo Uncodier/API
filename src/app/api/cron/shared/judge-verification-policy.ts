@@ -55,8 +55,8 @@ function requiredAction(failureKind: JudgeFailureKind | undefined): string {
   if (failureKind === 'capability_gap') {
     return [
       'Do not modify product code to compensate for a verifier limitation.',
-      'Keep this item quarantined for review and continue with another independent item.',
-      'The harness needs the capability named in the structured evidence gap.',
+      'Execute the structured environment repair once to restore the capability named in the evidence gap.',
+      'If that concrete repair attempt cannot restore it, quarantine the item for review and continue with another independent item.',
     ].join(' ');
   }
   return [
