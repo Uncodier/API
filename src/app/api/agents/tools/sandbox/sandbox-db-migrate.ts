@@ -41,14 +41,24 @@ export function sandboxDbMigrateTool(
         if (result.applied.length === 0) {
           return {
             success: true,
-            message: 'No pending migrations found. All migrations are already applied.'
+            message: 'No pending migrations found. All migrations are already applied.',
+            receipt: {
+              kind: 'database_migration',
+              applied: [],
+              pending: 0,
+            },
           };
         }
         
         return {
           success: true,
           message: `Successfully applied ${result.applied.length} migrations.`,
-          applied: result.applied
+          applied: result.applied,
+          receipt: {
+            kind: 'database_migration',
+            applied: result.applied,
+            pending: 0,
+          },
         };
       } catch (err: any) {
         return {

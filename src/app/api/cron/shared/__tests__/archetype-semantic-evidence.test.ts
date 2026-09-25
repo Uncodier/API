@@ -73,26 +73,67 @@ describe('generic semantic acceptance proof', () => {
     const browserEvidence = evidence('PASS unrelated test');
     browserEvidence.scenario_assertions = [{
       kind: 'dom_assertion',
+      criterion_id: 'criterion-1',
       pass: true,
       selector: '[data-testid="customer-profile-form"]',
       assertion: 'text_contains',
-      expected: 'Account details',
-      actual: 'Customer profile Account details',
+      expected: 'Customer profile form account details',
+      actual: 'Customer profile form Account details',
     }];
 
     expect(matchAcceptanceAgainstEvidence(
       item.acceptance,
       browserEvidence,
+      {
+        schema_version: 1,
+        criteria: [{
+          id: 'criterion-1',
+          text: item.acceptance[0],
+          all_of: [{
+            kind: 'semantic_assertion',
+            text: item.acceptance[0],
+          }],
+        }],
+      },
     )).toMatchObject({
       matched: item.acceptance,
       unmatched: [],
     });
   });
 
+  it('does not use a scenario assertion bound to another criterion', () => {
+    const browserEvidence = evidence('');
+    browserEvidence.scenario_assertions = [{
+      kind: 'dom_assertion',
+      criterion_id: 'other-criterion',
+      pass: true,
+      selector: '[data-testid="customer-profile-form"]',
+      assertion: 'text_contains',
+      actual: 'Customer profile Account details',
+    }];
+
+    expect(matchAcceptanceAgainstEvidence(
+      item.acceptance,
+      browserEvidence,
+      {
+        schema_version: 1,
+        criteria: [{
+          id: 'criterion-1',
+          text: item.acceptance[0],
+          all_of: [{
+            kind: 'semantic_assertion',
+            text: item.acceptance[0],
+          }],
+        }],
+      },
+    )).toMatchObject({ matched: [], unmatched: item.acceptance });
+  });
+
   it('does not trust authored expected text when the browser observed something else', () => {
     const browserEvidence = evidence('PASS unrelated test');
     browserEvidence.scenario_assertions = [{
       kind: 'dom_assertion',
+      criterion_id: 'criterion-1',
       pass: true,
       selector: '[data-testid="customer-profile-form-account-details"]',
       assertion: 'text_contains',
@@ -382,5 +423,47 @@ describe('generic semantic acceptance proof', () => {
       matched: [criterion],
       unmatched: [],
     });
+  });
+
+  it('does not let an unbound agent probe resolve a contractual unknown', () => {
+    const criterion = 'POST /api/orders returns 201.';
+    const probeEvidence = evidence('');
+    probeEvidence.observations = [{
+      kind: 'api',
+      disposition: 'pass',
+      source: 'agent_probe',
+      target: 'POST /api/orders',
+      method: 'POST',
+      http_status: 201,
+      detail: 'HTTP 201',
+    }];
+    const contract = {
+      schema_version: 2 as const,
+      source: 'declared' as const,
+      criteria: [{
+        id: 'create-order',
+        text: criterion,
+        all_of: [{
+          kind: 'http_response' as const,
+          path: '/api/orders',
+          method: 'POST' as const,
+          expected_status: '201',
+          auth: 'unspecified' as const,
+        }],
+      }],
+    };
+
+    expect(matchAcceptanceAgainstEvidence(
+      [criterion],
+      probeEvidence,
+      contract,
+    )).toMatchObject({ matched: [], unmatched: [criterion] });
+
+    probeEvidence.observations[0].criterion_id = 'create-order';
+    expect(matchAcceptanceAgainstEvidence(
+      [criterion],
+      probeEvidence,
+      contract,
+    )).toMatchObject({ matched: [criterion], unmatched: [] });
   });
 });

@@ -103,6 +103,9 @@ function probeObservations(
           (body ? `; body=${body}` : ''),
         method,
         http_status: status,
+        ...(typeof payload.criterion_id === 'string'
+          ? { criterion_id: payload.criterion_id }
+          : {}),
         ...(Array.isArray(api.expected_statuses)
           ? { expected_statuses: api.expected_statuses }
           : {}),
@@ -120,6 +123,9 @@ function probeObservations(
         detail: `HTTP ${status} collected by sandbox_probe_routes`,
         method: 'GET',
         http_status: status,
+        ...(typeof payload.criterion_id === 'string'
+          ? { criterion_id: payload.criterion_id }
+          : {}),
         ...(Array.isArray(page.expected_statuses)
           ? { expected_statuses: page.expected_statuses }
           : {}),
@@ -146,6 +152,9 @@ function scenarioReceipts(
       ) {
         receipts.push({
           kind: 'http_response',
+          ...(typeof payload.criterion_id === 'string'
+            ? { criterion_id: payload.criterion_id }
+            : {}),
           pass: true,
           method: httpMethod(receipt.method),
           target: receipt.target,
@@ -158,7 +167,12 @@ function scenarioReceipts(
         typeof receipt.selector === 'string' &&
         typeof receipt.assertion === 'string'
       ) {
-        receipts.push(receipt as ScenarioAssertionReceipt);
+        receipts.push({
+          ...receipt,
+          ...(typeof payload.criterion_id === 'string'
+            ? { criterion_id: payload.criterion_id }
+            : {}),
+        } as ScenarioAssertionReceipt);
       }
     }
   }
@@ -196,6 +210,9 @@ export function evidenceFromQaToolResult(
           method: receipt.method,
           http_status: receipt.actual_status,
           expected_statuses: receipt.expected_statuses,
+          ...(typeof payload.criterion_id === 'string'
+            ? { criterion_id: payload.criterion_id }
+            : {}),
         })),
     };
   }

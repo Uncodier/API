@@ -19,10 +19,14 @@ export function genericProofTerms(
 
 export function genericEvidenceReceipts(
   evidence: EvidenceRecord,
+  criterionId?: string,
 ): string[] {
   return [
     ...(evidence.scenario_assertions || [])
-      .filter((assertion) => assertion.pass)
+      .filter((assertion) =>
+        assertion.pass &&
+        !!criterionId &&
+        assertion.criterion_id === criterionId)
       .map((assertion) =>
         assertion.kind === 'http_response'
           ? [
@@ -36,7 +40,12 @@ export function genericEvidenceReceipts(
             ].join('\n'),
       ),
     ...(evidence.observations || [])
-      .filter((observation) => observation.disposition === 'pass')
+      .filter((observation) =>
+        observation.disposition === 'pass' &&
+        (
+          observation.source !== 'agent_probe' ||
+          (!!criterionId && observation.criterion_id === criterionId)
+        ))
       .map((observation) =>
         `${observation.target || ''}\n${observation.detail}`),
   ].filter(Boolean);

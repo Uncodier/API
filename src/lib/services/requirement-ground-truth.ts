@@ -201,6 +201,7 @@ export function mergeEvidenceRecords(
         observation.kind,
         observation.disposition,
         observation.source,
+        observation.criterion_id || '',
         observation.target || '',
         observation.detail,
       ].join(':'),

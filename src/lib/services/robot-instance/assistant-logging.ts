@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { type NodeResult, buildInitialNodeResult } from './node-result-collector';
 import type { NodeContextRef } from './assistant-streaming-logs';
+import { normalizeToolOperationResult } from '@/lib/services/tool-operation-result';
 export {
   createNodeStreamingCallbacks,
   createStreamingLogCallbacks,
@@ -133,6 +134,12 @@ export function createAssistantOnStepHandler(
         if (toolResult && toolCall.toolName === 'computer') {
           screenshotBase64 = toolResult.base64Image || null;
         }
+        const operation = toolResult
+          ? normalizeToolOperationResult(
+              toolResult.cleanedResult ?? toolResult.result ?? toolResult.content,
+              { transportError: toolResult.isError === true },
+            )
+          : undefined;
 
         const { error: toolLogError } = await supabaseAdmin.from('instance_logs').insert({
           log_type: 'tool_call',
@@ -142,8 +149,9 @@ export function createAssistantOnStepHandler(
           tool_call_id: toolCall.id || toolCall.toolCallId,
           tool_args: toolCall.args || {},
           tool_result: toolResult ? {
-            success: !toolResult.isError,
-            error: toolResult.isError ? (toolResult.error || toolResult.result) : null,
+            success: operation?.outcome === 'passed',
+            operation_outcome: operation?.outcome,
+            error: operation?.error || null,
             output: (() => {
               // Clean output of any base64 image and redundant success flags
               const rawOutput = toolResult.result || toolResult.content || '';
@@ -159,7 +167,6 @@ export function createAssistantOnStepHandler(
                   if (typeof obj === 'object' && obj !== null) {
                     const copy = { ...obj };
                     delete copy.base64Image;
-                    if (copy.success !== undefined) delete copy.success; // Remove redundant success flag
                     for (const key in copy) {
                       copy[key] = stripInternalKeys(copy[key]);
                     }

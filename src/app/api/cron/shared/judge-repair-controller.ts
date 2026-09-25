@@ -7,6 +7,11 @@ import type {
   JudgeFailureKind,
   JudgeResult,
 } from './archetype-judge-result';
+import {
+  hasExpectedToolReceipt,
+  normalizeToolOperationResult,
+  type ToolOperationOutcome,
+} from '@/lib/services/tool-operation-result';
 
 export type RepairKind =
   | 'repair_implementation'
@@ -27,6 +32,7 @@ export interface RepairAction {
   gap_code?: AcceptanceGapCode;
   instruction: string;
   verification: string;
+  expected_receipt?: string;
 }
 
 export interface RepairActionReceipt {
@@ -38,7 +44,10 @@ export interface RepairActionReceipt {
   tool_name: string;
   action_digest?: string;
   tool_arguments_excerpt?: string;
-  status: 'succeeded' | 'failed';
+  status: 'succeeded' | 'failed' | 'unknown';
+  operation_outcome?: ToolOperationOutcome;
+  expected_receipt?: string;
+  operational_error?: { message: string; code?: string; path: string };
   attempted_at: string;
   result_excerpt?: string;
 }
@@ -66,7 +75,7 @@ const TOOL_POLICY_BY_REPAIR_KIND: Record<RepairKind, RegExp> = {
   repair_contract:
     /(?:backlog|contract|requirement|edit|write|patch|replace|run_command)/i,
   collect_evidence:
-    /(?:test|probe|browser|request|fetch|curl|run_command|check_background|read_logs|screenshot|assert|validate)/i,
+    /(?:test|probe|inspect|browser|request|fetch|curl|run_command|check_background|read_logs|screenshot|assert|validate)/i,
   resolve_environment:
     /(?:run_command|background|deploy|environment|secret|key|install|restore|checkpoint|browser)/i,
 };
@@ -103,6 +112,16 @@ function verificationFor(kind: RepairKind, required: string): string {
   return `Collect a fresh typed receipt that directly proves: ${required}.`;
 }
 
+function expectedReceiptFor(text: string): string | undefined {
+  if (/\b(?:migrat(?:e|ion)|apply migrations?)\b/i.test(text)) {
+    return 'database_migration';
+  }
+  if (/\b(?:database|schema|table|column|row|rls)\b/i.test(text)) {
+    return 'database_schema_snapshot';
+  }
+  return undefined;
+}
+
 function actionsFromDiagnostics(
   diagnostics: AcceptanceCriterionDiagnostic[],
   failureKind: JudgeFailureKind,
@@ -110,6 +129,11 @@ function actionsFromDiagnostics(
   const actions = diagnostics.flatMap((diagnostic) =>
     diagnostic.gaps.map((gap, gapIndex) => {
       const kind = repairKindFor(failureKind, gap.class);
+      const expectedReceipt = expectedReceiptFor([
+        diagnostic.criterion,
+        gap.required,
+        gap.suggested_action,
+      ].join(' '));
       return {
         action_id: `${diagnostic.criterion_id}:${gap.code}:${gapIndex + 1}`,
         kind,
@@ -117,6 +141,7 @@ function actionsFromDiagnostics(
         gap_code: gap.code,
         instruction: gap.suggested_action,
         verification: verificationFor(kind, gap.required),
+        ...(expectedReceipt ? { expected_receipt: expectedReceipt } : {}),
       } satisfies RepairAction;
     }),
   );
@@ -149,6 +174,11 @@ export function planJudgeRepair(params: {
   const fallbackKind = repairKindFor(params.judge.failure_kind);
   const actions = actionsFromDiagnostics(diagnostics, params.judge.failure_kind);
   if (actions.length === 0) {
+    const fallbackText = [
+      params.judge.reason,
+      ...params.judge.unmatched_acceptance,
+    ].join(' ');
+    const expectedReceipt = expectedReceiptFor(fallbackText);
     actions.push({
       action_id: `judge:${fallbackKind}:1`,
       kind: fallbackKind,
@@ -157,6 +187,7 @@ export function planJudgeRepair(params: {
         fallbackKind,
         params.judge.unmatched_acceptance[0] || params.judge.reason,
       ),
+      ...(expectedReceipt ? { expected_receipt: expectedReceipt } : {}),
     });
   }
   const diagnosticId = createHash('sha256').update(JSON.stringify({
@@ -240,36 +271,18 @@ function resultExcerpt(value: unknown): string | undefined {
   }
 }
 
-function toolResultFailed(result: {
+function normalizedToolResult(toolResult: {
   isError?: unknown;
   result?: unknown;
   cleanedResult?: unknown;
-}): boolean {
-  if (result.isError === true) return true;
-  const payload = result.cleanedResult ?? result.result;
-  if (!payload || typeof payload !== 'object') return false;
-  const record = payload as Record<string, unknown>;
-  const exitCode = Number(record.exitCode ?? record.exit_code);
-  return record.success === false || record.failed === true ||
-    record.error != null || (Number.isFinite(exitCode) && exitCode !== 0);
-}
-
-function toolResultSucceeded(toolResult: {
-  isError?: unknown;
-  result?: unknown;
-  cleanedResult?: unknown;
-}): boolean {
-  if (toolResultFailed(toolResult)) return false;
-  const payload = toolResult.cleanedResult ?? toolResult.result;
-  if (!payload || typeof payload !== 'object') return false;
-  const record = payload as Record<string, unknown>;
-  const exitCode = Number(record.exitCode ?? record.exit_code);
-  return record.success === true ||
-    record.ok === true ||
-    record.completed === true ||
-    record.status === 'succeeded' ||
-    record.status === 'completed' ||
-    (Number.isFinite(exitCode) && exitCode === 0);
+  output?: unknown;
+  content?: unknown;
+}) {
+  return normalizeToolOperationResult(
+    toolResult.cleanedResult ?? toolResult.result ??
+      toolResult.output ?? toolResult.content,
+    { transportError: toolResult.isError === true },
+  );
 }
 
 /**
@@ -293,6 +306,8 @@ export function extractRepairActionReceipts(params: {
         isError?: unknown;
         result?: unknown;
         cleanedResult?: unknown;
+        output?: unknown;
+        content?: unknown;
       }>;
     }>;
   };
@@ -314,11 +329,19 @@ export function extractRepairActionReceipts(params: {
       if (!callId) continue;
       const result = results.get(callId);
       if (!result) continue;
-      const status =
-        toolCanExecuteRepair(action.kind, call.toolName || 'unknown') &&
-        toolResultSucceeded(result)
-          ? 'succeeded'
-          : 'failed';
+      const toolName = call.toolName || 'unknown';
+      const operation = normalizedToolResult(result);
+      const expectedReceipt = action.expected_receipt;
+      const canExecute = toolCanExecuteRepair(action.kind, toolName);
+      const operationOutcome: ToolOperationOutcome = !canExecute
+        ? 'failed'
+        : operation.outcome === 'passed' &&
+            !hasExpectedToolReceipt(toolName, operation, expectedReceipt ?? '')
+          ? 'unknown'
+          : operation.outcome;
+      const status = operationOutcome === 'passed'
+        ? 'succeeded'
+        : operationOutcome;
       receipts.push({
         receipt_id: createHash('sha256')
           .update(`${params.run.repair_run_id}:${attempt}:${params.actionId}:${callId}:${status}`)
@@ -328,13 +351,16 @@ export function extractRepairActionReceipts(params: {
         action_id: params.actionId,
         attempt,
         tool_call_id: callId,
-        tool_name: call.toolName || 'unknown',
+        tool_name: toolName,
         action_digest: createHash('sha256')
           .update(JSON.stringify(action))
           .digest('hex')
           .slice(0, 16),
         tool_arguments_excerpt: resultExcerpt(call.args),
         status,
+        operation_outcome: operationOutcome,
+        ...(expectedReceipt ? { expected_receipt: expectedReceipt } : {}),
+        ...(operation.error ? { operational_error: operation.error } : {}),
         attempted_at: attemptedAt,
         result_excerpt: resultExcerpt(result.cleanedResult ?? result.result),
       });
@@ -401,6 +427,18 @@ export function formatRepairRunFeedback(run: JudgeRepairRun): string {
   const actions = run.actions.map((action, index) =>
     `${index + 1}. [${action.kind}] action_id=${action.action_id} ${action.instruction} Verification: ${action.verification}`,
   );
+  const blockers = (run.action_receipts || [])
+    .filter((receipt) => receipt.status !== 'succeeded')
+    .slice(-3)
+    .map((receipt) => {
+      const error = receipt.operational_error;
+      const detail = error
+        ? `${error.code ? `${error.code}: ` : ''}${error.message} (${error.path})`
+        : receipt.expected_receipt
+          ? `missing expected receipt ${receipt.expected_receipt}`
+          : receipt.result_excerpt || 'operation outcome is unknown';
+      return `- ${receipt.tool_name}: ${receipt.status}: ${detail}`;
+    });
   return [
     `Repair run: ${run.status}${run.status === 'planned' ? ' (not yet applied)' : ''}`,
     `Diagnostic id: ${run.diagnostic_id}`,
@@ -411,6 +449,7 @@ export function formatRepairRunFeedback(run: JudgeRepairRun): string {
     ...(run.source_evidence_run_id
       ? [`Source evidence run id: ${run.source_evidence_run_id}`]
       : []),
+    ...(blockers.length > 0 ? ['Operational blockers (preserve and resolve these before secondary evidence gaps):', ...blockers] : []),
     'Execute only the affected actions below. The executor binds each tool call to the selected action structurally. Do not weaken acceptance. After execution, request fresh independent gate/Judge validation.',
     ...actions,
   ].join('\n');

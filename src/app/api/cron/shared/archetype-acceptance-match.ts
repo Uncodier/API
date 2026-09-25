@@ -151,16 +151,26 @@ function observationMatchesRoute(
   return targetPath === expected || routeTemplateMatches(expected, targetPath);
 }
 
+function observationAppliesToCriterion(
+  observation: NonNullable<EvidenceRecord['observations']>[number],
+  criterionId: string,
+): boolean {
+  return observation.source !== 'agent_probe' ||
+    observation.criterion_id === criterionId;
+}
+
 function hasRouteContradiction(
   analysis: AcceptanceAnalysis,
   route: string,
   evidence: EvidenceRecord,
   routeAnchor?: RouteAnchor,
+  criterionId?: string,
 ): boolean {
   const method = expectedHttpMethod(analysis, route, routeAnchor);
   return (evidence.observations || []).some(
     (observation) =>
       observation.disposition === 'hard_fail' &&
+      (!criterionId || observationAppliesToCriterion(observation, criterionId)) &&
       observationMatchesRoute(
         observation.target,
         route,
@@ -180,9 +190,10 @@ function hasRouteProof(
   route: string,
   evidence: EvidenceRecord,
   routeAnchor?: RouteAnchor,
+  criterionId?: string,
 ): boolean {
   if (
-    hasRouteContradiction(analysis, route, evidence, routeAnchor)
+    hasRouteContradiction(analysis, route, evidence, routeAnchor, criterionId)
   ) {
     return false;
   }
@@ -200,6 +211,7 @@ function hasRouteProof(
     (evidence.observations || []).some(
       (observation) =>
         observation.disposition === 'pass' &&
+        (!criterionId || observationAppliesToCriterion(observation, criterionId)) &&
         observationMatchesRoute(
           observation.target,
           route,
@@ -329,11 +341,12 @@ function semanticAssertionHasProof(
 
 function evaluateClaimEvidence(params: {
   claim: AcceptanceClaim;
+  criterionId: string;
   criterionAnalysis: AcceptanceAnalysis;
   evidence: EvidenceRecord;
   haystacks: string[];
 }): ClaimEvidenceResult {
-  const { claim, criterionAnalysis, evidence, haystacks } = params;
+  const { claim, criterionId, criterionAnalysis, evidence, haystacks } = params;
   if (claim.kind === 'internal_link') {
     return evaluateContractLinkClaims([claim], evidence) || 'unknown';
   }
@@ -347,7 +360,10 @@ function evaluateClaimEvidence(params: {
     return hasCommandProof(claim.command, evidence) ? 'pass' : 'unknown';
   }
   if (claim.kind === 'semantic_assertion') {
-    return semanticAssertionHasProof(claim.text, haystacks)
+    const scopedHaystacks = genericEvidenceReceipts(evidence, criterionId).map(
+      (entry) => entry.toLowerCase(),
+    );
+    return semanticAssertionHasProof(claim.text, scopedHaystacks)
       ? 'pass'
       : 'unknown';
   }
@@ -367,6 +383,7 @@ function evaluateClaimEvidence(params: {
       routeAnchor.value,
       evidence,
       routeAnchor,
+      criterionId,
     )
   ) {
     return 'fail';
@@ -376,6 +393,7 @@ function evaluateClaimEvidence(params: {
     routeAnchor.value,
     evidence,
     routeAnchor,
+    criterionId,
   )
     ? 'pass'
     : 'unknown';
@@ -395,10 +413,6 @@ export function matchAcceptanceAgainstEvidence(
   const unmatched: string[] = [];
   const contradicted: string[] = [];
   const contract = resolveAcceptanceContract(acceptance, persistedContract);
-  const haystackLower = genericEvidenceReceipts(evidence).map((entry) =>
-    entry.toLowerCase(),
-  );
-
   for (const contractCriterion of contract.criteria) {
     const criterion = contractCriterion.text;
     const analysis = analysisFromContract(contractCriterion);
@@ -409,9 +423,13 @@ export function matchAcceptanceAgainstEvidence(
     const claimResults = contractCriterion.all_of.map((claim) =>
       evaluateClaimEvidence({
         claim,
+        criterionId: contractCriterion.id,
         criterionAnalysis: analysis,
         evidence,
-        haystacks: haystackLower,
+        haystacks: genericEvidenceReceipts(
+          evidence,
+          contractCriterion.id,
+        ).map((entry) => entry.toLowerCase()),
       }));
     if (claimResults.some((result) => result === 'fail')) {
       contradicted.push(criterion);

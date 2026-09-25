@@ -245,6 +245,33 @@ describe('syncGroundTruthBeforeCommit', () => {
     }).scenario_assertions).toEqual(previous.scenario_assertions);
   });
 
+  it('keeps otherwise identical observations for different criteria', async () => {
+    const { mergeEvidenceRecords } = await import('../requirement-ground-truth');
+    const observation = {
+      kind: 'api' as const,
+      disposition: 'pass' as const,
+      source: 'agent_probe' as const,
+      target: 'GET /api/orders',
+      detail: 'HTTP 200',
+    };
+    const merged = mergeEvidenceRecords({
+      schema_version: 1,
+      item_id: 'item-1',
+      evidence_run_id: 'run-1',
+      captured_at: '2026-09-18T00:00:00.000Z',
+      critic_passes: 0,
+      observations: [{ ...observation, criterion_id: 'criterion-a' }],
+    }, {
+      schema_version: 1,
+      item_id: 'item-1',
+      evidence_run_id: 'run-1',
+      captured_at: '2026-09-18T00:01:00.000Z',
+      observations: [{ ...observation, criterion_id: 'criterion-b' }],
+    });
+
+    expect(merged.observations).toHaveLength(2);
+  });
+
   it('deduplicates receipts by step, command, and workspace fingerprint', async () => {
     const { mergeEvidenceRecords } = await import('../requirement-ground-truth');
     const base = {

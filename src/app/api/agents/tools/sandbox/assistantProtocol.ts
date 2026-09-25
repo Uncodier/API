@@ -119,6 +119,8 @@ export type SandboxToolsContext = {
   plan_id?: string;
   active_step_id?: string;
   backlog_item_id?: string;
+  /** Trusted criterion ids that QA receipts may bind to for this execution. */
+  acceptance_criterion_ids?: string[];
   /** ISO timestamp for classifying if files were updated this cycle (step.started_at or plan.started_at) */
   cycle_baseline_at?: string;
   /** Updated when sandbox_push_checkpoint snapshots the VM (SDK stops the old sandbox). */

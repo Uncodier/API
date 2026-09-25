@@ -369,6 +369,9 @@ export async function executeSingleTurnStep(params: {
       plan_id: plan.id,
       active_step_id: persistedStep.id,
       backlog_item_id: effectiveBacklogItemId || undefined,
+      acceptance_criterion_ids: activeRepairAction?.criterion_id
+        ? [activeRepairAction.criterion_id]
+        : undefined,
       cycle_baseline_at: cycleBaselineAt,
       activeSandboxRef,
     });

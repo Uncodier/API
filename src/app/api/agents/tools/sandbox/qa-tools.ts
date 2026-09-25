@@ -26,9 +26,23 @@ import { writeEvidence } from '@/lib/services/requirement-ground-truth';
 import {
   evidenceFromQaToolResult,
 } from '@/app/api/cron/shared/step-agent-probe-evidence';
+import { evaluateScenarioSelection } from './qa-scenario-selection';
 
 const WD = SandboxService.WORK_DIR;
 const PROBE_PORT = SandboxService.VISUAL_PROBE_PORT;
+
+function trustedCriterionId(
+  requested: string | undefined,
+  toolsCtx?: SandboxToolsContext,
+): { criterionId?: string; error?: string } {
+  const allowed = toolsCtx?.acceptance_criterion_ids;
+  if (!allowed) return { criterionId: requested };
+  if (requested && !allowed.includes(requested)) {
+    return { error: `Unknown acceptance criterion id: ${requested}` };
+  }
+  if (requested) return { criterionId: requested };
+  return allowed.length === 1 ? { criterionId: allowed[0] } : {};
+}
 
 async function persistQaToolEvidence(
   toolName: string,
@@ -91,9 +105,15 @@ export function sandboxProbeRoutesTool(
           type: 'number',
           description: 'Max time to wait for the server to boot and probe to complete. Defaults to 20000.',
         },
+        criterion_id: {
+          type: 'string',
+          description: 'Acceptance criterion id this probe verifies.',
+        },
       },
     },
-    execute: async (args: { routes?: string[]; duration_ms?: number }) => {
+    execute: async (args: { routes?: string[]; duration_ms?: number; criterion_id?: string }) => {
+      const criterion = trustedCriterionId(args.criterion_id, toolsCtx);
+      if (criterion.error) return { ok: false, error: criterion.error };
       const creditCheck = await deductSandboxToolCredits(toolsCtx, 'sandbox_probe_routes', args);
       if (!creditCheck.success) {
         return { ok: false, error: creditCheck.error };
@@ -109,6 +129,7 @@ export function sandboxProbeRoutesTool(
         keepServerAlive: false,
       });
       const payload = {
+        criterion_id: criterion.criterionId,
         ok: result.ok,
         port: result.port,
         duration_ms: result.duration_ms,
@@ -164,13 +185,20 @@ export function sandboxProbeApiTool(
           type: 'number',
           description: 'Max time to wait for the server to boot and probe to complete. Defaults to 20000.',
         },
+        criterion_id: {
+          type: 'string',
+          description: 'Acceptance criterion id this probe verifies.',
+        },
       },
       required: ['endpoints'],
     },
     execute: async (args: {
       endpoints: Array<{ path: string; method?: RuntimeProbeApiTarget['method']; payload?: unknown }>;
       duration_ms?: number;
+      criterion_id?: string;
     }) => {
+      const criterion = trustedCriterionId(args.criterion_id, toolsCtx);
+      if (criterion.error) return { ok: false, error: criterion.error };
       const creditCheck = await deductSandboxToolCredits(toolsCtx, 'sandbox_probe_api', args);
       if (!creditCheck.success) {
         return { ok: false, error: creditCheck.error };
@@ -197,6 +225,7 @@ export function sandboxProbeApiTool(
         keepServerAlive: false,
       });
       const payload = {
+        criterion_id: criterion.criterionId,
         ok: result.ok,
         port: result.port,
         duration_ms: result.duration_ms,
@@ -242,9 +271,20 @@ export function sandboxRunScenarioTool(
           type: 'number',
           description: 'Max time to wait for the server to boot before running scenarios. Defaults to 25000.',
         },
+        criterion_id: {
+          type: 'string',
+          description: 'Acceptance criterion id this scenario verifies.',
+        },
       },
     },
-    execute: async (args: { scenarios_dir?: string; only?: string[]; duration_ms?: number }) => {
+    execute: async (args: {
+      scenarios_dir?: string;
+      only?: string[];
+      duration_ms?: number;
+      criterion_id?: string;
+    }) => {
+      const criterion = trustedCriterionId(args.criterion_id, toolsCtx);
+      if (criterion.error) return { ok: false, error: criterion.error };
       const creditCheck = await deductSandboxToolCredits(toolsCtx, 'sandbox_run_scenario', args);
       if (!creditCheck.success) {
         return { ok: false, error: creditCheck.error };
@@ -277,15 +317,17 @@ export function sandboxRunScenarioTool(
           port: PROBE_PORT,
           stepOrder: 0,
         });
-        const filtered = args.only?.length
-          ? result.scenarios.filter((s) => args.only!.some((n) => s.scenario.startsWith(n) || s.scenario === n))
-          : result.scenarios;
-        const allPassed = filtered.every((s) => s.pass);
+        const selection = evaluateScenarioSelection(result.scenarios, args.only);
+        const filtered = selection.selected;
+        const unresolved = selection.unresolved;
         const payload = {
-          ok: allPassed,
+          criterion_id: criterion.criterionId,
+          ok: selection.ok,
           server_booted: true,
           base_url: result.base_url,
           scenarios_read: result.scenarios_read,
+          scenarios_run: filtered.length,
+          unresolved_scenarios: unresolved,
           scenarios: filtered.map((s) => {
             const firstFail = s.steps.find((st) => !st.ok);
             return {
@@ -298,7 +340,12 @@ export function sandboxRunScenarioTool(
               steps: s.steps,
             };
           }),
-          error: result.error,
+          error: result.error ||
+            (filtered.length === 0
+              ? 'No scenarios were executed.'
+              : unresolved.length > 0
+                ? `Requested scenarios not found: ${unresolved.join(', ')}`
+                : undefined),
         };
         const evidencePersisted = await persistQaToolEvidence(
           'sandbox_run_scenario',

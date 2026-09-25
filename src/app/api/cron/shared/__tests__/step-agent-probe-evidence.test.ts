@@ -33,6 +33,25 @@ describe('agent probe evidence', () => {
     ]);
   });
 
+  it('propagates an explicit criterion binding to probe observations', () => {
+    const evidence = extractAgentProbeEvidence({
+      steps: [{
+        toolCalls: [{ id: 'probe', toolName: 'sandbox_probe_api' }],
+        toolResults: [{
+          toolCallId: 'probe',
+          result: {
+            criterion_id: 'criterion-orders',
+            apis: [{ path: '/api/orders', method: 'POST', http_status: 201 }],
+          },
+        }],
+      }],
+    });
+
+    expect(evidence.observations).toEqual([
+      expect.objectContaining({ criterion_id: 'criterion-orders' }),
+    ]);
+  });
+
   it('promotes scenario HTTP and DOM receipts', () => {
     const evidence = extractAgentProbeEvidence({
       steps: [{
@@ -43,6 +62,7 @@ describe('agent probe evidence', () => {
         toolResults: [{
           toolCallId: 'scenario',
           result: {
+            criterion_id: 'criterion-contact',
             scenarios: [{
               steps: [{
                 receipt: {
@@ -69,6 +89,10 @@ describe('agent probe evidence', () => {
     });
 
     expect(evidence.scenario_assertions).toHaveLength(2);
+    expect(evidence.scenario_assertions).toEqual([
+      expect.objectContaining({ criterion_id: 'criterion-contact' }),
+      expect.objectContaining({ criterion_id: 'criterion-contact' }),
+    ]);
     expect(evidence.observations).toContainEqual(expect.objectContaining({
       target: 'POST /api/contact',
       http_status: 201,

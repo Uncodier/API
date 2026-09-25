@@ -133,6 +133,7 @@ export interface AcceptanceTargetResolution {
 export type ScenarioAssertionReceipt =
   | {
       kind: 'http_response';
+      criterion_id?: string;
       pass: boolean;
       method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
       target: string;
@@ -141,6 +142,7 @@ export type ScenarioAssertionReceipt =
     }
   | {
       kind: 'dom_assertion';
+      criterion_id?: string;
       pass: boolean;
       selector: string;
       assertion:

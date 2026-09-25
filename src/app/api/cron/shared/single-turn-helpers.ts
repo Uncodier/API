@@ -11,6 +11,7 @@ import {
 } from './loop-detectors';
 import { isSandboxGoneError } from '@/lib/services/sandbox-gone-error';
 import { inferPlanStepTestCommand } from '@/lib/services/instance-plan-step-contract';
+import { normalizeToolOperationResult } from '@/lib/services/tool-operation-result';
 
 const WORK_DIR = '/vercel/sandbox';
 const EVIDENCE_COLLECTION_TOOLS = new Set([
@@ -225,20 +226,12 @@ function explicitToolFailurePayload(
   toolResult: AssistantToolResult,
 ): unknown {
   const payload = toolResult.cleanedResult ?? toolResult.result;
-  if (toolResult.isError === true) return payload;
-  if (!payload || typeof payload !== 'object') return undefined;
-  const record = payload as Record<string, unknown>;
-  const status = Number(record.status ?? record.statusCode);
-  if (
-    record.success === false ||
-    record.failed === true ||
-    record.error != null ||
-    status === 404 ||
-    status === 410
-  ) {
-    return record.error ?? payload;
-  }
-  return undefined;
+  const normalized = normalizeToolOperationResult(payload, {
+    transportError: toolResult.isError === true,
+  });
+  return normalized.outcome === 'failed'
+    ? normalized.payload
+    : undefined;
 }
 
 function isSandboxGoneFailurePayload(payload: unknown): boolean {

@@ -5,6 +5,7 @@
 
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { extractStructuredResponse } from './response-parser';
+import { normalizeToolOperationResult } from '@/lib/services/tool-operation-result';
 
 /**
  * Create onStep callback handler for agent execution
@@ -237,6 +238,12 @@ export function createOnStepHandler(
             console.log(`⚠️ [SCREENSHOT_MISSING] Tool: ${toolCall.toolName}, toolResult keys:`, Object.keys(toolResult));
           }
         }
+        const operation = toolResult
+          ? normalizeToolOperationResult(
+              toolResult.cleanedResult ?? toolResult.result ?? toolResult.content,
+              { transportError: toolResult.isError === true },
+            )
+          : undefined;
         
         const { error: toolLogError } = await supabaseAdmin.from('instance_logs').insert({
           log_type: 'tool_call',
@@ -247,7 +254,8 @@ export function createOnStepHandler(
           tool_call_id: toolCall.id || toolCall.toolCallId,
           tool_args: toolCall.args || {},
           tool_result: toolResult ? {
-            success: !toolResult.isError,
+            success: operation?.outcome === 'passed',
+            operation_outcome: operation?.outcome,
             output: (() => {
               // Clean output of any base64 image
               const rawOutput = toolResult.result || toolResult.content || '';
@@ -266,7 +274,7 @@ export function createOnStepHandler(
               }
               return rawOutput;
             })(),
-            error: toolResult.isError ? (toolResult.error || toolResult.result) : null,
+            error: operation?.error || null,
             // ❌ NO include any base64 reference here
           } : {},
           screenshot_base64: screenshotBase64, // ✅ Only here

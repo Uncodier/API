@@ -54,7 +54,14 @@ export function sandboxDbInspectTool(
         return {
           success: true,
           message: `Table '${args.table_name}' exists and is accessible.`,
-          sample_data: data
+          sample_data: data,
+          receipt: {
+            kind: 'database_schema_snapshot',
+            schema,
+            table: args.table_name,
+            accessible: true,
+            row_sampled: Array.isArray(data) && data.length > 0,
+          },
         };
       } catch (err: any) {
         return {

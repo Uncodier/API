@@ -33,6 +33,7 @@
  */
 
 import OpenAI from 'openai';
+import { normalizeToolOperationResult } from '@/lib/services/tool-operation-result';
 import { GoogleAuth } from 'google-auth-library';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
@@ -1530,13 +1531,14 @@ export class AIAgentExecutor {
                 console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOL_NO_IMAGE] ${toolCall.toolName} - no image in result`);
               }
 
+              const operation = normalizeToolOperationResult(cleanedResult ?? result);
               toolResults.push({
                 toolCallId: toolCall.toolCallId,
                 toolName: toolCall.toolName,
                 result,
                 base64Image: base64Image,
                 cleanedResult: cleanedResult,
-                isError: false,
+                isError: operation.outcome === 'failed',
               });
 
               messages.push({

@@ -286,7 +286,7 @@ describe('judge repair controller', () => {
     })).toEqual([]);
   });
 
-  it('records an ambiguous matched result as failed rather than successful', () => {
+  it('records an ambiguous matched result as unknown rather than successful', () => {
     const run = startJudgeRepairRun(planJudgeRepair({
       judge: {
         verdict: 'rejected',
@@ -312,8 +312,125 @@ describe('judge repair controller', () => {
         }],
       },
     })).toEqual([
-      expect.objectContaining({ status: 'failed' }),
+      expect.objectContaining({
+        status: 'unknown',
+        operation_outcome: 'unknown',
+      }),
     ]);
+  });
+
+  it('preserves a nested operational blocker instead of accepting wrapper success', () => {
+    const run = startJudgeRepairRun(planJudgeRepair({
+      judge: {
+        verdict: 'escalate',
+        reason: 'Database inspection is blocked.',
+        matched_acceptance: [],
+        unmatched_acceptance: ['Tenant schema is inspectable'],
+        failure_kind: 'capability_gap',
+      },
+      repairRunId: 'repair-db',
+    })!);
+    const receipts = extractRepairActionReceipts({
+      run,
+      actionId: run.actions[0].action_id,
+      result: {
+        steps: [{
+          toolCalls: [{ id: 'inspect-1', toolName: 'sandbox_db_inspect' }],
+          toolResults: [{
+            toolCallId: 'inspect-1',
+            result: {
+              success: true,
+              error: null,
+              output: { error: 'permission denied', code: '42501' },
+            },
+          }],
+        }],
+      },
+    });
+
+    expect(receipts).toEqual([expect.objectContaining({
+      status: 'failed',
+      operation_outcome: 'failed',
+      expected_receipt: 'database_schema_snapshot',
+      operational_error: expect.objectContaining({
+        message: 'permission denied',
+        code: '42501',
+      }),
+    })]);
+    expect(formatRepairRunFeedback({
+      ...run,
+      action_receipts: receipts,
+    })).toContain('permission denied');
+  });
+
+  it('keeps a successful database call unknown without its postcondition receipt', () => {
+    const run = startJudgeRepairRun(planJudgeRepair({
+      judge: {
+        verdict: 'rejected',
+        reason: 'Database evidence is missing.',
+        matched_acceptance: [],
+        unmatched_acceptance: ['Tenant schema exists'],
+        failure_kind: 'evidence_gap',
+      },
+      repairRunId: 'repair-db',
+    })!);
+    const receipts = extractRepairActionReceipts({
+      run,
+      actionId: run.actions[0].action_id,
+      result: {
+        steps: [{
+          toolCalls: [{ id: 'inspect-1', toolName: 'sandbox_db_inspect' }],
+          toolResults: [{
+            toolCallId: 'inspect-1',
+            result: { success: true, message: 'done' },
+          }],
+        }],
+      },
+    });
+
+    expect(receipts).toEqual([expect.objectContaining({
+      status: 'unknown',
+      operation_outcome: 'unknown',
+      expected_receipt: 'database_schema_snapshot',
+    })]);
+    expect(recordJudgeRepairAttempt({
+      run,
+      receipts,
+      workspaceChanged: false,
+      contractRevision: run.contract_revision,
+    }).status).not.toBe('materialized');
+  });
+
+  it('derives postconditions from the repair action rather than the chosen tool', () => {
+    const run = startJudgeRepairRun(planJudgeRepair({
+      judge: {
+        verdict: 'rejected',
+        reason: 'Runtime evidence is missing.',
+        matched_acceptance: [],
+        unmatched_acceptance: ['GET /health returns 200'],
+        failure_kind: 'evidence_gap',
+      },
+      repairRunId: 'repair-http',
+    })!);
+    expect(run.actions[0].expected_receipt).toBeUndefined();
+
+    const receipts = extractRepairActionReceipts({
+      run,
+      actionId: run.actions[0].action_id,
+      result: {
+        steps: [{
+          toolCalls: [{ id: 'inspect-1', toolName: 'sandbox_db_inspect' }],
+          toolResults: [{
+            toolCallId: 'inspect-1',
+            result: { success: true },
+          }],
+        }],
+      },
+    });
+    expect(receipts).toEqual([expect.objectContaining({
+      status: 'succeeded',
+    })]);
+    expect(receipts[0]).not.toHaveProperty('expected_receipt');
   });
 
   it('counts an unrelated read-only tool as a failed concrete attempt', () => {
