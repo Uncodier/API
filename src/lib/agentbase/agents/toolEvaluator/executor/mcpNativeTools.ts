@@ -30,7 +30,7 @@ const MCP_NATIVE_TOOL_LOADERS: Record<string, () => Promise<McpToolFactory>> = {
   },
   skill_lookup: async () => {
     const { skillLookupTool } = await import('@/app/api/agents/tools/sandbox/skill-lookup-tool');
-    return () => skillLookupTool();
+    return (siteId?: string) => skillLookupTool({ siteId });
   },
 };
 

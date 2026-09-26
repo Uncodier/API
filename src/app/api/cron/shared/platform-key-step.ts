@@ -102,13 +102,16 @@ async function mergeDotEnvLocal(
     .filter((k) => entries[k])
     .map((k) => `/^${k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}=/d`)
     .join(";");
-  await sandbox.runCommand({
+  const writeResult = await sandbox.runCommand({
     cmd: "sh",
     args: [
       "-c",
       `cd "${cwd}" && touch .env.local && (sed -i '${keysSed}' .env.local || true) && (echo "${b64}" | base64 -d) > /tmp/_uncodie_env_add && cat /tmp/_uncodie_env_add .env.local > .env.local.next && mv .env.local.next .env.local && rm -f /tmp/_uncodie_env_add`,
     ],
   });
+  if (writeResult.exitCode !== 0) {
+    throw new Error(`Failed to write sandbox .env.local (exit ${writeResult.exitCode})`);
+  }
 }
 
 /**
@@ -190,26 +193,24 @@ export async function provisionPlatformKeyStep(
         created: ten.created,
         jwt_expires_at: ten.jwt_expires_at,
       };
-      try {
-        const apps = getAppsPublicConfig();
-        sandboxEnvBag.NEXT_PUBLIC_APPS_SUPABASE_URL = apps.url;
-        if (apps.anonKey)
-          sandboxEnvBag.NEXT_PUBLIC_APPS_SUPABASE_ANON_KEY = apps.anonKey;
-      } catch (e: unknown) {
-        console.warn(
-          "[provisionPlatformKeyStep] apps public config unavailable, skipping NEXT_PUBLIC_APPS_*:",
-          e instanceof Error ? e.message : e,
-        );
+      const apps = getAppsPublicConfig();
+      if (!apps.anonKey) {
+        throw new Error('Apps Supabase anon key is required for tenant-backed application flows');
       }
+      sandboxEnvBag.NEXT_PUBLIC_APPS_SUPABASE_URL = apps.url;
+      sandboxEnvBag.NEXT_PUBLIC_APPS_SUPABASE_ANON_KEY = apps.anonKey;
       sandboxEnvBag.NEXT_PUBLIC_APPS_TENANT_SCHEMA = ten.schema;
       vercelBranchEnvBag.NEXT_PUBLIC_APPS_TENANT_SCHEMA = ten.schema;
       sandboxEnvBag.APPS_TENANT_JWT = ten.jwt;
       vercelBranchEnvBag.APPS_TENANT_JWT = ten.jwt;
       sandboxEnvBag.APPS_AUTH_PROVIDER = ten.auth_provider;
     } catch (e: unknown) {
-      console.warn(
-        "[provisionPlatformKeyStep] tenant provisioning failed (continuing without DB envs):",
-        e instanceof Error ? e.message : e,
+      // An app/automation cannot pass database-backed acceptance criteria
+      // without its tenant. Let the workflow account for this as an
+      // infrastructure failure rather than spending product retries.
+      throw new Error(
+        `Apps tenant provisioning failed for requirement ${requirementId}: ${e instanceof Error ? e.message : String(e)}`,
+        { cause: e },
       );
     }
   }
@@ -245,9 +246,15 @@ export async function provisionPlatformKeyStep(
       await mergeDotEnvLocal(sandbox, SandboxService.WORK_DIR, sandboxEnvBag);
     } catch (e: unknown) {
       console.warn(
-        "[provisionPlatformKeyStep] failed to write .env.local (continuing):",
+        "[provisionPlatformKeyStep] failed to write .env.local:",
         e instanceof Error ? e.message : e,
       );
+      if (input.authProvider !== null) {
+        throw new Error(
+          `Apps tenant environment injection failed for requirement ${requirementId}: ${e instanceof Error ? e.message : String(e)}`,
+          { cause: e },
+        );
+      }
     }
 
     if (input.branchName && Object.keys(vercelBranchEnvBag).length > 0) {

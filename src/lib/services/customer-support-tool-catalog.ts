@@ -27,7 +27,7 @@ function asynchronousTool(
   return { type: "function", async: true, function: definition };
 }
 
-function skillLookupDefinition(): CustomerSupportToolDefinition {
+function skillLookupDefinition(siteId?: string): CustomerSupportToolDefinition {
   return {
     name: "skill_lookup",
     description:
@@ -59,7 +59,7 @@ function skillLookupDefinition(): CustomerSupportToolDefinition {
       const { skillLookupTool } = await import(
         "@/app/api/agents/tools/sandbox/skill-lookup-tool"
       );
-      return skillLookupTool().execute(args);
+      return skillLookupTool({ siteId }).execute(args);
     },
   };
 }
@@ -433,7 +433,7 @@ export function buildCustomerSupportTools(
 ): CustomerSupportToolRegistration[] {
   const scopedSiteId = siteId || undefined;
   const nativeTools = [
-    skillLookupDefinition(),
+    skillLookupDefinition(scopedSiteId),
     catalogCommerceTool(scopedSiteId),
     promotionsTool(scopedSiteId),
     reservationsTool(scopedSiteId),

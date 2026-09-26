@@ -1,34 +1,42 @@
+// @ts-nocheck -- ESM Jest mocks are dynamically imported under the project's ES5 TS target.
+import { jest } from '@jest/globals';
 import { NextRequest } from 'next/server';
-import { POST } from '../route';
-import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { WorkflowService } from '@/lib/services/workflow-service';
-import { fireWorkflowDispatch } from '@/lib/services/workflow-robot/dispatch';
 
-jest.mock('@/lib/database/supabase-client', () => ({
-  supabaseAdmin: {
-    from: jest.fn(),
-  },
-}));
-jest.mock('@/lib/services/workflow-service', () => ({
-  WorkflowService: {
-    getInstance: jest.fn(),
-  },
-}));
-jest.mock('@/lib/services/workflow-robot/dispatch', () => ({
-  fireWorkflowDispatch: jest.fn(),
-}));
+const from = jest.fn();
+const getInstance = jest.fn();
+const fireWorkflowDispatch = jest.fn();
+const isInternalServiceRequest = jest.fn();
+jest.unstable_mockModule('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from } }));
+jest.unstable_mockModule('@/lib/services/workflow-service', () => ({ WorkflowService: { getInstance } }));
+jest.unstable_mockModule('@/lib/services/workflow-robot/dispatch', () => ({ fireWorkflowDispatch }));
+jest.unstable_mockModule('@/lib/security/request-rate-limit', () => ({ isInternalServiceRequest }));
+const { POST } = await import('../route');
 
 describe('POST /api/workflow/webhook', () => {
   const executeWorkflow = jest.fn();
 
   beforeEach(() => {
     jest.clearAllMocks();
+    isInternalServiceRequest.mockReturnValue(true);
     executeWorkflow.mockResolvedValue({
       success: true,
       workflowId: 'workflow-1',
       runId: 'run-1',
     });
-    (WorkflowService.getInstance as jest.Mock).mockReturnValue({ executeWorkflow });
+    getInstance.mockReturnValue({ executeWorkflow });
+  });
+
+  it('rejects a spoofed tenant event before reading its body or executing workflows', async () => {
+    isInternalServiceRequest.mockReturnValue(false);
+    const response = await POST(new NextRequest('http://localhost/api/workflow/webhook', {
+      method: 'POST', body: JSON.stringify({
+        type: 'INSERT', table: 'leads', record: { site_id: 'someone-elses-site' },
+      }),
+    }));
+    expect(response.status).toBe(401);
+    expect(from).not.toHaveBeenCalled();
+    expect(fireWorkflowDispatch).not.toHaveBeenCalled();
+    expect(getInstance).not.toHaveBeenCalled();
   });
 
   it('uses the singular event and forwards the deleted record snapshot', async () => {
@@ -50,7 +58,7 @@ describe('POST /api/workflow/webhook', () => {
         error: null,
       });
     subscriptionQuery.in.mockReturnValue(subscriptionQuery);
-    (supabaseAdmin.from as jest.Mock).mockReturnValue(subscriptionQuery);
+    from.mockReturnValue(subscriptionQuery);
 
     const oldRecord = {
       id: 'deal-1',

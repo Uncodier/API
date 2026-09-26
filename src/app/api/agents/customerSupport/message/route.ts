@@ -7,6 +7,8 @@ import { buildCustomerSupportTools } from '@/lib/services/customer-support-tool-
 import { getCustomerSupportPolicies } from '@/app/api/agents/customerSupport/support-policies';
 import { appendLeadRecordToContext } from '@/app/api/agents/customerSupport/lead-record';
 import { appendActivePromotionsToContext } from '@/lib/promotions/context';
+import { runChannelMessageWorkflows } from '@/lib/services/workflow-robot/channel-message';
+import { isInternalServiceRequest } from '@/lib/security/request-rate-limit';
 import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { manageLeadCreation } from '@/lib/services/leads/lead-service';
@@ -1082,6 +1084,7 @@ export async function POST(request: Request) {
       body.name = undefined;
       body.email = undefined;
       body.phone = undefined;
+      body.origin_message_id = crypto.randomUUID();
     }
 
     console.log('[CustomerSupport] Request accepted', {
@@ -1550,6 +1553,20 @@ export async function POST(request: Request) {
       contextMessage = await appendActivePromotionsToContext(contextMessage, effectiveSiteId);
     }
     
+    // Only authorized inbound user messages enter the pre-response path. The
+    // browser is always web, regardless of any client-provided `origin` value.
+    // A stable origin_message_id scopes each workflow run. Direct web requests
+    // receive a server-generated ID; signed provider calls forward their ID.
+    if (effectiveSiteId && typeof origin_message_id === 'string' && (browserIdentity || isInternalServiceRequest(request))) {
+      contextMessage += await runChannelMessageWorkflows({
+        siteId: effectiveSiteId,
+        messageId: origin_message_id,
+        channel: browserIdentity ? 'web' : effectiveOrigin || (website_chat_origin ? 'web' : ''),
+        conversationId: effectiveConversationId,
+        message,
+        authorizedInbound: Boolean(browserIdentity || isInternalServiceRequest(request)),
+      });
+    }
     contextMessage += getCustomerSupportPolicies();
 
     const command = CommandFactory.createCommand({

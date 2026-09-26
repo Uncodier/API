@@ -33,6 +33,7 @@
  */
 
 import OpenAI from 'openai';
+import { fitInstanceRequest, resolveModelContextCapacity } from '@/lib/services/robot-instance/instance-context-budget';
 import { normalizeToolOperationResult } from '@/lib/services/tool-operation-result';
 import { GoogleAuth } from 'google-auth-library';
 import { z } from 'zod';
@@ -198,6 +199,10 @@ export interface ActOptions {
   /** If strictly true, stops the LLM turn loop immediately after the first pass (even if tools are called) */
   enforceSingleTurn?: boolean;
   toolOverrides?: Record<string, any>;
+  onContextUsage?: (params: { system: string; messages: Message[]; tools: unknown[];
+    provider: AIProvider; model: string; providerInputTokens?: number;
+    providerOutputTokens?: number }) => Promise<void>;
+  enforceContextBudget?: boolean;
 }
 
 export interface ActResponse {
@@ -484,6 +489,7 @@ export class AIAgentExecutor {
   private client: OpenAI;
   private model: string;
   private provider: AIProvider;
+  private contextModelId: string | null = null;
 
   constructor(config?: AIAgentExecutorConfig | string) {
     // Back-compat: string arg is treated as an API key for the selected provider.
@@ -498,6 +504,7 @@ export class AIAgentExecutor {
       const apiKey = config?.apiKey || process.env.MICROSOFT_AZURE_OPENAI_API_KEY;
       const endpoint = config?.endpoint || process.env.MICROSOFT_AZURE_OPENAI_ENDPOINT;
       const deployment = config?.deployment || process.env.MICROSOFT_AZURE_OPENAI_DEPLOYMENT || DEFAULT_MODEL_BY_PROVIDER.azure;
+      this.contextModelId = deployment;
       const apiVersion = config?.apiVersion || process.env.MICROSOFT_AZURE_OPENAI_API_VERSION || '2024-08-01-preview';
 
       if (!endpoint) {
@@ -867,6 +874,8 @@ export class AIAgentExecutor {
       onReasoningTokensUsed,
       enforceSingleTurn = false,
       toolOverrides,
+      onContextUsage,
+      enforceContextBudget = false,
     } = options;
 
     const modelName = model || this.model;
@@ -1091,6 +1100,21 @@ export class AIAgentExecutor {
           };
         }
 
+        const capacityModel = this.contextModelId || modelName;
+        if (enforceContextBudget) {
+          await resolveModelContextCapacity(provider, capacityModel);
+          fitInstanceRequest({ provider, model: capacityModel, messages, tools: completionOptions.tools || [],
+            responseFormat: completionOptions.response_format });
+        }
+        if (onContextUsage) {
+          try {
+            await onContextUsage({ system: system || '', messages, tools: completionOptions.tools || [],
+              provider, model: capacityModel });
+          } catch (error) {
+            console.warn('[AI EXECUTOR] Context usage checkpoint unavailable:', error);
+          }
+        }
+
         console.log(`🔍 [DEBUG] First 2000 chars of messages:`, JSON.stringify(messages, null, 2).substring(0, 2000));
 
         const useStreamingPath = useStreaming && onStreamStart && onStreamChunk && !schema;
@@ -1216,6 +1240,15 @@ export class AIAgentExecutor {
         const message = response.message;
 
         if (response.usage) {
+          if (onContextUsage && response.usage.prompt_tokens > 0) {
+            try {
+              await onContextUsage({ system: system || '', messages, tools: completionOptions.tools || [],
+                provider, model: capacityModel, providerInputTokens: response.usage.prompt_tokens,
+                providerOutputTokens: response.usage.completion_tokens || 0 });
+            } catch (error) {
+              console.warn('[AI EXECUTOR] Provider usage checkpoint unavailable:', error);
+            }
+          }
           totalUsage.promptTokens += response.usage.prompt_tokens;
           totalUsage.completionTokens += response.usage.completion_tokens;
           totalUsage.totalTokens += response.usage.total_tokens;

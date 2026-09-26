@@ -8,6 +8,7 @@ import { completeInProgressPlans } from '@/lib/helpers/plan-lifecycle';
 import { provisionScrapybaraInstance, needsProvisioning } from '@/lib/services/robot-instance/instance-provisioner';
 import { resetRequirementOnUserAction } from '@/lib/services/requirement-cron-reset';
 import { insertUserActionLog } from '@/app/api/robots/instance/assistant/user-message-log';
+import { robotSkillSelectionSchema, requiredRobotSkillsPrompt } from '@/lib/services/workflow/robot-skill-selection';
 
 // Instance Act Specific Context (builds on the shared planning core)
 // Helper function to save complete plan with proper structure
@@ -155,6 +156,8 @@ export async function POST(request: NextRequest) {
   
   try {
     const rawBody = await request.json();
+    const parsedSkills = robotSkillSelectionSchema.safeParse(rawBody);
+    if (!parsedSkills.success) return NextResponse.json({ error: 'Invalid skill selection' }, { status: 400 });
     console.log('🔍 Raw body received:', JSON.stringify(rawBody, null, 2));
     const { site_id: providedSiteId, activity: providedActivity, instance_id: parsedInstanceId, user_id: providedUserId, message, step_status, context: userContext } = ActSchema.parse(rawBody);
     instance_id = parsedInstanceId;
@@ -170,6 +173,17 @@ export async function POST(request: NextRequest) {
 
     if (instanceError || !instance) {
       return NextResponse.json({ error: 'Instancia no encontrada' }, { status: 404 });
+    }
+
+    // Reject cross-site instance requests before the instance is resumed or provisioned.
+    if (providedSiteId && providedSiteId !== instance.site_id) {
+      return NextResponse.json({ error: 'Instance does not belong to this site' }, { status: 400 });
+    }
+    let skillInstructions: string;
+    try {
+      skillInstructions = await requiredRobotSkillsPrompt(instance.site_id, parsedSkills.data);
+    } catch {
+      return NextResponse.json({ error: 'Selected skill is not available for this site' }, { status: 400 });
     }
 
     // 1.5. Check if instance is uninstantiated and needs provisioning
@@ -371,7 +385,7 @@ export async function POST(request: NextRequest) {
             message, // Usar el mensaje del usuario como actividad específica
             previousSessions || [],
             userContext, // User context from instance act route
-            previousPlanContext // Previous plan context for modifications
+            previousPlanContext + skillInstructions // Site-validated required skills in the planning prompt
           );
           activityPlanResults = planning.activityPlanResults;
           planningCommandUuid = planning.planningCommandUuid;

@@ -112,6 +112,15 @@ describe('atomic requirement finalization contracts', () => {
     );
   });
 
+  it('halts on tenant preflight errors without requesting product feedback', () => {
+    expect(workflowSource).toMatch(
+      /platformKeyResult = await provisionPlatformKeyStep\([\s\S]*?tenantProvisioningFailed = true;[\s\S]*?throw error;/,
+    );
+    expect(workflowSource).toContain(
+      'wrapUpRequiresUserFeedback = !tenantProvisioningFailed;',
+    );
+  });
+
   it('requires confirmed persistence before lightweight finalization', () => {
     expect(workflowSource).toContain('pushResult?.ok === true');
     expect(cronStepsSource).toContain('ok: true');

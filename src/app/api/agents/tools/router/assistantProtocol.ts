@@ -523,6 +523,7 @@ export const DEFAULT_ALWAYS_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
   // sandbox surface — every agent uses these every turn
   'webSearch',
   'skill_lookup',
+  'external_skill_lookup',
   'sandbox_run_command',
   'sandbox_read_file',
   'sandbox_list_files',

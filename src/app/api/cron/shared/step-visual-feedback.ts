@@ -62,7 +62,7 @@ function isFrontendFile(file: string): boolean {
 }
 
 function normalizePageRoute(candidate: string): string | null {
-  const route = candidate.trim().replace(/[),.;:]+$/, '');
+  const route = candidate.trim().replace(/[)'",.;:!?]+$/, '');
   if (!route.startsWith('/') || route.startsWith('//')) return null;
   if (
     route.startsWith('/api/') ||

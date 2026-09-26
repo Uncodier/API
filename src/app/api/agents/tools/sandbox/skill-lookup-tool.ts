@@ -6,6 +6,8 @@ export type SkillLookupToolContext = {
   requirement_type?: string;
   /** Pass toolsCtx to deduct credits */
   toolsCtx?: SandboxToolsContext;
+  /** Tenant scope for user-uploaded skills. Never derive this from tool arguments. */
+  siteId?: string;
 };
 
 function summarizeForList(
@@ -18,6 +20,17 @@ function summarizeForList(
     description: s.description,
     types: s.types ?? [],
   }));
+}
+
+/** Site catalog search uses the same keyword intent matching as bundled SkillsService. */
+function searchSiteSkills(skills: ReturnType<typeof SkillsService.matchSkillsForRequirement>, query: string) {
+  const words = query.toLowerCase().split(/[^a-z0-9_-]+/).filter(word => word.length > 2);
+  if (!words.length) return [];
+  return skills.map((skill) => {
+    const haystack = `${skill.name} ${skill.description} ${skill.slug} ${(skill.types ?? []).join(' ')}`.toLowerCase();
+    return { skill, score: words.reduce((score, word) => score + Number(haystack.includes(word)), 0) };
+  }).filter(({ score }) => score > 0)
+    .sort((a, b) => b.score - a.score).map(({ skill }) => skill);
 }
 
 /**
@@ -70,7 +83,9 @@ export function skillLookupTool(ctx?: SkillLookupToolContext) {
       const limit = Math.min(Math.max(args.limit ?? 20, 1), 40);
 
       if (args.action === 'list') {
-        const pool = SkillsService.matchSkillsForRequirement(requirementType);
+        const pool = ctx?.siteId
+          ? await SkillsService.listSkillsForSite(ctx.siteId, requirementType)
+          : SkillsService.matchSkillsForRequirement(requirementType);
         return {
           ok: true,
           requirement_type_filter: requirementType ?? null,
@@ -85,7 +100,9 @@ export function skillLookupTool(ctx?: SkillLookupToolContext) {
         if (!q) {
           return { ok: false, error: 'query is required for search (e.g. your objective or tech stack).' };
         }
-        const matches = await SkillsService.searchSkillsVector(q, requirementType);
+        const matches = ctx?.siteId
+          ? searchSiteSkills(await SkillsService.listSkillsForSite(ctx.siteId, requirementType), q)
+          : await SkillsService.searchSkillsVector(q, requirementType);
         return {
           ok: true,
           query: q,
@@ -104,12 +121,16 @@ export function skillLookupTool(ctx?: SkillLookupToolContext) {
         return { ok: false, error: 'skill_name is required for get.' };
       }
 
-      const skill = SkillsService.getSkillBySlugOrName(key);
+      const skill = ctx?.siteId
+        ? await SkillsService.getSkillBySlugForSite(ctx.siteId, key)
+        : SkillsService.getSkillBySlugOrName(key);
       if (!skill) {
         return { ok: false, error: `No skill found for "${key}". Use skill_lookup search or list first.` };
       }
 
-      const pool = SkillsService.matchSkillsForRequirement(requirementType);
+      const pool = ctx?.siteId
+        ? await SkillsService.listSkillsForSite(ctx.siteId, requirementType)
+        : SkillsService.matchSkillsForRequirement(requirementType);
       const inScope = pool.some((s) => s.slug === skill.slug);
       const scopeNote = !inScope
         ? ' Note: this skill is outside the usual filter for this requirement type — use only if appropriate.'

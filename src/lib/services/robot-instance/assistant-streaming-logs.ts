@@ -136,7 +136,8 @@ async function persistLogChunk(params: {
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       const { error } = await supabaseAdmin
         .from('instance_logs')
-        .update({ message: params.text })
+        .update(final ? { message: params.text, details: { ...params.details, streaming: false } }
+          : { message: params.text })
         .eq('id', params.id);
       if (!error) {
         persisted = true;

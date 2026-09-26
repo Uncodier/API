@@ -3,6 +3,10 @@
 -- DROP FUNCTION IF EXISTS public.apps_get_migration_receipt(text, uuid, text);
 -- Reassign each tenant schema before dropping its app_owner_<schema suffix>
 -- role. The per-tenant executor is intentionally not restored.
+-- Target: Apps Supabase (faxxouxekfwxvexoitxv), NOT the main Makinari DB.
+-- Apply after 20260923193900; Apps already has the tenant registry.
+-- Review on a copy first: this changes ownership across existing tenant
+-- schemas and converts tenant SECURITY DEFINER routines to SECURITY INVOKER.
 
 DO $prerequisites$
 BEGIN
@@ -102,7 +106,9 @@ BEGIN
       owner_role
     );
     EXECUTE format(
-      'GRANT %I TO %I WITH INHERIT FALSE, SET TRUE',
+      -- ALTER DEFAULT PRIVILEGES FOR ROLE requires inherited membership in
+      -- PostgreSQL 17; SET TRUE alone is insufficient for non-superusers.
+      'GRANT %I TO %I WITH INHERIT TRUE, SET TRUE',
       owner_role,
       current_user
     );

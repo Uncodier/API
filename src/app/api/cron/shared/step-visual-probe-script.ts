@@ -1,5 +1,6 @@
 import type { VisualProbeViewport } from './step-visual-probe';
 import { HARNESS_TRACKING_SCRIPT_URL } from './tracking-script-contract';
+import { PLATFORM_TRACKING_SCRIPT_URLS } from './step-visual-telemetry';
 
 export interface VisualProbeScriptParams {
   port: number;
@@ -58,6 +59,11 @@ const PROTECTED_ROUTES = new Set(${JSON.stringify(
 const CAPTURE_DIRECTORY = '/tmp/visual-probe-captures';
 const MAX_TELEMETRY_ENTRIES = 50;
 const HARNESS_TRACKING_SCRIPT_URL = ${JSON.stringify(HARNESS_TRACKING_SCRIPT_URL)};
+const PLATFORM_TRACKING_SCRIPT_URLS = ${JSON.stringify(PLATFORM_TRACKING_SCRIPT_URLS)};
+const PLATFORM_TRACKING_PATHS = PLATFORM_TRACKING_SCRIPT_URLS.map((value) => {
+  const url = new URL(value);
+  return \`\${url.origin}\${url.pathname}\`;
+});
 
 const consoleEntries = [];
 const pageErrors = [];
@@ -82,6 +88,17 @@ function pushBounded(collection, value, key) {
   } else {
     telemetryDropped[key]++;
   }
+}
+
+function isPlatformTrackingUrl(value) {
+  try {
+    const url = new URL(value);
+    return PLATFORM_TRACKING_PATHS.includes(\`\${url.origin}\${url.pathname}\`);
+  } catch { return false; }
+}
+
+function isPlatformTrackingConsoleLocation(value) {
+  return typeof value === 'string' && isPlatformTrackingUrl(value.replace(/:\\d+(?::\\d+)?$/, ''));
 }
 
 function telemetryCheckpoint() {
@@ -156,6 +173,38 @@ async function run() {
     page.setDefaultNavigationTimeout(TIMEOUT_MS);
     page.setDefaultTimeout(TIMEOUT_MS);
 
+    // Do not run platform analytics while testing the application. Respond
+    // with an empty script rather than aborting (which emits a console error).
+    await page.setRequestInterception(true);
+    page.on('request', async (request) => {
+      if (request.isInterceptResolutionHandled()) return;
+      try {
+        if (request.resourceType() === 'script' && isPlatformTrackingUrl(request.url())) {
+          await request.respond({ status: 200, contentType: 'application/javascript', body: '' });
+        } else {
+          await request.continue();
+        }
+      } catch (error) {
+        // A failed continuation can break navigation; report it, not just a
+        // generic timeout. Only an already-handled race is harmless: CDP may
+        // mark a request handled before a real continuation error is raised.
+        if (request.isInterceptResolutionHandled() && /Request is already handled!/i.test(String(error?.message))) {
+          return;
+        }
+        pushBounded(failedRequests, {
+          url: request.url().slice(0, 300),
+          failure: \`probe interception: \${error.message}\`,
+          resource_type: request.resourceType(),
+        }, 'failedRequests');
+        console.error(\`[VisualProbe] Interception failed: \${error.message}\`);
+        if (!request.isInterceptResolutionHandled()) {
+          try { await request.abort('failed'); } catch (abortError) {
+            console.error(\`[VisualProbe] Could not release intercepted request: \${abortError.message}\`);
+          }
+        }
+      }
+    });
+
     for (const viewport of VIEWPORTS) {
       for (const route of ROUTES) {
         const safeRoute = route.startsWith('/') ? route : '/' + route;
@@ -179,6 +228,9 @@ async function run() {
           const type = msg.type();
           const levelMap = { log: 'log', info: 'info', warn: 'warn', warning: 'warn', error: 'error', debug: 'debug', verbose: 'debug' };
           const loc = msg.location();
+          // Filter before the 50-entry cap: platform noise must never crowd
+          // out application errors or set telemetryDropped.
+          if (isPlatformTrackingConsoleLocation(loc?.url)) return;
           pushBounded(consoleEntries, {
             level: levelMap[type] || 'log',
             text: msg.text().slice(0, 600),
@@ -198,6 +250,7 @@ async function run() {
         });
 
         page.on('requestfailed', (req) => {
+          if (req.resourceType() === 'script' && isPlatformTrackingUrl(req.url())) return;
           pushBounded(failedRequests, {
             url: req.url().slice(0, 300),
             failure: req.failure()?.errorText,
@@ -209,6 +262,7 @@ async function run() {
 
         page.on('response', (res) => {
           if (res.status() >= 400) {
+            if (res.request().resourceType() === 'script' && isPlatformTrackingUrl(res.url())) return;
             pushBounded(failedRequests, {
               url: res.url().slice(0, 300),
               status: res.status(),

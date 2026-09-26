@@ -15,16 +15,21 @@ export async function processAssistantTurn(
 ): Promise<any> {
   'use step';
 
-  const availableTools = await getInstanceAssistantTools(
-    context.executionOptions.site_id,
-    context.executionOptions.user_id,
-    context.executionOptions.instance_id,
-    context.customTools,
-    context.agentType,
-    context.userPhone,
-    context.executionOptions.requirement_id,
-    context.uiMediaOutputType,
-  );
+  // Filtering an already routed `tools` function is unsafe: its closure still
+  // contains sends/writes. Expose only plan_result; no dynamic MCP/sandbox.
+  const availableTools = context.preResponseOnly
+    ? context.customTools.filter((tool) => tool?.name === 'plan_result')
+    : await getInstanceAssistantTools(
+        context.executionOptions.site_id,
+        context.executionOptions.user_id,
+        context.executionOptions.instance_id,
+        context.customTools,
+        context.agentType,
+        context.userPhone,
+        context.executionOptions.requirement_id,
+        context.uiMediaOutputType,
+        context.approvedImport,
+      );
   const fullTools = context.toolExecutionTracker
     ? instrumentWorkflowTools(availableTools, context.toolExecutionTracker)
     : availableTools;

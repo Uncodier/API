@@ -2,6 +2,7 @@ import type {
   WorkflowToolExecution,
   WorkflowToolExecutionTracker,
 } from './execution-tracker';
+import { relationContext } from './relation-routing';
 import {
   runWorkflowResultGate,
   type WorkflowResultGateSignal,
@@ -243,11 +244,14 @@ export function createWorkflowPlanResultCapture(step: {
       if (!['completed', 'failed', 'skipped'].includes(status)) {
         return { accepted: false, terminal: false, error: 'Invalid result status.' };
       }
-      if (status === 'skipped' && step.type !== 'condition') {
+      if (status === 'skipped' && step.type !== 'condition' &&
+        ['on success', 'on fail', 'on error', 'on failure', 'always'].includes(
+          relationContext(step.metadata?.relation_context).toLowerCase(),
+        )) {
         return {
           accepted: false,
           terminal: false,
-          error: 'Only condition steps may report status="skipped".',
+          error: 'Only condition steps or steps with custom relation context may report status="skipped".',
         };
       }
 

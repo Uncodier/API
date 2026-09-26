@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { randomUUID } from 'node:crypto';
 import { WorkflowService } from '@/lib/services/workflow-service';
 import {
   visitorAuthorizationErrorResponse,
@@ -54,6 +55,9 @@ export async function POST(request: NextRequest) {
       body.name = undefined;
       body.email = undefined;
       body.phone = undefined;
+      // A request-scoped, server-owned ID survives the Temporal hop into the
+      // Customer Support agent command. A second HTTP POST is a new message.
+      body.origin_message_id = randomUUID();
     }
     const { 
       conversationId, 

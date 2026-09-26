@@ -4,6 +4,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { executeUnifiedRobotActivityPlanning, formatPlanSteps, addSessionSaveSteps, calculateEstimatedDuration } from '@/lib/helpers/robot-planning-core';
 import { findGrowthRobotAgent } from '@/lib/helpers/agent-finder';
 import { completeInProgressPlans } from '@/lib/helpers/plan-lifecycle';
+import { robotSkillSelectionSchema, requiredRobotSkillsPrompt } from '@/lib/services/workflow/robot-skill-selection';
 
 // ------------------------------------------------------------------------------------
 // Growth Plan Specific Context (extends the core planning with previous plan context)
@@ -64,6 +65,19 @@ export async function POST(request: NextRequest) {
     // 1. Validar y parsear body -------------------------------------------------------
     const rawBody = await request.json();
     const { site_id, user_id, instance_id, activity, message, context } = CreatePlanSchema.parse(rawBody);
+    const { data: instance, error: instanceError } = await supabaseAdmin
+      .from('remote_instances').select('site_id').eq('id', instance_id).single();
+    if (instanceError || !instance || instance.site_id !== site_id) {
+      return NextResponse.json({ error: 'Instance does not belong to this site' }, { status: 400 });
+    }
+    const parsedSkills = robotSkillSelectionSchema.safeParse(rawBody);
+    if (!parsedSkills.success) return NextResponse.json({ error: 'Invalid skill selection' }, { status: 400 });
+    let skillInstructions: string;
+    try {
+      skillInstructions = await requiredRobotSkillsPrompt(site_id, parsedSkills.data);
+    } catch {
+      return NextResponse.json({ error: 'Selected skill is not available for this site' }, { status: 400 });
+    }
 
     // 2. Recuperar sesiones de autenticación previas ---------------------------------
     const { data: previousSessions, error: sessionsError } = await supabaseAdmin
@@ -377,7 +391,7 @@ export async function POST(request: NextRequest) {
         activity,
         previousSessions || [],
         undefined, // No user context in growth plan route
-        growthPlanContext // Previous plan context from growth plan
+        growthPlanContext + skillInstructions // Site-validated required skills in the planning prompt
       );
 
       planningCommandUuid = commandUuid;

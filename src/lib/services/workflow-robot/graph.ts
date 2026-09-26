@@ -1,5 +1,24 @@
 import type { WorkflowGraphNode, WorkflowStepSettings } from './types';
 import { resolveMaxRetries } from './retry';
+import { relationContext } from './relation-routing';
+
+/** Keep only the selected trigger's descendants; never run sibling branches. */
+export function channelTriggerBranch(nodes: WorkflowGraphNode[], triggerNodeId: string): WorkflowGraphNode[] {
+  const triggers = nodes.filter((node) => node.type === 'wf-trigger');
+  if (!triggers.some((node) => node.id === triggerNodeId)) return [];
+  const ids = new Set([triggerNodeId]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const node of nodes) {
+      if (node.parent_node_id && ids.has(node.parent_node_id) && !ids.has(node.id)) {
+        ids.add(node.id);
+        changed = true;
+      }
+    }
+  }
+  return nodes.filter((node) => ids.has(node.id));
+}
 
 function promptText(node: WorkflowGraphNode): string {
   const p = node.prompt;
@@ -50,6 +69,7 @@ function topoSort(nodes: WorkflowGraphNode[]): WorkflowGraphNode[] {
 export function buildRunSteps(nodes: WorkflowGraphNode[]) {
   const executable = nodes.filter((n) => n.type === 'wf-step' || n.type === 'wf-condition');
   const ordered = topoSort(executable);
+  const byId = new Map(nodes.map((node) => [node.id, node]));
   return ordered.map((node, index) => {
     const settings = stepSettings(node);
     const title = (node.settings?.title as string) || promptText(node).slice(0, 80) || `Workflow ${node.type}`;
@@ -94,6 +114,10 @@ export function buildRunSteps(nodes: WorkflowGraphNode[]) {
       browser_secret_names: settings.browser_secret_names || [],
       metadata: {
         node_id: node.id,
+        ...(node.parent_node_id && byId.has(node.parent_node_id)
+          ? { parent_node_id: node.parent_node_id, parent_type: byId.get(node.parent_node_id)?.type,
+              relation_context: relationContext(node.settings?.relation_context) }
+          : {}),
         requires_sandbox: requiresSandbox,
         ...(hasBrowserFlag ? { requires_browser: requiresBrowser } : {}),
         ...(hasBrowserInteractionFlag

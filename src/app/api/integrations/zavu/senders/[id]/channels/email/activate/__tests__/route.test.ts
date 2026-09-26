@@ -1,13 +1,21 @@
 import { NextRequest } from "next/server";
-import { POST } from "../route";
-import * as zavu from "@/lib/services/zavu";
+import { jest } from "@jest/globals";
 
-jest.mock("@/lib/services/zavu", () => ({
-  activateSenderChannel: jest.fn(),
-  getChannelConnection: jest.fn(),
-  requireZavuSiteManager: jest.fn(),
-  upsertChannelConnection: jest.fn(),
-}));
+const mockFunction = () => jest.fn<(...args: any[]) => any>();
+const zavu = {
+  activateSenderChannel: mockFunction(),
+  getChannelConnection: mockFunction(),
+  requireZavuSiteManager: mockFunction(),
+  upsertChannelConnection: mockFunction(),
+};
+
+jest.unstable_mockModule("@/lib/services/zavu", () => zavu);
+
+let POST: typeof import("../route").POST;
+
+beforeAll(async () => {
+  ({ POST } = await import("../route"));
+});
 
 function activationRequest() {
   return new NextRequest(
@@ -25,18 +33,19 @@ function activationRequest() {
 describe("POST /api/integrations/zavu/senders/:id/channels/email/activate", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    (zavu.requireZavuSiteManager as jest.Mock).mockResolvedValue(undefined);
-    (zavu.getChannelConnection as jest.Mock).mockResolvedValue({
+    zavu.requireZavuSiteManager.mockResolvedValue(undefined);
+    zavu.getChannelConnection.mockResolvedValue({
       id: "channel_1",
+      type: "email",
       zavu_sender_id: "snd_1",
     });
-    (zavu.upsertChannelConnection as jest.Mock).mockResolvedValue({
+    zavu.upsertChannelConnection.mockResolvedValue({
       channelId: "channel_1",
     });
   });
 
   it("activates email and persists the connected state", async () => {
-    (zavu.activateSenderChannel as jest.Mock).mockResolvedValue({
+    zavu.activateSenderChannel.mockResolvedValue({
       sender: { id: "snd_1", channels: ["email"] },
       channel: "email",
       activated: true,
@@ -67,8 +76,9 @@ describe("POST /api/integrations/zavu/senders/:id/channels/email/activate", () =
   });
 
   it("rejects a sender that does not belong to the channel connection", async () => {
-    (zavu.getChannelConnection as jest.Mock).mockResolvedValue({
+    zavu.getChannelConnection.mockResolvedValue({
       id: "channel_1",
+      type: "email",
       zavu_sender_id: "snd_other",
     });
 
@@ -78,5 +88,34 @@ describe("POST /api/integrations/zavu/senders/:id/channels/email/activate", () =
 
     expect(response.status).toBe(409);
     expect(zavu.activateSenderChannel).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-email connection", async () => {
+    zavu.getChannelConnection.mockResolvedValue({
+      id: "channel_1",
+      type: "voice",
+      zavu_sender_id: "snd_1",
+    });
+
+    const response = await POST(activationRequest(), {
+      params: Promise.resolve({ id: "snd_1" }),
+    });
+
+    expect(response.status).toBe(409);
+    expect(zavu.activateSenderChannel).not.toHaveBeenCalled();
+  });
+
+  it("does not persist activation returned for a different sender", async () => {
+    zavu.activateSenderChannel.mockResolvedValue({
+      sender: { id: "snd_other", channels: ["email"] },
+      activated: true,
+    });
+
+    const response = await POST(activationRequest(), {
+      params: Promise.resolve({ id: "snd_1" }),
+    });
+
+    expect(response.status).toBe(502);
+    expect(zavu.upsertChannelConnection).not.toHaveBeenCalled();
   });
 });

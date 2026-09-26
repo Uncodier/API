@@ -3,13 +3,11 @@ import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/upd
 import { processAssistantTurn } from '@/app/api/robots/instance/assistant/assistant-turn';
 import { prepareAssistantContext } from '@/app/api/robots/instance/assistant/steps';
 import { fetchStepLogHistoryText } from '@/app/api/cron/shared/step-history-builder';
-import { SkillsService } from '@/lib/services/skills-service';
 import { ensureWorkflowSandbox, stopWorkflowSandbox } from './sandbox-workspace';
 import {
   buildWorkflowRetryContext,
   canRetryStep,
   interpolateWorkflowText,
-  formatWorkflowValidationPrompt,
   resolveMaxRetries,
 } from './retry';
 import {
@@ -26,102 +24,8 @@ import { workflowStepRequiresBrowser } from './browser';
 import { createWorkflowToolExecutionTracker } from './execution-tracker';
 import { workflowStepStringList } from './step-config';
 import { parseWorkflowExpectedOutputContract } from './result-shape';
-
-function buildWorkflowStepPrompt(params: {
-  plan: any;
-  step: any;
-  dryRun: boolean;
-  triggerPayload: Record<string, unknown>;
-  previousOutputs: Record<string, unknown>;
-  instanceId: string;
-  siteId: string;
-  retryContext?: string;
-  sandboxTools?: any[];
-  sandboxEnvironmentKeys?: string[];
-  browserReady?: boolean;
-}): string {
-  const skillName = params.step.skill || 'makinari-rol-workflow-step';
-  const matched = SkillsService.getSkillBySlugOrName(skillName);
-  const skillBlock = matched
-    ? `\n\n--- SKILL: ${matched.name} ---\n${matched.content}\n--- END SKILL ---\n`
-    : '';
-  const mcpHints = (params.step.metadata?.mcp_actions || [])
-    .map((a: { tool: string; action?: string; hint?: string }) =>
-      `- ${a.tool}${a.action ? ` action=${a.action}` : ''}${a.hint ? `: ${a.hint}` : ''}`)
-    .join('\n');
-
-  const ctx = {
-    trigger: params.triggerPayload,
-    steps: params.previousOutputs,
-  };
-  const instructions = interpolateWorkflowText(params.step.instructions || '', ctx);
-  const expected = interpolateWorkflowText(params.step.expected_output || '', ctx);
-  const validationBlock = formatWorkflowValidationPrompt(params.step, (text) =>
-    interpolateWorkflowText(text, ctx),
-  );
-  const browserDomains = Array.isArray(params.step.browser_allowed_domains)
-    ? params.step.browser_allowed_domains
-    : params.step.metadata?.browser_allowed_domains || [];
-
-  const sandboxInstruction = params.step.requires_sandbox || params.step.metadata?.requires_sandbox
-    ? `This step has requires_sandbox=true. sandbox_* tools are available. Do not call sandbox_* on steps without this flag.${
-        params.sandboxTools && params.sandboxTools.length > 0
-          ? `\nAvailable sandbox tools for this step:\n${params.sandboxTools.map((t: any) => `- ${t.name}`).join('\n')}`
-          : ''
-      }${
-        params.browserReady
-          ? '\nBrowser navigation is pre-provisioned. Use sandbox_browser directly; do not install agent-browser or Chrome.'
-          : ''
-      }${
-        params.sandboxEnvironmentKeys?.length
-          ? `\nAvailable credential names: ${params.sandboxEnvironmentKeys.join(', ')}. Values are not present in process.env. Use value_env only on trusted domains: ${browserDomains.join(', ') || '(none configured)'}.`
-          : '\nNo custom workflow environment variables are configured.'
-      }`
-    : 'This step has NO sandbox. Do not call sandbox_* tools.';
-
-  const executionModeBlock = params.dryRun
-    ? `EXECUTION MODE: DRY RUN (test)
-This is a simulation. Read with tools if needed, but do NOT persist CRM/data writes or send messages. Simulate those side effects and include "execution_mode": "dry_run" in plan_result.data.`
-    : `EXECUTION MODE: LIVE (real)
-This is a real production run, not a test. Call tools via tools and apply real side effects when the step instructions require them (CRM writes, notifications, messages). Do NOT simulate, mock, skip tools, or treat this as a dry run.`;
-
-  const toolInstruction = params.dryRun
-    ? 'Use tools for reads. For writes/sends, describe the simulated outcome instead of executing them.'
-    : 'You MUST call tools to fulfill the step. Do not only describe what you would do and never fabricate tool results.';
-
-  return `⚠️ WORKFLOW MODE: You are executing ONE predefined workflow step. Do NOT create or update instance_plan or requirements. Do NOT plan new work.
-
-${executionModeBlock}
-
-${toolInstruction}
-
-Instance ID: ${params.instanceId}
-Site ID: ${params.siteId}
-Plan ID: ${params.plan.id}
-Step: ${params.step.order} — ${params.step.title}
-
-Instructions:
-${instructions}
-
-Expected output:
-${expected || 'A concise factual result that satisfies the step.'}
-${validationBlock}
-${mcpHints ? `Suggested MCP actions:\n${mcpHints}\n` : ''}
-Trigger payload:
-${JSON.stringify(params.triggerPayload || {}, null, 2)}
-
-Previous step outputs:
-${JSON.stringify(params.previousOutputs || {}, null, 2)}
-
-${sandboxInstruction}
-${skillBlock}${params.retryContext || ''}
-
-MANDATORY TERMINAL PROTOCOL:
-- Your step is not complete until you call the direct \`plan_result\` tool.
-- Submit factual structured data, evidence, and a pass/fail entry for every declared criterion and validation rule.
-- If a required capability or external dependency is unavailable, call \`plan_result\` with status="failed" and a concrete error. Never report invented data.
-- Plain text is not a completion signal and will be rejected by the runner.`;
-}
+import { shouldRunWorkflowStep, workflowRelationPrompt } from './relation-routing';
+import { buildWorkflowStepPrompt } from './step-prompt';
 
 const MAX_WORKFLOW_STEP_TURNS = 10;
 class WorkflowStepResultError extends Error {
@@ -140,12 +44,16 @@ async function runStepTurns(
   context: any,
   userContent: string,
   capture: WorkflowPlanResultCapture,
+  deadline?: number,
 ): Promise<{ result: WorkflowPlanResult; lastText: string; turns: number }> {
   let messages: any[] = [{ role: 'user', content: userContent }];
   let lastText = '';
   let turns = 0;
   try {
     while (turns < MAX_WORKFLOW_STEP_TURNS) {
+      if (deadline && Date.now() >= deadline) {
+        throw new Error('Pre-response workflow time budget exceeded');
+      }
       turns++;
       const turn = await processAssistantTurn(context, messages);
       messages = turn.messages;
@@ -211,11 +119,12 @@ function recordPreviousStepOutput(
     status: result?.status || step.status,
     evidence: Array.isArray(result?.evidence) ? result.evidence : [],
     title: step.title,
+    ...(step.error_message ? { error: step.error_message } : {}),
   };
   previousOutputs[`step_${step.order}`] = output;
 }
 
-export async function runWorkflowPlan(runPlanId: string): Promise<{
+export async function runWorkflowPlan(runPlanId: string, options?: { deadline?: number }): Promise<{
   run_plan_id: string;
   status: string;
   steps_completed: number;
@@ -240,6 +149,7 @@ export async function runWorkflowPlan(runPlanId: string): Promise<{
   }
 
   const dryRun = Boolean((plan.metadata as any)?.dry_run);
+  const preResponseOnly = (plan.metadata as any)?.pre_response_only === true;
   const triggerPayload = ((plan.metadata as any)?.trigger_payload || {}) as Record<string, unknown>;
   const steps = Array.isArray(plan.steps) ? [...plan.steps] : [];
   steps.sort((a: any, b: any) => (a.order || 0) - (b.order || 0));
@@ -266,9 +176,17 @@ export async function runWorkflowPlan(runPlanId: string): Promise<{
     }
 
     for (const step of steps) {
+      if (options?.deadline && Date.now() >= options.deadline) {
+        throw new Error('Pre-response workflow time budget exceeded');
+      }
       if (step.status === 'completed' || step.status === 'cancelled') {
         recordPreviousStepOutput(previousOutputs, step);
         if (step.status === 'completed') completed++;
+        continue;
+      }
+      if (!shouldRunWorkflowStep(step, steps)) {
+        await persistStepPatch(plan, { id: step.id, status: 'cancelled', completed_at: new Date().toISOString() });
+        step.status = 'cancelled';
         continue;
       }
       if (!await renewWorkflowRunExecutionClaim(runPlanId, claimed.token)) {
@@ -277,8 +195,13 @@ export async function runWorkflowPlan(runPlanId: string): Promise<{
 
       const maxRetries = resolveMaxRetries(step.max_retries);
       if (step.status === 'failed' && !canRetryStep(step.retry_count || 0, maxRetries)) {
-        anyFailed = true;
-        break;
+        recordPreviousStepOutput(previousOutputs, step);
+        if (!steps.some((candidate) => candidate.metadata?.parent_node_id === step.metadata?.node_id &&
+          shouldRunWorkflowStep(candidate, steps))) {
+          anyFailed = true;
+          break;
+        }
+        continue;
       }
 
       const needsBrowser = workflowStepRequiresBrowser(step);
@@ -287,6 +210,11 @@ export async function runWorkflowPlan(runPlanId: string): Promise<{
         step.requires_sandbox ||
         step.metadata?.requires_sandbox,
       );
+      if (preResponseOnly && needsSandbox) {
+        // Sandbox and browser tools can make outbound requests and send messages.
+        // Never provision them for a customer pre-response run.
+        throw new Error('Sandbox/browser steps cannot run before a customer response');
+      }
       const browserAllowedDomains = workflowStepStringList(step, 'browser_allowed_domains');
       const browserSecretNames = workflowStepStringList(step, 'browser_secret_names');
       if (needsSandbox) {
@@ -337,9 +265,9 @@ export async function runWorkflowPlan(runPlanId: string): Promise<{
         step.expected_output = parseWorkflowExpectedOutputContract(step.expected_output, step).suggestion || step.expected_output;
         const resultCapture = createWorkflowPlanResultCapture(step, {
           executionTracker,
-          requireToolExecution: step.type !== 'condition',
+          requireToolExecution: !preResponseOnly && step.type !== 'condition',
           requiresBrowser: needsBrowser,
-          requiredToolExecutions: step.metadata?.mcp_actions || [],
+          requiredToolExecutions: preResponseOnly ? [] : step.metadata?.mcp_actions || [],
         });
         const systemPrompt = buildWorkflowStepPrompt({
           plan,
@@ -353,6 +281,8 @@ export async function runWorkflowPlan(runPlanId: string): Promise<{
           sandboxTools: needsSandbox ? sandboxTools : undefined,
           sandboxEnvironmentKeys: needsSandbox ? sandboxEnvironmentKeys : undefined,
           browserReady: needsBrowser && browserReady,
+          preResponseOnly,
+          relationPrompt: workflowRelationPrompt(step, steps),
         });
 
         const context = await prepareAssistantContext(
@@ -370,8 +300,9 @@ export async function runWorkflowPlan(runPlanId: string): Promise<{
         context.executionOptions.plan_id = plan.id;
         context.executionOptions.step_id = step.id;
         context.toolExecutionTracker = executionTracker;
+        context.preResponseOnly = preResponseOnly;
 
-        const modeLabel = dryRun ? 'DRY RUN' : 'LIVE';
+        const modeLabel = preResponseOnly ? 'CHANNEL PRE-RESPONSE — NO SENDS' : dryRun ? 'DRY RUN' : 'LIVE';
         const userContent = isRetry
           ? `[${modeLabel}] Execute step ${step.order}: ${step.title}. This is retry ${step.retry_count}; follow the recovery plan if provided.`
           : `[${modeLabel}] Execute step ${step.order}: ${step.title}. ${step.instructions}`;
@@ -380,7 +311,7 @@ export async function runWorkflowPlan(runPlanId: string): Promise<{
           throw new Error('Workflow run claim was lost during step execution');
         }
         try {
-          const execution = await runStepTurns(context, userContent, resultCapture);
+          const execution = await runStepTurns(context, userContent, resultCapture, options?.deadline);
           const reported = execution.result;
           if (reported.status === 'failed') {
             throw new WorkflowStepResultError(
@@ -406,6 +337,8 @@ export async function runWorkflowPlan(runPlanId: string): Promise<{
             completed_at: new Date().toISOString(),
             error_message: null,
           });
+          step.status = skipped ? 'cancelled' : 'completed';
+          step.error_message = null;
           recordPreviousStepOutput(previousOutputs, {
             ...step,
             status: skipped ? 'cancelled' : 'completed',
@@ -441,7 +374,15 @@ export async function runWorkflowPlan(runPlanId: string): Promise<{
             planResult?.error?.retryable === false ||
             !canRetryStep(nextCount, maxRetries)
           ) {
-            anyFailed = true;
+            step.status = 'failed';
+            step.result = planResult || null;
+            recordPreviousStepOutput(previousOutputs, step);
+            // Only continue if a downstream failure branch handles this step.
+            // Existing linear workflows still stop immediately on exhausted retries.
+            if (!steps.some((candidate) => candidate.metadata?.parent_node_id === step.metadata?.node_id &&
+              shouldRunWorkflowStep(candidate, steps))) {
+              anyFailed = true;
+            }
             break;
           }
         }

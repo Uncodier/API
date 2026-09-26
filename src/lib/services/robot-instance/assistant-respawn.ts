@@ -113,6 +113,7 @@ export async function spawnSilentContinueWorkflow({
   instanceNodeId,
   expectedResultsAmount,
   contextString,
+  selectedSkills,
 }: {
   instanceId: string;
   siteId: string;
@@ -125,6 +126,7 @@ export async function spawnSilentContinueWorkflow({
   instanceNodeId?: string;
   expectedResultsAmount?: number;
   contextString?: string;
+  selectedSkills?: import('@/app/api/robots/instance/assistant/skill-selection').AssistantSkillSelection;
 }): Promise<void> {
   console.log(`[AssistantRespawn] Spawning silent continue workflow for instance ${instanceId}`);
 
@@ -147,7 +149,7 @@ export async function spawnSilentContinueWorkflow({
     expectedResultsAmount,
     contextString,
     undefined,
-    { silentContinue: true },
+    { silentContinue: true, selectedSkills },
   ];
   await start(runAssistantWorkflow, workflowArgs);
 }

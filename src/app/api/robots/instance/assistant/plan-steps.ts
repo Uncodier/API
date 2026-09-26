@@ -3,6 +3,7 @@ import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/upd
 import { processAssistantTurn } from './assistant-turn';
 import { AssistantContext } from './types';
 import { SkillsService } from '@/lib/services/skills-service';
+import { requiredSkillsPrompt } from './skill-selection';
 import { getStepCheckpointPromptFragment, getFileFreshnessPromptFragment } from '@/app/api/cron/shared/step-git-prompts';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import { getRedisClient } from '@/lib/utils/redis-client';
@@ -166,7 +167,7 @@ export async function executePlanStep(
   let skillContext = '';
   const skillName = step.skill || (step.role && ROLE_TO_SKILL[step.role]);
   if (skillName) {
-    const matched = SkillsService.getSkillBySlugOrName(skillName);
+    const matched = await SkillsService.getSkillBySlugForSite(context.executionOptions.site_id, skillName);
     if (matched) {
       console.log(`[PlanSteps] Injecting skill "${skillName}" for step ${step.order}`);
       skillContext = `\n\n--- SKILL INSTRUCTIONS: ${matched.name} ---\n${matched.content}\n--- END SKILL ---\n`;
@@ -228,6 +229,7 @@ Cycle baseline: ${cycleBaselineAt || 'unknown'}
 File freshness: sandbox_list_files / sandbox_read_file report updated_this_cycle vs this baseline.
 
 ${skillPromptText}
+${requiredSkillsPrompt(context.selectedSkills)}
 ${getFileFreshnessPromptFragment(cycleBaselineAt)}
 ${getStepCheckpointPromptFragment(requirementId, instance_id)}
 

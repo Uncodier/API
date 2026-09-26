@@ -19,6 +19,7 @@ import {
 import { gitBindingBranchTreeUrl } from '@/lib/services/requirement-git-binding';
 import { sandboxRestoreCheckpointTool } from '@/app/api/agents/tools/sandbox/sandbox-checkpoint-restore';
 import { skillLookupTool } from '@/app/api/agents/tools/sandbox/skill-lookup-tool';
+import { externalSkillLookupTool } from '@/app/api/agents/tools/sandbox/external-skill-lookup-tool';
 import { sandboxCodeSearchTool } from '@/app/api/agents/tools/sandbox/code-search-tool';
 import { sandboxReadLogsTool } from '@/app/api/agents/tools/sandbox_read_logs/assistantProtocol';
 import { getQaSandboxTools } from '@/app/api/agents/tools/sandbox/qa-tools';
@@ -444,7 +445,8 @@ export function getSandboxTools(
   browserSecrets?: Record<string, string>,
 ) {
   return [
-    skillLookupTool({ requirement_type: toolsCtx?.requirement_type, toolsCtx }),
+    skillLookupTool({ requirement_type: toolsCtx?.requirement_type, toolsCtx, siteId: toolsCtx?.site_id }),
+    externalSkillLookupTool(toolsCtx?.site_id ?? ''),
     ...(toolsCtx?.browser_enabled
       ? [sandboxBrowserTool(sandbox, {
         secretEnvironment: browserSecrets,

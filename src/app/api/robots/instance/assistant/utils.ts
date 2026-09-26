@@ -19,6 +19,7 @@ import {
   type RoutedTool,
 } from '@/app/api/agents/tools/router/assistantProtocol';
 import { skillLookupTool } from '@/app/api/agents/tools/sandbox/skill-lookup-tool';
+import { externalSkillLookupTool } from '@/app/api/agents/tools/sandbox/external-skill-lookup-tool';
 import { memoriesTool } from '@/app/api/agents/tools/memories/assistantProtocol';
 import { tasksTool } from '@/app/api/agents/tools/tasks/assistantProtocol';
 import { requirementsTool } from '@/app/api/agents/tools/requirements/assistantProtocol';
@@ -319,6 +320,7 @@ export const getAssistantToolDefinitions = (
   userPhone?: string,
   requirementId?: string,
   uiMediaOutputType?: UiMediaOutputType,
+  approvedImport?: { url: string; sha256: string; userId: string },
 ) => {
   const allowedMediaTool = uiMediaOutputType === 'image'
     ? 'generate_image'
@@ -417,7 +419,8 @@ export const getAssistantToolDefinitions = (
     sendBulkMessagesTool(siteId),
     placeVoiceCallTool(siteId, userId),
     publishTool(siteId, userId ?? '', instanceId),
-    skillLookupTool(),
+    skillLookupTool({ siteId }),
+    externalSkillLookupTool(siteId, approvedImport?.userId, approvedImport),
     activateCodingAgentsTool(),
     updateRepoTool(siteId, instanceId, userId),
     showArtifactTool(siteId, instanceId, userId ?? ''),
@@ -452,6 +455,7 @@ export const getAssistantTools = (
   userPhone?: string,
   requirementId?: string,
   uiMediaOutputType?: UiMediaOutputType,
+  approvedImport?: { url: string; sha256: string; userId: string },
 ) => {
   return routeTools(
     getAssistantToolDefinitions(
@@ -463,6 +467,7 @@ export const getAssistantTools = (
       userPhone,
       requirementId,
       uiMediaOutputType,
+      approvedImport,
     ),
   );
 };
@@ -480,6 +485,7 @@ export async function getInstanceAssistantTools(
   userPhone?: string,
   requirementId?: string,
   uiMediaOutputType?: UiMediaOutputType,
+  approvedImport?: { url: string; sha256: string; userId: string },
 ) {
   const composioKey = await getComposioApiKeyForSite(siteId);
   const instanceTools = composioKey
@@ -495,5 +501,6 @@ export async function getInstanceAssistantTools(
     userPhone,
     requirementId,
     uiMediaOutputType,
+    approvedImport,
   );
 }

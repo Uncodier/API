@@ -20,6 +20,8 @@ import {
 } from './assistant-streaming-logs';
 import { buildNodeResult, buildInitialNodeResult } from './node-result-collector';
 import { hydrateMessageImages } from './vision-message-images';
+import { InstanceContextManager } from './InstanceContextManager';
+import { measureInstanceContext } from './instance-context-budget';
 
 /**
  * Extract text from a node based on what the context type asks for.
@@ -378,7 +380,8 @@ Do NOT use general conversational history to infer which image/asset to edit. Us
                 }
               },
               maxIterations: nodeMaxIterations,
-              enforceSingleTurn: options.enforceSingleTurn
+              enforceSingleTurn: options.enforceSingleTurn,
+              enforceContextBudget: Boolean(instance_id && site_id),
             });
 
             const nodeResult = buildNodeResult(result.text || accumulatedText, 'done', result.steps);
@@ -479,7 +482,12 @@ Do NOT use general conversational history to infer which image/asset to edit. Us
                 onReasoningTokensUsed: thinkingStreamCallbacks?.onReasoningTokensUsed,
                 maxIterations: nodeMaxIterations,
                 enforceSingleTurn: options?.enforceSingleTurn,
-                toolOverrides: options?.tool_overrides
+                toolOverrides: options?.tool_overrides,
+                enforceContextBudget: Boolean(instance_id && site_id),
+                onContextUsage: !instance_node_id && instance_id && site_id ? async snapshot => {
+                  await new InstanceContextManager(instance_id, site_id).recordUsage(
+                    measureInstanceContext(snapshot));
+                } : undefined,
             });
 
         // Finalize node — pack text + tool outputs into unified result
@@ -621,7 +629,8 @@ export async function executeAssistant(
         onThinkingStreamStart: thinkingStreamCallbacks?.onThinkingStreamStart,
         onThinkingStreamChunk: thinkingStreamCallbacks?.onThinkingStreamChunk,
         onReasoningTokensUsed: thinkingStreamCallbacks?.onReasoningTokensUsed,
-        toolOverrides: options?.tool_overrides
+        toolOverrides: options?.tool_overrides,
+        enforceContextBudget: Boolean(instance_id && site_id),
       });
 
       console.log(`₍ᐢ•(ܫ)•ᐢ₎ [EXECUTOR RESULT] Text length: ${executionResult.text?.length || 0}`);

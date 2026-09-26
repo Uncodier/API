@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import {
   activateSenderChannel,
   getChannelConnection,
@@ -6,21 +7,31 @@ import {
   upsertChannelConnection,
 } from "@/lib/services/zavu";
 
+const activationSchema = z.object({
+  siteId: z.string().min(1),
+  channelId: z.string().min(1),
+});
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id: senderId } = await params;
-    const body = await request.json();
-    const { siteId, channelId } = body;
-
-    if (!senderId || !siteId || !channelId) {
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
+    const parsed = activationSchema.safeParse(body);
+    if (!senderId || !parsed.success) {
       return NextResponse.json(
         { error: "senderId, siteId, and channelId are required" },
         { status: 400 }
       );
     }
+    const { siteId, channelId } = parsed.data;
     await requireZavuSiteManager(request, siteId);
 
     const connection = await getChannelConnection(siteId, channelId);
@@ -30,16 +41,29 @@ export async function POST(
         { status: 404 }
       );
     }
-    if (connection.zavu_sender_id !== senderId) {
+    if (connection.type !== "email" || connection.zavu_sender_id !== senderId) {
       return NextResponse.json(
         { error: "Sender does not match the email channel connection" },
         { status: 409 }
       );
     }
 
-    const activation = await activateSenderChannel(senderId, "email");
+    let activation;
+    try {
+      activation = await activateSenderChannel(senderId, "email");
+    } catch (error) {
+      console.error("[Zavu] Email channel activation failed:", error);
+      return NextResponse.json(
+        { error: "Zavu could not activate the email channel" },
+        { status: 502 }
+      );
+    }
     const activeChannels = activation?.sender?.channels;
-    if (!Array.isArray(activeChannels) || !activeChannels.includes("email")) {
+    if (
+      activation?.sender?.id !== senderId ||
+      !Array.isArray(activeChannels) ||
+      !activeChannels.includes("email")
+    ) {
       return NextResponse.json(
         { error: "Zavu did not confirm email channel activation" },
         { status: 502 }

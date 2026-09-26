@@ -14,6 +14,9 @@ import { InstanceAssetsService } from '@/lib/services/robot-instance/InstanceAss
 import { executeAssistant } from '@/lib/services/robot-instance/assistant-executor';
 import { insertUserActionLog, withRetries } from './user-message-log';
 import { normalizePublishToolOverrides } from './publish-tool-overrides';
+import { approvedCommunityImport, assistantSkillSelectionSchema, resolveAssistantSkillSelection } from './skill-selection';
+import { canAccessSite } from '@/lib/security/site-access';
+import { isSiteSkillManager } from '@/lib/services/site-skill-access';
 
 // ------------------------------------------------------------------------------------
 // POST /api/robots/instance/assistant
@@ -34,12 +37,13 @@ const AssistantSchema = z.object({
   system_prompt: z.string().optional(),
   context: z.string().optional(),
   tool_overrides: z.record(z.any()).optional(),
+  ...assistantSkillSelectionSchema.shape,
 });
 
 export async function POST(request: NextRequest) {
   try {
     const rawBody = await request.json();
-    console.log('🔍 Raw body received:', JSON.stringify(rawBody, null, 2));
+    // Do not log request payload: it can contain private context and prompts.
     
     let parsedBody;
     try {
@@ -77,6 +81,35 @@ export async function POST(request: NextRequest) {
       parsedBody.context,
       parsedBody.tool_overrides,
     );
+
+    if (providedInstanceId && providedSiteId) {
+      const { data: scope } = await supabaseAdmin.from('remote_instances')
+        .select('site_id').eq('id', providedInstanceId).maybeSingle();
+      if (scope && scope.site_id !== providedSiteId) {
+        return NextResponse.json({ error: 'Instance does not belong to site' }, { status: 403 });
+      }
+    }
+    const selectionSiteId = providedSiteId || site_id_for_validation;
+    if (!selectionSiteId) return NextResponse.json({ error: 'site_id is required' }, { status: 400 });
+    const verifiedUserId = request.headers.get('x-auth-validated') === 'true'
+      ? request.headers.get('x-auth-user-id') : null;
+    const requestedImport = approvedCommunityImport(message);
+    const trustedImportUserId = verifiedUserId && z.string().uuid().safeParse(verifiedUserId).success
+      ? verifiedUserId : null;
+    // Internal service calls retain existing behavior but never authorize a write via a user_id in the body.
+    let approvedImport: { url: string; sha256: string; userId: string } | undefined;
+    if (requestedImport && trustedImportUserId) {
+      const hasSiteAccess = await canAccessSite(request, selectionSiteId);
+      const isManager = hasSiteAccess && await isSiteSkillManager(selectionSiteId, trustedImportUserId);
+      if (!isManager) return NextResponse.json({ error: 'Site manager access required to import skills' }, { status: 403 });
+      approvedImport = { ...requestedImport, userId: trustedImportUserId };
+    }
+    let selectedSkills;
+    try {
+      selectedSkills = await resolveAssistantSkillSelection(selectionSiteId, parsedBody);
+    } catch (error) {
+      return NextResponse.json({ error: error instanceof Error ? error.message : 'Invalid skill selection' }, { status: 400 });
+    }
 
     // CASE 1: No instance_id provided - Create new uninstantiated instance (FAST PATH - No Workflow needed for creation)
     if (!providedInstanceId) {
@@ -152,7 +185,8 @@ export async function POST(request: NextRequest) {
         providedNodeId,
         expectedResults,
         parsedBody.context,
-        normalizedToolOverrides
+        normalizedToolOverrides,
+        { selectedSkills, approvedImport }
       ]);
 
       // Return the run information. The frontend might need to poll or we stream.
@@ -227,7 +261,8 @@ export async function POST(request: NextRequest) {
     providedNodeId,
     expectedResults,
     parsedBody.context,
-    normalizedToolOverrides
+    normalizedToolOverrides,
+    { selectedSkills, approvedImport }
   ]);
 
     // Return stream response compatible with Vercel Workflow result streaming

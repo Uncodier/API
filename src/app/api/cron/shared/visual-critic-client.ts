@@ -12,6 +12,7 @@ export interface VisualCriticCompletionInput {
     | { type: 'image_url'; image_url: { url: string; detail: 'low' } }
   >;
   signal: AbortSignal;
+  maxOutputTokens?: number;
 }
 
 export interface VisualCriticCompletion {
@@ -187,8 +188,8 @@ export async function requestVisualCriticCompletion(
   const client = createVisualClient(provider, input.model);
   const reasoningModel = /^(?:o[134]|gpt-5)/i.test(input.model);
   const tokenLimit = reasoningModel
-    ? { max_completion_tokens: 1_200 }
-    : { max_tokens: 1_200 };
+    ? { max_completion_tokens: input.maxOutputTokens ?? 1_200 }
+    : { max_tokens: input.maxOutputTokens ?? 1_200 };
   const createCompletion = (
     responseFormat:
       | typeof VISUAL_CRITIC_RESPONSE_FORMAT

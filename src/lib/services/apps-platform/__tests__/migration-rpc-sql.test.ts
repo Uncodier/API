@@ -72,10 +72,10 @@ describe('atomic tenant migration SQL', () => {
       /GRANT apps_migration_coordinator TO %I\s+WITH INHERIT FALSE, SET TRUE/i,
     );
     expect(migration).toMatch(
-      /GRANT %I TO %I WITH INHERIT FALSE, SET TRUE/i,
+      /GRANT %I TO %I WITH INHERIT TRUE, SET TRUE/i,
     );
     expect(provisioningMigration).toMatch(
-      /GRANT %I TO %I WITH INHERIT FALSE, SET TRUE/i,
+      /GRANT %I TO %I WITH INHERIT TRUE, SET TRUE/i,
     );
     expect(migration).toMatch(
       /GRANT USAGE, CREATE ON SCHEMA public TO apps_migration_coordinator/i,
@@ -129,6 +129,56 @@ describe('atomic tenant migration SQL', () => {
       /ALTER ROUTINE %I\.%I\(%s\) SECURITY INVOKER/i,
     );
   });
+
+  it('allows a non-superuser installer to set tenant owner default privileges', () => {
+    const membership = /GRANT %I TO %I WITH INHERIT (?:TRUE|FALSE), SET TRUE/i;
+    const script = `
+      import { PGlite } from '@electric-sql/pglite';
+      const db = new PGlite();
+      const grants = ${JSON.stringify([
+        migration.match(membership)?.[0],
+        provisioningMigration.match(membership)?.[0],
+      ])};
+      await db.exec(
+        'CREATE ROLE installer LOGIN; CREATE ROLE tenant_owner NOLOGIN NOINHERIT; ' +
+        'CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; ' +
+        'CREATE ROLE service_role NOLOGIN; ' +
+        'CREATE SCHEMA tenant_space;'
+      );
+      for (const grant of grants) {
+        if (!grant) throw new Error('Missing owner membership grant');
+        await db.exec(grant.replace('%I', 'tenant_owner').replace('%I', 'installer'));
+        await db.exec('SET ROLE installer');
+        for (const kind of ['TABLES', 'ROUTINES', 'SEQUENCES']) {
+          await db.exec(
+            'ALTER DEFAULT PRIVILEGES FOR ROLE tenant_owner IN SCHEMA tenant_space ' +
+            'GRANT ALL PRIVILEGES ON ' + kind + ' TO anon, authenticated'
+          );
+        }
+        await db.exec('RESET ROLE');
+      }
+      const checks = await db.query(
+        "SELECT pg_has_role('installer', 'tenant_owner', 'USAGE') AS installer_inherits, " +
+        "pg_has_role('service_role', 'tenant_owner', 'MEMBER') AS service_is_member, " +
+        "(SELECT count(*)::integer FROM pg_default_acl WHERE defaclrole = " +
+        "'tenant_owner'::regrole) AS default_acl_types"
+      );
+      console.log(JSON.stringify(checks.rows[0]));
+      await db.close();
+    `;
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      timeout: 20_000,
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout.trim())).toMatchObject({
+      installer_inherits: true,
+      service_is_member: false,
+      default_acl_types: 3,
+    });
+  }, 25_000);
 
   it('executes SQL as the isolated tenant owner', () => {
     const script = `

@@ -4,6 +4,7 @@ import {
   countRecentRespawns,
   spawnSilentContinueWorkflow,
 } from '@/lib/services/robot-instance/assistant-respawn';
+import type { AssistantSkillSelection } from './skill-selection';
 
 export async function countRecentRespawnsStep(instanceId: string): Promise<number> {
   'use step';
@@ -22,6 +23,7 @@ export async function spawnSilentContinueStep(params: {
   instanceNodeId?: string;
   expectedResultsAmount?: number;
   contextString?: string;
+  selectedSkills?: AssistantSkillSelection;
 }): Promise<void> {
   'use step';
   await spawnSilentContinueWorkflow(params);

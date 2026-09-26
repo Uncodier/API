@@ -156,6 +156,12 @@ describe('visual feedback planning', () => {
       }),
     ).toEqual(['/dashboard']);
   });
+
+  it('does not probe prose punctuation as part of a route', () => {
+    expect(extractPageRoutesFromStepContext({
+      instructions: "Open '/dashboard.' then check /contacto!",
+    })).toEqual(['/dashboard', '/contacto']);
+  });
 });
 
 describe('visual feedback formatting', () => {

@@ -2,6 +2,9 @@
 -- DROP FUNCTION IF EXISTS public.apps_ensure_tenant(
 --   uuid, uuid, uuid, uuid, text
 -- );
+-- Target: Apps Supabase (faxxouxekfwxvexoitxv), NOT the main Makinari DB.
+-- Apply after 20260923194000: installs the RPC used to provision tenants
+-- before sandbox_db_migrate can apply a requirement's SQL migrations.
 
 CREATE OR REPLACE FUNCTION public.apps_ensure_tenant(
   p_requirement_id uuid,
@@ -104,10 +107,10 @@ BEGIN
     'ALTER ROLE %I NOLOGIN NOINHERIT NOCREATEDB NOCREATEROLE',
     owner_role
   );
-  -- Ownership changes require the SECURITY DEFINER owner to be able to
-  -- assume the constrained tenant role. Do not inherit its privileges.
+  -- Ownership changes require SET TRUE; ALTER DEFAULT PRIVILEGES FOR ROLE
+  -- also requires INHERIT TRUE for the non-superuser function owner.
   EXECUTE format(
-    'GRANT %I TO %I WITH INHERIT FALSE, SET TRUE',
+    'GRANT %I TO %I WITH INHERIT TRUE, SET TRUE',
     owner_role,
     current_user
   );

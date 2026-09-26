@@ -6,7 +6,7 @@ import type {
   WorkflowTriggerConfig,
 } from './types';
 import { WF_NODE_TYPES } from './types';
-import { buildRunSteps } from './graph';
+import { buildRunSteps, channelTriggerBranch } from './graph';
 
 export { buildRunSteps };
 
@@ -84,10 +84,11 @@ export async function syncWorkflowTriggersFromGraph(params: {
   nodes: WorkflowGraphNode[];
 }): Promise<void> {
   const triggers = params.nodes.filter((n) => n.type === 'wf-trigger');
-  const { data: existing } = await supabaseAdmin
+  const { data: existing, error: lookupError } = await supabaseAdmin
     .from('workflow_triggers')
     .select('id, node_id, kind')
     .eq('instance_id', params.instance_id);
+  if (lookupError) throw new Error(`Failed to load workflow triggers: ${lookupError.message}`);
 
   const byNode = new Map((existing || []).map((r) => [`${r.node_id}:${r.kind}`, r.id]));
   const keep = new Set<string>();
@@ -96,6 +97,9 @@ export async function syncWorkflowTriggersFromGraph(params: {
     const cfg = ((node.settings?.trigger || node.settings || {}) as WorkflowTriggerConfig & { active_kinds?: string[] });
     const activeKindsArray = cfg.active_kinds || (cfg.kind ? [cfg.kind] : ['manual']);
     const activeKinds = Array.from(new Set(activeKindsArray));
+    const channelSteps = buildRunSteps(channelTriggerBranch(params.nodes, node.id));
+    const channelBranchSafe = channelSteps.length > 0 && channelSteps.every((step) =>
+      !step.requires_sandbox && !step.requires_browser && !step.browser_interaction_required);
 
     for (const kind of activeKinds) {
       const row = {
@@ -104,25 +108,29 @@ export async function syncWorkflowTriggersFromGraph(params: {
         node_id: node.id,
         kind,
         config: cfg,
-        enabled: Boolean(node.settings?.enabled ?? kind !== 'manual'),
+        enabled: Boolean(node.settings?.enabled ?? kind !== 'manual')
+          && (kind !== 'channel_message' || channelBranchSafe),
         site_id: params.site_id,
         user_id: params.user_id,
         updated_at: new Date().toISOString(),
       };
       const existingId = byNode.get(`${node.id}:${kind}`);
       if (existingId) {
-        await supabaseAdmin.from('workflow_triggers').update(row).eq('id', existingId);
+        const { error } = await supabaseAdmin.from('workflow_triggers').update(row).eq('id', existingId);
+        if (error) throw new Error(`Failed to update workflow trigger: ${error.message}`);
         keep.add(existingId);
       } else {
-        const { data } = await supabaseAdmin.from('workflow_triggers').insert(row).select('id').single();
-        if (data?.id) keep.add(data.id);
+        const { data, error } = await supabaseAdmin.from('workflow_triggers').insert(row).select('id').single();
+        if (error || !data?.id) throw new Error(`Failed to insert workflow trigger: ${error?.message || 'missing ID'}`);
+        keep.add(data.id);
       }
     }
   }
 
   const stale = (existing || []).filter((r) => r.id && !keep.has(r.id)).map((r) => r.id);
   if (stale.length) {
-    await supabaseAdmin.from('workflow_triggers').delete().in('id', stale);
+    const { error } = await supabaseAdmin.from('workflow_triggers').delete().in('id', stale);
+    if (error) throw new Error(`Failed to remove stale workflow triggers: ${error.message}`);
   }
 }
 
@@ -165,6 +173,8 @@ export async function syncWorkflowDefinition(instanceId: string): Promise<{
 export async function materializeRunFromGraph(
   input: MaterializeRunInput,
 ): Promise<MaterializeRunResult> {
+  const preResponseOnly = input.pre_response_only === true;
+  const dryRun = Boolean(input.dry_run);
   if (input.idempotency_key) {
     const { data: dup } = await supabaseAdmin
       .from('workflow_runs')
@@ -197,6 +207,23 @@ export async function materializeRunFromGraph(
   if (instErr || !instance) throw new Error('Instance not found');
 
   let nodes = await loadGraph(input.instance_id);
+  let preResponseTrigger: { template_plan_id: string | null; node_id: string | null } | null = null;
+  if (preResponseOnly) {
+    if (!input.trigger_id) throw new Error('Pre-response run requires a trigger');
+    let triggerQuery = supabaseAdmin.from('workflow_triggers')
+      .select('template_plan_id, node_id').eq('id', input.trigger_id)
+      .eq('site_id', instance.site_id).eq('instance_id', input.instance_id)
+      .eq('kind', 'channel_message');
+    if (!input.dry_run) triggerQuery = triggerQuery.eq('enabled', true);
+    const { data: trigger } = await triggerQuery.single();
+    if (!trigger?.template_plan_id) throw new Error('Channel trigger has no template');
+    preResponseTrigger = trigger;
+    if (nodes.length && trigger.node_id) nodes = channelTriggerBranch(nodes, trigger.node_id);
+    else if (nodes.length) throw new Error('Channel trigger has no graph node');
+    if (!nodes.length || !nodes.some((node) => node.type === 'wf-step' || node.type === 'wf-condition')) {
+      throw new Error('Channel trigger branch has no executable steps');
+    }
+  }
   let steps: any[] = [];
   let templateId: string;
   let title = `Workflow: ${instance.name || input.instance_id.slice(0, 8)}`;
@@ -248,22 +275,27 @@ export async function materializeRunFromGraph(
       throw new Error('Workflow graph has no executable steps.');
     }
     
-    const template = await upsertTemplatePlan({
-      instance_id: input.instance_id,
-      site_id: instance.site_id,
-      user_id: instance.user_id,
-      steps,
-      title,
-    });
-    templateId = template.id;
+    if (preResponseOnly && preResponseTrigger) {
+      // Pre-response runs must not rewrite/sync trigger definitions on inbound traffic.
+      templateId = preResponseTrigger.template_plan_id!;
+    } else {
+      const template = await upsertTemplatePlan({
+        instance_id: input.instance_id,
+        site_id: instance.site_id,
+        user_id: instance.user_id,
+        steps,
+        title,
+      });
+      templateId = template.id;
 
-    await syncWorkflowTriggersFromGraph({
-      instance_id: input.instance_id,
-      site_id: instance.site_id,
-      user_id: instance.user_id,
-      template_plan_id: templateId,
-      nodes,
-    });
+      await syncWorkflowTriggersFromGraph({
+        instance_id: input.instance_id,
+        site_id: instance.site_id,
+        user_id: instance.user_id,
+        template_plan_id: templateId,
+        nodes,
+      });
+    }
   }
 
   const resetSteps = steps.map((s) => ({
@@ -277,7 +309,7 @@ export async function materializeRunFromGraph(
       instance_id: input.instance_id,
       site_id: instance.site_id,
       user_id: instance.user_id,
-      title: input.dry_run ? `${title} (test)` : title,
+      title: preResponseOnly ? `${title} (pre-response)` : input.dry_run ? `${title} (test)` : title,
       description: 'Workflow run',
       plan_type: 'task',
       status: 'pending',
@@ -288,8 +320,9 @@ export async function materializeRunFromGraph(
       progress_percentage: 0,
       metadata: {
         workflow_run: true,
-        dry_run: Boolean(input.dry_run),
+        dry_run: dryRun,
         trigger_payload: input.trigger_payload || {},
+        ...(preResponseOnly ? { pre_response_only: true } : {}),
       },
     })
     .select('id')
@@ -306,7 +339,7 @@ export async function materializeRunFromGraph(
       trigger_id: input.trigger_id || null,
       payload: input.trigger_payload || {},
       status: 'pending',
-      dry_run: Boolean(input.dry_run),
+      dry_run: dryRun,
       idempotency_key: input.idempotency_key || null,
       site_id: instance.site_id,
       user_id: instance.user_id,
@@ -314,13 +347,41 @@ export async function materializeRunFromGraph(
     .select('id')
     .single();
 
-  if (wfErr || !wfRun) throw new Error(`Failed to create workflow run: ${wfErr?.message}`);
+  if (wfErr || !wfRun) {
+    if (wfErr?.code === '23505' && input.idempotency_key) {
+      // The unique (site_id, idempotency_key) index resolves concurrent deliveries.
+      // The losing plan must never be executed or left pending for a scheduler.
+      const { error: cleanupError } = await supabaseAdmin.from('instance_plans').delete().eq('id', runPlan.id);
+      if (cleanupError) console.error('[WorkflowMaterialize] Failed to remove duplicate plan:', cleanupError);
+      const { data: existing, error: lookupError } = await supabaseAdmin
+        .from('workflow_runs')
+        .select('id, run_plan_id, template_plan_id, dry_run, status, claim_expires_at')
+        .eq('site_id', instance.site_id)
+        .eq('idempotency_key', input.idempotency_key)
+        .maybeSingle();
+      if (!lookupError && existing) {
+        return {
+          template_plan_id: existing.template_plan_id,
+          run_plan_id: existing.run_plan_id,
+          workflow_run_id: existing.id,
+          dry_run: existing.dry_run,
+          steps: [],
+          resume_existing_run: existing.status === 'pending' || (
+            existing.status === 'in_progress' &&
+            typeof existing.claim_expires_at === 'string' &&
+            Date.parse(existing.claim_expires_at) <= Date.now()
+          ),
+        };
+      }
+    }
+    throw new Error(`Failed to create workflow run: ${wfErr?.message}`);
+  }
 
   return {
     template_plan_id: templateId,
     run_plan_id: runPlan.id,
     workflow_run_id: wfRun.id,
-    dry_run: Boolean(input.dry_run),
+    dry_run: dryRun,
     steps: resetSteps,
   };
 }

@@ -2,6 +2,15 @@ import { createWorkflowPlanResultCapture } from '../plan-result';
 import { createWorkflowToolExecutionTracker } from '../execution-tracker';
 
 describe('createWorkflowPlanResultCapture', () => {
+  test('only lets a task skip when its relation has a custom condition', async () => {
+    const payload = { status: 'skipped', summary: 'Customer has not approved', data: {},
+      evidence: [], criteria: [], validation: [] };
+    const standard = createWorkflowPlanResultCapture({ type: 'task', metadata: { relation_context: 'on success' } });
+    expect(await standard.tool.execute(payload)).toMatchObject({ accepted: false });
+    const custom = createWorkflowPlanResultCapture({ type: 'task', metadata: { relation_context: 'when approved by customer' } });
+    expect(await custom.tool.execute(payload)).toMatchObject({ accepted: true, status: 'skipped' });
+  });
+
   test('captures a completed structured result after every contract check passes', async () => {
     const capture = createWorkflowPlanResultCapture({
       type: 'task',

@@ -245,6 +245,22 @@ describe('visual critic contract', () => {
     expect(mockedCompletion).toHaveBeenCalledTimes(2);
   });
 
+  it('increases the token budget only after a truncated model response', async () => {
+    mockedCompletion
+      .mockResolvedValueOnce({ text: '{"pass":', model: 'gemini-2.5-flash', finishReason: 'length', responseFormat: 'json_schema' })
+      .mockResolvedValueOnce({ text: validPass, model: 'gemini-2.5-flash', finishReason: 'stop', responseFormat: 'json_schema' });
+
+    const result = await runVisualCritic({
+      requirementId: 'req-1', screenshots: [{ route: '/', viewport: 'desktop', url: 'visual-storage://shot.jpg' }],
+      step: { order: 1 },
+    });
+
+    expect(result.status).toBe('verified');
+    expect(mockedCompletion).toHaveBeenCalledTimes(2);
+    expect(mockedCompletion.mock.calls[0][0].maxOutputTokens).toBeUndefined();
+    expect(mockedCompletion.mock.calls[1][0].maxOutputTokens).toBe(2_400);
+  });
+
   it('keeps the gate unverified after repeated malformed responses', async () => {
     mockedCompletion.mockResolvedValue({
       text: 'not-json',

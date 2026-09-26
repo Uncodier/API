@@ -37,6 +37,7 @@ import {
 } from '@/lib/services/robot-plan-execution';
 import { resumePlan } from '@/lib/helpers/plan-lifecycle';
 import { provisionScrapybaraInstance, needsProvisioning } from '@/lib/services/robot-instance/instance-provisioner';
+import { robotSkillSelectionSchema, requiredRobotSkillsPrompt } from '@/lib/services/workflow/robot-skill-selection';
 
 export const maxDuration = 300;
 
@@ -138,6 +139,8 @@ export async function POST(request: NextRequest) {
   
   try {
     const rawBody = await request.json();
+    const parsedSkills = robotSkillSelectionSchema.safeParse(rawBody);
+    if (!parsedSkills.success) return NextResponse.json({ error: 'Invalid skill selection' }, { status: 400 });
     const { instance_id: parsedInstanceId, instance_plan_id, user_instruction } = ActSchema.parse(rawBody);
     instance_id = parsedInstanceId;
 
@@ -150,6 +153,17 @@ export async function POST(request: NextRequest) {
 
     if (instanceError || !instance) {
       return NextResponse.json({ error: 'Instance not found' }, { status: 404 });
+    }
+
+    if (rawBody.site_id && rawBody.site_id !== instance.site_id) {
+      return NextResponse.json({ error: 'Instance does not belong to this site' }, { status: 400 });
+    }
+
+    let skillInstructions: string;
+    try {
+      skillInstructions = await requiredRobotSkillsPrompt(instance.site_id, parsedSkills.data);
+    } catch {
+      return NextResponse.json({ error: 'Selected skill is not available for this site' }, { status: 400 });
     }
 
     // 1.5. Check if instance is uninstantiated and needs provisioning
@@ -217,6 +231,10 @@ export async function POST(request: NextRequest) {
     if (planResult.error) return planResult.error;
     plan = planResult.plan;
     effective_plan_id = plan.id;
+
+    if (plan.site_id && plan.site_id !== instance.site_id) {
+      return NextResponse.json({ error: 'Plan does not belong to this instance site' }, { status: 400 });
+    }
 
     if (!effective_plan_id) {
       throw new Error('Plan ID is required for execution');
@@ -441,7 +459,7 @@ export async function POST(request: NextRequest) {
     if (statusCheck6) return statusCheck6;
 
     // 12. Build prompts
-    const systemPromptWithContext = buildSystemPrompt(logContext, sessionsContext, sessionsRequirementContext);
+    const systemPromptWithContext = buildSystemPrompt(logContext, sessionsContext, sessionsRequirementContext) + skillInstructions;
     const planPrompt = buildUserPrompt(plan, currentStep, allSteps);
     
     estimateTokens(systemPromptWithContext, planPrompt);

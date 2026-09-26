@@ -35,6 +35,7 @@ const nextraConfig = withNextra({
   // `/.well-known/workflow/v1/step`) even when webpack bundles them locally. Including these modules via NFT
   // guarantees they are shipped inside the lambda filesystem regardless of bundling decisions.
   outputFileTracingIncludes: {
+    '/api/skills/system': ['./src/skills/*/SKILL.md'],
     '**/.well-known/workflow/v1/step': [
       './node_modules/openai/**/*',
       './node_modules/zod/**/*',

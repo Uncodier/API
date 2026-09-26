@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { WorkflowService } from '@/lib/services/workflow-service';
+import { robotSkillSelectionSchema, resolveRobotSkills } from '@/lib/services/workflow/robot-skill-selection';
+import { supabaseAdmin } from '@/lib/database/supabase-client';
 
 interface StartRobotWorkflowArgs {
   site_id: string;
@@ -8,6 +10,8 @@ interface StartRobotWorkflowArgs {
   instance_id?: string;
   message?: string;
   context?: string;
+  skill_slugs?: string[];
+  skill_mode?: 'auto' | 'required';
 }
 
 interface WorkflowExecutionOptions {
@@ -59,6 +63,27 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (instance_id) {
+      if (typeof instance_id !== 'string') {
+        return NextResponse.json({ success: false, error: { code: 'INVALID_INSTANCE_ID', message: 'Invalid instance_id' } }, { status: 400 });
+      }
+      const { data: instance, error: instanceError } = await supabaseAdmin
+        .from('remote_instances').select('site_id').eq('id', instance_id).single();
+      if (instanceError || !instance || instance.site_id !== site_id) {
+        return NextResponse.json({ success: false, error: { code: 'INVALID_INSTANCE_SITE', message: 'Instance does not belong to this site' } }, { status: 400 });
+      }
+    }
+
+    const selection = robotSkillSelectionSchema.safeParse(body);
+    if (!selection.success) {
+      return NextResponse.json({ success: false, error: { code: 'INVALID_SKILL_SELECTION', message: 'Invalid skill_mode or skill_slugs' } }, { status: 400 });
+    }
+    try {
+      await resolveRobotSkills(site_id, selection.data);
+    } catch {
+      return NextResponse.json({ success: false, error: { code: 'INVALID_SKILL_SELECTION', message: 'Selected skill is not available for this site' } }, { status: 400 });
+    }
+
     console.log(`🤖 Ejecutando workflow Start Robot para sitio: ${site_id}`);
     console.log(`⚙️ Actividad: ${activity}`);
     if (user_id) {
@@ -84,7 +109,9 @@ export async function POST(request: NextRequest) {
       user_id,
       instance_id,
       message,
-      context
+      context,
+      skill_mode: selection.data.skill_mode,
+      skill_slugs: selection.data.skill_slugs
     };
 
     // Opciones de ejecución del workflow
@@ -155,7 +182,9 @@ export async function GET() {
       user_id: 'string - UUID del usuario que solicita el robot (opcional)',
       instance_id: 'string - ID de instancia preexistente a asociar (opcional)',
       message: 'string - Mensaje inicial para el robot (opcional)',
-      context: 'string - Contexto adicional para el robot (opcional)'
+      context: 'string - Contexto adicional para el robot (opcional)',
+      skill_mode: 'auto | required (opcional; auto por defecto)',
+      skill_slugs: 'string[] - slugs de habilidades de este sitio (obligatorio en modo required)'
     },
     robotTypes: {
       'sales-bot': 'Robot especializado en procesos de ventas',

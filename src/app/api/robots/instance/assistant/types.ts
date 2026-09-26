@@ -1,5 +1,6 @@
 import type { UiMediaOutputType } from './ui-media-contract';
 import type { WorkflowToolExecutionTracker } from '@/lib/services/workflow-robot/execution-tracker';
+import type { AssistantSkillSelection } from './skill-selection';
 
 export interface AssistantContext {
   instance: any;
@@ -32,4 +33,8 @@ export interface AssistantContext {
   toolOverrides?: Record<string, any>;
   uiMediaOutputType?: UiMediaOutputType;
   toolExecutionTracker?: WorkflowToolExecutionTracker;
+  /** Only expose plan_result while building a channel pre-response. */
+  preResponseOnly?: boolean;
+  selectedSkills?: AssistantSkillSelection;
+  approvedImport?: { url: string; sha256: string; userId: string };
 }

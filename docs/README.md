@@ -17,6 +17,8 @@ Read these first when changing the code-agent harness:
 
 ## Active integration guides
 
+- [Instance context manual setup](./INSTANCE_CONTEXT_MANUAL_SETUP.md) — migration and model-limit configuration for robot context compaction.
+
 These integrations still exist, but verify configuration details against the referenced implementation before operational changes:
 
 - [API-key authentication](./README-ApiKeyAuth.md) — active; middleware exceptions and environment behavior have evolved.

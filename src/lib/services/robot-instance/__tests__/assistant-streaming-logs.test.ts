@@ -11,6 +11,7 @@ const pipeline = {
 const mockHdel = jest.fn<() => Promise<number>>();
 const mockHvals = jest.fn<() => Promise<string[]>>();
 const mockUpdateEq: any = jest.fn();
+const mockUpdate: any = jest.fn(() => ({ eq: mockUpdateEq }));
 const mockSingle = jest.fn<() => Promise<{
   data: { id: string };
   error: null;
@@ -30,7 +31,7 @@ jest.mock('@/lib/database/supabase-client', () => ({
       insert: jest.fn(() => ({
         select: jest.fn(() => ({ single: mockSingle })),
       })),
-      update: jest.fn(() => ({ eq: mockUpdateEq })),
+      update: mockUpdate,
     })),
   },
 }));
@@ -63,6 +64,9 @@ describe('assistant streaming Redis snapshots', () => {
     await callbacks.onStreamChunk(id, 'one two three', true);
 
     expect(mockUpdateEq).toHaveBeenCalledTimes(2);
+    expect(mockUpdate).toHaveBeenLastCalledWith(expect.objectContaining({
+      message: 'one two three', details: expect.objectContaining({ streaming: false }),
+    }));
     expect(mockHdel).toHaveBeenCalledWith(
       'live:ai-stream:instance:instance-1',
       'log:log-1',

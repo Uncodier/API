@@ -224,6 +224,7 @@ export async function runVisualCritic(input: VisualCriticInput): Promise<VisualC
     let parsed: ReturnType<typeof parseVisualCriticVerdict> = null;
     let batchFailure = 'parse_error';
     let requestFailure = '';
+    let previousResponseTruncated = false;
     for (
       let attempt = 0;
       attempt < MAX_COMPLETION_ATTEMPTS && !abortController.signal.aborted;
@@ -242,6 +243,7 @@ export async function runVisualCritic(input: VisualCriticInput): Promise<VisualC
           system: systemPrompt,
           content: [...userBlocks, ...retryInstruction],
           signal: abortController.signal,
+          ...(previousResponseTruncated ? { maxOutputTokens: 2_400 } : {}),
         });
         finalModelUsed = response.model;
         finalFinishReason = response.finishReason;
@@ -265,6 +267,7 @@ export async function runVisualCritic(input: VisualCriticInput): Promise<VisualC
         batchFailure = response.finishReason === 'length'
           ? 'truncated_response'
           : 'parse_error';
+        previousResponseTruncated = batchFailure === 'truncated_response';
         invalidResponseExcerpt = sanitizeTelemetryText(response.text)
           .replace(/\s+/g, ' ')
           .slice(0, 300);

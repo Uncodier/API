@@ -10,6 +10,7 @@ import {
   SILENT_CONTINUE_PROMPT,
 } from '@/lib/services/robot-instance/assistant-respawn';
 import { countRecentRespawnsStep, spawnSilentContinueStep } from './assistant-respawn-steps';
+import type { AssistantSkillSelection } from './skill-selection';
 
 // Define the workflow step
 export async function runAssistantWorkflow(
@@ -26,7 +27,7 @@ export async function runAssistantWorkflow(
   expectedResultsAmount?: number,
   contextString?: string,
   toolOverrides?: Record<string, any>,
-  options?: { silentContinue?: boolean }
+   options?: { silentContinue?: boolean; selectedSkills?: AssistantSkillSelection; approvedImport?: { url: string; sha256: string; userId: string } }
 ) {
   'use workflow';
 
@@ -37,11 +38,13 @@ export async function runAssistantWorkflow(
     if (!isSilentContinue) {
       const logResult = await persistUserMessageStep(instanceId, message, siteId, userId, {
         prompt_source: 'assistant_workflow',
+        selected_skills: options?.selectedSkills?.skills.map(({ slug, version }) => ({ slug, version })) ?? [],
       });
       userMessageLogId = logResult.id;
     }
 
-  // Step 1: Prepare context
+  // Step 1: Prepare context, including automatic history assessment and
+  // conditional durable summarization before the first model request.
   const context = await prepareAssistantContext(
     instanceId,
     message,
@@ -55,7 +58,9 @@ export async function runAssistantWorkflow(
     instanceNodeId,
     expectedResultsAmount,
     contextString,
-    toolOverrides
+    toolOverrides,
+    options?.selectedSkills,
+    options?.approvedImport,
   );
 
   let isDone = false;
@@ -136,6 +141,7 @@ export async function runAssistantWorkflow(
         instanceNodeId,
         expectedResultsAmount,
         contextString,
+        selectedSkills: options?.selectedSkills,
       });
       return {
         instance_id: instanceId,

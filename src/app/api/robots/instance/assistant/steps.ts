@@ -1,5 +1,6 @@
 'use step';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { InstanceContextManager } from '@/lib/services/robot-instance/InstanceContextManager';
 import { findAssistantManagedPlan } from '@/lib/services/workflow-robot/plan-ownership';
 import { InstanceAssetsService } from '@/lib/services/robot-instance/InstanceAssetsService';
 import {
@@ -17,6 +18,7 @@ import {
 import type { AssistantContext } from './types';
 import { loadAssistantRequirementContext } from './requirement-context';
 import { resolveUiMediaContract } from './ui-media-contract';
+import { requiredSkillsPrompt, type AssistantSkillSelection } from './skill-selection';
 
 export async function prepareAssistantContext(
   instanceId: string,
@@ -31,7 +33,9 @@ export async function prepareAssistantContext(
   instanceNodeId?: string,
     expectedResultsAmount?: number,
     contextString?: string,
-    toolOverrides?: Record<string, any>
+    toolOverrides?: Record<string, any>,
+    selectedSkills?: AssistantSkillSelection,
+    approvedImport?: { url: string; sha256: string; userId: string },
   ): Promise<AssistantContext> {
   'use step';
   // We need to fetch the instance data inside the workflow to ensure we have the latest state
@@ -58,52 +62,6 @@ export async function prepareAssistantContext(
 
   // Log execution start
   console.log(`[Workflow] Starting assistant execution for instance: ${instanceId}`);
-
-  // Fetch historical logs
-  const { data: rawHistoricalLogs } = await supabaseAdmin
-    .from('instance_logs')
-    .select('log_type, message, created_at, tool_name, tool_result, details')
-    .eq('instance_id', instanceId)
-    .in('log_type', ['user_action', 'agent_action', 'execution_summary', 'tool_call'])
-    .order('created_at', { ascending: false })
-    .limit(50);
-
-  const historicalLogs = (rawHistoricalLogs ? [...rawHistoricalLogs].reverse() : []).filter(
-    (log) => !(log.log_type === 'user_action' && log.details?.status === 'queued')
-  );
-
-  // Build history context
-  let historyContext = '';
-  if (historicalLogs && historicalLogs.length > 0) {
-    historyContext = '\n\n📋 CONVERSATION HISTORY:\n';
-    historicalLogs.forEach((log) => {
-      const timestamp = new Date(log.created_at).toLocaleTimeString();
-      const role = log.log_type === 'user_action' ? 'User' : 'Assistant';
-      
-      if (log.log_type === 'tool_call' && log.tool_name && log.tool_result) {
-        if (['generate_image', 'generate_video'].includes(log.tool_name)) {
-            const toolResult = log.tool_result;
-            const outputKey = log.tool_name === 'generate_image' ? 'images' : 'videos';
-            if (toolResult.success && toolResult.output && toolResult.output[outputKey]) {
-              const urls = toolResult.output[outputKey].map((item: any) => item.url).filter(Boolean);
-              if (urls.length > 0) {
-                historyContext += `[${timestamp}] ${role}: Generated ${log.tool_name} - URLs: ${urls.join(', ')}\n`;
-              } else {
-                historyContext += `[${timestamp}] ${role}: ${log.message.substring(0, 150)}${log.message.length > 150 ? '...' : ''}\n`;
-              }
-            } else {
-              historyContext += `[${timestamp}] ${role}: ${log.message.substring(0, 150)}${log.message.length > 150 ? '...' : ''}\n`;
-            }
-        } else {
-          const resultStr = typeof log.tool_result === 'string' ? log.tool_result : JSON.stringify(log.tool_result);
-          const truncatedResult = resultStr.substring(0, 300) + (resultStr.length > 300 ? '...' : '');
-          historyContext += `[${timestamp}] ${role}: Tool ${log.tool_name} called with args: ${log.message.substring(0, 150)}${log.message.length > 150 ? '...' : ''} -> Result: ${truncatedResult}\n`;
-        }
-      } else {
-        historyContext += `[${timestamp}] ${role}: ${log.message.substring(0, 150)}${log.message.length > 150 ? '...' : ''}\n`;
-      }
-    });
-  }
 
   // Determine execution parameters
   const { isScrapybaraInstance, shouldUseSDKTools, provider, capabilities } = determineInstanceCapabilities(instance, useSdkTools);
@@ -229,6 +187,15 @@ export async function prepareAssistantContext(
   // Generate prompts
   const agentBackground = await generateAgentBackground(siteId, userId);
   const memoriesContext = await fetchMemoriesContext(siteId, userId, instanceId);
+  const historyContext = instanceNodeId || (systemPrompt || '').includes('WORKFLOW MODE')
+    ? ''
+    : await new InstanceContextManager(instanceId, siteId)
+        .buildHistory(message, finalProvider, finalProvider === 'azure'
+          ? process.env.MICROSOFT_AZURE_OPENAI_DEPLOYMENT || 'gpt-4o'
+          : process.env.AI_MODEL || (finalProvider === 'gemini' ? 'gemini-3.1-pro-preview'
+            : finalProvider === 'xai'
+              ? (process.env.GOOGLE_CLOUD_PROJECT_ID && !process.env.XAI_API_KEY ? 'xai/grok-4.6' : 'grok-4.6')
+              : 'gpt-4o'));
   
   // Get tools list just for counting/prompt purposes here
   // We do NOT pass these instantiated tools in the return value to avoid serialization issues
@@ -403,6 +370,7 @@ Follow the loaded SKILL.md playbooks before calling tools via \`tools\`. \`skill
         instanceContext,
         toolsRouterInstruction,
         skillLookupInstruction,
+        requiredSkillsPrompt(selectedSkills),
       ].filter(Boolean).join('\n')
     : [
     agentBackground,
@@ -413,13 +381,14 @@ Follow the loaded SKILL.md playbooks before calling tools via \`tools\`. \`skill
     systemPrompt || '',
     toolsRouterInstruction,
     skillLookupInstruction,
+    requiredSkillsPrompt(selectedSkills),
     commerceInstruction,
     planModeInstruction,
     activePlanInstruction,
     whatsappInstruction,
     generationInstruction,
     memoriesContext,
-    instanceNodeId ? '' : historyContext,
+    instanceNodeId || !historyContext ? '' : `INSTANCE_HISTORY_START\n${historyContext}\nINSTANCE_HISTORY_END`,
     requirementStatusContext,
     progressContext,
     backlogContext,
@@ -462,5 +431,7 @@ Follow the loaded SKILL.md playbooks before calling tools via \`tools\`. \`skill
     expectedResultsAmount: expectedResultsAmount || 1,
     toolOverrides: uiMediaContract?.toolOverrides ?? toolOverrides,
     uiMediaOutputType: uiMediaContract?.outputType,
+    selectedSkills,
+    approvedImport,
   };
 }

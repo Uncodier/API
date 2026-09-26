@@ -9,12 +9,33 @@ export interface SkillMetadata {
   description: string;
   types?: string[];
   content: string;
+  /** Site-owned catalog records have a database ID; bundled skills do not. */
+  id?: string;
 }
 
 export class SkillsService {
   private static cachedSkills: SkillMetadata[] | null = null;
   private static cachedSkillEmbeddings: Map<string, number[]> | null = null;
   private static embeddingsInitPromise: Promise<void> | null = null;
+
+  /** Never expose another site's skills; imported/custom slugs cannot shadow bundled skills. */
+  static async listSkillsForSite(siteId: string, requirementType?: string): Promise<SkillMetadata[]> {
+    const { listSiteSkills } = await import('./site-skills-catalog');
+    const custom = await listSiteSkills(siteId);
+    const bundled = this.listSkills();
+    const bundledSlugs = new Set(bundled.map(skill => skill.slug.toLowerCase()));
+    const skills: SkillMetadata[] = [...custom.filter(skill => skill.enabled && !bundledSlugs.has(skill.slug.toLowerCase())), ...bundled];
+    return requirementType
+      ? skills.filter(skill => !skill.types?.length || skill.types.includes(requirementType))
+      : skills;
+  }
+
+  static async getSkillBySlugForSite(siteId: string, slugOrName: string): Promise<SkillMetadata | null> {
+    const key = slugOrName.trim().toLowerCase();
+    if (!key) return null;
+    const skills = await this.listSkillsForSite(siteId);
+    return skills.find(skill => skill.slug.toLowerCase() === key || skill.name.toLowerCase() === key) ?? null;
+  }
 
   static listSkills(): SkillMetadata[] {
     if (this.cachedSkills) return this.cachedSkills;

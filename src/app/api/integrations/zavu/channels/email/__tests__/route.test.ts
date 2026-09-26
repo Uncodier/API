@@ -1,27 +1,36 @@
 import { NextRequest } from "next/server";
-import { POST, PUT } from "../route";
-import * as zavu from "@/lib/services/zavu";
+import { jest } from "@jest/globals";
 
-jest.mock("@/lib/services/zavu", () => ({
-  createSender: jest.fn(),
-  updateSender: jest.fn(),
-  attachSenderToAgent: jest.fn(),
-  upsertChannelConnection: jest.fn(),
-  ensureSenderWebhook: jest.fn(),
-  getChannelConnection: jest.fn(),
-  requireZavuSiteManager: jest.fn(),
-}));
+const mockFunction = () => jest.fn<(...args: any[]) => any>();
+const zavu = {
+  createSender: mockFunction(),
+  updateSender: mockFunction(),
+  attachSenderToAgent: mockFunction(),
+  upsertChannelConnection: mockFunction(),
+  ensureSenderWebhook: mockFunction(),
+  getChannelConnection: mockFunction(),
+  requireZavuSiteManager: mockFunction(),
+  verifyEmailDomain: mockFunction(),
+};
 
-jest.mock("@/lib/utils/token-encryption", () => ({
+jest.unstable_mockModule("@/lib/services/zavu", () => zavu);
+jest.unstable_mockModule("@/lib/utils/token-encryption", () => ({
   encryptToken: jest.fn((value) => `enc:${value}`),
 }));
+
+let POST: typeof import("../route").POST;
+let PUT: typeof import("../route").PUT;
+
+beforeAll(async () => {
+  ({ POST, PUT } = await import("../route"));
+});
 
 describe("POST /api/integrations/zavu/channels/email", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    (zavu.requireZavuSiteManager as jest.Mock).mockResolvedValue(undefined);
-    (zavu.getChannelConnection as jest.Mock).mockResolvedValue(null);
-    (zavu.createSender as jest.Mock).mockResolvedValue({
+    zavu.requireZavuSiteManager.mockResolvedValue(undefined);
+    zavu.getChannelConnection.mockResolvedValue(null);
+    zavu.createSender.mockResolvedValue({
       id: "snd_1",
       channels: [],
       webhook: {
@@ -31,8 +40,8 @@ describe("POST /api/integrations/zavu/channels/email", () => {
         secret: "whsec_1",
       },
     });
-    (zavu.attachSenderToAgent as jest.Mock).mockResolvedValue(null);
-    (zavu.upsertChannelConnection as jest.Mock).mockResolvedValue({
+    zavu.attachSenderToAgent.mockResolvedValue(null);
+    zavu.upsertChannelConnection.mockResolvedValue({
       channelId: "channel_1",
     });
   });
@@ -72,6 +81,77 @@ describe("POST /api/integrations/zavu/channels/email", () => {
       channels: [],
     });
   });
+
+  it("does not persist when updating a reused sender fails", async () => {
+    zavu.getChannelConnection.mockResolvedValue({
+      id: "channel_1",
+      type: "email",
+      zavu_sender_id: "snd_1",
+      metadata: { email_domain_id: "domain_1" },
+    });
+    zavu.verifyEmailDomain.mockResolvedValue({ id: "domain_1", status: "verified" });
+    zavu.updateSender.mockRejectedValue(new Error("vendor detail"));
+
+    const request = new NextRequest(
+      "http://localhost/api/integrations/zavu/channels/email",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          siteId: "site_1",
+          channelId: "channel_1",
+          name: "Email",
+          emailAddress: "team@mail.example.com",
+          emailFromName: "Example",
+          emailDomainId: "domain_1",
+        }),
+      }
+    );
+    const response = await POST(request);
+
+    expect(response.status).toBe(502);
+    expect(zavu.ensureSenderWebhook).not.toHaveBeenCalled();
+    expect(zavu.upsertChannelConnection).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.not.toEqual(
+      expect.objectContaining({ error: expect.stringContaining("vendor detail") })
+    );
+  });
+
+  it("rejects invalid payloads before authorization or Zavu calls", async () => {
+    const request = new NextRequest(
+      "http://localhost/api/integrations/zavu/channels/email",
+      { method: "POST", body: "not-json" }
+    );
+
+    const response = await POST(request);
+
+    expect(response.status).toBe(400);
+    expect(zavu.requireZavuSiteManager).not.toHaveBeenCalled();
+    expect(zavu.createSender).not.toHaveBeenCalled();
+  });
+
+  it("preserves authorization failures", async () => {
+    const error = Object.assign(new Error("Forbidden"), { status: 403 });
+    zavu.requireZavuSiteManager.mockRejectedValue(error);
+    const request = new NextRequest(
+      "http://localhost/api/integrations/zavu/channels/email",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          siteId: "site_1",
+          channelId: "channel_1",
+          name: "Email",
+          emailAddress: "team@mail.example.com",
+          emailFromName: "Example",
+          emailDomainId: "domain_1",
+        }),
+      }
+    );
+
+    const response = await POST(request);
+
+    expect(response.status).toBe(403);
+    expect(zavu.createSender).not.toHaveBeenCalled();
+  });
 });
 
 function receivingRequest(emailReceivingEnabled: unknown = true) {
@@ -92,19 +172,21 @@ function receivingRequest(emailReceivingEnabled: unknown = true) {
 describe("PUT /api/integrations/zavu/channels/email", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    (zavu.requireZavuSiteManager as jest.Mock).mockResolvedValue(undefined);
-    (zavu.getChannelConnection as jest.Mock).mockResolvedValue({
+    zavu.requireZavuSiteManager.mockResolvedValue(undefined);
+    zavu.getChannelConnection.mockResolvedValue({
       id: "channel_1",
       type: "email",
       zavu_sender_id: "snd_1",
+      metadata: { email_domain_id: "domain_1" },
     });
-    (zavu.upsertChannelConnection as jest.Mock).mockResolvedValue({
+    zavu.verifyEmailDomain.mockResolvedValue({ id: "domain_1", status: "verified" });
+    zavu.upsertChannelConnection.mockResolvedValue({
       channelId: "channel_1",
     });
   });
 
   it("updates Zavu and persists only the remotely confirmed value", async () => {
-    (zavu.updateSender as jest.Mock).mockResolvedValue({
+    zavu.updateSender.mockResolvedValue({
       id: "snd_1",
       emailReceivingEnabled: true,
     });
@@ -114,19 +196,20 @@ describe("PUT /api/integrations/zavu/channels/email", () => {
 
     expect(response.status).toBe(200);
     expect(zavu.requireZavuSiteManager).toHaveBeenCalledWith(expect.any(NextRequest), "site_1");
+    expect(zavu.verifyEmailDomain).toHaveBeenCalledWith("domain_1");
     expect(zavu.updateSender).toHaveBeenCalledWith("snd_1", {
       emailReceivingEnabled: true,
     });
     expect(zavu.upsertChannelConnection).toHaveBeenCalledWith(
       "site_1",
       "channel_1",
-      { metadata: { emailReceivingEnabled: true } }
+      { metadata: { emailReceivingEnabled: true, mx_verified: true } }
     );
     expect(payload.sender.emailReceivingEnabled).toBe(true);
   });
 
   it("returns and persists false when Zavu refuses receiving", async () => {
-    (zavu.updateSender as jest.Mock).mockResolvedValue({
+    zavu.updateSender.mockResolvedValue({
       id: "snd_1",
       emailReceivingEnabled: false,
     });
@@ -138,9 +221,72 @@ describe("PUT /api/integrations/zavu/channels/email", () => {
     expect(zavu.upsertChannelConnection).toHaveBeenCalledWith(
       "site_1",
       "channel_1",
-      { metadata: { emailReceivingEnabled: false } }
+      { metadata: { emailReceivingEnabled: false, mx_verified: false } }
     );
     expect(payload.sender.emailReceivingEnabled).toBe(false);
+  });
+
+  it("refreshes Zavu MX verification before enabling receiving", async () => {
+    const calls: string[] = [];
+    zavu.verifyEmailDomain.mockImplementation(async () => {
+      calls.push("verify");
+      return { id: "domain_1", status: "verified" };
+    });
+    zavu.updateSender.mockImplementation(async () => {
+      calls.push("update");
+      return { id: "snd_1", emailReceivingEnabled: true };
+    });
+
+    const response = await PUT(receivingRequest());
+
+    expect(response.status).toBe(200);
+    expect(calls).toEqual(["verify", "update"]);
+  });
+
+  it("does not enable receiving when Zavu MX verification fails", async () => {
+    zavu.verifyEmailDomain.mockRejectedValue(new Error("MX has not propagated"));
+
+    const response = await PUT(receivingRequest());
+
+    expect(response.status).toBe(502);
+    expect(zavu.updateSender).not.toHaveBeenCalled();
+    expect(zavu.upsertChannelConnection).not.toHaveBeenCalled();
+  });
+
+  it("returns an actionable pending state without enabling receiving", async () => {
+    zavu.verifyEmailDomain.mockResolvedValue({
+      id: "domain_1",
+      status: "pending",
+      dnsRecords: [{ type: "MX" }],
+    });
+
+    const response = await PUT(receivingRequest());
+    const payload = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(payload.error).toMatch(/retry Verify MX/);
+    expect(zavu.updateSender).not.toHaveBeenCalled();
+    expect(zavu.upsertChannelConnection).toHaveBeenCalledWith(
+      "site_1",
+      "channel_1",
+      { metadata: {
+        domain_status: "pending",
+        dns_records: [{ type: "MX" }],
+        mx_verified: false,
+      } }
+    );
+  });
+
+  it("does not persist a response for a different remote sender", async () => {
+    zavu.updateSender.mockResolvedValue({
+      id: "snd_other",
+      emailReceivingEnabled: true,
+    });
+
+    const response = await PUT(receivingRequest());
+
+    expect(response.status).toBe(502);
+    expect(zavu.upsertChannelConnection).not.toHaveBeenCalled();
   });
 
   it("rejects non-boolean values before calling Zavu", async () => {
@@ -151,7 +297,7 @@ describe("PUT /api/integrations/zavu/channels/email", () => {
   });
 
   it("rejects a sender that does not belong to the channel", async () => {
-    (zavu.getChannelConnection as jest.Mock).mockResolvedValue({
+    zavu.getChannelConnection.mockResolvedValue({
       id: "channel_1",
       type: "email",
       zavu_sender_id: "snd_other",
@@ -165,7 +311,7 @@ describe("PUT /api/integrations/zavu/channels/email", () => {
 
   it("preserves authorization failures and does not call Zavu", async () => {
     const error = Object.assign(new Error("Forbidden"), { status: 403 });
-    (zavu.requireZavuSiteManager as jest.Mock).mockRejectedValue(error);
+    zavu.requireZavuSiteManager.mockRejectedValue(error);
 
     const response = await PUT(receivingRequest());
 

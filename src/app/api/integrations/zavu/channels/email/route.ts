@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { createSender, updateSender, attachSenderToAgent, upsertChannelConnection, ensureSenderWebhook, getChannelConnection, requireZavuSiteManager } from "@/lib/services/zavu";
+import { createSender, updateSender, attachSenderToAgent, upsertChannelConnection, ensureSenderWebhook, getChannelConnection, requireZavuSiteManager, verifyEmailDomain } from "@/lib/services/zavu";
 import { encryptToken } from "@/lib/utils/token-encryption";
-import dns from "dns/promises";
 
 const receivingUpdateSchema = z.object({
   siteId: z.string().min(1),
@@ -11,9 +10,41 @@ const receivingUpdateSchema = z.object({
   emailReceivingEnabled: z.boolean(),
 });
 
+const emailConnectionSchema = z.object({
+  siteId: z.string().min(1),
+  channelId: z.string().min(1),
+  name: z.string().trim().min(1).optional(),
+  emailAddress: z.string().email(),
+  emailFromName: z.string().trim().min(1),
+  emailDomainId: z.string().min(1),
+});
+
+async function parseJson(request: NextRequest) {
+  try {
+    return { ok: true as const, value: await request.json() };
+  } catch {
+    return { ok: false as const };
+  }
+}
+
+function zavuFailure(operation: string, error: unknown) {
+  console.error(`[Zavu] ${operation}:`, error);
+  return NextResponse.json(
+    { error: `Zavu could not ${operation.toLowerCase()}` },
+    { status: 502 }
+  );
+}
+
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
+    const json = await parseJson(request);
+    if (!json.ok) {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
+    const parsed = emailConnectionSchema.safeParse(json.value);
+    if (!parsed.success) {
+      return NextResponse.json({ error: "Invalid email channel configuration" }, { status: 400 });
+    }
     const {
       siteId,
       channelId: existingChannelId,
@@ -21,29 +52,34 @@ export async function POST(request: NextRequest) {
       emailAddress,
       emailFromName,
       emailDomainId,
-    } = body;
-
-    if (!siteId) {
-      return NextResponse.json({ error: "siteId is required" }, { status: 400 });
-    }
-
-    if (!emailAddress) {
-      return NextResponse.json({ error: "emailAddress is required" }, { status: 400 });
-    }
+    } = parsed.data;
     await requireZavuSiteManager(request, siteId);
 
     let sender;
     const existingConnection = await getChannelConnection(siteId, existingChannelId);
+    if (existingConnection && existingConnection.type !== "email") {
+      return NextResponse.json(
+        { error: "Channel connection is not an email channel" },
+        { status: 409 }
+      );
+    }
     if (existingConnection?.zavu_sender_id) {
-      sender = { id: existingConnection.zavu_sender_id };
       try {
-        await updateSender(existingConnection.zavu_sender_id, {
+        sender = await updateSender(existingConnection.zavu_sender_id, {
           emailAddress,
           emailFromName,
         });
-        sender = await ensureSenderWebhook(existingConnection.zavu_sender_id);
-      } catch (err) {
-        console.warn("[Zavu] Error ensuring webhook on reused sender:", err);
+      } catch (error) {
+        return zavuFailure("update the email sender", error);
+      }
+      if (sender?.id !== existingConnection.zavu_sender_id) {
+        return NextResponse.json({ error: "Zavu returned a different sender" }, { status: 502 });
+      }
+      try {
+        const webhookSender = await ensureSenderWebhook(existingConnection.zavu_sender_id);
+        if (webhookSender?.id === sender.id) sender = { ...sender, ...webhookSender };
+      } catch (error) {
+        console.warn("[Zavu] Error ensuring webhook on reused sender:", error);
       }
     }
 
@@ -57,13 +93,12 @@ export async function POST(request: NextRequest) {
           emailReceivingEnabled: false,
         });
       } catch (zavuError: any) {
-        console.error("[Zavu] Error creating sender for Email:", zavuError);
-        const errorMessage = `Zavu API Error: ${zavuError.message || "Unknown error"}`;
-        return NextResponse.json(
-          { error: errorMessage },
-          { status: zavuError.status || 502 }
-        );
+        return zavuFailure("create the email sender", zavuError);
       }
+    }
+
+    if (!sender?.id) {
+      return NextResponse.json({ error: "Zavu returned an invalid sender" }, { status: 502 });
     }
 
     try {
@@ -116,7 +151,11 @@ export async function POST(request: NextRequest) {
 
 export async function PUT(request: NextRequest) {
   try {
-    const parsed = receivingUpdateSchema.safeParse(await request.json());
+    const json = await parseJson(request);
+    if (!json.ok) {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
+    const parsed = receivingUpdateSchema.safeParse(json.value);
     if (!parsed.success) {
       return NextResponse.json({ error: "Invalid email receiving update" }, { status: 400 });
     }
@@ -134,22 +173,55 @@ export async function PUT(request: NextRequest) {
       );
     }
 
+    if (emailReceivingEnabled) {
+      const emailDomainId = connection.metadata?.email_domain_id;
+      if (!emailDomainId) {
+        return NextResponse.json(
+          { error: "Email domain is not configured for this channel" },
+          { status: 409 }
+        );
+      }
+      try {
+        const verifiedDomain = await verifyEmailDomain(emailDomainId);
+        if (verifiedDomain?.id && verifiedDomain.id !== emailDomainId) {
+          return NextResponse.json(
+            { error: "Zavu returned a different email domain" },
+            { status: 502 }
+          );
+        }
+        if (verifiedDomain?.status !== "verified") {
+          await upsertChannelConnection(siteId, channelId, {
+            metadata: {
+              domain_status: verifiedDomain?.status || "pending",
+              dns_records: verifiedDomain?.dnsRecords || connection.metadata?.dns_records || [],
+              mx_verified: false,
+            },
+          });
+          return NextResponse.json(
+            {
+              error: "The MX record is not verified in Zavu yet. Check DNS propagation and retry Verify MX.",
+              domain: verifiedDomain,
+            },
+            { status: 409 }
+          );
+        }
+      } catch (zavuError) {
+        return zavuFailure("verify the MX record before enabling receiving", zavuError);
+      }
+    }
+
     let sender;
     try {
       sender = await updateSender(senderId, {
         emailReceivingEnabled,
       });
     } catch (zavuError: any) {
-      console.error("[Zavu] Error updating sender for Email:", zavuError);
-      return NextResponse.json(
-        { error: `Zavu API Error: ${zavuError.message || "Unknown error"}` },
-        { status: zavuError.status || 502 }
-      );
+      return zavuFailure("update email receiving", zavuError);
     }
 
-    if (typeof sender?.emailReceivingEnabled !== "boolean") {
+    if (sender?.id !== senderId || typeof sender?.emailReceivingEnabled !== "boolean") {
       return NextResponse.json(
-        { error: "Zavu did not confirm the email receiving status" },
+        { error: "Zavu did not confirm the email receiving update" },
         { status: 502 }
       );
     }
@@ -159,6 +231,7 @@ export async function PUT(request: NextRequest) {
     await upsertChannelConnection(siteId, channelId, {
       metadata: {
         emailReceivingEnabled: applied,
+        ...(emailReceivingEnabled ? { mx_verified: applied } : {}),
       },
     });
 

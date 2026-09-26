@@ -134,6 +134,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   let wrapUpAttempted = false;
   let wrapUpReason: string | null = null;
   let wrapUpRequiresUserFeedback = false;
+  let tenantProvisioningFailed = false;
   let cycleOutcome: CronCycleOutcome = 'idle';
   let preservePausedState = false;
   let hasRunnableBacklog = false;
@@ -434,20 +435,28 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   // app can call `/api/platform/*` via the SDK without ever holding raw
   // service credentials. Idempotent: reuses any active key already linked to
   // the remote_instance.
-  const platformKeyResult = await provisionPlatformKeyStep({
-    sandboxId: sandboxId!,
-    requirementId: reqId,
-    siteId: site_id,
-    userId: user_id,
-    instanceId,
-    branchName: requirementFlow.delivery.validate_deployment
-      ? branchName
-      : undefined,
-    authProvider: requirementFlow.delivery.provision_app_tenant
-      ? 'supabase'
-      : null,
-    gitRepoKind,
-  });
+  let platformKeyResult: Awaited<ReturnType<typeof provisionPlatformKeyStep>>;
+  try {
+    platformKeyResult = await provisionPlatformKeyStep({
+      sandboxId: sandboxId!,
+      requirementId: reqId,
+      siteId: site_id,
+      userId: user_id,
+      instanceId,
+      branchName: requirementFlow.delivery.validate_deployment
+        ? branchName
+        : undefined,
+      authProvider: requirementFlow.delivery.provision_app_tenant
+        ? 'supabase'
+        : null,
+      gitRepoKind,
+    });
+  } catch (error: unknown) {
+    if (requirementFlow.delivery.provision_app_tenant) {
+      tenantProvisioningFailed = true;
+    }
+    throw error;
+  }
   const provisionedEnvKeys = platformKeyResult.injected_env_keys;
 
   if (requirementFlow.delivery.provision_tracking_script) {
@@ -1475,7 +1484,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       cycleOutcome = 'infrastructure_retry';
     }
     wrapUpAttempted = false;
-    wrapUpRequiresUserFeedback = true;
+    wrapUpRequiresUserFeedback = !tenantProvisioningFailed;
     wrapUpReason = `The work cycle stopped because of an error: ${e?.message || String(e)}`;
     // Let the finally block handle the sandbox stop
     throw e;

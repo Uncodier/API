@@ -713,7 +713,7 @@ export async function POST(request: Request) {
     const defaultTools: any[] = [
       {
         "type": "function",
-        "function": skillLookupTool()
+        "function": skillLookupTool({ siteId: site_id })
       },
       {
         "type": "function",
@@ -834,7 +834,7 @@ export async function POST(request: Request) {
     if (!hasSkillLookup) {
       tools = [...tools, {
         type: "function",
-        function: skillLookupTool()
+        function: skillLookupTool({ siteId: site_id })
       }];
     }
       

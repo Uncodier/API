@@ -7,12 +7,14 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
     const secret = request.headers.get('x-workflow-secret') || request.headers.get('authorization');
     const expected = process.env.CRON_SECRET?.trim();
-    if (expected && secret !== `Bearer ${expected}` && secret !== expected) {
+    // CRON_SECRET must be configured to enable DB-event dispatch; an unset
+    // secret must not make the service-role dispatcher publicly callable.
+    if (!expected || (secret !== `Bearer ${expected}` && secret !== expected)) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+    const body = await request.json();
     if (!body.table || !body.op || !body.site_id || !body.row) {
       return NextResponse.json({ error: 'table, op, site_id, and row are required' }, { status: 400 });
     }

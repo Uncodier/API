@@ -1,4 +1,5 @@
-import { buildRunSteps } from '../graph';
+import { jest } from '@jest/globals';
+import { buildRunSteps, channelTriggerBranch } from '../graph';
 import { matchesFilter } from '../filter';
 import { listMcpCatalog } from '../mcp-catalog';
 import { isCronDueInWindow } from '../cron-window';
@@ -18,6 +19,21 @@ function node(partial: Partial<WorkflowGraphNode> & { id: string; type: string }
 }
 
 describe('buildRunSteps', () => {
+  test('selects all descendants of one trigger without executing sibling branches', () => {
+    const nodes = [
+      node({ id: 'trigger-a', type: 'wf-trigger' }),
+      node({ id: 'trigger-b', type: 'wf-trigger' }),
+      node({ id: 'a1', type: 'wf-step', parent_node_id: 'trigger-a' }),
+      node({ id: 'a2', type: 'wf-step', parent_node_id: 'a1' }),
+      node({ id: 'b1', type: 'wf-step', parent_node_id: 'trigger-b' }),
+      node({ id: 'orphan', type: 'wf-step' }),
+    ];
+    expect(buildRunSteps(channelTriggerBranch(nodes, 'trigger-a')).map((step) => step.metadata.node_id))
+      .toEqual(['a1', 'a2']);
+    expect(buildRunSteps(channelTriggerBranch(nodes, 'trigger-b')).map((step) => step.metadata.node_id))
+      .toEqual(['b1']);
+    expect(channelTriggerBranch(nodes, 'invalid')).toEqual([]);
+  });
   test('orders children after parents and copies mcp + sandbox flags', () => {
     const nodes: WorkflowGraphNode[] = [
       node({
@@ -49,9 +65,23 @@ describe('buildRunSteps', () => {
     expect(steps[0].metadata.node_id).toBe('a');
     expect(steps[1].title).toBe('Update lead');
     expect(steps[1].metadata.mcp_actions).toEqual([{ tool: 'leads', action: 'update' }]);
+    expect(steps[1].metadata.parent_node_id).toBe('a');
+    expect(steps[1].metadata.relation_context).toBe('on success');
     expect(steps[0].max_retries).toBe(2);
     expect(steps[0].recovery_plan).toBe('');
     expect(steps[1].max_retries).toBe(2);
+  });
+
+  test('copies custom relation context into the run plan without changing the step instructions', () => {
+    const steps = buildRunSteps([
+      node({ id: 'trigger', type: 'wf-trigger' }),
+      node({ id: 'child', type: 'wf-step', parent_node_id: 'trigger',
+        prompt: { text: 'Follow up' }, settings: { relation_context: 'on fail' } }),
+    ]);
+    expect(steps[0]).toMatchObject({
+      instructions: 'Follow up',
+      metadata: { parent_node_id: 'trigger', relation_context: 'on fail' },
+    });
   });
 
   test('copies max_retries and recovery_plan from settings.step', () => {

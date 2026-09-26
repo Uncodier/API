@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { WorkflowService } from '@/lib/services/workflow-service';
 import { fireWorkflowDispatch } from '@/lib/services/workflow-robot/dispatch';
 import { DB_EVENT_TABLES } from '@/lib/services/workflow-robot/types';
+import { isInternalServiceRequest } from '@/lib/security/request-rate-limit';
 import {
   buildWebhookEventNames,
   type WebhookMutationEvent,
@@ -48,6 +49,11 @@ function toEventType(changeType: DbChangePayload['type']): WebhookMutationEvent 
 }
 
 export async function POST(request: NextRequest) {
+  // Vault's workflow_webhook_api_key must be the server's SERVICE_API_KEY.
+  // Browser Origin and arbitrary tenant API keys cannot authenticate DB changes.
+  if (!isInternalServiceRequest(request)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   try {
     const body = (await request.json()) as DbChangePayload;
 

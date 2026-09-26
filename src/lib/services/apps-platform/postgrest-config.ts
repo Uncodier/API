@@ -15,9 +15,11 @@ export async function syncPostgrestSchemas(): Promise<{ ok: boolean; error?: str
     const appSchemas = tenants.map((t: { schema: string }) => t.schema);
     const db_schema = ['public', 'graphql_public', 'storage', ...appSchemas].join(',');
 
-    const url = process.env.REPOSITORY_SUPABASE_URL || process.env.APPS_SUPABASE_URL;
+    // Must match getAppsAdminClient() so the exposed schema list is updated
+    // on the same project that owns the tenant registry.
+    const url = process.env.APPS_SUPABASE_URL || process.env.REPOSITORY_SUPABASE_URL;
     if (!url) {
-      return { ok: false, error: 'REPOSITORY_SUPABASE_URL is not set' };
+      return { ok: false, error: 'APPS_SUPABASE_URL / REPOSITORY_SUPABASE_URL is not set' };
     }
     
     // Extract project ref from URL (e.g., https://ref.supabase.co)

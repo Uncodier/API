@@ -2,7 +2,10 @@ import type {
   ConsoleSignal,
   ConsoleSignalEntry,
 } from './step-iteration-signals';
-import { HARNESS_TRACKING_SCRIPT_URL } from './tracking-script-contract';
+import {
+  HARNESS_TRACKING_SCRIPT_URL,
+  LEGACY_TRACKING_SCRIPT_URL,
+} from './tracking-script-contract';
 
 export { HARNESS_TRACKING_SCRIPT_URL } from './tracking-script-contract';
 
@@ -11,13 +14,34 @@ export type HarnessTelemetryScope = {
   viewport: string;
 };
 
+// These are platform-owned tracking assets, not application dependencies. Match
+// origin and path; the tracking script may carry a version/cache-busting query.
+export const PLATFORM_TRACKING_SCRIPT_URLS = [
+  HARNESS_TRACKING_SCRIPT_URL,
+  LEGACY_TRACKING_SCRIPT_URL,
+  'https://backend.makinari.com/tracking.min.js',
+] as const;
+
+export function isPlatformTrackingScriptUrl(value: string | undefined): boolean {
+  if (!value) return false;
+  try {
+    const url = new URL(value);
+    return PLATFORM_TRACKING_SCRIPT_URLS.some((candidate) => {
+      const known = new URL(candidate);
+      return url.origin === known.origin &&
+        url.pathname === known.pathname;
+    });
+  } catch {
+    return false;
+  }
+}
+
 function referencesExactHarnessTrackingScript(
   value: string | undefined,
 ): boolean {
-  return typeof value === 'string' && (
-    value === HARNESS_TRACKING_SCRIPT_URL ||
-    value.startsWith(`${HARNESS_TRACKING_SCRIPT_URL}:`)
-  );
+  if (!value) return false;
+  // Browser console locations append ":line" to the script URL.
+  return isPlatformTrackingScriptUrl(value.replace(/:\d+(?::\d+)?$/, ''));
 }
 
 type FailedRequest = ConsoleSignal['failed_requests'][number];
@@ -117,9 +141,8 @@ export function dedupeFailedRequests(
 /**
  * The workflow injects this telemetry script itself. Its availability is not
  * controlled by generated application code, so a DNS/CDN outage must not fail
- * the product gate. Match the exact canonical URL even if application edits
- * remove the ownership marker; no other console or network failures are
- * suppressed.
+ * the product gate. Match only known platform tracking script paths even if
+ * application edits remove the ownership marker; keep all other failures.
  */
 export function filterHarnessOwnedTelemetry(input: {
   entries: ConsoleSignalEntry[];

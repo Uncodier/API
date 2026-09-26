@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { WorkflowService } from '@/lib/services/workflow-service';
+import { robotSkillSelectionSchema, resolveRobotSkills } from '@/lib/services/workflow/robot-skill-selection';
+import { supabaseAdmin } from '@/lib/database/supabase-client';
 
 interface PromptRobotWorkflowArgs {
   instance_id: string;
@@ -8,6 +10,8 @@ interface PromptRobotWorkflowArgs {
   site_id: string;
   context: string;
   activity: string;
+  skill_slugs?: string[];
+  skill_mode?: 'auto' | 'required';
 }
 
 interface WorkflowExecutionOptions {
@@ -87,6 +91,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // The workflow resumes the instance before calling /instance/act: enforce tenant ownership here.
+    const { data: instance, error: instanceError } = await supabaseAdmin
+      .from('remote_instances').select('site_id').eq('id', instance_id).single();
+    if (instanceError || !instance || instance.site_id !== site_id) {
+      return NextResponse.json({ success: false, error: { code: 'INVALID_INSTANCE_SITE', message: 'Instance does not belong to this site' } }, { status: 400 });
+    }
+
     if (!context || typeof context !== 'string') {
       console.error('❌ context requerido y debe ser una cadena');
       return NextResponse.json(
@@ -115,6 +126,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const selection = robotSkillSelectionSchema.safeParse(body);
+    if (!selection.success) {
+      return NextResponse.json({ success: false, error: { code: 'INVALID_SKILL_SELECTION', message: 'Invalid skill_mode or skill_slugs' } }, { status: 400 });
+    }
+    try {
+      await resolveRobotSkills(site_id, selection.data);
+    } catch {
+      return NextResponse.json({ success: false, error: { code: 'INVALID_SKILL_SELECTION', message: 'Selected skill is not available for this site' } }, { status: 400 });
+    }
+
     console.log(`🤖 Ejecutando workflow Prompt Robot para instancia: ${instance_id}`);
     console.log(`💬 Mensaje: ${message}`);
     console.log(`📊 Estado del paso: ${step_status}`);
@@ -132,7 +153,9 @@ export async function POST(request: NextRequest) {
       step_status,
       site_id,
       context,
-      activity
+      activity,
+      skill_mode: selection.data.skill_mode,
+      skill_slugs: selection.data.skill_slugs
     };
 
     // Opciones de ejecución del workflow

@@ -1,6 +1,6 @@
 export const WF_NODE_TYPES = ['wf-trigger', 'wf-step', 'wf-condition'] as const;
 
-export type WorkflowTriggerKind = 'cron' | 'db_event' | 'webhook' | 'manual';
+export type WorkflowTriggerKind = 'cron' | 'db_event' | 'webhook' | 'manual' | 'channel_message';
 
 export interface WorkflowTriggerConfig {
   kind: WorkflowTriggerKind;
@@ -8,6 +8,9 @@ export interface WorkflowTriggerConfig {
   table?: string;
   op?: 'insert' | 'update' | 'delete';
   filter?: Record<string, unknown>;
+  channel?: string;
+  connection_id?: string;
+  priority?: number;
 }
 
 export interface WorkflowStepSettings {
@@ -44,6 +47,7 @@ export interface MaterializeRunInput {
   trigger_id?: string | null;
   idempotency_key?: string | null;
   from_step_id?: string;
+  pre_response_only?: boolean;
 }
 
 export interface MaterializeRunResult {

@@ -125,6 +125,8 @@ interface StartRobotWorkflowArgs {
   instance_id?: string;
   message?: string;
   context?: string;
+  skill_slugs?: string[];
+  skill_mode?: 'auto' | 'required';
 }
 
 interface PromptRobotWorkflowArgs {
@@ -133,6 +135,8 @@ interface PromptRobotWorkflowArgs {
   step_status: string;
   site_id: string;
   context: string;
+  skill_slugs?: string[];
+  skill_mode?: 'auto' | 'required';
 }
 
 interface StopRobotWorkflowArgs {

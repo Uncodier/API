@@ -64,6 +64,21 @@ describe('visual critic client', () => {
     );
   });
 
+  it('raises the output budget only when requested for a truncated retry', async () => {
+    const create = jest.fn().mockResolvedValue({
+      model: 'gemini-2.5-flash',
+      choices: [{ finish_reason: 'stop', message: { content: '{"pass":true,"summary":"OK","defects":[]}' } }],
+    });
+    mockedOpenAI.mockImplementation(() => ({ chat: { completions: { create } } }));
+
+    await requestVisualCriticCompletion({
+      model: 'gemini-2.5-flash', system: 'Return JSON.', content: [],
+      signal: new AbortController().signal, maxOutputTokens: 2_400,
+    });
+
+    expect(create.mock.calls[0][0].max_tokens).toBe(2_400);
+  });
+
   it('falls back to JSON mode only when strict schemas are unsupported', async () => {
     const unsupported = Object.assign(
       new Error('response_format json_schema is unsupported'),
