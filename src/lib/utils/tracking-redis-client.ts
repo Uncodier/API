@@ -1,4 +1,5 @@
 import Redis from 'ioredis';
+import { parseRedisUrl } from './redis-options';
 
 let streamsClient: Redis | null = null;
 
@@ -12,12 +13,13 @@ export function getTrackingRedisClient(): Redis {
   }
 
   if (!streamsClient) {
-    streamsClient = new Redis(redisUrl, {
+    streamsClient = new Redis({
       retryStrategy: (times) => Math.min(times * 100, 10_000),
       maxRetriesPerRequest: 5,
       enableReadyCheck: true,
       connectTimeout: 15_000,
       lazyConnect: false,
+      ...parseRedisUrl(redisUrl),
     });
     streamsClient.on('error', (error) => {
       console.error('[Redis Streams] Connection error:', error);

@@ -1,4 +1,5 @@
 import Redis from 'ioredis';
+import { parseRedisUrl } from './redis-options';
 
 // Create a Redis client
 let redisClient: Redis | null = null;
@@ -21,9 +22,10 @@ export function getRedisClient(): Redis {
     isConnecting = true;
     try {
       const redisUrl = getCacheRedisUrl();
-      console.log(`[Redis Client] Attempting to connect to Redis at ${redisUrl.replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}`);
+      const connectionOptions = parseRedisUrl(redisUrl);
+      console.log(`[Redis Client] Attempting to connect to Redis at ${connectionOptions.host}:${connectionOptions.port}`);
       
-      redisClient = new Redis(redisUrl, {
+      redisClient = new Redis({
         retryStrategy: (times) => {
           // Retry with exponential backoff (max 10 seconds)
           const delay = Math.min(times * 100, 10000);
@@ -34,6 +36,7 @@ export function getRedisClient(): Redis {
         enableReadyCheck: true,
         connectTimeout: 15000, // 15 seconds
         lazyConnect: false, // Connect immediately
+        ...connectionOptions,
       });
 
       redisClient.on('error', (err) => {

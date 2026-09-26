@@ -1,18 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { CreditService, InsufficientCreditsError } from '@/lib/services/billing/CreditService';
+import { CreditService } from '@/lib/services/billing/CreditService';
 import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { start } from 'workflow/api';
 import { runAssistantWorkflow } from './workflow';
 import { resetRequirementOnUserAction } from '@/lib/services/requirement-cron-reset';
-import {
-  generateAgentBackground,
-  fetchMemoriesContext,
-  ICP_CATEGORY_IDS_INSTRUCTION
-} from './utils';
-import { InstanceAssetsService } from '@/lib/services/robot-instance/InstanceAssetsService';
-import { executeAssistant } from '@/lib/services/robot-instance/assistant-executor';
-import { insertUserActionLog, withRetries } from './user-message-log';
+import { insertUserActionLog, markRemoteInstanceError, withRetries } from './user-message-log';
+import { assistantResponseStream } from './response-stream';
 import { normalizePublishToolOverrides } from './publish-tool-overrides';
 import { approvedCommunityImport, assistantSkillSelectionSchema, resolveAssistantSkillSelection } from './skill-selection';
 import { canAccessSite } from '@/lib/security/site-access';
@@ -37,10 +31,12 @@ const AssistantSchema = z.object({
   system_prompt: z.string().optional(),
   context: z.string().optional(),
   tool_overrides: z.record(z.any()).optional(),
+  request_id: z.string().min(1).max(200).optional(),
   ...assistantSkillSelectionSchema.shape,
 });
 
 export async function POST(request: NextRequest) {
+  let failureContext: { instanceId: string; siteId: string; userId?: string | null; userMessageLogId?: string } | undefined;
   try {
     const rawBody = await request.json();
     // Do not log request payload: it can contain private context and prompts.
@@ -159,19 +155,16 @@ export async function POST(request: NextRequest) {
 
       console.log(`₍ᐢ•(ܫ)•ᐢ₎ Created uninstantiated instance: ${newInstance.id}`);
 
-      await withRetries(() => insertUserActionLog({
+      failureContext = { instanceId: newInstance.id, siteId: providedSiteId, userId };
+      const userAction = await withRetries(() => insertUserActionLog({
         instanceId: newInstance.id,
         siteId: providedSiteId,
         userId,
         message,
-        details: { is_creation: true },
+        details: { is_creation: true, request_id: parsedBody.request_id, status: 'running' },
       }));
+      failureContext.userMessageLogId = userAction.id;
 
-      // Prepare context for immediate execution (avoiding workflow overhead for initial creation response if speed is preferred, 
-      // but to be consistent with "use workflow", we could also use the workflow here. 
-      // However, for the very first message, users often expect immediate feedback.
-      // Let's use the workflow anyway to be "compatible with the framework" as requested.)
-      
       const workflowRun = await start(runAssistantWorkflow, [
         newInstance.id,
         message,
@@ -186,33 +179,10 @@ export async function POST(request: NextRequest) {
         expectedResults,
         parsedBody.context,
         normalizedToolOverrides,
-        { selectedSkills, approvedImport }
+        { selectedSkills, approvedImport, userMessageLogId: userAction.id }
       ]);
 
-      // Return the run information. The frontend might need to poll or we stream.
-      // However, since the user said "shouldn't change anything in front", 
-      // we attempt to wait for the result using the `result()` method if available on the run object in newer SDKs, 
-      // or we return the run ID and let the frontend adapt if needed. 
-      // BUT, since we can't easily change the frontend right now, 
-      // and Vercel Workflow is asynchronous...
-      
-      // OPTION: We wait for the result here manually by polling the workflow status?
-      // No, that's inefficient.
-      
-      // Let's see if we can just return the result of the workflow by NOT using `start` but calling it directly?
-      // No, `use workflow` functions MUST be called via `start`.
-      
-      // COMPROMISE: For now, we will return a response that LOOKS like the old one but with empty/processing status,
-      // OR we implement a poor-man's polling here to wait for the result (up to a timeout).
-      
-      // Check if we can stream the result
-      return new Response(workflowRun.readable, {
-          status: 200,
-          headers: {
-              'Content-Type': 'text/event-stream',
-              'X-Workflow-Run-Id': workflowRun.runId
-          }
-      });
+      return assistantResponseStream(workflowRun, newInstance.id, userAction.id, { signal: request.signal });
     }
 
     // CASE 2: Existing instance_id provided - Execute via Workflow
@@ -231,6 +201,7 @@ export async function POST(request: NextRequest) {
 
     const site_id = providedSiteId || instance.site_id;
     const user_id = providedUserId || instance.user_id;
+    failureContext = { instanceId: providedInstanceId, siteId: site_id, userId: user_id };
 
     const userAction = await withRetries(() => insertUserActionLog({
       instanceId: providedInstanceId,
@@ -238,8 +209,9 @@ export async function POST(request: NextRequest) {
       userId: user_id,
       message,
       skipDuplicateCheck: true,
-      details: { instance_status: instance.status || 'running' },
+      details: { instance_status: instance.status || 'running', request_id: parsedBody.request_id, status: 'running' },
     }));
+    failureContext.userMessageLogId = userAction.id;
     
     // Finish recovery before the workflow reads requirement/backlog state.
     await resetRequirementOnUserAction(
@@ -248,39 +220,43 @@ export async function POST(request: NextRequest) {
     );
 
     // Start the workflow
-  const workflowRun = await start(runAssistantWorkflow, [
-    providedInstanceId,
-    message,
-    site_id,
-    user_id,
-    customTools,
-    use_sdk_tools,
-    system_prompt,
-    undefined,
-    undefined,
-    providedNodeId,
-    expectedResults,
-    parsedBody.context,
-    normalizedToolOverrides,
-    { selectedSkills, approvedImport }
-  ]);
+    const workflowRun = await start(runAssistantWorkflow, [
+      providedInstanceId,
+      message,
+      site_id,
+      user_id,
+      customTools,
+      use_sdk_tools,
+      system_prompt,
+      undefined,
+      undefined,
+      providedNodeId,
+      expectedResults,
+      parsedBody.context,
+      normalizedToolOverrides,
+      { selectedSkills, approvedImport, userMessageLogId: userAction.id }
+    ]);
 
-    // Return stream response compatible with Vercel Workflow result streaming
-    return new Response(workflowRun.readable, {
-        status: 200,
-        headers: {
-            'Content-Type': 'text/event-stream',
-            'X-Workflow-Run-Id': workflowRun.runId,
-            'Cache-Control': 'no-cache',
-            'Connection': 'keep-alive',
-        }
-    });
+    return assistantResponseStream(workflowRun, providedInstanceId, userAction.id, { signal: request.signal });
 
   } catch (err: any) {
     console.error('Error in POST /robots/instance/assistant:', err);
+    // A startup failure happens before the workflow's own catch can log it.
+    // Only write after loading the instance/site scope. Logging failure must
+    // never replace the HTTP error or keep the client waiting indefinitely.
+    if (failureContext) {
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          markRemoteInstanceError({ ...failureContext, errorMessage: 'Assistant request could not be started. Please retry.' })
+            .catch(() => {}),
+          new Promise<void>(resolve => { timeout = setTimeout(resolve, 2000); }),
+        ]);
+      } finally { clearTimeout(timeout); }
+    }
     
     // Check if it's an insufficient credits error
-    if (err.name === 'InsufficientCreditsError' || err.message?.includes('Insufficient credits')) {
+    if (err?.name === 'InsufficientCreditsError' || err?.message?.includes('Insufficient credits')) {
       return NextResponse.json(
         { success: false, error: err.message, code: 'INSUFFICIENT_CREDITS' },
         { status: 402 } // 402 Payment Required
@@ -288,8 +264,8 @@ export async function POST(request: NextRequest) {
     }
     
     return NextResponse.json({
-      error: err.message || 'Failed to execute assistant',
-      details: err.stack,
+      success: false,
+      error: { code: 'ASSISTANT_START_FAILED', message: 'Failed to start assistant execution. Please try again.' },
     }, { status: 500 });
   }
 }

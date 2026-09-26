@@ -51,16 +51,19 @@ function harness() {
     },
   );
   const completeUserMessageStep = jest.fn<AsyncMock>();
+  const pauseUserMessageStep = jest.fn<AsyncMock>();
   const markAssistantFailedStep = jest.fn<AsyncMock>();
+  const persistUserMessageStep = jest.fn<AsyncMock>().mockResolvedValue({ id: 'user-log' });
+  const prepareAssistantContext = jest.fn<AsyncMock>().mockResolvedValue(context);
   const countRecentRespawnsStep = jest.fn<AsyncMock>().mockResolvedValue(0);
   const spawnSilentContinueStep = jest.fn<AsyncMock>();
   const workflow = loadRuntimeModule<typeof import('../workflow')>(
     'src/app/api/robots/instance/assistant/workflow.ts', {
       './assistant-turn': { processAssistantTurn },
-      './steps': { prepareAssistantContext: async () => context },
+      './steps': { prepareAssistantContext },
       './plan-steps': planSteps,
       './persist-and-fail-steps': {
-        persistUserMessageStep: async () => ({ id: 'user-log' }), completeUserMessageStep, markAssistantFailedStep,
+        persistUserMessageStep, completeUserMessageStep, markAssistantFailedStep, pauseUserMessageStep,
       },
       '@/lib/services/robot-instance/assistant-respawn': {
         isIncompleteTurn: (result: any) => !result.isDone || !result.text?.trim(),
@@ -80,10 +83,11 @@ function harness() {
       { id: `call-${effects}`, type: 'function', function: { name: 'write', arguments: '{}' } },
     ] }, { role: 'tool', tool_call_id: `call-${effects}`, content: `Effect ${effects} already applied` }]);
   };
-  const run = () => workflow.runAssistantWorkflow('instance', 'Implement plan', 'site', 'user', [], false);
+  const run = (options?: { userMessageLogId?: string }) => workflow.runAssistantWorkflow('instance', 'Implement plan', 'site', 'user', [], false,
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined, options);
   return { context, persisted, result, doTurn, effects: () => effects, run,
     processAssistantTurn, updateInstancePlanCore, planSteps, redis, maybeSingle, query,
-    completeUserMessageStep, markAssistantFailedStep, countRecentRespawnsStep, spawnSilentContinueStep };
+    completeUserMessageStep, pauseUserMessageStep, markAssistantFailedStep, persistUserMessageStep, prepareAssistantContext, countRecentRespawnsStep, spawnSilentContinueStep };
 }
 
 describe('interactive plan exhaustion and safe resumption', () => {
@@ -93,6 +97,23 @@ describe('interactive plan exhaustion and safe resumption', () => {
     jest.spyOn(console, 'error').mockImplementation(() => {});
   });
   afterEach(() => jest.restoreAllMocks());
+
+  it('does not duplicate the user log already persisted by the HTTP route', async () => {
+    const h = harness();
+    h.processAssistantTurn.mockImplementation(async (_context, messages) => h.result(messages, true, 'Finished'));
+    await h.run({ userMessageLogId: 'route-user-log' });
+    expect(h.persistUserMessageStep).not.toHaveBeenCalled();
+    expect(h.completeUserMessageStep).toHaveBeenCalledWith('route-user-log');
+  });
+
+  it('preserves the original workflow failure even when writing its error log fails', async () => {
+    const h = harness();
+    const original = new Error('Context failed');
+    h.prepareAssistantContext.mockRejectedValue(original);
+    h.markAssistantFailedStep.mockRejectedValue(new Error('Error log unavailable'));
+    await expect(h.run()).rejects.toBe(original);
+    expect(h.markAssistantFailedStep).toHaveBeenCalled();
+  });
 
   it('returns exhaustion after ten unfinished turns without completing the step', async () => {
     const h = harness();
@@ -301,6 +322,16 @@ describe('interactive plan exhaustion and safe resumption', () => {
     expect(h.completeUserMessageStep).not.toHaveBeenCalled();
     expect(h.markAssistantFailedStep).not.toHaveBeenCalled();
     expect(h.spawnSilentContinueStep).not.toHaveBeenCalled();
+    expect(h.pauseUserMessageStep).toHaveBeenCalledWith('user-log');
+  });
+
+  it('passes the original user log to a background continuation without claiming completion', async () => {
+    const h = harness();
+    h.processAssistantTurn.mockImplementation(async (_context, messages) => h.result(messages, true, ''));
+    const response = await h.run({ userMessageLogId: 'route-user-log' });
+    expect(response).toMatchObject({ success: false, execution_status: 'continuing' });
+    expect(h.spawnSilentContinueStep).toHaveBeenCalledWith(expect.objectContaining({ userMessageLogId: 'route-user-log' }));
+    expect(h.completeUserMessageStep).not.toHaveBeenCalled();
   });
 
   it('workflow preserves successful completion and executes subsequent steps only after actual completion', async () => {

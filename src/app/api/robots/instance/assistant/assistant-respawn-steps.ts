@@ -24,6 +24,7 @@ export async function spawnSilentContinueStep(params: {
   expectedResultsAmount?: number;
   contextString?: string;
   selectedSkills?: AssistantSkillSelection;
+  userMessageLogId?: string;
 }): Promise<void> {
   'use step';
   await spawnSilentContinueWorkflow(params);

@@ -1,3 +1,9 @@
+-- NEX CARGO FIX (2026-09-26): permission denied to change default privileges (42501).
+-- Requirement: 5a1d6caa-92a4-420d-80f2-567392a1af11.
+-- apps_ensure_tenant needs INHERIT TRUE, SET TRUE for the tenant-owner membership.
+-- Updating this historical file does NOT update an already-installed function;
+-- deploy the correction through a new forward migration in Apps Supabase only.
+--
 -- Rollback:
 -- DROP FUNCTION IF EXISTS public.apps_ensure_tenant(
 --   uuid, uuid, uuid, uuid, text

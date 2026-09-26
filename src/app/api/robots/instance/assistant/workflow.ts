@@ -3,7 +3,7 @@
 import { processAssistantTurn } from './assistant-turn';
 import { prepareAssistantContext } from './steps';
 import { getActiveInstancePlan, executePlanStep, acquirePlanExecutionLockStep, releasePlanExecutionLockStep } from './plan-steps';
-import { persistUserMessageStep, markAssistantFailedStep, completeUserMessageStep } from './persist-and-fail-steps';
+import { persistUserMessageStep, markAssistantFailedStep, completeUserMessageStep, pauseUserMessageStep } from './persist-and-fail-steps';
 import {
   isIncompleteTurn,
   MAX_RESPAWNS,
@@ -27,15 +27,16 @@ export async function runAssistantWorkflow(
   expectedResultsAmount?: number,
   contextString?: string,
   toolOverrides?: Record<string, any>,
-   options?: { silentContinue?: boolean; selectedSkills?: AssistantSkillSelection; approvedImport?: { url: string; sha256: string; userId: string } }
+   options?: { silentContinue?: boolean; selectedSkills?: AssistantSkillSelection; approvedImport?: { url: string; sha256: string; userId: string }; userMessageLogId?: string }
 ) {
   'use workflow';
 
-  let userMessageLogId: string | null = null;
+  // The HTTP route supplies only the ID it just persisted (not a client ID).
+  let userMessageLogId: string | null = options?.userMessageLogId ?? null;
   try {
     const isSilentContinue =
       options?.silentContinue === true || message === SILENT_CONTINUE_PROMPT;
-    if (!isSilentContinue) {
+    if (!isSilentContinue && !userMessageLogId) {
       const logResult = await persistUserMessageStep(instanceId, message, siteId, userId, {
         prompt_source: 'assistant_workflow',
         selected_skills: options?.selectedSkills?.skills.map(({ slug, version }) => ({ slug, version })) ?? [],
@@ -142,10 +143,13 @@ export async function runAssistantWorkflow(
         expectedResultsAmount,
         contextString,
         selectedSkills: options?.selectedSkills,
+        userMessageLogId: userMessageLogId ?? undefined,
       });
       return {
         instance_id: instanceId,
         status: context.instance.status,
+        success: false,
+        execution_status: 'continuing',
         message: 'Execution respawned due to incomplete turn',
         assistant_response: finalResult.text,
         output: finalResult.output,
@@ -178,9 +182,11 @@ export async function runAssistantWorkflow(
         console.log(
           `[Workflow] Could not acquire execution lock for plan ${activePlan.id}: ${lock.state}`,
         );
+        if (userMessageLogId) await pauseUserMessageStep(userMessageLogId);
         return {
           instance_id: instanceId,
           status: context.instance.status,
+          success: false,
           message: `Plan execution skipped because the lock is ${lock.state}`,
           assistant_response: lock.state === 'contended'
             ? 'Plan execution skipped (already running)'
@@ -202,6 +208,7 @@ export async function runAssistantWorkflow(
             // an exception that retries the multi-effect durable step. The
             // finally block releases ownership; a later invocation resumes the
             // same step from its persisted continuation before later steps.
+            if (userMessageLogId) await pauseUserMessageStep(userMessageLogId);
             return {
               instance_id: instanceId,
               status: context.instance.status,
@@ -256,7 +263,11 @@ export async function runAssistantWorkflow(
   } catch (error: any) {
     const errMsg = error instanceof Error ? error.message : String(error);
     console.error(`[Workflow] Assistant failed after retries for instance ${instanceId}:`, errMsg);
-    await markAssistantFailedStep(instanceId, siteId, userId, errMsg.slice(0, 500));
+    try {
+      await markAssistantFailedStep(instanceId, siteId, userId, errMsg.slice(0, 500), userMessageLogId);
+    } catch {
+      console.error(`[Workflow] Unable to persist assistant failure for instance ${instanceId}`);
+    }
     throw error;
   }
 }

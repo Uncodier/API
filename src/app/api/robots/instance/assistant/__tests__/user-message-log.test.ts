@@ -1,4 +1,4 @@
-import { insertUserActionLog, markRemoteInstanceError, withRetries } from '../user-message-log';
+import { insertUserActionLog, markRemoteInstanceError, setUserMessageStatus, withRetries } from '../user-message-log';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 
 jest.mock('@/lib/database/supabase-client', () => ({
@@ -118,7 +118,8 @@ describe('markRemoteInstanceError', () => {
 
   it('throws when the instance status update fails', async () => {
     const updateChain = createChain({ error: { message: 'cannot update' } });
-    (supabaseAdmin.from as jest.Mock).mockReturnValueOnce(updateChain);
+    const insertChain = createChain({ error: null });
+    (supabaseAdmin.from as jest.Mock).mockReturnValueOnce(updateChain).mockReturnValueOnce(insertChain);
 
     await expect(
       markRemoteInstanceError({
@@ -127,6 +128,8 @@ describe('markRemoteInstanceError', () => {
         errorMessage: 'timeout',
       })
     ).rejects.toThrow('Failed to mark robot as error: cannot update');
+    expect(insertChain.insert).toHaveBeenCalled();
+    expect(updateChain.eq).toHaveBeenCalledWith('site_id', 'site-1');
   });
 });
 
@@ -145,5 +148,45 @@ describe('withRetries', () => {
     const fn = jest.fn().mockRejectedValue(new Error('always'));
     await expect(withRetries(fn, 3, 1)).rejects.toThrow('always');
     expect(fn).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('setUserMessageStatus', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it('preserves request correlation when completing a persisted user turn', async () => {
+    const lookup = createChain({ data: { details: { request_id: 'request-1', status: 'running' } }, error: null });
+    const update = createChain({ error: null });
+    (supabaseAdmin.from as jest.Mock).mockReturnValueOnce(lookup).mockReturnValueOnce(update);
+    await setUserMessageStatus('user-log', 'completed');
+    expect(update.update).toHaveBeenCalledWith({ details: { request_id: 'request-1', status: 'completed' } });
+    expect(lookup.eq).toHaveBeenCalledWith('log_type', 'user_action');
+  });
+
+  it('does not turn a cancelled message into completed or failed', async () => {
+    const lookup = createChain({ data: { details: { status: 'cancelled' } }, error: null });
+    (supabaseAdmin.from as jest.Mock).mockReturnValue(lookup);
+    await setUserMessageStatus('user-log', 'failed');
+    expect(lookup.update).not.toHaveBeenCalled();
+  });
+
+  it('does not silently accept a failed status checkpoint', async () => {
+    const lookup = createChain({ data: { details: {} }, error: null });
+    const update = createChain({ error: { message: 'database unavailable' } });
+    (supabaseAdmin.from as jest.Mock).mockReturnValueOnce(lookup).mockReturnValueOnce(update);
+    await expect(setUserMessageStatus('user-log', 'completed')).rejects.toThrow('Failed to save');
+  });
+
+  it('marks the current turn failed even when the instance update is rejected', async () => {
+    const instance = createChain({ error: { message: 'cannot update instance' } });
+    const errorLog = createChain({ error: null });
+    const userLog = createChain({ data: { details: { request_id: 'request-1', status: 'running' } }, error: null });
+    const userUpdate = createChain({ error: null });
+    (supabaseAdmin.from as jest.Mock).mockReturnValueOnce(instance).mockReturnValueOnce(errorLog)
+      .mockReturnValueOnce(userLog).mockReturnValueOnce(userUpdate);
+    await expect(markRemoteInstanceError({ instanceId: 'instance', siteId: 'site',
+      errorMessage: 'failed', userMessageLogId: 'user-log' })).rejects.toThrow('Failed to mark robot');
+    expect(userUpdate.update).toHaveBeenCalledWith({ details: { request_id: 'request-1', status: 'failed' } });
+    expect(errorLog.insert).toHaveBeenCalled();
   });
 });

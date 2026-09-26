@@ -1,6 +1,6 @@
 'use step';
 
-import { insertUserActionLog, markRemoteInstanceError } from './user-message-log';
+import { insertUserActionLog, markRemoteInstanceError, setUserMessageStatus } from './user-message-log';
 
 export async function persistUserMessageStep(
   instanceId: string,
@@ -23,7 +23,8 @@ export async function markAssistantFailedStep(
   instanceId: string,
   siteId: string,
   userId: string | null | undefined,
-  errorMessage: string
+  errorMessage: string,
+  userMessageLogId?: string | null,
 ): Promise<void> {
   'use step';
   await markRemoteInstanceError({
@@ -31,16 +32,16 @@ export async function markAssistantFailedStep(
     siteId,
     userId,
     errorMessage,
+    userMessageLogId,
   });
 }
 
 export async function completeUserMessageStep(logId: string): Promise<void> {
   'use step';
-  const { supabaseAdmin } = await import('@/lib/database/supabase-client');
-  const { data: log } = await supabaseAdmin.from('instance_logs').select('details').eq('id', logId).single();
-  if (log) {
-    await supabaseAdmin.from('instance_logs').update({
-      details: { ...(log.details || {}), status: 'completed' }
-    }).eq('id', logId);
-  }
+  await setUserMessageStatus(logId, 'completed');
+}
+
+export async function pauseUserMessageStep(logId: string): Promise<void> {
+  'use step';
+  await setUserMessageStatus(logId, 'paused');
 }

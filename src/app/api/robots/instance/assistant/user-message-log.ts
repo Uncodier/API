@@ -19,6 +19,7 @@ export async function insertUserActionLog(params: {
       .from('instance_logs')
       .select('id')
       .eq('instance_id', params.instanceId)
+      .eq('site_id', params.siteId)
       .eq('log_type', 'user_action')
       .eq('trusted_user_action', true)
       .eq('message', params.message)
@@ -65,20 +66,17 @@ export async function markRemoteInstanceError(params: {
   siteId: string;
   userId?: string | null;
   errorMessage: string;
+  userMessageLogId?: string | null;
 }): Promise<void> {
-  const { error: updateError } = await supabaseAdmin
+  const update = async () => supabaseAdmin
     .from('remote_instances')
     .update({
       status: 'error',
       updated_at: new Date().toISOString(),
     })
-    .eq('id', params.instanceId);
+    .eq('id', params.instanceId).eq('site_id', params.siteId);
 
-  if (updateError) {
-    throw new Error(`Failed to mark robot as error: ${updateError.message}`);
-  }
-
-  const { error: logError } = await supabaseAdmin.from('instance_logs').insert({
+  const insert = async () => supabaseAdmin.from('instance_logs').insert({
     log_type: 'error',
     level: 'error',
     message: `Assistant failed after retries: ${params.errorMessage}`.slice(0, 2000),
@@ -90,10 +88,32 @@ export async function markRemoteInstanceError(params: {
     site_id: params.siteId,
     user_id: params.userId || null,
   });
-
+  // A denied status update must not suppress the error log, or vice versa.
+  const [updated, logged, userLog] = await Promise.allSettled([
+    update(), insert(), params.userMessageLogId
+      ? setUserMessageStatus(params.userMessageLogId, 'failed') : Promise.resolve(),
+  ]);
+  const updateError = updated.status === 'rejected' ? updated.reason : updated.value.error;
+  const logError = logged.status === 'rejected' ? logged.reason : logged.value.error;
   if (logError) {
     throw new Error(`Failed to log robot error: ${logError.message}`);
   }
+  if (updateError) {
+    throw new Error(`Failed to mark robot as error: ${updateError.message}`);
+  }
+  if (userLog.status === 'rejected') throw userLog.reason;
+}
+
+export async function setUserMessageStatus(logId: string, status: 'completed' | 'failed' | 'paused'): Promise<void> {
+  const { data, error } = await supabaseAdmin.from('instance_logs').select('details')
+    .eq('id', logId).eq('log_type', 'user_action').single();
+  if (error || !data) throw new Error('Failed to read the user message status');
+  // An explicit cancellation must not be undone by a late workflow checkpoint.
+  if (data.details?.status === 'cancelled' || data.details?.status === 'stopped') return;
+  const { error: updateError } = await supabaseAdmin.from('instance_logs').update({
+    details: { ...(data.details || {}), status },
+  }).eq('id', logId).eq('log_type', 'user_action');
+  if (updateError) throw new Error('Failed to save the user message status');
 }
 
 export async function withRetries<T>(
