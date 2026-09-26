@@ -9,6 +9,15 @@ import { loadOfficeZip, type SafeOfficeZip } from './officeZip';
 const xml = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_', textNodeName: '#text', processEntities: false, maxNestedTags: 100 });
 const orderedXml = new XMLParser({ preserveOrder: true, ignoreAttributes: true, processEntities: false, maxNestedTags: 100, trimValues: false });
 const MAX_XML_BYTES = 8 * 1024 * 1024;
+const MAX_PRESENTATION_SLIDES = 1_000;
+const SLIDE_RELATIONSHIP_TYPES = new Set([
+  'http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide',
+  'http://purl.oclc.org/ooxml/officeDocument/relationships/slide',
+]);
+const NOTES_RELATIONSHIP_TYPES = new Set([
+  'http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide',
+  'http://purl.oclc.org/ooxml/officeDocument/relationships/notesSlide',
+]);
 const list = <T>(value: T | T[] | undefined): T[] => value === undefined ? [] : Array.isArray(value) ? value : [value];
 const selected = (number: number, requested?: number[]) => !requested?.length || requested.includes(number);
 
@@ -50,11 +59,15 @@ const cleanText = (value: string) => value.replace(/[ \t]+\n/g, '\n').replace(/\
 
 function relationshipMap(document: unknown): Map<string, { target: string; type: string; external: boolean }> {
   const relationships = list((document as Record<string, any>)?.Relationships?.Relationship);
-  return new Map(relationships.flatMap((relationship: Record<string, unknown>) => {
+  const result = new Map<string, { target: string; type: string; external: boolean }>();
+  for (const relationship of relationships as Array<Record<string, unknown>>) {
     const id = String(relationship?.['@_Id'] ?? '');
     const target = String(relationship?.['@_Target'] ?? '');
-    return id && target ? [[id, { target, type: String(relationship?.['@_Type'] ?? ''), external: relationship?.['@_TargetMode'] === 'External' }] as const] : [];
-  }));
+    if (!id || !target) continue;
+    if (result.has(id)) throw new Error(`Duplicate OOXML relationship ID ${id}.`);
+    result.set(id, { target, type: String(relationship?.['@_Type'] ?? ''), external: relationship?.['@_TargetMode'] === 'External' });
+  }
+  return result;
 }
 
 function resolvePackageTarget(sourcePath: string, target: string): string {
@@ -74,8 +87,8 @@ export async function readPdf(buffer: Buffer, options: DocumentReadOptions): Pro
   };
 }
 
-export async function readSpreadsheet(buffer: Buffer, options: DocumentReadOptions) {
-  await loadOfficeZip(buffer);
+export async function readSpreadsheet(buffer: Buffer, options: DocumentReadOptions, loaded?: SafeOfficeZip) {
+  if (!loaded) await loadOfficeZip(buffer);
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(buffer as unknown as ExcelJS.Buffer);
   const sections: DocumentSection[] = [];
@@ -103,20 +116,18 @@ export async function readPresentation(buffer: Buffer, options: DocumentReadOpti
   const packageFile = loaded ?? await loadOfficeZip(buffer);
   const presentationPath = 'ppt/presentation.xml';
   const presentationRelsPath = 'ppt/_rels/presentation.xml.rels';
-  const presentationFile = packageFile.zip.file(presentationPath);
-  const presentationRelsFile = packageFile.zip.file(presentationRelsPath);
-  let slideFiles: string[];
-  if (presentationFile && presentationRelsFile) {
-    const presentation = xml.parse(await readZipXml(packageFile, presentationPath, 'PPTX presentation XML'));
-    const relationships = relationshipMap(xml.parse(await readZipXml(packageFile, presentationRelsPath, 'PPTX presentation relationships')));
-    slideFiles = list(presentation?.['p:presentation']?.['p:sldIdLst']?.['p:sldId']).map((slide: Record<string, unknown>) => {
-      const relationship = relationships.get(String(slide?.['@_r:id'] ?? ''));
-      if (!relationship || relationship.external || !relationship.type.endsWith('/slide')) throw new Error('PPTX contains an invalid slide relationship.');
-      return resolvePackageTarget(presentationPath, relationship.target);
-    });
-  } else {
-    slideFiles = Object.keys(packageFile.zip.files).filter(name => /^ppt\/slides\/slide\d+\.xml$/.test(name)).sort((a, b) => Number(a.match(/\d+/)?.[0]) - Number(b.match(/\d+/)?.[0]));
-  }
+  const presentation = xml.parse(await readZipXml(packageFile, presentationPath, 'PPTX presentation'));
+  const relationships = relationshipMap(xml.parse(await readZipXml(packageFile, presentationRelsPath, 'PPTX presentation relationships')));
+  const ids = list((presentation as Record<string, any>)?.['p:presentation']?.['p:sldIdLst']?.['p:sldId']).map((item: Record<string, unknown>) => String(item?.['@_r:id'] ?? '')).filter(Boolean);
+  if (ids.length > MAX_PRESENTATION_SLIDES) throw new Error(`PPTX exceeds the ${MAX_PRESENTATION_SLIDES} slide limit.`);
+  const slideFiles = ids.map(id => {
+    const relationship = relationships.get(id);
+    if (!relationship || relationship.external || !SLIDE_RELATIONSHIP_TYPES.has(relationship.type)) throw new Error(`Invalid or external slide relationship ${id}.`);
+    const target = resolvePackageTarget(presentationPath, relationship.target);
+    if (!/^ppt\/slides\/[^/]+\.xml$/.test(target)) throw new Error(`Slide relationship ${id} targets an invalid package part.`);
+    return target;
+  });
+  if (new Set(ids).size !== ids.length || new Set(slideFiles).size !== slideFiles.length) throw new Error('PPTX contains duplicate slide relationships.');
   const sections: DocumentSection[] = [];
   for (let index = 0; index < slideFiles.length; index += 1) {
     const number = index + 1;
@@ -127,9 +138,10 @@ export async function readPresentation(buffer: Buffer, options: DocumentReadOpti
     let notes = '';
     if (packageFile.zip.file(relsPath)) {
       const relationships = relationshipMap(xml.parse(await readZipXml(packageFile, relsPath, `Slide ${number} relationships`)));
-      const notesRelationship = Array.from(relationships.values()).find(relationship => !relationship.external && relationship.type.endsWith('/notesSlide'));
+      const notesRelationship = Array.from(relationships.values()).find(relationship => !relationship.external && NOTES_RELATIONSHIP_TYPES.has(relationship.type));
       if (notesRelationship) {
         const notesPath = resolvePackageTarget(slidePath, notesRelationship.target);
+        if (!/^ppt\/notesSlides\/[^/]+\.xml$/.test(notesPath)) throw new Error(`Slide ${number} notes target an invalid package part.`);
         const notesDocument = orderedXml.parse(await readZipXml(packageFile, notesPath, `Slide ${number} notes`));
         notes = cleanText(semanticText(notesDocument, 'a:t'));
       }

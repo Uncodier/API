@@ -48,6 +48,7 @@ export function readDocumentTool() {
         maxChars: { type: 'integer', minimum: 1000, maximum: 120000, description: 'Maximum serialized JSON characters returned, including text, tables and metadata. Default 60000.' },
       },
       required: ['url'],
+      additionalProperties: false,
     },
     execute: async (rawArgs: ReadDocumentToolParams) => {
       const args = validateArgs(rawArgs);

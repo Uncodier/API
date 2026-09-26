@@ -4,6 +4,15 @@ import { detectDocumentKind, readDocumentBuffer } from '../core';
 import { downloadDocument, isPublicAddress } from '../source';
 import { readDocumentTool } from '../assistantProtocol';
 
+const SLIDE_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide';
+const NOTES_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide';
+
+function addPresentationGraph(zip: JSZip, slideTargets: string[]): void {
+  const ids = slideTargets.map((_, index) => `rId${index + 1}`);
+  zip.file('ppt/presentation.xml', `<p:presentation xmlns:p="p" xmlns:r="r"><p:sldIdLst>${ids.map(id => `<p:sldId r:id="${id}"/>`).join('')}</p:sldIdLst></p:presentation>`);
+  zip.file('ppt/_rels/presentation.xml.rels', `<Relationships>${slideTargets.map((target, index) => `<Relationship Id="${ids[index]}" Type="${SLIDE_REL}" Target="${target}"/>`).join('')}</Relationships>`);
+}
+
 function minimalPdf(text: string): Buffer {
   const escaped = text.replace(/([\\()])/g, '\\$1');
   const objects = [
@@ -81,9 +90,10 @@ describe('read_document', () => {
 
   it('reads selected PPTX slides and speaker notes', async () => {
     const zip = new JSZip();
+    addPresentationGraph(zip, ['slides/slide1.xml', 'slides/slide2.xml']);
     zip.file('ppt/slides/slide1.xml', '<p:sld xmlns:p="p" xmlns:a="a"><p:cSld><a:t>First slide</a:t></p:cSld></p:sld>');
     zip.file('ppt/slides/slide2.xml', '<p:sld xmlns:p="p" xmlns:a="a"><p:cSld><a:t>Second slide</a:t></p:cSld></p:sld>');
-    zip.file('ppt/slides/_rels/slide2.xml.rels', '<Relationships><Relationship Id="notes" Type="x/notesSlide" Target="../notesSlides/notesSlide2.xml"/></Relationships>');
+    zip.file('ppt/slides/_rels/slide2.xml.rels', `<Relationships><Relationship Id="notes" Type="${NOTES_REL}" Target="../notesSlides/notesSlide2.xml"/></Relationships>`);
     zip.file('ppt/notesSlides/notesSlide2.xml', '<p:notes xmlns:p="p" xmlns:a="a"><p:cSld><a:t>Private note</a:t></p:cSld></p:notes>');
     const bytes = await zip.generateAsync({ type: 'nodebuffer' });
 
@@ -97,10 +107,10 @@ describe('read_document', () => {
   it('uses PPTX presentation order and relationship-bound notes', async () => {
     const zip = new JSZip();
     zip.file('ppt/presentation.xml', '<p:presentation xmlns:p="p" xmlns:r="r"><p:sldIdLst><p:sldId r:id="rIdB"/><p:sldId r:id="rIdA"/></p:sldIdLst></p:presentation>');
-    zip.file('ppt/_rels/presentation.xml.rels', '<Relationships><Relationship Id="rIdA" Type="x/slide" Target="slides/slide1.xml"/><Relationship Id="rIdB" Type="x/slide" Target="slides/slide2.xml"/></Relationships>');
+    zip.file('ppt/_rels/presentation.xml.rels', `<Relationships><Relationship Id="rIdA" Type="${SLIDE_REL}" Target="slides/slide1.xml"/><Relationship Id="rIdB" Type="${SLIDE_REL}" Target="slides/slide2.xml"/></Relationships>`);
     zip.file('ppt/slides/slide1.xml', '<p:sld xmlns:p="p" xmlns:a="a"><a:t name="ATTRIBUTE_SECRET">Physical one</a:t></p:sld>');
     zip.file('ppt/slides/slide2.xml', '<p:sld xmlns:p="p" xmlns:a="a"><a:t>Physical two</a:t></p:sld>');
-    zip.file('ppt/slides/_rels/slide2.xml.rels', '<Relationships><Relationship Id="notes" Type="x/notesSlide" Target="../notesSlides/notesSlide9.xml"/></Relationships>');
+    zip.file('ppt/slides/_rels/slide2.xml.rels', `<Relationships><Relationship Id="notes" Type="${NOTES_REL}" Target="../notesSlides/notesSlide9.xml"/></Relationships>`);
     zip.file('ppt/notesSlides/notesSlide9.xml', '<p:notes xmlns:p="p" xmlns:a="a"><a:t>Bound note</a:t></p:notes>');
     const bytes = await zip.generateAsync({ type: 'nodebuffer' });
     const result = await readDocumentBuffer({ buffer: bytes, filename: 'ordered.pptx', mimeType: '' });
@@ -140,6 +150,47 @@ describe('read_document', () => {
     await expect(detectDocumentKind({ buffer, filename: 'download', mimeType: 'application/octet-stream' })).resolves.toBe('document');
   });
 
+  it('detects OOXML content before misleading text MIME metadata', async () => {
+    const zip = new JSZip();
+    zip.file('word/document.xml', '<w:document/>');
+    const buffer = await zip.generateAsync({ type: 'nodebuffer' });
+    await expect(detectDocumentKind({ buffer, filename: 'download.txt', mimeType: 'text/plain' })).resolves.toBe('document');
+  });
+
+  it('rejects orphan PPTX slides without a presentation relationship graph', async () => {
+    const zip = new JSZip();
+    zip.file('ppt/presentation.xml', '<p:presentation xmlns:p="p"/>');
+    zip.file('ppt/slides/slide1.xml', '<p:sld xmlns:p="p" xmlns:a="a"><a:t>Orphan secret</a:t></p:sld>');
+    const buffer = await zip.generateAsync({ type: 'nodebuffer' });
+    await expect(readDocumentBuffer({ buffer, filename: 'orphan.pptx', mimeType: '' })).rejects.toThrow(/relationships.*missing/i);
+  });
+
+  it('rejects fake PPTX relationship types', async () => {
+    const zip = new JSZip();
+    zip.file('ppt/presentation.xml', '<p:presentation xmlns:p="p" xmlns:r="r"><p:sldIdLst><p:sldId r:id="rId1"/></p:sldIdLst></p:presentation>');
+    zip.file('ppt/_rels/presentation.xml.rels', '<Relationships><Relationship Id="rId1" Type="https://attacker.test/slide" Target="slides/slide1.xml"/></Relationships>');
+    zip.file('ppt/slides/slide1.xml', '<p:sld xmlns:p="p" xmlns:a="a"><a:t>Secret</a:t></p:sld>');
+    const buffer = await zip.generateAsync({ type: 'nodebuffer' });
+    await expect(readDocumentBuffer({ buffer, filename: 'fake.pptx', mimeType: '' })).rejects.toThrow(/invalid.*slide relationship/i);
+  });
+
+  it('rejects duplicate OOXML relationship IDs', async () => {
+    const zip = new JSZip();
+    zip.file('ppt/presentation.xml', '<p:presentation xmlns:p="p" xmlns:r="r"><p:sldIdLst><p:sldId r:id="rId1"/></p:sldIdLst></p:presentation>');
+    zip.file('ppt/_rels/presentation.xml.rels', `<Relationships><Relationship Id="rId1" Type="${SLIDE_REL}" Target="slides/slide1.xml"/><Relationship Id="rId1" Type="${SLIDE_REL}" Target="slides/slide2.xml"/></Relationships>`);
+    zip.file('ppt/slides/slide1.xml', '<p:sld xmlns:p="p"/>');
+    zip.file('ppt/slides/slide2.xml', '<p:sld xmlns:p="p"/>');
+    const buffer = await zip.generateAsync({ type: 'nodebuffer' });
+    await expect(readDocumentBuffer({ buffer, filename: 'duplicate.pptx', mimeType: '' })).rejects.toThrow(/duplicate.*relationship/i);
+  });
+
+  it('rejects ZIPs with more than 4096 directory entries before extraction', async () => {
+    const zip = new JSZip();
+    for (let index = 0; index < 4_097; index += 1) zip.folder(`directory-${index}`);
+    const buffer = await zip.generateAsync({ type: 'nodebuffer' });
+    await expect(detectDocumentKind({ buffer, filename: 'many.docx', mimeType: '' })).rejects.toThrow(/4096.*entry limit/i);
+  });
+
   it('blocks local URLs before fetching', async () => {
     await expect(downloadDocument('http://127.0.0.1/private.pdf')).rejects.toThrow(/private|reserved|local/i);
   });
@@ -154,6 +205,12 @@ describe('read_document', () => {
     await expect(tool.execute({ url: 'https://example.com/file.pdf', unexpected: true } as any)).rejects.toThrow(/unknown argument/i);
   });
 
+  it('validates output limits for direct core callers', async () => {
+    const file = { buffer: Buffer.from('content'), filename: 'file.txt', mimeType: 'text/plain' };
+    await expect(readDocumentBuffer(file, { maxChars: Number.NaN })).rejects.toThrow(/maxChars/i);
+    await expect(readDocumentBuffer(file, { maxSections: 1.5 })).rejects.toThrow(/maxSections/i);
+  });
+
   it('bounds returned text for the model context', async () => {
     const result = await readDocumentBuffer({ buffer: Buffer.from('x'.repeat(5_000)), filename: 'large.txt', mimeType: 'text/plain' }, { maxChars: 1_000 });
     expect(JSON.stringify(result).length).toBeLessThanOrEqual(1_000);
@@ -163,8 +220,9 @@ describe('read_document', () => {
 
   it('bounds the complete serialized result including PPTX notes', async () => {
     const zip = new JSZip();
+    addPresentationGraph(zip, ['slides/slide1.xml']);
     zip.file('ppt/slides/slide1.xml', '<p:sld xmlns:p="p" xmlns:a="a"><a:t>Slide</a:t></p:sld>');
-    zip.file('ppt/slides/_rels/slide1.xml.rels', '<Relationships><Relationship Id="notes" Type="x/notesSlide" Target="../notesSlides/notesSlide1.xml"/></Relationships>');
+    zip.file('ppt/slides/_rels/slide1.xml.rels', `<Relationships><Relationship Id="notes" Type="${NOTES_REL}" Target="../notesSlides/notesSlide1.xml"/></Relationships>`);
     zip.file('ppt/notesSlides/notesSlide1.xml', `<p:notes xmlns:p="p" xmlns:a="a"><a:t>${'n'.repeat(5_000)}</a:t></p:notes>`);
     const bytes = await zip.generateAsync({ type: 'nodebuffer' });
     const result = await readDocumentBuffer({ buffer: bytes, filename: 'notes.pptx', mimeType: '' }, { maxChars: 1_000 });
@@ -174,7 +232,8 @@ describe('read_document', () => {
 
   it('bounds large table cells too', async () => {
     const result = await readDocumentBuffer({ buffer: Buffer.from(`column\n${'x'.repeat(5_000)}\n`), filename: 'large.csv', mimeType: 'text/csv' }, { maxChars: 1_000 });
-    expect(JSON.stringify(result.sections).length).toBeLessThan(1_300);
+    expect(JSON.stringify(result).length).toBeLessThanOrEqual(1_000);
+    expect(result.sections[0]?.tables?.[0]?.rows.length).toBeGreaterThan(0);
     expect(result.truncated).toBe(true);
   });
 });

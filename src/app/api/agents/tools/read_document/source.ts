@@ -125,13 +125,13 @@ export async function downloadDocument(source: string): Promise<LoadedDocument> 
       const response = await requestPinned(url, await resolvePublic(url, controller.signal), controller.signal);
       if (response.statusCode && response.statusCode >= 300 && response.statusCode < 400) {
         const location = response.headers.location;
-        response.resume();
+        response.destroy();
         if (!location || redirect === MAX_REDIRECTS) throw new Error('Too many or invalid document redirects.');
         url = parseUrl(new URL(location, url).toString());
         continue;
       }
       if (!response.statusCode || response.statusCode < 200 || response.statusCode >= 300) {
-        response.resume();
+        response.destroy();
         throw new Error(`Document download failed with HTTP ${response.statusCode || 0}.`);
       }
       return { buffer: await readBody(response), filename: filenameFromResponse(url, response.headers['content-disposition']), mimeType: String(response.headers['content-type'] || '').split(';')[0]!.trim().toLowerCase() };
