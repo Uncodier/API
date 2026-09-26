@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   activateSenderChannel,
   getChannelConnection,
+  requireZavuSiteManager,
   upsertChannelConnection,
 } from "@/lib/services/zavu";
 
@@ -20,6 +21,7 @@ export async function POST(
         { status: 400 }
       );
     }
+    await requireZavuSiteManager(request, siteId);
 
     const connection = await getChannelConnection(siteId, channelId);
     if (!connection) {

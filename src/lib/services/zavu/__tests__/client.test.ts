@@ -13,6 +13,7 @@ import {
   ZAVU_SENDER_MESSAGE_WEBHOOK_EVENTS,
   ZAVU_SENDER_WEBHOOK_EVENTS,
   sendChannelMessage,
+  updateSender,
 } from "../client";
 import {
   createStandaloneAgent,
@@ -456,6 +457,25 @@ describe("Zavu client webhook contract", () => {
       "https://api.zavu.dev/v1/senders/snd%2F1/channels/email/activate",
       expect.objectContaining({ method: "POST" })
     );
+  });
+
+  it("updates an encoded sender path and unwraps the sender response", async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce(
+      mockJson(200, {
+        sender: { id: "snd/1", emailReceivingEnabled: true },
+      })
+    );
+
+    const sender = await updateSender("snd/1", { emailReceivingEnabled: true });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "https://api.zavu.dev/v1/senders/snd%2F1",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ emailReceivingEnabled: true }),
+      })
+    );
+    expect(sender).toEqual({ id: "snd/1", emailReceivingEnabled: true });
   });
 
   it("deleteSender sends DELETE /senders/:id", async () => {

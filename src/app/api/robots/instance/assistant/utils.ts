@@ -90,6 +90,7 @@ import { activateCodingAgentsTool } from '@/app/api/agents/tools/activate_coding
 import { updateRepoTool } from '@/app/api/agents/tools/update_repo/assistantProtocol';
 import { showArtifactTool } from '@/app/api/agents/tools/show_artifact/assistantProtocol';
 import { composioActionTool } from '@/app/api/agents/tools/composio/assistantProtocol';
+import { readDocumentTool } from '@/app/api/agents/tools/read_document/assistantProtocol';
 import type { UiMediaOutputType } from './ui-media-contract';
 
 /**
@@ -420,6 +421,7 @@ export const getAssistantToolDefinitions = (
     activateCodingAgentsTool(),
     updateRepoTool(siteId, instanceId, userId),
     showArtifactTool(siteId, instanceId, userId ?? ''),
+    readDocumentTool(),
   ];
 
   if (agentType === 'gear') {

@@ -104,6 +104,7 @@ export const TOOL_CATEGORIES: Record<string, ToolCategory> = {
   site_settings: 'content',
   record_category: 'content',
   record: 'content',
+  read_document: 'content',
 
   // infra / ops
   create_project: 'infra',

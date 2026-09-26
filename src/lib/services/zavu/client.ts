@@ -346,10 +346,10 @@ export async function updateSender(senderId: string, params: {
   enableVoice?: boolean;
   enableSmsOneway?: boolean;
 }): Promise<any> {
-  return zavuFetch(`/senders/${senderId}`, {
+  return unwrapSender(await zavuFetch(`/senders/${encodeURIComponent(senderId)}`, {
     method: "PATCH",
     body: JSON.stringify(params),
-  });
+  }));
 }
 
 export async function activateSenderChannel(

@@ -5,6 +5,7 @@ import * as zavu from "@/lib/services/zavu";
 jest.mock("@/lib/services/zavu", () => ({
   activateSenderChannel: jest.fn(),
   getChannelConnection: jest.fn(),
+  requireZavuSiteManager: jest.fn(),
   upsertChannelConnection: jest.fn(),
 }));
 
@@ -24,6 +25,7 @@ function activationRequest() {
 describe("POST /api/integrations/zavu/senders/:id/channels/email/activate", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    (zavu.requireZavuSiteManager as jest.Mock).mockResolvedValue(undefined);
     (zavu.getChannelConnection as jest.Mock).mockResolvedValue({
       id: "channel_1",
       zavu_sender_id: "snd_1",
