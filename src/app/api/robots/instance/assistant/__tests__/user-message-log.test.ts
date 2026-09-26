@@ -163,10 +163,13 @@ describe('setUserMessageStatus', () => {
     expect(lookup.eq).toHaveBeenCalledWith('log_type', 'user_action');
   });
 
-  it('does not turn a cancelled message into completed or failed', async () => {
-    const lookup = createChain({ data: { details: { status: 'cancelled' } }, error: null });
+  it.each([
+    ['cancelled', 'completed'], ['cancelled', 'failed'], ['cancelled', 'paused'],
+    ['stopped', 'completed'], ['stopped', 'failed'], ['stopped', 'paused'],
+  ] as const)('does not turn a %s message into %s', async (status, nextStatus) => {
+    const lookup = createChain({ data: { details: { status } }, error: null });
     (supabaseAdmin.from as jest.Mock).mockReturnValue(lookup);
-    await setUserMessageStatus('user-log', 'failed');
+    await setUserMessageStatus('user-log', nextStatus);
     expect(lookup.update).not.toHaveBeenCalled();
   });
 

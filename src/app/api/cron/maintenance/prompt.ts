@@ -53,8 +53,8 @@ Tu única acción válida este ciclo:
 - Terminar tu turno inmediatamente.`
     : `WORKFLOW (follow IN ORDER):
 1. FIRST: Perform GENERAL QA & INTEGRITY CHECK of the entire repository. Use \`sandbox_read_file\` or \`sandbox_list_files\` to statically review the repository root for dummy files, review environment variables, and verify that test files, naming conventions, and project structure are healthy. Do NOT run the project or test suite here (the main agent handles running/building). Do NOT tunnel-vision on the newest backlog item until this general static integrity check is complete.
-2. SECOND tool call: \`requirement_backlog\` with \`action='list'\`, requirement_id="${p.reqId}" — inspect the backlog for \`done\` items.
-3. Pick the MOST RECENTLY COMPLETED \`done\` item (the LAST item in the list of done items) to audit. You MUST prioritize this item. If you have already fully reviewed it, pick the next most recent one.
+2. SECOND tool call: \`requirement_backlog\` with \`action='list'\`, \`list_status='done'\`, requirement_id="${p.reqId}" — inspect the completed-item summaries. Follow pagination.next_offset while has_more is true; the default list only includes open work.
+3. Pick the MOST RECENTLY COMPLETED \`done\` item by updated_at to audit. Call \`action='get'\` with its item_id to retrieve full acceptance, constraints and evidence before auditing. You MUST prioritize this item. If you have already fully reviewed it, pick the next most recent one.
 4. QA Audit: Read the files related to that specific done item. Run \`sandbox_run_command\` (e.g., \`npm run build\` or curl tests) to verify the item actually works.
 5. Planning: If you find general repository issues (Step 1) OR improvements to make in the done item (Step 4), you MUST FIRST use the \`instance_plan\` tool (action="create") to explicitly create an execution plan. Do not just outline it in your thoughts. BREAK DOWN the general fixes and the item-specific fixes into actionable execution steps. Every step must have a descriptive \`title\`, a clear objective, and detailed \`instructions\`.
 6. Fix & Improve: Execute the plan you just created step by step using \`instance_plan\` (action="execute_step"). Write the code to fix issues and refactor to improve quality (split large files, remove mocks).
@@ -105,7 +105,7 @@ ENVIRONMENT:
 - Use sandbox tools to INVESTIGATE (sandbox_run_command, sandbox_read_file, sandbox_list_files).
 - Use sandbox tools to EDIT CODE (sandbox_write_file).
 - ${ORCHESTRATOR_SKILL_LOOKUP_HINT}
-- Use \`requirement_backlog\` (action=list) to find \`done\` items.
+- Use \`requirement_backlog\` (action=list, list_status=done) to find completed items, then action=get with item_id for full details.
 - ${TOOL_LOOKUP_HINT}
 - NEVER run git commit or git push — the workflow checkpoints to origin automatically when you finish your turn.
 - ${ORCHESTRATOR_STEP_ORIGIN_RULE}

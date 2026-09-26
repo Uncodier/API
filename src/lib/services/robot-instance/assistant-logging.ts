@@ -1,7 +1,10 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { type NodeResult, buildInitialNodeResult } from './node-result-collector';
 import type { NodeContextRef } from './assistant-streaming-logs';
-import { normalizeToolOperationResult } from '@/lib/services/tool-operation-result';
+import {
+  normalizeToolOperationResult,
+  toolOperationOutcomeToSuccess,
+} from '@/lib/services/tool-operation-result';
 export {
   createNodeStreamingCallbacks,
   createStreamingLogCallbacks,
@@ -149,7 +152,7 @@ export function createAssistantOnStepHandler(
           tool_call_id: toolCall.id || toolCall.toolCallId,
           tool_args: toolCall.args || {},
           tool_result: toolResult ? {
-            success: operation?.outcome === 'passed',
+            success: toolOperationOutcomeToSuccess(operation?.outcome),
             operation_outcome: operation?.outcome,
             error: operation?.error || null,
             output: (() => {

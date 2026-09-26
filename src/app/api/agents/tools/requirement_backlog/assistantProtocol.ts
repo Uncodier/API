@@ -1,5 +1,6 @@
 import { executeBacklogCore, type BacklogAction, type BacklogCoreParams } from './route';
 import type { BacklogItemKind, BacklogItemStatus, BacklogItemTier } from '@/lib/services/requirement-backlog';
+import { BACKLOG_LIST_STATUSES } from '@/lib/services/requirement-backlog-view';
 
 const acceptanceClaimSchema = {
   type: 'object',
@@ -51,7 +52,7 @@ export function requirementBacklogTool(_siteId: string, defaultRequirementId?: s
   return {
     name: 'requirement_backlog',
     description:
-      'Canonical backlog for a requirement. Every actionable work item lives here — Producer adds them, Consumer starts one (WIP=1), and the runner moves it through review to a terminal outcome. Model actions: list | upsert | start | downgrade | log_assumption | report_blocker | resolve_blocker | set_status. report_blocker pauses only the affected item, propagates blocked_by to dependency descendants, and releases WIP so independent items can continue. It never blocks the whole requirement. Terminal transitions (done, rejected, needs_review) are runner-owned; finish plan work with instance_plan action="execute_step" so the gate and Judge can decide the outcome.',
+      'Canonical backlog for a requirement. Every actionable work item lives here — Producer adds them, Consumer starts one (WIP=1), and the runner moves it through review to a terminal outcome. Model actions: list | get | upsert | start | downgrade | log_assumption | report_blocker | resolve_blocker | set_status. list is a read-only, paginated summary (open items by default, active first); get with item_id returns full acceptance, constraints, evidence and history. Always get the selected item before planning or modifying it. Check summary.total_items, not just backlog.items, before deciding the backlog is empty. Do not clone an existing task as a numbered remediation. report_blocker pauses only the affected item, propagates blocked_by to dependency descendants, and releases WIP so independent items can continue. It never blocks the whole requirement. Terminal transitions (done, rejected, needs_review) are runner-owned; finish plan work with instance_plan action="execute_step" so the gate and Judge can decide the outcome.',
     parameters: {
       type: 'object',
       properties: {
@@ -59,6 +60,7 @@ export function requirementBacklogTool(_siteId: string, defaultRequirementId?: s
           type: 'string',
           enum: [
             'list',
+            'get',
             'upsert',
             'start',
             'downgrade',
@@ -70,7 +72,13 @@ export function requirementBacklogTool(_siteId: string, defaultRequirementId?: s
           description: 'Backlog operation to perform.',
         },
         requirement_id: { type: 'string', description: 'Requirement UUID (required).' },
-        item_id: { type: 'string', description: 'Backlog item UUID. Provide this explicitly for start, downgrade, log_assumption, and set_status actions.' },
+        item_id: { type: 'string', description: 'Backlog item UUID. Required for get, start, downgrade, log_assumption, and set_status. Provide it on upsert to update existing work instead of duplicating it.' },
+        list_status: {
+          type: 'string', enum: [...BACKLOG_LIST_STATUSES],
+          description: 'list only. Default open excludes done/rejected. all includes every status; use an exact status to filter. This is NOT a status transition.',
+        },
+        limit: { type: 'integer', minimum: 1, maximum: 50, description: 'list page size; default 20, maximum 50.' },
+        offset: { type: 'integer', minimum: 0, description: 'list offset; default 0. Continue with pagination.next_offset when has_more is true.' },
         title: { type: 'string', description: 'Human-readable item title.' },
         kind: {
           type: 'string',
@@ -181,6 +189,9 @@ export function requirementBacklogTool(_siteId: string, defaultRequirementId?: s
         action: args.action,
         requirement_id,
         item_id: args.item_id,
+        list_status: args.list_status,
+        limit: args.limit,
+        offset: args.offset,
         title: args.title,
         kind: args.kind as BacklogItemKind | undefined,
         phase_id: args.phase_id,

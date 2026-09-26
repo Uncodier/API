@@ -14,8 +14,7 @@ import {
   type BacklogItemKind,
   type BacklogItemTier,
 } from '@/lib/services/requirement-backlog';
-import { checkAndResetCronAttempts } from '@/lib/services/requirement-cron-reset';
-import { getRequirementById } from '@/lib/database/requirement-db';
+import { buildBacklogListView, type BacklogListOptions } from '@/lib/services/requirement-backlog-view';
 import { assertAgentBacklogTransitionAllowed } from './agent-transition-policy';
 import {
   blockBacklogItem,
@@ -32,6 +31,7 @@ import {
 
 export type BacklogAction =
   | 'list'
+  | 'get'
   | 'upsert'
   | 'start'
   | 'complete'
@@ -42,7 +42,7 @@ export type BacklogAction =
   | 'resolve_blocker'
   | 'set_status';
 
-export interface BacklogCoreParams {
+export interface BacklogCoreParams extends BacklogListOptions {
   action: BacklogAction;
   requirement_id: string;
   item_id?: string;
@@ -67,6 +67,14 @@ export interface BacklogCoreParams {
 }
 
 export async function executeBacklogCore(params: BacklogCoreParams) {
+  const result = await executeBacklogAction(params);
+  if ('item' in result && !result.item) {
+    throw new Error(`Backlog item ${params.item_id} not found`);
+  }
+  return { success: true, ...result };
+}
+
+async function executeBacklogAction(params: BacklogCoreParams) {
   const { action, requirement_id } = params;
   if (!requirement_id) throw new Error('requirement_id is required');
   assertAgentBacklogTransitionAllowed({
@@ -85,31 +93,19 @@ export async function executeBacklogCore(params: BacklogCoreParams) {
     try { params.depends_on = JSON.parse(params.depends_on); } catch {}
   }
 
-  // Async unblock if there was a recent user action
-  getRequirementById(requirement_id).then(req => {
-    if (req?.metadata) {
-      checkAndResetCronAttempts(requirement_id, req.metadata).catch(console.error);
-    }
-  }).catch(console.error);
-
+  // Recovery belongs to the trusted user-action handler, never to a tool read
+  // (or an unawaited side effect racing a backlog mutation).
   switch (action) {
     case 'list': {
       const { kind, backlog } = await listBacklog(requirement_id);
-      
-      // TRUNCATE EVIDENCE TO AVOID CRASHING LLM CONTEXT
-      if (backlog && Array.isArray(backlog.items)) {
-        backlog.items = backlog.items.map((item: any) => {
-          const newItem = { ...item };
-          if (newItem.evidence) {
-             newItem.evidence = { 
-               _truncated: "Evidence data removed to save context window. Use other tools to inspect." 
-             };
-          }
-          return newItem;
-        });
-      }
-      
-      return { action, requirement_id, kind, backlog };
+      return { action, requirement_id, kind, ...buildBacklogListView(kind, backlog, params) };
+    }
+    case 'get': {
+      if (!params.item_id) throw new Error('get requires item_id');
+      const { kind, backlog } = await listBacklog(requirement_id);
+      const item = backlog.items.find((candidate) => candidate.id === params.item_id);
+      if (!item) throw new Error(`Backlog item ${params.item_id} not found`);
+      return { action, requirement_id, kind, item };
     }
     case 'upsert': {
       if (!params.title || !params.kind || !params.phase_id || !Array.isArray(params.acceptance) || params.acceptance.length === 0) {
@@ -143,7 +139,8 @@ export async function executeBacklogCore(params: BacklogCoreParams) {
         throw new Error(
           `Backlog item ${params.item_id} is terminal in ` +
           `"${existingItem.status}" and cannot be rewritten by model-facing ` +
-          'tools. Create a new remediation item instead.',
+          'tools. Inspect its evidence with action="get". A new external ' +
+          'user action must authorize a retry; do not clone the same work.',
         );
       }
       const effectiveTier =
@@ -264,7 +261,8 @@ export async function executeBacklogCore(params: BacklogCoreParams) {
         throw new Error(
           `Backlog item ${params.item_id} is quarantined in ` +
           `"${existingItem.status}". Model-facing tools cannot reopen terminal ` +
-          'items. A new external user action or a new remediation item is required.',
+          'items. A new external user action is required to authorize a retry; ' +
+          'do not clone the same work.',
         );
       }
       if (params.status === 'in_progress') {
@@ -295,6 +293,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(result);
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'Failed to execute requirement_backlog';
-    return NextResponse.json({ error: msg }, { status: 400 });
+    return NextResponse.json({ success: false, error: msg }, { status: 400 });
   }
 }

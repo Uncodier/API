@@ -5,7 +5,10 @@
 
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { extractStructuredResponse } from './response-parser';
-import { normalizeToolOperationResult } from '@/lib/services/tool-operation-result';
+import {
+  normalizeToolOperationResult,
+  toolOperationOutcomeToSuccess,
+} from '@/lib/services/tool-operation-result';
 
 /**
  * Create onStep callback handler for agent execution
@@ -254,7 +257,7 @@ export function createOnStepHandler(
           tool_call_id: toolCall.id || toolCall.toolCallId,
           tool_args: toolCall.args || {},
           tool_result: toolResult ? {
-            success: operation?.outcome === 'passed',
+            success: toolOperationOutcomeToSuccess(operation?.outcome),
             operation_outcome: operation?.outcome,
             output: (() => {
               // Clean output of any base64 image

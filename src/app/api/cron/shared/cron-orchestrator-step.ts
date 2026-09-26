@@ -427,8 +427,8 @@ export async function runOrchestratorStep(params: {
             ? 'The core backlog is done, but there are pending ornamental items. Stop running additional sandbox_* commands unless you are blocked.'
             : 'Stop running additional sandbox_* commands unless you are blocked.',
           'IMMEDIATE NEXT ACTIONS:',
-          '  1. Call `requirement_backlog` with `action="list"` to see the current phase and pending queue. If empty, `action="upsert"` 3-8 items derived from the INSTRUCTIONS block (do NOT read `requirement.spec.md` first).',
-          '  2. Pick the single next pending item and call `action="start"` to mark it in_progress (WIP=1 is enforced).',
+          '  1. Call `requirement_backlog` with `action="list"` for the compact current phase and open queue. Follow pagination.next_offset if needed. Only if summary.total_items is 0, `action="upsert"` 3-8 items derived from the INSTRUCTIONS block (do NOT read `requirement.spec.md` first). An empty filtered page is NOT an empty backlog.',
+          '  2. Reuse the active item in summary.active_item_ids if present; otherwise pick one runnable pending item. Call `action="get"` with its item_id to read full acceptance, constraints, evidence and blockers before planning. Only start a pending, unblocked item, with `action="start"` (WIP=1 is enforced). Never clone completed or quarantined work.',
           '  3. Call `instance_plan` with `action="create"`. BREAK DOWN the item into specific execution steps. Do NOT just repeat the item title. Every step MUST have a descriptive `title`, specific, descriptive `instructions` and a clear objective. Do NOT create generic steps like "Step 1" with "Execute step 1". Every step MUST set `skill` AND `metadata.backlog_item_id=<id>`.',
           '  4. Call `requirement_status` with `stage="in-progress"`.',
           '  5. If ALL items in the backlog are completely done, call the `system_notification` tool directly to notify the team.',

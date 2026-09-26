@@ -119,6 +119,15 @@ export function normalizeToolOperationResult(
   };
 }
 
+/** Preserve unknown outcomes in legacy success fields instead of reporting failure. */
+export function toolOperationOutcomeToSuccess(
+  outcome: ToolOperationOutcome | undefined,
+): boolean | null {
+  if (outcome === 'passed') return true;
+  if (outcome === 'failed') return false;
+  return null;
+}
+
 export function expectedToolReceiptKind(toolName: string): string | undefined {
   if (toolName === 'sandbox_db_inspect') return 'database_schema_snapshot';
   if (toolName === 'sandbox_db_migrate') return 'database_migration';

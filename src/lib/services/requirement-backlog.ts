@@ -37,6 +37,7 @@ import {
   assertBacklogStatusTransition,
 } from './requirement-backlog-invariants';
 import { mutateBacklogAtomically } from './requirement-backlog-mutation';
+import { findEquivalentBacklogItem } from './requirement-backlog-identity';
 import { validateAcceptance } from './requirement-acceptance';
 import {
   acceptanceContractIsExecutable,
@@ -141,14 +142,18 @@ function ensureItemDefaults(partial: Partial<BacklogItem> & { title: string; kin
     phase_id: partial.phase_id,
     acceptance: partial.acceptance,
     acceptance_contract: acceptanceContract,
+    constraints: partial.constraints,
     touches: partial.touches,
     status: (partial.status as BacklogItemStatus) || 'pending',
     attempts: typeof partial.attempts === 'number' ? partial.attempts : 0,
+    tool_failures: partial.tool_failures,
     assumptions: partial.assumptions,
     scope_level: partial.scope_level || 'full',
     tier: partial.tier ?? 'core',
     depends_on: partial.depends_on,
     blocked_by: partial.blocked_by,
+    review_quarantine: partial.review_quarantine,
+    plan_cancellation_pending: partial.plan_cancellation_pending,
     evidence: partial.evidence,
     created_at: partial.created_at || now,
     updated_at: now,
@@ -180,6 +185,12 @@ export async function upsertBacklogItem(params: {
   item: Partial<BacklogItem> & { title: string; kind: BacklogItemKind; phase_id: string; acceptance: string[] };
   allowLegacyContract?: boolean;
 }): Promise<BacklogItem> {
+  // Callers pass optional keys explicitly as undefined. Treat them as omitted,
+  // not as resets of persisted lifecycle state. Explicit values (including
+  // status, zero attempts and empty arrays) retain the existing update API.
+  const updates = Object.fromEntries(
+    Object.entries(params.item).filter(([, value]) => value !== undefined),
+  ) as typeof params.item;
   return mutateBacklogAtomically(
     params.requirementId,
     ({ backlog, flow }) => {
@@ -203,7 +214,7 @@ export async function upsertBacklogItem(params: {
         );
       }
       const next = ensureItemDefaults(
-        idx >= 0 ? { ...backlog.items[idx], ...params.item } : params.item,
+        idx >= 0 ? { ...backlog.items[idx], ...updates } : updates,
       );
 
       if ((next.tier ?? 'core') === 'core') {
@@ -233,7 +244,20 @@ export async function upsertBacklogItem(params: {
       }
 
       if (idx >= 0) backlog.items[idx] = next;
-      else backlog.items.push(next);
+      else {
+        // Check the latest snapshot on every CAS replay, not a caller's stale
+        // list. A duplicate is never rewritten/reopened, even if terminal.
+        const duplicate = findEquivalentBacklogItem(backlog.items, next);
+        if (duplicate) {
+          throw new Error(
+            `Backlog upsert rejected: equivalent item already exists ` +
+              `(id="${duplicate.id}", status="${duplicate.status}"). ` +
+              'No item was created or changed. Inspect the existing item; ' +
+              'distinct remediation must describe different work.',
+          );
+        }
+        backlog.items.push(next);
+      }
       assertBacklogInvariants(
         backlog.items,
         flow.phases.map((phase) => phase.id),

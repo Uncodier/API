@@ -83,7 +83,7 @@ function harness() {
       { id: `call-${effects}`, type: 'function', function: { name: 'write', arguments: '{}' } },
     ] }, { role: 'tool', tool_call_id: `call-${effects}`, content: `Effect ${effects} already applied` }]);
   };
-  const run = (options?: { userMessageLogId?: string }) => workflow.runAssistantWorkflow('instance', 'Implement plan', 'site', 'user', [], false,
+  const run = (options?: { userMessageLogId?: string }, message = 'Implement plan') => workflow.runAssistantWorkflow('instance', message, 'site', 'user', [], false,
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, options);
   return { context, persisted, result, doTurn, effects: () => effects, run,
     processAssistantTurn, updateInstancePlanCore, planSteps, redis, maybeSingle, query,
@@ -342,5 +342,28 @@ describe('interactive plan exhaustion and safe resumption', () => {
     expect(h.persisted.steps.map((step: any) => step.status)).toEqual(['completed', 'completed']);
     expect(h.completeUserMessageStep).toHaveBeenCalledWith('user-log');
     expect(h.redis.eval).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not treat a linked-requirement retry acknowledgement as permission to bypass cron ownership', async () => {
+    const h = harness();
+    h.context.hasLinkedRequirement = true;
+    h.context.executionOptions.requirement_id = 'requirement';
+    h.context.initialMessage = 'reintenta';
+    h.persisted.metadata = { requirement_id: 'requirement' };
+    h.persisted.steps[0].status = 'in_progress';
+    const before = clone(h.persisted);
+    h.processAssistantTurn.mockImplementation(async (_context, messages) => h.result(messages, true, 'Retry queued'));
+
+    await h.run({ userMessageLogId: 'route-user-log' }, 'reintenta');
+
+    expect(h.processAssistantTurn).toHaveBeenCalledTimes(1);
+    expect(h.processAssistantTurn.mock.calls[0][1]).toEqual([{ role: 'user', content: 'reintenta' }]);
+    // The interactive Redis lock is not a requirement cron run/generation fence.
+    // Its executor must stay off even if the model's final text claims a retry.
+    expect(h.redis.set).not.toHaveBeenCalled();
+    expect(h.redis.eval).not.toHaveBeenCalled();
+    expect(h.updateInstancePlanCore).not.toHaveBeenCalled();
+    expect(h.persisted).toEqual(before);
+    expect(h.spawnSilentContinueStep).not.toHaveBeenCalled();
   });
 });

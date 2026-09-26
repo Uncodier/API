@@ -6,6 +6,7 @@ export default {
   testMatch: [
     '<rootDir>/src/app/api/cron/shared/__tests__/**/*.test.ts',
     '<rootDir>/src/app/api/cron/requirements-apps/__tests__/**/*.test.ts',
+    '<rootDir>/src/app/api/agents/tools/requirement_backlog/__tests__/**/*.test.ts',
     '<rootDir>/src/app/api/robots/instance/assistant/__tests__/plan-exhaustion.test.ts',
     '<rootDir>/src/app/api/robots/instance/assistant/__tests__/route-lifecycle.test.ts',
     '<rootDir>/src/app/api/robots/instance/assistant/__tests__/response-stream.test.ts',
@@ -15,6 +16,10 @@ export default {
     '<rootDir>/src/lib/services/__tests__/harness-execution-ownership-sql.test.ts',
     '<rootDir>/src/lib/services/__tests__/requirement-cost-envelope.test.ts',
     '<rootDir>/src/lib/services/__tests__/requirement-backlog-invariants.test.ts',
+    '<rootDir>/src/lib/services/__tests__/requirement-backlog-view.test.ts',
+    '<rootDir>/src/lib/services/__tests__/requirement-backlog-upsert.test.ts',
+    '<rootDir>/src/lib/services/__tests__/tool-operation-result.test.ts',
+    '<rootDir>/src/lib/services/__tests__/tool-operation-logging.test.ts',
     '<rootDir>/src/lib/services/__tests__/sandbox-fast-attach.test.ts',
     '<rootDir>/src/lib/services/apps-platform/__tests__/migration-applier.test.ts',
   ],

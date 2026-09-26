@@ -19,6 +19,14 @@ build this cycle MAY ONLY work on **one pending item** (WIP=1) from the
 resume it instead of creating a new plan step. Plans that touch `done` items
 or items from future phases are rejected by the coordinator.
 
+`list` returns a compact, paginated open queue, not the full backlog history.
+Check `summary.total_items` before declaring the backlog empty; follow
+`pagination.next_offset` when `has_more` is true. Use `list_status="all"` to
+check terminal items for duplicates. Before planning the selected item, call
+`requirement_backlog action="get"` with its `item_id` to retrieve the full
+acceptance contract, constraints, evidence, and blockers. Never clone the same
+work under a numbered remediation to reset its attempt budget.
+
 ### 1. Read the remaining inputs
 - **CRITICAL - Company Background**: You MUST always search for the company's background, context, and brand identity using the `memories` tool and `instance_logs` or `tools(action="call", name="instance")` before designing requirements, backlogs, or plans. Align the plan with the company's core objectives and target audience.
 - `requirements action="read"` — load the immutable spec (`requirement.spec.md`

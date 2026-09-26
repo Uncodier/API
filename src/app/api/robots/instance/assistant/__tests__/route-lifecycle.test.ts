@@ -2,6 +2,8 @@ import { NextRequest } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { CreditService } from '@/lib/services/billing/CreditService';
 import { start } from 'workflow/api';
+import { resetRequirementOnUserAction } from '@/lib/services/requirement-cron-reset';
+import { runAssistantWorkflow } from '../workflow';
 import { insertUserActionLog, markRemoteInstanceError } from '../user-message-log';
 import { POST } from '../route';
 
@@ -38,6 +40,7 @@ beforeEach(() => {
   (CreditService.validateCredits as jest.Mock).mockResolvedValue(true);
   (insertUserActionLog as jest.Mock).mockResolvedValue({ id: LOG });
   (markRemoteInstanceError as jest.Mock).mockResolvedValue(undefined);
+  (resetRequirementOnUserAction as jest.Mock).mockResolvedValue(undefined);
   (supabaseAdmin.from as jest.Mock).mockImplementation((table: string) => {
     const query: any = {};
     for (const name of ['select', 'eq', 'insert']) query[name] = jest.fn(() => query);
@@ -71,6 +74,27 @@ it('uses the same lifecycle for a newly created session', async () => {
   expect(body).toContain('event: accepted');
   expect(body).toContain('event: completed');
   expect((start as jest.Mock).mock.calls[0][1][13]).toMatchObject({ userMessageLogId: LOG });
+});
+
+it('waits for trusted user-action recovery before starting an interactive retry, not a cron workflow', async () => {
+  let finishRecovery!: () => void;
+  let recoveryStarted!: () => void;
+  const started = new Promise<void>(resolve => { recoveryStarted = resolve; });
+  (resetRequirementOnUserAction as jest.Mock).mockImplementation(() => {
+    recoveryStarted();
+    return new Promise<void>(resolve => { finishRecovery = resolve; });
+  });
+  const pendingResponse = POST(request({ ...payload, message: 'reintenta' }));
+  await started;
+  expect(resetRequirementOnUserAction).toHaveBeenCalledWith(INSTANCE, LOG);
+  expect(start).not.toHaveBeenCalled();
+  finishRecovery();
+  const response = await pendingResponse;
+  expect(start).toHaveBeenCalledTimes(1);
+  expect((start as jest.Mock).mock.calls[0][0]).toBe(runAssistantWorkflow);
+  expect((start as jest.Mock).mock.calls[0][1][1]).toBe('reintenta');
+  expect((start as jest.Mock).mock.calls[0][1][13]).toMatchObject({ userMessageLogId: LOG });
+  expect(await response.text()).toContain('event: completed');
 });
 
 it('delivers workflow failure to the client independently of durable log visibility', async () => {

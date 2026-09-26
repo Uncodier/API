@@ -89,4 +89,58 @@ describe('assistant lifecycle SSE', () => {
     expect((await reader.read()).done).toBe(true);
     expect(jest.getTimerCount()).toBe(0);
   });
+
+  it.each([
+    ['completed', { assistant_response: 'Answer' }, 'completed'],
+    ['completed', { success: false, execution_status: 'exhausted' }, 'error'],
+    ['completed', { success: false, execution_status: 'continuing' }, 'error'],
+    ['failed', null, 'error'],
+    ['cancelled', null, 'error'],
+  ])('reaches actual EOF and releases observation resources for %s / %j', async (status, result, terminal) => {
+    jest.useFakeTimers();
+    const abort = new AbortController();
+    const removeListener = jest.spyOn(abort.signal, 'removeEventListener');
+    const getStatus = jest.fn().mockResolvedValue(status);
+    const getReturnValue = jest.fn().mockResolvedValue(result);
+    const cancelRun = jest.fn();
+    const run = {
+      runId: 'run',
+      get status() { return getStatus(); },
+      get returnValue() { return getReturnValue(); },
+      cancel: cancelRun,
+    };
+    const reader = assistantResponseStream(run, 'instance', 'log', { signal: abort.signal }).body!.getReader();
+    expect(decode((await reader.read()).value)).toContain('event: accepted');
+    expect(decode((await reader.read()).value)).toContain(`event: ${terminal}`);
+    expect(await reader.read()).toEqual({ done: true, value: undefined });
+    await expect(reader.closed).resolves.toBeUndefined();
+    expect(jest.getTimerCount()).toBe(0);
+    expect(removeListener).toHaveBeenCalledWith('abort', expect.any(Function));
+    abort.abort();
+    await jest.advanceTimersByTimeAsync(800_000);
+    expect(getStatus).toHaveBeenCalledTimes(1);
+    expect(getReturnValue).toHaveBeenCalledTimes(status === 'completed' ? 1 : 0);
+    expect(cancelRun).not.toHaveBeenCalled();
+  });
+
+  it('releases EOF on timeout while returnValue is pending and ignores its late completion', async () => {
+    jest.useFakeTimers();
+    let complete!: (value: unknown) => void;
+    const getReturnValue = jest.fn(() => new Promise(resolve => { complete = resolve; }));
+    const run = {
+      runId: 'run', status: Promise.resolve('completed'),
+      get returnValue() { return getReturnValue(); },
+    };
+    const reader = assistantResponseStream(run, 'instance', 'log', { timeoutMs: 100 }).body!.getReader();
+    await reader.read();
+    await flush();
+    expect(getReturnValue).toHaveBeenCalledTimes(1);
+    await jest.advanceTimersByTimeAsync(100);
+    expect(decode((await reader.read()).value)).toContain('ASSISTANT_RESPONSE_TIMEOUT');
+    expect((await reader.read()).done).toBe(true);
+    complete({ assistant_response: 'Late answer must not reopen the stream' });
+    await flush();
+    await expect(reader.closed).resolves.toBeUndefined();
+    expect(jest.getTimerCount()).toBe(0);
+  });
 });
