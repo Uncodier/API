@@ -75,6 +75,7 @@ import { systemNotificationTool } from '@/app/api/agents/tools/system_notificati
 import { requirementStatusTool } from '@/app/api/agents/tools/requirement_status/assistantProtocol';
 import { requirementBacklogTool } from '@/app/api/agents/tools/requirement_backlog/assistantProtocol';
 import { instanceLogsTool } from '@/app/api/agents/tools/instance_logs/assistantProtocol';
+import { instanceHistoryTool } from '@/app/api/agents/tools/instance_history/assistantProtocol';
 import { audioToTextTool } from '@/app/api/agents/tools/audioToText/assistantProtocol';
 import { transactionsTool } from '@/app/api/agents/tools/transactions/assistantProtocol';
 import { createSecretTool } from '@/app/api/agents/tools/createSecret/assistantProtocol';
@@ -406,6 +407,7 @@ export const getAssistantToolDefinitions = (
     requirementBacklogTool(siteId),
     companiesTool(),
     instanceLogsTool(siteId, userId ?? '', instanceId),
+    instanceHistoryTool(siteId, instanceId),
     transactionsTool(siteId, userId ?? ''),
     createProjectTool(userId ?? ''),
     audioToTextTool(siteId),

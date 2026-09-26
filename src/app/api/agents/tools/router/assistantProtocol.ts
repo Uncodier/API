@@ -118,6 +118,7 @@ export const TOOL_CATEGORIES: Record<string, ToolCategory> = {
   instance: 'infra',
   instance_project: 'infra',
   instance_logs: 'infra',
+  instance_history: 'infra',
   update_repo: 'infra',
   createAccount: 'infra',
   verifyAccount: 'infra',

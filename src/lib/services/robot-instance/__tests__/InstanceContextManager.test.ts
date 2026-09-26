@@ -1,5 +1,5 @@
 import { InstanceContextManager } from '../InstanceContextManager';
-import { measureInstanceContext } from '../instance-context-budget';
+import { estimateTokens, measureInstanceContext } from '../instance-context-budget';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { AIAgentExecutor } from '@/lib/custom-automation/ai-agent-executor';
 import { EmbeddingsService } from '@/lib/services/embeddings-service';
@@ -47,10 +47,14 @@ function mockPagedLogs(
     }
     if (table !== 'instance_logs') throw new Error(`Unexpected table: ${table}`);
     const filters: string[] = [];
+    const equalityFilters: Record<string, unknown> = {};
     let ascending = false;
     let limit = 200;
+    let offset = 0;
     const query: any = {};
-    query.select = query.eq = query.in = jest.fn().mockReturnValue(query);
+    query.select = query.in = jest.fn().mockReturnValue(query);
+    query.eq = jest.fn((column: string, value: unknown) => { equalityFilters[column] = value; return query; });
+    query.range = jest.fn((from: number, to: number) => { offset = from; limit = to - from + 1; return query; });
     query.or = jest.fn((filter: string) => { filters.push(filter); return query; });
     query.order = jest.fn((column: string, options: { ascending: boolean }) => {
       if (column === 'created_at') ascending = options.ascending;
@@ -58,7 +62,7 @@ function mockPagedLogs(
     });
     query.limit = jest.fn((size: number) => { limit = size; return query; });
     query.then = (resolve: (result: unknown) => unknown) => {
-      const rows = history.filter(log => filters.every(filter => {
+      const rows = history.filter(log => (!equalityFilters.log_type || log.log_type === equalityFilters.log_type) && filters.every(filter => {
         const match = filter.match(/created_at\.(gt|lt)\.([^,]+),and\(created_at\.eq\.[^,]+,id\.(?:gt|lt)\.([^)]+)\)/);
         if (!match) throw new Error(`Unexpected keyset: ${filter}`);
         const key = `${log.created_at}|${log.id}`;
@@ -70,7 +74,7 @@ function mockPagedLogs(
         const second = `${b.created_at}|${b.id}`;
         return ascending ? first.localeCompare(second) : second.localeCompare(first);
       });
-      return Promise.resolve({ data: rows.slice(0, limit), error: null }).then(resolve);
+      return Promise.resolve({ data: rows.slice(offset, offset + limit), error: null }).then(resolve);
     };
     return query;
   });
@@ -501,6 +505,7 @@ describe('InstanceContextManager', () => {
         return query;
       });
       query.limit = jest.fn((size: number) => { pageLimit = size; return query; });
+      query.range = jest.fn(() => chain({ data: [], error: null }));
       query.or = jest.fn((filter: string) => { keyset = filter; return query; });
       query.then = (resolve: (result: unknown) => unknown) => {
         const match = keyset?.match(/created_at\.(gt|lt)\.([^,]+),and\(created_at\.eq\.[^,]+,id\.(?:gt|lt)\.([^)]+)\)/);
@@ -629,12 +634,119 @@ describe('InstanceContextManager', () => {
     expect(text).toContain('Decision 1999');
   });
 
-  it('fails closed when un-compacted history exceeds the bounded fallback', async () => {
+  it('uses an explicit retrieval view when un-compacted history exceeds the bounded fallback', async () => {
     delete process.env.PORTKEY_API_KEY;
     mockPagedLogs(historyLogs(2001));
 
+    const text = await new InstanceContextManager('instance', 'site').buildHistory('hello', 'azure', 'gpt-4o');
+    expect(text).toContain('PARTIAL INSTANCE HISTORY');
+    expect(text).toContain('instance_history');
+    expect(text).toContain('Decision 2000');
+    expect(admin.rpc).not.toHaveBeenCalled();
+    expect(AIAgentExecutor).not.toHaveBeenCalled();
+  });
+
+  it('answers from a bounded retrieval view for the 38,732-row legacy session without bootstrapping it', async () => {
+    const history = historyLogs(38_732);
+    history[0] = { ...history[0], log_type: 'user_action', message: `ORIGINAL_REQUEST ${'a'.repeat(53_506)}` };
+    history[38_730] = { ...history[38_730], log_type: 'user_action', message: 'CURRENT_QUESTION' };
+    history[38_729] = { ...history[38_729], log_type: 'tool_call', message: 'Huge tool response',
+      tool_result: { payload: 'b'.repeat(204_000) } as any };
+    mockPagedLogs(history);
+
+    const text = await new InstanceContextManager('instance', 'site').buildHistory('CURRENT_QUESTION', 'azure', 'gpt-4o');
+    expect(text).toContain('PARTIAL INSTANCE HISTORY');
+    expect(text).toContain('ORIGINAL_REQUEST');
+    expect(text).toContain('CURRENT_QUESTION');
+    expect(text).toContain('EXCERPT');
+    expect(estimateTokens(text)).toBeLessThanOrEqual(6000);
+    expect(admin.from).toHaveBeenCalledTimes(7); // state, recent, memory, gap, metadata probe, first/latest user
+    expect(admin.rpc).not.toHaveBeenCalled();
+    expect(AIAgentExecutor).not.toHaveBeenCalled();
+  });
+
+  it('summarizes an entire oversized first log alone instead of selecting an empty batch', async () => {
+    const history = historyLogs(40);
+    history[0] = { ...history[0], message: `${'a'.repeat(53_506)}END_OF_LARGE_LOG` };
+    mockPagedLogs(history);
+    (admin.rpc as jest.Mock).mockResolvedValue({ data: false, error: null });
+
+    await new InstanceContextManager('instance', 'site').buildHistory('hello', 'azure', 'gpt-4o');
+    const act = (AIAgentExecutor as jest.Mock).mock.results[0].value.act;
+    expect(act).toHaveBeenCalledWith(expect.objectContaining({ prompt: expect.stringContaining('END_OF_LARGE_LOG') }));
+    expect(admin.rpc).toHaveBeenCalledWith('commit_instance_context_memory', expect.objectContaining({
+      p_log_ids: [history[0].id], p_end_log_id: history[0].id,
+    }));
+  });
+
+  it('does not compact an oversized row from an excerpt, even when a single page is too large', async () => {
+    const history = historyLogs(40);
+    history[0] = { ...history[0], log_type: 'user_action', message: `IMPORTANT_PREFIX ${'界'.repeat(200_000)}END_OF_LARGE_LOG` };
+    mockPagedLogs(history);
+
+    const text = await new InstanceContextManager('instance', 'site').buildHistory('hello', 'azure', 'gpt-4o');
+    expect(text).toContain('IMPORTANT_PREFIX');
+    expect(text).toContain(history[0].id);
+    expect(text).toContain('EXCERPT');
+    expect(estimateTokens(text)).toBeLessThanOrEqual(6000);
+    expect(admin.rpc).not.toHaveBeenCalled();
+    expect(AIAgentExecutor).not.toHaveBeenCalled();
+  });
+
+  it('retains readable cursor memory in retrieval mode without advancing it across omitted rows', async () => {
+    const history = historyLogs(2100);
+    const cursor = { cursor_at: history[4].created_at, cursor_log_id: history[4].id };
+    const memory = { id: 'memory', summary: 'Earlier decisions saved.', end_at: cursor.cursor_at, end_log_id: cursor.cursor_log_id };
+    mockPagedLogs(history, () => cursor, () => memory);
+    (admin.rpc as jest.Mock).mockResolvedValue({ data: [], error: null });
+
+    const text = await new InstanceContextManager('instance', 'site').buildHistory('hello', 'azure', 'gpt-4o');
+    expect(text).toContain('Earlier decisions saved.');
+    expect(text).toContain('PARTIAL INSTANCE HISTORY');
+    expect(admin.rpc).not.toHaveBeenCalledWith('commit_instance_context_memory', expect.anything());
+  });
+
+  it('excludes queued user actions from a partial preview', async () => {
+    const history = historyLogs(2100);
+    history[2098] = { ...history[2098], log_type: 'user_action', message: 'QUEUED_ACTION', details: { status: 'queued' } };
+    mockPagedLogs(history);
+
+    const text = await new InstanceContextManager('instance', 'site').buildHistory('hello', 'azure', 'gpt-4o');
+    expect(text).toContain('PARTIAL INSTANCE HISTORY');
+    expect(text).not.toContain('QUEUED_ACTION');
+  });
+
+  it('does not hide a metadata query failure as an incomplete but successful context', async () => {
+    mockPagedLogs(historyLogs(2100));
+    const from = (admin.from as jest.Mock).getMockImplementation()!;
+    (admin.from as jest.Mock).mockImplementation((table: string) => {
+      const query = from(table);
+      if (table === 'instance_logs') query.range = jest.fn(() => chain({ data: null, error: new Error('metadata unavailable') }));
+      return query;
+    });
     await expect(new InstanceContextManager('instance', 'site').buildHistory('hello', 'azure', 'gpt-4o'))
-      .rejects.toThrow('Instance history exceeds the safe un-compacted page limit');
+      .rejects.toThrow('metadata unavailable');
+  });
+
+  it('compacts a short oldest prefix before a queued row without reserving a second recent tail', async () => {
+    const history = historyLogs(230);
+    history[10] = { ...history[10], details: { status: 'queued' } };
+    let cursor: { cursor_at: string; cursor_log_id: string } | null = null;
+    let memory: { id: string; summary: string; end_at: string; end_log_id: string } | null = null;
+    mockPagedLogs(history, () => cursor, () => memory);
+    (admin.rpc as jest.Mock).mockImplementation(async (name: string, params: any) => {
+      if (name === 'match_instance_context_memories') return { data: [], error: null };
+      expect(params.p_log_ids).toEqual(history.slice(0, 10).map(log => log.id));
+      cursor = { cursor_at: params.p_end_at, cursor_log_id: params.p_end_log_id };
+      memory = { id: 'memory', summary: 'Prefix saved.', end_at: params.p_end_at, end_log_id: params.p_end_log_id };
+      return { data: true, error: null };
+    });
+
+    const text = await new InstanceContextManager('instance', 'site').buildHistory('hello', 'azure', 'gpt-4o');
+    expect(AIAgentExecutor).toHaveBeenCalledTimes(1);
+    expect(text).toContain('Prefix saved.');
+    expect(text).toContain('Decision 229');
+    expect(text).not.toContain('[agent_action] "Decision 10"');
   });
 
   it('retries legacy RPCs without retaining a reserve for a different model', async () => {

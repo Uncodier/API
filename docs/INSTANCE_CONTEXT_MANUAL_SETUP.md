@@ -105,12 +105,25 @@ DTO via `market-fit/app/api/robots/instance/context/route.ts`.
   compaction through their position.
 - The most recent summary is always included. Semantic search can add one
   relevant older snapshot as supplementary, possibly superseded evidence.
-- If the context migration is missing, or summarization cannot advance the
-  cursor, the assistant pages back from the newest logs and includes all
-  un-compacted history (up to 2,000 rows). It never skips unseen logs. Beyond
-  that bound it stops rather than sending an incomplete transcript; restore
-  summarization and apply the migration before long-running use. A model with
-  a verified window may also reject an oversized un-compacted prompt.
+- Existing long-running sessions can predate context memory and have tens of
+  thousands of audit logs. A metadata-only probe detects more than 2,000
+  un-compacted rows **before** attempting synchronous summarization. Such
+  sessions use an explicitly labelled **partial retrieval view**, not an
+  invented summary or an advanced cursor. It includes bounded excerpts of the
+  first/recent user instructions and recent error/tool evidence. Large payloads
+  can also trigger this view on smaller histories. The usual history allowance
+  (6k estimated tokens for unverified deployments) bounds the excerpts; the
+  executor still guards the entire request against a verified model window.
+- `instance_history` is a read-only tool available through the `tools` router.
+  `action="list"` searches message text and pages backwards using `next_cursor`;
+  `action="read"` reads a log by ID in bounded character chunks using
+  `next_offset`. Both are scoped to the current site **and** instance. The
+  partial view instructs the model to retrieve relevant decisions before
+  relying on them and never claim it has reviewed the entire archive.
+- Partial views never delete logs, generate embeddings, or move the compaction
+  cursor. For smaller histories, a complete log exceeding the 24k-character
+  batch can be summarized alone up to a 96k-byte ceiling. Larger logs remain
+  accessible by chunked reads; they are never committed from an excerpt.
 - If a cursor exists but its latest summary cannot be read, the assistant
   stops rather than proceed with silently lost context.
 - The widget projects the next turn using the last measured/estimated input
