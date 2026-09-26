@@ -10,6 +10,7 @@ type UsageStateRow = { model?: string | null; provider?: string | null; used_tok
   output_tokens?: number | null; available_tokens?: number | null;
   reserved_output_tokens?: number | null; source?: string | null; measured_at?: string | null;
   input_breakdown?: unknown };
+const MAX_UNCOMPACTED_HISTORY_LOGS = 2000;
 
 export function selectTacticalLogs(logs: Log[], limit = 8): Log[] {
   return logs.filter((log) => log.log_type === 'tool_call' || log.log_type === 'error'
@@ -248,17 +249,22 @@ export class InstanceContextManager {
     }
 
     // A page older than the newest 200 cannot be skipped just because it is
-    // outside the displayed transcript. A subsequent step can compact it.
+    // outside the displayed transcript.
     if (recentRows.length === 200 && await this.hasUnseenOlderLogs(cursor, recentRows[0])) {
       // Each successful CAS moves the durable cursor. Re-read the newest page
-      // and continue compacting the oldest gap rather than failing after the
-      // first batch. Bound the work per workflow step; on failure the next
-      // attempt can resume from the persisted cursor without skipping logs.
+      // and continue compacting the oldest gap. Bound summarization work per
+      // workflow step, but do not require summarization to answer a question.
       if (!migrationMissing && pagingPass < 10 && cursor?.cursor_at &&
         (cursor.cursor_at !== state?.cursor_at || cursor.cursor_log_id !== state?.cursor_log_id)) {
         return this.buildHistory(currentMessage, provider, model, pagingPass + 1);
       }
-      throw new Error('Instance history has unseen logs before the current page; compact from the cursor first');
+      // Missing embedding credentials, an unfinished log, or a failed CAS may
+      // prevent compaction. Page backwards to the cursor instead of omitting
+      // the unseen turns or failing every retry of the same assistant step.
+      const allRows = await this.loadUncompactedHistory(recentRows, cursor);
+      active = allRows.filter(log => log.details?.status !== 'queued' &&
+        (!cursor?.cursor_at || log.created_at > cursor.cursor_at ||
+          (log.created_at === cursor.cursor_at && log.id > (cursor.cursor_log_id || ''))));
     }
     // Tactical evidence is ordered separately, but every un-compacted row
     // must still be included. The executor's full-request guard raises an
@@ -283,6 +289,37 @@ export class InstanceContextManager {
     const row = data?.[0];
     return Boolean(row && (!cursor?.cursor_at || row.created_at > cursor.cursor_at ||
       (row.created_at === cursor.cursor_at && row.id > (cursor.cursor_log_id || ''))));
+  }
+
+  private async loadUncompactedHistory(recentRows: Log[], cursor: State | null): Promise<Log[]> {
+    let allRows = [...recentRows];
+    let oldest = allRows[0];
+    while (allRows.length < MAX_UNCOMPACTED_HISTORY_LOGS) {
+      let query = supabaseAdmin.from('instance_logs')
+        .select('id,created_at,log_type,message,level,tool_name,tool_args,tool_result,details')
+        .eq('instance_id', this.instanceId).eq('site_id', this.siteId)
+        .in('log_type', ['user_action','agent_action','tool_call','error','execution_summary','infrastructure','sandbox_test_failure'])
+        .or(`created_at.lt.${oldest.created_at},and(created_at.eq.${oldest.created_at},id.lt.${oldest.id})`)
+        .order('created_at', { ascending: false }).order('id', { ascending: false })
+        .limit(Math.min(200, MAX_UNCOMPACTED_HISTORY_LOGS - allRows.length));
+      if (cursor?.cursor_at && cursor.cursor_log_id) {
+        query = query.or(`created_at.gt.${cursor.cursor_at},and(created_at.eq.${cursor.cursor_at},id.gt.${cursor.cursor_log_id})`);
+      }
+      const { data, error } = await query;
+      if (error) throw error;
+      const page = (data || []) as Log[];
+      if (!page.length) return allRows;
+      if (page.some(log => log.created_at > oldest.created_at ||
+        (log.created_at === oldest.created_at && log.id >= oldest.id))) {
+        throw new Error('Instance history paging did not advance');
+      }
+      allRows = [...page.reverse(), ...allRows];
+      oldest = allRows[0];
+    }
+    if (await this.hasUnseenOlderLogs(cursor, oldest)) {
+      throw new Error('Instance history exceeds the safe un-compacted page limit; check context summarization');
+    }
+    return allRows;
   }
 
   private async compact(logs: Log[], cursor: State | null, provider: AIProvider, model: string): Promise<boolean> {

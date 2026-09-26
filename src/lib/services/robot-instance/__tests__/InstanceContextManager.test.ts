@@ -34,6 +34,56 @@ function chain(result: unknown) {
   return query;
 }
 
+function mockPagedLogs(
+  history: typeof logs,
+  readState: () => { cursor_at: string; cursor_log_id: string } | null = () => null,
+  readMemory: () => { id: string; summary: string; end_at: string; end_log_id: string } | null = () => null,
+) {
+  (admin.from as jest.Mock).mockImplementation((table: string) => {
+    if (table === 'instance_context_state') return chain({ data: readState(), error: null });
+    if (table === 'instance_context_memories') {
+      const memory = readMemory();
+      return chain({ data: memory ? [memory] : [], error: null });
+    }
+    if (table !== 'instance_logs') throw new Error(`Unexpected table: ${table}`);
+    const filters: string[] = [];
+    let ascending = false;
+    let limit = 200;
+    const query: any = {};
+    query.select = query.eq = query.in = jest.fn().mockReturnValue(query);
+    query.or = jest.fn((filter: string) => { filters.push(filter); return query; });
+    query.order = jest.fn((column: string, options: { ascending: boolean }) => {
+      if (column === 'created_at') ascending = options.ascending;
+      return query;
+    });
+    query.limit = jest.fn((size: number) => { limit = size; return query; });
+    query.then = (resolve: (result: unknown) => unknown) => {
+      const rows = history.filter(log => filters.every(filter => {
+        const match = filter.match(/created_at\.(gt|lt)\.([^,]+),and\(created_at\.eq\.[^,]+,id\.(?:gt|lt)\.([^)]+)\)/);
+        if (!match) throw new Error(`Unexpected keyset: ${filter}`);
+        const key = `${log.created_at}|${log.id}`;
+        const bound = `${match[2]}|${match[3]}`;
+        return match[1] === 'gt' ? key > bound : key < bound;
+      }));
+      rows.sort((a, b) => {
+        const first = `${a.created_at}|${a.id}`;
+        const second = `${b.created_at}|${b.id}`;
+        return ascending ? first.localeCompare(second) : second.localeCompare(first);
+      });
+      return Promise.resolve({ data: rows.slice(0, limit), error: null }).then(resolve);
+    };
+    return query;
+  });
+}
+
+function historyLogs(count: number) {
+  return Array.from({ length: count }, (_, index) => ({
+    ...logs[0], id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+    created_at: new Date(Date.UTC(2026, 8, 25, 12, 0, index)).toISOString(),
+    message: `Decision ${index}`,
+  }));
+}
+
 describe('InstanceContextManager', () => {
   const oldModel = process.env.INSTANCE_CONTEXT_SUMMARY_MODEL;
   const oldPortkey = process.env.PORTKEY_API_KEY;
@@ -483,6 +533,108 @@ describe('InstanceContextManager', () => {
     expect(commits[0][0]).toBe(many[0].id);
     expect(text).toContain('Earlier decisions saved.');
     expect(text).toContain('Decision 229');
+  });
+
+  it('pages back from the newest 200 when summarization is unavailable, preserving the first turn', async () => {
+    delete process.env.PORTKEY_API_KEY;
+    const history = historyLogs(230);
+    mockPagedLogs(history);
+
+    const text = await new InstanceContextManager('instance', 'site').buildHistory('hello', 'azure', 'gpt-4o');
+    expect(text).toContain('Decision 0');
+    expect(text).toContain('Decision 229');
+    expect(admin.rpc).not.toHaveBeenCalled();
+  });
+
+  it('pages back without a migration instead of dropping logs before the newest page', async () => {
+    const history = historyLogs(230);
+    mockPagedLogs(history);
+    const pagedFrom = admin.from as jest.Mock;
+    const from = pagedFrom.getMockImplementation()!;
+    pagedFrom.mockImplementation((table: string) => table === 'instance_context_state'
+      ? chain({ data: null, error: { code: '42P01', message: 'relation does not exist' } })
+      : from(table));
+
+    const text = await new InstanceContextManager('instance', 'site').buildHistory('hello', 'azure', 'gpt-4o');
+    expect(text).toContain('Decision 0');
+    expect(text).toContain('Decision 229');
+    expect(admin.rpc).not.toHaveBeenCalled();
+  });
+
+  it('pages through rows sharing a timestamp without dropping the keyset boundary', async () => {
+    delete process.env.PORTKEY_API_KEY;
+    const history = historyLogs(230).map(log => ({ ...log, created_at: timestamp(0) }));
+    mockPagedLogs(history);
+
+    const text = await new InstanceContextManager('instance', 'site').buildHistory('hello', 'azure', 'gpt-4o');
+    expect(text).toContain('Decision 0');
+    expect(text).toContain('Decision 29');
+    expect(text).toContain('Decision 30');
+    expect(text).toContain('Decision 229');
+  });
+
+  it('includes the unseen page if the database rejects compaction', async () => {
+    const history = historyLogs(230);
+    mockPagedLogs(history);
+    (admin.rpc as jest.Mock).mockResolvedValue({ data: false, error: null });
+
+    const text = await new InstanceContextManager('instance', 'site').buildHistory('hello', 'azure', 'gpt-4o');
+    expect(admin.rpc).toHaveBeenCalledWith('commit_instance_context_memory', expect.anything());
+    expect(text).toContain('Decision 0');
+    expect(text).toContain('Decision 229');
+    expect(text).not.toContain('RELEVANT EARLIER MEMORY');
+  });
+
+  it('loads only un-compacted pages after a cursor and skips queued actions', async () => {
+    delete process.env.PORTKEY_API_KEY;
+    const history = historyLogs(240);
+    history[12] = { ...history[12], details: { status: 'queued' } };
+    const cursor = { cursor_at: history[4].created_at, cursor_log_id: history[4].id };
+    const memory = { id: 'memory', summary: 'Earlier decisions saved.',
+      end_at: cursor.cursor_at, end_log_id: cursor.cursor_log_id };
+    mockPagedLogs(history, () => cursor, () => memory);
+    (admin.rpc as jest.Mock).mockResolvedValue({ data: [], error: null });
+
+    const text = await new InstanceContextManager('instance', 'site').buildHistory('hello', 'azure', 'gpt-4o');
+    expect(text).toContain('Earlier decisions saved.');
+    expect(text).toContain('Decision 5');
+    expect(text).toContain('Decision 239');
+    expect(text).not.toContain('[agent_action] "Decision 4"');
+    expect(text).not.toContain('[agent_action] "Decision 12"');
+    expect(admin.rpc).not.toHaveBeenCalledWith('commit_instance_context_memory', expect.anything());
+  });
+
+  it('keeps paging after the bounded compaction passes instead of losing the gap', async () => {
+    const history = historyLogs(2000);
+    let cursor: { cursor_at: string; cursor_log_id: string } | null = null;
+    let memory: { id: string; summary: string; end_at: string; end_log_id: string } | null = null;
+    const commits: string[][] = [];
+    mockPagedLogs(history, () => cursor, () => memory);
+    (admin.rpc as jest.Mock).mockImplementation(async (name: string, params: any) => {
+      if (name === 'match_instance_context_memories') return { data: [], error: null };
+      expect(name).toBe('commit_instance_context_memory');
+      const first = history.findIndex(log => cursor && log.id === cursor.cursor_log_id) + 1;
+      expect(params.p_log_ids).toEqual(history.slice(first, first + params.p_log_ids.length).map(log => log.id));
+      commits.push(params.p_log_ids);
+      cursor = { cursor_at: params.p_end_at, cursor_log_id: params.p_end_log_id };
+      memory = { id: 'memory', summary: 'Earlier decisions saved.',
+        end_at: params.p_end_at, end_log_id: params.p_end_log_id };
+      return { data: true, error: null };
+    });
+
+    const text = await new InstanceContextManager('instance', 'site').buildHistory('hello', 'azure', 'gpt-4o');
+    expect(commits.length).toBeGreaterThan(10);
+    expect(text).toContain('Earlier decisions saved.');
+    expect(text).toContain(`Decision ${commits.flat().length}`);
+    expect(text).toContain('Decision 1999');
+  });
+
+  it('fails closed when un-compacted history exceeds the bounded fallback', async () => {
+    delete process.env.PORTKEY_API_KEY;
+    mockPagedLogs(historyLogs(2001));
+
+    await expect(new InstanceContextManager('instance', 'site').buildHistory('hello', 'azure', 'gpt-4o'))
+      .rejects.toThrow('Instance history exceeds the safe un-compacted page limit');
   });
 
   it('retries legacy RPCs without retaining a reserve for a different model', async () => {

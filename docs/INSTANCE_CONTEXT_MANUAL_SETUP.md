@@ -105,9 +105,12 @@ DTO via `market-fit/app/api/robots/instance/context/route.ts`.
   compaction through their position.
 - The most recent summary is always included. Semantic search can add one
   relevant older snapshot as supplementary, possibly superseded evidence.
-- If the context migration is missing, the assistant cannot compact. When
-  there are more un-compacted logs than the page can hold, it stops rather
-  than silently skipping them; apply the migration before long-running use.
+- If the context migration is missing, or summarization cannot advance the
+  cursor, the assistant pages back from the newest logs and includes all
+  un-compacted history (up to 2,000 rows). It never skips unseen logs. Beyond
+  that bound it stops rather than sending an incomplete transcript; restore
+  summarization and apply the migration before long-running use. A model with
+  a verified window may also reject an oversized un-compacted prompt.
 - If a cursor exists but its latest summary cannot be read, the assistant
   stops rather than proceed with silently lost context.
 - The widget projects the next turn using the last measured/estimated input
