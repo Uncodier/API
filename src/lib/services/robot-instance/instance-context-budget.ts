@@ -2,7 +2,7 @@ export interface ContextUsage {
   model: string;
   provider: string;
   usedTokens: number;
-  outputTokens?: number;
+  outputTokens?: number | null;
   availableTokens: number | null;
   reservedOutputTokens: number;
   utilization: number | null;
@@ -53,7 +53,8 @@ const KNOWN_MODEL_CAPACITIES: Readonly<Record<string, ModelCapacity>> = {
   'openai:gpt-5.2': { availableTokens: 400_000, reservedOutputTokens: 128_000 },
   // Azure deployment names are arbitrary; only the exact default model-named
   // deployment can use this mapping. All other deployments need an override.
-  'azure:gpt-4o': { availableTokens: 128_000, reservedOutputTokens: 16_384 },
+  // Even a deployment called gpt-4o can point to a different model/version.
+  // Azure capacities require an explicit verified deployment override.
   'xai:grok-4.6': { availableTokens: 500_000, reservedOutputTokens: 2048 },
 };
 
@@ -160,10 +161,11 @@ export function estimatePromptTokens(messages: unknown[]): number {
 /** Estimate mutually exclusive portions of exactly the messages/tool schemas sent.
  * Embedded skill blocks are identified only in system messages. Loaded skill
  * playbooks in tool results belong to tool calls, not to system skills. */
-export function estimateInputBreakdown(system: string, messages: unknown[], tools: unknown[]): InputTokenBreakdown {
+export function estimateInputBreakdown(system: string, messages: unknown[], tools: unknown[], responseFormat?: unknown): InputTokenBreakdown {
   const prompt = messages as Array<{ role?: string; content?: unknown; tool_calls?: unknown }>;
   const estimatedInputTokens = estimatePromptTokens(messages) + estimateTokens(tools)
-    + (system && !prompt.some(message => message?.role === 'system') ? estimateTokens(system) : 0);
+    + (system && !prompt.some(message => message?.role === 'system') ? estimateTokens(system) : 0)
+    + (responseFormat ? estimateTokens(responseFormat) : 0);
   const toolDefinitions = tools.length ? estimateTokens(tools) : 0;
   const base = estimatePromptTokens([]);
   const toolMessages = prompt.filter(message => message?.role === 'tool' || (message?.role === 'assistant' && message.tool_calls));
@@ -180,8 +182,30 @@ export function estimateInputBreakdown(system: string, messages: unknown[], tool
       /--- BEGIN SKILL [^\n]* ---\n[\s\S]*?\n--- END SKILL [^\n]* ---/g), match => match[0]));
   const skills = Math.min(estimatedInputTokens - toolDefinitions - toolCalls - chatTokens,
     skillBlocks.length ? estimateTokens(skillBlocks.join('\n')) : 0);
-  return { estimatedInputTokens, instructions: estimatedInputTokens - toolDefinitions - toolCalls - chatTokens - skills,
-    skills, messages: chatTokens, toolCalls, toolDefinitions };
+  // The instance transcript is embedded in a system message for execution,
+  // but it is still historical messages and tool results, not instructions.
+  // Read only our explicit boundaries, never arbitrary text mentioning a tool.
+  let historyMessages = 0;
+  let historyTools = 0;
+  for (const text of systemTexts) {
+    const history = text.match(/(?:^|\n)INSTANCE_HISTORY_START\n([\s\S]*?)\nINSTANCE_HISTORY_END(?:\n|$)/);
+    if (!history) continue;
+    let category: 'messages' | 'toolCalls' = 'messages';
+    for (const line of history[1].split('\n')) {
+      if (line === 'TACTICAL INSTANCE EVIDENCE (preserve on overflow):') continue;
+      if (line === 'RECENT INSTANCE HISTORY (newest last):') continue;
+      if (line.startsWith('[tool_call')) category = 'toolCalls';
+      else if (line.startsWith('[') || line === 'RELEVANT EARLIER MEMORY:') category = 'messages';
+      const tokens = Math.ceil(Buffer.byteLength(line, 'utf8') / 2);
+      if (category === 'toolCalls') historyTools += tokens;
+      else historyMessages += tokens;
+    }
+  }
+  const instructionTokens = estimatedInputTokens - toolDefinitions - toolCalls - chatTokens - skills;
+  const historicalTools = Math.min(instructionTokens, historyTools);
+  const historicalMessages = Math.min(instructionTokens - historicalTools, historyMessages);
+  return { estimatedInputTokens, instructions: instructionTokens - historicalTools - historicalMessages,
+    skills, messages: chatTokens + historicalMessages, toolCalls: toolCalls + historicalTools, toolDefinitions };
 }
 
 export class InstanceContextOverflowError extends Error {
@@ -219,28 +243,9 @@ export function fitInstanceRequest(params: {
     + (params.responseFormat ? estimateTokens(params.responseFormat) : 0);
   let usedTokens = usage();
   if (usedTokens <= inputBudget) return { usedTokens, inputBudget, compacted: false };
-  const system = params.messages.find(message => message.role === 'system');
-  if (typeof system?.content === 'string') {
-    const startMarker = 'INSTANCE_HISTORY_START\n';
-    const blockStart = system.content.lastIndexOf(startMarker);
-    const marker = 'RECENT INSTANCE HISTORY (newest last):\n';
-    const sectionEnd = blockStart < 0 ? -1 : system.content.lastIndexOf('\nINSTANCE_HISTORY_END');
-    const start = sectionEnd < 0 ? -1 : system.content.indexOf(marker, blockStart + startMarker.length);
-    if (start >= 0 && start < sectionEnd) {
-      // Without a durable summary, removing even optional history would make
-      // prior user decisions irrecoverable for this request.
-      if (!system.content.slice(blockStart, start).includes('RELEVANT EARLIER MEMORY:')) {
-        throw new InstanceContextOverflowError(usedTokens, inputBudget);
-      }
-      const end = system.content.lastIndexOf('\nTACTICAL INSTANCE EVIDENCE (preserve on overflow):', sectionEnd);
-      // Remove the optional transcript only. Tactical evidence follows after
-      // the marker and is retained; never touch tool-call message pairs.
-      system.content = system.content.slice(0, start)
-        + (end >= 0 && end < sectionEnd ? system.content.slice(end, sectionEnd) : '')
-        + system.content.slice(sectionEnd);
-      usedTokens = usage();
-    }
-  }
+  // A previous summary covers only the cursor, never logs appended after it.
+  // Dropping the recent transcript here would erase those un-compacted turns.
+  // Fail closed; the next durable compaction may free space on a later step.
   // Requirement/cron single-turn prompts keep their independent history in a
   // marked user message. It is advisory evidence, not the current step.
   if (usedTokens > inputBudget) {
@@ -258,18 +263,19 @@ export function fitInstanceRequest(params: {
 
 export function measureInstanceContext(params: {
   provider: string; model: string; system: string; messages: unknown[]; tools: unknown[];
-  providerInputTokens?: number; providerOutputTokens?: number;
+  providerInputTokens?: number; providerOutputTokens?: number | null; responseFormat?: unknown;
 }): ContextUsage {
   const capacity = modelContextCapacity(params.provider, params.model);
   const availableTokens = capacity?.availableTokens ?? null;
-  const breakdown = estimateInputBreakdown(params.system, params.messages, params.tools);
+  const breakdown = estimateInputBreakdown(params.system, params.messages, params.tools, params.responseFormat);
   const usedTokens = Number.isFinite(params.providerInputTokens) && (params.providerInputTokens ?? 0) > 0
     ? Math.ceil(params.providerInputTokens!)
     : breakdown.estimatedInputTokens;
   const reservedOutputTokens = capacity?.reservedOutputTokens ?? 0;
   return {
     model: params.model, provider: params.provider, usedTokens,
-    outputTokens: Math.max(0, params.providerOutputTokens || 0), availableTokens,
+    outputTokens: typeof params.providerOutputTokens === 'number' && Number.isFinite(params.providerOutputTokens)
+      ? Math.max(0, Math.ceil(params.providerOutputTokens)) : null, availableTokens,
     reservedOutputTokens,
     utilization: availableTokens ? Math.min(1, usedTokens / Math.max(1, availableTokens - reservedOutputTokens)) : null,
     source: params.providerInputTokens ? 'provider' : 'estimate',

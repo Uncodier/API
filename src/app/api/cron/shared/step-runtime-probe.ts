@@ -7,10 +7,16 @@
  * step-git-gate.ts.
  */
 
-import type { Sandbox } from '@vercel/sandbox';
+import { randomUUID } from 'node:crypto';
+import type { Command, Sandbox } from '@vercel/sandbox';
 import { SandboxService } from '@/lib/services/sandbox-service';
+import { runtimeProbeDeadline } from './runtime-probe-deadline';
 
 const DEFAULT_PROBE_DURATION_MS = 20_000;
+const DEFAULT_TOTAL_TIMEOUT_MS = 60_000;
+const MAX_TOTAL_TIMEOUT_MS = 120_000;
+const CLEANUP_TIMEOUT_MS = 5_000;
+const CURL_TIMEOUT_FLAGS = '--connect-timeout 2 --max-time 5';
 const SERVER_LOG_TAIL_BYTES = 6_000;
 const BODY_SNIPPET_BYTES = 600;
 const PROBE_LOG_PATH_PREFIX = '/tmp/makinari-server';
@@ -81,12 +87,19 @@ export type RuntimeProbeParams = {
   pageRoutes?: string[];
   apiRoutes?: RuntimeProbeApiTarget[];
   durationMs?: number;
+  /** Total bound for payload writes, startup, curls and evidence reads (default 60s,
+   * maximum 120s). Cleanup has an independent <=5s allowance. durationMs remains
+   * the startup-readiness window for compatibility.
+   */
+  totalTimeoutMs?: number;
+  signal?: AbortSignal;
   port?: number;
   /**
    * When true, leaves `next start` running after curl probes finish and writes
    * the PID to /tmp/makinari-server-<port>.pid so the visual probe can reuse
    * the server. Caller MUST invoke stopProbeServer afterwards to avoid
-   * leaking processes inside the sandbox.
+    * leaking processes inside the sandbox. Failures/cancellation never retain it;
+    * a server-side five-minute lease also bounds a lost caller.
    */
   keepServerAlive?: boolean;
 };
@@ -129,7 +142,7 @@ function tail(text: string, bytes: number): string {
 }
 
 function pickPort(port?: number): number {
-  if (typeof port === 'number' && port > 1024 && port < 65535) return port;
+  if (typeof port === 'number' && Number.isInteger(port) && port > 1024 && port < 65535) return port;
   // Default = SandboxService.VISUAL_PROBE_PORT. Imported lazily to keep this
   // module usable in environments where the sandbox service isn't available.
   return 3000;
@@ -144,6 +157,7 @@ function buildProbeScript(params: {
   port: number;
   logPath: string;
   pidPath: string;
+  publicPidPath: string;
   startReadyTimeoutSec: number;
   pageRoutes: string[];
   apiRoutes: Array<{
@@ -160,6 +174,7 @@ function buildProbeScript(params: {
     port,
     logPath,
     pidPath,
+    publicPidPath,
     startReadyTimeoutSec,
     pageRoutes,
     apiRoutes,
@@ -167,29 +182,51 @@ function buildProbeScript(params: {
     keepServerAlive,
   } = params;
   const lines: string[] = [];
-  lines.push(`cd ${wd}`);
+  lines.push('set -eu');
+  lines.push(`cd ${shellEscape(wd)}`);
+  lines.push('command -v setsid >/dev/null || exit 1');
+  lines.push('command -v timeout >/dev/null || exit 1');
   lines.push(`: > ${logPath}`);
   lines.push(`: > ${resultPath}`);
-  lines.push(`rm -f ${pidPath}`);
-  lines.push(`npx --yes next start -H 0.0.0.0 -p ${port} >> ${logPath} 2>&1 &`);
+  // Do not download Next via npx, or kill unrelated `next start` processes.
+  // setsid owns exactly this server process group, timeout bounds orphaned servers.
+  lines.push('SERVER_PID=; KEEP_SERVER=0');
+  lines.push('cleanup() {');
+  lines.push('  if [ "$KEEP_SERVER" != 1 ] && [ -n "$SERVER_PID" ]; then');
+  lines.push('    kill -TERM -"$SERVER_PID" 2>/dev/null || true');
+  lines.push('    kill -KILL -"$SERVER_PID" 2>/dev/null || true');
+  lines.push(`    rm -f ${pidPath}`);
+  lines.push('  fi');
+  const tempFiles = [
+    ...pageRoutes.map((_, idx) => `${resultPath}-page-${idx}.bin`),
+    ...apiRoutes.map((_, idx) => `${resultPath}-api-${idx}.bin`),
+    ...apiRoutes.flatMap((a) => a.payloadFile ? [a.payloadFile] : []),
+  ];
+  lines.push(`  rm -f ${tempFiles.map(shellEscape).join(' ')}`);
+  lines.push('}');
+  lines.push("trap cleanup EXIT; trap 'exit 143' HUP INT TERM");
+  lines.push(`setsid timeout -k 1 300 node node_modules/next/dist/bin/next start -H 0.0.0.0 -p ${port} >> ${logPath} 2>&1 &`);
   lines.push('SERVER_PID=$!');
   lines.push(`echo $SERVER_PID > ${pidPath}`);
   lines.push('READY=0');
-  lines.push(`for i in $(seq 1 ${startReadyTimeoutSec}); do`);
-  lines.push(`  STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:${port}/ 2>/dev/null)`);
+  lines.push(`READY_DEADLINE=$(($(date +%s) + ${startReadyTimeoutSec}))`);
+  lines.push('while [ "$(date +%s)" -lt "$READY_DEADLINE" ]; do');
+  lines.push('  kill -0 "$SERVER_PID" 2>/dev/null || break');
+  lines.push(`  STATUS=$(curl -s ${CURL_TIMEOUT_FLAGS} -o /dev/null -w "%{http_code}" http://127.0.0.1:${port}/ 2>/dev/null) || STATUS=000`);
   lines.push('  if [ -n "$STATUS" ] && [ "$STATUS" != "000" ]; then READY=1; break; fi');
   lines.push('  sleep 1');
   lines.push('done');
   lines.push('echo "READY=$READY" >> ' + resultPath);
+  lines.push('[ "$READY" = 1 ] || exit 1');
 
   pageRoutes.forEach((route, idx) => {
     const safeRoute = route.startsWith('/') ? route : `/${route}`;
     const url = `http://127.0.0.1:${port}${safeRoute}`;
     lines.push(
-      `PAGE_BODY_${idx}=/tmp/mk-page-${idx}.bin`,
+      `PAGE_BODY_${idx}=${resultPath}-page-${idx}.bin`,
     );
     lines.push(
-      `PAGE_STATS_${idx}=$(curl -s -o "$PAGE_BODY_${idx}" -w "%{http_code}|%{time_starttransfer}|%{content_type}" ${shellEscape(url)} 2>/dev/null)`,
+      `PAGE_STATS_${idx}=$(curl -s ${CURL_TIMEOUT_FLAGS} -o "$PAGE_BODY_${idx}" -w "%{http_code}|%{time_starttransfer}|%{content_type}" ${shellEscape(url)} 2>/dev/null) || PAGE_STATS_${idx}='000|0|'`,
     );
     lines.push(
       `PAGE_SNIPPET_${idx}=$(head -c ${BODY_SNIPPET_BYTES} "$PAGE_BODY_${idx}" 2>/dev/null | base64 | tr -d '\\n')`,
@@ -203,13 +240,13 @@ function buildProbeScript(params: {
     const safeRoute = api.path.startsWith('/') ? api.path : `/${api.path}`;
     const url = `http://127.0.0.1:${port}${safeRoute}`;
     const bodyFlag = api.payloadFile
-      ? `-d @${api.payloadFile} -H 'content-type: application/json'`
+      ? `-d ${shellEscape(`@${api.payloadFile}`)} -H 'content-type: application/json'`
       : '';
     lines.push(
-      `API_BODY_${idx}=/tmp/mk-api-${idx}.bin`,
+      `API_BODY_${idx}=${resultPath}-api-${idx}.bin`,
     );
     lines.push(
-      `API_STATS_${idx}=$(curl -s -o "$API_BODY_${idx}" -w "%{http_code}|%{time_starttransfer}|%{content_type}" -X ${api.method} ${bodyFlag} ${shellEscape(url)} 2>/dev/null)`,
+      `API_STATS_${idx}=$(curl -s ${CURL_TIMEOUT_FLAGS} -o "$API_BODY_${idx}" -w "%{http_code}|%{time_starttransfer}|%{content_type}" -X ${shellEscape(api.method)} ${bodyFlag} ${shellEscape(url)} 2>/dev/null) || API_STATS_${idx}='000|0|'`,
     );
     lines.push(
       `API_SNIPPET_${idx}=$(head -c ${BODY_SNIPPET_BYTES} "$API_BODY_${idx}" 2>/dev/null | base64 | tr -d '\\n')`,
@@ -219,10 +256,9 @@ function buildProbeScript(params: {
     );
   });
 
-  if (!keepServerAlive) {
-    lines.push('kill $SERVER_PID 2>/dev/null || true');
-    lines.push('wait $SERVER_PID 2>/dev/null || true');
-    lines.push(`rm -f ${pidPath}`);
+  if (keepServerAlive) {
+    lines.push(`cp ${pidPath} ${publicPidPath}`);
+    lines.push('KEEP_SERVER=1');
   }
   lines.push('echo DONE >> ' + resultPath);
   return lines.join('\n');
@@ -230,30 +266,33 @@ function buildProbeScript(params: {
 
 function parseResultLines(raw: string): {
   ready: boolean;
+  done: boolean;
   pages: Array<{ path: string; stats: string; b64: string }>;
   apis: Array<{ path: string; method: string; stats: string; b64: string }>;
 } {
   const out = {
     ready: false,
+    done: false,
     pages: [] as Array<{ path: string; stats: string; b64: string }>,
     apis: [] as Array<{ path: string; method: string; stats: string; b64: string }>,
   };
   for (const line of raw.split('\n')) {
+    if (line.trim() === 'DONE') { out.done = true; continue; }
     if (line.startsWith('READY=')) {
       out.ready = line.slice(6).trim() === '1';
       continue;
     }
     if (line.startsWith('PAGE|')) {
-      const [, path, stats, b64] = line.split('|');
-      out.pages.push({ path: path || '/', stats: stats || '', b64: b64 || '' });
+      const [, path, code, ttfb, contentType, b64] = line.split('|');
+      out.pages.push({ path: path || '/', stats: [code, ttfb, contentType].join('|'), b64: b64 || '' });
       continue;
     }
     if (line.startsWith('API|')) {
-      const [, path, method, stats, b64] = line.split('|');
+      const [, path, method, code, ttfb, contentType, b64] = line.split('|');
       out.apis.push({
         path: path || '/',
         method: method || 'GET',
-        stats: stats || '',
+        stats: [code, ttfb, contentType].join('|'),
         b64: b64 || '',
       });
     }
@@ -280,13 +319,9 @@ function parseStats(stats: string): { status: number; ttfb?: number; contentType
   return { status, ttfb: ttfb && Number.isFinite(ttfb) ? Math.round(ttfb * 1000) : undefined, contentType: ctRaw || undefined };
 }
 
-async function readSandboxFile(sandbox: Sandbox, path: string): Promise<string> {
-  try {
-    const buf = await sandbox.fs.readFile(path, 'utf8');
-    return typeof buf === 'string' ? buf : String(buf ?? '');
-  } catch {
-    return '';
-  }
+async function readSandboxFile(sandbox: Sandbox, path: string, signal: AbortSignal): Promise<string> {
+  const buf = await sandbox.fs.readFile(path, { encoding: 'utf8', signal });
+  return typeof buf === 'string' ? buf : String(buf ?? '');
 }
 
 export async function runRuntimeProbe(params: RuntimeProbeParams): Promise<RuntimeProbeResult> {
@@ -294,10 +329,16 @@ export async function runRuntimeProbe(params: RuntimeProbeParams): Promise<Runti
   const { sandbox } = params;
   const wd = SandboxService.WORK_DIR;
   const port = pickPort(params.port);
+  const probeId = randomUUID();
   const logPath = `${PROBE_LOG_PATH_PREFIX}-${port}.log`;
-  const pidPath = `${PROBE_PID_PATH_PREFIX}-${port}.pid`;
-  const resultPath = `/tmp/makinari-probe-${port}.out`;
+  const publicPidPath = `${PROBE_PID_PATH_PREFIX}-${port}.pid`;
+  const pidPath = `${PROBE_PID_PATH_PREFIX}-${port}-${probeId}.pid`;
+  const resultPath = `/tmp/makinari-probe-${port}-${probeId}.out`;
   const keepServerAlive = !!params.keepServerAlive;
+  const totalTimeoutMs = typeof params.totalTimeoutMs === 'number' && Number.isFinite(params.totalTimeoutMs)
+    ? Math.max(1, Math.min(MAX_TOTAL_TIMEOUT_MS, params.totalTimeoutMs))
+    : DEFAULT_TOTAL_TIMEOUT_MS;
+  const deadline = runtimeProbeDeadline(totalTimeoutMs, params.signal);
 
   const pageRoutes = Array.from(new Set(['/', ...(params.pageRoutes || [])].map((p) => p.trim()).filter(Boolean)));
   const apiRoutes = (params.apiRoutes || []).map((api) => ({
@@ -318,13 +359,12 @@ export async function runRuntimeProbe(params: RuntimeProbeParams): Promise<Runti
     const a = apiRoutes[i];
     let payloadFile: string | undefined;
     if (a.payload !== undefined) {
-      payloadFile = `/tmp/mk-api-payload-${i}.json`;
-      await sandbox.writeFiles([{ path: payloadFile, content: JSON.stringify(a.payload) }]).catch(() => {});
+      payloadFile = `${resultPath}-payload-${i}.json`;
     }
     apiWithPayloads.push({ path: a.path, method: a.method, payloadFile, index: i, raw: a });
   }
 
-  const durationMs = params.durationMs ?? DEFAULT_PROBE_DURATION_MS;
+  const durationMs = Number.isFinite(params.durationMs) ? params.durationMs! : DEFAULT_PROBE_DURATION_MS;
   const startReadyTimeoutSec = Math.max(5, Math.min(40, Math.floor(durationMs / 1000)));
 
   const script = buildProbeScript({
@@ -332,6 +372,7 @@ export async function runRuntimeProbe(params: RuntimeProbeParams): Promise<Runti
     port,
     logPath,
     pidPath,
+    publicPidPath,
     startReadyTimeoutSec,
     pageRoutes,
     apiRoutes: apiWithPayloads.map(({ path, method, payloadFile, index }) => ({ path, method, payloadFile, index })),
@@ -340,16 +381,38 @@ export async function runRuntimeProbe(params: RuntimeProbeParams): Promise<Runti
   });
 
   let startupError: string | undefined;
+  let command: Command | undefined;
+  let commandFinished = false;
+  let commandStarted = false;
+  let serverLogRaw = '';
+  let resultRaw = '';
   try {
-    await sandbox.runCommand('sh', ['-c', script]);
+    for (const target of apiWithPayloads) {
+      if (target.payloadFile) {
+        await deadline.run(() => sandbox.writeFiles([{
+          path: target.payloadFile!, content: Buffer.from(JSON.stringify(target.raw.payload)),
+        }], { signal: deadline.signal }));
+      }
+    }
+    // SDK 3.2.1 RunCommandParams.timeoutMs is enforced by the VM (SIGKILL),
+    // including detached commands. AbortSignal bounds transport waits separately.
+    command = await deadline.run(() => {
+      commandStarted = true;
+      return sandbox.runCommand({
+        cmd: 'sh', args: ['-c', script], detached: true,
+        timeoutMs: deadline.remainingMs(), signal: deadline.signal,
+      });
+    });
+    const finished = await deadline.run(() => command!.wait({ signal: deadline.signal }));
+    commandFinished = true;
+    if (finished.exitCode !== 0) startupError = `Runtime probe command exited with code ${finished.exitCode}`;
+    [serverLogRaw, resultRaw] = await deadline.run(() => Promise.all([
+      readSandboxFile(sandbox, logPath, deadline.signal),
+      readSandboxFile(sandbox, resultPath, deadline.signal),
+    ]));
   } catch (e: unknown) {
     startupError = e instanceof Error ? e.message : String(e);
   }
-
-  const [serverLogRaw, resultRaw] = await Promise.all([
-    readSandboxFile(sandbox, logPath),
-    readSandboxFile(sandbox, resultPath),
-  ]);
 
   const parsed = parseResultLines(resultRaw);
   const logTail = tail(serverLogRaw, SERVER_LOG_TAIL_BYTES);
@@ -386,6 +449,8 @@ export async function runRuntimeProbe(params: RuntimeProbeParams): Promise<Runti
 
   if (!parsed.ready) {
     startupError = startupError || 'next start did not respond within the probe window';
+  } else if (!parsed.done || pages.length !== pageRoutes.length || apis.length !== apiRoutes.length) {
+    startupError = startupError || 'Runtime probe did not finish collecting all route evidence';
   }
 
   const hasBlockingServerError = serverErrors.some((e) =>
@@ -398,11 +463,33 @@ export async function runRuntimeProbe(params: RuntimeProbeParams): Promise<Runti
       'hydration_mismatch',
     ].includes(e.kind),
   );
+  if (deadline.signal.aborted) {
+    startupError ||= String(deadline.signal.reason);
+  }
 
   // Route-level status belongs to step-probe-policy, where explicit contract
   // targets can block while inferred/prose targets stay advisory. This raw
   // probe only owns process startup and process-wide fatal errors.
-  const ok = !startupError && !hasBlockingServerError;
+  const ok = !startupError && !hasBlockingServerError && !deadline.signal.aborted;
+  deadline.dispose();
+  const cleanupDeadline = runtimeProbeDeadline(CLEANUP_TIMEOUT_MS);
+  try {
+    await Promise.all([
+      command && !commandFinished
+        ? cleanupDeadline.run(() => command!.kill('SIGKILL', { abortSignal: cleanupDeadline.signal })).catch(() => {})
+        : Promise.resolve(),
+      cleanupDeadline.run(async () => {
+        const cleanup = [
+          ...(commandStarted && (!ok || !keepServerAlive) ? stopServerScript(pidPath, publicPidPath) : []),
+          `rm -f ${shellEscape(pidPath)} ${shellEscape(resultPath)} ${shellEscape(resultPath)}-*.bin ${shellEscape(resultPath)}-payload-*.json`,
+        ].join('\n');
+        await sandbox.runCommand({ cmd: 'sh', args: ['-c', cleanup], timeoutMs: CLEANUP_TIMEOUT_MS - 500, signal: cleanupDeadline.signal });
+      }).catch(() => {}),
+    ]);
+  } finally {
+    deadline.dispose();
+    cleanupDeadline.dispose();
+  }
 
   return {
     ok,
@@ -417,10 +504,24 @@ export async function runRuntimeProbe(params: RuntimeProbeParams): Promise<Runti
   };
 }
 
-/**
- * Compact plain-text summary for log lines / audit messages (not the full
- * structured retry payload — see formatIterationSignals for that).
- */
+function stopServerScript(pidPath: string, publicPidPath = pidPath): string[] {
+  return [
+    `if [ -f ${shellEscape(pidPath)} ]; then`,
+    `  PID=$(cat ${shellEscape(pidPath)} | tr -d '\\n')`,
+    '  case "$PID" in ""|*[!0-9]*|0|1) echo NO_PID;; *)',
+    // Own a whole process group, not just the npx parent while Next keeps running.
+    '    kill -TERM -"$PID" 2>/dev/null || true',
+    '    kill -KILL -"$PID" 2>/dev/null || true',
+    '    kill -KILL "$PID" 2>/dev/null || true',
+    '    echo KILLED;;',
+    '  esac',
+    // Do not remove a newer probe\'s public pointer during old-probe cleanup.
+    `  if [ "$(cat ${shellEscape(publicPidPath)} 2>/dev/null)" = "$PID" ]; then rm -f ${shellEscape(publicPidPath)}; fi`,
+    `  rm -f ${shellEscape(pidPath)}`,
+    'else echo NO_PID; fi',
+  ];
+}
+
 /**
  * Kill a server that was started by runRuntimeProbe with keepServerAlive: true.
  * Safe to call even if the PID file is missing — returns { killed: false }.
@@ -429,29 +530,19 @@ export async function stopProbeServer(
   sandbox: Sandbox,
   port: number,
 ): Promise<{ killed: boolean }> {
-  const pidPath = `${PROBE_PID_PATH_PREFIX}-${port}.pid`;
-  const script = [
-    `if [ -f ${pidPath} ]; then`,
-    `  PID=$(cat ${pidPath} | tr -d '\\n')`,
-    `  if [ -n "$PID" ]; then`,
-    `    kill $PID 2>/dev/null || true`,
-    `    for i in 1 2 3 4 5; do`,
-    `      if kill -0 $PID 2>/dev/null; then sleep 1; else break; fi`,
-    `    done`,
-    `    kill -9 $PID 2>/dev/null || true`,
-    `  fi`,
-    `  rm -f ${pidPath}`,
-    `  echo KILLED`,
-    `else`,
-    `  echo NO_PID`,
-    `fi`,
-  ].join('\n');
+  const pidPath = `${PROBE_PID_PATH_PREFIX}-${pickPort(port)}.pid`;
+  const deadline = runtimeProbeDeadline(CLEANUP_TIMEOUT_MS);
   try {
-    const r = await sandbox.runCommand('sh', ['-c', script]);
-    const out = await r.stdout().catch(() => '');
+    const r = await deadline.run(() => sandbox.runCommand({
+      cmd: 'sh', args: ['-c', stopServerScript(pidPath).join('\n')],
+      timeoutMs: CLEANUP_TIMEOUT_MS - 500, signal: deadline.signal,
+    }));
+    const out = await deadline.run(() => r.stdout({ signal: deadline.signal }));
     return { killed: /KILLED/.test(out) };
   } catch {
     return { killed: false };
+  } finally {
+    deadline.dispose();
   }
 }
 

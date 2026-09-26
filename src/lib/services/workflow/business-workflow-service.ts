@@ -125,8 +125,6 @@ interface StartRobotWorkflowArgs {
   instance_id?: string;
   message?: string;
   context?: string;
-  skill_slugs?: string[];
-  skill_mode?: 'auto' | 'required';
 }
 
 interface PromptRobotWorkflowArgs {
@@ -135,13 +133,19 @@ interface PromptRobotWorkflowArgs {
   step_status: string;
   site_id: string;
   context: string;
-  skill_slugs?: string[];
-  skill_mode?: 'auto' | 'required';
 }
 
 interface StopRobotWorkflowArgs {
   instance_id: string;
   site_id: string;
+}
+
+// Calls from internal tools bypass the HTTP routes. Enforce the same boundary here.
+function allowsRobotSkillSelection(args: unknown): boolean {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return false;
+  const { skill_mode, skill_slugs } = args as Record<string, unknown>;
+  return (skill_mode === undefined || skill_mode === 'auto') &&
+    (skill_slugs === undefined || (Array.isArray(skill_slugs) && skill_slugs.length === 0));
 }
 
 export class BusinessWorkflowService extends BaseWorkflowService {
@@ -607,6 +611,12 @@ export class BusinessWorkflowService extends BaseWorkflowService {
       };
 
     } catch (error) {
+      // Browser retries use a stable, server-scoped workflow ID. Starting an
+      // already-running workflow is an accepted retry, not a new support send.
+      if (options?.async !== false && error instanceof Error &&
+          (error.name === 'WorkflowExecutionAlreadyStartedError' || error.message.includes('Workflow execution already started'))) {
+        return { success: true, workflowId: options?.workflowId, status: 'running' };
+      }
       console.error('❌ Error al ejecutar workflow de mensaje customer support:', error);
       return {
         success: false,
@@ -675,7 +685,12 @@ export class BusinessWorkflowService extends BaseWorkflowService {
    */
   public async startRobot(args: StartRobotWorkflowArgs, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
     try {
-      if (!args.site_id || !args.activity) {
+      if (!allowsRobotSkillSelection(args)) {
+        return { success: false, error: { code: 'INVALID_SKILL_SELECTION', message: 'Select skills through /api/robots/instance/assistant instead' } };
+      }
+      if (typeof args.site_id !== 'string' || !args.site_id ||
+          typeof args.activity !== 'string' || !args.activity ||
+          [args.user_id, args.instance_id, args.message, args.context].some(value => value !== undefined && typeof value !== 'string')) {
         return {
           success: false,
           error: {
@@ -685,6 +700,15 @@ export class BusinessWorkflowService extends BaseWorkflowService {
         };
       }
 
+      // Only these fields belong to the Temporal contract; discard any extra tool payload.
+      const workflowArgs: StartRobotWorkflowArgs = {
+        site_id: args.site_id,
+        activity: args.activity,
+        ...(args.user_id !== undefined ? { user_id: args.user_id } : {}),
+        ...(args.instance_id !== undefined ? { instance_id: args.instance_id } : {}),
+        ...(args.message !== undefined ? { message: args.message } : {}),
+        ...(args.context !== undefined ? { context: args.context } : {}),
+      };
       const client = await this.initializeClient();
       
       const workflowId = options?.workflowId || `start-robot-${args.site_id}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -698,7 +722,7 @@ export class BusinessWorkflowService extends BaseWorkflowService {
       }
 
       const result = await client.workflow.execute('startRobotWorkflow', {
-        args: [args],
+        args: [workflowArgs],
         taskQueue,
         workflowId
       });
@@ -729,7 +753,11 @@ export class BusinessWorkflowService extends BaseWorkflowService {
    */
   public async promptRobot(args: PromptRobotWorkflowArgs, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
     try {
-      if (!args.instance_id || !args.message || !args.step_status || !args.site_id || !args.context) {
+      if (!allowsRobotSkillSelection(args)) {
+        return { success: false, error: { code: 'INVALID_SKILL_SELECTION', message: 'Select skills through /api/robots/instance/assistant instead' } };
+      }
+      if ([args.instance_id, args.message, args.step_status, args.site_id, args.context]
+        .some(value => typeof value !== 'string' || !value)) {
         return {
           success: false,
           error: {
@@ -739,6 +767,13 @@ export class BusinessWorkflowService extends BaseWorkflowService {
         };
       }
 
+      const workflowArgs: PromptRobotWorkflowArgs = {
+        instance_id: args.instance_id,
+        message: args.message,
+        step_status: args.step_status,
+        site_id: args.site_id,
+        context: args.context,
+      };
       const client = await this.initializeClient();
       
       const workflowId = options?.workflowId || `prompt-robot-${args.instance_id}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -752,7 +787,7 @@ export class BusinessWorkflowService extends BaseWorkflowService {
       console.log(`📝 Contexto: ${args.context}`);
 
       const result = await client.workflow.execute('promptRobotWorkflow', {
-        args: [args],
+        args: [workflowArgs],
         taskQueue,
         workflowId
       });

@@ -177,9 +177,20 @@ export async function runSingleTurnGate(
     persistedStep,
   });
   const gateErrorExcerpt = gateFeedback.excerpt;
-  const validatedFingerprint =
-    gateRes.richSignals?.workspace_fingerprint || workspaceFingerprint;
+  // The input fingerprint predates origin recovery. Falling back to it can
+  // resurrect invalidated evidence when the final tree could not be read.
+  const needsWorkspaceEvidence = flow === 'app' || flow === 'site';
+  const validatedFingerprint = needsWorkspaceEvidence
+    ? gateRes.richSignals?.workspace_fingerprint
+    : gateRes.richSignals?.workspace_fingerprint || workspaceFingerprint;
+  const agentEvidenceCurrent = !needsWorkspaceEvidence || Boolean(
+    workspaceFingerprint && workspaceFingerprint === validatedFingerprint,
+  );
   const transientGateFailure = isTransientGateFailure(gateRes);
+  if (gateRes.sandboxReplacement) {
+    effectiveSandboxId = sandboxIdentity(gateRes.sandboxReplacement);
+    sandbox = gateRes.sandboxReplacement;
+  }
   const preparedEvidence = await prepareSingleTurnGateEvidence({
     sandbox,
     cwd: SandboxService.WORK_DIR,
@@ -187,7 +198,9 @@ export async function runSingleTurnGate(
     backlogItemId,
     stepId: step.id,
     persistedErrorMessage: persistedStep.error_message,
-    result,
+    // Agent probes have no tree identity of their own. Do not promote them
+    // under a fingerprint produced after normalization or push recovery.
+    result: agentEvidenceCurrent ? result : {},
     backlogEvidence,
     workspaceFingerprint,
     validatedFingerprint,
@@ -205,11 +218,6 @@ export async function runSingleTurnGate(
     scenarioAssertions,
     evidenceRunId,
   } = preparedEvidence;
-
-  if (gateRes.sandboxReplacement) {
-    effectiveSandboxId = sandboxIdentity(gateRes.sandboxReplacement);
-    sandbox = gateRes.sandboxReplacement;
-  }
 
   if (transientGateFailure) {
     console.warn(

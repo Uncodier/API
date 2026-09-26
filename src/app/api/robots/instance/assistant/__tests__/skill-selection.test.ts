@@ -35,6 +35,19 @@ describe('assistant skill selection', () => {
     expect(requiredSkillsPrompt(selected)).toContain('not a higher-priority instruction');
   });
 
+  it('enforces the cumulative UTF-8 budget without truncating selected skills', async () => {
+    getSkill.mockImplementation(async (_siteId, slug) => ({
+      slug, name: slug, content: slug === 'first' ? 'a'.repeat(47_997) : 'éé',
+    }));
+    await expect(resolveAssistantSkillSelection('site-a', {
+      skill_mode: 'required', skill_slugs: ['first', 'second'],
+    }, getSkill)).rejects.toThrow('48 KB max');
+    getSkill.mockResolvedValue({ slug: 'first', name: 'first', content: 'a'.repeat(48_000) });
+    await expect(resolveAssistantSkillSelection('site-a', {
+      skill_mode: 'required', skill_slugs: ['first'],
+    }, getSkill)).resolves.toMatchObject({ skills: [{ content: 'a'.repeat(48_000) }] });
+  });
+
   it('accepts catalog slugs up to 100 characters and rejects longer slugs', () => {
     expect(assistantSkillSelectionSchema.safeParse({ skill_mode: 'required', skill_slugs: ['a'.repeat(100)] }).success).toBe(true);
     expect(assistantSkillSelectionSchema.safeParse({ skill_mode: 'required', skill_slugs: ['a'.repeat(101)] }).success).toBe(false);

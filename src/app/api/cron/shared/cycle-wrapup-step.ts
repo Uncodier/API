@@ -19,6 +19,8 @@ import {
   hasRetryablePlanFailure,
   hasRunnableRequirementPlan,
 } from './cycle-wrapup-retry-policy';
+import type { CycleRecoveryDisposition } from './cycle-recovery-policy';
+import { assertCronExecutionOwnership } from './cron-execution-ownership';
 
 const STEP_FAILURE_REASON_PREFIX = 'One or more execution steps failed';
 const AUTOMATED_RECOVERY_ERROR = /^(?:Build failed|Post-finally|Pre-push)/i;
@@ -43,6 +45,8 @@ export interface CycleWrapUpParams {
   forceWrapUp?: boolean;
   wrapUpReason?: string | null;
   requiresUserFeedback?: boolean;
+  /** Authoritative recovery policy. Omitted only for older durable payloads. */
+  recoveryDisposition?: CycleRecoveryDisposition;
 }
 
 export type CycleWrapUpResult =
@@ -67,20 +71,30 @@ export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<Cy
     forceWrapUp,
     wrapUpReason,
     requiresUserFeedback,
+    recoveryDisposition,
   } = params;
 
   try {
+    const ownership = params.audit?.executionOwnership;
+    if (ownership) await assertCronExecutionOwnership({ ...ownership, allowTerminal: true });
     const history = await loadUserActionHistory(instanceId, { requirementId });
-    const retryableStepFailure = !!requiresUserFeedback && !!wrapUpReason && (
-      wrapUpReason.startsWith(STEP_FAILURE_REASON_PREFIX)
-        ? await hasRetryablePlanFailure(instanceId, requirementId)
-        : AUTOMATED_RECOVERY_ERROR.test(wrapUpReason) &&
-          await hasRunnableRequirementPlan(instanceId, requirementId)
-    );
+    const retryableStepFailure = recoveryDisposition
+      ? recoveryDisposition === 'retry' ||
+        (recoveryDisposition === 'product_failure' &&
+          await hasRetryablePlanFailure(instanceId, requirementId)) ||
+        (recoveryDisposition === 'delivery_failure' &&
+          await hasRunnableRequirementPlan(instanceId, requirementId))
+      : !!requiresUserFeedback && !!wrapUpReason && (
+          // Compatibility for previously queued workflows. New callers pass policy.
+          wrapUpReason.startsWith(STEP_FAILURE_REASON_PREFIX)
+            ? await hasRetryablePlanFailure(instanceId, requirementId)
+            : AUTOMATED_RECOVERY_ERROR.test(wrapUpReason) &&
+              await hasRunnableRequirementPlan(instanceId, requirementId)
+        );
     const effectiveRequiresUserFeedback =
-      !!requiresUserFeedback && !retryableStepFailure;
+      !retryableStepFailure && (!!recoveryDisposition || !!requiresUserFeedback);
     const effectiveWrapUpReason = retryableStepFailure
-      ? 'A plan step failed validation but still has retries remaining. Continue automatically in the next cycle.'
+      ? `${wrapUpReason || 'The work cycle needs another attempt.'} Automatic retries remaining; continue in the next cycle without requesting user intervention.`
       : wrapUpReason;
 
     if (retryableStepFailure) {
@@ -169,7 +183,27 @@ export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<Cy
       repoUrl,
     });
 
-    const tools = [requirementStatusTool(siteId, instanceId)];
+    const statusTool = requirementStatusTool(siteId, instanceId);
+    const tools = [{
+      ...statusTool,
+      execute: async (args: Parameters<typeof statusTool.execute>[0]) => {
+        if (ownership) await assertCronExecutionOwnership({ ...ownership, allowTerminal: true });
+        if ((args.action || 'create') === 'create') {
+          if (retryableStepFailure) {
+            args = { ...args, stage: 'in-progress' };
+          } else if (effectiveRequiresUserFeedback) {
+            args = { ...args, stage: 'blocked' };
+          } else if (!['in-progress', 'on-review'].includes(args.stage || '')) {
+            return { success: false, error: 'Only the delivery finalizer may complete a requirement. Use in-progress or on-review.' };
+          }
+        }
+        return statusTool.execute({
+          ...args,
+          requirement_id: requirementId,
+          instance_id: instanceId,
+        });
+      },
+    }];
 
     let currentMessages: any[] = [
       {
@@ -210,6 +244,7 @@ export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<Cy
       turns++;
     }
 
+    if (!isDone) return { ran: false, outcome: 'failed' };
     console.log(`[CycleWrapUpStep] Completed in ${turns} turns for req ${requirementId}`);
     return { ran: true, outcome: 'completed' };
   } catch (error: unknown) {

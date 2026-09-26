@@ -1,0 +1,25 @@
+name: Harness regression tests
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  harness-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      # All providers, sandboxes, and DB calls are faked or use in-memory PGlite.
+      # No production credentials, database migrations, or live probes in this job.
+      - run: npm run test:harness

@@ -196,12 +196,12 @@ export interface ActOptions {
     final?: boolean,
   ) => Promise<void>;
   onReasoningTokensUsed?: (reasoningTokensCount: number) => Promise<void>;
-  /** If strictly true, stops the LLM turn loop immediately after the first pass (even if tools are called) */
+  /** One model turn and at most one actual tool execution attempt; remaining calls receive skipped results. */
   enforceSingleTurn?: boolean;
   toolOverrides?: Record<string, any>;
   onContextUsage?: (params: { system: string; messages: Message[]; tools: unknown[];
     provider: AIProvider; model: string; providerInputTokens?: number;
-    providerOutputTokens?: number }) => Promise<void>;
+    providerOutputTokens?: number | null; responseFormat?: unknown }) => Promise<void>;
   enforceContextBudget?: boolean;
 }
 
@@ -689,7 +689,6 @@ export class AIAgentExecutor {
       ) => Promise<void>;
       onReasoningTokensUsed?: (count: number) => Promise<void>;
     },
-    totalUsage: { promptTokens: number; completionTokens: number; totalTokens: number }
   ): Promise<{
     message: any;
     usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
@@ -699,6 +698,10 @@ export class AIAgentExecutor {
     const opts = {
       ...completionOptions,
       stream: true,
+      // OpenAI and Azure OpenAI send a final, choices-free usage chunk only
+      // when requested. Do not send this option to other compatibility APIs.
+      ...(this.provider === 'openai' || this.provider === 'azure'
+        ? { stream_options: { include_usage: true } } : {}),
     };
     const stream = await this.client.chat.completions.create(opts as any).catch(err => {
       console.error(`❌ [AI STREAM INIT ERROR][${this.provider}]`, err.message);
@@ -729,9 +732,6 @@ export class AIAgentExecutor {
     for await (const chunk of stream as unknown as AsyncIterable<any>) {
       if (chunk.usage) {
         usage = chunk.usage;
-        totalUsage.promptTokens += chunk.usage.prompt_tokens || 0;
-        totalUsage.completionTokens += chunk.usage.completion_tokens || 0;
-        totalUsage.totalTokens += chunk.usage.total_tokens || 0;
       }
 
       const choice = chunk.choices?.[0];
@@ -1068,6 +1068,11 @@ export class AIAgentExecutor {
 
         if (!shouldForceJson && openaiTools.length > 0) {
           completionOptions.tools = openaiTools;
+          // Only these providers have a supported parallel-tool control. The
+          // local execution limit below remains authoritative if it is ignored.
+          if (enforceSingleTurn && (provider === 'openai' || provider === 'azure')) {
+            completionOptions.parallel_tool_calls = false;
+          }
           console.log(`₍ᐢ•(ܫ)•ᐢ₎ [EXECUTOR] Including tools in API call`);
         } else if (shouldForceJson) {
           console.log(`⚠️ [EXECUTOR] Forcing JSON output - removing tools (iteration ${iterations})`);
@@ -1109,7 +1114,7 @@ export class AIAgentExecutor {
         if (onContextUsage) {
           try {
             await onContextUsage({ system: system || '', messages, tools: completionOptions.tools || [],
-              provider, model: capacityModel });
+              provider, model: capacityModel, responseFormat: completionOptions.response_format });
           } catch (error) {
             console.warn('[AI EXECUTOR] Context usage checkpoint unavailable:', error);
           }
@@ -1138,8 +1143,7 @@ export class AIAgentExecutor {
             }
             response = await this.runStreamingCompletion(
               completionOptions,
-              streamCallbacks,
-              totalUsage
+              streamCallbacks
             );
           } catch (streamError: any) {
             console.error(`❌ [STREAM_ERROR][${provider}] Streaming failed (${streamError.status || streamError.message}), falling back to non-streaming...`);
@@ -1244,14 +1248,15 @@ export class AIAgentExecutor {
             try {
               await onContextUsage({ system: system || '', messages, tools: completionOptions.tools || [],
                 provider, model: capacityModel, providerInputTokens: response.usage.prompt_tokens,
-                providerOutputTokens: response.usage.completion_tokens || 0 });
+                providerOutputTokens: response.usage.completion_tokens,
+                responseFormat: completionOptions.response_format });
             } catch (error) {
               console.warn('[AI EXECUTOR] Provider usage checkpoint unavailable:', error);
             }
           }
-          totalUsage.promptTokens += response.usage.prompt_tokens;
-          totalUsage.completionTokens += response.usage.completion_tokens;
-          totalUsage.totalTokens += response.usage.total_tokens;
+          totalUsage.promptTokens += response.usage.prompt_tokens || 0;
+          totalUsage.completionTokens += response.usage.completion_tokens || 0;
+          totalUsage.totalTokens += response.usage.total_tokens || 0;
         }
 
         messages.push(message as Message);
@@ -1363,7 +1368,7 @@ export class AIAgentExecutor {
             // let the next iteration retry. Otherwise, proceed to execute the
             // ones that did parse — the unparseable ones already have their
             // tool message above.
-            if (toolCalls.length === 0) {
+            if (toolCalls.length === 0 && !enforceSingleTurn) {
               console.warn(
                 `₍ᐢ•(ܫ)•ᐢ₎ [TOOLS] All ${unparseable.length} tool call(s) had invalid arguments; continuing to next iteration after sanitizing history.`
               );
@@ -1385,6 +1390,7 @@ export class AIAgentExecutor {
 
           // Collect images first, then attach them as a single user message AFTER all tool messages.
           const collectedImages: string[] = [];
+          let toolExecutionStarted = false;
 
           for (const toolCall of toolCalls) {
             const toolStartTime = Date.now();
@@ -1414,6 +1420,34 @@ export class AIAgentExecutor {
               continue;
             }
 
+            if (enforceSingleTurn && toolExecutionStarted) {
+              // Do not delete the provider's calls or leave dangling IDs: every
+              // call needs a result before history can be reused on the next turn.
+              const skippedResult = {
+                success: false,
+                status: 'skipped',
+                executed: false,
+                error: 'single_turn_tool_limit',
+                message: 'Not executed: this turn allows only one tool execution attempt. Request this call again in a later turn if still needed.',
+              };
+              toolResults.push({
+                toolCallId: toolCall.toolCallId,
+                toolName: toolCall.toolName,
+                result: skippedResult,
+                isError: true,
+              });
+              messages.push({
+                role: 'tool',
+                tool_call_id: toolCall.toolCallId,
+                name: toolCall.toolName,
+                content: JSON.stringify(skippedResult),
+              });
+              continue;
+            }
+
+            // A failed attempt may already have effects. It consumes the budget
+            // just like a successful invocation (including locally handled wait).
+            toolExecutionStarted = true;
             try {
               let result: any;
 
@@ -1451,7 +1485,7 @@ export class AIAgentExecutor {
                 }
 
                 let executeAttempts = 0;
-                const maxExecuteAttempts = 2;
+                const maxExecuteAttempts = enforceSingleTurn ? 1 : 2;
                 while (executeAttempts < maxExecuteAttempts) {
                   try {
                     result = await tool.execute(toolCall.args);

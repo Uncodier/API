@@ -1,7 +1,7 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/route';
 import { processAssistantTurn } from './assistant-turn';
-import { AssistantContext } from './types';
+import type { AssistantContext } from './types';
 import { SkillsService } from '@/lib/services/skills-service';
 import { requiredSkillsPrompt } from './skill-selection';
 import { getStepCheckpointPromptFragment, getFileFreshnessPromptFragment } from '@/app/api/cron/shared/step-git-prompts';
@@ -23,6 +23,18 @@ export type PlanExecutionLockResult =
   | { state: 'acquired'; token: string }
   | { state: 'contended' }
   | { state: 'unavailable' };
+
+export type PlanStepExecutionResult = {
+  text: string;
+  messages: any[];
+  output?: any;
+  usage: Record<string, any>;
+  steps: any[];
+  turns: number;
+} & (
+  | { executionStatus: 'completed'; isDone: true }
+  | { executionStatus: 'exhausted'; isDone: false; resumeFromStepId: string }
+);
 
 const ROLE_TO_SKILL: Record<string, string> = {
   'template_selection': 'makinari-obj-template-selection',
@@ -88,6 +100,17 @@ export async function getActiveInstancePlan(
   return null;
 }
 
+// Persistence acknowledgements are part of the execution boundary. A returned
+// error (or missing acknowledgement) must not allow tools, resumption, or a
+// success response, even if the writer did not throw.
+async function persistPlanStepUpdate(params: any, phase: string): Promise<void> {
+  const result: { success?: boolean; error?: unknown } | null | undefined =
+    await updateInstancePlanCore(params, { trustedRunner: true });
+  if (result?.success !== true) {
+    throw new Error(`Failed to persist plan step ${phase}: ${String(result?.error || 'write was not acknowledged')}`);
+  }
+}
+
 /**
  * Execute a single step of the instance plan.
  */
@@ -95,9 +118,40 @@ export async function executePlanStep(
   context: AssistantContext,
   plan: any,
   step: any
-) {
+): Promise<PlanStepExecutionResult> {
   'use step';
   console.log(`[PlanSteps] Executing step ${step.order}: ${step.title}`);
+  // Workflow inputs are snapshots. Never reuse their checkpoint after another
+  // execution has consumed it or changed the step's lifecycle/definition.
+  const { data: currentPlan, error: readError } = await supabaseAdmin
+    .from('instance_plans')
+    .select('*')
+    .eq('id', plan.id)
+    .eq('instance_id', context.executionOptions.instance_id)
+    .eq('site_id', context.executionOptions.site_id)
+    .maybeSingle();
+  if (readError || !currentPlan) {
+    throw new Error(`Failed to load authoritative plan ${plan.id}: ${readError?.message || 'plan not found for this instance and site'}`);
+  }
+  const currentStep = Array.isArray(currentPlan.steps)
+    ? currentPlan.steps.find((candidate: any) => candidate.id === step.id)
+    : undefined;
+  if (!['pending', 'active', 'in_progress'].includes(currentPlan.status) ||
+      !currentStep || !['pending', 'in_progress'].includes(currentStep.status)) {
+    throw new Error(`Refusing to execute plan step ${step.id}: authoritative plan or step is not runnable.`);
+  }
+  plan = currentPlan;
+  step = currentStep;
+  // A resumed batch must use the last completed turn's history, not replay its
+  // original prompt. Store runtime state in result (not definition metadata).
+  const checkpoint = step.result?.assistant_execution;
+  if (checkpoint?.state === 'running') {
+    throw new Error(`Plan step ${step.id} has an interrupted execution with uncertain effects; reconcile it before resuming.`);
+  }
+  const resuming = checkpoint?.state === 'exhausted';
+  if (resuming && (checkpoint.version !== 1 || !Array.isArray(checkpoint.messages) || checkpoint.messages.length === 0)) {
+    throw new Error(`Plan step ${step.id} has no valid continuation history; refusing to replay it.`);
+  }
   const requirementId =
     context.executionOptions.requirement_id ||
     plan?.metadata?.requirement_id ||
@@ -127,7 +181,7 @@ export async function executePlanStep(
           );
         }
       } else {
-        await updateInstancePlanCore({
+        await persistPlanStepUpdate({
           plan_id: plan.id,
           instance_id: context.executionOptions.instance_id,
           site_id: context.executionOptions.site_id,
@@ -138,7 +192,7 @@ export async function executePlanStep(
             error_message: reason,
             completed_at: new Date().toISOString(),
           }],
-        }, { trustedRunner: true });
+        }, 'cancellation');
       }
       throw new Error(
         `Refusing to execute plan step ${step.id}: ${backlogGate.reason}`,
@@ -151,7 +205,7 @@ export async function executePlanStep(
     const now = new Date().toISOString();
     const cycleBaselineAt = step.started_at || now;
 
-    await updateInstancePlanCore({
+    await persistPlanStepUpdate({
       plan_id: plan.id,
       instance_id: context.executionOptions.instance_id,
       site_id: context.executionOptions.site_id,
@@ -159,9 +213,14 @@ export async function executePlanStep(
       steps: [{
         id: step.id,
         status: 'in_progress',
+        completed_at: null,
+        error_message: null,
+        // Consume the checkpoint before any effects. If the process dies or a
+        // write fails after a tool ran, a new run must not reuse stale history.
+        result: { ...step.result, assistant_execution: { version: 1, state: 'running' } },
         ...(step.started_at ? {} : { started_at: cycleBaselineAt }),
       }]
-    });
+    }, 'start checkpoint');
 
   // 2. Load skill content for this step (if declared)
   let skillContext = '';
@@ -304,7 +363,7 @@ RULES:
   // similar to the main workflow loop
   
   let stepResult;
-  let currentMessages = [...messages];
+  let currentMessages = resuming ? [...checkpoint.messages] : [...messages];
   let isStepDone = false;
   let turns = 0;
   const MAX_STEP_TURNS = 10; // Avoid infinite loops within a step
@@ -333,7 +392,7 @@ RULES:
       console.error(`[PlanSteps] Step execution failed:`, error);
       
       // Update step status to failed
-      await updateInstancePlanCore({
+      await persistPlanStepUpdate({
         plan_id: plan.id,
         instance_id: context.executionOptions.instance_id,
         site_id: context.executionOptions.site_id,
@@ -344,12 +403,39 @@ RULES:
             error_message: error.message,
             completed_at: new Date().toISOString(),
         }]
-      }, { trustedRunner: true });
+      }, 'failure');
       throw error;
   }
 
-  // 4. Update step status to completed and save output
-  await updateInstancePlanCore({
+  if (!isStepDone) {
+    const reason = `Turn limit reached (${MAX_STEP_TURNS}); this step is incomplete and can be resumed from its saved history.`;
+    await persistPlanStepUpdate({
+      plan_id: plan.id,
+      instance_id: context.executionOptions.instance_id,
+      site_id: context.executionOptions.site_id,
+      requirement_id: context.executionOptions.requirement_id,
+      steps: [{
+        id: step.id,
+        status: 'in_progress',
+        completed_at: null,
+        error_message: reason,
+        result: {
+          ...step.result,
+          assistant_execution: {
+            version: 1,
+            state: 'exhausted',
+            turns: (resuming ? Number(checkpoint.turns) || 0 : 0) + turns,
+            // processAssistantTurn already dehydrates images for persistence.
+            messages: currentMessages,
+          },
+        },
+      }],
+    }, 'exhaustion checkpoint');
+    return { ...stepResult, isDone: false, executionStatus: 'exhausted', turns, resumeFromStepId: step.id };
+  }
+
+  // 4. Only an actually finished assistant turn may complete the step.
+  await persistPlanStepUpdate({
     plan_id: plan.id,
     instance_id: context.executionOptions.instance_id,
     site_id: context.executionOptions.site_id,
@@ -359,8 +445,10 @@ RULES:
       status: 'completed',
       actual_output: stepResult.text,
       completed_at: new Date().toISOString(),
+      error_message: null,
+      result: { ...step.result, assistant_execution: null },
     }]
-  }, { trustedRunner: true });
+  }, 'completion');
 
   // Si hay instanceNodeId, actualizamos el nodo de respuesta con el resultado
   if (context.instanceNodeId) {
@@ -368,8 +456,13 @@ RULES:
      // no lo pasamos directamente aca, lo hara el executor.
   }
 
-  return stepResult;
+  return { ...stepResult, isDone: true, executionStatus: 'completed', turns };
 }
+
+// This durable step contains multiple non-idempotent tool calls. The SDK's
+// default three retries would replay the entire batch, including prior effects.
+// Exhaustion returns a checkpoint instead; ambiguous failures need reconciliation.
+executePlanStep.maxRetries = 0;
 
 export async function acquirePlanExecutionLockStep(
   planId: string,

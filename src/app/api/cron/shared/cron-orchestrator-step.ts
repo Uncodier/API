@@ -12,6 +12,7 @@ import { detectPlanningLoop, type AssistantToolCallSnapshot } from './loop-detec
 import { CronInfraEvent, logCronInfrastructureEvent, type CronAuditContext } from '@/lib/services/cron-audit-log';
 import { ensureInProgressItem, escalateStaleInProgressItems } from '@/lib/services/requirement-backlog';
 import { guardOrchestratorPlanTool } from './orchestrator-plan-tool-guard';
+import { assertCronExecutionOwnership, withCronExecutionOwnership, type CronExecutionOwnership } from './cron-execution-ownership';
 
 /**
  * Tool set for the cron orchestrator — routed through `tools`.
@@ -78,6 +79,7 @@ function getCronOrchestratorTools(
 }
 
 export async function runOrchestratorStep(params: {
+  executionOwnership?: CronExecutionOwnership;
   sandboxId: string;
   reqId: string;
   requirementType: string;
@@ -94,6 +96,7 @@ export async function runOrchestratorStep(params: {
   globalStartTime?: number;
 }) {
   'use step';
+  if (params.executionOwnership) await assertCronExecutionOwnership(params.executionOwnership);
   const {
     sandboxId,
     reqId,
@@ -111,7 +114,7 @@ export async function runOrchestratorStep(params: {
 
   const instanceType = git_repo_kind === 'automation' ? 'automation' : 'applications';
   const audit: CronAuditContext | undefined = site_id
-    ? { instanceId, siteId: site_id, userId: user_id, requirementId: reqId }
+    ? { instanceId, siteId: site_id, userId: user_id, requirementId: reqId, executionOwnership: params.executionOwnership }
     : undefined;
 
   // Backlog watchdog (runs once per cycle, BEFORE the orchestrator turn loop):
@@ -218,12 +221,15 @@ export async function runOrchestratorStep(params: {
     createdPlan: false,
     updatedPlan: false,
   };
-  const fullTools = guardOrchestratorPlanTool(
+  const guardedTools = guardOrchestratorPlanTool(
     getCronOrchestratorTools(
       sandboxTools, site_id, instanceId, user_id, reqId,
     ),
     planMutationState,
   );
+  const fullTools = params.executionOwnership
+    ? withCronExecutionOwnership(guardedTools, params.executionOwnership)
+    : guardedTools;
   const routedCount = fullTools.find((t: any) => t?.name === 'tools') ? 1 : 0;
   console.log(
     `[CronStep|orchestrator] Orchestrator tools visible to LLM: ${fullTools.length} (always-on + tools=${routedCount}). Routed tools are discoverable via tools.`,

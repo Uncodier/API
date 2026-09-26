@@ -11,7 +11,7 @@ function migrationChecksum(sql: string): string {
 export async function applyPendingMigrations(
   sandbox: Sandbox,
   requirementId: string
-): Promise<{ applied: string[]; errors: string[] }> {
+): Promise<{ applied: string[]; errors: string[]; failureKind?: 'product' | 'infrastructure' }> {
   const client = getAppsAdminClient();
 
   const { data: tenantRow, error: tenantError } = await client
@@ -62,6 +62,7 @@ export async function applyPendingMigrations(
 
   const applied: string[] = [];
   const errors: string[] = [];
+  let failureKind: 'product' | 'infrastructure' = 'infrastructure';
   let shouldSyncExposure = false;
 
   for (const file of files) {
@@ -115,6 +116,7 @@ export async function applyPendingMigrations(
           ? String(receipt.value.checksum)
           : null;
       if (recordedChecksum && recordedChecksum !== checksum) {
+        failureKind = 'product';
         errors.push(
           `Migration ${file} changed after it was applied. ` +
           'Create a new migration instead of editing applied SQL.',
@@ -157,6 +159,7 @@ export async function applyPendingMigrations(
     });
 
     if (!lintResult.ok) {
+      failureKind = 'product';
       const errorMsgs = lintResult.errors.map(e => `Line ${e.line}: ${e.message}`).join('\n');
       errors.push(`File ${file} failed linting:\n${errorMsgs}`);
       break;
@@ -174,6 +177,11 @@ export async function applyPendingMigrations(
     );
 
     if (execError) {
+      // Syntax/constraint errors require product repair, not infrastructure retries.
+      // Unknown/transport/authentication failures remain infrastructure failures.
+      if (/^(?:22|23|42)/.test(execError.code || '') && execError.code !== '42501') {
+        failureKind = 'product';
+      }
       errors.push(`File ${file} failed to execute: ${execError.message}`);
       break;
     }
@@ -207,5 +215,5 @@ export async function applyPendingMigrations(
     }
   }
 
-  return { applied, errors };
+  return { applied, errors, ...(errors.length > 0 ? { failureKind } : {}) };
 }

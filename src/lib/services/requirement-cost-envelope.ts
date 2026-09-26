@@ -31,12 +31,7 @@ export interface BudgetUsage {
   cycles_used_requirement: number;
 }
 
-/**
- * Assert the caller has not blown through its budget. Called from:
- *   - inline-step-executor before each retry (`step` scope).
- *   - cron-execute-steps-phase before advancing to the next step (`item` scope).
- *   - workflow.ts on each cycle entry (`requirement` scope).
- */
+/** Pure budget validation for callers with durable usage counters. */
 export function assertBudget(kind: RequirementKind, usage: BudgetUsage): void {
   const flow = getFlow(kind);
   const env = flow.cost_envelope;
@@ -46,13 +41,13 @@ export function assertBudget(kind: RequirementKind, usage: BudgetUsage): void {
   if (usage.turns_used_step >= env.max_turns_per_step) {
     throw new BudgetExhaustedError('step', env.max_turns_per_step, usage.turns_used_step);
   }
-  // if (usage.cycles_used_requirement >= env.max_cycles_per_requirement) {
-  //   throw new BudgetExhaustedError(
-  //     'requirement',
-  //     env.max_cycles_per_requirement,
-  //     usage.cycles_used_requirement,
-  //   );
-  // }
+  if (usage.cycles_used_requirement >= env.max_cycles_per_requirement) {
+    throw new BudgetExhaustedError(
+      'requirement',
+      env.max_cycles_per_requirement,
+      usage.cycles_used_requirement,
+    );
+  }
 }
 
 export function budgetRemaining(kind: RequirementKind, usage: BudgetUsage): {
@@ -64,6 +59,24 @@ export function budgetRemaining(kind: RequirementKind, usage: BudgetUsage): {
   return {
     item: Math.max(0, env.max_cycles_per_item - usage.cycles_used_item),
     step: Math.max(0, env.max_turns_per_step - usage.turns_used_step),
-    requirement: 999999, // Temporarily disabled: Math.max(0, env.max_cycles_per_requirement - usage.cycles_used_requirement),
+    requirement: Math.max(0, env.max_cycles_per_requirement - usage.cycles_used_requirement),
+  };
+}
+
+/** Scheduler's coarse cycle circuit; per-step turns use the same registry. */
+export function getRequirementCycleBudget(
+  kind: RequirementKind,
+  itemCount: number,
+  perItemOverride?: string,
+): { perItem: number; requirement: number } {
+  const envelope = getFlow(kind).cost_envelope;
+  const configured = Number(perItemOverride);
+  const perItem = Number.isSafeInteger(configured) && configured > 0
+    ? configured
+    : envelope.max_cycles_per_item;
+  const count = Number.isSafeInteger(itemCount) && itemCount > 0 ? itemCount : 1;
+  return {
+    perItem,
+    requirement: Math.min(envelope.max_cycles_per_requirement, perItem * count),
   };
 }

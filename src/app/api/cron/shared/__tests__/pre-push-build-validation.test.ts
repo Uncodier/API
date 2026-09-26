@@ -5,6 +5,11 @@ import {
   validateApplicationBeforePush,
 } from '../commit/pre-push-build-validation';
 import { SandboxService } from '@/lib/services/sandbox-service';
+import { logCronInfrastructureEvent } from '@/lib/services/cron-audit-log';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 jest.mock('@/lib/services/cron-audit-log', () => ({
   CronInfraEvent: { PRE_PUSH_BUILD: 'cron_infra_pre_push_build' },
@@ -63,20 +68,34 @@ describe('pre-push build validation', () => {
     expect(sandbox.fs.rm).toHaveBeenCalled();
   });
 
-  it('includes QA scenarios in the validation fingerprint', async () => {
-    const sandbox = {
-      runCommand: jest.fn().mockResolvedValue(
-        commandResult(0, FINGERPRINT),
-      ),
-    };
-
-    await expect(computeApplicationBuildFingerprint(
-      sandbox as any,
-      '/vercel/sandbox',
-    )).resolves.toBe(FINGERPRINT);
-    const script = sandbox.runCommand.mock.calls[0][1][1];
-    expect(script).toContain("const ignoredDirs=new Set(['evidence']);");
-    expect(script).not.toContain("'evidence','.qa'");
+  it('fingerprints real product and QA files, but not generated evidence', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'gate-fingerprint-'));
+    try {
+      expect(spawnSync('git', ['init', '-q', cwd]).status).toBe(0);
+      mkdirSync(join(cwd, '.qa'));
+      mkdirSync(join(cwd, 'evidence'));
+      writeFileSync(join(cwd, 'page.tsx'), 'product v1');
+      writeFileSync(join(cwd, '.qa', 'scenario.json'), 'scenario v1');
+      const sandbox = {
+        runCommand: jest.fn(async (command: string, args: string[]) => {
+          expect(command).toBe('node');
+          const execution = spawnSync(process.execPath, args, { encoding: 'utf8' });
+          return commandResult(execution.status ?? 1, execution.stdout, execution.stderr);
+        }),
+      };
+      const fingerprint = () => computeApplicationBuildFingerprint(sandbox as any, cwd);
+      const initial = await fingerprint();
+      expect(initial).toMatch(/^[a-f0-9]{64}$/);
+      writeFileSync(join(cwd, 'evidence', 'run.json'), 'new receipt');
+      expect(await fingerprint()).toBe(initial);
+      writeFileSync(join(cwd, '.qa', 'scenario.json'), 'scenario v2');
+      const changedQa = await fingerprint();
+      expect(changedQa).not.toBe(initial);
+      writeFileSync(join(cwd, 'page.tsx'), 'product v2');
+      expect(await fingerprint()).not.toBe(changedQa);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 
   it('rolls back a harness mutation and retries before allowing push', async () => {
@@ -133,6 +152,61 @@ describe('pre-push build validation', () => {
       error: expect.stringContaining('no commit was pushed'),
     }));
     expect(sandbox.writeFiles).not.toHaveBeenCalled();
+  });
+
+  it.each(['empty', 'unreadable', 'stderr only', 'long output'])(
+    'rejects nonzero exit with %s output and preserves exit evidence',
+    async (mode) => {
+      const failed = commandResult(137, mode === 'long output' ? 'x'.repeat(7_000) : '',
+        mode === 'stderr only' ? 'killed build' : '');
+      if (mode === 'unreadable') {
+        failed.stdout.mockRejectedValue(new Error('stdout unavailable'));
+        failed.stderr.mockRejectedValue(new Error('stderr unavailable'));
+      }
+      const sandbox = {
+        runCommand: jest.fn()
+          .mockResolvedValueOnce(failed)
+          .mockResolvedValueOnce(commandResult(2)),
+        writeFiles: jest.fn(),
+        fs: { rm: jest.fn().mockResolvedValue(undefined) },
+      };
+      const validation = await validateApplicationBeforePush({ sandbox: sandbox as any, cwd: '/vercel/sandbox' });
+      expect(validation).toMatchObject({ ok: false, exitCode: 137, error: expect.stringContaining('code 137') });
+      if (mode === 'stderr only') expect(validation.error).toContain('killed build');
+      if (mode === 'empty' || mode === 'unreadable') expect(validation.error).toContain('no readable build output');
+      expect(sandbox.writeFiles).not.toHaveBeenCalled();
+      expect(logCronInfrastructureEvent).toHaveBeenLastCalledWith(undefined,
+        expect.objectContaining({ details: expect.objectContaining({ ok: false, exit_code: 137 }) }));
+    },
+  );
+
+  it.each(['empty', 'unreadable'])('rejects %s output on the build after rollback', async (mode) => {
+    const trackingTag = '<script src="https://files.uncodie.com/tracking.min.js" data-site-id="site-1" data-uncodie-harness="tracking"></script>';
+    const originalSource = '<html><body>product</body></html>';
+    const transformedSource = `<html><body>product${trackingTag}</body></html>`;
+    const failed = commandResult(42);
+    if (mode === 'unreadable') {
+      failed.stdout.mockRejectedValue(new Error('stdout unavailable'));
+      failed.stderr.mockRejectedValue(new Error('stderr unavailable'));
+    }
+    const sandbox = {
+      runCommand: jest.fn()
+        .mockResolvedValueOnce(commandResult(1, 'initial error'))
+        .mockResolvedValueOnce(commandResult(0, JSON.stringify({
+          path: '/vercel/sandbox/src/app/layout.tsx', originalSource, transformedSource, siteId: 'site-1', reason: 'inserted',
+        })))
+        .mockResolvedValueOnce(commandResult(0, transformedSource))
+        .mockResolvedValueOnce(failed),
+      writeFiles: jest.fn().mockResolvedValue(undefined),
+      fs: { rm: jest.fn().mockResolvedValue(undefined) },
+    };
+    await expect(validateApplicationBeforePush({ sandbox: sandbox as any, cwd: '/vercel/sandbox' })).resolves.toMatchObject({
+      ok: false, exitCode: 42, rolledBackHarnessMutation: true, error: expect.stringContaining('code 42'),
+    });
+    expect(sandbox.runCommand).toHaveBeenCalledTimes(4);
+    expect(sandbox.writeFiles).toHaveBeenCalledTimes(1); // rollback, never a success marker
+    expect(logCronInfrastructureEvent).toHaveBeenLastCalledWith(undefined,
+      expect.objectContaining({ details: expect.objectContaining({ ok: false, exit_code: 42, initial_exit_code: 1 }) }));
   });
 
   it('reports the remaining product error after a safe harness rollback', async () => {

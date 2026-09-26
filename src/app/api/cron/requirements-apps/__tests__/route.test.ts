@@ -37,6 +37,10 @@ jest.mock('../../shared/cron-run-lock', () => ({
   getSupabaseUrlHostForLogs: jest.fn().mockReturnValue('mock-host'),
 }));
 
+jest.mock('../../shared/cron-execution-ownership', () => ({
+  assertCronExecutionOwnership: jest.fn(async () => undefined),
+}));
+
 jest.mock('@/lib/services/requirement-backlog', () => ({
   isBacklogComplete: jest.fn(),
   hasOutstandingWork: jest.fn(),
@@ -74,6 +78,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import * as backlogService from '@/lib/services/requirement-backlog';
 import { patchRequirementMetadataKeys } from '@/lib/services/requirement-metadata-patch';
 import { releaseRunLock } from '../../shared/cron-run-lock';
+import { assertCronExecutionOwnership } from '../../shared/cron-execution-ownership';
 
 describe('Cron Requirements Apps Route', () => {
   let mockSupabase: any;
@@ -212,6 +217,7 @@ describe('Cron Requirements Apps Route', () => {
     
     expect(res.status).toBe(200);
     expect(json.results[0].started).toBe(true);
+    expect(releaseRunLock).not.toHaveBeenCalled();
     expect(patchRequirementMetadataKeys).toHaveBeenCalledWith({
       requirementId: 'req-1',
       patch: { runner_instance_id: 'inst-1' },
@@ -448,4 +454,32 @@ describe('Cron Requirements Apps Route', () => {
     );
     expect(start).not.toHaveBeenCalled();
   });
+  it.each(['metadata', 'ownership', 'history', 'start'])(
+    'releases an activated lease when %s fails before workflow handoff', async (failure) => {
+      const requirement = {
+        id: 'req-release', status: 'in-progress', site_id: 'site-1', user_id: 'user-1',
+        title: 'Release on failure', type: 'app', backlog: { items: [] },
+        metadata: { runner_instance_id: 'inst-1', requirement_execution_generation: 7 }, cron: null,
+      };
+      mockClaimBatches([[{ state: 'claimed', requirement, run_id: 'lock-release', expires_at: '2099-01-01' }]]);
+      const values = [[], requirement, { status: 'running' }, null, []];
+      mockSupabase.then = jest.fn((resolve: any, reject: any) => {
+        if (values.length) return resolve({ data: values.shift(), error: null });
+        if (failure === 'history') return reject(new Error('history unavailable'));
+        return resolve({ data: null, error: null });
+      });
+      (backlogService.isBacklogComplete as jest.Mock).mockReturnValue(false);
+      (backlogService.hasOutstandingWork as jest.Mock).mockReturnValue(true);
+      (backlogService.outstandingGatingItems as jest.Mock).mockReturnValue([{ id: 'wip' }]);
+      if (failure === 'metadata') (patchRequirementMetadataKeys as jest.Mock<any>)
+        .mockRejectedValueOnce(new Error('metadata unavailable'));
+      if (failure === 'ownership') (assertCronExecutionOwnership as jest.Mock<any>)
+        .mockRejectedValueOnce(new Error('owner changed'));
+      if (failure === 'start') (start as jest.Mock<any>).mockRejectedValueOnce(new Error('start unavailable'));
+      const res = await GET(new Request('http://localhost', { headers: { authorization: 'Bearer test-secret' } }));
+      expect(mockRpc).toHaveBeenCalledWith('activate_requirement_cron_run', expect.any(Object));
+      expect(releaseRunLock).toHaveBeenCalledWith('req-release', 'lock-release');
+      if (failure !== 'start') expect(start).not.toHaveBeenCalled();
+      expect(res.status).toBe(failure === 'start' ? 200 : 500);
+    });
 });

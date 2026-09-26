@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { WorkflowService } from '@/lib/services/workflow-service';
-import { robotSkillSelectionSchema, resolveRobotSkills } from '@/lib/services/workflow/robot-skill-selection';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 
 interface PromptRobotWorkflowArgs {
@@ -10,8 +9,6 @@ interface PromptRobotWorkflowArgs {
   site_id: string;
   context: string;
   activity: string;
-  skill_slugs?: string[];
-  skill_mode?: 'auto' | 'required';
 }
 
 interface WorkflowExecutionOptions {
@@ -126,14 +123,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const selection = robotSkillSelectionSchema.safeParse(body);
-    if (!selection.success) {
-      return NextResponse.json({ success: false, error: { code: 'INVALID_SKILL_SELECTION', message: 'Invalid skill_mode or skill_slugs' } }, { status: 400 });
-    }
-    try {
-      await resolveRobotSkills(site_id, selection.data);
-    } catch {
-      return NextResponse.json({ success: false, error: { code: 'INVALID_SKILL_SELECTION', message: 'Selected skill is not available for this site' } }, { status: 400 });
+    // Older clients may send the empty Auto selection; never forward it to Temporal.
+    if ((body.skill_mode !== undefined && body.skill_mode !== 'auto') ||
+      (body.skill_slugs !== undefined && (!Array.isArray(body.skill_slugs) || body.skill_slugs.length > 0))) {
+      return NextResponse.json({ success: false, error: { code: 'INVALID_SKILL_SELECTION', message: 'Select skills through /api/robots/instance/assistant instead' } }, { status: 400 });
     }
 
     console.log(`🤖 Ejecutando workflow Prompt Robot para instancia: ${instance_id}`);
@@ -154,8 +147,6 @@ export async function POST(request: NextRequest) {
       site_id,
       context,
       activity,
-      skill_mode: selection.data.skill_mode,
-      skill_slugs: selection.data.skill_slugs
     };
 
     // Opciones de ejecución del workflow

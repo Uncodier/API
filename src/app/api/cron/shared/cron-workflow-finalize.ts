@@ -15,9 +15,11 @@ import {
 import { parseGithubTreeUrl, branchBelongsToRequirement } from '@/lib/services/requirement-branch';
 import { getRequirementGitBinding } from '@/lib/services/requirement-git-binding';
 import { canCloseRequirement } from '@/lib/services/requirement-flow-engine';
-import { isLightRequirementFlow } from '@/lib/services/requirement-flows';
+import { classifyRequirementType, getFlow, isLightRequirementFlow } from '@/lib/services/requirement-flows';
 import { deleteSnapshotQuiet } from '@/lib/services/sandbox-persisted-snapshot';
 import { finalizeRequirementExecution } from '@/lib/services/requirement-finalization';
+import { databaseMigrationsPassed, type DatabaseMigrationOutcome } from './database-migration-outcome';
+import { assertCronExecutionOwnership } from './cron-execution-ownership';
 
 const REQUIREMENT_GIT_STRICT = () => process.env.REQUIREMENT_GIT_STRICT === 'true';
 
@@ -157,6 +159,7 @@ export async function createFinalStatusStep(params: {
   previewOk?: boolean;
   smokeError?: string;
   postFinallyBuildError?: string;
+  databaseMigrations?: DatabaseMigrationOutcome;
   audit?: CronAuditContext;
   expectedExecutionGeneration: number;
   cycleId: string;
@@ -179,12 +182,14 @@ export async function createFinalStatusStep(params: {
     previewOk,
     smokeError,
     postFinallyBuildError,
+    databaseMigrations,
     audit,
     expectedExecutionGeneration,
     cycleId,
   } = params;
 
   const smokeOk = !smokeError;
+  if (audit?.executionOwnership) await assertCronExecutionOwnership({ ...audit.executionOwnership, allowTerminal: true });
   const { data: currentRequirement, error: requirementError } =
     await supabaseAdmin
       .from('requirements')
@@ -289,6 +294,10 @@ export async function createFinalStatusStep(params: {
   const hasSourceArchive = !!mergedSourceCode;
   const lightFlow = isLightRequirementFlow(flowKind);
   const buildBlocksComplete = !lightFlow && !!postFinallyBuildError;
+  const migrationsOk = databaseMigrationsPassed(
+    getFlow(classifyRequirementType(flowKind || 'app')).delivery.apply_database_migrations,
+    databaseMigrations,
+  );
   let planCounts = !!planCompleted;
   if (!planCounts && instanceId) {
     const { data: latestPlan } = await supabaseAdmin
@@ -313,6 +322,7 @@ export async function createFinalStatusStep(params: {
     !!repoOk &&
     (lightFlow || smokeOk) &&
     !buildBlocksComplete &&
+    migrationsOk &&
     hasSourceArchive;
 
   const missingParts: string[] = [];
@@ -322,6 +332,11 @@ export async function createFinalStatusStep(params: {
   if (!lightFlow && mergedPreviewUrl && !effectivePreviewOk) missingParts.push('preview_url returns error/404');
   if (repoUrl && !repoOk) missingParts.push('repo_url returns error/404');
   if (!hasSourceArchive) missingParts.push('no source_code archive in storage');
+  if (!migrationsOk) {
+    missingParts.push(databaseMigrations?.status === 'failed'
+      ? `database migrations failed: ${databaseMigrations.errors.join('; ').slice(0, 2000)}`
+      : 'database migrations not verified in this cycle');
+  }
   if (smokeError) missingParts.push(`smoke test: ${smokeError}`);
   if (buildBlocksComplete && postFinallyBuildError) {
     missingParts.push(`post-finally build: ${postFinallyBuildError.slice(0, 200)}`);
@@ -378,6 +393,7 @@ export async function createFinalStatusStep(params: {
     }
   }
 
+  if (audit?.executionOwnership) await assertCronExecutionOwnership({ ...audit.executionOwnership, allowTerminal: true });
   const finalization = await finalizeRequirementExecution({
     requirementId: reqId,
     siteId: site_id,
@@ -418,6 +434,7 @@ export async function createFinalStatusStep(params: {
       didPush,
       planCompleted: !!planCompleted,
       execution_generation: expectedExecutionGeneration,
+      database_migrations_status: databaseMigrations?.status || 'not_verified',
     },
   });
 

@@ -43,24 +43,36 @@ const WORKSPACE_FINGERPRINT_SCRIPT = [
 export type ApplicationBuildValidation = {
   ok: boolean;
   error?: string;
+  exitCode?: number;
   rolledBackHarnessMutation: boolean;
 };
+
+type BuildOutcome =
+  | { ok: true }
+  | { ok: false; exitCode: number; error: string };
 
 async function runBuild(
   sandbox: Sandbox,
   cwd: string,
-): Promise<string | null> {
+): Promise<BuildOutcome> {
   const result = await sandbox.runCommand(
     'sh',
     ['-c', `cd "${cwd}" && npm run build 2>&1`],
   );
-  if (result.exitCode === 0) return null;
+  if (result.exitCode === 0) return { ok: true };
   const stdout = await result.stdout().catch(() => '');
   const stderr = await result.stderr().catch(() => '');
   const combined = `${stdout}${stderr ? `\n${stderr}` : ''}`;
-  return combined.length > BUILD_OUTPUT_MAX
+  const tail = combined.length > BUILD_OUTPUT_MAX
     ? combined.slice(-BUILD_OUTPUT_MAX)
     : combined;
+  return {
+    ok: false,
+    exitCode: result.exitCode,
+    // Output can be empty or unreadable. Only exit 0 proves success, and
+    // truncation must not discard the command's exit evidence.
+    error: `npm run build exited with code ${result.exitCode}:\n${tail || '(no readable build output)'}`,
+  };
 }
 
 async function hasPendingPushWork(
@@ -206,8 +218,8 @@ export async function validateApplicationBeforePush(params: {
     return { ok: true, rolledBackHarnessMutation: false };
   }
 
-  const firstError = await runBuild(params.sandbox, params.cwd);
-  if (!firstError) {
+  const firstBuild = await runBuild(params.sandbox, params.cwd);
+  if (firstBuild.ok) {
     await removeTrackingBackup(params.sandbox);
     await recordSuccessfulApplicationBuild(params.sandbox, params.cwd);
     await logCronInfrastructureEvent(params.audit, {
@@ -220,7 +232,7 @@ export async function validateApplicationBeforePush(params: {
 
   const backup = await readTrackingBackup(params.sandbox);
   let didRollbackHarnessMutation = false;
-  let finalError = firstError;
+  let finalFailure = firstBuild;
   if (backup && backup.path.startsWith(`${params.cwd}/src/app/`)) {
     const currentSource = await readSandboxFile(params.sandbox, backup.path);
     const rolledBackSource = currentSource === null
@@ -233,11 +245,10 @@ export async function validateApplicationBeforePush(params: {
       didRollbackHarnessMutation = true;
     }
     await removeTrackingBackup(params.sandbox);
-    const afterRollbackError = rolledBackSource === null
-      ? firstError
+    const afterRollback = rolledBackSource === null
+      ? firstBuild
       : await runBuild(params.sandbox, params.cwd);
-    finalError = afterRollbackError || firstError;
-    if (rolledBackSource !== null && !afterRollbackError) {
+    if (afterRollback.ok) {
       await recordSuccessfulApplicationBuild(params.sandbox, params.cwd);
       await logCronInfrastructureEvent(params.audit, {
         event: CronInfraEvent.PRE_PUSH_BUILD,
@@ -246,11 +257,13 @@ export async function validateApplicationBeforePush(params: {
         details: {
           ok: true,
           rolled_back_harness_mutation: true,
-          initial_error: firstError.slice(-1_200),
+          initial_error: firstBuild.error.slice(-1_200),
+          initial_exit_code: firstBuild.exitCode,
         },
       });
       return { ok: true, rolledBackHarnessMutation: true };
     }
+    finalFailure = afterRollback;
   } else {
     await removeTrackingBackup(params.sandbox);
   }
@@ -261,15 +274,20 @@ export async function validateApplicationBeforePush(params: {
     message: 'Pre-push npm run build failed; origin was not updated',
     details: {
       ok: false,
-      error: finalError.slice(-1_200),
+      error: finalFailure.error.slice(-1_200),
+      exit_code: finalFailure.exitCode,
       initial_error: didRollbackHarnessMutation
-        ? firstError.slice(-1_200)
+        ? firstBuild.error.slice(-1_200)
+        : undefined,
+      initial_exit_code: didRollbackHarnessMutation
+        ? firstBuild.exitCode
         : undefined,
     },
   });
   return {
     ok: false,
-    error: `Pre-push build failed; no commit was pushed:\n${finalError}`,
+    error: `Pre-push build failed; no commit was pushed:\n${finalFailure.error}`,
+    exitCode: finalFailure.exitCode,
     rolledBackHarnessMutation: didRollbackHarnessMutation,
   };
 }

@@ -4,7 +4,7 @@ import { AIAgentExecutor, type AIProvider } from '@/lib/custom-automation/ai-age
 import { estimateTokens, measureInstanceContext, outputReserveForModel, readInputTokenBreakdown, resolveModelContextCapacity, type ContextUsage } from './instance-context-budget';
 
 type Log = { id: string; created_at: string; log_type: string; message: string; level?: string;
-  tool_name?: string; tool_result?: unknown; details?: Record<string, unknown> | null };
+  tool_name?: string; tool_args?: unknown; tool_result?: unknown; details?: Record<string, unknown> | null };
 type State = { cursor_at: string | null; cursor_log_id: string | null };
 type UsageStateRow = { model?: string | null; provider?: string | null; used_tokens?: number | null;
   output_tokens?: number | null; available_tokens?: number | null;
@@ -18,8 +18,11 @@ export function selectTacticalLogs(logs: Log[], limit = 8): Log[] {
 }
 
 function logText(log: Log): string {
-  const result = log.log_type === 'tool_call' ? JSON.stringify(log.tool_result ?? '') : '';
-  return `[${log.log_type}${log.tool_name ? `:${log.tool_name}` : ''}] ${log.message.slice(0, 800)} ${result.slice(0, 400)}`;
+  // Encode newlines so each row has an unambiguous provenance marker. Never
+  // summarize an excerpt and then mark the *whole* log as compacted.
+  const tool = log.log_type === 'tool_call'
+    ? ` args=${JSON.stringify(log.tool_args ?? {})} result=${JSON.stringify(log.tool_result ?? '')}` : '';
+  return `[${log.log_type}${log.tool_name ? `:${log.tool_name}` : ''}] ${JSON.stringify(log.message)}${tool}`;
 }
 
 export class InstanceContextManager {
@@ -63,7 +66,7 @@ export class InstanceContextManager {
       : availableTokens ? outputReserveForModel(data.provider || '', data.model)
         || Math.max(2048, Math.ceil(availableTokens * .1)) : 0;
     return { model: data.model, provider: data.provider || '', usedTokens: data.used_tokens || 0,
-      outputTokens: data.output_tokens || 0,
+      outputTokens: data.output_tokens ?? null,
       availableTokens, reservedOutputTokens, source: data.source === 'provider' ? 'provider' : 'estimate',
       utilization: availableTokens ? Math.min(1, (data.used_tokens || 0) / Math.max(1, availableTokens - reservedOutputTokens)) : null,
       measuredAt: data.measured_at,
@@ -77,17 +80,23 @@ export class InstanceContextManager {
       const { error } = await supabaseAdmin.rpc('record_instance_context_usage', {
         p_instance_id: this.instanceId, p_site_id: this.siteId, p_model: usage.model,
         p_provider: usage.provider, p_used_tokens: usage.usedTokens,
-        p_output_tokens: usage.outputTokens || 0,
+        p_output_tokens: usage.outputTokens ?? null,
         p_available_tokens: usage.availableTokens, p_reserved_output_tokens: usage.reservedOutputTokens,
         p_source: usage.source,
         p_measured_at: usage.measuredAt,
       });
-      if (error && (['PGRST202', '42883'].includes(error.code)
+      if (error?.code === '23502' && usage.outputTokens == null) {
+        // Old databases require a non-null output count. Do not retry with a
+        // fabricated zero: wait for the nullable-output migration instead.
+        console.warn('[InstanceContext] Usage unavailable: apply the nullable output_tokens migration');
+        return;
+      }
+      if (error && (['PGRST202', '42883', '23502'].includes(error.code)
         || (error.code === '42703' && /\boutput_tokens\b/.test(error.message)))) {
         const legacy = await supabaseAdmin.rpc('record_instance_context_usage', {
           p_instance_id: this.instanceId, p_site_id: this.siteId, p_model: usage.model,
           p_provider: usage.provider, p_used_tokens: usage.usedTokens,
-          p_output_tokens: usage.outputTokens || 0,
+          p_output_tokens: usage.outputTokens ?? null,
           p_available_tokens: usage.availableTokens, p_source: usage.source,
           p_measured_at: usage.measuredAt,
         });
@@ -125,7 +134,7 @@ export class InstanceContextManager {
     }
   }
 
-  async buildHistory(currentMessage: string, provider: AIProvider, model: string): Promise<string> {
+  async buildHistory(currentMessage: string, provider: AIProvider, model: string, pagingPass = 0): Promise<string> {
     await resolveModelContextCapacity(provider, model);
     const { data: state, error: stateError } = await supabaseAdmin.from('instance_context_state')
       .select('cursor_at,cursor_log_id').eq('instance_id', this.instanceId)
@@ -135,7 +144,7 @@ export class InstanceContextManager {
     const migrationMissing = stateError && ['42P01', 'PGRST205'].includes(stateError.code);
     if (stateError && !migrationMissing) throw new Error(`Context cursor unavailable: ${stateError.message}`);
     let recentQuery = supabaseAdmin.from('instance_logs')
-      .select('id,created_at,log_type,message,level,tool_name,tool_result,details')
+      .select('id,created_at,log_type,message,level,tool_name,tool_args,tool_result,details')
       .eq('instance_id', this.instanceId).eq('site_id', this.siteId)
       .in('log_type', ['user_action','agent_action','tool_call','error','execution_summary','infrastructure','sandbox_test_failure'])
       .order('created_at', { ascending: false }).order('id', { ascending: false }).limit(200);
@@ -149,7 +158,7 @@ export class InstanceContextManager {
     if (error) throw error;
     const recentRows = ((rows || []) as Log[]).reverse();
     const logs = recentRows.filter(l => l.details?.status !== 'queued');
-    const cursor = migrationMissing ? null : state as State | null;
+    let cursor = migrationMissing ? null : state as State | null;
     // A cursor without a readable summary is unsafe: never proceed as though
     // the omitted rows are irrelevant.
     const memories = cursor?.cursor_at
@@ -162,16 +171,16 @@ export class InstanceContextManager {
     const budget = measureInstanceContext({ provider, model, system: '', messages: [], tools: [] });
     const maxHistory = budget.availableTokens
       ? Math.min(14_000, Math.max(300, Math.floor((budget.availableTokens - budget.reservedOutputTokens) * .2))) : 6_000;
-    if (!migrationMissing && active.length > 1 && rough > maxHistory * .75) {
+    const unreadOlder = recentRows.length === 200 &&
+      await this.hasUnseenOlderLogs(cursor, recentRows[0]);
+    if (!migrationMissing && active.length > 1 && (rough > maxHistory * .75 || unreadOlder)) {
       const recentToKeep = Math.min(15, active.length - 1);
       let candidates = active.slice(0, -recentToKeep);
-      const unreadOlder = recentRows.length === 200 &&
-        await this.hasUnseenOlderLogs(cursor, recentRows[0]);
       if (unreadOlder) {
         // Read from the *oldest* un-compacted row rather than compacting the
         // newest page and accidentally advancing across an unseen gap.
         let oldestQuery = supabaseAdmin.from('instance_logs')
-          .select('id,created_at,log_type,message,level,tool_name,tool_result,details')
+          .select('id,created_at,log_type,message,level,tool_name,tool_args,tool_result,details')
           .eq('instance_id', this.instanceId).eq('site_id', this.siteId)
           .in('log_type', ['user_action','agent_action','tool_call','error','execution_summary','infrastructure','sandbox_test_failure'])
           .order('created_at', { ascending: true }).order('id', { ascending: true }).limit(100);
@@ -182,9 +191,10 @@ export class InstanceContextManager {
         const { data: oldest, error: oldestError } = await oldestQuery;
         if (oldestError) throw oldestError;
         const oldestRows = (oldest || []) as Log[];
-        if (cursor?.cursor_at && cursor.cursor_log_id && oldestRows.some(log =>
-          log.created_at < cursor.cursor_at! ||
-          (log.created_at === cursor.cursor_at && log.id <= cursor.cursor_log_id!))) {
+        const expectedCursor = cursor;
+        if (expectedCursor?.cursor_at && expectedCursor.cursor_log_id && oldestRows.some(log =>
+          log.created_at < expectedCursor.cursor_at! ||
+          (log.created_at === expectedCursor.cursor_at && log.id <= expectedCursor.cursor_log_id!))) {
           throw new Error('Cursor paging returned already compacted logs');
         }
         // Leave room for recent turns and do not advance past a queued action
@@ -212,11 +222,10 @@ export class InstanceContextManager {
       const committed = await this.compact(toCompact, cursor, provider, model);
       if (committed) {
         const last = toCompact[toCompact.length - 1];
+        cursor = { cursor_at: last.created_at, cursor_log_id: last.id };
         active = active.filter(log => log.created_at > last.created_at ||
           (log.created_at === last.created_at && log.id > last.id));
-        const updatedMemories = await this.retrieve(currentMessage, true, {
-          cursor_at: last.created_at, cursor_log_id: last.id,
-        });
+        const updatedMemories = await this.retrieve(currentMessage, true, cursor);
         memories.splice(0, memories.length, ...updatedMemories);
       } else if (toCompact.length > 0) {
         // A failed CAS is indistinguishable from a provider/embedding failure.
@@ -233,43 +242,33 @@ export class InstanceContextManager {
           memories.splice(0, memories.length, ...updatedMemories);
           active = active.filter(log => log.created_at > latest.cursor_at ||
             (log.created_at === latest.cursor_at && log.id > latest.cursor_log_id));
+          cursor = { cursor_at: latest.cursor_at, cursor_log_id: latest.cursor_log_id };
         }
       }
     }
 
-    // Never fetch the entire audit trail into the LLM. Tactical logs stay in DB;
-    // the last few are explicitly retained in context even under pressure.
+    // A page older than the newest 200 cannot be skipped just because it is
+    // outside the displayed transcript. A subsequent step can compact it.
+    if (recentRows.length === 200 && await this.hasUnseenOlderLogs(cursor, recentRows[0])) {
+      // Each successful CAS moves the durable cursor. Re-read the newest page
+      // and continue compacting the oldest gap rather than failing after the
+      // first batch. Bound the work per workflow step; on failure the next
+      // attempt can resume from the persisted cursor without skipping logs.
+      if (!migrationMissing && pagingPass < 10 && cursor?.cursor_at &&
+        (cursor.cursor_at !== state?.cursor_at || cursor.cursor_log_id !== state?.cursor_log_id)) {
+        return this.buildHistory(currentMessage, provider, model, pagingPass + 1);
+      }
+      throw new Error('Instance history has unseen logs before the current page; compact from the cursor first');
+    }
+    // Tactical evidence is ordered separately, but every un-compacted row
+    // must still be included. The executor's full-request guard raises an
+    // overflow instead of discarding decisions when the model cannot fit them.
     const tactical = selectTacticalLogs(active);
     const tacticalIds = new Set(tactical.map(log => log.id));
-    const tacticalBudget = Math.min(Math.floor(maxHistory * .35), 2200);
-    let reserved = tacticalBudget;
-    const includedTactical: Log[] = [];
-    for (const log of [...tactical].reverse()) {
-      const tokens = estimateTokens(logText(log));
-      if (tokens > reserved) continue;
-      includedTactical.push(log); reserved -= tokens;
-    }
-    if (tactical.length > 0 && includedTactical.length === 0) {
-      // The most recent tactical entry must survive even when its output is
-      // pathological: keep a bounded excerpt rather than dropping it entirely.
-      const recent = tactical[tactical.length - 1];
-      includedTactical.push({ ...recent,
-        message: recent.message.slice(0, 120), tool_result: null });
-      reserved = Math.max(0, tacticalBudget - estimateTokens(logText(includedTactical[0])));
-    }
-    let remaining = maxHistory - (tacticalBudget - reserved);
-    const bounded: Log[] = [];
-    for (const log of [...active.slice(-30)].reverse()) {
-      if (tacticalIds.has(log.id)) continue;
-      const tokens = estimateTokens(logText(log));
-      if (tokens > remaining) continue;
-      bounded.push(log); remaining -= tokens;
-    }
-    const selected = [...bounded]
-      .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
+    const selected = active.filter(log => !tacticalIds.has(log.id));
     return [memories.length ? `RELEVANT EARLIER MEMORY:\n${memories.join('\n')}` : '',
       selected.length ? `RECENT INSTANCE HISTORY (newest last):\n${selected.map(logText).join('\n')}` : '',
-      includedTactical.length ? `TACTICAL INSTANCE EVIDENCE (preserve on overflow):\n${includedTactical.reverse().map(logText).join('\n')}` : '']
+      tactical.length ? `TACTICAL INSTANCE EVIDENCE (preserve on overflow):\n${tactical.map(logText).join('\n')}` : '']
       .filter(Boolean).join('\n\n');
   }
 
@@ -343,7 +342,7 @@ export class InstanceContextManager {
       if (related?.summary) {
         // Older cumulative snapshots are reference only; never override the
         // latest state or flood the prompt with duplicate summaries.
-        memories.push(`Related historical snapshot (may be superseded): ${String(related.summary).slice(0, 700)}`);
+        memories.push(`Related historical snapshot (may be superseded): ${String(related.summary)}`);
       }
     } catch (error) {
       console.warn('[InstanceContext] Vector search unavailable; using latest summary:', error);

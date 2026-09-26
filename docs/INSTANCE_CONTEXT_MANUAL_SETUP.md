@@ -8,6 +8,11 @@ After those, apply `supabase/migrations/20260926050000_instance_context_input_br
 to enable the estimated category chart for subsequent turns. This migration
 adds a numeric-only `input_breakdown` and a service-only RPC; it preserves all
 older measurements and does not retroactively reconstruct their categories.
+After inspecting the target project and schema, apply
+`supabase/migrations/20260926060000_instance_context_unknown_output_and_legacy_reserve.sql`
+to store unknown completion counts as NULL and invalidate stale output reserves
+when a legacy usage RPC writes a newer checkpoint. Do not apply migrations to a
+remote project without verifying its existing schema and migration history.
 The third migration repairs databases where the existing state table lacks
 `output_tokens`. Inspect the target schema before applying anything. If the
 state table and RPCs already exist, **do not rerun their CREATE TABLE statements**:
@@ -32,8 +37,8 @@ substitutes pgvector, so the real HNSW index still needs validation in Supabase.
   `gemini-3.1-pro-preview` (and `-customtools`) **1,048,576 input** tokens,
   OpenAI `gpt-4o` **128,000 total** (16,384 output reserve), OpenAI direct
   `gpt-5.2` **400,000 total** (128,000 output reserve), xAI `grok-4.6`
-  **500,000 total**, and the default Azure deployment named `gpt-4o`
-  **128,000 total**. Gemini metadata for other exact IDs is fetched via
+  **500,000 total**. Azure deployment names, including `gpt-4o`, are unverified
+  until configured explicitly. Gemini metadata for other exact IDs is fetched via
   `models.get` with a 2.5s timeout and cached in-process.
   Provider references: [Gemini 3.1 Pro](https://ai.google.dev/gemini-api/docs/models/gemini-3.1-pro-preview),
   [GPT-4o](https://platform.openai.com/docs/models/gpt-4o),
@@ -100,17 +105,20 @@ DTO via `market-fit/app/api/robots/instance/context/route.ts`.
   compaction through their position.
 - The most recent summary is always included. Semantic search can add one
   relevant older snapshot as supplementary, possibly superseded evidence.
-- If this migration has not been applied, the assistant uses a bounded recent
-  history without compacting; metrics may not be visible until it is applied.
+- If the context migration is missing, the assistant cannot compact. When
+  there are more un-compacted logs than the page can hold, it stops rather
+  than silently skipping them; apply the migration before long-running use.
 - If a cursor exists but its latest summary cannot be read, the assistant
   stops rather than proceed with silently lost context.
 - The widget projects the next turn using the last measured/estimated input
   plus its output tokens. It is not a live counter for unsent characters.
-  The reader refreshes every 15 seconds. If the full prepared request exceeds
-  the verified model window, the executor removes only optional transcript;
-  mandatory instructions, tactical evidence and tool schemas are never
-  truncated. It raises `INSTANCE_CONTEXT_OVERFLOW` before contacting the model
-  if the request still cannot fit.
+  The reader refreshes every 15 seconds. Unknown output remains unknown, not
+  zero, and the projection is a lower bound in that case. If the full prepared
+  request exceeds the verified model window, the executor never drops
+  un-compacted instance history. It may omit independently sourced advisory
+  requirement/cron history; mandatory instructions, tactical evidence and tool
+  schemas are never truncated. It raises `INSTANCE_CONTEXT_OVERFLOW` before
+  contacting the model if the request still cannot fit.
   Hydrated `image_url` parts are estimated as image inputs (4096 tokens each),
   not as base64 text; this is a safety allowance, not a provider-accurate
   vision token count. Ordinary text and tool output still count by size.

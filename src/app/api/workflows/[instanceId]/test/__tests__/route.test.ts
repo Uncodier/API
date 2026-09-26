@@ -71,10 +71,9 @@ it('blocks generic tool-capable tests when the channel trigger is not yet synced
   expect(materializeRunFromGraph).not.toHaveBeenCalled();
 });
 
-it('permits an authorized channel test with pre-response-only enforcement', async () => {
+it('explicitly rejects the unbounded channel test runner even for authorized managers', async () => {
   const response = await POST(request({ source: 'channel_message', trigger_id: triggerNodeId }), context);
-  expect(response.status).toBe(200);
-  expect(materializeRunFromGraph).toHaveBeenCalledWith(expect.objectContaining({
-    trigger_id: 'trigger-row-1', pre_response_only: true, dry_run: true,
-  }));
+  expect(response.status).toBe(422);
+  expect(materializeRunFromGraph).not.toHaveBeenCalled();
+  expect(runWorkflowPlan).not.toHaveBeenCalled();
 });

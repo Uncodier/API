@@ -197,6 +197,25 @@ export async function runAssistantWorkflow(
           
           // Accumulate results
           finalResult = stepResult;
+          if (stepResult.executionStatus === 'exhausted') {
+            // A turn budget is a pause, never a successful plan completion or
+            // an exception that retries the multi-effect durable step. The
+            // finally block releases ownership; a later invocation resumes the
+            // same step from its persisted continuation before later steps.
+            return {
+              instance_id: instanceId,
+              status: context.instance.status,
+              success: false,
+              execution_status: 'exhausted',
+              resumable: true,
+              message: 'Plan execution paused at the step turn limit; the plan is not complete',
+              assistant_response: 'This plan step is still incomplete. Its progress has been saved; ask to continue to resume it without restarting completed turns.',
+              usage: stepResult.usage,
+              plan_id: activePlan.id,
+              plan_step_id: stepResult.resumeFromStepId,
+              instance_node_id: instanceNodeId,
+            };
+          }
         }
       } finally {
         await releasePlanExecutionLockStep(activePlan.id, lock.token);

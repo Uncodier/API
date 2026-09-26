@@ -101,6 +101,7 @@ jest.mock('../single-turn-helpers', () => ({
 
 import { runSingleTurnGate } from '../single-turn-gate';
 import { singleTurnGateInput as input } from './single-turn-gate.fixture';
+import { writeEvidence } from '@/lib/services/requirement-ground-truth';
 
 describe('runSingleTurnGate', () => {
   beforeEach(() => {
@@ -517,6 +518,69 @@ describe('runSingleTurnGate', () => {
       }),
     );
   });
+
+  it.each(['changed', 'unavailable'])(
+    'does not resurrect pre-recovery agent proofs when final fingerprint is %s',
+    async (state) => {
+      mockClassifyRequirementType.mockReturnValue('app');
+      const originalFingerprint = 'a'.repeat(64);
+      const finalFingerprint = state === 'changed' ? 'b'.repeat(64) : undefined;
+      const replacement = { id: 'new-sandbox' };
+      const receipt = {
+        command: 'npm test', exit_code: 0, output_tail: 'PASS',
+        ran_after_changes: true, captured_at: '2026-09-22T12:00:00.000Z',
+        step_id: 'step-1', workspace_fingerprint: originalFingerprint,
+      };
+      mockGetBacklogItem.mockResolvedValueOnce({ item: { evidence: {
+        schema_version: 1, item_id: 'item-1', producer_step_id: 'step-1',
+        workspace_fingerprint: originalFingerprint,
+        captured_at: receipt.captured_at, critic_passes: 0,
+        build: { exit_code: 0 }, tests: [receipt],
+      } } });
+      mockRunGateForFlow.mockResolvedValueOnce({
+        ok: false, failureKind: 'evidence_gap', signals: [],
+        sandboxReplacement: replacement,
+        richSignals: {
+          workspace_fingerprint: finalFingerprint,
+          build: { ok: false },
+          tests: { ok: false, tests: [{ ...receipt, ran_after_changes: false }] },
+        },
+      });
+      mockUpdatePlanStepStatus.mockResolvedValueOnce({ persisted: true, state: 'applied', generation: 4 });
+      const gateInput = input();
+      gateInput.result = {
+        messages: [],
+        steps: [{
+          toolCalls: [
+            { id: 'test', toolName: 'sandbox_run_command', args: { command: 'npm test' } },
+            { id: 'probe', toolName: 'sandbox_probe_api' },
+            { id: 'scenario', toolName: 'sandbox_run_scenario' },
+          ],
+          toolResults: [
+            { toolCallId: 'test', result: { exitCode: 0, stdout: 'PASS' } },
+            { toolCallId: 'probe', result: { apis: [{ path: '/api/assets', http_status: 200 }] } },
+            { toolCallId: 'scenario', result: { scenarios: [{ steps: [{ receipt: {
+              kind: 'http_response', pass: true, method: 'GET', target: '/api/assets', actual_status: 200, expected_statuses: [200],
+            } }] }] } },
+          ],
+        }],
+      } as any;
+
+      const result = await runSingleTurnGate(gateInput);
+      expect(result.gatePassed).toBe(false);
+      expect(mockCompletePlanStepAfterGate).not.toHaveBeenCalled();
+      expect(mockRunArchetypePostGate).not.toHaveBeenCalled();
+      expect(writeEvidence).toHaveBeenCalledWith(expect.objectContaining({
+        sandbox: replacement,
+        record: expect.objectContaining({
+          workspace_fingerprint: finalFingerprint,
+          build: expect.objectContaining({ exit_code: 1 }),
+          tests: [expect.objectContaining({ workspace_fingerprint: originalFingerprint, ran_after_changes: false })],
+          observations: [], scenario_assertions: [], gate_resume: null,
+        }),
+      }));
+    },
+  );
 
   it('provides automation gates the context required to persist origin', async () => {
     mockClassifyRequirementType.mockReturnValue('automation');

@@ -56,6 +56,12 @@ import { classifyRequirementType } from '@/lib/services/requirement-flows';
 import { computeApplicationBuildFingerprint } from './commit/pre-push-build-validation';
 import { loadConstraintSourceBlocks } from '@/lib/services/requirement-constraints-persist';
 import {
+  assertCronExecutionOwnership,
+  CronExecutionOwnershipError,
+  isCronExecutionOwnershipError,
+  withCronExecutionOwnership,
+} from './cron-execution-ownership';
+import {
   canResumeCachedGate,
   shouldEnterRepairGateOnlyPhase,
   shouldRunGateAfterTurn,
@@ -78,15 +84,46 @@ export async function executeSingleTurnStep(params: {
   cycleId: string;
   executionEventId: string;
   executionGeneration: number;
+  cronLockRunId: string | undefined;
 }): Promise<SingleTurnResult> {
   'use step';
   const { sandboxId, plan, step, requirementId, instanceId, siteId, userId, title, gitRepoKind, requirementType, validateDeployment = true, provisionedEnvKeys, cycleId, executionEventId, executionGeneration } = params;
   const audit: CronAuditContext = {
     instanceId, siteId, userId, requirementId,
     planId: plan.id, stepId: step.id,
+    executionOwnership: { requirementId, runId: params.cronLockRunId, executionGeneration },
   };
   const instanceType = gitRepoKind === 'automation' ? 'automation' : 'applications';
   let infrastructureGeneration = Number(step.infrastructure_generation || 0);
+  const ownership = { requirementId, runId: params.cronLockRunId, executionGeneration };
+  const ownershipHalt = (error: unknown, effectiveSandboxId = sandboxId): SingleTurnResult => ({
+    ok: false, isDone: false, concurrencyHalt: true, effectiveSandboxId,
+    infrastructureGeneration,
+    error: error instanceof Error ? error.message : String(error),
+  });
+  // A replay must not attach to a shared sandbox, nor adopt a newer step's CAS
+  // generation. Check both expected identities before even connecting.
+  let persistedStep = step;
+  try {
+    await assertCronExecutionOwnership(ownership);
+    const { data: planRow, error } = await supabaseAdmin.from('instance_plans')
+      .select('steps, status').eq('id', plan.id).maybeSingle();
+    if (error) throw new CronExecutionOwnershipError('plan_state_unavailable', error.message);
+    const freshStep = Array.isArray(planRow?.steps)
+      ? planRow.steps.find((candidate: any) => candidate.id === step.id) : undefined;
+    if (!freshStep || planRow?.status === 'paused' || planRow?.status === 'cancelled' ||
+        Number(freshStep.infrastructure_generation || 0) !== infrastructureGeneration) {
+      throw new CronExecutionOwnershipError('plan_step_generation_changed');
+    }
+    if (freshStep.status === 'completed' || freshStep.status === 'cancelled') {
+      return { ...ownershipHalt(`Step already ${freshStep.status}`), ok: true, isDone: true,
+        ...(freshStep.status === 'completed' ? { persistedTerminalStatus: 'completed' as const } : {}) };
+    }
+    persistedStep = { ...step, ...freshStep };
+    await assertCronExecutionOwnership(ownership);
+  } catch (error) {
+    return ownershipHalt(error);
+  }
   let connected;
   try {
     connected = await connectOrRecreateRequirementSandbox({
@@ -95,6 +132,7 @@ export async function executeSingleTurnStep(params: {
       instanceType,
       title,
       audit,
+      fastAttach: true,
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -115,7 +153,7 @@ export async function executeSingleTurnStep(params: {
   let effectiveSandboxId = connected.sandboxId;
 
   try {
-    let persistedStep = step;
+    await assertCronExecutionOwnership(ownership);
     const { data: planRow, error: planReadError } = await supabaseAdmin
       .from('instance_plans')
       .select('steps, status')
@@ -140,9 +178,11 @@ export async function executeSingleTurnStep(params: {
         concurrencyHalt: true,
       };
     }
+    if (Number(freshStep.infrastructure_generation || 0) !== infrastructureGeneration ||
+        planRow?.status === 'paused' || planRow?.status === 'cancelled') {
+      throw new CronExecutionOwnershipError('plan_step_generation_changed');
+    }
     persistedStep = { ...step, ...freshStep };
-    infrastructureGeneration =
-      Number(persistedStep.infrastructure_generation || 0);
     if (
       freshStep.status === 'completed' ||
       freshStep.status === 'cancelled'
@@ -188,6 +228,7 @@ export async function executeSingleTurnStep(params: {
       cycleId,
       executionGeneration,
     });
+    await assertCronExecutionOwnership(ownership);
     const startMutation = await patchPlanStepAtomically({
       planId: plan.id,
       stepId: step.id,
@@ -390,10 +431,12 @@ export async function executeSingleTurnStep(params: {
     const evidenceCollectionOnly = isEvidenceCollectionRetry(
       persistedStep.error_message,
     );
-    const fullTools = restrictToolsForEvidenceCollection(
+    const fullTools = withCronExecutionOwnership(restrictToolsForEvidenceCollection(
       guardedTools,
       persistedStep.error_message,
-    );
+    ), ownership);
+
+    await assertCronExecutionOwnership(ownership);
 
     if (noProgressAdjudication) {
       return runGateOnlyNoProgressAdjudication({
@@ -467,6 +510,7 @@ export async function executeSingleTurnStep(params: {
           console.log(
             `[SingleTurn] Resuming unchanged gate for step ${persistedStep.order} without another assistant turn.`,
           );
+          await assertCronExecutionOwnership(ownership);
           return runSingleTurnGate({
             sandbox,
             effectiveSandboxId,
@@ -492,12 +536,14 @@ export async function executeSingleTurnStep(params: {
           });
         }
       } catch (error: unknown) {
+        if (isCronExecutionOwnershipError(error)) throw error;
         console.warn(
           '[SingleTurn] Could not evaluate the cached gate resume:',
           error instanceof Error ? error.message : error,
         );
       }
     }
+    await assertCronExecutionOwnership(ownership);
     const result = await executeAssistantStep(messages, { id: instanceId, site_id: siteId, user_id: userId, requirement_id: requirementId }, {
       instance_id: instanceId,
       site_id: siteId,
@@ -509,6 +555,7 @@ export async function executeSingleTurnStep(params: {
       custom_tools: fullTools,
       enforceSingleTurn: true // CRITICAL: enforce 1 tool call max per invocation
     });
+    await assertCronExecutionOwnership(ownership);
     sandbox = activeSandboxRef.current;
     effectiveSandboxId = sandboxIdentity(sandbox);
     const workspaceFingerprintAfter =
@@ -664,6 +711,7 @@ export async function executeSingleTurnStep(params: {
     }
 
     if (shouldRunGate) {
+      await assertCronExecutionOwnership(ownership);
       const gateResult = await runSingleTurnGate({
         sandbox,
         effectiveSandboxId,
@@ -699,6 +747,7 @@ export async function executeSingleTurnStep(params: {
       durableProductProgress,
     };
   } catch (e: any) {
+    if (isCronExecutionOwnershipError(e)) return ownershipHalt(e, effectiveSandboxId);
     console.error('[SingleTurn] Executor wrapper failed:', e);
     return {
       ok: false,

@@ -38,6 +38,7 @@
  */
 
 import { getSupabaseServiceRoleUrl, supabaseAdmin } from '@/lib/database/supabase-client';
+import { CronExecutionOwnershipError } from './cron-execution-ownership';
 
 /**
  * UUID generator that works inside the Vercel Workflow bundle (no `require`
@@ -274,26 +275,32 @@ export async function extendRunLock(
   runId: string,
   ttlMs: number = CRON_RUN_LOCK_TTL_MS,
 ): Promise<void> {
+  if (!runId?.trim()) throw new CronExecutionOwnershipError('missing_execution_identity');
+  const now = new Date().toISOString();
+  const expiresAt = new Date(Date.now() + ttlMs).toISOString();
   if (lockKey.endsWith('-maint')) {
     const requirementId = lockKey.replace('-maint', '');
-    const { data } = await supabaseAdmin.from('requirements').select('metadata').eq('id', requirementId).single();
-    if (data?.metadata?.maint_lock_run_id === runId) {
-      const metadata = { ...data.metadata };
-      metadata.maint_lock_expires_at = new Date(Date.now() + ttlMs).toISOString();
-      await supabaseAdmin.from('requirements').update({ metadata }).eq('id', requirementId);
+    const { data, error } = await supabaseAdmin.from('requirements').select('metadata').eq('id', requirementId).single();
+    if (error) throw new CronExecutionOwnershipError('lease_extend_unavailable', error.message);
+    if (data?.metadata?.maint_lock_run_id !== runId ||
+        !(Date.parse(data?.metadata?.maint_lock_expires_at) > Date.now())) {
+      throw new CronExecutionOwnershipError('lease_lost');
     }
+    // Keep unrelated metadata and never overwrite a concurrent new owner.
+    const result = await supabaseAdmin.from('requirements')
+      .update({ metadata: { ...data.metadata, maint_lock_expires_at: expiresAt } })
+      .eq('id', requirementId).eq('metadata', JSON.stringify(data.metadata)).select('id');
+    if (result.error) throw new CronExecutionOwnershipError('lease_extend_unavailable', result.error.message);
+    if (!result.data?.length) throw new CronExecutionOwnershipError('lease_lost');
     return;
   }
-  
-  const requirementId = lockKey;
-  try {
-    const expiresAt = new Date(Date.now() + ttlMs).toISOString();
-    await supabaseAdmin
-      .from('requirements')
-      .update({ cron_lock_expires_at: expiresAt })
-      .eq('id', requirementId)
-      .eq('cron_lock_run_id', runId);
-  } catch (e: unknown) {
-    console.warn(`[CronRunLock] extend threw for ${requirementId}:`, e instanceof Error ? e.message : e);
-  }
+  const { data, error } = await supabaseAdmin
+    .from('requirements')
+    .update({ cron_lock_expires_at: expiresAt })
+    .eq('id', lockKey)
+    .eq('cron_lock_run_id', runId)
+    .gt('cron_lock_expires_at', now)
+    .select('id');
+  if (error) throw new CronExecutionOwnershipError('lease_extend_unavailable', error.message);
+  if (!data?.length) throw new CronExecutionOwnershipError('lease_lost');
 }

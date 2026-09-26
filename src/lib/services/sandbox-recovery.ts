@@ -4,6 +4,8 @@ import { persistActiveSandboxId } from '@/lib/tools/requirement-status-core';
 import { getSandboxHandle, sandboxIdentity } from '@/lib/services/sandbox-sdk';
 import { deleteRequirementSandboxes } from '@/lib/services/sandbox-lifecycle';
 import { warmStartNamedSandbox } from '@/lib/services/sandbox-on-resume';
+import { inspectFastAttachWorkspace, runningSessionId } from './sandbox-fast-attach';
+import { branchBelongsToRequirement } from './requirement-branch';
 import { isFatalGitLayoutReason, verifyPlatformGitLayout } from '@/lib/services/sandbox-git-layout';
 import {
   CronInfraEvent,
@@ -13,15 +15,19 @@ import {
 
 const GET_SANDBOX_ATTEMPTS = 5;
 
-async function tryGetSandbox(sandboxId: string): Promise<Sandbox | null> {
+async function tryGetSandbox(sandboxId: string, fastAttach = false): Promise<{
+  sandbox: Sandbox;
+  fastSessionId: string | null;
+} | null> {
   let delayMs = 1000;
   for (let attempt = 0; attempt < GET_SANDBOX_ATTEMPTS; attempt++) {
     try {
       const sandbox = await getSandboxHandle(sandboxId);
+      const fastSessionId = fastAttach ? runningSessionId(sandbox) : null;
       
       // Explicitly resume the sandbox bypassing runCommand's "use step" wrapper.
       // This avoids a 3-retry loop in the Vercel Workflows engine when the sandbox is dead (410).
-      if (typeof (sandbox as any).resume === 'function') {
+      if (!fastSessionId && typeof (sandbox as any).resume === 'function') {
         try {
           await (sandbox as any).resume();
         } catch (resumeErr: any) {
@@ -33,7 +39,7 @@ async function tryGetSandbox(sandboxId: string): Promise<Sandbox | null> {
         }
       }
       
-      return sandbox;
+      return { sandbox, fastSessionId };
     } catch (e: unknown) {
       if (attempt < GET_SANDBOX_ATTEMPTS - 1) {
         console.warn(`[Sandbox] tryGetSandbox attempt ${attempt + 1} failed for ${sandboxId}. Retrying in ${delayMs}ms...`);
@@ -53,7 +59,7 @@ export async function getSandboxWithRetriesOrThrow(sandboxId: string): Promise<S
   if (!s) {
     throw new Error(`Sandbox.get failed after ${GET_SANDBOX_ATTEMPTS} attempts (${sandboxId})`);
   }
-  return s;
+  return s.sandbox;
 }
 
 export type SandboxPing = { ok: boolean; reason?: string; fatal: boolean };
@@ -85,6 +91,11 @@ export async function connectOrRecreateRequirementSandbox(params: {
   instanceType: string;
   title: string;
   audit?: CronAuditContext;
+  /** Mid-cycle only: read-only attach if this exact running session is healthy.
+   * Callers must independently recheck execution ownership before every turn/tool.
+   * Defaults to the existing warm recovery path; never skips genuine resume.
+   */
+  fastAttach?: boolean;
 }): Promise<{
   sandbox: Sandbox;
   sandboxId: string;
@@ -93,18 +104,34 @@ export async function connectOrRecreateRequirementSandbox(params: {
 }> {
   const { sandboxId, requirementId, instanceType, title, audit } = params;
 
-  let sandbox = await tryGetSandbox(sandboxId);
+  const connected = await tryGetSandbox(sandboxId, params.fastAttach);
+  const sandbox = connected?.sandbox;
   if (sandbox) {
+    if (connected.fastSessionId) {
+      const branchName = await inspectFastAttachWorkspace(sandbox, requirementId, connected.fastSessionId);
+      if (branchName) return { sandbox, sandboxId, recovered: false, branchName };
+    }
     const ping = await inspectSandboxWorkspace(sandbox);
     if (!ping.fatal) {
       await warmStartNamedSandbox(sandbox, requirementId, instanceType, {
         syncToOrigin: false,
       });
+      // A transient pre-resume ping must not be treated as proof of a valid root.
+      const afterWarm = await inspectSandboxWorkspace(sandbox);
+      if (!afterWarm.ok) throw new Error(`Sandbox workspace not ready after warm recovery: ${afterWarm.reason}`);
+      let branchName: string | undefined;
       try {
-        const branchName = await SandboxService.getCurrentBranch(sandbox);
-        return { sandbox, sandboxId, recovered: false, branchName };
+        branchName = await SandboxService.getCurrentBranch(sandbox);
       } catch (e: unknown) {
         console.warn(`[Sandbox] connect failed to get branch, forcing reprovision:`, e instanceof Error ? e.message : e);
+      }
+      if (branchName !== undefined) {
+        if (params.fastAttach && !branchBelongsToRequirement(branchName, requirementId)) {
+          // Do not delete a live workspace (and possible unpushed edits) on a
+          // branch mismatch. Surface the problem instead of silently attaching.
+          throw new Error('Warm recovery did not attach the expected requirement branch');
+        }
+        return { sandbox, sandboxId, recovered: false, branchName };
       }
     } else {
       console.warn(`[Sandbox] Fatal nested layout on ${sandboxId}: ${ping.reason}`);
@@ -126,18 +153,26 @@ export async function connectOrRecreateRequirementSandbox(params: {
 
     if (reqStatus?.active_sandbox_id && reqStatus.active_sandbox_id !== sandboxId) {
       console.warn(`[Sandbox] Provided sandboxId ${sandboxId} failed, but DB has newer active_sandbox_id ${reqStatus.active_sandbox_id}. Trying that...`);
-      const dbSandbox = await tryGetSandbox(reqStatus.active_sandbox_id);
+      const dbSandbox = (await tryGetSandbox(reqStatus.active_sandbox_id))?.sandbox;
       if (dbSandbox) {
         const dbPing = await inspectSandboxWorkspace(dbSandbox);
         if (!dbPing.fatal) {
           await warmStartNamedSandbox(dbSandbox, requirementId, instanceType, {
             syncToOrigin: false,
           });
+          const afterWarm = await inspectSandboxWorkspace(dbSandbox);
+          if (!afterWarm.ok) throw new Error(`Sandbox workspace not ready after warm recovery: ${afterWarm.reason}`);
+          let branchName: string | undefined;
           try {
-            const branchName = await SandboxService.getCurrentBranch(dbSandbox);
-            return { sandbox: dbSandbox, sandboxId: reqStatus.active_sandbox_id, recovered: true, branchName };
+            branchName = await SandboxService.getCurrentBranch(dbSandbox);
           } catch (e: unknown) {
             console.warn(`[Sandbox] DB active sandbox failed to get branch, forcing reprovision:`, e instanceof Error ? e.message : e);
+          }
+          if (branchName !== undefined) {
+            if (params.fastAttach && !branchBelongsToRequirement(branchName, requirementId)) {
+              throw new Error('Warm recovery did not attach the expected requirement branch');
+            }
+            return { sandbox: dbSandbox, sandboxId: reqStatus.active_sandbox_id, recovered: true, branchName };
           }
         }
       }

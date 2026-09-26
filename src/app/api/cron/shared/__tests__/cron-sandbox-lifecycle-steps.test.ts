@@ -3,6 +3,7 @@ const mockRunCommand = jest.fn();
 const mockCaptureFingerprint = jest.fn();
 const mockPersistReceipt = jest.fn();
 const mockLogEvent = jest.fn();
+const mockAssertOwner = jest.fn();
 
 jest.mock('@/lib/services/sandbox-sdk', () => ({
   getSandboxHandle: mockGetSandboxHandle,
@@ -30,6 +31,10 @@ jest.mock('../cron-run-lock', () => ({
   extendRunLock: jest.fn(),
   CRON_RUN_LOCK_TTL_MS: 60_000,
 }));
+jest.mock('../cron-execution-ownership', () => ({
+  ...jest.requireActual('../cron-execution-ownership'),
+  assertCronExecutionOwnership: mockAssertOwner,
+}));
 jest.mock('@/lib/services/cron-audit-log', () => ({
   CronInfraEvent: { STEP_STATUS: 'step_status' },
   logCronInfrastructureEvent: mockLogEvent,
@@ -43,7 +48,8 @@ jest.mock(
   }),
 );
 
-import { checkBackgroundCommandStep } from '../cron-sandbox-lifecycle-steps';
+import { checkBackgroundCommandStep, createSandboxStep, stopSandboxStep, assertCronExecutionOwnershipStep, extendRunLockStep } from '../cron-sandbox-lifecycle-steps';
+import { CronExecutionOwnershipError } from '../cron-execution-ownership';
 
 describe('checkBackgroundCommandStep', () => {
   beforeEach(() => {
@@ -89,5 +95,54 @@ describe('checkBackgroundCommandStep', () => {
       exitCode: 0,
       ranAfterChanges: true,
     }));
+  });
+});
+
+describe('durable lifecycle execution fencing', () => {
+  const ownership = { requirementId: 'req', runId: 'original', executionGeneration: 7, allowTerminal: true };
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockAssertOwner.mockResolvedValue(undefined);
+  });
+
+  it('does not attach/stop a newer sandbox after ownership is revoked', async () => {
+    mockAssertOwner.mockRejectedValueOnce(new CronExecutionOwnershipError('run_owner_changed'));
+    await expect(stopSandboxStep('sandbox', undefined, ownership)).rejects.toThrow('run_owner_changed');
+    expect(mockGetSandboxHandle).not.toHaveBeenCalled();
+  });
+
+  it('does not look up, resume, or create a sandbox for stale durable create retries', async () => {
+    mockAssertOwner.mockRejectedValueOnce(new CronExecutionOwnershipError('run_owner_changed'));
+    await expect(createSandboxStep('req', 'applications', 'title', undefined, ownership))
+      .rejects.toThrow('run_owner_changed');
+    expect(mockGetSandboxHandle).not.toHaveBeenCalled();
+    expect(mockRunCommand).not.toHaveBeenCalled();
+  });
+
+  it('does not resume a sandbox if ownership changes during get', async () => {
+    const resume = jest.fn();
+    mockGetSandboxHandle.mockResolvedValue({ resume });
+    mockAssertOwner.mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new CronExecutionOwnershipError('run_owner_changed'));
+    await expect(createSandboxStep('req', 'applications', 'title', undefined, ownership))
+      .rejects.toThrow('run_owner_changed');
+    expect(resume).not.toHaveBeenCalled();
+  });
+
+  it('checks again after a potentially slow sandbox lookup without retrying lost ownership', async () => {
+    const stop = jest.fn();
+    mockGetSandboxHandle.mockResolvedValue({ stop });
+    mockAssertOwner.mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new CronExecutionOwnershipError('run_owner_changed'));
+    await expect(stopSandboxStep('sandbox', undefined, ownership)).rejects.toThrow('run_owner_changed');
+    expect(stop).not.toHaveBeenCalled();
+    expect(mockGetSandboxHandle).toHaveBeenCalledTimes(1);
+  });
+
+  it('delegates guards without automatic stale retries and rejects missing extension identity', async () => {
+    await assertCronExecutionOwnershipStep(ownership);
+    expect(mockAssertOwner).toHaveBeenCalledWith(ownership);
+    expect(assertCronExecutionOwnershipStep.maxRetries).toBe(0);
+    await expect(extendRunLockStep('req', undefined)).rejects.toThrow('missing_execution_identity');
   });
 });

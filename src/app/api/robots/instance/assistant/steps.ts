@@ -192,10 +192,7 @@ export async function prepareAssistantContext(
     : await new InstanceContextManager(instanceId, siteId)
         .buildHistory(message, finalProvider, finalProvider === 'azure'
           ? process.env.MICROSOFT_AZURE_OPENAI_DEPLOYMENT || 'gpt-4o'
-          : process.env.AI_MODEL || (finalProvider === 'gemini' ? 'gemini-3.1-pro-preview'
-            : finalProvider === 'xai'
-              ? (process.env.GOOGLE_CLOUD_PROJECT_ID && !process.env.XAI_API_KEY ? 'xai/grok-4.6' : 'grok-4.6')
-              : 'gpt-4o'));
+          : process.env.AI_MODEL || (finalProvider === 'gemini' ? 'gemini-3.1-pro-preview' : 'gpt-4o'));
   
   // Get tools list just for counting/prompt purposes here
   // We do NOT pass these instantiated tools in the return value to avoid serialization issues

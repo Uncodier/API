@@ -26,6 +26,7 @@ import {
   ensureApplicationBuildCurrent,
 } from './pre-push-build-validation';
 import { clearStuckGitOperationState } from '@/lib/services/sandbox-git-push';
+import { assertCronExecutionOwnership, isCronExecutionOwnershipError, type CronExecutionOwnership } from '../cron-execution-ownership';
 
 export {
   classifyGitPushFailure,
@@ -48,6 +49,7 @@ export async function commitWorkspaceToOrigin(
     deferRequirementStatusPersist?: boolean;
     validateDeployment?: boolean;
     lightweightCheckpoint?: boolean;
+    executionOwnership?: CronExecutionOwnership;
   },
 ): Promise<{
   branch: string;
@@ -59,6 +61,8 @@ export async function commitWorkspaceToOrigin(
   snapshotId?: string;
   source_code?: string;
 }> {
+  const executionOwnership = options?.executionOwnership || audit?.executionOwnership;
+  if (executionOwnership) await assertCronExecutionOwnership(executionOwnership);
   try {
     await sandbox.extendTimeout(3 * 60 * 1000);
   } catch {
@@ -188,24 +192,25 @@ fi`,
     let pushError: any;
 
     try {
+      if (executionOwnership) await assertCronExecutionOwnership(executionOwnership);
       result = await SandboxService.commitAndPush(activeSandbox, {
         message: msg,
         requirementId: reqId,
         title,
-        validateBeforePush: validateDeployment && gitKind === 'applications'
+        validateBeforePush: executionOwnership || (validateDeployment && gitKind === 'applications')
           ? async () => {
-            const validation = await ensureApplicationBuildCurrent({
-              sandbox: activeSandbox,
-              cwd,
-              audit,
-            });
-            return validation.ok
-              ? null
-              : `[pre-push-build] ${validation.error || 'Build validation failed before push'}`;
+            if (validateDeployment && gitKind === 'applications') {
+              const validation = await ensureApplicationBuildCurrent({ sandbox: activeSandbox, cwd, audit });
+              if (!validation.ok) return `[pre-push-build] ${validation.error || 'Build validation failed before push'}`;
+            }
+            // Builds/rebases can outlive the lease; check at each actual push.
+            if (executionOwnership) await assertCronExecutionOwnership(executionOwnership);
+            return null;
           }
           : undefined,
       });
     } catch (e: any) {
+      if (isCronExecutionOwnershipError(e)) throw e;
       pushError = e;
       try {
         const branch = await SandboxService.getCurrentBranch(activeSandbox);
@@ -367,6 +372,7 @@ fi`,
       ...(source_code ? { source_code } : {}),
     };
   } catch (e: any) {
+    if (isCronExecutionOwnershipError(e)) throw e;
     if (e instanceof CommitPushTriageError) {
       throw e;
     }

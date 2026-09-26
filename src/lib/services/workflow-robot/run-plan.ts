@@ -138,6 +138,12 @@ export async function runWorkflowPlan(runPlanId: string, options?: { deadline?: 
   if (!(plan.metadata as any)?.workflow_run) {
     throw new Error('Plan is not a workflow run');
   }
+  // Pre-response runs must use advanceBoundedChannelMessageRun. The ordinary
+  // workflow runner loops over steps/retries and its provider fallback is not
+  // abortable; invoking it in an API request can exceed serverless deadlines.
+  if ((plan.metadata as any)?.pre_response_only === true) {
+    throw new Error('Channel message runs require bounded execution');
+  }
 
   const claimed = await claimWorkflowRunExecution(runPlanId);
   if (!claimed) {

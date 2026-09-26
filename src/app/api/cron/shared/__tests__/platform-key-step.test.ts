@@ -1,29 +1,11 @@
 import { jest } from '@jest/globals';
+import { loadRuntimeModule } from '@/lib/custom-automation/test-helpers/load-runtime-module';
 const getSandboxHandle = jest.fn<(...args: any[]) => Promise<any>>();
 const ensurePlatformKeyForRequirement = jest.fn<(...args: any[]) => Promise<any>>();
 const ensureTenant = jest.fn<(...args: any[]) => Promise<any>>();
 const pushVercelBranchEnv = jest.fn<(...args: any[]) => Promise<any>>();
 const from = jest.fn();
 const getAppsPublicConfig = jest.fn<(...args: any[]) => any>();
-
-jest.unstable_mockModule('@/lib/services/sandbox-sdk', () => ({ getSandboxHandle }));
-jest.unstable_mockModule('@/lib/services/sandbox-service', () => ({
-  SandboxService: { WORK_DIR: '/vercel/sandbox' },
-}));
-jest.unstable_mockModule('@/lib/services/platform-api/ensure-platform-key', () => ({
-  ensurePlatformKeyForRequirement,
-}));
-jest.unstable_mockModule('@/lib/services/apps-platform/tenant-provisioner', () => ({
-  ensureTenant,
-}));
-jest.unstable_mockModule('@/lib/database/apps-supabase', () => ({
-  getAppsPublicConfig,
-}));
-jest.unstable_mockModule('@/lib/database/supabase-client', () => ({
-  supabaseAdmin: { from },
-}));
-jest.unstable_mockModule('@/lib/services/vercel-env', () => ({ pushVercelBranchEnv }));
-jest.unstable_mockModule('@/lib/utils/token-decryption', () => ({ decryptToken: jest.fn() }));
 
 const input = {
   sandboxId: 'sandbox-1',
@@ -48,7 +30,18 @@ describe('platform key / tenant preflight', () => {
   let provisionPlatformKeyStep: typeof import('../platform-key-step').provisionPlatformKeyStep;
 
   beforeAll(async () => {
-    ({ provisionPlatformKeyStep } = await import('../platform-key-step'));
+    ({ provisionPlatformKeyStep } = loadRuntimeModule<typeof import('../platform-key-step')>(
+      'src/app/api/cron/shared/platform-key-step.ts', {
+        '@/lib/services/sandbox-sdk': { getSandboxHandle },
+        '@/lib/services/sandbox-service': { SandboxService: { WORK_DIR: '/vercel/sandbox' } },
+        '@/lib/services/platform-api/ensure-platform-key': { ensurePlatformKeyForRequirement },
+        '@/lib/services/apps-platform/tenant-provisioner': { ensureTenant },
+        '@/lib/database/apps-supabase': { getAppsPublicConfig },
+        '@/lib/database/supabase-client': { supabaseAdmin: { from } },
+        '@/lib/services/vercel-env': { pushVercelBranchEnv },
+        '@/lib/utils/token-decryption': { decryptToken: jest.fn() },
+      },
+    ));
   });
 
   beforeEach(() => {

@@ -18,6 +18,8 @@ export class VisitorAuthorizationError extends Error {
   ) {
     super(message);
     this.name = 'VisitorAuthorizationError';
+    // Preserve instanceof when TypeScript downlevels built-in Error subclasses.
+    Object.setPrototypeOf(this, new.target.prototype);
   }
 }
 

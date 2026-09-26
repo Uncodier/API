@@ -117,7 +117,10 @@ describe('atomic requirement finalization contracts', () => {
       /platformKeyResult = await provisionPlatformKeyStep\([\s\S]*?tenantProvisioningFailed = true;[\s\S]*?throw error;/,
     );
     expect(workflowSource).toContain(
-      'wrapUpRequiresUserFeedback = !tenantProvisioningFailed;',
+      'const recovery = recoveryAfterUnhandledError(cycleOutcome);',
+    );
+    expect(workflowSource).toContain(
+      "wrapUpRequiresUserFeedback = recovery.disposition !== 'retry';",
     );
   });
 

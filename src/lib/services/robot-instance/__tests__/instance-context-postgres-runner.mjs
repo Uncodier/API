@@ -56,6 +56,11 @@ try {
     'supabase/migrations/20260926050000_instance_context_input_breakdown.sql', 'utf8'
   );
   await db.exec(breakdownMigration);
+  const compatibility = readFileSync(
+    'supabase/migrations/20260926060000_instance_context_unknown_output_and_legacy_reserve.sql', 'utf8'
+  );
+  await db.exec(compatibility);
+  await db.exec(compatibility);
   const repaired = (await db.query('SELECT output_tokens FROM instance_context_state WHERE instance_id=$1',[instance])).rows[0];
   assert(repaired.output_tokens === 40, 'repair changed existing output usage');
   for (let n=1;n<=4;n++) await db.query('INSERT INTO instance_logs VALUES ($1,$2,$3,$4,$5,$6)',
@@ -74,10 +79,25 @@ try {
   await db.query('SELECT public.record_instance_context_usage($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
     [instance,site,'test-model','azure',800,120,4000,1024,'estimate',at]);
   const signatures = (await db.query("SELECT count(*)::integer AS count FROM pg_proc WHERE proname = 'record_instance_context_usage'")).rows[0].count;
-  assert(signatures === 2, 'rolling deploy lost the legacy usage RPC signature');
+  assert(signatures === 3, 'rolling deploy lost a legacy usage RPC signature');
   const status = (await db.query('SELECT cursor_log_id, revision, reserved_output_tokens FROM instance_context_state WHERE instance_id=$1',[instance])).rows[0];
   assert(status.cursor_log_id === id(14) && Number(status.revision) === 2, 'metric update changed cursor');
   assert(status.reserved_output_tokens === 1024, 'model-specific output reserve was not persisted');
+  // A new legacy writer must not carry that Azure reserve into a Gemini turn.
+  await db.query('SELECT public.record_instance_context_usage($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+    [instance,site,'gemini-3.1-pro-preview','gemini',800,null,1048576,'estimate',at]);
+  const legacyWritten = (await db.query('SELECT reserved_output_tokens,output_tokens FROM instance_context_state WHERE instance_id=$1',
+    [instance])).rows[0];
+  assert(legacyWritten.reserved_output_tokens === null && legacyWritten.output_tokens === null,
+    'legacy RPC retained a reserve or invented completion usage');
+  await db.query('SELECT public.record_instance_context_usage($1,$2,$3,$4,$5,$6,$7,$8)',
+    [instance,site,'oldest-writer','gemini',800,1048576,'estimate',at]);
+  const oldestWritten = (await db.query('SELECT reserved_output_tokens,output_tokens FROM instance_context_state WHERE instance_id=$1',
+    [instance])).rows[0];
+  assert(oldestWritten.reserved_output_tokens === null && oldestWritten.output_tokens === null,
+    'oldest RPC did not invalidate unknown usage and reserve');
+  await db.query('SELECT public.record_instance_context_usage($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+    [instance,site,'test-model','azure',800,120,4000,1024,'estimate',at]);
   const measuredAt = '2026-09-25T12:00:00.000Z';
   const breakdown = { estimatedInputTokens: 800, instructions: 250, skills: 50,
     messages: 200, toolCalls: 100, toolDefinitions: 200,

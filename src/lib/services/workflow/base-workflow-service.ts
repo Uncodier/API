@@ -479,6 +479,30 @@ export abstract class BaseWorkflowService {
     }
   }
 
+  /** Describe first: result() must never hold a serverless request open while Temporal runs. */
+  public async getFinishedWorkflowResult(workflowId: string): Promise<WorkflowExecutionResponse> {
+    try {
+      const client = await this.initializeClient();
+      const handle = client.workflow.getHandle(workflowId);
+      const description = await handle.describe();
+      if (description.status.name === 'RUNNING') {
+        return { success: true, workflowId, status: 'running' };
+      }
+      if (description.status.name !== 'COMPLETED') {
+        return { success: false, workflowId, status: description.status.name, error: {
+          code: 'WORKFLOW_FAILED', message: 'Customer Support workflow did not complete',
+        } };
+      }
+      const result = await handle.result();
+      return { success: true, workflowId, status: 'completed', data: result };
+    } catch (error) {
+      console.error('Failed to read completed workflow result:', error);
+      return { success: false, workflowId, error: {
+        code: 'WORKFLOW_RESULT_UNAVAILABLE', message: 'Customer Support result is unavailable',
+      } };
+    }
+  }
+
   public async cancelWorkflow(workflowId: string, runId?: string): Promise<WorkflowExecutionResponse> {
     try {
       const client = await this.initializeClient();

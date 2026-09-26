@@ -52,6 +52,7 @@ import type { TestSignal } from './step-test-evidence';
 import type { ProbeObservation } from './step-probe-policy';
 import type { ReusableGateValidation } from './gate-validation-cache';
 import { runLocalGateValidation } from './step-local-validation';
+import { computeApplicationBuildFingerprint } from './commit/pre-push-build-validation';
 import type { FlowGateFailureKind } from './gates/types';
 
 export { MAX_PUSH_RECOVERY_TURNS } from './step-git-prompts';
@@ -60,6 +61,66 @@ export { runGateForFlow } from './gates';
 export type { FlowGateInput, FlowGateResult, FlowGateSignal } from './gates';
 
 const VERCEL_LOG_AGENT_MAX = 6000;
+
+/** Origin persistence can normalize, rebase, roll back tracking, or replace
+ * the sandbox even without an assistant recovery turn. Never stamp those
+ * resulting files with build/test/runtime evidence from the earlier tree. */
+async function verifyFinalValidationTree(
+  sandbox: Sandbox,
+  signals: GateSignals,
+): Promise<{
+  ok: boolean;
+  error?: string;
+  failureKind?: FlowGateFailureKind;
+  infrastructureFailure?: boolean;
+  sandboxUnavailable?: boolean;
+}> {
+  const validatedFingerprint = signals.workspace_fingerprint;
+  let finalFingerprint: string | null = null;
+  let sandboxUnavailable = false;
+  try {
+    finalFingerprint = await computeApplicationBuildFingerprint(
+      sandbox,
+      SandboxService.WORK_DIR,
+    );
+  } catch (error: unknown) {
+    sandboxUnavailable = isSandboxGoneError(error instanceof Error ? error : String(error));
+  }
+  if (validatedFingerprint && validatedFingerprint === finalFingerprint) {
+    return { ok: true };
+  }
+
+  const unavailable = !validatedFingerprint || !finalFingerprint;
+  const error = unavailable
+    ? 'Final workspace fingerprint unavailable; build, tests and runtime evidence must be revalidated'
+    : 'Failure kind: evidence_gap. Workspace changed after local validation (origin persistence or recovery); rerun build, declared tests, interaction and runtime checks against the final tree';
+  signals.workspace_fingerprint = finalFingerprint || undefined;
+  // Keep historical exit evidence, but explicitly invalidate freshness. A
+  // successful build receipt must not allow resuming with stale cached tests.
+  if (signals.build) signals.build = { ...signals.build, ok: false, error_tail: error };
+  if (signals.tests) {
+    signals.tests = {
+      ok: false,
+      tests: signals.tests.tests.map((test) => ({ ...test, ran_after_changes: false })),
+    };
+  }
+  delete signals.interaction;
+  delete signals.runtime;
+  delete signals.api;
+  delete signals.console;
+  delete signals.visual;
+  delete signals.scenarios;
+  delete signals.observations;
+  return {
+    ok: false,
+    error,
+    // Changed files use the caller's bounded evidence retry budget, not an
+    // unbounded infrastructure wait or recursive recovery/revalidation loop.
+    failureKind: unavailable ? 'infrastructure_unavailable' : 'evidence_gap',
+    infrastructureFailure: unavailable,
+    ...(sandboxUnavailable ? { sandboxUnavailable: true } : {}),
+  };
+}
 
 function buildPushRecoveryAppend(requirementId: string, expectedBranch: string): string {
   const wd = SandboxService.WORK_DIR;
@@ -471,7 +532,6 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
   let lastResult = initialLastResult;
   const signals: GateSignals = {};
 
-  const cwd = SandboxService.WORK_DIR;
   const localValidation = await runLocalGateValidation({
     sandbox,
     stepId: params.stepId,
@@ -628,18 +688,16 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
 
   if (!requirementId) {
     console.warn(`[StepGitGate] No requirement_id — skipping origin verification for step ${stepOrder}`);
-    return { ok: true, lastResult, signals };
+    return { ...await verifyFinalValidationTree(sandbox, signals), lastResult, signals };
   }
 
-  let didPushRecovery = false;
-  
   const recovery = await verifyOriginAndRecover(params);
   if (recovery.sandboxReplacement) {
     sandbox = recovery.sandboxReplacement;
-    params.sandbox = sandbox;
   }
   Object.assign(signals, recovery.signals);
   lastResult = recovery.lastResult;
+  const finalValidation = await verifyFinalValidationTree(sandbox, signals);
 
   if (!recovery.ok) {
     return {
@@ -649,6 +707,21 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
       infrastructureFailure: recovery.infrastructureFailure,
       signals,
       sandboxUnavailable: recovery.sandboxUnavailable,
+      sandboxReplacement: sandbox !== initialSandbox ? sandbox : undefined,
+    };
+  }
+
+  if (!finalValidation.ok) {
+    await logCronInfrastructureEvent(audit, {
+      event: CronInfraEvent.STEP_STATUS,
+      level: 'warn',
+      message: finalValidation.error!,
+      details: { stepOrder, failureKind: finalValidation.failureKind },
+    });
+    return {
+      ...finalValidation,
+      lastResult,
+      signals,
       sandboxReplacement: sandbox !== initialSandbox ? sandbox : undefined,
     };
   }

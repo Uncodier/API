@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'node:crypto';
 import { WorkflowService } from '@/lib/services/workflow-service';
+import { hasAuthenticatedPrincipal, isInternalServiceRequest } from '@/lib/security/request-rate-limit';
+import { canAccessSite } from '@/lib/security/site-access';
 import {
   visitorAuthorizationErrorResponse,
   visitorSessionAuthorizationService
 } from '@/lib/services/visitor-identity/VisitorSessionAuthorizationService';
+import { readSupportRequest, supportMessageId, supportRequestError } from './request-contract';
 
 interface CustomerSupportWorkflowArgs {
   conversationId?: string;
@@ -40,12 +43,16 @@ export async function POST(request: NextRequest) {
     console.log('🚀 Iniciando ejecución del workflow customerSupportWorkflow');
 
     // Extraer y validar parámetros del cuerpo de la petición
-    const body = await request.json();
+    const body = await readSupportRequest(request);
+    const validationError = body ? supportRequestError(body) : 'Invalid JSON request';
+    if (!body || validationError) {
+      return NextResponse.json({ success: false, error: { code: 'INVALID_REQUEST', message: validationError } }, { status: 400 });
+    }
     const identity = await visitorSessionAuthorizationService.authorizeBrowserRequest({
       request,
-      siteId: body.site_id,
-      sessionId: body.session_id,
-      conversationId: body.conversationId
+      siteId: body.site_id as string,
+      sessionId: body.session_id as string | undefined,
+      conversationId: body.conversationId as string | undefined
     });
     if (identity) {
       body.site_id = identity.siteId;
@@ -55,9 +62,31 @@ export async function POST(request: NextRequest) {
       body.name = undefined;
       body.email = undefined;
       body.phone = undefined;
-      // A request-scoped, server-owned ID survives the Temporal hop into the
-      // Customer Support agent command. A second HTTP POST is a new message.
-      body.origin_message_id = randomUUID();
+      body.origin = 'website_chat';
+      body.agentId = undefined;
+      // A browser retry of the same, session-authorized send must reuse the
+      // same Temporal workflow and pre-response run; a new send gets a new ID.
+      const clientMessageId = typeof body.client_message_id === 'string'
+        && body.client_message_id.length <= 128 && body.client_message_id.trim()
+        ? body.client_message_id.trim() : randomUUID();
+      body.origin_message_id = supportMessageId(identity.siteId, identity.sessionId, clientMessageId, body.message as string);
+    } else {
+      // Only a middleware-validated principal may start a non-browser workflow.
+      // The route must not accept a bare site_id (or a forged origin) as proof.
+      if (!hasAuthenticatedPrincipal(request)) {
+        return NextResponse.json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Authentication is required' } }, { status: 401 });
+      }
+      if (typeof body.site_id !== 'string' || !await canAccessSite(request, body.site_id)) {
+        return NextResponse.json({ success: false, error: { code: 'FORBIDDEN', message: 'Site is not accessible' } }, { status: 403 });
+      }
+      if (!isInternalServiceRequest(request)) {
+        return NextResponse.json({ success: false, error: { code: 'FORBIDDEN', message: 'A service principal is required' } }, { status: 403 });
+      }
+      // Provider-supplied message identifiers must belong to an authenticated
+      // integration; otherwise the caller could reuse another workflow ID.
+      if (typeof body.origin_message_id === 'string' && body.origin_message_id.length > 256) {
+        return NextResponse.json({ success: false, error: { code: 'INVALID_REQUEST', message: 'Invalid inbound message ID' } }, { status: 400 });
+      }
     }
     const { 
       conversationId, 
@@ -74,7 +103,7 @@ export async function POST(request: NextRequest) {
       lead_notification,
       origin,
       origin_message_id
-    } = body;
+    } = body as unknown as CustomerSupportWorkflowArgs;
 
     // Validación del mensaje (requerido)
     if (!message || typeof message !== 'string') {
@@ -132,10 +161,10 @@ export async function POST(request: NextRequest) {
     // Opciones de ejecución del workflow
     const workflowOptions: WorkflowExecutionOptions = {
       priority: 'high', // Customer support tiene alta prioridad
-      async: false,
+      async: true,
       retryAttempts: 3,
       taskQueue: 'high',
-      workflowId: `customer-support-message-${site_id || 'nosid'}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+      workflowId: `customer-support-message-${site_id || 'nosid'}-${origin_message_id || randomUUID()}`
     };
 
     console.log(`🔄 Iniciando workflow Customer Support con ID: ${workflowOptions.workflowId}`);
@@ -162,8 +191,11 @@ export async function POST(request: NextRequest) {
 
     console.log('✅ Workflow Customer Support ejecutado exitosamente');
 
-    // Retornar directamente la respuesta del workflow
-    return NextResponse.json(result.data, { status: 200 });
+    // Do not hold a Vercel request open for a potentially long Temporal run.
+    return NextResponse.json(
+      { success: true, data: { status: result.status, workflowId: result.workflowId, runId: result.runId } },
+      { status: 202 },
+    );
 
   } catch (error) {
     const authorizationResponse = visitorAuthorizationErrorResponse(error);

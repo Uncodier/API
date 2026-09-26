@@ -28,6 +28,9 @@ import {
   REMOTE_INSTANCE_TYPE_CRON_APPS,
 } from './scheduler-config';
 import { buildPreviousWorkContext } from './previous-work-context';
+import { assertCronExecutionOwnership } from '../shared/cron-execution-ownership';
+import { classifyRequirementType } from '@/lib/services/requirement-flows';
+import { getRequirementCycleBudget } from '@/lib/services/requirement-cost-envelope';
 
 export const maxDuration = 800; // Approximately 13 minutes (Pro plan maximum).
 export const dynamic = 'force-dynamic';
@@ -77,6 +80,8 @@ export async function GET(req: Request) {
         runId: claim.run_id,
         expiresAt: claim.expires_at,
       };
+      let workflowStarted = false;
+      try {
 
       // Re-fetch the entire mutable row under the run lock. Backlog and
       // metadata from candidate discovery may already be stale.
@@ -223,16 +228,13 @@ export async function GET(req: Request) {
       }
 
       // Scale the coarse runaway-cost guard with backlog size.
-      const configuredCycleBudget = Number.parseInt(
-        process.env.CRON_CYCLES_PER_BACKLOG_ITEM || '100',
-        10,
-      );
-      const PER_ITEM_CYCLE_BUDGET =
-        Number.isFinite(configuredCycleBudget) && configuredCycleBudget > 0
-          ? configuredCycleBudget
-          : 100;
       const backlogItemCount = requirement.backlog?.items?.length || 0;
-      const maxAttempts = PER_ITEM_CYCLE_BUDGET * Math.max(1, backlogItemCount);
+      const cycleBudget = getRequirementCycleBudget(
+        classifyRequirementType(type), backlogItemCount,
+        process.env.CRON_CYCLES_PER_BACKLOG_ITEM,
+      );
+      const PER_ITEM_CYCLE_BUDGET = cycleBudget.perItem;
+      const maxAttempts = cycleBudget.requirement;
       const currentAttempts = requirement.metadata?.cron_attempts || 0;
       const lastAccountedCycleId =
         typeof requirement.metadata?.cron_last_cycle_id === 'string'
@@ -403,6 +405,12 @@ export async function GET(req: Request) {
         continue;
       }
 
+      await assertCronExecutionOwnership({
+        requirementId: reqId,
+        runId: runLock.runId,
+        executionGeneration,
+      });
+
       if (requirement.status === 'backlog') {
         await supabaseAdmin.from('requirements').update({ 
           status: 'in-progress',
@@ -429,6 +437,11 @@ export async function GET(req: Request) {
       // Start the MAIN workflow — durable execution with step-level retries
       console.log(`[Cron Apps] Starting main workflow for req ${reqId}, instance ${instanceId}`);
       try {
+        await assertCronExecutionOwnership({
+          requirementId: reqId,
+          runId: runLock.runId,
+          executionGeneration,
+        });
         const workflowRun = await start(runCronAppsWorkflow, [{
           reqId,
           title,
@@ -444,6 +457,7 @@ export async function GET(req: Request) {
           executionGeneration,
           gitRepoKind,
         }]);
+        workflowStarted = true;
 
         results.push({ reqId, runId: workflowRun.runId, started: true, type: 'main' });
       } catch (err: any) {
@@ -451,7 +465,11 @@ export async function GET(req: Request) {
         results.push({ reqId, error: err?.message || 'Failed to start main workflow' });
         await releaseRunLock(reqId, runLock.runId);
       }
-
+      } finally {
+        // Once start succeeds only the durable workflow owns cleanup. This also
+        // covers preparation/history/metadata exceptions outside the start catch.
+        if (!workflowStarted) await releaseRunLock(reqId, runLock.runId);
+      }
     }
 
     if (results.length === 0) {

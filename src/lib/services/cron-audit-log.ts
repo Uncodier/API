@@ -4,6 +4,7 @@
  */
 
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import type { CronExecutionOwnership } from '@/app/api/cron/shared/cron-execution-ownership';
 
 /** siteId is required to persist; instanceId optional (stored null if missing). */
 export type CronAuditContext = {
@@ -13,6 +14,8 @@ export type CronAuditContext = {
   requirementId?: string;
   planId?: string;
   stepId?: string;
+  /** Original run identity; internal side-effect boundaries must revalidate it. */
+  executionOwnership?: CronExecutionOwnership;
 };
 
 /** Stable event names for dashboards / SQL filters */

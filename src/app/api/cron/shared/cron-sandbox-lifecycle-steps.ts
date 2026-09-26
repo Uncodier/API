@@ -22,6 +22,11 @@ import {
   persistSandboxTestReceipt,
 } from '@/app/api/agents/tools/sandbox/sandbox-test-receipt';
 import { sanitizeRuntimeLog } from './runtime-log-context';
+import {
+  assertCronExecutionOwnership,
+  CronExecutionOwnershipError,
+  type CronExecutionOwnership,
+} from './cron-execution-ownership';
 
 export interface SandboxInfo {
   sandboxId: string;
@@ -136,11 +141,13 @@ export async function createSandboxStep(
   instanceType: string,
   title: string,
   audit?: CronAuditContext,
+  ownership?: CronExecutionOwnership,
 ): Promise<SandboxInfo> {
   'use step';
 
+  if (ownership) await assertCronExecutionOwnership(ownership);
   const namedId = requirementSandboxName(reqId, audit?.instanceId);
-  const reusedNamed = await tryReuseExistingSandbox(namedId, reqId, instanceType);
+  const reusedNamed = await tryReuseExistingSandbox(namedId, reqId, instanceType, ownership);
   if (reusedNamed) return reusedNamed;
 
   if (audit?.instanceId) {
@@ -159,12 +166,13 @@ export async function createSandboxStep(
     }
 
     if (reqStatus?.active_sandbox_id) {
-      const reusedDb = await tryReuseExistingSandbox(reqStatus.active_sandbox_id, reqId, instanceType);
+      const reusedDb = await tryReuseExistingSandbox(reqStatus.active_sandbox_id, reqId, instanceType, ownership);
       if (reusedDb) return reusedDb;
       console.warn(`[CronStep] Existing active sandbox ${reqStatus.active_sandbox_id} is gone or fatal. Provisioning new one.`);
     }
   }
 
+  if (ownership) await assertCronExecutionOwnership(ownership);
   const result = await SandboxService.createRequirementSandbox(reqId, instanceType, title, audit);
 
   await logCronInfrastructureEvent(audit, {
@@ -193,10 +201,13 @@ async function tryReuseExistingSandbox(
   idOrName: string,
   reqId: string,
   instanceType: string,
+  ownership?: CronExecutionOwnership,
 ): Promise<SandboxInfo | null> {
+  if (ownership) await assertCronExecutionOwnership(ownership);
   let sandbox;
   try {
     sandbox = await getSandboxHandle(idOrName);
+    if (ownership) await assertCronExecutionOwnership(ownership);
     
     // Explicitly resume the sandbox bypassing runCommand's "use step" wrapper.
     // This avoids a 3-retry loop in the Vercel Workflows engine when the sandbox is dead (410).
@@ -212,6 +223,7 @@ async function tryReuseExistingSandbox(
       }
     }
   } catch (err) {
+    if (err instanceof CronExecutionOwnershipError) throw err;
     console.warn(`[CronStep] getSandboxHandle failed for ${idOrName}:`, err instanceof Error ? err.message : err);
     return null;
   }
@@ -220,6 +232,7 @@ async function tryReuseExistingSandbox(
     console.warn(`[CronStep] Not reusing ${idOrName}: fatal layout ${ping.reason}`);
     return null;
   }
+  if (ownership) await assertCronExecutionOwnership(ownership);
   await warmStartNamedSandbox(sandbox, reqId, instanceType).catch((e: unknown) => {
     console.warn(
       `[CronStep] warmStart on ${idOrName} failed — keeping existing VM:`,
@@ -248,8 +261,14 @@ async function tryReuseExistingSandbox(
   };
 }
 
-export async function stopSandboxStep(sandboxId: string, audit?: CronAuditContext) {
+export async function stopSandboxStep(
+  sandboxId: string,
+  audit?: CronAuditContext,
+  ownership?: CronExecutionOwnership,
+) {
   'use step';
+
+  if (ownership) await assertCronExecutionOwnership(ownership);
 
   if (audit?.instanceId && audit?.requirementId && !String(sandboxId).startsWith('req-')) {
     await supabaseAdmin
@@ -262,8 +281,10 @@ export async function stopSandboxStep(sandboxId: string, audit?: CronAuditContex
 
   let delayMs = 1000;
   for (let attempt = 0; attempt < 3; attempt++) {
+    if (ownership) await assertCronExecutionOwnership(ownership);
     try {
       const sandbox = await getSandboxHandle(sandboxId);
+      if (ownership) await assertCronExecutionOwnership(ownership);
       await sandbox.stop();
       console.log(`[CronStep] CLEANUP: Sandbox ${sandboxId} stopped`);
       await logCronInfrastructureEvent(audit, {
@@ -273,6 +294,7 @@ export async function stopSandboxStep(sandboxId: string, audit?: CronAuditContex
       });
       return;
     } catch (e: unknown) {
+      if (e instanceof CronExecutionOwnershipError) throw e;
       if (attempt < 2) {
         console.warn(`[CronStep] CLEANUP: Sandbox stop attempt ${attempt + 1} failed (${sandboxId}). Retrying in ${delayMs}ms...`);
         await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
@@ -296,9 +318,19 @@ export async function extendRunLockStep(
   ttlMs: number = CRON_RUN_LOCK_TTL_MS,
 ): Promise<void> {
   'use step';
-  if (!runId) return;
+  if (!runId) throw new CronExecutionOwnershipError('missing_execution_identity');
   await _extendRunLockImpl(requirementId, runId, ttlMs);
 }
+
+export async function assertCronExecutionOwnershipStep(
+  ownership: CronExecutionOwnership,
+): Promise<void> {
+  'use step';
+  await assertCronExecutionOwnership(ownership);
+}
+// A guard is observational; retrying a definitely superseded owner cannot heal
+// it. A later scheduler run can recover a transient database outage safely.
+assertCronExecutionOwnershipStep.maxRetries = 0;
 
 export async function releaseRunLockStep(
   requirementId: string,

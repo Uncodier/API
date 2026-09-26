@@ -7,7 +7,7 @@ import { buildCustomerSupportTools } from '@/lib/services/customer-support-tool-
 import { getCustomerSupportPolicies } from '@/app/api/agents/customerSupport/support-policies';
 import { appendLeadRecordToContext } from '@/app/api/agents/customerSupport/lead-record';
 import { appendActivePromotionsToContext } from '@/lib/promotions/context';
-import { runChannelMessageWorkflows } from '@/lib/services/workflow-robot/channel-message';
+import { getCompletedChannelMessageGuidance } from '@/lib/services/workflow-robot/channel-message';
 import { isInternalServiceRequest } from '@/lib/security/request-rate-limit';
 import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
@@ -1125,7 +1125,8 @@ export async function POST(request: Request) {
       origin_message_id, // Parámetro opcional que se agrega como metadata al message del user
       channel_delivery,
       require_approval,
-      custom_data: inboundCustomData
+      custom_data: inboundCustomData,
+      channel_guidance_run_plan_ids,
     } = body;
     
     /**
@@ -1553,19 +1554,22 @@ export async function POST(request: Request) {
       contextMessage = await appendActivePromotionsToContext(contextMessage, effectiveSiteId);
     }
     
-    // Only authorized inbound user messages enter the pre-response path. The
-    // browser is always web, regardless of any client-provided `origin` value.
-    // A stable origin_message_id scopes each workflow run. Direct web requests
-    // receive a server-generated ID; signed provider calls forward their ID.
-    if (effectiveSiteId && typeof origin_message_id === 'string' && (browserIdentity || isInternalServiceRequest(request))) {
-      contextMessage += await runChannelMessageWorkflows({
-        siteId: effectiveSiteId,
-        messageId: origin_message_id,
-        channel: browserIdentity ? 'web' : effectiveOrigin || (website_chat_origin ? 'web' : ''),
-        conversationId: effectiveConversationId,
-        message,
-        authorizedInbound: Boolean(browserIdentity || isInternalServiceRequest(request)),
-      });
+    // Temporal owns pre-response execution. Never run model turns from this
+    // Vercel request: only read already-completed, server-bound results.
+    if (isInternalServiceRequest(request) && effectiveSiteId && typeof origin_message_id === 'string' &&
+        Array.isArray(channel_guidance_run_plan_ids)) {
+      try {
+        contextMessage += await getCompletedChannelMessageGuidance({
+          siteId: effectiveSiteId,
+          messageId: origin_message_id,
+          channel: effectiveOrigin || (website_chat_origin ? 'web' : ''),
+          runPlanIds: channel_guidance_run_plan_ids,
+        });
+      } catch (error) {
+        // Guidance is advisory. Never fail or duplicate a customer reply just
+        // because a read-only workflow result lookup is unavailable.
+        console.error('[CustomerSupport] Channel guidance lookup failed:', error);
+      }
     }
     contextMessage += getCustomerSupportPolicies();
 

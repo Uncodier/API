@@ -48,6 +48,12 @@ export function isWebhookPath(pathname: string): boolean {
 }
 
 export function isPublicRequest(pathname: string, method: string): boolean {
+  // These exact browser endpoints authorize the visitor session in their
+  // handlers. Do not extend this exemption to the service-only workflow APIs.
+  if ((method === 'POST' || method === 'OPTIONS') && (
+    pathname === '/api/workflow/customerSupport'
+    || pathname === '/api/workflow/customerSupport/status'
+  )) return true;
   if (pathname.startsWith('/api/public/')) return true;
   if (pathname === '/api/tracking/email' && method === 'GET') return true;
   if (

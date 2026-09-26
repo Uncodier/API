@@ -150,9 +150,23 @@ describe('InstanceContextManager', () => {
       });
       expect(admin.rpc).toHaveBeenCalledTimes(3);
       expect((admin.rpc as jest.Mock).mock.calls[0][1]).toHaveProperty('p_reserved_output_tokens', 0);
-      expect((admin.rpc as jest.Mock).mock.calls[1][1]).toHaveProperty('p_output_tokens', 0);
+      expect((admin.rpc as jest.Mock).mock.calls[1][1]).toHaveProperty('p_output_tokens', null);
       expect((admin.rpc as jest.Mock).mock.calls[2][1]).not.toHaveProperty('p_output_tokens');
       expect(warn).not.toHaveBeenCalled();
+    } finally { warn.mockRestore(); }
+  });
+
+  it('does not turn unreported output into zero on a legacy NOT NULL table', async () => {
+    (admin.rpc as jest.Mock).mockResolvedValue({ error: { code: '23502', message: 'output_tokens is required' } });
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await new InstanceContextManager('instance', 'site').recordUsage({
+        provider: 'azure', model: 'deployment', usedTokens: 700,
+        outputTokens: null, availableTokens: null, reservedOutputTokens: 0, utilization: null,
+        source: 'estimate', measuredAt: timestamp(0),
+      });
+      expect(admin.rpc).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('nullable output_tokens migration'));
     } finally { warn.mockRestore(); }
   });
 
@@ -163,7 +177,7 @@ describe('InstanceContextManager', () => {
         available_tokens: null, source: 'estimate', measured_at: timestamp(0) }, error: null }));
     (admin.from as jest.Mock).mockReturnValue({ select });
     const status = await new InstanceContextManager('instance', 'site').status();
-    expect(status).toEqual(expect.objectContaining({ model: 'custom', usedTokens: 700, outputTokens: 0,
+    expect(status).toEqual(expect.objectContaining({ model: 'custom', usedTokens: 700, outputTokens: null,
       availableTokens: null, utilization: null }));
     expect(select).toHaveBeenCalledTimes(3);
   });
@@ -178,7 +192,7 @@ describe('InstanceContextManager', () => {
     const status = await new InstanceContextManager('instance', 'site').status();
     expect(select).toHaveBeenCalledTimes(2);
     expect(status).toEqual(expect.objectContaining({ reservedOutputTokens: 1024,
-      outputTokens: 0, availableTokens: 10000 }));
+      outputTokens: null, availableTokens: 10000 }));
   });
 
   it('persists only the exact contiguous IDs, then reads the summary', async () => {
@@ -370,5 +384,116 @@ describe('InstanceContextManager', () => {
       if (original === undefined) delete process.env.INSTANCE_CONTEXT_SUMMARY_MODEL;
       else process.env.INSTANCE_CONTEXT_SUMMARY_MODEL = original;
     }
+  });
+
+  it('never commits a log whose decision or tool result lies past the old excerpts', async () => {
+    const decision = 'DECISION_AFTER_800_CHARS';
+    const toolOutcome = 'RESULT_AFTER_400_CHARS';
+    const toolArgument = 'ARGUMENT_AFTER_400_CHARS';
+    const history = logs.map((log, index) => index === 0
+      ? { ...log, message: `${'a'.repeat(820)}${decision}` }
+      : index === 1 ? { ...log, log_type: 'tool_call', tool_name: 'browser',
+        tool_args: { payload: `${'c'.repeat(430)}${toolArgument}` },
+        tool_result: { payload: `${'b'.repeat(430)}${toolOutcome}` } } : log);
+    (admin.from as jest.Mock).mockImplementation((table: string) => {
+      if (table === 'instance_context_state') return chain({ data: null, error: null });
+      if (table === 'instance_logs') return chain({ data: [...history].reverse(), error: null });
+      return chain({ data: [], error: null });
+    });
+    (admin.rpc as jest.Mock).mockResolvedValue({ data: false, error: null });
+    await new InstanceContextManager('instance', 'site').buildHistory('hello', 'azure', 'gpt-4o');
+    const args = (AIAgentExecutor as jest.Mock).mock.results[0]?.value.act.mock.calls[0][0];
+    if (args) {
+      expect(args.prompt).toContain(decision);
+      expect(args.prompt).toContain(toolArgument);
+      expect(args.prompt).toContain(toolOutcome);
+    } else {
+      // If the first log cannot fit in the compaction request it must remain
+      // un-compacted and visible, not be committed from a truncated excerpt.
+      expect(admin.rpc).not.toHaveBeenCalledWith('commit_instance_context_memory', expect.anything());
+    }
+  });
+
+  it('includes all un-compacted rows, including decisions earlier than the last 30', async () => {
+    delete process.env.PORTKEY_API_KEY;
+    const history = logs.map((log, index) => index === 1
+      ? { ...log, message: 'UNCOMPACTED_EARLY_DECISION' } : log);
+    (admin.from as jest.Mock).mockImplementation((table: string) => {
+      if (table === 'instance_context_state') return chain({ data: null, error: null });
+      if (table === 'instance_logs') return chain({ data: [...history].reverse(), error: null });
+      return chain({ data: [], error: null });
+    });
+    const text = await new InstanceContextManager('instance', 'site').buildHistory('hello', 'azure', 'gpt-4o');
+    expect(text).toContain('UNCOMPACTED_EARLY_DECISION');
+    expect(admin.rpc).not.toHaveBeenCalled();
+  });
+
+  it('compacts successive oldest pages before returning the newest 200 logs', async () => {
+    const many = Array.from({ length: 230 }, (_, index) => ({
+      ...logs[0], id: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+      created_at: new Date(Date.UTC(2026, 8, 25, 12, 0, index)).toISOString(),
+      message: `Decision ${index}`,
+    }));
+    let cursor: { cursor_at: string; cursor_log_id: string } | null = null;
+    let memory: { id: string; summary: string; end_at: string; end_log_id: string } | null = null;
+    const commits: string[][] = [];
+    (admin.from as jest.Mock).mockImplementation((table: string) => {
+      if (table === 'instance_context_state') return chain({ data: cursor, error: null });
+      if (table === 'instance_context_memories') return chain({ data: memory ? [memory] : [], error: null });
+      if (table !== 'instance_logs') throw new Error(`Unexpected table: ${table}`);
+      let sortAscending = false;
+      let pageLimit = 200;
+      let keyset: string | null = null;
+      const query: any = {};
+      query.select = query.eq = query.in = jest.fn().mockReturnValue(query);
+      query.order = jest.fn((column: string, options: { ascending: boolean }) => {
+        if (column === 'created_at') sortAscending = options.ascending;
+        return query;
+      });
+      query.limit = jest.fn((size: number) => { pageLimit = size; return query; });
+      query.or = jest.fn((filter: string) => { keyset = filter; return query; });
+      query.then = (resolve: (result: unknown) => unknown) => {
+        const match = keyset?.match(/created_at\.(gt|lt)\.([^,]+),and\(created_at\.eq\.[^,]+,id\.(?:gt|lt)\.([^)]+)\)/);
+        const filtered = many.filter(log => {
+          const key = `${log.created_at}|${log.id}`;
+          const bound = match ? `${match[2]}|${match[3]}` : null;
+          return !bound || (match![1] === 'gt' ? key > bound : key < bound);
+        });
+        filtered.sort((a, b) => sortAscending
+          ? a.id.localeCompare(b.id) : b.id.localeCompare(a.id));
+        return Promise.resolve({ data: filtered.slice(0, pageLimit), error: null }).then(resolve);
+      };
+      return query;
+    });
+    (admin.rpc as jest.Mock).mockImplementation(async (name: string, params: any) => {
+      if (name === 'match_instance_context_memories') return { data: [], error: null };
+      expect(name).toBe('commit_instance_context_memory');
+      const first = many.findIndex(log => cursor && log.id === cursor.cursor_log_id) + 1;
+      const expected = many.slice(first, first + params.p_log_ids.length).map(log => log.id);
+      expect(params.p_log_ids).toEqual(expected);
+      commits.push(params.p_log_ids);
+      cursor = { cursor_at: params.p_end_at, cursor_log_id: params.p_end_log_id };
+      memory = { id: 'memory', summary: 'Earlier decisions saved.',
+        end_at: params.p_end_at, end_log_id: params.p_end_log_id };
+      return { data: true, error: null };
+    });
+
+    const text = await new InstanceContextManager('instance', 'site').buildHistory('hello', 'azure', 'gpt-4o');
+    expect(commits.length).toBeGreaterThan(0);
+    expect(commits[0][0]).toBe(many[0].id);
+    expect(text).toContain('Earlier decisions saved.');
+    expect(text).toContain('Decision 229');
+  });
+
+  it('retries legacy RPCs without retaining a reserve for a different model', async () => {
+    (admin.rpc as jest.Mock).mockResolvedValueOnce({ error: { code: 'PGRST202', message: 'legacy signature' } })
+      .mockResolvedValueOnce({ error: null });
+    await new InstanceContextManager('instance', 'site').recordUsage({
+      provider: 'gemini', model: 'gemini-3.1-pro-preview', usedTokens: 300,
+      outputTokens: 12, availableTokens: 1_048_576, reservedOutputTokens: 0,
+      utilization: 0, source: 'provider', measuredAt: timestamp(0),
+    });
+    expect((admin.rpc as jest.Mock).mock.calls[1][1]).not.toHaveProperty('p_reserved_output_tokens');
+    // The forward-only SQL migration clears reserved_output_tokens on this path.
   });
 });

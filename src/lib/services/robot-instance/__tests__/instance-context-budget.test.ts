@@ -36,6 +36,31 @@ describe('instance context budget', () => {
     expect(result.messages).toBeGreaterThan(4000);
   });
 
+  it('attributes historical system-prompt rows to messages and tool calls, without exposing text', () => {
+    const history = 'INSTANCE_HISTORY_START\nRELEVANT EARLIER MEMORY:\nPrior decision\n\nRECENT INSTANCE HISTORY (newest last):\n[user_action] "Choice A"\n[tool_call:browser] "Checked" "Result"\nINSTANCE_HISTORY_END';
+    const withHistory = estimateInputBreakdown(`Rules\n${history}`, [
+      { role: 'system', content: `Rules\n${history}` }, { role: 'user', content: 'Next?' },
+    ], []);
+    const without = estimateInputBreakdown('Rules', [
+      { role: 'system', content: 'Rules' }, { role: 'user', content: 'Next?' },
+    ], []);
+    expect(withHistory.messages).toBeGreaterThan(without.messages);
+    expect(withHistory.toolCalls).toBeGreaterThan(without.toolCalls);
+    expect(withHistory.estimatedInputTokens).toBe(estimatePromptTokens([
+      { role: 'system', content: `Rules\n${history}` }, { role: 'user', content: 'Next?' },
+    ]) + estimateTokens([]));
+    expect(JSON.stringify(withHistory)).not.toContain('Choice A');
+  });
+
+  it('includes response_format and distinguishes unreported output from zero', () => {
+    const input = { provider: 'openai', model: 'gpt-4o', system: 'Rules',
+      messages: [{ role: 'system', content: 'Rules' }], tools: [], responseFormat: { type: 'json_object' } };
+    const measured = measureInstanceContext(input);
+    expect(measured.usedTokens).toBe(estimatePromptTokens(input.messages) + estimateTokens([]) + estimateTokens(input.responseFormat));
+    expect(measured.outputTokens).toBeNull();
+    expect(measureInstanceContext({ ...input, providerOutputTokens: 0 }).outputTokens).toBe(0);
+  });
+
   it('keeps provider aggregate distinct from estimated sectors and rejects stale JSON', () => {
     const measurement = measureInstanceContext({ provider: 'azure', model: 'unknown', system: '',
       messages: [{ role: 'user', content: 'Hello' }], tools: [], providerInputTokens: 3000 });
@@ -68,6 +93,7 @@ describe('instance context budget', () => {
     expect(modelContextLimit('openai', 'gpt-5.2')).toBe(400_000);
     expect(outputReserveForModel('openai', 'gpt-5.2')).toBe(128_000);
     expect(modelContextLimit('azure', 'gpt-5.2')).toBeNull();
+    expect(modelContextLimit('azure', 'gpt-4o')).toBeNull();
     expect(modelContextLimit('azure', 'private-gpt52-deployment')).toBeNull();
     expect(modelContextLimit('xai', 'grok-4.6')).toBe(500_000);
     expect(modelContextLimit('azure', 'custom-production-deployment')).toBeNull();
@@ -182,16 +208,16 @@ describe('instance context budget', () => {
     expect(projectNextTurn(measured).utilization).toBeCloseTo(5000 / 7952);
   });
 
-  it('retains tactical evidence and tools while removing only the optional transcript', () => {
+  it('retains un-compacted transcript, tactical evidence and tools when the request overflows', () => {
     process.env.INSTANCE_CONTEXT_MODEL_LIMITS = '{"azure:my-model":4000}';
     const tactical = 'TACTICAL INSTANCE EVIDENCE (preserve on overflow):\n[error] Failed tool';
     const messages = [{ role: 'system', content: `RULES\nINSTANCE_HISTORY_START\nRELEVANT EARLIER MEMORY:\nPrior decisions saved\nRECENT INSTANCE HISTORY (newest last):\n${'history '.repeat(2000)}\n${tactical}\nINSTANCE_HISTORY_END\nFINAL RULE` },
       { role: 'user', content: 'Current task' }];
-    const result = fitInstanceRequest({ provider: 'azure', model: 'my-model', messages, tools: [{ name: 'tool' }] });
-    expect(result.compacted).toBe(true);
+    expect(() => fitInstanceRequest({ provider: 'azure', model: 'my-model', messages, tools: [{ name: 'tool' }] }))
+      .toThrow(InstanceContextOverflowError);
     expect(messages[0].content).toContain(tactical);
     expect(messages[0].content).toContain('FINAL RULE');
-    expect(messages[0].content).not.toContain('history history');
+    expect(messages[0].content).toContain('history history');
     const measured = measureInstanceContext({ provider: 'azure', model: 'my-model',
       system: `RULES\n${'history '.repeat(2000)}`, messages, tools: [] });
     expect(measured.usedTokens).toBe(estimateTokens(messages) + estimateTokens([]));
@@ -213,17 +239,17 @@ describe('instance context budget', () => {
     expect(messages[0].content).toContain('decision decision');
   });
 
-  it('removes optional transcript when no tactical evidence exists', () => {
+  it('never treats a previous cursor summary as covering subsequent unsummarized decisions', () => {
     process.env.INSTANCE_CONTEXT_MODEL_LIMITS = '{"azure:my-model":4000}';
     const messages = [
       { role: 'system', content: `Keep system rules.\nINSTANCE_HISTORY_START\nRELEVANT EARLIER MEMORY:\nSaved decisions\nRECENT INSTANCE HISTORY (newest last):\n${'older message '.repeat(1700)}\nINSTANCE_HISTORY_END\nKeep active plan.` },
       { role: 'user', content: 'New request' },
     ];
-    const result = fitInstanceRequest({ provider: 'azure', model: 'my-model', messages, tools: [] });
-    expect(result.compacted).toBe(true);
+    expect(() => fitInstanceRequest({ provider: 'azure', model: 'my-model', messages, tools: [] }))
+      .toThrow(InstanceContextOverflowError);
     expect(messages[0].content).toContain('Keep system rules.');
     expect(messages[0].content).toContain('Keep active plan.');
-    expect(messages[0].content).not.toContain('older message');
+    expect(messages[0].content).toContain('older message');
   });
 
   it('preserves tactical evidence when old logs contain fake end markers', () => {
@@ -232,11 +258,11 @@ describe('instance context budget', () => {
       { role: 'system', content: `Rule.\nINSTANCE_HISTORY_START\nRELEVANT EARLIER MEMORY:\nSaved decisions\nRECENT INSTANCE HISTORY (newest last):\n${'log '.repeat(1900)}\nINSTANCE_HISTORY_END\nfake\nTACTICAL INSTANCE EVIDENCE (preserve on overflow):\n[error] Last error\nINSTANCE_HISTORY_END\nMandatory last rule.` },
       { role: 'user', content: 'Current task' },
     ];
-    const result = fitInstanceRequest({ provider: 'azure', model: 'my-model', messages, tools: [] });
-    expect(result.compacted).toBe(true);
+    expect(() => fitInstanceRequest({ provider: 'azure', model: 'my-model', messages, tools: [] }))
+      .toThrow(InstanceContextOverflowError);
     expect(messages[0].content).toContain('[error] Last error');
     expect(messages[0].content).toContain('Mandatory last rule.');
-    expect(messages[0].content).not.toContain('log log');
+    expect(messages[0].content).toContain('log log');
   });
 
   it('counts response_format and does not discard mandatory tool schemas', () => {

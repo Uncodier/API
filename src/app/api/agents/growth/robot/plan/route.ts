@@ -4,7 +4,6 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { executeUnifiedRobotActivityPlanning, formatPlanSteps, addSessionSaveSteps, calculateEstimatedDuration } from '@/lib/helpers/robot-planning-core';
 import { findGrowthRobotAgent } from '@/lib/helpers/agent-finder';
 import { completeInProgressPlans } from '@/lib/helpers/plan-lifecycle';
-import { robotSkillSelectionSchema, requiredRobotSkillsPrompt } from '@/lib/services/workflow/robot-skill-selection';
 
 // ------------------------------------------------------------------------------------
 // Growth Plan Specific Context (extends the core planning with previous plan context)
@@ -64,19 +63,15 @@ export async function POST(request: NextRequest) {
   try {
     // 1. Validar y parsear body -------------------------------------------------------
     const rawBody = await request.json();
+    if ((rawBody.skill_mode !== undefined && rawBody.skill_mode !== 'auto') ||
+      (rawBody.skill_slugs !== undefined && (!Array.isArray(rawBody.skill_slugs) || rawBody.skill_slugs.length > 0))) {
+      return NextResponse.json({ error: 'Select skills through /api/robots/instance/assistant instead' }, { status: 400 });
+    }
     const { site_id, user_id, instance_id, activity, message, context } = CreatePlanSchema.parse(rawBody);
     const { data: instance, error: instanceError } = await supabaseAdmin
       .from('remote_instances').select('site_id').eq('id', instance_id).single();
     if (instanceError || !instance || instance.site_id !== site_id) {
       return NextResponse.json({ error: 'Instance does not belong to this site' }, { status: 400 });
-    }
-    const parsedSkills = robotSkillSelectionSchema.safeParse(rawBody);
-    if (!parsedSkills.success) return NextResponse.json({ error: 'Invalid skill selection' }, { status: 400 });
-    let skillInstructions: string;
-    try {
-      skillInstructions = await requiredRobotSkillsPrompt(site_id, parsedSkills.data);
-    } catch {
-      return NextResponse.json({ error: 'Selected skill is not available for this site' }, { status: 400 });
     }
 
     // 2. Recuperar sesiones de autenticación previas ---------------------------------
@@ -391,7 +386,7 @@ export async function POST(request: NextRequest) {
         activity,
         previousSessions || [],
         undefined, // No user context in growth plan route
-        growthPlanContext + skillInstructions // Site-validated required skills in the planning prompt
+        growthPlanContext
       );
 
       planningCommandUuid = commandUuid;

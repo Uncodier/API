@@ -71,6 +71,8 @@ describe('judge verification policy', () => {
 
     expect(feedback).toContain('Structured evidence gaps:');
     expect(feedback).toContain('"code": "authentication_context_missing"');
-    expect(feedback).toContain('Keep this item quarantined');
+    expect(feedback).toContain('Execute the structured environment repair once');
+    expect(feedback).toContain('quarantine the item for review');
+    expect(feedback).toContain('Do not modify product code');
   });
 });

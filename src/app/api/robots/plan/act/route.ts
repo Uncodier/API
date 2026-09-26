@@ -37,7 +37,6 @@ import {
 } from '@/lib/services/robot-plan-execution';
 import { resumePlan } from '@/lib/helpers/plan-lifecycle';
 import { provisionScrapybaraInstance, needsProvisioning } from '@/lib/services/robot-instance/instance-provisioner';
-import { robotSkillSelectionSchema, requiredRobotSkillsPrompt } from '@/lib/services/workflow/robot-skill-selection';
 
 export const maxDuration = 300;
 
@@ -139,8 +138,13 @@ export async function POST(request: NextRequest) {
   
   try {
     const rawBody = await request.json();
-    const parsedSkills = robotSkillSelectionSchema.safeParse(rawBody);
-    if (!parsedSkills.success) return NextResponse.json({ error: 'Invalid skill selection' }, { status: 400 });
+    if (rawBody === null || typeof rawBody !== 'object' || Array.isArray(rawBody)) {
+      return NextResponse.json({ error: 'Invalid request data' }, { status: 400 });
+    }
+    if ((rawBody.skill_mode !== undefined && rawBody.skill_mode !== 'auto') ||
+      (rawBody.skill_slugs !== undefined && (!Array.isArray(rawBody.skill_slugs) || rawBody.skill_slugs.length > 0))) {
+      return NextResponse.json({ error: 'Select skills through /api/robots/instance/assistant instead' }, { status: 400 });
+    }
     const { instance_id: parsedInstanceId, instance_plan_id, user_instruction } = ActSchema.parse(rawBody);
     instance_id = parsedInstanceId;
 
@@ -159,12 +163,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Instance does not belong to this site' }, { status: 400 });
     }
 
-    let skillInstructions: string;
-    try {
-      skillInstructions = await requiredRobotSkillsPrompt(instance.site_id, parsedSkills.data);
-    } catch {
-      return NextResponse.json({ error: 'Selected skill is not available for this site' }, { status: 400 });
-    }
 
     // 1.5. Check if instance is uninstantiated and needs provisioning
     if (needsProvisioning(instance)) {
@@ -459,7 +457,7 @@ export async function POST(request: NextRequest) {
     if (statusCheck6) return statusCheck6;
 
     // 12. Build prompts
-    const systemPromptWithContext = buildSystemPrompt(logContext, sessionsContext, sessionsRequirementContext) + skillInstructions;
+    const systemPromptWithContext = buildSystemPrompt(logContext, sessionsContext, sessionsRequirementContext);
     const planPrompt = buildUserPrompt(plan, currentStep, allSteps);
     
     estimateTokens(systemPromptWithContext, planPrompt);

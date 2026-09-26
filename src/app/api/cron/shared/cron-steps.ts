@@ -23,6 +23,7 @@ import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/upd
 import { commitWorkspaceToOrigin, type GitRepoKind } from './cron-commit-helpers';
 import { validateBuildForStep } from './step-git-gate';
 import { consumePrePushBuildMarker } from './commit/pre-push-build-validation';
+import { assertCronExecutionOwnership, type CronExecutionOwnership } from './cron-execution-ownership';
 import {
   CronInfraEvent,
   logCronInfrastructureEvent,
@@ -336,6 +337,7 @@ export async function commitAndPushStep(
   options?: {
     validateDeployment?: boolean;
     lightweightCheckpoint?: boolean;
+    executionOwnership?: CronExecutionOwnership;
   },
 ): Promise<{
   ok: boolean;
@@ -347,6 +349,7 @@ export async function commitAndPushStep(
 } | null> {
   'use step';
   const instanceType = gitRepoKind === 'automation' ? 'automation' : 'applications';
+  if (options?.executionOwnership) await assertCronExecutionOwnership(options.executionOwnership);
   try {
     const connected = await connectOrRecreateRequirementSandbox({
       sandboxId,
@@ -356,6 +359,7 @@ export async function commitAndPushStep(
       audit,
     });
     let effectiveSandboxId = connected.sandboxId;
+    if (options?.executionOwnership) await assertCronExecutionOwnership(options.executionOwnership);
     const r = await commitWorkspaceToOrigin(
       connected.sandbox,
       title,
@@ -366,6 +370,7 @@ export async function commitAndPushStep(
         gitRepoKind,
         validateDeployment: options?.validateDeployment,
         lightweightCheckpoint: options?.lightweightCheckpoint,
+        executionOwnership: options?.executionOwnership,
       },
     );
     const sand = r.sandboxReplacement ?? connected.sandbox;

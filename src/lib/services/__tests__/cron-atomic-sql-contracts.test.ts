@@ -10,7 +10,7 @@ const cronCapacitySql = workspaceFile(
   'supabase/migrations/20260917204500_atomic_requirement_cron_capacity.sql',
 );
 const cronMonthlyScopeSql = workspaceFile(
-  'supabase/migrations/20260917204600_current_month_requirement_cron_scope.sql',
+  'supabase/migrations/20260926070000_harness_execution_ownership.sql',
 );
 const scopedCycleSql = workspaceFile(
   'supabase/migrations/20260919165000_scope_cron_no_progress.sql',
@@ -388,8 +388,8 @@ describe('atomic cron SQL contracts', () => {
     expect(appWorkflowSource).toMatch(
       /gateFailureKind === 'missing_precondition'[\s\S]*?persistWorkspaceOnInfrastructureHalt = true/,
     );
-    expect(appWorkflowSource).toContain(
-      'if (shouldPersistCycleWorkspace({',
+    expect(appWorkflowSource).toMatch(
+      /if \((?:[^\n]*&& )?shouldPersistCycleWorkspace\(\{/,
     );
   });
 
