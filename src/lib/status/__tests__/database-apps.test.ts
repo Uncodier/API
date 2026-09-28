@@ -1,6 +1,6 @@
 import { jest } from '@jest/globals';
 const getAppsAdminClient = jest.fn<(...args: any[]) => any>();
-jest.unstable_mockModule('@/lib/database/apps-supabase', () => ({ getAppsAdminClient }));
+jest.mock('@/lib/database/apps-supabase', () => ({ getAppsAdminClient }));
 
 const tenant = {
   tenant_id: '00000000-0000-4000-8000-000000000003',
@@ -39,6 +39,7 @@ describe('Apps database health', () => {
     });
 
     const health = await databaseAppsHandler.runCheck();
+    expect(getAppsAdminClient).toHaveBeenCalledTimes(1);
     expect(health.status).toBe('down');
     expect(health.summary).toContain('apps_get_migration_receipt');
     expect(health.checks).toMatchObject({ rowReadable: true, migrationRpcAvailable: false });
@@ -53,6 +54,7 @@ describe('Apps database health', () => {
     });
 
     const health = await databaseAppsHandler.runCheck();
+    expect(getAppsAdminClient).toHaveBeenCalledTimes(1);
     expect(health.status).toBe('up');
     expect(health.checks).toMatchObject({ migrationRpcAvailable: true });
     expect(rpc).toHaveBeenCalledWith('apps_get_migration_receipt', {
