@@ -9,8 +9,11 @@ describe('requirements workflow ordering contracts', () => {
   const cronCapacitySql = workspaceFile(
     'supabase/migrations/20260917204500_atomic_requirement_cron_capacity.sql',
   );
-  const cronMonthlyScopeSql = workspaceFile(
+  const ownershipSql = workspaceFile(
     'supabase/migrations/20260926070000_harness_execution_ownership.sql',
+  );
+  const cronMonthlyScopeSql = workspaceFile(
+    'supabase/migrations/20260926090000_restore_current_month_requirement_cron_scope.sql',
   );
   const workflowSource = workspaceFile(
     'src/app/api/cron/requirements-apps/workflow.ts',
@@ -185,15 +188,21 @@ describe('requirements workflow ordering contracts', () => {
     expect(cronCapacitySql).toContain(
       "COALESCE(requirement.status, '') NOT IN ('backlog', 'in-progress')",
     );
-    expect(cronMonthlyScopeSql).not.toContain(
+    expect(ownershipSql).toContain(
+      "'requirement_execution_generation'",
+    );
+    expect(cronMonthlyScopeSql).toContain(
       "pg_catalog.date_trunc('month', v_now AT TIME ZONE 'UTC')",
     );
-    expect(cronMonthlyScopeSql).not.toContain(
+    expect(cronMonthlyScopeSql).toContain(
       'requirement.created_at >= v_month_start',
     );
-    expect(cronMonthlyScopeSql).not.toContain(
+    expect(cronMonthlyScopeSql).toContain(
       'requirement.updated_at >= v_month_start',
     );
+    expect(cronMonthlyScopeSql).toContain('FOR UPDATE SKIP LOCKED');
+    expect(cronMonthlyScopeSql).toContain('RETURNING requirement.* INTO v_requirement');
+    expect(cronMonthlyScopeSql).toContain("'requirement_execution_generation'");
     expect(routeStateSource).toContain(
       "'claim_requirement_cron_candidates'",
     );

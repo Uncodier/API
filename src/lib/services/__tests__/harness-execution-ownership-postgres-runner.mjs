@@ -6,6 +6,8 @@ import assert from 'node:assert/strict';
 const db = new PGlite();
 const id = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const migration = 'supabase/migrations/20260926070000_harness_execution_ownership.sql';
+const monthlyScopeMigration =
+  'supabase/migrations/20260926090000_restore_current_month_requirement_cron_scope.sql';
 const claim = async (max = 8, excluded = []) => (await db.query(
   'SELECT public.claim_requirement_cron_candidates($1,7200,$2::uuid[]) AS result',
   [max, excluded],
@@ -132,7 +134,60 @@ try {
   await db.exec('SET ROLE service_role');
   assert.equal((await owner(id(5), 'paused-owner', 4)).current, false);
   await claim();
-  console.log('PASS real PostgreSQL scheduler/ownership: scope, capacity, reclaim fencing, CAS, WIP, permissions');
+
+  await db.exec('RESET ROLE');
+  await reset();
+  await insert(1);
+  await db.query(`UPDATE requirements SET updated_at=now(), cron_lock_run_id='old-running',
+    cron_lock_expires_at=now()+interval '2 hours',cron_lock_active=true WHERE id=$1`, [id(1)]);
+  await db.exec(readFileSync(monthlyScopeMigration, 'utf8'));
+  await db.exec(readFileSync(monthlyScopeMigration, 'utf8')); // idempotent; does not change leases
+  assert.equal((await owner(id(1), 'old-running', 4)).current, true,
+    'restoring the selection policy must not revoke an existing workflow');
+  assert.deepEqual((await claim(1))[0], { state: 'capacity_full', active_runs: 1 },
+    'already running old work still counts toward capacity');
+
+  await insert(2, 'backlog');
+  await db.query(`UPDATE requirements SET created_at=
+    date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC',
+    updated_at=date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+    WHERE id=$1`, [id(2)]);
+  await insert(3);
+  await db.query(`UPDATE requirements SET created_at=
+    (date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC') - interval '1 microsecond',
+    updated_at=now() WHERE id=$1`, [id(3)]);
+  await insert(4, 'done', '* * * * *');
+  await db.query('UPDATE requirements SET updated_at=now() WHERE id=$1', [id(4)]);
+  await insert(5);
+  await db.query(`UPDATE requirements SET created_at=now(), updated_at=
+    (date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC') - interval '1 microsecond'
+    WHERE id=$1`, [id(5)]);
+  await insert(6);
+  await db.query('UPDATE requirements SET created_at=now(),updated_at=now() WHERE id=$1', [id(6)]);
+  await db.exec("SET TIME ZONE 'America/Los_Angeles'");
+  [a] = await claim();
+  assert.equal(a.requirement.id, id(2), 'UTC start-of-month boundary must be included');
+  assert.equal(a.requirement.metadata.requirement_execution_generation, 4,
+    'monthly filtering must retain execution generation');
+  assert.equal((await owner(id(2), a.run_id, 4, true)).current, true);
+  [b] = await claim(8, [id(2)]);
+  assert.equal(b.requirement.id, id(6), 'only a newly created and updated requirement can be claimed');
+  assert.equal((await claim(8, [id(2), id(6)])).length, 0,
+    'old, recently updated, recurring and pre-month-updated requirements must be excluded');
+  assert.equal((await activate(id(2), a.run_id)).state, 'active');
+  assert.deepEqual((await claim(2))[0], { state: 'capacity_full', active_runs: 2 },
+    'old running workflows keep their capacity slot until they release it');
+  await db.query(`UPDATE requirements SET cron_lock_run_id=NULL,cron_lock_expires_at=NULL,
+    cron_lock_active=false WHERE id=$1`, [id(1)]);
+  assert.equal((await claim(8, [id(2), id(6)])).length, 0,
+    'an old requirement must not be reclaimed for a new run after release');
+  for (const role of ['anon', 'authenticated']) {
+    await db.exec(`SET ROLE ${role}`);
+    await assert.rejects(db.query('SELECT public.claim_requirement_cron_candidates(8)'),
+      (e) => e.code === '42501', `${role} can execute the restored service-only RPC`);
+    await db.exec('RESET ROLE');
+  }
+  console.log('PASS real PostgreSQL scheduler/ownership: UTC monthly scope, live leases, capacity, reclaim fencing, CAS, WIP, permissions');
 } finally {
   await db.close();
 }

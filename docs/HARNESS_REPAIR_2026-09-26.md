@@ -1,5 +1,11 @@
 # Harness correctness and bounded execution repair
 
+> Historical checkpoint: the later migration
+> `supabase/migrations/20260926090000_restore_current_month_requirement_cron_scope.sql`
+> restores the UTC current-month requirement claim filter without undoing the
+> execution-ownership safeguards described below. Apply that migration after
+> `20260926070000_harness_execution_ownership.sql` to use the current policy.
+
 ## Scope
 
 This repair keeps the durable workflow/CAS architecture. It fixes false completion,
@@ -55,7 +61,8 @@ lease, activation and runnable state. Cleanup may allow terminal status but
 never bypasses owner/generation/expiry. Missing RPCs **fail closed** with an
 explicit migration error; deploying the API first will pause execution.
 
-The scheduler no longer excludes work created before the current month. Stale,
+At this checkpoint the scheduler no longer excluded work created before the
+current month (superseded by the current-month migration above). Stale,
 expired or frozen lease revocation advances the requirement generation. Normal
 unowned claims preserve it so no-progress accounting is not reset each cycle.
 Step execution retains its original step-generation expectation rather than

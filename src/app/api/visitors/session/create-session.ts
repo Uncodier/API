@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
+import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { enforceRequestRateLimit } from '@/lib/security/request-rate-limit';
 import { issueVisitorSessionToken } from '@/lib/security/visitor-session-token';
@@ -9,8 +10,17 @@ import {
   createSessionSchema,
   prepareSessionData,
   sessionErrorResponse,
+  updateSessionSchema,
 } from './session-shared';
+import { updateExistingSession } from './read-update-session';
 import { closeVisitorLiveState } from '@/lib/services/visitor-session-live-state';
+
+// The tracking script also POSTs session heartbeats to this URL. Keep those
+// updates separate from creation: the signed session must be authorized before
+// any existing session can be changed.
+const scriptSessionUpdateSchema = updateSessionSchema.extend({
+  url: z.string().url().optional(),
+});
 
 async function closePreviousSession(
   visitorId: string,
@@ -119,7 +129,21 @@ async function createOrUpdateVisitor(input: {
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
   try {
-    const parsed = createSessionSchema.safeParse(await request.json());
+    const body = await request.json();
+    if (body && typeof body === 'object' && !Array.isArray(body)
+      && Object.prototype.hasOwnProperty.call(body, 'session_id')) {
+      const scriptUpdate = scriptSessionUpdateSchema.safeParse(body);
+      if (!scriptUpdate.success) {
+        return sessionErrorResponse('Invalid session update', 400, scriptUpdate.error.format());
+      }
+      const { url, ...update } = scriptUpdate.data;
+      return updateExistingSession(request, {
+        ...update,
+        current_url: update.current_url ?? url,
+      });
+    }
+
+    const parsed = createSessionSchema.safeParse(body);
     if (!parsed.success) {
       return sessionErrorResponse(
         'Invalid request data',
@@ -217,6 +241,7 @@ export async function POST(request: NextRequest) {
       data: {
         session_id: sessionId,
         visitor_id: visitorId,
+        site_id: sessionData.site_id,
         fingerprint: sessionData.fingerprint || null,
         id: visitorId,
         lead_id: null,

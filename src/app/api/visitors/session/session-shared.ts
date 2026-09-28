@@ -22,6 +22,21 @@ export const createSessionSchema = z.object({
   fingerprint: z.string().max(512).optional(),
   url: z.string().url('url must be valid').optional(),
   referrer: z.string().max(2_048).optional(),
+  // The tracking script sends device_data; normalize its safe fields into the
+  // canonical device/browser columns rather than dropping the entire object.
+  device_data: z.object({
+    screenWidth: z.number().int().nonnegative().max(100_000).optional(),
+    screenHeight: z.number().int().nonnegative().max(100_000).optional(),
+    pixelRatio: z.number().nonnegative().max(100).optional(),
+    orientation: z.string().max(100).optional(),
+    browser: z.string().max(100).optional(),
+    browserVersion: z.string().max(100).optional(),
+    language: z.string().max(100).optional(),
+    mobile: z.boolean().optional(),
+    tablet: z.boolean().optional(),
+    desktop: z.boolean().optional(),
+  }).nullish(),
+  custom_data: z.record(z.unknown()).optional(),
   utm_source: z.string().max(512).optional(),
   utm_medium: z.string().max(512).optional(),
   utm_campaign: z.string().max(512).optional(),
@@ -156,10 +171,17 @@ export async function prepareSessionData(
 ) {
   try {
     const requestInfo = await extractRequestInfoWithLocation(request);
+    const scriptDevice = sessionData.device_data;
     const device = sessionData.device || {
-      type: requestInfo.device.type,
-      screen_size: detectScreenSize(requestInfo.userAgent),
+      type: scriptDevice?.mobile ? 'mobile'
+        : scriptDevice?.tablet ? 'tablet'
+        : scriptDevice?.desktop ? 'desktop' : requestInfo.device.type,
+      screen_size: scriptDevice?.screenWidth && scriptDevice?.screenHeight
+        ? `${scriptDevice.screenWidth}x${scriptDevice.screenHeight}`
+        : detectScreenSize(requestInfo.userAgent),
       os: requestInfo.device.os,
+      pixel_ratio: scriptDevice?.pixelRatio,
+      orientation: scriptDevice?.orientation,
       touch_support: requestInfo.device.touch_support,
     };
     device.type ||= requestInfo.device.type;
@@ -170,9 +192,9 @@ export async function prepareSessionData(
     }
 
     const browser = sessionData.browser || {
-      name: requestInfo.browser.name,
-      version: requestInfo.browser.version,
-      language: requestInfo.browser.language,
+      name: scriptDevice?.browser || requestInfo.browser.name,
+      version: scriptDevice?.browserVersion || requestInfo.browser.version,
+      language: scriptDevice?.language || requestInfo.browser.language,
     };
     browser.name ||= requestInfo.browser.name;
     browser.version ||= requestInfo.browser.version;
@@ -211,6 +233,7 @@ export async function prepareSessionData(
         previous_session_id: sessionData.previous_session_id || null,
         performance: sessionData.performance || null,
         consent: sessionData.consent || null,
+        custom_data: sessionData.custom_data || null,
         is_active: true,
       },
     };

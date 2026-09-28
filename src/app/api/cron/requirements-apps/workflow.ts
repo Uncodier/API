@@ -475,11 +475,17 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
 
   if (requirementFlow.delivery.provision_tracking_script) {
     // Application flows expose browser telemetry through the root layout.
-    await provisionTrackingScriptStep({
+    const tracking = await provisionTrackingScriptStep({
       sandboxId: sandboxId!,
-      siteId: site_id,
+      requirementId: reqId,
+      originSiteId: site_id,
       audit: cronAudit,
     });
+    if (tracking.error) {
+      // An older layout may still embed the ordering site's id. Do not deploy
+      // that layout if we could not replace it with the app's own tracking id.
+      throw new Error(`Application tracking provisioning failed: ${tracking.error}`);
+    }
   }
 
   // Step 1d: Run the admin-loop detector against the recent git history. We

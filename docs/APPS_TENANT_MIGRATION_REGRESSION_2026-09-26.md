@@ -70,3 +70,36 @@ operation is **not yet proven**. At last check NEX CARGO still had no tenant.
    migration was applied just from the agent's step output.
 
 No database migrations were applied as part of this investigation.
+
+## Follow-up: idempotent tenant provisioning (2026-09-26)
+
+A subsequent live run showed that `apps_ensure_tenant` still failed with
+`must be owner of table _meta` for **existing** tenants. The migration ledger
+`_meta` is intentionally owned by `apps_migration_coordinator`; the provisioning
+RPC was unconditionally reapplying table RLS, policies, and tenant executor DDL
+on every run, including when the tenant was already provisioned.
+
+The Apps-only forward migration
+`/Users/prado/Desktop/Proyectos/Uncodie/Code/API/supabase/migrations/20260926080000_apps_tenant_idempotent_reprovision.sql`
+was applied to Apps (`faxxouxekfwxvexoitxv`) as remote migration
+`20260926081503` (Management API assigns its own version). It returns the
+existing tenant receipt after checking the schema, coordinator-owned `_meta`
+table with RLS, and owner-controlled tenant migration executor. Incomplete
+bootstrap still fails closed; new tenants still take the atomic creation path.
+No `apps_tenants` data, `_meta` owner, or existing tenant ledger was rewritten
+by this migration. Do not push the whole API migration directory to Apps.
+
+Validation: the offline PGlite regression runs under a non-superuser installer;
+`npm run test:harness` passed 101 suites / 848 tests. After application,
+Apps returned HTTP 200 for `apps_ensure_tenant` and NEX CARGO's tenant
+`app_5a1d6caa92a4420d80f25673` was created, with `_meta` owned by
+`apps_migration_coordinator`. The obsolete platform-owned blocker
+`infra-runtime-migration-tools-unavailable` was resolved on its backlog item.
+
+**Not a product unblock:** NEX CARGO then reached the database-migration gate,
+which rejected `supabase/migrations/0001_initial_schema.sql` because several
+RLS policies grant unconditional access to authenticated users. The requirement
+remains `blocked` (latest cycle outcome `product_failure`) until those policies
+are scoped to row ownership or tenant membership and tested. Visualgv's Storage
+step also remains incomplete; repairing provisioning does not fix its malformed
+Jest test. Neither requirement was marked complete by this repair.

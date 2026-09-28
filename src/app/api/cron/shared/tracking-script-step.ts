@@ -3,6 +3,7 @@
 import type { Sandbox } from '@vercel/sandbox';
 import { getSandboxHandle } from '@/lib/services/sandbox-sdk';
 import { SandboxService } from '@/lib/services/sandbox-service';
+import { ensureRequirementTrackingSite } from '@/lib/services/requirement-tracking-site';
 import {
   CronInfraEvent,
   logCronInfrastructureEvent,
@@ -15,7 +16,9 @@ import {
 
 export interface ProvisionTrackingScriptStepInput {
   sandboxId: string;
-  siteId: string;
+  requirementId: string;
+  /** Site where the requirement was created, not the generated app's tracking site. */
+  originSiteId: string;
   audit?: CronAuditContext;
 }
 
@@ -69,7 +72,7 @@ export async function provisionTrackingScriptStep(
   input: ProvisionTrackingScriptStepInput,
 ): Promise<{ injected: boolean; error?: string }> {
   'use step';
-  const { sandboxId, siteId, audit } = input;
+  const { sandboxId, requirementId, originSiteId, audit } = input;
 
   let sandbox: Sandbox;
   try {
@@ -100,8 +103,9 @@ export async function provisionTrackingScriptStep(
     }
 
     const absoluteLayoutPath = `${cwd}/${layoutPath}`;
-    await sandbox.fs.rm(HARNESS_TRACKING_BACKUP_PATH, { force: true });
     const source = await readSandboxFile(sandbox, absoluteLayoutPath);
+    const siteId = await ensureRequirementTrackingSite(requirementId, originSiteId);
+    await sandbox.fs.rm(HARNESS_TRACKING_BACKUP_PATH, { force: true });
     const transformed = transformHarnessTrackingScript(source, siteId);
     if (!transformed.changed) {
       console.log(

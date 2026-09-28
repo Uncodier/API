@@ -18,10 +18,12 @@ export default {
     '<rootDir>/src/lib/services/__tests__/requirement-backlog-invariants.test.ts',
     '<rootDir>/src/lib/services/__tests__/requirement-backlog-view.test.ts',
     '<rootDir>/src/lib/services/__tests__/requirement-backlog-upsert.test.ts',
+    '<rootDir>/src/lib/services/__tests__/requirement-tracking-site.test.ts',
     '<rootDir>/src/lib/services/__tests__/tool-operation-result.test.ts',
     '<rootDir>/src/lib/services/__tests__/tool-operation-logging.test.ts',
     '<rootDir>/src/lib/services/__tests__/sandbox-fast-attach.test.ts',
     '<rootDir>/src/lib/services/apps-platform/__tests__/migration-applier.test.ts',
+    '<rootDir>/src/lib/services/apps-platform/__tests__/tenant-reprovision-sql.test.ts',
   ],
   extensionsToTreatAsEsm: [],
   transform: {

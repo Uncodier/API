@@ -14,6 +14,7 @@ import {
   type GitBindingKind,
 } from '@/lib/services/requirement-git-binding';
 import { branchBelongsToRequirement } from '@/lib/services/requirement-branch';
+import { allowRequirementPreviewDomain } from '@/lib/services/requirement-tracking-site';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -187,32 +188,21 @@ export async function syncLatestRequirementStatusWithPreview(params: {
     return { updated: false, preview_url, repo_url };
   }
 
-  if (preview_url && preview_url !== existingPreviewUrl) {
-    await logInstancePreviewUrlRecorded({
-      siteId: resolvedSiteId,
-      instanceId: validInstance ?? instanceId ?? null,
-      requirementId,
-      previewUrl: preview_url,
-      context: 'requirement_status_sync',
-      repoUrl: repo_url,
-    });
+  if (preview_url) {
+    if (preview_url !== existingPreviewUrl) {
+      await logInstancePreviewUrlRecorded({
+        siteId: resolvedSiteId,
+        instanceId: validInstance ?? instanceId ?? null,
+        requirementId,
+        previewUrl: preview_url,
+        context: 'requirement_status_sync',
+        repoUrl: repo_url,
+      });
+    }
 
-    // Whitelist the generated Vercel preview domain for CORS
+    // Scope the preview origin to the generated app, never the ordering site.
     try {
-      const previewHostname = new URL(preview_url.trim()).hostname;
-      const { data: existingDomain } = await supabaseAdmin
-        .from('allowed_domains')
-        .select('id')
-        .eq('domain', previewHostname)
-        .maybeSingle();
-
-      if (!existingDomain) {
-        await supabaseAdmin.from('allowed_domains').insert({
-          site_id: resolvedSiteId,
-          domain: previewHostname,
-        });
-        console.log(`[RequirementStatusSync] Whitelisted preview domain for CORS: ${previewHostname}`);
-      }
+      await allowRequirementPreviewDomain({ requirementId, originSiteId: resolvedSiteId, previewUrl: preview_url });
     } catch (domainErr) {
       console.warn('[RequirementStatusSync] Failed to whitelist preview domain:', domainErr instanceof Error ? domainErr.message : domainErr);
     }
@@ -298,32 +288,21 @@ export async function patchLatestRequirementStatusColumns(params: {
       return { updated: false, error: upErr.message };
     }
     console.log(`[RequirementStatusPatch] Updated ${rowId} (${Object.keys(patch).join(', ')})`);
-    if (columns.preview_url?.trim() && columns.preview_url.trim() !== existingPreviewUrl) {
-      await logInstancePreviewUrlRecorded({
-        siteId: resolvedSiteId,
-        instanceId: validInstance ?? instanceId ?? null,
-        requirementId,
-        previewUrl: columns.preview_url.trim(),
-        context: 'requirement_status_patch',
-        repoUrl: columns.repo_url ?? null,
-      });
+    if (columns.preview_url?.trim()) {
+      if (columns.preview_url.trim() !== existingPreviewUrl) {
+        await logInstancePreviewUrlRecorded({
+          siteId: resolvedSiteId,
+          instanceId: validInstance ?? instanceId ?? null,
+          requirementId,
+          previewUrl: columns.preview_url.trim(),
+          context: 'requirement_status_patch',
+          repoUrl: columns.repo_url ?? null,
+        });
+      }
 
-      // Whitelist the generated Vercel preview domain for CORS
+      // Scope the preview origin to the generated app, never the ordering site.
       try {
-        const previewHostname = new URL(columns.preview_url.trim()).hostname;
-        const { data: existingDomain } = await supabaseAdmin
-          .from('allowed_domains')
-          .select('id')
-          .eq('domain', previewHostname)
-          .maybeSingle();
-
-        if (!existingDomain) {
-          await supabaseAdmin.from('allowed_domains').insert({
-            site_id: resolvedSiteId,
-            domain: previewHostname,
-          });
-          console.log(`[RequirementStatusPatch] Whitelisted preview domain for CORS: ${previewHostname}`);
-        }
+        await allowRequirementPreviewDomain({ requirementId, originSiteId: resolvedSiteId, previewUrl: columns.preview_url.trim() });
       } catch (domainErr) {
         console.warn('[RequirementStatusPatch] Failed to whitelist preview domain:', domainErr instanceof Error ? domainErr.message : domainErr);
       }
@@ -374,22 +353,9 @@ export async function patchLatestRequirementStatusColumns(params: {
         repoUrl: patch.repo_url ?? null,
       });
 
-      // Whitelist the generated Vercel preview domain for CORS
+      // Scope the preview origin to the generated app, never the ordering site.
       try {
-        const previewHostname = new URL(patch.preview_url.trim()).hostname;
-        const { data: existingDomain } = await supabaseAdmin
-          .from('allowed_domains')
-          .select('id')
-          .eq('domain', previewHostname)
-          .maybeSingle();
-
-        if (!existingDomain) {
-          await supabaseAdmin.from('allowed_domains').insert({
-            site_id: resolvedSiteId,
-            domain: previewHostname,
-          });
-          console.log(`[RequirementStatusPatch] Whitelisted preview domain for CORS: ${previewHostname}`);
-        }
+        await allowRequirementPreviewDomain({ requirementId, originSiteId: resolvedSiteId, previewUrl: patch.preview_url.trim() });
       } catch (domainErr) {
         console.warn('[RequirementStatusPatch] Failed to whitelist preview domain:', domainErr instanceof Error ? domainErr.message : domainErr);
       }

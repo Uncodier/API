@@ -1,3 +1,4 @@
+import { jest } from '@jest/globals';
 import { loadRuntimeModule } from '@/lib/custom-automation/test-helpers/load-runtime-module';
 import * as cyclePolicy from '../../shared/plan-cycle-outcome';
 import * as recoveryPolicy from '../../shared/cycle-recovery-policy';
@@ -34,6 +35,7 @@ function harness() {
   const migration = { applyDatabaseMigrationsStep: jest.fn(async (): Promise<any> => ({ status: 'passed', applied: [], errors: [], effectiveSandboxId: 'sandbox' })) };
   const finalizer = { createFinalStatusStep: jest.fn(), validateDeliverablesStep: jest.fn() };
   const wrapup = { emitCycleWrapUpStep: jest.fn(async (_params?: unknown) => ({ ran: true, outcome: 'completed' })) };
+  const provisionTrackingScriptStep = jest.fn(async (_params?: unknown): Promise<{ injected: boolean; error?: string }> => ({ injected: true }));
   const workflow = loadRuntimeModule<typeof import('../workflow')>(
     'src/app/api/cron/requirements-apps/workflow.ts', {
       '../shared/cron-steps': steps,
@@ -41,7 +43,7 @@ function harness() {
       '../shared/workflow-db-steps': db,
       '../shared/step-db-migrations': migration,
       '../shared/bootstrap-spec-step': { bootstrapRequirementSpecStep: async () => {} },
-      '../shared/tracking-script-step': { provisionTrackingScriptStep: async () => {} },
+      '../shared/tracking-script-step': { provisionTrackingScriptStep },
       '../shared/ensure-source-archive-step': {},
       '@/lib/services/requirement-flows': { getFlow, classifyRequirementType, productAttemptLimits },
       '@/lib/services/cycle-wrapup-prompt': {
@@ -74,7 +76,7 @@ function harness() {
   const run = () => workflow.runCronAppsWorkflow({ reqId: 'req', title: 'Test', instructions: '', type: 'app',
     site_id: 'site', user_id: 'user', instanceId: 'instance', previousWorkContext: '', instance_type: 'applications',
     cronLockRunId: 'run', cycleStartedAt: '2026-09-26T00:00:00Z', executionGeneration: 3 });
-  return { run, plan, lifecycle, db, steps, executeSingleTurnStep, migration, finalizer, wrapup };
+  return { run, plan, lifecycle, db, steps, executeSingleTurnStep, migration, finalizer, wrapup, provisionTrackingScriptStep };
 }
 
 describe('workflow recovery and truthful completion', () => {
@@ -118,10 +120,22 @@ describe('workflow recovery and truthful completion', () => {
   it('uses the declared turn budget and checkpoints progress without claiming completion', async () => {
     const h = harness();
     await expect(h.run()).resolves.toMatchObject({ status: 'in-progress' });
+    expect(h.provisionTrackingScriptStep).toHaveBeenCalledWith(expect.objectContaining({
+      requirementId: 'req', originSiteId: 'site', sandboxId: 'sandbox',
+    }));
     expect(h.executeSingleTurnStep).toHaveBeenCalledTimes(getFlow('app').cost_envelope.max_turns_per_step);
     expect(h.executeSingleTurnStep).toHaveBeenCalledWith(expect.objectContaining({ cronLockRunId: 'run', executionGeneration: 3 }));
     expect(h.finalizer.createFinalStatusStep).not.toHaveBeenCalled();
     expect(h.lifecycle.stopSandboxStep).toHaveBeenCalledWith('sandbox', expect.anything(), expect.objectContaining({ runId: 'run', allowTerminal: true }));
+  });
+
+  it('stops before execution when the generated app tracking site is unavailable', async () => {
+    const h = harness();
+    h.provisionTrackingScriptStep.mockResolvedValue({ injected: false, error: 'tracking site unavailable' });
+    await expect(h.run()).rejects.toThrow('Application tracking provisioning failed');
+    expect(h.executeSingleTurnStep).not.toHaveBeenCalled();
+    expect(h.steps.commitAndPushStep).not.toHaveBeenCalled();
+    expect(h.lifecycle.releaseRunLockStep).toHaveBeenCalledTimes(1);
   });
 
   it('does not push or finalize delivery after a required migration fails', async () => {

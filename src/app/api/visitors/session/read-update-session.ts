@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { issueVisitorSessionToken } from '@/lib/security/visitor-session-token';
+import type { z } from 'zod';
 import {
   authorizeExistingSession,
   getSessionParamsSchema,
@@ -112,101 +114,7 @@ export async function PUT(request: NextRequest) {
         parsed.error.format(),
       );
     }
-    const update = parsed.data;
-    if (!await authorizeExistingSession(
-      request,
-      update.site_id,
-      update.session_id,
-    )) {
-      return sessionErrorResponse('Session authorization failed', 403);
-    }
-
-    const startTime = Date.now();
-    let existing = await readCachedVisitorSession<any>(
-      update.site_id,
-      update.session_id,
-    );
-    if (!existing) {
-      const { data, error } = await supabaseAdmin
-        .from('visitor_sessions')
-        .select('*, visitors(fingerprint)')
-        .eq('id', update.session_id)
-        .eq('site_id', update.site_id)
-        .eq('is_active', true)
-        .single();
-      if (error || !data) {
-        return sessionErrorResponse('Session not found or expired', 404);
-      }
-      existing = data;
-      await cacheVisitorSession(update.site_id, update.session_id, existing);
-    }
-
-    const updates: Record<string, unknown> = {
-      updated_at: new Date().toISOString(),
-    };
-    if (update.last_activity_at !== undefined) {
-      updates.last_activity_at = update.last_activity_at;
-      updates.duration = Math.max(
-        0,
-        update.last_activity_at - (existing.started_at || update.last_activity_at),
-      );
-    }
-    if (update.current_url !== undefined) updates.current_url = update.current_url;
-    if (update.page_views !== undefined) updates.page_views = update.page_views;
-    if (update.active_time !== undefined) updates.active_time = update.active_time;
-    if (update.custom_data !== undefined) updates.custom_data = update.custom_data;
-
-    const heartbeat = await recordVisitorHeartbeat(
-      update.site_id,
-      update.session_id,
-      updates,
-    );
-    if (heartbeat?.closed) {
-      return sessionErrorResponse('Session not found or expired', 404);
-    }
-    const persistedUpdates = heartbeat?.state ?? updates;
-    if (!heartbeat || heartbeat.shouldPersist) {
-      const { data: persisted, error } = await supabaseAdmin
-        .from('visitor_sessions')
-        .update(persistedUpdates)
-        .eq('id', update.session_id)
-        .eq('site_id', update.site_id)
-        .eq('is_active', true)
-        .select('id')
-        .maybeSingle();
-      if (error || !persisted) {
-        return sessionErrorResponse(
-          error
-            ? `Unable to update session: ${error.message}`
-            : 'Session not found or expired',
-          error ? 500 : 404,
-        );
-      }
-    }
-    await cacheVisitorSession(update.site_id, update.session_id, {
-      ...existing,
-      ...persistedUpdates,
-    });
-
-    const ttl = 1_800;
-    return NextResponse.json({
-      success: true,
-      data: {
-        session_id: update.session_id,
-        visitor_id: existing.visitor_id,
-        fingerprint: existing.visitors?.fingerprint || null,
-        id: existing.visitor_id,
-        lead_id: existing.lead_id,
-        updated_at: Date.now(),
-        expires_at: Date.now() + ttl * 1_000,
-        ttl,
-      },
-      meta: {
-        api_version: '1.0',
-        server_time: Date.now(),
-        processing_time: Date.now() - startTime,
-      },
-    });
+    return await updateExistingSession(request, parsed.data);
   } catch (error) {
     console.error('[Visitor Session] Update failed:', error);
     return sessionErrorResponse(
@@ -214,4 +122,111 @@ export async function PUT(request: NextRequest) {
       500,
     );
   }
+}
+
+export async function updateExistingSession(
+  request: NextRequest,
+  update: z.infer<typeof updateSessionSchema>,
+) {
+  if (!await authorizeExistingSession(
+    request,
+    update.site_id,
+    update.session_id,
+  )) {
+    return sessionErrorResponse('Session authorization failed', 403);
+  }
+
+  const startTime = Date.now();
+  let existing = await readCachedVisitorSession<any>(
+    update.site_id,
+    update.session_id,
+  );
+  if (!existing) {
+    const { data, error } = await supabaseAdmin
+      .from('visitor_sessions')
+      .select('*, visitors(fingerprint)')
+      .eq('id', update.session_id)
+      .eq('site_id', update.site_id)
+      .eq('is_active', true)
+      .single();
+    if (error || !data) {
+      return sessionErrorResponse('Session not found or expired', 404);
+    }
+    existing = data;
+    await cacheVisitorSession(update.site_id, update.session_id, existing);
+  }
+
+  const updates: Record<string, unknown> = {
+    updated_at: new Date().toISOString(),
+  };
+  if (update.last_activity_at !== undefined) {
+    updates.last_activity_at = update.last_activity_at;
+    updates.duration = Math.max(
+      0,
+      update.last_activity_at - (existing.started_at || update.last_activity_at),
+    );
+  }
+  if (update.current_url !== undefined) updates.current_url = update.current_url;
+  if (update.page_views !== undefined) updates.page_views = update.page_views;
+  if (update.active_time !== undefined) updates.active_time = update.active_time;
+  if (update.custom_data !== undefined) updates.custom_data = update.custom_data;
+
+  const heartbeat = await recordVisitorHeartbeat(
+    update.site_id,
+    update.session_id,
+    updates,
+  );
+  if (heartbeat?.closed) {
+    return sessionErrorResponse('Session not found or expired', 404);
+  }
+  const persistedUpdates = heartbeat?.state ?? updates;
+  if (!heartbeat || heartbeat.shouldPersist) {
+    const { data: persisted, error } = await supabaseAdmin
+      .from('visitor_sessions')
+      .update(persistedUpdates)
+      .eq('id', update.session_id)
+      .eq('site_id', update.site_id)
+      .eq('is_active', true)
+      .select('id')
+      .maybeSingle();
+    if (error || !persisted) {
+      return sessionErrorResponse(
+        error
+          ? `Unable to update session: ${error.message}`
+          : 'Session not found or expired',
+        error ? 500 : 404,
+      );
+    }
+  }
+  await cacheVisitorSession(update.site_id, update.session_id, {
+    ...existing,
+    ...persistedUpdates,
+  });
+
+  const ttl = 1_800;
+  const sessionToken = await issueVisitorSessionToken({
+    siteId: update.site_id,
+    sessionId: update.session_id,
+    visitorId: existing.visitor_id,
+  }, ttl);
+  return NextResponse.json({
+    success: true,
+    data: {
+      session_id: update.session_id,
+      visitor_id: existing.visitor_id,
+      site_id: update.site_id,
+      fingerprint: existing.visitors?.fingerprint || null,
+      id: existing.visitor_id,
+      lead_id: existing.lead_id,
+      updated_at: Date.now(),
+      expires_at: Date.now() + ttl * 1_000,
+      ttl,
+      session_token: sessionToken,
+    },
+    meta: {
+      api_version: '1.0',
+      server_time: Date.now(),
+      processing_time: Date.now() - startTime,
+    },
+  });
 }

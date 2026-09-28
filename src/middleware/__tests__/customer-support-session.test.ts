@@ -27,6 +27,14 @@ jest.unstable_mockModule('@/lib/security/request-rate-limit', () => ({
 jest.unstable_mockModule('@/lib/security/upstash-rest', () => ({ getCachedJson: async () => null, setCachedJson: async () => {}, sha256: async () => 'hash' }));
 jest.unstable_mockModule('@/lib/security/site-access', () => ({ canAccessSite: async () => false }));
 jest.unstable_mockModule('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from } }));
+jest.unstable_mockModule('@/app/api/agents/customerSupport/conversations/core', () => ({
+  getConversationsCore: async () => ({ success: true, data: {
+    conversations: [], pagination: { total: 0, page: 1, limit: 10, pages: 0 },
+  } }),
+}));
+jest.unstable_mockModule('@/app/api/agents/customerSupport/conversations/messages/core', () => ({
+  getMessagesCore: async () => ({ success: true, data: { messages: [] } }),
+}));
 jest.unstable_mockModule('@/lib/services/workflow-service', () => ({ WorkflowService: {
   getInstance: () => ({ getFinishedWorkflowResult, customerSupportMessage }),
 } }));
@@ -34,6 +42,8 @@ jest.unstable_mockModule('@/lib/services/workflow-service', () => ({ WorkflowSer
 const { default: middleware, isPublicRequest } = await import('../requestMiddleware');
 const { POST: status } = await import('@/app/api/workflow/customerSupport/status/route');
 const { POST: send } = await import('@/app/api/workflow/customerSupport/route');
+const { GET: conversations } = await import('@/app/api/agents/customerSupport/conversations/route');
+const { GET: messages } = await import('@/app/api/agents/customerSupport/conversations/messages/route');
 const { issueVisitorSessionToken } = await import('@/lib/security/visitor-session-token');
 const oldSecret = process.env.VISITOR_SESSION_TOKEN_SECRET;
 beforeAll(() => { process.env.VISITOR_SESSION_TOKEN_SECRET = 'test-only-session-signing-key'; });
@@ -86,4 +96,36 @@ it('allows widget CORS preflight but keeps internal and sibling workflow routes 
     expect((await throughMiddleware(path, 'signed-looking-token')).status).toBe(401);
   }
   expect(isPublicRequest('/api/workflow/customerSupport/status', 'DELETE')).toBe(false);
+});
+
+it.each([
+  ['/api/agents/customerSupport/conversations', conversations],
+  ['/api/agents/customerSupport/conversations/messages', messages],
+])('allows signed visitor reads through middleware and checks them in the handler at %s', async (path, handler) => {
+  const token = await issueVisitorSessionToken({ siteId, sessionId, visitorId });
+  const url = `https://api.example${path}?site_id=${siteId}&session_id=${sessionId}&visitor_id=${visitorId}`;
+  const visit = async (auth?: string) => {
+    const request = new NextRequest(url, { method: 'GET', headers: {
+      origin: 'https://customer-website.example',
+      ...(auth ? { 'X-Visitor-Session-Token': auth } : {}),
+    } });
+    const gateway = await middleware(request);
+    if (gateway.headers.get('x-middleware-next') !== '1') return gateway;
+    const headers = new Headers();
+    for (const name of (gateway.headers.get('x-middleware-override-headers') || '').split(',')) {
+      if (name) headers.set(name, gateway.headers.get(`x-middleware-request-${name}`)!);
+    }
+    return handler(new NextRequest(request, { headers }));
+  };
+  expect((await visit(token)).status).toBe(200);
+  expect((await visit()).status).toBe(403);
+  expect(apiKeyAuth).not.toHaveBeenCalled();
+  expect(isPublicRequest(path, 'POST')).toBe(false);
+  expect(isPublicRequest(`${path}/other`, 'GET')).toBe(false);
+  const preflight = await middleware(new NextRequest(url, { method: 'OPTIONS', headers: {
+    origin: 'https://customer-website.example',
+    'access-control-request-headers': 'X-Visitor-Session-Token',
+  } }));
+  expect(preflight.status).toBe(204);
+  expect(preflight.headers.get('access-control-allow-headers')).toContain('X-Visitor-Session-Token');
 });

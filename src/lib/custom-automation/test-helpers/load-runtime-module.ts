@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { runInNewContext } from 'node:vm';
+import { URL } from 'node:url';
 import ts from 'typescript';
 
 /** Execute the real TS module with an explicit, fail-closed I/O boundary.
@@ -29,6 +30,7 @@ export function loadRuntimeModule<T>(relativePath: string, dependencies: Record<
     process: { env: {} },
     console,
     Buffer,
+    URL,
     crypto: { randomUUID: () => 'local-test-lock-token' },
     setTimeout,
     clearTimeout,
