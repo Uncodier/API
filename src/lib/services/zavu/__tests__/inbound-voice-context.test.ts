@@ -4,7 +4,6 @@ const mockBuildFollowUpContext = jest.fn();
 const mockSetContactContext = jest.fn();
 const mockClearContactContext = jest.fn();
 const mockEnsureContactMetadata = jest.fn();
-const mockCustomerSupportMessage = jest.fn();
 
 jest.mock("@/lib/database/supabase-server", () => ({
   supabaseAdmin: {
@@ -25,14 +24,6 @@ jest.mock("../contact-client", () => ({
 jest.mock("../voice-agent-context", () => ({
   ensureVoiceContactMetadataEnabled: mockEnsureContactMetadata,
 }));
-jest.mock("@/lib/services/workflow-service", () => ({
-  WorkflowService: {
-    getInstance: jest.fn(() => ({
-      customerSupportMessage: mockCustomerSupportMessage,
-    })),
-  },
-}));
-
 import { handleUntrackedInboundVoiceEvent } from "../inbound-voice-context";
 
 function readChain(data: unknown) {
@@ -69,10 +60,6 @@ describe("inbound Voice follow-up context", () => {
     mockSetContactContext.mockResolvedValue(undefined);
     mockClearContactContext.mockResolvedValue(undefined);
     mockEnsureContactMetadata.mockResolvedValue(undefined);
-    mockCustomerSupportMessage.mockResolvedValue({
-      success: true,
-      workflowId: "workflow-1",
-    });
   });
 
   it("hydrates contact metadata when an inbound call starts", async () => {
@@ -119,13 +106,14 @@ describe("inbound Voice follow-up context", () => {
     expect(mockSetContactContext).not.toHaveBeenCalled();
   });
 
-  it("creates a pending customer-support proposal for a completed inbound call", async () => {
+  it("stores spoken turns alongside the original Voice call without starting Customer Support", async () => {
     mockGetVoiceCall.mockResolvedValue({
       id: "call-1",
       direction: "inbound",
       from: "+14155550100",
       to: "+14155550999",
       status: "completed",
+      agentId: "provider-agent-1",
       transcript: [
         { seq: 1, role: "user", text: "I need to move my appointment." },
         { seq: 2, role: "tool", text: "internal reservation payload" },
@@ -135,18 +123,23 @@ describe("inbound Voice follow-up context", () => {
       endedAt: "2026-09-23T12:02:00.000Z",
     });
     const conversationUpserts: Record<string, any>[] = [];
-    const messageUpserts: Record<string, any>[] = [];
-    const messageUpdates: Record<string, any>[] = [];
+    const messageUpserts: Array<Record<string, any> | Array<Record<string, any>>> = [];
     const deliveryUpserts: Record<string, any>[] = [];
     mockFrom.mockImplementation((table: string) => {
       if (table === "settings") return readChain({ site_id: "site-1" });
       if (table === "leads") return readChain({ id: "lead-1" });
       if (table === "sites") return readChain({ user_id: "user-1" });
+      if (table === "agents") return readChain({ id: "local-agent-1" });
       if (table === "conversations") {
         return {
           upsert: jest.fn().mockImplementation(async (payload) => {
             conversationUpserts.push(payload);
             return { error: null };
+          }),
+          update: jest.fn().mockReturnValue({
+            eq: jest.fn().mockReturnValue({
+              eq: jest.fn().mockResolvedValue({ error: null }),
+            }),
           }),
         };
       }
@@ -155,23 +148,6 @@ describe("inbound Voice follow-up context", () => {
           upsert: jest.fn().mockImplementation(async (payload) => {
             messageUpserts.push(payload);
             return { error: null };
-          }),
-          select: jest.fn().mockReturnValue({
-            eq: jest.fn().mockReturnValue({
-              maybeSingle: jest.fn().mockResolvedValue({
-                data: {
-                  custom_data: {
-                    source: "zavu_inbound_voice",
-                    voice_response_workflow_status: "pending",
-                  },
-                },
-                error: null,
-              }),
-            }),
-          }),
-          update: jest.fn().mockImplementation((payload) => {
-            messageUpdates.push(payload);
-            return { eq: jest.fn().mockResolvedValue({ error: null }) };
           }),
         };
       }
@@ -199,45 +175,34 @@ describe("inbound Voice follow-up context", () => {
         status: "completed",
       },
     });
-    expect(mockCustomerSupportMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        userId: "user-1",
-        message: expect.stringContaining(
-          "CALLER: I need to move my appointment."
-        ),
-        conversationId: conversationUpserts[0].id,
-        site_id: "site-1",
-        lead_id: "lead-1",
-        phone: "+14155550100",
-        origin: "voice",
-        origin_message_id: "call-1",
-        channel_delivery: true,
-        require_approval: true,
-        custom_data: expect.objectContaining({
-          source: "zavu_inbound_voice",
-          call_direction: "inbound",
-          transcript_available: true,
-        }),
-      }),
-      expect.objectContaining({
-        async: true,
-        priority: "high",
-        workflowId: expect.stringMatching(/^customer-support-voice-/),
-      })
-    );
-    const workflowMessage = mockCustomerSupportMessage.mock.calls[0][0].message;
-    expect(workflowMessage).toContain("VOICE AGENT: I can help with that.");
-    expect(workflowMessage).not.toContain("internal reservation payload");
+    expect(conversationUpserts[0]).toMatchObject({
+      channel: "voice", user_id: "user-1", agent_id: "local-agent-1",
+    });
     expect(messageUpserts[0]).toMatchObject({
       conversation_id: conversationUpserts[0].id,
       role: "system",
+      content: "Inbound Voice call completed.",
       custom_data: expect.objectContaining({
-        voice_response_workflow_status: "pending",
+        source: "zavu_inbound_voice",
+        voice_call_delivery_id: expect.any(String),
       }),
     });
+    const speech = messageUpserts[1] as Array<Record<string, any>>;
+    expect(speech.map(({ role, content }) => ({ role, content }))).toEqual([
+      { role: "user", content: "I need to move my appointment." },
+      { role: "assistant", content: "I can help with that." },
+    ]);
+    expect(speech.every((turn) => turn.conversation_id === conversationUpserts[0].id))
+      .toBe(true);
+    expect(speech[0].custom_data).toMatchObject({
+      source: "zavu_voice_transcript",
+      voice_call_delivery_id: deliveryUpserts[0].id,
+    });
+    expect(speech[1].agent_id).toBe("local-agent-1");
+    expect(speech[0]).not.toHaveProperty("agent_id");
     expect(deliveryUpserts[0]).toMatchObject({
       zavu_call_id: "call-1",
-      message_id: messageUpserts[0].id,
+      message_id: (messageUpserts[0] as Record<string, any>).id,
       conversation_id: conversationUpserts[0].id,
       lead_id: "lead-1",
       transcript: [
@@ -245,10 +210,6 @@ describe("inbound Voice follow-up context", () => {
         { seq: 2, role: "tool", text: "internal reservation payload" },
         { seq: 3, role: "assistant", text: "I can help with that." },
       ],
-    });
-    expect(messageUpdates[0].custom_data).toMatchObject({
-      voice_response_workflow_status: "queued",
-      voice_response_workflow_id: "workflow-1",
     });
     expect(mockClearContactContext).toHaveBeenCalledWith({
       phone: "+14155550100",

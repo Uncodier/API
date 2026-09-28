@@ -23,6 +23,7 @@ export interface ZavuVoiceCallTurn {
 
 export interface ZavuVoiceCall {
   id: string;
+  agentId?: string;
   direction: "inbound" | "outbound";
   from: string;
   to: string;

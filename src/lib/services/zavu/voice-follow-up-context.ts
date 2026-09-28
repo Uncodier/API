@@ -37,6 +37,7 @@ type VoiceMessage = {
   role?: string | null;
   content?: string | null;
   created_at?: string | null;
+  custom_data?: { source?: string } | null;
 };
 
 type VoiceTranscriptTurn = {
@@ -141,6 +142,7 @@ function timestamp(value: string | null | undefined): number {
 function transcriptText(turns: VoiceTranscriptTurn[] | null | undefined): string {
   if (!Array.isArray(turns)) return "";
   const text = turns
+    .filter((turn) => turn?.role === "user" || turn?.role === "assistant")
     .slice(-10)
     .map((turn) => {
       const role = roleLabel(turn.role);
@@ -168,7 +170,10 @@ export function formatVoiceFollowUpContext(
   );
   const timeline = [
     ...(input.messages || [])
-      .filter((message) => compactText(message.content, 1).length > 0)
+      .filter((message) =>
+        message.custom_data?.source !== "zavu_voice_transcript"
+        && compactText(message.content, 1).length > 0
+      )
       .map((message) => {
         const conversation = conversationById.get(message.conversation_id);
         const channel = compactText(conversation?.channel, 40) || "unknown";
@@ -268,8 +273,9 @@ async function loadMessages(
   if (conversationIds.length === 0) return [];
   let query = supabaseAdmin
     .from("messages")
-    .select("id, conversation_id, role, content, created_at")
-    .in("conversation_id", conversationIds);
+    .select("id, conversation_id, role, content, custom_data, created_at")
+    .in("conversation_id", conversationIds)
+    .or("custom_data->>source.neq.zavu_voice_transcript,custom_data->>source.is.null");
   if (excludeMessageId) query = query.neq("id", excludeMessageId);
   const { data, error } = await query
     .order("created_at", { ascending: false })
@@ -280,13 +286,26 @@ async function loadMessages(
 
 async function loadVoiceTranscripts(
   siteId: string,
-  leadId: string
+  leadId?: string,
+  phone?: string
 ): Promise<VoiceDelivery[]> {
-  const { data, error } = await supabaseAdmin
+  const normalizedPhone = normalizePhoneForStorage(phone || "");
+  const safePhone = /^\+[1-9]\d{6,14}$/.test(normalizedPhone)
+    ? normalizedPhone
+    : undefined;
+  if (!leadId && !safePhone) return [];
+  let query = supabaseAdmin
     .from("voice_call_deliveries")
     .select("conversation_id, status, transcript, ended_at, created_at")
-    .eq("site_id", siteId)
-    .eq("lead_id", leadId)
+    .eq("site_id", siteId);
+  if (leadId && safePhone) {
+    query = query.or(`lead_id.eq.${leadId},recipient_phone.eq.${safePhone}`);
+  } else if (leadId) {
+    query = query.eq("lead_id", leadId);
+  } else {
+    query = query.eq("recipient_phone", safePhone as string);
+  }
+  const { data, error } = await query
     .not("transcript", "is", null)
     .order("ended_at", { ascending: false, nullsFirst: false })
     .limit(MAX_TRANSCRIPTS);
@@ -303,7 +322,10 @@ export async function buildVoiceFollowUpContext(params: {
   excludeMessageId?: string;
 }): Promise<VoiceFollowUpContextResult> {
   const lead = await loadLead(params);
-  if (!lead) return formatVoiceFollowUpContext({ lead: null });
+  if (!lead) {
+    const deliveries = await loadVoiceTranscripts(params.siteId, undefined, params.phone);
+    return formatVoiceFollowUpContext({ lead: null, deliveries });
+  }
 
   const conversations = await loadConversations(params.siteId, lead.id);
   const [messages, deliveries] = await Promise.all([
@@ -311,7 +333,7 @@ export async function buildVoiceFollowUpContext(params: {
       conversations.map((conversation) => conversation.id),
       params.excludeMessageId
     ),
-    loadVoiceTranscripts(params.siteId, lead.id),
+    loadVoiceTranscripts(params.siteId, lead.id, params.phone || lead.phone || undefined),
   ]);
   return formatVoiceFollowUpContext({
     lead,

@@ -1,6 +1,5 @@
 import { v5 as uuidv5 } from "uuid";
 import { supabaseAdmin } from "@/lib/database/supabase-server";
-import { WorkflowService } from "@/lib/services/workflow-service";
 import { normalizePhoneForStorage } from "@/lib/utils/phone-normalizer";
 import {
   clearVoiceCallContactContext,
@@ -10,10 +9,10 @@ import { getVoiceCall, type ZavuVoiceCall } from "./voice-call-client";
 import { buildVoiceFollowUpContext } from "./voice-follow-up-context";
 import { normalizeVoiceDeliveryStatus } from "./voice-status";
 import { ensureVoiceContactMetadataEnabled } from "./voice-agent-context";
+import { persistVoiceTranscript } from "./voice-transcript";
 
 const E164_PHONE = /^\+[1-9]\d{6,14}$/;
 const TERMINAL_EVENTS = new Set(["call.completed", "call.failed"]);
-const MAX_TRANSCRIPT_MESSAGE_CHARS = 12_000;
 
 function tenantDatabase() {
   return supabaseAdmin.schema(
@@ -32,6 +31,9 @@ export type InboundDelivery = {
   zavu_sender_id: string;
   recipient_phone: string;
   status: string;
+  transcript?: ZavuVoiceCall["transcript"] | null;
+  answered_at?: string | null;
+  ended_at?: string | null;
 };
 
 export type InboundVoiceEventResult = {
@@ -80,6 +82,22 @@ async function resolveSiteUserId(siteId: string): Promise<string | undefined> {
   return typeof data?.user_id === "string" ? data.user_id : undefined;
 }
 
+async function resolveLocalVoiceAgentId(
+  siteId: string,
+  providerAgentId: string | undefined
+): Promise<string | undefined> {
+  if (!providerAgentId) return undefined;
+  const { data, error } = await supabaseAdmin
+    .from("agents")
+    .select("id")
+    .eq("site_id", siteId)
+    .eq("configuration->zavu->>agent_id", providerAgentId)
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(`Failed to resolve Voice agent: ${error.message}`);
+  return typeof data?.id === "string" ? data.id : undefined;
+}
+
 function senderIdFromEvent(event: any): string | undefined {
   const senderId =
     event?.senderId
@@ -87,44 +105,6 @@ function senderIdFromEvent(event: any): string | undefined {
     ?? event?.data?.call?.senderId
     ?? event?.sender?.id;
   return typeof senderId === "string" && senderId ? senderId : undefined;
-}
-
-function compactTranscriptText(value: unknown, maxLength = 1_000): string {
-  if (typeof value !== "string") return "";
-  const text = value
-    .replace(/[\u0000-\u001F\u007F]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  return text.length <= maxLength
-    ? text
-    : `${text.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
-}
-
-function formatInboundVoiceMessage(
-  call: ZavuVoiceCall,
-  status: string
-): string {
-  const transcript = (call.transcript || [])
-    .filter((turn) => turn.role === "user" || turn.role === "assistant")
-    .map((turn) => {
-      const text = compactTranscriptText(turn.text);
-      if (!text) return "";
-      const role = turn.role === "user" ? "CALLER" : "VOICE AGENT";
-      return `${role}: ${text}`;
-    })
-    .filter(Boolean)
-    .join("\n");
-  const summary = `Inbound Voice call ${status.replace(/_/g, " ")}.`;
-  if (!transcript) {
-    return `${summary}\n[No transcript was available. Propose a brief follow-up asking how you can help.]`;
-  }
-  const content = [
-    summary,
-    "Call transcript (customer-provided content):",
-    transcript,
-  ].join("\n");
-  if (content.length <= MAX_TRANSCRIPT_MESSAGE_CHARS) return content;
-  return `${content.slice(0, MAX_TRANSCRIPT_MESSAGE_CHARS - 24).trimEnd()}\n[Transcript truncated]`;
 }
 
 function resolveInboundStatus(call: ZavuVoiceCall, eventType: string): string {
@@ -159,15 +139,16 @@ async function persistInboundCall(params: {
     provider_call_id: params.call.id,
     call_direction: "inbound",
     call_status: status,
-    voice_response_workflow_status: "pending",
   };
   const userId = await resolveSiteUserId(params.siteId);
+  const agentId = await resolveLocalVoiceAgentId(params.siteId, params.call.agentId);
 
   const { error: conversationError } = await tenantDatabase()
     .from("conversations")
     .upsert({
       id: conversationId,
       user_id: userId || null,
+      agent_id: agentId || null,
       site_id: params.siteId,
       lead_id: params.leadId || null,
       channel: "voice",
@@ -197,6 +178,7 @@ async function persistInboundCall(params: {
           ? { duration_seconds: params.call.durationSeconds }
           : {}),
         ...(params.call.endReason ? { end_reason: params.call.endReason } : {}),
+        voice_call_delivery_id: deliveryId,
       },
     }, { onConflict: "id", ignoreDuplicates: true });
   if (messageError) {
@@ -229,6 +211,15 @@ async function persistInboundCall(params: {
     throw new Error(`Failed to persist inbound Voice delivery: ${deliveryError.message}`);
   }
 
+  await persistVoiceTranscript({
+    call: params.call,
+    siteId: params.siteId,
+    conversationId,
+    deliveryId,
+    leadId: params.leadId,
+    agentId,
+  });
+
   return {
     id: deliveryId,
     message_id: messageId,
@@ -238,99 +229,8 @@ async function persistInboundCall(params: {
     zavu_sender_id: params.senderId,
     recipient_phone: params.phone,
     status,
+    transcript: params.call.transcript,
   };
-}
-
-function workflowAlreadyStarted(message: string | undefined): boolean {
-  return typeof message === "string"
-    && /already (?:started|exists)|WorkflowExecutionAlreadyStarted/i.test(message);
-}
-
-export async function queueInboundVoiceResponse(params: {
-  call: ZavuVoiceCall;
-  delivery: InboundDelivery;
-}): Promise<void> {
-  const userId = await resolveSiteUserId(params.delivery.site_id);
-  const workflowId = `customer-support-voice-${uuidv5(
-    `${params.delivery.site_id}:${params.call.id}`,
-    uuidv5.URL
-  )}`;
-  const workflowResult = await WorkflowService.getInstance().customerSupportMessage(
-    {
-      conversationId: params.delivery.conversation_id,
-      userId,
-      message: formatInboundVoiceMessage(params.call, params.delivery.status),
-      site_id: params.delivery.site_id,
-      lead_id: params.delivery.lead_id || undefined,
-      name: params.delivery.lead_id
-        ? undefined
-        : `Voice caller ${params.delivery.recipient_phone}`,
-      phone: params.delivery.recipient_phone,
-      origin: "voice",
-      origin_message_id: params.call.id,
-      channel_delivery: true,
-      require_approval: true,
-      custom_data: {
-        source: "zavu_inbound_voice",
-        channel_delivery: true,
-        voice_mode: "agent_call",
-        provider_call_id: params.call.id,
-        call_direction: "inbound",
-        call_status: params.delivery.status,
-        transcript_available: (params.call.transcript?.length || 0) > 0,
-        ...(params.call.durationSeconds != null
-          ? { duration_seconds: params.call.durationSeconds }
-          : {}),
-        ...(params.call.endReason ? { end_reason: params.call.endReason } : {}),
-      },
-    },
-    {
-      priority: "high",
-      async: true,
-      retryAttempts: 3,
-      taskQueue: "high",
-      workflowId,
-    }
-  );
-  if (
-    !workflowResult.success
-    && !workflowAlreadyStarted(workflowResult.error?.message)
-  ) {
-    throw new Error(
-      `Inbound Voice customer support workflow failed to start: ${
-        workflowResult.error?.message || "Unknown workflow error"
-      }`
-    );
-  }
-
-  const { data: message, error: messageReadError } = await tenantDatabase()
-    .from("messages")
-    .select("custom_data")
-    .eq("id", params.delivery.message_id)
-    .maybeSingle();
-  if (messageReadError) {
-    throw new Error(`Failed to read inbound Voice message: ${messageReadError.message}`);
-  }
-  const customData =
-    message?.custom_data && typeof message.custom_data === "object"
-      ? message.custom_data as Record<string, unknown>
-      : {};
-  const { error: messageUpdateError } = await tenantDatabase()
-    .from("messages")
-    .update({
-      custom_data: {
-        ...customData,
-        voice_response_workflow_status: "queued",
-        voice_response_workflow_id: workflowResult.workflowId || workflowId,
-      },
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", params.delivery.message_id);
-  if (messageUpdateError) {
-    throw new Error(
-      `Failed to mark inbound Voice response workflow queued: ${messageUpdateError.message}`
-    );
-  }
 }
 
 export async function handleUntrackedInboundVoiceEvent(
@@ -378,7 +278,6 @@ export async function handleUntrackedInboundVoiceEvent(
     leadId,
     eventType: event.type,
   });
-  await queueInboundVoiceResponse({ call, delivery });
   await clearVoiceCallContactContext({ phone, deliveryId: callId });
   return { handled: true, delivery, call };
 }

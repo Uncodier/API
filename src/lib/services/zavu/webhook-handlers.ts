@@ -114,6 +114,9 @@ export async function handleInboundMessage(event: any) {
     console.warn("[Zavu Webhook] Inbound event missing a valid channel");
     return;
   }
+  // Zavu's Voice agent handles speech and tool calls during the live call.
+  // A text-shaped echo from that call must never start a second support agent.
+  if (channel === "voice") return;
 
   const rawFrom = String(data.from);
   const identity = rawFrom.includes(":") ? rawFrom.split(":").slice(1).join(":") : rawFrom;

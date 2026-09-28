@@ -9,18 +9,18 @@ import {
 } from '@/lib/services/visitor-identity/VisitorSessionAuthorizationService';
 import { readSupportRequest, supportMessageId, supportRequestError } from './request-contract';
 
-// Browser clients published before the status endpoint expect the completed
-// assistant message in the POST response. Leave time to return a controlled
-// error if the workflow does not finish within the compatibility window.
+// Browser requests receive the final assistant reply in the POST by default.
+// Prefer: respond-async selects a 202 receipt followed by client-side /status polling.
+// Leave time to return a controlled error if the final-reply wait expires.
 export const maxDuration = 180;
-const LEGACY_REPLY_WAIT_MS = 120_000;
-const LEGACY_REPLY_POLL_MS = 2_500;
+const FINAL_REPLY_WAIT_MS = 120_000;
+const FINAL_REPLY_POLL_MS = 2_500;
 
-async function waitForLegacyReply(
+async function waitForFinalReply(
   workflowService: WorkflowService,
   workflowId: string,
 ): Promise<NextResponse> {
-  const deadline = Date.now() + LEGACY_REPLY_WAIT_MS;
+  const deadline = Date.now() + FINAL_REPLY_WAIT_MS;
   while (Date.now() < deadline) {
     const result = await workflowService.getFinishedWorkflowResult(workflowId);
     if (result.success && result.status === 'completed') {
@@ -43,11 +43,11 @@ async function waitForLegacyReply(
       }, { status: 502 });
     }
     await new Promise<void>(resolve => setTimeout(resolve,
-      Math.min(LEGACY_REPLY_POLL_MS, Math.max(0, deadline - Date.now())),
+      Math.min(FINAL_REPLY_POLL_MS, Math.max(0, deadline - Date.now())),
     ));
   }
-  // Never send a successful "running" receipt to a client that treats it as
-  // a final answer. The same workflow remains queryable via /status.
+  // Final-reply mode returns an error on timeout, not an asynchronous receipt.
+  // This stops the HTTP wait; the Temporal workflow may continue running.
   return NextResponse.json({
     success: false,
     error: { code: 'WORKFLOW_PENDING', message: 'Customer Support is still processing the message', workflowId },
@@ -203,7 +203,8 @@ export async function POST(request: NextRequest) {
       origin_message_id
     };
 
-    // Opciones de ejecución del workflow
+    // Both HTTP response modes start Temporal asynchronously. Final-reply mode
+    // waits for the result below; asynchronous receipt mode leaves polling to the client.
     const workflowOptions: WorkflowExecutionOptions = {
       priority: 'high', // Customer support tiene alta prioridad
       async: true,
@@ -236,12 +237,12 @@ export async function POST(request: NextRequest) {
 
     console.log('✅ Workflow Customer Support ejecutado exitosamente');
 
-    // Older browser bundles expect the assistant reply in this response; newer
-    // clients may explicitly opt into the asynchronous receipt and /status.
+    // Browser identity: final reply by default, or 202 + /status polling when
+    // Prefer: respond-async is requested. Requests without browser identity retain 202.
     const wantsAsync = request.headers.get('prefer')?.split(',')
       .some(value => value.trim().toLowerCase() === 'respond-async');
     if (identity && !wantsAsync) {
-      return await waitForLegacyReply(workflowService, result.workflowId || workflowOptions.workflowId!);
+      return await waitForFinalReply(workflowService, result.workflowId || workflowOptions.workflowId!);
     }
 
     return NextResponse.json(

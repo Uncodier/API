@@ -51,7 +51,7 @@ beforeEach(() => {
   canAccessSite.mockResolvedValue(false);
 });
 
-it('starts customer support asynchronously and returns an accepted receipt, not a long response', async () => {
+it('returns a 202 receipt without waiting when the browser opts into respond-async', async () => {
   const response = await POST(request());
   expect(response.status).toBe(202);
   expect(await response.json()).toEqual({
@@ -61,9 +61,10 @@ it('starts customer support asynchronously and returns an accepted receipt, not 
     expect.objectContaining({ site_id: 'canonical-site', visitor_id: 'canonical-visitor' }),
     expect.objectContaining({ async: true, taskQueue: 'high' }),
   );
+  expect(getFinishedWorkflowResult).not.toHaveBeenCalled();
 });
 
-it('keeps authenticated internal service requests asynchronous by default', async () => {
+it('keeps authenticated internal requests without browser identity asynchronous by default', async () => {
   authorizeBrowserRequest.mockResolvedValueOnce(null);
   hasAuthenticatedPrincipal.mockReturnValueOnce(true);
   canAccessSite.mockResolvedValueOnce(true);
@@ -73,7 +74,7 @@ it('keeps authenticated internal service requests asynchronous by default', asyn
   expect(getFinishedWorkflowResult).not.toHaveBeenCalled();
 });
 
-it('waits for an assistant reply for the published browser contract', async () => {
+it('returns the final assistant reply in the POST by default for browser requests', async () => {
   getFinishedWorkflowResult.mockResolvedValue({
     success: true, status: 'completed', data: {
       success: true, data: {
@@ -91,7 +92,7 @@ it('waits for an assistant reply for the published browser contract', async () =
   expect(getFinishedWorkflowResult).toHaveBeenCalledWith('wf-1');
 });
 
-it('does not return a successful receipt as a reply while the workflow is running', async () => {
+it('polls Temporal server-side while waiting for the final reply', async () => {
   getFinishedWorkflowResult.mockResolvedValueOnce({ success: true, status: 'running' })
     .mockResolvedValue({ success: true, status: 'completed', data: {
       success: true, data: { messages: { assistant: { content: 'Done' } } },
@@ -124,7 +125,7 @@ it('returns an explicit error when the workflow fails', async () => {
   expect(await response.json()).toMatchObject({ success: false, error: { code: 'WORKFLOW_FAILED' } });
 });
 
-it('bounds the compatibility wait rather than returning a successful empty reply', async () => {
+it('bounds the final-reply wait rather than returning a successful empty reply', async () => {
   jest.useFakeTimers();
   try {
     const pending = POST(request('client-send-1', 'Hello', false));

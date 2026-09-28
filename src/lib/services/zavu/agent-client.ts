@@ -75,6 +75,23 @@ export async function getSenderAgent(senderId: string): Promise<ZavuAgent> {
     `/senders/${encodeURIComponent(senderId)}/agent`
   );
   if (payload?.agent === null) {
+    // Standalone multi-sender agents can be listed as attached while the
+    // legacy sender-scoped lookup still returns null. Check the canonical
+    // agent list before concluding that the sender has no agent.
+    let cursor: string | undefined;
+    do {
+      const search = new URLSearchParams({ limit: "100" });
+      if (cursor) search.set("cursor", cursor);
+      const result = await zavuFetch<{
+        items?: ZavuAgent[];
+        nextCursor?: string | null;
+      }>(`/agents?${search}`);
+      const match = result.items?.find((agent) =>
+        agent.senderId === senderId || agent.senderIds?.includes(senderId)
+      );
+      if (match) return match;
+      cursor = result.nextCursor || undefined;
+    } while (cursor);
     const error = new Error("Zavu agent not found");
     (error as Error & { status: number }).status = 404;
     throw error;

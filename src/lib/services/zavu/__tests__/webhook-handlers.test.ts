@@ -9,7 +9,7 @@ import { clearVoiceCallContactContext } from "../contact-client";
 import { getVoiceCall } from "../voice-call-client";
 
 const mockHandleUntrackedInboundVoiceEvent = jest.fn();
-const mockQueueInboundVoiceResponse = jest.fn();
+const mockPersistVoiceTranscript = jest.fn();
 
 jest.mock("@/lib/database/supabase-server", () => ({
   supabaseAdmin: {
@@ -42,8 +42,10 @@ jest.mock("../contact-client", () => ({
 jest.mock("../inbound-voice-context", () => ({
   handleUntrackedInboundVoiceEvent: (...args: unknown[]) =>
     mockHandleUntrackedInboundVoiceEvent(...args),
-  queueInboundVoiceResponse: (...args: unknown[]) =>
-    mockQueueInboundVoiceResponse(...args),
+}));
+jest.mock("../voice-transcript", () => ({
+  persistVoiceTranscript: (...args: unknown[]) =>
+    mockPersistVoiceTranscript(...args),
 }));
 
 function mockSettingsForSender(siteId = "site-1") {
@@ -110,6 +112,18 @@ describe("handleInboundMessage", () => {
     expect(customerSupportMessage).not.toHaveBeenCalled();
   });
 
+  it("does not start a second agent for a Voice message echo", async () => {
+    mockSettingsForSender();
+    await handleInboundMessage({
+      senderId: "snd_1",
+      data: {
+        from: "+14155550100", channel: "voice", text: "I need help",
+      },
+    });
+
+    expect(customerSupportMessage).not.toHaveBeenCalled();
+  });
+
   it("uses a media placeholder instead of dropping inbound media without text", async () => {
     mockSettingsForSender("site-media");
 
@@ -141,7 +155,7 @@ describe("handleVoiceCallEvent", () => {
       from: supabaseAdmin.from,
     });
     mockHandleUntrackedInboundVoiceEvent.mockResolvedValue({ handled: false });
-    mockQueueInboundVoiceResponse.mockResolvedValue(undefined);
+    mockPersistVoiceTranscript.mockResolvedValue(undefined);
   });
 
   it("treats call.completed without a provider status as completed", () => {
@@ -207,6 +221,22 @@ describe("handleVoiceCallEvent", () => {
       undefined,
       "completed"
     )).toBe("completed");
+  });
+
+  it("retries a completed call while Zavu has not exposed its announced transcript", async () => {
+    (getVoiceCall as jest.Mock).mockResolvedValue({
+      id: "call-1", direction: "inbound", status: "completed", transcript: [],
+    });
+    (supabaseAdmin.from as jest.Mock).mockReturnValue({
+      select: () => ({ limit: () => ({ eq: async () => ({
+        data: [{ id: "delivery-1", status: "ringing" }], error: null,
+      }) }) }),
+    });
+
+    await expect(handleVoiceCallEvent({
+      type: "call.completed",
+      data: { callId: "call-1", transcriptAvailable: true },
+    })).rejects.toThrow("Voice transcript is not yet available");
   });
 
   it("preserves prior fields when a sparse completion event arrives", async () => {
@@ -298,7 +328,13 @@ describe("handleVoiceCallEvent", () => {
     });
   });
 
-  it("retries an inbound response workflow that was not marked queued", async () => {
+  it("materializes existing inbound transcripts without starting a response workflow", async () => {
+    const conversationUpdate = jest.fn().mockReturnValue({
+      eq: jest.fn().mockReturnValue({ eq: jest.fn().mockResolvedValue({ error: null }) }),
+    });
+    const messageUpdate = jest.fn().mockReturnValue({
+      eq: jest.fn().mockResolvedValue({ error: null }),
+    });
     const delivery = {
       id: "delivery-1",
       message_id: "message-1",
@@ -308,6 +344,7 @@ describe("handleVoiceCallEvent", () => {
       zavu_sender_id: "sender-1",
       recipient_phone: "+14155550100",
       status: "completed",
+      transcript: [{ seq: 1, role: "user", text: "Please follow up." }],
     };
     const call = {
       id: "call-1",
@@ -363,9 +400,20 @@ describe("handleVoiceCallEvent", () => {
               }),
             }),
           }),
-          update: jest.fn().mockReturnValue({
-            eq: jest.fn().mockResolvedValue({ error: null }),
-          }),
+          update: messageUpdate,
+        };
+      }
+      if (table === "conversations") {
+        return {
+          select: () => ({ eq: () => ({ eq: () => ({
+            maybeSingle: async () => ({
+              data: { custom_data: {
+                voice_response_workflow_status: "pending", source: "zavu_inbound_voice",
+              } },
+              error: null,
+            }),
+          }) }) }),
+          update: conversationUpdate,
         };
       }
       throw new Error(`Unexpected table ${table}`);
@@ -376,9 +424,117 @@ describe("handleVoiceCallEvent", () => {
       data: { callId: "call-1" },
     });
 
-    expect(mockQueueInboundVoiceResponse).toHaveBeenCalledWith({
-      call,
-      delivery,
+    expect(conversationUpdate).toHaveBeenCalledWith({
+      custom_data: { source: "zavu_inbound_voice" },
     });
+    expect(messageUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      custom_data: expect.not.objectContaining({ voice_response_workflow_status: "pending" }),
+    }));
+
+    expect(mockPersistVoiceTranscript).toHaveBeenCalledWith({
+      call: expect.objectContaining({
+        id: "call-1",
+        direction: "inbound",
+        transcript: call.transcript,
+      }),
+      siteId: "site-1",
+      conversationId: "conversation-1",
+      deliveryId: "delivery-1",
+      leadId: "lead-1",
+      agentId: undefined,
+    });
+  });
+
+  it("projects outbound call turns separately from the original campaign message", async () => {
+    const delivery = {
+      id: "delivery-2",
+      message_id: "campaign-message",
+      site_id: "site-1",
+      conversation_id: "conversation-1",
+      recipient_phone: "+14155550100",
+      status: "completed",
+      transcript: [{ seq: 0, role: "assistant", text: "Welcome" }],
+    };
+    (supabaseAdmin.from as jest.Mock).mockImplementation((table: string) => {
+      if (table === "voice_call_deliveries") {
+        return {
+          select: () => ({ limit: () => ({ eq: async () => ({ data: [delivery], error: null }) }) }),
+          update: () => ({ eq: () => ({
+            select: () => ({ maybeSingle: async () => ({ data: { status: "completed" }, error: null }) }),
+          }) }),
+        };
+      }
+      if (table === "messages") {
+        return {
+          select: () => ({ eq: () => ({ maybeSingle: async () => ({
+            data: { custom_data: { call_direction: "outbound" } }, error: null,
+          }) }) }),
+          update: () => ({ eq: async () => ({ error: null }) }),
+        };
+      }
+      throw new Error(`Unexpected table ${table}`);
+    });
+
+    await handleVoiceCallEvent({ type: "call.completed", data: { callId: "call-2" } });
+
+    expect(mockPersistVoiceTranscript).toHaveBeenCalledWith({
+      call: expect.objectContaining({ direction: "outbound", transcript: delivery.transcript }),
+      siteId: "site-1",
+      conversationId: "conversation-1",
+      deliveryId: "delivery-2",
+      leadId: undefined,
+      agentId: undefined,
+    });
+  });
+
+  it("links an existing inbound conversation to its verified local Voice agent", async () => {
+    const agentUpdate = jest.fn().mockReturnValue({
+      eq: jest.fn().mockReturnValue({
+        eq: jest.fn().mockReturnValue({ is: jest.fn().mockResolvedValue({ error: null }) }),
+      }),
+    });
+    (getVoiceCall as jest.Mock).mockResolvedValue({
+      id: "call-1", agentId: "zavu-agent-1", direction: "inbound", status: "completed",
+      transcript: [{ seq: 0, role: "assistant", text: "Hello" }],
+    });
+    (supabaseAdmin.from as jest.Mock).mockImplementation((table: string) => {
+      if (table === "voice_call_deliveries") return {
+        select: () => ({ limit: () => ({ eq: async () => ({ data: [{
+          id: "delivery-1", message_id: "message-1", site_id: "site-1",
+          conversation_id: "conversation-1", recipient_phone: "+14155550100",
+          status: "completed",
+        }], error: null }) }) }),
+        update: () => ({ eq: () => ({ select: () => ({
+          maybeSingle: async () => ({ data: { status: "completed" }, error: null }),
+        }) }) }),
+      };
+      if (table === "messages") return {
+        select: () => ({ eq: () => ({ maybeSingle: async () => ({
+          data: { custom_data: { call_direction: "inbound" } }, error: null,
+        }) }) }),
+        update: () => ({ eq: async () => ({ error: null }) }),
+      };
+      if (table === "agents") return {
+        select: () => ({ eq: () => ({ eq: () => ({ limit: () => ({
+          maybeSingle: async () => ({ data: { id: "local-agent-1" }, error: null }),
+        }) }) }) }),
+      };
+      if (table === "conversations") return {
+        update: agentUpdate,
+        select: () => ({ eq: () => ({ eq: () => ({
+          maybeSingle: async () => ({ data: { custom_data: {} }, error: null }),
+        }) }) }),
+      };
+      throw new Error(`Unexpected table ${table}`);
+    });
+
+    await handleVoiceCallEvent({
+      type: "call.completed", data: { callId: "call-1", transcriptAvailable: true },
+    });
+
+    expect(agentUpdate).toHaveBeenCalledWith({ agent_id: "local-agent-1" });
+    expect(mockPersistVoiceTranscript).toHaveBeenCalledWith(expect.objectContaining({
+      agentId: "local-agent-1",
+    }));
   });
 });

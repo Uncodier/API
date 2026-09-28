@@ -24,7 +24,7 @@ import { POST } from "../route";
 
 const SITE_ID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 
-function request(body: unknown, signature?: string, toolName = "reservations") {
+function request(body: unknown, signature?: string, toolName: string | null = "reservations") {
   const rawBody = JSON.stringify(body);
   return new NextRequest(
     `https://backend.example.com/api/integrations/zavu/voice-tools?siteId=${SITE_ID}`,
@@ -32,7 +32,7 @@ function request(body: unknown, signature?: string, toolName = "reservations") {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-zavu-tool": toolName,
+        ...(toolName !== null ? { "x-zavu-tool": toolName } : {}),
         "x-zavu-signature":
           signature ||
           crypto.createHmac("sha256", "whsec_test").update(rawBody).digest("hex"),
@@ -106,6 +106,46 @@ describe("Zavu Voice tools webhook", () => {
     }, "0".repeat(64)));
 
     expect(response.status).toBe(401);
+    expect(mockExecuteCustomerSupportVoiceTool).not.toHaveBeenCalled();
+  });
+
+  it("uses a signed body tool name when Zavu omits its header", async () => {
+    mockExecuteCustomerSupportVoiceTool.mockResolvedValue({ success: true });
+    const response = await POST(request({
+      tool: "reservations",
+      arguments: { action: "list" },
+    }, undefined, null));
+
+    expect(response.status).toBe(200);
+    expect(mockExecuteCustomerSupportVoiceTool).toHaveBeenCalledWith(
+      expect.objectContaining({ toolName: "reservations", siteId: SITE_ID })
+    );
+  });
+
+  it("rejects an unsigned body tool name without executing it", async () => {
+    const response = await POST(request({
+      tool: "reservations",
+      arguments: {},
+    }, "0".repeat(64), null));
+
+    expect(response.status).toBe(401);
+    expect(mockExecuteCustomerSupportVoiceTool).not.toHaveBeenCalled();
+  });
+
+  it("rejects mismatched header and signed body tool names", async () => {
+    const response = await POST(request({
+      tool: "CREATE_TASK",
+      arguments: {},
+    }));
+
+    expect(response.status).toBe(400);
+    expect(mockExecuteCustomerSupportVoiceTool).not.toHaveBeenCalled();
+  });
+
+  it("rejects requests without a tool name after authenticating", async () => {
+    const response = await POST(request({ arguments: {} }, undefined, null));
+
+    expect(response.status).toBe(400);
     expect(mockExecuteCustomerSupportVoiceTool).not.toHaveBeenCalled();
   });
 

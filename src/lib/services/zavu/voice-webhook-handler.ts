@@ -3,9 +3,9 @@ import { clearVoiceCallContactContext } from "./contact-client";
 import { getVoiceCall } from "./voice-call-client";
 import {
   handleUntrackedInboundVoiceEvent,
-  queueInboundVoiceResponse,
   type InboundDelivery,
 } from "./inbound-voice-context";
+import { persistVoiceTranscript } from "./voice-transcript";
 import { normalizeVoiceDeliveryStatus } from "./voice-status";
 
 function tenantDatabase() {
@@ -80,6 +80,7 @@ export async function handleVoiceCallEvent(event: any): Promise<void> {
   }
   let delivery = deliveries?.[0] as unknown as InboundDelivery | undefined;
   let callDetails: Awaited<ReturnType<typeof getVoiceCall>> | undefined;
+  let untrackedInbound = false;
   if (!delivery) {
     const inbound = await handleUntrackedInboundVoiceEvent(event, callId);
     if (!inbound.handled) {
@@ -89,6 +90,7 @@ export async function handleVoiceCallEvent(event: any): Promise<void> {
     callDetails = inbound.call;
     delivery = inbound.delivery;
     if (!delivery) return;
+    untrackedInbound = true;
   }
   if (
     TERMINAL_VOICE_STATUSES.has(delivery.status)
@@ -108,6 +110,16 @@ export async function handleVoiceCallEvent(event: any): Promise<void> {
     && data?.transcriptAvailable === true
   ) {
     callDetails = await getVoiceCall(callId);
+  }
+  if (
+    event.type === "call.completed"
+    && data?.transcriptAvailable === true
+    && !callDetails?.transcript?.length
+    && !delivery.transcript?.length
+  ) {
+    // Do not acknowledge completion until Zavu actually exposes the turns.
+    // A failed webhook claim can be retried with the same deterministic IDs.
+    throw new Error(`Voice transcript is not yet available for call ${callId}`);
   }
 
   const status = resolveVoiceCallWebhookStatus(
@@ -181,8 +193,36 @@ export async function handleVoiceCallEvent(event: any): Promise<void> {
       ? message.custom_data as Record<string, unknown>
       : {};
   const inbound = customData.call_direction === "inbound";
+  const {
+    voice_response_workflow_status: _oldStatus,
+    voice_response_workflow_id: _oldWorkflowId,
+    ...retainedCustomData
+  } = customData;
+  let agentId: string | undefined;
+  if (inbound && terminal && callDetails?.agentId && delivery.site_id) {
+    const { data: agent, error: agentError } = await supabaseAdmin
+      .from("agents")
+      .select("id")
+      .eq("site_id", delivery.site_id)
+      .eq("configuration->zavu->>agent_id", callDetails.agentId)
+      .limit(1)
+      .maybeSingle();
+    if (agentError) throw new Error(`Failed to resolve Voice agent: ${agentError.message}`);
+    agentId = agent?.id;
+    if (agentId && delivery.conversation_id) {
+      const { error: conversationError } = await tenantDatabase()
+        .from("conversations")
+        .update({ agent_id: agentId })
+        .eq("site_id", delivery.site_id)
+        .eq("id", delivery.conversation_id)
+        .is("agent_id", null);
+      if (conversationError) {
+        throw new Error(`Failed to link inbound Voice agent: ${conversationError.message}`);
+      }
+    }
+  }
   const messageCustomData: Record<string, unknown> = {
-    ...customData,
+    ...(inbound ? retainedCustomData : customData),
     status: failed
       ? "failed"
       : terminal
@@ -211,15 +251,57 @@ export async function handleVoiceCallEvent(event: any): Promise<void> {
   if (messageError) {
     throw new Error(`Failed to update Voice call message: ${messageError.message}`);
   }
-  if (
-    inbound
-    && terminal
-    && customData.voice_response_workflow_status !== "queued"
-  ) {
-    const completedCall = callDetails || await getVoiceCall(callId);
-    await queueInboundVoiceResponse({
-      call: completedCall,
-      delivery,
-    });
+
+  // For existing inbound and outbound deliveries, keep the raw provider
+  // transcript on the delivery and materialize only spoken turns in chat.
+  if (terminal && !untrackedInbound && delivery.conversation_id && delivery.site_id) {
+    const existingTranscript = Array.isArray(delivery.transcript) ? delivery.transcript : [];
+    const turns = callDetails?.transcript?.length ? callDetails.transcript : existingTranscript;
+    if (turns.length > 0) {
+      await persistVoiceTranscript({
+        call: {
+          id: callId,
+          direction: inbound ? "inbound" : "outbound",
+          transcript: turns,
+          endedAt: callDetails?.endedAt || delivery.ended_at,
+          createdAt: callDetails?.createdAt || delivery.answered_at,
+        },
+        siteId: delivery.site_id,
+        conversationId: delivery.conversation_id,
+        deliveryId: delivery.id,
+        leadId: delivery.lead_id,
+        agentId,
+      });
+    }
+  }
+
+  // Remove the abandoned Customer Support workflow marker only after the
+  // transcript has been materialized successfully for this inbound call.
+  if (inbound && terminal && delivery.conversation_id && delivery.site_id) {
+    const { data: conversation, error: conversationReadError } = await tenantDatabase()
+      .from("conversations")
+      .select("custom_data")
+      .eq("id", delivery.conversation_id)
+      .eq("site_id", delivery.site_id)
+      .maybeSingle();
+    if (conversationReadError) {
+      throw new Error(`Failed to read inbound Voice conversation: ${conversationReadError.message}`);
+    }
+    const conversationData = conversation?.custom_data;
+    if (conversationData?.voice_response_workflow_status) {
+      const {
+        voice_response_workflow_status: _oldStatus,
+        voice_response_workflow_id: _oldWorkflowId,
+        ...retainedConversationData
+      } = conversationData as Record<string, unknown>;
+      const { error: conversationUpdateError } = await tenantDatabase()
+        .from("conversations")
+        .update({ custom_data: retainedConversationData })
+        .eq("id", delivery.conversation_id)
+        .eq("site_id", delivery.site_id);
+      if (conversationUpdateError) {
+        throw new Error(`Failed to update inbound Voice conversation: ${conversationUpdateError.message}`);
+      }
+    }
   }
 }

@@ -1,7 +1,13 @@
 import {
+  buildVoiceFollowUpContext,
   formatVoiceFollowUpContext,
   MAX_VOICE_FOLLOW_UP_CONTEXT_CHARS,
 } from "../voice-follow-up-context";
+import { supabaseAdmin } from "@/lib/database/supabase-server";
+
+jest.mock("@/lib/database/supabase-server", () => ({
+  supabaseAdmin: { from: jest.fn() },
+}));
 
 describe("Voice follow-up context", () => {
   it("builds a newest-first cross-channel customer timeline", () => {
@@ -73,5 +79,67 @@ describe("Voice follow-up context", () => {
     expect(result.context.length).toBeLessThanOrEqual(
       MAX_VOICE_FOLLOW_UP_CONTEXT_CHARS
     );
+  });
+
+  it("keeps tool output out of the spoken follow-up context", () => {
+    const result = formatVoiceFollowUpContext({
+      deliveries: [{ transcript: [
+        { seq: 0, role: "user", text: "Please follow up next week." },
+        { seq: 1, role: "tool", text: '{"private_api_key":"secret"}' },
+        { seq: 2, role: "assistant", text: "I will make a note." },
+      ] }],
+    });
+
+    expect(result.context).toContain("Please follow up next week.");
+    expect(result.context).not.toContain("private_api_key");
+    expect(result.sources.transcriptCount).toBe(1);
+  });
+
+  it("does not repeat projected transcript turns alongside the original call", () => {
+    const result = formatVoiceFollowUpContext({
+      messages: [{
+        id: "turn-1",
+        conversation_id: "conversation-1",
+        role: "user",
+        content: "Already in provider transcript",
+        custom_data: { source: "zavu_voice_transcript" },
+      }],
+      deliveries: [{ transcript: [
+        { seq: 0, role: "user", text: "Already in provider transcript" },
+      ] }],
+    });
+
+    expect(result.context.match(/Already in provider transcript/g)).toHaveLength(1);
+  });
+
+  it("loads voice history by site and phone for a caller without a lead", async () => {
+    const transcript = [{ seq: 0, role: "user", text: "Please call me tomorrow." }];
+    const deliveriesQuery: any = {
+      select: jest.fn(), eq: jest.fn(), not: jest.fn(), order: jest.fn(),
+      limit: jest.fn().mockResolvedValue({ data: [{ transcript }], error: null }),
+    };
+    for (const method of ["select", "eq", "not", "order"] as const) {
+      deliveriesQuery[method].mockReturnValue(deliveriesQuery);
+    }
+    (supabaseAdmin.from as jest.Mock).mockImplementation((table: string) => {
+      if (table === "leads") return {
+        select: () => ({ eq: () => ({ eq: () => ({
+          limit: () => ({ maybeSingle: async () => ({ data: null, error: null }) }),
+        }) }) }),
+      };
+      if (table === "voice_call_deliveries") return deliveriesQuery;
+      throw new Error(`Unexpected table ${table}`);
+    });
+
+    const result = await buildVoiceFollowUpContext({
+      siteId: "site-1", phone: "+14155550100",
+    });
+
+    expect(deliveriesQuery.eq).toHaveBeenCalledWith("site_id", "site-1");
+    expect(deliveriesQuery.eq).toHaveBeenCalledWith("recipient_phone", "+14155550100");
+    expect(result.sources).toEqual({
+      leadFound: false, messageCount: 0, transcriptCount: 1,
+    });
+    expect(result.context).toContain("Please call me tomorrow.");
   });
 });

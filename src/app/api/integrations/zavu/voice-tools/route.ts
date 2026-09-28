@@ -6,7 +6,7 @@ import { getSupabaseAdmin } from "@/lib/database/supabase-server";
 import { executeCustomerSupportVoiceTool } from "@/lib/services/zavu/voice-tool-executor";
 
 const requestSchema = z.object({
-  tool: z.string().optional(),
+  tool: z.string().min(1).optional(),
   arguments: z.record(z.unknown()),
   context: z.object({
     contactPhone: z.string().optional(),
@@ -20,17 +20,13 @@ export async function POST(request: NextRequest) {
   try {
     const rawBody = await request.text();
     const signature = request.headers.get("x-zavu-signature");
-    const toolName = request.headers.get("x-zavu-tool");
+    const headerToolName = request.headers.get("x-zavu-tool")?.trim();
     
     const { searchParams } = new URL(request.url);
     const siteId = searchParams.get("siteId");
 
     if (!siteId || !z.string().uuid().safeParse(siteId).success) {
       return NextResponse.json({ error: "Missing siteId query parameter" }, { status: 400 });
-    }
-
-    if (!toolName) {
-      return NextResponse.json({ error: "Missing x-zavu-tool header" }, { status: 400 });
     }
 
     const supabase = getSupabaseAdmin();
@@ -54,13 +50,25 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
     }
 
-    const parsed = requestSchema.safeParse(JSON.parse(rawBody));
+    let payload: unknown;
+    try {
+      payload = JSON.parse(rawBody);
+    } catch {
+      return NextResponse.json({ error: "Invalid tool payload" }, { status: 400 });
+    }
+    const parsed = requestSchema.safeParse(payload);
     if (!parsed.success) {
       return NextResponse.json({ error: "Invalid tool payload" }, { status: 400 });
     }
 
-    if (parsed.data.tool && parsed.data.tool !== toolName) {
+    if (headerToolName && parsed.data.tool && parsed.data.tool !== headerToolName) {
       return NextResponse.json({ error: "Tool name mismatch" }, { status: 400 });
+    }
+    // Zavu's voice runtime can omit X-Zavu-Tool. The body is trusted only
+    // after checking its signature with this site's agent secret.
+    const toolName = headerToolName || parsed.data.tool;
+    if (!toolName) {
+      return NextResponse.json({ error: "Missing tool name" }, { status: 400 });
     }
 
     try {

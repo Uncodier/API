@@ -509,14 +509,31 @@ describe("Zavu client webhook contract", () => {
   });
 
   it("treats an explicitly empty sender agent as not found", async () => {
-    (global.fetch as jest.Mock).mockResolvedValueOnce(
-      mockJson(200, { agent: null })
-    );
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce(mockJson(200, { agent: null }))
+      .mockResolvedValueOnce(mockJson(200, { items: [], nextCursor: null }));
 
     await expect(getSenderAgent("sender_1")).rejects.toMatchObject({
       message: "Zavu agent not found",
       status: 404,
     });
+  });
+
+  it("finds an attached standalone agent when sender-scoped lookup returns null", async () => {
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce(mockJson(200, { agent: null }))
+      .mockResolvedValueOnce(mockJson(200, {
+        items: [{ id: "other", senderIds: ["sender_other"] }],
+        nextCursor: "page-2",
+      }))
+      .mockResolvedValueOnce(mockJson(200, {
+        items: [{ id: "agent_1", senderIds: ["sender_1"], includeContactMetadata: true }],
+        nextCursor: null,
+      }));
+
+    await expect(getSenderAgent("sender_1")).resolves.toMatchObject({ id: "agent_1" });
+    expect((global.fetch as jest.Mock).mock.calls[2][0])
+      .toBe("https://api.zavu.dev/v1/agents?limit=100&cursor=page-2");
   });
 
   it("attaches a sender to the requested agent instead of the legacy global agent", async () => {
