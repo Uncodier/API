@@ -224,8 +224,11 @@ export abstract class BaseWorkflowService {
   }
 
   protected getTemporalApiKey(): string | undefined {
-    // Priorizar TEMPORAL_SERVICE_API_KEY para operaciones de lectura/servicio
-    return process.env.TEMPORAL_SERVICE_API_KEY || process.env.TEMPORAL_CLOUD_API_KEY;
+    // Prefer the write-capable gateway key when configured, regardless of URL.
+    // Otherwise preserve the existing service/cloud key fallback order.
+    return process.env.TEMPORAL_GATEWAY_SERVICE_API_KEY?.trim()
+      || process.env.TEMPORAL_SERVICE_API_KEY
+      || process.env.TEMPORAL_CLOUD_API_KEY;
   }
 
   protected getTemporalEnvironment(): string | undefined {
