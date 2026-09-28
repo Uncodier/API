@@ -9,6 +9,51 @@ import {
 } from '@/lib/services/visitor-identity/VisitorSessionAuthorizationService';
 import { readSupportRequest, supportMessageId, supportRequestError } from './request-contract';
 
+// Browser clients published before the status endpoint expect the completed
+// assistant message in the POST response. Leave time to return a controlled
+// error if the workflow does not finish within the compatibility window.
+export const maxDuration = 180;
+const LEGACY_REPLY_WAIT_MS = 120_000;
+const LEGACY_REPLY_POLL_MS = 2_500;
+
+async function waitForLegacyReply(
+  workflowService: WorkflowService,
+  workflowId: string,
+): Promise<NextResponse> {
+  const deadline = Date.now() + LEGACY_REPLY_WAIT_MS;
+  while (Date.now() < deadline) {
+    const result = await workflowService.getFinishedWorkflowResult(workflowId);
+    if (result.success && result.status === 'completed') {
+      const payload = result.data as {
+        success?: boolean;
+        data?: { messages?: { assistant?: { content?: string } } };
+      } | undefined;
+      if (payload?.success && payload.data?.messages?.assistant?.content) {
+        return NextResponse.json({ success: true, data: payload.data });
+      }
+      return NextResponse.json({
+        success: false,
+        error: { code: 'WORKFLOW_NO_REPLY', message: 'Customer Support completed without an assistant reply' },
+      }, { status: 502 });
+    }
+    if (!result.success && result.error?.code === 'WORKFLOW_FAILED') {
+      return NextResponse.json({
+        success: false,
+        error: { code: 'WORKFLOW_FAILED', message: 'Customer Support workflow failed' },
+      }, { status: 502 });
+    }
+    await new Promise<void>(resolve => setTimeout(resolve,
+      Math.min(LEGACY_REPLY_POLL_MS, Math.max(0, deadline - Date.now())),
+    ));
+  }
+  // Never send a successful "running" receipt to a client that treats it as
+  // a final answer. The same workflow remains queryable via /status.
+  return NextResponse.json({
+    success: false,
+    error: { code: 'WORKFLOW_PENDING', message: 'Customer Support is still processing the message', workflowId },
+  }, { status: 504, headers: { 'Retry-After': '5' } });
+}
+
 interface CustomerSupportWorkflowArgs {
   conversationId?: string;
   userId?: string;
@@ -191,7 +236,14 @@ export async function POST(request: NextRequest) {
 
     console.log('✅ Workflow Customer Support ejecutado exitosamente');
 
-    // Do not hold a Vercel request open for a potentially long Temporal run.
+    // Older browser bundles expect the assistant reply in this response; newer
+    // clients may explicitly opt into the asynchronous receipt and /status.
+    const wantsAsync = request.headers.get('prefer')?.split(',')
+      .some(value => value.trim().toLowerCase() === 'respond-async');
+    if (identity && !wantsAsync) {
+      return await waitForLegacyReply(workflowService, result.workflowId || workflowOptions.workflowId!);
+    }
+
     return NextResponse.json(
       { success: true, data: { status: result.status, workflowId: result.workflowId, runId: result.runId } },
       { status: 202 },

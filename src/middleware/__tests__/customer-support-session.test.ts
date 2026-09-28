@@ -17,7 +17,7 @@ const from = jest.fn((table) => {
 
 jest.unstable_mockModule('../apiKeyAuth', () => ({ apiKeyAuth }));
 jest.unstable_mockModule('../../../cors.config.js', () => ({
-  getAllowedHeaders: () => 'Content-Type, X-Visitor-Session-Token', getAllowedOrigins: () => ['https://app.example'],
+  getAllowedHeaders: () => 'Content-Type, Prefer, X-Visitor-Session-Token', getAllowedOrigins: () => ['https://app.example'],
 }));
 jest.unstable_mockModule('@/lib/security/request-rate-limit', () => ({
   enforceRequestRateLimit: async () => null,
@@ -55,7 +55,7 @@ beforeEach(() => jest.clearAllMocks());
 
 async function throughMiddleware(path: string, token?: string, forgedPrincipal = false) {
   const request = new NextRequest(`https://api.example${path}`, { method: 'POST', headers: {
-    'content-type': 'application/json', origin: 'https://customer-website.example',
+    'content-type': 'application/json', origin: 'https://customer-website.example', prefer: 'respond-async',
     ...(token ? { 'X-Visitor-Session-Token': token } : {}),
     ...(forgedPrincipal ? { 'x-api-key-data': '{"isService":true}', 'x-auth-validated': 'true' } : {}),
   }, body: JSON.stringify({ site_id: siteId, session_id: sessionId, client_message_id: 'send-1', message: 'Hello' }) });
@@ -87,10 +87,11 @@ it('rejects missing, invalid, expired and other-session tokens, including forged
 
 it('allows widget CORS preflight but keeps internal and sibling workflow routes private', async () => {
   const response = await middleware(new NextRequest('https://api.example/api/workflow/customerSupport/status', {
-    method: 'OPTIONS', headers: { origin: 'https://customer-website.example', 'Access-Control-Request-Headers': 'X-Visitor-Session-Token' },
+    method: 'OPTIONS', headers: { origin: 'https://customer-website.example', 'Access-Control-Request-Headers': 'X-Visitor-Session-Token, Prefer' },
   }));
   expect(response.status).toBe(204);
   expect(response.headers.get('access-control-allow-headers')).toContain('X-Visitor-Session-Token');
+  expect(response.headers.get('access-control-allow-headers')).toContain('Prefer');
   for (const path of ['/api/workflows/channel-message/advance', '/api/workflows/channel-message/prepare', '/api/workflows/channel-message/result', '/api/workflow/customerSupport/other']) {
     expect(isPublicRequest(path, 'POST')).toBe(false);
     expect((await throughMiddleware(path, 'signed-looking-token')).status).toBe(401);

@@ -21,7 +21,7 @@ const { POST: send } = await import('../customerSupport/route');
 const { POST: status } = await import('../customerSupport/status/route');
 const payload = { site_id: 'site-1', session_id: 'session-1', client_message_id: 'client-1', message: 'Hello' };
 const request = (body: unknown) => new NextRequest('https://api.example/api/workflow/customerSupport', {
-  method: 'POST', body: JSON.stringify(body),
+  method: 'POST', headers: { Prefer: 'respond-async' }, body: JSON.stringify(body),
 });
 beforeEach(() => jest.clearAllMocks());
 
