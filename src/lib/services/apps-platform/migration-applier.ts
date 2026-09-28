@@ -3,6 +3,7 @@ import { lintMigration } from './migration-linter';
 import { Sandbox } from '@vercel/sandbox';
 import { syncPostgrestSchemas } from './postgrest-config';
 import { createHash } from 'node:crypto';
+import type { MigrationRepairTarget } from './migration-repair-types';
 
 function migrationChecksum(sql: string): string {
   return createHash('sha256').update(sql).digest('hex');
@@ -10,8 +11,9 @@ function migrationChecksum(sql: string): string {
 
 export async function applyPendingMigrations(
   sandbox: Sandbox,
-  requirementId: string
-): Promise<{ applied: string[]; errors: string[]; failureKind?: 'product' | 'infrastructure' }> {
+  requirementId: string,
+  expectedRepairs: MigrationRepairTarget[] = [],
+): Promise<{ applied: string[]; errors: string[]; failureKind?: 'product' | 'infrastructure'; repairTarget?: MigrationRepairTarget }> {
   const client = getAppsAdminClient();
 
   const { data: tenantRow, error: tenantError } = await client
@@ -36,6 +38,17 @@ export async function applyPendingMigrations(
   const tenantId = tenantRow.tenant_id;
   const schema = tenantRow.schema;
 
+  // A recovered sandbox must not turn a lost repair into an empty/passing batch.
+  for (const expected of expectedRepairs) {
+    if (expected.schema !== schema || expected.tenantId !== tenantId) {
+      return { applied: [], errors: ['Repaired migration tenant identity changed.'], failureKind: 'infrastructure' };
+    }
+    const read = await sandbox.runCommand('cat', [expected.file]);
+    if (read.exitCode !== 0 || migrationChecksum(await read.stdout()) !== expected.checksum) {
+      return { applied: [], errors: [`Repaired migration ${expected.file} is missing or changed after sandbox recovery.`], failureKind: 'infrastructure' };
+    }
+  }
+
   // Find migration files in the sandbox
   // Check both migrations/ and supabase/migrations/
   const findCmd = await sandbox.runCommand('sh', [
@@ -55,6 +68,9 @@ export async function applyPendingMigrations(
   }
   const stdout = await findCmd.stdout();
   const files = stdout.trim().split('\n').filter(Boolean);
+  if (expectedRepairs.some(expected => !files.includes(expected.file))) {
+    return { applied: [], errors: ['Repaired migration is absent from the discovered migration batch.'], failureKind: 'infrastructure' };
+  }
 
   if (files.length === 0) {
     return { applied: [], errors: [] };
@@ -63,6 +79,7 @@ export async function applyPendingMigrations(
   const applied: string[] = [];
   const errors: string[] = [];
   let failureKind: 'product' | 'infrastructure' = 'infrastructure';
+  let repairTarget: MigrationRepairTarget | undefined;
   let shouldSyncExposure = false;
 
   for (const file of files) {
@@ -84,6 +101,11 @@ export async function applyPendingMigrations(
       continue;
     }
     const checksum = migrationChecksum(sql);
+    const expectedRepair = expectedRepairs.find(expected => expected.file === file);
+    if (expectedRepair && expectedRepair.checksum !== checksum) {
+      errors.push(`Repaired migration ${file} changed during validation.`);
+      break;
+    }
 
     const { data: receipt, error: metaError } = await client.rpc(
       'apps_get_migration_receipt',
@@ -160,6 +182,7 @@ export async function applyPendingMigrations(
 
     if (!lintResult.ok) {
       failureKind = 'product';
+      repairTarget = { file, schema, tenantId, checksum, reason: 'lint' };
       const errorMsgs = lintResult.errors.map(e => `Line ${e.line}: ${e.message}`).join('\n');
       errors.push(`File ${file} failed linting:\n${errorMsgs}`);
       break;
@@ -181,6 +204,7 @@ export async function applyPendingMigrations(
       // Unknown/transport/authentication failures remain infrastructure failures.
       if (/^(?:22|23|42)/.test(execError.code || '') && execError.code !== '42501') {
         failureKind = 'product';
+        repairTarget = { file, schema, tenantId, checksum, reason: 'sql' };
       }
       errors.push(`File ${file} failed to execute: ${execError.message}`);
       break;
@@ -198,11 +222,26 @@ export async function applyPendingMigrations(
     }
   }
 
+  if (errors.length === 0) {
+    for (const expected of expectedRepairs) {
+      const { data: receipt, error } = await client.rpc('apps_get_migration_receipt', {
+        p_target_schema: schema, p_expected_tenant_id: tenantId,
+        p_migration_key: `migration:${expected.file}`,
+      });
+      if (error || receipt?.found !== true || receipt.value?.checksum !== expected.checksum) {
+        errors.push(`Repaired migration ${expected.file} has no matching atomic receipt.`);
+        break;
+      }
+    }
+  }
+
   if (shouldSyncExposure) {
     // Automatically expose schemas to PostgREST to ensure new tables/schemas are visible
     // and reload the schema cache so introspection works immediately.
     const syncResult = await syncPostgrestSchemas();
     if (!syncResult.ok) {
+      failureKind = 'infrastructure';
+      repairTarget = undefined;
       errors.push(`Failed to sync schemas with Supabase Management API: ${syncResult.error}`);
     }
     const exposeSql = `
@@ -211,9 +250,12 @@ export async function applyPendingMigrations(
     `;
     const { error: exposeError } = await client.rpc('apps_exec_sql', { sql: exposeSql });
     if (exposeError) {
+      failureKind = 'infrastructure';
+      repairTarget = undefined;
       errors.push(`Failed to auto-expose schema to PostgREST: ${exposeError.message}`);
     }
   }
 
-  return { applied, errors, ...(errors.length > 0 ? { failureKind } : {}) };
+  return { applied, errors, ...(errors.length > 0 ? { failureKind } : {}),
+    ...(repairTarget ? { repairTarget } : {}) };
 }

@@ -8,9 +8,10 @@ Documents are ordered below by relevance and freshness. A dated checkpoint recor
 
 Read these first when changing the code-agent harness:
 
-1. [Harness correctness repair and rollout — 2026-09-26](./HARNESS_REPAIR_2026-09-26.md)
-2. [Code-agent harness checkpoint — 2026-09-17](./CODE_AGENT_HARNESS_CHECKPOINT_2026-09-17.md)
-3. [Harness reliability appendix — 2026-09-17](./CODE_AGENT_HARNESS_RELIABILITY_CHECKPOINT_2026-09-17.md)
+1. [Bounded tenant migration repair — 2026-09-28](./MIGRATION_REPAIR_2026-09-28.md)
+2. [Harness correctness repair and rollout — 2026-09-26](./HARNESS_REPAIR_2026-09-26.md)
+3. [Code-agent harness checkpoint — 2026-09-17](./CODE_AGENT_HARNESS_CHECKPOINT_2026-09-17.md)
+4. [Harness reliability appendix — 2026-09-17](./CODE_AGENT_HARNESS_RELIABILITY_CHECKPOINT_2026-09-17.md)
 
 ## Availability audits
 

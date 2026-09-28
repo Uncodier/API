@@ -12,6 +12,12 @@ import { applyGateFailureHealing } from './gate-failure-healing';
 import { isStrictFinalPlanStep } from '@/lib/helpers/plan-status';
 import { patchPlanStepAtomically } from '@/lib/services/instance-plan-infrastructure-state';
 import type { JudgeRepairRun } from './judge-repair-controller';
+import { assertCronExecutionOwnership, type CronExecutionOwnership } from './cron-execution-ownership';
+import { loadBacklogGateContext } from './single-turn-gate-context';
+import { computeApplicationBuildFingerprint } from './commit/pre-push-build-validation';
+import { getDeclaredProtectedRoutes, getDeclaredTestCommand, getDeclaredValidationTargets } from './single-turn-helpers';
+import { verifyMigrationRepairFiles } from '@/lib/services/apps-platform/migration-repair-files';
+import type { MigrationRepairTarget } from '@/lib/services/apps-platform/migration-repair-types';
 
 export interface GateStepResult {
   ok: boolean;
@@ -35,6 +41,10 @@ export async function runGateStep(params: {
   title: string;
   instanceType: string;
   requirementType: string;
+  /** Migration repair requires fresh runtime evidence, not cached pre-repair validation. */
+  freshMigrationValidation?: boolean;
+  executionOwnership?: CronExecutionOwnership;
+  expectedRepairs?: MigrationRepairTarget[];
 }): Promise<GateStepResult> {
   'use step';
   const { sandboxId, plan, step, requirementId, instanceId, siteId, userId, title, instanceType, requirementType } = params;
@@ -46,7 +56,9 @@ export async function runGateStep(params: {
     requirementId: requirementId,
     planId: plan.id,
     stepId: step.id,
+    executionOwnership: params.executionOwnership,
   };
+  if (params.executionOwnership) await assertCronExecutionOwnership(params.executionOwnership);
 
   let connected;
   try {
@@ -66,6 +78,30 @@ export async function runGateStep(params: {
 
   console.log(`[GateStep] Running gate for step ${step.order}`);
   try {
+    if (params.executionOwnership) await assertCronExecutionOwnership(params.executionOwnership);
+    if (params.expectedRepairs) await verifyMigrationRepairFiles(sandbox, params.expectedRepairs);
+    const backlogItemId = step.metadata?.backlog_item_id || step.backlog_item_id;
+    const context = params.freshMigrationValidation
+      ? await loadBacklogGateContext(requirementId, backlogItemId) : {};
+    const systemPrompt = 'Validate the application after tenant RLS repair with fresh tests/runtime evidence. Do not rewrite product code or reuse prior validation.';
+    const appContext = params.freshMigrationValidation ? {
+      planTitle: plan.title, stepId: step.id, stepOrder: step.order,
+      validationScope: 'intermediate' as const, validateDeployment: false,
+      backlogItemId,
+      workspaceFingerprint: (await computeApplicationBuildFingerprint(sandbox, SandboxService.WORK_DIR)) || undefined,
+      stepPrompt: systemPrompt,
+      stepContext: {
+        title: step.title, instructions: step.instructions, expected_output: step.expected_output,
+        acceptance: context.acceptance, acceptance_contract: context.acceptanceContract,
+        test_command: getDeclaredTestCommand(step), protected_routes: getDeclaredProtectedRoutes(step),
+        validation_targets: getDeclaredValidationTargets(step),
+      },
+      currentMessages: [], fullTools: [], lastResult: {},
+      assistantContext: {
+        instance: { id: instanceId, site_id: siteId, user_id: userId, requirement_id: requirementId },
+        systemPrompt, customTools: [], executionOptions: { instance_id: instanceId, site_id: siteId, user_id: userId, enforceSingleTurn: true },
+      } as any,
+    } : undefined;
     const gateRes = await runGateForFlow({
       flow: requirementType as RequirementKind,
       sandbox,
@@ -77,12 +113,14 @@ export async function runGateStep(params: {
         order: step.order,
         acceptance: step.instructions ? [String(step.instructions)] : [],
       } as any,
+      appContext,
       audit,
     });
-
     if (gateRes.sandboxReplacement) {
       effectiveSandboxId = sandboxIdentity(gateRes.sandboxReplacement);
     }
+    if (params.executionOwnership) await assertCronExecutionOwnership(params.executionOwnership);
+    if (params.expectedRepairs) await verifyMigrationRepairFiles(gateRes.sandboxReplacement || sandbox, params.expectedRepairs);
     if (!gateRes.ok && gateRes.infrastructureFailure) {
       return {
         ok: false,

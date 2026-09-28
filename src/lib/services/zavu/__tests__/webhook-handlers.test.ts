@@ -324,7 +324,7 @@ describe("handleVoiceCallEvent", () => {
     });
     expect(clearVoiceCallContactContext).toHaveBeenCalledWith({
       phone: "+14155550100",
-      deliveryId: "delivery-1",
+      deliveryId: "call-1",
     });
   });
 
@@ -443,6 +443,50 @@ describe("handleVoiceCallEvent", () => {
       leadId: "lead-1",
       agentId: undefined,
     });
+  });
+
+  it("does not lose a completed transcript when Zavu contact cleanup fails", async () => {
+    const delivery = {
+      id: "delivery-1", message_id: "message-1", site_id: "site-1",
+      conversation_id: "conversation-1", recipient_phone: "+14155550100",
+      status: "completed", transcript: [{ seq: 0, role: "assistant", text: "Hello" }],
+    };
+    (supabaseAdmin.from as jest.Mock).mockImplementation((table: string) => {
+      if (table === "voice_call_deliveries") return {
+        select: () => ({ limit: () => ({ eq: async () => ({ data: [delivery], error: null }) }) }),
+        update: () => ({ eq: () => ({ select: () => ({
+          maybeSingle: async () => ({ data: { status: "completed" }, error: null }),
+        }) }) }),
+      };
+      if (table === "messages") return {
+        select: () => ({ eq: () => ({ maybeSingle: async () => ({
+          data: { custom_data: { call_direction: "inbound" } }, error: null,
+        }) }) }),
+        update: () => ({ eq: async () => ({ error: null }) }),
+      };
+      if (table === "conversations") return {
+        select: () => ({ eq: () => ({ eq: () => ({
+          maybeSingle: async () => ({ data: { custom_data: {} }, error: null }),
+        }) }) }),
+      };
+      throw new Error(`Unexpected table ${table}`);
+    });
+    (clearVoiceCallContactContext as jest.Mock).mockRejectedValueOnce(new Error("Zavu unavailable"));
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(handleVoiceCallEvent({
+        type: "call.completed", data: { callId: "call-1" },
+      })).resolves.toBeUndefined();
+      expect(mockPersistVoiceTranscript).toHaveBeenCalledWith(expect.objectContaining({
+        deliveryId: "delivery-1",
+      }));
+      expect(clearVoiceCallContactContext).toHaveBeenCalledWith({
+        phone: "+14155550100", deliveryId: "call-1",
+      });
+      expect(warn).toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("projects outbound call turns separately from the original campaign message", async () => {

@@ -54,7 +54,11 @@ function getApiKey(): string {
   return apiKey;
 }
 
-export async function zavuFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+export async function zavuFetch<T>(
+  path: string,
+  init: RequestInit = {},
+  options?: { silentStatuses?: readonly number[] }
+): Promise<T> {
   const response = await fetch(`${ZAVU_API_BASE}${path}`, {
     ...init,
     headers: {
@@ -74,7 +78,9 @@ export async function zavuFetch<T>(path: string, init: RequestInit = {}): Promis
 
   if (!response.ok) {
     const errorMsg = payload.message || payload.error || `Zavu API ${response.status}`;
-    console.error(`[Zavu API Error] ${init.method || "GET"} ${path} failed with status ${response.status}: ${errorMsg}`);
+    if (!options?.silentStatuses?.includes(response.status)) {
+      console.error(`[Zavu API Error] ${init.method || "GET"} ${path} failed with status ${response.status}: ${errorMsg}`);
+    }
     const error = new Error(errorMsg);
     (error as any).status = response.status;
     throw error;

@@ -90,6 +90,26 @@ describe("inbound Voice follow-up context", () => {
     });
   });
 
+  it("acknowledges the live call when optional contact guidance fails", async () => {
+    mockFrom.mockImplementation((table: string) => {
+      if (table === "settings") return readChain({ site_id: "site-1" });
+      if (table === "leads") return readChain(null);
+      throw new Error(`Unexpected table ${table}`);
+    });
+    mockSetContactContext.mockRejectedValueOnce(new Error("Zavu contact unavailable"));
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(handleUntrackedInboundVoiceEvent({
+        type: "call.answered", senderId: "sender-1", data: { callId: "call-1" },
+      }, "call-1")).resolves.toMatchObject({ handled: true });
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("Voice contact guidance unavailable"), expect.any(Error)
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("fails instead of accepting an inbound call with no configured site", async () => {
     mockFrom.mockImplementation((table: string) => {
       if (table === "settings") return readChain(null);

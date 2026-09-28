@@ -107,6 +107,8 @@ describe('applyPendingMigrations', () => {
 
     expect(result.applied).toEqual([]);
     expect(result.errors[0]).toContain('changed after it was applied');
+    expect(result.failureKind).toBe('product');
+    expect(result.repairTarget).toBeUndefined();
     expect(mocked.rpc).not.toHaveBeenCalledWith(
       'apps_apply_migration',
       expect.anything(),
@@ -197,10 +199,64 @@ describe('applyPendingMigrations', () => {
     );
 
     expect(result.errors[0]).toContain('failed linting');
+    expect(result.repairTarget).toEqual({
+      file: first, schema, tenantId: 'tenant-123', reason: 'lint',
+      checksum: createHash('sha256').update('DROP SCHEMA public;').digest('hex'),
+    });
     expect(mocked.rpc).not.toHaveBeenCalledWith(
       'apps_apply_migration',
       expect.anything(),
     );
     expect(mocked.rpc).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['42601', 'product', true], ['23503', 'product', true],
+    ['42501', 'infrastructure', false], ['PGRST202', 'infrastructure', false],
+  ])('classifies SQLSTATE %s and limits automatic repair to SQL defects', async (code, failureKind, repairable) => {
+    const mocked = client(null);
+    mocked.rpc.mockImplementation(async (name: string): Promise<any> => name === 'apps_get_migration_receipt'
+      ? { data: { found: false }, error: null }
+      : { data: null, error: { code, message: 'Failure' } });
+    (getAppsAdminClient as jest.Mock).mockReturnValue(mocked.db);
+    const result = await applyPendingMigrations(sandbox(), requirementId);
+    expect(result.failureKind).toBe(failureKind);
+    expect(!!result.repairTarget).toBe(repairable);
+  });
+
+  it('does not edit product SQL to work around a simultaneous exposure failure', async () => {
+    const first = 'supabase/migrations/001.sql';
+    const second = 'supabase/migrations/002.sql';
+    const mocked = client(null);
+    (getAppsAdminClient as jest.Mock).mockReturnValue(mocked.db);
+    (syncPostgrestSchemas as jest.Mock).mockResolvedValue({ ok: false, error: 'API unavailable' });
+    const result = await applyPendingMigrations(sandbox([first, second], {
+      [first]: migrationSql, [second]: 'DROP SCHEMA public;',
+    }), requirementId);
+    expect(result.applied).toEqual([first]);
+    expect(result.errors).toHaveLength(2);
+    expect(result.failureKind).toBe('infrastructure');
+    expect(result.repairTarget).toBeUndefined();
+  });
+
+  it('fails closed if recovery loses a repaired file, even with an empty migration batch', async () => {
+    const mocked = client(null);
+    (getAppsAdminClient as jest.Mock).mockReturnValue(mocked.db);
+    const expected = { file: migrationFile, schema, tenantId: 'tenant-123',
+      checksum: createHash('sha256').update(migrationSql).digest('hex'), reason: 'lint' as const };
+    const lost = await applyPendingMigrations(sandbox([], {}), requirementId, [expected]);
+    expect(lost.failureKind).toBe('infrastructure');
+    expect(lost.errors[0]).toContain('missing or changed');
+    expect(mocked.rpc).not.toHaveBeenCalled();
+    const undiscovered = await applyPendingMigrations(sandbox([], { [migrationFile]: migrationSql }), requirementId, [expected]);
+    expect(undiscovered.errors[0]).toContain('absent from the discovered');
+    const withoutReceipt = await applyPendingMigrations(sandbox(), requirementId, [expected]);
+    expect(withoutReceipt.errors[0]).toContain('no matching atomic receipt');
+    mocked.rpc.mockImplementation(async (name: string): Promise<any> => name === 'apps_get_migration_receipt'
+      ? { data: { found: true, value: { checksum: expected.checksum } }, error: null }
+      : { data: null, error: null });
+    const valid = await applyPendingMigrations(sandbox(), requirementId, [expected]);
+    expect(valid.applied).toEqual([]);
+    expect(valid.errors).toEqual([]);
   });
 });

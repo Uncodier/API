@@ -33,6 +33,8 @@ function harness() {
   };
   const executeSingleTurnStep = jest.fn(async (_params?: unknown): Promise<any> => ({ ok: true, isDone: false, durableProductProgress: true }));
   const migration = { applyDatabaseMigrationsStep: jest.fn(async (): Promise<any> => ({ status: 'passed', applied: [], errors: [], effectiveSandboxId: 'sandbox' })) };
+  const repair = { repairDatabaseMigrationStep: jest.fn(async (): Promise<any> => ({ changed: false, done: false, messages: [], effectiveSandboxId: 'sandbox' })) };
+  const gate = { runGateStep: jest.fn(async (): Promise<any> => ({ passed: true, effectiveSandboxId: 'sandbox' })) };
   const finalizer = { createFinalStatusStep: jest.fn(), validateDeliverablesStep: jest.fn() };
   const wrapup = { emitCycleWrapUpStep: jest.fn(async (_params?: unknown) => ({ ran: true, outcome: 'completed' })) };
   const provisionTrackingScriptStep = jest.fn(async (_params?: unknown): Promise<{ injected: boolean; error?: string }> => ({ injected: true }));
@@ -42,6 +44,7 @@ function harness() {
       '../shared/cron-sandbox-lifecycle-steps': lifecycle,
       '../shared/workflow-db-steps': db,
       '../shared/step-db-migrations': migration,
+      '../shared/step-db-migration-repair': repair,
       '../shared/bootstrap-spec-step': { bootstrapRequirementSpecStep: async () => {} },
       '../shared/tracking-script-step': { provisionTrackingScriptStep },
       '../shared/ensure-source-archive-step': {},
@@ -57,7 +60,7 @@ function harness() {
       },
       '../shared/cron-blocker-scope-steps': {},
       '../shared/single-turn-executor': { executeSingleTurnStep },
-      '../shared/gate-step-executor': {},
+      '../shared/gate-step-executor': gate,
       '../shared/cron-orchestrator-step': {},
       '../shared/cron-workflow-finalize': finalizer,
       '../shared/platform-key-step': { provisionPlatformKeyStep: async () => ({ injected_env_keys: [] }) },
@@ -76,7 +79,7 @@ function harness() {
   const run = () => workflow.runCronAppsWorkflow({ reqId: 'req', title: 'Test', instructions: '', type: 'app',
     site_id: 'site', user_id: 'user', instanceId: 'instance', previousWorkContext: '', instance_type: 'applications',
     cronLockRunId: 'run', cycleStartedAt: '2026-09-26T00:00:00Z', executionGeneration: 3 });
-  return { run, plan, lifecycle, db, steps, executeSingleTurnStep, migration, finalizer, wrapup, provisionTrackingScriptStep };
+  return { run, plan, lifecycle, db, steps, executeSingleTurnStep, migration, repair, gate, finalizer, wrapup, provisionTrackingScriptStep };
 }
 
 describe('workflow recovery and truthful completion', () => {
@@ -146,5 +149,79 @@ describe('workflow recovery and truthful completion', () => {
     expect(h.finalizer.createFinalStatusStep).not.toHaveBeenCalled();
     expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({ recoveryDisposition: 'blocked', requiresUserFeedback: true }));
     expect(h.lifecycle.releaseRunLockStep).toHaveBeenCalledTimes(1);
+    expect(h.repair.repairDatabaseMigrationStep).not.toHaveBeenCalled();
+  });
+
+  const repairableFailure = {
+    status: 'failed', applied: [], errors: ['RLS is unconditional'], failureKind: 'product', effectiveSandboxId: 'sandbox',
+    repairTarget: { file: 'supabase/migrations/0001.sql', schema: 'app_aaaaaaaaaaaaaaaaaaaaaaaa', tenantId: 'tenant', checksum: 'a'.repeat(64), reason: 'lint' },
+  };
+
+  it('revalidates a repaired migration before allowing any push', async () => {
+    const h = harness();
+    h.migration.applyDatabaseMigrationsStep.mockResolvedValueOnce(repairableFailure);
+    h.repair.repairDatabaseMigrationStep.mockResolvedValue({ changed: true, done: true, messages: [], effectiveSandboxId: 'recovered', repairedTarget: repairableFailure.repairTarget });
+    await expect(h.run()).resolves.toMatchObject({ status: 'in-progress' });
+    expect(h.repair.repairDatabaseMigrationStep).toHaveBeenCalledTimes(1);
+    expect(h.repair.repairDatabaseMigrationStep).toHaveBeenCalledWith(expect.objectContaining({
+      executionOwnership: { requirementId: 'req', runId: 'run', executionGeneration: 3 }, attempt: 1, maxAttempts: 5,
+    }));
+    expect(h.migration.applyDatabaseMigrationsStep).toHaveBeenCalledTimes(2);
+    expect(h.migration.applyDatabaseMigrationsStep).toHaveBeenLastCalledWith('recovered', 'req', 'applications', 'Test', expect.anything(), expect.anything(), [repairableFailure.repairTarget]);
+    expect(h.steps.commitAndPushStep.mock.invocationCallOrder[0]).toBeGreaterThan(h.migration.applyDatabaseMigrationsStep.mock.invocationCallOrder[1]);
+    expect(h.gate.runGateStep).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not reuse stale product evidence after a repaired migration passes', async () => {
+    const h = harness();
+    h.migration.applyDatabaseMigrationsStep.mockResolvedValueOnce(repairableFailure);
+    h.repair.repairDatabaseMigrationStep.mockResolvedValue({ changed: true, done: true, messages: [], effectiveSandboxId: 'sandbox', repairedTarget: repairableFailure.repairTarget });
+    h.gate.runGateStep.mockResolvedValue({ passed: false, effectiveSandboxId: 'sandbox', error: 'RLS probe failed' });
+    await expect(h.run()).resolves.toMatchObject({ status: 'product_failure' });
+    expect(h.steps.commitAndPushStep).not.toHaveBeenCalled();
+    expect(h.finalizer.createFinalStatusStep).not.toHaveBeenCalled();
+  });
+
+  it('retains the recovered sandbox on an ambiguous repair error without reapplying SQL', async () => {
+    const h = harness();
+    h.migration.applyDatabaseMigrationsStep.mockResolvedValueOnce(repairableFailure);
+    h.repair.repairDatabaseMigrationStep.mockResolvedValue({ changed: false, done: true, messages: [], effectiveSandboxId: 'recovered', error: 'transport failed' });
+    await expect(h.run()).resolves.toMatchObject({ status: 'infrastructure_retry' });
+    expect(h.migration.applyDatabaseMigrationsStep).toHaveBeenCalledTimes(1);
+    expect(h.lifecycle.stopSandboxStep).toHaveBeenCalledWith('recovered', expect.anything(), expect.anything());
+    expect(h.steps.commitAndPushStep).not.toHaveBeenCalled();
+  });
+
+  it('blocks after the shared repair turn budget rather than retrying forever', async () => {
+    const h = harness();
+    h.migration.applyDatabaseMigrationsStep.mockResolvedValue(repairableFailure);
+    await expect(h.run()).resolves.toMatchObject({ status: 'product_failure' });
+    expect(h.repair.repairDatabaseMigrationStep).toHaveBeenCalledTimes(5);
+    expect(h.migration.applyDatabaseMigrationsStep).toHaveBeenCalledTimes(1);
+    expect(h.steps.commitAndPushStep).not.toHaveBeenCalled();
+    expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({ recoveryDisposition: 'blocked', requiresUserFeedback: true }));
+  });
+
+  it('shares the budget across files and never treats a write as an applied receipt', async () => {
+    const h = harness();
+    h.migration.applyDatabaseMigrationsStep.mockResolvedValue(repairableFailure);
+    h.repair.repairDatabaseMigrationStep.mockResolvedValue({ changed: true, done: false, messages: [], effectiveSandboxId: 'sandbox', repairedTarget: repairableFailure.repairTarget });
+    await expect(h.run()).resolves.toMatchObject({ status: 'product_failure' });
+    expect(h.repair.repairDatabaseMigrationStep).toHaveBeenCalledTimes(5);
+    expect(h.migration.applyDatabaseMigrationsStep).toHaveBeenCalledTimes(6);
+    expect(h.steps.commitAndPushStep).not.toHaveBeenCalled();
+  });
+
+  it('stops if the agent cannot safely repair and never repairs infrastructure failures', async () => {
+    const h = harness();
+    h.migration.applyDatabaseMigrationsStep.mockResolvedValue(repairableFailure);
+    h.repair.repairDatabaseMigrationStep.mockResolvedValue({ changed: false, done: true, messages: [], effectiveSandboxId: 'sandbox' });
+    await h.run();
+    expect(h.repair.repairDatabaseMigrationStep).toHaveBeenCalledTimes(1);
+    const infra = harness();
+    infra.migration.applyDatabaseMigrationsStep.mockResolvedValue({ ...repairableFailure, failureKind: 'infrastructure' });
+    await expect(infra.run()).resolves.toMatchObject({ status: 'infrastructure_retry' });
+    expect(infra.repair.repairDatabaseMigrationStep).not.toHaveBeenCalled();
+    expect(infra.steps.commitAndPushStep).not.toHaveBeenCalled();
   });
 });

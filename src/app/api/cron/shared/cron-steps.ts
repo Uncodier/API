@@ -24,6 +24,8 @@ import { commitWorkspaceToOrigin, type GitRepoKind } from './cron-commit-helpers
 import { validateBuildForStep } from './step-git-gate';
 import { consumePrePushBuildMarker } from './commit/pre-push-build-validation';
 import { assertCronExecutionOwnership, type CronExecutionOwnership } from './cron-execution-ownership';
+import { verifyMigrationRepairFiles } from '@/lib/services/apps-platform/migration-repair-files';
+import type { MigrationRepairTarget } from '@/lib/services/apps-platform/migration-repair-types';
 import {
   CronInfraEvent,
   logCronInfrastructureEvent,
@@ -338,6 +340,7 @@ export async function commitAndPushStep(
     validateDeployment?: boolean;
     lightweightCheckpoint?: boolean;
     executionOwnership?: CronExecutionOwnership;
+    expectedRepairs?: MigrationRepairTarget[];
   },
 ): Promise<{
   ok: boolean;
@@ -360,6 +363,7 @@ export async function commitAndPushStep(
     });
     let effectiveSandboxId = connected.sandboxId;
     if (options?.executionOwnership) await assertCronExecutionOwnership(options.executionOwnership);
+    if (options?.expectedRepairs) await verifyMigrationRepairFiles(connected.sandbox, options.expectedRepairs);
     const r = await commitWorkspaceToOrigin(
       connected.sandbox,
       title,
@@ -374,6 +378,7 @@ export async function commitAndPushStep(
       },
     );
     const sand = r.sandboxReplacement ?? connected.sandbox;
+    if (options?.expectedRepairs) await verifyMigrationRepairFiles(sand, options.expectedRepairs);
     if (r.sandboxReplacement) {
       effectiveSandboxId = sandboxIdentity(r.sandboxReplacement);
     }

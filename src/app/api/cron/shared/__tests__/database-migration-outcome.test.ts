@@ -42,4 +42,11 @@ describe('database migration delivery receipt', () => {
     await expect(applyDatabaseMigrationsStep('old', 'req', 'applications', 'Title'))
       .resolves.toMatchObject({ status: 'failed', failureKind: 'infrastructure', effectiveSandboxId: 'recovered' });
   });
+
+  it('preserves the verified pending migration target for bounded repair', async () => {
+    const repairTarget = { file: 'supabase/migrations/001.sql', schema: 'app_aaaaaaaaaaaaaaaaaaaaaaaa', tenantId: 'tenant', checksum: 'a'.repeat(64), reason: 'lint' };
+    (applyPendingMigrations as jest.Mock).mockResolvedValue({ applied: [], errors: ['RLS'], failureKind: 'product', repairTarget });
+    await expect(applyDatabaseMigrationsStep('old', 'req', 'applications', 'Title'))
+      .resolves.toMatchObject({ status: 'failed', repairTarget });
+  });
 });

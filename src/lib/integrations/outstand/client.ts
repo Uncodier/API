@@ -195,6 +195,25 @@ export class OutstandClient {
     });
   }
 
+  async listSocialAccountImports(id: string, tenantId: string): Promise<{
+    success: boolean;
+    data: Array<{ id: string; status: string; imported: number; failed: number; error: string | null }>;
+    count: number;
+  }> {
+    return this.request(`/social-accounts/${encodeURIComponent(id)}/imports`, {
+      method: 'GET',
+      headers: { 'X-Tenant-ID': tenantId },
+    });
+  }
+
+  async importSocialAccountPosts(id: string, tenantId: string, options: { limit: number }): Promise<unknown> {
+    return this.request(`/social-accounts/${encodeURIComponent(id)}/imports`, {
+      method: 'POST',
+      headers: { 'X-Tenant-ID': tenantId },
+      body: JSON.stringify(options),
+    });
+  }
+
   async connectBlueskyAccount(
     params: { handle: string; app_password: string },
     tenantId?: string

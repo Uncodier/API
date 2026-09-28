@@ -20,6 +20,7 @@ import {
   assertCronExecutionOwnershipStep,
 } from '../shared/cron-sandbox-lifecycle-steps';
 import { applyDatabaseMigrationsStep } from '../shared/step-db-migrations';
+import { repairDatabaseMigrationStep, type DatabaseMigrationRepairResult } from '../shared/step-db-migration-repair';
 // Import directly — the 'use step' plugin forbids re-exports, so the step
 // lives in its own module.
 import { bootstrapRequirementSpecStep } from '../shared/bootstrap-spec-step';
@@ -88,6 +89,7 @@ import {
 import { shouldHoldNoProgressBlock } from '../shared/no-progress-adjudication';
 import { recoveryAfterUnhandledError, type CycleRecoveryDisposition } from '../shared/cycle-recovery-policy';
 import type { DatabaseMigrationOutcome } from '../shared/database-migration-outcome';
+import type { MigrationRepairTarget } from '@/lib/services/apps-platform/migration-repair-types';
 
 export interface CronAppsWorkflowInput {
   reqId: string;
@@ -140,6 +142,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   let wrapUpRequiresUserFeedback = false;
   let recoveryDisposition: CycleRecoveryDisposition | undefined;
   let databaseMigrations: DatabaseMigrationOutcome | undefined;
+  const repairedMigrations: MigrationRepairTarget[] = [];
   let tenantProvisioningFailed = false;
   let cycleOutcome: CronCycleOutcome = 'idle';
   let preservePausedState = false;
@@ -1231,10 +1234,46 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       await assertCronExecutionOwnershipStep({
         requirementId: reqId, runId: cronLockRunId, executionGeneration,
       });
-      const dbMig = await applyDatabaseMigrationsStep(sandboxId!, reqId, instanceType, title, cronAudit, {
+      let dbMig = await applyDatabaseMigrationsStep(sandboxId!, reqId, instanceType, title, cronAudit, {
         requirementId: reqId, runId: cronLockRunId, executionGeneration,
       });
       sandboxId = dbMig.effectiveSandboxId;
+      databaseMigrations = dbMig;
+      // Same-cycle, bounded repair: never turn product defects into infinite infra retries.
+      // Only the applier can identify a safely editable, unapplied migration.
+      const migrationRepairBudget = Math.min(5, requirementFlow.cost_envelope.max_turns_per_step);
+      let migrationRepairMessages: any[] = [];
+      for (let attempt = 1;
+        attempt <= migrationRepairBudget && dbMig.status === 'failed' &&
+        dbMig.failureKind === 'product' && dbMig.repairTarget;
+        attempt++) {
+        const repair: DatabaseMigrationRepairResult = await repairDatabaseMigrationStep({
+          sandboxId: sandboxId!, requirementId: reqId, instanceType, title, audit: cronAudit,
+          executionOwnership: { requirementId: reqId, runId: cronLockRunId, executionGeneration },
+          outcome: dbMig, attempt, maxAttempts: migrationRepairBudget, messages: migrationRepairMessages,
+        });
+        sandboxId = repair.effectiveSandboxId;
+        migrationRepairMessages = repair.messages;
+        if (repair.error) {
+          dbMig = { status: 'failed', applied: dbMig.applied, errors: [...dbMig.errors, repair.error],
+            failureKind: 'infrastructure', effectiveSandboxId: sandboxId! };
+          break;
+        }
+        if (repair.changed) {
+          if (!repair.repairedTarget) throw new Error('Migration repair did not return a verified file checksum.');
+          const repairedIndex = repairedMigrations.findIndex(target => target.file === repair.repairedTarget!.file);
+          if (repairedIndex < 0) repairedMigrations.push(repair.repairedTarget);
+          else repairedMigrations[repairedIndex] = repair.repairedTarget;
+          const alreadyApplied = dbMig.applied;
+          dbMig = await applyDatabaseMigrationsStep(sandboxId!, reqId, instanceType, title, cronAudit, {
+            requirementId: reqId, runId: cronLockRunId, executionGeneration,
+          }, repairedMigrations);
+          dbMig.applied = Array.from(new Set([...alreadyApplied, ...dbMig.applied]));
+          sandboxId = dbMig.effectiveSandboxId;
+        } else if (repair.done) {
+          break;
+        }
+      }
       databaseMigrations = dbMig;
       if (dbMig.errors.length > 0) {
         lightweightCycleFinalization = false;
@@ -1247,6 +1286,29 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
         console.warn(`[CronAppsWorkflow] DB Migrations had errors:`, dbMig.errors);
       } else if (dbMig.applied.length > 0) {
         console.log(`[CronAppsWorkflow] Applied ${dbMig.applied.length} DB migrations.`);
+      }
+      if (dbMig.status === 'passed' && repairedMigrations.length > 0) {
+        // SQL repair changes runtime authorization. Prior product evidence is not reusable.
+        const refreshedPlan = activePlan?.id ? await getInstancePlanByIdStep(activePlan.id) : null;
+        const validationStep = refreshedPlan?.steps?.find((step: any) => step.id === stepsPhase?.lastTouchedStepId) ||
+          refreshedPlan?.steps?.[refreshedPlan.steps.length - 1];
+        const gate = validationStep ? await runGateStep({
+          sandboxId: sandboxId!, plan: refreshedPlan, step: validationStep,
+          requirementId: reqId, instanceId, siteId: site_id, userId: user_id,
+          title, instanceType, requirementType: requirementKind,
+          freshMigrationValidation: true,
+          expectedRepairs: repairedMigrations,
+          executionOwnership: { requirementId: reqId, runId: cronLockRunId, executionGeneration },
+        }) : null;
+        if (gate) sandboxId = gate.effectiveSandboxId;
+        if (!gate?.passed) {
+          infrastructureHalt = true;
+          cycleOutcome = gate?.infrastructureFailure ? 'infrastructure_retry' : 'product_failure';
+          recoveryDisposition = gate?.infrastructureFailure ? 'retry' : 'blocked';
+          wrapUpRequiresUserFeedback = recoveryDisposition === 'blocked';
+          wrapUpAttempted = false;
+          wrapUpReason = `Migration repaired, but fresh product verification did not pass: ${gate?.error || gate?.gateErrorExcerpt || 'No verifiable plan step.'}`;
+        }
       }
     }
 
@@ -1273,6 +1335,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
           validateDeployment:
             requirementFlow.delivery.validate_deployment,
           lightweightCheckpoint: lightweightCycleFinalization,
+          expectedRepairs: repairedMigrations,
           executionOwnership: { requirementId: reqId, runId: cronLockRunId, executionGeneration },
         },
       );

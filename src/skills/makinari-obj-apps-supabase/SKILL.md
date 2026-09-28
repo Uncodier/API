@@ -87,13 +87,42 @@ export async function createClient() {
 }
 ```
 
-The browser client uses the anon key + tenant schema — RLS filters by row ownership (`auth.uid() = user_id`) and local roles within the schema (`users` table). The server client carries the tenant JWT directly so backend routes can read/write without a user session (e.g. cron, webhooks).
+The browser client uses the anon key + tenant schema — RLS filters by row ownership (`auth.uid() = user_id`) or tenant-local membership. The cookie-based server helper above also acts with the user's session; it does not automatically attach `APPS_TENANT_JWT` or bypass RLS. Backend jobs and public intake need an explicitly authorized server-side write path. Never expose server credentials to the browser.
 
-## How to add a table (CRUD ready in 3 steps)
+## Migration contract (current linter; no exceptions)
+
+`src/lib/services/apps-platform/migration-linter.ts` is the enforcement contract.
+Fix rejected SQL; never weaken the linter or bypass the migration tools to make it apply.
+
+- Write **static, tenant-only SQL**. Prefer unqualified names such as `reservations`:
+  the migration runner already sets the tenant `search_path`. If qualification is
+  necessary, use only the actual provisioned tenant schema, not a copied example
+  or another tenant. Do not add `SET search_path`, `SET LOCAL search_path`, or
+  `set_config()` to migrations.
+- **`DO` blocks are forbidden**, including "idempotent" wrappers. Dynamic SQL
+  (`EXECUTE`, including `EXECUTE format(...)`) and schema enumeration through
+  `information_schema.schemata` or `pg_namespace` are forbidden. Never loop over
+  `app_%` schemas. Use ordinary static DDL for this tenant only.
+- **`GRANT` / `REVOKE` and schema, role, or extension administration are forbidden.**
+  The platform manages privileges and schema exposure. Do not disable RLS, create
+  `SECURITY DEFINER` routines, or try to widen access through a view; tenant views
+  must use `WITH (security_invoker = true)`.
+- Do not read/write other schemas (`public`, `auth`, `storage`, or another
+  tenant), call privileged platform SQL RPCs, or touch the protected `_meta` /
+  `_execute_tenant_migration` infrastructure. The allowed auth helpers
+  `auth.uid()`, `auth.jwt()`, `auth.email()`, and `auth.role()` are not permission
+  to access `auth` tables.
+- Every new table needs `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` and an
+  explicit policy **in the same migration file**, including tables created with
+  `IF NOT EXISTS`. Policies must use row ownership, correlated membership, or an
+  explicit deny predicate. Omitting predicates, unconditional access, and a
+  standalone "user is logged in" check are not acceptable. `TO authenticated`
+  alone is not tenant isolation: Supabase auth roles are shared across apps.
+
+## How to add a table (CRUD ready in 4 steps)
 
 1. Draft the migration as a single SQL file inside the app, e.g.
-   `migrations/0001_reservations.sql`. Always include the `enable row
-   level security` + tenant policy in the same file:
+   `migrations/0001_reservations.sql`. This complete example is user-owned:
 
 ```sql
 create table reservations (
@@ -106,30 +135,22 @@ create table reservations (
 );
 alter table reservations enable row level security;
 
--- Política de lectura: el usuario puede ver sus propias reservas o, si es admin, puede ver todas
 create policy reservations_select on reservations
-  for select
-  using (
-    auth.uid() = user_id OR 
-    (SELECT role FROM users WHERE id = auth.uid() LIMIT 1) = 'admin'
-  );
+  for select to authenticated
+  using (auth.uid() = user_id);
 
--- Política de inserción: el usuario solo puede insertar sus propias reservas
 create policy reservations_insert on reservations
-  for insert
+  for insert to authenticated
   with check (auth.uid() = user_id);
 
--- Política de actualización: el usuario actualiza las suyas, el admin actualiza todas
 create policy reservations_update on reservations
-  for update
-  using (
-    auth.uid() = user_id OR 
-    (SELECT role FROM users WHERE id = auth.uid() LIMIT 1) = 'admin'
-  )
-  with check (
-    auth.uid() = user_id OR 
-    (SELECT role FROM users WHERE id = auth.uid() LIMIT 1) = 'admin'
-  );
+  for update to authenticated
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+
+create policy reservations_delete on reservations
+  for delete to authenticated
+  using (auth.uid() = user_id);
 ```
 
 2. Apply the migration using the `sandbox_db_migrate` tool. Do NOT use `sandbox_run_command` with custom scripts or `fetch` to apply migrations.
@@ -148,93 +169,140 @@ const { data } = await db.schema(SCHEMA_NAME).from('reservations').select('*').o
 
 ## RLS policy templates by table type (copy/adapt in migrations)
 
-Use fully-qualified schema names in SQL (`app_<id>.<table>`) or set `SET LOCAL search_path` first.  
-For policy replacements on existing tables, always use `DROP POLICY IF EXISTS` before `CREATE POLICY`.
+These are alternatives for **existing tenant tables**, not extra policies to layer
+over permissive ones. Inspect existing policy names first. For replacements, use
+`DROP POLICY IF EXISTS` before `CREATE POLICY` and remove obsolete permissive
+policies explicitly in the same migration: permissive policies combine with OR,
+so adding a restrictive-looking predicate does not repair another open policy.
+Do not add a search-path preamble; the runner owns it.
 
+The member examples assume `studios` / `projects` have `organization_id`, and
+`organization_memberships` has `organization_id` and `user_id`. Protect the
+membership table with RLS allowing users to read only their own memberships;
+only a trusted backend may create/change memberships or roles. Do not let users
+enroll themselves into arbitrary organizations. Use an inspected, non-recursive
+authorization model, not an assumed `get_user_role()` helper.
+
+**Reference/catalog table (member read, trusted backend manages)**
 ```sql
--- Policy replacement scaffold
--- rollback hint:
--- DROP POLICY IF EXISTS "Policy Name" ON app_123.my_table;
-SET LOCAL search_path TO app_123;
-ALTER TABLE IF EXISTS app_123.my_table ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "Policy Name" ON app_123.my_table;
-CREATE POLICY "Policy Name" ON app_123.my_table FOR SELECT USING (true);
-```
+ALTER TABLE studios ENABLE ROW LEVEL SECURITY;
 
-**Public reference table (public read, admin manage)**
-```sql
-SET LOCAL search_path TO app_123;
-ALTER TABLE IF EXISTS app_123.studios ENABLE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS "Everyone can view studios" ON app_123.studios;
-CREATE POLICY "Everyone can view studios" ON app_123.studios
-  FOR SELECT
-  USING (true);
-
-DROP POLICY IF EXISTS "Admins can manage studios" ON app_123.studios;
-CREATE POLICY "Admins can manage studios" ON app_123.studios
-  FOR ALL
-  USING (app_123.get_user_role(auth.uid()) = 'admin')
-  WITH CHECK (app_123.get_user_role(auth.uid()) = 'admin');
+DROP POLICY IF EXISTS studios_member_read ON studios;
+CREATE POLICY studios_member_read ON studios
+  FOR SELECT TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1 FROM organization_memberships m
+      WHERE m.organization_id = studios.organization_id
+        AND m.user_id = auth.uid()
+    )
+  );
 ```
 
 **Private user-owned table (auth user owns row)**
 ```sql
-SET LOCAL search_path TO app_123;
-ALTER TABLE IF EXISTS app_123.reservations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE reservations ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "Users read own reservations" ON app_123.reservations;
-CREATE POLICY "Users read own reservations" ON app_123.reservations
-  FOR SELECT USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS reservations_select ON reservations;
+CREATE POLICY reservations_select ON reservations
+  FOR SELECT TO authenticated USING (auth.uid() = user_id);
 
-DROP POLICY IF EXISTS "Users insert own reservations" ON app_123.reservations;
-CREATE POLICY "Users insert own reservations" ON app_123.reservations
-  FOR INSERT WITH CHECK (auth.uid() = user_id);
+DROP POLICY IF EXISTS reservations_insert ON reservations;
+CREATE POLICY reservations_insert ON reservations
+  FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
 
-DROP POLICY IF EXISTS "Users update own reservations" ON app_123.reservations;
-CREATE POLICY "Users update own reservations" ON app_123.reservations
-  FOR UPDATE USING (auth.uid() = user_id)
+DROP POLICY IF EXISTS reservations_update ON reservations;
+CREATE POLICY reservations_update ON reservations
+  FOR UPDATE TO authenticated USING (auth.uid() = user_id)
   WITH CHECK (auth.uid() = user_id);
 
-DROP POLICY IF EXISTS "Users delete own reservations" ON app_123.reservations;
-CREATE POLICY "Users delete own reservations" ON app_123.reservations
-  FOR DELETE USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS reservations_delete ON reservations;
+CREATE POLICY reservations_delete ON reservations
+  FOR DELETE TO authenticated USING (auth.uid() = user_id);
 ```
 
-**Team/org-scoped table (membership-gated)**
+**Team/org-scoped table (members may read and manage their organization's rows)**
 ```sql
-SET LOCAL search_path TO app_123;
-ALTER TABLE IF EXISTS app_123.projects ENABLE ROW LEVEL SECURITY;
+ALTER TABLE projects ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "Members read org projects" ON app_123.projects;
-CREATE POLICY "Members read org projects" ON app_123.projects
-  FOR SELECT
+DROP POLICY IF EXISTS projects_member_access ON projects;
+CREATE POLICY projects_member_access ON projects
+  FOR ALL TO authenticated
   USING (
     EXISTS (
       SELECT 1
-      FROM app_123.organization_memberships m
+      FROM organization_memberships m
+      WHERE m.organization_id = projects.organization_id
+        AND m.user_id = auth.uid()
+    )
+  )
+  WITH CHECK (
+    EXISTS (
+      SELECT 1
+      FROM organization_memberships m
       WHERE m.organization_id = projects.organization_id
         AND m.user_id = auth.uid()
     )
   );
 ```
 
-**System/internal table (deny user JWT, backend/service only)**
+**System/internal table (no direct anon/user access)**
 ```sql
-SET LOCAL search_path TO app_123;
-ALTER TABLE IF EXISTS app_123.webhook_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE webhook_events ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "No direct user access to webhook_events" ON app_123.webhook_events;
-CREATE POLICY "No direct user access to webhook_events" ON app_123.webhook_events
+DROP POLICY IF EXISTS webhook_events_no_direct_access ON webhook_events;
+CREATE POLICY webhook_events_no_direct_access ON webhook_events
   FOR ALL
   USING (false)
   WITH CHECK (false);
 ```
 
 **Control-table guardrails (`users`, `roles`, permissions)**
-- Never read `users` from a `FOR SELECT` policy on `users` itself (avoids recursion).
-- Prefer simple predicates (`id = auth.uid()`) for self-read/write.
-- Keep role escalation checks in `WITH CHECK` where possible.
+- Never query `users` from a policy on `users` itself; moving a recursive subquery
+  into `WITH CHECK` does not solve recursion or privilege escalation.
+- Use `id = auth.uid()` for self-read. Self-registration also needs a fixed safe
+  role, e.g. `WITH CHECK (id = auth.uid() AND role = 'member')`.
+- Ownership alone does not make arbitrary updates to `role`, permissions, or
+  membership safe. Keep those writes on a trusted server-controlled path. Do not
+  give self-update access to privilege-bearing fields.
+
+## Public intake is a server-controlled path, not an open table insert
+
+An anonymous contact/signup form is **not** an exception to the linter or RLS.
+Never use an unconditional insert policy (including `TO anon`) or weaken a table
+to make a public form work. The same applies to anonymous catalog reads.
+Use a narrow server-controlled endpoint with input validation, abuse controls,
+and a fixed server-resolved tenant/destination; never trust client-supplied
+schema, role, owner, or membership values. The endpoint must use an explicitly
+authorized, platform-supported write path and return only safe response data.
+An ordinary cookie-based server client still obeys user RLS; moving an open
+insert into a route handler is not authorization. If an authorized backend path
+is unavailable, report that prerequisite rather than granting public table access.
+For a genuinely public catalog, expose only reviewed non-sensitive fields through
+a similarly controlled read endpoint or static data, not an open table policy.
+
+The internal-table deny template assumes no other policy permits the request.
+A trusted backend must have independently provisioned access; a server-side JWT
+does not automatically override a deny predicate.
+
+## Applied migration immutability vs pending edits
+
+- **Applied migrations are immutable.** Preserve their original path and exact
+  contents, including comments and whitespace. Never edit, rename, delete, or
+  rewrite applied SQL to "fix" history. Checksum mismatches must not be bypassed.
+  Restore the original applied file from version control if it was changed, then
+  add a new forward migration for the repair.
+- **Pending, never-applied migrations may be edited**, including a file rejected
+  by the linter. Confirm application status from the migration tool's receipts /
+  results first, especially when earlier files in a batch succeeded. A failure
+  does not mean the whole migration directory is unapplied.
+- The runner stops at the first failing file. Repair an invalid pending file
+  before retrying; merely appending a later migration cannot unblock it. For an
+  already-applied file, create a new uniquely named, ordered forward migration
+  instead. Do not modify ledger rows or invoke privileged SQL RPCs yourself.
+- Re-run `sandbox_db_migrate`, inspect with `sandbox_db_inspect`, and record the
+  resulting receipt and validation evidence. Lint success is not proof of correct
+  business authorization or runtime SQL behavior.
 
 ## Post-migration RLS validation (required)
 1. Verify policy existence and schema-qualified table names with `sandbox_db_inspect`.
@@ -262,7 +330,10 @@ CREATE POLICY "No direct user access to webhook_events" ON app_123.webhook_event
   ```
   
   **Step 2: Verify OTP and Sync User (Sincronización Inmediata)**
-  Después de verificar el código OTP exitosamente, debes hacer un `upsert` (o insert inmediato) a la tabla `users` del esquema actual (`NEXT_PUBLIC_APPS_TENANT_SCHEMA`).
+  Después de verificar el código OTP exitosamente, registra al usuario nuevo en
+  `users` del tenant actual (`NEXT_PUBLIC_APPS_TENANT_SCHEMA`) sin sobrescribir
+  perfiles ni roles existentes. Este ejemplo presupone auto-registro permitido
+  por el producto; en apps por invitación, usa el flujo autorizado del servidor.
   ```ts
   const { data, error } = await supabase.auth.verifyOtp({ 
     email, 
@@ -277,10 +348,14 @@ CREATE POLICY "No direct user access to webhook_events" ON app_123.webhook_event
       id: data.user.id,
       email: data.user.email,
       role: 'member' // Rol por defecto
-    }, { onConflict: 'id' });
+    }, { onConflict: 'id', ignoreDuplicates: true });
   }
   ```
-  Asegúrate de que la política RLS en `users` permita este insert/upsert (ej. `with check (id = auth.uid())`). No confíes en custom claims en el JWT para aislar tenants, ya que la separación por esquema (`app_<id>`) provee el aislamiento necesario.
+  La política de insert debe exigir `WITH CHECK (id = auth.uid() AND role = 'member')`;
+  enviar `role: 'member'` desde el cliente no es una protección. No habilites
+  actualizaciones arbitrarias de roles para permitir el login. El esquema por
+  tenant no sustituye a RLS: usa ownership o membresía local y nunca confíes en
+  claims editables por el usuario para conceder acceso o privilegios.
 
   **Login UI**: Always use the existing `LoginOtp` component from the base repo (`src/components/auth/login-otp.tsx`) or adapt it as needed.
 
@@ -295,14 +370,14 @@ CREATE POLICY "No direct user access to webhook_events" ON app_123.webhook_event
 - **Overriding global fetch headers incorrectly**. Next.js discards headers passed as a plain object (`Record<string, string>`). If you override `global.fetch` in the Supabase client to inject `accept-profile` headers for schema isolation, you MUST initialize a native `Headers` object: `const newHeaders = new Headers(init?.headers); newHeaders.set('accept-profile', schema);` before passing it to `fetch`. DO NOT use `const newHeaders: Record<string, string> = {};`.
 - **Writing custom Node.js scripts (e.g. `test-api.js`) to test the database connection.** This often fails due to missing env vars or dependencies in the sandbox. INSTEAD, use the `sandbox_db_inspect` tool to verify if tables exist or to sample data.
 - Adding `@supabase/supabase-js` with a foreign URL or service key.
-- Writing migrations that touch `public.*`, `auth.*` or `storage.*`
-  outside the tenant bucket — the linter rejects them and your migration
-  call returns 422.
-- **Disabling RLS.** Always write policies based on row ownership (`auth.uid() = user_id`) and/or local roles within the schema.
-- **Infinite Recursion on Control Tables (e.g., `users`).** NEVER query the `users` table within a `FOR SELECT` policy on the `users` table itself (this causes `infinite recursion detected`).
-  - For reading `users`: Use `USING (true)` or `USING (id = auth.uid())`.
-  - For inserting/updating `users`: Use `WITH CHECK (id = auth.uid())`.
-  - If you absolutely must check admin roles inside the `users` table policies (e.g., for `FOR UPDATE` or `FOR DELETE`), restrict it via a subquery only in the `WITH CHECK` clause: `WITH CHECK ((SELECT role FROM users WHERE id = auth.uid() LIMIT 1) = 'admin')`. Do NOT put the subquery in a `FOR SELECT` policy on the same table.
+- Writing migrations that touch `public.*`, `auth.*`, `storage.*`, or other
+  tenants. Storage policies and bucket administration belong to the platform;
+  call only the allowed auth helpers from tenant policies.
+- **Disabling RLS or granting unconditional access.** Use ownership, correlated
+  tenant-local membership, or explicit denial, never an open policy for a public form.
+- **Recursive policies or self-service privilege escalation on control tables.**
+  Follow the control-table guardrails above; a `WITH CHECK` clause is not a safe
+  place to hide a recursive role lookup.
 - Hard-coding the tenant schema. Always read
   `process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA`.
 - Calling `apps_exec_sql` directly. The RPC is service-role only — go

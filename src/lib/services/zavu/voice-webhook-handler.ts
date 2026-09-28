@@ -96,13 +96,7 @@ export async function handleVoiceCallEvent(event: any): Promise<void> {
     TERMINAL_VOICE_STATUSES.has(delivery.status)
     && event.type !== "call.completed"
     && event.type !== "call.failed"
-  ) {
-    await clearVoiceCallContactContext({
-      phone: delivery.recipient_phone,
-      deliveryId: delivery.id,
-    });
-    return;
-  }
+  ) return;
 
   if (
     !callDetails
@@ -130,12 +124,6 @@ export async function handleVoiceCallEvent(event: any): Promise<void> {
   );
   const terminal = TERMINAL_VOICE_STATUSES.has(status);
   const failed = terminal && status !== "completed";
-  if (terminal) {
-    await clearVoiceCallContactContext({
-      phone: delivery.recipient_phone,
-      deliveryId: delivery.id,
-    });
-  }
   const now = new Date().toISOString();
   const deliveryUpdate: Record<string, unknown> = {
     zavu_call_id: callId,
@@ -302,6 +290,19 @@ export async function handleVoiceCallEvent(event: any): Promise<void> {
       if (conversationUpdateError) {
         throw new Error(`Failed to update inbound Voice conversation: ${conversationUpdateError.message}`);
       }
+    }
+  }
+  // Contact metadata is optional guidance, not part of the durable call result.
+  // Inbound calls use the provider call ID as the metadata owner; outbound
+  // calls use the delivery ID. Never fail a completed webhook on cleanup.
+  if (terminal && !untrackedInbound) {
+    try {
+      await clearVoiceCallContactContext({
+        phone: delivery.recipient_phone,
+        deliveryId: inbound ? callId : delivery.id,
+      });
+    } catch (error) {
+      console.warn(`[Zavu Webhook] Contact context cleanup failed for ${callId}:`, error);
     }
   }
 }

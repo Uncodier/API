@@ -255,18 +255,24 @@ export async function handleUntrackedInboundVoiceEvent(
   const leadId = await resolveLeadId(siteId, phone);
 
   if (!TERMINAL_EVENTS.has(event.type)) {
-    await ensureVoiceContactMetadataEnabled(senderId);
-    const followUp = await buildVoiceFollowUpContext({
-      siteId,
-      leadId,
-      phone,
-    });
-    await setVoiceCallContactContext({
-      phone,
-      deliveryId: callId,
-      siteId,
-      followUpContext: followUp.context,
-    });
+    // The live agent already owns the call. Guidance is useful, but a missing
+    // contact or a provider metadata outage must not reject its webhook.
+    try {
+      await ensureVoiceContactMetadataEnabled(senderId);
+      const followUp = await buildVoiceFollowUpContext({
+        siteId,
+        leadId,
+        phone,
+      });
+      await setVoiceCallContactContext({
+        phone,
+        deliveryId: callId,
+        siteId,
+        followUpContext: followUp.context,
+      });
+    } catch (error) {
+      console.warn(`[Zavu Webhook] Voice contact guidance unavailable for ${callId}:`, error);
+    }
     return { handled: true, call };
   }
 
@@ -278,6 +284,10 @@ export async function handleUntrackedInboundVoiceEvent(
     leadId,
     eventType: event.type,
   });
-  await clearVoiceCallContactContext({ phone, deliveryId: callId });
+  try {
+    await clearVoiceCallContactContext({ phone, deliveryId: callId });
+  } catch (error) {
+    console.warn(`[Zavu Webhook] Contact context cleanup failed for ${callId}:`, error);
+  }
   return { handled: true, delivery, call };
 }

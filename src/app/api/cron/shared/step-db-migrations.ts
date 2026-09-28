@@ -5,6 +5,7 @@ import { applyPendingMigrations } from '@/lib/services/apps-platform/migration-a
 import { logCronInfrastructureEvent, type CronAuditContext } from '@/lib/services/cron-audit-log';
 import type { DatabaseMigrationOutcome } from './database-migration-outcome';
 import { assertCronExecutionOwnership, type CronExecutionOwnership } from './cron-execution-ownership';
+import type { MigrationRepairTarget } from '@/lib/services/apps-platform/migration-repair-types';
 
 export async function applyDatabaseMigrationsStep(
   sandboxId: string,
@@ -13,6 +14,7 @@ export async function applyDatabaseMigrationsStep(
   title: string,
   audit?: CronAuditContext,
   executionOwnership?: CronExecutionOwnership,
+  expectedRepairs: MigrationRepairTarget[] = [],
 ): Promise<DatabaseMigrationOutcome & { effectiveSandboxId: string }> {
   'use step';
   if (executionOwnership) await assertCronExecutionOwnership(executionOwnership);
@@ -28,10 +30,11 @@ export async function applyDatabaseMigrationsStep(
     });
     effectiveSandboxId = connected.sandboxId;
     if (executionOwnership) await assertCronExecutionOwnership(executionOwnership);
-    const result = await applyPendingMigrations(connected.sandbox, reqId);
+    const result = await applyPendingMigrations(connected.sandbox, reqId, expectedRepairs);
     outcome = result.errors.length > 0
       ? { status: 'failed', applied: result.applied, errors: result.errors,
-          failureKind: result.failureKind || 'infrastructure' }
+          failureKind: result.failureKind || 'infrastructure',
+          ...(result.repairTarget ? { repairTarget: result.repairTarget } : {}) }
       : { status: 'passed', applied: result.applied, errors: [] };
   } catch (err: any) {
     console.error('[CronStep] applyDatabaseMigrationsStep FAILED:', err?.message || err);

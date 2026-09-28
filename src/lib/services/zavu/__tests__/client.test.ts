@@ -58,6 +58,25 @@ describe("Zavu client webhook contract", () => {
     process.env = originalEnv;
   });
 
+  it("silences only expected contact lookup 404s without hiding other Zavu errors", async () => {
+    const log = jest.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce(mockJson(404, { error: "Contact not found" }))
+        .mockResolvedValueOnce(mockJson(200, { items: [], nextCursor: null }))
+        .mockResolvedValueOnce(mockJson(503, { error: "Service unavailable" }));
+      const { clearVoiceCallContactContext } = await import("../contact-client");
+      await clearVoiceCallContactContext({ phone: "+14155550100", deliveryId: "call-1" });
+      expect(log).not.toHaveBeenCalled();
+      await expect(clearVoiceCallContactContext({
+        phone: "+14155550100", deliveryId: "call-1",
+      })).rejects.toThrow("Service unavailable");
+      expect(log).toHaveBeenCalledTimes(1);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it("createSender posts webhook events and always PATCHes to ensure them", async () => {
     (global.fetch as jest.Mock)
       .mockResolvedValueOnce(
