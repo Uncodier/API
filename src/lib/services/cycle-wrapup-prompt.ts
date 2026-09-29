@@ -28,6 +28,8 @@ export interface CycleWrapUpPromptInput {
   wrapUpReason?: string | null;
   /** Forces a feedback request instead of silently continuing. */
   requiresUserFeedback?: boolean;
+  /** Technical/platform hold, not customer approval. Overrides feedback/continuation. */
+  internalReviewRequired?: boolean;
   previewUrl?: string | null;
   repoUrl?: string | null;
 }
@@ -191,16 +193,20 @@ export function buildCycleWrapUpSystemPrompt(input: CycleWrapUpPromptInput): str
   const digestText = formatDigestForPrompt(input.digestFiles ?? []);
   const pending = input.pendingPlanSteps ?? 0;
   const continuePlan =
+    !input.internalReviewRequired &&
     !input.planCompleted &&
     (pending > 0 || input.hasRunnableBacklogWork === true) &&
     !input.requiresUserFeedback;
-  const verdictBlock = input.requiresUserFeedback
+  const verdictBlock = input.internalReviewRequired
+    ? `3. VERDICT: INTERNAL TECHNICAL/PLATFORM REVIEW REQUIRED. Work is paused in a safe blocked state and technical/platform review is required before it can continue. Keep stage='blocked', even if plan steps remain or the digest suggests success. This is not a request for customer approval: do NOT ask the customer for permission, feedback, or another iteration. Do NOT change the status to 'in-progress', 'on-review', or completed, and do NOT describe the requirement as delivered. Explain the verified product impact and the safe paused state in simple terms, not raw SQL diagnostics. Do NOT claim that review is queued, assigned, or active, or promise automatic continuation, unless explicitly evidenced by the deterministic stop reason or digest. Successful wrap-up only reports the hold; it does not resume work.`
+    : input.requiresUserFeedback
     ? `3. VERDICT: USER FEEDBACK REQUIRED. The workflow has already persisted stage='blocked' so cron does not resume automatically. Explain what stopped progress, identify the concrete decision or intervention needed, and explicitly ask the user to reply before work continues. Do NOT change the status to 'in-progress' or 'on-review', and do NOT describe the requirement as delivered.`
     : continuePlan
     ? `3. VERDICT: Executable work remains (${pending} queued plan step(s), backlog runnable=${input.hasRunnableBacklogWork === true}). Do NOT ask the user for permission and do NOT use stage='on-review'. Call \`requirement_status\` with stage='in-progress' and a short progress summary.`
     : `3. VERDICT CHOICE: You must decide between:
-   - DELIVERED: If the task seems addressed, explain what is done and answer the client clearly in your final response prose. Optionally call \`requirement_status\` with stage='on-review' when appropriate.
-   - NEEDS USER ITERATION: If something critical is missing, ambiguous, or requires human approval, you MUST explicitly ask the user for permission to run another iteration in your final response prose. Also call \`requirement_status\` with a clear waiting message (e.g. stage='on-review' or 'in-progress').`;
+   - DELIVERED: If the evidence shows the task is addressed, explain what is done and answer the client clearly in your final response prose. Optionally call \`requirement_status\` with stage='on-review' when appropriate.
+   - NEEDS USER DECISION: Ask only for a real product decision, required credentials, or approval for an irreversible action. Name the specific decision or intervention needed; do not ask for generic permission to run another iteration.
+   - ROUTINE REPAIR OR INCOMPLETE WORK: Explain the verified limitation without asking the customer to approve routine implementation, build, or database repairs. Do not claim a retry is scheduled or work has resumed, and do not set stage='in-progress', unless the deterministic stop reason or digest explicitly evidences executable work or an active retry. Otherwise leave the persisted status unchanged.`;
 
   return `You are a cycle evaluation agent wrapping up a delivery cycle for a requirement.
 
@@ -219,7 +225,8 @@ HARD RULES:
 1. INFERENCE ONLY: You MUST infer facts ONLY from the deterministic Cycle stop reason and Docs Digest below. If the digest contains a quote (e.g. price, timeline), state it clearly. Do NOT invent numbers, features, or facts.
 2. FIDELITY: Respect the ORIGINAL instructions and any LATEST change requests from the user history.
 ${verdictBlock}
-4. When you are done, simply finish your turn. Your final prose response will be shown to the client. Keep it concise (5-15 lines).
+4. CLIENT-SAFE REPORTING: Do not expose raw SQL diagnostics, SQL statements, stack traces, or internal schema details in client-facing prose or status messages. Describe only the verified product impact and safe state in simple terms. Do not invent claims that data is unchanged or secure.
+5. When you are done, simply finish your turn. Your final prose response will be shown to the client. Keep it concise (5-15 lines).
 
 === REQUIREMENT INFO ===
 Title: ${input.title}
@@ -227,7 +234,7 @@ ID: ${input.requirementId}
 Plan Completed this cycle: ${input.planCompleted}
 Pending plan steps remaining: ${input.pendingPlanSteps ?? 0}
 Runnable backlog work remains: ${input.hasRunnableBacklogWork === true}
-Cycle stop reason: ${input.wrapUpReason || 'Normal cycle completion'}
+Cycle stop reason: ${input.wrapUpReason || (input.internalReviewRequired ? 'Technical/platform review is required; work remains paused.' : 'Normal cycle completion')}
 Preview URL: ${input.previewUrl || 'Not available'}
 Repo URL: ${input.repoUrl || 'Not available'}
 User history mode: ${input.historyMode}

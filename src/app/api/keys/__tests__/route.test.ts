@@ -8,6 +8,7 @@ import {
 import { NextRequest } from 'next/server';
 
 const mockCreate: any = jest.fn();
+const mockFirstPartyUser: any = jest.fn();
 const mockList: any = jest.fn();
 const mockRevoke: any = jest.fn();
 const mockMaybeSingle: any = jest.fn();
@@ -25,6 +26,9 @@ jest.mock('@/lib/services/api-keys/ApiKeyService', () => ({
 jest.mock('@/lib/database/supabase-server', () => ({
   createSupabaseClient: jest.fn(() => mockClient),
 }));
+jest.mock('@/lib/services/visitor-identity/token-auth', () => ({
+  authenticateFirstPartyUser: (...args: unknown[]) => mockFirstPartyUser(...args),
+}));
 
 import { DELETE, GET, POST } from '../route';
 
@@ -40,6 +44,7 @@ describe('/api/keys', () => {
     jest.clearAllMocks();
     process.env.ENCRYPTION_KEY = 'test-encryption-key';
     mockMaybeSingle.mockResolvedValue({ data: { id: siteId }, error: null });
+    mockFirstPartyUser.mockResolvedValue({ id: userId });
   });
 
   it('creates a key for the authenticated user', async () => {
@@ -95,5 +100,34 @@ describe('/api/keys', () => {
     ));
     expect(response.status).toBe(401);
     expect(mockList).not.toHaveBeenCalled();
+  });
+
+  it('requires independent user authentication and site ownership to provision identity:issue', async () => {
+    const response = await POST(new NextRequest('http://localhost/api/keys', {
+      method: 'POST', headers: { ...authenticatedHeaders, authorization: 'Bearer test-user-token' },
+      body: JSON.stringify({ name: 'Identity', scopes: ['identity:issue'], site_id: siteId }),
+    }));
+    expect(response.status).toBe(200);
+    expect(mockFirstPartyUser).toHaveBeenCalledTimes(1);
+    expect(mockEq).toHaveBeenCalledWith('user_id', userId);
+  });
+
+  it.each([null, undefined])('rejects non-site identity issuer provisioning', async site_id => {
+    const response = await POST(new NextRequest('http://localhost/api/keys', {
+      method: 'POST', headers: authenticatedHeaders,
+      body: JSON.stringify({ name: 'Identity', scopes: ['identity:issue'], site_id }),
+    }));
+    expect(response.status).toBe(403);
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-owner even if the caller requests the issuer scope', async () => {
+    mockMaybeSingle.mockResolvedValue({ data: null, error: null });
+    const response = await POST(new NextRequest('http://localhost/api/keys', {
+      method: 'POST', headers: authenticatedHeaders,
+      body: JSON.stringify({ name: 'Identity', scopes: ['identity:issue'], site_id: siteId }),
+    }));
+    expect(response.status).toBe(403);
+    expect(mockCreate).not.toHaveBeenCalled();
   });
 });

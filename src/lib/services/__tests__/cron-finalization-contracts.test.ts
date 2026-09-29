@@ -120,7 +120,7 @@ describe('atomic requirement finalization contracts', () => {
       'const recovery = recoveryAfterUnhandledError(cycleOutcome);',
     );
     expect(workflowSource).toContain(
-      "wrapUpRequiresUserFeedback = recovery.disposition !== 'retry';",
+      "wrapUpRequiresUserFeedback = recoveryDisposition !== 'internal_review' && recovery.disposition !== 'retry';",
     );
   });
 

@@ -40,6 +40,11 @@ export function requestRatePolicy(
   pathname: string,
   webhookRequest: boolean,
 ): RequestRateLimitPolicy {
+  if (pathname === '/api/visitors/identity/token/current-user') {
+    // A BFF's shared egress must not consume the public tracking budget.
+    // The handler additionally limits each independently authenticated user.
+    return { namespace: 'identity-current-user-admission', limit: 1200, windowSeconds: 60, failClosed: true };
+  }
   if (pathname === '/api/status' || pathname.startsWith('/api/status/')) {
     return {
       namespace: 'status',

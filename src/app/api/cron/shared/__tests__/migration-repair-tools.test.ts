@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { createMigrationRepairTools } from '@/lib/services/apps-platform/migration-repair-tools';
 import { getAppsAdminClient } from '@/lib/database/apps-supabase';
+import type { MigrationSecurityReview } from '@/lib/services/apps-platform/migration-security-review';
 
 jest.mock('@/lib/database/apps-supabase', () => ({ getAppsAdminClient: jest.fn() }));
 
@@ -10,7 +11,7 @@ const fixed = 'CREATE POLICY read_all ON records USING (auth.uid() = user_id);';
 const target = { file, schema: 'app_aaaaaaaaaaaaaaaaaaaaaaaa', tenantId: 'tenant',
   checksum: createHash('sha256').update(sql).digest('hex'), reason: 'lint' as const };
 
-function harness() {
+function harness(contextPaths: string[] = []) {
   const assertCurrent = jest.fn().mockResolvedValue(undefined);
   const sandbox = {
     fs: { readFile: jest.fn().mockResolvedValue(sql) }, writeFiles: jest.fn(),
@@ -24,8 +25,9 @@ function harness() {
   (getAppsAdminClient as jest.Mock).mockReturnValue({
     from: () => ({ select: () => ({ eq: () => ({ maybeSingle: lookup }) }) }), rpc,
   });
-  const repair = createMigrationRepairTools({ sandbox: sandbox as any, requirementId: 'req', target, assertCurrent });
-  return { ...repair, sandbox, rpc, lookup, assertCurrent,
+  const reviewSecurity = jest.fn<Promise<MigrationSecurityReview>, [unknown]>().mockResolvedValue({ decision: 'approved_for_validation', reason: 'Preserves the specified owner access.' });
+  const repair = createMigrationRepairTools({ sandbox: sandbox as any, requirementId: 'req', target, assertCurrent, reviewSecurity, contextPaths });
+  return { ...repair, sandbox, rpc, lookup, assertCurrent, reviewSecurity,
     read: repair.tools[0].execute as (args: { path: string }) => Promise<any>,
     write: repair.tools[1].execute as (args: { sql: string }) => Promise<any> };
 }
@@ -44,7 +46,9 @@ describe('restricted pending migration repair tools', () => {
     expect(h.rpc).toHaveBeenCalledWith('apps_get_migration_receipt', expect.objectContaining({ p_migration_key: `migration:${file}` }));
     expect(h.sandbox.writeFiles).toHaveBeenCalledWith([{ path: `/vercel/sandbox/${file}`, content: fixed }]);
     expect(h.wasChanged()).toBe(true);
-    expect(h.assertCurrent).toHaveBeenCalledTimes(3);
+    expect(h.assertCurrent).toHaveBeenCalledTimes(5);
+    expect(h.reviewSecurity).toHaveBeenCalledWith(expect.objectContaining({ originalSql: sql, proposedSql: fixed }));
+    expect(h.rpc).toHaveBeenCalledTimes(4);
   });
 
   it.each(['', '-- skip this migration', 'SELECT 1;', 'ALTER TABLE records DROP COLUMN email;', 'DELETE FROM records;', 'DROP SCHEMA public;', sql])('refuses empty/unsafe/unchanged SQL: %s', async bad => {
@@ -120,5 +124,106 @@ describe('restricted pending migration repair tools', () => {
     const stale = harness(); stale.assertCurrent.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('stale'));
     await expect(stale.write({ sql: fixed })).rejects.toThrow('stale');
     expect(stale.sandbox.writeFiles).not.toHaveBeenCalled();
+  });
+
+  it.each(['request_changes', 'platform_review'] as const)('refuses a %s verdict without writing', async decision => {
+    const h = harness();
+    h.reviewSecurity.mockResolvedValue({ decision, reason: 'The product access model is not preserved.' });
+    await expect(h.write({ sql: fixed })).resolves.toMatchObject({ success: false, review: { decision } });
+    expect(h.wasChanged()).toBe(false);
+    expect(h.sandbox.writeFiles).not.toHaveBeenCalled();
+  });
+
+  it('does not treat a business question as authorization to write', async () => {
+    const h = harness();
+    h.reviewSecurity.mockResolvedValue({ decision: 'needs_product_decision', reason: 'Access is undefined.',
+      question: 'Who should see records?', options: ['Owner', 'Organization'], specificationExcerpt: 'Records' });
+    await expect(h.write({ sql: fixed })).resolves.toMatchObject({ success: false });
+    expect(h.securityReview()?.decision).toBe('needs_product_decision');
+    expect(h.sandbox.writeFiles).not.toHaveBeenCalled();
+  });
+
+  it('revalidates concurrent changes and applied receipts after review', async () => {
+    const h = harness();
+    h.reviewSecurity.mockImplementation(async () => {
+      h.sandbox.fs.readFile.mockResolvedValue('-- changed during review');
+      return { decision: 'approved_for_validation', reason: 'Approved' };
+    });
+    await expect(h.write({ sql: fixed })).rejects.toThrow('concurrently');
+    expect(h.sandbox.writeFiles).not.toHaveBeenCalled();
+    const applied = harness();
+    applied.reviewSecurity.mockImplementation(async () => {
+      applied.rpc.mockResolvedValue({ data: { found: true } });
+      return { decision: 'approved_for_validation', reason: 'Approved' };
+    });
+    await expect(applied.write({ sql: fixed })).rejects.toThrow('ledger');
+    expect(applied.sandbox.writeFiles).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when review context is missing or the reviewer fails', async () => {
+    const h = harness();
+    h.sandbox.runCommand.mockImplementation(async (_command, args) => ({ exitCode: args[1].endsWith('requirement.spec.md') ? 1 : 0, stdout: async () => args[1] }));
+    await expect(h.write({ sql: fixed })).resolves.toMatchObject({ success: false, review: { decision: 'platform_review' } });
+    expect(h.reviewSecurity).not.toHaveBeenCalled();
+    expect(h.sandbox.writeFiles).not.toHaveBeenCalled();
+    const failed = harness();
+    failed.reviewSecurity.mockRejectedValue(new Error('provider unavailable'));
+    await expect(failed.write({ sql: fixed })).rejects.toThrow('provider unavailable');
+    expect(() => failed.assertHealthy()).toThrow('provider unavailable');
+    expect(failed.sandbox.writeFiles).not.toHaveBeenCalled();
+  });
+
+  it('triages a stopped repair without exposing write privileges or replaying review', async () => {
+    const h = harness();
+    h.reviewSecurity.mockResolvedValue({ decision: 'platform_review', reason: 'Dynamic SQL cannot be safely replaced automatically.' });
+    await expect(h.reviewBlockedMigration()).resolves.toMatchObject({ decision: 'platform_review' });
+    await h.reviewBlockedMigration();
+    expect(h.reviewSecurity).toHaveBeenCalledTimes(1);
+    expect(h.reviewSecurity).toHaveBeenCalledWith(expect.objectContaining({ proposedSql: undefined, originalSql: sql }));
+    expect(h.sandbox.writeFiles).not.toHaveBeenCalled();
+  });
+
+  it('rejects concurrent replacement calls before a second reviewer or writer runs', async () => {
+    const h = harness();
+    const results = await Promise.all([h.write({ sql: fixed }), h.write({ sql: fixed })]);
+    expect(results.filter(result => result.success)).toHaveLength(1);
+    expect(h.reviewSecurity).toHaveBeenCalledTimes(1);
+    expect(h.sandbox.writeFiles).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a changed specification after the reviewer approved the previous contract', async () => {
+    const h = harness();
+    h.reviewSecurity.mockImplementation(async () => {
+      h.sandbox.fs.readFile.mockImplementation(async (path: string) => path.endsWith('requirement.spec.md') ? 'Changed access model' : sql);
+      return { decision: 'approved_for_validation', reason: 'Preserves original contract.' };
+    });
+    await expect(h.write({ sql: fixed })).rejects.toThrow('specification changed');
+    expect(h.sandbox.writeFiles).not.toHaveBeenCalled();
+  });
+
+  it('rereads carried source paths across durable turns and rejects post-review source changes', async () => {
+    const h = harness(['src/access.ts']);
+    const source = 'export const access = "owner";';
+    h.sandbox.fs.readFile.mockImplementation(async (path: string) => path.endsWith('src/access.ts') ? source : sql);
+    await h.write({ sql: fixed });
+    expect(h.reviewSecurity).toHaveBeenCalledWith(expect.objectContaining({
+      sourceContext: [{ path: '/vercel/sandbox/src/access.ts', content: source }],
+    }));
+    const changed = harness(['src/access.ts']);
+    changed.reviewSecurity.mockImplementation(async () => {
+      changed.sandbox.fs.readFile.mockImplementation(async (path: string) => path.endsWith('src/access.ts') ? 'changed' : sql);
+      return { decision: 'approved_for_validation', reason: 'Approved original context.' };
+    });
+    await expect(changed.write({ sql: fixed })).rejects.toThrow('Project source changed');
+    expect(changed.sandbox.writeFiles).not.toHaveBeenCalled();
+  });
+
+  it('tracks a write attempt even when verification fails and preserves its terminal error', async () => {
+    const h = harness();
+    h.sandbox.writeFiles.mockImplementation(async () => { h.sandbox.fs.readFile.mockRejectedValue(new Error('readback unavailable')); });
+    await expect(h.write({ sql: fixed })).rejects.toThrow('readback unavailable');
+    expect(h.writeAttempted()).toBe(true);
+    expect(h.wasChanged()).toBe(false);
+    expect(() => h.assertHealthy()).toThrow('readback unavailable');
   });
 });

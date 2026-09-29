@@ -5,13 +5,15 @@ import { createMigrationRepairTools } from '@/lib/services/apps-platform/migrati
 import { assertCronExecutionOwnership } from '../cron-execution-ownership';
 import { logCronInfrastructureEvent } from '@/lib/services/cron-audit-log';
 import { getTenantCapabilities } from '@/lib/services/apps-platform/tenant-capabilities-service';
+import { reviewMigrationSecurity } from '@/lib/services/apps-platform/migration-security-review';
 
 jest.mock('@/lib/services/robot-instance/assistant-executor', () => ({ executeAssistantStep: jest.fn() }));
 jest.mock('@/lib/services/sandbox-recovery', () => ({ connectOrRecreateRequirementSandbox: jest.fn() }));
 jest.mock('@/lib/services/apps-platform/migration-repair-tools', () => ({ createMigrationRepairTools: jest.fn() }));
 jest.mock('../cron-execution-ownership', () => ({ assertCronExecutionOwnership: jest.fn(), isCronExecutionOwnershipError: () => false }));
-jest.mock('@/lib/services/cron-audit-log', () => ({ logCronInfrastructureEvent: jest.fn() }));
+jest.mock('@/lib/services/cron-audit-log', () => ({ logCronInfrastructureEvent: jest.fn(), CronInfraEvent: { DATABASE_MIGRATION_REPAIR: 'cron_database_migration_repair' } }));
 jest.mock('@/lib/services/apps-platform/tenant-capabilities-service', () => ({ getTenantCapabilities: jest.fn() }));
+jest.mock('@/lib/services/apps-platform/migration-security-review', () => ({ reviewMigrationSecurity: jest.fn() }));
 
 const params = {
   sandboxId: 'old', requirementId: 'req', instanceType: 'applications', title: 'Title',
@@ -27,7 +29,8 @@ describe('durable migration repair step', () => {
     jest.resetAllMocks();
     (connectOrRecreateRequirementSandbox as jest.Mock).mockResolvedValue({ sandbox: {}, sandboxId: 'recovered' });
     (executeAssistantStep as jest.Mock).mockResolvedValue({ isDone: true, messages: [{ role: 'assistant', content: 'Claimed done' }] });
-    (createMigrationRepairTools as jest.Mock).mockReturnValue({ tools: [{ name: 'restricted-tool' }], wasChanged: () => false, repairedTarget: () => undefined });
+    (createMigrationRepairTools as jest.Mock).mockReturnValue({ tools: [{ name: 'restricted-tool' }], wasChanged: () => false, repairedTarget: () => undefined,
+      contextPaths: () => [], writeAttempted: () => false, assertHealthy: () => {}, securityReview: () => undefined, reviewBlockedMigration: jest.fn(async () => ({ decision: 'platform_review', reason: 'Needs technical review' })) });
     (getTenantCapabilities as jest.Mock).mockResolvedValue({ schema: params.outcome.repairTarget.schema, tenant_id: params.outcome.repairTarget.tenantId });
   });
 
@@ -47,7 +50,7 @@ describe('durable migration repair step', () => {
       enforceSingleTurn: true, use_sdk_tools: false, custom_tools: [{ name: 'restricted-tool' }],
       system_prompt: expect.stringContaining('Never claim delivery'),
     }));
-    expect(assertCronExecutionOwnership).toHaveBeenCalledTimes(3);
+    expect(assertCronExecutionOwnership).toHaveBeenCalledTimes(4);
     expect(logCronInfrastructureEvent).toHaveBeenCalledWith(params.audit, expect.objectContaining({
       details: expect.objectContaining({ failureKind: 'product', attempt: 1, changed: false }),
     }));
@@ -73,5 +76,51 @@ describe('durable migration repair step', () => {
     (executeAssistantStep as jest.Mock).mockRejectedValue(new Error('transport failed'));
     await expect(repairDatabaseMigrationStep(params)).resolves.toMatchObject({ changed: false, error: expect.stringContaining('transport failed'), effectiveSandboxId: 'recovered' });
     expect(executeAssistantStep).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns typed technical review instead of asking the user to authorize a repair', async () => {
+    const result = await repairDatabaseMigrationStep(params);
+    expect(result.securityReview).toMatchObject({ decision: 'platform_review' });
+    expect(logCronInfrastructureEvent).toHaveBeenCalledWith(params.audit, expect.objectContaining({
+      details: expect.objectContaining({ resolution_actor: 'platform', user_action_required: false }),
+    }));
+  });
+
+  it('uses the final budgeted turn only for independent review', async () => {
+    await repairDatabaseMigrationStep({ ...params, attempt: 5 });
+    expect(executeAssistantStep).not.toHaveBeenCalled();
+    const repair = (createMigrationRepairTools as jest.Mock).mock.results[0].value;
+    expect(repair.reviewBlockedMigration).toHaveBeenCalledTimes(1);
+  });
+
+  it('counts executor and reviewer calls and keeps change requests retryable', async () => {
+    const verdict = { decision: 'request_changes', reason: 'Preserve organization access.' };
+    (reviewMigrationSecurity as jest.Mock).mockResolvedValue(verdict);
+    (createMigrationRepairTools as jest.Mock).mockImplementation(options => ({
+      tools: [], wasChanged: () => false, repairedTarget: () => undefined, assertHealthy: () => {}, securityReview: () => undefined,
+      contextPaths: () => [], writeAttempted: () => false,
+      reviewBlockedMigration: () => options.reviewSecurity({ originalSql: 'SQL', specification: 'Spec', sourceContext: [] }),
+    }));
+    await expect(repairDatabaseMigrationStep(params)).resolves.toMatchObject({ done: false, turnsUsed: 2, securityReview: verdict });
+    expect(reviewMigrationSecurity).toHaveBeenCalledTimes(1);
+    expect(reviewMigrationSecurity).toHaveBeenCalledWith(expect.objectContaining({
+      target: params.outcome.repairTarget, errors: params.outcome.errors,
+      instance: expect.objectContaining({ requirement_id: 'req' }),
+    }));
+  });
+
+  it.each([{ attempt: 0, maxAttempts: 5 }, { attempt: 6, maxAttempts: 5 }, { attempt: 1, maxAttempts: 6 }])('rejects invalid or exhausted budgets: %j', async budget => {
+    await expect(repairDatabaseMigrationStep({ ...params, ...budget })).resolves.toMatchObject({
+      changed: false, done: true, turnsUsed: 0, securityReview: { decision: 'platform_review' },
+    });
+    expect(executeAssistantStep).not.toHaveBeenCalled();
+    expect(connectOrRecreateRequirementSandbox).not.toHaveBeenCalled();
+  });
+
+  it('does not hide an ambiguous tool failure consumed by the assistant executor', async () => {
+    (createMigrationRepairTools as jest.Mock).mockReturnValue({ tools: [], writeAttempted: () => true, repairedTarget: () => undefined, assertHealthy: () => { throw new Error('unverified write'); } });
+    await expect(repairDatabaseMigrationStep(params)).resolves.toMatchObject({
+      changed: false, done: true, writeAttempted: true, error: expect.stringContaining('unverified write'),
+    });
   });
 });

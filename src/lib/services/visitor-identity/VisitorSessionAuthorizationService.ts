@@ -114,7 +114,8 @@ export class VisitorSessionAuthorizationService {
     if (error) {
       throw new VisitorAuthorizationError('AUTHORIZATION_UNAVAILABLE', 'Unable to authorize conversation', 503);
     }
-    const ownedByVisitor = data?.visitor_id === identity.visitorId;
+    // A remembered visitor id must never unlock another account after logout.
+    const ownedByVisitor = !data?.lead_id && data?.visitor_id === identity.visitorId;
     const ownedByLead = Boolean(identity.leadId && data?.lead_id === identity.leadId);
     if (!data || (!ownedByVisitor && !ownedByLead)) {
       throw new VisitorAuthorizationError('CONVERSATION_FORBIDDEN', 'Conversation does not belong to this session', 403);

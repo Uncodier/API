@@ -57,4 +57,9 @@ describe('fresh product gate after SQL repair', () => {
     (runGateForFlow as jest.Mock).mockResolvedValue({ ok: false, infrastructureFailure: true, error: 'probe unavailable' });
     await expect(runGateStep(params)).resolves.toMatchObject({ passed: false, infrastructureFailure: true, effectiveSandboxId: 'recovered' });
   });
+
+  it('classifies an exception during fresh verification as infrastructure, never product proof', async () => {
+    (runGateForFlow as jest.Mock).mockRejectedValueOnce(new Error('probe transport unavailable'));
+    await expect(runGateStep(params)).resolves.toMatchObject({ passed: false, infrastructureFailure: true, error: 'probe transport unavailable' });
+  });
 });

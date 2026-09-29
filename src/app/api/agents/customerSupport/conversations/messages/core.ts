@@ -58,7 +58,7 @@ export async function getMessagesCore(params: GetMessagesParams): Promise<{
       .order('created_at', { ascending: false })
       .range(offset, offset + safeLimit - 1);
     if (leadId) siteQuery = siteQuery.eq('lead_id', leadId);
-    if (visitorId) siteQuery = siteQuery.eq('conversations.visitor_id', visitorId);
+    if (visitorId) siteQuery = siteQuery.eq('conversations.visitor_id', visitorId).is('conversations.lead_id', null);
     if (roleFilter) siteQuery = siteQuery.eq('role', roleFilter);
     if (interactionFilter) siteQuery = siteQuery.eq('interaction', interactionFilter);
     if (customDataStatus) siteQuery = siteQuery.filter('custom_data->>status', 'eq', customDataStatus);

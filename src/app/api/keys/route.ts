@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { ApiKeyService } from '@/lib/services/api-keys/ApiKeyService';
 import { createSupabaseClient } from '@/lib/database/supabase-server';
+import { authenticateFirstPartyUser } from '@/lib/services/visitor-identity/token-auth';
+import { tokenRouteError } from '@/lib/services/visitor-identity/token-http';
 
 const createApiKeySchema = z.object({
   name: z.string().min(1).max(200),
@@ -72,6 +74,16 @@ export async function POST(request: NextRequest) {
     if (!parsed.success) {
       return error('INVALID_REQUEST', 'Invalid request parameters', 400, parsed.error.format());
     }
+    if (parsed.data.scopes.includes('identity:issue')) {
+      // Identity issuer provisioning cannot be delegated to another API key.
+      const user = await authenticateFirstPartyUser(request);
+      if (!parsed.data.site_id || (parsed.data.user_id && parsed.data.user_id !== user.id)
+        || !await hasDirectSiteAccess(request, user.id, parsed.data.site_id)) {
+        return error('FORBIDDEN', 'Only the site owner may create identity issuer keys', 403);
+      }
+      const apiKey = await ApiKeyService.createApiKey(user.id, parsed.data, { client: createSupabaseClient(request) });
+      return NextResponse.json({ success: true, data: apiKey }, { headers: { 'Cache-Control': 'no-store' } });
+    }
     const userId = trustedUserId(request, parsed.data.user_id);
     if (!userId) return error('UNAUTHORIZED', 'Authentication is required', 401);
     if (
@@ -91,6 +103,7 @@ export async function POST(request: NextRequest) {
     );
     return NextResponse.json({ success: true, data: apiKey });
   } catch (cause) {
+    if (cause instanceof Error && cause.name === 'VisitorIdentityError') return tokenRouteError(cause);
     console.error('[Keys API] Creation failed:', cause);
     return error(
       'SYSTEM_ERROR',

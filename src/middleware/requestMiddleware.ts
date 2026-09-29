@@ -390,6 +390,14 @@ export default async function requestMiddleware(request: NextRequest) {
     return withCors(next(), origin);
   }
 
+  // These exact handlers independently validate both issuer and visitor proof.
+  // Never route them through generic service/global API-key shortcuts.
+  if (pathname === '/api/visitors/identity/token'
+    || pathname === '/api/visitors/identity/token/current-user'
+    || /^\/api\/visitors\/session\/[^/]+\/identify\/token$/.test(pathname)) {
+    return withCors(next(), origin);
+  }
+
   if (publicRequest) {
     if (bearer && isPlausibleUserJwt(bearer)) {
       const authLimited = await limitBearerValidation(request);

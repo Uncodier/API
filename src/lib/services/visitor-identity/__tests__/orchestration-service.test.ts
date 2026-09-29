@@ -82,6 +82,7 @@ describe('VisitorIdentityService challenge issuance', () => {
         id: params.leadId,
         email: params.email
       }))
+      .mockReturnValueOnce(queryResult(null))
       .mockReturnValueOnce(queryResult({ lead_id: params.leadId }));
 
     await expect(new VisitorIdentityService().restore(params)).resolves.toEqual({
@@ -90,6 +91,17 @@ describe('VisitorIdentityService challenge issuance', () => {
     });
     expect(rpc).not.toHaveBeenCalled();
     expect(sendCode).not.toHaveBeenCalled();
+  });
+
+  it('refuses OTP identity lookup for a server-mapped lead even if CRM email was added', async () => {
+    from.mockReturnValueOnce(queryResult({
+      id: params.sessionId, site_id: params.siteId, visitor_id: params.visitorId,
+      lead_id: null, is_active: true,
+    })).mockReturnValueOnce(queryResult({ id: params.leadId, email: params.email }))
+      .mockReturnValueOnce(queryResult({ id: 'external-mapping' }));
+    await expect(new VisitorIdentityService().identify(params)).rejects.toMatchObject({ code: 'server_identity_required' });
+    expect(sendCode).not.toHaveBeenCalled();
+    expect(rpc).not.toHaveBeenCalled();
   });
 });
 

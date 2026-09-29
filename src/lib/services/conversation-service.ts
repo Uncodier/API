@@ -59,7 +59,7 @@ export class ConversationService {
         query = query.eq('lead_id', leadId);
         console.log(`🔍 Filtrando por lead_id: ${leadId}`);
       } else if (visitorId && isValidUUID(visitorId)) {
-        query = query.eq('visitor_id', visitorId);
+        query = query.eq('visitor_id', visitorId).is('lead_id', null);
         console.log(`🔍 Filtrando por visitor_id: ${visitorId}`);
       }
 

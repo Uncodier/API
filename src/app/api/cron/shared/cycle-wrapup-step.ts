@@ -24,6 +24,8 @@ import { assertCronExecutionOwnership } from './cron-execution-ownership';
 
 const STEP_FAILURE_REASON_PREFIX = 'One or more execution steps failed';
 const AUTOMATED_RECOVERY_ERROR = /^(?:Build failed|Post-finally|Pre-push)/i;
+const INTERNAL_REVIEW_MESSAGE =
+  'Work is paused because the update could not be completed safely. Technical/platform review is required before work can continue. No customer approval is needed.';
 
 export interface CycleWrapUpParams {
   sandboxId?: string;
@@ -50,6 +52,7 @@ export interface CycleWrapUpParams {
 }
 
 export type CycleWrapUpResult =
+  // Completion refers only to reporting, never authorization to resume the requirement.
   | { ran: true; outcome: 'completed' }
   | { ran: false; outcome: 'skipped' | 'failed' };
 
@@ -77,7 +80,8 @@ export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<Cy
   try {
     const ownership = params.audit?.executionOwnership;
     if (ownership) await assertCronExecutionOwnership({ ...ownership, allowTerminal: true });
-    const history = await loadUserActionHistory(instanceId, { requirementId });
+    const internalReviewRequired = recoveryDisposition === 'internal_review';
+    const effectiveForceWrapUp = forceWrapUp || internalReviewRequired;
     const retryableStepFailure = recoveryDisposition
       ? recoveryDisposition === 'retry' ||
         (recoveryDisposition === 'product_failure' &&
@@ -92,8 +96,12 @@ export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<Cy
               await hasRunnableRequirementPlan(instanceId, requirementId)
         );
     const effectiveRequiresUserFeedback =
-      !retryableStepFailure && (!!recoveryDisposition || !!requiresUserFeedback);
-    const effectiveWrapUpReason = retryableStepFailure
+      !internalReviewRequired && !retryableStepFailure &&
+      (!!recoveryDisposition || !!requiresUserFeedback);
+    // Internal diagnostics stay in execution logs, not client-facing status/prose inputs.
+    const effectiveWrapUpReason = internalReviewRequired
+      ? INTERNAL_REVIEW_MESSAGE
+      : retryableStepFailure
       ? `${wrapUpReason || 'The work cycle needs another attempt.'} Automatic retries remaining; continue in the next cycle without requesting user intervention.`
       : wrapUpReason;
 
@@ -112,7 +120,7 @@ export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<Cy
           statusError instanceof Error ? statusError.message : statusError,
         );
       }
-    } else if (effectiveRequiresUserFeedback) {
+    } else if (internalReviewRequired || effectiveRequiresUserFeedback) {
       try {
         await createRequirementStatusCore({
           site_id: siteId,
@@ -129,9 +137,11 @@ export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<Cy
           `[CycleWrapUpStep] Failed to persist blocked status for ${requirementId}:`,
           statusError instanceof Error ? statusError.message : statusError,
         );
+        if (internalReviewRequired) return { ran: false, outcome: 'failed' };
       }
     }
 
+    const history = await loadUserActionHistory(instanceId, { requirementId });
     // Reload full digest from the log written by emitDocsDigestStep (slim workflow payload).
     let digestFiles =
       digest?.emitted
@@ -146,7 +156,7 @@ export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<Cy
       planCompleted,
       pendingPlanSteps,
       hasRunnableBacklogWork,
-      forceWrapUp,
+      forceWrapUp: effectiveForceWrapUp,
     })) {
       console.log(
         `[CycleWrapUpStep] Skipping wrap-up for ${requirementId} — ${pendingPlanSteps} plan step(s) still pending`,
@@ -155,7 +165,7 @@ export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<Cy
     }
 
     if (
-      !forceWrapUp &&
+      !effectiveForceWrapUp &&
       !shouldRunCycleWrapUp({
         hasDigest: !!(digestFiles && digestFiles.length > 0),
         userMessageCount: history.totalCount,
@@ -179,6 +189,7 @@ export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<Cy
       hasRunnableBacklogWork,
       wrapUpReason: effectiveWrapUpReason,
       requiresUserFeedback: effectiveRequiresUserFeedback,
+      internalReviewRequired,
       previewUrl,
       repoUrl,
     });
@@ -189,7 +200,10 @@ export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<Cy
       execute: async (args: Parameters<typeof statusTool.execute>[0]) => {
         if (ownership) await assertCronExecutionOwnership({ ...ownership, allowTerminal: true });
         if ((args.action || 'create') === 'create') {
-          if (retryableStepFailure) {
+          if (internalReviewRequired) {
+            // Neither a model verdict nor raw diagnostics may reopen or misreport this hold.
+            args = { ...args, stage: 'blocked', message: INTERNAL_REVIEW_MESSAGE };
+          } else if (retryableStepFailure) {
             args = { ...args, stage: 'in-progress' };
           } else if (effectiveRequiresUserFeedback) {
             args = { ...args, stage: 'blocked' };

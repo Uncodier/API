@@ -4,6 +4,8 @@ import { TeamNotificationService } from '@/lib/services/team-notification-servic
 import { NotificationType, NotificationCategory } from '@/lib/services/notification-service';
 import { EmailSendService } from '@/lib/services/email/EmailSendService';
 import { z } from 'zod';
+import { reportSectionsSchema } from '@/lib/services/dailyStandupReportSections';
+import { isDailyStandupNotificationAllowed } from '@/lib/services/dailyStandupNotificationPolicy';
 
 // Configurar timeout máximo a 2 minutos
 export const maxDuration = 120;
@@ -13,6 +15,7 @@ const DailyStandUpSchema = z.object({
   site_id: z.string().uuid('site_id debe ser un UUID válido'),
   subject: z.string().min(1, 'subject es requerido'),
   message: z.string().min(1, 'message es requerido'),
+  report_sections: reportSectionsSchema.min(1).optional(),
   health: z
     .object({
       status: z
@@ -457,7 +460,12 @@ export async function POST(request: NextRequest) {
       console.log('✅ [DailyStandUp] Debug - transformed focus_areas:', JSON.stringify(validationResult.data.systemAnalysis.strategic_analysis.focus_areas));
     }
     
-    const { site_id, subject, message, systemAnalysis, health } = validationResult.data;
+    const { site_id, subject, message, systemAnalysis, health, report_sections } = validationResult.data;
+    if (!await isDailyStandupNotificationAllowed(site_id, report_sections)) {
+      return NextResponse.json({ success: false, error: {
+        code: 'REPORT_NOT_ELIGIBLE', message: 'Daily Standup settings no longer allow this report',
+      } }, { status: 409 });
+    }
     
     console.log(`📋 [DailyStandUp] Procesando notificación para sitio: ${site_id}`);
     
@@ -465,7 +473,7 @@ export async function POST(request: NextRequest) {
     let businessAssessment: string | undefined;
 
     // 1) Construir desde health si está disponible (tiene prioridad)
-    if (health) {
+    if (report_sections === undefined && health) {
       const statusUpper = health.status ? String(health.status).toUpperCase() : undefined;
       const statusPart = statusUpper
         ? `Status: ${statusUpper}${health.reason ? ' - ' + health.reason : ''}`
@@ -486,7 +494,7 @@ export async function POST(request: NextRequest) {
     }
 
     // 2) Si no hay health utilizable, usar el de systemAnalysis
-    if (!businessAssessment && systemAnalysis?.strategic_analysis?.business_assessment) {
+    if (report_sections === undefined && !businessAssessment && systemAnalysis?.strategic_analysis?.business_assessment) {
       businessAssessment = systemAnalysis.strategic_analysis.business_assessment;
       console.log('📊 [DailyStandUp] Business assessment extraído del systemAnalysis');
     }

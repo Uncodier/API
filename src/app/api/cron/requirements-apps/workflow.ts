@@ -91,6 +91,7 @@ import { cycleFailureReason, recoveryAfterUnhandledError, type CycleRecoveryDisp
 import { boundedFailureDetail, cronOwnershipRejectionReason } from '../shared/cron-ownership-rejection';
 import type { DatabaseMigrationOutcome } from '../shared/database-migration-outcome';
 import type { MigrationRepairTarget } from '@/lib/services/apps-platform/migration-repair-types';
+import type { MigrationSecurityReview } from '@/lib/services/apps-platform/migration-security-review';
 
 export interface CronAppsWorkflowInput {
   reqId: string;
@@ -1287,6 +1288,9 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       // Only the applier can identify a safely editable, unapplied migration.
       const migrationRepairBudget = Math.min(5, requirementFlow.cost_envelope.max_turns_per_step);
       let migrationRepairMessages: any[] = [];
+      let migrationRepairContextPaths: string[] = [];
+      let ambiguousMigrationWrite = false;
+      let migrationSecurityReview: MigrationSecurityReview | undefined;
       for (let attempt = 1;
         attempt <= migrationRepairBudget && dbMig.status === 'failed' &&
         dbMig.failureKind === 'product' && dbMig.repairTarget;
@@ -1295,10 +1299,16 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
           sandboxId: sandboxId!, requirementId: reqId, instanceType, title, audit: cronAudit,
           executionOwnership: { requirementId: reqId, runId: cronLockRunId, executionGeneration },
           outcome: dbMig, attempt, maxAttempts: migrationRepairBudget, messages: migrationRepairMessages,
+          contextPaths: migrationRepairContextPaths,
         });
         sandboxId = repair.effectiveSandboxId;
         migrationRepairMessages = repair.messages;
+        migrationRepairContextPaths = repair.contextPaths || [];
+        migrationSecurityReview = repair.securityReview;
+        // Both agents consume the same bounded budget; never add hidden review turns.
+        attempt += Math.max(0, (repair.turnsUsed ?? 1) - 1);
         if (repair.error) {
+          ambiguousMigrationWrite = repair.writeAttempted === true;
           dbMig = { status: 'failed', applied: dbMig.applied, errors: [...dbMig.errors, repair.error],
             failureKind: 'infrastructure', effectiveSandboxId: sandboxId! };
           break;
@@ -1314,6 +1324,11 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
           }, repairedMigrations);
           dbMig.applied = Array.from(new Set([...alreadyApplied, ...dbMig.applied]));
           sandboxId = dbMig.effectiveSandboxId;
+          if (dbMig.status === 'failed' && dbMig.repairTarget?.file !== repair.repairedTarget.file) {
+            migrationRepairMessages = [];
+            migrationRepairContextPaths = [];
+            migrationSecurityReview = undefined;
+          }
         } else if (repair.done) {
           break;
         }
@@ -1323,9 +1338,29 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
         lightweightCycleFinalization = false;
         cycleOutcome = dbMig.status === 'failed' && dbMig.failureKind === 'product'
           ? 'product_failure' : 'infrastructure_retry';
-        recoveryDisposition = cycleOutcome === 'product_failure' ? 'blocked' : 'retry';
-        wrapUpRequiresUserFeedback = recoveryDisposition === 'blocked';
-        wrapUpReason = `Database migration delivery gate failed: ${dbMig.errors.join('; ').slice(0, 2000)}`;
+        const productDecision = migrationSecurityReview?.decision === 'needs_product_decision'
+          ? migrationSecurityReview : undefined;
+        const internalHold = ambiguousMigrationWrite || repairedMigrations.length > 0;
+        recoveryDisposition = cycleOutcome === 'product_failure' || internalHold
+          ? productDecision ? 'blocked' : 'internal_review'
+          : 'retry';
+        wrapUpRequiresUserFeedback = !!productDecision && recoveryDisposition === 'blocked';
+        wrapUpReason = productDecision
+          ? `A product decision is required before changing data access. Ask this concrete question, not for permission to repair SQL: ${productDecision.question} Options: ${productDecision.options.join(' / ')}`
+          : 'The database update did not pass safety validation. Technical platform review is required before it can be applied. No customer authorization is needed to repair SQL. Do not claim the update was delivered or that further review is already scheduled.';
+        if (cycleOutcome === 'product_failure' || internalHold) {
+          // Persist the stop independently of the client-facing LLM and digest availability.
+          await assertCronExecutionOwnershipStep({ requirementId: reqId, runId: cronLockRunId, executionGeneration });
+          const blocked = await recordRequirementBlockedStep({
+            site_id, instance_id: instanceId, requirement_id: reqId,
+            provenance: 'product_failure', expected_execution_generation: executionGeneration,
+            event_id: `${cronLockRunId}:migration-review`,
+            message: productDecision
+              ? `Product decision required: ${productDecision.question}`
+              : 'Database update blocked for technical security review. No customer action is required.',
+          });
+          if (!blocked.ok) throw new Error(`Could not persist migration review stop: ${blocked.error}`);
+        }
         wrapUpAttempted = false;
         console.warn(`[CronAppsWorkflow] DB Migrations had errors:`, dbMig.errors);
       } else if (dbMig.applied.length > 0) {
@@ -1348,10 +1383,20 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
         if (!gate?.passed) {
           infrastructureHalt = true;
           cycleOutcome = gate?.infrastructureFailure ? 'infrastructure_retry' : 'product_failure';
-          recoveryDisposition = gate?.infrastructureFailure ? 'retry' : 'blocked';
-          wrapUpRequiresUserFeedback = recoveryDisposition === 'blocked';
+          // A changed authorization model must not escape fresh verification in a
+          // new cycle that lacks this repair's receipts, even if the probe is down.
+          recoveryDisposition = 'internal_review';
+          wrapUpRequiresUserFeedback = false;
           wrapUpAttempted = false;
           wrapUpReason = `Migration repaired, but fresh product verification did not pass: ${gate?.error || gate?.gateErrorExcerpt || 'No verifiable plan step.'}`;
+          await assertCronExecutionOwnershipStep({ requirementId: reqId, runId: cronLockRunId, executionGeneration });
+          const blocked = await recordRequirementBlockedStep({
+            site_id, instance_id: instanceId, requirement_id: reqId,
+            provenance: 'product_failure', expected_execution_generation: executionGeneration,
+            event_id: `${cronLockRunId}:migration-verification-review`,
+            message: 'Database repair requires technical review because fresh product verification failed. No customer action is required.',
+          });
+          if (!blocked.ok) throw new Error(`Could not persist migration verification stop: ${blocked.error}`);
         }
       }
     }
@@ -1647,10 +1692,12 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     }
     const recovery = recoveryAfterUnhandledError(cycleOutcome);
     cycleOutcome = recovery.outcome;
-    recoveryDisposition = cycleOutcome === 'product_failure'
-      ? recoveryDisposition || recovery.disposition : recovery.disposition;
+    if (recoveryDisposition !== 'internal_review') {
+      recoveryDisposition = cycleOutcome === 'product_failure'
+        ? recoveryDisposition || recovery.disposition : recovery.disposition;
+    }
     wrapUpAttempted = false;
-    wrapUpRequiresUserFeedback = recovery.disposition !== 'retry';
+    wrapUpRequiresUserFeedback = recoveryDisposition !== 'internal_review' && recovery.disposition !== 'retry';
     wrapUpReason = cycleFailureReason(cycleOutcome, wrapUpReason, e);
     workflowErrorInFlight = true;
     // Let the finally block handle the sandbox stop

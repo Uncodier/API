@@ -7,7 +7,7 @@ export const identifySchema = z.object({
   lead_id: z.string().uuid().optional(),
   segment_id: z.string().uuid().optional(),
   traits: z.object({
-    email: z.string().email().optional(),
+    email: z.string().email().max(320).optional(),
     phone: z.string().max(100).optional(),
     name: z.string().max(500).optional(),
     position: z.string().max(500).optional(),

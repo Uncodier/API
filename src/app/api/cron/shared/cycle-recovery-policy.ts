@@ -17,6 +17,7 @@ export function cycleFailureReason(
 export type CycleRecoveryDisposition =
   | 'retry'
   | 'blocked'
+  | 'internal_review'
   | 'product_failure'
   | 'delivery_failure';
 

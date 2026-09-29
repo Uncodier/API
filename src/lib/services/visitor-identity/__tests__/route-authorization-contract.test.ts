@@ -44,20 +44,20 @@ describe('browser route authorization contract', () => {
   });
 
   it('native WebSocket validates session ownership and forbids conversation switching', () => {
-    const source = readFileSync(resolve(process.cwd(), 'wsServer.js'), 'utf8');
+    const source = ['wsServer.js', 'wsServerConnection.cjs', 'wsServerAuthorization.cjs']
+      .map(file => readFileSync(resolve(process.cwd(), file), 'utf8')).join('\n');
     expect(source).toContain('authorizeWebSocketUpgrade(request');
     expect(source).toContain('selectVisitorSessionProtocol');
-    expect(source).toContain('authorizeConnection({ site_id, session_id, conversation_id })');
-    expect(source).toContain("code: 'REALTIME_AUTH_UNAVAILABLE'");
+    expect(source).toContain('authorizeConnection(supabase, params)');
+    expect(source).toContain("denied('REALTIME_AUTH_UNAVAILABLE'");
     expect(source).toContain('subConvId !== conversation_id');
     expect(source).toContain('payload.conversation_id !== conversation_id');
   });
 
   it('keeps SSE authorization parameters and event names compatible with the Script', () => {
-    const source = readFileSync(
-      resolve(process.cwd(), 'src/app/api/agents/chat/websocket/route.ts'),
-      'utf8'
-    );
+    const source = ['route.ts', 'event-stream.ts'].map(file => readFileSync(
+      resolve(process.cwd(), 'src/app/api/agents/chat/websocket', file), 'utf8',
+    )).join('\n');
     expect(source).toContain("query.get('session_id')");
     expect(source).toContain('X-Visitor-Session-Token');
     expect(source).toContain('export async function OPTIONS');
@@ -70,8 +70,11 @@ describe('browser route authorization contract', () => {
       resolve(process.cwd(), 'src/app/api/visitors/session/[session_id]/identify/route.ts'),
       'utf8'
     );
-    expect(identify).toContain("result.identity_status === 'verification_required'");
-    expect(identify).toContain("result.identity_status === 'new_lead'");
+    expect(identify).toContain("identity_status: 'unverified'");
+    expect(identify).not.toContain('visitorIdentityService.identify');
+    const challenge = readFileSync(resolve(process.cwd(), 'src/lib/services/visitor-identity/challenge-route.ts'), 'utf8');
+    expect(challenge).toContain("result.identity_status === 'verification_required'");
+    expect(challenge).toContain("result.identity_status === 'new_lead'");
 
     const status = readFileSync(
       resolve(process.cwd(), 'src/app/api/visitors/session/[session_id]/identify/status/route.ts'),
@@ -85,7 +88,7 @@ describe('browser route authorization contract', () => {
         resolve(process.cwd(), `src/app/api/visitors/session/[session_id]/identify/${operation}/route.ts`),
         'utf8'
       );
-      expect(source).toContain('new Response(null, { status: 204 })');
+      expect(source).toContain('new Response(null, { status: 204');
     }
   });
 
@@ -99,7 +102,7 @@ describe('browser route authorization contract', () => {
         ),
         'utf8'
       );
-      expect(source).toContain('authorizeVisitorSession(request');
+      expect(source).toMatch(/authorizeVisitorSession\(request|requireIdentitySession\(request/);
     }
   });
 });

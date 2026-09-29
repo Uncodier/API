@@ -3,6 +3,11 @@
 The website chat uses an expiring email challenge before an existing lead can
 access prior conversations from an untrusted visitor session.
 
+Explicit OTP issuance uses `POST /api/visitors/session/{session_id}/identify/challenge`.
+Plain `/identify` is unverified attributes-only and no longer sends an email.
+See [server-issued identity tokens](./VISITOR_IDENTITY_TOKENS.md) for automatic
+first-party identity and the additional required forward migration.
+
 ## Deployment
 
 1. Configure `VISITOR_IDENTITY_OTP_HMAC_SECRET` with at least 32 random

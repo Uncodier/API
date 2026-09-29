@@ -11,6 +11,9 @@ import {
   visitorIdentityRouteError
 } from '@/lib/services/visitor-identity/route-utils';
 import { authorizeVisitorSession } from '@/lib/security/authorize-visitor-session';
+import { requireIdentitySession } from '@/lib/services/visitor-identity/token-auth';
+import { identityRateLimit, identityResponse, tokenRouteError } from '@/lib/services/visitor-identity/token-http';
+import { readCurrentIdentity } from '@/lib/services/visitor-identity/token-service';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,6 +24,19 @@ const RestoreIdentitySchema = z.object({
   lead_id: z.string().uuid(),
   email: z.string().trim().email().max(320)
 });
+
+export async function GET(request: NextRequest, context: { params: Promise<{ session_id: string }> }) {
+  try {
+    const limited = await identityRateLimit(request, 'status');
+    if (limited) return limited;
+    const query = z.object({ site_id: z.string().uuid(), session_id: z.string().uuid() }).strict()
+      .parse(Object.fromEntries(request.nextUrl.searchParams));
+    const { session_id } = await context.params;
+    assertRouteIdentity(session_id, query.session_id, query.site_id, query.site_id);
+    const session = await requireIdentitySession(request, query.site_id, session_id);
+    return identityResponse(await readCurrentIdentity(session));
+  } catch (error) { return tokenRouteError(error); }
+}
 
 export async function POST(
   request: NextRequest,

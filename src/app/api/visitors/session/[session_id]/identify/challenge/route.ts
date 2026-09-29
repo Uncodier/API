@@ -4,6 +4,11 @@ import { VisitorIdentityError } from '@/lib/services/visitor-identity/contracts'
 import { visitorIdentityService } from '@/lib/services/visitor-identity/orchestration-service';
 import { assertRouteIdentity, visitorIdentityRouteError } from '@/lib/services/visitor-identity/route-utils';
 import { authorizeVisitorSession } from '@/lib/security/authorize-visitor-session';
+import { requestIdentityChallenge } from '@/lib/services/visitor-identity/challenge-route';
+
+export async function POST(request: NextRequest, context: { params: Promise<{ session_id: string }> }) {
+  return requestIdentityChallenge(request, context);
+}
 
 const CancelSchema = z.object({
   site_id: z.string().uuid(),

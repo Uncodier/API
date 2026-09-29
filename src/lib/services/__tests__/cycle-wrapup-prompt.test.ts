@@ -36,7 +36,8 @@ describe('cycle-wrapup-prompt', () => {
     expect(prompt).toContain('"price":20');
     expect(prompt).toContain('INFERENCE ONLY');
     expect(prompt).toContain('DELIVERED');
-    expect(prompt).toContain('NEEDS USER ITERATION');
+    expect(prompt).toContain('NEEDS USER DECISION');
+    expect(prompt).not.toContain('NEEDS USER ITERATION');
     expect(prompt).toContain('User history mode: full');
     expect(prompt).toContain('req-123');
     expect(prompt).toContain('SAME language');
@@ -100,6 +101,101 @@ describe('cycle-wrapup-prompt', () => {
         forceWrapUp: true,
       }),
     ).toBe(false);
+  });
+
+  it.each([undefined, false, true])(
+    'prioritizes internal review over remaining work and incoming feedback %s',
+    requiresUserFeedback => {
+      const prompt = buildCycleWrapUpSystemPrompt({
+        title: 'Customer registration',
+        requirementId: 'req-internal',
+        instructions: 'Finish customer registration',
+        historyPromptText: '',
+        historyMode: 'empty',
+        digestFiles: [],
+        planCompleted: false,
+        pendingPlanSteps: 2,
+        hasRunnableBacklogWork: true,
+        internalReviewRequired: true,
+        requiresUserFeedback,
+        wrapUpReason: 'The update could not be completed safely.',
+      });
+
+      expect(prompt).toContain('INTERNAL TECHNICAL/PLATFORM REVIEW REQUIRED');
+      expect(prompt).toContain("Keep stage='blocked'");
+      expect(prompt).toContain('not a request for customer approval');
+      expect(prompt).toContain('do NOT ask the customer for permission, feedback, or another iteration');
+      expect(prompt).toContain('verified product impact and the safe paused state in simple terms');
+      expect(prompt).toContain('Do NOT claim that review is queued, assigned, or active');
+      expect(prompt).toContain('or promise automatic continuation, unless explicitly evidenced');
+      expect(prompt).toContain('Successful wrap-up only reports the hold; it does not resume work');
+      expect(prompt).not.toContain('USER FEEDBACK REQUIRED');
+      expect(prompt).not.toContain('VERDICT: Executable work remains');
+      expect(prompt).not.toContain("with stage='in-progress'");
+      expect(prompt).not.toContain('NEEDS USER DECISION');
+    },
+  );
+
+  it('keeps internal review blocked even when the plan is complete', () => {
+    const prompt = buildCycleWrapUpSystemPrompt({
+      title: 'Database update',
+      requirementId: 'req-internal',
+      instructions: null,
+      historyPromptText: '',
+      historyMode: 'empty',
+      digestFiles: [],
+      planCompleted: true,
+      internalReviewRequired: true,
+    });
+
+    expect(prompt).toContain('even if plan steps remain or the digest suggests success');
+    expect(prompt).not.toContain('VERDICT CHOICE');
+    expect(prompt).not.toContain('Normal cycle completion');
+    expect(prompt).toContain('Do not expose raw SQL diagnostics, SQL statements, stack traces, or internal schema details');
+    expect(prompt).toContain('Do not invent claims that data is unchanged or secure');
+  });
+
+  it('does not ask for generic iteration permission or invent resumption for routine repairs', () => {
+    const prompt = buildCycleWrapUpSystemPrompt({
+      title: 'Repair registration',
+      requirementId: 'req-repair',
+      instructions: 'Fix registration',
+      historyPromptText: '',
+      historyMode: 'empty',
+      digestFiles: [],
+      planCompleted: false,
+      wrapUpReason: 'The update remains incomplete.',
+    });
+
+    expect(prompt).toContain('NEEDS USER DECISION');
+    expect(prompt).toContain('Ask only for a real product decision, required credentials, or approval for an irreversible action');
+    expect(prompt).toContain('do not ask for generic permission to run another iteration');
+    expect(prompt).toContain('without asking the customer to approve routine implementation, build, or database repairs');
+    expect(prompt).toContain('Do not claim a retry is scheduled or work has resumed');
+    expect(prompt).toContain("do not set stage='in-progress', unless the deterministic stop reason or digest explicitly evidences");
+    expect(prompt).toContain('Otherwise leave the persisted status unchanged');
+    expect(prompt).not.toContain('NEEDS USER ITERATION');
+    expect(prompt).not.toContain('MUST explicitly ask the user for permission');
+  });
+
+  it('preserves the concrete user-decision prompt without internal review', () => {
+    const prompt = buildCycleWrapUpSystemPrompt({
+      title: 'Configure billing',
+      requirementId: 'req-decision',
+      instructions: 'Enable billing',
+      historyPromptText: '',
+      historyMode: 'empty',
+      digestFiles: [],
+      planCompleted: false,
+      requiresUserFeedback: true,
+      internalReviewRequired: false,
+      wrapUpReason: 'Choose the subscription tier and supply the billing credential.',
+    });
+
+    expect(prompt).toContain('USER FEEDBACK REQUIRED');
+    expect(prompt).toContain('explicitly ask the user to reply before work continues');
+    expect(prompt).toContain('Choose the subscription tier and supply the billing credential.');
+    expect(prompt).not.toContain('INTERNAL TECHNICAL/PLATFORM REVIEW REQUIRED');
   });
 
   it('shouldRunCycleWrapUp skips only when both empty', () => {

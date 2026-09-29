@@ -87,6 +87,12 @@ export class VisitorIdentityService {
       : query.ilike('email', escapeLike(normalizedEmail));
     const { data, error } = await query.order('created_at', { ascending: true }).limit(1).maybeSingle();
     if (error) throw new VisitorIdentityError('identity_storage_error', 'Unable to resolve identity', 503);
+    if (data) {
+      const { data: external, error: externalError } = await supabaseAdmin
+        .from('visitor_external_identities').select('id').eq('lead_id', data.id).maybeSingle();
+      if (externalError) throw new VisitorIdentityError('identity_storage_error', 'Unable to resolve identity', 503);
+      if (external) throw new VisitorIdentityError('server_identity_required', 'This identity requires a server-issued token', 403);
+    }
     if (leadId && (!data || normalizeIdentityEmail(data.email || '') !== normalizedEmail)) {
       throw new VisitorIdentityError('lead_mismatch', 'Lead does not match this site and email', 400);
     }

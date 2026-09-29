@@ -31,6 +31,32 @@ describe('conservative migration repair policy', () => {
       'CREATE POLICY scoped ON records FOR SELECT TO anon USING (auth.uid() = user_id);')).toBe(false);
   });
 
+  it.each([
+    ['"OwnerOnly"', '"owneronly"', '"Records"', '"Records"', 'authenticated', 'authenticated'],
+    ['"OwnerOnly"', '"OwnerOnly"', '"Records"', '"records"', 'authenticated', 'authenticated'],
+    ['scoped', 'scoped', 'records', 'records', '"Staff"', '"staff"'],
+    ['scoped', 'scoped', 'records', 'records', '"Staff  Team"', '"Staff Team"'],
+  ])('preserves case and spacing of quoted policy/table/role names', (beforePolicy, afterPolicy, beforeTable, afterTable, beforeRole, afterRole) => {
+    expect(canAutomaticallyReplaceMigration(
+      `CREATE POLICY ${beforePolicy} ON ${beforeTable} FOR SELECT TO ${beforeRole} USING (true);`,
+      `CREATE POLICY ${afterPolicy} ON ${afterTable} FOR SELECT TO ${afterRole} USING (user_id = _app_current_user_id());`,
+    )).toBe(false);
+  });
+
+  it('still accepts case-insensitive unquoted SQL keywords and exact quoted names', () => {
+    expect(canAutomaticallyReplaceMigration(
+      'CREATE POLICY "OwnerOnly" ON "Records" FOR SELECT TO "Staff" USING (true);',
+      'create policy "OwnerOnly" on "Records" for select to "Staff" using (user_id = _app_current_user_id());',
+    )).toBe(true);
+  });
+
+  it('does not parse predicate keywords inside quoted identifiers as the policy boundary', () => {
+    expect(canAutomaticallyReplaceMigration(
+      'CREATE POLICY scoped ON "Records using (Original)" FOR SELECT TO authenticated USING (true);',
+      'CREATE POLICY scoped ON "Records using (Changed)" FOR ALL TO authenticated USING (user_id = _app_current_user_id());',
+    )).toBe(false);
+  });
+
   it('redacts recognizable secrets but preserves process.env references', () => {
     expect(sanitizeMigrationRepairContext('const token = "abc"; const key = process.env.APPS_TOKEN;'))
       .toBe('const token = "[REDACTED]"; const key = process.env.APPS_TOKEN;');

@@ -71,7 +71,7 @@ export async function runGateStep(params: {
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    return { ok: false, passed: false, error: msg, effectiveSandboxId: sandboxId };
+    return { ok: false, passed: false, infrastructureFailure: true, error: msg, effectiveSandboxId: sandboxId };
   }
   let sandbox = connected.sandbox;
   let effectiveSandboxId = connected.sandboxId;
@@ -296,6 +296,6 @@ export async function runGateStep(params: {
     }
   } catch (e: any) {
     console.error(`[GateStep] Exception running gate:`, e);
-    return { ok: false, passed: false, error: e.message, effectiveSandboxId };
+    return { ok: false, passed: false, infrastructureFailure: true, error: e.message, effectiveSandboxId };
   }
 }

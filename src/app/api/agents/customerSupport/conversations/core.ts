@@ -63,7 +63,7 @@ export async function getConversationsCore(params: GetConversationsParams): Prom
     .range(offset, offset + limit - 1);
 
   if (leadId) query = query.eq('lead_id', leadId);
-  else if (visitorId) query = query.eq('visitor_id', visitorId);
+  else if (visitorId) query = query.eq('visitor_id', visitorId).is('lead_id', null);
   if (userId) query = query.eq('user_id', userId);
   if (siteId) query = query.eq('site_id', siteId);
   if (agentId) query = query.eq('agent_id', agentId);
