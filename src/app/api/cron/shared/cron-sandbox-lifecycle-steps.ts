@@ -1,5 +1,6 @@
 'use step';
 
+import { FatalError } from 'workflow';
 import { getSandboxHandle, sandboxIdentity } from '@/lib/services/sandbox-sdk';
 import { requirementSandboxName } from '@/lib/services/sandbox-constants';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
@@ -25,6 +26,7 @@ import { sanitizeRuntimeLog } from './runtime-log-context';
 import {
   assertCronExecutionOwnership,
   CronExecutionOwnershipError,
+  isCronExecutionOwnershipError,
   type CronExecutionOwnership,
 } from './cron-execution-ownership';
 
@@ -326,7 +328,16 @@ export async function assertCronExecutionOwnershipStep(
   ownership: CronExecutionOwnership,
 ): Promise<void> {
   'use step';
-  await assertCronExecutionOwnership(ownership);
+  try {
+    await assertCronExecutionOwnership(ownership);
+  } catch (error) {
+    if (!isCronExecutionOwnershipError(error)) throw error;
+    // maxRetries=0 alone turns this into "exceeded max retries", hiding the
+    // underlying rejection. FatalError preserves it on the first invocation.
+    const fatal = new FatalError((error as Error).message);
+    fatal.stack = undefined;
+    throw fatal;
+  }
 }
 // A guard is observational; retrying a definitely superseded owner cannot heal
 // it. A later scheduler run can recover a transient database outage safely.

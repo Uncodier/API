@@ -1,4 +1,4 @@
-import { recoveryAfterUnhandledError } from '../cycle-recovery-policy';
+import { cycleFailureReason, recoveryAfterUnhandledError } from '../cycle-recovery-policy';
 
 describe('typed cycle recovery policy', () => {
   it.each(['idle', 'progress', 'infrastructure_retry', 'infrastructure_wait'] as const)(
@@ -19,5 +19,15 @@ describe('typed cycle recovery policy', () => {
     expect(recoveryAfterUnhandledError('product_failure')).toEqual({
       outcome: 'product_failure', disposition: 'product_failure',
     });
+  });
+
+  it('preserves primary product evidence rather than a secondary ownership wrapper', () => {
+    const reason = 'POST /api/drivers/register ->400 invalid nested payload; product budget exhausted after 3';
+    expect(cycleFailureReason('product_failure', reason, new Error('exceeded max retries'))).toBe(reason);
+  });
+
+  it('does not hide new infrastructure failure behind earlier progress', () => {
+    expect(cycleFailureReason('progress', 'Earlier progress', new Error('database unavailable')))
+      .toContain('database unavailable');
   });
 });

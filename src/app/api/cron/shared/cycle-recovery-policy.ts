@@ -1,4 +1,17 @@
 import type { CronCycleOutcome } from '@/lib/services/requirement-metadata-patch';
+import { boundedFailureDetail } from './cron-ownership-rejection';
+
+export function cycleFailureReason(
+  outcome: CronCycleOutcome,
+  primaryReason: string | null,
+  error: unknown,
+): string {
+  if (primaryReason && (
+    outcome === 'product_failure' || outcome === 'product_no_progress' ||
+    outcome === 'infrastructure_exhausted' || outcome === 'paused'
+  )) return primaryReason;
+  return `The work cycle stopped because of an error: ${boundedFailureDetail(error)}`;
+}
 
 /** Execution policy, not prose, decides whether a cycle requires intervention. */
 export type CycleRecoveryDisposition =

@@ -87,7 +87,8 @@ import {
   shouldUseLightweightCycleFinalization,
 } from '../shared/plan-cycle-outcome';
 import { shouldHoldNoProgressBlock } from '../shared/no-progress-adjudication';
-import { recoveryAfterUnhandledError, type CycleRecoveryDisposition } from '../shared/cycle-recovery-policy';
+import { cycleFailureReason, recoveryAfterUnhandledError, type CycleRecoveryDisposition } from '../shared/cycle-recovery-policy';
+import { boundedFailureDetail, cronOwnershipRejectionReason } from '../shared/cron-ownership-rejection';
 import type { DatabaseMigrationOutcome } from '../shared/database-migration-outcome';
 import type { MigrationRepairTarget } from '@/lib/services/apps-platform/migration-repair-types';
 
@@ -152,6 +153,8 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   let progressPlanId: string | undefined;
   let progressStepId: string | undefined;
   let lightweightCycleFinalization = false;
+  let terminalProductHalt = false;
+  let workflowErrorInFlight = false;
   const requirementKind = classifyRequirementType(type);
   const requirementFlow = getFlow(requirementKind);
   const gitRepoKind: GitRepoKind =
@@ -722,6 +725,21 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
               cycleOutcome = 'idle';
               break outer;
             }
+
+            if (turnRes.persistedTerminalStatus === 'cancelled') {
+              // Judge/repair exhaustion already quarantined the item and cancelled
+              // linked work. It is not success-clear, infrastructure starvation,
+              // or permission to run delivery effects on a non-runnable owner.
+              anyStepFailed = true;
+              terminalProductHalt = true;
+              cycleOutcome = 'product_failure';
+              recoveryDisposition = 'product_failure';
+              wrapUpRequiresUserFeedback = true;
+              wrapUpReason = `Product verification/repair exhausted; linked work was cancelled for review. ${boundedFailureDetail(turnRes.gateErrorExcerpt || turnRes.error || 'The product gate did not pass.')}`;
+              latestPlanSteps = allSteps.map((candidate) => candidate.id === workingStep.id
+                ? { ...candidate, status: 'cancelled' } : candidate);
+              break outer;
+            }
             
             if (!turnRes.ok) {
                if (turnRes.transient || isSandboxGoneError(turnRes.error)) {
@@ -829,6 +847,8 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
                } else {
                  // Step failed genuinely
                  anyStepFailed = true;
+                 cycleOutcome = 'product_failure';
+                 wrapUpReason = `Product execution failed: ${boundedFailureDetail(turnRes.error)}`;
                  console.warn(`[CronAppsWorkflow] Step ${workingStep.order} turn failed: ${turnRes.error}`);
                  const clearResult = await clearStepInfrastructureStateStep(
                    activePlan.id,
@@ -1046,6 +1066,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
             if (turnRes.persistedTerminalStatus === 'failed') {
               anyStepFailed = true;
               cycleOutcome = 'product_failure';
+              wrapUpReason = `Product verification failed: ${boundedFailureDetail(turnRes.gateErrorExcerpt || turnRes.error || 'The product gate did not pass.')}`;
               break outer;
             }
 
@@ -1092,6 +1113,8 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
                } else {
                   // Gate failed, do adaptation loop
                   anyStepFailed = true;
+                  cycleOutcome = 'product_failure';
+                  wrapUpReason = `Product verification failed: ${boundedFailureDetail(turnRes.gateErrorExcerpt || 'The product gate did not pass.')}`;
                   console.warn(`[CronAppsWorkflow] Step ${workingStep.order} gate failed`);
                   const failureMutation = await updatePlanStepStatusStep(
                     activePlan.id,
@@ -1157,6 +1180,23 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       // Re-fetch the final plan to count completed steps
       const finalPlan = await getInstancePlanByIdStep(activePlan.id);
       if (Array.isArray(finalPlan?.steps)) latestPlanSteps = finalPlan.steps;
+
+      if (terminalProductHalt) {
+        const finalContext = await getRequirementFullContextStep(reqId, instanceId, site_id, user_id);
+        const finalItems = finalContext.backlog?.items || [];
+        const failedStep = allSteps.find((candidate) => candidate.id === attemptedStepId);
+        const failedItemId = failedStep?.metadata?.backlog_item_id || failedStep?.backlog_item_id;
+        const failedItem = finalItems.find((item: any) => item.id === failedItemId);
+        if (failedItem?.review_quarantine?.active && failedItem.review_quarantine.reason) {
+          wrapUpReason += ` Review quarantine: ${boundedFailureDetail(failedItem.review_quarantine.reason, 800)}`;
+        }
+        hasRunnableBacklog = hasRunnableBacklogWork(finalItems, feedbackAttemptLimits);
+        // Quarantine is item-scoped: do not block independent runnable work.
+        if (hasRunnableBacklog) {
+          wrapUpAttempted = true;
+          wrapUpRequiresUserFeedback = false;
+        }
+      }
 
       if (planCompleted && finalPlan) {
         const syncResult = await syncCompletedPlanBacklogStep({
@@ -1228,6 +1268,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     if (
       requirementFlow.delivery.apply_database_migrations &&
       executionPhaseCompleted &&
+      !terminalProductHalt &&
       !anyFail &&
       !infrastructureHalt
     ) {
@@ -1312,7 +1353,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       }
     }
 
-    if (databaseMigrations?.status !== 'failed' && shouldPersistCycleWorkspace({
+    if (executionPhaseCompleted && !terminalProductHalt && databaseMigrations?.status !== 'failed' && shouldPersistCycleWorkspace({
       infrastructureHalt,
       persistWorkspaceOnInfrastructureHalt,
     })) {
@@ -1354,7 +1395,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     }
   }
 
-  if (infrastructureHalt || databaseMigrations?.status === 'failed') {
+  if (terminalProductHalt || infrastructureHalt || databaseMigrations?.status === 'failed') {
     return {
       reqId,
       branch: null,
@@ -1495,16 +1536,14 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       );
       if (!hasRunnableBacklog && finalFeedbackItems.length > 0) {
         wrapUpRequiresUserFeedback = true;
-        wrapUpReason = `Feedback is required for backlog item(s): ${finalFeedbackItems
+        wrapUpReason = `${wrapUpReason ? `${wrapUpReason} ` : ''}Feedback is required for backlog item(s): ${finalFeedbackItems
           .map((item: any) => `"${item.title}" (status=${item.status}, attempts=${item.attempts || 0})`)
           .join(', ')}.`;
       } else if (stepsPhase?.anyStepFailed && !hasRunnableBacklog) {
         wrapUpRequiresUserFeedback = true;
-        wrapUpReason =
-          'A confirmed product failure exhausted the current item and no independent backlog work remains runnable.';
+        wrapUpReason = `${wrapUpReason ? `${wrapUpReason} ` : ''}A confirmed product failure exhausted the current item and no independent backlog work remains runnable.`;
       } else if (stepsPhase?.anyStepFailed) {
-        wrapUpReason =
-          'The failed item was isolated; independent backlog work remains runnable and will continue automatically.';
+        wrapUpReason = `${wrapUpReason ? `${wrapUpReason} ` : ''}The failed item was isolated; independent backlog work remains runnable and will continue automatically.`;
       }
     }
 
@@ -1582,13 +1621,35 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   // late step (validate/final-status/preview) throws.
   return { reqId, branch: effectiveBranch, previewUrl, status: finalStatus };
   } catch (e: any) {
-    console.error(`[CronAppsWorkflow] 🚨 CRITICAL ERROR in workflow for req ${reqId}:`, e);
+    const ownershipReason = cronOwnershipRejectionReason(e);
+    console.warn('[CronAppsWorkflow] Cycle stopped', {
+      requirementId: reqId,
+      outcome: cycleOutcome,
+      ownershipReason,
+      error: boundedFailureDetail(e),
+      primaryReason: wrapUpReason ? boundedFailureDetail(wrapUpReason) : undefined,
+    });
+    if (ownershipReason === 'execution_not_runnable') {
+      // No retries can make terminal/paused execution runnable. Only the normal
+      // user resume path may do that. This is NOT an infrastructure failure.
+      if (cycleOutcome === 'product_failure') {
+        recoveryDisposition ||= 'product_failure';
+        wrapUpRequiresUserFeedback = true;
+      } else {
+        cycleOutcome = 'paused';
+        preservePausedState = true;
+        wrapUpAttempted = true;
+      }
+      return { reqId, branch: null, previewUrl: null, status: cycleOutcome };
+    }
     const recovery = recoveryAfterUnhandledError(cycleOutcome);
     cycleOutcome = recovery.outcome;
-    recoveryDisposition = recovery.disposition;
+    recoveryDisposition = cycleOutcome === 'product_failure'
+      ? recoveryDisposition || recovery.disposition : recovery.disposition;
     wrapUpAttempted = false;
     wrapUpRequiresUserFeedback = recovery.disposition !== 'retry';
-    wrapUpReason = `The work cycle stopped because of an error: ${e?.message || String(e)}`;
+    wrapUpReason = cycleFailureReason(cycleOutcome, wrapUpReason, e);
+    workflowErrorInFlight = true;
     // Let the finally block handle the sandbox stop
     throw e;
   } finally {
@@ -1602,13 +1663,21 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
         reqId,
         executionGeneration,
       );
+      if (executionIsCurrent) {
+        // allowTerminal authorizes cleanup only, not unpausing the instance or
+        // writing a new wrap-up over a user's pause in the same generation.
+        const cleanupStatus = await checkInstanceAndPlanStatusStep(instanceId);
+        if (cleanupStatus.isPaused) {
+          preservePausedState = true;
+          wrapUpAttempted = true;
+        }
+      }
     } catch (generationError: unknown) {
       console.warn(
         '[CronAppsWorkflow] Failed to validate execution generation:',
-        generationError instanceof Error
-          ? generationError.message
-          : generationError,
+        boundedFailureDetail(generationError),
       );
+      executionIsCurrent = false;
     }
     if (!executionIsCurrent) {
       wrapUpAttempted = true;
@@ -1853,8 +1922,27 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
         expectedExecutionGeneration: executionGeneration,
       });
     }
+    } catch (accountingError: unknown) {
+      console.warn('[CronAppsWorkflow] Cycle accounting failed', {
+        requirementId: reqId, outcome: cycleOutcome, error: boundedFailureDetail(accountingError),
+      });
+      // A secondary cleanup failure must not replace the original thrown error
+      // or turn a confirmed product failure into an infrastructure retry.
+      if (!workflowErrorInFlight && cycleOutcome !== 'product_failure' && cycleOutcome !== 'product_no_progress') {
+        workflowErrorInFlight = true;
+        throw accountingError;
+      }
     } finally {
-      await releaseRunLockStep(reqId, cronLockRunId);
+      try {
+        await releaseRunLockStep(reqId, cronLockRunId);
+      } catch (releaseError: unknown) {
+        console.warn('[CronAppsWorkflow] Run lock release failed', {
+          requirementId: reqId, outcome: cycleOutcome, error: boundedFailureDetail(releaseError),
+        });
+        if (!workflowErrorInFlight && cycleOutcome !== 'product_failure' && cycleOutcome !== 'product_no_progress') {
+          throw releaseError;
+        }
+      }
     }
   }
 }

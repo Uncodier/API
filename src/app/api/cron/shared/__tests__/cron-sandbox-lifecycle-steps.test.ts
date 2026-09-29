@@ -1,3 +1,7 @@
+import { loadRuntimeModule } from '@/lib/custom-automation/test-helpers/load-runtime-module';
+import * as rejection from '../cron-ownership-rejection';
+import { sanitizeRuntimeLog } from '../runtime-log-context';
+
 const mockGetSandboxHandle = jest.fn();
 const mockRunCommand = jest.fn();
 const mockCaptureFingerprint = jest.fn();
@@ -5,51 +9,39 @@ const mockPersistReceipt = jest.fn();
 const mockLogEvent = jest.fn();
 const mockAssertOwner = jest.fn();
 
-jest.mock('@/lib/services/sandbox-sdk', () => ({
-  getSandboxHandle: mockGetSandboxHandle,
-  sandboxIdentity: jest.fn(() => 'sandbox-1'),
-}));
-jest.mock('@/lib/services/sandbox-service', () => ({
-  SandboxService: {
-    runCommandInSandbox: mockRunCommand,
+const ownershipModule = loadRuntimeModule<typeof import('../cron-execution-ownership')>(
+  'src/app/api/cron/shared/cron-execution-ownership.ts', {
+    '@/lib/database/supabase-client': { supabaseAdmin: {} },
+    './cron-ownership-rejection': rejection,
   },
-}));
-jest.mock('@/lib/services/sandbox-constants', () => ({
-  requirementSandboxName: jest.fn(() => 'sandbox-name'),
-}));
-jest.mock('@/lib/database/supabase-client', () => ({
-  supabaseAdmin: {},
-}));
-jest.mock('@/lib/services/sandbox-recovery', () => ({
-  inspectSandboxWorkspace: jest.fn(),
-}));
-jest.mock('@/lib/services/sandbox-on-resume', () => ({
-  warmStartNamedSandbox: jest.fn(),
-}));
-jest.mock('../cron-run-lock', () => ({
-  releaseRunLock: jest.fn(),
-  extendRunLock: jest.fn(),
-  CRON_RUN_LOCK_TTL_MS: 60_000,
-}));
-jest.mock('../cron-execution-ownership', () => ({
-  ...jest.requireActual('../cron-execution-ownership'),
-  assertCronExecutionOwnership: mockAssertOwner,
-}));
-jest.mock('@/lib/services/cron-audit-log', () => ({
-  CronInfraEvent: { STEP_STATUS: 'step_status' },
-  logCronInfrastructureEvent: mockLogEvent,
-}));
-jest.mock(
-  '@/app/api/agents/tools/sandbox/sandbox-test-receipt',
-  () => ({
-    captureSandboxTestFingerprint: mockCaptureFingerprint,
-    isSandboxTestCommand: (command: string) => command === 'npm test',
-    persistSandboxTestReceipt: mockPersistReceipt,
-  }),
 );
+const { CronExecutionOwnershipError } = ownershipModule;
 
-import { checkBackgroundCommandStep, createSandboxStep, stopSandboxStep, assertCronExecutionOwnershipStep, extendRunLockStep } from '../cron-sandbox-lifecycle-steps';
-import { CronExecutionOwnershipError } from '../cron-execution-ownership';
+class FatalError extends Error {
+  name = 'FatalError';
+  fatal = true;
+}
+const { checkBackgroundCommandStep, createSandboxStep, stopSandboxStep, assertCronExecutionOwnershipStep, extendRunLockStep } =
+  loadRuntimeModule<typeof import('../cron-sandbox-lifecycle-steps')>(
+    'src/app/api/cron/shared/cron-sandbox-lifecycle-steps.ts', {
+      workflow: { FatalError },
+      '@/lib/services/sandbox-sdk': { getSandboxHandle: mockGetSandboxHandle, sandboxIdentity: () => 'sandbox-1' },
+      '@/lib/services/sandbox-service': { SandboxService: { runCommandInSandbox: mockRunCommand } },
+      '@/lib/services/sandbox-constants': { requirementSandboxName: () => 'sandbox-name' },
+      '@/lib/database/supabase-client': { supabaseAdmin: {} },
+      '@/lib/services/sandbox-recovery': { inspectSandboxWorkspace: jest.fn() },
+      '@/lib/services/sandbox-on-resume': { warmStartNamedSandbox: jest.fn() },
+      './cron-run-lock': { releaseRunLock: jest.fn(), extendRunLock: jest.fn(), CRON_RUN_LOCK_TTL_MS: 60_000 },
+      './cron-execution-ownership': { ...ownershipModule, assertCronExecutionOwnership: mockAssertOwner },
+      './runtime-log-context': { sanitizeRuntimeLog },
+      '@/lib/services/cron-audit-log': { CronInfraEvent: { STEP_STATUS: 'step_status' }, logCronInfrastructureEvent: mockLogEvent },
+      '@/app/api/agents/tools/sandbox/sandbox-test-receipt': {
+        captureSandboxTestFingerprint: mockCaptureFingerprint,
+        isSandboxTestCommand: (command: string) => command === 'npm test',
+        persistSandboxTestReceipt: mockPersistReceipt,
+      },
+    },
+  );
 
 describe('checkBackgroundCommandStep', () => {
   beforeEach(() => {
@@ -145,4 +137,16 @@ describe('durable lifecycle execution fencing', () => {
     expect(assertCronExecutionOwnershipStep.maxRetries).toBe(0);
     await expect(extendRunLockStep('req', undefined)).rejects.toThrow('missing_execution_identity');
   });
+
+  it.each(['execution_not_runnable', 'run_owner_changed', 'execution_generation_changed', 'ownership_check_unavailable'])(
+    'preserves %s through the durable fatal path rather than retry starvation', async reason => {
+      mockAssertOwner.mockRejectedValueOnce(new CronExecutionOwnershipError(reason));
+      await expect(assertCronExecutionOwnershipStep(ownership)).rejects.toMatchObject({
+        name: 'FatalError', fatal: true,
+        message: `Cron execution ownership rejected (${reason})`,
+        stack: undefined,
+      });
+      expect(mockAssertOwner).toHaveBeenCalledTimes(1);
+    },
+  );
 });

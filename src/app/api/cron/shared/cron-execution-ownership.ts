@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { boundedFailureDetail } from './cron-ownership-rejection';
 
 /** Carry the original execution identity across durable steps; never refresh it. */
 export interface CronExecutionOwnership {
@@ -13,7 +14,7 @@ export interface CronExecutionOwnership {
 
 export class CronExecutionOwnershipError extends Error {
   constructor(public readonly reason: string, detail?: string) {
-    super(`Cron execution ownership rejected (${reason})${detail ? `: ${detail}` : ''}`);
+    super(`Cron execution ownership rejected (${reason})${detail ? `: ${boundedFailureDetail(detail)}` : ''}`);
     Object.setPrototypeOf(this, new.target.prototype);
     this.name = 'CronExecutionOwnershipError';
   }
@@ -31,10 +32,27 @@ export function isCronExecutionOwnershipError(error: unknown): boolean {
 export async function assertCronExecutionOwnership(
   ownership: CronExecutionOwnership,
 ): Promise<void> {
+  const reject = (reason: string, detail?: string, code?: string): never => {
+    const error = new CronExecutionOwnershipError(reason, detail);
+    // Log at the source, before durable error wrapping can discard the reason.
+    // No RPC response, stack, metadata, or credentials are included.
+    console.warn('[CronOwnership] Execution rejected', {
+      event: 'cron_execution_ownership_rejected',
+      requirementId: boundedFailureDetail(ownership.requirementId, 120),
+      runId: boundedFailureDetail(ownership.runId, 120),
+      executionGeneration: Number.isSafeInteger(ownership.executionGeneration) ? ownership.executionGeneration : null,
+      allowInactive: ownership.allowInactive === true,
+      allowTerminal: ownership.allowTerminal === true,
+      reason: boundedFailureDetail(reason, 80),
+      ...(code ? { code: boundedFailureDetail(code, 80) } : {}),
+      ...(detail ? { detail: boundedFailureDetail(detail) } : {}),
+    });
+    throw error;
+  };
   if (!ownership.runId?.trim() || !ownership.requirementId ||
       !Number.isSafeInteger(ownership.executionGeneration) ||
       ownership.executionGeneration < 0) {
-    throw new CronExecutionOwnershipError('missing_execution_identity');
+    reject('missing_execution_identity');
   }
   let response;
   try {
@@ -46,16 +64,18 @@ export async function assertCronExecutionOwnership(
       p_allow_terminal: ownership.allowTerminal === true,
     });
   } catch (error) {
-    throw new CronExecutionOwnershipError('ownership_check_unavailable',
+    return reject('ownership_check_unavailable',
       error instanceof Error ? error.message : String(error));
   }
   if (response.error) {
-    throw new CronExecutionOwnershipError('ownership_check_unavailable',
+    reject('ownership_check_unavailable',
       `Deploy 20260926070000_harness_execution_ownership.sql first. ` +
-      `${response.error.code || ''} ${response.error.message || ''}`);
+      `${response.error.code || ''} ${response.error.message || ''}`, response.error.code);
   }
   if (response.data?.current !== true) {
-    throw new CronExecutionOwnershipError(response.data?.reason || 'ownership_not_confirmed');
+    const reason = response.data?.reason;
+    reject(typeof reason === 'string' && /^[a-z_]{1,80}$/.test(reason)
+      ? reason : 'ownership_not_confirmed');
   }
 }
 
