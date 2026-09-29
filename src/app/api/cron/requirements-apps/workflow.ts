@@ -489,8 +489,8 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       audit: cronAudit,
     });
     if (tracking.error) {
-      // An older layout may still embed the ordering site's id. Do not deploy
-      // that layout if we could not replace it with the app's own tracking id.
+      // An older layout may still embed an automatically generated app site.
+      // Do not deploy it if we cannot restore the verified requirement site.
       throw new Error(`Application tracking provisioning failed: ${tracking.error}`);
     }
   }

@@ -17,7 +17,7 @@ import {
 export interface ProvisionTrackingScriptStepInput {
   sandboxId: string;
   requirementId: string;
-  /** Site where the requirement was created, not the generated app's tracking site. */
+  /** Expected requirements.site_id; tracking uses this existing site, never a new app site. */
   originSiteId: string;
   audit?: CronAuditContext;
 }

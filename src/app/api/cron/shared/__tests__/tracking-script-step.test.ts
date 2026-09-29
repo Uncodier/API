@@ -31,10 +31,10 @@ describe('tracking script provisioning', () => {
   });
   beforeEach(() => {
     jest.clearAllMocks();
-    ensureRequirementTrackingSite.mockResolvedValue('app-site');
+    ensureRequirementTrackingSite.mockResolvedValue('site-1');
   });
 
-  it('marks a newly injected tracking script as harness-owned', async () => {
+  it('marks a newly injected tracking script as harness-owned and uses the requirement site', async () => {
     const layout = [
       'export default function Layout({ children }) {',
       '  return <html><body>{children}</body></html>;',
@@ -70,12 +70,11 @@ describe('tracking script provisioning', () => {
       ]),
     );
     const writes = writeFiles.mock.calls[0][0] as Array<{ path: string; content: string }>;
-    expect(writes[1].content).toContain('data-site-id="app-site"');
-    expect(writes[1].content).not.toContain('data-site-id="site-1"');
-    expect(JSON.parse(writes[0].content).siteId).toBe('app-site');
+    expect(writes[1].content).toContain('data-site-id="site-1"');
+    expect(JSON.parse(writes[0].content).siteId).toBe('site-1');
   });
 
-  it('does not provision a tracking site if the sandbox has no root layout', async () => {
+  it('does not resolve a tracking site if the sandbox has no root layout', async () => {
     getSandboxHandle.mockResolvedValue({
       runCommand: jest.fn(async () => commandResult('MISSING\n')),
     });
@@ -88,8 +87,8 @@ describe('tracking script provisioning', () => {
     expect(ensureRequirementTrackingSite).not.toHaveBeenCalled();
   });
 
-  it('replaces a previously injected ordering-site id with the application site id', async () => {
-    const layout = '<html><body><script src="https://files.uncodie.com/tracking.min.js?v=1.959" data-site-id="site-1" data-uncodie-harness="tracking"></script></body></html>';
+  it('replaces a previously generated application site id with the requirement site id', async () => {
+    const layout = '<html><body><script src="https://files.uncodie.com/tracking.min.js?v=1.959" data-site-id="legacy-app-site" data-uncodie-harness="tracking"></script></body></html>';
     const writeFiles = jest.fn<(...args: any[]) => Promise<void>>(async () => {});
     getSandboxHandle.mockResolvedValue({
       runCommand: jest.fn<(...args: any[]) => Promise<ReturnType<typeof commandResult>>>()
@@ -104,11 +103,12 @@ describe('tracking script provisioning', () => {
       sandboxId: 'sandbox-1', requirementId: 'requirement-1', originSiteId: 'site-1',
     })).resolves.toEqual({ injected: true });
     const writes = writeFiles.mock.calls[0][0] as Array<{ path: string; content: string }>;
-    expect(writes[1].content).toContain('data-site-id="app-site"');
-    expect(writes[1].content).not.toContain('data-site-id="site-1"');
+    expect(writes[1].content).toContain('data-site-id="site-1"');
+    expect(writes[1].content).not.toContain('legacy-app-site');
+    expect(JSON.parse(writes[0].content).siteId).toBe('site-1');
   });
 
-  it('does not inject the ordering site when the tracking site cannot be provisioned', async () => {
+  it('does not inject an unverified site when the requirement site cannot be resolved', async () => {
     getSandboxHandle.mockResolvedValue({
       runCommand: jest.fn<(...args: any[]) => Promise<ReturnType<typeof commandResult>>>()
         .mockResolvedValueOnce(commandResult('src/app/layout.tsx\n'))

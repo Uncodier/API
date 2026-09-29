@@ -200,7 +200,7 @@ export async function syncLatestRequirementStatusWithPreview(params: {
       });
     }
 
-    // Scope the preview origin to the generated app, never the ordering site.
+    // Authorize the preview on the same verified site used by the requirement and tracking.
     try {
       await allowRequirementPreviewDomain({ requirementId, originSiteId: resolvedSiteId, previewUrl: preview_url });
     } catch (domainErr) {
@@ -300,7 +300,7 @@ export async function patchLatestRequirementStatusColumns(params: {
         });
       }
 
-      // Scope the preview origin to the generated app, never the ordering site.
+      // Authorize the preview on the same verified site used by the requirement and tracking.
       try {
         await allowRequirementPreviewDomain({ requirementId, originSiteId: resolvedSiteId, previewUrl: columns.preview_url.trim() });
       } catch (domainErr) {
@@ -353,7 +353,7 @@ export async function patchLatestRequirementStatusColumns(params: {
         repoUrl: patch.repo_url ?? null,
       });
 
-      // Scope the preview origin to the generated app, never the ordering site.
+      // Authorize the preview on the same verified site used by the requirement and tracking.
       try {
         await allowRequirementPreviewDomain({ requirementId, originSiteId: resolvedSiteId, previewUrl: patch.preview_url.trim() });
       } catch (domainErr) {

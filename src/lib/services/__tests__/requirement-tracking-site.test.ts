@@ -9,47 +9,50 @@ let ensureRequirementTrackingSite: typeof import('../requirement-tracking-site')
 const requirementId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const originSiteId = '00000000-0000-4000-8000-000000000002';
 const ownerId = '00000000-0000-4000-8000-000000000001';
-const appSiteId = uuidv5(`makinari:requirement-tracking-site:${requirementId}`, uuidv5.URL);
+const legacyAppSiteId = uuidv5(`makinari:requirement-tracking-site:${requirementId}`, uuidv5.URL);
 
-describe('per-requirement application tracking site', () => {
-  let appSite: { id: string; user_id: string } | null;
-  let insert: jest.Mock<(row: { id: string; user_id: string }) => Promise<{ error: null }>>;
-  let upsert: jest.Mock<(...args: any[]) => Promise<{ error: null }>>;
+describe('tracking uses the requirement site without provisioning another site', () => {
+  let requirements: Map<string, { site_id: string | null; title: string }>;
+  let sites: Map<string, { id: string; user_id: string }>;
+  let requirementError: { message: string } | null;
+  let siteError: { message: string } | null;
   let siteLookups: string[];
+  let siteWrite: jest.Mock<(...args: any[]) => Promise<{ error: null }>>;
+  let upsert: jest.Mock<(...args: any[]) => Promise<{ error: { message: string } | null }>>;
 
   beforeAll(() => {
     ({ allowRequirementPreviewDomain, ensureRequirementTrackingSite } =
       loadRuntimeModule<typeof import('../requirement-tracking-site')>(
         'src/lib/services/requirement-tracking-site.ts', {
-          uuid: { v5: uuidv5 },
           '@/lib/database/supabase-client': { supabaseAdmin: { from } },
         },
       ));
   });
+
   beforeEach(() => {
     jest.clearAllMocks();
-    appSite = null;
+    requirements = new Map([[requirementId, { site_id: originSiteId, title: 'Generated app' }]]);
+    sites = new Map([[originSiteId, { id: originSiteId, user_id: ownerId }]]);
+    requirementError = null;
+    siteError = null;
     siteLookups = [];
-    insert = jest.fn(async (row: { id: string; user_id: string }) => {
-      appSite = { id: row.id, user_id: row.user_id };
-      return { error: null };
-    });
+    siteWrite = jest.fn(async () => ({ error: null }));
     upsert = jest.fn(async () => ({ error: null }));
     from.mockImplementation((table: string) => {
       if (table === 'requirements') return {
         select: () => ({ eq: (_field: string, id: string) => ({
-          maybeSingle: async () => ({
-            data: id === requirementId ? { site_id: originSiteId, title: 'Generated app' } : null,
-            error: null,
-          }),
+          maybeSingle: async () => ({ data: requirements.get(id) ?? null, error: requirementError }),
         }) }),
       };
       if (table === 'sites') return {
-        insert,
+        insert: siteWrite,
+        update: siteWrite,
+        upsert: siteWrite,
+        delete: siteWrite,
         select: () => ({ eq: (_field: string, id: string) => ({
           maybeSingle: async () => {
             siteLookups.push(id);
-            return { data: id === originSiteId ? { user_id: ownerId } : appSite, error: null };
+            return { data: sites.get(id) ?? null, error: siteError };
           },
         }) }),
       };
@@ -58,111 +61,106 @@ describe('per-requirement application tracking site', () => {
     });
   });
 
-  it('creates once for the requirement, owned by the ordering site owner, with tracking enabled', async () => {
-    expect(await ensureRequirementTrackingSite(requirementId, originSiteId)).toBe(appSiteId);
-    expect(await ensureRequirementTrackingSite(requirementId, originSiteId)).toBe(appSiteId);
-    expect(siteLookups).toContain(appSiteId);
-    expect(insert).toHaveBeenCalledTimes(1);
-    expect(insert).toHaveBeenCalledWith(expect.objectContaining({
-      id: appSiteId,
-      user_id: ownerId,
-      name: 'Generated app',
-      tracking: { track_visitors: true, track_actions: true, record_screen: false },
-    }));
-    expect(appSiteId).not.toBe(originSiteId);
+  afterEach(() => {
+    expect(siteWrite).not.toHaveBeenCalled();
+    expect(from).not.toHaveBeenCalledWith('site_members');
+    expect(from).not.toHaveBeenCalledWith('site_ownership');
   });
 
-  it('never creates a tracking site or whitelists a domain for a different requirement owner', async () => {
-    await expect(ensureRequirementTrackingSite(requirementId, 'other-site'))
-      .rejects.toThrow('does not belong');
+  it('reuses the existing requirement site on every run without changing its tracking settings', async () => {
+    expect(await ensureRequirementTrackingSite(requirementId, originSiteId)).toBe(originSiteId);
+    expect(await ensureRequirementTrackingSite(requirementId, originSiteId)).toBe(originSiteId);
+    expect(siteLookups).toEqual([originSiteId, originSiteId]);
+  });
+
+  it('uses the same site for multiple requirements belonging to that site', async () => {
+    const secondRequirementId = 'bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+    requirements.set(secondRequirementId, { site_id: originSiteId, title: 'Another app' });
+    expect(await ensureRequirementTrackingSite(requirementId, originSiteId)).toBe(originSiteId);
+    expect(await ensureRequirementTrackingSite(secondRequirementId, originSiteId)).toBe(originSiteId);
+    expect(siteLookups).toEqual([originSiteId, originSiteId]);
+  });
+
+  it('ignores a site left by the old per-app provisioner, even if its owner differs', async () => {
+    sites.set(legacyAppSiteId, { id: legacyAppSiteId, user_id: 'another-owner' });
+    expect(await ensureRequirementTrackingSite(requirementId, originSiteId)).toBe(originSiteId);
+    await allowRequirementPreviewDomain({ requirementId, originSiteId, previewUrl: 'https://app.example.com' });
+    expect(siteLookups).not.toContain(legacyAppSiteId);
+    expect(upsert).toHaveBeenCalledWith(
+      { site_id: originSiteId, domain: 'app.example.com' },
+      { onConflict: 'site_id,domain', ignoreDuplicates: true },
+    );
+  });
+
+  it('rejects another site even when it has the same owner', async () => {
+    sites.set('other-site', { id: 'other-site', user_id: ownerId });
+    await expect(ensureRequirementTrackingSite(requirementId, 'other-site')).rejects.toThrow('does not belong');
     await expect(allowRequirementPreviewDomain({
       requirementId, originSiteId: 'other-site', previewUrl: 'https://app.example.com',
     })).rejects.toThrow('does not belong');
-    expect(insert).not.toHaveBeenCalled();
+    expect(siteLookups).toEqual([]);
     expect(upsert).not.toHaveBeenCalled();
   });
 
-  it('does not whitelist previews until the app tracking site exists', async () => {
-    await allowRequirementPreviewDomain({
+  it.each(['missing', 'null-site', 'empty-site', 'database-error'])('fails closed for %s requirements', async (scenario) => {
+    if (scenario === 'missing') requirements.clear();
+    if (scenario === 'null-site') requirements.set(requirementId, { site_id: null, title: 'App' });
+    if (scenario === 'empty-site') requirements.set(requirementId, { site_id: '', title: 'App' });
+    if (scenario === 'database-error') requirementError = { message: 'database unavailable' };
+    const expectedSiteId = scenario === 'empty-site' ? '' : originSiteId;
+    await expect(ensureRequirementTrackingSite(requirementId, expectedSiteId)).rejects.toThrow();
+    await expect(allowRequirementPreviewDomain({
+      requirementId, originSiteId: expectedSiteId, previewUrl: 'https://app.example.com',
+    })).rejects.toThrow();
+    expect(siteLookups).toEqual([]);
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it.each(['missing', 'database-error'])('never recreates an unavailable requirement site (%s)', async (scenario) => {
+    if (scenario === 'missing') sites.clear();
+    else siteError = { message: 'database unavailable' };
+    await expect(ensureRequirementTrackingSite(requirementId, originSiteId)).rejects.toThrow();
+    await expect(allowRequirementPreviewDomain({
       requirementId, originSiteId, previewUrl: 'https://app.example.com',
-    });
+    })).rejects.toThrow();
     expect(upsert).not.toHaveBeenCalled();
-    expect(insert).not.toHaveBeenCalled();
   });
 
-  it('reuses the site after a concurrent insert without changing its owner', async () => {
-    insert.mockImplementation(async (row) => {
-      appSite = { id: row.id, user_id: row.user_id };
-      return { error: { code: '23505' } } as any;
-    });
-    expect(await ensureRequirementTrackingSite(requirementId, originSiteId)).toBe(appSiteId);
-    expect(insert).toHaveBeenCalledTimes(1);
-  });
-
-  it('does not reuse a concurrent insert owned by someone else', async () => {
-    insert.mockImplementation(async (row) => {
-      appSite = { id: row.id, user_id: 'somebody-else' };
-      return { error: { code: '23505' } } as any;
-    });
-    await expect(ensureRequirementTrackingSite(requirementId, originSiteId))
-      .rejects.toThrow('could not be safely reused');
-  });
-
-  it('whitelists only the generated app site and uses the per-site unique key', async () => {
-    await ensureRequirementTrackingSite(requirementId, originSiteId);
+  it('registers previews directly on the requirement site without an app-specific site or prior injection', async () => {
     await allowRequirementPreviewDomain({
-      requirementId, originSiteId, previewUrl: 'https://App.Example.Com/some/path',
+      requirementId, originSiteId, previewUrl: ' https://App.Example.Com/some/path ',
     });
     expect(upsert).toHaveBeenCalledWith(
-      { site_id: appSiteId, domain: 'app.example.com' },
+      { site_id: originSiteId, domain: 'app.example.com' },
       { onConflict: 'site_id,domain', ignoreDuplicates: true },
     );
-    expect((upsert.mock.calls[0][0] as { site_id: string }).site_id).not.toBe(originSiteId);
+    expect(siteLookups).toEqual([originSiteId]);
   });
 
-  it('registers a preview on the generated app even if the ordering site already has that domain', async () => {
-    // A previous cron version registered this domain on the ordering site.
-    // The unique key is (site_id, domain), not domain alone.
-    const existingDomains = [{ site_id: originSiteId, domain: 'app.example.com' }];
-    upsert.mockImplementation(async (row: any, options: any) => {
-      expect(options.onConflict).toBe('site_id,domain');
-      if (!existingDomains.some((existing) =>
-        existing.site_id === row.site_id && existing.domain === row.domain)) {
+  it('idempotently registers the requirement site even if a legacy app site already has that domain', async () => {
+    const existingDomains = [{ site_id: legacyAppSiteId, domain: 'app.example.com' }];
+    upsert.mockImplementation(async (row: { site_id: string; domain: string }, options) => {
+      expect(options).toEqual({ onConflict: 'site_id,domain', ignoreDuplicates: true });
+      if (!existingDomains.some((existing) => existing.site_id === row.site_id && existing.domain === row.domain)) {
         existingDomains.push(row);
       }
       return { error: null };
     });
-
-    await ensureRequirementTrackingSite(requirementId, originSiteId);
-    await allowRequirementPreviewDomain({
-      requirementId, originSiteId, previewUrl: 'https://app.example.com',
-    });
-    await allowRequirementPreviewDomain({
-      requirementId, originSiteId, previewUrl: 'https://app.example.com',
-    });
-
+    await allowRequirementPreviewDomain({ requirementId, originSiteId, previewUrl: 'https://app.example.com' });
+    await allowRequirementPreviewDomain({ requirementId, originSiteId, previewUrl: 'https://app.example.com' });
     expect(existingDomains).toEqual([
+      { site_id: legacyAppSiteId, domain: 'app.example.com' },
       { site_id: originSiteId, domain: 'app.example.com' },
-      { site_id: appSiteId, domain: 'app.example.com' },
     ]);
   });
 
-  it('rejects an existing site with a different owner and non-HTTPS preview URLs', async () => {
-    appSite = { id: appSiteId, user_id: 'somebody-else' };
-    await expect(ensureRequirementTrackingSite(requirementId, originSiteId)).rejects.toThrow('different owner');
-    await expect(allowRequirementPreviewDomain({
-      requirementId, originSiteId, previewUrl: 'https://app.example.com',
-    })).rejects.toThrow('different owner');
-    appSite = { id: appSiteId, user_id: ownerId };
-    await expect(allowRequirementPreviewDomain({
-      requirementId, originSiteId, previewUrl: 'http://app.example.com',
-    })).rejects.toThrow('HTTPS');
+  it.each(['http://app.example.com', 'not a URL'])('rejects an invalid preview URL: %s', async (previewUrl) => {
+    await expect(allowRequirementPreviewDomain({ requirementId, originSiteId, previewUrl })).rejects.toThrow();
     expect(upsert).not.toHaveBeenCalled();
   });
 
   it('reports database errors when registering a preview instead of silently dropping them', async () => {
-    await ensureRequirementTrackingSite(requirementId, originSiteId);
-    upsert.mockResolvedValue({ error: { message: 'database unavailable' } } as any);
+    upsert.mockResolvedValue({ error: { message: 'database unavailable' } });
     await expect(allowRequirementPreviewDomain({
       requirementId, originSiteId, previewUrl: 'https://app.example.com',
     })).rejects.toMatchObject({ message: 'database unavailable' });

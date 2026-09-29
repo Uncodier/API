@@ -265,7 +265,7 @@ describe('workflow recovery and truthful completion', () => {
     expect(h.lifecycle.stopSandboxStep).toHaveBeenCalledWith('sandbox', expect.anything(), expect.objectContaining({ runId: 'run', allowTerminal: true }));
   });
 
-  it('stops before execution when the generated app tracking site is unavailable', async () => {
+  it('stops before execution when the requirement tracking site cannot be verified', async () => {
     const h = harness();
     h.provisionTrackingScriptStep.mockResolvedValue({ injected: false, error: 'tracking site unavailable' });
     await expect(h.run()).rejects.toThrow('Application tracking provisioning failed');

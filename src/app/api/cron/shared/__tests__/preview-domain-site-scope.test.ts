@@ -9,13 +9,21 @@ const createRequirementStatusCore = jest.fn<(...args: any[]) => Promise<void>>(a
 const logInstancePreviewUrlRecorded = jest.fn<(...args: any[]) => Promise<void>>(async () => {});
 const update = jest.fn<(...args: any[]) => any>();
 const from = jest.fn<(...args: any[]) => any>();
+const domainUpsert = jest.fn<(...args: any[]) => Promise<{ error: null }>>(async () => ({ error: null }));
 
-describe('preview domain registration keeps the requirement owner separate from the app', () => {
+describe('preview domain registration uses the requirement site for tracking', () => {
   let sync: typeof import('../commit/status-sync').syncLatestRequirementStatusWithPreview;
   let patch: typeof import('../commit/status-sync').patchLatestRequirementStatusColumns;
   let existingStatus: boolean;
+  let registerPreviewDomain: typeof import('@/lib/services/requirement-tracking-site').allowRequirementPreviewDomain;
 
   beforeAll(() => {
+    ({ allowRequirementPreviewDomain: registerPreviewDomain } =
+      loadRuntimeModule<typeof import('@/lib/services/requirement-tracking-site')>(
+        'src/lib/services/requirement-tracking-site.ts', {
+          '@/lib/database/supabase-client': { supabaseAdmin: { from } },
+        },
+      ));
     ({ syncLatestRequirementStatusWithPreview: sync, patchLatestRequirementStatusColumns: patch } =
       loadRuntimeModule<typeof import('../commit/status-sync')>(
         'src/app/api/cron/shared/commit/status-sync.ts', {
@@ -34,9 +42,21 @@ describe('preview domain registration keeps the requirement owner separate from 
 
   beforeEach(() => {
     jest.clearAllMocks();
+    allowRequirementPreviewDomain.mockImplementation(registerPreviewDomain);
     existingStatus = true;
     update.mockImplementation(() => ({ eq: async () => ({ error: null }) }));
     from.mockImplementation((table: string) => {
+      if (table === 'requirements') return {
+        select: () => ({ eq: (_field: string, id: string) => ({
+          maybeSingle: async () => ({ data: id === requirementId ? { site_id: originSiteId } : null, error: null }),
+        }) }),
+      };
+      if (table === 'sites') return {
+        select: () => ({ eq: (_field: string, id: string) => ({
+          maybeSingle: async () => ({ data: id === originSiteId ? { id } : null, error: null }),
+        }) }),
+      };
+      if (table === 'allowed_domains') return { upsert: domainUpsert };
       if (table !== 'requirement_status') throw new Error(`Unexpected table ${table}`);
       return {
         select: () => ({
@@ -54,7 +74,16 @@ describe('preview domain registration keeps the requirement owner separate from 
     });
   });
 
-  it('does not re-associate requirement_status with the app when syncing an existing preview', async () => {
+  afterEach(() => {
+    expect(domainUpsert).toHaveBeenCalledWith(
+      { site_id: originSiteId, domain: 'generated.example.com' },
+      { onConflict: 'site_id,domain', ignoreDuplicates: true },
+    );
+    expect(from).not.toHaveBeenCalledWith('site_members');
+    expect(from).not.toHaveBeenCalledWith('site_ownership');
+  });
+
+  it('uses the requirement site when syncing an existing preview', async () => {
     const result = await sync({
       requirementId,
       siteId: originSiteId,
@@ -66,10 +95,10 @@ describe('preview domain registration keeps the requirement owner separate from 
 
     expect(result.updated).toBe(true);
     expect(allowRequirementPreviewDomain).toHaveBeenCalledWith({ requirementId, originSiteId, previewUrl });
-    expect(from).not.toHaveBeenCalledWith('allowed_domains');
+    expect(update).toHaveBeenCalledWith(expect.not.objectContaining({ site_id: expect.anything() }));
   });
 
-  it('scopes an existing status patch to the app even if the preview URL did not change', async () => {
+  it('registers the requirement site even if the preview URL did not change', async () => {
     await expect(patch({
       requirementId, siteId: originSiteId, columns: { preview_url: previewUrl },
     })).resolves.toEqual({ updated: true });
@@ -79,7 +108,7 @@ describe('preview domain registration keeps the requirement owner separate from 
     expect(createRequirementStatusCore).not.toHaveBeenCalled();
   });
 
-  it('preserves the ordering site on newly inserted statuses and uses the app for preview origins', async () => {
+  it('uses the requirement site for both newly inserted statuses and preview origins', async () => {
     existingStatus = false;
     await expect(patch({
       requirementId, siteId: originSiteId, columns: { preview_url: previewUrl },
@@ -90,6 +119,5 @@ describe('preview domain registration keeps the requirement owner separate from 
       requirement_id: requirementId,
     }));
     expect(allowRequirementPreviewDomain).toHaveBeenCalledWith({ requirementId, originSiteId, previewUrl });
-    expect(from).not.toHaveBeenCalledWith('allowed_domains');
   });
 });

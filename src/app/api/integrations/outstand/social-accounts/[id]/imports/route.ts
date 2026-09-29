@@ -108,11 +108,39 @@ export async function POST(
         error: 'An import job already exists for this account; inspect its status before starting another',
       }, { status: 409 });
     }
-    const result = await client!.importSocialAccountPosts(id, siteId!, { limit: body.limit });
-    if (result && typeof result === 'object' && 'success' in result && result.success === false) {
-      return NextResponse.json(result, { status: 502 });
+    // Claim the per-account flag atomically before making the billable call.
+    const { data: claimed, error: claimError } = await supabaseAdmin.rpc('claim_outstand_initial_import', {
+      p_site_id: siteId!, p_account_id: id, p_limit: body.limit,
+    });
+    if (claimError) {
+      console.error('[Outstand import] account claim unavailable:', claimError);
+      return NextResponse.json({ success: false, error: 'Initial import state unavailable' }, { status: 503 });
     }
-    return NextResponse.json(result, { status: 202 });
+    if (claimed !== true) {
+      return NextResponse.json({ success: false, error: 'Initial import already claimed for this account' }, { status: 409 });
+    }
+    try {
+      const result = await client!.importSocialAccountPosts(id, siteId!, { limit: body.limit });
+      const job = (result as { data?: { id?: string; status?: string; socialAccountId?: string }; success?: boolean })?.data;
+      if ((result as { success?: boolean })?.success !== true || typeof job?.id !== 'string' ||
+        !job.id || job.status !== 'queued' ||
+        (job.socialAccountId && job.socialAccountId !== id)) {
+        throw new Error('Outstand did not confirm a queued import job');
+      }
+      const { error: statusError } = await supabaseAdmin.rpc('record_outstand_initial_import', {
+        p_site_id: siteId!, p_account_id: id, p_status: 'queued', p_job_id: job.id,
+      });
+      if (statusError) console.error('[Outstand import] job queued; unable to record state:', statusError);
+      return NextResponse.json(result, { status: 202 });
+    } catch (error) {
+      // An uncertain network response can mean the provider accepted the POST.
+      // Keep the claim: subsequent polls inspect jobs but never retry blindly.
+      const { error: statusError } = await supabaseAdmin.rpc('record_outstand_initial_import', {
+        p_site_id: siteId!, p_account_id: id, p_status: 'unknown',
+      });
+      if (statusError) console.error('[Outstand import] unable to record uncertain job:', statusError);
+      throw error;
+    }
   } catch (error) {
     return importErrorResponse(error);
   }

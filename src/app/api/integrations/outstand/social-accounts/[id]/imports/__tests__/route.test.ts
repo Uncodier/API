@@ -3,9 +3,10 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 const mockGetOutstandClient = jest.fn();
 const mockRequireSite = jest.fn();
 const mockFrom = jest.fn();
+const mockRpc = jest.fn();
 jest.unstable_mockModule('@/lib/integrations/outstand/client', () => ({ getOutstandClient: mockGetOutstandClient }));
 jest.unstable_mockModule('@/lib/integrations/outstand/conversation-access', () => ({ requireOutstandConversationSite: mockRequireSite }));
-jest.unstable_mockModule('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: mockFrom } }));
+jest.unstable_mockModule('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: mockFrom, rpc: mockRpc } }));
 
 const SITE_ID = '00000000-0000-4000-8000-000000000001';
 const OTHER_SITE_ID = '00000000-0000-4000-8000-000000000002';
@@ -32,6 +33,7 @@ describe('Outstand social account history import', () => {
     listAccounts.mockResolvedValue({ data: [owned] } as never);
     importSocialAccountPosts.mockResolvedValue({ success: true, data: { id: 'import-1', status: 'queued' } } as never);
     listSocialAccountImports.mockResolvedValue({ success: true, data: [], count: 0 } as never);
+    mockRpc.mockResolvedValue({ data: true, error: null } as never);
     mockGetOutstandClient.mockReturnValue({ listAccounts, importSocialAccountPosts, listSocialAccountImports });
   });
 
@@ -41,6 +43,9 @@ describe('Outstand social account history import', () => {
     expect(await response.json()).toMatchObject({ success: true, data: { id: 'import-1', status: 'queued' } });
     expect(listAccounts).toHaveBeenCalledWith(SITE_ID, { tenantId: SITE_ID, limit: 100 });
     expect(importSocialAccountPosts).toHaveBeenCalledWith(owned.id, SITE_ID, { limit: 10 });
+    expect(mockRpc).toHaveBeenCalledWith('claim_outstand_initial_import', {
+      p_site_id: SITE_ID, p_account_id: owned.id, p_limit: 10,
+    });
   });
 
   it('requires explicit confirmation and a bounded limit before billing', async () => {
@@ -67,6 +72,38 @@ describe('Outstand social account history import', () => {
     } as never);
     expect((await POST(request({ confirm: true, limit: 10 }), context)).status).toBe(409);
     expect(importSocialAccountPosts).not.toHaveBeenCalled();
+  });
+
+  it('does not post when another cron/manual request already claimed the account', async () => {
+    mockRpc.mockResolvedValueOnce({ data: false, error: null } as never);
+    expect((await POST(request({ confirm: true, limit: 10 }), context)).status).toBe(409);
+    expect(importSocialAccountPosts).not.toHaveBeenCalled();
+  });
+
+  it('keeps the durable claim on an ambiguous provider response (no automatic retry)', async () => {
+    importSocialAccountPosts.mockRejectedValueOnce(new Error('Connection reset') as never);
+    expect((await POST(request({ confirm: true, limit: 10 }), context)).status).toBe(500);
+    expect(mockRpc).toHaveBeenCalledWith('record_outstand_initial_import', {
+      p_site_id: SITE_ID, p_account_id: owned.id, p_status: 'unknown',
+    });
+    expect(importSocialAccountPosts).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails closed when the atomic claim RPC is not installed', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    mockRpc.mockResolvedValueOnce({ data: null, error: { message: 'RPC missing' } } as never);
+    expect((await POST(request({ confirm: true, limit: 10 }), context)).status).toBe(503);
+    expect(importSocialAccountPosts).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it('returns the accepted queued job even if status bookkeeping fails after the billable call', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    mockRpc.mockResolvedValueOnce({ data: true, error: null } as never)
+      .mockResolvedValueOnce({ data: null, error: { message: 'database unavailable' } } as never);
+    expect((await POST(request({ confirm: true, limit: 10 }), context)).status).toBe(202);
+    expect(importSocialAccountPosts).toHaveBeenCalledTimes(1);
+    errorSpy.mockRestore();
   });
 
   it('denies an unauthorized tenant before reading accounts', async () => {
