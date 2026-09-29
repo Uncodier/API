@@ -56,7 +56,7 @@ beforeEach(() => {
 
 afterEach(() => {
   jest.restoreAllMocks();
-  if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+  if (previousNodeEnv === undefined) Reflect.deleteProperty(process.env, 'NODE_ENV');
   else Object.assign(process.env, { NODE_ENV: previousNodeEnv });
 });
 

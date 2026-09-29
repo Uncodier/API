@@ -4,6 +4,7 @@ import { apiKeyAuth } from './apiKeyAuth';
 import { enforceRequestRateLimit } from '@/lib/security/request-rate-limit';
 import {
   isExpensivePath,
+  limitCorsPreflight,
   limitPublicImageDelivery,
   requestRatePolicy,
   usesRouteLevelGenerationRateLimit,
@@ -252,6 +253,25 @@ export default async function requestMiddleware(request: NextRequest) {
     );
   }
 
+  if (method === 'OPTIONS') {
+    if (!publicRequest && !isAllowedStaticOrigin(origin)) {
+      return new NextResponse(null, { status: 403 });
+    }
+    const limited = await limitCorsPreflight(request);
+    if (limited) return withCors(limited, origin);
+    return withCors(
+      new NextResponse(null, {
+        status: 204,
+        headers: {
+          'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+          'Access-Control-Allow-Headers': getAllowedHeaders(),
+          'Access-Control-Max-Age': '86400',
+        },
+      }),
+      origin,
+    );
+  }
+
   if (routeLevelGenerationLimit) {
     const limited = await limitPublicImageDelivery(request);
     if (limited) return withCors(limited, origin);
@@ -364,23 +384,6 @@ export default async function requestMiddleware(request: NextRequest) {
     && authHeader === `Bearer ${cronSecret}`
   ) {
     return withCors(next(), origin);
-  }
-
-  if (method === 'OPTIONS') {
-    if (!publicRequest && !isAllowedStaticOrigin(origin)) {
-      return new NextResponse(null, { status: 403 });
-    }
-    return withCors(
-      new NextResponse(null, {
-        status: 204,
-        headers: {
-          'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
-          'Access-Control-Allow-Headers': getAllowedHeaders(),
-          'Access-Control-Max-Age': '86400',
-        },
-      }),
-      origin,
-    );
   }
 
   if (webhookRequest) {

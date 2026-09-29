@@ -1,25 +1,29 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { NextRequest, NextResponse } from 'next/server';
 
 const mockApiKeyAuth: any = jest.fn();
 const mockEnforceRequestRateLimit: any = jest.fn();
 
-jest.mock('../../../cors.config.js', () => ({
+jest.unstable_mockModule('../../../cors.config.js', () => ({
   getAllowedHeaders: () => 'Content-Type, Authorization',
   getAllowedOrigins: () => ['https://app.makinari.com'],
 }));
-jest.mock('../apiKeyAuth', () => ({
+jest.unstable_mockModule('../apiKeyAuth', () => ({
   apiKeyAuth: mockApiKeyAuth,
 }));
-jest.mock('@/lib/security/request-rate-limit', () => ({
+jest.unstable_mockModule('@/lib/security/request-rate-limit', () => ({
   enforceRequestRateLimit: mockEnforceRequestRateLimit,
 }));
 
-import requestMiddleware, {
-  isPublicRequest,
-  isWebhookPath,
-} from '../requestMiddleware';
-import { usesRouteLevelGenerationRateLimit } from '../requestRateLimits';
+let requestMiddleware: typeof import('../requestMiddleware').default;
+let isPublicRequest: typeof import('../requestMiddleware').isPublicRequest;
+let isWebhookPath: typeof import('../requestMiddleware').isWebhookPath;
+let usesRouteLevelGenerationRateLimit: typeof import('../requestRateLimits').usesRouteLevelGenerationRateLimit;
+
+beforeAll(async () => {
+  ({ default: requestMiddleware, isPublicRequest, isWebhookPath } = await import('../requestMiddleware'));
+  ({ usesRouteLevelGenerationRateLimit } = await import('../requestRateLimits'));
+});
 
 describe('request middleware route classification', () => {
   beforeEach(() => {

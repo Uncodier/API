@@ -17,6 +17,7 @@ Read these first when changing the code-agent harness:
 ## Availability audits
 
 - [Redis/Upstash availability and consistency audit — 2026-09-20](./REDIS_UPSTASH_AVAILABILITY_AUDIT_2026-09-20.md)
+- [CORS preflight admission](./CORS_PREFLIGHT_RATE_LIMITS.md) — independent preflight budgets and Finder `429` diagnosis.
 
 ## Active integration guides
 

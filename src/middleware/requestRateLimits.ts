@@ -97,6 +97,31 @@ export function requestRatePolicy(
   };
 }
 
+export async function limitCorsPreflight(
+  request: NextRequest,
+): Promise<NextResponse | null> {
+  // OPTIONS never executes the route. Bound this traffic independently so
+  // browser permission checks cannot consume expensive operation budgets.
+  const perClient = await enforceRequestRateLimit(request, {
+    namespace: 'cors-preflight',
+    limit: positiveIntegerSetting('CORS_PREFLIGHT_REQUESTS_PER_MINUTE', 300),
+    windowSeconds: 60,
+    failClosed: true,
+  });
+  if (perClient) return perClient;
+
+  return enforceRequestRateLimit(request, {
+    namespace: 'cors-preflight-global',
+    identity: 'global',
+    limit: positiveIntegerSetting(
+      'CORS_PREFLIGHT_GLOBAL_REQUESTS_PER_MINUTE',
+      10_000,
+    ),
+    windowSeconds: 60,
+    failClosed: true,
+  });
+}
+
 export async function limitPublicImageDelivery(
   request: NextRequest,
 ): Promise<NextResponse | null> {
