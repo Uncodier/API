@@ -22,6 +22,7 @@ Read these first when changing the code-agent harness:
 ## Active integration guides
 
 - [Instance context manual setup](./INSTANCE_CONTEXT_MANUAL_SETUP.md) — migration and model-limit configuration for robot context compaction.
+- [Outstand comments contract](./OUTSTAND_COMMENTS.md) — response normalization, upstream failures, and offline regression tests.
 
 These integrations still exist, but verify configuration details against the referenced implementation before operational changes:
 

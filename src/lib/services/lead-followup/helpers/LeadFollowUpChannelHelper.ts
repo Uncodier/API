@@ -1,13 +1,34 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { getOutreachPolicy, isOutreachActivity, isOutreachChannel, selectedOutreachAccounts } from '@/lib/services/outreach/policy';
+import type { OutreachRecipient } from '@/lib/services/outreach/recipients';
 
 // Function to get site channel configuration
-export async function getSiteChannelsConfiguration(siteId: string): Promise<{
+export async function getSiteChannelsConfiguration(siteId: string, outreachActivity?: unknown): Promise<{
   hasChannels: boolean,
   configuredChannels: string[],
   channelsDetails: Record<string, any>,
   warning?: string
 }> {
   try {
+    // Automatic outreach is strictly opt-in. Keep the old interactive behavior
+    // untouched, but never fall back to it for an invalid/empty selection.
+    if (outreachActivity !== undefined) {
+      const empty = { hasChannels: false, configuredChannels: [], channelsDetails: {}, warning: 'No selected outreach accounts are available' };
+      if (!isOutreachActivity(outreachActivity)) return empty;
+      const { data: settings, error } = await supabaseAdmin.from('settings').select('channels,activities').eq('site_id', siteId).single();
+      if (error) return empty;
+      const policy = getOutreachPolicy(settings, outreachActivity);
+      if (!policy || policy.status !== 'active') return empty;
+      const channelsDetails: Record<string, any> = {};
+      for (const channel of Object.keys(policy.channel_accounts)) {
+        const selected = selectedOutreachAccounts(settings, policy, channel);
+        if (selected.length) channelsDetails[channel] = {
+          type: channel, account_ids: selected.map(account => account.id), description: `Selected ${channel} outreach accounts`,
+        };
+      }
+      const configuredChannels = Object.keys(channelsDetails);
+      return { hasChannels: !!configuredChannels.length, configuredChannels, channelsDetails };
+    }
     console.log(`📡 Getting channel configuration for site: ${siteId}`);
     
     // Try with .single() first (like other parts of the codebase)
@@ -404,13 +425,23 @@ export async function triggerChannelsSetupNotification(siteId: string): Promise<
 export function filterAndCorrectMessageChannel(
   messages: any,
   configuredChannels: string[],
-  leadContact?: { hasEmail?: boolean; hasPhone?: boolean; leadEmail?: string | null; leadPhone?: string | null }
+  leadContact?: { hasEmail?: boolean; hasPhone?: boolean; leadEmail?: string | null; leadPhone?: string | null;
+    recipients?: Record<string, OutreachRecipient> }
 ): { correctedMessages: any, corrections: string[] } {
   const corrections: string[] = [];
   const correctedMessages: any = {};
   
   // Process each message channel
   for (const [originalChannel, messageData] of Object.entries(messages)) {
+    if (!isOutreachChannel(originalChannel)) continue;
+    // Managed outreach must never rewrite an inaccessible channel to email (or
+    // any other channel). The validated recipient map is the sole authority.
+    if (leadContact?.recipients) {
+      if (configuredChannels.includes(originalChannel) && leadContact.recipients[originalChannel]) {
+        correctedMessages[originalChannel] = { ...(typeof messageData === 'object' && messageData !== null ? messageData : {}), channel: originalChannel };
+      }
+      continue;
+    }
     let targetChannel = originalChannel;
     let needsCorrection = false;
     const leadHasEmail = !!leadContact?.hasEmail && !!(leadContact?.leadEmail && String(leadContact.leadEmail).trim() !== '');

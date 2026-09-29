@@ -17,6 +17,8 @@ export interface AgentMailSendParams {
   username: string;
   domain: string;
   senderEmail: string;
+  /** Central delivery owns the message metadata/lease; only inject tracking. */
+  preserveMessageMetadata?: boolean;
   trackingId?: string; // 🆕 Permite reutilizar un ID de tracking existente
 }
 
@@ -61,7 +63,7 @@ export class AgentMailSendService {
     try {
       if (trackingId) {
         // Si ya tenemos trackingId, actualizamos el registro con los datos de AgentMail
-        await supabaseAdmin
+        if (!params.preserveMessageMetadata) await supabaseAdmin
           .from('messages')
           .update({
             custom_data: {
@@ -96,7 +98,7 @@ export class AgentMailSendService {
 
         if (!msgError && newMessage) {
           trackingId = newMessage.id;
-          htmlContent = EmailTrackingService.injectTracking(htmlContent, trackingId);
+          htmlContent = EmailTrackingService.injectTracking(htmlContent, newMessage.id);
         }
       }
     } catch (err) {
@@ -114,7 +116,7 @@ export class AgentMailSendService {
     const agentmailResponse = await sendMessage(inboxId, agentmailParams);
 
     // Update message tracking with AgentMail details
-    if (trackingId) {
+    if (trackingId && !params.preserveMessageMetadata) {
       try {
         await supabaseAdmin
           .from('messages')

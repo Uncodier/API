@@ -18,13 +18,20 @@ export async function sendTwilioWhatsAppMessage(params: {
   fromNumber: string;
   mediaUrls?: string[];
   messagingServiceSid?: string;
+  /** Automatic outreach reserves one message and must not change sender/chunk. */
+  strictSingleMessage?: boolean;
+  contentSid?: string;
+  contentVariables?: Record<string, string>;
 }): Promise<TwilioWhatsAppSendResult> {
   try {
     console.log('📤 [WhatsAppSendService] Enviando via API de Twilio WhatsApp...');
 
-    const chunks = chunkWhatsAppMessage(params.message, 1500);
+    if (params.strictSingleMessage && params.message.length > 1500) {
+      return { success: false, error: 'Outreach WhatsApp message exceeds single-message limit' };
+    }
+    const chunks = params.strictSingleMessage ? [params.message] : chunkWhatsAppMessage(params.message, 1500);
     let lastSid: string | undefined;
-    const fromCandidates = twilioWhatsAppFromCandidates(params.fromNumber);
+    const fromCandidates = params.strictSingleMessage ? [params.fromNumber] : twilioWhatsAppFromCandidates(params.fromNumber);
 
     for (let i = 0; i < chunks.length; i++) {
       const mediaForChunk = i === 0 ? params.mediaUrls : undefined;
@@ -40,6 +47,8 @@ export async function sendTwilioWhatsAppMessage(params: {
           messagingServiceSid: params.messagingServiceSid,
           chunkIndex: i,
           chunkCount: chunks.length,
+          contentSid: params.contentSid,
+          contentVariables: params.contentVariables,
         });
         if (!posted.success) return posted;
         lastSid = posted.messageId;
@@ -55,6 +64,8 @@ export async function sendTwilioWhatsAppMessage(params: {
             fromNumber: candidate,
             chunkIndex: i,
             chunkCount: chunks.length,
+            contentSid: params.contentSid,
+            contentVariables: params.contentVariables,
           });
           if (posted.success) break;
           if (posted.errorCode === 63007 && candidate !== fromCandidates[fromCandidates.length - 1]) {
@@ -94,6 +105,8 @@ async function postTwilioWhatsAppMessage(params: {
   messagingServiceSid?: string;
   chunkIndex: number;
   chunkCount: number;
+  contentSid?: string;
+  contentVariables?: Record<string, string>;
 }): Promise<TwilioWhatsAppSendResult> {
   const apiUrl = `https://api.twilio.com/2010-04-01/Accounts/${params.accountSid}/Messages.json`;
   const credentials = Buffer.from(`${params.accountSid}:${params.authToken}`).toString('base64');
@@ -106,7 +119,14 @@ async function postTwilioWhatsAppMessage(params: {
   }
 
   formData.append('To', `whatsapp:${params.phoneNumber}`);
-  formData.append('Body', params.body);
+  if (params.contentSid) {
+    formData.append('ContentSid', params.contentSid);
+    if (params.contentVariables && Object.keys(params.contentVariables).length) {
+      formData.append('ContentVariables', JSON.stringify(params.contentVariables));
+    }
+  } else {
+    formData.append('Body', params.body);
+  }
 
   if (params.mediaUrls && params.mediaUrls.length > 0) {
     params.mediaUrls.slice(0, 10).forEach((url) => formData.append('MediaUrl', url));

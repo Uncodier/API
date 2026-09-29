@@ -342,4 +342,45 @@ describe("placeTrackedVoiceCall idempotency", () => {
       }),
     }));
   });
+
+  it('pins optional selected site connection rather than the first voice sender and preserves terminal callbacks', async () => {
+    const connections: any[] = [
+      { id: 'first', type: 'voice', status: 'connected', zavu_sender_id: 'wrong-first' },
+      { id: 'selected', type: 'voice', status: 'connected', zavu_sender_id: 'chosen-sender' },
+    ];
+    const lead: any = { phone: '+5215551234567', voice_call_consent_status: 'granted', voice_call_consent_at: '2026-09-21T12:00:00Z', do_not_call: false };
+    let current: any = { outreach_activity: 'leads_initial_cold_outreach', outreach_delivery: { state: 'dispatching', attempt_id: 'attempt' } };
+    const filters: any[] = []; const inserts: any[] = [];
+    mockFrom.mockImplementation((table: string) => {
+      const q: any = {
+        select: () => q,
+        eq: (key: string, value: string) => { filters.push([table, key, value]); return q; },
+        maybeSingle: async () => ({ data: table === 'settings' ? { channels: { connections } } : table === 'leads' ? lead
+          : table === 'messages' ? { conversation_id: 'conversation-1', lead_id: 'lead-1', custom_data: current } : null, error: null }),
+        update: (payload: any) => { if (table === 'messages') current = payload.custom_data; return q; },
+        insert: async (payload: any) => { inserts.push(payload); return { error: null }; },
+        then: (resolve: any) => Promise.resolve(resolve({ error: null })),
+      }; return q;
+    });
+    mockPlaceVoiceCall.mockImplementation(async () => {
+      // Simulates a terminal webhook being persisted before placement returns.
+      current = { ...current, voice_mode: 'agent_call', provider_call_id: 'call-exact', status: 'failed', call_status: 'no_answer', duration_seconds: 12 };
+      return { id: 'call-exact', status: 'queued', to: lead.phone };
+    });
+    const input = { siteId: 'site-1', messageId: 'message-1', to: lead.phone, greeting: 'Hello', selectedConnectionId: 'selected', selectedSenderId: 'chosen-sender' };
+    await expect(placeTrackedVoiceCall(input)).resolves.toMatchObject({ call: { id: 'call-exact' } });
+    expect(mockPlaceVoiceCall).toHaveBeenCalledWith(expect.objectContaining({ senderId: 'chosen-sender' }));
+    expect(inserts[0]).toMatchObject({ zavu_sender_id: 'chosen-sender', site_id: 'site-1' });
+    expect(filters).toContainEqual(['settings', 'site_id', 'site-1']);
+    expect(current).toMatchObject({ status: 'failed', call_status: 'no_answer', duration_seconds: 12, outreach_delivery: { attempt_id: 'attempt' } });
+    mockPlaceVoiceCall.mockClear();
+    await expect(placeTrackedVoiceCall({ ...input, selectedSenderId: 'wrong-first' })).rejects.toThrow('Selected Voice sender');
+    connections[1].status = 'disconnected';
+    await expect(placeTrackedVoiceCall(input)).rejects.toThrow('Selected Voice sender');
+    connections[1].status = 'connected'; connections.push({ ...connections[1] });
+    await expect(placeTrackedVoiceCall(input)).rejects.toThrow('Selected Voice sender');
+    connections.pop(); lead.voice_call_consent_status = 'unknown';
+    await expect(placeTrackedVoiceCall(input)).rejects.toThrow('explicit Voice call consent');
+    expect(mockPlaceVoiceCall).not.toHaveBeenCalled();
+  });
 });

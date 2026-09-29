@@ -5,6 +5,9 @@ import {
   safeStringify 
 } from '@/lib/helpers/lead-context-helper';
 import { ConversationService } from '@/lib/services/conversation-service';
+import { isOutreachActivity, isOutreachChannel, type OutreachActivityKey } from '@/lib/services/outreach/policy';
+import { isNonDirectIdentity } from '@/lib/services/outreach/recipients';
+import { loadOutreachConversations } from '@/lib/services/outreach/recipient-repository';
 
 /**
  * Validates if a string is a valid UUID
@@ -26,6 +29,7 @@ export class LeadFollowUpLogService {
     channel: string;
     title?: string;
     commandIds?: { sales?: string; copywriter?: string };
+    managedOutreach?: boolean;
   }): Promise<string | null> {
     try {
       // Don't create conversation for notifications
@@ -36,7 +40,9 @@ export class LeadFollowUpLogService {
 
       // 1. Search for existing conversation for this lead and channel
       console.log(`🔍 Checking for existing conversation for lead ${data.leadId} on channel ${data.channel}`);
-      const existingConversationId = await ConversationService.findExistingConversation(
+      const direct = data.managedOutreach ? (await loadOutreachConversations(data.siteId, data.leadId))
+        .find(c => c.channel === data.channel && !isNonDirectIdentity(c.custom_data)) : undefined;
+      const existingConversationId = data.managedOutreach ? direct?.id : await ConversationService.findExistingConversation(
         data.leadId,
         undefined,
         data.siteId,
@@ -109,12 +115,14 @@ export class LeadFollowUpLogService {
     agentId?: string;
     commandIds?: { sales?: string; copywriter?: string };
     messageStatus?: string;
+    outreachActivity?: OutreachActivityKey;
   }): Promise<{conversations: Record<string, string>, messages: Record<string, string>}> {
     const { messages, leadData, siteId, leadId, userId, agentId, commandIds, messageStatus = 'pending' } = params;
     const conversations: Record<string, string> = {};
     const channelMessages: Record<string, string> = {};
     
     for (const [channel, messageData] of Object.entries(messages)) {
+      if (!isOutreachChannel(channel)) continue;
       if (!messageData || typeof messageData !== 'object') continue;
       if (channel === 'notification') continue;
 
@@ -125,7 +133,8 @@ export class LeadFollowUpLogService {
         agentId,
         channel,
         title: messageData.title,
-        commandIds
+        commandIds,
+        managedOutreach: !!params.outreachActivity
       });
 
       if (!conversationId) continue;
@@ -146,6 +155,14 @@ export class LeadFollowUpLogService {
         role: 'assistant',
         user_id: userId,
         custom_data: {
+          // Retain approved media/call guidance, never model-supplied delivery state or recipient overrides.
+          ...Object.fromEntries(['message_type', 'media_url', 'mime_type', 'voice_objective', 'voice_context', 'voice_additional_context']
+            .flatMap(key => {
+              const value = messageData[key] ?? messageData.custom_data?.[key];
+              return typeof value === 'string' ? [[key, value]] : [];
+            })),
+          ...((params.outreachActivity || isOutreachActivity(messageData.custom_data?.outreach_activity))
+            ? { outreach_activity: params.outreachActivity || messageData.custom_data.outreach_activity } : {}),
           channel: channel,
           follow_up_type: 'lead_nurture',
           title: messageData.title,

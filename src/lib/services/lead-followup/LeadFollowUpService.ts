@@ -1,4 +1,6 @@
 import { CommandFactory } from '@/lib/agentbase';
+import { isOutreachActivity } from '@/lib/services/outreach/policy';
+import { assertOutreachGeneration } from '@/lib/services/outreach/generation-guard';
 import { 
   getLeadInfo, 
   getPreviousInteractions, 
@@ -98,6 +100,14 @@ export class LeadFollowUpService {
       };
     }
     
+    const outreachActivity = body.outreach_activity ?? body.additionalData?.outreach_activity;
+    if (outreachActivity !== undefined && !isOutreachActivity(outreachActivity)) {
+      throw { code: 'INVALID_OUTREACH_ACTIVITY', message: 'Invalid outreach_activity', status: 400 };
+    }
+    const managed = outreachActivity
+      ? await assertOutreachGeneration(request, siteId, leadId, outreachActivity) : undefined;
+    const managedLead = managed?.lead;
+
     // Search for active sales agent if agent_id is not provided
     let effectiveAgentId = agent_id;
     let agentInfo: any = null;
@@ -131,7 +141,7 @@ export class LeadFollowUpService {
     }
     
     // Get lead information from database if not provided
-    let effectiveLeadData = leadData;
+    let effectiveLeadData = managedLead || leadData;
     if (!effectiveLeadData || Object.keys(effectiveLeadData).length === 0) {
       const leadInfo = await getLeadInfo(leadId);
       if (leadInfo) {
@@ -153,20 +163,20 @@ export class LeadFollowUpService {
     const hasPhone = !!(effectiveLeadData && effectiveLeadData.phone && String(effectiveLeadData.phone).trim() !== '');
 
     // Fetch site channel configuration EARLY (before any AI work)
-    const channelConfig = await getSiteChannelsConfiguration(siteId);
+    const channelConfig = await getSiteChannelsConfiguration(siteId, outreachActivity);
     console.log(`[LeadFollowUp:${requestId}] 📡 [EARLY] Channel configuration result:`, channelConfig);
 
     // Early abort if site has no channels configured
     if (!channelConfig.hasChannels) {
       console.error(`❌ CHANNELS CONFIG: Site ${siteId} has no channels configured. Aborting before AI.`);
       try {
-        await triggerChannelsSetupNotification(siteId);
+        if (!outreachActivity) await triggerChannelsSetupNotification(siteId);
       } catch (notificationError) {
         console.error(`⚠️ Failed to trigger channels setup notification:`, notificationError);
       }
       throw {
         code: 'NO_CHANNELS_CONFIGURED',
-        message: 'Site has no communication channels configured. Configure email or WhatsApp in settings before sending messages.',
+        message: 'Site has no communication channels configured. Select a connected outreach account in settings before sending messages.',
         details: channelConfig.warning || 'No channels configured',
         action_taken: 'Channels setup notification attempted',
         status: 400
@@ -174,9 +184,9 @@ export class LeadFollowUpService {
     }
 
     // Early abort if no configured channel matches lead contact data
-    const canEmail = channelConfig.configuredChannels.includes('email') && hasEmail;
-    const canWhatsApp = channelConfig.configuredChannels.includes('whatsapp') && hasPhone;
-    if (!canEmail && !canWhatsApp) {
+    const recipientChannels = managed?.channels || channelConfig.configuredChannels.filter(channel =>
+      (channel === 'email' && hasEmail) || (channel === 'whatsapp' && hasPhone));
+    if (!recipientChannels.length) {
       console.error(`❌ CHANNELS CONFIG: No valid channel for this lead. Aborting before AI.`, {
         configured: channelConfig.configuredChannels,
         hasEmail,
@@ -224,21 +234,15 @@ export class LeadFollowUpService {
     console.log(`[LeadFollowUp:${requestId}] 📞 Lead contact availability - Email: ${hasEmail ? 'YES' : 'NO'}, Phone: ${hasPhone ? 'YES' : 'NO'}`);
     
     // Build available channels list for context
-    const availableChannels = [];
-    
-    if (hasEmail && channelConfig.configuredChannels.includes('email')) {
-      availableChannels.push('email');
-    }
-    if (hasPhone && channelConfig.configuredChannels.includes('whatsapp')) {
-      availableChannels.push('whatsapp');
-    }
+    const availableChannels = [...recipientChannels];
     // Always add web and notification channels (don't depend on specific lead data)
-    availableChannels.push('notification', 'web');
+    if (!outreachActivity) availableChannels.push('notification', 'web');
     
     console.log(`📋 Available channels for context: ${availableChannels.join(', ')}`);
 
     // Add specific instructions about channel selection to context
     contextMessage += LeadContextBuilder.getChannelSelectionInstructions(availableChannels);
+    if (managed) contextMessage += '\nThese channels have server-validated recipients. Do not invent contact identities or switch to an unavailable channel. For voice, generate a spoken greeting of 1–1000 characters; this starts a tracked consented call, not a text message.';
 
     // PHASE 1: Create command for Sales/CRM Specialist
     console.log(`🚀 PHASE 1: Creating command for Sales/CRM Specialist`);
@@ -448,7 +452,7 @@ VALIDATION CHECKLIST:
     
     // Extract messages from final result (prioritize copywriter if exists)
     const finalCommand = copywriterCompleted ? completedCopywriterCommand : completedSalesCommand;
-    let finalContent = extractFinalContent(finalCommand, copywriterCompleted, salesFollowUpContent, requestId, availableChannels);
+    let finalContent = extractFinalContent(finalCommand, copywriterCompleted, salesFollowUpContent, requestId, availableChannels, !!managed);
     
     // Organize messages by channel
     const messages: any = organizeMessagesByChannel(finalContent, hasEmail, hasPhone, channelConfig, requestId);
@@ -473,7 +477,7 @@ VALIDATION CHECKLIST:
       
       throw { 
         code: 'NO_CHANNELS_CONFIGURED', 
-        message: 'Site has no communication channels configured. Please configure at least email or WhatsApp channels in site settings before sending messages. Team members have been notified to set up channels.',
+        message: 'Site has no communication channels configured. Please configure a connected outreach account in site settings before sending messages.',
         details: channelConfig.warning,
         action_taken: 'Channels setup notification sent to team members',
         status: 400
@@ -488,7 +492,8 @@ VALIDATION CHECKLIST:
         hasEmail,
         hasPhone,
         leadEmail: effectiveLeadData?.email || null,
-        leadPhone: effectiveLeadData?.phone || null
+        leadPhone: effectiveLeadData?.phone || null,
+        ...(managed ? { recipients: managed.recipients } : {})
       }
     );
     
@@ -536,10 +541,16 @@ VALIDATION CHECKLIST:
       copywriter: copywriterDbUuid || copywriterCommandId // Priorizar UUID de DB
     };
     
+    if (outreachActivity) {
+      for (const generated of Object.values(correctedMessages) as any[]) {
+        generated.custom_data = { ...(generated.custom_data || {}), outreach_activity: outreachActivity };
+      }
+    }
     const responseData: any = {
       messages: correctedMessages, // Return filtered messages instead of original
       lead: effectiveLeadData || {},
-      command_ids: finalCommandIds
+      command_ids: finalCommandIds,
+      ...(outreachActivity ? { outreach_activity: outreachActivity } : {})
     };
     
     // Add channel corrections if any were applied

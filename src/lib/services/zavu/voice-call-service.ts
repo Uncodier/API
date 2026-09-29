@@ -28,6 +28,9 @@ export interface PlaceTrackedVoiceCallInput {
   includeCurrentMessageInFollowUp?: boolean;
   language?: string;
   maxDurationMinutes?: number;
+  /** Optional exact outreach selection; omission preserves existing callers. */
+  selectedConnectionId?: string;
+  selectedSenderId?: string;
 }
 
 export interface PlaceTrackedVoiceCallResult {
@@ -37,6 +40,8 @@ export interface PlaceTrackedVoiceCallResult {
 }
 
 type VoiceConnection = {
+  id?: unknown;
+  enabled?: unknown;
   zavu_sender_id?: unknown;
   status?: unknown;
   type?: unknown;
@@ -56,7 +61,7 @@ function parseConnections(channels: unknown): VoiceConnection[] {
   return Array.isArray(connections) ? connections : [];
 }
 
-async function resolveVoiceSenderId(siteId: string): Promise<string> {
+async function resolveVoiceSenderId(siteId: string, selectedConnectionId?: string, selectedSenderId?: string): Promise<string> {
   const { data, error } = await supabaseAdmin
     .from("settings")
     .select("channels")
@@ -64,7 +69,17 @@ async function resolveVoiceSenderId(siteId: string): Promise<string> {
     .maybeSingle();
   if (error) throw new Error("Failed to load Voice configuration");
 
-  const connection = parseConnections(data?.channels).find(
+  const connections = parseConnections(data?.channels);
+  if (selectedConnectionId !== undefined || selectedSenderId !== undefined) {
+    const matches = connections.filter(c => c?.id === selectedConnectionId);
+    const selected = matches.length === 1 ? matches[0] : undefined;
+    if (!selectedConnectionId || !selectedSenderId || !selected || selected.type !== 'voice'
+      || selected.status !== 'connected' || selected.enabled === false || selected.zavu_sender_id !== selectedSenderId) {
+      throw Object.assign(new Error('Selected Voice sender is not connected for this site'), { status: 409 });
+    }
+    return selectedSenderId;
+  }
+  const connection = connections.find(
     (candidate) =>
       candidate.type === "voice"
       && typeof candidate.status === "string"
@@ -209,16 +224,20 @@ async function markMessagePlaced(
     data?.custom_data && typeof data.custom_data === "object"
       ? data.custom_data as Record<string, unknown>
       : {};
+  // A fast terminal webhook can beat the placement response. Do not regress
+  // its status or discard its transcript/duration metadata when marking accepted.
+  const preserveTerminal = customData.provider_call_id === call.id
+    && ['completed', 'failed', 'busy', 'no_answer', 'canceled', 'cancelled'].includes(String(customData.call_status));
   const { error } = await supabaseAdmin
     .from("messages")
     .update({
       custom_data: {
         ...customData,
-        status: "sent",
+        status: preserveTerminal ? customData.status : "sent",
         voice_mode: "agent_call",
         voice_call_delivery_id: deliveryId,
         provider_call_id: call.id,
-        call_status: call.status,
+        call_status: preserveTerminal ? customData.call_status : call.status,
         sent_at: new Date().toISOString(),
       },
       updated_at: new Date().toISOString(),
@@ -341,7 +360,7 @@ export async function placeTrackedVoiceCall(
     followUp.context,
     followUp.sources
   );
-  const senderId = await resolveVoiceSenderId(input.siteId);
+  const senderId = await resolveVoiceSenderId(input.siteId, input.selectedConnectionId, input.selectedSenderId);
   await ensureVoiceContactMetadataEnabled(senderId);
   const deliveryId = randomUUID();
   const attemptToken = randomUUID();

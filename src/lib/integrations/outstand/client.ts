@@ -15,7 +15,8 @@ import {
   SendConversationMessageParams,
   SendConversationMessageResponse,
 } from './types';
-import { mergeCommentResults, networksFromPost, usernameFromPost, emptyDegradedCommentsResult } from './comments';
+import { mergeCommentResults, networksFromPost, normalizeCommentResult, usernameFromPost } from './comments';
+import type { CommentsResult } from './comments';
 
 const BASE_URL = 'https://api.outstand.so/v1';
 
@@ -245,7 +246,7 @@ export class OutstandClient {
     });
   }
 
-  async getComments(postId: string, params: { network?: string; username?: string } = {}, tenantId?: string): Promise<any> {
+  async getComments(postId: string, params: { network?: string; username?: string } = {}, tenantId?: string): Promise<CommentsResult> {
     const post = (!params.network || !params.username)
       ? (await this.getPost(postId, tenantId))?.post
       : undefined;
@@ -266,19 +267,10 @@ export class OutstandClient {
       }, tenantId))
     );
 
-    const results = outcomes.map((outcome, i) => {
-      if (outcome.status === 'fulfilled') {
-        return outcome.value;
-      }
-      
-      const error = outcome.reason;
-      if (error?.status >= 500) {
-        console.warn(`[OutstandClient] Degraded comments for post ${postId} on network ${networks[i]}:`, error.message);
-        return emptyDegradedCommentsResult(error.upstreamStatus, `Failed to load comments for ${networks[i]}`);
-      }
-      
-      // Propagate non-5xx errors (e.g., 400 Bad Request, 404 Not Found)
-      throw error;
+    const results = outcomes.map((outcome) => {
+      // A partial read must fail so callers can retry every network.
+      if (outcome.status === 'rejected') throw outcome.reason;
+      return outcome.value;
     });
 
     return results.length === 1 ? results[0] : mergeCommentResults(results);
@@ -288,7 +280,7 @@ export class OutstandClient {
     postId: string,
     params: { network: string; username?: string },
     tenantId?: string
-  ): Promise<any> {
+  ): Promise<CommentsResult> {
     const query = new URLSearchParams();
     query.append('network', params.network);
     if (params.username) query.append('username', params.username);
@@ -298,10 +290,11 @@ export class OutstandClient {
       headers['X-Tenant-ID'] = tenantId;
     }
 
-    return this.request(`/posts/${postId}/replies?${query.toString()}`, {
+    const result = await this.request<unknown>(`/posts/${postId}/replies?${query.toString()}`, {
       method: 'GET',
       headers,
     });
+    return normalizeCommentResult(result);
   }
 
   // --- Conversations ---

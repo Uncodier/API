@@ -1,4 +1,5 @@
 // Helper functions for content extraction and validation in LeadFollowUpService
+import { isOutreachChannel } from '@/lib/services/outreach/policy';
 
 export function validateToolExecutionResults(toolResults: any[]) {
     console.log(`🔧 PHASE 1: Validating ${toolResults.length} tool execution results`);
@@ -133,7 +134,7 @@ export function createFallbackContent(completedSalesCommand: any, availableChann
     return null;
 }
 
-export function extractFinalContent(finalCommand: any, copywriterCompleted: boolean, salesFollowUpContent: any, requestId: string, availableChannels: string[]): any[] {
+export function extractFinalContent(finalCommand: any, copywriterCompleted: boolean, salesFollowUpContent: any, requestId: string, availableChannels: string[], strictChannels = false): any[] {
   let finalContent: any[] = [];
   
   console.log(`[LeadFollowUp:${requestId}] 📦 Extracting final content from ${copywriterCompleted ? 'copywriter' : 'sales'} command`);
@@ -141,7 +142,7 @@ export function extractFinalContent(finalCommand: any, copywriterCompleted: bool
   // Helper function to normalize channel names (agent_email -> email, agent_whatsapp -> whatsapp)
   // Also normalizes to lowercase to handle case variations (Email -> email, EMAIL -> email)
   const normalizeChannel = (channel: string | undefined): string | undefined => {
-    if (!channel) return undefined;
+    if (typeof channel !== 'string' || !channel) return undefined;
     const lowerChannel = channel.toLowerCase();
     if (lowerChannel === 'agent_email') return 'email';
     if (lowerChannel === 'agent_whatsapp') return 'whatsapp';
@@ -182,6 +183,7 @@ export function extractFinalContent(finalCommand: any, copywriterCompleted: bool
         
         // If channel is not in availableChannels, use a valid fallback
         if (!preservedChannel || !availableChannels.includes(preservedChannel)) {
+          if (strictChannels) continue;
           const fallbackChannel = getValidFallbackChannel();
           console.log(`[LeadFollowUp:${requestId}] ⚠️ Sales channel '${preservedChannel || 'undefined'}' not in availableChannels [${availableChannels.join(', ')}], using fallback: ${fallbackChannel}`);
           preservedChannel = fallbackChannel;
@@ -272,6 +274,12 @@ export function extractFinalContent(finalCommand: any, copywriterCompleted: bool
   }
   
   // 🔧 VALIDATION: Ensure all content items have a valid channel
+  if (strictChannels) {
+    return finalContent.flatMap(item => {
+      const channel = normalizeChannel(item?.channel || salesFollowUpContent?.channel);
+      return channel && isOutreachChannel(channel) && availableChannels.includes(channel) ? [{ ...item, channel }] : [];
+    });
+  }
   if (finalContent && finalContent.length > 0) {
     finalContent = finalContent.map((item: any) => {
       if (!item.channel) {
@@ -321,8 +329,9 @@ export function organizeMessagesByChannel(finalContent: any[], hasEmail: boolean
   if (finalContent && Array.isArray(finalContent)) {
     finalContent.forEach((item: any, index: number) => {
       
-      if (item.channel) {
+      if (item.channel && isOutreachChannel(item.channel)) {
         messages[item.channel] = {
+          ...item,
           title: item.title || '',
           message: item.message || '',
           strategy: item.strategy || ''

@@ -539,7 +539,8 @@ export class WhatsAppTemplateService {
   static async findExistingTemplate(
     message: string,
     siteId: string,
-    accountSid: string
+    accountSid: string,
+    options?: { approvedExactOnly?: boolean; trackUsage?: boolean }
   ): Promise<FindExistingTemplateResult> {
     try {
       console.log(`🔍 [WhatsAppTemplateService] Buscando template existente para site: ${siteId}`);
@@ -560,7 +561,10 @@ export class WhatsAppTemplateService {
         return {};
       }
       
-      const reusableTemplates = pickReusableWhatsAppTemplates(templates || []);
+      // Existing templates are stored as 'active'; callers using exact-only
+      // mode must additionally verify live provider approval before dispatch.
+      const reusableTemplates = pickReusableWhatsAppTemplates(templates || []).filter(t =>
+        !options?.approvedExactOnly || ['active', 'approved'].includes(t.status));
       if (reusableTemplates.length === 0) {
         console.log(`📝 [WhatsAppTemplateService] No se encontraron templates reutilizables`);
         return {};
@@ -570,11 +574,11 @@ export class WhatsAppTemplateService {
         typeof t.templated_body === 'string' && t.templated_body === preparedTemplated,
       );
       
-      const similarTemplate = exactMatch ?? reusableTemplates.find(template => {
+      const similarTemplate = exactMatch ?? (!options?.approvedExactOnly ? reusableTemplates.find(template => {
         const candidate = (template.templated_body as string | undefined) ?? template.content ?? template.original_message ?? '';
         const similarity = this.calculateSimilarity(preparedTemplated, candidate);
         return similarity > 0.8;
-      });
+      }) : undefined);
       
       if (similarTemplate) {
         const placeholderMap = Array.isArray(similarTemplate.placeholder_map)
@@ -587,7 +591,7 @@ export class WhatsAppTemplateService {
           hasPlaceholderMap: !!placeholderMap,
         });
         
-        this.incrementTemplateUsage(similarTemplate.template_sid).catch((error: any) => {
+        if (options?.trackUsage !== false) this.incrementTemplateUsage(similarTemplate.template_sid).catch((error: any) => {
           console.warn('⚠️ [WhatsAppTemplateService] Error incrementando uso de template:', error);
         });
         
@@ -817,7 +821,7 @@ export class WhatsAppTemplateService {
   /**
    * Verifica el estado de aprobación de un Content Template para WhatsApp
    */
-  private static async checkTemplateApprovalStatus(
+  static async checkTemplateApprovalStatus(
     templateSid: string,
     accountSid: string,
     authToken: string

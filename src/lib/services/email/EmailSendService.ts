@@ -1,4 +1,4 @@
-import { EmailConfigService } from './EmailConfigService';
+import { EmailConfigService, type EmailConfig } from './EmailConfigService';
 import { SentEmailDuplicationService } from './SentEmailDuplicationService';
 import nodemailer from 'nodemailer';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
@@ -16,6 +16,8 @@ export interface SendEmailParams {
   lead_id?: string;
   site_id: string;
   trackingId?: string; // 🆕 ID para rastreo de apertura y clics
+  /** Trusted server-side caller may pin freshly resolved SMTP credentials. */
+  smtpConfig?: EmailConfig;
 }
 
 export interface SendEmailResult {
@@ -87,7 +89,7 @@ export class EmailSendService {
       const siteInfo = await this.getSiteInfo(site_id);
       
       // Obtener configuración de email para el sitio
-      const emailConfig = await EmailConfigService.getEmailConfig(site_id);
+      const emailConfig = params.smtpConfig || await EmailConfigService.getEmailConfig(site_id);
       
       // Usar el email configurado del sitio o el del parámetro fromEmail
       const senderEmail = fromEmail || emailConfig.user || emailConfig.email;

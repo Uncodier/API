@@ -21,34 +21,53 @@ export function usernameFromPost(
   return match?.username;
 }
 
-export function mergeCommentResults(results: Array<Record<string, unknown>>): Record<string, unknown> {
-  const replies = results.flatMap((result) => {
-    if (Array.isArray(result.replies)) return result.replies;
-    if (Array.isArray(result.data)) return result.data;
-    return [];
-  });
+export type CommentsResult = Record<string, unknown> & {
+  success: true;
+  data: Array<Record<string, unknown>>;
+};
 
-  const someDegraded = results.some((result) => result.degraded === true);
-  const degradedWarnings = results
-    .filter((result) => result.warning && typeof result.warning === 'string')
-    .map((result) => result.warning);
-
-  return {
-    success: results.every((result) => result.success !== false),
-    replies,
-    data: replies,
-    ...(someDegraded ? { degraded: true } : {}),
-    ...(degradedWarnings.length > 0 ? { warning: degradedWarnings.join('; ') } : {}),
-  };
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-export function emptyDegradedCommentsResult(upstreamStatus?: number, message?: string): Record<string, unknown> {
+function commentsError(message: string): Error & { status: number } {
+  return Object.assign(new Error(message), { status: 502 });
+}
+
+export function normalizeCommentResult(result: unknown): CommentsResult {
+  if (!isRecord(result)) {
+    throw commentsError('Invalid Outstand comments response');
+  }
+  if (result.success === false || result.degraded === true) {
+    throw commentsError('Outstand failed to load complete comments');
+  }
+  if (result.success !== undefined && result.success !== true) {
+    throw commentsError('Invalid Outstand comments success flag');
+  }
+
+  // Canonical data wins, even when empty. Never replace malformed data with raw replies.
+  const comments = Object.prototype.hasOwnProperty.call(result, 'data')
+    ? result.data
+    : Array.isArray(result.replies)
+      ? result.replies
+      : isRecord(result.replies)
+        ? result.replies.comments
+        : undefined;
+
+  if (!Array.isArray(comments) || !comments.every(isRecord)) {
+    throw commentsError('Invalid Outstand comments collection');
+  }
+
+  // Keep raw replies and provider metadata intact for existing single-network callers.
+  return { ...result, success: true, data: comments };
+}
+
+export function mergeCommentResults(results: unknown[]): CommentsResult {
+  const comments = results.flatMap((result) => normalizeCommentResult(result).data);
+
   return {
     success: true,
-    replies: [],
-    data: [],
-    degraded: true,
-    warning: message || 'Outstand failed to load comments',
-    upstream_status: upstreamStatus || 500,
+    replies: comments,
+    data: comments,
   };
 }

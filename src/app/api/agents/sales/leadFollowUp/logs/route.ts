@@ -4,6 +4,8 @@ import {
 } from '@/lib/helpers/lead-context-helper';
 import { leadFollowUpLogService } from '@/lib/services/lead-followup/LeadFollowUpLogService';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { isOutreachActivity } from '@/lib/services/outreach/policy';
+import { assertOutreachGeneration } from '@/lib/services/outreach/generation-guard';
 
 /**
  * Validates if a string is a valid UUID
@@ -45,6 +47,10 @@ async function findActiveSalesAgent(siteId: string): Promise<{agentId: string, u
 export async function POST(request: Request) {
   try {
     const body = await request.json();
+    const outreachActivity = body.outreach_activity ?? body.additionalData?.outreach_activity;
+    if (outreachActivity !== undefined && !isOutreachActivity(outreachActivity)) {
+      return NextResponse.json({ success: false, error: { code: 'INVALID_OUTREACH_ACTIVITY' } }, { status: 400 });
+    }
     console.log('[LeadFollowUp:Log] Received body keys:', Object.keys(body));
     
     const { 
@@ -65,10 +71,15 @@ export async function POST(request: Request) {
       );
     }
 
+    const managed = outreachActivity
+      ? await assertOutreachGeneration(request, siteId, leadId, outreachActivity) : undefined;
+    const allowedMessages = managed ? Object.fromEntries(Object.entries(messages || {})
+      .filter(([channel]) => managed.channels.includes(channel))) : messages;
+
     const salesAgentResult = await findActiveSalesAgent(siteId);
     let effectiveAgentId = agent_id || salesAgentResult?.agentId;
 
-    let effectiveLeadData = leadData;
+    let effectiveLeadData = managed?.lead || leadData;
     if (!effectiveLeadData || Object.keys(effectiveLeadData).length === 0) {
       effectiveLeadData = await getLeadInfo(leadId);
     }
@@ -88,14 +99,15 @@ export async function POST(request: Request) {
     
     if (messages && typeof messages === 'object' && Object.keys(messages).length > 0) {
       channelResults = await leadFollowUpLogService.createChannelMessages({
-        messages,
+        messages: allowedMessages,
         leadData: effectiveLeadData,
         siteId,
         leadId,
         userId,
         agentId: effectiveAgentId,
         commandIds: command_ids,
-        messageStatus: message_status
+        messageStatus: message_status,
+        outreachActivity
       });
     }
 
@@ -133,11 +145,11 @@ export async function POST(request: Request) {
       { 
         success: false, 
         error: { 
-          code: 'SYSTEM_ERROR', 
+          code: error.code || 'SYSTEM_ERROR',
           message: error.message || 'An internal system error occurred' 
         } 
       },
-      { status: 500 }
+      { status: error.status || 500 }
     );
   }
 }
