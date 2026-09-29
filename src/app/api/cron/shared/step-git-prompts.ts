@@ -62,6 +62,8 @@ SUPABASE ENVIRONMENT (CRITICAL):
 - NEVER use \`NEXT_PUBLIC_SUPABASE_URL\`, \`NEXT_PUBLIC_SUPABASE_ANON_KEY\`, or \`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY\` in your generated code.
 - You MUST ALWAYS use \`NEXT_PUBLIC_APPS_SUPABASE_URL\` and \`NEXT_PUBLIC_APPS_SUPABASE_ANON_KEY\` instead.
 - You MUST ALWAYS use the \`makinari-obj-apps-supabase\` skill when dealing with databases, auth, or Supabase.
+- Consume the verified tenant capability manifest (or \`sandbox_db_capabilities\`) before database/auth/storage work. Never infer tenant access from the shared authenticated role.
+- Use platform-provisioned tenant-local identity helpers, not an assumed dependency on \`auth.uid()\` / \`auth.jwt()\`. Missing capabilities are provisioning gaps, not a reason to change global grants or RLS.
 `;
 
 /** Enforced in code: git + clone root must stay at /vercel/sandbox (never move .git or the repo under app/). */

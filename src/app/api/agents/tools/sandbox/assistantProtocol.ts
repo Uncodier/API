@@ -25,6 +25,7 @@ import { sandboxReadLogsTool } from '@/app/api/agents/tools/sandbox_read_logs/as
 import { getQaSandboxTools } from '@/app/api/agents/tools/sandbox/qa-tools';
 import { sandboxDbMigrateTool } from '@/app/api/agents/tools/sandbox/sandbox-db-migrate';
 import { sandboxDbInspectTool } from '@/app/api/agents/tools/sandbox/sandbox-db-inspect';
+import { sandboxDbCapabilitiesTool } from './sandbox-db-capabilities';
 import { sandboxBrowserTool } from './sandbox-browser-tool';
 import {
   sandboxWriteFileTool,
@@ -468,6 +469,7 @@ export function getSandboxTools(
     sandboxReadLintsTool(sandbox, toolsCtx),
     sandboxDbMigrateTool(sandbox, requirementId, toolsCtx),
     sandboxDbInspectTool(requirementId, toolsCtx),
+    sandboxDbCapabilitiesTool(requirementId),
     sandboxRestoreCheckpointTool(sandbox, requirementId, toolsCtx),
     sandboxPushCheckpointTool(sandbox, requirementId, toolsCtx),
     sandboxReadLogsTool(sandbox, toolsCtx),

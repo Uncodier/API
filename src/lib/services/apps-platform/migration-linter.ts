@@ -213,7 +213,7 @@ function checkRlsAfterCreateTable(
         rule: 'tenant-policy-required',
         severity: 'error',
         line: t.line,
-        message: `Table "${schema}.${t.name}" should declare a policy. Make sure to use auth.uid() or role-based logic for RLS.`,
+        message: `Table "${schema}.${t.name}" should declare a policy. Use the provisioned tenant identity helper with ownership or protected membership for RLS.`,
       });
     }
   }
@@ -431,7 +431,9 @@ function isUnconditionalPolicyPredicate(predicate: string): boolean {
   const normalized = predicate.replace(/\s+/g, ' ').trim();
   const tautology =
     String.raw`(?:true|1\s*=\s*1|auth\.uid\s*\(\s*\)\s+is\s+not\s+null|` +
-    String.raw`auth\.uid\s*\(\s*\)\s*=\s*auth\.uid\s*\(\s*\))`;
+    String.raw`auth\.uid\s*\(\s*\)\s*=\s*auth\.uid\s*\(\s*\)|` +
+    String.raw`(?:"?app_[a-f0-9]+"?\s*\.\s*)?"?_app_current_user_id"?\s*\(\s*\)\s+is\s+not\s+null|` +
+    String.raw`(?:"?app_[a-f0-9]+"?\s*\.\s*)?"?_app_current_user_id"?\s*\(\s*\)\s*=\s*(?:"?app_[a-f0-9]+"?\s*\.\s*)?"?_app_current_user_id"?\s*\(\s*\))`;
   const wrappedTautology = String.raw`\(*\s*${tautology}\s*\)*`;
   return new RegExp(`^${wrappedTautology}$`, 'i').test(normalized) ||
     new RegExp(`(?:^|\\()\\s*${wrappedTautology}\\s+or\\b`, 'i')
@@ -453,11 +455,20 @@ function checkPermissiveAuthenticatedPolicy(stmt: Statement): LintIssue[] {
     line: stmt.line,
     message:
       'RLS policy grants unconditional access to authenticated users. ' +
-      'Scope access with auth.uid(), tenant membership, or another row ownership predicate.',
+      'Scope access with the provisioned tenant identity helper, tenant membership, or another row ownership predicate.',
   }];
 }
 
 function checkMigrationInfrastructureMutation(stmt: Statement): LintIssue[] {
+  const protectedHelper = /\b_app_(?:current_user_id|request_claims|is_backend_request)\b/i;
+  const routineMutation = /\b(?:create(?:\s+or\s+replace)?|alter|drop)\s+(?:function|procedure|routine)\s+(?:if\s+exists\s+)?(?:"?[a-zA-Z_][\w]*"?\s*\.\s*)?"?_app_(?:current_user_id|request_claims|is_backend_request)\b/i;
+  const bulkDrop = /\bdrop\s+(?:function|procedure|routine)\b/i.test(stmt.code) && protectedHelper.test(stmt.code);
+  const protectedRename = /\balter\s+(?:function|procedure|routine)\b/i.test(stmt.code) &&
+    /\brename\s+to\s+"?_app_(?:current_user_id|request_claims|is_backend_request)\b/i.test(stmt.code);
+  if (routineMutation.test(stmt.code) || bulkDrop || protectedRename) {
+    return [{ rule: 'tenant-identity-protected', severity: 'error', line: stmt.line,
+      message: 'Provisioned _app_* identity helpers are platform-owned. Consume the verified capability; do not redefine or mutate it.' }];
+  }
   if (!/\b(?:_meta|_execute_tenant_migration)\b/i.test(stmt.code)) return [];
   return [{
     rule: 'migration-ledger-protected',

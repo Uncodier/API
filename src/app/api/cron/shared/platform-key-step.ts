@@ -13,6 +13,7 @@ import { supabaseAdmin } from "@/lib/database/supabase-client";
 import { pushVercelBranchEnv } from "@/lib/services/vercel-env";
 import type { CronAuditContext } from "@/lib/services/cron-audit-log";
 import { decryptToken } from "@/lib/utils/token-decryption";
+import { parseTenantCapabilities, type TenantCapabilities } from '@/lib/services/apps-platform/tenant-capabilities';
 
 export interface ProvisionPlatformKeyStepInput {
   sandboxId: string;
@@ -44,6 +45,7 @@ export interface ProvisionPlatformKeyStepResult {
     jwt_expires_at: string;
   };
   injected_env_keys: string[];
+  tenant_capabilities?: TenantCapabilities;
 }
 
 function defaultApiBase(): string {
@@ -157,6 +159,7 @@ export async function provisionPlatformKeyStep(
 
   const envInjected = !!result.api_key;
   let tenant: ProvisionPlatformKeyStepResult["tenant"];
+  let tenantCapabilities: TenantCapabilities | undefined;
 
   // Two bags:
   //   - sandboxEnvBag: everything the generated app needs locally, written to
@@ -193,6 +196,9 @@ export async function provisionPlatformKeyStep(
         created: ten.created,
         jwt_expires_at: ten.jwt_expires_at,
       };
+      tenantCapabilities = parseTenantCapabilities(ten.capabilities, {
+        requirementId, tenantId: ten.tenant_id, schema: ten.schema, bucket: ten.bucket,
+      });
       const apps = getAppsPublicConfig();
       if (!apps.anonKey) {
         throw new Error('Apps Supabase anon key is required for tenant-backed application flows');
@@ -225,6 +231,10 @@ export async function provisionPlatformKeyStep(
 
     if (secrets && secrets.length > 0) {
       for (const secret of secrets) {
+        // Site secrets cannot replace the platform identity behind a verified manifest.
+        if (/^(?:APPS_|NEXT_PUBLIC_APPS_|NEXT_PUBLIC_SUPABASE_|REPOSITORY_SUPABASE_|SUPABASE_|API_KEY$|API_BASE_URL$|NEXT_API_URL$)/.test(secret.name)) {
+          continue;
+        }
         if (!secret.encrypted_value) continue;
         const decrypted = decryptToken(secret.encrypted_value);
         if (decrypted) {
@@ -280,5 +290,6 @@ export async function provisionPlatformKeyStep(
     env_injected: envInjected,
     tenant,
     injected_env_keys: Object.keys(sandboxEnvBag),
+    ...(tenantCapabilities ? { tenant_capabilities: tenantCapabilities } : {}),
   };
 }

@@ -478,6 +478,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     throw error;
   }
   const provisionedEnvKeys = platformKeyResult.injected_env_keys;
+  const tenantCapabilities = platformKeyResult.tenant_capabilities;
 
   if (requirementFlow.delivery.provision_tracking_script) {
     // Application flows expose browser telemetry through the root layout.
@@ -527,6 +528,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     memoriesContext: reqContext.memoriesContext,
     historyContext: reqContext.historyContext,
     provisionedEnvKeys,
+    tenantCapabilities,
   });
 
   // Step 4: Run orchestrator (if no pending plan)
@@ -701,6 +703,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
                validateDeployment:
                  requirementFlow.delivery.validate_deployment,
                provisionedEnvKeys,
+               tenantCapabilities,
                cycleId: cronLockRunId,
                executionEventId:
                  `${cronLockRunId}:${workingStep.id}:turn:${turnCount}`,

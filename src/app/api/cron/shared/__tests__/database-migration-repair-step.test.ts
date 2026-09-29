@@ -4,12 +4,14 @@ import { connectOrRecreateRequirementSandbox } from '@/lib/services/sandbox-reco
 import { createMigrationRepairTools } from '@/lib/services/apps-platform/migration-repair-tools';
 import { assertCronExecutionOwnership } from '../cron-execution-ownership';
 import { logCronInfrastructureEvent } from '@/lib/services/cron-audit-log';
+import { getTenantCapabilities } from '@/lib/services/apps-platform/tenant-capabilities-service';
 
 jest.mock('@/lib/services/robot-instance/assistant-executor', () => ({ executeAssistantStep: jest.fn() }));
 jest.mock('@/lib/services/sandbox-recovery', () => ({ connectOrRecreateRequirementSandbox: jest.fn() }));
 jest.mock('@/lib/services/apps-platform/migration-repair-tools', () => ({ createMigrationRepairTools: jest.fn() }));
 jest.mock('../cron-execution-ownership', () => ({ assertCronExecutionOwnership: jest.fn(), isCronExecutionOwnershipError: () => false }));
 jest.mock('@/lib/services/cron-audit-log', () => ({ logCronInfrastructureEvent: jest.fn() }));
+jest.mock('@/lib/services/apps-platform/tenant-capabilities-service', () => ({ getTenantCapabilities: jest.fn() }));
 
 const params = {
   sandboxId: 'old', requirementId: 'req', instanceType: 'applications', title: 'Title',
@@ -26,6 +28,15 @@ describe('durable migration repair step', () => {
     (connectOrRecreateRequirementSandbox as jest.Mock).mockResolvedValue({ sandbox: {}, sandboxId: 'recovered' });
     (executeAssistantStep as jest.Mock).mockResolvedValue({ isDone: true, messages: [{ role: 'assistant', content: 'Claimed done' }] });
     (createMigrationRepairTools as jest.Mock).mockReturnValue({ tools: [{ name: 'restricted-tool' }], wasChanged: () => false, repairedTarget: () => undefined });
+    (getTenantCapabilities as jest.Mock).mockResolvedValue({ schema: params.outcome.repairTarget.schema, tenant_id: params.outcome.repairTarget.tenantId });
+  });
+
+  it('does not run repair against unverified capabilities or another tenant', async () => {
+    (getTenantCapabilities as jest.Mock).mockRejectedValue(new Error('capability unavailable'));
+    await expect(repairDatabaseMigrationStep(params)).resolves.toMatchObject({ changed: false, error: expect.stringContaining('capability unavailable') });
+    expect(executeAssistantStep).not.toHaveBeenCalled();
+    (getTenantCapabilities as jest.Mock).mockResolvedValue({ schema: 'other', tenant_id: 'other' });
+    await expect(repairDatabaseMigrationStep(params)).resolves.toMatchObject({ changed: false, error: expect.stringContaining('does not match') });
   });
 
   it('uses only restricted tools, exact ownership and one tool attempt', async () => {

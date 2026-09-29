@@ -19,6 +19,7 @@
  */
 import { getAppsAdminClient, issueTenantJWT } from '@/lib/database/apps-supabase';
 import { syncPostgrestSchemas } from './postgrest-config';
+import { parseTenantCapabilities, type TenantCapabilities } from './tenant-capabilities';
 
 export type AppsAuthProvider = 'supabase' | 'auth0';
 
@@ -38,6 +39,7 @@ export interface EnsureTenantResult {
   jwt_expires_at: string;
   auth_provider: AppsAuthProvider;
   created: boolean;
+  capabilities: TenantCapabilities;
 }
 
 function ownerRoleForSchema(schema: string): string {
@@ -99,6 +101,24 @@ export async function ensureTenant(input: EnsureTenantInput): Promise<EnsureTena
       'tenant-provisioner: atomic provisioning returned an invalid receipt.',
     );
   }
+  const { data: capabilityReceipt, error: capabilityError } = await client.rpc('apps_ensure_tenant_capabilities', {
+    p_requirement_id: requirement_id, p_expected_tenant_id: tenantId,
+  });
+  if (capabilityError) {
+    throw new Error(`tenant-provisioner: capability provisioning failed (${capabilityError.code || 'unknown'}). Deploy the tenant capabilities migration first.`);
+  }
+  const capabilities = parseTenantCapabilities(capabilityReceipt, {
+    requirementId: requirement_id, tenantId, schema: resolvedSchema, bucket: resolvedBucket,
+  });
+  // Existing tenant bootstrap preserves its original registry subject. Never mint
+  // a backend token from a different invoking user's id while claiming capability.
+  const { data: binding, error: bindingError } = await client.from('apps_tenants')
+    .select('tenant_id, schema, user_id, site_id, status')
+    .eq('requirement_id', requirement_id).maybeSingle();
+  if (bindingError || binding?.tenant_id !== tenantId || binding?.schema !== resolvedSchema ||
+      binding?.user_id !== user_id || binding?.site_id !== site_id || binding?.status !== 'active') {
+    throw new Error('tenant-provisioner: caller and tenant backend identity binding do not match.');
+  }
   // Automatically expose the new schema to PostgREST
   const syncResult = await syncPostgrestSchemas();
   if (!syncResult.ok) {
@@ -120,7 +140,7 @@ export async function ensureTenant(input: EnsureTenantInput): Promise<EnsureTena
   const { token, expires_at } = await issueTenantJWT({
     tenant_id: tenantId,
     schema: resolvedSchema,
-    user_id,
+    user_id: binding.user_id,
   });
 
   return {
@@ -131,6 +151,7 @@ export async function ensureTenant(input: EnsureTenantInput): Promise<EnsureTena
     jwt_expires_at: expires_at,
     auth_provider: resolvedAuthProvider,
     created,
+    capabilities,
   };
 }
 

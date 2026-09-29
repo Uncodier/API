@@ -66,6 +66,8 @@ import {
   shouldEnterRepairGateOnlyPhase,
   shouldRunGateAfterTurn,
 } from './repair-execution-policy';
+import type { TenantCapabilities } from '@/lib/services/apps-platform/tenant-capabilities';
+import { getTenantCapabilities } from '@/lib/services/apps-platform/tenant-capabilities-service';
 export { inferRoleFromStep } from './single-turn-prompt';
 export type { SingleTurnResult };
 export async function executeSingleTurnStep(params: {
@@ -81,6 +83,7 @@ export async function executeSingleTurnStep(params: {
   requirementType: string;
   validateDeployment?: boolean;
   provisionedEnvKeys?: string[];
+  tenantCapabilities?: TenantCapabilities;
   cycleId: string;
   executionEventId: string;
   executionGeneration: number;
@@ -308,6 +311,7 @@ export async function executeSingleTurnStep(params: {
       historyContext,
       constraintSources,
       historyText,
+      currentTenantCapabilities,
     ] = await Promise.all([
       progressPromise,
       generateAgentBackground(siteId),
@@ -317,6 +321,9 @@ export async function executeSingleTurnStep(params: {
         ? loadConstraintSourceBlocks(requirementId)
         : Promise.resolve([]),
       fetchStepLogHistoryText(instanceId, plan.id, persistedStep.id),
+      params.tenantCapabilities
+        ? getTenantCapabilities(requirementId)
+        : Promise.resolve(undefined),
     ]);
 
     let progressContext = '';
@@ -348,6 +355,7 @@ export async function executeSingleTurnStep(params: {
       retryContext,
       constraintSources,
       provisionedEnvKeys,
+      tenantCapabilities: currentTenantCapabilities,
       noProgressAdjudication,
     });
 

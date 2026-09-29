@@ -25,6 +25,7 @@ const dependencies = {
   '@/app/api/agents/tools/sandbox/assistantProtocol': {},
   '@/lib/services/sandbox-sdk': {},
   './single-turn-prompt': {},
+  '@/lib/services/apps-platform/tenant-capabilities-service': { getTenantCapabilities: jest.fn() },
   './single-turn-visual-feedback': {},
   './single-turn-background-task': {},
   './single-turn-helpers': {},

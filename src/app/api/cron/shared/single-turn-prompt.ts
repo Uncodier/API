@@ -16,6 +16,7 @@ import {
 } from './step-git-prompts';
 import { extractRequirementConstraints, formatConstraintsPromptBlock } from '@/lib/services/requirement-constraints';
 import { PLAN_ROLE_TO_SKILL } from '@/lib/services/instance-plan-step-contract';
+import { tenantCapabilitiesPrompt, type TenantCapabilities } from '@/lib/services/apps-platform/tenant-capabilities';
 
 export { firstActionsPromptLine } from './step-git-prompts';
 
@@ -57,6 +58,7 @@ export interface SingleTurnPromptParams {
   retryContext: string;
   constraintSources?: Array<string | null | undefined>;
   provisionedEnvKeys?: string[];
+  tenantCapabilities?: TenantCapabilities;
   noProgressAdjudication?: boolean;
 }
 
@@ -96,6 +98,7 @@ ${constraintBlock}
 ${LANGUAGE_REQUIREMENT_PROMPT}
 ${TEMPLATE_CUSTOMIZATION_PROMPT}
 ${SUPABASE_ENVIRONMENT_PROMPT}
+${tenantCapabilitiesPrompt(p.tenantCapabilities, requirementId)}
 
 PROVISIONED ENVIRONMENT VARIABLES (Sandbox):
 The following variables are available in \`.env.local\` and \`process.env\`: ${(p.provisionedEnvKeys || []).join(', ')}

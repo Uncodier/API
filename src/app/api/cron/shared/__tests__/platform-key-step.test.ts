@@ -1,5 +1,6 @@
 import { jest } from '@jest/globals';
 import { loadRuntimeModule } from '@/lib/custom-automation/test-helpers/load-runtime-module';
+import { parseTenantCapabilities } from '@/lib/services/apps-platform/tenant-capabilities';
 const getSandboxHandle = jest.fn<(...args: any[]) => Promise<any>>();
 const ensurePlatformKeyForRequirement = jest.fn<(...args: any[]) => Promise<any>>();
 const ensureTenant = jest.fn<(...args: any[]) => Promise<any>>();
@@ -24,6 +25,12 @@ const tenant = {
   created: false,
   jwt: 'sandbox-jwt',
   jwt_expires_at: '2026-10-01T00:00:00Z',
+  capabilities: {
+    version: 1, requirement_id: input.requirementId,
+    tenant_id: '00000000-0000-4000-8000-000000000004', schema: 'app_aaaaaaaabbbb4ccc8dddeeee',
+    identity: { user_id: 'app_aaaaaaaabbbb4ccc8dddeeee._app_current_user_id', claims: 'app_aaaaaaaabbbb4ccc8dddeeee._app_request_claims', backend: 'app_aaaaaaaabbbb4ccc8dddeeee._app_is_backend_request' },
+    storage: { bucket: null, available: false }, backend: { role: 'authenticated', bypasses_rls: false, operations: [] },
+  },
 };
 
 describe('platform key / tenant preflight', () => {
@@ -40,6 +47,7 @@ describe('platform key / tenant preflight', () => {
         '@/lib/database/supabase-client': { supabaseAdmin: { from } },
         '@/lib/services/vercel-env': { pushVercelBranchEnv },
         '@/lib/utils/token-decryption': { decryptToken: jest.fn() },
+        '@/lib/services/apps-platform/tenant-capabilities': { parseTenantCapabilities },
       },
     ));
   });
@@ -111,6 +119,8 @@ describe('platform key / tenant preflight', () => {
     const result = await provisionPlatformKeyStep({ ...input, authProvider: 'supabase' });
 
     expect(result.tenant).toMatchObject({ schema: tenant.schema, tenant_id: tenant.tenant_id });
+    expect(result.tenant_capabilities).toEqual(tenant.capabilities);
+    expect(JSON.stringify(result)).not.toContain('sandbox-jwt');
     expect(result.injected_env_keys).toEqual(expect.arrayContaining([
       'NEXT_PUBLIC_APPS_SUPABASE_URL',
       'NEXT_PUBLIC_APPS_SUPABASE_ANON_KEY',
@@ -125,5 +135,25 @@ describe('platform key / tenant preflight', () => {
       }),
       'applications',
     );
+  });
+
+  it('stops before injection when tenant capabilities are missing', async () => {
+    ensureTenant.mockResolvedValue({ ...tenant, capabilities: undefined });
+    await expect(provisionPlatformKeyStep({ ...input, authProvider: 'supabase' })).rejects.toThrow('Tenant capability receipt');
+    expect(pushVercelBranchEnv).not.toHaveBeenCalled();
+  });
+
+  it('does not let site secrets replace a provisioned tenant identity', async () => {
+    ensureTenant.mockResolvedValue(tenant);
+    from.mockReturnValue({ select: () => ({ eq: () => ({ or: async () => ({ data: [
+      { name: 'APPS_TENANT_JWT', encrypted_value: 'malicious' },
+      { name: 'NEXT_PUBLIC_APPS_TENANT_SCHEMA', encrypted_value: 'malicious' },
+      { name: 'SUPABASE_SERVICE_ROLE_KEY', encrypted_value: 'malicious' },
+    ], error: null }) }) }) });
+    const result = await provisionPlatformKeyStep(input);
+    expect(result.tenant_capabilities).toEqual(tenant.capabilities);
+    expect(pushVercelBranchEnv).toHaveBeenCalledWith(input.branchName,
+      expect.objectContaining({ APPS_TENANT_JWT: tenant.jwt, NEXT_PUBLIC_APPS_TENANT_SCHEMA: tenant.schema }), 'applications');
+    expect(result.injected_env_keys).not.toContain('SUPABASE_SERVICE_ROLE_KEY');
   });
 });

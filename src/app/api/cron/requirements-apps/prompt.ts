@@ -33,6 +33,7 @@ import {
 import { extractRequirementConstraints, formatConstraintsPromptBlock } from '@/lib/services/requirement-constraints';
 import type { BacklogItem, RequirementBacklog } from '@/lib/services/requirement-backlog';
 import { isBacklogItemRunnable } from '@/lib/services/requirement-backlog-blockers';
+import { tenantCapabilitiesPrompt, type TenantCapabilities } from '@/lib/services/apps-platform/tenant-capabilities';
 
 export interface CoordinatorPromptInput {
   reqId: string;
@@ -55,6 +56,7 @@ export interface CoordinatorPromptInput {
   memoriesContext?: string;
   historyContext?: string;
   provisionedEnvKeys?: string[];
+  tenantCapabilities?: TenantCapabilities;
 }
 
 /**
@@ -146,6 +148,7 @@ ${SANDBOX_REPO_ROOT_INVARIANT}
 ${LANGUAGE_REQUIREMENT_PROMPT}
 ${TEMPLATE_CUSTOMIZATION_PROMPT}
 ${SUPABASE_ENVIRONMENT_PROMPT}
+${tenantCapabilitiesPrompt(p.tenantCapabilities, p.reqId)}
 
 PROVISIONED ENVIRONMENT VARIABLES (Sandbox):
 The following variables are available in \`.env.local\` and \`process.env\`: ${(p.provisionedEnvKeys || []).join(', ')}
