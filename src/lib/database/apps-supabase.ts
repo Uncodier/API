@@ -10,6 +10,7 @@
  * `docs/apps-platform-setup.md` (Phase 2c of the harness plan).
  */
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { assertAppsPublicKey } from './apps-public-key';
 
 let cachedClient: SupabaseClient | null = null;
 
@@ -55,6 +56,7 @@ export function getAppsAdminClient(): SupabaseClient {
 
 export function getAppsPublicConfig(): { url: string; anonKey: string } {
   const { url, anonKey } = readAppsEnv();
+  assertAppsPublicKey(anonKey);
   return { url, anonKey };
 }
 

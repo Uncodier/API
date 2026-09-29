@@ -66,6 +66,9 @@ different user while claiming the original backend capability.
 Custom site secrets cannot override platform-owned Apps schema/JWT/config entries.
 Values of tokens, signing keys, service keys and `.env` files are never part of the
 manifest. The SDK clients still require runtime env values but discovery does not.
+`getAppsPublicConfig()` also rejects secret/service-role/authenticated credentials
+even if a privileged key was mistakenly stored under an "anon" env name. Only a
+publishable key or legacy anon-role JWT can be returned for the generated app.
 
 ## Application rules
 
@@ -107,7 +110,7 @@ The read-only manifests for NEX and Visualgv return `storage.available=false`,
 app-specific registration RPC; it correctly avoids claiming it is a generic
 platform operation. Missing buckets remain explicit provisioning gaps.
 
-Local verification: **117 suites / 1,109 tests passed**. Repository-wide TypeScript
+Local verification: **118 suites / 1,116 tests passed**. Repository-wide TypeScript
 still reports unrelated pre-existing errors; none were reported in the changed
 capability, provisioning or prompt files. Single-connection PGlite tests are not
 a claim of multi-connection concurrency verification.
