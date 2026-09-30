@@ -62,6 +62,8 @@ jest.mock('@/lib/services/instance-plan-infrastructure-state', () => ({
 
 import { runArchetypePostGate } from '../step-archetype-postgate';
 import { persistJudgeRejection } from '../single-turn-judge-rejection';
+import { missingTestEvidenceResult } from '../judge-test-repair';
+import { planJudgeRepair } from '../judge-repair-controller';
 
 const item = {
   id: 'item-1',
@@ -213,6 +215,28 @@ describe('runArchetypePostGate verification budget', () => {
         },
       }),
     }));
+  });
+
+  it('assigns missing tests automatically even when older evidence-only attempts exhausted', async () => {
+    const judge = missingTestEvidenceResult(item as any);
+    runJudge.mockReturnValue(judge);
+    recordToolFailure.mockResolvedValue({ ...item, tool_failures: { judge_evidence_collector: 5 } });
+    await expect(runArchetypePostGate(input())).resolves.toMatchObject({
+      verification_exhausted: false,
+      repair_planned: expect.objectContaining({ status: 'planned', actions: [expect.objectContaining({ kind: 'repair_tests' })] }),
+    });
+    expect(markNeedsReview).not.toHaveBeenCalled();
+  });
+
+  it('does not hide a new failed Judge pass after the bounded test repair is exhausted', async () => {
+    const judge = missingTestEvidenceResult(item as any);
+    runJudge.mockReturnValue(judge);
+    const repair = planJudgeRepair({ judge })!;
+    recordToolFailure.mockResolvedValue({ ...item, tool_failures: { judge_evidence_collector: 5 } });
+    markNeedsReview.mockResolvedValue({ ...item, status: 'needs_review' });
+    await expect(runArchetypePostGate({ ...input(), repairRun: { ...repair, status: 'materialized', attempt_count: 3 } }))
+      .resolves.toMatchObject({ verification_exhausted: true, terminal_step_status: 'cancelled' });
+    expect(markNeedsReview).toHaveBeenCalledTimes(1);
   });
 
   it('moves only the exhausted item to review at the verification limit', async () => {

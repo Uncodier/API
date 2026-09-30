@@ -160,7 +160,8 @@ export async function applyPendingMigrations(
         failureKind = 'product';
         errors.push(
           `Migration ${file} changed after it was applied. ` +
-          'Create a new migration instead of editing applied SQL.',
+          'Restore the exact applied file bytes from a trusted source and verify their SHA-256 against the protected ledger first; the earliest Git commit is not proof of the applied version. ' +
+          'Create a new migration for subsequent changes instead of editing applied SQL. Never change the ledger checksum to match the file.',
         );
         break;
       }

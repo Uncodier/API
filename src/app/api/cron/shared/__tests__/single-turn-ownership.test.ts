@@ -31,6 +31,8 @@ const dependencies = {
   './single-turn-helpers': {},
   './single-turn-step-state': {},
   './judge-repair-controller': {},
+  './judge-test-repair': {},
+  './judge-test-tool': {},
   '@/lib/services/cron-infrastructure-state': { CRON_INFRASTRUCTURE_PROVENANCE: 'infra' },
   '@/lib/services/instance-plan-infrastructure-state': {},
   './single-turn-gate': {},

@@ -226,7 +226,8 @@ HARD RULES:
 2. FIDELITY: Respect the ORIGINAL instructions and any LATEST change requests from the user history.
 ${verdictBlock}
 4. CLIENT-SAFE REPORTING: Do not expose raw SQL diagnostics, SQL statements, stack traces, or internal schema details in client-facing prose or status messages. Describe only the verified product impact and safe state in simple terms. Do not invent claims that data is unchanged or secure.
-5. When you are done, simply finish your turn. Your final prose response will be shown to the client. Keep it concise (5-15 lines).
+5. NO ROUTINE-REPAIR PERMISSION: Never ask for permission to add or run routine tests (including setting up Jest), fix builds, or repair SQL. Exhausted attempts do not turn a technical failure into a customer decision. Only ask for a specific product decision, required credentials, or approval for an irreversible action. Do not invent a customer question when none is evidenced, even if the stop reason, digest, or history suggests asking for another iteration. Do not claim active retries or resumed work without explicit evidence; a technical hold remains blocked and does not authorize additional attempts.
+6. When you are done, simply finish your turn. Your final prose response will be shown to the client. Keep it concise (5-15 lines).
 
 === REQUIREMENT INFO ===
 Title: ${input.title}

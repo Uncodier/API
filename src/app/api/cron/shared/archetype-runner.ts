@@ -8,6 +8,7 @@ import {
   requiresSuccessfulTestEvidence,
 } from './archetype-acceptance-policy';
 import { extractRequirementConstraints, findConstraintViolations } from '@/lib/services/requirement-constraints';
+import { missingTestEvidenceResult } from './judge-test-repair';
 import {
   commitSummary,
   evidenceClaim,
@@ -260,11 +261,7 @@ function judgeApp(item: BacklogItem, evidence: EvidenceRecord): JudgeResult {
         (test) => test.exit_code === 0 && test.ran_after_changes,
       ) ?? false;
     if (requiresSuccessfulTestEvidence(item) && !hasPassingTests) {
-      return rejected(
-        item,
-        'core item requires successful test evidence — write and run Jest tests before claiming done',
-        'evidence_gap',
-      );
+      return missingTestEvidenceResult(item);
     }
 
     const text = `${item.title} ${item.acceptance?.join(' ') || ''}`.toLowerCase();
@@ -391,11 +388,7 @@ function judgeBackend(item: BacklogItem, evidence: EvidenceRecord): JudgeResult 
     // TDD Assertion: Core items must have passing tests
     const hasPassingTests = evidence.tests?.some((t) => t.exit_code === 0 && t.ran_after_changes) ?? false;
     if (!hasPassingTests) {
-      return rejected(
-        item,
-        'backend core item requires successful test evidence — write and run Jest tests before claiming done',
-        'evidence_gap',
-      );
+      return missingTestEvidenceResult(item);
     }
 
     const text = `${item.title} ${item.acceptance?.join(' ') || ''}`.toLowerCase();

@@ -17,6 +17,7 @@ import {
 import { extractRequirementConstraints, formatConstraintsPromptBlock } from '@/lib/services/requirement-constraints';
 import { PLAN_ROLE_TO_SKILL } from '@/lib/services/instance-plan-step-contract';
 import { tenantCapabilitiesPrompt, type TenantCapabilities } from '@/lib/services/apps-platform/tenant-capabilities';
+import { isTestRepairRun } from './judge-test-repair';
 
 export { firstActionsPromptLine } from './step-git-prompts';
 
@@ -68,9 +69,10 @@ export function buildSingleTurnSystemPrompt(p: SingleTurnPromptParams): string {
     skillContext, progressContext, agentBackground, memoriesContext, retryContext,
     constraintSources,
   } = p;
+  const testRepair = isTestRepairRun(step?.metadata?.repair_run);
   const verificationOnly =
     p.noProgressAdjudication ||
-    /\bFailure kind:\s*evidence_gap\b/i.test(retryContext);
+    (!testRepair && /\bFailure kind:\s*evidence_gap\b/i.test(retryContext));
 
   const constraintBlock = formatConstraintsPromptBlock(extractRequirementConstraints(
     ...(constraintSources || []),
@@ -118,7 +120,10 @@ ${verificationOnly
     ? '- GATE-ONLY ADJUDICATION MODE: normal executor actions are skipped; the runner is validating the existing workspace evidence directly.'
     : '- EVIDENCE-ONLY MODE: inspect and collect fresh proof. QA probe receipts are persisted automatically. Do not modify files, push, deploy, or create cosmetic changes.'
   : firstActionsPromptLine(effectiveRole)}
-${verificationOnly
+${testRepair && !p.noProgressAdjudication
+  ? '- AUTOMATIC TEST REPAIR: prioritize the structured missing-test action over earlier implementation instructions. Inspect the existing test framework, add or repair relevant tests/fixtures as needed, and execute them without customer permission. Do not weaken assertions or change acceptance. Use sandbox_run_tests with the existing direct test command; this host-owned tool waits with a bounded timeout and persists fresh evidence before independent validation. Ordinary shell/background execution and deployment are unavailable during this action. A read, edit, or build is not test completion. No production data changes are authorized.'
+  : ''}
+${verificationOnly || testRepair
   ? ''
   : '- LAST ACTION BEFORE STOPPING: Call sandbox_push_checkpoint (title_hint = this step\'s title) after your work builds — mandatory if you modified files; see CHECKPOINTS section below.'}
 
@@ -164,6 +169,7 @@ BEFORE starting to code or execute any commands, you MUST:
 
 SERVER TEST DEBUGGING:
 - Design API tests before or alongside route implementation.
+- Required tests are ordinary implementation work: request the needed test execution through the available sandbox tools, not customer approval. Use the test framework already configured in the repository.
 - Use \`sandbox_probe_api\` or \`sandbox_probe_routes\` for runtime failures. Their result includes request-specific HTTP status, server errors, and a bounded server-log tail.
 - If more detail is needed after a probe, use \`sandbox_tail_api_log\` or \`sandbox_tail_server_log\`; do not add debug endpoints, response fields, global console patches, or test-only route wrappers.
 - Pertinent runtime errors and warnings are sanitized, correlated to this plan step, stored in \`instance_logs\`, and injected into the next attempt under "Runtime Evidence".
@@ -173,12 +179,12 @@ SHELL LIMITATIONS:
 - The sandbox shell is /bin/sh (NOT bash). Brace expansion like {a,b,c} does NOT work.
 - WRONG: mkdir -p src/app/{community,guests,booking} — creates a LITERAL folder named "{community,guests,booking}".
 - RIGHT: mkdir -p src/app/community src/app/guests src/app/booking — list each path separately.
-- FOR LONG COMMANDS (like npm run build, tests, or servers), ALWAYS use sandbox_start_background_command. Never use sandbox_run_command for them.
+- ${testRepair ? 'For this test repair, use sandbox_run_tests; the host owns the execution timeout and evidence. Do not start background jobs.' : 'FOR LONG COMMANDS (like npm run build, tests, or servers), ALWAYS use sandbox_start_background_command. Never use sandbox_run_command for them.'}
 
 ${verificationOnly ? '' : TOOL_LOOKUP_HINT}
 ${verificationOnly ? '' : effectiveRole === 'investigate' ? RESEARCH_WEBSEARCH_HINT : ''}
 ${verificationOnly ? '' : getFileFreshnessPromptFragment(cycleBaselineAt)}
-${verificationOnly ? '' : getStepCheckpointPromptFragment(requirementId, instanceId)}`;
+${verificationOnly || testRepair ? '' : getStepCheckpointPromptFragment(requirementId, instanceId)}`;
 }
 
 export function buildUntrustedHistoryMessage(historyContext: string): string {

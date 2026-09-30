@@ -164,5 +164,15 @@ export function hasExpectedToolReceipt(
   if (expectedReceipt === 'database_migration') {
     return Array.isArray(receipt.applied) && receipt.pending === 0;
   }
+  if (expectedReceipt === 'test_execution') {
+    return typeof receipt.workspace_fingerprint === 'string' && !!receipt.workspace_fingerprint &&
+      typeof receipt.step_id === 'string' && !!receipt.step_id &&
+      Array.isArray(receipt.tests) && receipt.tests.length > 0 && receipt.tests.every((test: unknown) => {
+        const value = parseRecord(test);
+        return value?.exit_code === 0 && value?.ran_after_changes === true &&
+          value?.workspace_fingerprint === receipt.workspace_fingerprint &&
+          value?.step_id === receipt.step_id;
+      });
+  }
   return true;
 }

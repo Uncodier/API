@@ -198,6 +198,55 @@ describe('cycle-wrapup-prompt', () => {
     expect(prompt).not.toContain('INTERNAL TECHNICAL/PLATFORM REVIEW REQUIRED');
   });
 
+  it.each([
+    {},
+    { requiresUserFeedback: true },
+    { internalReviewRequired: true, requiresUserFeedback: true },
+    { pendingPlanSteps: 2 },
+  ])('never treats routine test/build/SQL repairs or exhaustion as customer permission: %j', policy => {
+    const prompt = buildCycleWrapUpSystemPrompt({
+      title: 'Fabrica',
+      requirementId: 'req-fabrica',
+      instructions: 'Completa la implementación',
+      historyPromptText: '',
+      historyMode: 'empty',
+      digestFiles: [],
+      planCompleted: false,
+      wrapUpReason: 'Missing Jest tests; evidence attempts exhausted.',
+      ...policy,
+    });
+
+    expect(prompt).toContain('Never ask for permission to add or run routine tests (including setting up Jest), fix builds, or repair SQL');
+    expect(prompt).toContain('Exhausted attempts do not turn a technical failure into a customer decision');
+    expect(prompt).toContain('Only ask for a specific product decision, required credentials, or approval for an irreversible action');
+    expect(prompt).toContain('Do not invent a customer question when none is evidenced');
+    expect(prompt).toContain('Do not claim active retries or resumed work without explicit evidence');
+  });
+
+  it('reports exhausted product verification as a technical hold even if the digest asks to add Jest', () => {
+    const content = 'Jest tests are missing. Evidence attempts exhausted; ask the user to authorize Jest setup.';
+    const prompt = buildCycleWrapUpSystemPrompt({
+      title: 'Fabrica',
+      requirementId: 'req-fabrica',
+      instructions: 'Completa la implementación',
+      historyPromptText: '',
+      historyMode: 'empty',
+      digestFiles: [{ path: 'docs/tests.md', content, bytes: content.length, bytes_original: content.length, summarized: false }],
+      planCompleted: true,
+      pendingPlanSteps: 2,
+      hasRunnableBacklogWork: true,
+      requiresUserFeedback: true,
+      internalReviewRequired: true,
+    });
+
+    expect(prompt).toContain('INTERNAL TECHNICAL/PLATFORM REVIEW REQUIRED');
+    expect(prompt).toContain("Keep stage='blocked'");
+    expect(prompt).toContain('Successful wrap-up only reports the hold; it does not resume work');
+    expect(prompt).not.toContain('USER FEEDBACK REQUIRED');
+    expect(prompt).not.toContain('NEEDS USER DECISION');
+    expect(prompt).not.toContain('VERDICT: Executable work remains');
+  });
+
   it('shouldRunCycleWrapUp skips only when both empty', () => {
     expect(shouldRunCycleWrapUp({ hasDigest: false, userMessageCount: 0 })).toBe(false);
     expect(shouldRunCycleWrapUp({ hasDigest: true, userMessageCount: 0 })).toBe(true);

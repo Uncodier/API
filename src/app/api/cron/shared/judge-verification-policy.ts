@@ -35,7 +35,8 @@ export function verificationAttemptCount(
   return Number.isFinite(count) && count > 0 ? count : 0;
 }
 
-function requiredAction(failureKind: JudgeFailureKind | undefined): string {
+function requiredAction(failureKind: JudgeFailureKind | undefined, testsRequired = false): string {
+  if (testsRequired) return 'Execute the structured test repair automatically in the same backlog item: inspect the existing test framework, author or repair relevant tests if necessary, run them to completion, and request fresh independent validation. No customer permission is required. Do not weaken acceptance or substitute a build for tests.';
   if (failureKind === 'evidence_gap') {
     return [
       'Inspect any relevant repository file, test, route, and runtime receipt.',
@@ -125,6 +126,6 @@ export function formatJudgeRepairFeedback(
     diagnostics.length > 0
       ? JSON.stringify(diagnostics, null, 2)
       : '[]',
-    `Required next action: ${requiredAction(judge.failure_kind)}`,
+    `Required next action: ${requiredAction(judge.failure_kind, judge.acceptance_diagnostics?.some(diagnostic => diagnostic.gaps.some(gap => gap.code === 'missing_test_evidence')) === true)}`,
   ].join('\n').slice(0, 8_000);
 }

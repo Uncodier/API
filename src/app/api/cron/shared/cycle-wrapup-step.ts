@@ -80,12 +80,12 @@ export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<Cy
   try {
     const ownership = params.audit?.executionOwnership;
     if (ownership) await assertCronExecutionOwnership({ ...ownership, allowTerminal: true });
-    const internalReviewRequired = recoveryDisposition === 'internal_review';
+    // Terminal product failures cannot be reopened by stale plan retry counts.
+    const internalReviewRequired = recoveryDisposition === 'internal_review' ||
+      recoveryDisposition === 'product_failure';
     const effectiveForceWrapUp = forceWrapUp || internalReviewRequired;
     const retryableStepFailure = recoveryDisposition
       ? recoveryDisposition === 'retry' ||
-        (recoveryDisposition === 'product_failure' &&
-          await hasRetryablePlanFailure(instanceId, requirementId)) ||
         (recoveryDisposition === 'delivery_failure' &&
           await hasRunnableRequirementPlan(instanceId, requirementId))
       : !!requiresUserFeedback && !!wrapUpReason && (

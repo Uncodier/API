@@ -10,6 +10,7 @@ import type { Sandbox } from '@vercel/sandbox';
 import { randomUUID } from 'node:crypto';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import { runCritic, runJudge } from './archetype-runner';
+import { isTestRepairRun } from './judge-test-repair';
 import {
   bumpItemAttempts,
   getBacklogItem,
@@ -303,7 +304,10 @@ export async function runArchetypePostGate(
           ? 1
           : judgeVerificationAttemptLimit();
         const canExhaustVerification =
-          judge.failure_kind !== 'capability_gap' ||
+          isTestRepairRun(newlyPlanned)
+            ? hasAttemptedJudgeRepair(input.repairRun, newlyPlanned?.diagnostic_id) &&
+              (input.repairRun?.attempt_count ?? 0) >= input.repairRun!.max_attempts
+            : judge.failure_kind !== 'capability_gap' ||
           hasAttemptedJudgeRepair(
             input.repairRun,
             repairPlanned?.diagnostic_id,

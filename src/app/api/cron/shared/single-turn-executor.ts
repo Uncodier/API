@@ -67,6 +67,8 @@ import {
   shouldRunGateAfterTurn,
 } from './repair-execution-policy';
 import type { TenantCapabilities } from '@/lib/services/apps-platform/tenant-capabilities';
+import { isTestRepairRun } from './judge-test-repair';
+import { createJudgeTestTool } from './judge-test-tool';
 import { getTenantCapabilities } from '@/lib/services/apps-platform/tenant-capabilities-service';
 export { inferRoleFromStep } from './single-turn-prompt';
 export type { SingleTurnResult };
@@ -438,10 +440,16 @@ export async function executeSingleTurnStep(params: {
     ), historyText);
     const evidenceCollectionOnly = isEvidenceCollectionRetry(
       persistedStep.error_message,
-    );
+      activeRepairRun,
+    ) || isTestRepairRun(activeRepairRun);
     const fullTools = withCronExecutionOwnership(restrictToolsForEvidenceCollection(
-      guardedTools,
+      isTestRepairRun(activeRepairRun) && effectiveBacklogItemId
+        ? [...guardedTools, createJudgeTestTool({ sandbox: () => activeSandboxRef.current,
+          requirementId, backlogItemId: effectiveBacklogItemId, stepId: persistedStep.id,
+          assertCurrent: () => assertCronExecutionOwnership(ownership) })]
+        : guardedTools,
       persistedStep.error_message,
+      activeRepairRun,
     ), ownership);
 
     await assertCronExecutionOwnership(ownership);

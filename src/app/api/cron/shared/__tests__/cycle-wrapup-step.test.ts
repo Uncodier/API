@@ -133,7 +133,7 @@ describe('emitCycleWrapUpStep outcomes', () => {
     );
   });
 
-  it('blocks when a failed step has exhausted its retries', async () => {
+  it.each([undefined, 'delivery_failure'] as const)('preserves exhausted failure compatibility for %s', async recoveryDisposition => {
     (executeAssistantStep as jest.Mock).mockResolvedValue({
       messages: [{ role: 'assistant', content: 'Blocked' }],
       isDone: true,
@@ -144,6 +144,7 @@ describe('emitCycleWrapUpStep outcomes', () => {
       pendingPlanSteps: 1,
       forceWrapUp: true,
       requiresUserFeedback: true,
+      recoveryDisposition,
       wrapUpReason:
         'One or more execution steps failed and need user feedback before continuing.',
     });
@@ -151,6 +152,10 @@ describe('emitCycleWrapUpStep outcomes', () => {
     expect(createRequirementStatusCore).toHaveBeenCalledWith(
       expect.objectContaining({ stage: 'blocked' }),
     );
+    expect(buildCycleWrapUpSystemPrompt).toHaveBeenCalledWith(expect.objectContaining({
+      internalReviewRequired: false, requiresUserFeedback: true,
+      wrapUpReason: 'One or more execution steps failed and need user feedback before continuing.',
+    }));
   });
 
   it('keeps an auto-repairable build failure in progress', async () => {
@@ -186,6 +191,42 @@ describe('emitCycleWrapUpStep outcomes', () => {
     expect(hasRetryablePlanFailure).not.toHaveBeenCalled();
     expect(hasRunnableRequirementPlan).not.toHaveBeenCalled();
   });
+
+  it.each([undefined, false, true])(
+    'reports terminal product failure as technical review despite incoming feedback %s and stale runnable hints',
+    async requiresUserFeedback => {
+      (hasRetryablePlanFailure as jest.Mock).mockResolvedValue(true);
+      (hasRunnableRequirementPlan as jest.Mock).mockResolvedValue(true);
+      (executeAssistantStep as jest.Mock).mockResolvedValue({ messages: [], isDone: true });
+      const wrapUpReason = 'Product verification/repair exhausted; linked work was cancelled for review. Missing Jest tests. Ask the user for permission to add Jest.';
+
+      await expect(emitCycleWrapUpStep({
+        ...baseParams,
+        recoveryDisposition: 'product_failure',
+        requiresUserFeedback,
+        wrapUpReason,
+        pendingPlanSteps: 2,
+        hasRunnableBacklogWork: true,
+      })).resolves.toEqual({ ran: true, outcome: 'completed' });
+
+      expect(createRequirementStatusCore).toHaveBeenCalledTimes(1);
+      expect(createRequirementStatusCore).toHaveBeenCalledWith(expect.objectContaining({
+        stage: 'blocked', message: expect.stringContaining('No customer approval is needed'),
+      }));
+      expect(buildCycleWrapUpSystemPrompt).toHaveBeenCalledWith(expect.objectContaining({
+        internalReviewRequired: true, requiresUserFeedback: false,
+      }));
+      const prompt = (executeAssistantStep as jest.Mock).mock.calls[0][2].system_prompt;
+      expect(prompt).toContain('INTERNAL TECHNICAL/PLATFORM REVIEW REQUIRED');
+      expect(prompt).not.toContain('USER FEEDBACK REQUIRED');
+      expect(prompt).not.toContain('NEEDS USER DECISION');
+      expect(prompt).not.toContain('Automatic retries remaining');
+      expect(prompt).not.toContain(wrapUpReason);
+      // Retry counts alone cannot release product quarantine or authorize resumption.
+      expect(hasRetryablePlanFailure).not.toHaveBeenCalled();
+      expect(hasRunnableRequirementPlan).not.toHaveBeenCalled();
+    },
+  );
 
   it('does not allow the model to override recovery policy or target another requirement', async () => {
     (executeAssistantStep as jest.Mock).mockImplementation(async (_messages, _context, options) => {
@@ -246,7 +287,7 @@ describe('emitCycleWrapUpStep outcomes', () => {
     },
   );
 
-  it('reports internal review even without pending work, digest, history, or an explicit force flag', async () => {
+  it.each(['internal_review', 'product_failure'] as const)('reports %s even without pending work, digest, history, or an explicit force flag', async recoveryDisposition => {
     (loadUserActionHistory as jest.Mock).mockResolvedValue({
       promptText: '', mode: 'empty', totalCount: 0,
     });
@@ -255,29 +296,32 @@ describe('emitCycleWrapUpStep outcomes', () => {
     await expect(emitCycleWrapUpStep({
       ...baseParams,
       planCompleted: true,
-      recoveryDisposition: 'internal_review',
+      recoveryDisposition,
     })).resolves.toEqual({ ran: true, outcome: 'completed' });
     expect(executeAssistantStep).toHaveBeenCalledTimes(1);
     expect(createRequirementStatusCore).toHaveBeenCalledWith(expect.objectContaining({ stage: 'blocked' }));
   });
 
-  it.each(['in-progress', 'on-review', 'completed', 'done', 'blocked', undefined])(
-    'clamps model stage %s to the bound internal-review hold, even when the model reports success',
-    async stage => {
+  it.each((['internal_review', 'product_failure'] as const).flatMap(recoveryDisposition =>
+    ['in-progress', 'on-review', 'completed', 'done', 'blocked', undefined].map(stage => ({ recoveryDisposition, stage })),
+  ))(
+    'clamps model stage $stage and customer requests to the bound $recoveryDisposition hold',
+    async ({ recoveryDisposition, stage }) => {
       (executeAssistantStep as jest.Mock).mockImplementation(async (_messages, _context, options) => {
         await options.custom_tools[0].execute({
           action: 'create', requirement_id: 'other', instance_id: 'other', stage,
-          message: 'SQLSTATE 42P01: review queued and active; continuing automatically.',
+          message: 'SQLSTATE 42P01: review queued and active; continuing automatically. Please authorize adding Jest and fixing SQL.',
         });
         await options.custom_tools[0].execute({
           requirement_id: 'other', instance_id: 'other', stage: 'in-progress',
+          message: 'Can you approve another iteration?',
         });
         return { messages: [{ role: 'assistant', content: 'Successfully completed' }], isDone: true };
       });
 
       await expect(emitCycleWrapUpStep({
         ...baseParams,
-        recoveryDisposition: 'internal_review',
+        recoveryDisposition,
         requiresUserFeedback: true,
       })).resolves.toEqual({ ran: true, outcome: 'completed' });
 
@@ -290,19 +334,19 @@ describe('emitCycleWrapUpStep outcomes', () => {
           stage: 'blocked',
           message: expect.stringContaining('No customer approval is needed'),
         }));
-        expect(args.message).not.toMatch(/SQLSTATE|queued|active|automatically/);
+        expect(args.message).not.toMatch(/SQLSTATE|queued|active|automatically|authorize|approve|\?/);
       }
       expect(createRequirementStatusCore).not.toHaveBeenCalledWith(expect.objectContaining({ stage: 'in-progress' }));
     },
   );
 
-  it('binds internal-review status reads to the current requirement and instance', async () => {
+  it.each(['internal_review', 'product_failure'] as const)('binds %s status reads to the current requirement and instance', async recoveryDisposition => {
     (executeAssistantStep as jest.Mock).mockImplementation(async (_messages, _context, options) => {
       await options.custom_tools[0].execute({ action: 'list', requirement_id: 'other', instance_id: 'other' });
       return { messages: [], isDone: true };
     });
 
-    await emitCycleWrapUpStep({ ...baseParams, recoveryDisposition: 'internal_review' });
+    await emitCycleWrapUpStep({ ...baseParams, recoveryDisposition });
     const originalTool = (requirementStatusTool as jest.Mock).mock.results[0].value;
     expect(originalTool.execute).toHaveBeenCalledWith({
       action: 'list', requirement_id: baseParams.requirementId, instance_id: baseParams.instanceId,
@@ -312,11 +356,13 @@ describe('emitCycleWrapUpStep outcomes', () => {
   it.each([undefined, 'blocked'] as const)(
     'preserves concrete customer decisions for legacy/blocked disposition %s',
     async recoveryDisposition => {
+      const wrapUpReason = 'Choose the subscription tier and provide the required API credential.';
       (executeAssistantStep as jest.Mock).mockImplementation(async (_messages, _context, options) => {
-        await options.custom_tools[0].execute({ requirement_id: 'other', stage: 'in-progress' });
+        await options.custom_tools[0].execute({
+          requirement_id: 'other', stage: 'in-progress', message: wrapUpReason,
+        });
         return { messages: [], isDone: true };
       });
-      const wrapUpReason = 'Choose the subscription tier and provide the required API credential.';
 
       await emitCycleWrapUpStep({
         ...baseParams, forceWrapUp: true, recoveryDisposition, requiresUserFeedback: true, wrapUpReason,
@@ -332,41 +378,47 @@ describe('emitCycleWrapUpStep outcomes', () => {
       expect(prompt).toContain('USER FEEDBACK REQUIRED');
       expect(prompt).toContain('explicitly ask the user to reply');
       const originalTool = (requirementStatusTool as jest.Mock).mock.results[0].value;
-      expect(originalTool.execute).toHaveBeenCalledWith(expect.objectContaining({ stage: 'blocked' }));
+      expect(originalTool.execute).toHaveBeenCalledWith(expect.objectContaining({
+        stage: 'blocked', message: wrapUpReason,
+      }));
     },
   );
 
-  it('retains the internal-review hold if the reporting assistant fails', async () => {
+  it.each(['internal_review', 'product_failure'] as const)('retains the %s hold if the reporting assistant fails', async recoveryDisposition => {
     (executeAssistantStep as jest.Mock).mockRejectedValue(new Error('provider unavailable'));
 
-    await expect(emitCycleWrapUpStep({ ...baseParams, recoveryDisposition: 'internal_review' }))
+    await expect(emitCycleWrapUpStep({ ...baseParams, recoveryDisposition }))
       .resolves.toEqual({ ran: false, outcome: 'failed' });
     expect(createRequirementStatusCore).toHaveBeenCalledTimes(1);
     expect(createRequirementStatusCore).toHaveBeenCalledWith(expect.objectContaining({ stage: 'blocked' }));
   });
 
-  it('persists the internal-review hold before loading reporting context that may fail', async () => {
+  it.each(['internal_review', 'product_failure'] as const)('persists the %s hold before loading reporting context that may fail', async recoveryDisposition => {
     (loadUserActionHistory as jest.Mock).mockRejectedValueOnce(new Error('history unavailable'));
 
-    await expect(emitCycleWrapUpStep({ ...baseParams, recoveryDisposition: 'internal_review' }))
+    await expect(emitCycleWrapUpStep({ ...baseParams, recoveryDisposition }))
       .resolves.toEqual({ ran: false, outcome: 'failed' });
     expect(createRequirementStatusCore).toHaveBeenCalledWith(expect.objectContaining({ stage: 'blocked' }));
     expect(executeAssistantStep).not.toHaveBeenCalled();
   });
 
-  it('does not claim reporting success if the internal-review status cannot be persisted', async () => {
+  it.each(['internal_review', 'product_failure'] as const)('does not claim reporting success if the %s status cannot be persisted', async recoveryDisposition => {
     (createRequirementStatusCore as jest.Mock).mockRejectedValueOnce(new Error('database unavailable'));
     (executeAssistantStep as jest.Mock).mockResolvedValue({ messages: [], isDone: true });
 
-    await expect(emitCycleWrapUpStep({ ...baseParams, recoveryDisposition: 'internal_review' }))
+    await expect(emitCycleWrapUpStep({ ...baseParams, recoveryDisposition }))
       .resolves.toEqual({ ran: false, outcome: 'failed' });
     expect(executeAssistantStep).not.toHaveBeenCalled();
   });
 
-  it('does not report completion when the wrap-up itself exhausts its turns', async () => {
+  it.each([undefined, 'internal_review', 'product_failure'] as const)('does not report completion when wrap-up exhausts its turns under %s', async recoveryDisposition => {
     (executeAssistantStep as jest.Mock).mockResolvedValue({ messages: [], isDone: false });
-    await expect(emitCycleWrapUpStep({ ...baseParams, forceWrapUp: true }))
+    await expect(emitCycleWrapUpStep({ ...baseParams, forceWrapUp: true, recoveryDisposition }))
       .resolves.toEqual({ ran: false, outcome: 'failed' });
     expect(executeAssistantStep).toHaveBeenCalledTimes(3);
+    if (recoveryDisposition) {
+      expect(createRequirementStatusCore).toHaveBeenCalledWith(expect.objectContaining({ stage: 'blocked' }));
+      expect(createRequirementStatusCore).not.toHaveBeenCalledWith(expect.objectContaining({ stage: 'in-progress' }));
+    }
   });
 });

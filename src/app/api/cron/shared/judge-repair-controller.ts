@@ -15,6 +15,7 @@ import {
 
 export type RepairKind =
   | 'repair_implementation'
+  | 'repair_tests'
   | 'repair_contract'
   | 'collect_evidence'
   | 'resolve_environment';
@@ -70,6 +71,7 @@ export interface JudgeRepairRun {
 }
 
 const TOOL_POLICY_BY_REPAIR_KIND: Record<RepairKind, RegExp> = {
+  repair_tests: /^sandbox_run_tests$/,
   repair_implementation:
     /(?:edit|write|patch|replace|delete|move|rename|run_command|execute|checkpoint|backlog)/i,
   repair_contract:
@@ -100,6 +102,9 @@ function repairKindFor(
 }
 
 function verificationFor(kind: RepairKind, required: string): string {
+  if (kind === 'repair_tests') {
+    return 'Complete a real test execution, then collect fresh workspace-bound passing test evidence and re-run the independent Judge. Reading, writing tests, starting a background job, or a passing build alone is not test completion.';
+  }
   if (kind === 'repair_implementation') {
     return `Re-run only the probes and tests that cover: ${required}.`;
   }
@@ -128,7 +133,8 @@ function actionsFromDiagnostics(
 ): RepairAction[] {
   const actions = diagnostics.flatMap((diagnostic) =>
     diagnostic.gaps.map((gap, gapIndex) => {
-      const kind = repairKindFor(failureKind, gap.class);
+      const kind = gap.code === 'missing_test_evidence' && gap.class === 'evidence'
+        ? 'repair_tests' : repairKindFor(failureKind, gap.class);
       const expectedReceipt = expectedReceiptFor([
         diagnostic.criterion,
         gap.required,
@@ -331,7 +337,9 @@ export function extractRepairActionReceipts(params: {
       if (!result) continue;
       const toolName = call.toolName || 'unknown';
       const operation = normalizedToolResult(result);
-      const expectedReceipt = action.expected_receipt;
+      // Only the bounded host test tool spends this action's test budget.
+      if (action.kind === 'repair_tests' && toolName !== 'sandbox_run_tests') continue;
+      const expectedReceipt = action.kind === 'repair_tests' ? 'test_execution' : action.expected_receipt;
       const canExecute = toolCanExecuteRepair(action.kind, toolName);
       const operationOutcome: ToolOperationOutcome = !canExecute
         ? 'failed'

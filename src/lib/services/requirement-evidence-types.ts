@@ -18,6 +18,7 @@ export type AcceptanceGapCode =
   | 'missing_file_artifact'
   | 'file_not_changed'
   | 'missing_command_receipt'
+  | 'missing_test_evidence'
   | 'missing_semantic_receipt';
 
 export type AcceptanceGapClass =

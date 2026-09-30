@@ -113,6 +113,9 @@ describe('applyPendingMigrations', () => {
 
     expect(result.applied).toEqual([]);
     expect(result.errors[0]).toContain('changed after it was applied');
+    expect(result.errors[0]).toContain('Restore the exact applied file bytes');
+    expect(result.errors[0]).toContain('earliest Git commit is not proof');
+    expect(result.errors[0]).toContain('Never change the ledger checksum');
     expect(result.failureKind).toBe('product');
     expect(result.repairTarget).toBeUndefined();
     expect(mocked.rpc).not.toHaveBeenCalledWith(

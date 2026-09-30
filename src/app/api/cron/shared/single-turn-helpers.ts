@@ -12,6 +12,8 @@ import {
 import { isSandboxGoneError } from '@/lib/services/sandbox-gone-error';
 import { inferPlanStepTestCommand } from '@/lib/services/instance-plan-step-contract';
 import { normalizeToolOperationResult } from '@/lib/services/tool-operation-result';
+import { isTestRepairRun } from './judge-test-repair';
+import type { JudgeRepairRun } from './judge-repair-controller';
 
 const WORK_DIR = '/vercel/sandbox';
 const EVIDENCE_COLLECTION_TOOLS = new Set([
@@ -91,8 +93,16 @@ process.stdout.write(hash.digest('hex'));
 
 export function restrictToolsForEvidenceCollection<
   T extends { name?: string },
->(tools: T[], previousError?: string | null): T[] {
-  if (!isEvidenceCollectionRetry(previousError)) {
+>(tools: T[], previousError?: string | null, repairRun?: JudgeRepairRun): T[] {
+  if (isTestRepairRun(repairRun)) {
+    // Authoring tests requires repository tools, not customer/status or DB writers.
+    return tools.filter((tool) => !!tool.name && (
+      (EVIDENCE_COLLECTION_TOOLS.has(tool.name) &&
+        !['instance_plan', 'sandbox_check_background_command'].includes(tool.name)) ||
+      /^sandbox_(?:run_tests|edit_file|write_file)$/.test(tool.name)
+    ));
+  }
+  if (!isEvidenceCollectionRetry(previousError, repairRun)) {
     return tools;
   }
   return tools.filter(
@@ -102,7 +112,9 @@ export function restrictToolsForEvidenceCollection<
 
 export function isEvidenceCollectionRetry(
   previousError?: string | null,
+  repairRun?: JudgeRepairRun,
 ): boolean {
+  if (isTestRepairRun(repairRun)) return false;
   return /\bFailure kind:\s*evidence_gap\b/i.test(previousError || '');
 }
 
