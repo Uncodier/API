@@ -34,7 +34,9 @@ export function sandboxDbMigrateTool(
           return {
             success: false,
             error: `Failed to apply some migrations:\n${result.errors.join('\n')}`,
-            applied: result.applied
+            applied: result.applied,
+            ...(result.correction ? { correction: { file: result.correction.file, state: result.correction.state,
+              reason: result.correction.reason, attempts: result.correction.attempts } } : {}),
           };
         }
         

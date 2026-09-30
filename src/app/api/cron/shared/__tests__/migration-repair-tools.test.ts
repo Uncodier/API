@@ -26,8 +26,9 @@ function harness(contextPaths: string[] = []) {
     from: () => ({ select: () => ({ eq: () => ({ maybeSingle: lookup }) }) }), rpc,
   });
   const reviewSecurity = jest.fn<Promise<MigrationSecurityReview>, [unknown]>().mockResolvedValue({ decision: 'approved_for_validation', reason: 'Preserves the specified owner access.' });
-  const repair = createMigrationRepairTools({ sandbox: sandbox as any, requirementId: 'req', target, assertCurrent, reviewSecurity, contextPaths });
-  return { ...repair, sandbox, rpc, lookup, assertCurrent, reviewSecurity,
+  const beforeWrite = jest.fn(async () => {});
+  const repair = createMigrationRepairTools({ sandbox: sandbox as any, requirementId: 'req', target, assertCurrent, reviewSecurity, contextPaths, beforeWrite });
+  return { ...repair, sandbox, rpc, lookup, assertCurrent, reviewSecurity, beforeWrite,
     read: repair.tools[0].execute as (args: { path: string }) => Promise<any>,
     write: repair.tools[1].execute as (args: { sql: string }) => Promise<any> };
 }
@@ -46,7 +47,8 @@ describe('restricted pending migration repair tools', () => {
     expect(h.rpc).toHaveBeenCalledWith('apps_get_migration_receipt', expect.objectContaining({ p_migration_key: `migration:${file}` }));
     expect(h.sandbox.writeFiles).toHaveBeenCalledWith([{ path: `/vercel/sandbox/${file}`, content: fixed }]);
     expect(h.wasChanged()).toBe(true);
-    expect(h.assertCurrent).toHaveBeenCalledTimes(5);
+    expect(h.assertCurrent).toHaveBeenCalledTimes(6);
+    expect(h.beforeWrite).toHaveBeenCalledWith(fixed);
     expect(h.reviewSecurity).toHaveBeenCalledWith(expect.objectContaining({ originalSql: sql, proposedSql: fixed }));
     expect(h.rpc).toHaveBeenCalledTimes(4);
   });
@@ -136,7 +138,7 @@ describe('restricted pending migration repair tools', () => {
 
   it('does not treat a business question as authorization to write', async () => {
     const h = harness();
-    h.reviewSecurity.mockResolvedValue({ decision: 'needs_product_decision', reason: 'Access is undefined.',
+    h.reviewSecurity.mockResolvedValue({ decision: 'needs_product_decision', decisionId: 'access-audience', reason: 'Access is undefined.',
       question: 'Who should see records?', options: ['Owner', 'Organization'], specificationExcerpt: 'Records' });
     await expect(h.write({ sql: fixed })).resolves.toMatchObject({ success: false });
     expect(h.securityReview()?.decision).toBe('needs_product_decision');

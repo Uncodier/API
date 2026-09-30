@@ -36,9 +36,9 @@ export interface CreatePostParams {
   content?: string; // Either content or containers
   containers?: {
     content: string;
-    media?: { id: string }[];
+    media?: { url: string; filename: string }[];
   }[];
-  accounts: string[]; // references by network name or username
+  accounts: string[]; // Opaque connected account IDs or exact usernames, never network names.
   scheduledAt?: string; // ISO 8601
   threads?: any;
   instagram?: any;

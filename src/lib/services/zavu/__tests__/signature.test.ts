@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { verifyZavuSignature } from "../signature";
+import { checkZavuSignature, verifyZavuSignature } from "../signature";
 
 describe("verifyZavuSignature", () => {
   const secret = "whsec_test";
@@ -96,5 +96,44 @@ describe("verifyZavuSignature", () => {
         secret
       )
     ).toBe(false);
+  });
+
+  it("reports safe reasons without including payloads or credentials", () => {
+    expect(checkZavuSignature(null, payload, secret)).toEqual({
+      valid: false, format: "missing", reason: "missing_signature",
+    });
+    expect(checkZavuSignature(sign(payload), payload, undefined)).toMatchObject({
+      valid: false, reason: "missing_secret",
+    });
+    expect(checkZavuSignature("Bearer private", payload, secret)).toEqual({
+      valid: false, format: "unsupported", reason: "malformed_signature",
+    });
+    expect(checkZavuSignature(sign(payload), `${payload} `, secret)).toEqual({
+      valid: false, format: "legacy_hex", reason: "signature_mismatch",
+    });
+    expect(checkZavuSignature(sign(payload), payload, secret)).toEqual({
+      valid: true, format: "legacy_hex", reason: "verified",
+    });
+    expect(checkZavuSignature(sign(payload), Buffer.alloc(0), secret)).toMatchObject({
+      valid: false, reason: "empty_payload",
+    });
+  });
+
+  it("distinguishes expired and future signatures without weakening timestamp validation", () => {
+    const now = Math.floor(Date.now() / 1000);
+    for (const [timestamp, reason] of [
+      [now - 600, "expired_signature"],
+      [now + 120, "future_signature"],
+    ] as const) {
+      expect(checkZavuSignature(
+        `t=${timestamp},v2=${sign(`${timestamp}.${payload}`)}`, payload, secret
+      )).toEqual({ valid: false, format: "versioned", reason });
+    }
+  });
+
+  it("never accepts a bearer secret, missing header, or arbitrary digest prefix", () => {
+    for (const signature of [secret, `Bearer ${secret}`, `sha256=${sign(payload)}`, "", null]) {
+      expect(verifyZavuSignature(signature, payload, secret)).toBe(false);
+    }
   });
 });

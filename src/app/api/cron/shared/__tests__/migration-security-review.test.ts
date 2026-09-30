@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { reviewMigrationSecurity, type MigrationSecurityReview } from '@/lib/services/apps-platform/migration-security-review';
+import { reviewMigrationSecurity, type MigrationProductDecision, type MigrationSecurityReview } from '@/lib/services/apps-platform/migration-security-review';
 import { executeAssistantStep } from '@/lib/services/robot-instance/assistant-executor';
 import { lintMigration } from '@/lib/services/apps-platform/migration-linter';
 import { canAutomaticallyReplaceMigration } from '@/lib/services/apps-platform/migration-repair-policy';
@@ -13,10 +13,14 @@ const proposedSql = `CREATE POLICY read_records ON records FOR SELECT USING (${s
 const specification = 'Cada registro pertenece a su creador. Solo su propietario puede leerlo.';
 const approved: MigrationSecurityReview = { decision: 'approved_for_validation', reason: 'La corrección conserva el acceso exclusivo del propietario.' };
 const excerpt = 'No se ha decidido si los registros son privados o compartidos con la organización.';
-const productDecision: MigrationSecurityReview = {
-  decision: 'needs_product_decision', reason: 'Falta concretar la audiencia de los registros.',
+const trustedDecision: MigrationProductDecision = {
+  id: 'record-audience', kind: 'access_audience', status: 'pending',
   question: '¿Quién debería poder leer los registros?',
   options: ['Solo su propietario', 'Los miembros de su organización'], specificationExcerpt: excerpt,
+};
+const productDecision: MigrationSecurityReview = {
+  decision: 'needs_product_decision', decisionId: trustedDecision.id, reason: 'Falta concretar la audiencia de los registros.',
+  question: trustedDecision.question, options: trustedDecision.options, specificationExcerpt: excerpt,
 };
 const call = (id: string, name = 'migration_security_verdict') => ({ id, type: 'function', function: { name, arguments: '{}' } });
 const result = (overrides = {}) => ({ text: '', output: undefined, usage: {}, isDone: true, messages: [], ...overrides });
@@ -105,18 +109,26 @@ describe('independent read-only migration security review', () => {
     await expect(reviewMigrationSecurity(params())).resolves.toEqual(verdict);
   });
 
-  it('permits read-only business triage without SQL only for an exact concrete specification excerpt', async () => {
+  it('permits read-only business triage without SQL only for an exact host-supplied pending decision', async () => {
     submit(productDecision);
-    await expect(reviewMigrationSecurity({ ...params(), specification: excerpt, proposedSql: undefined })).resolves.toEqual(productDecision);
+    await expect(reviewMigrationSecurity({ ...params(), specification: excerpt, proposedSql: undefined,
+      productDecisions: [trustedDecision] })).resolves.toEqual(productDecision);
     expect(executeAssistantStep).toHaveBeenCalledTimes(1);
   });
 
   it.each([
+    ['missing decision ID', { ...productDecision, decisionId: undefined }],
+    ['unknown decision ID', { ...productDecision, decisionId: 'fabricated' }],
+    ['case-changed decision ID', { ...productDecision, decisionId: trustedDecision.id.toUpperCase() }],
     ['missing excerpt', { ...productDecision, specificationExcerpt: undefined }],
     ['fabricated excerpt', { ...productDecision, specificationExcerpt: 'The SQL repair requires approval.' }],
     ['blank excerpt', { ...productDecision, specificationExcerpt: ' ' }],
     ['paraphrased excerpt', { ...productDecision, specificationExcerpt: excerpt.toUpperCase() }],
     ['blank question', { ...productDecision, question: '  ' }],
+    ['paraphrased question', { ...productDecision, question: '¿Quién puede leer los registros?' }],
+    ['whitespace-changed question', { ...productDecision, question: `${trustedDecision.question} ` }],
+    ['reordered options', { ...productDecision, options: [...trustedDecision.options].reverse() }],
+    ['paraphrased options', { ...productDecision, options: ['Su propietario', trustedDecision.options[1]] }],
     ['one option', { ...productDecision, options: ['Private'] }],
     ['too many options', { ...productDecision, options: ['a', 'b', 'c', 'd', 'e'] }],
     ['duplicate options', { ...productDecision, options: ['Privado', ' privado '] }],
@@ -125,7 +137,41 @@ describe('independent read-only migration security review', () => {
     ['oversized option', { ...productDecision, options: ['a'.repeat(301), 'Privado'] }],
   ])('fails closed on product decision with %s', async (_label, value) => {
     submit(value);
+    await expect(reviewMigrationSecurity({ ...params(), specification: excerpt, productDecisions: [trustedDecision] }))
+      .resolves.toMatchObject({ decision: 'platform_review' });
+  });
+
+  it('does not invent questions from an unresolved specification when no host decisions exist', async () => {
+    submit(productDecision);
     await expect(reviewMigrationSecurity({ ...params(), specification: excerpt })).resolves.toMatchObject({ decision: 'platform_review' });
+    await expect(reviewMigrationSecurity({ ...params(), specification: excerpt, productDecisions: [] }))
+      .resolves.toMatchObject({ decision: 'platform_review' });
+  });
+
+  it('refuses authorize-SQL-rewrite yes/no with an arbitrary exact quote, even using a real decision ID', async () => {
+    submit({ ...productDecision, question: '¿Autoriza reescribir el SQL para cumplir seguridad?',
+      options: ['Sí', 'No'], specificationExcerpt: specification });
+    await expect(reviewMigrationSecurity({ ...params(), specification: `${specification}\n${excerpt}`,
+      productDecisions: [trustedDecision] })).resolves.toMatchObject({ decision: 'platform_review' });
+  });
+
+  it.each([
+    { status: 'resolved' }, { kind: 'sql_repair' }, { id: '' }, { options: ['Privado', ' privado '] },
+    { specificationExcerpt: 'An invented specification quotation.' }, { question: 'Who owns sk-private-key?' },
+  ])('rejects invalid host decision records before the model (%#)', async invalid => {
+    await expect(reviewMigrationSecurity({ ...params(), specification: excerpt,
+      productDecisions: [{ ...trustedDecision, ...invalid } as MigrationProductDecision] }))
+      .resolves.toMatchObject({ decision: 'platform_review' });
+    expect(executeAssistantStep).not.toHaveBeenCalled();
+  });
+
+  it('rejects duplicate host decision IDs and excessive records', async () => {
+    await expect(reviewMigrationSecurity({ ...params(), specification: excerpt, productDecisions: [trustedDecision, trustedDecision] }))
+      .resolves.toMatchObject({ decision: 'platform_review' });
+    await expect(reviewMigrationSecurity({ ...params(), specification: excerpt,
+      productDecisions: Array.from({ length: 21 }, (_, index) => ({ ...trustedDecision, id: `choice-${index}` })) }))
+      .resolves.toMatchObject({ decision: 'platform_review' });
+    expect(executeAssistantStep).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -276,19 +322,27 @@ describe('independent read-only migration security review', () => {
       .resolves.toMatchObject({ decision: 'platform_review' });
   });
 
-  it('sanitizes returned reason, question and all options without inventing a changed specification quotation', async () => {
-    submit({ ...productDecision, reason: 'Bearer secret-reason', question: '¿Quién ve api_key="secret-question"?',
-      options: ['Propietario sk-option-private', 'Organización eyJabc.def.ghi'] });
-    const verdict = await reviewMigrationSecurity({ ...params(), specification: excerpt });
+  it('sanitizes the reason without changing the exact host-bound question/options/excerpt', async () => {
+    submit({ ...productDecision, reason: 'Bearer secret-reason' });
+    const verdict = await reviewMigrationSecurity({ ...params(), specification: excerpt, productDecisions: [trustedDecision] });
     expect(verdict.decision).toBe('needs_product_decision');
-    expect(JSON.stringify(verdict)).not.toMatch(/secret-reason|secret-question|sk-option-private|eyJabc.def.ghi/);
+    expect(JSON.stringify(verdict)).not.toContain('secret-reason');
     expect(JSON.stringify(verdict)).toContain('REDACTED');
-    if (verdict.decision === 'needs_product_decision') expect(verdict.specificationExcerpt).toBe(excerpt);
+    expect(verdict).toMatchObject({ decisionId: trustedDecision.id, question: trustedDecision.question,
+      options: trustedDecision.options, specificationExcerpt: excerpt });
+  });
+
+  it('rejects secret-bearing model questions/options instead of sanitizing them into a different decision', async () => {
+    submit({ ...productDecision, question: '¿Quién ve api_key="secret-question"?',
+      options: ['Propietario sk-option-private', 'Organización eyJabc.def.ghi'] });
+    const verdict = await reviewMigrationSecurity({ ...params(), specification: excerpt, productDecisions: [trustedDecision] });
+    expect(verdict).toMatchObject({ decision: 'platform_review' });
+    expect(JSON.stringify(verdict)).not.toMatch(/secret-question|sk-option-private|eyJabc.def.ghi/);
   });
 
   it('does not allow a secret/redacted quotation to manufacture an exact product decision excerpt', async () => {
     submit({ ...productDecision, specificationExcerpt: 'secret="private-value"' });
-    await expect(reviewMigrationSecurity({ ...params(), specification: `${excerpt}\nsecret="private-value"` }))
+    await expect(reviewMigrationSecurity({ ...params(), specification: `${excerpt}\nsecret="private-value"`, productDecisions: [trustedDecision] }))
       .resolves.toMatchObject({ decision: 'platform_review' });
   });
 });

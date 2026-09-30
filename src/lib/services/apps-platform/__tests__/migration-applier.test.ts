@@ -2,6 +2,9 @@ import { createHash } from 'node:crypto';
 import { applyPendingMigrations } from '../migration-applier';
 import { getAppsAdminClient } from '@/lib/database/apps-supabase';
 import { syncPostgrestSchemas } from '../postgrest-config';
+import { authorizeMigrationApplication, loadMigrationApplicationContext } from '../migration-application-guard';
+jest.mock('../migration-application-guard', () => ({ authorizeMigrationApplication: jest.fn(), loadMigrationApplicationContext: jest.fn() }));
+jest.mock('../migration-lifecycle', () => ({ transitionMigrationLifecycle: jest.fn(async input => ({ ...input.value, version: 2 })) }));
 
 jest.mock('@/lib/database/apps-supabase', () => ({
   getAppsAdminClient: jest.fn(),
@@ -21,6 +24,7 @@ function sandbox(
 ) {
   return {
     runCommand: jest.fn(async (command: string, args: string[]) => {
+      if (command === 'realpath') return { exitCode: 0, stdout: jest.fn().mockResolvedValue(args[1]) };
       if (command === 'sh') {
         return {
           exitCode: 0,
@@ -72,6 +76,8 @@ describe('applyPendingMigrations', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     (syncPostgrestSchemas as jest.Mock).mockResolvedValue({ ok: true });
+    (loadMigrationApplicationContext as jest.Mock).mockResolvedValue({ executionGeneration: 1, assertCurrent: jest.fn() });
+    (authorizeMigrationApplication as jest.Mock).mockResolvedValue({ allowed: true, lifecycle: { version: 1, attempts: 1 } });
   });
 
   it('reads the ledger through the protected RPC and skips applied SQL', async () => {
@@ -154,6 +160,41 @@ describe('applyPendingMigrations', () => {
         p_migration_sql: migrationSql,
       }),
     );
+  });
+
+  it('cannot apply a normal executor file that independent review rejected', async () => {
+    const mocked = client(null);
+    (getAppsAdminClient as jest.Mock).mockReturnValue(mocked.db);
+    (authorizeMigrationApplication as jest.Mock).mockResolvedValue({ allowed: false, error: 'Preserve ownership', lifecycle: { state: 'correction_required', file: migrationFile } });
+    const result = await applyPendingMigrations(sandbox(), requirementId);
+    expect(result.correction).toMatchObject({ state: 'correction_required' });
+    expect(mocked.rpc).not.toHaveBeenCalledWith('apps_apply_migration', expect.anything());
+  });
+
+  it('aborts when a file changes after independent review', async () => {
+    const mocked = client(null);
+    (getAppsAdminClient as jest.Mock).mockReturnValue(mocked.db);
+    const files = { [migrationFile]: migrationSql };
+    (authorizeMigrationApplication as jest.Mock).mockImplementation(async params => {
+      files[migrationFile] += '-- changed';
+      await params.assertUnchanged();
+      return { allowed: true };
+    });
+    const result = await applyPendingMigrations(sandbox([migrationFile], files), requirementId);
+    expect(result.errors).toEqual([expect.stringContaining('changed during')]);
+    expect(mocked.rpc).not.toHaveBeenCalledWith('apps_apply_migration', expect.anything());
+  });
+
+  it('preserves the first atomic receipt when review of a later file throws', async () => {
+    const mocked = client(null);
+    (getAppsAdminClient as jest.Mock).mockReturnValue(mocked.db);
+    (authorizeMigrationApplication as jest.Mock).mockResolvedValueOnce({ allowed: true, lifecycle: { version: 1 } })
+      .mockRejectedValueOnce(new Error('review transport unavailable'));
+    const next = 'migrations/0002.sql';
+    const result = await applyPendingMigrations(sandbox([migrationFile, next], { [migrationFile]: migrationSql, [next]: migrationSql }), requirementId);
+    expect(result.applied).toEqual([migrationFile]);
+    expect(result.errors).toEqual([expect.stringContaining('review transport unavailable')]);
+    expect(result.failureKind).toBe('infrastructure');
   });
 
   it('retries exposure when another caller already applied the migration', async () => {

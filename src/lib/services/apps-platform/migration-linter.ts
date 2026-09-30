@@ -15,6 +15,8 @@
  * remains, even after autofix.
  */
 import {
+  changesSqlStringSemantics,
+  maskSqlIdentifiers,
   splitSqlStatements,
   type SqlStatement as Statement,
 } from './migration-sql-text';
@@ -410,15 +412,16 @@ function checkViewSafety(stmt: Statement): LintIssue[] {
 
 function policyPredicates(code: string): string[] {
   const predicates: string[] = [];
+  const unquoted = maskSqlIdentifiers(code);
   const predicateStart = /\b(?:using|with\s+check)\s*\(/gi;
   let match: RegExpExecArray | null;
-  while ((match = predicateStart.exec(code)) !== null) {
+  while ((match = predicateStart.exec(unquoted)) !== null) {
     const start = predicateStart.lastIndex;
     let depth = 1;
     let end = start;
-    while (end < code.length && depth > 0) {
-      if (code[end] === '(') depth++;
-      else if (code[end] === ')') depth--;
+    while (end < unquoted.length && depth > 0) {
+      if (unquoted[end] === '(') depth++;
+      else if (unquoted[end] === ')') depth--;
       end++;
     }
     if (depth === 0) predicates.push(code.slice(start, end - 1).trim());
@@ -486,6 +489,14 @@ export function lintMigration(input: LintInput): LintResult {
   const warnings: LintIssue[] = [];
 
   for (const stmt of statements) {
+    if (stmt.parseError) {
+      errors.push({ rule: 'sql-parse', severity: 'error', line: stmt.line, message: stmt.parseError });
+      continue;
+    }
+    if (changesSqlStringSemantics(stmt.code)) {
+      errors.push({ rule: 'sql-string-semantics', severity: 'error', line: stmt.line,
+        message: 'Tenant migrations cannot change runner-owned SQL string parsing settings or call set_config().' });
+    }
     errors.push(...checkTopLevelForbidden(stmt));
     errors.push(...checkSchemaScope(stmt, schema, bucket));
     errors.push(...checkAuthAndStorage(stmt, bucket));

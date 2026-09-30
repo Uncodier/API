@@ -10,6 +10,7 @@ import {
   upsertAgentTool,
 } from "../agent-client";
 import { getCustomerSupportToolDefinitions } from "../../customer-support-tool-catalog";
+import { getCustomerSupportVoiceToolDefinitions } from "../voice-tool-catalog";
 import { buildVoiceRuntimePrompt, syncVoiceTools } from "../voice-tools";
 
 const mockListAgentTools = listAgentTools as jest.Mock;
@@ -89,6 +90,15 @@ describe("syncVoiceTools", () => {
       expect.objectContaining({ name: "GET_TASKS" })
     );
     expect(mockUpsertAgentTool).toHaveBeenCalledTimes(16);
+    expect(mockUpsertAgentTool).toHaveBeenCalledWith(
+      "agent_1",
+      expect.objectContaining({
+        name: "IDENTIFY_LEAD",
+        parameters: expect.objectContaining({
+          required: ["name", "email", "phone", "consent"],
+        }),
+      })
+    );
     for (const [, tool] of mockUpsertAgentTool.mock.calls) {
       expect(tool.description.length).toBeLessThanOrEqual(500);
     }
@@ -97,6 +107,19 @@ describe("syncVoiceTools", () => {
     expect(tools).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ name: "custom_tool" }),
     ]));
+  });
+
+  it("requires explicit consent for voice without changing the chat contract", () => {
+    const voice = getCustomerSupportVoiceToolDefinitions("site-1")
+      .find((tool) => tool.name === "IDENTIFY_LEAD")!;
+    const chat = getCustomerSupportToolDefinitions("site-1")
+      .find((tool) => tool.name === "IDENTIFY_LEAD")!;
+
+    expect(voice.parameters.required).toContain("consent");
+    expect(voice.parameters.properties).not.toHaveProperty("visitor_id");
+    expect(voice.parameters.properties).not.toHaveProperty("conversation");
+    expect(chat.parameters.required).not.toContain("consent");
+    expect(chat.parameters.properties).toHaveProperty("conversation");
   });
 
   it("prompts the agent with live-call and tool execution rules", () => {

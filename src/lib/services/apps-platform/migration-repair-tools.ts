@@ -19,6 +19,8 @@ export function createMigrationRepairTools(params: {
   target: MigrationRepairTarget;
   assertCurrent: () => Promise<void>;
   contextPaths?: string[];
+  /** Host persists review obligations before any file mutation. */
+  beforeWrite: (sql: string) => Promise<void>;
   reviewSecurity: (context: {
     originalSql: string;
     proposedSql?: string;
@@ -178,6 +180,8 @@ export function createMigrationRepairTools(params: {
             throw new Error('Project source changed during security review; revalidate before repairing.');
           }
         }
+        await assertCurrent();
+        await params.beforeWrite(args.sql);
         await assertCurrent();
         writeAttempted = true;
         await sandbox.writeFiles([{ path, content: args.sql }]);

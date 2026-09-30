@@ -2,6 +2,8 @@ const mockMutateBacklogAtomically = jest.fn();
 const mockPatchRequirementMetadataKeys = jest.fn();
 const mockRequirementUpdate = jest.fn();
 const mockResumeRequirementExecution = jest.fn();
+const mockListMigrationLifecycle = jest.fn(async (): Promise<any[]> => []);
+jest.mock('@/lib/services/apps-platform/migration-lifecycle', () => ({ listMigrationLifecycle: mockListMigrationLifecycle }));
 
 jest.mock('@/lib/services/requirement-backlog-mutation', () => ({
   mutateBacklogAtomically: mockMutateBacklogAtomically,
@@ -31,6 +33,7 @@ import { prepareRequirementForCronRun } from '../route-state';
 describe('prepareRequirementForCronRun', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockListMigrationLifecycle.mockResolvedValue([]);
     jest.useFakeTimers();
     jest.setSystemTime(new Date('2026-09-17T20:30:30.000Z'));
     mockRequirementUpdate.mockReturnValue({
@@ -116,6 +119,15 @@ describe('prepareRequirementForCronRun', () => {
         patch: expect.objectContaining({ all_done_cycles: 0 }),
       }),
     );
+  });
+
+  it('does not let a scheduled tick reopen technical review or erase pending validation', async () => {
+    mockListMigrationLifecycle.mockResolvedValue([{ state: 'platform_review' }]);
+    const result = await prepareRequirementForCronRun({ requirement: { id: 'requirement-1', status: 'blocked', site_id: 'site',
+      cron: '* * * * *', updated_at: '2026-09-17T20:20:00.000Z', metadata: {}, backlog: { items: [] } }, currentStatus: 'blocked' });
+    expect(result.skipReason).toBe('migration_review_pending');
+    expect(mockResumeRequirementExecution).not.toHaveBeenCalled();
+    expect(mockMutateBacklogAtomically).not.toHaveBeenCalled();
   });
 
   it('discovers blocked requirements without running an undued blocked cycle', async () => {

@@ -1,5 +1,8 @@
 import { resolveHandler } from '../handlers';
 import { getAppsAdminClient } from '@/lib/database/apps-supabase';
+import { authorizeMigrationApplication, loadMigrationApplicationContext } from '@/lib/services/apps-platform/migration-application-guard';
+jest.mock('@/lib/services/apps-platform/migration-application-guard', () => ({ authorizeMigrationApplication: jest.fn(), loadMigrationApplicationContext: jest.fn() }));
+jest.mock('@/lib/services/apps-platform/migration-lifecycle', () => ({ transitionMigrationLifecycle: jest.fn() }));
 
 jest.mock('@/lib/database/supabase-client', () => ({
   supabaseAdmin: {},
@@ -33,6 +36,8 @@ function migrationHandler() {
 describe('platform migration handler', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    (loadMigrationApplicationContext as jest.Mock).mockResolvedValue({ instance: { site_id: context.site_id }, assertCurrent: jest.fn() });
+    (authorizeMigrationApplication as jest.Mock).mockResolvedValue({ allowed: true });
   });
 
   it('requires a stable migration name', async () => {
@@ -47,7 +52,7 @@ describe('platform migration handler', () => {
   });
 
   it('uses the supplied name as the immutable ledger identity', async () => {
-    const rpc = jest.fn().mockResolvedValue({ data: true, error: null });
+    const rpc = jest.fn(async (name: string) => ({ data: name === 'apps_get_migration_receipt' ? { found: false } : true, error: null }));
     const maybeSingle = jest.fn().mockResolvedValue({
       data: {
         tenant_id: '00000000-0000-4000-8000-000000000003',
@@ -74,6 +79,9 @@ describe('platform migration handler', () => {
     );
 
     expect(result.status).toBe(200);
+    expect(authorizeMigrationApplication).toHaveBeenCalledWith(expect.objectContaining({
+      target: expect.objectContaining({ file: 'platform/20260923_campaigns.sql' }),
+    }));
     expect(rpc).toHaveBeenCalledWith(
       'apps_apply_migration',
       expect.objectContaining({
@@ -81,5 +89,16 @@ describe('platform migration handler', () => {
           'migration:platform/20260923_campaigns.sql',
       }),
     );
+  });
+
+  it('refuses direct platform application when the central review requires correction', async () => {
+    (authorizeMigrationApplication as jest.Mock).mockResolvedValue({ allowed: false, lifecycle: { state: 'correction_required' }, error: 'Access model mismatch' });
+    const rpc = jest.fn(async () => ({ data: { found: false }, error: null }));
+    (getAppsAdminClient as jest.Mock).mockReturnValue({ rpc, from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: {
+      tenant_id: 'tenant', schema: 'app_aaaaaaaaaaaaaaaaaaaaaaaa', bucket: null,
+    } }) }) }) }) });
+    const result = await migrationHandler()(request({ name: 'test.sql', sql: 'ALTER TABLE records ENABLE ROW LEVEL SECURITY;' }), context);
+    expect(result.status).toBe(409);
+    expect(rpc).not.toHaveBeenCalledWith('apps_apply_migration', expect.anything());
   });
 });

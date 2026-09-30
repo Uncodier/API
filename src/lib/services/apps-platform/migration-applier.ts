@@ -4,6 +4,9 @@ import { Sandbox } from '@vercel/sandbox';
 import { syncPostgrestSchemas } from './postgrest-config';
 import { createHash } from 'node:crypto';
 import type { MigrationRepairTarget } from './migration-repair-types';
+import { authorizeMigrationApplication, loadMigrationApplicationContext, type MigrationApplicationContext } from './migration-application-guard';
+import { transitionMigrationLifecycle, type MigrationLifecycleRecord } from './migration-lifecycle';
+import { migrationLifecycleValue } from './migration-lifecycle-value';
 
 function migrationChecksum(sql: string): string {
   return createHash('sha256').update(sql).digest('hex');
@@ -13,7 +16,8 @@ export async function applyPendingMigrations(
   sandbox: Sandbox,
   requirementId: string,
   expectedRepairs: MigrationRepairTarget[] = [],
-): Promise<{ applied: string[]; errors: string[]; failureKind?: 'product' | 'infrastructure'; repairTarget?: MigrationRepairTarget }> {
+  applicationContext?: MigrationApplicationContext,
+): Promise<{ applied: string[]; errors: string[]; failureKind?: 'product' | 'infrastructure'; repairTarget?: MigrationRepairTarget; correction?: MigrationLifecycleRecord }> {
   const client = getAppsAdminClient();
 
   const { data: tenantRow, error: tenantError } = await client
@@ -80,9 +84,22 @@ export async function applyPendingMigrations(
   const errors: string[] = [];
   let failureKind: 'product' | 'infrastructure' = 'infrastructure';
   let repairTarget: MigrationRepairTarget | undefined;
+  let correction: MigrationLifecycleRecord | undefined;
+  let context = applicationContext;
   let shouldSyncExposure = false;
 
   for (const file of files) {
+    try {
+    if (!/^(?:migrations|supabase\/migrations|src\/db\/migrations)\/[A-Za-z0-9_./-]+\.sql$/.test(file) ||
+        file.split('/').some(part => !part || part === '.' || part === '..')) {
+      errors.push('Non-canonical migration path rejected.');
+      break;
+    }
+    const canonical = await sandbox.runCommand('realpath', ['--', `/vercel/sandbox/${file}`]);
+    if (canonical.exitCode !== 0 || (await canonical.stdout()).trim() !== `/vercel/sandbox/${file}`) {
+      errors.push(`Migration ${file} is not a canonical file.`);
+      break;
+    }
     const migrationKey = `migration:${file}`;
 
     // Read file content
@@ -98,7 +115,9 @@ export async function applyPendingMigrations(
     const sql = await catCmd.stdout();
 
     if (!sql.trim()) {
-      continue;
+      errors.push(`Migration ${file} is empty; do not erase pending or applied SQL to skip validation.`);
+      failureKind = 'product';
+      break;
     }
     const checksum = migrationChecksum(sql);
     const expectedRepair = expectedRepairs.find(expected => expected.file === file);
@@ -173,7 +192,27 @@ export async function applyPendingMigrations(
       continue;
     }
 
-    // Lint
+    // Central review applies equally to normal executor writes and repair-tool writes.
+    context ||= await loadMigrationApplicationContext(requirementId);
+    const target: MigrationRepairTarget = { file, schema, tenantId, checksum, reason: 'lint' };
+    const decision = await authorizeMigrationApplication({
+      context, target, sql,
+      assertUnchanged: async () => {
+        const canonical = await sandbox.runCommand('realpath', ['--', `/vercel/sandbox/${file}`]);
+        if (canonical.exitCode !== 0 || (await canonical.stdout()).trim() !== `/vercel/sandbox/${file}`) throw new Error('Migration path changed during independent review.');
+        const read = await sandbox.runCommand('cat', [file]);
+        if (read.exitCode !== 0 || migrationChecksum(await read.stdout()) !== checksum) throw new Error('Migration changed during independent review.');
+      },
+    });
+    if (!decision.allowed) {
+      failureKind = 'product';
+      correction = decision.lifecycle;
+      repairTarget = target;
+      errors.push(decision.error || 'Migration requires correction or technical review.');
+      break;
+    }
+    await context.assertCurrent();
+    // Defense in depth: review never replaces deterministic lint.
     const lintResult = lintMigration({
       schema,
       tenant_id: tenantId,
@@ -205,6 +244,9 @@ export async function applyPendingMigrations(
       if (/^(?:22|23|42)/.test(execError.code || '') && execError.code !== '42501') {
         failureKind = 'product';
         repairTarget = { file, schema, tenantId, checksum, reason: 'sql' };
+        correction = await transitionMigrationLifecycle({ requirementId, file,
+          expectedVersion: decision.lifecycle.version, executionGeneration: context.executionGeneration,
+          value: migrationLifecycleValue(decision.lifecycle, { state: 'correction_required', reason: `Atomic SQL application rolled back (${execError.code}). Correct the tenant migration.` }) });
       }
       errors.push(`File ${file} failed to execute: ${execError.message}`);
       break;
@@ -218,6 +260,13 @@ export async function applyPendingMigrations(
       errors.push(
         `File ${file} did not return an atomic migration receipt.`,
       );
+      break;
+    }
+    } catch (error) {
+      // Preserve earlier atomic receipts when a later file's review/transport
+      // fails. Durable lifecycle intent still blocks unverified delivery.
+      failureKind = 'infrastructure';
+      errors.push(`Migration ${file} could not complete review/application: ${error instanceof Error ? error.message : String(error)}`);
       break;
     }
   }
@@ -257,5 +306,5 @@ export async function applyPendingMigrations(
   }
 
   return { applied, errors, ...(errors.length > 0 ? { failureKind } : {}),
-    ...(repairTarget ? { repairTarget } : {}) };
+    ...(repairTarget ? { repairTarget } : {}), ...(correction ? { correction } : {}) };
 }

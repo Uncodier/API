@@ -45,6 +45,7 @@ function request(body: unknown, signature?: string, toolName: string | null = "r
 describe("Zavu Voice tools webhook", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockExecuteCustomerSupportVoiceTool.mockReset();
     mockFrom.mockImplementation((table: string) => {
       if (table !== "agents") throw new Error(`Unexpected table ${table}`);
       return {
@@ -163,5 +164,75 @@ describe("Zavu Voice tools webhook", () => {
     await expect(response.json()).resolves.toMatchObject({
       code: "UNKNOWN_TOOL",
     });
+  });
+
+  it("logs a missing signature safely and never executes an unsigned voice callback", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const req = request({
+        tool: "IDENTIFY_LEAD",
+        arguments: { email: "private@example.com", phone: "+14155550100" },
+      });
+      req.headers.delete("x-zavu-signature");
+      req.headers.delete("x-zavu-tool");
+      const response = await POST(req);
+      const body = await response.json();
+
+      expect(response.status).toBe(401);
+      expect(body.code).toBe("VOICE_TOOL_AUTH_FAILED");
+      expect(body.request_id).toBe(response.headers.get("x-request-id"));
+      expect(warn).toHaveBeenCalledWith("[Zavu Voice Tool]", expect.objectContaining({
+        event: "authentication_failed",
+        reason: "missing_signature",
+        signature_format: "missing",
+        has_tool_header: false,
+        secret_decryptable: true,
+      }));
+      expect(JSON.stringify(warn.mock.calls)).not.toMatch(/private@example|14155550100|whsec_test|encrypted/);
+      expect(mockExecuteCustomerSupportVoiceTool).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("distinguishes an unreadable secret from a wrong digest in server logs only", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      mockDecryptToken.mockReturnValueOnce(null);
+      const response = await POST(request({ tool: "reservations", arguments: {} }));
+      expect(response.status).toBe(401);
+      expect(warn).toHaveBeenCalledWith("[Zavu Voice Tool]", expect.objectContaining({
+        reason: "missing_secret", secret_configured: true, secret_decryptable: false,
+      }));
+      expect(await response.json()).not.toHaveProperty("reason");
+      expect(mockExecuteCustomerSupportVoiceTool).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("does not accept a different site's signing secret", async () => {
+    const payload = { tool: "reservations", arguments: {} };
+    const otherSignature = crypto.createHmac("sha256", "other-site-secret")
+      .update(JSON.stringify(payload)).digest("hex");
+    const response = await POST(request(payload, otherSignature));
+    expect(response.status).toBe(401);
+    expect(mockExecuteCustomerSupportVoiceTool).not.toHaveBeenCalled();
+  });
+
+  it("correlates execution failures without logging raw tool errors or arguments", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      mockExecuteCustomerSupportVoiceTool.mockRejectedValueOnce(new Error("private caller data"));
+      const response = await POST(request({ tool: "reservations", arguments: {} }));
+      expect(response.status).toBe(422);
+      expect(warn).toHaveBeenCalledWith("[Zavu Voice Tool]", expect.objectContaining({
+        event: "execution_failed", status: 422, tool: "reservations",
+        request_id: response.headers.get("x-request-id"),
+      }));
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("private caller data");
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

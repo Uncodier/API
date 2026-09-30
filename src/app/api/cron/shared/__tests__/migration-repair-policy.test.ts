@@ -61,4 +61,87 @@ describe('conservative migration repair policy', () => {
     expect(sanitizeMigrationRepairContext('const token = "abc"; const key = process.env.APPS_TOKEN;'))
       .toBe('const token = "[REDACTED]"; const key = process.env.APPS_TOKEN;');
   });
+
+  it.each(['política', '权限', 'policy$owner', '"Owner\'s /* -- $$ ""Policy"""'])('tracks every policy, including %s', name => {
+    const extra = `CREATE POLICY ${name} ON records FOR SELECT TO authenticated USING (true);`;
+    const scoped = extra.replace('(true)', '(user_id = auth.uid())');
+    expect(canAutomaticallyReplaceMigration(ddl + policy + extra, ddl + fixed + scoped)).toBe(true);
+    expect(canAutomaticallyReplaceMigration(ddl + policy + extra, ddl + fixed)).toBe(false);
+    expect(canAutomaticallyReplaceMigration(ddl + policy, ddl + fixed + scoped)).toBe(false);
+    expect(canAutomaticallyReplaceMigration(ddl + policy + extra,
+      ddl + fixed + scoped.replace('FOR SELECT', 'FOR ALL'))).toBe(false);
+    expect(canAutomaticallyReplaceMigration(ddl + policy + extra,
+      ddl + fixed + scoped.replace('TO authenticated', 'TO anon'))).toBe(false);
+  });
+
+  it.each([
+    'CREATE POLICY 123 ON records USING (true);',
+    'CREATE POLICY unknown ON records.extra.too_many USING (true);',
+    'CREATE POLICY unknown ON records FOR SOMETHING USING (true);',
+    'ALTER POLICY unknown ON records RENAME TO other;',
+    'ALTER POLICY unknown ON records USING (true) TO anon;',
+    'ALTER POLICY unknown ON records USING (true) "trailing";',
+    'ALTER POLICY unknown ON records USING ();',
+    'CREATE POLICY unknown ON records USING (true) WITH CHECK (true) USING (true);',
+    'CREATE POLICY U&"pol\\00edtica" ON records USING (true);',
+    '/* unterminated',
+    "SELECT 'unterminated; ALTER TABLE records DISABLE ROW LEVEL SECURITY;",
+    'SELECT "unterminated;',
+    'SELECT $missing$unterminated;',
+    'CREATE POLICY unknown ON records USING ((true);',
+  ])('refuses the entire repair if any statement cannot be parsed: %s', unknown => {
+    expect(canAutomaticallyReplaceMigration(policy + unknown, fixed + unknown)).toBe(false);
+    expect(canAutomaticallyReplaceMigration(policy + unknown, fixed)).toBe(false);
+    expect(canAutomaticallyReplaceMigration(policy, fixed + unknown)).toBe(false);
+  });
+
+  it.each([
+    'SET standard_conforming_strings = off;',
+    'SET LOCAL "standard_conforming_strings" TO on;',
+    'RESET standard_conforming_strings;',
+    'RESET ALL;',
+    "SELECT set_config('standard_conforming_strings', 'off', false);",
+  ])('refuses repairs that retain a string-semantics change: %s', setting => {
+    expect(canAutomaticallyReplaceMigration(setting + policy, setting + fixed)).toBe(false);
+  });
+
+  it('does not treat backslashes as escapes in ordinary strings or identifiers', () => {
+    const prefix = String.raw`SELECT '\'; SELECT 1 AS "ends\";`;
+    expect(canAutomaticallyReplaceMigration(prefix + policy, prefix + fixed)).toBe(true);
+    expect(canAutomaticallyReplaceMigration(prefix + policy,
+      prefix.replace('SELECT 1', 'SELECT 2') + fixed)).toBe(false);
+  });
+
+  it.each([
+    ['"Owner\'s"', '"Owner s"'],
+    ['"Staff /* One */"', '"Staff /* Two */"'],
+    ['"Staff -- One"', '"Staff -- Two"'],
+    ['"Staff $$ One $$"', '"Staff $$ Two $$"'],
+    ['"Staff ""One"""', '"Staff ""one"""'],
+  ])('preserves quoted header text that looks like literals or comments (%s)', (beforeName, afterName) => {
+    const original = `CREATE POLICY scoped ON records FOR SELECT TO ${beforeName} USING (true);`;
+    const replacement = original.replace('(true)', '(user_id = auth.uid())');
+    expect(canAutomaticallyReplaceMigration(original, replacement)).toBe(true);
+    expect(canAutomaticallyReplaceMigration(original, replacement.replace(beforeName, afterName))).toBe(false);
+  });
+
+  it('preserves ALTER policy roles and quoted non-ASCII table names', () => {
+    const original = 'ALTER POLICY política ON "Registros  Privados" TO "Staff", authenticated USING (true);';
+    const replacement = original.replace('(true)', '(user_id = auth.uid())');
+    expect(canAutomaticallyReplaceMigration(original, replacement)).toBe(true);
+    expect(canAutomaticallyReplaceMigration(original, replacement.replace('authenticated', 'anon'))).toBe(false);
+    expect(canAutomaticallyReplaceMigration(original, replacement.replace('Privados', 'privados'))).toBe(false);
+  });
+
+  it.each([
+    ['polÍtica', 'política'],
+    ['own\u00a0records', 'own records'],
+    ['own\u00a0\u00a0records', 'own\u00a0records'],
+    ['records\u00a0', 'records'],
+  ])('does not normalize significant non-ASCII identifier characters (%s)', (beforeName, afterName) => {
+    const original = `CREATE POLICY ${beforeName} ON ${beforeName} USING (true);`;
+    expect(canAutomaticallyReplaceMigration(original, original.replace('(true)', '(user_id = auth.uid())'))).toBe(true);
+    expect(canAutomaticallyReplaceMigration(original,
+      `CREATE POLICY ${afterName} ON ${afterName} USING (user_id = auth.uid());`)).toBe(false);
+  });
 });

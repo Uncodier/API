@@ -1,3 +1,4 @@
+jest.mock('@/lib/services/apps-platform/migration-application-guard', () => ({ loadMigrationApplicationContext: jest.fn(async () => ({ assertCurrent: jest.fn() })) }));
 import { databaseMigrationsPassed } from '../database-migration-outcome';
 import { applyDatabaseMigrationsStep } from '../step-db-migrations';
 import { applyPendingMigrations } from '@/lib/services/apps-platform/migration-applier';

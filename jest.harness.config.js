@@ -24,6 +24,7 @@ export default {
     '<rootDir>/src/lib/services/__tests__/tool-operation-logging.test.ts',
     '<rootDir>/src/lib/services/__tests__/sandbox-fast-attach.test.ts',
     '<rootDir>/src/lib/services/apps-platform/__tests__/migration-security-review.test.ts',
+    '<rootDir>/src/lib/services/platform-api/__tests__/migration-handler.test.ts',
     '<rootDir>/src/lib/services/apps-platform/__tests__/migration-applier.test.ts',
     '<rootDir>/src/lib/services/apps-platform/__tests__/migration-guidance.test.ts',
     '<rootDir>/src/lib/services/apps-platform/__tests__/backend-migration-guidance.test.ts',

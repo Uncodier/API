@@ -11,6 +11,9 @@ import type { MigrationRepairTarget } from '@/lib/services/apps-platform/migrati
 import { tenantCapabilitiesPrompt, type TenantCapabilities } from '@/lib/services/apps-platform/tenant-capabilities';
 import { getTenantCapabilities } from '@/lib/services/apps-platform/tenant-capabilities-service';
 import { reviewMigrationSecurity, type MigrationSecurityReview } from '@/lib/services/apps-platform/migration-security-review';
+import { loadMigrationApplicationContext, migrationDigest } from '@/lib/services/apps-platform/migration-application-guard';
+import { listMigrationLifecycle, transitionMigrationLifecycle } from '@/lib/services/apps-platform/migration-lifecycle';
+import { migrationLifecycleValue } from '@/lib/services/apps-platform/migration-lifecycle-value';
 
 export interface DatabaseMigrationRepairResult {
   changed: boolean;
@@ -69,6 +72,16 @@ export async function repairDatabaseMigrationStep(params: {
         instance: { id: audit.instanceId, site_id: audit.siteId, user_id: audit.userId, requirement_id: params.requirementId },
       });
     },
+    beforeWrite: async sql => {
+      const context = await loadMigrationApplicationContext(params.requirementId, assertCurrent);
+      const current = (await listMigrationLifecycle(params.requirementId)).find(row => row.file === target.file);
+      if (current && ['reviewing','validation_pending','platform_review'].includes(current.state)) throw new Error('Migration lifecycle does not authorize another write.');
+      await transitionMigrationLifecycle({ requirementId: params.requirementId, file: target.file,
+        expectedVersion: current?.version ?? 0, executionGeneration: context.executionGeneration,
+        value: { state: 'reviewing', checksum: migrationDigest(sql), specification_checksum: context.specificationChecksum,
+          reason: 'Restricted file write in progress; central application review is required.', original_sql: current?.original_sql ?? null,
+          attempts: (current?.attempts ?? 0) + 1 } });
+    },
   });
   try {
   await assertCurrent();
@@ -105,6 +118,13 @@ export async function repairDatabaseMigrationStep(params: {
   });
   repair.assertHealthy();
   await assertCurrent();
+  if (repair.wasChanged()) {
+    const current = (await listMigrationLifecycle(params.requirementId)).find(row => row.file === target.file);
+    if (!current || current.state !== 'reviewing') throw new Error('Missing durable migration write intent.');
+    await transitionMigrationLifecycle({ requirementId: params.requirementId, file: target.file,
+      expectedVersion: current.version, executionGeneration: params.executionOwnership.executionGeneration,
+      value: migrationLifecycleValue(current, { state: 'correction_required', reason: 'Verified file replacement awaits central application review.' }) });
+  }
   let securityReview = repair.securityReview();
   if (!repair.wasChanged() && !securityReview && (result.isDone === true || params.attempt >= params.maxAttempts)) {
     securityReview = await repair.reviewBlockedMigration();

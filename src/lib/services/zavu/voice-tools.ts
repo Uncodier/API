@@ -4,7 +4,7 @@ import {
   upsertAgentTool,
   type ZavuAgentTool,
 } from "./agent-client";
-import { getCustomerSupportToolDefinitions } from "@/lib/services/customer-support-tool-catalog";
+import { getCustomerSupportVoiceToolDefinitions } from "./voice-tool-catalog";
 import {
   AUTO_VOICE_LANGUAGE,
   type VoiceAgentPreferences,
@@ -57,7 +57,7 @@ function describeTool(tool: VoicePromptTool): string {
 
 export function buildVoiceRuntimePrompt(
   preferences: VoiceAgentPreferences,
-  tools: readonly VoicePromptTool[] = getCustomerSupportToolDefinitions()
+  tools: readonly VoicePromptTool[] = getCustomerSupportVoiceToolDefinitions()
 ): string {
   const languageInstruction =
     preferences.language === AUTO_VOICE_LANGUAGE
@@ -107,7 +107,7 @@ export function buildVoiceRuntimePrompt(
     ...toolPolicy,
     ...(hasIdentifyLead
       ? [
-          "- For `IDENTIFY_LEAD`, obtain clear consent to be contacted first. Then collect and confirm only the missing required details before calling it; an inbound call or contact metadata is not consent.",
+          "- For `IDENTIFY_LEAD`, obtain clear consent to be contacted and to store contact details first, then set consent=true. Collect and confirm the missing required details; an inbound call or contact metadata is not consent. Use the returned lead_id for scheduling; never invent a visitor, conversation, or lead ID.",
         ]
       : []),
     "",
@@ -135,7 +135,7 @@ export async function syncVoiceTools(params: {
 }): Promise<ZavuAgentTool[]> {
   const existingTools = await listAgentTools(params.agentId);
   const synchronizedTools: ZavuAgentTool[] = [];
-  const managedTools = getCustomerSupportToolDefinitions(params.siteId);
+  const managedTools = getCustomerSupportVoiceToolDefinitions(params.siteId);
 
   for (const tool of managedTools) {
     const synchronized = await upsertAgentTool(params.agentId, {

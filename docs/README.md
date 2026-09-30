@@ -24,6 +24,7 @@ Read these first when changing the code-agent harness:
 - [Server-issued visitor identity tokens](./VISITOR_IDENTITY_TOKENS.md) — scoped issuers, first-party support identity, atomic exchange, logout, and offline tests.
 - [Instance context manual setup](./INSTANCE_CONTEXT_MANUAL_SETUP.md) — migration and model-limit configuration for robot context compaction.
 - [Outstand comments contract](./OUTSTAND_COMMENTS.md) — response normalization, upstream failures, and offline regression tests.
+- [Social publishing contract](./SOCIAL_PUBLISHING.md) — scoped account IDs, media attachments, delivery state, and safe retries.
 
 These integrations still exist, but verify configuration details against the referenced implementation before operational changes:
 

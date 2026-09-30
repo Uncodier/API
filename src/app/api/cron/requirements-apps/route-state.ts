@@ -10,6 +10,7 @@ import { mutateBacklogAtomically } from '@/lib/services/requirement-backlog-muta
 import { computeRatio } from '@/lib/services/requirement-backlog-store';
 import { patchRequirementMetadataKeys } from '@/lib/services/requirement-metadata-patch';
 import { resumeRequirementExecutionOnUserAction } from '@/lib/services/requirement-execution-recovery';
+import { listMigrationLifecycle } from '@/lib/services/apps-platform/migration-lifecycle';
 
 type RequirementRow = {
   id: string;
@@ -193,6 +194,12 @@ export async function prepareRequirementForCronRun(params: {
     requirement.cron &&
     ['on-review', 'done', 'cancelled', 'blocked'].includes(status)
   ) {
+    // Check before creating a new backlog item: a scheduled tick is not a
+    // technical review receipt, even when the requirement was explicitly blocked.
+    const migrations = await listMigrationLifecycle(requirementId);
+    if (migrations.some(row => row.state !== 'validated')) {
+      return { status, backlog, metadata, skipReason: 'migration_review_pending' };
+    }
     try {
       const interval = CronExpressionParser.parse(requirement.cron);
       const previousRun = interval.prev().toDate();

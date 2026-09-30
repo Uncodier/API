@@ -1,11 +1,9 @@
 import { v5 as uuidv5 } from "uuid";
 import { getApiBaseUrl } from "@/app/api/agents/tools/utils/fetch-helper";
-import {
-  getCustomerSupportToolDefinitions,
-  type CustomerSupportToolDefinition,
-} from "@/lib/services/customer-support-tool-catalog";
+import type { CustomerSupportToolDefinition } from "@/lib/services/customer-support-tool-catalog";
+import { getCustomerSupportVoiceToolDefinitions } from "./voice-tool-catalog";
+import { identifyVoiceLead, normalizeVoiceIdentityPhone } from "./voice-lead-identification";
 import { supabaseAdmin } from "@/lib/database/supabase-server";
-import { normalizePhoneForStorage } from "@/lib/utils/phone-normalizer";
 import { getCustomToolDefinition } from "@/lib/agentbase/agents/toolEvaluator/executor/customToolsMap";
 
 const VOICE_TOOL_TIMEOUT_MS = 8_500;
@@ -41,16 +39,16 @@ async function resolveLeadId(
   siteId: string,
   phone: string | undefined
 ): Promise<string | undefined> {
-  const normalized = normalizePhoneForStorage(phone || "");
+  const normalized = normalizeVoiceIdentityPhone(phone);
   if (!normalized) return undefined;
   const { data, error } = await tenantDatabase()
     .from("leads")
     .select("id")
     .eq("site_id", siteId)
     .eq("phone", normalized)
-    .limit(1)
+    .limit(2)
     .maybeSingle();
-  if (error) throw new Error(`Failed to resolve Voice tool lead: ${error.message}`);
+  if (error) throw new Error("Unable to resolve an unambiguous Voice tool lead");
   return typeof data?.id === "string" ? data.id : undefined;
 }
 
@@ -101,8 +99,10 @@ async function scopeToolArguments(params: {
   context?: ZavuVoiceToolContext;
 }): Promise<Record<string, unknown>> {
   const next = { ...params.arguments };
-  const phone = normalizePhoneForStorage(params.context?.contactPhone || "");
-  const usesLead = hasParameter(params.tool, "lead_id");
+  const phone = normalizeVoiceIdentityPhone(params.context?.contactPhone);
+  const usesLeadContext = params.tool.name === "scheduling"
+    && hasParameter(params.tool, "context_id");
+  const usesLead = hasParameter(params.tool, "lead_id") || usesLeadContext;
   const usesConversation =
     hasParameter(params.tool, "conversation_id")
     || hasParameter(params.tool, "conversation");
@@ -115,6 +115,16 @@ async function scopeToolArguments(params: {
       params.siteId,
       next.lead_id
     );
+    if (usesLeadContext && next.context_id !== undefined) {
+      if (typeof next.context_id !== "string" || !next.context_id.trim()) {
+        throw new Error("Voice scheduling context must be a lead ID");
+      }
+      const contextLeadId = await requireSiteRecord("leads", params.siteId, next.context_id);
+      if (leadId && contextLeadId !== leadId) {
+        throw new Error("Voice scheduling lead and context must identify the same lead");
+      }
+      leadId = contextLeadId;
+    }
   }
   let conversationId = usesConversation
     ? await resolveConversationId(params.siteId, leadId)
@@ -134,6 +144,7 @@ async function scopeToolArguments(params: {
   if (usesLead && leadId) {
     next.lead_id = leadId;
   }
+  if (usesLeadContext && leadId) next.context_id = leadId;
   if (
     hasParameter(params.tool, "conversation_id")
     && conversationId
@@ -207,9 +218,20 @@ export async function executeCustomerSupportVoiceTool(params: {
   context?: ZavuVoiceToolContext;
   rawPayload: string;
 }): Promise<unknown> {
-  const tool = getCustomerSupportToolDefinitions(params.siteId)
+  const tool = getCustomerSupportVoiceToolDefinitions(params.siteId)
     .find((candidate) => candidate.name === params.toolName);
   if (!tool) throw new Error(`Unknown Customer Support tool "${params.toolName}"`);
+
+  if (tool.name === "IDENTIFY_LEAD") {
+    // Live voice has no browser visitor/conversation. Preserve the original
+    // supplied phone for confirmation rather than silently replacing it during
+    // generic argument scoping, and never call the browser identify endpoint.
+    return identifyVoiceLead({
+      siteId: params.siteId,
+      contactPhone: params.context?.contactPhone,
+      arguments: params.arguments,
+    });
+  }
 
   const scopedArguments = await scopeToolArguments({
     tool,

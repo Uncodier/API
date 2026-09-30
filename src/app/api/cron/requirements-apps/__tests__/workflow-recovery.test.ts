@@ -37,6 +37,13 @@ function harness() {
   const migration = { applyDatabaseMigrationsStep: jest.fn(async (): Promise<any> => ({ status: 'passed', applied: [], errors: [], effectiveSandboxId: 'sandbox' })) };
   const repair = { repairDatabaseMigrationStep: jest.fn(async (): Promise<any> => ({ changed: false, done: false, messages: [], effectiveSandboxId: 'sandbox' })) };
   const gate = { runGateStep: jest.fn(async (): Promise<any> => ({ passed: true, effectiveSandboxId: 'sandbox' })) };
+  const migrationLifecycle = {
+    loadMigrationLifecycleStep: jest.fn(async (): Promise<any[]> => []),
+    loadMigrationSourcePlanStep: jest.fn(async () => plan),
+    scheduleMigrationCorrectionStep: jest.fn(async () => ({ scheduled: true, internalReview: false })),
+    verifyPendingMigrationLifecycleStep: jest.fn(async () => ({ passed: true, effectiveSandboxId: 'sandbox' })),
+    holdMigrationLifecycleStep: jest.fn(async () => {}),
+  };
   const finalizer = { createFinalStatusStep: jest.fn(), validateDeliverablesStep: jest.fn() };
   const wrapup = { emitCycleWrapUpStep: jest.fn(async (_params?: unknown) => ({ ran: true, outcome: 'completed' })) };
   const execution = {
@@ -53,6 +60,7 @@ function harness() {
       '../shared/workflow-db-steps': db,
       '../shared/step-db-migrations': migration,
       '../shared/step-db-migration-repair': repair,
+      '../shared/migration-lifecycle-steps': migrationLifecycle,
       '../shared/bootstrap-spec-step': { bootstrapRequirementSpecStep: async () => {} },
       '../shared/tracking-script-step': { provisionTrackingScriptStep },
       '../shared/ensure-source-archive-step': {},
@@ -84,7 +92,7 @@ function harness() {
   const run = () => workflow.runCronAppsWorkflow({ reqId: 'req', title: 'Test', instructions: '', type: 'app',
     site_id: 'site', user_id: 'user', instanceId: 'instance', previousWorkContext: '', instance_type: 'applications',
     cronLockRunId: 'run', cycleStartedAt: '2026-09-26T00:00:00Z', executionGeneration: 3 });
-  return { run, plan, lifecycle, db, steps, executeSingleTurnStep, execution, migration, repair, gate, finalizer, wrapup, provisionTrackingScriptStep };
+  return { run, plan, lifecycle, db, steps, executeSingleTurnStep, execution, migration, repair, gate, finalizer, wrapup, provisionTrackingScriptStep, migrationLifecycle };
 }
 
 describe('workflow recovery and truthful completion', () => {
@@ -104,6 +112,43 @@ describe('workflow recovery and truthful completion', () => {
     }));
     expect(h.db.recordCronCycleOutcomeStep).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'infrastructure_retry' }));
     expect(h.lifecycle.releaseRunLockStep).toHaveBeenCalledTimes(1);
+  });
+
+  it('assigns a classified correction without burning the restricted repair loop', async () => {
+    const h = harness();
+    h.migration.applyDatabaseMigrationsStep.mockResolvedValue({ status: 'failed', applied: [], errors: ['Static SQL needed'],
+      failureKind: 'product', effectiveSandboxId: 'sandbox', correction: { state: 'correction_required' } });
+    await expect(h.run()).resolves.toMatchObject({ status: 'remediation_handoff' });
+    expect(h.migrationLifecycle.scheduleMigrationCorrectionStep).toHaveBeenCalledTimes(1);
+    expect(h.repair.repairDatabaseMigrationStep).not.toHaveBeenCalled();
+    expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({ recoveryDisposition: 'retry', requiresUserFeedback: false }));
+  });
+
+  it('retains a durable validation obligation after an exception between apply and verification', async () => {
+    const h = harness();
+    h.migrationLifecycle.loadMigrationLifecycleStep.mockResolvedValueOnce([]).mockResolvedValue([{ state: 'validation_pending' }]);
+    h.migrationLifecycle.verifyPendingMigrationLifecycleStep.mockRejectedValue(new Error('plan service down'));
+    await expect(h.run()).rejects.toThrow('plan service down');
+    expect(h.migrationLifecycle.holdMigrationLifecycleStep).toHaveBeenCalled();
+    expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({ recoveryDisposition: 'internal_review', requiresUserFeedback: false }));
+    expect(h.steps.commitAndPushStep).not.toHaveBeenCalled();
+  });
+
+  it('cannot begin normal execution while an earlier migration needs technical review', async () => {
+    const h = harness();
+    h.migrationLifecycle.loadMigrationLifecycleStep.mockResolvedValue([{ state: 'platform_review' }]);
+    await expect(h.run()).resolves.toMatchObject({ status: 'blocked' });
+    expect(h.executeSingleTurnStep).not.toHaveBeenCalled();
+    expect(h.lifecycle.createSandboxStep).not.toHaveBeenCalled();
+  });
+
+  it('runs a dependent pending correction before verifying a partially applied batch', async () => {
+    const h = harness();
+    h.migrationLifecycle.loadMigrationLifecycleStep.mockResolvedValueOnce([{ state: 'validation_pending' }, { state: 'correction_required' }]).mockResolvedValue([]);
+    await h.run();
+    expect(h.migrationLifecycle.scheduleMigrationCorrectionStep).toHaveBeenCalled();
+    expect(h.executeSingleTurnStep).toHaveBeenCalled();
+    expect(h.migrationLifecycle.verifyPendingMigrationLifecycleStep).not.toHaveBeenCalled();
   });
 
   it('releases the run lock even when the accounting ledger is unavailable', async () => {

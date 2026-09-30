@@ -237,4 +237,73 @@ describe('tenant migration linter', () => {
       expect.objectContaining({ rule: 'tenant-policy-required' }),
     ]));
   });
+
+  it.each([
+    String.raw`SELECT '\'; ALTER TABLE records DISABLE ROW LEVEL SECURITY; -- '`,
+    String.raw`SELECT E'\\'; ALTER TABLE records DISABLE ROW LEVEL SECURITY; -- '`,
+    String.raw`SELECT 1 AS "ends\"; ALTER TABLE records DISABLE ROW LEVEL SECURITY; -- "`,
+    `SELECT 1 AS "Owner's -- column"; ALTER TABLE records DISABLE ROW LEVEL SECURITY;`,
+    `SELECT 1 AS "/* column */ $$"; ALTER TABLE records DISABLE ROW LEVEL SECURITY;`,
+  ])('does not hide an RLS disable after a safely closed token: %s', sql => {
+    expect(lintMigration(input(sql)).errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({ rule: 'forbidden-statement' }),
+    ]));
+  });
+
+  it.each([
+    String.raw`SELECT E'can\'t; ALTER TABLE records DISABLE ROW LEVEL SECURITY;';`,
+    String.raw`SELECT 'can''t; ALTER TABLE records DISABLE ROW LEVEL SECURITY;';`,
+    String.raw`SELECT E'odd\\\'; ALTER TABLE records DISABLE ROW LEVEL SECURITY;';`,
+    String.raw`SELECT E'first'
+      '\'; ALTER TABLE records DISABLE ROW LEVEL SECURITY;';`,
+    `SELECT 1 AS "Owner's -- /* $$ column";`,
+    `CREATE POLICY "using (true)" ON records USING ("odd)column" = auth.uid());`,
+  ])('accepts safely escaped literal text and quoted identifiers: %s', sql => {
+    expect(lintMigration(input(sql))).toEqual({ ok: true, errors: [], warnings: [] });
+  });
+
+  it.each([
+    "SELECT 'unfinished; ALTER TABLE records DISABLE ROW LEVEL SECURITY;",
+    'SELECT "unfinished;',
+    '/* unfinished comment',
+    '/* outer /* nested */',
+    'SELECT $body$unfinished;',
+    'SELECT (1;',
+    'SELECT 1);',
+    'SELECT "";',
+    "SELECT 'before\0after';",
+  ])('rejects malformed SQL conservatively: %s', sql => {
+    expect(lintMigration(input(sql)).errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({ rule: 'sql-parse' }),
+    ]));
+  });
+
+  it.each([
+    'SET standard_conforming_strings = off;',
+    'SET SESSION standard_conforming_strings TO off;',
+    'SET LOCAL "standard_conforming_strings" TO on;',
+    'SET /* comment */ standard_conforming_strings TO DEFAULT;',
+    'RESET "standard_conforming_strings";',
+    'RESET ALL;',
+    `SELECT "set_config"('standard_conforming_strings', 'off', false);`,
+    `CREATE FUNCTION unsafe() RETURNS void LANGUAGE plpgsql AS $$ BEGIN SET standard_conforming_strings = off; END; $$;`,
+  ])('forbids changing the fixed string parsing semantics: %s', sql => {
+    expect(lintMigration(input(sql)).errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({ rule: 'sql-string-semantics' }),
+    ]));
+  });
+
+  it('does not mistake quoted predicate text for an actual policy predicate', () => {
+    expect(lintMigration(input('CREATE POLICY "using (owner_id = auth.uid())" ON records FOR SELECT;')).ok).toBe(false);
+    expect(lintMigration(input('CREATE POLICY "with check (owner_id = auth.uid())" ON records USING (true);')).ok).toBe(false);
+  });
+
+  it('does not switch scanner semantics after encountering a disallowed setting', () => {
+    const sql = String.raw`SET standard_conforming_strings = off;
+      SELECT '\'; ALTER TABLE records DISABLE ROW LEVEL SECURITY; -- '`;
+    expect(lintMigration(input(sql)).errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({ rule: 'sql-string-semantics' }),
+      expect.objectContaining({ rule: 'forbidden-statement' }),
+    ]));
+  });
 });

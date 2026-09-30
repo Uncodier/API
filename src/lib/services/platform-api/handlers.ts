@@ -4,6 +4,9 @@ import { withPlatformScope, type PlatformHandler, type PlatformHandlerResult } f
 import { lintMigration } from '@/lib/services/apps-platform/migration-linter';
 import { getAppsAdminClient } from '@/lib/database/apps-supabase';
 import { createHash } from 'node:crypto';
+import { authorizeMigrationApplication, loadMigrationApplicationContext } from '@/lib/services/apps-platform/migration-application-guard';
+import { transitionMigrationLifecycle } from '@/lib/services/apps-platform/migration-lifecycle';
+import { migrationLifecycleValue } from '@/lib/services/apps-platform/migration-lifecycle-value';
 
 /**
  * Platform API handlers. Each handler is a thin gateway over an existing
@@ -276,6 +279,23 @@ const applyMigration: PlatformHandler = async (req, ctx): Promise<PlatformHandle
     const migrationFile = requestedName.endsWith('.sql')
       ? requestedName
       : `${requestedName}.sql`;
+    const { data: receipt, error: receiptError } = await apps.rpc('apps_get_migration_receipt', {
+      p_target_schema: tenant.schema, p_expected_tenant_id: tenant.tenant_id,
+      p_migration_key: `migration:platform/${migrationFile}`,
+    });
+    if (receiptError || typeof receipt?.found !== 'boolean') return { status: 503, body: { error: 'Migration ledger unavailable.' } };
+    if (receipt.found) {
+      if (receipt.value?.checksum !== checksum) return { status: 409, body: { error: 'Applied migration content is immutable.' } };
+      return { status: 200, body: { applied: false, schema: tenant.schema, checksum, warnings: lint.warnings } };
+    }
+    const context = await loadMigrationApplicationContext(requirementId);
+    if (context.instance.site_id !== ctx.site_id) return { status: 403, body: { error: 'Migration requirement does not belong to the API key site.' } };
+    const decision = await authorizeMigrationApplication({ context,
+      target: { file: `platform/${migrationFile}`, schema: tenant.schema, tenantId: tenant.tenant_id, checksum, reason: 'sql' },
+      sql, assertUnchanged: context.assertCurrent });
+    if (!decision.allowed) return { status: 409, body: { error: 'Migration awaits correction or technical review.',
+      state: decision.lifecycle.state, reason: decision.error } };
+    await context.assertCurrent();
     const { data: applied, error } = await apps.rpc(
       'apps_apply_migration',
       {
@@ -287,6 +307,12 @@ const applyMigration: PlatformHandler = async (req, ctx): Promise<PlatformHandle
       },
     );
     if (error) {
+      if (/^(?:22|23|42)/.test(error.code || '') && error.code !== '42501') {
+        await transitionMigrationLifecycle({ requirementId, file: `platform/${migrationFile}`,
+          expectedVersion: decision.lifecycle.version, executionGeneration: context.executionGeneration,
+          value: migrationLifecycleValue(decision.lifecycle, { state: 'correction_required',
+            reason: `Atomic SQL application rolled back (${error.code}). Correct the tenant migration.` }) });
+      }
       return { status: 502, body: { error: `Migration apply failed: ${error.message}` } };
     }
     if (applied !== true && applied !== false) {

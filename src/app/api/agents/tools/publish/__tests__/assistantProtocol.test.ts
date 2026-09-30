@@ -1,74 +1,86 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { getLeadById } from '@/lib/database/lead-db';
-import { sendEmailCore } from '../../sendEmail/route';
-import { sendBulkMessagesTool } from '../../sendBulkMessages/assistantProtocol';
-import { publishTool } from '../assistantProtocol';
-import { getOutstandClient } from '@/lib/integrations/outstand/client';
-import { authorizeOutstandConversation } from '@/lib/integrations/outstand/conversation-access';
-import { recordOutstandMessage } from '@/lib/integrations/outstand/inbox-sync';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
-jest.mock('../../content/create/core', () => ({
+jest.unstable_mockModule('../../content/create/core', () => ({
   createContentCore: jest.fn(),
 }));
-jest.mock('../../content/update/route', () => ({
+jest.unstable_mockModule('../../content/update/route', () => ({
   updateContentCore: jest.fn(),
 }));
-jest.mock('@/lib/integrations/outstand/client', () => ({
+jest.unstable_mockModule('@/lib/integrations/outstand/client', () => ({
   getOutstandClient: jest.fn(),
 }));
-jest.mock('@/lib/integrations/outstand/conversation-access', () => ({
+jest.unstable_mockModule('@/lib/integrations/outstand/conversation-access', () => ({
   authorizeOutstandConversation: jest.fn(),
 }));
-jest.mock('@/lib/integrations/outstand/inbox-sync', () => ({
+jest.unstable_mockModule('@/lib/integrations/outstand/inbox-sync', () => ({
   recordOutstandMessage: jest.fn(),
 }));
-jest.mock('../../sendBulkMessages/assistantProtocol', () => ({
+jest.unstable_mockModule('../../sendBulkMessages/assistantProtocol', () => ({
   sendBulkMessagesTool: jest.fn(),
 }));
-jest.mock('../../sendEmail/route', () => ({
+jest.unstable_mockModule('../../sendEmail/route', () => ({
   sendEmailCore: jest.fn(),
 }));
-jest.mock('@/lib/services/whatsapp/WhatsAppSendService', () => ({
+jest.unstable_mockModule('@/lib/services/whatsapp/WhatsAppSendService', () => ({
   WhatsAppSendService: { sendMessage: jest.fn() },
 }));
-jest.mock('@/lib/database/lead-db', () => ({
+jest.unstable_mockModule('@/lib/database/lead-db', () => ({
   getLeadById: jest.fn(),
 }));
 
+jest.unstable_mockModule('@/lib/database/content-db', () => ({ getContentById: jest.fn() }));
+jest.unstable_mockModule('@/lib/database/supabase-client', () => ({ supabaseAdmin: {} }));
+
+let publishTool: typeof import('../assistantProtocol').publishTool;
+type GetLead = typeof import('@/lib/database/lead-db').getLeadById;
+type SendEmail = typeof import('../../sendEmail/route').sendEmailCore;
+type SendBulk = typeof import('../../sendBulkMessages/assistantProtocol').sendBulkMessagesTool;
+type GetClient = typeof import('@/lib/integrations/outstand/client').getOutstandClient;
+type Authorize = typeof import('@/lib/integrations/outstand/conversation-access').authorizeOutstandConversation;
+type RecordMessage = typeof import('@/lib/integrations/outstand/inbox-sync').recordOutstandMessage;
+let mockedGetLeadById: jest.MockedFunction<GetLead>;
+let mockedSendEmailCore: jest.MockedFunction<SendEmail>;
+let mockedSendBulkMessagesTool: jest.MockedFunction<SendBulk>;
+let mockedGetOutstandClient: jest.MockedFunction<GetClient>;
+let mockedAuthorizeOutstandConversation: jest.MockedFunction<Authorize>;
+let mockedRecordOutstandMessage: jest.MockedFunction<RecordMessage>;
+
+beforeAll(async () => {
+  ({ publishTool } = await import('../assistantProtocol'));
+  mockedGetLeadById = jest.mocked((await import('@/lib/database/lead-db')).getLeadById);
+  mockedSendEmailCore = jest.mocked((await import('../../sendEmail/route')).sendEmailCore);
+  mockedSendBulkMessagesTool = jest.mocked((await import('../../sendBulkMessages/assistantProtocol')).sendBulkMessagesTool);
+  mockedGetOutstandClient = jest.mocked((await import('@/lib/integrations/outstand/client')).getOutstandClient);
+  mockedAuthorizeOutstandConversation = jest.mocked((await import('@/lib/integrations/outstand/conversation-access')).authorizeOutstandConversation);
+  mockedRecordOutstandMessage = jest.mocked((await import('@/lib/integrations/outstand/inbox-sync')).recordOutstandMessage);
+});
+
 const siteId = '00000000-0000-4000-8000-000000000001';
 const leadId = '00000000-0000-4000-8000-000000000002';
-const mockedGetLeadById = getLeadById as jest.MockedFunction<typeof getLeadById>;
-const mockedSendEmailCore = sendEmailCore as jest.MockedFunction<typeof sendEmailCore>;
-const mockedSendBulkMessagesTool =
-  sendBulkMessagesTool as jest.MockedFunction<typeof sendBulkMessagesTool>;
-const mockedGetOutstandClient =
-  getOutstandClient as jest.MockedFunction<typeof getOutstandClient>;
-const mockedAuthorizeOutstandConversation =
-  authorizeOutstandConversation as jest.MockedFunction<typeof authorizeOutstandConversation>;
-const mockedRecordOutstandMessage =
-  recordOutstandMessage as jest.MockedFunction<typeof recordOutstandMessage>;
 const bulkExecuteMock = jest.fn(async (_args: unknown) => ({ success: true }));
 const sendConversationMessageMock = jest.fn();
 const getMediaMock = jest.fn();
 
 describe('publish test delivery', () => {
+  afterEach(() => { jest.restoreAllMocks(); });
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Unexpected live request'));
     mockedGetLeadById.mockResolvedValue({
       id: leadId,
       site_id: siteId,
       name: 'Sergio Prado',
       email: 'lead@example.com',
       phone: '+15551234567',
-    } as Awaited<ReturnType<typeof getLeadById>>);
+    } as Awaited<ReturnType<GetLead>>);
     mockedSendEmailCore.mockResolvedValue({ success: true, status: 'sent' });
     mockedSendBulkMessagesTool.mockReturnValue({
       execute: bulkExecuteMock,
-    } as unknown as ReturnType<typeof sendBulkMessagesTool>);
+    } as unknown as ReturnType<SendBulk>);
     mockedGetOutstandClient.mockReturnValue({
       sendConversationMessage: sendConversationMessageMock,
       getMedia: getMediaMock,
-    } as unknown as ReturnType<typeof getOutstandClient>);
+    } as unknown as ReturnType<GetClient>);
     sendConversationMessageMock.mockResolvedValue({
       success: true,
       message: { id: 'outstand-message-1', status: 'pending' },
@@ -147,7 +159,7 @@ describe('publish test delivery', () => {
       site_id: '00000000-0000-4000-8000-000000000099',
       name: 'Other Site Lead',
       email: 'other@example.com',
-    } as Awaited<ReturnType<typeof getLeadById>>);
+    } as Awaited<ReturnType<GetLead>>);
 
     const result = await publishTool(siteId).execute({
       is_test: true,
@@ -192,6 +204,7 @@ describe('publish test delivery', () => {
       },
     });
 
+    expect(result.instagram_dm?.error).toBeUndefined();
     expect(result.success).toBe(true);
     expect(result.actions_attempted).toContain('instagram_dm');
     expect(sendConversationMessageMock).toHaveBeenCalledWith(

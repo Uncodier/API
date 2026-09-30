@@ -14,6 +14,8 @@ jest.mock('../cron-execution-ownership', () => ({ assertCronExecutionOwnership: 
 jest.mock('@/lib/services/cron-audit-log', () => ({ logCronInfrastructureEvent: jest.fn(), CronInfraEvent: { DATABASE_MIGRATION_REPAIR: 'cron_database_migration_repair' } }));
 jest.mock('@/lib/services/apps-platform/tenant-capabilities-service', () => ({ getTenantCapabilities: jest.fn() }));
 jest.mock('@/lib/services/apps-platform/migration-security-review', () => ({ reviewMigrationSecurity: jest.fn() }));
+jest.mock('@/lib/services/apps-platform/migration-application-guard', () => ({ loadMigrationApplicationContext: jest.fn(), migrationDigest: jest.fn() }));
+jest.mock('@/lib/services/apps-platform/migration-lifecycle', () => ({ listMigrationLifecycle: jest.fn(async () => []), transitionMigrationLifecycle: jest.fn() }));
 
 const params = {
   sandboxId: 'old', requirementId: 'req', instanceType: 'applications', title: 'Title',
