@@ -121,6 +121,7 @@ function isPlausibleUserJwt(token: string): boolean {
 
 function withCors(response: NextResponse, origin: string | null): NextResponse {
   response.headers.set('Vary', 'Origin');
+  response.headers.set('Access-Control-Expose-Headers', 'Retry-After');
   response.headers.set('X-Middleware-Executed', 'true');
   if (origin) {
     response.headers.set('Access-Control-Allow-Origin', origin);
@@ -244,13 +245,18 @@ export default async function requestMiddleware(request: NextRequest) {
       ? 1024 * 1024
       : positiveIntegerSetting('API_MAX_REQUEST_BYTES', 2 * 1024 * 1024);
   if (Number.isFinite(contentLength) && contentLength > maxRequestBytes) {
-    return NextResponse.json(
+    const response = NextResponse.json(
       {
         success: false,
         error: { code: 'PAYLOAD_TOO_LARGE', message: 'Request body is too large' },
       },
       { status: 413 },
     );
+    // Browsers must be able to read 413 and reduce their recording batches.
+    // Keep private-origin restrictions even when rejecting before auth/rate limits.
+    return publicRequest || isAllowedStaticOrigin(origin)
+      ? withCors(response, origin)
+      : response;
   }
 
   if (method === 'OPTIONS') {

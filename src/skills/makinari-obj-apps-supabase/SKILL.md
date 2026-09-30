@@ -435,6 +435,27 @@ Do not edit `storage.buckets`, `storage.objects`, storage policies, grants, or
 other global SQL to supply missing capacity. Bucket provisioning and policy
 administration belong to the platform, not app migrations.
 
+The platform provisioner creates one private bucket per tenant via the Storage
+API. The baseline platform policy supports two separate namespaces:
+
+- `backend/<path>`: only the exact tenant-bound backend JWT, with object
+  `owner_id` matching its subject. Never expose that token or this namespace
+  through an unvalidated public upload/download endpoint.
+- `users/<user-id>/<path>`: the authenticated user's own files, only with a
+  protected platform `tenant_users` membership. Ordinary login does not create
+  that membership. User metadata, chosen paths and organization IDs do not grant it.
+
+This is private-file capacity, **not organization-shared assets**. Do not replace
+product collaboration with personal ownership: shared/org storage requires a
+separately reviewed platform authorization contract. Do not manufacture
+memberships or use the backend token to bypass a missing user capability.
+Use the exact manifest bucket, never a literal `assets` bucket; a nested `assets/`
+folder may be used inside the authorized namespace. Files are limited to 10 MiB
+and a platform MIME allowlist (JPEG, PNG, WebP, GIF, PDF, plain text, CSV, JSON,
+octet-stream). Existing stricter limits are preserved. This per-file limit is
+not an enforced aggregate tenant storage quota. Signed read URLs are bearer
+capabilities; keep them short-lived and never treat a private bucket as public.
+
 ## Applied migration immutability vs pending edits
 
 - **Applied migrations are immutable.** Preserve their original path and exact

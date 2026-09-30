@@ -61,20 +61,42 @@ asset is deleted automatically, including an orphaned upload after interruption.
 
 ### TikTok post mode
 
-`tiktok.postMode` must be explicit whenever TikTok is selected:
+TikTok defaults to **direct, public publishing** when selected. The default is
+resolved inside `publish`, so Imprenta and other callers do not need to inject
+parameters for the ordinary publish action:
 
-- `DIRECT_POST` requires `privacyLevel`, chosen by the creator from their allowed
+```json
+{ "tiktok": { "postMode": "DIRECT_POST", "privacyLevel": "PUBLIC_TO_EVERYONE" } }
+```
+
+The `tiktok` object and its direct-post fields are optional. Omitting it, passing
+`{}`, or passing only `postMode: "DIRECT_POST"` uses these defaults. Passing only
+`privacyLevel` selects that visibility with the default direct mode. Explicit
+values take precedence; nulls, invalid values, unknown fields, and incompatible
+mode/privacy combinations fail validation rather than falling back to public.
+
+Supported overrides:
+
+- `DIRECT_POST` accepts `privacyLevel`, chosen by the creator from their allowed
   options (`PUBLIC_TO_EVERYONE`, `MUTUAL_FOLLOW_FRIENDS`, `FOLLOWER_OF_CREATOR`,
   or `SELF_ONLY`). The tool validates the enum and Outstand/TikTok enforces account
-  eligibility. It never invents privacy or silently falls back to inbox mode.
+  eligibility. If the selected visibility is rejected, report the restriction;
+  never silently switch to another visibility or inbox mode.
 - `MEDIA_UPLOAD` sends an inbox draft. Results carry `requires_creator_action`
   and cannot promote social content to `published`, even if the provider labels
   its transfer as published. The creator must finish publishing inside TikTok.
 
+Examples: `{"tiktok":{"privacyLevel":"SELF_ONLY"}}` posts privately;
+`{"tiktok":{"postMode":"MEDIA_UPLOAD"}}` sends an inbox draft. The tool router's
+explicit `tool_overrides.publish.tiktok` setting remains authoritative. Do not
+inject defaults as forced overrides: that would overwrite an agent's explicit
+privacy choice. This is a tool parameter contract, not a new canvas settings UI.
+
 The documented Outstand API does not expose a creator-info lookup endpoint.
-Do not invent one or claim an enum value was live-verified. If valid visibility
-has not been selected, request it before a direct-post attempt. Uploading a file
-to Outstand's Media API and selecting TikTok `MEDIA_UPLOAD` are different actions.
+Do not invent one or claim an enum value was live-verified. The configured public
+default is an application policy, not proof the creator is eligible for it.
+Uploading a file to Outstand's Media API and selecting TikTok `MEDIA_UPLOAD` are
+different actions.
 
 ## Content and delivery
 

@@ -100,32 +100,18 @@ export const isOriginAllowed = async (origin) => {
  * Genera configuración CORS para next.config.mjs
  */
 export const getNextJsCorsConfig = () => {
-  const allowedOrigins = getAllowedOrigins();
-  
-  const config = allowedOrigins.flatMap(origin => [
-    {
-      source: '/api/:path*',
-      headers: [
-        { key: 'Access-Control-Allow-Credentials', value: 'true' },
-        { key: 'Access-Control-Allow-Origin', value: origin },
-        { key: 'Access-Control-Allow-Methods', value: 'GET,DELETE,PATCH,POST,PUT,OPTIONS' },
-        { key: 'Access-Control-Allow-Headers', value: ALLOWED_HEADERS },
-        { key: 'Vary', value: 'Origin' }
-      ]
-    },
-    {
-      source: '/record',
-      headers: [
-        { key: 'Access-Control-Allow-Credentials', value: 'true' },
-        { key: 'Access-Control-Allow-Origin', value: origin },
-        { key: 'Access-Control-Allow-Methods', value: 'GET,DELETE,PATCH,POST,PUT,OPTIONS' },
-        { key: 'Access-Control-Allow-Headers', value: ALLOWED_HEADERS },
-        { key: 'Vary', value: 'Origin' }
-      ]
-    }
-  ]);
-  
-  return config;
+  // Origin is selected per request by middleware, including for public tenant
+  // domains. Repeated static origins are not an allowlist: the last one wins.
+  return ['/api/:path*', '/record'].map(source => ({
+    source,
+    headers: [
+      { key: 'Access-Control-Allow-Credentials', value: 'true' },
+      { key: 'Access-Control-Allow-Methods', value: 'GET,DELETE,PATCH,POST,PUT,OPTIONS' },
+      { key: 'Access-Control-Allow-Headers', value: ALLOWED_HEADERS },
+      { key: 'Access-Control-Expose-Headers', value: 'Retry-After' },
+      { key: 'Vary', value: 'Origin' }
+    ]
+  }));
 };
 
 // Exportación por defecto para ES modules

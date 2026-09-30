@@ -180,27 +180,12 @@ const nextraConfig = withNextra({
         ],
       },
       {
-        // Configuración CORS explícita para localhost:3456 (desarrollo local)
-        source: '/api/:path*',
-        headers: [
-          { key: 'Access-Control-Allow-Origin', value: 'http://localhost:3456' },
-          { key: 'Access-Control-Allow-Methods', value: 'GET, POST, PUT, PATCH, DELETE, OPTIONS' },
-          { key: 'Access-Control-Allow-Headers', value: 'Content-Type, Authorization, X-SA-API-KEY, Accept, Origin, X-Requested-With' },
-          { key: 'Access-Control-Allow-Credentials', value: 'true' },
-          { key: 'Access-Control-Max-Age', value: '86400' },
-          { key: 'Vary', value: 'Origin' }
-        ]
-      },
-      {
         // Configuración específica para la ruta WebSocket
         source: '/api/agents/chat/websocket',
         headers: [
           { key: 'Connection', value: 'upgrade' },
           { key: 'Upgrade', value: 'websocket' },
-          // Encabezados CORS para WebSockets
-          { key: 'Access-Control-Allow-Origin', value: '*' },
-          { key: 'Access-Control-Allow-Methods', value: 'GET, OPTIONS' },
-          { key: 'Access-Control-Allow-Headers', value: 'Content-Type, Authorization, X-SA-API-KEY, Accept, Origin' }
+          { key: 'Access-Control-Allow-Methods', value: 'GET, OPTIONS' }
         ]
       }
     ];

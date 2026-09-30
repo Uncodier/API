@@ -31,6 +31,7 @@ export default {
     '<rootDir>/src/lib/services/apps-platform/__tests__/migration-linter.test.ts',
     '<rootDir>/src/lib/services/apps-platform/__tests__/tenant-reprovision-sql.test.ts',
     '<rootDir>/src/lib/services/apps-platform/__tests__/tenant-provisioner.test.ts',
+    '<rootDir>/src/lib/services/apps-platform/__tests__/tenant-storage*.test.ts',
   ],
   extensionsToTreatAsEsm: [],
   transform: {

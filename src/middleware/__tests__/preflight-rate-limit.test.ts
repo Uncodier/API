@@ -38,6 +38,7 @@ const lookupPath = '/api/finder/autocomplete/locations?q=que&page=0';
 const searchPath = '/api/finder/person_role_search';
 const envNames = [
   'NODE_ENV',
+  'API_MAX_REQUEST_BYTES',
   'CORS_PREFLIGHT_REQUESTS_PER_MINUTE',
   'CORS_PREFLIGHT_GLOBAL_REQUESTS_PER_MINUTE',
 ];
@@ -72,6 +73,7 @@ beforeEach(() => {
   Object.assign(process.env, { NODE_ENV: 'production' });
   delete process.env.CORS_PREFLIGHT_REQUESTS_PER_MINUTE;
   delete process.env.CORS_PREFLIGHT_GLOBAL_REQUESTS_PER_MINUTE;
+  delete process.env.API_MAX_REQUEST_BYTES;
   jest.spyOn(globalThis, 'fetch').mockImplementation(async () => (
     new Response(JSON.stringify({ id: 'test-user' }), { status: 200 })
   ));
@@ -205,6 +207,39 @@ describe('CORS preflight request budgets', () => {
     expect(await response.json()).toMatchObject({ error: { code: 'PAYLOAD_TOO_LARGE' } });
     expect(mockCheckRateLimit).not.toHaveBeenCalled();
     expect(mockApiKeyAuth).not.toHaveBeenCalled();
+  });
+
+  it.each(['/record', '/api/visitors/record'])(
+    'exposes oversized recording errors to the browser at %s', async (path) => {
+      const response = await middleware(request(path, 'POST', {
+        'content-length': String(2 * 1024 * 1024 + 1),
+      }));
+      expect(response.status).toBe(413);
+      expect(response.headers.get('access-control-allow-origin')).toBe(origin);
+      expect(response.headers.get('access-control-allow-credentials')).toBe('true');
+      expect(response.headers.get('vary')).toBe('Origin');
+      expect(await response.json()).toMatchObject({ error: { code: 'PAYLOAD_TOO_LARGE' } });
+      expect(mockCheckRateLimit).not.toHaveBeenCalled();
+      expect(mockApiKeyAuth).not.toHaveBeenCalled();
+    },
+  );
+
+  it('preserves dynamic public origins on early size errors', async () => {
+    const response = await middleware(request('/record', 'POST', {
+      origin: 'https://customer.example',
+      'content-length': String(2 * 1024 * 1024 + 1),
+    }));
+    expect(response.status).toBe(413);
+    expect(response.headers.get('access-control-allow-origin')).toBe('https://customer.example');
+  });
+
+  it('does not grant CORS to unapproved private origins on size errors', async () => {
+    const response = await middleware(request(searchPath, 'POST', {
+      origin: 'https://untrusted.example',
+      'content-length': String(2 * 1024 * 1024 + 1),
+    }));
+    expect(response.status).toBe(413);
+    expect(response.headers.get('access-control-allow-origin')).toBeNull();
   });
 
   it('retains dynamic public visitor preflights without granting Finder access', async () => {

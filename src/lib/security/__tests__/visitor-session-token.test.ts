@@ -59,6 +59,21 @@ describe('visitor session tokens', () => {
     })).resolves.toBe(false);
   });
 
+  it('authorizes visitor-scoped endpoints without requiring a session ID in the body', async () => {
+    const token = await issueVisitorSessionToken({
+      siteId: 'site-1', sessionId: 'session-1', visitorId: 'visitor-1',
+    });
+    await expect(verifyVisitorSessionToken(token, {
+      siteId: 'site-1', visitorId: 'visitor-1',
+    })).resolves.toBe(true);
+    await expect(verifyVisitorSessionToken(token, {
+      siteId: 'site-2', visitorId: 'visitor-1',
+    })).resolves.toBe(false);
+    await expect(verifyVisitorSessionToken(null, {
+      siteId: 'site-1', visitorId: 'visitor-1',
+    })).resolves.toBe(false);
+  });
+
   it('rejects expired tokens', async () => {
     const token = await issueVisitorSessionToken({
       siteId: 'site-1',

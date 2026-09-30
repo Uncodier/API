@@ -3,8 +3,8 @@
  *
  * Responsibilities:
  *   - `ensureTenant(requirement)`  → idempotent: row in `public.apps_tenants`,
- *     create schema `app_<requirementId>`, apply baseline migration, mint
- *     tenant JWT for the sandbox.
+ *     create schema `app_<requirementId>`, apply baseline migration, provision
+ *     private Storage when available, then mint the tenant JWT for the sandbox.
  *   - `destroyTenant(requirement)` → drops the schema, deletes the row,
  *     revokes JWTs (cascade).
  *   - `bootstrapAuthForTenant(requirement, provider)` → ensures the auth
@@ -14,12 +14,14 @@
  *   - Registry creation and schema bootstrap are one atomic
  *     `apps_ensure_tenant` RPC. Tenant-authored migrations use the
  *     constrained `apps_apply_migration` RPC.
- *   - Provisioning is serialized per requirement and committed atomically by
- *     the database function.
+ *   - Database provisioning is serialized per requirement and committed atomically.
+ *     Storage uses a retryable API operation after SQL authorization preflight;
+ *     it is not part of the database transaction.
  */
 import { getAppsAdminClient, issueTenantJWT } from '@/lib/database/apps-supabase';
 import { syncPostgrestSchemas } from './postgrest-config';
 import { parseTenantCapabilities, type TenantCapabilities } from './tenant-capabilities';
+import { ensureTenantStorage, TenantStorageError } from './tenant-storage';
 
 export type AppsAuthProvider = 'supabase' | 'auth0';
 
@@ -107,7 +109,7 @@ export async function ensureTenant(input: EnsureTenantInput): Promise<EnsureTena
   if (capabilityError) {
     throw new Error(`tenant-provisioner: capability provisioning failed (${capabilityError.code || 'unknown'}). Deploy the tenant capabilities migration first.`);
   }
-  const capabilities = parseTenantCapabilities(capabilityReceipt, {
+  let capabilities = parseTenantCapabilities(capabilityReceipt, {
     requirementId: requirement_id, tenantId, schema: resolvedSchema, bucket: resolvedBucket,
   });
   // Existing tenant bootstrap preserves its original registry subject. Never mint
@@ -118,6 +120,35 @@ export async function ensureTenant(input: EnsureTenantInput): Promise<EnsureTena
   if (bindingError || binding?.tenant_id !== tenantId || binding?.schema !== resolvedSchema ||
       binding?.user_id !== user_id || binding?.site_id !== site_id || binding?.status !== 'active') {
     throw new Error('tenant-provisioner: caller and tenant backend identity binding do not match.');
+  }
+  let storageReady = false;
+  try {
+    await ensureTenantStorage({
+      requirementId: requirement_id, tenantId, schema: resolvedSchema,
+      bucket: resolvedBucket, userId: user_id, siteId: site_id,
+    }, client);
+    storageReady = true;
+  } catch (error) {
+    // Storage is optional capacity. Do not stop unrelated DB/Auth work during
+    // rollout, policy remediation or an outage; never advertise an unsafe bucket.
+    console.warn('[tenant-provisioner] Storage unavailable', {
+      requirement_id, code: error instanceof TenantStorageError ? error.code : 'provisioning_failed',
+    });
+    capabilities.storage = { available: false, bucket: null };
+  }
+  if (storageReady) {
+    const { data: freshReceipt, error: refreshError } = await client.rpc('apps_get_tenant_capabilities', {
+      p_requirement_id: requirement_id, p_expected_tenant_id: tenantId,
+    });
+    if (refreshError) {
+      console.warn('[tenant-provisioner] Storage unavailable', { requirement_id, code: 'capability_refresh_failed' });
+      capabilities.storage = { available: false, bucket: null };
+    } else {
+      // Malformed or mismatched identity metadata remains a hard DB boundary error.
+      capabilities = parseTenantCapabilities(freshReceipt, {
+        requirementId: requirement_id, tenantId, schema: resolvedSchema, bucket: resolvedBucket,
+      });
+    }
   }
   // Automatically expose the new schema to PostgREST
   const syncResult = await syncPostgrestSchemas();

@@ -223,6 +223,55 @@ describe('visitor recording route', () => {
     expect(mockEnqueue).not.toHaveBeenCalled();
   });
 
+  it.each([true, false])('rejects requests over 1 MiB before storage (content-length: %s)', async (hasLength) => {
+    const body = JSON.stringify({ padding: 'x'.repeat(1024 * 1024) });
+    const response = await POST(new Request('http://localhost/record', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(hasLength ? { 'content-length': String(Buffer.byteLength(body)) } : {}),
+      },
+      body,
+    }) as never);
+
+    expect(response.status).toBe(413);
+    expect(await response.json()).toMatchObject({ error: 'Recording request is too large' });
+    expect(mockFrom).not.toHaveBeenCalled();
+    expect(mockUpload).not.toHaveBeenCalled();
+    expect(mockEnqueue).not.toHaveBeenCalled();
+  });
+
+  it('measures chunk events in UTF-8 bytes, not JavaScript string length', async () => {
+    const events = [{ timestamp: 1000, text: '😀'.repeat(140_000) }];
+    expect(JSON.stringify(events).length).toBeLessThan(512 * 1024);
+    expect(Buffer.byteLength(JSON.stringify(events))).toBeGreaterThan(512 * 1024);
+    const response = await POST(new Request('http://localhost/record', {
+      method: 'POST',
+      body: JSON.stringify({ site_id: siteId, session_id: sessionId, events }),
+    }) as never);
+
+    expect(response.status).toBe(413);
+    expect(await response.json()).toMatchObject({ error: 'Recording chunk is too large' });
+    expect(mockFrom).not.toHaveBeenCalled();
+    expect(mockUpload).not.toHaveBeenCalled();
+    expect(mockEnqueue).not.toHaveBeenCalled();
+  });
+
+  it('accepts events exactly at the 512 KiB chunk boundary', async () => {
+    const events = [{ timestamp: 1000, text: '' }];
+    const overhead = Buffer.byteLength(JSON.stringify(events));
+    events[0].text = 'x'.repeat(512 * 1024 - overhead);
+    const response = await POST(new Request('http://localhost/record', {
+      method: 'POST',
+      body: JSON.stringify({ site_id: siteId, session_id: sessionId, events }),
+    }) as never);
+
+    expect(response.status).toBe(200);
+    expect(mockUpload).toHaveBeenCalledTimes(1);
+    expect(Buffer.byteLength(mockUpload.mock.calls[0][1])).toBe(512 * 1024);
+    expect(mockEnqueue).toHaveBeenCalledTimes(1);
+  });
+
   it('returns 400 for null chunk entries', async () => {
     const response = await POST(new Request('http://localhost/api/visitors/record', {
       method: 'POST',

@@ -2,7 +2,7 @@ import { publishToolDefinition } from './publish-schema';
 import { createContentCore } from '../content/create/core';
 import { updateContentCore } from '../content/update/route';
 import { publishSocialContent } from './social-publishing';
-import type { TikTokPublishOptions } from './tiktok-options';
+import type { TikTokPublishInput } from './tiktok-options';
 import { sendBulkMessagesTool } from '../sendBulkMessages/assistantProtocol';
 import { sendEmailCore } from '../sendEmail/route';
 import { WhatsAppSendService } from '@/lib/services/whatsapp/WhatsAppSendService';
@@ -41,7 +41,7 @@ export interface PublishToolParams {
   // Social Media Params
   social_accounts?: string[];
   scheduledAt?: string;
-  tiktok?: TikTokPublishOptions;
+  tiktok?: TikTokPublishInput;
   instagram_dm?: InstagramDirectMessageParams;
 
   // Audience Params

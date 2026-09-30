@@ -60,6 +60,25 @@ describe('normalizePublishToolOverrides', () => {
     });
   });
 
+  it.each([
+    { privacyLevel: 'SELF_ONLY' },
+    { postMode: 'MEDIA_UPLOAD' },
+  ])('preserves configurable TikTok overrides without replacing them with defaults: %j', (tiktok) => {
+    const result = normalizePublishToolOverrides(
+      JSON.stringify({ nodeType: 'publish', publish_destinations: ['tiktok'] }),
+      { publish: { tiktok } },
+    );
+    expect(result?.publish.tiktok).toEqual(tiktok);
+  });
+
+  it('leaves absent TikTok configuration to the tool instead of forcing over agent choices', () => {
+    const result = normalizePublishToolOverrides(
+      JSON.stringify({ nodeType: 'publish', publish_destinations: ['tiktok'] }),
+      { publish: { social_accounts: ['tt-account'] } },
+    );
+    expect(result?.publish).not.toHaveProperty('tiktok');
+  });
+
   it('does not alter overrides outside publish nodes', () => {
     const overrides = { sendBulkMessages: { channel: 'email' } };
 

@@ -4,6 +4,11 @@ import {
 } from '@/lib/database/apps-supabase';
 import { ensureTenant } from '../tenant-provisioner';
 import { syncPostgrestSchemas } from '../postgrest-config';
+import { ensureTenantStorage } from '../tenant-storage';
+
+jest.mock('../tenant-storage', () => ({
+  ...jest.requireActual('../tenant-storage'), ensureTenantStorage: jest.fn(),
+}));
 
 jest.mock('@/lib/database/apps-supabase', () => ({
   getAppsAdminClient: jest.fn(),
@@ -26,6 +31,7 @@ const capabilityReceipt = {
   identity: { user_id: 'app_aaaaaaaabbbb4ccc8dddeeee._app_current_user_id', claims: 'app_aaaaaaaabbbb4ccc8dddeeee._app_request_claims', backend: 'app_aaaaaaaabbbb4ccc8dddeeee._app_is_backend_request' },
   storage: { available: false, bucket: null }, backend: { role: 'authenticated', bypasses_rls: false, operations: [] },
 };
+const readyReceipt = { ...capabilityReceipt, storage: { available: true, bucket: 'tenant-aaaaaaaabbbb4ccc8dddeeee' } };
 
 const bindingQuery = (overrides: Record<string, unknown> = {}) => () => ({ select: () => ({ eq: () => ({
   maybeSingle: async () => ({ data: { tenant_id: capabilityReceipt.tenant_id, schema: capabilityReceipt.schema,
@@ -35,6 +41,7 @@ const bindingQuery = (overrides: Record<string, unknown> = {}) => () => ({ selec
 describe('tenant provisioner', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    (ensureTenantStorage as jest.Mock).mockResolvedValue({ bucket: readyReceipt.storage.bucket, created: false });
     (syncPostgrestSchemas as jest.Mock).mockResolvedValue({ ok: true });
     (issueTenantJWT as jest.Mock).mockResolvedValue({
       token: 'tenant-token',
@@ -67,6 +74,7 @@ describe('tenant provisioner', () => {
       name === 'apps_ensure_tenant'
         ? { data: winner, error: null }
         : name === 'apps_ensure_tenant_capabilities' ? { data: capabilityReceipt, error: null }
+        : name === 'apps_get_tenant_capabilities' ? { data: readyReceipt, error: null }
         : { data: null, error: null });
     (getAppsAdminClient as jest.Mock).mockReturnValue({ rpc, from: bindingQuery() });
 
@@ -76,7 +84,7 @@ describe('tenant provisioner', () => {
       tenant_id: winner.tenant_id,
       schema: winner.schema,
       created: false,
-      capabilities: capabilityReceipt,
+      capabilities: readyReceipt,
     }));
     expect(rpc).toHaveBeenCalledWith(
       'apps_ensure_tenant',
@@ -88,6 +96,11 @@ describe('tenant provisioner', () => {
       tenant_id: winner.tenant_id,
       schema: winner.schema,
     }));
+    expect(ensureTenantStorage).toHaveBeenCalledWith({ requirementId,
+      tenantId: winner.tenant_id, schema: winner.schema, bucket: winner.bucket,
+      userId: input.user_id, siteId: input.site_id }, expect.anything());
+    expect((ensureTenantStorage as jest.Mock).mock.invocationCallOrder[0])
+      .toBeLessThan((issueTenantJWT as jest.Mock).mock.invocationCallOrder[0]);
   });
 
   it('fails before issuing a JWT when schema exposure fails', async () => {
@@ -98,7 +111,7 @@ describe('tenant provisioner', () => {
       auth_provider: 'supabase',
       created: true,
     };
-    const rpc = jest.fn(async (name: string) => ({ data: name === 'apps_ensure_tenant_capabilities' ? capabilityReceipt : tenant, error: null }));
+    const rpc = jest.fn(async (name: string) => ({ data: name === 'apps_ensure_tenant_capabilities' ? capabilityReceipt : name === 'apps_get_tenant_capabilities' ? readyReceipt : tenant, error: null }));
     (getAppsAdminClient as jest.Mock).mockReturnValue({ rpc, from: bindingQuery() });
     (syncPostgrestSchemas as jest.Mock).mockResolvedValue({
       ok: false,
@@ -130,5 +143,51 @@ describe('tenant provisioner', () => {
     (getAppsAdminClient as jest.Mock).mockReturnValue({ rpc, from: bindingQuery({ user_id: 'another-user' }) });
     await expect(ensureTenant(input)).rejects.toThrow('backend identity binding do not match');
     expect(issueTenantJWT).not.toHaveBeenCalled();
+    expect(ensureTenantStorage).not.toHaveBeenCalled();
+  });
+
+  it.each(['stale_receipt', 'refresh_error'])('does not block DB/Auth after optional Storage %s', async failure => {
+    const tenant = { tenant_id: capabilityReceipt.tenant_id, schema: capabilityReceipt.schema,
+      bucket: readyReceipt.storage.bucket, auth_provider: 'supabase', created: false };
+    const rpc = jest.fn(async (name: string) => ({
+      data: name === 'apps_ensure_tenant' ? tenant : name === 'apps_get_tenant_capabilities' && failure !== 'stale_receipt' ? readyReceipt : capabilityReceipt,
+      error: name === 'apps_get_tenant_capabilities' && failure === 'refresh_error' ? { code: 'unavailable' } : null,
+    }));
+    (getAppsAdminClient as jest.Mock).mockReturnValue({ rpc, from: bindingQuery() });
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      expect((await ensureTenant(input)).capabilities.storage).toEqual({ available: false, bucket: null });
+      expect(issueTenantJWT).toHaveBeenCalled();
+      expect(syncPostgrestSchemas).toHaveBeenCalled();
+    } finally { warn.mockRestore(); }
+  });
+
+  it('still rejects identity metadata changes during capability refresh', async () => {
+    const tenant = { tenant_id: capabilityReceipt.tenant_id, schema: capabilityReceipt.schema,
+      bucket: readyReceipt.storage.bucket, auth_provider: 'supabase', created: false };
+    const rpc = jest.fn(async (name: string) => ({ data: name === 'apps_ensure_tenant' ? tenant
+      : name === 'apps_get_tenant_capabilities' ? { ...readyReceipt, tenant_id: input.user_id } : capabilityReceipt, error: null }));
+    (getAppsAdminClient as jest.Mock).mockReturnValue({ rpc, from: bindingQuery() });
+    await expect(ensureTenant(input)).rejects.toThrow('Tenant capability receipt');
+    expect(issueTenantJWT).not.toHaveBeenCalled();
+  });
+
+  it('keeps DB/Auth provisioning usable but hides Storage when its preflight or API fails', async () => {
+    const tenant = { tenant_id: capabilityReceipt.tenant_id, schema: capabilityReceipt.schema,
+      bucket: readyReceipt.storage.bucket, auth_provider: 'supabase', created: false };
+    const rpc = jest.fn(async (name: string) => ({ data: name === 'apps_ensure_tenant' ? tenant : readyReceipt, error: null }));
+    (getAppsAdminClient as jest.Mock).mockReturnValue({ rpc, from: bindingQuery() });
+    (ensureTenantStorage as jest.Mock).mockRejectedValue(new Error('private provider detail'));
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const result = await ensureTenant(input);
+      expect(result.capabilities.storage).toEqual({ available: false, bucket: null });
+      expect(result.capabilities.identity).toEqual(capabilityReceipt.identity);
+      expect(issueTenantJWT).toHaveBeenCalled();
+      expect(rpc).not.toHaveBeenCalledWith('apps_get_tenant_capabilities', expect.anything());
+      expect(warn).toHaveBeenCalledWith('[tenant-provisioner] Storage unavailable', {
+        requirement_id: requirementId, code: 'provisioning_failed',
+      });
+    } finally { warn.mockRestore(); }
   });
 });

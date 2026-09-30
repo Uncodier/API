@@ -1,3 +1,5 @@
+import { DEFAULT_TIKTOK_OPTIONS } from './tiktok-options';
+
 export const publishToolDefinition = {
     name: 'publish',
     description: `Consolidated tool to publish content. Can perform one or more of the following actions simultaneously:
@@ -8,7 +10,7 @@ export const publishToolDefinition = {
 For Voice, voice_mode "tts" sends a one-way spoken message and "agent_call" starts a two-way Zavu voice-agent call. agent_call also accepts a private objective and additional_context; these guide the conversation and are not spoken as the greeting.
 
 You MUST provide at least valid 'text', 'assets' (uploaded Outstand media IDs), 'urls', 'media_urls', or 'instagram_dm.media_urls'. For social posts attach images/videos using media_urls from trusted public storage, or uploaded assets. Ordinary urls are text links; recognized image/video urls are attached for compatibility. Instagram/TikTok cannot publish a link-only caption.
-When TikTok is selected, the tool automatically uploads external trusted media to Outstand and confirms it before posting (64 MiB per file). Already hosted Outstand media is reused. Do not ask the user to verify our storage domain. Provide tiktok.postMode explicitly: DIRECT_POST requires the creator-selected privacyLevel from their allowed options; never invent visibility or default to public. MEDIA_UPLOAD sends an inbox draft that the creator must publish manually. Never silently switch modes. Outstand's documented API does not expose a creator-info endpoint; obtain the creator's valid selection rather than inventing an endpoint or privacy value.
+When TikTok is selected, the tool automatically uploads external trusted media to Outstand and confirms it before posting (64 MiB per file). Already hosted Outstand media is reused. Do not ask the user to verify our storage domain. The configured default is DIRECT_POST with PUBLIC_TO_EVERYONE. If the user asks to publish without specifying mode or privacy, omit tiktok or use these defaults; do not ask for a choice just because parameters are absent. Explicit tiktok.postMode and privacyLevel override the defaults: preserve requested privacy, including SELF_ONLY, and use MEDIA_UPLOAD only when an inbox draft is requested. MEDIA_UPLOAD requires the creator to publish manually. If the provider rejects public visibility, report that restriction; never silently switch privacy or modes. Outstand's documented API does not expose a creator-info endpoint, so do not invent one or claim the default was live-verified.
 Social delivery status pending/scheduled means accepted, NOT published. Report success as published only for status published. For failed, partial_failure, or unknown status, inspect the existing provider post before retrying. Reuse content_id after a confirmed rejection instead of creating duplicate content. Never automatically resend when retry_safe is false.
 If sending email to audience, 'subject' is required.
 
@@ -54,12 +56,12 @@ The tool will return an object detailing the success/failure of each attempted a
         scheduledAt: { type: 'string', description: 'ISO 8601 date to schedule social post (optional).' },
         tiktok: {
           type: 'object',
-          description: 'Required for TikTok. Choose direct publishing with explicit creator-selected privacy, or an inbox draft. Never guess privacy or silently fall back to an inbox draft.',
+          description: 'Optional TikTok overrides. Defaults to DIRECT_POST with PUBLIC_TO_EVERYONE. Explicit privacy or inbox-draft mode takes precedence; never silently change it after a provider rejection.',
+          default: DEFAULT_TIKTOK_OPTIONS,
           properties: {
-            postMode: { type: 'string', enum: ['DIRECT_POST', 'MEDIA_UPLOAD'] },
-            privacyLevel: { type: 'string', enum: ['PUBLIC_TO_EVERYONE', 'MUTUAL_FOLLOW_FRIENDS', 'FOLLOWER_OF_CREATOR', 'SELF_ONLY'], description: 'Required for DIRECT_POST only. Use the creator-selected value from their allowed privacy options. The provider enforces eligibility.' },
+            postMode: { type: 'string', enum: ['DIRECT_POST', 'MEDIA_UPLOAD'], default: DEFAULT_TIKTOK_OPTIONS.postMode },
+            privacyLevel: { type: 'string', enum: ['PUBLIC_TO_EVERYONE', 'MUTUAL_FOLLOW_FRIENDS', 'FOLLOWER_OF_CREATOR', 'SELF_ONLY'], description: 'DIRECT_POST only; defaults to PUBLIC_TO_EVERYONE when omitted. Set explicitly to override visibility. Omit for MEDIA_UPLOAD. The provider enforces account eligibility.' },
           },
-          required: ['postMode'],
           additionalProperties: false,
         },
         instagram_dm: {

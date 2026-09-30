@@ -231,15 +231,39 @@ describe('social publish end-to-end contract without external side effects', () 
     expect(downloadMedia).not.toHaveBeenCalled();
   });
 
-  it('rejects missing TikTok mode or direct-post privacy before side effects', async () => {
-    for (const tiktok of [undefined, { postMode: 'DIRECT_POST' }]) {
-      const result = await publishTool(site).execute({ ...input, tiktok } as PublishToolParams);
-      expect(result.success).toBe(false);
-      expect(result.social.error).toContain('explicit tiktok.postMode');
-    }
+  it.each([undefined, {}, { postMode: 'DIRECT_POST' }])('publishes directly and publicly when options are omitted: %j', async (tiktok) => {
+    const result = await publishTool(site).execute({ ...input, tiktok } as PublishToolParams);
+    expect(result.success).toBe(true);
+    expect(result.social.tiktok_post_mode).toBe('DIRECT_POST');
+    expect(confirmUpload).toHaveBeenCalled();
+    expect(createPost).toHaveBeenCalledWith(expect.objectContaining({
+      tiktok: directPost,
+      containers: [{ content: 'Caption', media: [{ url: hostedVideo, filename: 'clip.mp4' }] }],
+    }), site);
+  });
+
+  it('preserves a private override with the default direct mode', async () => {
+    const result = await publishTool(site).execute({ ...input, tiktok: { privacyLevel: 'SELF_ONLY' } } as PublishToolParams);
+    expect(result.success).toBe(true);
+    expect(createPost).toHaveBeenCalledWith(expect.objectContaining({
+      tiktok: { postMode: 'DIRECT_POST', privacyLevel: 'SELF_ONLY' },
+    }), site);
+  });
+
+  it('rejects invalid TikTok options before side effects instead of falling back to public', async () => {
+    const result = await publishTool(site).execute({ ...input, tiktok: { privacyLevel: 'invalid' } } as unknown as PublishToolParams);
+    expect(result.success).toBe(false);
     expect(createContent).not.toHaveBeenCalled();
     expect(getUploadUrl).not.toHaveBeenCalled();
     expect(createPost).not.toHaveBeenCalled();
+  });
+
+  it('reports a rejected public default without retrying a different privacy or mode', async () => {
+    createPost.mockRejectedValueOnce(Object.assign(new Error('privacy_level_option_mismatch'), { upstreamStatus: 400 }));
+    const result = await publishTool(site).execute({ ...input, tiktok: undefined });
+    expect(result).toMatchObject({ success: false, social: { status: 'failed', tiktok_post_mode: 'DIRECT_POST' } });
+    expect(createPost).toHaveBeenCalledTimes(1);
+    expect(createPost).toHaveBeenCalledWith(expect.objectContaining({ tiktok: directPost }), site);
   });
 
   it('never posts after upload or confirmation failure', async () => {
