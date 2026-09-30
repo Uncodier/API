@@ -117,6 +117,11 @@ function attachment(value: string, hosts: Set<string>, filename?: unknown): Prep
   return { url: url.href, filename: cleanFilename(filename ?? parts[parts.length - 1]) };
 }
 
+/** Shared preflight for the upload boundary; never widens the storage allowlist. */
+export function validateSocialMediaAttachment(value: string, filename?: unknown): PreparedSocialMedia['media'][number] {
+  return attachment(value, trustedStorageHosts(), filename);
+}
+
 function validateTenant(record: Record<string, unknown>, siteId: string): void {
   for (const key of ['tenant_id', 'tenantId', 'site_id', 'siteId']) {
     if (key in record && record[key] !== siteId) {

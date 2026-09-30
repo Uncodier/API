@@ -186,6 +186,9 @@ describe("Zavu Voice tools webhook", () => {
         reason: "missing_signature",
         signature_format: "missing",
         has_tool_header: false,
+        has_timestamp_header: false,
+        has_authorization_header: false,
+        secret_configured: true,
         secret_decryptable: true,
       }));
       expect(JSON.stringify(warn.mock.calls)).not.toMatch(/private@example|14155550100|whsec_test|encrypted/);

@@ -2,6 +2,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { WorkflowService } from '@/lib/services/workflow-service';
 import { sanitizeZavuRecipient } from '@/lib/services/channels/ChannelSendService';
 import { placeTrackedVoiceCall } from '@/lib/services/zavu/voice-call-service';
+import { VoicePlacementError } from '@/lib/services/zavu/voice-call-message-state';
 
 function isValidUUID(uuid: string): boolean {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -17,7 +18,7 @@ export type ChannelContactInfo = {
   visitorPhone?: string;
 };
 
-export type ChannelSendReason = 'missing_contact' | 'workflow_start_failed';
+export type ChannelSendReason = 'missing_contact' | 'workflow_start_failed' | 'voice_placement_failed' | 'placement_unknown';
 
 export type ChannelSendResult = {
   success: boolean;
@@ -25,6 +26,7 @@ export type ChannelSendResult = {
   error?: string;
   workflowId?: string;
   callId?: string;
+  delivery_status?: 'failed' | 'placement_unknown' | 'accepted';
   workflowStarted?: boolean;
   reason?: ChannelSendReason;
 };
@@ -171,14 +173,16 @@ export async function sendMessageByChannel(
     }
 
     if (channel === 'voice') {
-      const recipient = contactInfo.leadPhone?.replace(/[^\d+]/g, '');
+      const recipient = contactInfo.leadPhone?.replace(/[^\d+]/g, '') || '';
       const effectiveLeadId = leadId || contactInfo.leadId;
-      if (!recipient || !effectiveMessageId) {
+      if (!effectiveMessageId) {
         return {
           success: false,
+          method: 'voice_agent_call',
           workflowStarted: false,
-          reason: 'missing_contact',
-          error: 'Voice follow-up requires a lead phone number and saved message',
+          reason: 'placement_unknown',
+          delivery_status: 'placement_unknown',
+          error: 'Voice follow-up requires a saved message before placement',
         };
       }
       const result = await placeTrackedVoiceCall({
@@ -199,6 +203,7 @@ export async function sendMessageByChannel(
         method: 'voice_agent_call',
         workflowStarted: false,
         callId: result.call.id,
+        delivery_status: 'accepted',
       };
     }
 
@@ -331,6 +336,17 @@ export async function sendMessageByChannel(
     };
   } catch (error) {
     console.error('Error al enviar mensaje por canal usando workflows:', error);
+    if (channel === 'voice') {
+      const status = error instanceof VoicePlacementError ? error.deliveryStatus : 'placement_unknown';
+      return {
+        success: false,
+        method: 'voice_agent_call',
+        workflowStarted: false,
+        delivery_status: status,
+        reason: status === 'failed' ? 'voice_placement_failed' : 'placement_unknown',
+        error: status === 'failed' ? 'Voice call could not be placed' : 'Voice call placement requires reconciliation',
+      };
+    }
     return {
       success: false,
       workflowStarted: false,

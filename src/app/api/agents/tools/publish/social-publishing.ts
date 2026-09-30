@@ -6,9 +6,11 @@ import { createContentCore } from '../content/create/core';
 import { updateContentCore } from '../content/update/route';
 import { prepareSocialMedia } from './social-media';
 import { claimSocialContent } from './content-attempt';
+import { ensureOutstandMedia, type MediaUploadReceipt } from './outstand-media-upload';
+import { validateTikTokOptions } from './tiktok-options';
 import type { PublishToolParams } from './assistantProtocol';
 
-type DeliveryStatus = 'pending' | 'scheduled' | 'published' | 'failed' | 'partial_failure' | 'unknown';
+type DeliveryStatus = 'pending' | 'scheduled' | 'published' | 'inbox_draft' | 'failed' | 'partial_failure' | 'unknown';
 type Delivery = {
   success: boolean;
   status: DeliveryStatus;
@@ -17,6 +19,8 @@ type Delivery = {
   published_at?: string;
   error?: string;
   retry_safe: boolean;
+  tiktok_post_mode?: 'DIRECT_POST' | 'MEDIA_UPLOAD';
+  requires_creator_action?: boolean;
 };
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -93,6 +97,8 @@ export async function publishSocialContent(
     // All validation and read-only discovery happen before any content write/send.
     const accounts = await resolveSocialAccounts(client, siteId, input.social_accounts || []);
     safeValidationError = true;
+    const hasTikTok = accounts.some((account) => account.network === 'tiktok');
+    const tiktok = validateTikTokOptions(input.tiktok, hasTikTok);
     const media = await prepareSocialMedia(client, siteId, input);
     if (accounts.some((account) => ['instagram', 'tiktok'].includes(account.network)) && !media.media.length) {
       throw new Error('Instagram and TikTok require attached media. Supply media_urls or uploaded assets, not a link-only caption.');
@@ -102,7 +108,8 @@ export async function publishSocialContent(
     const mergedMetadata = { ...existing?.metadata, ...metadata };
     // Blog visibility is a local action, independent of social delivery status.
     const preserveBlogPublication = existing?.type === 'blog_post' || (!existing && input.type === 'blog_post');
-    const attempt = { attempt_id: randomUUID(), status: 'unknown', account_ids: accountIds, retry_safe: false };
+    const attempt = { attempt_id: randomUUID(), status: 'unknown', account_ids: accountIds, retry_safe: false,
+      ...(tiktok ? { tiktok_post_mode: tiktok.postMode } : {}) };
     if (contentId || (input.title && input.type)) {
       actions.push('content');
       const saved = existing
@@ -116,21 +123,50 @@ export async function publishSocialContent(
       savedContent = { success: true, id: contentId, status: saved.status };
     }
 
-    actions.push('social');
     let delivery: Delivery;
+    const uploadReceipts: MediaUploadReceipt[] = [];
+    let postAttempted = false;
     try {
+      let postMedia = media.media;
+      if (hasTikTok) {
+        actions.push('media_upload');
+        const uploaded = await ensureOutstandMedia(client, siteId, media.media, {
+          cached: existing?.metadata?.outstand_media_uploads,
+          scheduledAt: input.scheduledAt,
+          onUploaded: async (receipt) => {
+            uploadReceipts.push(receipt);
+            mergedMetadata.outstand_media_uploads = uploadReceipts;
+            if (contentId) await updateContentCore({ content_id: contentId, site_id: siteId,
+              metadata: { ...mergedMetadata, social_publication: attempt } });
+          },
+        });
+        postMedia = uploaded.media;
+        mergedMetadata.outstand_media_uploads = uploaded.uploads;
+      }
+      actions.push('social');
+      postAttempted = true;
       const response = await client.createPost({
         accounts: accountIds,
-        containers: [{ content: media.content, ...(media.media.length ? { media: media.media } : {}) }],
+        containers: [{ content: media.content, ...(postMedia.length ? { media: postMedia } : {}) }],
         ...(input.scheduledAt ? { scheduledAt: input.scheduledAt } : {}),
+        ...(tiktok ? { tiktok } : {}),
       }, siteId);
       delivery = socialDeliveryResult(response, accountIds);
+      if (tiktok) {
+        delivery.tiktok_post_mode = tiktok.postMode;
+        if (tiktok.postMode === 'MEDIA_UPLOAD') {
+          delivery.requires_creator_action = true;
+          if (delivery.status === 'published') delivery.status = 'inbox_draft';
+        }
+      }
     } catch (error) {
       const status = (error as { upstreamStatus?: number })?.upstreamStatus;
       const rejected = typeof status === 'number' && [400, 401, 403, 404, 422, 429].includes(status);
-      delivery = { success: false, status: rejected ? 'failed' : 'unknown',
-        account_ids: accountIds, retry_safe: rejected,
-        error: rejected ? 'The provider rejected the social post. Verify account permissions and media; this is not proof of disconnected accounts.'
+      delivery = { success: false, status: !postAttempted || rejected ? 'failed' : 'unknown',
+        account_ids: accountIds, retry_safe: !postAttempted || rejected,
+        ...(tiktok ? { tiktok_post_mode: tiktok.postMode } : {}),
+        error: !postAttempted ? 'Media upload to Outstand did not complete. Check media readiness, MIME type, and the 64 MiB limit. No post was sent; reuse this content_id when retrying.'
+          : rejected ? 'The provider rejected the social post. Verify account permissions and media; this is not proof of disconnected accounts.'
           : 'Social delivery is unconfirmed. Inspect provider status before retrying to avoid duplicates.' };
     }
     if (contentId && savedContent) {

@@ -13,7 +13,9 @@ function isValidUUID(uuid: string): boolean {
 
 export async function reuseInterventionMessage(
   messageId: string,
-  conversationId: string
+  conversationId: string,
+  userId: string,
+  content: string,
 ): Promise<SavedInterventionMessage | null> {
   if (!isValidUUID(messageId) || !isValidUUID(conversationId)) {
     return null;
@@ -21,10 +23,11 @@ export async function reuseInterventionMessage(
 
   const { data, error } = await supabaseAdmin
     .from('messages')
-    .select('id, conversation_id, custom_data')
+    .select('id, conversation_id, custom_data, content')
     .eq('id', messageId)
     .eq('conversation_id', conversationId)
     .eq('role', 'team_member')
+    .eq('user_id', userId)
     .single();
 
   if (error || !data) {
@@ -33,17 +36,29 @@ export async function reuseInterventionMessage(
   }
 
   const customData = { ...((data.custom_data as Record<string, unknown>) || {}) };
+  if (data.content !== content || customData.provider_call_id
+    || ['sent', 'delivered', 'received', 'sending', 'queued', 'running', 'success', 'placement_unknown'].includes(String(customData.status))
+    || ['success', 'completed', 'running', 'sending', 'queued'].includes(String(customData.command_status))
+    || ['placement_unknown', 'placing', 'queued', 'ringing', 'in_progress', 'completed'].includes(String(customData.call_status))
+    || (customData.status !== 'failed' && customData.command_status !== 'failed')) return null;
   delete customData.error_message;
   customData.command_status = 'pending';
   customData.status = 'pending';
 
-  const { error: updateError } = await supabaseAdmin
+  const { data: claimed, error: updateError } = await supabaseAdmin
     .from('messages')
     .update({ custom_data: customData })
-    .eq('id', messageId);
+    .eq('id', messageId)
+    .eq('conversation_id', conversationId)
+    .eq('user_id', userId)
+    .eq('role', 'team_member')
+    .eq('custom_data', JSON.stringify(data.custom_data))
+    .select('id')
+    .maybeSingle();
 
-  if (updateError) {
+  if (updateError || !claimed) {
     console.error('Failed to clear failed status on intervention retry:', updateError);
+    return null;
   }
 
   return {

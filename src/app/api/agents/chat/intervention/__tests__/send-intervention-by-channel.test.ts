@@ -14,6 +14,7 @@ jest.mock("@/lib/services/zavu/voice-call-service", () => ({
 }));
 
 import { sendMessageByChannel } from "../send-intervention-by-channel";
+import { VoicePlacementError } from '@/lib/services/zavu/voice-call-message-state';
 
 describe("Voice human intervention", () => {
   beforeEach(() => {
@@ -60,5 +61,19 @@ describe("Voice human intervention", () => {
       callId: "call-1",
       workflowStarted: false,
     });
+  });
+
+  it.each(['failed', 'placement_unknown'] as const)('propagates typed voice outcome %s without claiming a workflow failure', async (status) => {
+    mockPlaceTrackedVoiceCall.mockRejectedValue(new VoicePlacementError(new Error('Placement rejected'), status));
+    const result = await sendMessageByChannel('voice', 'Hello', { leadPhone: '+14155550100' }, 'site', null, 'conversation', 'lead', 'message');
+    expect(result).toMatchObject({ success: false, method: 'voice_agent_call', delivery_status: status });
+    expect(result.reason).not.toBe('workflow_start_failed');
+  });
+
+  it('lets the tracked service persist a missing-phone preflight failure', async () => {
+    mockPlaceTrackedVoiceCall.mockRejectedValue(new VoicePlacementError(new Error('Missing phone'), 'failed'));
+    const result = await sendMessageByChannel('voice', 'Hello', {}, 'site', null, 'conversation', 'lead', 'message');
+    expect(mockPlaceTrackedVoiceCall).toHaveBeenCalledWith(expect.objectContaining({ to: '', messageId: 'message' }));
+    expect(result.delivery_status).toBe('failed');
   });
 });

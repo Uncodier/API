@@ -104,6 +104,7 @@ describe("placeTrackedVoiceCall idempotency", () => {
     expect(messageUpdate).toHaveBeenCalledWith(expect.objectContaining({
       custom_data: expect.objectContaining({
         status: "sent",
+        command_status: 'success',
         voice_call_delivery_id: "delivery-1",
         provider_call_id: "call-1",
       }),
@@ -226,9 +227,9 @@ describe("placeTrackedVoiceCall idempotency", () => {
           }),
           insert: jest.fn().mockResolvedValue({ error: null }),
           update: jest.fn().mockReturnValue({
-            eq: jest.fn().mockReturnValue({
+            eq: jest.fn().mockReturnValue({ eq: jest.fn().mockReturnValue({
               eq: jest.fn().mockResolvedValue({ error: null }),
-            }),
+            }) }),
           }),
         };
       }
@@ -372,8 +373,10 @@ describe("placeTrackedVoiceCall idempotency", () => {
     expect(mockPlaceVoiceCall).toHaveBeenCalledWith(expect.objectContaining({ senderId: 'chosen-sender' }));
     expect(inserts[0]).toMatchObject({ zavu_sender_id: 'chosen-sender', site_id: 'site-1' });
     expect(filters).toContainEqual(['settings', 'site_id', 'site-1']);
-    expect(current).toMatchObject({ status: 'failed', call_status: 'no_answer', duration_seconds: 12, outreach_delivery: { attempt_id: 'attempt' } });
+    expect(current).toMatchObject({ status: 'failed', command_status: 'failed', call_status: 'no_answer', duration_seconds: 12, outreach_delivery: { attempt_id: 'attempt' } });
     mockPlaceVoiceCall.mockClear();
+    // Each following preflight assertion represents a fresh unsent message.
+    current = { status: 'pending', command_status: 'pending' };
     await expect(placeTrackedVoiceCall({ ...input, selectedSenderId: 'wrong-first' })).rejects.toThrow('Selected Voice sender');
     connections[1].status = 'disconnected';
     await expect(placeTrackedVoiceCall(input)).rejects.toThrow('Selected Voice sender');

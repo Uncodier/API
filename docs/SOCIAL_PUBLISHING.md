@@ -29,10 +29,52 @@ metadata is present. Posts use `containers[].media: [{url, filename}]`, not IDs.
 Direct media URLs must use HTTPS on `media.outstand.so`, or public storage on
 `db.makinari.com`/the configured Supabase project, in `assets`,
 `generative_images`, or `generative_videos`. Arbitrary remote origins, credentials,
-unsafe paths, and non-media filenames are rejected. Upload other external media
-through the existing approved media-upload flow first. The tool never downloads
+unsafe paths, and non-media filenames are rejected. The tool never downloads
 arbitrary URLs. Provider availability, codec, duration, dimensions, and account
 permission checks still occur downstream; this preflight is not a delivery test.
+
+### Managed media upload for TikTok
+
+When TikTok is among the selected accounts, `publish` automatically transfers
+trusted external media into Outstand before creating the post:
+
+1. Validate all source attachments and download each file with a 64 MiB cap.
+2. Request `POST /v1/media/upload` using the filename and verified MIME type.
+3. `PUT` the raw bytes to the returned presigned R2 URL, without API credentials.
+4. Confirm `POST /v1/media/{id}/confirm` with the byte size.
+5. Publish using only the confirmed active `media.outstand.so` URL and filename.
+
+Upload initialization, confirmation, and cached-media lookup are site-scoped.
+The batch has a 120-second deadline, downloads are byte-counted while streaming,
+and HTTPS sockets use validated DNS results (no DNS check/fetch gap). Redirects,
+private IPs, unexpected ports, partial transfers, MIME mismatches, and malformed
+provider responses fail closed. No post is sent if any upload fails; the tool
+does not fall back to the original storage URL.
+
+Confirmed media receipts are saved in `metadata.outstand_media_uploads` when a
+content record exists, without presigned URLs or credentials. Retrying that
+content after a confirmed rejection reuses unexpired receipts only after a
+site-scoped media lookup. Media already hosted by Outstand is not uploaded again.
+Expired receipts trigger a fresh transfer; unavailable/foreign cached assets
+fail closed. Upload/checkpoint failure leaves the content unpublished. No remote
+asset is deleted automatically, including an orphaned upload after interruption.
+
+### TikTok post mode
+
+`tiktok.postMode` must be explicit whenever TikTok is selected:
+
+- `DIRECT_POST` requires `privacyLevel`, chosen by the creator from their allowed
+  options (`PUBLIC_TO_EVERYONE`, `MUTUAL_FOLLOW_FRIENDS`, `FOLLOWER_OF_CREATOR`,
+  or `SELF_ONLY`). The tool validates the enum and Outstand/TikTok enforces account
+  eligibility. It never invents privacy or silently falls back to inbox mode.
+- `MEDIA_UPLOAD` sends an inbox draft. Results carry `requires_creator_action`
+  and cannot promote social content to `published`, even if the provider labels
+  its transfer as published. The creator must finish publishing inside TikTok.
+
+The documented Outstand API does not expose a creator-info lookup endpoint.
+Do not invent one or claim an enum value was live-verified. If valid visibility
+has not been selected, request it before a direct-post attempt. Uploading a file
+to Outstand's Media API and selecting TikTok `MEDIA_UPLOAD` are different actions.
 
 ## Content and delivery
 
@@ -75,7 +117,8 @@ npm test -- --runInBand src/app/api/agents/tools/publish/__tests__ src/lib/integ
 ```
 
 The suites mock all persistence/provider effects, including account discovery,
-media lookup, compare-and-set conflicts, provider rejection, and ambiguous sends.
+media lookup/upload/confirmation, HTTPS/DNS transfer, compare-and-set conflicts,
+provider rejection, and ambiguous sends.
 The API uses ESM Jest; dependency mocks are installed before dynamic imports.
 
 Provider references: [account identifiers](https://www.outstand.so/docs/getting-started#targeting-accounts)

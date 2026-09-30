@@ -8,6 +8,7 @@ export const publishToolDefinition = {
 For Voice, voice_mode "tts" sends a one-way spoken message and "agent_call" starts a two-way Zavu voice-agent call. agent_call also accepts a private objective and additional_context; these guide the conversation and are not spoken as the greeting.
 
 You MUST provide at least valid 'text', 'assets' (uploaded Outstand media IDs), 'urls', 'media_urls', or 'instagram_dm.media_urls'. For social posts attach images/videos using media_urls from trusted public storage, or uploaded assets. Ordinary urls are text links; recognized image/video urls are attached for compatibility. Instagram/TikTok cannot publish a link-only caption.
+When TikTok is selected, the tool automatically uploads external trusted media to Outstand and confirms it before posting (64 MiB per file). Already hosted Outstand media is reused. Do not ask the user to verify our storage domain. Provide tiktok.postMode explicitly: DIRECT_POST requires the creator-selected privacyLevel from their allowed options; never invent visibility or default to public. MEDIA_UPLOAD sends an inbox draft that the creator must publish manually. Never silently switch modes. Outstand's documented API does not expose a creator-info endpoint; obtain the creator's valid selection rather than inventing an endpoint or privacy value.
 Social delivery status pending/scheduled means accepted, NOT published. Report success as published only for status published. For failed, partial_failure, or unknown status, inspect the existing provider post before retrying. Reuse content_id after a confirmed rejection instead of creating duplicate content. Never automatically resend when retry_safe is false.
 If sending email to audience, 'subject' is required.
 
@@ -46,11 +47,21 @@ The tool will return an object detailing the success/failure of each attempted a
         text: { type: 'string', description: 'Main text content.' },
         assets: { type: 'array', items: { type: 'string' }, description: 'Uploaded Outstand media IDs; resolved to URL and filename before posting.' },
         urls: { type: 'array', items: { type: 'string' }, description: 'Text links. For social posts, recognized image/video URLs are attached as media.' },
-        media_urls: { type: 'array', items: { type: 'string' }, description: 'Social post image/video URLs from trusted public storage. Use this for generated videos, not a link in the caption.' },
+        media_urls: { type: 'array', items: { type: 'string' }, description: 'Social post image/video URLs from trusted public storage. TikTok uploads these to Outstand automatically before sending. Maximum 64 MiB per file.' },
 
         // Social
         social_accounts: { type: 'array', items: { type: 'string' }, description: 'Exact connected account IDs from social_media_accounts. All targets must belong to the current site and be active. Never invent IDs.' },
         scheduledAt: { type: 'string', description: 'ISO 8601 date to schedule social post (optional).' },
+        tiktok: {
+          type: 'object',
+          description: 'Required for TikTok. Choose direct publishing with explicit creator-selected privacy, or an inbox draft. Never guess privacy or silently fall back to an inbox draft.',
+          properties: {
+            postMode: { type: 'string', enum: ['DIRECT_POST', 'MEDIA_UPLOAD'] },
+            privacyLevel: { type: 'string', enum: ['PUBLIC_TO_EVERYONE', 'MUTUAL_FOLLOW_FRIENDS', 'FOLLOWER_OF_CREATOR', 'SELF_ONLY'], description: 'Required for DIRECT_POST only. Use the creator-selected value from their allowed privacy options. The provider enforces eligibility.' },
+          },
+          required: ['postMode'],
+          additionalProperties: false,
+        },
         instagram_dm: {
           type: 'object',
           description: 'Reply to an existing Instagram conversation. Instagram does not allow initiating arbitrary DMs.',

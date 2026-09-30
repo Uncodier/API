@@ -17,6 +17,7 @@ import {
 } from './types';
 import { mergeCommentResults, networksFromPost, normalizeCommentResult, usernameFromPost } from './comments';
 import type { CommentsResult } from './comments';
+import { readResponseWithLimit } from '@/lib/security/limited-response';
 
 const BASE_URL = 'https://api.outstand.so/v1';
 
@@ -27,7 +28,7 @@ export class OutstandClient {
     this.apiKey = apiKey;
   }
 
-  private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  private async request<T>(endpoint: string, options: RequestInit = {}, maxResponseBytes?: number): Promise<T> {
     const url = `${BASE_URL}${endpoint}`;
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.apiKey}`,
@@ -38,9 +39,19 @@ export class OutstandClient {
     }
 
     const response = await fetch(url, { ...options, headers });
+    let boundedText: string | undefined;
+    if (maxResponseBytes) {
+      try {
+        boundedText = (await readResponseWithLimit(response, maxResponseBytes)).toString('utf8');
+      } catch {
+        void response.body?.cancel().catch(() => {});
+        throw new Error('Outstand media response exceeded the limit or could not be read.');
+      }
+    }
     
     if (!response.ok) {
-      const errorBody = await response.json().catch(() => ({}));
+      const errorBody = boundedText === undefined ? await response.json().catch(() => ({}))
+        : (() => { try { return JSON.parse(boundedText); } catch { return {}; } })();
       const details = typeof errorBody === 'string' ? errorBody : JSON.stringify(errorBody);
       const error = new Error(
         `Outstand API Error: ${response.status} ${response.statusText} - ${details}`
@@ -50,7 +61,7 @@ export class OutstandClient {
       throw error;
     }
 
-    const text = await response.text();
+    const text = boundedText ?? await response.text();
     if (!text) return {} as T;
     
     try {
@@ -371,7 +382,7 @@ export class OutstandClient {
 
   // --- Media ---
 
-  async getUploadUrl(filename: string, contentType?: string, tenantId?: string): Promise<UploadUrlResponse> {
+  async getUploadUrl(filename: string, contentType?: string, tenantId?: string, signal?: AbortSignal): Promise<UploadUrlResponse> {
     const headers: Record<string, string> = {};
     if (tenantId) {
       headers['X-Tenant-ID'] = tenantId;
@@ -380,11 +391,13 @@ export class OutstandClient {
     return this.request('/media/upload', {
       method: 'POST',
       headers,
+      signal,
+      redirect: 'error',
       body: JSON.stringify({ filename, content_type: contentType }),
-    });
+    }, 64 * 1024);
   }
 
-  async confirmUpload(id: string, size?: number, tenantId?: string): Promise<ConfirmUploadResponse> {
+  async confirmUpload(id: string, size?: number, tenantId?: string, signal?: AbortSignal): Promise<ConfirmUploadResponse> {
     const headers: Record<string, string> = {};
     if (tenantId) {
       headers['X-Tenant-ID'] = tenantId;
@@ -393,11 +406,13 @@ export class OutstandClient {
     return this.request(`/media/${id}/confirm`, {
       method: 'POST',
       headers,
+      signal,
+      redirect: 'error',
       body: JSON.stringify({ size }),
-    });
+    }, 64 * 1024);
   }
 
-  async getMedia(id: string, tenantId?: string): Promise<any> {
+  async getMedia(id: string, tenantId?: string, signal?: AbortSignal): Promise<any> {
     const headers: Record<string, string> = {};
     if (tenantId) {
       headers['X-Tenant-ID'] = tenantId;
@@ -406,7 +421,9 @@ export class OutstandClient {
     return this.request(`/media/${id}`, {
       method: 'GET',
       headers,
-    });
+      redirect: 'error',
+      ...(signal ? { signal } : {}),
+    }, 64 * 1024);
   }
 
   async listMedia(limit: number = 50, offset: number = 0, tenantId?: string): Promise<any> {

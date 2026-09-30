@@ -1,4 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import crypto from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 
 const mockApiKeyAuth: any = jest.fn();
@@ -49,7 +50,63 @@ describe('request middleware route classification', () => {
   it('recognizes only explicitly supported webhook surfaces', () => {
     expect(isWebhookPath('/api/integrations/stripe/webhook')).toBe(true);
     expect(isWebhookPath('/api/integrations/agentmail/webhook/message-received')).toBe(true);
+    expect(isWebhookPath('/api/integrations/zavu/voice-tools')).toBe(true);
     expect(isWebhookPath('/api/integrations/stripe/checkout')).toBe(false);
+  });
+
+  it.each([true, false])('preserves voice tool signatures and raw bodies (metadata headers: %s)', async (includeMetadata) => {
+    const rawBody = '{ "tool": "skill_lookup", "arguments": { "action": "list" } }\n';
+    const signature = crypto.createHmac('sha256', 'test-voice-secret')
+      .update(rawBody).digest('hex');
+    const headers = new Headers({
+      'content-type': 'application/json',
+      'x-zavu-signature': signature,
+      // Middleware must strip spoofed application identity, not webhook proof.
+      'x-auth-user-id': 'spoofed-user',
+      'x-auth-validated': 'true',
+      'x-api-key-data': 'spoofed-key-data',
+    });
+    if (includeMetadata) {
+      headers.set('x-zavu-tool', 'skill_lookup');
+      headers.set('x-zavu-timestamp', String(Date.now()));
+    }
+    const request = new NextRequest(
+      'https://backend.example.com/api/integrations/zavu/voice-tools?siteId=aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+      { method: 'POST', headers, body: rawBody },
+    );
+
+    const response = await requestMiddleware(request);
+
+    expect(response.headers.get('x-middleware-next')).toBe('1');
+    for (const name of ['x-zavu-signature', 'x-zavu-tool', 'x-zavu-timestamp']) {
+      expect(response.headers.get(`x-middleware-request-${name}`)).toBe(headers.get(name));
+    }
+    for (const name of ['x-auth-user-id', 'x-auth-validated', 'x-api-key-data']) {
+      expect(response.headers.get(`x-middleware-request-${name}`)).toBeNull();
+    }
+    expect(request.bodyUsed).toBe(false);
+    expect(await request.text()).toBe(rawBody);
+    expect(mockApiKeyAuth).not.toHaveBeenCalled();
+  });
+
+  it('does not manufacture authentication for an unsigned voice callback', async () => {
+    const request = new NextRequest(
+      'https://backend.example.com/api/integrations/zavu/voice-tools?siteId=aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ tool: 'skill_lookup', arguments: { action: 'list' } }),
+      },
+    );
+
+    const response = await requestMiddleware(request);
+
+    // Passing middleware delegates authentication to the route; it is not proof.
+    expect(response.headers.get('x-middleware-next')).toBe('1');
+    for (const name of ['x-zavu-signature', 'x-zavu-tool', 'x-zavu-timestamp', 'authorization', 'x-auth-validated']) {
+      expect(response.headers.get(`x-middleware-request-${name}`)).toBeNull();
+    }
+    expect(mockApiKeyAuth).not.toHaveBeenCalled();
   });
 
   it('defers prompt image generation limits until after cache lookup', () => {

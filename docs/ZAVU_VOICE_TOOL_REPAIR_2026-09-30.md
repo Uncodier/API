@@ -1,5 +1,83 @@
 # Voice tool incident: 2026-09-30
 
+## Follow-up: live callback arrived without a signature
+
+**Status: blocked on signed callbacks from the voice runtime, not repaired by
+the previous API patch.** The new diagnostics now distinguish this from a bad
+HMAC digest or an unreadable local secret.
+
+- Conversation: `32e0ce92-0e2a-5f55-b160-4c11be24f9ad`.
+- Provider call: `px7qtfhpkxr2ycrdawaskvkebs8fcyhx`.
+- Failed tool turn: `2026-09-30T03:19:35.718Z`, HTTP 401,
+  `VOICE_TOOL_AUTH_FAILED`.
+- Application request: `9922a0b8-aabf-4621-be4d-da7011680fbc`.
+- Vercel request: `fd2k8-1790738374857-c239f62433dd`.
+- Production deployment: `dpl_7rsrsrkFstFnpLA4hQdSb6zM3tYd`, commit
+  `b4a8c93e0133f72dfbe725144963a22e87292a9c`. The diagnostic patch was deployed.
+
+The correlated server log contains only these authentication diagnostics:
+
+```text
+reason: missing_signature
+signature_format: missing
+has_tool_header: false
+has_timestamp_header: false
+has_authorization_header: false
+secret_configured: true
+secret_decryptable: true
+```
+
+### Controls run against production
+
+1. Zavu's agent-scoped manual `skill_lookup` test (`action: list`, `limit: 1`)
+   returned `run.success: true`, `statusCode: 200` at
+   `2026-09-30T03:24:38.263Z`. Run: `qx7kjf6wj2qspfaa1jv6q4acdx8fczxp`.
+   Its API log records `execution_completed`, application request
+   `50bdb551-adcb-49b2-8143-f32be0ead0f7`.
+2. A locally signed request with only `{ "arguments": {} }`, using the stored
+   agent secret, passed authentication and returned HTTP 400 `Missing tool name`
+   (request `0d98c9ad-6e13-486f-8406-331976ee4d17`). No tool was executed.
+3. The same no-tool payload without a signature returned HTTP 401
+   `VOICE_TOOL_AUTH_FAILED` (request `5fc39022-ccd8-4e9a-98b7-9b8e301ed4d6`).
+
+The middleware preserves incoming webhook headers and does not parse the body.
+Regression tests cover signatures with and without the optional tool/timestamp
+headers, exact raw-body preservation, and unsigned callbacks remaining unsigned.
+The route test asserts that the missing-header incident still fails closed.
+No production authentication logic, secrets, agent associations or tool
+configuration were changed during this follow-up.
+
+### Required upstream fix and acceptance criteria
+
+Zavu needs to trace the real-call execution path for the call/request above:
+load the tool's configured signing secret, sign the exact HTTP body with
+HMAC-SHA256, and send `X-Zavu-Signature` to the webhook. Inspect any intermediate
+voice transport for dropped headers. The API log proves the header is missing
+at receipt; it does not identify which upstream component omitted it. The
+manual-test path works and is **not** an end-to-end voice-runtime test.
+
+Do not rotate a working secret, widen accepted digest formats, add a secret to
+the webhook URL, or accept unsigned calls to conceal this failure. Tool-list
+responses intentionally omit `webhookSecret`; its absence in that response is
+not evidence that the provider has no secret.
+
+Separately, the provider's `IDENTIFY_LEAD` definition still requires only
+`name`, `email`, `phone` and has not advertised the new required `consent` input.
+The authorized re-sync described below remains necessary; it does not solve
+the missing-signature problem. Before closing the incident, verify the synced
+contract and a consented real inbound call whose tool executes successfully.
+
+### Follow-up local validation
+
+- `npm run test:voice`: 17 suites, 197 tests passed.
+- `npm test -- --runInBand src/middleware/__tests__/requestMiddleware.test.ts`:
+  9 tests passed, including the three new header/body regression cases.
+- The broader middleware run passed 40/44 tests. Four existing `apiKeyAuth`
+  tests fail because they reach the real Supabase service without offline
+  credentials; the same four failures reproduce when that unchanged suite runs
+  alone. No production credentials were loaded into the test environment.
+- `git diff --check`: passed. These checks do not prove a real-call repair.
+
 ## Verified incident
 
 - Conversation: `3aafe97b-bd06-59b8-85c6-88a0c0ac39f3`.

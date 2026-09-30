@@ -8,13 +8,18 @@ const claimContent = jest.fn<(...args: unknown[]) => Promise<{ id: string; statu
 const listAccounts = jest.fn<() => Promise<unknown>>();
 const createPost = jest.fn<(...args: unknown[]) => Promise<unknown>>();
 const getMedia = jest.fn<() => Promise<unknown>>();
+const getUploadUrl = jest.fn<(...args: unknown[]) => Promise<unknown>>();
+const confirmUpload = jest.fn<(...args: unknown[]) => Promise<unknown>>();
+const downloadMedia = jest.fn<(...args: unknown[]) => Promise<unknown>>();
+const putMedia = jest.fn<(...args: unknown[]) => Promise<void>>();
 const bulkSend = jest.fn();
-const client = { listAccounts, createPost, getMedia };
+const client = { listAccounts, createPost, getMedia, getUploadUrl, confirmUpload };
 
 jest.unstable_mockModule('../../content/create/core', () => ({ createContentCore: createContent }));
 jest.unstable_mockModule('../../content/update/route', () => ({ updateContentCore: updateContent }));
 jest.unstable_mockModule('@/lib/database/content-db', () => ({ getContentById: getContent }));
 jest.unstable_mockModule('../content-attempt', () => ({ claimSocialContent: claimContent }));
+jest.unstable_mockModule('../media-transfer-http', () => ({ downloadMedia, putMedia }));
 jest.unstable_mockModule('@/lib/integrations/outstand/client', () => ({ getOutstandClient: () => client }));
 jest.unstable_mockModule('../../sendBulkMessages/assistantProtocol', () => ({ sendBulkMessagesTool: bulkSend }));
 jest.unstable_mockModule('../../sendEmail/route', () => ({ sendEmailCore: jest.fn() }));
@@ -35,12 +40,15 @@ beforeAll(async () => {
 });
 const site = '00000000-0000-4000-8000-000000000001';
 const video = `https://db.makinari.com/storage/v1/object/public/generative_videos/${site}/clip.mp4`;
+const hostedVideo = 'https://media.outstand.so/org/upload/clip.mp4';
+const directPost = { postMode: 'DIRECT_POST', privacyLevel: 'PUBLIC_TO_EVERYONE' } as const;
 const accountRows = [
   { id: 'ig-one', network: 'instagram', username: 'demo.ig', isActive: 1, tenant_id: site },
   { id: 'tt-one', network: 'tiktok', username: 'demo.tt', isActive: 1, tenant_id: site },
 ];
 const input: PublishToolParams = {
   title: 'Video', type: 'social_post', text: 'Caption', urls: [video], social_accounts: ['tiktok', 'instagram'],
+  tiktok: directPost,
 };
 const acceptedPost = () => ({ success: true, post: {
   id: 'post-one', publishedAt: null, scheduledAt: null,
@@ -56,6 +64,12 @@ beforeEach(() => {
   updateContent.mockResolvedValue({ id: 'content-one', status: 'draft' });
   claimContent.mockResolvedValue({ id: 'content-one', status: 'draft' });
   getContent.mockResolvedValue(null);
+  downloadMedia.mockResolvedValue({ bytes: new Uint8Array([1, 2, 3]), contentType: 'video/mp4' });
+  putMedia.mockResolvedValue();
+  getUploadUrl.mockResolvedValue({ success: true, data: { id: 'media-one', expires_in: 3600,
+    upload_url: 'https://bucket.r2.cloudflarestorage.com/org/clip.mp4?X-Amz-Signature=test' } });
+  confirmUpload.mockResolvedValue({ success: true, data: { id: 'media-one', status: 'active', filename: 'clip.mp4',
+    url: hostedVideo, size: 3, content_type: 'video/mp4', expires_at: new Date(Date.now() + 86400000).toISOString() } });
 });
 afterEach(() => { jest.restoreAllMocks(); });
 
@@ -66,8 +80,10 @@ describe('social publish end-to-end contract without external side effects', () 
     expect(result).toMatchObject({ success: true, social: { post_id: 'post-one', status: 'pending' } });
     expect(listAccounts).toHaveBeenCalledWith(site, expect.objectContaining({ tenantId: site }));
     expect(createPost).toHaveBeenCalledWith({ accounts: ['tt-one', 'ig-one'], containers: [{
-      content: 'Caption', media: [{ url: video, filename: 'clip.mp4' }],
-    }] }, site);
+      content: 'Caption', media: [{ url: hostedVideo, filename: 'clip.mp4' }],
+    }], tiktok: directPost }, site);
+    expect(getUploadUrl).toHaveBeenCalledWith('clip.mp4', 'video/mp4', site, expect.any(AbortSignal));
+    expect(confirmUpload).toHaveBeenCalledWith('media-one', 3, site, expect.any(AbortSignal));
     expect(createContent).toHaveBeenCalledWith(expect.objectContaining({ status: 'draft' }));
     expect(updateContent).toHaveBeenCalledWith(expect.objectContaining({ status: 'draft', published_at: null,
       metadata: expect.objectContaining({ outstand_post_id: 'post-one' }) }));
@@ -149,7 +165,7 @@ describe('social publish end-to-end contract without external side effects', () 
     const result = await publishTool(site).execute({ ...input, type: 'blog_post' });
     expect(result.social.success).toBe(false);
     expect(createContent).toHaveBeenCalledWith(expect.objectContaining({ status: 'published' }));
-    expect(updateContent.mock.calls[0][0]).not.toHaveProperty('status');
+    expect(updateContent.mock.calls.every(([call]) => !Object.hasOwn(call, 'status'))).toBe(true);
   });
 
   it('blocks retries when a legacy record already has an Outstand post ID', async () => {
@@ -165,7 +181,7 @@ describe('social publish end-to-end contract without external side effects', () 
     expect(result).toMatchObject({ success: false, social: { status: 'unknown', retry_safe: false } });
     expect(createPost).toHaveBeenCalledTimes(1);
     createPost.mockResolvedValue(acceptedPost());
-    updateContent.mockRejectedValue(new Error('Database unavailable'));
+    updateContent.mockResolvedValueOnce({ id: 'content-one' }).mockRejectedValue(new Error('Database unavailable'));
     const accepted = await publishTool(site).execute(input);
     expect(accepted).toMatchObject({ success: false, content: { id: 'content-one', success: false },
       social: { post_id: 'post-one', status: 'pending', retry_safe: false } });
@@ -197,10 +213,10 @@ describe('social publish end-to-end contract without external side effects', () 
   });
 
   it('supports explicit media_urls and no-caption video posts', async () => {
-    const result = await publishTool(site).execute({ social_accounts: ['ig-one', 'tt-one'], media_urls: [video] });
+    const result = await publishTool(site).execute({ social_accounts: ['ig-one', 'tt-one'], media_urls: [video], tiktok: directPost });
     expect(result.success).toBe(true);
     expect(createPost).toHaveBeenCalledWith(expect.objectContaining({ containers: [{
-      content: '', media: [{ url: video, filename: 'clip.mp4' }],
+      content: '', media: [{ url: hostedVideo, filename: 'clip.mp4' }],
     }] }), site);
   });
 
@@ -211,6 +227,66 @@ describe('social publish end-to-end contract without external side effects', () 
     expect(getMedia).not.toHaveBeenCalled();
     expect(createContent).not.toHaveBeenCalled();
     expect(createPost).not.toHaveBeenCalled();
+    expect(getUploadUrl).not.toHaveBeenCalled();
+    expect(downloadMedia).not.toHaveBeenCalled();
+  });
+
+  it('rejects missing TikTok mode or direct-post privacy before side effects', async () => {
+    for (const tiktok of [undefined, { postMode: 'DIRECT_POST' }]) {
+      const result = await publishTool(site).execute({ ...input, tiktok } as PublishToolParams);
+      expect(result.success).toBe(false);
+      expect(result.social.error).toContain('explicit tiktok.postMode');
+    }
+    expect(createContent).not.toHaveBeenCalled();
+    expect(getUploadUrl).not.toHaveBeenCalled();
+    expect(createPost).not.toHaveBeenCalled();
+  });
+
+  it('never posts after upload or confirmation failure', async () => {
+    confirmUpload.mockResolvedValue({ success: false, error: 'Storage not ready' });
+    const result = await publishTool(site).execute(input);
+    expect(result).toMatchObject({ success: false, content: { id: 'content-one' }, social: { status: 'failed', retry_safe: true } });
+    expect(createPost).not.toHaveBeenCalled();
+    expect(updateContent).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'draft' }));
+  });
+
+  it('checkpoints confirmed upload receipts and reuses them on a confirmed-rejection retry', async () => {
+    createPost.mockRejectedValueOnce(Object.assign(new Error('Rejected'), { upstreamStatus: 400 }));
+    await publishTool(site).execute(input);
+    const saved = updateContent.mock.calls[updateContent.mock.calls.length - 1][0].metadata as Record<string, unknown>;
+    expect(saved.outstand_media_uploads).toEqual([expect.objectContaining({ media_id: 'media-one', url: hostedVideo })]);
+    expect(JSON.stringify(saved)).not.toContain('X-Amz-Signature');
+    getContent.mockResolvedValue({ id: 'content-one', site_id: site, type: 'social_post', status: 'draft', metadata: saved });
+    getMedia.mockResolvedValue({ success: true, data: { id: 'media-one', status: 'active', filename: 'clip.mp4',
+      url: hostedVideo, content_type: 'video/mp4', expires_at: new Date(Date.now() + 86400000).toISOString() } });
+    const result = await publishTool(site).execute({ ...input, content_id: 'content-one' });
+    expect(result.success).toBe(true);
+    expect(getUploadUrl).toHaveBeenCalledTimes(1);
+    expect(downloadMedia).toHaveBeenCalledTimes(1);
+    expect(createPost).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not resend Instagram when the request selects only TikTok', async () => {
+    createPost.mockResolvedValue({ success: true, post: { id: 'tt-post', socialAccounts: [{ id: 'tt-one' }] } });
+    const result = await publishTool(site).execute({ ...input, social_accounts: ['tt-one'] });
+    expect(result.success).toBe(true);
+    expect(createPost).toHaveBeenCalledWith(expect.objectContaining({ accounts: ['tt-one'], tiktok: directPost }), site);
+  });
+
+  it('leaves Instagram-only uploads unchanged and does not transfer media', async () => {
+    await publishTool(site).execute({ ...input, social_accounts: ['ig-one'], tiktok: undefined });
+    expect(downloadMedia).not.toHaveBeenCalled();
+    expect(createPost).toHaveBeenCalledWith({ accounts: ['ig-one'], containers: [{ content: 'Caption',
+      media: [{ url: video, filename: 'clip.mp4' }],
+    }] }, site);
+  });
+
+  it('does not describe a MEDIA_UPLOAD inbox delivery as a published profile post', async () => {
+    createPost.mockResolvedValue({ success: true, post: { id: 'post-one', publishedAt: new Date().toISOString(),
+      socialAccounts: [{ id: 'tt-one', status: 'published' }, { id: 'ig-one', status: 'published' }] } });
+    const result = await publishTool(site).execute({ ...input, tiktok: { postMode: 'MEDIA_UPLOAD' } });
+    expect(result.social).toMatchObject({ status: 'inbox_draft', requires_creator_action: true, tiktok_post_mode: 'MEDIA_UPLOAD' });
+    expect(updateContent).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'draft' }));
   });
 
   it.each([

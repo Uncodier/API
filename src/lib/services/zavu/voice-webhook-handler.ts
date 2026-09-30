@@ -7,6 +7,7 @@ import {
 } from "./inbound-voice-context";
 import { persistVoiceTranscript } from "./voice-transcript";
 import { normalizeVoiceDeliveryStatus } from "./voice-status";
+import { voiceCommandStatus } from './voice-call-message-state';
 
 function tenantDatabase() {
   return supabaseAdmin.schema(
@@ -221,6 +222,7 @@ export async function handleVoiceCallEvent(event: any): Promise<void> {
     provider_call_id: callId,
     call_status: status,
   };
+  messageCustomData.command_status = voiceCommandStatus(messageCustomData.status);
   if (durationSeconds != null) messageCustomData.duration_seconds = durationSeconds;
   if (endReason != null) messageCustomData.end_reason = endReason;
   if (data?.transcriptAvailable === true || (transcript?.length ?? 0) > 0) {

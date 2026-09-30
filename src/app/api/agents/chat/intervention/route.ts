@@ -7,11 +7,7 @@ import {
   type SavedInterventionMessage,
 } from './reuse-intervention-message';
 import { getConversationChannel, sendMessageByChannel } from './send-intervention-by-channel';
-
-function isValidUUID(uuid: string): boolean {
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  return uuidRegex.test(uuid);
-}
+import { authorizeIntervention, InterventionRequestError } from './authorize-intervention';
 
 const PENDING_CUSTOM_DATA = {
   command_status: 'pending',
@@ -21,44 +17,13 @@ const PENDING_CUSTOM_DATA = {
 async function saveMessages(
   userId: string,
   interventionMessage: string,
-  conversationId?: string,
+  conversationId: string,
   leadId?: string,
   visitorId?: string,
   conversationTitle?: string,
   agentId?: string,
-  commandId?: string
 ) {
   try {
-    if (!conversationId) {
-      const conversationData: any = { user_id: userId };
-      if (leadId) conversationData.lead_id = leadId;
-      if (visitorId) conversationData.visitor_id = visitorId;
-      if (agentId) conversationData.agent_id = agentId;
-      if (conversationTitle) conversationData.title = conversationTitle;
-
-      const { data: conversation, error: convError } = await supabaseAdmin
-        .from('conversations')
-        .insert([conversationData])
-        .select()
-        .single();
-
-      if (convError) {
-        console.error('Error al crear conversación de intervención:', convError);
-        return null;
-      }
-
-      conversationId = conversation.id;
-    } else if (conversationTitle) {
-      const { error: updateError } = await supabaseAdmin
-        .from('conversations')
-        .update({ title: conversationTitle })
-        .eq('id', conversationId);
-
-      if (updateError) {
-        console.error('Error al actualizar título de conversación:', updateError);
-      }
-    }
-
     const interventionMessageData: any = {
       conversation_id: conversationId,
       user_id: userId,
@@ -70,7 +35,6 @@ async function saveMessages(
     if (leadId) interventionMessageData.lead_id = leadId;
     if (visitorId) interventionMessageData.visitor_id = visitorId;
     if (agentId) interventionMessageData.agent_id = agentId;
-    if (commandId) interventionMessageData.command_id = commandId;
 
     const { data: savedInterventionMessage, error: interventionMsgError } = await supabaseAdmin
       .from('messages')
@@ -79,7 +43,7 @@ async function saveMessages(
       .single();
 
     if (interventionMsgError) {
-      console.error('Error al guardar mensaje de intervención:', interventionMsgError);
+      console.error('Failed to save intervention message:', interventionMsgError);
       return null;
     }
 
@@ -89,30 +53,7 @@ async function saveMessages(
       conversationTitle
     };
   } catch (error) {
-    console.error('Error al guardar mensaje de intervención en la base de datos:', error);
-    return null;
-  }
-}
-
-async function getAgentInfo(agentId: string): Promise<{ site_id?: string } | null> {
-  try {
-    if (!isValidUUID(agentId)) {
-      return null;
-    }
-
-    const { data, error } = await supabaseAdmin
-      .from('agents')
-      .select('id, site_id')
-      .eq('id', agentId)
-      .single();
-
-    if (error || !data) {
-      return null;
-    }
-
-    return { site_id: data.site_id };
-  } catch (error) {
-    console.error('Error al obtener información del agente para intervención:', error);
+    console.error('Failed to persist intervention message:', error);
     return null;
   }
 }
@@ -120,59 +61,18 @@ async function getAgentInfo(agentId: string): Promise<{ site_id?: string } | nul
 export async function POST(request: Request) {
   let savedMessages: SavedInterventionMessage | null = null;
   try {
-    const body = await request.json();
-
+    let body: unknown;
+    try { body = await request.json(); } catch {
+      throw new InterventionRequestError('Invalid JSON body', 400);
+    }
     const {
-      conversationId: conversationIdCamel,
-      conversation_id: conversationIdSnake,
-      message,
-      agentId,
-      user_id,
-      conversation_title,
-      lead_id,
-      visitor_id,
-      site_id: requestSiteId,
-      message_id: requestMessageId
-    } = body;
-    const conversationId = conversationIdCamel || conversationIdSnake;
-
-    if (!message) {
-      return NextResponse.json(
-        { success: false, error: { code: 'INVALID_REQUEST', message: 'message is required' } },
-        { status: 400 }
-      );
-    }
-
-    if (!user_id) {
-      return NextResponse.json(
-        { success: false, error: { code: 'INVALID_REQUEST', message: 'user_id is required' } },
-        { status: 400 }
-      );
-    }
-
-    if (!isValidUUID(user_id)) {
-      return NextResponse.json(
-        { success: false, error: { code: 'INVALID_REQUEST', message: 'user_id must be a valid UUID' } },
-        { status: 400 }
-      );
-    }
-
-    let agentInfo = null;
-    if (agentId) {
-      agentInfo = await getAgentInfo(agentId);
-      if (!agentInfo) {
-        return NextResponse.json(
-          { success: false, error: { code: 'AGENT_NOT_FOUND', message: 'The specified agent was not found' } },
-          { status: 404 }
-        );
-      }
-    }
-
-    const site_id = requestSiteId || (agentInfo ? agentInfo.site_id : null);
-    const conversationTitle = conversation_title || "Intervention Conversation";
+      conversationId, message, agentId, userId: user_id,
+      leadId: lead_id, visitorId: visitor_id, siteId: site_id,
+      messageId: requestMessageId, title: conversationTitle,
+    } = await authorizeIntervention(request, body);
 
     if (requestMessageId && conversationId) {
-      savedMessages = await reuseInterventionMessage(requestMessageId, conversationId);
+      savedMessages = await reuseInterventionMessage(requestMessageId, conversationId, user_id, message);
       if (!savedMessages) {
         return NextResponse.json(
           { success: false, error: { code: 'INVALID_REQUEST', message: 'message_id does not belong to this conversation' } },
@@ -276,6 +176,7 @@ export async function POST(request: Request) {
         method: channelSendResult.method,
         workflowId: channelSendResult.workflowId,
         callId: channelSendResult.callId,
+        delivery_status: channelSendResult.delivery_status,
         error: channelSendResult.error
       };
     }
@@ -285,7 +186,13 @@ export async function POST(request: Request) {
       { status: 200 }
     );
   } catch (error) {
-    console.error('Error al procesar la solicitud de intervención:', error);
+    if (error instanceof InterventionRequestError) {
+      return NextResponse.json(
+        { success: false, error: { code: 'INVALID_REQUEST', message: error.message } },
+        { status: error.status },
+      );
+    }
+    console.error('Failed to process intervention request:', error);
     return NextResponse.json(
       interventionPostSaveErrorBody(savedMessages),
       { status: 500 }

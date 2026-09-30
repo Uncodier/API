@@ -9,6 +9,12 @@ import {
 import { buildVoiceFollowUpContext } from "./voice-follow-up-context";
 import { normalizeVoiceDeliveryStatus } from "./voice-status";
 import { ensureVoiceContactMetadataEnabled } from "./voice-agent-context";
+import {
+  markMessagePlaced,
+  markMessagePlacementError,
+  VoicePlacementError,
+  type VoicePlacementStatus,
+} from './voice-call-message-state';
 
 const E164_PHONE = /^\+[1-9]\d{6,14}$/;
 const CONNECTED_STATUSES = new Set(["connected", "active", "synced"]);
@@ -207,84 +213,6 @@ export async function assertVoiceCallAllowed(
   }
 }
 
-async function markMessagePlaced(
-  messageId: string,
-  call: ZavuVoiceCall,
-  deliveryId: string
-): Promise<void> {
-  const { data, error: readError } = await supabaseAdmin
-    .from("messages")
-    .select("custom_data")
-    .eq("id", messageId)
-    .maybeSingle();
-  if (readError) {
-    throw new Error("Failed to read Voice call message state");
-  }
-  const customData =
-    data?.custom_data && typeof data.custom_data === "object"
-      ? data.custom_data as Record<string, unknown>
-      : {};
-  // A fast terminal webhook can beat the placement response. Do not regress
-  // its status or discard its transcript/duration metadata when marking accepted.
-  const preserveTerminal = customData.provider_call_id === call.id
-    && ['completed', 'failed', 'busy', 'no_answer', 'canceled', 'cancelled'].includes(String(customData.call_status));
-  const { error } = await supabaseAdmin
-    .from("messages")
-    .update({
-      custom_data: {
-        ...customData,
-        status: preserveTerminal ? customData.status : "sent",
-        voice_mode: "agent_call",
-        voice_call_delivery_id: deliveryId,
-        provider_call_id: call.id,
-        call_status: preserveTerminal ? customData.call_status : call.status,
-        sent_at: new Date().toISOString(),
-      },
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", messageId);
-  if (error) {
-    throw new Error(
-      `Call ${call.id} was placed but message ${messageId} could not be updated`
-    );
-  }
-}
-
-async function markMessagePlacementError(
-  messageId: string,
-  status: "failed" | "placement_unknown",
-  error: unknown
-): Promise<void> {
-  const { data } = await supabaseAdmin
-    .from("messages")
-    .select("custom_data")
-    .eq("id", messageId)
-    .maybeSingle();
-  const customData =
-    data?.custom_data && typeof data.custom_data === "object"
-      ? data.custom_data as Record<string, unknown>
-      : {};
-  const { error: updateError } = await supabaseAdmin
-    .from("messages")
-    .update({
-      custom_data: {
-        ...customData,
-        status,
-        voice_mode: "agent_call",
-        call_status: status,
-        error_message: error instanceof Error ? error.message : String(error),
-      },
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", messageId);
-  if (updateError) {
-    console.error(
-      `[Zavu Voice] Failed to mark message ${messageId} as ${status}:`,
-      updateError
-    );
-  }
-}
-
 function providerStatus(error: unknown): number | undefined {
   if (!error || typeof error !== "object" || !("status" in error)) return undefined;
   return typeof error.status === "number" ? error.status : undefined;
@@ -293,20 +221,39 @@ function providerStatus(error: unknown): number | undefined {
 export async function placeTrackedVoiceCall(
   input: PlaceTrackedVoiceCallInput
 ): Promise<PlaceTrackedVoiceCallResult> {
-  if (!E164_PHONE.test(input.to)) {
-    throw Object.assign(
-      new Error("Voice call recipient must use E.164 format"),
-      { status: 400 }
-    );
+  const attempt: PlacementAttempt = { status: 'placement_unknown', messageValidated: false };
+  try {
+    return await placeTrackedVoiceCallAttempt(input, attempt);
+  } catch (error) {
+    // Provider acceptance remains acceptance even when a subsequent DB write fails.
+    if (attempt.accepted) {
+      console.error('[Zavu Voice] Accepted call state requires reconciliation');
+      return attempt.accepted;
+    }
+    if (attempt.messageValidated) {
+      try {
+        await markMessagePlacementError(input.messageId, attempt.status, error);
+      } catch {
+        attempt.status = 'placement_unknown';
+        console.error('[Zavu Voice] Placement state requires reconciliation');
+      }
+    }
+    throw new VoicePlacementError(error, attempt.status);
   }
-  if (!input.greeting.trim() || input.greeting.length > 1_000) {
-    throw Object.assign(
-      new Error("Voice call greeting must contain 1 to 1000 characters"),
-      { status: 400 }
-    );
-  }
+}
 
+type PlacementAttempt = {
+  status: VoicePlacementStatus;
+  messageValidated: boolean;
+  accepted?: PlaceTrackedVoiceCallResult;
+};
+
+async function placeTrackedVoiceCallAttempt(
+  input: PlaceTrackedVoiceCallInput,
+  attempt: PlacementAttempt,
+): Promise<PlaceTrackedVoiceCallResult> {
   const messageContext = await loadMessageContext(input.messageId, input.siteId);
+  attempt.messageValidated = true;
   const objective = input.objective || messageContext.objective;
   const additionalContext =
     input.additionalContext || messageContext.additionalContext;
@@ -321,6 +268,7 @@ export async function placeTrackedVoiceCall(
       status: previous.status,
       createdAt: "",
     } as ZavuVoiceCall;
+    attempt.accepted = { deliveryId: previous.id, duplicate: true, call };
     await markMessagePlaced(input.messageId, call, previous.id);
     return {
       deliveryId: previous.id,
@@ -338,7 +286,19 @@ export async function placeTrackedVoiceCall(
       { status: 409 }
     );
   }
+  if (messageContext.customData.provider_call_id
+    || messageContext.customData.call_status === 'placement_unknown') {
+    throw new Error('Existing Voice call state requires reconciliation');
+  }
 
+  // No earlier attempt exists. Rejections before calling the provider are known failures.
+  attempt.status = 'failed';
+  if (!E164_PHONE.test(input.to)) {
+    throw Object.assign(new Error('Voice call recipient must use E.164 format'), { status: 400 });
+  }
+  if (typeof input.greeting !== 'string' || !input.greeting.trim() || input.greeting.length > 1_000) {
+    throw Object.assign(new Error('Voice call greeting must contain 1 to 1000 characters'), { status: 400 });
+  }
   await assertVoiceCallAllowed(
     input.siteId,
     leadId,
@@ -379,6 +339,7 @@ export async function placeTrackedVoiceCall(
       placement_attempt_token: attemptToken,
     });
   if (insertError) {
+    attempt.status = 'placement_unknown';
     const raced = await existingDelivery(input.messageId);
     if (raced?.zavu_call_id) {
       const call = {
@@ -389,6 +350,7 @@ export async function placeTrackedVoiceCall(
         status: raced.status,
         createdAt: "",
       } as ZavuVoiceCall;
+      attempt.accepted = { deliveryId: raced.id, duplicate: true, call };
       await markMessagePlaced(input.messageId, call, raced.id);
       return {
         deliveryId: raced.id,
@@ -402,6 +364,7 @@ export async function placeTrackedVoiceCall(
         "voice_call_deliveries_one_active_recipient_idx"
       )
     ) {
+      if (!raced) attempt.status = 'failed';
       throw Object.assign(
         new Error("An active Voice call already exists for this recipient"),
         { status: 429 }
@@ -424,6 +387,7 @@ export async function placeTrackedVoiceCall(
       followUpContext: followUp.context,
     });
     callPlacementAttempted = true;
+    attempt.status = 'placement_unknown';
     call = await placeVoiceCall({
       to: input.to,
       senderId,
@@ -457,6 +421,7 @@ export async function placeTrackedVoiceCall(
         && status !== 429
       );
     const deliveryStatus = terminal ? "failed" : "placement_unknown";
+    attempt.status = deliveryStatus;
     await supabaseAdmin
       .from("voice_call_deliveries")
       .update({
@@ -465,8 +430,8 @@ export async function placeTrackedVoiceCall(
         updated_at: new Date().toISOString(),
       })
       .eq("id", deliveryId)
-      .eq("placement_attempt_token", attemptToken);
-    await markMessagePlacementError(input.messageId, deliveryStatus, error);
+      .eq("placement_attempt_token", attemptToken)
+      .eq('status', 'placing');
     if (terminal && contactContextMayExist) {
       try {
         await clearVoiceCallContactContext({
@@ -483,6 +448,7 @@ export async function placeTrackedVoiceCall(
     throw error;
   }
 
+  attempt.accepted = { deliveryId, call, duplicate: false };
   const { error: updateError } = await supabaseAdmin
     .from("voice_call_deliveries")
     .update({
@@ -492,7 +458,8 @@ export async function placeTrackedVoiceCall(
       updated_at: new Date().toISOString(),
     })
     .eq("id", deliveryId)
-    .eq("placement_attempt_token", attemptToken);
+    .eq("placement_attempt_token", attemptToken)
+    .eq('status', 'placing');
   if (updateError) {
     console.error(
       `[Zavu Voice] Call ${call.id} was placed but delivery ${deliveryId} could not be updated:`,

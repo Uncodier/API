@@ -1,5 +1,14 @@
 import { POST } from '@/app/api/agents/chat/intervention/route';
 import { getConversationChannel, sendMessageByChannel } from '@/app/api/agents/chat/intervention/send-intervention-by-channel';
+import { canAccessSite, getRequestSitePrincipal } from '@/lib/security/site-access';
+const mockPermission = jest.fn();
+jest.mock('@supabase/supabase-js', () => ({ createClient: () => ({ rpc: mockPermission }) }));
+
+jest.mock('@/lib/security/site-access', () => ({
+  canAccessSite: jest.fn(),
+  getRequestSitePrincipal: jest.fn(),
+}));
+jest.mock('@/lib/security/request-rate-limit', () => ({ hasAuthenticatedPrincipal: () => true }));
 
 jest.mock('uuid', () => ({
   v4: () => 'intervention-uuid',
@@ -25,6 +34,7 @@ function createChain(result: { data?: any; error?: any } = { data: null, error: 
   chain.update = jest.fn().mockReturnValue(chain);
   chain.eq = jest.fn().mockReturnValue(chain);
   chain.single = jest.fn().mockResolvedValue(result);
+  chain.maybeSingle = jest.fn().mockResolvedValue(result);
   return chain;
 }
 
@@ -36,8 +46,11 @@ const SITE_ID = '44444444-4444-4444-8444-444444444444';
 describe('POST /api/agents/chat/intervention', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    (canAccessSite as jest.Mock).mockResolvedValue(true);
+    mockPermission.mockResolvedValue({ data: true, error: null });
+    (getRequestSitePrincipal as jest.Mock).mockReturnValue({ userId: USER_ID, siteId: null, internal: false });
 
-    const conversations = createChain({ data: { id: CONV_ID }, error: null });
+    const conversations = createChain({ data: { id: CONV_ID, site_id: SITE_ID }, error: null });
     const messages = createChain({ data: { id: MSG_ID }, error: null });
     fromMock.mockImplementation((table: string) => (table === 'messages' ? messages : conversations));
 
@@ -56,7 +69,7 @@ describe('POST /api/agents/chat/intervention', () => {
   it('returns 200 accepted with message_id and workflowId without waiting for delivery', async () => {
     const request = new Request('http://localhost/api/agents/chat/intervention', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-session' },
       body: JSON.stringify({
         conversationId: CONV_ID,
         message: 'Hello from the team',
@@ -96,7 +109,7 @@ describe('POST /api/agents/chat/intervention', () => {
 
     const request = new Request('http://localhost/api/agents/chat/intervention', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-session' },
       body: JSON.stringify({
         conversationId: CONV_ID,
         message: 'Hello from the team',
@@ -125,7 +138,7 @@ describe('POST /api/agents/chat/intervention', () => {
 
     const request = new Request('http://localhost/api/agents/chat/intervention', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer test-session' },
       body: JSON.stringify({
         conversationId: CONV_ID,
         message: 'Hello from the team',
@@ -140,5 +153,102 @@ describe('POST /api/agents/chat/intervention', () => {
     expect(response.status).toBe(500);
     expect(body.success).toBe(false);
     expect(body.data.message_id).toBe(MSG_ID);
+  });
+
+  it.each([true, false])('retains the saved row and unknown outcome regardless of delivery flag %s', async (channelDelivery) => {
+    (getConversationChannel as jest.Mock).mockResolvedValue({ channel: 'voice', channelDelivery });
+    (sendMessageByChannel as jest.Mock).mockResolvedValue({
+      success: false, method: 'voice_agent_call', delivery_status: 'placement_unknown', reason: 'placement_unknown',
+    });
+    const response = await POST(new Request('http://localhost/api/agents/chat/intervention', {
+      method: 'POST', headers: { Authorization: 'Bearer test-session' }, body: JSON.stringify({ conversationId: CONV_ID, message: 'Hello', site_id: SITE_ID }),
+    }));
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({ success: true, data: {
+      message: { message_id: MSG_ID },
+      channel_send: { success: false, method: 'voice_agent_call', delivery_status: 'placement_unknown' },
+    } });
+  });
+
+  it('returns accepted callId rather than requiring a workflow id', async () => {
+    (getConversationChannel as jest.Mock).mockResolvedValue({ channel: 'voice' });
+    (sendMessageByChannel as jest.Mock).mockResolvedValue({
+      success: true, method: 'voice_agent_call', delivery_status: 'accepted', callId: 'call-1',
+    });
+    const response = await POST(new Request('http://localhost/api/agents/chat/intervention', {
+      method: 'POST', headers: { Authorization: 'Bearer test-session' }, body: JSON.stringify({ conversationId: CONV_ID, message: 'Hello', agentId: '' }),
+    }));
+    expect(await response.json()).toMatchObject({ data: {
+      status: 'accepted', channel_send: { callId: 'call-1', delivery_status: 'accepted' },
+    } });
+  });
+
+  it.each([
+    { user_id: SITE_ID }, { site_id: MSG_ID }, { agentId: MSG_ID },
+    { lead_id: MSG_ID }, { visitor_id: MSG_ID },
+  ])('rejects impersonated or mismatched resources before persistence %j', async (extra) => {
+    const response = await POST(new Request('http://localhost/api/agents/chat/intervention', {
+      method: 'POST', headers: { Authorization: 'Bearer test-session' }, body: JSON.stringify({ conversationId: CONV_ID, message: 'Hello', ...extra }),
+    }));
+    expect(response.status).toBe(403);
+    expect(fromMock.mock.calls.some(([table]) => table === 'messages')).toBe(false);
+    expect(sendMessageByChannel).not.toHaveBeenCalled();
+  });
+
+  it('rejects unauthenticated requests before database access', async () => {
+    (getRequestSitePrincipal as jest.Mock).mockReturnValue({ userId: null });
+    const response = await POST(new Request('http://localhost/api/agents/chat/intervention', {
+      method: 'POST', body: JSON.stringify({ conversationId: CONV_ID, message: 'Hello' }),
+    }));
+    expect(response.status).toBe(401);
+    expect(fromMock).not.toHaveBeenCalled();
+  });
+
+  it('requires the session-scoped insert capability before saving', async () => {
+    mockPermission.mockResolvedValue({ data: false, error: null });
+    const response = await POST(new Request('http://localhost/api/agents/chat/intervention', {
+      method: 'POST', headers: { Authorization: 'Bearer test-session' },
+      body: JSON.stringify({ conversationId: CONV_ID, message: 'Hello' }),
+    }));
+    expect(response.status).toBe(403);
+    expect(mockPermission).toHaveBeenCalledWith('user_can', { p_site_id: SITE_ID, p_command: 'insert' });
+    expect(fromMock.mock.calls.some(([table]) => table === 'messages')).toBe(false);
+  });
+
+  it('requires update capability for retries', async () => {
+    mockPermission.mockResolvedValue({ data: false, error: null });
+    const response = await POST(new Request('http://localhost/api/agents/chat/intervention', {
+      method: 'POST', headers: { Authorization: 'Bearer test-session' },
+      body: JSON.stringify({ conversationId: CONV_ID, message: 'Hello', message_id: MSG_ID }),
+    }));
+    expect(response.status).toBe(403);
+    expect(mockPermission).toHaveBeenCalledWith('user_can', { p_site_id: SITE_ID, p_command: 'update' });
+    expect(sendMessageByChannel).not.toHaveBeenCalled();
+  });
+
+  it('rejects a read-only API key before privileged access', async () => {
+    const response = await POST(new Request('http://localhost/api/agents/chat/intervention', {
+      method: 'POST', headers: { 'x-api-key-data': JSON.stringify({ scopes: ['read'] }) },
+      body: JSON.stringify({ conversationId: CONV_ID, message: 'Hello' }),
+    }));
+    expect(response.status).toBe(403);
+    expect(fromMock).not.toHaveBeenCalled();
+  });
+
+  it('denies site membership failures before saving', async () => {
+    (canAccessSite as jest.Mock).mockResolvedValue(false);
+    const response = await POST(new Request('http://localhost/api/agents/chat/intervention', {
+      method: 'POST', headers: { Authorization: 'Bearer test-session' },
+      body: JSON.stringify({ conversationId: CONV_ID, message: 'Hello' }),
+    }));
+    expect(response.status).toBe(403);
+    expect(fromMock.mock.calls.some(([table]) => table === 'messages')).toBe(false);
+  });
+
+  it('rejects malformed JSON as a client error', async () => {
+    const response = await POST(new Request('http://localhost/api/agents/chat/intervention', { method: 'POST', body: '{' }));
+    expect(response.status).toBe(400);
+    expect(fromMock).not.toHaveBeenCalled();
   });
 });
