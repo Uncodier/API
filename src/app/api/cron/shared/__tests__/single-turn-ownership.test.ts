@@ -17,6 +17,8 @@ const dependencies = {
   '@/lib/services/robot-instance/assistant-executor': { executeAssistantStep: execute },
   '@/app/api/robots/instance/assistant/utils': {},
   './step-history-builder': {},
+  './step-action-guard': {},
+  './step-action-observation': {},
   '@/lib/services/skills-service': {},
   '@/lib/services/instance-user-history': {},
   '@/lib/services/sandbox-recovery': { connectOrRecreateRequirementSandbox: connect },

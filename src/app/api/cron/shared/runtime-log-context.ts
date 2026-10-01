@@ -34,6 +34,9 @@ function redactSecrets(value: string): string {
     );
 }
 
+/** Redaction without selection/truncation, for bounded structured history views. */
+export const redactRuntimeSecrets = redactSecrets;
+
 function selectPertinentLines(lines: string[]): string[] {
   const selected = new Set<number>();
   lines.forEach((line, index) => {

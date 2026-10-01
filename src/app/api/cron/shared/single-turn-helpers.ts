@@ -5,19 +5,18 @@ import {
   type GateFailureCategory,
 } from './step-iteration-signals';
 import type { FlowGateResult } from './gates/types';
-import {
-  ACTION_LOOP_BLOCKED_ACTION_MARKER,
-  buildToolActionKey,
-} from './loop-detectors';
+export { withActionLoopGuard } from './step-action-guard';
 import { isSandboxGoneError } from '@/lib/services/sandbox-gone-error';
 import { inferPlanStepTestCommand } from '@/lib/services/instance-plan-step-contract';
 import { normalizeToolOperationResult } from '@/lib/services/tool-operation-result';
 import { isTestRepairRun } from './judge-test-repair';
 import type { JudgeRepairRun } from './judge-repair-controller';
+import { instanceHistoryTool } from '@/app/api/agents/tools/instance_history/assistantProtocol';
 
 const WORK_DIR = '/vercel/sandbox';
 const EVIDENCE_COLLECTION_TOOLS = new Set([
   'skill_lookup',
+  'instance_history',
   'sandbox_browser',
   'sandbox_code_search',
   'sandbox_read_file',
@@ -37,6 +36,13 @@ const EVIDENCE_COLLECTION_TOOLS = new Set([
   'sandbox_check_background_command',
   'instance_plan',
 ]);
+
+/** Retrieve the current scoped history even when repair removes the generic
+ * router. This adds no other routed capability. */
+export function withDiagnosticHistoryTool<T extends { name?: string }>(tools: T[], siteId: string, instanceId: string) {
+  return tools.some(tool => tool.name === 'instance_history')
+    ? tools : [...tools, instanceHistoryTool(siteId, instanceId)];
+}
 const PROGRESS_FINGERPRINT_SCRIPT = String.raw`
 const crypto = require('node:crypto');
 const fs = require('node:fs');
@@ -314,45 +320,6 @@ export function getDeclaredTestCommand(step: {
     success_criteria: Array.isArray(step.success_criteria)
       ? step.success_criteria
       : undefined,
-  });
-}
-
-export function withActionLoopGuard<
-  T extends { name?: string; execute?: (args: Record<string, unknown>) => Promise<unknown> },
->(tools: T[], historyText: string): T[] {
-  const markerIndex = historyText.lastIndexOf(
-    ACTION_LOOP_BLOCKED_ACTION_MARKER,
-  );
-  if (markerIndex < 0) return tools;
-  const blockedAction = historyText
-    .slice(markerIndex + ACTION_LOOP_BLOCKED_ACTION_MARKER.length)
-    .split('\n', 1)[0]
-    .trim();
-  if (!blockedAction) return tools;
-
-  return tools.map((tool) => {
-    if (!tool.name || typeof tool.execute !== 'function') return tool;
-    const original = tool.execute.bind(tool);
-    return {
-      ...tool,
-      execute: async (args: Record<string, unknown>) => {
-        if (
-          tool.name === 'instance_plan' &&
-          args.action === 'execute_step'
-        ) {
-          return original(args);
-        }
-        if (buildToolActionKey(tool.name!, args) !== blockedAction) {
-          return original(args);
-        }
-        return {
-          success: false,
-          blocked: true,
-          error:
-            'Action loop guard blocked this unchanged tool call after three repetitions. Change the arguments or use a different tool.',
-        };
-      },
-    };
   });
 }
 

@@ -14,6 +14,7 @@ import {
 } from './session-shared';
 import { updateExistingSession } from './read-update-session';
 import { closeVisitorLiveState } from '@/lib/services/visitor-session-live-state';
+import type { SessionAttribution } from './session-attribution';
 
 // The tracking script also POSTs session heartbeats to this URL. Keep those
 // updates separate from creation: the signed session must be authorized before
@@ -65,12 +66,7 @@ async function createOrUpdateVisitor(input: {
   startTime: number;
   url?: string;
   referrer?: string;
-  utm_source?: string;
-  utm_medium?: string;
-  utm_campaign?: string;
-  utm_term?: string;
-  utm_content?: string;
-}) {
+} & SessionAttribution) {
   const { data: existing } = await supabaseAdmin
     .from('visitors')
     .select('id')
@@ -211,11 +207,12 @@ export async function POST(request: NextRequest) {
       fingerprint: sessionData.fingerprint,
       url: sessionData.url,
       referrer: sessionData.referrer,
-      utm_source: sessionData.utm_source,
-      utm_medium: sessionData.utm_medium,
-      utm_campaign: sessionData.utm_campaign,
-      utm_term: sessionData.utm_term,
-      utm_content: sessionData.utm_content,
+      // Reuse the session's normalized attribution for visitor first touch.
+      utm_source: prepared.data.utm_source,
+      utm_medium: prepared.data.utm_medium,
+      utm_campaign: prepared.data.utm_campaign,
+      utm_term: prepared.data.utm_term,
+      utm_content: prepared.data.utm_content,
     });
 
     const { data, error } = await supabaseAdmin

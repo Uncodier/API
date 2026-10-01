@@ -12,6 +12,8 @@ import {
   normalizeToolOperationResult,
   type ToolOperationOutcome,
 } from '@/lib/services/tool-operation-result';
+import type { RepairVerificationObservation } from './judge-repair-observations';
+export { continueJudgeRepairRun } from './judge-repair-observations';
 
 export type RepairKind =
   | 'repair_implementation'
@@ -60,6 +62,8 @@ export interface JudgeRepairRun {
   status: RepairRunStatus;
   failure_kind: JudgeFailureKind;
   source_evidence_run_id?: string;
+  source_workspace_fingerprint?: string;
+  verification_observations?: RepairVerificationObservation[];
   contract_revision: string;
   created_at: string;
   max_attempts: number;
@@ -169,6 +173,7 @@ export function contractRevisionFor(contract: unknown): string {
 export function planJudgeRepair(params: {
   judge: JudgeResult;
   evidenceRunId?: string;
+  workspaceFingerprint?: string;
   acceptanceContract?: unknown;
   createdAt?: string;
   repairRunId?: string;
@@ -208,6 +213,9 @@ export function planJudgeRepair(params: {
     status: 'planned',
     failure_kind: params.judge.failure_kind,
     source_evidence_run_id: params.evidenceRunId,
+    ...(params.workspaceFingerprint
+      ? { source_workspace_fingerprint: params.workspaceFingerprint }
+      : {}),
     contract_revision: contractRevisionFor(params.acceptanceContract),
     created_at: params.createdAt || new Date().toISOString(),
     max_attempts:
@@ -241,30 +249,6 @@ export function hasAttemptedJudgeRepair(
     !!diagnosticId &&
     run.diagnostic_id === diagnosticId &&
     (run.attempt_count || 0) > 0;
-}
-
-export function continueJudgeRepairRun(params: {
-  previous: JudgeRepairRun;
-  planned: JudgeRepairRun;
-  evidenceRunId: string;
-}): JudgeRepairRun {
-  if (params.previous.diagnostic_id !== params.planned.diagnostic_id) {
-    return params.planned;
-  }
-  return {
-    ...params.planned,
-    created_at: params.previous.created_at,
-    max_attempts: params.previous.max_attempts,
-    attempt_count: params.previous.attempt_count || 0,
-    action_receipts: params.previous.action_receipts || [],
-    source_evidence_run_id:
-      params.previous.source_evidence_run_id || params.evidenceRunId,
-    actions: params.planned.actions.map((action) => ({
-      ...action,
-      action_id:
-        `${action.action_id}:round:${(params.previous.attempt_count || 0) + 1}`,
-    })),
-  };
 }
 
 function resultExcerpt(value: unknown): string | undefined {

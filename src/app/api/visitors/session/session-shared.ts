@@ -15,6 +15,7 @@ import {
   visitorSessionTokenFromRequest,
 } from '@/lib/security/visitor-session-token';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { MAX_UTM_LENGTH, normalizeSessionAttribution } from './session-attribution';
 
 export const createSessionSchema = z.object({
   site_id: z.string().uuid('site_id must be a valid UUID'),
@@ -37,11 +38,11 @@ export const createSessionSchema = z.object({
     desktop: z.boolean().optional(),
   }).nullish(),
   custom_data: z.record(z.unknown()).optional(),
-  utm_source: z.string().max(512).optional(),
-  utm_medium: z.string().max(512).optional(),
-  utm_campaign: z.string().max(512).optional(),
-  utm_term: z.string().max(512).optional(),
-  utm_content: z.string().max(512).optional(),
+  utm_source: z.string().max(MAX_UTM_LENGTH).optional(),
+  utm_medium: z.string().max(MAX_UTM_LENGTH).optional(),
+  utm_campaign: z.string().max(MAX_UTM_LENGTH).optional(),
+  utm_term: z.string().max(MAX_UTM_LENGTH).optional(),
+  utm_content: z.string().max(MAX_UTM_LENGTH).optional(),
   device: z.object({
     type: z.string().max(100).optional(),
     screen_size: z.string().max(100).optional(),
@@ -218,12 +219,9 @@ export async function prepareSessionData(
         site_id: sessionData.site_id,
         landing_url: sessionData.url || null,
         current_url: sessionData.url || null,
+        // Only the document referrer supplied by the tracker, not HTTP Referer.
         referrer: sessionData.referrer || null,
-        utm_source: sessionData.utm_source || null,
-        utm_medium: sessionData.utm_medium || null,
-        utm_campaign: sessionData.utm_campaign || null,
-        utm_term: sessionData.utm_term || null,
-        utm_content: sessionData.utm_content || null,
+        ...normalizeSessionAttribution(sessionData),
         started_at: startTime,
         last_activity_at: startTime,
         page_views: 1,

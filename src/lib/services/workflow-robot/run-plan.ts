@@ -252,7 +252,7 @@ export async function runWorkflowPlan(runPlanId: string, options?: { deadline?: 
         if (isRetry) {
           const interpCtx = { trigger: triggerPayload, steps: previousOutputs };
           const recoveryRaw = typeof step.recovery_plan === 'string' ? step.recovery_plan : '';
-          const historyText = await fetchStepLogHistoryText(plan.instance_id, plan.id, step.id);
+          const historyText = await fetchStepLogHistoryText(plan.instance_id, plan.id, step.id, plan.site_id);
           retryContext = buildWorkflowRetryContext({
             errorMessage: step.error_message || 'Unknown error',
             retryCount: step.retry_count || 0,

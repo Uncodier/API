@@ -57,6 +57,7 @@ import {
 } from './judge-repair-controller';
 
 export interface PostGateGateSignals {
+  workspace_fingerprint?: string;
   build?: { ok: boolean; duration_ms?: number };
   runtime?: {
     pages?: Array<{
@@ -240,7 +241,8 @@ export async function runArchetypePostGate(
       : undefined;
     const newlyPlanned = planJudgeRepair({
       judge,
-      evidenceRunId,
+      evidenceRunId: persisted.evidence_run_id,
+      workspaceFingerprint: persisted.workspace_fingerprint,
       acceptanceContract: adjudicatedItem.acceptance_contract,
       createdAt: input.capturedAt,
       repairRunId: input.repairRun?.repair_run_id,
@@ -252,6 +254,14 @@ export async function runArchetypePostGate(
             previous: input.repairRun,
             planned: newlyPlanned,
             evidenceRunId,
+            verification: {
+              evidenceRunId: persisted.evidence_run_id,
+              workspaceFingerprint: persisted.workspace_fingerprint,
+              capturedAt: persisted.captured_at,
+              evidenceCaptured: hasFreshProducerEvidence &&
+                (!persisted.evidence_provenance ||
+                  persisted.evidence_provenance.mode === 'captured'),
+            },
           })
         : newlyPlanned;
     if (
@@ -461,6 +471,7 @@ function buildEvidenceRecord(
     }));
   return {
     evidence_run_id: evidenceRunId,
+    workspace_fingerprint: signals.workspace_fingerprint,
     captured_at: capturedAt,
     build: signals.build
       ? {

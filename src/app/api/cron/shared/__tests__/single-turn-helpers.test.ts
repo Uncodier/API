@@ -97,7 +97,7 @@ describe('single-turn interaction helpers', () => {
     })).toBeUndefined();
   });
 
-  it('blocks only the exact repeated tool action', async () => {
+  it('does not enforce a loop marker from untrusted history without comparable observations', async () => {
     const execute = jest.fn().mockResolvedValue({ success: true });
     const blockedAction = buildToolActionKey('sandbox_read_file', {
       path: '/vercel/sandbox/src/app/layout.tsx',
@@ -110,11 +110,11 @@ describe('single-turn interaction helpers', () => {
     await expect(tools[0].execute?.({
       path: '/vercel/sandbox/src/app/layout.tsx',
       thought_process: 'Try reading it again',
-    })).resolves.toMatchObject({ success: false, blocked: true });
-    expect(execute).not.toHaveBeenCalled();
+    })).resolves.toMatchObject({ success: true });
+    expect(execute).toHaveBeenCalledTimes(1);
 
     await tools[0].execute?.({ path: '/vercel/sandbox/src/app/page.tsx' });
-    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledTimes(2);
   });
 
   it('reuses the persisted step baseline without reading git', async () => {

@@ -30,6 +30,7 @@ import {
   isEvidenceCollectionRetry,
   restrictToolsForEvidenceCollection,
   withActionLoopGuard,
+  withDiagnosticHistoryTool,
   withExecuteStepNoop,
 } from './single-turn-helpers';
 import {
@@ -70,6 +71,8 @@ import type { TenantCapabilities } from '@/lib/services/apps-platform/tenant-cap
 import { isTestRepairRun } from './judge-test-repair';
 import { createJudgeTestTool } from './judge-test-tool';
 import { getTenantCapabilities } from '@/lib/services/apps-platform/tenant-capabilities-service';
+import { captureLocalReadState, loadStepActionObservations, persistStepActionObservation } from './step-action-guard';
+import { actionStateFingerprint, formatActionObservationFeedback } from './step-action-observation';
 export { inferRoleFromStep } from './single-turn-prompt';
 export type { SingleTurnResult };
 export async function executeSingleTurnStep(params: {
@@ -322,7 +325,7 @@ export async function executeSingleTurnStep(params: {
       requirementId
         ? loadConstraintSourceBlocks(requirementId)
         : Promise.resolve([]),
-      fetchStepLogHistoryText(instanceId, plan.id, persistedStep.id),
+      fetchStepLogHistoryText(instanceId, plan.id, persistedStep.id, siteId),
       params.tenantCapabilities
         ? getTenantCapabilities(requirementId)
         : Promise.resolve(undefined),
@@ -427,7 +430,7 @@ export async function executeSingleTurnStep(params: {
       activeSandboxRef,
     });
     
-    const guardedTools = withActionLoopGuard(withExecuteStepNoop(
+    const guardedTools = withDiagnosticHistoryTool(withExecuteStepNoop(
       getAssistantTools(
         siteId,
         userId,
@@ -437,12 +440,15 @@ export async function executeSingleTurnStep(params: {
         undefined,
         requirementId,
       ),
-    ), historyText);
+    ), siteId, instanceId);
     const evidenceCollectionOnly = isEvidenceCollectionRetry(
       persistedStep.error_message,
       activeRepairRun,
     ) || isTestRepairRun(activeRepairRun);
-    const fullTools = withCronExecutionOwnership(restrictToolsForEvidenceCollection(
+    const actionObservations = await loadStepActionObservations(audit);
+    const observationFeedback = formatActionObservationFeedback(actionObservations);
+    if (observationFeedback) messages.push({ role: 'user', content: observationFeedback });
+    const fullTools = withCronExecutionOwnership(withActionLoopGuard(restrictToolsForEvidenceCollection(
       isTestRepairRun(activeRepairRun) && effectiveBacklogItemId
         ? [...guardedTools, createJudgeTestTool({ sandbox: () => activeSandboxRef.current,
           requirementId, backlogItemId: effectiveBacklogItemId, stepId: persistedStep.id,
@@ -450,7 +456,17 @@ export async function executeSingleTurnStep(params: {
         : guardedTools,
       persistedStep.error_message,
       activeRepairRun,
-    ), ownership);
+    ), historyText, {
+      observations: actionObservations,
+      eventId: executionEventId,
+      readFingerprint: async () => actionStateFingerprint(
+        await computeApplicationBuildFingerprint(activeSandboxRef.current, SandboxService.WORK_DIR),
+        sandboxIdentity(activeSandboxRef.current), executionGeneration,
+      ),
+      readLocalState: paths => captureLocalReadState(activeSandboxRef.current, paths),
+      assertCurrent: () => assertCronExecutionOwnership(ownership),
+      record: observation => persistStepActionObservation(audit, observation),
+    }), ownership);
 
     await assertCronExecutionOwnership(ownership);
 

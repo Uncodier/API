@@ -63,7 +63,11 @@ jest.mock('@/lib/services/instance-plan-infrastructure-state', () => ({
 import { runArchetypePostGate } from '../step-archetype-postgate';
 import { persistJudgeRejection } from '../single-turn-judge-rejection';
 import { missingTestEvidenceResult } from '../judge-test-repair';
-import { planJudgeRepair } from '../judge-repair-controller';
+import {
+  planJudgeRepair,
+  recordJudgeRepairAttempt,
+  type JudgeRepairRun,
+} from '../judge-repair-controller';
 
 const item = {
   id: 'item-1',
@@ -91,6 +95,25 @@ function input() {
     evidenceRunId: 'evidence-run-1',
     audit: {} as any,
   };
+}
+
+function appliedRepair(run: JudgeRepairRun): JudgeRepairRun {
+  const attempt = (run.attempt_count || 0) + 1;
+  return recordJudgeRepairAttempt({
+    run,
+    workspaceChanged: true,
+    contractRevision: run.contract_revision,
+    receipts: [{
+      receipt_id: `receipt-${attempt}`,
+      repair_run_id: run.repair_run_id,
+      action_id: run.actions[0].action_id,
+      attempt,
+      tool_call_id: `call-${attempt}`,
+      tool_name: 'sandbox_run_command',
+      status: 'succeeded',
+      attempted_at: '2026-09-21T18:45:00.000Z',
+    }],
+  });
 }
 
 describe('runArchetypePostGate verification budget', () => {
@@ -359,6 +382,74 @@ describe('runArchetypePostGate verification budget', () => {
       contractScoped: true,
       changedFiles: ['src/app/layout.tsx'],
     });
+  });
+
+  it('persists real fingerprint comparisons and actionable repeated-failure feedback in repair metadata', async () => {
+    recordToolFailure.mockResolvedValue({ ...item, tool_failures: { judge_evidence_collector: 2 } });
+    patchPlanStepAtomically.mockResolvedValue({ persisted: true, generation: 5 });
+    const gateInput = { ...input(), signals: { ...input().signals, workspace_fingerprint: 'workspace-a' } };
+    const initial = await runArchetypePostGate(gateInput);
+    expect(initial.repair_planned?.source_workspace_fingerprint).toBe('workspace-a');
+    expect(writeEvidence).toHaveBeenCalledWith(expect.objectContaining({
+      requireCanonicalPersistence: true,
+      record: expect.objectContaining({ workspace_fingerprint: 'workspace-a' }),
+    }));
+    const first = await runArchetypePostGate({
+      ...gateInput,
+      evidenceRunId: 'evidence-run-2',
+      repairRun: appliedRepair(initial.repair_planned!),
+    });
+    expect(first.repair_planned?.verification_observations?.[0].status).toBe('same_failure_unchanged');
+    const secondInput = {
+      ...gateInput,
+      signals: { ...gateInput.signals, workspace_fingerprint: 'workspace-b' },
+      evidenceRunId: 'evidence-run-3',
+      repairRun: appliedRepair(first.repair_planned!),
+    };
+    const second = await runArchetypePostGate(secondInput);
+    expect(second.repair_planned?.verification_observations?.[1]).toMatchObject({
+      source_evidence_run_id: 'evidence-run-2',
+      latest_evidence_run_id: 'evidence-run-3',
+      workspace_fingerprint: 'workspace-b',
+      applied_attempts: [2],
+      status: 'same_failure_after_change',
+    });
+    expect(second.repair_planned?.actions[0].verification).toContain('new hypothesis');
+    expect(second.repair_planned?.actions[0].verification).toContain('targeted check');
+    expect(second).toMatchObject({ verification_exhausted: false, healing_applied: undefined });
+    await persistJudgeRejection({
+      planId: 'plan-1', stepId: 'step-1', postGate: second,
+      effectiveSandboxId: 'sandbox-1', infrastructureGeneration: 4,
+      executionEventId: 'cycle:step:turn',
+    });
+    expect(patchPlanStepAtomically).toHaveBeenCalledWith(expect.objectContaining({
+      expectedGeneration: 4,
+      patch: expect.objectContaining({ metadata: { repair_run: second.repair_planned } }),
+    }));
+    const replay = await runArchetypePostGate({ ...secondInput, repairRun: second.repair_planned });
+    expect(replay.repair_planned).toEqual(second.repair_planned);
+    expect(replay.repair_planned).toMatchObject({ attempt_count: 2, max_attempts: 3 });
+    expect(replay.repair_planned?.verification_observations).toHaveLength(2);
+  });
+
+  it.each(['missing fingerprint', 'reused evidence', 'mixed evidence'])('keeps %s unknown using canonical persistence', async (mode) => {
+    recordToolFailure.mockResolvedValue({ ...item, tool_failures: { judge_evidence_collector: 1 } });
+    const initial = await runArchetypePostGate({
+      ...input(), signals: { ...input().signals, workspace_fingerprint: 'workspace-a' },
+    });
+    writeEvidence.mockImplementation(async ({ itemId, record }: any) => ({
+      ...record, schema_version: 1, item_id: itemId,
+      workspace_fingerprint: mode === 'missing fingerprint' ? undefined : 'workspace-a',
+      evidence_provenance: mode !== 'missing fingerprint'
+        ? { mode: mode === 'reused evidence' ? 'reused' : 'mixed', reused_from_evidence_run_ids: ['evidence-run-1'] } : undefined,
+    }));
+    const result = await runArchetypePostGate({
+      ...input(), evidenceRunId: 'evidence-run-2',
+      signals: { ...input().signals, workspace_fingerprint: 'workspace-b' },
+      repairRun: appliedRepair(initial.repair_planned!),
+    });
+    expect(result.repair_planned?.verification_observations?.[0].status).toBe('unknown');
+    expect(result.repair_planned?.actions[0].verification).not.toContain('new hypothesis');
   });
 
   it('persists scenario receipts as structured acceptance observations', async () => {
