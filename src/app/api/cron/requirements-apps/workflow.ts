@@ -93,6 +93,7 @@ import { cycleFailureReason, recoveryAfterUnhandledError, type CycleRecoveryDisp
 import { boundedFailureDetail, cronOwnershipRejectionReason } from '../shared/cron-ownership-rejection';
 import type { DatabaseMigrationOutcome } from '../shared/database-migration-outcome';
 import type { MigrationRepairTarget } from '@/lib/services/apps-platform/migration-repair-types';
+import type { MigrationFileRestoration } from '@/lib/services/apps-platform/migration-restoration';
 import type { MigrationSecurityReview } from '@/lib/services/apps-platform/migration-security-review';
 
 export interface CronAppsWorkflowInput {
@@ -152,6 +153,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   let migrationValidationRequired = false;
   let migrationFreshValidationCompleted = false;
   const repairedMigrations: MigrationRepairTarget[] = [];
+  const restoredMigrations: MigrationFileRestoration[] = [];
   let tenantProvisioningFailed = false;
   let cycleOutcome: CronCycleOutcome = 'idle';
   let preservePausedState = false;
@@ -1364,6 +1366,8 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
         requirementId: reqId, runId: cronLockRunId, executionGeneration,
       });
       sandboxId = dbMig.effectiveSandboxId;
+      restoredMigrations.push(...(dbMig.restored || []));
+      if (restoredMigrations.length) lightweightCycleFinalization = false;
       databaseMigrations = dbMig;
       if (dbMig.status === 'failed' && dbMig.correction?.state === 'correction_required' && activePlan?.id) {
         const handoff = await scheduleMigrationCorrectionStep({ requirementId: reqId, planId: activePlan.id,
@@ -1413,6 +1417,8 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
           dbMig = await applyDatabaseMigrationsStep(sandboxId!, reqId, instanceType, title, cronAudit, {
             requirementId: reqId, runId: cronLockRunId, executionGeneration,
           }, repairedMigrations);
+          restoredMigrations.push(...(dbMig.restored || []));
+          if (restoredMigrations.length) lightweightCycleFinalization = false;
           dbMig.applied = Array.from(new Set([...alreadyApplied, ...dbMig.applied]));
           sandboxId = dbMig.effectiveSandboxId;
           if (dbMig.status === 'failed' && dbMig.repairTarget?.file !== repair.repairedTarget.file) {
@@ -1424,6 +1430,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
           break;
         }
       }
+      if (restoredMigrations.length) dbMig.restored = [...restoredMigrations];
       databaseMigrations = dbMig;
       const persistedMigrations = await loadMigrationLifecycleStep(reqId);
       migrationValidationRequired = persistedMigrations.some(row => row.state === 'validation_pending' || row.state === 'reviewing');
@@ -1440,7 +1447,8 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
         const productDecision = migrationSecurityReview?.decision === 'needs_product_decision'
           ? migrationSecurityReview : undefined;
         productDecisionForWrapUp = productDecision;
-        const internalHold = ambiguousMigrationWrite || repairedMigrations.length > 0;
+        const internalHold = ambiguousMigrationWrite || repairedMigrations.length > 0 ||
+          restoredMigrations.length > 0 || (dbMig.status === 'failed' && dbMig.restorationFailure?.writeAttempted === true);
         recoveryDisposition = cycleOutcome === 'product_failure' || internalHold
           ? productDecision ? 'blocked' : 'internal_review'
           : 'retry';
@@ -1471,6 +1479,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
         wrapUpRequiresUserFeedback = false;
         const verified = await verifyPendingMigrationLifecycleStep({ sandboxId: sandboxId!, requirementId: reqId, instanceId,
           siteId: site_id, userId: user_id, instanceType, title, requirementType: requirementKind, plan: activePlan,
+          expectedRestorations: restoredMigrations,
           audit: cronAudit, executionOwnership: { requirementId: reqId, runId: cronLockRunId, executionGeneration } });
         sandboxId = verified.effectiveSandboxId;
         if (!verified.passed) {
@@ -1495,6 +1504,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
           title, instanceType, requirementType: requirementKind,
           freshMigrationValidation: true,
           expectedRepairs: repairedMigrations,
+          expectedRestorations: restoredMigrations,
           executionOwnership: { requirementId: reqId, runId: cronLockRunId, executionGeneration },
         }) : null;
         if (gate) sandboxId = gate.effectiveSandboxId;
@@ -1528,6 +1538,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
         recoveryDisposition = 'internal_review';
         const verified = await verifyPendingMigrationLifecycleStep({ sandboxId: sandboxId!, requirementId: reqId,
           instanceId, siteId: site_id, userId: user_id, title, instanceType, requirementType: requirementKind,
+          expectedRestorations: restoredMigrations,
           plan: activePlan, audit: cronAudit, executionOwnership: { requirementId: reqId, runId: cronLockRunId, executionGeneration } });
         sandboxId = verified.effectiveSandboxId;
         if (!verified.passed) {
@@ -1565,6 +1576,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
             requirementFlow.delivery.validate_deployment,
           lightweightCheckpoint: lightweightCycleFinalization,
           expectedRepairs: repairedMigrations,
+          expectedRestorations: restoredMigrations,
           executionOwnership: { requirementId: reqId, runId: cronLockRunId, executionGeneration },
         },
       );

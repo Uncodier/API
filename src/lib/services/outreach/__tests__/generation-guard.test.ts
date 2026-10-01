@@ -16,7 +16,7 @@ test('managed generation rejects unauthorized site before any tenant data query'
 });
 test.each(['sms', 'telegram', 'voice'])('generation guard supports %s-only sites and defers inaccessible recipient', async channel => {
   (canAccessSite as jest.Mock).mockResolvedValue(true);
-  const lead: any = { id: 'lead', site_id: 'site', status: 'new', phone: '+15551234567', voice_call_consent_status: 'granted', voice_call_consent_at: '2026-01-01T12:00:00Z' };
+  const lead: any = { id: 'lead', site_id: 'site', status: 'new', phone: '+15551234567' };
   const settings = { activities: { leads_initial_cold_outreach: { status: 'active', all_segments: true, channel_accounts: { [channel]: ['selected'] } } },
     channels: { connections: [{ id: 'selected', type: channel, status: 'connected', zavu_sender_id: 'sender' }] } };
   (supabaseAdmin.from as jest.Mock).mockImplementation(table => {
@@ -25,7 +25,14 @@ test.each(['sms', 'telegram', 'voice'])('generation guard supports %s-only sites
   (loadOutreachConversations as jest.Mock).mockResolvedValue(channel === 'telegram' ? [{ id: 'c', site_id: 'site', lead_id: 'lead', channel, custom_data: { chat_id: 'known-chat' } }] : []);
   (outreachRepository.history as jest.Mock).mockResolvedValue([]);
   expect(await assertOutreachGeneration(request, 'site', 'lead', 'leads_initial_cold_outreach')).toMatchObject({ channels: [channel], recipients: { [channel]: { recipient: channel === 'telegram' ? 'known-chat' : lead.phone } } });
-  lead.phone = undefined; lead.voice_call_consent_status = 'revoked';
+  if (channel === 'voice') {
+    for (const record of [{ do_not_call: true }, { voice_call_consent_status: 'revoked' }, { voice_call_consent_status: 'denied' }]) {
+      Object.assign(lead, { do_not_call: false, voice_call_consent_status: 'unknown' }, record);
+      await expect(assertOutreachGeneration(request, 'site', 'lead', 'leads_initial_cold_outreach')).rejects.toMatchObject({ message: 'No accessible recipient on selected channels' });
+    }
+    lead.voice_call_consent_status = 'unknown';
+  }
+  lead.phone = undefined;
   (loadOutreachConversations as jest.Mock).mockResolvedValue([]);
   await expect(assertOutreachGeneration(request, 'site', 'lead', 'leads_initial_cold_outreach')).rejects.toMatchObject({ message: 'No accessible recipient on selected channels' });
 });

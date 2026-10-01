@@ -44,7 +44,7 @@ export async function prepareOutreachDelivery(ctx: DeliveryContext): Promise<Pre
   const format = message.custom_data?.message_type || message.message_type;
   const mediaUrl = message.custom_data?.media_url || message.media_url;
   if (!text?.trim() && !mediaUrl) return { reason: 'empty_message' };
-  if (account.channel === 'voice' && !getVoiceCallEligibility(lead).allowed) return { reason: 'voice_consent_required' };
+  if (account.channel === 'voice' && !getVoiceCallEligibility(lead).allowed) return { reason: 'voice_call_opted_out' };
   const recipient = resolveOutreachRecipient({ siteId, lead, channel: account.channel, conversations: ctx.conversations || [conversation] });
   if (!recipient) return { reason: 'invalid_recipient' };
   const to = recipient.recipient;
@@ -53,7 +53,7 @@ export async function prepareOutreachDelivery(ctx: DeliveryContext): Promise<Pre
     if (account.provider !== 'zavu') return { reason: 'selected_account_unavailable' };
     if (mediaUrl || !text?.trim() || text.length > 1000) return { reason: 'invalid_voice_greeting' };
     return { send: async () => {
-      // Only called after central daily/message/lead claim. Consent and selected
+      // Only called after central daily/message/lead claim. Call opt-outs and selected
       // site-owned sender are checked afresh by the existing tracked-call service.
       const result = await placeTrackedVoiceCall({ siteId, to, greeting: text, messageId: message.id,
         conversationId: conversation.id, leadId: lead.id, selectedConnectionId: account.id, selectedSenderId: c.zavu_sender_id,

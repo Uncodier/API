@@ -6,6 +6,7 @@ import { decryptToken } from "@/lib/utils/token-decryption";
 import { getSupabaseAdmin } from "@/lib/database/supabase-server";
 import { executeCustomerSupportVoiceTool } from "@/lib/services/zavu/voice-tool-executor";
 import { VoiceLeadValidationError } from "@/lib/services/zavu/voice-lead-errors";
+import { VoiceToolArgumentValidationError } from "@/lib/services/zavu/voice-tool-parameters";
 
 const requestSchema = z.object({
   tool: z.string().min(1).optional(),
@@ -128,7 +129,8 @@ export async function POST(request: NextRequest) {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Tool execution failed";
       const unknownTool = message.startsWith("Unknown Customer Support tool");
-      const validation = error instanceof VoiceLeadValidationError ? error : undefined;
+      const validation = error instanceof VoiceLeadValidationError || error instanceof VoiceToolArgumentValidationError
+        ? error : undefined;
       const code = validation?.code || (unknownTool ? "UNKNOWN_TOOL" : "TOOL_EXECUTION_FAILED");
       log("execution_failed", {
         tool: unknownTool ? "unknown_tool" : toolLabel,

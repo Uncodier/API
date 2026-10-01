@@ -19,7 +19,7 @@ const leadId = '22222222-2222-4222-8222-222222222222';
 beforeEach(() => jest.clearAllMocks());
 test.each(['sms', 'telegram', 'voice', 'instagram', 'custom_chat'])('real managed %s-only generation retains channel/schema without email fallback', async channel => {
   const lead = { id: leadId, site_id: siteId, status: 'new', phone: ['sms', 'voice'].includes(channel) ? '+15551234567' : null,
-    social_networks: { [channel]: 'chat-user' }, voice_call_consent_status: 'granted', voice_call_consent_at: '2026-01-01T12:00:00Z' };
+    social_networks: { [channel]: 'chat-user' }, voice_call_consent_status: 'unknown' };
   const recipients = availableOutreachRecipients({ siteId, lead, channels: [channel] });
   (assertOutreachGeneration as jest.Mock).mockResolvedValue({ lead, channels: Object.keys(recipients), recipients });
   (parseIncomingRequest as jest.Mock).mockResolvedValue({ body: { siteId, leadId, userId: 'user', outreach_activity: 'leads_initial_cold_outreach' }, files: {} });
@@ -31,5 +31,13 @@ test.each(['sms', 'telegram', 'voice', 'instagram', 'custom_chat'])('real manage
   expect(Object.keys(result.messages)).toEqual([channel]);
   expect(result.messages[channel]).toMatchObject({ channel, message: 'Hello from your team', custom_data: { outreach_activity: 'leads_initial_cold_outreach' } });
   if (channel === 'telegram') expect(result.messages[channel]).toMatchObject({ message_type: 'audio', media_url: 'https://cdn.example.com/reply.mp3' });
-  expect((CommandFactory.createCommand as jest.Mock).mock.calls[0][0].targets[1].follow_up_content.channel).toContain(channel);
+  const command = (CommandFactory.createCommand as jest.Mock).mock.calls[0][0];
+  expect(command.targets[1].follow_up_content.channel).toContain(channel);
+  expect(command).toMatchObject({ task: 'lead follow-up strategy', userId: 'user', site_id: siteId, model: 'openai:gpt-5.6-sol' });
+  expect(command.tools[0].function.parameters.properties.site_id.enum).toEqual([siteId]);
+  if (channel === 'voice') {
+    expect(command.context).toContain('Voice blocks explicit call opt-outs (do_not_call, revoked, or legacy denied)');
+    expect(command.context).toContain('no explicit consent grant or timestamp is required');
+    expect(command.context).not.toMatch(/consented|requires explicit voice-call consent/);
+  }
 });

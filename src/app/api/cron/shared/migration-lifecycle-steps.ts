@@ -9,6 +9,7 @@ import { appendPlanRepairStepAtomically, patchPlanStepAtomically } from '@/lib/s
 import { assertCronExecutionOwnership, type CronExecutionOwnership } from './cron-execution-ownership';
 import { getTenantCapabilities } from '@/lib/services/apps-platform/tenant-capabilities-service';
 import { verifyMigrationRepairFiles } from '@/lib/services/apps-platform/migration-repair-files';
+import type { MigrationFileRestoration } from '@/lib/services/apps-platform/migration-restoration';
 import type { Sandbox } from '@vercel/sandbox';
 import { connectOrRecreateRequirementSandbox } from '@/lib/services/sandbox-recovery';
 import { runGateStep } from './gate-step-executor';
@@ -149,6 +150,7 @@ export async function verifyPendingMigrationLifecycleStep(params: {
   sandboxId: string; requirementId: string; instanceId: string; siteId: string; userId: string;
   instanceType: string; title: string; requirementType: string; plan: any;
   audit: CronAuditContext; executionOwnership: CronExecutionOwnership;
+  expectedRestorations?: MigrationFileRestoration[];
 }): Promise<{ passed: boolean; effectiveSandboxId: string }> {
   'use step';
   await assertCronExecutionOwnership(params.executionOwnership);

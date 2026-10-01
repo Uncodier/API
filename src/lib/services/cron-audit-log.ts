@@ -5,6 +5,7 @@
 
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import type { CronExecutionOwnership } from '@/app/api/cron/shared/cron-execution-ownership';
+import type { MigrationFileRestoration } from './apps-platform/migration-restoration';
 
 /** siteId is required to persist; instanceId optional (stored null if missing). */
 export type CronAuditContext = {
@@ -16,6 +17,8 @@ export type CronAuditContext = {
   stepId?: string;
   /** Original run identity; internal side-effect boundaries must revalidate it. */
   executionOwnership?: CronExecutionOwnership;
+  /** Host-generated expectations carried through nested product gates/checkpoints. */
+  expectedMigrationRestorations?: MigrationFileRestoration[];
 };
 
 /** Stable event names for dashboards / SQL filters */

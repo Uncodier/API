@@ -33,13 +33,16 @@ export async function applyDatabaseMigrationsStep(
     if (executionOwnership) await assertCronExecutionOwnership(executionOwnership);
     const context = await loadMigrationApplicationContext(reqId, executionOwnership
       ? () => assertCronExecutionOwnership(executionOwnership) : undefined);
-    const result = await applyPendingMigrations(connected.sandbox, reqId, expectedRepairs, context);
+    const result = await applyPendingMigrations(connected.sandbox, reqId, expectedRepairs, context,
+      executionOwnership ? { assertCurrent: () => assertCronExecutionOwnership(executionOwnership) } : undefined);
     outcome = result.errors.length > 0
       ? { status: 'failed', applied: result.applied, errors: result.errors,
           failureKind: result.failureKind || 'infrastructure',
           ...(result.repairTarget ? { repairTarget: result.repairTarget } : {}),
           ...(result.correction ? { correction: result.correction } : {}) }
       : { status: 'passed', applied: result.applied, errors: [] };
+    if (result.restored?.length) outcome.restored = result.restored;
+    if (outcome.status === 'failed' && result.restorationFailure) outcome.restorationFailure = result.restorationFailure;
   } catch (err: any) {
     console.error('[CronStep] applyDatabaseMigrationsStep FAILED:', err?.message || err);
     outcome = { status: 'failed', applied: [], errors: [err?.message || String(err)], failureKind: 'infrastructure' };
@@ -52,3 +55,6 @@ export async function applyDatabaseMigrationsStep(
   });
   return { ...outcome, effectiveSandboxId };
 }
+
+// A timeout may follow an exact-byte file write. A new owned gate must read-reconcile it.
+applyDatabaseMigrationsStep.maxRetries = 0;

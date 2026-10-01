@@ -44,8 +44,7 @@ describe("sendBulkMessages Voice context", () => {
         email: "ada@example.com",
         phone: "+14155550100",
         do_not_call: false,
-        voice_call_consent_status: "granted",
-        voice_call_consent_at: "2026-09-23T12:00:00.000Z",
+        voice_call_consent_status: "unknown",
         metadata: { preferred_slot: "afternoon" },
       }],
     });
@@ -53,7 +52,7 @@ describe("sendBulkMessages Voice context", () => {
     mockUpdateAudienceLeadStatus.mockResolvedValue(undefined);
   });
 
-  it("stores personalized private guidance on queued Voice records", async () => {
+  it("queues Voice with unknown consent and stores personalized private guidance", async () => {
     const conversationInsert = jest.fn().mockReturnValue({
       select: jest.fn().mockReturnValue({
         single: jest.fn().mockResolvedValue({
@@ -108,5 +107,27 @@ describe("sendBulkMessages Voice context", () => {
         }),
       }),
     ]);
+  });
+
+  it.each([
+    { do_not_call: true, voice_call_consent_status: 'granted' },
+    { voice_call_consent_status: 'revoked' },
+    { voice_call_consent_status: 'denied' },
+  ])('skips explicit call opt-outs before queueing: %j', async preferences => {
+    mockGetAudiencePageForSending.mockResolvedValue({ leads: [{
+      id: 'lead-1', name: 'Ada Lovelace', phone: '+14155550100', ...preferences,
+    }] });
+    mockFrom.mockImplementation((table: string) => {
+      if (table !== 'sites') throw new Error(`Unexpected write to ${table}`);
+      return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { name: 'Acme' }, error: null }) }) }) };
+    });
+    const result = await sendBulkMessagesTool('site-1').execute({
+      audience_id: 'audience-1', channel: 'voice', voice_mode: 'agent_call', message: 'Hello Ada.',
+    });
+    expect(result).toMatchObject({ total_sent: 0, total_skipped: 1 });
+    expect(mockUpdateAudienceLeadStatus).toHaveBeenCalledWith('audience-1', 'lead-1', 'skipped',
+      preferences.do_not_call ? 'Lead is on the do-not-call list' : 'Lead has opted out of Voice calls');
+    expect(mockFrom.mock.calls.map(([table]) => table)).not.toContain('conversations');
+    expect(mockFrom.mock.calls.map(([table]) => table)).not.toContain('messages');
   });
 });

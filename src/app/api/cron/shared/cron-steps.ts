@@ -26,6 +26,7 @@ import { consumePrePushBuildMarker } from './commit/pre-push-build-validation';
 import { assertCronExecutionOwnership, type CronExecutionOwnership } from './cron-execution-ownership';
 import { verifyMigrationRepairFiles } from '@/lib/services/apps-platform/migration-repair-files';
 import type { MigrationRepairTarget } from '@/lib/services/apps-platform/migration-repair-types';
+import { verifyMigrationRestorations, type MigrationFileRestoration } from '@/lib/services/apps-platform/migration-restoration';
 import {
   CronInfraEvent,
   logCronInfrastructureEvent,
@@ -341,6 +342,7 @@ export async function commitAndPushStep(
     lightweightCheckpoint?: boolean;
     executionOwnership?: CronExecutionOwnership;
     expectedRepairs?: MigrationRepairTarget[];
+    expectedRestorations?: MigrationFileRestoration[];
   },
 ): Promise<{
   ok: boolean;
@@ -364,6 +366,7 @@ export async function commitAndPushStep(
     let effectiveSandboxId = connected.sandboxId;
     if (options?.executionOwnership) await assertCronExecutionOwnership(options.executionOwnership);
     if (options?.expectedRepairs) await verifyMigrationRepairFiles(connected.sandbox, options.expectedRepairs);
+    if (options?.expectedRestorations?.length) await verifyMigrationRestorations(connected.sandbox, options.expectedRestorations);
     const r = await commitWorkspaceToOrigin(
       connected.sandbox,
       title,
@@ -375,10 +378,12 @@ export async function commitAndPushStep(
         validateDeployment: options?.validateDeployment,
         lightweightCheckpoint: options?.lightweightCheckpoint,
         executionOwnership: options?.executionOwnership,
+        expectedRestorations: options?.expectedRestorations,
       },
     );
     const sand = r.sandboxReplacement ?? connected.sandbox;
     if (options?.expectedRepairs) await verifyMigrationRepairFiles(sand, options.expectedRepairs);
+    if (options?.expectedRestorations?.length) await verifyMigrationRestorations(sand, options.expectedRestorations, true);
     if (r.sandboxReplacement) {
       effectiveSandboxId = sandboxIdentity(r.sandboxReplacement);
     }

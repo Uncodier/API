@@ -11,6 +11,7 @@ jest.mock("@/lib/database/supabase-server", () => ({
   },
 }));
 
+import { randomBytes, randomUUID } from "node:crypto";
 import { v5 as uuidv5 } from "uuid";
 import { persistVoiceTranscript } from "../voice-transcript";
 
@@ -33,6 +34,12 @@ const params = {
   deliveryId: "delivery-1",
   leadId: "lead-1",
 };
+
+const providerBodyEncodings = [
+  { name: "JSON", encode: (body: Record<string, unknown>) => JSON.stringify(body) },
+  { name: "JSON string", encode: (body: Record<string, unknown>) => JSON.stringify(JSON.stringify(body)) },
+  { name: "escaped JSON", encode: (body: Record<string, unknown>) => JSON.stringify(JSON.stringify(body)).slice(1, -1) },
+];
 
 describe("persistVoiceTranscript", () => {
   beforeEach(() => {
@@ -213,6 +220,242 @@ describe("persistVoiceTranscript", () => {
     expect(mockConversationUpdate).toHaveBeenCalledTimes(1);
     expect(mockConversationEq).toHaveBeenCalledWith("id", "conversation-1");
     expect(mockConversationEq.mock.results[0].value.eq).toHaveBeenCalledWith("site_id", "site-1");
+  });
+
+  it.each(providerBodyEncodings)("projects two provider 422 failures with $name bodies without exposing private data", async ({ encode }) => {
+    const requestIds = [randomUUID(), randomUUID().toUpperCase()];
+    const token = randomBytes(24).toString("hex");
+    const signature = randomBytes(24).toString("hex");
+    const username = randomBytes(16).toString("hex");
+    const password = randomBytes(24).toString("hex");
+    const email = `${randomBytes(16).toString("hex")}@example.invalid`;
+    const details = randomBytes(24).toString("hex");
+    const url = new URL("https://example.invalid/voice");
+    url.username = username;
+    url.password = password;
+    url.searchParams.set("token", token);
+    const texts = requestIds.map((requestId) => JSON.stringify({
+      ok: false,
+      error: `Webhook returned 422: ${encode({
+        request_id: requestId,
+        error: `Validation failed: ${details}\n"${email}"\\${password}`,
+        headers: { authorization: `Bearer ${token}`, "x-signature": signature },
+        arguments: { email, password, url: url.toString() },
+        // Neither nested statuses nor body fields can override safe metadata.
+        http_status: 401,
+        code: details,
+        call_id: details,
+        seq: details,
+      })}`,
+    }));
+    const incidentCall = {
+      ...call,
+      transcript: [
+        { seq: 11, role: "assistant" as const, text: "Hello", startedAt: "2026-09-23T12:00:01Z" },
+        { seq: 12, role: "tool" as const, text: texts[0], startedAt: "2026-09-23T12:00:02Z" },
+        { seq: 13, role: "user" as const, text: " Help\n me " },
+        // The provider can also JSON-encode the entire text once.
+        { seq: 15, role: "tool" as const, text: JSON.stringify(texts[1]), startedAt: "invalid" },
+      ],
+    };
+    const originalCall = JSON.parse(JSON.stringify(incidentCall));
+    await persistVoiceTranscript({ ...params, call: incidentCall, agentId: "agent-1" });
+    await persistVoiceTranscript({ ...params, call: incidentCall, agentId: "agent-1" });
+
+    const [messages, options] = mockUpsert.mock.calls[0];
+    expect(messages.map((message: any) => [message.role, message.content])).toEqual([
+      ["assistant", "Hello"],
+      ["system", "Voice tool request failed (HTTP 422)."],
+      ["user", "Help me"],
+      ["system", "Voice tool request failed (HTTP 422)."],
+    ]);
+    expect(messages.map((message: any) => message.id)).toEqual(
+      [0, 1, 2, 3].map((index) => uuidv5(`voice-turn:site-1:call-1:${index}`, uuidv5.URL))
+    );
+    expect(messages.map((message: any) => message.created_at)).toEqual([
+      "2026-09-23T12:00:01.000Z",
+      "2026-09-23T12:00:02.000Z",
+      "2026-09-23T12:00:02.001Z",
+      "2026-09-23T12:00:02.002Z",
+    ]);
+    for (const [index, seq, requestId] of [[1, 12, requestIds[0]], [3, 15, requestIds[1]]] as const) {
+      expect(messages[index].custom_data).toEqual({
+        source: "zavu_voice_tool_error",
+        channel_delivery: true,
+        voice_mode: "agent_call",
+        call_direction: "inbound",
+        provider_call_id: "call-1",
+        voice_call_delivery_id: "delivery-1",
+        transcript_seq: seq,
+        status: "failed",
+        code: "VOICE_TOOL_FAILED",
+        http_status: 422,
+        request_id: requestId,
+        call_id: "call-1",
+        seq,
+      });
+      expect(messages[index]).not.toHaveProperty("agent_id");
+    }
+    const serialized = JSON.stringify(messages);
+    for (const sensitive of [
+      token, signature, username, password, email, details, url.toString(),
+      "Webhook returned", "Validation failed", "headers", "authorization", "arguments", "http_body",
+    ]) {
+      expect(serialized).not.toContain(sensitive);
+    }
+    expect(options).toEqual({ onConflict: "id", ignoreDuplicates: true });
+    expect(mockUpsert.mock.calls[1]).toEqual(mockUpsert.mock.calls[0]);
+    expect(mockConversationUpdate).toHaveBeenCalledTimes(2);
+    expect(incidentCall).toEqual(originalCall);
+  });
+
+  it.each([400, 401, 403, 404, 422, 429, 500, 503, 599])("classifies provider HTTP %i from the prefix only", async (httpStatus) => {
+    const secret = randomBytes(24).toString("hex");
+    await persistVoiceTranscript({
+      ...params,
+      call: { ...call, transcript: [{ seq: 12, role: "tool", text: JSON.stringify({
+        ok: false,
+        error: `Webhook returned ${httpStatus}: ${JSON.stringify({ http_status: 200, error: secret })}`,
+      }) }] },
+    });
+
+    const [messages] = mockUpsert.mock.calls[0];
+    const authFailed = httpStatus === 401 || httpStatus === 403;
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      role: "system",
+      content: authFailed
+        ? `Voice tool callback authentication failed (HTTP ${httpStatus}).`
+        : `Voice tool request failed (HTTP ${httpStatus}).`,
+      custom_data: { http_status: httpStatus, code: authFailed ? "VOICE_TOOL_AUTH_FAILED" : "VOICE_TOOL_FAILED" },
+    });
+    expect(messages[0].custom_data).not.toHaveProperty("request_id");
+    expect(JSON.stringify(messages)).not.toContain(secret);
+  });
+
+  it("rejects spoofed provider envelopes and unanchored or invalid HTTP prefixes", async () => {
+    const secret = randomBytes(24).toString("hex");
+    const body = JSON.stringify({ request_id: randomUUID(), error: secret });
+    const error = `Webhook returned 422: ${body}`;
+    const envelopes = [
+      { error },
+      { ok: true, error },
+      { ok: "false", error },
+      { ok: 0, error },
+      { ok: null, error },
+      { ok: false, error: { message: error } },
+      { ok: false, error: [error] },
+      { ok: false, error, extra: secret },
+      { ok: false, error, request_id: randomUUID() },
+      { ok: false, error, http_status: 200 },
+      { ok: false, error, http_status: "422" },
+      { result: { ok: false, error } },
+      { ["__proto__"]: { ok: false, error } },
+      [{ ok: false, error }],
+      ...[
+        `${secret} ${error}`, `\n${error}`, ` ${error}`,
+        error.toLowerCase(), `Webhook returned 422:${body}`,
+        `Webhook returned 422\n: ${body}`, `Webhook returned 422 ${secret}: ${body}`,
+        ...[200, 302, 399, 600, "0422", "4220", "422.5", "+422", "4e2"].map(
+          (status) => `Webhook returned ${status}: ${body}`
+        ),
+      ].map((spoofedError) => ({ ok: false, error: spoofedError })),
+    ];
+    const texts = envelopes.flatMap((envelope) => {
+      const text = JSON.stringify(envelope);
+      return [text, JSON.stringify(text)];
+    });
+    await persistVoiceTranscript({
+      ...params,
+      call: { ...call, transcript: [
+        ...texts.map((text, seq) => ({ seq, role: "tool" as const, text })),
+        { seq: texts.length, role: "assistant", text: "Still here" },
+      ] },
+    });
+
+    const [messages] = mockUpsert.mock.calls[0];
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({ role: "assistant", content: "Still here" });
+    expect(JSON.stringify(messages)).not.toContain(secret);
+  });
+
+  it("rejects malformed, non-object or excessively encoded provider bodies without evaluating them", async () => {
+    const secret = randomBytes(24).toString("hex");
+    const body = JSON.stringify({ request_id: randomUUID(), error: secret });
+    const encodedBody = JSON.stringify(body);
+    const envelope = (bodyText: string) => JSON.stringify({ ok: false, error: `Webhook returned 422: ${bodyText}` });
+    const texts = [
+      "", "null", "422", "false", `[{"error":"${secret}"}]`, JSON.stringify(secret),
+      `{error:'${secret}'}`, `{"error":"${secret}"`,
+      `${body} ${secret}`, `${secret} ${body}`, `${body}${body}`,
+      `(() => { throw new Error("${secret}"); })()`,
+      `{"error":"${secret}","request_id":undefined}`,
+      `{\\"error\\":\\"${secret}\\q\\"}`,
+      JSON.stringify(encodedBody),
+      JSON.stringify(encodedBody).slice(1, -1),
+    ].map(envelope);
+    const validText = envelope(body);
+    texts.push(validText.slice(0, -1), JSON.stringify(JSON.stringify(validText)));
+    await expect(persistVoiceTranscript({
+      ...params,
+      call: { ...call, transcript: texts.map((text, seq) => ({ seq, role: "tool", text })) },
+    })).resolves.toBeUndefined();
+
+    expect(mockUpsert).not.toHaveBeenCalled();
+    expect(mockConversationUpdate).not.toHaveBeenCalled();
+  });
+
+  it("bounds provider JSON parsing before decoding oversized text, escaped bodies or whitespace", async () => {
+    const secret = randomBytes(24).toString("hex");
+    const body = JSON.stringify({ request_id: randomUUID(), error: secret, padding: "x".repeat(64 * 1024) });
+    const texts = [
+      body, JSON.stringify(body), JSON.stringify(body).slice(1, -1),
+    ].map((bodyText) => JSON.stringify({ ok: false, error: `Webhook returned 422: ${bodyText}` }));
+    texts.push(" ".repeat(64 * 1024) + JSON.stringify({ ok: false, error: `Webhook returned 422: {"error":"${secret}"}` }));
+    const parse = jest.spyOn(JSON, "parse");
+    try {
+      await persistVoiceTranscript({
+        ...params,
+        call: { ...call, transcript: texts.map((text, seq) => ({ seq, role: "tool", text })) },
+      });
+      expect(parse).not.toHaveBeenCalled();
+      expect(mockUpsert).not.toHaveBeenCalled();
+      expect(mockConversationUpdate).not.toHaveBeenCalled();
+    } finally {
+      parse.mockRestore();
+    }
+  });
+
+  it.each(providerBodyEncodings)("omits invalid or nested request IDs from $name provider bodies", async ({ encode }) => {
+    const requestId = randomUUID();
+    const secret = randomBytes(24).toString("hex");
+    const bodies = [
+      ...[
+        undefined, null, 422, [requestId], { value: requestId }, secret,
+        `${requestId}\n`, `${requestId}\r`, ` ${requestId}`, `${requestId}${secret}`,
+        `${secret}${requestId}`, requestId.replace(/-/g, ""),
+        `${requestId.slice(0, 14)}5${requestId.slice(15)}`,
+        `${requestId.slice(0, 19)}7${requestId.slice(20)}`,
+      ].map((candidate) => ({ request_id: candidate, error: secret })),
+      { nested: { request_id: requestId }, error: secret },
+      { ["__proto__"]: { request_id: requestId }, error: secret },
+      { error: `request_id=${requestId} ${secret}` },
+    ];
+    await persistVoiceTranscript({
+      ...params,
+      call: { ...call, transcript: bodies.map((body, seq) => ({
+        seq, role: "tool", text: JSON.stringify({ ok: false, error: `Webhook returned 422: ${encode(body)}` }),
+      })) },
+    });
+
+    const [messages] = mockUpsert.mock.calls[0];
+    expect(messages).toHaveLength(bodies.length);
+    for (const message of messages) {
+      expect(message).toMatchObject({ role: "system", content: "Voice tool request failed (HTTP 422)." });
+      expect(message.custom_data).not.toHaveProperty("request_id");
+    }
+    expect(JSON.stringify(messages)).not.toContain(requestId);
+    expect(JSON.stringify(messages)).not.toContain(secret);
   });
 
   it.each([400, 403, 404, 429, 500, 503, 599])("classifies HTTP %i without using provider error text", async (httpStatus) => {

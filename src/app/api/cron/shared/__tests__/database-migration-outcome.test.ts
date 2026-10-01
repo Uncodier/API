@@ -50,4 +50,28 @@ describe('database migration delivery receipt', () => {
     await expect(applyDatabaseMigrationsStep('old', 'req', 'applications', 'Title'))
       .resolves.toMatchObject({ status: 'failed', repairTarget });
   });
+
+  it('enables exact-byte restoration only for an owned gate and logs its separate receipt', async () => {
+    const ownership = { requirementId: 'req', runId: 'run', executionGeneration: 2 };
+    const restored = [{ file: 'supabase/migrations/001.sql', checksum: 'a'.repeat(64), source: { kind: 'git', revision: 'b'.repeat(40) } }];
+    (applyPendingMigrations as jest.Mock).mockResolvedValue({ applied: [], errors: [], restored });
+    const result = await applyDatabaseMigrationsStep('old', 'req', 'applications', 'Title', undefined, ownership);
+    expect(result).toMatchObject({ status: 'passed', restored, applied: [] });
+    expect((applyPendingMigrations as jest.Mock).mock.calls[0][4]).toEqual({ assertCurrent: expect.any(Function) });
+    expect(logCronInfrastructureEvent).toHaveBeenCalledWith(undefined, expect.objectContaining({ details: expect.objectContaining({ restored }) }));
+    expect(applyDatabaseMigrationsStep.maxRetries).toBe(0);
+  });
+
+  it('does not silently grant restoration to an unowned caller', async () => {
+    (applyPendingMigrations as jest.Mock).mockResolvedValue({ applied: [], errors: [] });
+    await applyDatabaseMigrationsStep('old', 'req', 'applications', 'Title');
+    expect((applyPendingMigrations as jest.Mock).mock.calls[0][4]).toBeUndefined();
+  });
+
+  it('retains ambiguous recovery diagnostics in the gate failure', async () => {
+    const restorationFailure = { file: 'supabase/migrations/001.sql', expectedChecksum: 'a'.repeat(64), actualChecksum: 'b'.repeat(64),
+      reason: 'restoration_unverified', writeAttempted: true };
+    (applyPendingMigrations as jest.Mock).mockResolvedValue({ applied: [], errors: ['Recovery unverified'], failureKind: 'infrastructure', restorationFailure });
+    expect(await applyDatabaseMigrationsStep('old', 'req', 'applications', 'Title')).toMatchObject({ status: 'failed', restorationFailure });
+  });
 });

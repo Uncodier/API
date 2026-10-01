@@ -6,6 +6,7 @@ import { resolveClientTimezone } from "@/lib/timezone";
 import type { CustomerSupportAgent } from "./voice-agent";
 import { readVoiceAgentPreferences, type VoiceAgentPreferences } from "./voice-preferences";
 import { composeVoiceSystemPrompt } from "./voice-prompt-budget";
+import { buildVoiceBusinessBrief } from "./voice-business-brief";
 import { buildVoiceRuntimePrompt, VOICE_RUNTIME_REMINDER, type VoicePromptTool } from "./voice-tools";
 
 const fileProcessingService = new FileProcessingService();
@@ -83,6 +84,7 @@ export async function buildCustomerSupportBackground(
       options?.voiceTools
     ),
     background,
+    businessBrief: buildVoiceBusinessBrief(siteInfo, agent.name),
     reminder: VOICE_RUNTIME_REMINDER,
     timezone,
   });

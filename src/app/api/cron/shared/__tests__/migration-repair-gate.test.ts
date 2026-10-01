@@ -2,6 +2,8 @@ import { runGateStep } from '../gate-step-executor';
 import { runGateForFlow } from '../gates';
 import { assertCronExecutionOwnership } from '../cron-execution-ownership';
 import { verifyMigrationRepairFiles } from '@/lib/services/apps-platform/migration-repair-files';
+import { verifyMigrationRestorations } from '@/lib/services/apps-platform/migration-restoration';
+jest.mock('@/lib/services/apps-platform/migration-restoration', () => ({ verifyMigrationRestorations: jest.fn() }));
 
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: () => ({ select: () => ({ eq: () => ({
   single: async () => ({ data: { steps: [{ id: 'step', status: 'completed' }, { id: 'next', status: 'pending' }] } }),
@@ -56,6 +58,15 @@ describe('fresh product gate after SQL repair', () => {
   it('preserves infrastructure failure instead of accepting unverified repairs', async () => {
     (runGateForFlow as jest.Mock).mockResolvedValue({ ok: false, infrastructureFailure: true, error: 'probe unavailable' });
     await expect(runGateStep(params)).resolves.toMatchObject({ passed: false, infrastructureFailure: true, effectiveSandboxId: 'recovered' });
+  });
+
+  it('carries restored-file verification across a replaced sandbox', async () => {
+    const restored = [{ file: 'supabase/migrations/001.sql', checksum: 'a'.repeat(64) }] as any;
+    const replacement = { name: 'new' };
+    (runGateForFlow as jest.Mock).mockResolvedValue({ ok: true, richSignals: {}, sandboxReplacement: replacement });
+    await expect(runGateStep({ ...params, expectedRestorations: restored })).resolves.toMatchObject({ passed: true });
+    expect(verifyMigrationRestorations).toHaveBeenCalledTimes(2);
+    expect(verifyMigrationRestorations).toHaveBeenLastCalledWith(replacement, restored);
   });
 
   it('classifies an exception during fresh verification as infrastructure, never product proof', async () => {

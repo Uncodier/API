@@ -18,6 +18,7 @@ import { computeApplicationBuildFingerprint } from './commit/pre-push-build-vali
 import { getDeclaredProtectedRoutes, getDeclaredTestCommand, getDeclaredValidationTargets } from './single-turn-helpers';
 import { verifyMigrationRepairFiles } from '@/lib/services/apps-platform/migration-repair-files';
 import type { MigrationRepairTarget } from '@/lib/services/apps-platform/migration-repair-types';
+import { verifyMigrationRestorations, type MigrationFileRestoration } from '@/lib/services/apps-platform/migration-restoration';
 
 export interface GateStepResult {
   ok: boolean;
@@ -45,6 +46,7 @@ export async function runGateStep(params: {
   freshMigrationValidation?: boolean;
   executionOwnership?: CronExecutionOwnership;
   expectedRepairs?: MigrationRepairTarget[];
+  expectedRestorations?: MigrationFileRestoration[];
 }): Promise<GateStepResult> {
   'use step';
   const { sandboxId, plan, step, requirementId, instanceId, siteId, userId, title, instanceType, requirementType } = params;
@@ -57,6 +59,7 @@ export async function runGateStep(params: {
     planId: plan.id,
     stepId: step.id,
     executionOwnership: params.executionOwnership,
+    expectedMigrationRestorations: params.expectedRestorations,
   };
   if (params.executionOwnership) await assertCronExecutionOwnership(params.executionOwnership);
 
@@ -80,6 +83,7 @@ export async function runGateStep(params: {
   try {
     if (params.executionOwnership) await assertCronExecutionOwnership(params.executionOwnership);
     if (params.expectedRepairs) await verifyMigrationRepairFiles(sandbox, params.expectedRepairs);
+    if (params.expectedRestorations?.length) await verifyMigrationRestorations(sandbox, params.expectedRestorations);
     const backlogItemId = step.metadata?.backlog_item_id || step.backlog_item_id;
     const context = params.freshMigrationValidation
       ? await loadBacklogGateContext(requirementId, backlogItemId) : {};
@@ -121,6 +125,7 @@ export async function runGateStep(params: {
     }
     if (params.executionOwnership) await assertCronExecutionOwnership(params.executionOwnership);
     if (params.expectedRepairs) await verifyMigrationRepairFiles(gateRes.sandboxReplacement || sandbox, params.expectedRepairs);
+    if (params.expectedRestorations?.length) await verifyMigrationRestorations(gateRes.sandboxReplacement || sandbox, params.expectedRestorations);
     if (!gateRes.ok && gateRes.infrastructureFailure) {
       return {
         ok: false,

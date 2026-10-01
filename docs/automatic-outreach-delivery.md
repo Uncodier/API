@@ -56,7 +56,31 @@ The send request remains `{site_id,message_id}`. Confirmed responses and central
 
 ### Voice and media
 
-Voice is a call, **never** a generic text send. Generation/dispatch requires the existing `getVoiceCallEligibility`: granted explicit consent with a valid timestamp and no `do_not_call`. `placeTrackedVoiceCall` rechecks the server lead and consented phone and receives new optional `selectedConnectionId` / `selectedSenderId`; both must match one currently connected site-owned voice connection. Existing callers omitting these parameters retain their existing behavior. Calls start only inside the central daily/message/lead reservation, use the existing tracked-call idempotency mechanism, and count one accepted call as one contact attempt. Existing voice metadata, terminal webhook status and transcript/duration fields are retained; ambiguous placement never automatically retries.
+Voice is a call, **never** a generic text send. Generation/dispatch uses
+`getVoiceCallEligibility` to block only explicit call opt-outs: `do_not_call === true`,
+`voice_call_consent_status === 'revoked'`, or legacy `'denied'`. Absent, null,
+unknown or unrecognized consent statuses and missing/invalid grant timestamps do
+not block calls. No consent field is written or inferred by this eligibility check.
+The legacy `denied` value appears in inbound/identity preservation fixtures and
+remains an opt-out, even though the current `DbLead` type lists `revoked` instead.
+
+`placeTrackedVoiceCall` rechecks the server-loaded tenant lead, matching phone and
+call opt-outs. Optional `selectedConnectionId` / `selectedSenderId` must match one
+currently connected site-owned voice connection. Existing callers omitting these
+parameters retain their existing sender-selection behavior. Calls start only inside
+the central daily/message/lead reservation, use tracked-call idempotency, and count
+one accepted call as one contact attempt. Existing voice metadata, terminal webhook
+status and transcript/duration fields are retained; ambiguous placement never
+automatically retries. Missing/inaccessible leads, invalid/mismatched phones,
+authorization, account checks and other outreach eligibility restrictions remain
+unchanged. The transport reports `voice_call_opted_out`; recipient rejection in
+central delivery reports `voice_recipient_ineligible`, replacing the old
+consent-required deferral reasons.
+
+This is separate from the live `IDENTIFY_LEAD` tool's explicit permission to
+identify/store caller contact details, which remains required. Inbound linkage
+does not grant consent or clear opt-outs. The admission change requires no schema
+migration or consent backfill.
 
 Saved `message_type`, `media_url`, `mime_type` and voice guidance survive generation/logging. Explicit image/video/audio/document messages use Zavu `messageType` / `content.mediaUrl` on the exact selected messaging account; SMS media and generic voice media defer. URLs use the existing HTTPS/public-DNS `assertSafeRemoteUrl` validator; this path never fetches media, follows media redirects, or adds a dependency. Zavu still validates channel/provider media capabilities. No new automatic TTS generation or audio account type is introduced.
 
@@ -76,4 +100,9 @@ History paginates tenant conversation joins; histories at/above 20,000 rows defe
 node node_modules/jest/bin/jest.js --config jest.outreach.config.mjs --runInBand
 ```
 
-Offline tests cover policy, mixed-channel concurrent capacity (including SMS/Telegram/voice), message and lead identity, Redis loss/unavailability, conservative ambiguity, exact provider dispatch/no fallback, selected SMTP tokens, Twilio single-message templates, media/voice metadata preservation, generic generation, persistence and route authorization. Related regression suites cover the actual voice-call service’s selected sender and consent enforcement, terminal callbacks, existing channel/audio delivery and safe URL validation. Lua execution is modeled as a serialized atomic command; no local Redis server was available. No external delivery, remote migration, production build, or deployment is performed.
+Offline tests cover policy, mixed-channel concurrent capacity (including SMS/Telegram/voice), message and lead identity, Redis loss/unavailability, conservative ambiguity, exact provider dispatch/no fallback, selected SMTP tokens, Twilio single-message templates, media/voice metadata preservation, generic generation, persistence and route authorization. Related regression suites cover the actual voice-call service's selected sender and explicit opt-out enforcement, terminal callbacks, existing channel/audio delivery and safe URL validation. Lua execution is modeled as a serialized atomic command; no local Redis server was available. No external delivery, remote migration, production build, or deployment is performed.
+
+Run `npm run test:voice` for tracked placement, lifecycle, webhook authentication,
+and the unchanged caller-identification consent tests. Outreach regressions also
+exercise absent/unknown consent, missing/invalid grant timestamps, DNC/revoked/legacy
+denied opt-outs, and generation prompts that no longer require a consent grant.

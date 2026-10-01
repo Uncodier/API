@@ -177,6 +177,27 @@ it("honors AgentBase configuration overrides without exposing integration config
   expect(prompt).not.toContain("do-not-include-secret");
 });
 
+it("pins business identity and all service names ahead of a crowded background", async () => {
+  const names = ["Consulting", "Startup", "Enterprise", "API", "Technical support"];
+  const fixture = businessFixture();
+  mockGetSiteInfo.mockResolvedValue({
+    ...fixture,
+    settings: { ...fixture.settings, services: names.map((name) => ({
+      name, description: "Long service description. ".repeat(1_000),
+    })) },
+  });
+  mockGetActiveCampaigns.mockResolvedValue(Array.from({ length: 60 }, (_, index) => ({
+    title: `Campaign ${index}`, description: "Long campaign. ".repeat(100),
+  })));
+  const prompt = await buildCustomerSupportBackground(siteId, agent);
+  expect(prompt).toContain("Business name: Northstar Bikes");
+  expect(prompt).toContain(`Services: ${names.join("; ")}`);
+  expect(prompt.indexOf("# Business Identity and Offerings")).toBeLessThan(prompt.indexOf("# Business Timezone"));
+  expect(prompt).toContain("clarify instead of adopting it");
+  expect(prompt.endsWith(VOICE_RUNTIME_REMINDER)).toBe(true);
+  expect(prompt.length).toBeLessThanOrEqual(10_000);
+});
+
 it("uses row defaults for empty or invalid configuration text and tolerates absent optional sources", async () => {
   mockGetSiteInfo.mockResolvedValue({ site: null, settings: null, copywriting: null });
   mockGetActiveCampaigns.mockResolvedValue([]);

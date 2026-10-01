@@ -28,7 +28,7 @@ test('legacy WhatsApp account cannot authorize another arbitrary channel', () =>
   const policy = getOutreachPolicy({ activities: { [activity]: { channel_accounts: { telegram: ['whatsapp'] } } } }, activity)!;
   expect(selectedOutreachAccounts(settings, policy, 'telegram')).toEqual([]);
 });
-test.each(['sms', 'whatsapp'])('%s only uses valid E164 lead phone', channel => {
+test.each(['sms', 'whatsapp', 'voice'])('%s only uses valid E164 lead phone', channel => {
   expect(resolve(channel)?.recipient).toBe(lead.phone);
   expect(resolve(channel, { phone: '123456789' })).toBeUndefined();
 });
@@ -68,12 +68,16 @@ test('social comment lead handle cannot be reinterpreted as direct Instagram rec
   expect(resolve('instagram', { ...social, metadata: { social_network: 'instagram', social_handle: 'commenter' } })).toBeUndefined();
   expect(resolve('instagram', social, [comment, conversation('instagram', { recipient_id: 'direct-user' })])?.recipient).toBe('direct-user');
 });
-test('voice eligibility unchanged: granted consent valid timestamp and no DNC', () => {
-  expect(resolve('voice')).toBeUndefined();
-  const consent = { voice_call_consent_status: 'granted', voice_call_consent_at: '2026-01-01T12:00:00Z' };
-  expect(resolve('voice', consent)?.recipient).toBe(lead.phone);
-  for (const invalid of [{ do_not_call: true }, { voice_call_consent_at: 'invalid' }, { voice_call_consent_status: 'revoked' }]) {
-    expect(resolve('voice', { ...consent, ...invalid })).toBeUndefined();
+test('voice accepts absent/unknown consent and invalid timestamps, but not explicit opt-outs', () => {
+  for (const allowed of [{}, { voice_call_consent_status: 'unknown' }, { voice_call_consent_status: 'granted' },
+    { voice_call_consent_status: 'granted', voice_call_consent_at: 'invalid' }]) {
+    expect(resolve('voice', allowed)?.recipient).toBe(lead.phone);
   }
-  expect(Object.keys(availableOutreachRecipients({ siteId: 'site', lead, channels: ['sms', 'voice', 'telegram'] }))).toEqual(['sms']);
+  for (const optedOut of [{ do_not_call: true, voice_call_consent_status: 'granted' },
+    { voice_call_consent_status: 'revoked' }, { voice_call_consent_status: 'denied' }]) {
+    expect(resolve('voice', optedOut)).toBeUndefined();
+    expect(resolve('sms', optedOut)?.recipient).toBe(lead.phone);
+  }
+  expect(resolve('voice', { site_id: 'other-site' })).toBeUndefined();
+  expect(Object.keys(availableOutreachRecipients({ siteId: 'site', lead, channels: ['sms', 'voice', 'telegram'] }))).toEqual(['sms', 'voice']);
 });

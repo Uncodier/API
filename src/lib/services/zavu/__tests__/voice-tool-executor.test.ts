@@ -23,6 +23,7 @@ jest.mock("@/lib/database/supabase-server", () => ({
 }));
 
 import { executeCustomerSupportVoiceTool } from "../voice-tool-executor";
+import { VoiceToolArgumentValidationError } from "../voice-tool-parameters";
 
 function singleResult(data: unknown) {
   const chain: any = {
@@ -143,6 +144,95 @@ describe("executeCustomerSupportVoiceTool", () => {
       siteId: "site-1",
       rawPayload: "{}",
     })).rejects.toThrow('Unknown Customer Support tool "unsafe_tool"');
+  });
+
+  function useSourceCatalog() {
+    const { getCustomerSupportVoiceToolDefinitions } = jest.requireActual("../voice-tool-catalog");
+    mockGetCustomerSupportVoiceToolDefinitions.mockImplementation(getCustomerSupportVoiceToolDefinitions);
+  }
+
+  it.each([
+    [{ action: "list", resource: "service" }, "resource"],
+    [{ action: "search", resource: "item" }, "action"],
+    [{ action: "list", resource: "invented" }, "resource"],
+    [{ action: "list", limit: "10" }, "limit"],
+    [{ resource: "item" }, "action"],
+  ])("rejects invalid catalog arguments before native execution/network without resource coercion", async (args, field) => {
+    useSourceCatalog();
+    const execution = executeCustomerSupportVoiceTool({
+      toolName: "catalog_commerce", arguments: args, siteId: "site-1", rawPayload: "{}",
+    });
+    await expect(execution).rejects.toBeInstanceOf(VoiceToolArgumentValidationError);
+    await expect(execution).rejects.toMatchObject({ code: "VOICE_TOOL_INVALID_ARGUMENTS", fields: [field] });
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(mockGetCustomToolDefinition).not.toHaveBeenCalled();
+    expect(mockTenantFrom).not.toHaveBeenCalled();
+  });
+
+  it("passes a valid service list to the real native executor scoped to the authenticated site", async () => {
+    useSourceCatalog();
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true, text: jest.fn().mockResolvedValue('{"success":true,"items":[]}'),
+    });
+    await executeCustomerSupportVoiceTool({
+      toolName: "catalog_commerce",
+      arguments: { action: "list", resource: "item", kind: "service", site_id: "foreign-site" },
+      siteId: "site-1", rawPayload: "{}",
+    });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    const [, options] = (global.fetch as jest.Mock).mock.calls[0];
+    expect(JSON.parse(options.body)).toMatchObject({
+      action: "list", resource: "item", kind: "service", site_id: "site-1",
+    });
+  });
+
+  it("rejects nested array constraints before a native tool network call", async () => {
+    useSourceCatalog();
+    await expect(executeCustomerSupportVoiceTool({
+      toolName: "promotions", siteId: "site-1", rawPayload: "{}",
+      arguments: { action: "list", channels: ["unknown"], required_items: [{ min_quantity: "two" }] },
+    })).rejects.toMatchObject({ fields: ["channels[]", "required_items[].min_quantity"] });
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("preserves documented null=unlimited on native catalog updates", async () => {
+    useSourceCatalog();
+    (global.fetch as jest.Mock).mockResolvedValue({ ok: true, text: jest.fn().mockResolvedValue('{"success":true}') });
+    await executeCustomerSupportVoiceTool({
+      toolName: "catalog_commerce", siteId: "site-1", rawPayload: "{}",
+      arguments: { action: "update", resource: "modifier_group", id: "group-1", max_select: null },
+    });
+    const [, options] = (global.fetch as jest.Mock).mock.calls[0];
+    expect(JSON.parse(options.body)).toMatchObject({ resource: "modifier_group", max_select: null, site_id: "site-1" });
+  });
+
+  it("rejects source constraint violations before an API-backed tool fetch", async () => {
+    useSourceCatalog();
+    mockTenantFrom.mockReturnValue(singleResult({ id: "lead-1" }));
+    await expect(executeCustomerSupportVoiceTool({
+      toolName: "GET_TASKS", siteId: "site-1", rawPayload: "{}",
+      arguments: { lead_id: "lead-1", status: "invented", limit: 101 },
+    })).rejects.toMatchObject({ fields: ["status", "limit"] });
+    expect(mockGetCustomToolDefinition).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("validates after trusted lead/site scoping and before internal command_id injection", async () => {
+    useSourceCatalog();
+    mockTenantFrom.mockReturnValue(singleResult({ id: "lead-1" }));
+    mockGetCustomToolDefinition.mockReturnValue({ endpoint: { url: "/api/agents/tools/leads/qualify", method: "POST" } });
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true, text: jest.fn().mockResolvedValue('{"success":true}'),
+    });
+    await executeCustomerSupportVoiceTool({
+      toolName: "QUALIFY_LEAD", siteId: "site-1", rawPayload: "{}",
+      arguments: { site_id: "foreign-site", status: "qualified" },
+      context: { contactPhone: "+13015550100" },
+    });
+    const [, options] = (global.fetch as jest.Mock).mock.calls[0];
+    expect(JSON.parse(options.body)).toMatchObject({
+      site_id: "site-1", lead_id: "lead-1", phone: "+13015550100", status: "qualified", command_id: expect.any(String),
+    });
   });
 
   it("uses the native IDENTIFY_LEAD adapter before visitor/conversation scoping or HTTP fallback", async () => {

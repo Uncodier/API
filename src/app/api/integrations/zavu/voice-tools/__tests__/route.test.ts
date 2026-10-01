@@ -22,8 +22,10 @@ jest.mock("@/lib/database/supabase-server", () => ({
 import { NextRequest } from "next/server";
 import { POST } from "../route";
 import { VoiceLeadValidationError } from "@/lib/services/zavu/voice-lead-errors";
+import { VoiceToolArgumentValidationError } from "@/lib/services/zavu/voice-tool-parameters";
 
 const SITE_ID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+const signingSecret = crypto.randomBytes(32).toString("hex");
 
 function request(body: unknown, signature?: string, toolName: string | null = "reservations") {
   const rawBody = JSON.stringify(body);
@@ -36,7 +38,7 @@ function request(body: unknown, signature?: string, toolName: string | null = "r
         ...(toolName !== null ? { "x-zavu-tool": toolName } : {}),
         "x-zavu-signature":
           signature ||
-          crypto.createHmac("sha256", "whsec_test").update(rawBody).digest("hex"),
+          crypto.createHmac("sha256", signingSecret).update(rawBody).digest("hex"),
       },
       body: rawBody,
     }
@@ -65,7 +67,7 @@ describe("Zavu Voice tools webhook", () => {
       data: { configuration: { zavu: { tool_webhook_secret: "encrypted" } } },
       error: null,
     });
-    mockDecryptToken.mockReturnValue("whsec_test");
+    mockDecryptToken.mockReturnValue(signingSecret);
   });
 
   it("executes a Customer Support tool from Zavu's arguments payload", async () => {
@@ -192,7 +194,8 @@ describe("Zavu Voice tools webhook", () => {
         secret_configured: true,
         secret_decryptable: true,
       }));
-      expect(JSON.stringify(warn.mock.calls)).not.toMatch(/private@example|14155550100|whsec_test|encrypted/);
+      expect(JSON.stringify(warn.mock.calls)).not.toMatch(/private@example|14155550100|encrypted/);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(signingSecret);
       expect(mockExecuteCustomerSupportVoiceTool).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();
@@ -217,7 +220,7 @@ describe("Zavu Voice tools webhook", () => {
 
   it("does not accept a different site's signing secret", async () => {
     const payload = { tool: "reservations", arguments: {} };
-    const otherSignature = crypto.createHmac("sha256", "other-site-secret")
+    const otherSignature = crypto.createHmac("sha256", crypto.randomBytes(32))
       .update(JSON.stringify(payload)).digest("hex");
     const response = await POST(request(payload, otherSignature));
     expect(response.status).toBe(401);
@@ -259,7 +262,36 @@ describe("Zavu Voice tools webhook", () => {
       expect(warn).toHaveBeenCalledWith("[Zavu Voice Tool]", expect.objectContaining({
         code: body.code, invalid_fields: [field], request_id: body.request_id,
       }));
-      expect(JSON.stringify([warn.mock.calls, body])).not.toMatch(/private@example|14155550100|whsec_test|encrypted/);
+      expect(JSON.stringify([warn.mock.calls, body])).not.toMatch(/private@example|14155550100|encrypted/);
+      expect(JSON.stringify([warn.mock.calls, body])).not.toContain(signingSecret);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("returns actionable tool argument fields without exposing caller values", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    const sensitiveValue = crypto.randomBytes(32).toString("hex");
+    try {
+      mockExecuteCustomerSupportVoiceTool.mockRejectedValueOnce(
+        new VoiceToolArgumentValidationError([{ field: "resource", requirement: 'allowed values are "item".' }])
+      );
+      const response = await POST(request({
+        tool: "catalog_commerce", arguments: { action: "list", resource: sensitiveValue },
+      }, undefined, "catalog_commerce"));
+      const body = await response.json();
+      expect(response.status).toBe(422);
+      expect(body).toMatchObject({
+        code: "VOICE_TOOL_INVALID_ARGUMENTS", invalid_fields: ["resource"],
+        request_id: response.headers.get("x-request-id"),
+      });
+      expect(body.error).toContain('allowed values are "item"');
+      expect(warn).toHaveBeenCalledWith("[Zavu Voice Tool]", expect.objectContaining({
+        code: body.code, invalid_fields: ["resource"], request_id: body.request_id,
+      }));
+      const diagnostic = JSON.stringify([warn.mock.calls, body]);
+      expect(diagnostic).not.toContain(sensitiveValue);
+      expect(diagnostic).not.toContain(signingSecret);
     } finally {
       warn.mockRestore();
     }

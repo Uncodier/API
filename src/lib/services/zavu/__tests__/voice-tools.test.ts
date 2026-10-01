@@ -4,6 +4,7 @@ jest.mock("../agent-client", () => ({
   deleteAgentTool: jest.fn(),
 }));
 
+import { randomBytes } from "node:crypto";
 import {
   deleteAgentTool,
   listAgentTools,
@@ -19,12 +20,14 @@ const mockDeleteAgentTool = deleteAgentTool as jest.Mock;
 
 describe("syncVoiceTools", () => {
   const originalEnv = process.env;
+  let webhookSecret: string;
 
   beforeEach(() => {
     jest.clearAllMocks();
+    webhookSecret = randomBytes(24).toString("hex");
     process.env = {
       ...originalEnv,
-      API_SERVER_URL: "https://backend.makinari.com",
+      API_SERVER_URL: "https://voice.example.invalid",
     };
     mockListAgentTools.mockResolvedValue([
       { id: "tool_capture", name: "capture_lead" },
@@ -66,7 +69,7 @@ describe("syncVoiceTools", () => {
     const tools = await syncVoiceTools({
       agentId: "agent_1",
       siteId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
-      webhookSecret: "whsec_test",
+      webhookSecret,
     });
 
     expect(mockDeleteAgentTool).toHaveBeenCalledWith("agent_1", "tool_old");
@@ -78,7 +81,7 @@ describe("syncVoiceTools", () => {
       expect.objectContaining({
         name: "reservations",
         webhookUrl: expect.stringContaining("siteId=aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"),
-        webhookSecret: "whsec_test",
+        webhookSecret,
       })
     );
     expect(mockUpsertAgentTool).toHaveBeenCalledWith(
@@ -126,6 +129,51 @@ describe("syncVoiceTools", () => {
     expect(voice.parameters.properties).not.toHaveProperty("conversation");
     expect(chat.parameters.required).not.toContain("consent");
     expect(chat.parameters.properties).toHaveProperty("conversation");
+  });
+
+  it("keeps all 16 tools and enum guidance through the provider's type/description-only roundtrip", async () => {
+    mockUpsertAgentTool.mockImplementation(async (_agentId, input) => ({
+      ...input,
+      id: `tool_${input.name}`,
+      parameters: JSON.parse(JSON.stringify({
+        type: input.parameters.type,
+        required: input.parameters.required,
+        properties: Object.fromEntries(Object.entries(input.parameters.properties).map(([name, value]) => {
+          const property = value as { type: string; description: string };
+          return [name, { type: property.type, description: property.description }];
+        })),
+      })),
+    }));
+    const tools = await syncVoiceTools({ agentId: "agent_1", siteId: "site-1", webhookSecret });
+    expect(tools.map((tool) => tool.name)).toEqual(getCustomerSupportToolDefinitions().map((tool) => tool.name));
+    expect(tools).toHaveLength(16);
+    const catalog = tools.find((tool) => tool.name === "catalog_commerce")!;
+    const properties = catalog.parameters.properties as any;
+    expect(properties.resource.enum).toBeUndefined();
+    expect(properties.resource.description).toContain('Allowed values: "item", "modifier_group"');
+    expect(properties.action.description).toContain('"create", "list", "get", "update", "delete"');
+    const promotions = tools.find((tool) => tool.name === "promotions")!;
+    expect(promotions.parameters.properties).toHaveProperty("channels.description", expect.stringContaining('"marketplace", "shop", "pos"'));
+    const source = getCustomerSupportVoiceToolDefinitions().find((tool) => tool.name === "catalog_commerce")!;
+    expect(source.parameters.properties).toHaveProperty("resource.enum", expect.arrayContaining(["item"]));
+    const prompt = buildVoiceRuntimePrompt({ language: "auto" }, tools);
+    expect(prompt).toContain('List services: action="list", resource="item", kind="service"; never resource="service".');
+    expect(prompt.length).toBeLessThan(5_600);
+  });
+
+  it("prefixes service-list guidance in voice only, preserving every chat parameter contract", () => {
+    const chat = getCustomerSupportToolDefinitions();
+    const voice = getCustomerSupportVoiceToolDefinitions();
+    for (const source of chat) {
+      const projected = voice.find((tool) => tool.name === source.name)!;
+      if (source.name !== "IDENTIFY_LEAD") expect(projected.parameters).toEqual(source.parameters);
+      if (!["IDENTIFY_LEAD", "catalog_commerce"].includes(source.name)) {
+        expect(projected.description).toBe(source.description);
+      }
+    }
+    expect(chat.find((tool) => tool.name === "catalog_commerce")!.description).not.toContain("List services:");
+    expect(voice.find((tool) => tool.name === "catalog_commerce")!.description.slice(0, 120))
+      .toContain('resource="item", kind="service"; never resource="service"');
   });
 
   it("prompts the agent with live-call and tool execution rules", () => {
@@ -201,7 +249,7 @@ describe("syncVoiceTools", () => {
     await expect(syncVoiceTools({
       agentId: "agent_1",
       siteId: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
-      webhookSecret: "whsec_test",
+      webhookSecret,
     })).rejects.toThrow("Registration failed");
 
     expect(mockDeleteAgentTool).not.toHaveBeenCalled();

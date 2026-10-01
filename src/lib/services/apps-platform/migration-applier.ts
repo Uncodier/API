@@ -7,6 +7,7 @@ import type { MigrationRepairTarget } from './migration-repair-types';
 import { authorizeMigrationApplication, loadMigrationApplicationContext, type MigrationApplicationContext } from './migration-application-guard';
 import { transitionMigrationLifecycle, type MigrationLifecycleRecord } from './migration-lifecycle';
 import { migrationLifecycleValue } from './migration-lifecycle-value';
+import { restoreAppliedMigration, verifyMigrationRestorations, type MigrationFileRestoration, type MigrationRestorationFailure } from './migration-restoration';
 
 function migrationChecksum(sql: string): string {
   return createHash('sha256').update(sql).digest('hex');
@@ -17,7 +18,9 @@ export async function applyPendingMigrations(
   requirementId: string,
   expectedRepairs: MigrationRepairTarget[] = [],
   applicationContext?: MigrationApplicationContext,
-): Promise<{ applied: string[]; errors: string[]; failureKind?: 'product' | 'infrastructure'; repairTarget?: MigrationRepairTarget; correction?: MigrationLifecycleRecord }> {
+  restoration?: { assertCurrent: () => Promise<void> },
+): Promise<{ applied: string[]; errors: string[]; failureKind?: 'product' | 'infrastructure'; repairTarget?: MigrationRepairTarget; correction?: MigrationLifecycleRecord;
+  restored?: MigrationFileRestoration[]; restorationFailure?: MigrationRestorationFailure }> {
   const client = getAppsAdminClient();
 
   const { data: tenantRow, error: tenantError } = await client
@@ -82,6 +85,8 @@ export async function applyPendingMigrations(
 
   const applied: string[] = [];
   const errors: string[] = [];
+  const restored: MigrationFileRestoration[] = [];
+  let restorationFailure: MigrationRestorationFailure | undefined;
   let failureKind: 'product' | 'infrastructure' = 'infrastructure';
   let repairTarget: MigrationRepairTarget | undefined;
   let correction: MigrationLifecycleRecord | undefined;
@@ -114,11 +119,6 @@ export async function applyPendingMigrations(
     }
     const sql = await catCmd.stdout();
 
-    if (!sql.trim()) {
-      errors.push(`Migration ${file} is empty; do not erase pending or applied SQL to skip validation.`);
-      failureKind = 'product';
-      break;
-    }
     const checksum = migrationChecksum(sql);
     const expectedRepair = expectedRepairs.find(expected => expected.file === file);
     if (expectedRepair && expectedRepair.checksum !== checksum) {
@@ -158,14 +158,36 @@ export async function applyPendingMigrations(
           : null;
       if (recordedChecksum && recordedChecksum !== checksum) {
         failureKind = 'product';
+        // Only the owned deterministic gate may restore history; no agent-selected SQL.
+        if (restoration && applicationContext?.requirementId === requirementId) {
+          const recovery = await restoreAppliedMigration({ sandbox, requirementId, file, schema, tenantId,
+            expectedChecksum: recordedChecksum, actualChecksum: checksum,
+            assertCurrent: async () => {
+              await restoration.assertCurrent();
+              await applicationContext.assertCurrent();
+            } });
+          if ('restored' in recovery) {
+            restored.push(recovery.restored);
+            continue; // Already applied: never re-lint, re-authorize or execute historical SQL.
+          }
+          restorationFailure = recovery.failure;
+          failureKind = recovery.failureKind;
+        }
         errors.push(
           `Migration ${file} changed after it was applied. ` +
+          `Expected SHA-256: ${/^[a-f0-9]{64}$/.test(recordedChecksum) ? recordedChecksum : 'invalid ledger checksum'}; actual SHA-256: ${checksum}. ` +
+          (restorationFailure ? `Automatic restoration stopped: ${restorationFailure.reason}. ` : 'Exact-byte recovery is performed by the owned database gate. ') +
           'Restore the exact applied file bytes from a trusted source and verify their SHA-256 against the protected ledger first; the earliest Git commit is not proof of the applied version. ' +
           'Create a new migration for subsequent changes instead of editing applied SQL. Never change the ledger checksum to match the file.',
         );
         break;
       }
       if (!recordedChecksum) {
+        if (!sql.trim()) {
+          failureKind = 'product';
+          errors.push(`Migration ${file} is empty; a legacy receipt cannot prove the applied bytes.`);
+          break;
+        }
         const { data: backfilled, error: backfillError } = await client.rpc(
           'apps_apply_migration',
           {
@@ -193,6 +215,11 @@ export async function applyPendingMigrations(
       continue;
     }
 
+    if (!sql.trim()) {
+      errors.push(`Migration ${file} is empty; do not erase pending or applied SQL to skip validation.`);
+      failureKind = 'product';
+      break;
+    }
     // Central review applies equally to normal executor writes and repair-tool writes.
     context ||= await loadMigrationApplicationContext(requirementId);
     const target: MigrationRepairTarget = { file, schema, tenantId, checksum, reason: 'lint' };
@@ -272,40 +299,48 @@ export async function applyPendingMigrations(
     }
   }
 
-  if (errors.length === 0) {
-    for (const expected of expectedRepairs) {
-      const { data: receipt, error } = await client.rpc('apps_get_migration_receipt', {
-        p_target_schema: schema, p_expected_tenant_id: tenantId,
-        p_migration_key: `migration:${expected.file}`,
-      });
-      if (error || receipt?.found !== true || receipt.value?.checksum !== expected.checksum) {
-        errors.push(`Repaired migration ${expected.file} has no matching atomic receipt.`);
-        break;
+  try {
+    if (errors.length === 0) {
+      for (const expected of expectedRepairs) {
+        const { data: receipt, error } = await client.rpc('apps_get_migration_receipt', {
+          p_target_schema: schema, p_expected_tenant_id: tenantId,
+          p_migration_key: `migration:${expected.file}`,
+        });
+        if (error || receipt?.found !== true || receipt.value?.checksum !== expected.checksum) {
+          errors.push(`Repaired migration ${expected.file} has no matching atomic receipt.`);
+          break;
+        }
       }
     }
-  }
 
-  if (shouldSyncExposure) {
-    // Automatically expose schemas to PostgREST to ensure new tables/schemas are visible
-    // and reload the schema cache so introspection works immediately.
-    const syncResult = await syncPostgrestSchemas();
-    if (!syncResult.ok) {
-      failureKind = 'infrastructure';
-      repairTarget = undefined;
-      errors.push(`Failed to sync schemas with Supabase Management API: ${syncResult.error}`);
+    if (restored.length) await verifyMigrationRestorations(sandbox, restored);
+    if (shouldSyncExposure && !restorationFailure) {
+      // Automatically expose schemas to PostgREST to ensure new tables/schemas are visible
+      // and reload the schema cache so introspection works immediately.
+      const syncResult = await syncPostgrestSchemas();
+      if (!syncResult.ok) {
+        failureKind = 'infrastructure';
+        repairTarget = undefined;
+        errors.push(`Failed to sync schemas with Supabase Management API: ${syncResult.error}`);
+      }
+      const exposeSql = `
+        notify pgrst, 'reload config';
+        notify pgrst, 'reload schema';
+      `;
+      const { error: exposeError } = await client.rpc('apps_exec_sql', { sql: exposeSql });
+      if (exposeError) {
+        failureKind = 'infrastructure';
+        repairTarget = undefined;
+        errors.push(`Failed to auto-expose schema to PostgREST: ${exposeError.message}`);
+      }
     }
-    const exposeSql = `
-      notify pgrst, 'reload config';
-      notify pgrst, 'reload schema';
-    `;
-    const { error: exposeError } = await client.rpc('apps_exec_sql', { sql: exposeSql });
-    if (exposeError) {
-      failureKind = 'infrastructure';
-      repairTarget = undefined;
-      errors.push(`Failed to auto-expose schema to PostgREST: ${exposeError.message}`);
-    }
+  } catch {
+    failureKind = 'infrastructure';
+    repairTarget = undefined;
+    errors.push('Migration receipt, exposure or restored-file verification could not complete. Retain the recorded receipts and revalidate; do not replay applied SQL.');
   }
 
   return { applied, errors, ...(errors.length > 0 ? { failureKind } : {}),
-    ...(repairTarget ? { repairTarget } : {}), ...(correction ? { correction } : {}) };
+    ...(repairTarget ? { repairTarget } : {}), ...(correction ? { correction } : {}),
+    ...(restored.length ? { restored } : {}), ...(restorationFailure ? { restorationFailure } : {}) };
 }

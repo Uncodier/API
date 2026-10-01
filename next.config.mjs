@@ -9,6 +9,8 @@ const require = createRequire(import.meta.url)
 // during Next configuration. A narrow list prevents shipping secrets or the full repo.
 const harnessReference = readFileSync(new URL('./src/lib/services/harness-diagnostics/reference.ts', import.meta.url), 'utf8')
 const harnessSourceFiles = [...harnessReference.matchAll(/^  \w+: '((?:src|supabase)\/[^']+)',?$/gm)].map(match => `./${match[1]}`)
+// Only reviewed recovery copies, never the entire mixed-project migration directory.
+const migrationRecoveryFiles = JSON.parse(readFileSync(new URL('./src/lib/services/apps-platform/migration-restoration-archives.json', import.meta.url), 'utf8')).map(entry => `./${entry.archive}`)
 
 const withNextra = nextra({
   contentDirBasePath: '/',
@@ -41,10 +43,11 @@ const nextraConfig = withNextra({
   // guarantees they are shipped inside the lambda filesystem regardless of bundling decisions.
   outputFileTracingIncludes: {
     '/api/robots/instance/assistant': harnessSourceFiles,
-    '/api/cron/requirements-apps': harnessSourceFiles,
+    '/api/cron/requirements-apps': [...harnessSourceFiles, ...migrationRecoveryFiles],
     '/api/skills/system': ['./src/skills/*/SKILL.md'],
     '**/.well-known/workflow/v1/step': [
       ...harnessSourceFiles,
+      ...migrationRecoveryFiles,
       './node_modules/openai/**/*',
       './node_modules/zod/**/*',
       './node_modules/zod-to-json-schema/**/*',

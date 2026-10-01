@@ -27,6 +27,7 @@ import {
 } from './pre-push-build-validation';
 import { clearStuckGitOperationState } from '@/lib/services/sandbox-git-push';
 import { assertCronExecutionOwnership, isCronExecutionOwnershipError, type CronExecutionOwnership } from '../cron-execution-ownership';
+import { verifyMigrationRestorations, type MigrationFileRestoration } from '@/lib/services/apps-platform/migration-restoration';
 
 export {
   classifyGitPushFailure,
@@ -50,6 +51,7 @@ export async function commitWorkspaceToOrigin(
     validateDeployment?: boolean;
     lightweightCheckpoint?: boolean;
     executionOwnership?: CronExecutionOwnership;
+    expectedRestorations?: MigrationFileRestoration[];
   },
 ): Promise<{
   branch: string;
@@ -62,7 +64,9 @@ export async function commitWorkspaceToOrigin(
   source_code?: string;
 }> {
   const executionOwnership = options?.executionOwnership || audit?.executionOwnership;
+  const expectedRestorations = [...(audit?.expectedMigrationRestorations || []), ...(options?.expectedRestorations || [])];
   if (executionOwnership) await assertCronExecutionOwnership(executionOwnership);
+  if (expectedRestorations.length) await verifyMigrationRestorations(sandbox, expectedRestorations);
   try {
     await sandbox.extendTimeout(3 * 60 * 1000);
   } catch {
@@ -197,7 +201,7 @@ fi`,
         message: msg,
         requirementId: reqId,
         title,
-        validateBeforePush: executionOwnership || (validateDeployment && gitKind === 'applications')
+        validateBeforePush: executionOwnership || expectedRestorations.length || (validateDeployment && gitKind === 'applications')
           ? async () => {
             if (validateDeployment && gitKind === 'applications') {
               const validation = await ensureApplicationBuildCurrent({ sandbox: activeSandbox, cwd, audit });
@@ -205,10 +209,14 @@ fi`,
             }
             // Builds/rebases can outlive the lease; check at each actual push.
             if (executionOwnership) await assertCronExecutionOwnership(executionOwnership);
+            // Rebase and Git attributes may change committed bytes without changing the ledger.
+            if (expectedRestorations.length) await verifyMigrationRestorations(activeSandbox, expectedRestorations, true);
             return null;
           }
           : undefined,
       });
+      // The clean/already-synced shortcut does not invoke validateBeforePush.
+      if (expectedRestorations.length) await verifyMigrationRestorations(activeSandbox, expectedRestorations, true);
     } catch (e: any) {
       if (isCronExecutionOwnershipError(e)) throw e;
       pushError = e;

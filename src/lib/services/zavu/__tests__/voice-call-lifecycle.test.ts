@@ -9,11 +9,12 @@ jest.mock('../voice-follow-up-context', () => ({
 }));
 
 import { placeTrackedVoiceCall } from '../voice-call-service';
+import type { VoiceCallConsentRecord } from '../voice-call-consent';
 
 describe('tracked voice placement outcomes', () => {
   let customData: Record<string, any>;
   let delivery: any;
-  let consent: boolean;
+  let preferences: VoiceCallConsentRecord;
   let failAcceptedWrite: boolean;
   let raceMessageWrite: boolean;
   const input = { siteId: 'site', messageId: 'message', greeting: 'Hello', to: '+14155550100' };
@@ -22,7 +23,7 @@ describe('tracked voice placement outcomes', () => {
     jest.clearAllMocks();
     customData = { status: 'pending', command_status: 'pending' };
     delivery = null;
-    consent = true;
+    preferences = {};
     failAcceptedWrite = false;
     raceMessageWrite = false;
     mockPlace.mockResolvedValue({ id: 'call', status: 'queued', to: input.to });
@@ -45,7 +46,7 @@ describe('tracked voice placement outcomes', () => {
         }
         const data = table === 'messages' ? { id: 'message', lead_id: 'lead', conversation_id: 'conversation', custom_data: customData }
           : table === 'voice_call_deliveries' ? delivery
-          : table === 'leads' ? { phone: input.to, voice_call_consent_status: consent ? 'granted' : 'unknown', voice_call_consent_at: '2026-09-21T12:00:00Z' }
+          : table === 'leads' ? { phone: input.to, ...preferences }
           : { channels: { connections: [{ type: 'voice', status: 'connected', zavu_sender_id: 'sender' }] } };
         return { data, error: null };
       };
@@ -61,14 +62,26 @@ describe('tracked voice placement outcomes', () => {
     });
   });
 
-  it('completes the pending command after provider acceptance', async () => {
+  it.each([
+    {},
+    { voice_call_consent_status: 'unknown', voice_call_consent_at: null },
+    { voice_call_consent_status: 'granted' },
+    { voice_call_consent_status: 'granted', voice_call_consent_at: 'invalid' },
+  ])('accepts and deduplicates calls without explicit consent: %j', async (record) => {
+    preferences = record;
     await expect(placeTrackedVoiceCall(input)).resolves.toMatchObject({ call: { id: 'call' } });
     expect(customData).toMatchObject({ status: 'sent', command_status: 'success', provider_call_id: 'call' });
+    preferences = { voice_call_consent_status: 'revoked' };
+    await expect(placeTrackedVoiceCall(input)).resolves.toMatchObject({ duplicate: true, call: { id: 'call' } });
     expect(mockPlace).toHaveBeenCalledTimes(1);
   });
 
-  it('persists deterministic consent rejection as failed before placing a call', async () => {
-    consent = false;
+  it.each([
+    { do_not_call: true, voice_call_consent_status: 'granted', voice_call_consent_at: '2026-09-21T12:00:00Z' },
+    { voice_call_consent_status: 'revoked' },
+    { voice_call_consent_status: 'denied' },
+  ])('persists explicit opt-out rejection before placing a call: %j', async (record) => {
+    preferences = record;
     await expect(placeTrackedVoiceCall(input)).rejects.toMatchObject({ deliveryStatus: 'failed', status: 403 });
     expect(customData).toMatchObject({ status: 'failed', command_status: 'failed', call_status: 'failed' });
     expect(mockPlace).not.toHaveBeenCalled();
@@ -121,7 +134,7 @@ describe('tracked voice placement outcomes', () => {
   });
 
   it('does not label a preflight rejection retryable if its state write races a callback', async () => {
-    consent = false;
+    preferences = { voice_call_consent_status: 'revoked' };
     raceMessageWrite = true;
     await expect(placeTrackedVoiceCall(input)).rejects.toMatchObject({ deliveryStatus: 'placement_unknown' });
     expect(customData.call_status).toBe('completed');

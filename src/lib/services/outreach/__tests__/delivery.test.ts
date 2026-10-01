@@ -122,7 +122,6 @@ describe('central outreach delivery', () => {
     Array.from(f.rows.values()).forEach((row, index) => {
       const channel = channels[index % channels.length]; row.message.custom_data.channel = channel;
       row.lead.social_networks = { telegram: 'known-chat' };
-      row.lead.voice_call_consent_status = 'granted'; row.lead.voice_call_consent_at = now.toISOString();
     });
     const results = await Promise.all(Array.from(f.rows.keys()).map(id => f.deliver('site', id)));
     expect(results.filter(r => r.success)).toHaveLength(3);
@@ -135,7 +134,7 @@ describe('central outreach delivery', () => {
     row.message.custom_data.channel = channel;
     row.conversation.channel = channel;
     row.lead.social_networks = { [channel]: 'chat-1' };
-    row.lead.voice_call_consent_status = 'granted'; row.lead.voice_call_consent_at = now.toISOString();
+    row.lead.voice_call_consent_status = 'unknown';
     (f.config.activities[cold].channel_accounts as Record<string, string[]>)[channel] = ['selected-generic'];
     f.config.channels.connections.push({ id: 'selected-generic', type: channel, status: 'connected', zavu_sender_id: 'generic-sender' });
     expect(await f.deliver('site', 'm0')).toMatchObject({ success: true, channel, recipient: channel === 'telegram' ? 'chat-1' : row.lead.phone });
@@ -147,9 +146,20 @@ describe('central outreach delivery', () => {
   test.each(['telegram', 'voice'])('inaccessible %s defers before reservation without email fallback', async channel => {
     const f = fixture(); const row = f.rows.get('m0')!;
     row.message.custom_data.channel = channel;
+    row.lead.phone = null;
     (f.config.activities[cold].channel_accounts as Record<string, string[]>)[channel] = ['selected-generic'];
     f.config.channels.connections.push({ id: 'selected-generic', type: channel, status: 'connected', zavu_sender_id: 'generic-sender' });
     expect(await f.deliver('site', 'm0')).toMatchObject({ success: false, deferred: true });
+    expect(f.prepare).not.toHaveBeenCalled(); expect(f.repo.claim).not.toHaveBeenCalled(); expect(f.send).not.toHaveBeenCalled();
+  });
+  test.each([{ do_not_call: true, voice_call_consent_status: 'granted' },
+    { voice_call_consent_status: 'revoked' }, { voice_call_consent_status: 'denied' }])('voice opt-out defers before reservation: %j', async record => {
+    const f = fixture(); const row = f.rows.get('m0')!;
+    row.message.custom_data.channel = 'voice';
+    Object.assign(row.lead, record);
+    (f.config.activities[cold].channel_accounts as Record<string, string[]>).voice = ['voice'];
+    f.config.channels.connections.push({ id: 'voice', type: 'voice', status: 'connected', zavu_sender_id: 'voice-sender' });
+    expect(await f.deliver('site', 'm0')).toMatchObject({ success: false, deferred: true, reason: 'voice_recipient_ineligible' });
     expect(f.prepare).not.toHaveBeenCalled(); expect(f.repo.claim).not.toHaveBeenCalled(); expect(f.send).not.toHaveBeenCalled();
   });
   test('uses only selected hi Zavu account and idempotently recognizes sent after deactivation', async () => {

@@ -382,8 +382,8 @@ describe("placeTrackedVoiceCall idempotency", () => {
     await expect(placeTrackedVoiceCall(input)).rejects.toThrow('Selected Voice sender');
     connections[1].status = 'connected'; connections.push({ ...connections[1] });
     await expect(placeTrackedVoiceCall(input)).rejects.toThrow('Selected Voice sender');
-    connections.pop(); lead.voice_call_consent_status = 'unknown';
-    await expect(placeTrackedVoiceCall(input)).rejects.toThrow('explicit Voice call consent');
+    connections.pop(); lead.voice_call_consent_status = 'revoked';
+    await expect(placeTrackedVoiceCall(input)).rejects.toThrow('Lead has opted out of Voice calls');
     expect(mockPlaceVoiceCall).not.toHaveBeenCalled();
   });
 });

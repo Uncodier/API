@@ -8,6 +8,13 @@ export function getCustomerSupportVoiceToolDefinitions(
   siteId?: string
 ): CustomerSupportToolDefinition[] {
   return getCustomerSupportToolDefinitions(siteId).map((tool) => {
+    if (tool.name === "catalog_commerce") {
+      return {
+        ...tool,
+        // Keep this first so it survives the runtime's 120-character summary.
+        description: 'List services: action="list", resource="item", kind="service"; never resource="service". ' + tool.description,
+      };
+    }
     if (tool.name !== "IDENTIFY_LEAD") return tool;
     return {
       ...tool,

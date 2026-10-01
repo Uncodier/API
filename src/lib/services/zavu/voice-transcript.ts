@@ -26,7 +26,7 @@ function compactSpeech(value: unknown): string {
 
 const MAX_TOOL_TEXT_LENGTH = 64 * 1024;
 
-function safeToolFailure(value: unknown) {
+function parseToolJson(value: unknown): Record<string, unknown> | null {
   // Provider text is untrusted. Accept JSON or one JSON-encoded string only,
   // with bounded work; never evaluate it or extract errors from arbitrary text.
   if (typeof value !== "string") return null;
@@ -40,7 +40,28 @@ function safeToolFailure(value: unknown) {
     return null;
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-  const httpStatus = (parsed as Record<string, unknown>).http_status;
+  return parsed as Record<string, unknown>;
+}
+
+function safeToolFailure(value: unknown) {
+  const parsed = parseToolJson(value);
+  if (!parsed) return null;
+  let httpStatus = parsed.http_status;
+  let body = parsed.http_body;
+  if (Object.keys(parsed).length === 2 && parsed.ok === false && typeof parsed.error === "string") {
+    // Recognize only the provider's exact failure envelope and anchored prefix.
+    const prefix = /^Webhook returned ([45][0-9]{2}): /.exec(parsed.error);
+    if (!prefix) return null;
+    httpStatus = Number(prefix[1]);
+    const bodyText = parsed.error.slice(prefix[0].length);
+    body = parseToolJson(bodyText);
+    if (!body && bodyText.startsWith("{") && bodyText.endsWith("}")) {
+      // Some provider bodies contain JSON string escapes without the surrounding
+      // quotes. Decode one such layer with JSON.parse, never replacement or eval.
+      body = parseToolJson(`"${bodyText}"`);
+    }
+    if (!body) return null;
+  }
   if (
     typeof httpStatus !== "number"
     || !Number.isInteger(httpStatus)
@@ -49,10 +70,10 @@ function safeToolFailure(value: unknown) {
   ) return null;
 
   const authFailed = httpStatus === 401 || httpStatus === 403;
-  const body = (parsed as Record<string, unknown>).http_body;
   const candidateRequestId = body && typeof body === "object" && !Array.isArray(body)
     ? (body as Record<string, unknown>).request_id : undefined;
   const requestId = typeof candidateRequestId === "string"
+    && candidateRequestId.length === 36
     && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(candidateRequestId)
     ? candidateRequestId : undefined;
   // Only validated status and our UUID correlation ID may cross into chat.

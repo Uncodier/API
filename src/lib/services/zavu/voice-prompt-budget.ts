@@ -1,3 +1,5 @@
+import { MAX_VOICE_BUSINESS_BRIEF_LENGTH } from "./voice-business-brief";
+
 export const MAX_SYSTEM_PROMPT_LENGTH = 10_000;
 const OMISSION = "\n\n[Additional business context omitted due to provider limits.]";
 const EXCERPT = "… [excerpt]";
@@ -119,6 +121,7 @@ export function fitZavuSystemPrompt(prompt: string, preservedSuffix = ""): strin
 export function composeVoiceSystemPrompt(params: {
   runtime: string;
   background: string;
+  businessBrief?: string;
   reminder: string;
   timezone: string;
 }): string {
@@ -134,10 +137,16 @@ export function composeVoiceSystemPrompt(params: {
     heading: "# Business Timezone",
     body: `${params.timezone}. Confirm dates in this timezone; never infer today's date from the synchronization time.`,
   });
+  const brief = params.businessBrief?.trim() || "";
+  if (brief.length > MAX_VOICE_BUSINESS_BRIEF_LENGTH) {
+    throw new Error("Voice business brief exceeds its reserved prompt budget");
+  }
   const available = MAX_SYSTEM_PROMPT_LENGTH - params.runtime.length - params.reminder.length - 4;
   if (available < 2_000) {
     throw new Error("Voice runtime rules leave insufficient room for business context");
   }
-  const background = fitBackground(sections, available);
-  return `${params.runtime}\n\n${background}\n\n${params.reminder}`;
+  // Reserve the brief in full before campaigns, files and JSON-heavy sections
+  // compete for space. Never feed it through weighted excerpt allocation.
+  const background = fitBackground(sections, available - (brief ? brief.length + 2 : 0));
+  return [params.runtime, brief, background, params.reminder].filter(Boolean).join("\n\n");
 }

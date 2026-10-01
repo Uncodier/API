@@ -87,3 +87,16 @@ it("rejects oversized runtime instructions instead of syncing a tools-only agent
   expect(() => fitZavuSystemPrompt("business", "r".repeat(10_000)))
     .toThrow("Voice runtime rules exceed");
 });
+
+it("reserves a business brief in full under worst-case optional context pressure", () => {
+  const businessBrief = ("# Business Identity and Offerings\n" + "Business fact. ".repeat(100)).trim();
+  const prompt = composeVoiceSystemPrompt({
+    runtime: "r".repeat(5_599),
+    background: Array.from({ length: 80 }, (_, i) => `## Campaign ${i}\n${"Long copy. ".repeat(100)}`).join("\n\n"),
+    reminder: "Never invent results.", timezone: "UTC", businessBrief,
+  });
+  expect(prompt).toContain(businessBrief);
+  expect(prompt.length).toBeLessThanOrEqual(10_000);
+  expect(() => composeVoiceSystemPrompt({ runtime: "Rules", background: "Facts", reminder: "Safety", timezone: "UTC", businessBrief: "x".repeat(1_601) }))
+    .toThrow("Voice business brief exceeds");
+});

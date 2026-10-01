@@ -32,6 +32,8 @@ function harness() {
     cleanupNestedProjectsStep: jest.fn(async () => ({ effectiveSandboxId: 'sandbox' })),
     reconcilePlanStep: jest.fn(async () => 'in_progress'),
     commitAndPushStep: jest.fn(async () => ({ ok: true, pushed: true, branch: 'feature', commitCount: 1 })),
+    postFinallyBuildStep: jest.fn(async () => ({ ok: true, effectiveSandboxId: 'sandbox' })),
+    getPreviewUrlStep: jest.fn(async () => 'https://preview.example.invalid'),
   };
   const executeSingleTurnStep = jest.fn(async (_params?: unknown): Promise<any> => ({ ok: true, isDone: false, durableProductProgress: true }));
   const migration = { applyDatabaseMigrationsStep: jest.fn(async (): Promise<any> => ({ status: 'passed', applied: [], errors: [], effectiveSandboxId: 'sandbox' })) };
@@ -44,7 +46,10 @@ function harness() {
     verifyPendingMigrationLifecycleStep: jest.fn(async () => ({ passed: true, effectiveSandboxId: 'sandbox' })),
     holdMigrationLifecycleStep: jest.fn(async () => {}),
   };
-  const finalizer = { createFinalStatusStep: jest.fn(), validateDeliverablesStep: jest.fn() };
+  const finalizer = {
+    createFinalStatusStep: jest.fn(async () => ({ state: 'applied', effectiveStatus: 'in-progress' })),
+    validateDeliverablesStep: jest.fn(async () => ({ repoOk: true, previewOk: true })),
+  };
   const wrapup = { emitCycleWrapUpStep: jest.fn(async (_params?: unknown) => ({ ran: true, outcome: 'completed' })) };
   const technicalReviewBacklogItems = jest.fn((): any[] => []);
   const execution = {
@@ -64,7 +69,10 @@ function harness() {
       '../shared/migration-lifecycle-steps': migrationLifecycle,
       '../shared/bootstrap-spec-step': { bootstrapRequirementSpecStep: async () => {} },
       '../shared/tracking-script-step': { provisionTrackingScriptStep },
-      '../shared/ensure-source-archive-step': {},
+      '../shared/ensure-source-archive-step': { ensureSourceArchiveStep: async () => 'https://archive.example.invalid/source.zip' },
+      '@/lib/services/requirement-git-binding': { getRequirementGitBinding: async () => ({ org: 'fixture', repo: 'app' }) },
+      '../shared/docs-digest-step': { emitDocsDigestStep: async () => ({}) },
+      '../shared/sync-docs-to-backlog-step': { emitSyncDocsToBacklogStep: async () => {} },
       '@/lib/services/requirement-flows': { getFlow, classifyRequirementType, productAttemptLimits },
       '@/lib/services/cycle-wrapup-prompt': {
         activeBacklogItemIdsFromPlanSteps: () => new Set(['item']), countPendingPlanSteps: () => 1,
@@ -415,6 +423,37 @@ describe('workflow recovery and truthful completion', () => {
     expect(h.migration.applyDatabaseMigrationsStep).toHaveBeenCalledTimes(1);
     expect(h.lifecycle.stopSandboxStep).toHaveBeenCalledWith('recovered', expect.anything(), expect.anything());
     expect(h.steps.commitAndPushStep).not.toHaveBeenCalled();
+  });
+
+  it('passes restoration expectations to the normal checkpoint even with no pending SQL', async () => {
+    const h = harness();
+    const restored = [{ file: 'supabase/migrations/001.sql', checksum: 'a'.repeat(64), source: { kind: 'git', revision: 'b'.repeat(40) } }];
+    h.migration.applyDatabaseMigrationsStep.mockResolvedValue({ status: 'passed', applied: [], errors: [], restored, effectiveSandboxId: 'sandbox' });
+    await h.run();
+    expect(h.repair.repairDatabaseMigrationStep).not.toHaveBeenCalled();
+    expect(h.gate.runGateStep).not.toHaveBeenCalled();
+    expect(h.steps.commitAndPushStep).toHaveBeenCalledWith('sandbox', expect.anything(), 'req', expect.anything(), expect.anything(), 'applications',
+      expect.objectContaining({ expectedRestorations: restored, expectedRepairs: [], lightweightCheckpoint: false }));
+  });
+
+  it('does not publish a restoration when a later migration still fails', async () => {
+    const h = harness();
+    h.migration.applyDatabaseMigrationsStep.mockResolvedValue({ status: 'failed', applied: [], errors: ['Later SQL failed'], failureKind: 'product',
+      restored: [{ file: 'supabase/migrations/001.sql', checksum: 'a'.repeat(64) }], effectiveSandboxId: 'sandbox' });
+    await expect(h.run()).resolves.toMatchObject({ status: 'product_failure' });
+    expect(h.steps.commitAndPushStep).not.toHaveBeenCalled();
+    expect(h.finalizer.createFinalStatusStep).not.toHaveBeenCalled();
+    expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({ recoveryDisposition: 'internal_review', requiresUserFeedback: false }));
+  });
+
+  it('holds ambiguous restoration writes for technical review instead of replaying them', async () => {
+    const h = harness();
+    h.migration.applyDatabaseMigrationsStep.mockResolvedValue({ status: 'failed', applied: [], errors: ['Write unverified'], failureKind: 'infrastructure',
+      restorationFailure: { writeAttempted: true }, effectiveSandboxId: 'sandbox' });
+    await h.run();
+    expect(h.db.recordRequirementBlockedStep).toHaveBeenCalledTimes(1);
+    expect(h.steps.commitAndPushStep).not.toHaveBeenCalled();
+    expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({ recoveryDisposition: 'internal_review', requiresUserFeedback: false }));
   });
 
   it('blocks after the shared repair turn budget rather than retrying forever', async () => {

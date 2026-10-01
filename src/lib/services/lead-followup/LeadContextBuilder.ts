@@ -191,7 +191,7 @@ export class LeadContextBuilder {
     }
     for (const channel of availableChannels.filter(channel => !['email', 'whatsapp', 'web', 'notification'].includes(channel))) {
       contextMessage += channel === 'voice'
-        ? '• VOICE: A consented, tracked phone call. Write a natural spoken greeting of 1–1000 characters, not an email or chat message.\n'
+        ? '• VOICE: A tracked phone call subject to explicit call opt-outs. Write a natural spoken greeting of 1–1000 characters, not an email or chat message.\n'
         : `• ${channel.toUpperCase()}: Direct outreach using this channel’s server-validated recipient identity.\n`;
     }
     if (availableChannels.includes('notification')) {
@@ -214,7 +214,7 @@ export class LeadContextBuilder {
     contextMessage += `- If you select an invalid channel (not in the list above or missing required contact info), the system will fail - be precise\n`;
     contextMessage += `- Email channel requires: lead must have a valid email address\n`;
     contextMessage += `- WhatsApp channel requires: lead must have a valid phone number\n`;
-    contextMessage += `- SMS requires E.164 phone; Voice also requires explicit voice-call consent and no do-not-call restriction\n`;
+    contextMessage += `- SMS and Voice require an E.164 phone. Voice blocks explicit call opt-outs (do_not_call, revoked, or legacy denied); no explicit consent grant or timestamp is required\n`;
     contextMessage += `- Other messaging channels require their own verified recipient identity, never an arbitrary phone number\n`;
     contextMessage += `- Notification and Web channels: always available (no specific contact info required)\n`;
     

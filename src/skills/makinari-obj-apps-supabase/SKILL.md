@@ -463,6 +463,13 @@ capabilities; keep them short-lived and never treat a private bucket as public.
   rewrite applied SQL to "fix" history. Checksum mismatches must not be bypassed.
   Restore the original applied file from version control if it was changed, then
   add a new forward migration for the repair.
+  The owned database delivery gate attempts exact-byte restoration from bounded
+  Git history or a platform recovery copy, verified against the protected SHA-256.
+  Do not choose the first commit by age or rewrite SQL from memory. A restoration
+  receipt is file recovery, not a new SQL application; pending migrations still
+  need normal review and validation. Unmatched sources require technical review,
+  not customer approval or another blind retry. Sandbox-local backups are not
+  durable checkpoints; normal successful-cycle publication remains required.
 - **Pending, never-applied migrations may be edited**, including a file rejected
   by the linter. Confirm application status from the migration tool's receipts /
   results first, especially when earlier files in a batch succeeded. A failure

@@ -144,7 +144,7 @@ export function createOutreachDelivery(deps: {
       const account = accounts.find(a => a.id === sticky) || accounts[index];
       if (!account) return defer('no_selected_account');
       const recipient = resolveOutreachRecipient({ siteId, lead, channel, conversations: snapshot.conversations || [conversation] });
-      if (!recipient) return defer(channel === 'voice' ? 'voice_recipient_or_consent_required' : 'invalid_recipient');
+      if (!recipient) return defer(channel === 'voice' ? 'voice_recipient_ineligible' : 'invalid_recipient');
       const historyReason = (history: any[]) => {
         const h = summarizeOutreachHistory(history.filter(m => m.id !== message.id));
         if (h.uncertain) return 'delivery_uncertain';

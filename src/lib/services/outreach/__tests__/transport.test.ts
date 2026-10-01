@@ -46,9 +46,10 @@ test('inaccessible telegram recipient defers instead of using phone or email', a
   expect(await prepareOutreachDelivery(ctx)).toEqual({ reason: 'invalid_recipient' });
   expect(sendChannelMessage).not.toHaveBeenCalled(); expect(EmailSendService.sendEmail).not.toHaveBeenCalled();
 });
-test('voice dispatch is tracked exact selected consented call, never generic text', async () => {
+test.each([{}, { voice_call_consent_status: 'unknown' }, { voice_call_consent_status: 'granted' },
+  { voice_call_consent_status: 'granted', voice_call_consent_at: 'invalid' }])('voice without explicit consent uses exact tracked call, never text: %j', async record => {
   const ctx = context(); ctx.account.channel = 'voice';
-  ctx.lead.voice_call_consent_status = 'granted'; ctx.lead.voice_call_consent_at = '2026-01-01T12:00:00Z';
+  Object.assign(ctx.lead, record);
   (placeTrackedVoiceCall as jest.Mock).mockResolvedValue({ call: { id: 'call-id' }, deliveryId: 'delivery-id' });
   const prepared = await prepareOutreachDelivery(ctx);
   expect(placeTrackedVoiceCall).not.toHaveBeenCalled();
@@ -58,9 +59,11 @@ test('voice dispatch is tracked exact selected consented call, never generic tex
     siteId: 'site', leadId: 'lead', messageId: 'message', greeting: 'Hello Ada', to: ctx.lead.phone }));
   expect(sendChannelMessage).not.toHaveBeenCalled();
 });
-test('voice without consent blocked before dispatch', async () => {
+test.each([{ do_not_call: true, voice_call_consent_status: 'granted' },
+  { voice_call_consent_status: 'revoked' }, { voice_call_consent_status: 'denied' }])('explicit voice opt-out blocked before dispatch: %j', async record => {
   const ctx = context(); ctx.account.channel = 'voice';
-  expect(await prepareOutreachDelivery(ctx)).toEqual({ reason: 'voice_consent_required' });
+  Object.assign(ctx.lead, record);
+  expect(await prepareOutreachDelivery(ctx)).toEqual({ reason: 'voice_call_opted_out' });
   expect(placeTrackedVoiceCall).not.toHaveBeenCalled(); expect(sendChannelMessage).not.toHaveBeenCalled();
 });
 test('saved audio format/media retained and URL validated without fetching', async () => {

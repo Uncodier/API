@@ -2,6 +2,7 @@ import { v5 as uuidv5 } from "uuid";
 import { getApiBaseUrl } from "@/app/api/agents/tools/utils/fetch-helper";
 import type { CustomerSupportToolDefinition } from "@/lib/services/customer-support-tool-catalog";
 import { getCustomerSupportVoiceToolDefinitions } from "./voice-tool-catalog";
+import { validateVoiceToolArguments } from "./voice-tool-parameters";
 import { identifyVoiceLead, normalizeVoiceIdentityPhone } from "./voice-lead-identification";
 import { supabaseAdmin } from "@/lib/database/supabase-server";
 import { getCustomToolDefinition } from "@/lib/agentbase/agents/toolEvaluator/executor/customToolsMap";
@@ -239,6 +240,7 @@ export async function executeCustomerSupportVoiceTool(params: {
     siteId: params.siteId,
     context: params.context,
   });
+  validateVoiceToolArguments(tool, scopedArguments);
   const executionArguments = {
     ...scopedArguments,
     command_id: uuidv5(

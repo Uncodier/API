@@ -5,6 +5,7 @@ import {
   type ZavuAgentTool,
 } from "./agent-client";
 import { getCustomerSupportVoiceToolDefinitions } from "./voice-tool-catalog";
+import { projectVoiceToolParameters } from "./voice-tool-parameters";
 import {
   AUTO_VOICE_LANGUAGE,
   type VoiceAgentPreferences,
@@ -137,10 +138,11 @@ export async function syncVoiceTools(params: {
   const managedTools = getCustomerSupportVoiceToolDefinitions(params.siteId);
 
   for (const tool of managedTools) {
+    const parameters = projectVoiceToolParameters(tool);
     const synchronized = await upsertAgentTool(params.agentId, {
       name: tool.name,
       description: compactPromptText(tool.description, 500),
-      parameters: tool.parameters as unknown as Record<string, unknown>,
+      parameters,
       webhookUrl: getVoiceToolWebhookUrl(params.siteId),
       webhookSecret: params.webhookSecret,
       enabled: true,
@@ -151,7 +153,7 @@ export async function syncVoiceTools(params: {
       agentId: synchronized.agentId || params.agentId,
       parameters:
         synchronized.parameters ||
-        (tool.parameters as unknown as Record<string, unknown>),
+        parameters,
       webhookUrl:
         synchronized.webhookUrl || getVoiceToolWebhookUrl(params.siteId),
       webhookSecret: synchronized.webhookSecret || params.webhookSecret,

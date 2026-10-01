@@ -3,6 +3,8 @@ import { applyPendingMigrations } from '../migration-applier';
 import { getAppsAdminClient } from '@/lib/database/apps-supabase';
 import { syncPostgrestSchemas } from '../postgrest-config';
 import { authorizeMigrationApplication, loadMigrationApplicationContext } from '../migration-application-guard';
+import { restoreAppliedMigration, verifyMigrationRestorations } from '../migration-restoration';
+jest.mock('../migration-restoration', () => ({ restoreAppliedMigration: jest.fn(), verifyMigrationRestorations: jest.fn() }));
 jest.mock('../migration-application-guard', () => ({ authorizeMigrationApplication: jest.fn(), loadMigrationApplicationContext: jest.fn() }));
 jest.mock('../migration-lifecycle', () => ({ transitionMigrationLifecycle: jest.fn(async input => ({ ...input.value, version: 2 })) }));
 
@@ -78,6 +80,7 @@ describe('applyPendingMigrations', () => {
     (syncPostgrestSchemas as jest.Mock).mockResolvedValue({ ok: true });
     (loadMigrationApplicationContext as jest.Mock).mockResolvedValue({ executionGeneration: 1, assertCurrent: jest.fn() });
     (authorizeMigrationApplication as jest.Mock).mockResolvedValue({ allowed: true, lifecycle: { version: 1, attempts: 1 } });
+    (verifyMigrationRestorations as jest.Mock).mockResolvedValue(undefined);
   });
 
   it('reads the ledger through the protected RPC and skips applied SQL', async () => {
@@ -118,10 +121,63 @@ describe('applyPendingMigrations', () => {
     expect(result.errors[0]).toContain('Never change the ledger checksum');
     expect(result.failureKind).toBe('product');
     expect(result.repairTarget).toBeUndefined();
+    expect(restoreAppliedMigration).not.toHaveBeenCalled();
     expect(mocked.rpc).not.toHaveBeenCalledWith(
       'apps_apply_migration',
       expect.anything(),
     );
+  });
+
+  it('owned gate restores an applied file then reviews only the pending migration', async () => {
+    const recorded = createHash('sha256').update('applied bytes').digest('hex');
+    const next = 'supabase/migrations/002.sql';
+    const restored = { file: migrationFile, schema, tenantId: 'tenant-123', checksum: recorded,
+      previousChecksum: createHash('sha256').update(migrationSql).digest('hex'),
+      source: { kind: 'git', revision: 'a'.repeat(40) }, backupPath: '/tmp/backup.sql' };
+    const mocked = client(null);
+    mocked.rpc.mockImplementation(async (name: string, args?: any) => name === 'apps_get_migration_receipt'
+      ? { data: { found: args.p_migration_key === `migration:${migrationFile}`, value: { checksum: recorded } }, error: null }
+      : { data: name === 'apps_apply_migration' ? true : null, error: null });
+    (getAppsAdminClient as jest.Mock).mockReturnValue(mocked.db);
+    (restoreAppliedMigration as jest.Mock).mockResolvedValue({ restored });
+    const context = { requirementId, assertCurrent: jest.fn(), executionGeneration: 1 } as any;
+    const owner = jest.fn();
+    const result = await applyPendingMigrations(sandbox([migrationFile, next], { [migrationFile]: migrationSql, [next]: migrationSql }),
+      requirementId, [], context, { assertCurrent: owner });
+    expect(result).toEqual({ applied: [next], errors: [], restored: [restored] });
+    expect(authorizeMigrationApplication).toHaveBeenCalledTimes(1);
+    expect(authorizeMigrationApplication).toHaveBeenCalledWith(expect.objectContaining({ target: expect.objectContaining({ file: next }) }));
+    expect(mocked.rpc).not.toHaveBeenCalledWith('apps_apply_migration', expect.objectContaining({ p_migration_key: `migration:${migrationFile}` }));
+    await (restoreAppliedMigration as jest.Mock).mock.calls[0][0].assertCurrent();
+    expect(owner).toHaveBeenCalled(); expect(context.assertCurrent).toHaveBeenCalled();
+    expect(verifyMigrationRestorations).toHaveBeenCalledWith(expect.anything(), [restored]);
+  });
+
+  it('retains structured failure and never executes SQL when exact recovery fails', async () => {
+    const recorded = 'a'.repeat(64);
+    const mocked = client({ value: { checksum: recorded } });
+    (getAppsAdminClient as jest.Mock).mockReturnValue(mocked.db);
+    const failure = { file: migrationFile, expectedChecksum: recorded, actualChecksum: 'b'.repeat(64),
+      reason: 'no_matching_applied_source', writeAttempted: false };
+    (restoreAppliedMigration as jest.Mock).mockResolvedValue({ failure, failureKind: 'product' });
+    const result = await applyPendingMigrations(sandbox(), requirementId, [], { requirementId } as any, { assertCurrent: jest.fn() });
+    expect(result).toMatchObject({ applied: [], failureKind: 'product', restorationFailure: failure });
+    expect(result.errors[0]).toContain('Expected SHA-256:');
+    expect(result.repairTarget).toBeUndefined();
+    expect(authorizeMigrationApplication).not.toHaveBeenCalled();
+    expect(mocked.rpc).not.toHaveBeenCalledWith('apps_apply_migration', expect.anything());
+    expect(syncPostgrestSchemas).not.toHaveBeenCalled();
+  });
+
+  it('preserves a restoration receipt even when exposure transport throws', async () => {
+    const mocked = client({ value: { checksum: 'a'.repeat(64) } });
+    (getAppsAdminClient as jest.Mock).mockReturnValue(mocked.db);
+    const restored = { file: migrationFile, checksum: 'a'.repeat(64) };
+    (restoreAppliedMigration as jest.Mock).mockResolvedValue({ restored });
+    (syncPostgrestSchemas as jest.Mock).mockRejectedValueOnce(new Error('transport'));
+    const result = await applyPendingMigrations(sandbox(), requirementId, [], { requirementId } as any, { assertCurrent: jest.fn() });
+    expect(result).toMatchObject({ restored: [restored], applied: [], failureKind: 'infrastructure' });
+    expect(result.errors).toHaveLength(1);
   });
 
   it('backfills a legacy ledger row without rerunning its migration', async () => {

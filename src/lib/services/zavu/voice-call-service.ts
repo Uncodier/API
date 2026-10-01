@@ -184,7 +184,7 @@ export async function assertVoiceCallAllowed(
 ): Promise<void> {
   if (!leadId) {
     throw Object.assign(
-      new Error("Voice calls require a lead with explicit consent"),
+      new Error("Voice calls require a lead in this site"),
       { status: 403 }
     );
   }
@@ -194,7 +194,7 @@ export async function assertVoiceCallAllowed(
     .eq("id", leadId)
     .eq("site_id", siteId)
     .maybeSingle();
-  if (error) throw new Error("Failed to validate Voice call consent");
+  if (error) throw new Error("Failed to validate Voice call eligibility");
   if (!data) {
     throw Object.assign(new Error("Voice call lead was not found"), { status: 404 });
   }
@@ -203,7 +203,7 @@ export async function assertVoiceCallAllowed(
     typeof data.phone === "string" ? data.phone.replace(/[^\d+]/g, "") : "";
   if (normalizedPhone !== recipient) {
     throw Object.assign(
-      new Error("Voice call recipient does not match the consented lead phone"),
+      new Error("Voice call recipient does not match the lead phone"),
       { status: 403 }
     );
   }

@@ -10,7 +10,9 @@ removed in `7b54ce13` and replaced with `persistVoiceTranscript`.
 Only terminal inbound events (`call.completed` / `call.failed`) create a
 minimal contact. Nonterminal events may look up an existing contact for private
 continuity, but do not create a new contact or start another assistant.
-Outbound calls retain their existing lead/consent requirements.
+Outbound calls retain tenant lead and matching-phone requirements, but call
+eligibility blocks only explicit call opt-outs, not missing consent grants or
+timestamps. See [outbound voice eligibility](./automatic-outreach-delivery.md#voice-and-media).
 
 The webhook still verifies the raw-body Zavu signature and acquires the durable
 provider event claim before business processing. Sender configuration resolves
@@ -91,6 +93,12 @@ Recording an inbound CRM contact is not proof of the caller's identity and is
 not permission for marketing or outbound calling. New leads explicitly retain
 `voice_call_consent_status: unknown`; the consent timestamp is not populated.
 Existing consent and do-not-call fields are never cleared or changed.
+
+An absent/unknown outbound consent grant does not itself prevent a later call.
+Outbound admission blocks `do_not_call === true`, consent status `'revoked'`,
+and legacy `'denied'`; it does not require a valid grant timestamp.
+This does not reclassify an inbound call as consent or relax the separate
+contact-storage consent below.
 
 The live `IDENTIFY_LEAD` tool remains a separate consent-gated interaction for
 confirmed caller attributes. This patch does not change its required fields,

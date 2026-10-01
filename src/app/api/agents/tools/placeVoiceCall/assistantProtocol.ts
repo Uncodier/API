@@ -19,7 +19,7 @@ export function placeVoiceCallTool(siteId: string, userId?: string) {
   return {
     name: "placeVoiceCall",
     description:
-      "Place one real two-way Zavu voice-agent call to a consented lead in this site. " +
+      "Place one real two-way Zavu voice-agent call to a lead in this site who has not opted out of calls. " +
       "The greeting is spoken when the call connects. objective and additional_context " +
       "are private instructions loaded by the voice agent and are not spoken verbatim.",
     parameters: {
@@ -27,7 +27,7 @@ export function placeVoiceCallTool(siteId: string, userId?: string) {
       properties: {
         lead_id: {
           type: "string",
-          description: "UUID of the site lead to call. The lead must have explicit Voice consent.",
+          description: "UUID of the site lead to call. Do-not-call, revoked, and legacy denied call preferences block placement.",
         },
         idempotency_key: {
           type: "string",
