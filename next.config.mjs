@@ -69,7 +69,6 @@ const nextraConfig = withNextra({
     'imapflow',
     'pino',
     'composio-core',
-    '@vercel/sandbox',
     '@supabase/supabase-js',
     // Keep undici unbundled so workflow's Agent and fetch share one class instance.
     'undici',

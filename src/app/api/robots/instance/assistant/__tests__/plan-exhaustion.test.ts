@@ -65,7 +65,7 @@ function harness() {
       './persist-and-fail-steps': {
         persistUserMessageStep, completeUserMessageStep, markAssistantFailedStep, pauseUserMessageStep,
       },
-      '@/lib/services/robot-instance/assistant-respawn': {
+      '@/lib/services/robot-instance/assistant-respawn-policy': {
         isIncompleteTurn: (result: any) => !result.isDone || !result.text?.trim(),
         MAX_RESPAWNS: 2, SILENT_CONTINUE_PROMPT: 'silent continue',
       },

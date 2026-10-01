@@ -7,7 +7,7 @@ import { persistUserMessageStep, markAssistantFailedStep, completeUserMessageSte
 import {
   isIncompleteTurn,
   SILENT_CONTINUE_PROMPT,
-} from '@/lib/services/robot-instance/assistant-respawn';
+} from '@/lib/services/robot-instance/assistant-respawn-policy';
 import { spawnSilentContinueStep } from './assistant-respawn-steps';
 import type { AssistantSkillSelection } from './skill-selection';
 import { prepareRecoveryStep, guardRecoveryStep, checkpointRecoveryStep } from './assistant-recovery-steps';

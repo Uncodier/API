@@ -26,7 +26,7 @@ function setup() {
     './plan-steps': { getActiveInstancePlan: async () => null },
     './persist-and-fail-steps': { completeUserMessageStep, pauseUserMessageStep, markAssistantFailedStep,
       persistUserMessageStep: async () => ({ id: 'user-log' }) },
-    '@/lib/services/robot-instance/assistant-respawn': {
+    '@/lib/services/robot-instance/assistant-respawn-policy': {
       isIncompleteTurn: (r: any) => !r.isDone || !r.text?.trim(), SILENT_CONTINUE_PROMPT: 'silent continue',
     },
     './assistant-respawn-steps': { spawnSilentContinueStep },
