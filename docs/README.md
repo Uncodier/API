@@ -18,6 +18,10 @@ Read these first when changing the code-agent harness:
 4. [Code-agent harness checkpoint — 2026-09-17](./CODE_AGENT_HARNESS_CHECKPOINT_2026-09-17.md)
 5. [Harness reliability appendix — 2026-09-17](./CODE_AGENT_HARNESS_RELIABILITY_CHECKPOINT_2026-09-17.md)
 
+## Security practices
+
+- [Secret scanning and synthetic test credentials](./SECRET_SCANNING.md) — safe fixtures, preserved redaction coverage, and GitGuardian incident handling without disabling detectors.
+
 ## Availability audits
 
 - [Redis/Upstash availability and consistency audit — 2026-09-20](./REDIS_UPSTASH_AVAILABILITY_AUDIT_2026-09-20.md)

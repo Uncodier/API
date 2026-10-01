@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { loadHarnessScope, sanitizeHarnessData } from '@/lib/services/harness-diagnostics/context';
 import { readHarnessEvents } from '@/lib/services/harness-diagnostics/events';
@@ -75,10 +76,11 @@ it('finds the originating blocker in another instance and pages without exposing
 });
 
 it('redacts full event payloads and rejects model scope overrides before I/O', async () => {
+  const marker = randomBytes(16).toString('hex');
   fixture({ instance_logs: { id: event, instance_id: other, details: { requirement_id: req },
-    tool_args: { authorization: 'Bearer unsafe', text: 'password=unsafe' }, tool_result: { token: 'sb_secret_unsafe' } } });
+    tool_args: { authorization: `Bearer ${marker}`, text: `password=${marker}` }, tool_result: { token: `sb_secret_${marker}` } } });
   const result: any = await readHarnessEvents(context(), { action: 'read', log_id: event });
-  expect(result.content).not.toContain('unsafe');
+  expect(result.content).not.toContain(marker);
   jest.clearAllMocks();
   await expect(readHarnessEvents(context(), { action: 'list', site_id: other })).rejects.toThrow();
   expect(supabaseAdmin.from).not.toHaveBeenCalled();
@@ -157,9 +159,21 @@ it('keeps read tools direct during restricted repair and refreshes the actual to
   expect(result.runtime.exposed_tools).not.toContain('harness_decide');
 });
 
-it('redacts nested secret fields and signed URLs', () => {
-  const value = sanitizeHarnessData({ details: { credentials: 'private', url: 'https://user:pass@example.com/file?token=abc', text: 'Bearer topsecret' } });
-  expect(JSON.stringify(value)).not.toMatch(/private|user:pass|token=abc|topsecret/);
+it.each(['http:', 'https:'])('redacts nested secrets and each URL credential before email redaction (%s)', protocol => {
+  // Generate synthetic credentials only in memory; never contact this reserved host.
+  const credential = randomBytes(16).toString('hex');
+  const token = randomBytes(16).toString('hex');
+  const url = new URL(`${protocol}//example.invalid/file`);
+  url.username = `fixture-${randomBytes(16).toString('hex')}`;
+  url.password = randomBytes(16).toString('hex');
+  url.searchParams.set('token', token);
+  const value = sanitizeHarnessData({ details: { credentials: credential, url: url.href, text: `Bearer ${credential}` } });
+  expect(value).toEqual({ details: {
+    credentials: '[REDACTED]', url: `${protocol}//[REDACTED]@example.invalid/file?token=[REDACTED]`, text: 'Bearer [REDACTED]',
+  } });
+  for (const marker of [credential, token, url.username, url.password]) {
+    expect(JSON.stringify(value)).not.toContain(marker);
+  }
 });
 
 it('keeps the static harness map available when the database is down', async () => {

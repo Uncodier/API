@@ -5,6 +5,7 @@ it('publishes holds atomically, preserves pauses and unrelated work, and does no
   const script = String.raw`
     import { PGlite } from '@electric-sql/pglite';
     import { readFileSync } from 'node:fs';
+    import { randomBytes } from 'node:crypto';
     import assert from 'node:assert/strict';
     const db = new PGlite();
     const req='00000000-0000-4000-8000-000000000001', instance='00000000-0000-4000-8000-000000000002';
@@ -39,9 +40,11 @@ it('publishes holds atomically, preserves pauses and unrelated work, and does no
       assert.equal((await one("SELECT metadata ? 'execution_hold' present FROM requirements")).present,false);
       // Paused plans/instances must not be changed by a later hold.
       await db.exec("UPDATE instance_plans SET status='paused'; UPDATE remote_instances SET status='paused';");
-      await transition(3,'platform_review','Private SQL diagnostic password=do-not-publish');
-      assert.ok(!JSON.stringify((await db.query('SELECT * FROM requirement_status')).rows).includes('do-not-publish'));
-      assert.ok(!JSON.stringify((await db.query('SELECT metadata FROM requirements')).rows).includes('do-not-publish'));
+      // Synthetic marker stays in this offline child process, never in committed fixtures.
+      const marker = randomBytes(16).toString('hex');
+      await transition(3,'platform_review','Private SQL diagnostic password=' + marker);
+      assert.ok(!JSON.stringify((await db.query('SELECT * FROM requirement_status')).rows).includes(marker));
+      assert.ok(!JSON.stringify((await db.query('SELECT metadata FROM requirements')).rows).includes(marker));
       assert.equal((await one('SELECT status FROM instance_plans')).status,'paused');
       assert.equal((await one('SELECT status FROM remote_instances')).status,'paused');
       await transition(4,'correction_required');

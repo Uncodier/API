@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { link, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -184,15 +184,26 @@ describe('readHarnessSource', () => {
   });
 
   it('redacts before pagination and literal search, retaining multiline source coordinates', async () => {
-    const secrets = ['literal-secret', 'bearer-value', 'cookie-value', 'db-pass', 'param-value',
-      'ghp_fixtureOnlyToken123', 'person@example.test', 'private-line', 'second-private-line', 'multiline-secret'];
+    // Keep realistic syntax, but generate all credential values at test runtime.
+    const literal = randomBytes(16).toString('hex');
+    const bearer = randomBytes(16).toString('hex');
+    const cookie = randomBytes(16).toString('hex');
+    const param = randomBytes(16).toString('hex');
+    const provider = `ghp_${randomBytes(16).toString('hex')}`;
+    const multiline = randomBytes(16).toString('hex');
+    const databaseUrl = new URL('postgres://example.invalid/db');
+    databaseUrl.username = 'fixture-reader';
+    databaseUrl.password = randomBytes(16).toString('hex');
+    databaseUrl.searchParams.set('token', param);
+    const secrets = [literal, bearer, cookie, databaseUrl.username, databaseUrl.password, param,
+      provider, 'person@example.test', 'private-line', 'second-private-line', multiline];
     const text = [
-      "const SERVICE_ROLE_KEY = 'literal-secret';",
-      'Authorization: Bearer bearer-value', 'Cookie: cookie-value',
-      'postgres://reader:db-pass@localhost/db?token=param-value',
-      'ghp_fixtureOnlyToken123', 'person@example.test',
+      `const SERVICE_ROLE_KEY = '${literal}';`,
+      `Authorization: Bearer ${bearer}`, `Cookie: ${cookie}`,
+      databaseUrl.href,
+      provider, 'person@example.test',
       '-----BEGIN PRIVATE KEY-----', 'private-line', 'second-private-line', '-----END PRIVATE KEY-----',
-      'const password = `', 'multiline-secret', '`;', 'SAFE_END',
+      'const password = `', multiline, '`;', 'SAFE_END',
     ].join('\n');
     await fixture(sourcePath, text);
     const full = await readHarnessSource({ action: 'read', path: sourcePath }) as any;
@@ -226,13 +237,17 @@ describe('readHarnessSource', () => {
   });
 
   it('redacts quoted assignments split across lines and known provider tokens', async () => {
-    const text = 'const apiKey =\n "split-value";\nconst key = "sk-fixtureOnlyKey";\nconst t = "eyJabcdefghijk.abcdefghijk.abcdefghijk";';
+    const split = randomBytes(16).toString('hex');
+    const provider = `sk-${randomBytes(16).toString('hex')}`;
+    const jwtHeader = `eyJ${randomBytes(16).toString('hex')}`;
+    const jwt = `${jwtHeader}.${randomBytes(16).toString('hex')}.${randomBytes(16).toString('hex')}`;
+    const text = `const apiKey =\n "${split}";\nconst key = "${provider}";\nconst t = "${jwt}";`;
     await fixture(sourcePath, text);
     const result = await readHarnessSource({ action: 'read', path: sourcePath }) as any;
     expect(result.total_lines).toBe(4);
-    expect(result.content).not.toContain('split-value');
-    expect(result.content).not.toContain('sk-fixtureOnlyKey');
-    expect(result.content).not.toContain('eyJabcdefghijk');
+    expect(result.content).not.toContain(split);
+    expect(result.content).not.toContain(provider);
+    expect(result.content).not.toContain(jwtHeader);
   });
 
   it('rejects oversized, binary, invalid UTF-8, directory and hardlinked files', async () => {

@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { ensureCycleTechnicalEscalation } from '@/lib/services/harness-diagnostics/cycle-escalation';
 import type { HarnessDiagnosticContext } from '@/lib/services/harness-diagnostics/context';
@@ -382,8 +383,15 @@ it.each(['none', 'ambiguous', 'error', 'throw'])('fails closed when snapshot fal
 
 it('sanitizes and bounds host reasons before persistence and never exposes raw diagnostics in its result', async () => {
   fixture();
-  const reason = 'Gate exhausted.\nBearer hidden-bearer\npassword=hidden-password\n' +
-    'https://alice:hidden-pass@private.test/file?signature=hidden-signature\n' +
+  // Synthetic, offline values: exercise redaction without committing credentials.
+  const bearer = randomBytes(16).toString('hex');
+  const password = randomBytes(16).toString('hex');
+  const signature = randomBytes(16).toString('hex');
+  const url = new URL('https://example.invalid/file');
+  url.username = `fixture-${randomBytes(16).toString('hex')}`;
+  url.password = randomBytes(16).toString('hex');
+  url.searchParams.set('signature', signature);
+  const reason = `Gate exhausted.\nBearer ${bearer}\npassword=${password}\n${url.href}\n` +
     'customer@example.com\n-----BEGIN PRIVATE KEY-----hidden-pem-----END PRIVATE KEY-----\n' +
     '\u0000' + 'detail '.repeat(1000);
   const result = await ensureCycleTechnicalEscalation(context(), { reason });
@@ -391,7 +399,10 @@ it('sanitizes and bounds host reasons before persistence and never exposes raw d
   const args = rpcArgs();
   expect(args.p_reason.length).toBeLessThanOrEqual(2000);
   expect(args.p_reason).toContain('[REDACTED');
-  expect(JSON.stringify(args)).not.toMatch(/hidden-|alice|customer@example|\\u0000/);
+  expect(JSON.stringify(args)).not.toMatch(/hidden-pem|customer@example|\\u0000/);
+  for (const value of [bearer, password, url.username, url.password, signature]) {
+    expect(JSON.stringify(args)).not.toContain(value);
+  }
   expect(deliverHarnessSupportTicket).toHaveBeenCalledWith(expect.objectContaining({ reason: args.p_reason }), context());
 });
 

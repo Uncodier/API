@@ -14,9 +14,12 @@ export interface HarnessDiagnosticContext {
 
 export function sanitizeHarnessData(value: unknown, depth = 0): unknown {
   if (depth > 15) return '[DEPTH_LIMIT]';
-  if (typeof value === 'string') return redactRuntimeSecrets(sanitizeMigrationRepairContext(value))
-    .replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[REDACTED]@')
-    .replace(/([?&](?:token|key|signature|secret|password|credential|x-amz-signature)=)[^\s&#"']+/gi, '$1[REDACTED]');
+  if (typeof value === 'string') {
+    // Strip both URL credentials before email redaction can consume their @ delimiter.
+    const withoutUserinfo = value.replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[REDACTED]@');
+    return redactRuntimeSecrets(sanitizeMigrationRepairContext(withoutUserinfo))
+      .replace(/([?&](?:token|key|signature|secret|password|credential|x-amz-signature)=)[^\s&#"']+/gi, '$1[REDACTED]');
+  }
   if (Array.isArray(value)) return value.map(item => sanitizeHarnessData(item, depth + 1));
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key,
     /(?:password|secret|authorization|cookie|api.?key|access.?token|refresh.?token|private.?key|credential|screenshot_base64)/i.test(key)
