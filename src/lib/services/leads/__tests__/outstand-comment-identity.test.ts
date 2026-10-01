@@ -223,6 +223,18 @@ describe('stable Outstand commenter lead identity', () => {
     expect(db.queries.filter(query => query.action === 'read' && query.table === 'leads')).toHaveLength(0);
   });
 
+  it.each([
+    { source: 'outstand_dm', outstand_dm_participant_id: 'dm-igsid', outstand_dm_social_account_id: 'other-account' },
+    { source: 'outstand_dm' },
+  ])('does not claim a DM-first lead through a coincident public-comment handle %j', async metadata => {
+    const dm = existing({ metadata, social_networks: { instagram: 'alice' } });
+    const db = database([dm]);
+    expect(await manage()).toMatchObject({ isNewLead: true });
+    expect(db.rows).toHaveLength(2);
+    expect(dm.metadata).toEqual(metadata);
+    expect(db.rows[1].metadata.social_author_id).toBe('author-1');
+  });
+
   it('accepts numeric stable author IDs without using them as display names', async () => {
     const db = database();
     await manage({ ...contract, author_id: 123, author_name: '123', author_username: '' });

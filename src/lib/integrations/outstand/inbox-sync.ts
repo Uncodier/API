@@ -1,5 +1,7 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { getOutstandClient } from './client';
+import { ensureOutstandDmLead } from '@/lib/services/leads/outstand-dm-identity';
+import { outstandParticipantIdentity, OutstandParticipantIdentityError } from './participant-identity';
 import type {
   OutstandConversation,
   OutstandConversationMessage,
@@ -45,9 +47,10 @@ async function findTenantId(socialAccountId: string): Promise<string> {
 async function findLocalConversation(siteId: string, outstandConversationId: string) {
   return supabaseAdmin
     .from('conversations')
-    .select('id, user_id, custom_data')
+    .select('id, user_id, lead_id, title, custom_data')
     .eq('site_id', siteId)
     .eq('channel', 'instagram')
+    .filter('custom_data->>source', 'eq', 'outstand_dm')
     .filter('custom_data->>outstand_conversation_id', 'eq', outstandConversationId)
     .maybeSingle();
 }
@@ -67,60 +70,78 @@ export async function ensureLocalOutstandConversation(
   siteId?: string,
 ): Promise<string> {
   const resolvedSiteId = siteId || await findTenantId(conversation.socialAccountId);
-  const existing = await findLocalConversation(resolvedSiteId, conversation.id);
-  if (existing.error) throw existing.error;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const existing = await findLocalConversation(resolvedSiteId, conversation.id);
+    if (existing.error) throw existing.error;
+    const previous = existing.data?.custom_data || {};
+    const cachedIdentity = outstandParticipantIdentity(conversation, previous);
+    const { leadId, identity } = await ensureOutstandDmLead(
+      resolvedSiteId, outstandParticipantIdentity(conversation), existing.data?.lead_id, cachedIdentity,
+    );
+    const participantName = identity.displayName || identity.username;
+    const title = participantName || 'Instagram direct message';
+    const canRename = !existing.data?.title || existing.data.title === 'Instagram direct message'
+      || (previous.outstand_generated_title && existing.data.title === previous.outstand_generated_title);
+    const customData = {
+      ...previous,
+      source: 'outstand_dm',
+      provider: 'outstand',
+      channel_delivery: true,
+      outstand_conversation_id: conversation.id,
+      outstand_social_account_id: identity.socialAccountId,
+      outstand_platform_conversation_id: conversation.platformConversationId,
+      outstand_participant_id: identity.participantId,
+      participant_display_name: identity.displayName || null,
+      participant_username: identity.username || null,
+      participant_profile_picture: identity.profilePicture || null,
+      participant_identity_status: participantName ? 'available' : 'unavailable',
+      ...(canRename ? { outstand_generated_title: title } : {}),
+      unread_count: conversation.unreadCount,
+    };
+    const userId = existing.data?.user_id || await findSiteOwnerId(resolvedSiteId);
 
-  const customData = {
-    ...(existing.data?.custom_data || {}),
-    source: 'outstand_dm',
-    provider: 'outstand',
-    channel_delivery: true,
-    outstand_conversation_id: conversation.id,
-    outstand_social_account_id: conversation.socialAccountId,
-    outstand_platform_conversation_id: conversation.platformConversationId,
-    outstand_participant_id: conversation.participantId,
-    participant_display_name: conversation.participantDisplayName,
-    participant_profile_picture: conversation.participantProfilePicture,
-    unread_count: conversation.unreadCount,
-  };
-
-  if (existing.data) {
-    const userId = existing.data.user_id || await findSiteOwnerId(resolvedSiteId);
-    const { error } = await supabaseAdmin
-      .from('conversations')
-      .update({
+    if (existing.data) {
+      let query = supabaseAdmin.from('conversations').update({
         ...(userId ? { user_id: userId } : {}),
+        lead_id: leadId,
+        ...(canRename ? { title } : {}),
         status: conversation.status,
         is_archived: conversation.status === 'archived',
         custom_data: customData,
-      })
-      .eq('id', existing.data.id);
-    if (error) throw error;
-    return existing.data.id;
-  }
+      }).eq('site_id', resolvedSiteId).eq('id', existing.data.id);
+      // Do not lose a simultaneous profile refresh, CRM link or manual title edit.
+      query = existing.data.custom_data == null ? query.is('custom_data', null)
+        : query.eq('custom_data', JSON.stringify(existing.data.custom_data));
+      query = existing.data.lead_id == null ? query.is('lead_id', null) : query.eq('lead_id', existing.data.lead_id);
+      if (canRename) query = existing.data.title == null ? query.is('title', null) : query.eq('title', existing.data.title);
+      const { data, error } = await query.select('id').maybeSingle();
+      if (error) throw error;
+      if (data) return data.id;
+      continue;
+    }
 
-  const userId = await findSiteOwnerId(resolvedSiteId);
-  const { data, error } = await supabaseAdmin
-    .from('conversations')
-    .insert([{
-      site_id: resolvedSiteId,
-      user_id: userId,
-      channel: 'instagram',
-      status: conversation.status,
-      is_archived: conversation.status === 'archived',
-      title: conversation.participantDisplayName || 'Instagram direct message',
-      custom_data: customData,
-      last_message_at: conversation.lastMessageAt,
-    }])
-    .select('id')
-    .single();
-
-  if (!error && data) return data.id;
-  if ((error as { code?: string } | null)?.code === '23505') {
-    const raced = await findLocalConversation(resolvedSiteId, conversation.id);
-    if (!raced.error && raced.data) return raced.data.id;
+    const { data, error } = await supabaseAdmin
+      .from('conversations')
+      .insert([{
+        site_id: resolvedSiteId,
+        user_id: userId,
+        lead_id: leadId,
+        channel: 'instagram',
+        status: conversation.status,
+        is_archived: conversation.status === 'archived',
+        title,
+        custom_data: customData,
+        last_message_at: conversation.lastMessageAt,
+      }])
+      .select('id')
+      .single();
+    if (!error && data) return data.id;
+    if ((error as { code?: string } | null)?.code !== '23505') {
+      throw error || new OutstandParticipantIdentityError();
+    }
+    // Reload a raced conversation and enrich it instead of returning an unlinked row.
   }
-  throw error || new Error('Failed to create local Outstand conversation');
+  throw new OutstandParticipantIdentityError();
 }
 
 interface LocalMessageRecord {

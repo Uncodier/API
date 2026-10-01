@@ -70,10 +70,13 @@ export async function loadAssistantRequirementContext(
   requirementStatusContext += '\n\n📋 REQUIREMENT STATUS HISTORY:\n';
   requirementStatusContext += JSON.stringify(requirementStatuses, null, 2);
   requirementStatusContext +=
-    '\n\n💡 WHEN CHANGES ARE REQUESTED: If the user requests changes, you MUST use ' +
-    'the requirements tool (action="update") to update the requirement instructions ' +
-    'with the new requests and set its status to "in-progress". Then, use the ' +
-    'requirement_status tool (action="create") to log that the requirement is back in progress.';
+    '\n\n💡 CHANGE AND REPAIR REQUESTS: Distinguish a concrete scope change from generic "repair it", "apply it", or "continue". ' +
+    'Generic repair requests preserve the existing specification, access model, execution history and recovery budgets. ' +
+    'They are not evidence that an exhausted repair is impossible, permission to weaken security, a choice between product alternatives, or proof of missing credentials. ' +
+    'Do not append generic approval to canonical instructions or recreate the requirement/backlog to reset attempts. ' +
+    'Use the existing authorized resume/handoff path only; respect technical holds and do not claim a next agent is assigned without a persisted assignment. ' +
+    'Only concrete new requirements belong in requirements(action="update"). If a genuine product choice or external capability is required, ' +
+    'state the exact verified blocker and actionable options, not "may I repair SQL?". An apply request executes only a validated proposal; it never substitutes for validation.';
 
   const { data: reqData } = await supabaseAdmin
     .from('requirements')

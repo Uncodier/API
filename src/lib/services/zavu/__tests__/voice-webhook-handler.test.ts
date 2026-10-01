@@ -10,6 +10,12 @@ import { getVoiceCall } from "../voice-call-client";
 
 const mockHandleUntrackedInboundVoiceEvent = jest.fn();
 const mockPersistVoiceTranscript = jest.fn();
+const mockResolveLead = jest.fn();
+const mockLinkLead = jest.fn();
+jest.mock("../inbound-voice-lead", () => ({
+  resolveInboundVoiceLead: (...args: unknown[]) => mockResolveLead(...args),
+  linkInboundVoiceLead: (...args: unknown[]) => mockLinkLead(...args),
+}));
 
 jest.mock("@/lib/database/supabase-server", () => ({
   supabaseAdmin: {
@@ -48,106 +54,6 @@ jest.mock("../voice-transcript", () => ({
     mockPersistVoiceTranscript(...args),
 }));
 
-function mockSettingsForSender(siteId = "site-1") {
-  const maybeSingle = jest.fn().mockResolvedValue({ data: { user_id: "user-1" } });
-  (supabaseAdmin.from as jest.Mock).mockImplementation((table: string) => {
-    if (table === "sites") {
-      return { select: jest.fn().mockReturnValue({ eq: jest.fn().mockReturnValue({ maybeSingle }) }) };
-    }
-    return {
-      select: jest.fn().mockReturnValue({
-        contains: jest.fn().mockResolvedValue({
-          data: [{ id: "settings-1", site_id: siteId, channels: { connections: [] } }],
-          error: null,
-        }),
-      }),
-    };
-  });
-}
-
-describe("handleInboundMessage", () => {
-  const customerSupportMessage = jest.fn().mockResolvedValue({ success: true, workflowId: "wf_1" });
-
-  beforeEach(() => {
-    jest.clearAllMocks();
-    (WorkflowService.getInstance as jest.Mock).mockReturnValue({ customerSupportMessage });
-  });
-
-  it("starts the customerSupport workflow for a valid inbound channel", async () => {
-    mockSettingsForSender("site-99");
-
-    await handleInboundMessage({
-      id: "evt_1",
-      senderId: "snd_1",
-      data: {
-        from: "12345",
-        channel: "telegram",
-        text: "hola",
-        messageId: "msg_1",
-        profileName: "Ana",
-      },
-    });
-
-    expect(customerSupportMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        message: "hola",
-        site_id: "site-99",
-        origin: "telegram",
-        phone: "12345",
-        origin_message_id: "msg_1",
-        channel_delivery: true,
-      }),
-      expect.any(Object)
-    );
-  });
-
-  it("does not start a workflow when channel is missing", async () => {
-    mockSettingsForSender();
-
-    await handleInboundMessage({
-      senderId: "snd_1",
-      data: { from: "12345", text: "hola" },
-    });
-
-    expect(customerSupportMessage).not.toHaveBeenCalled();
-  });
-
-  it("does not start a second agent for a Voice message echo", async () => {
-    mockSettingsForSender();
-    await handleInboundMessage({
-      senderId: "snd_1",
-      data: {
-        from: "+14155550100", channel: "voice", text: "I need help",
-      },
-    });
-
-    expect(customerSupportMessage).not.toHaveBeenCalled();
-  });
-
-  it("uses a media placeholder instead of dropping inbound media without text", async () => {
-    mockSettingsForSender("site-media");
-
-    await handleInboundMessage({
-      senderId: "snd_1",
-      data: {
-        from: "12345",
-        channel: "telegram",
-        messageType: "image",
-        messageId: "msg_img",
-      },
-    });
-
-    expect(customerSupportMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        message: "[image]",
-        origin: "telegram",
-        origin_message_id: "msg_img",
-      }),
-      expect.any(Object)
-    );
-  });
-});
-
 describe("handleVoiceCallEvent", () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -156,6 +62,8 @@ describe("handleVoiceCallEvent", () => {
     });
     mockHandleUntrackedInboundVoiceEvent.mockResolvedValue({ handled: false });
     mockPersistVoiceTranscript.mockResolvedValue(undefined);
+    mockResolveLead.mockResolvedValue("lead-1");
+    mockLinkLead.mockResolvedValue(undefined);
   });
 
   it("treats call.completed without a provider status as completed", () => {
@@ -443,6 +351,8 @@ describe("handleVoiceCallEvent", () => {
       leadId: "lead-1",
       agentId: undefined,
     });
+    expect(mockLinkLead).toHaveBeenCalledWith({ siteId: "site-1", conversationId: "conversation-1",
+      deliveryId: "delivery-1", callId: "call-1", leadId: "lead-1" });
   });
 
   it("does not lose a completed transcript when Zavu contact cleanup fails", async () => {
@@ -479,7 +389,9 @@ describe("handleVoiceCallEvent", () => {
       })).resolves.toBeUndefined();
       expect(mockPersistVoiceTranscript).toHaveBeenCalledWith(expect.objectContaining({
         deliveryId: "delivery-1",
+        leadId: "lead-1",
       }));
+      expect(mockResolveLead).toHaveBeenCalledWith("site-1", "+14155550100");
       expect(clearVoiceCallContactContext).toHaveBeenCalledWith({
         phone: "+14155550100", deliveryId: "call-1",
       });
@@ -529,6 +441,8 @@ describe("handleVoiceCallEvent", () => {
       leadId: undefined,
       agentId: undefined,
     });
+    expect(mockResolveLead).not.toHaveBeenCalled();
+    expect(mockLinkLead).not.toHaveBeenCalled();
   });
 
   it("links an existing inbound conversation to its verified local Voice agent", async () => {

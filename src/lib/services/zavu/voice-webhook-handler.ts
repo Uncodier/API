@@ -8,6 +8,7 @@ import {
 import { persistVoiceTranscript } from "./voice-transcript";
 import { normalizeVoiceDeliveryStatus } from "./voice-status";
 import { voiceCommandStatus } from './voice-call-message-state';
+import { resolveInboundVoiceLead, linkInboundVoiceLead } from './inbound-voice-lead';
 
 function tenantDatabase() {
   return supabaseAdmin.schema(
@@ -67,7 +68,7 @@ export async function handleVoiceCallEvent(event: any): Promise<void> {
   let query = supabaseAdmin
     .from("voice_call_deliveries")
     .select(
-      "id, message_id, site_id, conversation_id, lead_id, zavu_sender_id, "
+      "id, message_id, site_id, conversation_id, lead_id, zavu_sender_id, zavu_call_id, "
       + "recipient_phone, status, duration_seconds, end_reason, turn_count, "
       + "cost, currency, transcript, answered_at, ended_at"
     )
@@ -80,6 +81,13 @@ export async function handleVoiceCallEvent(event: any): Promise<void> {
     throw new Error(`Failed to find Voice call delivery: ${deliveryError.message}`);
   }
   let delivery = deliveries?.[0] as unknown as InboundDelivery | undefined;
+  if (delivery?.zavu_call_id && delivery.zavu_call_id !== callId) {
+    throw new Error("Voice webhook does not match the persisted provider call");
+  }
+  const senderId = event?.senderId ?? data?.senderId ?? event?.sender?.id;
+  if (delivery && senderId && senderId !== delivery.zavu_sender_id) {
+    throw new Error("Voice webhook does not match the persisted sender");
+  }
   let callDetails: Awaited<ReturnType<typeof getVoiceCall>> | undefined;
   let untrackedInbound = false;
   if (!delivery) {
@@ -182,6 +190,14 @@ export async function handleVoiceCallEvent(event: any): Promise<void> {
       ? message.custom_data as Record<string, unknown>
       : {};
   const inbound = customData.call_direction === "inbound";
+  if (inbound && terminal && !untrackedInbound && delivery.site_id && delivery.conversation_id) {
+    // Reconcile legacy/unlinked calls when a later terminal webhook arrives.
+    // Do not trust a lead ID or contact details embedded in transcript/tool text.
+    const leadId = delivery.lead_id || await resolveInboundVoiceLead(delivery.site_id, delivery.recipient_phone);
+    await linkInboundVoiceLead({ siteId: delivery.site_id, conversationId: delivery.conversation_id,
+      deliveryId: delivery.id, callId, leadId });
+    delivery = { ...delivery, lead_id: leadId };
+  }
   const {
     voice_response_workflow_status: _oldStatus,
     voice_response_workflow_id: _oldWorkflowId,

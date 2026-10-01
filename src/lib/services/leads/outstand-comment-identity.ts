@@ -83,6 +83,9 @@ async function lookup(siteId: string, identity: CommentIdentity, byHandle = fals
     const networkKey = identity.origin === 'x' ? 'twitter' : identity.origin;
     const handle = identity.handle.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
     query = query.eq('site_id', siteId).eq('origin', identity.origin)
+      // DM IGSIDs are a separate namespace. A coincident handle must not turn
+      // a DM lead into a public commenter (possibly under another account).
+      .is('metadata->>outstand_dm_participant_id', null)
       .or(`metadata->>social_handle.eq."${handle}",social_networks->>${networkKey}.eq."${handle}"`);
     query = identity.publisherAccountId && !legacyAccount
       ? query.eq('metadata->>social_account_id', identity.publisherAccountId)
@@ -100,6 +103,7 @@ async function lookup(siteId: string, identity: CommentIdentity, byHandle = fals
   }
   if (byHandle && lead) {
     const metadata = record(lead.metadata);
+    if (metadata.source === 'outstand_dm') return null;
     // A legacy handle can acquire the new stable reference, but must never
     // reassign a lead already bound to another author or publishing account.
     if ((metadata.social_author_id && identity.authorId && metadata.social_author_id !== identity.authorId)

@@ -40,7 +40,7 @@ function harness() {
   const migrationLifecycle = {
     loadMigrationLifecycleStep: jest.fn(async (): Promise<any[]> => []),
     loadMigrationSourcePlanStep: jest.fn(async () => plan),
-    scheduleMigrationCorrectionStep: jest.fn(async () => ({ scheduled: true, internalReview: false })),
+    scheduleMigrationCorrectionStep: jest.fn(async (): Promise<any> => ({ scheduled: true, internalReview: false })),
     verifyPendingMigrationLifecycleStep: jest.fn(async () => ({ passed: true, effectiveSandboxId: 'sandbox' })),
     holdMigrationLifecycleStep: jest.fn(async () => {}),
   };
@@ -122,6 +122,32 @@ describe('workflow recovery and truthful completion', () => {
     expect(h.migrationLifecycle.scheduleMigrationCorrectionStep).toHaveBeenCalledTimes(1);
     expect(h.repair.repairDatabaseMigrationStep).not.toHaveBeenCalled();
     expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({ recoveryDisposition: 'retry', requiresUserFeedback: false }));
+  });
+
+  it('provisions a diagnostic workspace and hands the assigned correction to the next agent, not a blocked requirement', async () => {
+    const h = harness();
+    h.migrationLifecycle.loadMigrationLifecycleStep.mockResolvedValue([{ state: 'correction_required', attempts: 5 }]);
+    h.migrationLifecycle.scheduleMigrationCorrectionStep
+      .mockResolvedValueOnce({ scheduled: false, internalReview: false, diagnosticPending: true })
+      .mockResolvedValueOnce({ scheduled: true, internalReview: false });
+    await expect(h.run()).resolves.toMatchObject({ status: 'remediation_handoff' });
+    expect(h.lifecycle.createSandboxStep).toHaveBeenCalledTimes(1);
+    expect(h.migrationLifecycle.scheduleMigrationCorrectionStep).toHaveBeenLastCalledWith(expect.objectContaining({ sandboxId: 'sandbox' }));
+    expect(h.executeSingleTurnStep).not.toHaveBeenCalled();
+    expect(h.db.recordRequirementBlockedStep).not.toHaveBeenCalled();
+    expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({ recoveryDisposition: 'retry', requiresUserFeedback: false }));
+    expect(h.lifecycle.releaseRunLockStep).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not execute product work when independent diagnosis found no evidence-backed follow-up', async () => {
+    const h = harness();
+    h.migrationLifecycle.loadMigrationLifecycleStep.mockResolvedValue([{ state: 'correction_required', attempts: 5 }]);
+    h.migrationLifecycle.scheduleMigrationCorrectionStep
+      .mockResolvedValueOnce({ scheduled: false, internalReview: false, diagnosticPending: true })
+      .mockResolvedValueOnce({ scheduled: false, internalReview: true, diagnosis: { reason: 'Evidence missing', next_action: 'Inspect ownership' } });
+    await expect(h.run()).resolves.toMatchObject({ status: 'blocked' });
+    expect(h.executeSingleTurnStep).not.toHaveBeenCalled();
+    expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({ recoveryDisposition: 'internal_review', requiresUserFeedback: false }));
   });
 
   it('retains a durable validation obligation after an exception between apply and verification', async () => {

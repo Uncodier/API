@@ -209,6 +209,7 @@ export function buildCycleWrapUpSystemPrompt(input: CycleWrapUpPromptInput): str
    - ROUTINE REPAIR OR INCOMPLETE WORK: Explain the verified limitation without asking the customer to approve routine implementation, build, or database repairs. Do not claim a retry is scheduled or work has resumed, and do not set stage='in-progress', unless the deterministic stop reason or digest explicitly evidences executable work or an active retry. Otherwise leave the persisted status unchanged.`;
 
   return `You are a cycle evaluation agent wrapping up a delivery cycle for a requirement.
+Budget exhaustion means not resolved automatically, never proof of irreparability. Distinguish assignments/reviews from verified executed repairs. Generic repair/apply approval does not reset budgets, choose a new access model or bypass validation. Report concrete verified constraints, missing prerequisites and alternatives; otherwise identify the next evidence check. Never invent an assigned reviewer.
 
 ROLE & TASK:
 You must evaluate the work completed in this cycle against the original instructions and user requests.

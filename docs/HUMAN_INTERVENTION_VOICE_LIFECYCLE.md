@@ -10,6 +10,11 @@ The API saves a team-member message before attempting external delivery. For
 the persisted `voice` channel, delivery uses the existing tracked Zavu call
 service directly, **not Temporal**. Other channel workflows are unchanged.
 
+Inbound terminal call webhooks separately create/reuse and link a minimal
+site-scoped CRM lead before transcript projection. This does not grant outbound
+call consent. See [Inbound voice lead linkage](./ZAVU_INBOUND_VOICE_LEAD_LINKAGE.md)
+for conflict handling, retries and explicit historic-repair limits.
+
 ## Response and state
 
 The response retains `data.message.message_id` for the saved row:

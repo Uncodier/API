@@ -6,6 +6,7 @@ export default {
   testMatch: [
     '<rootDir>/src/lib/services/zavu/__tests__/voice-*.test.ts',
     '<rootDir>/src/lib/services/zavu/__tests__/inbound-voice-context.test.ts',
+    '<rootDir>/src/lib/services/zavu/__tests__/webhook-inbound-message.test.ts',
     '<rootDir>/src/lib/services/zavu/__tests__/signature.test.ts',
     '<rootDir>/src/app/api/integrations/zavu/voice/**/__tests__/**/*.test.ts',
     '<rootDir>/src/app/api/integrations/zavu/voice-tools/__tests__/**/*.test.ts',

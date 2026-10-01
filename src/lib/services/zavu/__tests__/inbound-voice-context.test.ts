@@ -4,6 +4,15 @@ const mockBuildFollowUpContext = jest.fn();
 const mockSetContactContext = jest.fn();
 const mockClearContactContext = jest.fn();
 const mockEnsureContactMetadata = jest.fn();
+const mockFindLead = jest.fn();
+const mockResolveLead = jest.fn();
+const mockLinkLead = jest.fn();
+
+jest.mock("../inbound-voice-lead", () => ({
+  findInboundVoiceLead: (...args: unknown[]) => mockFindLead(...args),
+  resolveInboundVoiceLead: (...args: unknown[]) => mockResolveLead(...args),
+  linkInboundVoiceLead: (...args: unknown[]) => mockLinkLead(...args),
+}));
 
 jest.mock("@/lib/database/supabase-server", () => ({
   supabaseAdmin: {
@@ -60,6 +69,9 @@ describe("inbound Voice follow-up context", () => {
     mockSetContactContext.mockResolvedValue(undefined);
     mockClearContactContext.mockResolvedValue(undefined);
     mockEnsureContactMetadata.mockResolvedValue(undefined);
+    mockFindLead.mockResolvedValue("lead-1");
+    mockResolveLead.mockResolvedValue("lead-1");
+    mockLinkLead.mockResolvedValue(undefined);
   });
 
   it("hydrates contact metadata when an inbound call starts", async () => {
@@ -81,6 +93,8 @@ describe("inbound Voice follow-up context", () => {
       leadId: "lead-1",
       phone: "+14155550100",
     });
+    expect(mockFindLead).toHaveBeenCalledWith("site-1", "+14155550100");
+    expect(mockResolveLead).not.toHaveBeenCalled();
     expect(mockEnsureContactMetadata).toHaveBeenCalledWith("sender-1");
     expect(mockSetContactContext).toHaveBeenCalledWith({
       phone: "+14155550100",
@@ -197,6 +211,10 @@ describe("inbound Voice follow-up context", () => {
     });
     expect(conversationUpserts[0]).toMatchObject({
       channel: "voice", user_id: "user-1", agent_id: "local-agent-1",
+    });
+    expect(mockResolveLead).toHaveBeenCalledWith("site-1", "+14155550100");
+    expect(mockLinkLead).toHaveBeenCalledWith({ siteId: "site-1", callId: "call-1", leadId: "lead-1",
+      conversationId: conversationUpserts[0].id, deliveryId: deliveryUpserts[0].id,
     });
     expect(messageUpserts[0]).toMatchObject({
       conversation_id: conversationUpserts[0].id,

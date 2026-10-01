@@ -146,6 +146,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   let recoveryDisposition: CycleRecoveryDisposition | undefined;
   let databaseMigrations: DatabaseMigrationOutcome | undefined;
   let migrationCorrectionScheduled = false;
+  let migrationDiagnosticPending = false;
   let migrationValidationRequired = false;
   let migrationFreshValidationCompleted = false;
   const repairedMigrations: MigrationRepairTarget[] = [];
@@ -224,6 +225,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   if (existingPlan && migrationLifecycle.some(row => row.state === 'correction_required')) {
     const handoff = await scheduleMigrationCorrectionStep({ requirementId: reqId, planId: existingPlan.id,
       executionOwnership: { requirementId: reqId, runId: cronLockRunId, executionGeneration } });
+    migrationDiagnosticPending = handoff.diagnosticPending === true;
     if (handoff.internalReview) {
       recoveryDisposition = 'internal_review';
       return { reqId, branch: null, previewUrl: null, status: 'blocked' as const };
@@ -233,7 +235,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   const actionableSteps = selectPlanStepsForExecution(
     Array.isArray(existingPlan?.steps) ? existingPlan.steps : [],
   );
-  const hasActivePlan = !!(existingPlan && (actionableSteps.length > 0 || migrationValidationRequired));
+  const hasActivePlan = !!(existingPlan && (actionableSteps.length > 0 || migrationValidationRequired || migrationDiagnosticPending));
 
   if (existingPlan && actionableSteps[0]) {
     const preflightGate = await getPlanExecutionGateStep(
@@ -458,6 +460,23 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   });
   sandboxId = created.sandboxId;
   const { branchName, workDir, isNewBranch, instanceType } = created;
+  if (migrationDiagnosticPending && existingPlan) {
+    const handoff = await scheduleMigrationCorrectionStep({ requirementId: reqId, planId: existingPlan.id, sandboxId,
+      executionOwnership: { requirementId: reqId, runId: cronLockRunId, executionGeneration } });
+    if (handoff.internalReview) {
+      recoveryDisposition = 'internal_review';
+      wrapUpReason = handoff.diagnosis ? `Unresolved automatically: ${handoff.diagnosis.reason}. ${handoff.diagnosis.next_action}` : 'Independent migration diagnosis requires technical reconciliation.';
+      wrapUpRequiresUserFeedback = false;
+      return { reqId, branch: null, previewUrl: null, status: 'blocked' as const };
+    }
+    // The next execution owns implementation; diagnosis cannot spend a second
+    // repair budget in this same cycle or skip downstream migration validation.
+    cycleOutcome = 'remediation_handoff';
+    recoveryDisposition = 'retry';
+    wrapUpRequiresUserFeedback = false;
+    wrapUpReason = 'Independent diagnosis assigned one evidence-backed correction to the existing plan. No user approval is required.';
+    return { reqId, branch: null, previewUrl: null, status: 'remediation_handoff' as const };
+  }
   // A partially applied batch may depend on its next pending correction. Let
   // that scoped repair run first; the durable guard still prevents delivery.
   if (migrationValidationRequired && !migrationLifecycle.some(row => row.state === 'correction_required')) {
@@ -1337,9 +1356,13 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       databaseMigrations = dbMig;
       if (dbMig.status === 'failed' && dbMig.correction?.state === 'correction_required' && activePlan?.id) {
         const handoff = await scheduleMigrationCorrectionStep({ requirementId: reqId, planId: activePlan.id,
+          sandboxId,
           sourceStepId: stepsPhase?.lastTouchedStepId,
           executionOwnership: { requirementId: reqId, runId: cronLockRunId, executionGeneration } });
         migrationCorrectionScheduled = handoff.scheduled;
+        if (handoff.internalReview && handoff.diagnosis) {
+          wrapUpReason = `Unresolved automatically: ${handoff.diagnosis.reason}. ${handoff.diagnosis.next_action}`;
+        }
       }
       // Same-cycle, bounded repair: never turn product defects into infinite infra retries.
       // Only the applier can identify a safely editable, unapplied migration.

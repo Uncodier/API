@@ -154,6 +154,8 @@ export interface OutstandConversation {
   platformConversationId: string;
   participantId: string;
   participantDisplayName: string | null;
+  // Optional, explicit participant field only; a display name is not a username.
+  participantUsername?: string | null;
   participantProfilePicture: string | null;
   lastMessageAt: string;
   lastInboundAt: string;

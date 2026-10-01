@@ -13,7 +13,9 @@ LLM repair turns on an operation the restricted tool cannot perform. The workflo
 assigns concrete correction instructions to the existing implementation step,
 or appends a bounded repair if its source step is completed. It retains the same
 backlog item and enables sandbox tools. Corrections/reviews share a persisted
-five-attempt budget; exhaustion requires technical review, not generic permission.
+five-attempt historical budget. Exhaustion now enters the bounded independent
+[diagnostic handoff](MIGRATION_DIAGNOSTIC_HANDOFF.md), not an immediate assertion
+of irreparability or a generic permission request. Genuine security holds remain.
 
 ## Durable states and safety
 

@@ -79,6 +79,9 @@ describe('interactive assistant requirement context', () => {
 
     expect(result.activeRequirementId).toBe('req-open');
     expect(result.requirementStatusContext).toContain('Open requirement');
+    expect(result.requirementStatusContext).toContain('Generic repair requests preserve the existing specification');
+    expect(result.requirementStatusContext).toContain('it never substitutes for validation');
+    expect(result.requirementStatusContext).not.toContain('you MUST use the requirements tool');
     expect(result.progressContext).toContain('Started');
     expect(result.backlogContext).toContain('Current item');
   });

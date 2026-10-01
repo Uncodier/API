@@ -3,11 +3,13 @@ import { authorizeMigrationApplication } from '@/lib/services/apps-platform/migr
 import { listMigrationLifecycle, transitionMigrationLifecycle } from '@/lib/services/apps-platform/migration-lifecycle';
 import { reviewMigrationSecurity } from '@/lib/services/apps-platform/migration-security-review';
 import { getTenantCapabilities } from '@/lib/services/apps-platform/tenant-capabilities-service';
+import { beginMigrationDiagnosticReview, loadMigrationDiagnostic } from '@/lib/services/apps-platform/migration-diagnostic-state';
 
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: {} }));
 jest.mock('@/lib/services/apps-platform/migration-lifecycle', () => ({ listMigrationLifecycle: jest.fn(), transitionMigrationLifecycle: jest.fn() }));
 jest.mock('@/lib/services/apps-platform/migration-security-review', () => ({ reviewMigrationSecurity: jest.fn() }));
 jest.mock('@/lib/services/apps-platform/tenant-capabilities-service', () => ({ getTenantCapabilities: jest.fn() }));
+jest.mock('@/lib/services/apps-platform/migration-diagnostic-state', () => ({ beginMigrationDiagnosticReview: jest.fn(), loadMigrationDiagnostic: jest.fn() }));
 
 const digest = (text: string) => createHash('sha256').update(text).digest('hex');
 const sql = 'CREATE TABLE records (id uuid, user_id uuid); ALTER TABLE records ENABLE ROW LEVEL SECURITY; CREATE POLICY own_records ON records USING (user_id = _app_current_user_id());';
@@ -24,6 +26,8 @@ describe('central migration application review', () => {
     (transitionMigrationLifecycle as jest.Mock).mockImplementation(async input => ({ ...input.value, requirement_id: input.requirementId, file: input.file, version: input.expectedVersion + 1 }));
     (getTenantCapabilities as jest.Mock).mockResolvedValue({ schema: target.schema, tenant_id: target.tenantId });
     (reviewMigrationSecurity as jest.Mock).mockResolvedValue({ decision: 'approved_for_validation', reason: 'Preserves specified ownership.' });
+    (loadMigrationDiagnostic as jest.Mock).mockResolvedValue(null);
+    (beginMigrationDiagnosticReview as jest.Mock).mockImplementation(async input => ({ ...input.value, requirement_id: input.requirementId, file: input.file, version: input.expectedVersion + 1 }));
   });
 
   it('persists review and validation intent before returning authorization for new SQL', async () => {
@@ -55,11 +59,28 @@ describe('central migration application review', () => {
     expect(result.lifecycle.state).toBe(decision === 'request_changes' ? 'correction_required' : 'platform_review');
   });
 
-  it('cannot silently repeat an interrupted review or exhausted correction budget', async () => {
+  it('holds interrupted review but routes budget exhaustion to diagnosis without approving SQL', async () => {
     (listMigrationLifecycle as jest.Mock).mockResolvedValue([{ ...existing, state: 'reviewing' }]);
     expect((await authorizeMigrationApplication({ context, target, sql, assertUnchanged: jest.fn() })).lifecycle.state).toBe('platform_review');
     (listMigrationLifecycle as jest.Mock).mockResolvedValue([{ ...existing, attempts: 5 }]);
-    expect((await authorizeMigrationApplication({ context, target, sql, assertUnchanged: jest.fn() })).lifecycle.state).toBe('platform_review');
+    expect((await authorizeMigrationApplication({ context, target, sql, assertUnchanged: jest.fn() })).lifecycle.state).toBe('correction_required');
+    expect(reviewMigrationSecurity).not.toHaveBeenCalled();
+  });
+
+  it('allows exactly the diagnostic-authorized changed proposal to enter a fresh review without resetting attempts', async () => {
+    (listMigrationLifecycle as jest.Mock).mockResolvedValue([{ ...existing, attempts: 5 }]);
+    (loadMigrationDiagnostic as jest.Mock).mockResolvedValue({ state: 'followup_assigned', checksum: 'c'.repeat(64) });
+    const result = await authorizeMigrationApplication({ context, target, sql, assertUnchanged: jest.fn() });
+    expect(beginMigrationDiagnosticReview).toHaveBeenCalledWith(expect.objectContaining({ value: expect.objectContaining({ state: 'reviewing', attempts: 5, review: null }) }));
+    expect(reviewMigrationSecurity).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ allowed: true, lifecycle: { state: 'validation_pending', attempts: 5 } });
+  });
+
+  it.each(['followup_reviewing', 'exhausted'])('does not get another review after diagnostic state %s', async state => {
+    (listMigrationLifecycle as jest.Mock).mockResolvedValue([{ ...existing, attempts: 5 }]);
+    (loadMigrationDiagnostic as jest.Mock).mockResolvedValue({ state });
+    expect((await authorizeMigrationApplication({ context, target, sql, assertUnchanged: jest.fn() })).allowed).toBe(false);
+    expect(beginMigrationDiagnosticReview).not.toHaveBeenCalled();
     expect(reviewMigrationSecurity).not.toHaveBeenCalled();
   });
 

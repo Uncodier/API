@@ -1,6 +1,7 @@
 import { v5 as uuidv5 } from "uuid";
 import { supabaseAdmin } from "@/lib/database/supabase-server";
-import { normalizePhoneForStorage } from "@/lib/utils/phone-normalizer";
+import { normalizeVoiceIdentityPhone } from "./voice-lead-identification";
+import { findInboundVoiceLead, resolveInboundVoiceLead, linkInboundVoiceLead } from "./inbound-voice-lead";
 import {
   clearVoiceCallContactContext,
   setVoiceCallContactContext,
@@ -29,6 +30,7 @@ export type InboundDelivery = {
   conversation_id: string;
   lead_id?: string | null;
   zavu_sender_id: string;
+  zavu_call_id?: string | null;
   recipient_phone: string;
   status: string;
   transcript?: ZavuVoiceCall["transcript"] | null;
@@ -49,25 +51,10 @@ async function resolveSiteId(senderId: string): Promise<string | undefined> {
     .contains("channels", {
       connections: [{ zavu_sender_id: senderId }],
     })
-    .limit(1)
+    .limit(2)
     .maybeSingle();
   if (error) throw new Error(`Failed to resolve inbound Voice site: ${error.message}`);
   return typeof data?.site_id === "string" ? data.site_id : undefined;
-}
-
-async function resolveLeadId(
-  siteId: string,
-  phone: string
-): Promise<string | undefined> {
-  const { data, error } = await supabaseAdmin
-    .from("leads")
-    .select("id")
-    .eq("site_id", siteId)
-    .eq("phone", phone)
-    .limit(1)
-    .maybeSingle();
-  if (error) throw new Error(`Failed to resolve inbound Voice lead: ${error.message}`);
-  return typeof data?.id === "string" ? data.id : undefined;
 }
 
 async function resolveSiteUserId(siteId: string): Promise<string | undefined> {
@@ -211,6 +198,10 @@ async function persistInboundCall(params: {
     throw new Error(`Failed to persist inbound Voice delivery: ${deliveryError.message}`);
   }
 
+  if (params.leadId) {
+    await linkInboundVoiceLead({ siteId: params.siteId, conversationId, deliveryId, callId: params.call.id, leadId: params.leadId });
+  }
+
   await persistVoiceTranscript({
     call: params.call,
     siteId: params.siteId,
@@ -238,21 +229,24 @@ export async function handleUntrackedInboundVoiceEvent(
   callId: string
 ): Promise<InboundVoiceEventResult> {
   const call = await getVoiceCall(callId);
+  if (call.id !== callId) throw new Error("Inbound Voice provider call does not match the webhook");
   if (call.direction !== "inbound") return { handled: false, call };
 
   const senderId = senderIdFromEvent(event);
   if (!senderId) {
     throw new Error("Inbound Voice webhook is missing senderId");
   }
-  const phone = normalizePhoneForStorage(call.from);
-  if (!E164_PHONE.test(phone)) {
+  const phone = normalizeVoiceIdentityPhone(call.from);
+  if (!phone || !E164_PHONE.test(phone)) {
     throw new Error("Inbound Voice caller phone is not valid E.164");
   }
   const siteId = await resolveSiteId(senderId);
   if (!siteId) {
     throw new Error(`No site is configured for inbound Voice sender ${senderId}`);
   }
-  const leadId = await resolveLeadId(siteId, phone);
+  const leadId = TERMINAL_EVENTS.has(event.type)
+    ? await resolveInboundVoiceLead(siteId, phone)
+    : await findInboundVoiceLead(siteId, phone);
 
   if (!TERMINAL_EVENTS.has(event.type)) {
     // The live agent already owns the call. Guidance is useful, but a missing

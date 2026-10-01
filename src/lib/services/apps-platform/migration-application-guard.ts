@@ -5,6 +5,7 @@ import { getTenantCapabilities } from './tenant-capabilities-service';
 import { reviewMigrationSecurity } from './migration-security-review';
 import { listMigrationLifecycle, transitionMigrationLifecycle, type MigrationLifecycleRecord } from './migration-lifecycle';
 import type { MigrationRepairTarget } from './migration-repair-types';
+import { beginMigrationDiagnosticReview, loadMigrationDiagnostic } from './migration-diagnostic-state';
 
 export const migrationDigest = (text: string): string => createHash('sha256').update(text).digest('hex');
 const MAX_ATTEMPTS = 5;
@@ -111,13 +112,30 @@ export async function authorizeMigrationApplication(params: {
     const lifecycle = await transition('correction_required', reason, current?.attempts ?? 0);
     return { allowed: false, lifecycle, error: reason };
   }
-  if ((current?.attempts ?? 0) >= MAX_ATTEMPTS) {
-    const lifecycle = await transition('platform_review', 'Bounded migration correction/review budget exhausted.', current!.attempts);
-    return { allowed: false, lifecycle, error: lifecycle.reason };
+  const exhausted = (current?.attempts ?? 0) >= MAX_ATTEMPTS;
+  if (exhausted) {
+    const diagnostic = await loadMigrationDiagnostic(context.requirementId, target.file);
+    if (!diagnostic || ['running', 'followup_ready'].includes(diagnostic.state)) {
+      // Applying is still denied, but diagnosis remains runnable. Generic approval
+      // does not replenish the budget or supply an independent repair assignment.
+      const lifecycle = await transition('correction_required', 'Automatic correction/review budget exhausted; independent diagnosis is required, not proof of impossibility.', current!.attempts);
+      return { allowed: false, lifecycle, error: lifecycle.reason };
+    }
+    if (diagnostic.state !== 'followup_assigned') {
+      const lifecycle = await transition('correction_required', 'Automatic recovery remains unresolved after independent diagnosis. The owned scheduler must settle this outcome; no new repair budget was authorized.', current!.attempts, { diagnosis: diagnostic.result });
+      return { allowed: false, lifecycle, error: lifecycle.reason };
+    }
+    if (diagnostic.checksum === target.checksum) return { allowed: false, lifecycle: current!, error: 'The diagnostic follow-up must materialize a changed proposal before review.' };
   }
   const capabilities = await getTenantCapabilities(context.requirementId);
   if (capabilities.schema !== target.schema || capabilities.tenant_id !== target.tenantId) throw new Error('Migration tenant identity changed.');
-  const reviewing = await transition('reviewing', 'Independent security review in progress.', (current?.attempts ?? 0) + 1);
+  const reviewing = exhausted ? await beginMigrationDiagnosticReview({
+    requirementId: context.requirementId, file: target.file, expectedVersion: current!.version,
+    executionGeneration: context.executionGeneration,
+    value: { state: 'reviewing', checksum: target.checksum, specification_checksum: context.specificationChecksum,
+      original_sql: current!.original_sql, attempts: MAX_ATTEMPTS, reason: 'Independent security review of the single diagnostic follow-up.', review: null },
+  }) : await transition('reviewing', 'Independent security review in progress.', (current?.attempts ?? 0) + 1);
+  current = reviewing;
   const review = await reviewMigrationSecurity({
     target, originalSql: reviewing.original_sql || sql, proposedSql: sql,
     specification: context.specification, errors: [], capabilities,

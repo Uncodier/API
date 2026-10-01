@@ -71,7 +71,7 @@ const inputSchema = z.object({
 
 const columns = 'requirement_id,file,version,state,checksum,specification_checksum,original_sql,reason,review,attempts,updated_at';
 
-function parseRecord(value: unknown): MigrationLifecycleRecord {
+export function parseMigrationLifecycleRecord(value: unknown): MigrationLifecycleRecord {
   const parsed = recordSchema.safeParse(value);
   // z.unknown() accepts undefined; a full persisted row must still include review.
   if (!parsed.success || !Object.prototype.hasOwnProperty.call(value, 'review') || parsed.data.review === undefined) {
@@ -87,7 +87,7 @@ export async function listMigrationLifecycle(requirementId: string): Promise<Mig
     .select(columns).eq('requirement_id', id);
   if (error) throw new Error(`Migration lifecycle lookup failed (${error.code || 'lookup_failed'}).`);
   if (!Array.isArray(data)) throw new Error('Invalid migration lifecycle response.');
-  const rows = data.map(parseRecord);
+  const rows = data.map(parseMigrationLifecycleRecord);
   const files = new Set<string>();
   for (const row of rows) {
     if (row.requirement_id !== id.toLowerCase() || files.has(row.file)) {
@@ -109,7 +109,7 @@ export async function transitionMigrationLifecycle(input: MigrationLifecycleTran
     p_value: parsed.value,
   });
   if (error) throw new Error(`Migration lifecycle transition failed (${error.code || 'transition_failed'}).`);
-  const row = parseRecord(data);
+  const row = parseMigrationLifecycleRecord(data);
   if (row.requirement_id !== parsed.requirementId.toLowerCase() || row.file !== parsed.file ||
       row.version !== parsed.expectedVersion + 1 || row.state !== parsed.value.state ||
       row.checksum !== parsed.value.checksum || row.specification_checksum !== parsed.value.specification_checksum ||
