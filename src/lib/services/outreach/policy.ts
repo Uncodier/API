@@ -1,3 +1,5 @@
+import { validOutreachTiming } from './timing';
+
 export type OutreachActivityKey = 'leads_initial_cold_outreach' | 'leads_follow_up';
 export type OutreachChannel = string;
 /** Channel names become record keys. Audio is a message format, not an account. */
@@ -50,6 +52,7 @@ export function isOutreachAccountId(value: unknown): value is string {
 export function getOutreachPolicy(settings: any, activity: OutreachActivityKey): OutreachPolicy | null {
   const raw = settings?.activities?.[activity];
   if (!raw || typeof raw !== 'object') return null;
+  if (!validOutreachTiming(raw)) return null;
   const selections = raw.channel_accounts;
   if (selections != null && (typeof selections !== 'object' || Array.isArray(selections)
     || Object.keys(selections).some(key => !isOutreachChannel(key)))) return null;
@@ -115,7 +118,7 @@ export function selectedOutreachChannels(settings: any, policy: OutreachPolicy):
 
 export function outreachTimezone(settings: any): string {
   const hours = Array.isArray(settings?.business_hours) ? settings.business_hours[0] : settings?.business_hours;
-  return hours?.timezone || 'America/Mexico_City';
+  return hours?.timezone ?? 'America/Mexico_City';
 }
 
 export function localDay(now: Date, timezone: string): { day: string; weekday: number } {

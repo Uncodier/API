@@ -28,10 +28,12 @@ jest.mock('@/lib/utils/token-decryption', () => ({ decryptToken: jest.fn() }));
 
 import { POST } from '../route';
 import { inboundDatabase, SITE, OTHER_SITE, LEAD, PHONE, CALL } from '@/lib/services/zavu/__tests__/inbound-lead-test-database';
+import { buildVoiceFollowUpContext } from '@/lib/services/zavu/voice-follow-up-context';
+import { setVoiceCallContactContext } from '@/lib/services/zavu/contact-client';
 
 const originalSecret = process.env.ZAVUDEV_WEBHOOK_SECRET;
-function request(id: string, signed = true) {
-  const body = JSON.stringify({ id, type: 'call.completed', senderId: 'sender-1', data: {
+function request(id: string, signed = true, type = 'call.completed') {
+  const body = JSON.stringify({ id, type, senderId: 'sender-1', data: {
     callId: CALL, transcriptAvailable: true, site_id: OTHER_SITE, lead_id: OTHER_SITE,
   } });
   const t = Math.floor(Date.now() / 1000);
@@ -86,6 +88,36 @@ it('reuses a formatted same-site lead without changing its opt-outs', async () =
   expect(state.tables.conversations[0].lead_id).toBe(LEAD);
   expect(state.tables.leads[0]).toMatchObject({ name: 'Existing', do_not_call: true, voice_call_consent_status: 'denied' });
 })
+
+it.each(['525543640787', '+5215543640787', '(55) 4364-0787'])(
+  'recognizes Mexican caller stored as %s at call start and links the same lead on completion', async phone => {
+    const lead = { id: LEAD, site_id: SITE, phone, name: 'Existing', do_not_call: true, voice_call_consent_status: 'denied' };
+    const state = inboundDatabase(mockFrom, { leads: [structuredClone(lead)] });
+    mockGetCall.mockResolvedValue({
+      id: CALL, direction: 'inbound', from: '+525543640787', status: 'completed',
+      createdAt: '2026-10-01T00:00:00Z', endedAt: '2026-10-01T00:01:00Z',
+      transcript: [{ seq: 0, role: 'user', text: 'Hello again' }],
+    });
+    jest.mocked(buildVoiceFollowUpContext).mockResolvedValue({
+      context: 'Existing customer context', leadId: LEAD,
+      sources: { leadFound: true, messageCount: 0, transcriptCount: 0 },
+    });
+    expect((await POST(request('started', true, 'call.initiated'))).status).toBe(200);
+    expect(buildVoiceFollowUpContext).toHaveBeenCalledWith({ siteId: SITE, leadId: LEAD, phone: '+525543640787' });
+    expect(setVoiceCallContactContext).toHaveBeenCalledWith(expect.objectContaining({
+      phone: '+525543640787', followUpContext: 'Existing customer context',
+    }));
+    expect(state.operations.every(op => op.kind === 'read')).toBe(true);
+    expect((await POST(request('completed'))).status).toBe(200);
+    expect((await POST(request('completed-again'))).status).toBe(200);
+    expect(state.tables.leads).toEqual([lead]);
+    expect(state.tables.conversations).toHaveLength(1);
+    expect(state.tables.voice_call_deliveries).toHaveLength(1);
+    expect(state.tables.messages).toHaveLength(2);
+    expect([...state.tables.conversations, ...state.tables.voice_call_deliveries, ...state.tables.messages]
+      .every(row => row.lead_id === LEAD)).toBe(true);
+  },
+)
 
 it('rejects unsigned events before admission, provider lookup or any contact writes', async () => {
   const state = inboundDatabase(mockFrom);

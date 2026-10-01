@@ -17,6 +17,7 @@ export function isExpensivePath(pathname: string): boolean {
     || pathname.startsWith('/api/site/analyze')
     || pathname.startsWith('/api/site/tester')
     || pathname.startsWith('/api/finder/')
+    || pathname === '/api/integrations/icypeas/email-search/resolve'
     || pathname.startsWith('/api/agents/')
     || pathname.startsWith('/api/robots/')
     || pathname.startsWith('/api/public/image/prompt/')
@@ -100,6 +101,33 @@ export function requestRatePolicy(
     windowSeconds: 60,
     failClosed: true,
   };
+}
+
+export async function limitServiceExpensive(
+  request: NextRequest,
+): Promise<NextResponse | null> {
+  // Only call after verifying the real service credential and apiKeyAuth.
+  // All workers/routes/IPs share this identity; never key it by the secret.
+  return enforceRequestRateLimit(request, {
+    namespace: 'service-expensive',
+    identity: 'service-key',
+    limit: positiveIntegerSetting('SERVICE_EXPENSIVE_REQUESTS_PER_MINUTE', 600),
+    windowSeconds: 60,
+    failClosed: true,
+  });
+}
+
+export async function limitExpensiveGlobal(
+  request: NextRequest,
+): Promise<NextResponse | null> {
+  // Shared by verified internal service and ordinary expensive admission.
+  return enforceRequestRateLimit(request, {
+    namespace: 'expensive-global',
+    identity: 'global',
+    limit: positiveIntegerSetting('EXPENSIVE_API_GLOBAL_REQUESTS_PER_MINUTE', 2_000),
+    windowSeconds: 60,
+    failClosed: true,
+  });
 }
 
 export async function limitCorsPreflight(

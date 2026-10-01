@@ -22,7 +22,7 @@ it('creates a minimal unverified inbound contact without inventing identity or g
   expect(state.tables.leads[0]).not.toHaveProperty('voice_call_consent_at');
 })
 
-it.each([PHONE, '+1 (301) 555-0100', '0013015550100'])('reuses only full normalized same-site phone %s without modifying the profile', async storedPhone => {
+it.each([PHONE, '+1 (301) 555-0100', '0013015550100', '13015550100'])('reuses only full normalized same-site phone %s without modifying the profile', async storedPhone => {
   const rows = linkRows();
   rows.leads[0].phone = storedPhone;
   const original = structuredClone(rows.leads[0]);
@@ -30,6 +30,43 @@ it.each([PHONE, '+1 (301) 555-0100', '0013015550100'])('reuses only full normali
   expect(await resolveInboundVoiceLead(SITE, PHONE)).toBe(LEAD);
   expect(state.tables.leads).toEqual([original]);
   expect(state.operations.filter(op => op.kind !== 'read')).toEqual([]);
+})
+
+it.each([
+  '+525543640787', '+52 (55) 4364-0787', '525543640787', '00525543640787',
+  '+5215543640787', '5215543640787', '0052 1 (55) 4364-0787', '5543640787', '(55) 4364-0787',
+])('resolves and links the existing Mexican caller stored as %s without creating a lead', async storedPhone => {
+  const rows = linkRows();
+  rows.leads[0].phone = storedPhone;
+  rows.voice_call_deliveries[0].recipient_phone = '+525543640787';
+  const original = structuredClone(rows.leads[0]);
+  const state = inboundDatabase(mockFrom, rows);
+  expect(await resolveInboundVoiceLead(SITE, '+525543640787')).toBe(LEAD);
+  await linkInboundVoiceLead(link);
+  expect(state.tables.leads).toEqual([original]);
+  expect(state.tables.conversations[0].lead_id).toBe(LEAD);
+  expect(state.tables.voice_call_deliveries[0].lead_id).toBe(LEAD);
+  expect(state.tables.messages[0].lead_id).toBe(LEAD);
+  expect(state.operations.some(op => op.kind === 'insert')).toBe(false);
+})
+
+it('rejects ambiguous Mexican formats even when one lead has the exact incoming phone', async () => {
+  const state = inboundDatabase(mockFrom, { leads: [
+    { id: LEAD, site_id: SITE, phone: '+525543640787' },
+    { id: CONVERSATION, site_id: SITE, phone: '(55) 4364-0787' },
+  ] });
+  await expect(resolveInboundVoiceLead(SITE, '+525543640787')).rejects.toThrow(/Ambiguous/);
+  expect(state.operations.some(op => op.kind === 'insert')).toBe(false);
+})
+
+it('does not confuse foreign numbers or extra digits with the Mexican caller', async () => {
+  const state = inboundDatabase(mockFrom, { leads: [
+    { id: LEAD, site_id: OTHER_SITE, phone: '5543640787' },
+    { id: CONVERSATION, site_id: SITE, phone: '+15543640787' },
+    { id: DELIVERY, site_id: SITE, phone: '+5255436407879' },
+  ] });
+  expect(await findInboundVoiceLead(SITE, '+525543640787')).toBeUndefined();
+  expect(state.operations.every(op => op.kind === 'read')).toBe(true);
 })
 
 it('does not reuse foreign-site, phone-suffix or guessed-country identities', async () => {
@@ -41,6 +78,13 @@ it('does not reuse foreign-site, phone-suffix or guessed-country identities', as
   const id = await resolveInboundVoiceLead(SITE, PHONE);
   expect(id).not.toBe(LEAD);
   expect(state.tables.leads).toHaveLength(4);
+})
+
+it('does not bind a Danish caller to a Mexican national-format contact with the same digits', async () => {
+  const state = inboundDatabase(mockFrom, { leads: [{ id: LEAD, site_id: SITE, phone: '(453) 234-5678' }] });
+  expect(await findInboundVoiceLead(SITE, '+4532345678')).toBeUndefined();
+  expect(await findInboundVoiceLead(SITE, '+524532345678')).toBe(LEAD);
+  expect(state.operations.every(op => op.kind === 'read')).toBe(true);
 })
 
 it('rejects ambiguous and oversized candidate sets instead of choosing the first match', async () => {

@@ -1,7 +1,12 @@
 import { v5 as uuidv5 } from "uuid";
 import { z } from "zod";
 import { supabaseAdmin } from "@/lib/database/supabase-server";
-import { normalizeVoiceIdentityPhone } from "./voice-lead-identification";
+import {
+  MAX_VOICE_PHONE_CANDIDATES,
+  matchesVoiceLeadPhone,
+  normalizeVoiceIdentityPhone,
+  voiceLeadPhoneSearchPattern,
+} from "./voice-phone-match";
 
 const uuid = z.string().uuid();
 type Lead = { id: string; site_id: string; phone: string | null };
@@ -23,23 +28,22 @@ function scope(siteId: string, phone: string) {
 }
 
 function assertLead(lead: Lead, siteId: string, phone: string): string {
-  if (!uuid.safeParse(lead.id).success || lead.site_id !== siteId || normalizeVoiceIdentityPhone(lead.phone) !== phone) {
+  if (!uuid.safeParse(lead.id).success || lead.site_id !== siteId || !matchesVoiceLeadPhone(lead.phone, phone)) {
     throw new Error("Inbound Voice lead conflicts with the call scope");
   }
   return lead.id;
 }
 
-/** Match full international digits only; never guess countries or merge on a phone suffix. */
+/** Match explicit CRM phone aliases within a site; never choose an arbitrary suffix match. */
 export async function findInboundVoiceLead(siteId: string, phone: string): Promise<string | undefined> {
   const trusted = scope(siteId, phone);
-  // Candidate filtering tolerates punctuation. Every result must normalize to the entire E.164 phone.
-  const pattern = `%${trusted.phone.slice(1).split("").join("%")}%`;
+  const pattern = voiceLeadPhoneSearchPattern(trusted.phone);
   const { data, error } = await database().from("leads")
-    .select("id, site_id, phone").eq("site_id", trusted.siteId).ilike("phone", pattern).limit(51);
+    .select("id, site_id, phone").eq("site_id", trusted.siteId).ilike("phone", pattern).limit(MAX_VOICE_PHONE_CANDIDATES + 1);
   if (error) throw new Error("Unable to resolve inbound Voice lead");
   const candidates = (data || []) as Lead[];
-  if (candidates.length > 50) throw new Error("Inbound Voice lead lookup requires human review");
-  const matches = candidates.filter(lead => normalizeVoiceIdentityPhone(lead.phone) === trusted.phone);
+  if (candidates.length > MAX_VOICE_PHONE_CANDIDATES) throw new Error("Inbound Voice lead lookup requires human review");
+  const matches = candidates.filter(lead => matchesVoiceLeadPhone(lead.phone, trusted.phone));
   if (matches.length > 1) throw new Error("Ambiguous inbound Voice lead; human review required");
   return matches[0] ? assertLead(matches[0], trusted.siteId, trusted.phone) : undefined;
 }

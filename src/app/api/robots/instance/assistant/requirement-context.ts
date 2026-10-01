@@ -1,4 +1,6 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { loadRequirementMigrationHolds, migrationHoldContext } from '@/lib/services/requirement-execution-visibility';
+import { HARNESS_DIAGNOSTIC_GUIDANCE } from '@/lib/services/harness-diagnostics/guidance';
 
 export type AssistantRequirementContext = {
   activeRequirementId: string | null;
@@ -67,6 +69,12 @@ export async function loadAssistantRequirementContext(
 
   let requirementStatusContext = '\n\n📋 CURRENT REQUIREMENT CONTEXT:\n';
   requirementStatusContext += JSON.stringify(reqRow, null, 2);
+  requirementStatusContext += '\n\n' + HARNESS_DIAGNOSTIC_GUIDANCE;
+  try {
+    requirementStatusContext += migrationHoldContext(await loadRequirementMigrationHolds(candidateId));
+  } catch {
+    requirementStatusContext += '\n\nExecution hold lookup is unavailable. Do not infer that execution is unblocked, resumed, or assigned from plan status or historical messages.';
+  }
   requirementStatusContext += '\n\n📋 REQUIREMENT STATUS HISTORY:\n';
   requirementStatusContext += JSON.stringify(requirementStatuses, null, 2);
   requirementStatusContext +=

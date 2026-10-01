@@ -32,6 +32,11 @@ jest.mock('@/lib/database/supabase-client', () => ({
 }));
 
 import { loadAssistantRequirementContext } from '../requirement-context';
+import { loadRequirementMigrationHolds } from '@/lib/services/requirement-execution-visibility';
+jest.mock('@/lib/services/requirement-execution-visibility', () => ({
+  ...jest.requireActual('@/lib/services/requirement-execution-visibility'),
+  loadRequirementMigrationHolds: jest.fn(),
+}));
 
 describe('interactive assistant requirement context', () => {
   beforeEach(() => {
@@ -40,6 +45,7 @@ describe('interactive assistant requirement context', () => {
     requirementSummary = null;
     requirementDetails = null;
     assignedRequirements = [];
+    (loadRequirementMigrationHolds as jest.Mock).mockResolvedValue([]);
   });
 
   it('returns generic context when only a terminal requirement is present', async () => {
@@ -97,5 +103,24 @@ describe('interactive assistant requirement context', () => {
   it('does not guess when an instance has multiple assigned requirements', async () => {
     assignedRequirements = [{ id: 'one' }, { id: 'two' }];
     expect((await loadAssistantRequirementContext('original')).activeRequirementId).toBeNull();
+  });
+
+  it('exposes the live technical hold despite misleading in-progress history', async () => {
+    requirementStatuses = [{ requirement_id: 'req', stage: 'in-progress', message: 'Automatic retries remaining' }];
+    requirementSummary = { status: 'blocked', title: 'Stopped requirement' };
+    (loadRequirementMigrationHolds as jest.Mock).mockResolvedValue([{
+      file: 'migrations/0016.sql', state: 'platform_review', reason: 'Correction budget exhausted', attempts: 5,
+    }]);
+    const context = await loadAssistantRequirementContext('instance');
+    expect(context.requirementStatusContext).toContain('AUTHORITATIVE EXECUTION HOLD');
+    expect(context.requirementStatusContext).toContain('Correction budget exhausted');
+    expect(context.requirementStatusContext).toContain('NOT a resume');
+  });
+
+  it('never interprets a failed hold lookup as evidence that work resumed', async () => {
+    requirementStatuses = [{ requirement_id: 'req', stage: 'in-progress' }];
+    requirementSummary = { status: 'blocked' };
+    (loadRequirementMigrationHolds as jest.Mock).mockRejectedValue(new Error('unavailable'));
+    expect((await loadAssistantRequirementContext('instance')).requirementStatusContext).toContain('Do not infer that execution is unblocked');
   });
 });

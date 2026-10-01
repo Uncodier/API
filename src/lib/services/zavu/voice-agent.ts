@@ -1,10 +1,5 @@
 import crypto from "crypto";
-import { AgentService } from "@/lib/agentbase/adapters/AgentService";
-import { FileProcessingService } from "@/lib/agentbase/services/FileProcessingService";
-import { BackgroundBuilder } from "@/lib/agentbase/services/agent/BackgroundServices/BackgroundBuilder";
-import { DataFetcher } from "@/lib/agentbase/services/agent/BackgroundServices/DataFetcher";
 import { supabaseAdmin } from "@/lib/database/supabase-server";
-import { resolveClientTimezone } from "@/lib/timezone";
 import { decryptToken } from "@/lib/utils/token-decryption";
 import { encryptToken } from "@/lib/utils/token-encryption";
 import { attachSenderToAgent, detachSenderFromAgent } from "./client";
@@ -16,11 +11,8 @@ import {
   type ZavuAgent,
   type ZavuAgentInput,
 } from "./agent-client";
-import {
-  buildVoiceRuntimePrompt,
-  VOICE_RUNTIME_REMINDER,
-  type VoicePromptTool,
-} from "./voice-tools";
+import type { VoicePromptTool } from "./voice-tools";
+import { buildCustomerSupportBackground } from "./voice-background";
 import {
   AUTO_VOICE_LANGUAGE,
   mergeVoiceAgentPreferences,
@@ -29,9 +21,10 @@ import {
   type VoiceAgentPreferencesPatch,
 } from "./voice-preferences";
 
+export { buildCustomerSupportBackground } from "./voice-background";
+export { fitZavuSystemPrompt } from "./voice-prompt-budget";
+
 const CUSTOMER_SUPPORT_ROLE = "Customer Support";
-const MAX_SYSTEM_PROMPT_LENGTH = 10_000;
-const fileProcessingService = new FileProcessingService();
 
 export type CustomerSupportAgent = {
   id: string;
@@ -44,31 +37,6 @@ export type CustomerSupportAgent = {
   activities: Record<string, any> | null;
   configuration: Record<string, any> | null;
 };
-
-function enabledNames(values: Record<string, any> | null): string[] {
-  if (!values) return [];
-  return Object.entries(values)
-    .filter(([, value]) => value?.enabled === true || value?.status === "available")
-    .map(([key, value]) => value?.name || key);
-}
-
-export function fitZavuSystemPrompt(
-  prompt: string,
-  preservedSuffix = ""
-): string {
-  const requiredSuffix = preservedSuffix
-    ? `\n\n${preservedSuffix}`
-    : "";
-  const completePrompt = `${prompt}${requiredSuffix}`;
-  if (completePrompt.length <= MAX_SYSTEM_PROMPT_LENGTH) return completePrompt;
-
-  const omission = "\n\n[Additional business context omitted due to provider limits.]";
-  const reserved = `${omission}${requiredSuffix}`;
-  if (reserved.length >= MAX_SYSTEM_PROMPT_LENGTH) {
-    return reserved.slice(reserved.length - MAX_SYSTEM_PROMPT_LENGTH);
-  }
-  return `${prompt.slice(0, MAX_SYSTEM_PROMPT_LENGTH - reserved.length)}${reserved}`;
-}
 
 async function loadCustomerSupportAgent(siteId: string): Promise<CustomerSupportAgent> {
   const { data, error } = await supabaseAdmin
@@ -83,69 +51,6 @@ async function loadCustomerSupportAgent(siteId: string): Promise<CustomerSupport
   if (error) throw new Error("Failed to load the Customer Support agent");
   if (!data) throw new Error("Customer Support agent not found");
   return data as CustomerSupportAgent;
-}
-
-export async function buildCustomerSupportBackground(
-  siteId: string,
-  agent: CustomerSupportAgent,
-  options?: {
-    voicePreferences?: VoiceAgentPreferences;
-    voiceTools?: readonly VoicePromptTool[];
-  }
-): Promise<string> {
-  const siteInfo = await DataFetcher.getSiteInfo(siteId);
-  const activeCampaigns = await DataFetcher.getActiveCampaigns(siteId);
-  const timezone = await resolveClientTimezone({ siteId });
-  const capabilities = [
-    ...enabledNames(agent.tools),
-    ...enabledNames(agent.activities),
-  ];
-
-  let background = BackgroundBuilder.buildAgentPrompt(
-    agent.id,
-    agent.name,
-    agent.description || "",
-    Array.from(new Set(capabilities)),
-    agent.backstory || undefined,
-    undefined,
-    agent.prompt,
-    siteInfo,
-    activeCampaigns,
-    timezone
-  );
-
-  const linkedFiles = (await AgentService.getAgentFiles(agent.id)) || [];
-  const configuredFiles = Array.isArray(agent.configuration?.contextFiles)
-    ? agent.configuration.contextFiles
-    : [];
-  const files = [...linkedFiles, ...configuredFiles]
-    .map((file: any) => ({
-      ...file,
-      file_path: file.file_path || file.path,
-    }))
-    .filter(
-      (file: any, index, all) =>
-        all.findIndex(
-          (candidate: any) =>
-            (file.id && candidate.id === file.id) ||
-            (file.file_path && candidate.file_path === file.file_path)
-        ) === index
-    );
-  if (files.length > 0) {
-    background = await fileProcessingService.appendAgentFilesToBackground(
-      background,
-      files
-    );
-  }
-
-  const runtimePrompt = buildVoiceRuntimePrompt(
-    options?.voicePreferences || readVoiceAgentPreferences(agent.configuration),
-    options?.voiceTools
-  );
-  return fitZavuSystemPrompt(
-    `${runtimePrompt}\n\n${background}`,
-    VOICE_RUNTIME_REMINDER
-  );
 }
 
 function storedZavuAgentId(agent: CustomerSupportAgent): string | undefined {

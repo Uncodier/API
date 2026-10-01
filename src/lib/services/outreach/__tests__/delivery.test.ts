@@ -85,6 +85,34 @@ function fixture(total = 1, sameLead = false) {
 }
 
 describe('central outreach delivery', () => {
+  test.each([cold, follow])('blocks %s before custom start without reserving or sending', async activity => {
+    const f = fixture();
+    f.rows.get('m0')!.message.custom_data.outreach_activity = activity;
+    Object.assign(f.config.activities[activity as typeof cold | typeof follow], { start_time_mode: 'custom', start_time: '10:30' });
+    expect(await f.deliver('site', 'm0')).toMatchObject({ deferred: true, reason: 'before_start_time' });
+    expect(f.prepare).not.toHaveBeenCalled();
+    expect(f.repo.claim).not.toHaveBeenCalled();
+    expect(f.send).not.toHaveBeenCalled();
+  });
+  test('re-reads an opening reset during transport preparation before reserving', async () => {
+    const f = fixture();
+    Object.assign(f.config.activities[cold], { start_time_mode: 'custom', start_time: '06:00' });
+    f.prepare.mockImplementation(async () => {
+      Object.assign(f.config.activities[cold], { start_time_mode: 'business_opening' });
+      Object.assign(f.config.business_hours[0], { days: { tuesday: { start: '10:30' } } });
+      return { send: f.send };
+    });
+    expect(await f.deliver('site', 'm0')).toMatchObject({ deferred: true, reason: 'before_start_time' });
+    expect(f.repo.claim).not.toHaveBeenCalled();
+    expect(f.send).not.toHaveBeenCalled();
+  });
+  test('opening mode ignores an invalid stale override at actual delivery', async () => {
+    const f = fixture();
+    Object.assign(f.config.activities[cold], { start_time_mode: 'business_opening', start_time: 'invalid' });
+    Object.assign(f.config.business_hours[0], { days: { tuesday: { start: '06:00' } } });
+    expect(await f.deliver('site', 'm0')).toMatchObject({ success: true });
+    expect(f.send).toHaveBeenCalledTimes(1);
+  });
   test('SMS, Telegram and voice workers share one atomic daily cap', async () => {
     const f = fixture(12); const channels = ['sms', 'telegram', 'voice'];
     for (const channel of channels) {

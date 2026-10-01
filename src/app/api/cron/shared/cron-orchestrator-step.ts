@@ -265,7 +265,8 @@ export async function runOrchestratorStep(params: {
 
   let timedOut = false;
 
-  const finalPrompt = orchestratorPrompt + instanceContext;
+  const { HARNESS_DIAGNOSTIC_GUIDANCE } = await import('@/lib/services/harness-diagnostics/guidance');
+  const finalPrompt = orchestratorPrompt + instanceContext + '\n' + HARNESS_DIAGNOSTIC_GUIDANCE;
 
   while (!isDone && turns < MAX_TURNS) {
     if (Date.now() - globalStartTime > MAX_EXECUTION_TIME_MS) {

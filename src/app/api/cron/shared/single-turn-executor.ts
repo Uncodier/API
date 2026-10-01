@@ -53,6 +53,7 @@ import { isNoProgressAdjudicationRequested } from './no-progress-adjudication';
 import { runGateOnlyNoProgressAdjudication } from './no-progress-gate-adjudicator';
 import { shouldResumeGateFromEvidence } from './gate-validation-cache';
 import { getBacklogItem } from '@/lib/services/requirement-backlog';
+import { refreshHarnessToolManifest } from '@/lib/services/harness-diagnostics/tools';
 import { classifyRequirementType } from '@/lib/services/requirement-flows';
 import { computeApplicationBuildFingerprint } from './commit/pre-push-build-validation';
 import { loadConstraintSourceBlocks } from '@/lib/services/requirement-constraints-persist';
@@ -305,7 +306,7 @@ export async function executeSingleTurnStep(params: {
     const progressPromise = requirementId
       ? supabaseAdmin
           .from('requirements')
-          .select('progress')
+          .select('progress,backlog')
           .eq('id', requirementId)
           .single()
       : Promise.resolve({ data: null });
@@ -341,6 +342,13 @@ export async function executeSingleTurnStep(params: {
       const recentProgress = reqData.progress.slice(-5);
       progressContext = '\n\n📋 RECENT REQUIREMENT PROGRESS:\n';
       progressContext += JSON.stringify(recentProgress, null, 2);
+    }
+    const strategyItem = Array.isArray(reqData?.backlog?.items)
+      ? reqData.backlog.items.find((item: any) => item.id === effectiveBacklogItemId) : undefined;
+    if (strategyItem?.implementation_strategy) {
+      progressContext += '\nIMPLEMENTATION STRATEGY (means only; acceptance and security checks remain mandatory):\n' +
+        JSON.stringify({ strategy: strategyItem.implementation_strategy,
+          acceptance: strategyItem.acceptance, constraints: strategyItem.constraints });
     }
     const retryContext = retryFeedback.promptFragment;
 
@@ -467,6 +475,7 @@ export async function executeSingleTurnStep(params: {
       assertCurrent: () => assertCronExecutionOwnership(ownership),
       record: observation => persistStepActionObservation(audit, observation),
     }), ownership);
+    refreshHarnessToolManifest(fullTools, evidenceCollectionOnly ? 'evidence_collection' : 'cron_executor');
 
     await assertCronExecutionOwnership(ownership);
 

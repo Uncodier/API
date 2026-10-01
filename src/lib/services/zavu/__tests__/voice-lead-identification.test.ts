@@ -6,6 +6,8 @@ jest.mock("@/lib/database/supabase-server", () => ({
 }));
 
 import { identifyVoiceLead, normalizeVoiceIdentityPhone } from "../voice-lead-identification";
+import { VoiceLeadValidationError } from "../voice-lead-errors";
+import { v5 as uuidv5 } from "uuid";
 
 const SITE = "11111111-1111-4111-8111-111111111111";
 const OTHER_SITE = "22222222-2222-4222-8222-222222222222";
@@ -17,7 +19,17 @@ const EMAIL = "ada@example.com";
 const validArgs = { consent: true, name: "Ada Caller", email: EMAIL, phone: PHONE };
 
 type Row = Record<string, any>;
-type Read = { table: string; filters: Array<[string, string]>; emailPattern?: string };
+type Read = { table: string; filters: Array<[string, unknown]>; emailPattern?: string; phonePattern?: string };
+
+function provisionalLead(patch: Row = {}): Row {
+  return {
+    id: uuidv5(`zavu-voice-lead:${SITE}:${PHONE}`, uuidv5.URL),
+    site_id: SITE, phone: PHONE, name: `Voice caller ${PHONE}`, email: null, company: null,
+    origin: "voice", status: "contacted", voice_call_consent_status: "unknown",
+    metadata: { voice_inbound: { source: "zavu_webhook", identity_status: "unverified", phone_source: "provider_call" } },
+    ...patch,
+  };
+}
 
 /** Offline, stateful PostgREST double including the actual PK/identity unique constraints. */
 function database(initialLeads: Row[] = []) {
@@ -25,31 +37,55 @@ function database(initialLeads: Row[] = []) {
   const sites: Row[] = [{ id: SITE, user_id: OWNER }, { id: OTHER_SITE, user_id: OWNER }];
   const reads: Read[] = [];
   const inserts: Row[] = [];
+  const updates: Array<{ filters: Read["filters"]; payload: Row }> = [];
   const state = {
-    leads, sites, reads, inserts,
+    leads, sites, reads, inserts, updates,
     readError: null as null | { message: string },
     insertError: null as null | { code: string; message: string },
+    updateError: null as null | { code: string; message: string },
     beforeInsert: undefined as undefined | ((row: Row) => void),
+    beforeUpdate: undefined as undefined | (() => void),
   };
   mockFrom.mockImplementation((table: string) => {
     if (table !== "leads" && table !== "sites") throw new Error(`Unexpected table ${table}`);
     const read: Read = { table, filters: [] };
     let max = Infinity;
+    let update: Row | undefined;
     const result = () => {
       reads.push(read);
       if (state.readError) return { data: null, error: state.readError };
+      if (update) {
+        updates.push({ filters: [...read.filters], payload: update });
+        state.beforeUpdate?.();
+        if (state.updateError) return { data: null, error: state.updateError };
+      }
       let rows = (table === "leads" ? leads : sites)
-        .filter((row) => read.filters.every(([key, value]) => row[key] === value));
+        .filter((row) => read.filters.every(([key, value]) => key === "metadata" || (key === "company" && typeof value === "string")
+          ? JSON.stringify(row[key]) === value
+          : (row[key] ?? null) === value));
       if (read.emailPattern !== undefined) {
         const email = read.emailPattern.replace(/\\([\\%_])/g, "$1");
         rows = rows.filter((row) => row.email?.toLowerCase() === email.toLowerCase());
       }
-      return { data: rows.slice(0, max).map((row) => ({ ...row })), error: null };
+      if (read.phonePattern !== undefined) {
+        const regex = new RegExp(`^${read.phonePattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*')}$`, 'i');
+        rows = rows.filter((row) => regex.test(row.phone || ''));
+      }
+      rows = rows.slice(0, max);
+      if (update) rows.forEach((row) => Object.assign(row, update));
+      return { data: rows.map((row) => structuredClone(row)), error: null };
     };
     const chain: any = {
       select: jest.fn(() => chain),
       eq: jest.fn((key, value) => { read.filters.push([key, value]); return chain; }),
-      ilike: jest.fn((_key, value) => { read.emailPattern = value; return chain; }),
+      is: jest.fn((key, value) => { read.filters.push([key, value]); return chain; }),
+      update: jest.fn((payload) => { update = payload; return chain; }),
+      ilike: jest.fn((key, value) => {
+        if (key === "phone") read.phonePattern = value;
+        else if (key === "email") read.emailPattern = value;
+        else throw new Error(`Unexpected ilike column ${key}`);
+        return chain;
+      }),
       limit: jest.fn((value) => { max = value; return chain; }),
       then: (resolve: any, reject: any) => Promise.resolve(result()).then(resolve, reject),
       maybeSingle: jest.fn(async () => {
@@ -91,7 +127,7 @@ describe("identifyVoiceLead", () => {
       metadata: { do_not_call: false }, voice_call_consent_status: "granted", status: "converted",
     });
 
-    expect(result).toEqual({ success: true, lead_id: expect.any(String), is_new_lead: true });
+    expect(result).toEqual({ success: true, lead_id: expect.any(String), is_new_lead: true, contact_details_saved: true });
     expect(result.lead_id).toMatch(/^[a-f0-9-]{36}$/);
     expect(db.inserts).toEqual([{
       id: result.lead_id, site_id: SITE, user_id: OWNER,
@@ -100,6 +136,7 @@ describe("identifyVoiceLead", () => {
       metadata: { voice_identification: {
         consent: true, consent_scope: "store_contact_details_and_be_contacted",
         consent_recorded_at: expect.any(String),
+        identity_status: "caller_confirmed",
       } },
     }]);
     expect(db.reads.every((read) => read.filters.some(([key, value]) =>
@@ -121,7 +158,9 @@ describe("identifyVoiceLead", () => {
     { phone: "" }, { phone: null }, { company: {} },
   ])("rejects invalid/blank contact details %p without querying", async (patch) => {
     database();
-    await expect(identify({ ...validArgs, ...patch })).rejects.toThrow("nonblank name and valid email");
+    await expect(identify({ ...validArgs, ...patch })).rejects.toMatchObject({
+      code: "VOICE_LEAD_INVALID_DETAILS", fields: Object.keys(patch),
+    });
     expect(mockSchema).not.toHaveBeenCalled();
   });
 
@@ -137,6 +176,9 @@ describe("identifyVoiceLead", () => {
   it("fails on a supplied phone conflicting with the trusted caller, rather than overwriting it", async () => {
     database();
     await expect(identify({ ...validArgs, phone: "+14155550199" })).rejects.toThrow("must match");
+    await expect(identify({ ...validArgs, phone: "+14155550199" })).rejects.toMatchObject({
+      code: "VOICE_LEAD_PHONE_MISMATCH", fields: ["phone"],
+    });
     expect(mockSchema).not.toHaveBeenCalled();
   });
 
@@ -162,7 +204,7 @@ describe("identifyVoiceLead", () => {
     };
     const db = database([existing]);
     await expect(identify({ ...validArgs, name: "Replacement", company: "Replacement" }))
-      .resolves.toEqual({ success: true, lead_id: LEAD, is_new_lead: false });
+      .resolves.toMatchObject({ success: true, lead_id: LEAD, is_new_lead: false, contact_details_saved: false });
     expect(db.leads).toEqual([existing]);
     expect(db.inserts).toEqual([]);
     expect(db.reads.every((read) => read.table === "leads")).toBe(true);
@@ -170,9 +212,207 @@ describe("identifyVoiceLead", () => {
 
   it("never fills in an existing blank email based on a supplied unverified email", async () => {
     const db = database([{ id: LEAD, site_id: SITE, phone: PHONE, email: null }]);
-    await expect(identify()).resolves.toMatchObject({ lead_id: LEAD, is_new_lead: false });
+    await expect(identify()).resolves.toMatchObject({ lead_id: LEAD, is_new_lead: false, contact_details_saved: false });
     expect(db.leads[0].email).toBeNull();
     expect(db.inserts).toEqual([]);
+  });
+
+  it.each([
+    [PHONE, '+1 (301) 555-0100'], [PHONE, '0013015550100'], [PHONE, '13015550100'],
+    ['+525543640787', '+52 (55) 4364-0787'], ['+525543640787', '525543640787'],
+    ['+525543640787', '+5215543640787'], ['+525543640787', '5215543640787'],
+    ['+525543640787', '0052 1 (55) 4364-0787'], ['+525543640787', '(55) 4364-0787'],
+    ['+5215543640787', '+525543640787'],
+  ])('reuses caller %s stored as %s in native identification without overwriting the profile', async (caller, stored) => {
+    const existing = { id: LEAD, site_id: SITE, phone: stored, email: EMAIL, name: validArgs.name,
+      do_not_call: true, voice_call_consent_status: 'denied' };
+    const db = database([existing]);
+    await expect(identify({ ...validArgs, phone: caller }, SITE, caller)).resolves.toMatchObject({
+      lead_id: LEAD, is_new_lead: false, contact_details_saved: true,
+    });
+    expect(db.leads).toEqual([existing]);
+    expect(db.inserts).toEqual([]);
+    expect(db.updates).toEqual([]);
+  });
+
+  it('does not create a duplicate when the national-format Mexican lead has no email', async () => {
+    const db = database([{ id: LEAD, site_id: SITE, phone: '5543640787', email: null }]);
+    await expect(identify({ ...validArgs, phone: undefined }, SITE, '+525543640787')).resolves.toMatchObject({
+      lead_id: LEAD, is_new_lead: false, contact_details_saved: false,
+    });
+    expect(db.inserts).toEqual([]);
+    expect(db.updates).toEqual([]);
+  });
+
+  it('rejects multiple equivalent phone formats instead of preferring an exact text match', async () => {
+    const db = database([
+      { id: LEAD, site_id: SITE, phone: '+525543640787', email: EMAIL },
+      { id: OTHER_LEAD, site_id: SITE, phone: '(55) 4364-0787', email: null },
+    ]);
+    await expect(identify({ ...validArgs, phone: undefined }, SITE, '+525543640787')).rejects.toThrow('identity conflicts');
+    expect(db.inserts).toEqual([]);
+    expect(db.updates).toEqual([]);
+  });
+
+  it('does not identify a Danish caller as a Mexican national-format contact', async () => {
+    const existing = { id: LEAD, site_id: SITE, phone: '(453) 234-5678', email: null };
+    const db = database([existing]);
+    await expect(identify({ ...validArgs, phone: undefined }, SITE, '+4532345678')).resolves.toMatchObject({ is_new_lead: true });
+    expect(db.leads[0]).toEqual(existing);
+    expect(db.inserts).toHaveLength(1);
+    expect(db.inserts[0].phone).toBe('+4532345678');
+  });
+
+  it.each([
+    "Sergio punto Prado arroba m e punto com.",
+    "Sergio punto Prado arroba me punto com.",
+    "sergio.prado@m e.com",
+  ])("saves a confirmed spoken email from the failed-call scenario: %s", async (email) => {
+    const db = database();
+    const result = await identify({ ...validArgs, email });
+    expect(result.contact_details_saved).toBe(true);
+    expect(db.leads[0].email).toBe("sergio.prado@me.com");
+    expect(db.reads.find((read) => read.emailPattern)?.emailPattern).toBe("sergio.prado@me.com");
+  });
+
+  it("reports every invalid field without echoing caller data or blaming email for company", async () => {
+    database();
+    await expect(identify({ ...validArgs, name: "", company: { private: "private@example.com" } }))
+      .rejects.toMatchObject({ code: "VOICE_LEAD_INVALID_DETAILS", fields: ["name", "company"] });
+    await expect(identify({ ...validArgs, company: {} })).rejects.toThrow(/^Invalid Voice lead details\. company:/);
+    expect(new VoiceLeadValidationError("VOICE_LEAD_INVALID_DETAILS", ["email"]).message)
+      .toContain("ask the caller to spell only the unclear part");
+    expect(mockSchema).not.toHaveBeenCalled();
+  });
+
+  it("keeps an alternate contact phone separate from caller identity and never matches on it", async () => {
+    const db = database([{ id: OTHER_LEAD, site_id: SITE, phone: "+14155550199", email: "other@example.com" }]);
+    const result = await identify({ ...validArgs, phone: undefined, callback_phone: "+1 (415) 555-0199" });
+    const saved = db.leads.find((lead) => lead.id === result.lead_id)!;
+    expect(saved.phone).toBe(PHONE);
+    expect(saved.metadata.voice_identification).toMatchObject({ callback_phone: "+14155550199", callback_phone_verified: false });
+    expect(saved.voice_call_consent_status).not.toBe("granted");
+    expect(db.reads.filter((read) => read.table === "leads" && !read.emailPattern)
+      .every((read) => read.phonePattern === '%1%3%0%1%5%5%5%0%1%0%0%')).toBe(true);
+    expect(db.leads[0].email).toBe("other@example.com");
+  });
+
+  it.each([null, "", "4611721870", "+14155550199 ext 2", 14155550199])(
+    "asks for a valid international callback_phone without guessing: %p", async (callback_phone) => {
+      database();
+      await expect(identify({ ...validArgs, callback_phone })).rejects.toMatchObject({
+        code: "VOICE_LEAD_INVALID_DETAILS", fields: ["callback_phone"],
+      });
+      expect(mockSchema).not.toHaveBeenCalled();
+    }
+  );
+
+  it("completes only a consented inbound placeholder, preserving identity, restrictions and metadata", async () => {
+    const provisional = provisionalLead({ do_not_call: true, voice_call_consent_status: "revoked" });
+    provisional.metadata.private = { keep: true };
+    const db = database([provisional]);
+    const result = await identify({ ...validArgs, phone: undefined, email: "ada arroba example punto com", company: "Acme", callback_phone: "+14155550199" });
+    expect(result).toEqual({ success: true, lead_id: provisional.id, is_new_lead: false, contact_details_saved: true });
+    expect(db.inserts).toEqual([]);
+    expect(db.updates).toHaveLength(1);
+    expect(db.leads[0]).toMatchObject({
+      id: provisional.id, site_id: SITE, phone: PHONE, name: validArgs.name, email: EMAIL,
+      company: { name: "Acme" }, do_not_call: true, voice_call_consent_status: "revoked", status: "contacted",
+      metadata: {
+        private: { keep: true }, voice_inbound: provisional.metadata.voice_inbound,
+        voice_identification: { consent: true, identity_status: "caller_confirmed", callback_phone: "+14155550199", callback_phone_verified: false },
+      },
+    });
+    expect(db.updates[0].filters).toEqual(expect.arrayContaining([
+      ["id", provisional.id], ["site_id", SITE], ["phone", PHONE], ["email", null],
+      ["name", provisional.name], ["company", null], ["metadata", JSON.stringify(provisional.metadata)],
+    ]));
+  });
+
+  it.each([
+    { id: LEAD }, { name: "Existing customer" }, { company: { name: "Existing" } },
+    { company: [] }, { company: "" }, { company: { notes: "Do not replace" } },
+    { origin: "chat" }, { metadata: {} }, { metadata: { voice_inbound: { source: "zavu_webhook" } } },
+  ])("does not upgrade a non-placeholder profile %#", async (patch) => {
+    const existing = provisionalLead(patch);
+    const db = database([existing]);
+    await expect(identify()).resolves.toMatchObject({ contact_details_saved: false });
+    expect(db.leads).toEqual([existing]);
+    expect(db.updates).toEqual([]);
+  });
+
+  it("does not upgrade a placeholder without explicit consent or with conflicting email identity", async () => {
+    const provisional = provisionalLead();
+    const db = database([provisional, { id: OTHER_LEAD, site_id: SITE, phone: "+14155550199", email: EMAIL }]);
+    await expect(identify({ ...validArgs, consent: false })).rejects.toThrow("Explicit caller consent");
+    await expect(identify()).rejects.toThrow("identity conflicts");
+    expect(db.updates).toEqual([]);
+    expect(db.leads[0]).toEqual(provisional);
+  });
+
+  it("converges duplicate concurrent placeholder confirmations without losing restrictions", async () => {
+    const provisional = provisionalLead({ do_not_call: true });
+    const db = database([provisional]);
+    const results = await Promise.all([identify(), identify()]);
+    expect(results.every((result) => result.lead_id === provisional.id && result.contact_details_saved)).toBe(true);
+    expect(db.leads).toHaveLength(1);
+    expect(db.leads[0].do_not_call).toBe(true);
+    expect(db.leads[0].email).toBe(EMAIL);
+  });
+
+  it("completes a placeholder with the live schema's empty company default", async () => {
+    const db = database([provisionalLead({ company: {} })]);
+    await expect(identify({ ...validArgs, company: "Acme" })).resolves.toMatchObject({ contact_details_saved: true });
+    expect(db.leads[0].company).toEqual({ name: "Acme" });
+    expect(db.updates[0].filters).toContainEqual(["company", "{}"]);
+  });
+
+  it("does not overwrite an empty company snapshot changed during confirmation", async () => {
+    const db = database([provisionalLead({ company: {} })]);
+    db.beforeUpdate = () => { db.leads[0].company = { name: "Concurrent company" }; };
+    await expect(identify({ ...validArgs, company: "Acme" })).resolves.toMatchObject({ contact_details_saved: false });
+    expect(db.leads[0].company).toEqual({ name: "Concurrent company" });
+    expect(db.leads[0].email).toBeNull();
+  });
+
+  it("does not report success when a conflicting email profile appears during the update", async () => {
+    const db = database([provisionalLead()]);
+    db.beforeUpdate = () => db.leads.push({ id: OTHER_LEAD, site_id: SITE, email: EMAIL, phone: "+14155550199" });
+    await expect(identify()).rejects.toThrow("identity conflicts");
+    // No cross-profile reassignment or rollback of another writer's data.
+    expect(db.leads[1]).toMatchObject({ id: OTHER_LEAD, email: EMAIL, phone: "+14155550199" });
+  });
+
+  it("does not overwrite a concurrently edited name, email, or private metadata", async () => {
+    const db = database([provisionalLead()]);
+    db.beforeUpdate = () => {
+      Object.assign(db.leads[0], { name: "Concurrent owner", email: "different@example.com", metadata: { do_not_contact: true } });
+    };
+    await expect(identify()).rejects.toThrow("identity conflicts");
+    expect(db.leads[0]).toMatchObject({ name: "Concurrent owner", email: "different@example.com", metadata: { do_not_contact: true } });
+  });
+
+  it("asks to retry rather than overwrite concurrent metadata on an otherwise empty placeholder", async () => {
+    const db = database([provisionalLead()]);
+    db.beforeUpdate = () => { db.leads[0].metadata = { ...db.leads[0].metadata, private: "new" }; };
+    await expect(identify()).rejects.toThrow("changed during confirmation");
+    expect(db.leads[0].email).toBeNull();
+    expect(db.leads[0].metadata.private).toBe("new");
+  });
+
+  it("reports persistence failures without exposing database details or claiming success", async () => {
+    const db = database([provisionalLead()]);
+    db.updateError = { code: "23505", message: "private@example.com" };
+    await expect(identify()).rejects.toThrow(/^Unable to save confirmed Voice contact details$/);
+    expect(db.leads[0].email).toBeNull();
+  });
+
+  it("completes a webhook placeholder that wins the concurrent insert race", async () => {
+    const db = database();
+    db.beforeInsert = () => db.leads.push(provisionalLead());
+    await expect(identify()).resolves.toMatchObject({ is_new_lead: false, contact_details_saved: true });
+    expect(db.leads).toHaveLength(1);
+    expect(db.leads[0].email).toBe(EMAIL);
   });
 
   it.each([
@@ -212,7 +452,7 @@ describe("identifyVoiceLead", () => {
       ...validArgs, name: "Changed optional profile", email: EMAIL.toUpperCase(),
       phone: "+1 (301) 555-0100", company: "New company",
     }, SITE, "0013015550100");
-    expect(second).toEqual({ success: true, lead_id: first.lead_id, is_new_lead: false });
+    expect(second).toMatchObject({ success: true, lead_id: first.lead_id, is_new_lead: false, contact_details_saved: false });
     expect(db.inserts).toHaveLength(1);
     expect(db.leads[0].name).toBe("Ada Caller");
   });
@@ -248,6 +488,23 @@ describe("identifyVoiceLead", () => {
     db.readError = { message: "Private contact at other@example.com" };
     await expect(identify()).rejects.toThrow(/^Unable to check existing Voice lead identity$/);
     expect(db.inserts).toEqual([]);
+  });
+
+  it('does not identify or insert from a truncated phone candidate set', async () => {
+    const db = database(Array.from({ length: 51 }, () => ({ id: LEAD, site_id: SITE, phone: PHONE, email: null })));
+    await expect(identify()).rejects.toThrow('identity conflicts');
+    expect(db.inserts).toEqual([]);
+    expect(db.updates).toEqual([]);
+  });
+
+  it('filters foreign-country and extra-digit candidates without matching on the suffix', async () => {
+    const db = database([
+      { id: LEAD, site_id: SITE, phone: '+15543640787', email: null },
+      { id: OTHER_LEAD, site_id: SITE, phone: '+5255436407879', email: null },
+    ]);
+    await expect(identify({ ...validArgs, phone: undefined }, SITE, '+525543640787')).resolves.toMatchObject({ is_new_lead: true });
+    expect(db.inserts).toHaveLength(1);
+    expect(db.inserts[0].phone).toBe('+525543640787');
   });
 
   it.each(["missing", "owner-missing"])("requires a valid authoritative site owner (%s)", async (mode) => {

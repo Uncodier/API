@@ -3,7 +3,12 @@ import pkg from 'workflow/next'
 const { withWorkflow } = pkg
 import { getNextJsCorsConfig } from './cors.config.js'
 import { createRequire } from 'module'
+import { readFileSync } from 'node:fs'
 const require = createRequire(import.meta.url)
+// Match the exact source allowlist without importing any server/TypeScript module
+// during Next configuration. A narrow list prevents shipping secrets or the full repo.
+const harnessReference = readFileSync(new URL('./src/lib/services/harness-diagnostics/reference.ts', import.meta.url), 'utf8')
+const harnessSourceFiles = [...harnessReference.matchAll(/^  \w+: '((?:src|supabase)\/[^']+)',?$/gm)].map(match => `./${match[1]}`)
 
 const withNextra = nextra({
   contentDirBasePath: '/',
@@ -35,8 +40,11 @@ const nextraConfig = withNextra({
   // `/.well-known/workflow/v1/step`) even when webpack bundles them locally. Including these modules via NFT
   // guarantees they are shipped inside the lambda filesystem regardless of bundling decisions.
   outputFileTracingIncludes: {
+    '/api/robots/instance/assistant': harnessSourceFiles,
+    '/api/cron/requirements-apps': harnessSourceFiles,
     '/api/skills/system': ['./src/skills/*/SKILL.md'],
     '**/.well-known/workflow/v1/step': [
+      ...harnessSourceFiles,
       './node_modules/openai/**/*',
       './node_modules/zod/**/*',
       './node_modules/zod-to-json-schema/**/*',

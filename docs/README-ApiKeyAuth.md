@@ -2,12 +2,21 @@
 
 Este documento describe el sistema de autenticación de API keys implementado en la API.
 
+> Para los límites actuales de servicio interno verificado, precedencia de
+> credenciales y exclusiones de rutas, ver
+> [SERVICE_EXPENSIVE_RATE_LIMITS.md](SERVICE_EXPENSIVE_RATE_LIMITS.md).
+> En rutas privadas expensive: 600/min de servicio, sujeto además a 5.000/min de
+> autenticación de servicio y al global compartido de 2.000/min. CORS no es
+> autenticación: un origen permitido nunca sustituye una credencial válida.
+
 ## Resumen
 
-La API utiliza un sistema dual de autenticación:
+La API aplica dos controles independientes:
 
-1. **CORS** - Para peticiones desde navegadores (con header `origin`)
-2. **API Keys** - Para peticiones servidor-a-servidor (sin header `origin`)
+1. **CORS** - Restringe orígenes de navegador; no autentica al solicitante.
+2. **Autenticación** - Valida API keys o sesiones de usuario admitidas por la ruta,
+   tanto con `origin` como sin él. Las rutas públicas y webhooks mantienen sus
+   contratos específicos de autorización.
 
 ## Flujo de Autenticación
 
@@ -17,9 +26,12 @@ Si la petición incluye un header `origin`, se valida mediante CORS:
 - En desarrollo: Se permiten todos los orígenes
 - En producción: Solo se permiten orígenes configurados en `cors.config.js`
 
+Una petición a una ruta privada sigue necesitando autenticación válida después
+de CORS. No se deben enviar claves de servicio desde el navegador.
+
 ### Peticiones Servidor-a-Servidor
 
-Si la petición NO incluye header `origin` y estamos en producción:
+Para peticiones autenticadas mediante API key, con o sin `origin` y también en desarrollo:
 
 1. Se busca el API key en los siguientes headers (en orden):
    - `x-api-key`
@@ -71,7 +83,8 @@ curl -X GET https://api.example.com/api/endpoint \
 
 - Las API keys de servicio tienen acceso completo (scope: `*`)
 - Las API keys de base de datos tienen scopes específicos
-- Se puede requerir un scope específico usando el header `x-required-scope`
+- Los scopes requeridos se determinan en el servidor según ruta y método.
+  El header `x-required-scope` enviado por el cliente no concede permisos.
 
 ## Errores
 
@@ -110,14 +123,16 @@ curl -X GET https://api.example.com/api/endpoint \
 
 ## Notas Importantes
 
-1. **Solo en Producción**: La validación de API keys solo ocurre en producción
-2. **Prioridad CORS**: Si hay un header `origin`, siempre se usa CORS
+1. **Autenticación en todos los entornos**: Desarrollo no omite la validación de API keys.
+2. **CORS independiente**: Un origen permitido no sustituye la autenticación.
 3. **Service Key Primero**: El `SERVICE_API_KEY` se valida antes que las keys de BD
 4. **Información en Request**: Los datos de la API key validada se añaden al header `x-api-key-data`
 
 ## Endpoint de Status
 
-Para probar la autenticación y verificar el estado del servidor, usa el endpoint `/api/status`:
+`GET /api/status` es público: permite comprobar disponibilidad, pero un 200 sin
+credenciales no demuestra autenticación. Para validar permisos, usa las pruebas
+de middleware indicadas en la documentación de límites.
 
 ### Petición desde Navegador (CORS)
 ```bash

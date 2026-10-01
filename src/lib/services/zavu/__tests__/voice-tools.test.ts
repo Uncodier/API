@@ -95,7 +95,7 @@ describe("syncVoiceTools", () => {
       expect.objectContaining({
         name: "IDENTIFY_LEAD",
         parameters: expect.objectContaining({
-          required: ["name", "email", "phone", "consent"],
+          required: ["name", "email", "consent"],
         }),
       })
     );
@@ -116,6 +116,12 @@ describe("syncVoiceTools", () => {
       .find((tool) => tool.name === "IDENTIFY_LEAD")!;
 
     expect(voice.parameters.required).toContain("consent");
+    expect(voice.parameters.required).not.toContain("phone");
+    expect(voice.parameters.properties).toHaveProperty("callback_phone");
+    expect(voice.parameters.properties).toMatchObject({
+      email: { description: expect.stringContaining("Read back and confirm") },
+    });
+    expect(chat.parameters.properties).not.toHaveProperty("callback_phone");
     expect(voice.parameters.properties).not.toHaveProperty("visitor_id");
     expect(voice.parameters.properties).not.toHaveProperty("conversation");
     expect(chat.parameters.required).not.toContain("consent");
@@ -139,7 +145,13 @@ describe("syncVoiceTools", () => {
     expect(prompt).toContain("Prefer that result over memory or guesswork");
     expect(prompt).toContain("never claim success before the tool confirms it");
     expect(prompt).toContain("clear consent to be contacted");
-    expect(prompt.length).toBeLessThan(7_500);
+    expect(prompt).toContain("Read back the full address and get confirmation");
+    expect(prompt).toContain("invalid_fields");
+    expect(prompt).toContain("On invalid_fields, fix only those fields; never retry unchanged input");
+    expect(prompt).toContain("callback_phone with a confirmed country code");
+    expect(prompt).toContain("contact_details_saved=false");
+    expect(prompt.length).toBeLessThan(5_600);
+    expect(buildVoiceRuntimePrompt({ language: "auto" }).length).toBeLessThan(5_600);
   });
 
   it("documents every enabled provider tool in the final prompt", () => {

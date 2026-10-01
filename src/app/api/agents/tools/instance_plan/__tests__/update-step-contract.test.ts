@@ -22,6 +22,8 @@ jest.mock('@/lib/services/requirement-backlog-store', () => ({
 }));
 
 import { updateInstancePlanCore } from '../update/route';
+import { requirementStepExecutionBlock } from '@/lib/services/requirement-execution-visibility';
+jest.mock('@/lib/services/requirement-execution-visibility', () => ({ requirementStepExecutionBlock: jest.fn() }));
 
 const PLAN_ID = '11111111-1111-4111-8111-111111111111';
 const INSTANCE_ID = '22222222-2222-4222-8222-222222222222';
@@ -42,6 +44,7 @@ function existingPlan(steps: any[] = []) {
 describe('updateInstancePlanCore step contracts', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    (requirementStepExecutionBlock as jest.Mock).mockResolvedValue(null);
     resolveBacklogContextForInstance.mockResolvedValue({
       requirementId: REQUIREMENT_ID,
       inProgressItemId: 'item-1',
@@ -71,6 +74,14 @@ describe('updateInstancePlanCore step contracts', () => {
       }],
     })).rejects.toThrow('Standalone research step');
 
+    expect(builder.update).not.toHaveBeenCalled();
+  });
+
+  it('does not allow direct plan updates to reactivate a technically held requirement', async () => {
+    single.mockResolvedValueOnce({ data: { ...existingPlan(), status: 'blocked' }, error: null });
+    (requirementStepExecutionBlock as jest.Mock).mockResolvedValue('0016.sql requires technical review');
+    await expect(updateInstancePlanCore({ plan_id: PLAN_ID, site_id: SITE_ID, status: 'in_progress' }))
+      .rejects.toThrow('0016.sql requires technical review');
     expect(builder.update).not.toHaveBeenCalled();
   });
 

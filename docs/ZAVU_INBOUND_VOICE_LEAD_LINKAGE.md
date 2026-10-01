@@ -23,12 +23,25 @@ identity authority.
 
 `src/lib/services/zavu/inbound-voice-lead.ts`:
 
-1. Validates site UUID and full E.164 caller phone. Normalization removes only
-   formatting and converts a `00` international prefix; it does not guess a
-   country, discard trunk digits, or match the last ten digits.
-2. Looks up candidates within the same site, then compares the entire normalized
-   phone. Ambiguous matches or a truncated candidate set require human review;
-   no `limit(1)` identity merge is performed.
+1. Validates site UUID and full E.164 provider caller phone. Caller validation
+   removes only formatting and converts a `00` international prefix; it does not
+   infer a country or discard digits from the authoritative identity.
+2. Looks up candidates within the same site using the shared `voice-phone-match.ts`
+   rules, also used by native `IDENTIFY_LEAD` and inbound linkage validation:
+   - Ignore spaces, parentheses, dots and hyphens in stored phones.
+   - Accept the full international digits stored without `+` or with `00`, except
+     bare ten-digit values reserved for the CRM's Mexican national format. A
+     ten-digit international number from another country needs explicit `+`/`00`
+     to avoid confusing, for example, `+45 32345678` with `+52 4532345678`.
+   - For an explicit Mexican caller, recognize `+52` and historical `+521`
+     (mobile-only `1`) as search aliases, plus the CRM's legacy ten-digit national
+     format. For example, `+525543640787`, `+5215543640787`, `525543640787` and
+     `(55) 4364-0787` match the same caller.
+   - Never match an explicit different country, arbitrary phone suffix, extension
+     or extra digits. National numbers from other countries are not inferred.
+   Every SQL candidate is checked against these complete formats. Multiple matches
+   (even if one has the exact raw phone) or more than 50 candidates require human
+   review; no `limit(1)` identity merge is performed.
 3. Reuses a unique existing lead without modifying its name, email, phone,
    metadata, status, opt-outs or consent.
 4. If absent, resolves the active site's owner and inserts a minimal lead with
@@ -44,8 +57,9 @@ before it is treated as success.
 
 This is not cross-channel phone uniqueness: unrelated writers can still insert
 different IDs for the same number. The resolver fails on duplicates rather than
-guessing which person owns a phone. Existing legacy formats that require country
-or historical prefix inference need explicit reconciliation.
+guessing which person owns a phone. Legacy formats outside the explicit aliases
+above still need reconciliation. Search aliases do not rewrite stored phones,
+provider caller digits or existing deterministic IDs.
 
 ## Linkage and retries
 
@@ -102,6 +116,17 @@ consent to force recovery.
 
 ## Offline validation
 
+Phone normalization regression (2026-10-01): the previous lookup failed 20 of
+the new regression cases. Final validation: **498 tests passed in 28 voice suites**.
+Coverage includes Mexican national/international/historical formats, missing `+`,
+native identification, start-of-call contact context, terminal linkage and retries,
+ambiguous aliases, foreign-country/extra-digit rejection, ten-digit Mexican versus
+Danish number collisions and profile preservation.
+`git diff --check` passed. Whole-repository `tsc --noEmit --incremental false`
+reports 203 diagnostics outside the Zavu voice files; it is not a passing global
+type check. The four directly affected test suites separately passed 196 tests.
+No database migration, deployment or historic reassignment is part of this fix.
+
 Run from the API repository:
 
 ```sh
@@ -115,7 +140,7 @@ denial, duplicate events, concurrent creation, partial failure retries,
 conflicting linkage and legacy null-link recovery. No live provider calls are
 used as regression tests.
 
-Validation: 265 tests passed in 23 voice suites, including the split inbound
+Original linkage validation: 265 tests passed in 23 voice suites, including the split inbound
 message and voice webhook regression suites. `git diff --check` passed.
 Whole-repository TypeScript still reports the same 203 baseline diagnostics;
 there are no new diagnostics and none in the changed voice files. The existing

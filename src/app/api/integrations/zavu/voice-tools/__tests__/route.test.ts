@@ -21,6 +21,7 @@ jest.mock("@/lib/database/supabase-server", () => ({
 
 import { NextRequest } from "next/server";
 import { POST } from "../route";
+import { VoiceLeadValidationError } from "@/lib/services/zavu/voice-lead-errors";
 
 const SITE_ID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 
@@ -234,6 +235,31 @@ describe("Zavu Voice tools webhook", () => {
         request_id: response.headers.get("x-request-id"),
       }));
       expect(JSON.stringify(warn.mock.calls)).not.toContain("private caller data");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it.each(["email", "company", "callback_phone"] as const)("returns actionable %s validation without logging contact data", async (field) => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      mockExecuteCustomerSupportVoiceTool.mockRejectedValueOnce(
+        new VoiceLeadValidationError("VOICE_LEAD_INVALID_DETAILS", [field])
+      );
+      const response = await POST(request({
+        tool: "IDENTIFY_LEAD", arguments: { email: "private@example.com", phone: "+14155550100" },
+      }, undefined, "IDENTIFY_LEAD"));
+      const body = await response.json();
+      expect(response.status).toBe(422);
+      expect(body).toMatchObject({
+        code: "VOICE_LEAD_INVALID_DETAILS", invalid_fields: [field],
+        request_id: response.headers.get("x-request-id"),
+      });
+      expect(body.error).toContain(`${field}:`);
+      expect(warn).toHaveBeenCalledWith("[Zavu Voice Tool]", expect.objectContaining({
+        code: body.code, invalid_fields: [field], request_id: body.request_id,
+      }));
+      expect(JSON.stringify([warn.mock.calls, body])).not.toMatch(/private@example|14155550100|whsec_test|encrypted/);
     } finally {
       warn.mockRestore();
     }

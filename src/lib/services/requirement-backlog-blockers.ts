@@ -29,10 +29,10 @@ function dependencyBlocker(dependency: BacklogItem): BacklogBlocker {
     reason:
       `Depends on unfinished item "${dependency.title}" ` +
       `(status=${dependency.status}).`,
-    resolution_actor: legacyReviewBlocker ? 'user' : 'executor',
+    resolution_actor: legacyReviewBlocker ? 'platform' : 'executor',
     source_item_id: dependency.id,
     propagated_from_item_id: dependency.id,
-    user_action_required: legacyReviewBlocker,
+    user_action_required: false,
   };
 }
 
@@ -136,6 +136,13 @@ export function requiresUserAction(
       blocker.user_action_required === true ||
       blocker.resolution_actor === 'user',
   );
+}
+
+/** A synthesized dependency or exhausted budget is not a customer decision. */
+export function isCustomerDecisionBlocker(blocker: BacklogBlocker): boolean {
+  return (blocker.category === 'user_decision' || blocker.category === 'missing_precondition') &&
+    (blocker.resolution_actor === 'user' || blocker.user_action_required === true) &&
+    typeof blocker.reason === 'string' && blocker.reason.trim().length > 0;
 }
 
 export function addDirectBacklogBlocker(

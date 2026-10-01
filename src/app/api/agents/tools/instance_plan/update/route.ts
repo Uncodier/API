@@ -10,6 +10,7 @@ import {
 } from '@/lib/services/instance-plan-step-contract';
 import { assertRequirementPlanUpdateAllowed } from '../requirement-plan-lock';
 import { SkillsService } from '@/lib/services/skills-service';
+import { requirementStepExecutionBlock } from '@/lib/services/requirement-execution-visibility';
 import { z } from 'zod';
 
 const parseIfString = (val: any) => typeof val === 'string' ? (() => { try { return JSON.parse(val); } catch { return val; } })() : val;
@@ -430,6 +431,14 @@ export async function updateInstancePlanCore(
     if (summary.status !== 'completed') {
       throw new Error('Cannot mark a plan completed while one or more steps are unfinished');
     }
+  }
+
+  if (!options.trustedRunner && effectiveRequirementId && (
+    ['pending', 'in_progress'].includes(updateData.status) ||
+    updates.steps?.some(step => ['pending', 'in_progress'].includes(step.status || ''))
+  )) {
+    const reason = await requirementStepExecutionBlock(effectiveRequirementId, site_id);
+    if (reason) throw new Error(`Requirement execution is blocked: ${reason}`);
   }
 
   const { data: updatedPlan, error } = await supabaseAdmin

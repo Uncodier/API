@@ -7,6 +7,7 @@ import { getInstancePlansCore } from '@/app/api/agents/tools/instance_plan/get/r
 import { createInstancePlanCore } from '@/app/api/agents/tools/instance_plan/create/route';
 import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/route';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { requirementStepExecutionBlock } from '@/lib/services/requirement-execution-visibility';
 import {
   assertRequirementPlanUpdateAllowed,
   isRunnerOwnedRequirementStepTerminal,
@@ -191,7 +192,7 @@ export function instancePlanTool(
     description:
       'Manage instance plans. Plans are strict execution paths composed of steps that the system delegates to specialized sub-agents. Use action="create" to define a new plan — each step SHOULD set "skill" (preferred, any SKILL.md slug such as makinari-rol-frontend, makinari-rol-qa, makinari-obj-template-selection) and/or "role" (legacy slug such as frontend/backend/devops/content/investigate/plan/validate/report/qa/template_selection/orchestrator) so the system injects the right skill. Use action="list" to get current plans. Use action="update" to add steps or modify an existing plan. The system auto-executes pending steps as sub-agents after you finish planning. Note: You can create a workflow template (repeatable process) instead of a one-off plan by passing is_template: true and an array of triggers.' +
       (requirement_id
-        ? ' This tool is running in requirement context: action="create" is rejected while another non-template plan is active. action="update" cannot complete/fail steps or terminally transition plans; it may cancel a failing step only when replacing it during plan adaptation. Executor completion requests use action="execute_step", and only the runner persists them after gates.'
+        ? ' This tool is running in requirement context: action="create" is rejected while another non-template plan is active. action="update" cannot complete/fail steps or terminally transition plans; it may cancel a failing step only when replacing it during plan adaptation. Executor completion requests use action="execute_step", and only the runner persists them after gates. execute_step reports status; it does not start or resume an executor. Never claim that reporting in_progress scheduled work. Technical holds remain authoritative.'
         : ''),
     parameters: {
       type: 'object',
@@ -370,6 +371,13 @@ export function instancePlanTool(
             error: 'Missing step_status for execute_step (pending | in_progress | completed | failed).',
           };
         }
+        if (requirement_id && ['pending', 'in_progress'].includes(params.step_status)) {
+          const reason = await requirementStepExecutionBlock(requirement_id, site_id);
+          if (reason) return {
+            success: false, execution_started: false, code: 'requirement_execution_blocked',
+            error: reason, message: 'No step was changed and no execution was started. Resolve the authoritative hold through technical reconciliation.',
+          };
+        }
         if (isRunnerOwnedRequirementStepTerminal({
           requirementId: requirement_id,
           stepStatus: params.step_status,
@@ -435,7 +443,8 @@ export function instancePlanTool(
           }
 
           console.log('[InstancePlanTool] execute_step result:', result);
-          return result;
+          return { ...result, execution_started: false,
+            message: 'Step status recorded only. This operation does not start or resume an executor.' };
         } catch (error: any) {
           console.error('[InstancePlanTool] Error during execute_step:', error);
           // Re-throw the error or return a structured error response

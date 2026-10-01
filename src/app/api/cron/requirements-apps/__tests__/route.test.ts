@@ -264,6 +264,29 @@ describe('Cron Requirements Apps Route', () => {
     );
   });
 
+  it('routes coarse budget exhaustion to internal review without resetting attempts', async () => {
+    const requirement = { id: 'req-budget', site_id: 'site-1', user_id: 'user-1', status: 'in-progress',
+      title: 'Webhook', instructions: 'Implement webhook', type: 'application', cron: null,
+      backlog: { items: [{ id: 'item', status: 'in_progress' }] },
+      metadata: { runner_instance_id: 'inst-1', requirement_execution_generation: 7,
+        cron_attempts: 3000, cron_last_cycle_id: 'last-cycle' } };
+    mockClaimBatches([[{ state: 'claimed', requirement, run_id: 'test-lock-id', expires_at: '2099-01-01' }]]);
+    mockSupabase.then = jest.fn()
+      .mockImplementationOnce((resolve: any) => resolve({ data: [], error: null }))
+      .mockImplementationOnce((resolve: any) => resolve({ data: requirement, error: null }))
+      .mockImplementation((resolve: any, reject: any) => Promise.resolve({ data: [], error: null }).then(resolve, reject));
+    (backlogService.isBacklogComplete as jest.Mock).mockReturnValue(false);
+    (backlogService.hasOutstandingWork as jest.Mock).mockReturnValue(true);
+    const response = await GET(new Request('http://localhost', { headers: { authorization: 'Bearer test-secret' } }));
+    expect(response.status).toBe(200);
+    expect(mockBlockRequirementForProductAttemptBudget).toHaveBeenCalled();
+    expect(start).toHaveBeenCalledWith(expect.anything(), [expect.objectContaining({
+      requirementId: 'req-budget', requiresUserFeedback: false, recoveryDisposition: 'internal_review',
+      wrapUpReason: expect.not.stringContaining('reset metadata.cron_attempts'),
+    })]);
+    expect(mockResumeRequirementExecution).not.toHaveBeenCalled();
+  });
+
   it('does not create or start a runner while the originating assistant is working', async () => {
     const requirement = {
       id: 'req-original', site_id: 'site-1', status: 'backlog',

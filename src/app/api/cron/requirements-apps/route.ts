@@ -268,7 +268,7 @@ export async function GET(req: Request) {
           .limit(1);
           
         const errorMessage = latestStatus?.[0]?.message || `Unknown error after ${currentAttempts} attempts`;
-        const blockedMessage = `Auto-blocked: main builder hit ${currentAttempts} cycles without progress (budget ${maxAttempts} = ${PER_ITEM_CYCLE_BUDGET}/item × ${Math.max(1, backlogItemCount)} backlog item(s)). Last error: ${errorMessage}. Resolve the blocker (often two agents racing on the same git branch → rebase conflicts) and reset metadata.cron_attempts to re-open.`;
+        const blockedMessage = `Auto-blocked: main builder hit ${currentAttempts} cycles without progress (budget ${maxAttempts} = ${PER_ITEM_CYCLE_BUDGET}/item × ${Math.max(1, backlogItemCount)} backlog item(s)). Last error: ${errorMessage}. Technical reconciliation is required; preserve acceptance, validation and retry budgets. This is not a customer product decision.`;
         const blockResult = await blockRequirementForProductAttemptBudget({
           requirementId: reqId,
           siteId: site_id,
@@ -318,7 +318,8 @@ export async function GET(req: Request) {
               instructions,
               planCompleted: false,
               wrapUpReason: blockedMessage,
-              requiresUserFeedback: true,
+              requiresUserFeedback: false,
+              recoveryDisposition: 'internal_review',
             }]);
             results.push({
               reqId,

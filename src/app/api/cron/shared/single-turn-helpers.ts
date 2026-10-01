@@ -17,6 +17,10 @@ const WORK_DIR = '/vercel/sandbox';
 const EVIDENCE_COLLECTION_TOOLS = new Set([
   'skill_lookup',
   'instance_history',
+  'harness_inspect',
+  'harness_events',
+  'harness_reference',
+  'harness_source',
   'sandbox_browser',
   'sandbox_code_search',
   'sandbox_read_file',

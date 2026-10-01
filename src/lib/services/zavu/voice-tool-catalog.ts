@@ -12,13 +12,17 @@ export function getCustomerSupportVoiceToolDefinitions(
     return {
       ...tool,
       description:
-        "Identify the caller as a lead after explicit consent to store their contact details and be contacted. Confirm their name, email and phone first. No visitor ID is required. Returns lead_id for scheduling; never invent an ID.",
+        "Identify the caller after explicit contact-storage consent. Confirm name and email first. Returns lead_id for scheduling and contact_details_saved; never claim details were saved when false. No visitor ID required.",
       parameters: {
         type: "object",
         properties: {
           name: { type: "string", description: "Confirmed caller name" },
-          email: { type: "string", description: "Confirmed caller email address" },
-          phone: { type: "string", description: "Confirmed caller phone in E.164 format" },
+          email: {
+            type: "string",
+            description: "Read back and confirm the complete email, then send canonical format, e.g. ada.prado@me.com. Convert arroba/at to @ and punto/dot to .; join explicitly spelled letters (m e -> me). Never guess unclear spelling.",
+          },
+          phone: { type: "string", description: "Optional confirmed calling number in E.164. Must match the current call; omit if unknown. Never put an alternate contact number here." },
+          callback_phone: { type: "string", description: "Optional alternate contact number, confirmed with country code in E.164. Stored as unverified contact metadata, never used to identify or merge leads or authorize outbound calls." },
           company: { type: "string", description: "Company name, if supplied by the caller" },
           consent: {
             type: "boolean",
@@ -26,7 +30,7 @@ export function getCustomerSupportVoiceToolDefinitions(
               "Set true only after the caller explicitly agrees to storing their contact details and being contacted. A call or caller ID alone is not consent.",
           },
         },
-        required: ["name", "email", "phone", "consent"],
+        required: ["name", "email", "consent"],
         additionalProperties: false,
       },
     };

@@ -26,8 +26,13 @@ authentication and does not authorize site access.
 ## Finder behavior
 
 `OPTIONS` no longer consumes the shared expensive-operation budget. Actual Finder
-requests still consume the existing 20/minute per-IP and 2,000/minute global
-expensive-operation budgets, alongside applicable authentication/principal limits.
+requests using browser sessions or ordinary API keys still consume the existing
+20/minute per-IP and 2,000/minute global expensive-operation budgets, alongside
+applicable authentication/principal limits. Verified internal service credentials
+on private expensive routes instead use the shared 600/minute service-expensive
+budget, while retaining service authentication (5,000/minute) and the same
+2,000/minute global cap. See [internal-service admission](SERVICE_EXPENSIVE_RATE_LIMITS.md)
+for configuration and route exclusions.
 No Finder endpoint becomes public and no service API key belongs in the browser.
 
 When diagnosing `429`:

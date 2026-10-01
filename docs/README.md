@@ -8,6 +8,8 @@ Documents are ordered below by relevance and freshness. A dated checkpoint recor
 
 Read these first when changing the code-agent harness:
 
+- [Technical verification escalation — 2026-10-01](./HARNESS_TECHNICAL_ESCALATION_2026-10-01.md) — technical holds, canonical customer decisions and host-owned support tickets.
+
 - [Evidence-based migration diagnosis and bounded handoff](./MIGRATION_DIAGNOSTIC_HANDOFF.md) — exhaustion is not irreparability; one independent diagnosis and a verified follow-up.
 
 1. [Tenant capability contract — 2026-09-29](./TENANT_CAPABILITY_CONTRACT_2026-09-29.md)
@@ -23,6 +25,7 @@ Read these first when changing the code-agent harness:
 
 ## Active integration guides
 
+- [Zavu Voice business context](./ZAVU_VOICE_BUSINESS_CONTEXT.md) — shared AgentBase sources, section-aware prompt limits and resynchronization.
 - [Zavu inbound voice lead linkage](./ZAVU_INBOUND_VOICE_LEAD_LINKAGE.md) — webhook-owned CRM contacts, transcript links, consent separation and retry behavior.
 - [Server-issued visitor identity tokens](./VISITOR_IDENTITY_TOKENS.md) — scoped issuers, first-party support identity, atomic exchange, logout, and offline tests.
 - [Instance context manual setup](./INSTANCE_CONTEXT_MANUAL_SETUP.md) — migration and model-limit configuration for robot context compaction.

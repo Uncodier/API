@@ -3,6 +3,7 @@ import {
   buildCycleWrapUpSystemPrompt,
   countPendingPlanSteps,
   feedbackRequiredBacklogItems,
+  technicalReviewBacklogItems,
   hasRunnableBacklogWork,
   shouldRunCycleWrapUp,
   shouldSkipWrapUpForPendingSteps,
@@ -75,7 +76,7 @@ describe('cycle-wrapup-prompt', () => {
     ])).toBe(1);
   });
 
-  it('asks for feedback when a forced wrap-up reports blocked pending work', () => {
+  it('routes exhausted work to technical review instead of inventing a customer decision', () => {
     const prompt = buildCycleWrapUpSystemPrompt({
       title: 'Research',
       requirementId: 'req-2',
@@ -89,8 +90,9 @@ describe('cycle-wrapup-prompt', () => {
       requiresUserFeedback: true,
     });
 
-    expect(prompt).toContain('USER FEEDBACK REQUIRED');
-    expect(prompt).toContain('explicitly ask the user to reply');
+    expect(prompt).toContain('INTERNAL TECHNICAL/PLATFORM REVIEW REQUIRED');
+    expect(prompt).not.toContain('USER FEEDBACK REQUIRED');
+    expect(prompt).not.toContain('explicitly ask the user to reply');
     expect(prompt).toContain("stage='blocked'");
     expect(prompt).toContain('The active item exhausted its attempt budget.');
     expect(prompt).not.toContain('Do NOT ask the user for permission');
@@ -190,6 +192,8 @@ describe('cycle-wrapup-prompt', () => {
       requiresUserFeedback: true,
       internalReviewRequired: false,
       wrapUpReason: 'Choose the subscription tier and supply the billing credential.',
+      userDecisionBlockers: [{ blocker_id: 'billing', category: 'user_decision', resolution_actor: 'user',
+        reason: 'Choose the subscription tier and supply the billing credential.' }],
     });
 
     expect(prompt).toContain('USER FEEDBACK REQUIRED');
@@ -357,7 +361,7 @@ describe('cycle-wrapup-prompt', () => {
     )).toEqual([userBlocked]);
   });
 
-  it('asks for feedback only when the relevant scope has no runnable work', () => {
+  it('separates technical exhaustion from customer blockers in the relevant scope', () => {
     const items = [
       { id: 'review', phase_id: 'outline', status: 'needs_review' as const, attempts: 4, tier: 'core' as const },
       { id: 'exhausted', phase_id: 'outline', status: 'in_progress' as const, attempts: 4, tier: 'core' as const },
@@ -368,7 +372,9 @@ describe('cycle-wrapup-prompt', () => {
       items,
       { core: 4, ornamental: 2 },
       { currentPhaseId: 'outline' },
-    )).toEqual([items[0], items[1]]);
+    )).toEqual([]);
+    expect(technicalReviewBacklogItems(items, { core: 4, ornamental: 2 }, { currentPhaseId: 'outline' }))
+      .toEqual([items[0], items[1]]);
   });
 
   it('retains user blockers from an earlier phase in terminal feedback', () => {

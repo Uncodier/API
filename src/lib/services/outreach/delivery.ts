@@ -2,6 +2,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { createHash } from 'crypto';
 import { createOutreachLedger, type OutreachLedger } from './redis-ledger';
 import { getOutreachPolicy, isOutreachChannel, localDay, nextLocalDay, outreachTimezone, resolveOutreachActivity, selectedOutreachAccounts, type OutreachActivityKey } from './policy';
+import { outreachTimingReason } from './timing';
 import { prepareOutreachDelivery, type DeliveryContext, type PreparedDelivery } from './transport';
 import { summarizeOutreachHistory } from './history';
 import { resolveOutreachRecipient } from './recipients';
@@ -119,6 +120,8 @@ export function createOutreachDelivery(deps: {
       const policy = getOutreachPolicy(settings, activity);
       if (!policy) return defer('invalid_outreach_configuration');
       if (policy.status !== 'active') return defer('activity_inactive');
+      const timingReason = outreachTimingReason(settings, activity, now);
+      if (timingReason) return defer(timingReason);
       if (!policy.all_segments && (!lead.segment_id || !policy.segment_ids.includes(lead.segment_id))) return defer('segment_not_selected');
       if (!policy.all_segments && !await repo.segmentBelongsToSite(siteId, lead.segment_id)) return defer('segment_not_selected');
       if (!['new', 'contacted', 'qualified'].includes(lead.status)) return defer('lead_ineligible');
@@ -156,6 +159,12 @@ export function createOutreachDelivery(deps: {
       // Preparation may cross midnight; never dispatch against yesterday's cap.
       const dispatchNow = deps.now?.() || new Date();
       if (localDay(dispatchNow, timezone).day !== day.day) return defer('local_day_changed', dispatchNow.toISOString());
+      // Preparation can be slow and preferences may have changed since the first read.
+      const current = await repo.load(siteId, messageId);
+      if (!current) return defer('message_changed');
+      const currentTimingReason = outreachTimingReason(current.settings, activity, dispatchNow);
+      if (currentTimingReason) return defer(currentTimingReason);
+      if (outreachTimezone(current.settings) !== timezone) return defer('timezone_changed');
       const baseline = await repo.reservedCount(siteId, activity, day.day);
       const reservation = await ledger.reserve({ siteId, activity, day: day.day, messageId, leadId: lead.id, limit: policy.daily_message_limit, baseline });
       if (reservation.state === 'sent') return { success: true, alreadySent: true, messageId: reservation.messageId };
@@ -186,6 +195,12 @@ export function createOutreachDelivery(deps: {
           await repo.mark(message, { ...marker, state: 'blocked', reason: 'local_day_changed' });
           await ledger.release(lease);
           return defer('local_day_changed', actualDispatchTime.toISOString());
+        }
+        const finalTimingReason = outreachTimingReason(current.settings, activity, actualDispatchTime);
+        if (finalTimingReason) {
+          await repo.mark(message, { ...marker, state: 'blocked', reason: finalTimingReason });
+          await ledger.release(lease);
+          return defer(finalTimingReason);
         }
         const sent = await prepared.send();
         if (!sent.success || !sent.messageId) return uncertain();

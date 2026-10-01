@@ -6,6 +6,10 @@ import type { TenantCapabilities } from '@/lib/services/apps-platform/tenant-cap
 
 jest.mock('@/lib/services/robot-instance/assistant-executor', () => ({ executeAssistantStep: jest.fn() }));
 jest.mock('@/lib/services/apps-platform/migration-repair-tools', () => ({ createMigrationRepairTools: jest.fn() }));
+jest.mock('@/lib/services/harness-diagnostics/tools', () => ({
+  createHarnessDiagnosticTools: () => [{ name: 'harness_inspect', parameters: {},
+    execute: jest.fn(async () => ({ runtime: { kind: 'migration_diagnostic' } })) }],
+}));
 
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 const schema = 'app_aaaaaaaaaaaaaaaaaaaaaaaa';
@@ -118,7 +122,7 @@ describe('independent read-only migration diagnostic agent', () => {
     const input = params();
     await diagnoseMigration(input);
     const options = (executeAssistantStep as jest.Mock).mock.calls[0][2];
-    expect(options.custom_tools.map((entry: Tool) => entry.name)).toEqual([readName, verdictName]);
+    expect(options.custom_tools.map((entry: Tool) => entry.name)).toEqual([readName, verdictName, 'harness_inspect']);
     expect(tool(options, verdictName)).toMatchObject({ description: expect.stringContaining('does not approve application') });
     expect(writeSql).not.toHaveBeenCalled();
     expect(applySql).not.toHaveBeenCalled();
@@ -131,6 +135,21 @@ describe('independent read-only migration diagnostic agent', () => {
     });
     await expect(factoryOptions.beforeWrite(sql)).rejects.toThrow(/read-only/i);
     await expect(factoryOptions.reviewSecurity({})).rejects.toThrow(/cannot authorize SQL/i);
+  });
+
+  it('advertises every required repair field and does not accept an incomplete candidate as success', async () => {
+    const incomplete = { decision: 'repair_candidate', reason: 'Missing ownership predicate', evidence_ids: ['migration', 'specification'], next_action: 'Fix the policy' };
+    (executeAssistantStep as jest.Mock).mockImplementation(async (messages, _instance, options) => {
+      const verdict = options.custom_tools.find((entry: Tool) => entry.name === verdictName);
+      expect(verdict.parameters.required).toEqual(expect.arrayContaining(['hypothesis', 'instruction', 'verification']));
+      const response = await verdict.execute(incomplete);
+      expect(response).toMatchObject({ accepted: false, decision: 'unresolved', error: expect.stringContaining('No repair was assigned') });
+      return result(messages);
+    });
+    expect(await diagnoseMigration(params())).toMatchObject({ decision: 'unresolved' });
+    expect(executeAssistantStep).toHaveBeenCalledTimes(1);
+    expect(writeSql).not.toHaveBeenCalled();
+    expect(applySql).not.toHaveBeenCalled();
   });
 
   it('binds submitted IDs to full host checksums and bounded evidence excerpts', async () => {
@@ -161,14 +180,14 @@ describe('independent read-only migration diagnostic agent', () => {
     { output: candidate },
     { messages: [{ role: 'assistant', content: JSON.stringify(candidate) }] },
     { messages: [{ role: 'assistant', tool_calls: [offeredCall('never-executed')] }] },
-  ])('uses at most three model calls and never treats prose/output/unexecuted tools as a verdict (%#)', async response => {
+  ])('bounds investigation and never treats prose/output/unexecuted tools as a verdict (%#)', async response => {
     (executeAssistantStep as jest.Mock).mockImplementation(async messages => {
       const next = [...messages, { role: 'assistant', content: 'No submitted diagnostic.' }];
       return result(next, response);
     });
     const diagnosis = await diagnoseMigration(params());
-    expect(MIGRATION_DIAGNOSTIC_TURNS).toBe(3);
-    expect(executeAssistantStep).toHaveBeenCalledTimes(3);
+    expect(MIGRATION_DIAGNOSTIC_TURNS).toBe(12);
+    expect(executeAssistantStep).toHaveBeenCalledTimes(MIGRATION_DIAGNOSTIC_TURNS);
     expect(diagnosis).toMatchObject({ decision: 'unresolved', evidence: [] });
     expect(diagnosis.next_action).toMatch(/not proof.*impossible/i);
     expect(writeSql).not.toHaveBeenCalled();
@@ -185,6 +204,31 @@ describe('independent read-only migration diagnostic agent', () => {
     });
     await expect(diagnoseMigration(params())).resolves.toMatchObject({ decision: 'repair_candidate' });
     expect(executeAssistantStep).toHaveBeenCalledTimes(3);
+  });
+
+  it('can investigate host execution before submitting a migration diagnosis', async () => {
+    (executeAssistantStep as jest.Mock).mockImplementation(async (messages, _instance, options) => {
+      const observation = await tool(options, 'harness_inspect').execute({});
+      expect(observation).toMatchObject({ evidence_id: 'harness-1', result: { runtime: { kind: 'migration_diagnostic' } } });
+      await tool(options, verdictName).execute({ ...candidate, evidence_ids: [...candidate.evidence_ids, observation.evidence_id] });
+      return result(messages);
+    });
+    const diagnosis = await diagnoseMigration(params());
+    expect(diagnosis.evidence.map(item => item.id)).toContain('harness-1');
+    expect(diagnosis.decision).toBe('repair_candidate');
+  });
+
+  it('rechecks diagnostic ownership before any harness tool dispatch even when tool errors are swallowed', async () => {
+    const input = params();
+    const stale = new Error('diagnostic lease expired');
+    (executeAssistantStep as jest.Mock).mockImplementation(async (messages, _instance, options) => {
+      const harnessTool = tool(options, 'harness_inspect');
+      input.context.assertCurrent.mockRejectedValue(stale);
+      await expect(harnessTool.execute({})).rejects.toBe(stale);
+      return result(messages);
+    });
+    await expect(diagnoseMigration(input)).rejects.toBe(stale);
+    expect(executeAssistantStep).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -275,8 +319,8 @@ describe('independent read-only migration diagnostic agent', () => {
       return result(messages);
     });
     await expect(diagnoseMigration(params())).resolves.toMatchObject({ decision: 'unresolved' });
-    expect(executeAssistantStep).toHaveBeenCalledTimes(3);
-    expect(attempts).toBe(9);
+    expect(executeAssistantStep).toHaveBeenCalledTimes(MIGRATION_DIAGNOSTIC_TURNS);
+    expect(attempts).toBe(MIGRATION_DIAGNOSTIC_TURNS * 3);
     expect(readContext).toHaveBeenCalledTimes(9); // The initial migration plus eight diagnostic reads.
   });
 

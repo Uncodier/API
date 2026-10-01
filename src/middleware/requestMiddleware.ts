@@ -2,10 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAllowedHeaders, getAllowedOrigins } from '../../cors.config.js';
 import { apiKeyAuth } from './apiKeyAuth';
 import { enforceRequestRateLimit } from '@/lib/security/request-rate-limit';
+import { extractApiKeyCredential, isServiceApiKeyCredential } from '@/lib/security/api-key-credential';
 import {
   isExpensivePath,
   limitCorsPreflight,
+  limitExpensiveGlobal,
   limitPublicImageDelivery,
+  limitServiceExpensive,
   requestRatePolicy,
   usesRouteLevelGenerationRateLimit,
 } from './requestRateLimits';
@@ -79,6 +82,12 @@ export function isPublicRequest(pathname: string, method: string): boolean {
 function positiveIntegerSetting(name: string, fallback: number): number {
   const parsed = Number(process.env[name]);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function isIdentityTokenRequest(pathname: string): boolean {
+  return pathname === '/api/visitors/identity/token'
+    || pathname === '/api/visitors/identity/token/current-user'
+    || /^\/api\/visitors\/session\/[^/]+\/identify\/token$/.test(pathname);
 }
 
 function isAllowedStaticOrigin(origin: string | null): boolean {
@@ -278,6 +287,29 @@ export default async function requestMiddleware(request: NextRequest) {
     );
   }
 
+  // A verified service credential gets a separate private expensive budget,
+  // not an authentication bypass. Public/identity/webhook handlers must retain
+  // their existing admission and independent authorization contracts.
+  if (isExpensivePath(pathname)
+    && !publicRequest
+    && !webhookRequest
+    && !isIdentityTokenRequest(pathname)) {
+    if (!isAllowedStaticOrigin(origin)) {
+      return new NextResponse(null, {
+        status: 403,
+        statusText: 'Forbidden - Origin not allowed',
+      });
+    }
+    if (await isServiceApiKeyCredential(extractApiKeyCredential(request))) {
+      const authenticated = await apiKeyAuth(request);
+      if (!authenticated.ok) return withCors(authenticated, origin);
+      const limited = await limitServiceExpensive(request);
+      if (limited) return withCors(limited, origin);
+      const globallyLimited = await limitExpensiveGlobal(request);
+      return withCors(globallyLimited ?? authenticated, origin);
+    }
+  }
+
   if (routeLevelGenerationLimit) {
     const limited = await limitPublicImageDelivery(request);
     if (limited) return withCors(limited, origin);
@@ -323,16 +355,7 @@ export default async function requestMiddleware(request: NextRequest) {
     !routeLevelGenerationLimit
     && isExpensivePath(pathname)
   ) {
-    const globallyLimited = await enforceRequestRateLimit(request, {
-      namespace: 'expensive-global',
-      identity: 'global',
-      limit: positiveIntegerSetting(
-        'EXPENSIVE_API_GLOBAL_REQUESTS_PER_MINUTE',
-        2_000,
-      ),
-      windowSeconds: 60,
-      failClosed: true,
-    });
+    const globallyLimited = await limitExpensiveGlobal(request);
     if (globallyLimited) return withCors(globallyLimited, origin);
   } else if (
     !routeLevelGenerationLimit
@@ -398,9 +421,7 @@ export default async function requestMiddleware(request: NextRequest) {
 
   // These exact handlers independently validate both issuer and visitor proof.
   // Never route them through generic service/global API-key shortcuts.
-  if (pathname === '/api/visitors/identity/token'
-    || pathname === '/api/visitors/identity/token/current-user'
-    || /^\/api\/visitors\/session\/[^/]+\/identify\/token$/.test(pathname)) {
+  if (isIdentityTokenRequest(pathname)) {
     return withCors(next(), origin);
   }
 

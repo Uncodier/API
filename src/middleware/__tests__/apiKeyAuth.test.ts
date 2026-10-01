@@ -1,16 +1,25 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { NextRequest } from 'next/server';
 
 const validateApiKey = jest.fn();
 
-jest.mock('@/lib/services/api-keys/ApiKeyService', () => ({
+jest.unstable_mockModule('@/lib/services/api-keys/ApiKeyService', () => ({
   ApiKeyService: { validateApiKey },
 }));
-jest.mock('@/lib/status/telemetry', () => ({
+jest.unstable_mockModule('@/lib/status/telemetry', () => ({
   recordTelemetry: jest.fn(() => Promise.resolve()),
 }));
+jest.unstable_mockModule('@/lib/security/request-rate-limit', () => ({
+  enforceRequestRateLimit: jest.fn(async () => null),
+}));
 
-import { apiKeyAuth, requiredApiKeyScope } from '../apiKeyAuth';
+// The repository's Jest runner uses native ESM; import after registering mocks
+// so these unit regressions cannot contact database/telemetry/admission storage.
+let apiKeyAuth: typeof import('../apiKeyAuth').apiKeyAuth;
+let requiredApiKeyScope: typeof import('../apiKeyAuth').requiredApiKeyScope;
+beforeAll(async () => {
+  ({ apiKeyAuth, requiredApiKeyScope } = await import('../apiKeyAuth'));
+});
 
 describe('apiKeyAuth', () => {
   beforeEach(() => {

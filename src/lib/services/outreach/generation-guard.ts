@@ -5,6 +5,7 @@ import { availableOutreachRecipients } from './recipients';
 import { loadOutreachConversations } from './recipient-repository';
 import { outreachRepository } from './delivery';
 import { summarizeOutreachHistory } from './history';
+import { outreachTimingReason } from './timing';
 
 /** Managed-only boundary: caller leadData never authorizes generation/logging. */
 export async function assertOutreachGeneration(request: Request, siteId: string, leadId: string, activity: OutreachActivityKey) {
@@ -21,6 +22,8 @@ export async function assertOutreachGeneration(request: Request, siteId: string,
     || !['new', 'contacted', 'qualified'].includes(lead.status)) denied('Lead is ineligible');
   const policy = getOutreachPolicy(settings, activity);
   if (!policy || policy.status !== 'active') return denied('Outreach inactive or invalid');
+  const timingReason = outreachTimingReason(settings, activity);
+  if (timingReason) denied(timingReason);
   if (!policy.all_segments && (!lead.segment_id || !policy.segment_ids.includes(lead.segment_id))) denied('Segment not selected');
   if (!policy.all_segments && !await outreachRepository.segmentBelongsToSite(siteId, lead.segment_id)) denied('Segment not selected');
   try {

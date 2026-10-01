@@ -74,6 +74,7 @@ import { companiesTool } from '@/app/api/agents/tools/companies/assistantProtoco
 import { systemNotificationTool } from '@/app/api/agents/tools/system_notification/assistantProtocol';
 import { requirementStatusTool } from '@/app/api/agents/tools/requirement_status/assistantProtocol';
 import { requirementBacklogTool } from '@/app/api/agents/tools/requirement_backlog/assistantProtocol';
+import { createHarnessDiagnosticTools, refreshHarnessToolManifest } from '@/lib/services/harness-diagnostics/tools';
 import { instanceLogsTool } from '@/app/api/agents/tools/instance_logs/assistantProtocol';
 import { instanceHistoryTool } from '@/app/api/agents/tools/instance_history/assistantProtocol';
 import { audioToTextTool } from '@/app/api/agents/tools/audioToText/assistantProtocol';
@@ -445,6 +446,17 @@ export const getAssistantToolDefinitions = (
     );
   }
 
+  if (requirementId) {
+    const diagnosticContext = {
+      siteId, instanceId, requirementId,
+      runtime: customTools.some(tool => tool?.name?.startsWith('sandbox_')) ? 'sandbox_executor' : 'assistant',
+      toolNames: tools.map(tool => tool.name),
+    };
+    const diagnostics = createHarnessDiagnosticTools(diagnosticContext);
+    diagnosticContext.toolNames.push(...diagnostics.map(tool => tool.name));
+    tools.push(...diagnostics);
+  }
+
   return tools as RoutedTool[];
 };
 
@@ -459,7 +471,7 @@ export const getAssistantTools = (
   uiMediaOutputType?: UiMediaOutputType,
   approvedImport?: { url: string; sha256: string; userId: string },
 ) => {
-  return routeTools(
+  return refreshHarnessToolManifest(routeTools(
     getAssistantToolDefinitions(
       siteId,
       userId,
@@ -471,7 +483,7 @@ export const getAssistantTools = (
       uiMediaOutputType,
       approvedImport,
     ),
-  );
+  ));
 };
 
 /**

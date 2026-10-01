@@ -10,6 +10,17 @@ The official public documentation is hosted via Nextra in the `src/content` fold
 
 To contribute to the documentation, please read [CONTRIBUTING.md](CONTRIBUTING.md).
 
+### Durable IcyPeas email search
+
+The new `POST /api/integrations/icypeas/email-search/resolve` performs one durable
+submit-or-poll step per request, scoped to an authenticated site. Apply
+`20261002000000_icypeas_email_searches.sql` **before API deployment**, then roll out
+the separately patched polling worker. Ambiguous submits require manual recovery;
+they are never automatically resubmitted. This is a bounded single-repair path,
+not a new automated bulk/backfill runner: ICP work needs an explicit target budget,
+serial execution and durable checkpoints. See the [deployment order, API/worker
+contract, offline tests and recovery runbook](docs/README-IcyPeas-Durable-Email-Search.md).
+
 ## Features
 
 - **AI Agent Management**: Coordinate and communicate with AI team members (Sales, Copywriter, Analyst)

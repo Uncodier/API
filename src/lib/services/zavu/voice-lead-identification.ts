@@ -1,20 +1,43 @@
 import { v5 as uuidv5 } from "uuid";
 import { z } from "zod";
 import { supabaseAdmin } from "@/lib/database/supabase-server";
+import { normalizeVoiceIdentityEmail } from "./voice-identity-email";
+import { VoiceLeadValidationError, type VoiceLeadField } from "./voice-lead-errors";
+import {
+  MAX_VOICE_PHONE_CANDIDATES,
+  matchesVoiceLeadPhone,
+  normalizeVoiceIdentityPhone,
+  voiceLeadPhoneSearchPattern,
+} from "./voice-phone-match";
+
+export { normalizeVoiceIdentityPhone } from "./voice-phone-match";
 
 const identitySchema = z.object({
   name: z.string().trim().min(1).max(200).regex(/^[^\u0000-\u001f\u007f]+$/),
-  email: z.string().trim().max(254).email().transform((email) => email.toLowerCase()),
+  email: z.preprocess(normalizeVoiceIdentityEmail, z.string().max(254).email()),
   phone: z.string().trim().min(1).max(80).optional(),
+  callback_phone: z.string().trim().min(1).max(80).optional(),
   company: z.string().trim().max(200).optional(),
 });
 
-type LeadIdentity = { id: string; site_id: string; email: string | null; phone: string | null };
+type ConfirmedIdentity = z.infer<typeof identitySchema>;
+type LeadIdentity = {
+  id: string;
+  site_id: string;
+  email: string | null;
+  phone: string | null;
+  name: string;
+  origin: string | null;
+  company: { name?: string } | null;
+  metadata: Record<string, any> | null;
+};
 
 export type VoiceLeadIdentificationResult = {
   success: true;
   lead_id: string;
   is_new_lead: boolean;
+  contact_details_saved: boolean;
+  message?: string;
 };
 
 function tenantDatabase() {
@@ -23,14 +46,6 @@ function tenantDatabase() {
     || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA
     || "public"
   );
-}
-
-/** Do not guess a country or remove digits from a caller identity. */
-export function normalizeVoiceIdentityPhone(value: unknown): string | undefined {
-  if (typeof value !== "string" || value.length > 80) return undefined;
-  let phone = value.trim().replace(/[\s().-]/g, "");
-  if (phone.startsWith("00")) phone = `+${phone.slice(2)}`;
-  return /^\+[1-9]\d{6,14}$/.test(phone) ? phone : undefined;
 }
 
 function conflict(): never {
@@ -42,19 +57,19 @@ async function findExistingLead(
   siteId: string,
   phone: string,
   email: string
-): Promise<string | undefined> {
+): Promise<LeadIdentity | undefined> {
   const db = tenantDatabase();
   // Separate filters avoid an email OR phone / limit(1) arbitrary identity merge.
   // Escape LIKE metacharacters: a literal '_' or '%' in an email is not a wildcard.
   const emailPattern = email.replace(/[\\%_]/g, "\\$&");
   const [phoneResult, emailResult] = await Promise.all([
     db.from("leads")
-      .select("id, site_id, email, phone")
+      .select("id, site_id, email, phone, name, origin, company, metadata")
       .eq("site_id", siteId)
-      .eq("phone", phone)
-      .limit(2),
+      .ilike("phone", voiceLeadPhoneSearchPattern(phone))
+      .limit(MAX_VOICE_PHONE_CANDIDATES + 1),
     db.from("leads")
-      .select("id, site_id, email, phone")
+      .select("id, site_id, email, phone, name, origin, company, metadata")
       .eq("site_id", siteId)
       .ilike("email", emailPattern)
       .limit(2),
@@ -62,7 +77,9 @@ async function findExistingLead(
   if (phoneResult.error || emailResult.error) {
     throw new Error("Unable to check existing Voice lead identity");
   }
-  const phoneMatches = (phoneResult.data || []) as LeadIdentity[];
+  const phoneCandidates = (phoneResult.data || []) as LeadIdentity[];
+  if (phoneCandidates.length > MAX_VOICE_PHONE_CANDIDATES) conflict();
+  const phoneMatches = phoneCandidates.filter(lead => matchesVoiceLeadPhone(lead.phone, phone));
   const emailMatches = (emailResult.data || []) as LeadIdentity[];
   if (phoneMatches.length > 1 || emailMatches.length > 1) conflict();
   const phoneLead = phoneMatches[0];
@@ -74,13 +91,77 @@ async function findExistingLead(
   if (!phoneLead) return undefined;
   if (
     phoneLead.site_id !== siteId
-    || phoneLead.phone !== phone
+    || !matchesVoiceLeadPhone(phoneLead.phone, phone)
     || !z.string().uuid().safeParse(phoneLead.id).success
     || (phoneLead.email?.trim() && phoneLead.email.trim().toLowerCase() !== email)
   ) conflict();
-  // Existing names/company, blank contact fields, status and opt-outs are not
-  // overwritten based on unverified caller-supplied attributes.
-  return phoneLead.id;
+  return phoneLead;
+}
+
+function identificationMetadata(callbackPhone?: string) {
+  return {
+    consent: true,
+    consent_scope: "store_contact_details_and_be_contacted",
+    consent_recorded_at: new Date().toISOString(),
+    // Caller-supplied contact details are not verified identity or call consent.
+    identity_status: "caller_confirmed",
+    ...(callbackPhone ? { callback_phone: callbackPhone, callback_phone_verified: false } : {}),
+  };
+}
+
+function isProvisionalLead(lead: LeadIdentity): boolean {
+  const inbound = lead.metadata?.voice_inbound;
+  return lead.id === uuidv5(`zavu-voice-lead:${lead.site_id}:${lead.phone}`, uuidv5.URL)
+    && lead.origin === "voice"
+    && lead.name === `Voice caller ${lead.phone}`
+    && lead.email === null
+    && (lead.company == null || (
+      typeof lead.company === "object" && !Array.isArray(lead.company) && Object.keys(lead.company).length === 0
+    ))
+    && inbound?.source === "zavu_webhook"
+    && inbound.identity_status === "unverified"
+    && inbound.phone_source === "provider_call"
+    && lead.metadata?.voice_identification == null;
+}
+
+function existingResult(lead: LeadIdentity, identity: ConfirmedIdentity): VoiceLeadIdentificationResult {
+  const saved = lead.email?.trim().toLowerCase() === identity.email
+    && lead.name === identity.name
+    && (!identity.company || lead.company?.name === identity.company)
+    && (!identity.callback_phone || lead.metadata?.voice_identification?.callback_phone === identity.callback_phone);
+  return {
+    success: true, lead_id: lead.id, is_new_lead: false, contact_details_saved: saved,
+    ...(!saved ? {
+      message: "Caller matched, but existing contact details were not changed. Do not claim the new details were saved; request human assistance to update this profile.",
+    } : {}),
+  };
+}
+
+async function completeProvisionalLead(
+  lead: LeadIdentity,
+  identity: ConfirmedIdentity
+): Promise<VoiceLeadIdentificationResult> {
+  if (!isProvisionalLead(lead)) return existingResult(lead, identity);
+
+  // Only upgrade our own empty webhook placeholder. Compare the complete
+  // metadata snapshot so concurrent changes and opt-outs are never overwritten.
+  let update = tenantDatabase().from("leads").update({
+    name: identity.name,
+    email: identity.email,
+    ...(identity.company ? { company: { name: identity.company } } : {}),
+    metadata: { ...lead.metadata, voice_identification: identificationMetadata(identity.callback_phone) },
+  }).eq("id", lead.id).eq("site_id", lead.site_id).eq("phone", lead.phone)
+    .eq("origin", "voice").eq("name", lead.name).is("email", null)
+    .eq("metadata", JSON.stringify(lead.metadata));
+  // The live schema defaults company to {}, while older placeholders can be null.
+  update = lead.company == null ? update.is("company", null) : update.eq("company", JSON.stringify(lead.company));
+  const { error } = await update.select("id").maybeSingle();
+  if (error) throw new Error("Unable to save confirmed Voice contact details");
+  // Check both the saved details and identity conflicts again before success,
+  // including a simultaneous winner. This is not a cross-row uniqueness lock.
+  const winner = await findExistingLead(lead.site_id, lead.phone!, identity.email);
+  if (winner?.id === lead.id && !isProvisionalLead(winner)) return existingResult(winner, identity);
+  throw new Error("Voice contact changed during confirmation; retry with the same confirmed details");
 }
 
 /**
@@ -97,7 +178,7 @@ export async function identifyVoiceLead(params: {
   arguments: Record<string, unknown>;
 }): Promise<VoiceLeadIdentificationResult> {
   if (params.arguments?.consent !== true) {
-    throw new Error("Explicit caller consent is required to identify a Voice lead");
+    throw new VoiceLeadValidationError("VOICE_LEAD_CONSENT_REQUIRED", ["consent"]);
   }
   if (!z.string().uuid().safeParse(params.siteId).success) {
     throw new Error("A valid authoritative site is required for Voice lead identification");
@@ -106,19 +187,25 @@ export async function identifyVoiceLead(params: {
   // conversation, command_id, or any other model-controlled persistence fields.
   const parsed = identitySchema.safeParse(params.arguments);
   if (!parsed.success) {
-    throw new Error("Voice lead identification requires a nonblank name and valid email and contact details");
+    throw new VoiceLeadValidationError("VOICE_LEAD_INVALID_DETAILS", parsed.error.issues
+      .map((issue) => issue.path[0] as VoiceLeadField));
   }
   const identity = parsed.data;
   const phone = normalizeVoiceIdentityPhone(params.contactPhone);
   if (!phone) {
-    throw new Error("A trusted caller phone in international format is required for Voice lead identification");
+    throw new VoiceLeadValidationError("VOICE_LEAD_CALLER_PHONE_UNAVAILABLE");
   }
   if (identity.phone !== undefined && normalizeVoiceIdentityPhone(identity.phone) !== phone) {
-    throw new Error("Confirmed phone must match the trusted Voice caller phone");
+    throw new VoiceLeadValidationError("VOICE_LEAD_PHONE_MISMATCH", ["phone"]);
+  }
+  if (identity.callback_phone !== undefined) {
+    const callbackPhone = normalizeVoiceIdentityPhone(identity.callback_phone);
+    if (!callbackPhone) throw new VoiceLeadValidationError("VOICE_LEAD_INVALID_DETAILS", ["callback_phone"]);
+    identity.callback_phone = callbackPhone;
   }
 
-  const existingId = await findExistingLead(params.siteId, phone, identity.email);
-  if (existingId) return { success: true, lead_id: existingId, is_new_lead: false };
+  const existing = await findExistingLead(params.siteId, phone, identity.email);
+  if (existing) return completeProvisionalLead(existing, identity);
 
   const db = tenantDatabase();
   const { data: site, error: siteError } = await db.from("sites")
@@ -148,20 +235,16 @@ export async function identifyVoiceLead(params: {
     status: "contacted",
     origin: "voice",
     metadata: {
-      voice_identification: {
-        consent: true,
-        consent_scope: "store_contact_details_and_be_contacted",
-        consent_recorded_at: new Date().toISOString(),
-      },
+      voice_identification: identificationMetadata(identity.callback_phone),
     },
   });
   if (insertError) {
     if (insertError.code === "23505") {
-      const winnerId = await findExistingLead(params.siteId, phone, identity.email);
-      if (winnerId) return { success: true, lead_id: winnerId, is_new_lead: false };
+      const winner = await findExistingLead(params.siteId, phone, identity.email);
+      if (winner) return completeProvisionalLead(winner, identity);
     }
     // Do not surface database errors (which may include PII/other tenant data).
     throw new Error("Unable to create Voice lead");
   }
-  return { success: true, lead_id: leadId, is_new_lead: true };
+  return { success: true, lead_id: leadId, is_new_lead: true, contact_details_saved: true };
 }

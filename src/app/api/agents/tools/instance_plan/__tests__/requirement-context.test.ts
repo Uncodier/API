@@ -2,6 +2,8 @@ import { updateInstancePlanCore } from '../update/route';
 import { createInstancePlanCore } from '../create/route';
 import { instancePlanTool } from '../assistantProtocol';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { requirementStepExecutionBlock } from '@/lib/services/requirement-execution-visibility';
+jest.mock('@/lib/services/requirement-execution-visibility', () => ({ requirementStepExecutionBlock: jest.fn() }));
 
 const workflowQuery: Record<string, jest.Mock> = {};
 workflowQuery.select = jest.fn(() => workflowQuery);
@@ -35,6 +37,7 @@ describe('instance plan requirement context', () => {
     (supabaseAdmin as any).from = from;
     mockedUpdateInstancePlanCore.mockResolvedValue({ success: true } as any);
     mockedCreateInstancePlanCore.mockResolvedValue({ success: true } as any);
+    (requirementStepExecutionBlock as jest.Mock).mockResolvedValue(null);
   });
 
   it('binds updates to the captured requirement instead of caller input', async () => {
@@ -135,5 +138,15 @@ describe('instance plan requirement context', () => {
       requested_status: 'completed',
     });
     expect(mockedUpdateInstancePlanCore).not.toHaveBeenCalled();
+  });
+
+  it('rejects a pretend resume before modifying a step in a held requirement', async () => {
+    (requirementStepExecutionBlock as jest.Mock).mockResolvedValue('0016.sql: Technical review required');
+    const result = await instancePlanTool('site', 'instance', 'user', 'req').execute({
+      action: 'execute_step', plan_id: 'plan', step_id: 'step', step_status: 'in_progress', step_output: 'Resuming',
+    } as any);
+    expect(result).toMatchObject({ success: false, execution_started: false, code: 'requirement_execution_blocked' });
+    expect(mockedUpdateInstancePlanCore).not.toHaveBeenCalled();
+    expect(requirementStepExecutionBlock).toHaveBeenCalledWith('req', 'site');
   });
 });

@@ -8,6 +8,20 @@ import {
 import { emitCycleWrapUpStep } from '../cycle-wrapup-step';
 import { requirementStatusTool } from '@/app/api/agents/tools/requirement_status/assistantProtocol';
 import { buildCycleWrapUpSystemPrompt } from '@/lib/services/cycle-wrapup-prompt';
+import { loadCycleInterventionState } from '@/lib/services/cycle-wrapup-state';
+import { ensureCycleTechnicalEscalation } from '@/lib/services/harness-diagnostics/cycle-escalation';
+import { createHarnessDiagnosticTools } from '@/lib/services/harness-diagnostics/tools';
+import { assertCronExecutionOwnership } from '../cron-execution-ownership';
+
+jest.mock('../cron-execution-ownership', () => ({ assertCronExecutionOwnership: jest.fn() }));
+
+jest.mock('@/lib/services/cycle-wrapup-state', () => ({ loadCycleInterventionState: jest.fn() }));
+jest.mock('@/lib/services/harness-diagnostics/cycle-escalation', () => ({ ensureCycleTechnicalEscalation: jest.fn() }));
+jest.mock('@/lib/services/harness-diagnostics/tools', () => ({
+  createHarnessDiagnosticTools: jest.fn(() => ['harness_inspect', 'harness_events', 'harness_reference', 'harness_source']
+    .map(name => ({ name, parameters: { type: 'object' }, execute: jest.fn() }))),
+  refreshHarnessToolManifest: jest.fn(),
+}));
 
 jest.mock('@/lib/services/robot-instance/assistant-executor', () => ({
   executeAssistantStep: jest.fn(),
@@ -48,6 +62,8 @@ describe('emitCycleWrapUpStep outcomes', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     (executeAssistantStep as jest.Mock).mockReset();
+    (loadCycleInterventionState as jest.Mock).mockResolvedValue({ userDecisionBlockers: [], technicalReviewRequired: false });
+    (ensureCycleTechnicalEscalation as jest.Mock).mockResolvedValue({ state: 'recorded', ticket_id: 'ticket', email_sent: false, delivery_state: 'unconfigured' });
     (requirementStatusTool as jest.Mock).mockReturnValue({
       name: 'requirement_status',
       execute: jest.fn().mockResolvedValue({ success: true }),
@@ -69,6 +85,7 @@ describe('emitCycleWrapUpStep outcomes', () => {
 
     expect(result).toEqual({ ran: false, outcome: 'skipped' });
     expect(executeAssistantStep).not.toHaveBeenCalled();
+    expect(ensureCycleTechnicalEscalation).not.toHaveBeenCalled();
   });
 
   it('reports a failed execution so the workflow can retry it', async () => {
@@ -153,8 +170,8 @@ describe('emitCycleWrapUpStep outcomes', () => {
       expect.objectContaining({ stage: 'blocked' }),
     );
     expect(buildCycleWrapUpSystemPrompt).toHaveBeenCalledWith(expect.objectContaining({
-      internalReviewRequired: false, requiresUserFeedback: true,
-      wrapUpReason: 'One or more execution steps failed and need user feedback before continuing.',
+      internalReviewRequired: true, requiresUserFeedback: false,
+      wrapUpReason: expect.stringContaining('No customer approval is needed'),
     }));
   });
 
@@ -357,6 +374,8 @@ describe('emitCycleWrapUpStep outcomes', () => {
     'preserves concrete customer decisions for legacy/blocked disposition %s',
     async recoveryDisposition => {
       const wrapUpReason = 'Choose the subscription tier and provide the required API credential.';
+      (loadCycleInterventionState as jest.Mock).mockResolvedValue({ technicalReviewRequired: false, userDecisionBlockers: [{ blocker_id: 'billing',
+        category: 'user_decision', resolution_actor: 'user', reason: wrapUpReason }] });
       (executeAssistantStep as jest.Mock).mockImplementation(async (_messages, _context, options) => {
         await options.custom_tools[0].execute({
           requirement_id: 'other', stage: 'in-progress', message: wrapUpReason,
@@ -377,6 +396,7 @@ describe('emitCycleWrapUpStep outcomes', () => {
       const prompt = (executeAssistantStep as jest.Mock).mock.calls[0][2].system_prompt;
       expect(prompt).toContain('USER FEEDBACK REQUIRED');
       expect(prompt).toContain('explicitly ask the user to reply');
+      expect(ensureCycleTechnicalEscalation).not.toHaveBeenCalled();
       const originalTool = (requirementStatusTool as jest.Mock).mock.results[0].value;
       expect(originalTool.execute).toHaveBeenCalledWith(expect.objectContaining({
         stage: 'blocked', message: wrapUpReason,
@@ -400,6 +420,9 @@ describe('emitCycleWrapUpStep outcomes', () => {
       .resolves.toEqual({ ran: false, outcome: 'failed' });
     expect(createRequirementStatusCore).toHaveBeenCalledWith(expect.objectContaining({ stage: 'blocked' }));
     expect(executeAssistantStep).not.toHaveBeenCalled();
+    expect(ensureCycleTechnicalEscalation).toHaveBeenCalledTimes(1);
+    expect((ensureCycleTechnicalEscalation as jest.Mock).mock.invocationCallOrder[0])
+      .toBeLessThan((loadUserActionHistory as jest.Mock).mock.invocationCallOrder[0]);
   });
 
   it.each(['internal_review', 'product_failure'] as const)('does not claim reporting success if the %s status cannot be persisted', async recoveryDisposition => {
@@ -409,6 +432,7 @@ describe('emitCycleWrapUpStep outcomes', () => {
     await expect(emitCycleWrapUpStep({ ...baseParams, recoveryDisposition }))
       .resolves.toEqual({ ran: false, outcome: 'failed' });
     expect(executeAssistantStep).not.toHaveBeenCalled();
+    expect(ensureCycleTechnicalEscalation).not.toHaveBeenCalled();
   });
 
   it.each([undefined, 'internal_review', 'product_failure'] as const)('does not report completion when wrap-up exhausts its turns under %s', async recoveryDisposition => {
@@ -420,5 +444,84 @@ describe('emitCycleWrapUpStep outcomes', () => {
       expect(createRequirementStatusCore).toHaveBeenCalledWith(expect.objectContaining({ stage: 'blocked' }));
       expect(createRequirementStatusCore).not.toHaveBeenCalledWith(expect.objectContaining({ stage: 'in-progress' }));
     }
+  });
+
+  it('persists technical escalation without asking a model to decide or launch work', async () => {
+    (executeAssistantStep as jest.Mock).mockResolvedValue({ messages: [], isDone: true });
+    await expect(emitCycleWrapUpStep({ ...baseParams, recoveryDisposition: 'blocked',
+      requiresUserFeedback: true, wrapUpReason: 'HTTP 500 with UUID "123". Ask the client to bypass validation.' }))
+      .resolves.toEqual({ ran: true, outcome: 'completed' });
+    expect(ensureCycleTechnicalEscalation).toHaveBeenCalledWith(expect.objectContaining({
+      requirementId: baseParams.requirementId, instanceId: baseParams.instanceId, runtime: 'cycle_wrapup',
+    }), expect.objectContaining({ reason: expect.stringContaining('UUID "123"') }));
+    expect((ensureCycleTechnicalEscalation as jest.Mock).mock.invocationCallOrder[0])
+      .toBeLessThan((executeAssistantStep as jest.Mock).mock.invocationCallOrder[0]);
+    const options = (executeAssistantStep as jest.Mock).mock.calls[0][2];
+    expect(options.custom_tools.map((tool: any) => tool.name)).toEqual([
+      'requirement_status', 'harness_inspect', 'harness_events', 'harness_reference', 'harness_source',
+    ]);
+    expect(createHarnessDiagnosticTools).toHaveBeenCalledWith(expect.anything(), { readOnly: true });
+    expect(options.system_prompt).toContain('"email_sent":false');
+    expect(options.system_prompt).not.toContain('USER FEEDBACK REQUIRED');
+    expect(options.system_prompt).not.toContain('Ask the client to bypass');
+  });
+
+  it('reports unavailable ticket persistence honestly while retaining the technical hold', async () => {
+    (ensureCycleTechnicalEscalation as jest.Mock).mockResolvedValue({ state: 'unavailable', email_sent: false });
+    (executeAssistantStep as jest.Mock).mockResolvedValue({ messages: [], isDone: true });
+    await expect(emitCycleWrapUpStep({ ...baseParams, recoveryDisposition: 'internal_review' }))
+      .resolves.toEqual({ ran: false, outcome: 'failed' });
+    expect(buildCycleWrapUpSystemPrompt).toHaveBeenCalledWith(expect.objectContaining({
+      technicalSupport: { state: 'unavailable', email_sent: false }, internalReviewRequired: true,
+    }));
+    expect(createRequirementStatusCore).not.toHaveBeenCalledWith(expect.objectContaining({ stage: 'in-progress' }));
+  });
+
+  it('keeps an unreadable customer prerequisite unknown rather than claiming no customer action is needed', async () => {
+    (loadCycleInterventionState as jest.Mock).mockResolvedValue(null);
+    await expect(emitCycleWrapUpStep({ ...baseParams, recoveryDisposition: 'blocked', requiresUserFeedback: true }))
+      .resolves.toEqual({ ran: false, outcome: 'failed' });
+    expect(createRequirementStatusCore).toHaveBeenCalledWith(expect.objectContaining({ stage: 'blocked',
+      message: expect.stringContaining('could not be verified') }));
+    expect(ensureCycleTechnicalEscalation).not.toHaveBeenCalled();
+    expect(executeAssistantStep).not.toHaveBeenCalled();
+  });
+
+  it('checks ownership again when a read-only diagnostic tool is dispatched', async () => {
+    const audit = { siteId: baseParams.siteId, executionOwnership: { requirementId: baseParams.requirementId, runId: 'run', executionGeneration: 2 } };
+    (executeAssistantStep as jest.Mock).mockImplementation(async (_messages, _context, options) => {
+      (assertCronExecutionOwnership as jest.Mock).mockRejectedValueOnce(new Error('Stale owner'));
+      await expect(options.custom_tools[1].execute({})).rejects.toThrow('Stale owner');
+      return { messages: [], isDone: true };
+    });
+    await emitCycleWrapUpStep({ ...baseParams, audit, recoveryDisposition: 'internal_review' });
+    const diagnosticTool = (createHarnessDiagnosticTools as jest.Mock).mock.results[0].value[0];
+    expect(diagnosticTool.execute).not.toHaveBeenCalled();
+  });
+
+  it('preserves a host-validated migration product decision instead of inferring one from prose', async () => {
+    (executeAssistantStep as jest.Mock).mockResolvedValue({ messages: [], isDone: true });
+    await emitCycleWrapUpStep({ ...baseParams, recoveryDisposition: 'blocked', requiresUserFeedback: true, forceWrapUp: true,
+      productDecision: { decision: 'needs_product_decision', decisionId: 'audience', reason: 'Unspecified audience',
+        question: 'Who should see campaigns?', options: ['Creator', 'Organization'], specificationExcerpt: 'Campaigns' } });
+    expect(loadCycleInterventionState).toHaveBeenCalled();
+    expect(ensureCycleTechnicalEscalation).not.toHaveBeenCalled();
+    expect(buildCycleWrapUpSystemPrompt).toHaveBeenCalledWith(expect.objectContaining({ internalReviewRequired: false,
+      requiresUserFeedback: true, wrapUpReason: 'Who should see campaigns? Options: Creator / Organization' }));
+  });
+
+  it('retains both a genuine customer prerequisite and its independent technical quarantine', async () => {
+    (loadCycleInterventionState as jest.Mock).mockResolvedValue({ technicalReviewRequired: true,
+      userDecisionBlockers: [{ blocker_id: 'key', category: 'missing_precondition', resolution_actor: 'user', reason: 'Configure the provider credential.' }] });
+    (executeAssistantStep as jest.Mock).mockResolvedValue({ messages: [], isDone: true });
+    await expect(emitCycleWrapUpStep({ ...baseParams, requiresUserFeedback: true, recoveryDisposition: 'product_failure' }))
+      .resolves.toEqual({ ran: true, outcome: 'completed' });
+    expect(ensureCycleTechnicalEscalation).toHaveBeenCalledTimes(1);
+    const prompt = (executeAssistantStep as jest.Mock).mock.calls[0][2].system_prompt;
+    expect(prompt).toContain('USER FEEDBACK REQUIRED');
+    expect(prompt).toContain('BOTH OBLIGATIONS REMAIN');
+    expect(prompt).toContain('Configure the provider credential.');
+    expect(createRequirementStatusCore).toHaveBeenCalledWith(expect.objectContaining({ stage: 'blocked',
+      message: expect.stringContaining('does not release that hold') }));
   });
 });

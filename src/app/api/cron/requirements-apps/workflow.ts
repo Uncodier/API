@@ -36,6 +36,7 @@ import {
   activeBacklogItemIdsFromPlanSteps,
   countPendingPlanSteps,
   feedbackRequiredBacklogItems,
+  technicalReviewBacklogItems,
   hasRunnableBacklogWork,
 } from '@/lib/services/cycle-wrapup-prompt';
 import { 
@@ -144,6 +145,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   let wrapUpReason: string | null = null;
   let wrapUpRequiresUserFeedback = false;
   let recoveryDisposition: CycleRecoveryDisposition | undefined;
+  let productDecisionForWrapUp: Extract<MigrationSecurityReview, { decision: 'needs_product_decision' }> | undefined;
   let databaseMigrations: DatabaseMigrationOutcome | undefined;
   let migrationCorrectionScheduled = false;
   let migrationDiagnosticPending = false;
@@ -365,6 +367,15 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       wrapUpReason = `Feedback is required for backlog item(s): ${feedbackItems
         .map((item: any) => `"${item.title}" (status=${item.status}, attempts=${item.attempts || 0})`)
         .join(', ')}.`;
+    } else if (!hasRunnableBacklog && technicalReviewBacklogItems(
+      reqContext.backlog.items, feedbackAttemptLimits, { hasRunnablePlanSteps: hasActivePlan },
+    ).length > 0) {
+      recoveryDisposition = 'internal_review';
+      wrapUpRequiresUserFeedback = false;
+      wrapUpReason = 'Backlog verification or repair requires technical review; no independent work remains runnable.';
+      cycleOutcome = 'remediation_handoff';
+      // Do not materialize a new plan/budget for terminal verification. Finally reports and escalates the hold.
+      return { reqId, branch: null, previewUrl: null, status: 'blocked' as const };
     }
   }
 
@@ -808,7 +819,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
               terminalProductHalt = true;
               cycleOutcome = 'product_failure';
               recoveryDisposition = 'product_failure';
-              wrapUpRequiresUserFeedback = true;
+              wrapUpRequiresUserFeedback = false;
               wrapUpReason = `Product verification/repair exhausted; linked work was cancelled for review. ${boundedFailureDetail(turnRes.gateErrorExcerpt || turnRes.error || 'The product gate did not pass.')}`;
               latestPlanSteps = allSteps.map((candidate) => candidate.id === workingStep.id
                 ? { ...candidate, status: 'cancelled' } : candidate);
@@ -1428,6 +1439,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
           ? 'product_failure' : 'infrastructure_retry';
         const productDecision = migrationSecurityReview?.decision === 'needs_product_decision'
           ? migrationSecurityReview : undefined;
+        productDecisionForWrapUp = productDecision;
         const internalHold = ambiguousMigrationWrite || repairedMigrations.length > 0;
         recoveryDisposition = cycleOutcome === 'product_failure' || internalHold
           ? productDecision ? 'blocked' : 'internal_review'
@@ -1715,8 +1727,15 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
         wrapUpReason = `${wrapUpReason ? `${wrapUpReason} ` : ''}Feedback is required for backlog item(s): ${finalFeedbackItems
           .map((item: any) => `"${item.title}" (status=${item.status}, attempts=${item.attempts || 0})`)
           .join(', ')}.`;
+      } else if (!hasRunnableBacklog && technicalReviewBacklogItems(
+        finalBacklogItems, feedbackAttemptLimits, { hasRunnablePlanSteps: pendingPlanSteps > 0 },
+      ).length > 0) {
+        recoveryDisposition = 'internal_review';
+        wrapUpRequiresUserFeedback = false;
+        wrapUpReason ||= 'Backlog verification or repair requires technical review; no independent work remains runnable.';
       } else if (stepsPhase?.anyStepFailed && !hasRunnableBacklog) {
-        wrapUpRequiresUserFeedback = true;
+        wrapUpRequiresUserFeedback = false;
+        recoveryDisposition = 'product_failure';
         wrapUpReason = `${wrapUpReason ? `${wrapUpReason} ` : ''}A confirmed product failure exhausted the current item and no independent backlog work remains runnable.`;
       } else if (stepsPhase?.anyStepFailed) {
         wrapUpReason = `${wrapUpReason ? `${wrapUpReason} ` : ''}The failed item was isolated; independent backlog work remains runnable and will continue automatically.`;
@@ -1742,6 +1761,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       forceWrapUp: wrapUpRequiresUserFeedback,
       wrapUpReason,
       requiresUserFeedback: wrapUpRequiresUserFeedback,
+      productDecision: productDecisionForWrapUp,
       recoveryDisposition: recoveryDisposition || (wrapUpRequiresUserFeedback ? 'blocked' : undefined),
     });
     // Intentional skips are handled. Actual failures remain retryable in the
@@ -1826,7 +1846,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       // user resume path may do that. This is NOT an infrastructure failure.
       if (cycleOutcome === 'product_failure') {
         recoveryDisposition ||= 'product_failure';
-        wrapUpRequiresUserFeedback = true;
+        wrapUpRequiresUserFeedback = false;
       } else {
         cycleOutcome = 'paused';
         preservePausedState = true;
@@ -1841,7 +1861,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
         ? recoveryDisposition || recovery.disposition : recovery.disposition;
     }
     wrapUpAttempted = false;
-    wrapUpRequiresUserFeedback = recoveryDisposition !== 'internal_review' && recovery.disposition !== 'retry';
+    wrapUpRequiresUserFeedback = recoveryDisposition === 'blocked';
     wrapUpReason = cycleFailureReason(cycleOutcome, wrapUpReason, e);
     workflowErrorInFlight = true;
     // Let the finally block handle the sandbox stop
@@ -1899,6 +1919,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
           forceWrapUp: wrapUpRequiresUserFeedback,
           wrapUpReason: wrapUpReason || 'The work cycle ended before the normal wrap-up stage.',
           requiresUserFeedback: wrapUpRequiresUserFeedback,
+          productDecision: productDecisionForWrapUp,
           recoveryDisposition: recoveryDisposition || (wrapUpRequiresUserFeedback ? 'blocked' : undefined),
         });
       } catch (wrapUpError: unknown) {

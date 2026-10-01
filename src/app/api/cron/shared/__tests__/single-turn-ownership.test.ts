@@ -11,6 +11,7 @@ class OwnershipError extends Error {
   }
 }
 const dependencies = {
+  '@/lib/services/harness-diagnostics/tools': { refreshHarnessToolManifest: (tools: any[]) => tools },
   '@/lib/database/supabase-client': { supabaseAdmin: { from: jest.fn(() => ({
     select: () => ({ eq: () => ({ maybeSingle: planRead }) }),
   })) } },

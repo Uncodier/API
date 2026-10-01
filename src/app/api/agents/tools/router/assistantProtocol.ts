@@ -541,6 +541,11 @@ export const DEFAULT_ALWAYS_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
   'requirement_backlog',
   'requirements',
   'plan_result',
+  'harness_inspect',
+  'harness_events',
+  'harness_reference',
+  'harness_source',
+  'harness_decide',
   
   // direct ui feedback surface
   'show_artifact',

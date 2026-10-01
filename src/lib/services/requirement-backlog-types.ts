@@ -99,6 +99,15 @@ export interface BacklogItem {
   acceptance_contract?: AcceptanceContract;
   /** MUST NOT / hard rules extracted from the spec (negative acceptance). */
   constraints?: string[];
+  /** Agent-selected means, never a replacement for acceptance or security constraints. */
+  implementation_strategy?: {
+    decision_id: string;
+    instructions: string;
+    verification: string;
+    equivalence_reason: string;
+    acceptance_mapping: Array<{ criterion: string; implementation: string; verification: string }>;
+    recorded_at: string;
+  };
   touches?: string[];
   status: BacklogItemStatus;
   /** Number of product verification / judge failures. */

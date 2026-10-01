@@ -32,6 +32,7 @@ function harness() {
   });
   const record = jest.fn().mockResolvedValue(undefined);
   const deps = {
+    '@/lib/services/harness-diagnostics/tools': { refreshHarnessToolManifest: (tools: any[]) => tools },
     '@/lib/database/supabase-client': { supabaseAdmin: { from } },
     '@/lib/services/robot-instance/assistant-executor': { executeAssistantStep: execute },
     '@/app/api/robots/instance/assistant/utils': {

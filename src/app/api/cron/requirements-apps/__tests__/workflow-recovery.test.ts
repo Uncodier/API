@@ -46,6 +46,7 @@ function harness() {
   };
   const finalizer = { createFinalStatusStep: jest.fn(), validateDeliverablesStep: jest.fn() };
   const wrapup = { emitCycleWrapUpStep: jest.fn(async (_params?: unknown) => ({ ran: true, outcome: 'completed' })) };
+  const technicalReviewBacklogItems = jest.fn((): any[] => []);
   const execution = {
     selectPlanStepsForExecution: (input: any[]) => input.filter(step => step.status === 'in_progress'),
     getPlanExecutionGateStep: jest.fn(async () => ({ runnable: true })),
@@ -67,7 +68,8 @@ function harness() {
       '@/lib/services/requirement-flows': { getFlow, classifyRequirementType, productAttemptLimits },
       '@/lib/services/cycle-wrapup-prompt': {
         activeBacklogItemIdsFromPlanSteps: () => new Set(['item']), countPendingPlanSteps: () => 1,
-        feedbackRequiredBacklogItems: () => [], hasRunnableBacklogWork: (items: any[]) => items.some(item => item.status === 'in_progress'),
+        feedbackRequiredBacklogItems: () => [], technicalReviewBacklogItems,
+        hasRunnableBacklogWork: (items: any[]) => items.some(item => item.status === 'in_progress'),
       },
       '../shared/cron-execute-steps-phase': execution,
       '../shared/cron-blocker-scope-steps': {},
@@ -92,7 +94,7 @@ function harness() {
   const run = () => workflow.runCronAppsWorkflow({ reqId: 'req', title: 'Test', instructions: '', type: 'app',
     site_id: 'site', user_id: 'user', instanceId: 'instance', previousWorkContext: '', instance_type: 'applications',
     cronLockRunId: 'run', cycleStartedAt: '2026-09-26T00:00:00Z', executionGeneration: 3 });
-  return { run, plan, lifecycle, db, steps, executeSingleTurnStep, execution, migration, repair, gate, finalizer, wrapup, provisionTrackingScriptStep, migrationLifecycle };
+  return { run, plan, lifecycle, db, steps, executeSingleTurnStep, execution, migration, repair, gate, finalizer, wrapup, provisionTrackingScriptStep, migrationLifecycle, technicalReviewBacklogItems };
 }
 
 describe('workflow recovery and truthful completion', () => {
@@ -102,6 +104,20 @@ describe('workflow recovery and truthful completion', () => {
     jest.spyOn(console, 'error').mockImplementation(() => {});
   });
   afterEach(() => { jest.restoreAllMocks(); });
+
+  it('reports terminal backlog review without a new sandbox, plan, attempt reset or customer question', async () => {
+    const h = harness();
+    h.plan.steps = [];
+    const failed = { id: 'item', status: 'needs_review', attempts: 4 };
+    h.db.getRequirementFullContextStep.mockResolvedValue({ backlog: { items: [failed] } });
+    h.technicalReviewBacklogItems.mockReturnValue([failed]);
+    await expect(h.run()).resolves.toMatchObject({ status: 'blocked' });
+    expect(h.lifecycle.createSandboxStep).not.toHaveBeenCalled();
+    expect(h.executeSingleTurnStep).not.toHaveBeenCalled();
+    expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({
+      recoveryDisposition: 'internal_review', requiresUserFeedback: false,
+    }));
+  });
 
   it('does not request user intervention on the first infrastructure failure', async () => {
     const h = harness();
@@ -225,7 +241,7 @@ describe('workflow recovery and truthful completion', () => {
     expect(h.finalizer.createFinalStatusStep).not.toHaveBeenCalled();
     expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({
       wrapUpReason: expect.stringContaining(productEvidence),
-      recoveryDisposition: 'product_failure', requiresUserFeedback: true,
+      recoveryDisposition: 'product_failure', requiresUserFeedback: false,
     }));
     expect(h.db.recordCronCycleOutcomeStep).toHaveBeenCalledWith(expect.objectContaining({
       outcome: 'product_failure', planId: 'plan', stepId: 'step',

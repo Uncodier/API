@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ApiKeyService } from '@/lib/services/api-keys/ApiKeyService';
 import { recordTelemetry } from '@/lib/status/telemetry';
 import { enforceRequestRateLimit } from '@/lib/security/request-rate-limit';
+import { extractApiKeyCredential, isServiceApiKeyCredential } from '@/lib/security/api-key-credential';
 
 function positiveIntegerSetting(name: string, fallback: number): number {
   const parsed = Number(process.env[name]);
@@ -45,17 +46,7 @@ export async function apiKeyAuth(req: NextRequest) {
   try {
     // CORS validation and authentication are independent. A browser Origin
     // never grants access to a private API route.
-    let apiKey = req.headers.get('x-api-key');
-    
-    if (!apiKey) {
-      const authHeader = req.headers.get('authorization');
-      if (authHeader) {
-        // Soportar formato "Bearer <apikey>" o directamente el apikey
-        apiKey = authHeader.startsWith('Bearer ') 
-          ? authHeader.substring(7) 
-          : authHeader;
-      }
-    }
+    const apiKey = extractApiKeyCredential(req);
 
     if (!apiKey) {
       return NextResponse.json(
@@ -71,8 +62,7 @@ export async function apiKeyAuth(req: NextRequest) {
     }
 
     // Primero verificar si es el SERVICE_API_KEY para servicios internos
-    const serviceApiKey = process.env.SERVICE_API_KEY?.trim();
-    if (serviceApiKey && apiKey === serviceApiKey) {
+    if (await isServiceApiKeyCredential(apiKey)) {
       const limited = await enforceRequestRateLimit(req, {
         namespace: 'service-api-key',
         identity: 'service-key',

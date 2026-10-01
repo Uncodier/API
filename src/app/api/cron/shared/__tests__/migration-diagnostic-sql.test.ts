@@ -20,13 +20,15 @@ it('enforces one diagnostic, one changed follow-up review, immutable budgets and
       await db.exec("CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS; GRANT USAGE ON SCHEMA public TO anon,authenticated,service_role; "+
         "CREATE TABLE public.requirements(id uuid PRIMARY KEY,status text,metadata jsonb,updated_at timestamptz,site_id uuid DEFAULT gen_random_uuid()); "+
         "CREATE TABLE public.requirement_status(site_id uuid,instance_id uuid,requirement_id uuid,stage text,message text); "+
-        "CREATE TABLE public.remote_instances(id uuid PRIMARY KEY,status text,is_archived boolean DEFAULT false,updated_at timestamptz); "+
+        "CREATE TABLE public.remote_instances(id uuid PRIMARY KEY,site_id uuid,status text,is_archived boolean DEFAULT false,updated_at timestamptz); "+
         "CREATE TABLE public.instance_plans(id uuid PRIMARY KEY,instance_id uuid,status text,steps jsonb,metadata jsonb,created_at timestamptz DEFAULT now(),updated_at timestamptz); "+
         "CREATE FUNCTION public.assert_requirement_cron_execution_owner(uuid,text,integer,boolean,boolean) RETURNS jsonb LANGUAGE sql AS $$ SELECT jsonb_build_object('current',$2='run') $$;");
       await db.exec(readFileSync('supabase/migrations/20260930010000_requirement_migration_lifecycle.sql','utf8'));
       await db.exec(readFileSync('supabase/migrations/20261001053000_migration_diagnostic_handoff.sql','utf8'));
+      await db.exec(readFileSync('supabase/migrations/20261001190500_migration_hold_visibility.sql','utf8'));
       await db.query('INSERT INTO requirements(id,status,metadata,updated_at) VALUES ($1,$2,$3,now())',[id,'in-progress',{requirement_execution_generation:7,runner_instance_id:instance}]);
       await db.query('INSERT INTO remote_instances(id,status) VALUES ($1,$2)',[instance,'running']);
+      await db.query('UPDATE remote_instances SET site_id=(SELECT site_id FROM requirements WHERE id=$1) WHERE id=$2',[id,instance]);
       await db.query('INSERT INTO instance_plans(id,instance_id,status,steps,metadata) VALUES ($1,$2,$3,$4,$5)',[plan,instance,'in_progress',[{id:'step',status:'in_progress'}],{requirement_id:id}]);
       await transition(0,'correction_required');
       await rejected(()=>rpc('claim_migration_diagnostic',[id,file,1,7,'other-run']),'40001');

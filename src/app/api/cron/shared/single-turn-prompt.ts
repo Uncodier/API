@@ -3,6 +3,7 @@
  * Split from single-turn-executor.ts to keep files under the 500-line rule.
  */
 import { SandboxService } from '@/lib/services/sandbox-service';
+import { HARNESS_DIAGNOSTIC_GUIDANCE } from '@/lib/services/harness-diagnostics/guidance';
 import {
   getStepCheckpointPromptFragment,
   getFileFreshnessPromptFragment,
@@ -97,6 +98,7 @@ Passing diagnostics are evidence, not an invitation to search indefinitely for a
 
 ${SANDBOX_REPO_ROOT_INVARIANT}
 ${constraintBlock}
+${HARNESS_DIAGNOSTIC_GUIDANCE}
 ${LANGUAGE_REQUIREMENT_PROMPT}
 ${TEMPLATE_CUSTOMIZATION_PROMPT}
 ${SUPABASE_ENVIRONMENT_PROMPT}
