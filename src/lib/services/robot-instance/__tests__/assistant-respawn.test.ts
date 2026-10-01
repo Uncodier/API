@@ -11,6 +11,9 @@ import {
 } from '../assistant-respawn';
 import { start } from 'workflow/api';
 import { runAssistantWorkflow } from '@/app/api/robots/instance/assistant/workflow';
+import { claimAssistantRecovery } from '../assistant-recovery';
+
+jest.mock('../assistant-recovery', () => ({ claimAssistantRecovery: jest.fn() }));
 
 jest.mock('@/lib/database/supabase-client', () => ({
   supabaseAdmin: {
@@ -140,18 +143,26 @@ describe('Assistant Respawn', () => {
   });
 
   it('passes silentContinue in the workflow options slot', async () => {
+    (claimAssistantRecovery as jest.Mock).mockResolvedValue({ resumeToken: 'resume-token', snapshot: {
+      respawnCount: 1, execution: { customTools: [], useSdkTools: false, instanceNodeId: 'original-node',
+        contextString: '{"publish_destinations":["tiktok"]}',
+        toolOverrides: { publish: { social_accounts: ['tt-only'], media_urls: ['https://example.com/original.mp4'] } } },
+    } });
     await spawnSilentContinueWorkflow({
       instanceId: 'instance-1',
       siteId: 'site-1',
       userId: 'user-1',
+      userMessageLogId: 'user-log',
     });
 
     const mockedStart = start as jest.MockedFunction<typeof start>;
     expect(mockedStart).toHaveBeenCalledTimes(1);
-    const [, args] = mockedStart.mock.calls[0];
+    const args = (mockedStart.mock.calls[0] as unknown as [unknown, unknown[]])[1];
     expect(args[1]).toBe(SILENT_CONTINUE_PROMPT);
-    expect(args[12]).toBeUndefined();
-    expect(args[13]).toEqual({ silentContinue: true });
+    expect(args[9]).toBe('original-node');
+    expect(args[11]).toBe('{"publish_destinations":["tiktok"]}');
+    expect(args[12]).toEqual({ publish: { social_accounts: ['tt-only'], media_urls: ['https://example.com/original.mp4'] } });
+    expect(args[13]).toMatchObject({ silentContinue: true, userMessageLogId: 'user-log', resumeToken: 'resume-token' });
     expect(mockedStart.mock.calls[0][0]).toBe(runAssistantWorkflow);
   });
 });

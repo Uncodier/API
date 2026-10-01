@@ -39,6 +39,48 @@ SSE consumer and sends assistant requests through its authenticated same-origin
 proxy. Deploy both repositories together. Existing runs are not automatically
 restarted, and older clients that discard SSE data will not show these errors.
 
+## Bound canvas continuation
+
+New executions save an `assistant_recovery` checkpoint on their trusted
+`user_action`. It preserves the original node ID, context string, tool overrides,
+selected instructions, message transcript/tool receipts, and response-node IDs.
+The snapshot fingerprints the node and its Content/context references, including
+an implicit parent. Moving UI coordinates does not invalidate it; changing
+content, references, destinations, or deleting/moving a referenced node does.
+
+Node execution is split into bounded chunks. A tool call at the end of a chunk
+is not completion: the next chunk receives the same transcript and response node,
+not a fresh generic assistant or a new response child. Partial parallel fan-out
+cannot be replayed safely and is paused instead of duplicated.
+
+Both workflow and cron recovery must claim this checkpoint for the original
+user action. They cannot infer work from the latest tool log. Recovery refuses
+legacy/missing checkpoints, stopped/cancelled/completed/failed/paused or superseded
+actions, changed node context, concurrent owners, and in-flight tool/model work.
+An in-flight crash is ambiguous and is never automatically replayed. Revision
+compare-and-set and generation fencing prevent stale executions from resuming
+after another owner claims recovery. The maximum of two background restarts is
+per action, not reset when the cron lookback window expires.
+
+Before each model chunk and tool invocation the active action and fingerprint are
+checked again. `publish` arguments are bound to persisted Content output URLs and
+saved social destinations at the tool execution boundary; a video cannot be
+replaced by its reference images or all instance assets. Model-authored captions
+and explicit TikTok options remain configurable. Blog-only nodes cannot add a
+social destination. Missing/unsafe Content fails closed.
+
+Checkpoints are JSON-only and limited to 512 KiB of messages, without inline data
+URIs. Oversized/nonserializable context pauses rather than dropping receipts.
+These are safety checks, not an atomic transaction across external providers:
+already-started external requests cannot be undone by a later cancellation.
+No historical rows are backfilled, and no old execution is restarted on rollout.
+No remote schema migration is required. Deploy the API before relying on recovery.
+
+New offline suites cover `node-recovery-workflow`, `recovery-turn-guard`,
+`publish-node-binding`, `bound-recovery`, `bound-respawn`,
+`assistant-node-continuation`, and `assistant-recovery*`. They run with `npm test
+-- --runInBand <test-paths>` and mock all model/provider/database effects.
+
 Offline regression coverage: `route-lifecycle.test.ts`, `response-stream.test.ts`,
 `user-message-log.test.ts`, and `plan-exhaustion.test.ts` under
 `src/app/api/robots/instance/assistant/__tests__`, included in `npm run test:harness`.

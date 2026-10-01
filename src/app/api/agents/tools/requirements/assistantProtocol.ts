@@ -45,7 +45,7 @@ export interface RequirementsToolParams {
   offset?: number;
 }
 
-export function requirementsTool(site_id: string, user_id?: string) {
+export function requirementsTool(site_id: string, user_id?: string, instanceId?: string) {
   return {
     name: 'requirements',
     description:
@@ -129,7 +129,8 @@ export function requirementsTool(site_id: string, user_id?: string) {
           throw new Error('Missing required fields for create requirement: site_id');
         }
 
-        return createRequirementCore(params);
+        // Execution identity comes from the server closure, never model metadata.
+        return createRequirementCore(params, instanceId);
       }
 
       if (action === 'update') {

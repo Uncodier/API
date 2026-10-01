@@ -4,6 +4,38 @@
 `/posts/{id}/replies` endpoint. This contract only concerns comment reads; it does
 not change comment publishing or the customer-support endpoint.
 
+## On-demand LinkedIn author names
+
+`getComments(postId, { network?, username?, resolve_author_names?: boolean }, tenantId?)`
+accepts an optional `resolve_author_names` boolean. It is **never enabled by
+default**: omission keeps the existing provider request unchanged, `false`
+explicitly disables resolution, and only `true` opts in. The client sends this
+query parameter only to LinkedIn, including when it infers and reads multiple
+networks from a post. Other networks never receive the parameter.
+
+The GET route accepts only the exact query values `true` and `false`; empty,
+invalid, or repeated values return HTTP 400 before accessing the provider:
+
+```text
+GET /api/integrations/outstand/posts/{id}/comments?network=linkedin&resolve_author_names=true
+```
+
+This opt-in is for **on-demand presentation of LinkedIn author names**, not
+background synchronization or profile enrichment. Do not persist resolved
+LinkedIn profiles (including names and other profile fields) in **leads,
+messages, or Temporal** workflow/activity inputs, outputs, history, or durable
+state. Durable/background callers must omit the option or keep it `false`.
+Display consumers must not copy resolved profiles into those records or other
+durable storage.
+
+The [provider documentation](https://www.outstand.so/docs/get-post-repliescomments)
+limits caching of resolved LinkedIn member profiles to **at most 24 hours**;
+that limit is not permission to retain them permanently in this API or its consumers.
+There is **no server-side profile cache here**: opted-in LinkedIn fetches use
+`cache: 'no-store'`, and GET responses with `resolve_author_names=true` include
+`Cache-Control: private, no-store`, including provider-error responses. Each
+on-demand read goes to the provider again; no local profile data is retained.
+
 ## Successful responses
 
 The canonical comment collection is `data`. Selection order is:
@@ -56,10 +88,14 @@ The client no longer manufactures successful empty lists with degraded metadata.
 npm test -- --runInBand --runTestsByPath \
   src/lib/integrations/outstand/__tests__/client-comments.test.ts \
   src/lib/integrations/outstand/__tests__/comments.test.ts \
-  src/lib/integrations/outstand/__tests__/conversations.test.ts
+  src/lib/integrations/outstand/__tests__/conversations.test.ts \
+  'src/app/api/integrations/outstand/posts/[id]/comments/__tests__/route.test.ts'
 ```
 
-These Jest tests use local fixtures and mocked `fetch`, without loading Next
-configuration or contacting providers. They cover canonical precedence, raw and
+These ESM Jest tests use local fixtures, mocked `fetch`, and a mocked route client
+and `NextResponse`, without loading Next configuration or contacting providers.
+They cover opt-in/default/explicit-false behavior, LinkedIn-only forwarding,
+multi-network inference, strict query validation, non-cacheable responses,
+canonical precedence, raw and
 empty collections, malformed envelopes, HTTP/transport failures, multi-network
 failure followed by retry, and adjacent conversation-client behavior.

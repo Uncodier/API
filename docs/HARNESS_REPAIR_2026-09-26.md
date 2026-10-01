@@ -1,10 +1,16 @@
 # Harness correctness and bounded execution repair
 
-> Historical checkpoint: the later migration
-> `supabase/migrations/20260926090000_restore_current_month_requirement_cron_scope.sql`
-> restores the UTC current-month requirement claim filter without undoing the
-> execution-ownership safeguards described below. Apply that migration after
-> `20260926070000_harness_execution_ownership.sql` to use the current policy.
+> Historical checkpoint: the moving UTC current-month filter was subsequently
+> corrected by
+> `/Users/prado/Desktop/Proyectos/Uncodie/Code/API/supabase/migrations/20261001020000_fixed_september_requirement_cron_scope.sql`.
+> The cutoff is the literal **2026-09-01 00:00:00 UTC**, inclusive, for both
+> `created_at` and `updated_at`; it does not advance at month boundaries.
+> Deploy this forward migration to Makinari (not Apps). It preserves leases,
+> capacity, pause guards and execution ownership, without rewriting requirement
+> timestamps, statuses or retry budgets. Earlier migration files remain unchanged.
+> Production rollout is pending: the local Management API credential returned
+> HTTP 403 during migration-access preflight. No production function or data was
+> changed by this correction.
 
 ## Scope
 
@@ -62,7 +68,7 @@ never bypasses owner/generation/expiry. Missing RPCs **fail closed** with an
 explicit migration error; deploying the API first will pause execution.
 
 At this checkpoint the scheduler no longer excluded work created before the
-current month (superseded by the current-month migration above). Stale,
+current month (later superseded by the fixed September cutoff above). Stale,
 expired or frozen lease revocation advances the requirement generation. Normal
 unowned claims preserve it so no-progress accounting is not reset each cycle.
 Step execution retains its original step-generation expectation rather than

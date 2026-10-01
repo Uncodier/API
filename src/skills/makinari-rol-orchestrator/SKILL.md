@@ -221,7 +221,7 @@ If the plan continues work whose base is already locked in `instructions` (`BASE
 | `sandbox_read_file` / `sandbox_list_files` | Sanity checks when deciding whether to create a new step. |
 | `sandbox_write_file` | Optional `REQUIREMENT.md` snapshot. |
 | `sandbox_push_checkpoint` / `sandbox_restore_checkpoint` | Snapshot workspace between plan phases. |
-| `activate_coding_agents` | Use this tool to unpause all instances and plans associated with a requirement when the user asks to continue work on a paused requirement. |
+| `activate_coding_agents` | Resume only the assigned instance using a trusted user instruction. Never unpause all instances or maintenance agents. If another instance owns the requirement, send the instruction there rather than starting parallel work. |
 
 ## Artifacts
 

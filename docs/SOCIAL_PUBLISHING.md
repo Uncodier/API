@@ -100,6 +100,13 @@ different actions.
 
 ## Content and delivery
 
+Imprenta node execution binds `publish` to the node's persisted **Content** links
+and saved social destinations before the tool runs. Structured video outputs take
+precedence over image references; generic context, prompt attachments and global
+instance assets cannot replace them. A missing or changed binding stops execution.
+See [bound canvas continuation](ASSISTANT_RESPONSE_LIFECYCLE.md#bound-canvas-continuation)
+for restart ownership, cancellation, and legacy-checkpoint behavior.
+
 - Social content is saved as `draft` before sending. A saved draft is not a
   successful social publication. Blog visibility is a separate local action and
   is preserved independently of social delivery.

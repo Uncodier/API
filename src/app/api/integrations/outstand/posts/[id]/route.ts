@@ -1,30 +1,11 @@
-import { NextResponse } from 'next/server';
-import { getOutstandClient } from '@/lib/integrations/outstand/client';
+import { handlePostRequest, type PostRouteContext } from '@/lib/integrations/outstand/post-handler';
 
-export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const tenantId = searchParams.get('tenant_id');
-    const params = await context.params;
-    const client = getOutstandClient();
-    const result = await client.getPost(params.id, tenantId || undefined);
-    return NextResponse.json(result);
-  } catch (error: any) {
-    const status = error.status || 500;
-    return NextResponse.json({ error: error.message }, { status });
-  }
+export const maxDuration = 75;
+
+export async function GET(request: Request, context: PostRouteContext) {
+  return handlePostRequest(request, context);
 }
 
-export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const tenantId = searchParams.get('tenant_id');
-    const params = await context.params;
-    const client = getOutstandClient();
-    const result = await client.deletePost(params.id, tenantId || undefined);
-    return NextResponse.json(result);
-  } catch (error: any) {
-    const status = error.status || 500;
-    return NextResponse.json({ error: error.message }, { status });
-  }
+export async function DELETE(request: Request, context: PostRouteContext) {
+  return handlePostRequest(request, context);
 }

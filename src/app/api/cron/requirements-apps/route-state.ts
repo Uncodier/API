@@ -11,6 +11,7 @@ import { computeRatio } from '@/lib/services/requirement-backlog-store';
 import { patchRequirementMetadataKeys } from '@/lib/services/requirement-metadata-patch';
 import { resumeRequirementExecutionOnUserAction } from '@/lib/services/requirement-execution-recovery';
 import { listMigrationLifecycle } from '@/lib/services/apps-platform/migration-lifecycle';
+import { inspectRequirementRunnerHandoff } from '@/lib/services/requirement-runner-handoff';
 
 type RequirementRow = {
   id: string;
@@ -137,6 +138,10 @@ export async function cleanupRecentlyCompletedRequirements(): Promise<void> {
     .limit(100);
 
   for (const requirement of recentCompletedReqs || []) {
+    if (requirement.metadata?.assistant_origin_instance_id) {
+      const handoff = await inspectRequirementRunnerHandoff(requirement);
+      if (handoff.skipReason) continue;
+    }
     const isComplete = isBacklogComplete(requirement.backlog?.items || []);
     if (
       ['on-review', 'done'].includes(requirement.status) &&

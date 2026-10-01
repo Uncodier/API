@@ -24,11 +24,16 @@ const BASE_URL = 'https://api.outstand.so/v1';
 export class OutstandClient {
   private apiKey: string;
 
-  constructor(apiKey: string) {
+  constructor(apiKey: string, private readonly signal?: AbortSignal) {
     this.apiKey = apiKey;
   }
 
   private async request<T>(endpoint: string, options: RequestInit = {}, maxResponseBytes?: number): Promise<T> {
+    if (this.signal) {
+      this.signal.throwIfAborted();
+      options = { ...options, signal: this.signal, redirect: 'error', cache: 'no-store' };
+      maxResponseBytes ??= 2 * 1024 * 1024;
+    }
     const url = `${BASE_URL}${endpoint}`;
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.apiKey}`,
@@ -112,7 +117,7 @@ export class OutstandClient {
       headers['X-Tenant-ID'] = tenantId;
     }
     
-    return this.request(`/posts/${id}`, {
+    return this.request(`/posts/${encodeURIComponent(id)}`, {
       method: 'GET',
       headers,
     });
@@ -136,9 +141,17 @@ export class OutstandClient {
       headers['X-Tenant-ID'] = tenantId;
     }
 
-    return this.request(`/posts/${id}`, {
+    return this.request(`/posts/${encodeURIComponent(id)}`, {
       method: 'DELETE',
       headers,
+    });
+  }
+
+  /** Remote deletion is separate from record deletion and may only partially succeed. */
+  async deleteRemotePost(id: string, tenantId: string): Promise<unknown> {
+    return this.request(`/posts/${encodeURIComponent(id)}/remote`, {
+      method: 'DELETE',
+      headers: { 'X-Tenant-ID': tenantId },
     });
   }
 
@@ -257,7 +270,12 @@ export class OutstandClient {
     });
   }
 
-  async getComments(postId: string, params: { network?: string; username?: string } = {}, tenantId?: string): Promise<CommentsResult> {
+  /** LinkedIn author resolution is presentation-only; durable callers must leave it disabled. */
+  async getComments(
+    postId: string,
+    params: { network?: string; username?: string; resolve_author_names?: boolean } = {},
+    tenantId?: string
+  ): Promise<CommentsResult> {
     const post = (!params.network || !params.username)
       ? (await this.getPost(postId, tenantId))?.post
       : undefined;
@@ -275,6 +293,7 @@ export class OutstandClient {
       networks.map((network) => this.fetchComments(postId, {
         network,
         username: usernameFromPost(post, network) || username,
+        resolve_author_names: params.resolve_author_names,
       }, tenantId))
     );
 
@@ -289,12 +308,14 @@ export class OutstandClient {
 
   private async fetchComments(
     postId: string,
-    params: { network: string; username?: string },
+    params: { network: string; username?: string; resolve_author_names?: boolean },
     tenantId?: string
   ): Promise<CommentsResult> {
     const query = new URLSearchParams();
     query.append('network', params.network);
     if (params.username) query.append('username', params.username);
+    const resolveAuthorNames = params.network === 'linkedin' ? params.resolve_author_names : undefined;
+    if (resolveAuthorNames !== undefined) query.append('resolve_author_names', String(resolveAuthorNames));
 
     const headers: Record<string, string> = {};
     if (tenantId) {
@@ -304,6 +325,7 @@ export class OutstandClient {
     const result = await this.request<unknown>(`/posts/${postId}/replies?${query.toString()}`, {
       method: 'GET',
       headers,
+      ...(resolveAuthorNames === true ? { cache: 'no-store' as const } : {}),
     });
     return normalizeCommentResult(result);
   }
@@ -451,10 +473,10 @@ export class OutstandClient {
   }
 }
 
-export const getOutstandClient = () => {
+export const getOutstandClient = (signal?: AbortSignal) => {
   const apiKey = process.env.OUTSTAND_API_KEY;
   if (!apiKey) {
     throw new Error('OUTSTAND_API_KEY is not defined');
   }
-  return new OutstandClient(apiKey);
+  return new OutstandClient(apiKey, signal);
 };

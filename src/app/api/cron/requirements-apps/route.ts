@@ -31,6 +31,7 @@ import { buildPreviousWorkContext } from './previous-work-context';
 import { assertCronExecutionOwnership } from '../shared/cron-execution-ownership';
 import { classifyRequirementType } from '@/lib/services/requirement-flows';
 import { getRequirementCycleBudget } from '@/lib/services/requirement-cost-envelope';
+import { inspectRequirementRunnerHandoff } from '@/lib/services/requirement-runner-handoff';
 
 export const maxDuration = 800; // Approximately 13 minutes (Pro plan maximum).
 export const dynamic = 'force-dynamic';
@@ -101,8 +102,12 @@ export async function GET(req: Request) {
       }
       Object.assign(requirement, currentReq);
       const { title, instructions, type, site_id, user_id } = requirement;
-      let instanceId: string | undefined =
-        requirement.metadata?.runner_instance_id;
+      const handoff = await inspectRequirementRunnerHandoff(requirement);
+      if (handoff.skipReason) {
+        results.push({ reqId, skipped: true, reason: handoff.skipReason });
+        continue;
+      }
+      let instanceId: string | undefined = handoff.instanceId;
       let executionGeneration = readExecutionGeneration(
         requirement.metadata?.requirement_execution_generation,
       );
@@ -224,6 +229,17 @@ export async function GET(req: Request) {
             if (insertErr) console.error('[Cron Apps] Error inserting remote_instance:', insertErr);
             instanceId = newInstance?.id;
           }
+        }
+      }
+
+      // Legacy name/status resolution also needs admission before dispatch.
+      // Never overlap an assistant
+      // just because it runs on the same instance (the foreign check excludes it).
+      if (instanceId && instanceId !== handoff.instanceId) {
+        const resolvedHandoff = await inspectRequirementRunnerHandoff(requirement, instanceId);
+        if (resolvedHandoff.skipReason) {
+          results.push({ reqId, skipped: true, reason: resolvedHandoff.skipReason });
+          continue;
         }
       }
 
@@ -367,7 +383,7 @@ export async function GET(req: Request) {
       // Defer when a different instance recently worked on the same branch.
       const CONCURRENCY_WINDOW_MIN = parseInt(process.env.CRON_FOREIGN_AGENT_WINDOW_MIN || '5', 10);
       const concurrencyCutoff = new Date(Date.now() - CONCURRENCY_WINDOW_MIN * 60 * 1000).toISOString();
-      const { data: foreignActivity } = await supabaseAdmin
+      const { data: foreignActivity, error: foreignActivityError } = await supabaseAdmin
         .from('requirement_status')
         .select('instance_id, created_at')
         .eq('requirement_id', reqId)
@@ -376,6 +392,10 @@ export async function GET(req: Request) {
         .order('created_at', { ascending: false })
         .limit(1);
 
+      if (foreignActivityError) {
+        results.push({ reqId, skipped: true, reason: 'foreign_activity_unavailable' });
+        continue;
+      }
       if (foreignActivity && foreignActivity.length > 0) {
         console.log(`[Cron Apps] Skipping ${reqId} — another instance (${foreignActivity[0].instance_id?.substring(0, 8)}) is actively working this requirement (last activity ${foreignActivity[0].created_at}). Deferring to avoid git branch collision.`);
         await releaseRunLock(reqId, runLock.runId);

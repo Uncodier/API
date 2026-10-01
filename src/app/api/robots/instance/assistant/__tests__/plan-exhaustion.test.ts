@@ -56,7 +56,7 @@ function harness() {
   const persistUserMessageStep = jest.fn<AsyncMock>().mockResolvedValue({ id: 'user-log' });
   const prepareAssistantContext = jest.fn<AsyncMock>().mockResolvedValue(context);
   const countRecentRespawnsStep = jest.fn<AsyncMock>().mockResolvedValue(0);
-  const spawnSilentContinueStep = jest.fn<AsyncMock>();
+  const spawnSilentContinueStep = jest.fn<AsyncMock>().mockResolvedValue(true);
   const workflow = loadRuntimeModule<typeof import('../workflow')>(
     'src/app/api/robots/instance/assistant/workflow.ts', {
       './assistant-turn': { processAssistantTurn },
@@ -70,6 +70,11 @@ function harness() {
         MAX_RESPAWNS: 2, SILENT_CONTINUE_PROMPT: 'silent continue',
       },
       './assistant-respawn-steps': { countRecentRespawnsStep, spawnSilentContinueStep },
+      './assistant-recovery-steps': {
+        prepareRecoveryStep: async () => ({ ok: true }),
+        guardRecoveryStep: async () => true,
+        checkpointRecoveryStep: async () => true,
+      },
     },
   );
   const result = (messages: any[], isDone = false, text = '') => ({

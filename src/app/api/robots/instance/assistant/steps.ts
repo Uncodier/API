@@ -19,6 +19,7 @@ import type { AssistantContext } from './types';
 import { loadAssistantRequirementContext } from './requirement-context';
 import { resolveUiMediaContract } from './ui-media-contract';
 import { requiredSkillsPrompt, type AssistantSkillSelection } from './skill-selection';
+import { resolvePublishNodeBinding } from './publish-node-binding';
 
 export async function prepareAssistantContext(
   instanceId: string,
@@ -183,6 +184,10 @@ export async function prepareAssistantContext(
     contextString,
     toolOverrides,
   });
+  const publishBinding = instanceNodeId ? await resolvePublishNodeBinding({
+    instanceNodeId, instanceId, siteId,
+    toolOverrides: uiMediaContract?.toolOverrides ?? toolOverrides,
+  }) : null;
 
   // Generate prompts
   const agentBackground = await generateAgentBackground(siteId, userId);
@@ -408,7 +413,7 @@ Follow the loaded SKILL.md playbooks before calling tools via \`tools\`. \`skill
 
   return {
     instance,
-    systemPrompt: finalSystemPrompt,
+    systemPrompt: publishBinding ? `${finalSystemPrompt}\n${publishBinding.instruction}` : finalSystemPrompt,
     customTools, // Pass definitions, not instantiated tools
     agentType,
     userPhone,
@@ -426,7 +431,7 @@ Follow the loaded SKILL.md playbooks before calling tools via \`tools\`. \`skill
     hasLinkedRequirement,
     instanceNodeId,
     expectedResultsAmount: expectedResultsAmount || 1,
-    toolOverrides: uiMediaContract?.toolOverrides ?? toolOverrides,
+    toolOverrides: publishBinding?.toolOverrides ?? uiMediaContract?.toolOverrides ?? toolOverrides,
     uiMediaOutputType: uiMediaContract?.outputType,
     selectedSkills,
     approvedImport,

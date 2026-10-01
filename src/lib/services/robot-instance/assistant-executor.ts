@@ -1,175 +1,17 @@
-/**
- * Assistant Executor Service
- * Unified execution for OpenAI/Azure assistant without Scrapybara tools
- */
-
-import { AIAgentExecutor, type AIProvider } from '@/lib/custom-automation/ai-agent-executor';
+/** Bounded assistant execution, including resumable canvas node chunks. */
+import { AIAgentExecutor } from '@/lib/custom-automation/ai-agent-executor';
 import { CreditService, InsufficientCreditsError } from '@/lib/services/billing/CreditService';
-import { supabaseAdmin } from '@/lib/database/supabase-client';
-import {
-  createAssistantOnStepHandler,
-  fetchNodeContexts,
-  batchCreateResponseNodes,
-  updateNodeResult,
-  failNode,
-} from './assistant-logging';
-import {
-  createNodeStreamingCallbacks,
-  createStreamingLogCallbacks,
-  createThinkingStreamLogCallbacks,
-} from './assistant-streaming-logs';
-import { buildNodeResult, buildInitialNodeResult } from './node-result-collector';
+import { createAssistantOnStepHandler, batchCreateResponseNodes } from './assistant-logging';
+import { createNodeStreamingCallbacks, createStreamingLogCallbacks, createThinkingStreamLogCallbacks } from './assistant-streaming-logs';
 import { hydrateMessageImages } from './vision-message-images';
 import { InstanceContextManager } from './InstanceContextManager';
 import { measureInstanceContext } from './instance-context-budget';
-
-/**
- * Extract text from a node based on what the context type asks for.
- * 'result' -> node.result.text
- * 'prompt' -> node.prompt.text or node.prompt
- * anything else -> try result first, fallback to prompt
- */
-function extractNodeText(node: any, type: string): string {
-  if (!node) return '';
-  
-  if (type === 'prompt') {
-    if (!node.prompt) return '';
-    if (typeof node.prompt === 'string') {
-      try { return JSON.parse(node.prompt).text || node.prompt; } catch { return node.prompt; }
-    }
-    return node.prompt?.text || JSON.stringify(node.prompt);
-  }
-
-  // 'result' or any other type -> extract from result
-  const res = node.result;
-  if (!res) return '';
-  if (typeof res === 'string') {
-    try { return JSON.parse(res).text || res; } catch { return res; }
-  }
-  if (res.text) return res.text;
-  const str = JSON.stringify(res);
-  return str === '{}' ? '' : str;
-}
-
-/**
- * Extract image URLs from a node's result.outputs so they can be
- * injected as multimodal image_url parts in the next node's context.
- */
-function extractNodeImageUrls(node: any): string[] {
-  if (!node) return [];
-  
-  const urls: string[] = [];
-  
-  // 1. Try extracting from node.result.outputs
-  const res = node.result;
-  if (res) {
-    const parsed = typeof res === 'string'
-      ? (() => { try { return JSON.parse(res); } catch { return null; } })()
-      : res;
-
-    if (parsed?.outputs && Array.isArray(parsed.outputs)) {
-      const outputUrls = parsed.outputs
-        .filter((o: any) => o?.type === 'image')
-        .map((o: any) => (typeof o.data?.url === 'string' ? o.data.url : o.url) as string)
-        .filter((url: string) => typeof url === 'string' && url.length > 0);
-      urls.push(...outputUrls);
-    }
-  }
-
-  // 2. Try extracting from node.prompt if there are images uploaded there
-  const prompt = node.prompt;
-  if (prompt) {
-    const parsedPrompt = typeof prompt === 'string'
-      ? (() => { try { return JSON.parse(prompt); } catch { return null; } })()
-      : prompt;
-      
-    if (parsedPrompt?.attachments && Array.isArray(parsedPrompt.attachments)) {
-      const attachmentUrls = parsedPrompt.attachments
-        .filter((a: any) => typeof a === 'string' && (a.includes('http') || a.includes('data:image')))
-        .map((a: any) => a as string);
-      urls.push(...attachmentUrls);
-    }
-    
-    // Also check explicit image_url structures in prompt
-    if (parsedPrompt?.image_url) urls.push(parsedPrompt.image_url);
-  }
-    
-  console.log(`[extractNodeImageUrls] Extracted ${urls.length} images from node ${node.id}`);
-  return urls;
-}
-
-/**
- * Build the message content for a context entry.
- * Returns a multimodal array when images are present, plain string otherwise.
- */
-function buildContextContent(
-  text: string,
-  imageUrls: string[],
-  label: string,
-): string | Array<{ type: string; text?: string; image_url?: { url: string } }> {
-  const baseText = `[Context from node ${label}]: ${text}`;
-
-  if (imageUrls.length === 0) {
-    return baseText;
-  }
-
-  const parts: any[] = [];
-  
-  // Include URLs in text so the LLM knows the actual strings to pass to tools
-  const urlText = imageUrls.length > 0 ? `\n\nCRITICAL - Image URLs for reference (YOU MUST PASS THESE URLS EXACTLY AS THEY ARE TO THE APPROPRIATE TOOL PARAMETER, e.g. reference_images):\n${imageUrls.join('\n')}` : '';
-  const combinedText = `${baseText}${urlText}`;
-  
-  parts.push({ type: 'text', text: combinedText });
-  
-  for (const url of imageUrls) {
-    parts.push({ type: 'image_url', image_url: { url } });
-  }
-  return parts;
-}
-
-  export interface AssistantExecutionOptions {
-    use_sdk_tools?: boolean;
-    provider?: 'azure' | 'openai' | 'gemini';
-    system_prompt?: string;
-    custom_tools?: any[];
-    instance_id?: string;
-    site_id?: string;
-    user_id?: string;
-    requirement_id?: string;
-    instance_node_id?: string;
-    expected_results_amount?: number;
-    ai_provider?: AIProvider;
-    ai_model?: string;
-    plan_id?: string;
-    step_id?: string;
-    enforceSingleTurn?: boolean;
-    tool_overrides?: Record<string, any>;
-  }
-
-export interface AssistantExecutionResult {
-  text: string;
-  output: any;
-  usage: any;
-  steps?: any[];
-}
-
-/**
- * Prepare tools for assistant execution
- */
-export async function prepareAssistantTools(
-  instance: any,
-  options: AssistantExecutionOptions
-) {
-  const {
-    custom_tools = [],
-  } = options;
-
-  // Case 2: OpenAI/Azure
-  return {
-      type: 'openai',
-      tools: custom_tools
-  };
-}
+import { prepareNodeExecutionContext } from './assistant-node-context';
+import { createNodeChunkWriter, finalNodeAssistantText } from './assistant-node-results';
+import { prepareAssistantTools, type AssistantExecutionOptions, type AssistantStepExecutionResult } from './assistant-execution-options';
+export { executeAssistant } from './assistant-executor-legacy';
+export { prepareAssistantTools } from './assistant-execution-options';
+export type { AssistantExecutionOptions, AssistantExecutionResult, AssistantStepExecutionResult } from './assistant-execution-options';
 
 /**
  * Execute a single step (iteration) of the assistant
@@ -178,7 +20,7 @@ export async function executeAssistantStep(
   messages: any[],
   instance: any,
   options: AssistantExecutionOptions
-): Promise<AssistantExecutionResult & { messages: any[], isDone: boolean }> {
+): Promise<AssistantStepExecutionResult> {
   const {
     system_prompt = 'You are a helpful AI assistant.',
     instance_id,
@@ -221,131 +63,31 @@ export async function executeAssistantStep(
         ? createThinkingStreamLogCallbacks(instance_id, site_id, user_id, provider, options.plan_id, options.step_id, options.requirement_id)
         : undefined;
 
-      // Instance Node handling
       const instance_node_id = options.instance_node_id;
       const expectedResults = options.expected_results_amount || 1;
-      let promptNode: any = null;
-      let contextEntries: Awaited<ReturnType<typeof fetchNodeContexts>> = [];
+      const nodeContext = await prepareNodeExecutionContext(messages, system_prompt, options);
+      const { promptNode, responseNode, contextRefs, systemPrompt: activeSystemPrompt } = nodeContext;
+      messages = nodeContext.messages;
 
-      let activeSystemPrompt = system_prompt;
-
-      if (instance_node_id) {
-        // 1. Adapt System Prompt for Node Mode
-        activeSystemPrompt += `\n\n=== NODE EXECUTION MODE ===
-You are executing a specific Node in a visual Canvas workflow.
-Your action must be based EXCLUSIVELY on the 'Reference Context' explicitly provided to you right before the final prompt.
-Do NOT use general conversational history to infer which image/asset to edit. Use ONLY the URLs and text provided in the Reference Context.`;
-
-        // 2. Discard all previous conversation history to prevent hallucinating assets from previous turns.
-        // We ONLY keep the very last message (the user's current prompt).
-        if (messages.length > 0) {
-          const finalPrompt = messages[messages.length - 1];
-          messages = [finalPrompt];
-        }
-
-        const { data } = await supabaseAdmin
-          .from('instance_nodes')
-          .select('*')
-          .eq('id', instance_node_id)
-          .single();
-        promptNode = data;
-
-        if (promptNode) {
-          // If the node has a parent, explicitly add it to contextEntries if not already there
-          contextEntries = await fetchNodeContexts(instance_node_id);
-          
-          if (promptNode.parent_node_id) {
-            const hasParent = contextEntries.some(e => e.context_node_id === promptNode.parent_node_id);
-            if (!hasParent) {
-              console.log(`[Node Executor] Parent node ${promptNode.parent_node_id} not in context entries, fetching explicitly`);
-              const { data: parentData } = await supabaseAdmin
-                .from('instance_nodes')
-                .select('*')
-                .eq('id', promptNode.parent_node_id)
-                .single();
-              if (parentData) {
-                contextEntries.unshift({
-                  context_node_id: parentData.id,
-                  type: 'parent_reference',
-                  node: parentData
-                });
-              }
-            }
-          }
-
-          // 3. Inject context nodes right before the final user prompt
-          if (contextEntries.length > 0) {
-            const contextMessages: any[] = [];
-            
-            for (const entry of contextEntries) {
-              const text = extractNodeText(entry.node, entry.type);
-              const imageUrls = extractNodeImageUrls(entry.node);
-              
-              if (text || imageUrls.length > 0) {
-                // If there are images, format as a multimodal message
-                if (imageUrls.length > 0) {
-                  const parts: any[] = [];
-                  const urlText = `\n\nCRITICAL - Image URLs for reference (YOU MUST PASS THESE URLS EXACTLY AS THEY ARE TO THE APPROPRIATE TOOL PARAMETER, e.g. reference_images):\n${imageUrls.join('\n')}`;
-                  
-                  parts.push({ 
-                    type: 'text', 
-                    text: `[Reference Context from linked node ${entry.type}]:\nPRIORITY: Please prioritize the assets (like images or text) from this reference node. The main prompt refers to these assets.\n\n${text}${urlText}` 
-                  });
-                  
-                  for (const url of imageUrls) {
-                    parts.push({ type: 'image_url', image_url: { url } });
-                  }
-                  
-                  contextMessages.push({
-                    role: 'user',
-                    content: parts
-                  });
-                } else {
-                  // Text only
-                  contextMessages.push({
-                    role: 'user',
-                    content: `[Reference Context from linked node ${entry.type}]:\nPRIORITY: Please prioritize the assets (like images or text) from this reference node. The main prompt refers to these assets.\n\n${text}`
-                  });
-                }
-              }
-            }
-            
-            if (contextMessages.length > 0) {
-              console.log(`[Node Executor] Injecting ${contextMessages.length} context messages just before final prompt`);
-              
-              // We already ensured messages only has the final prompt
-              if (messages.length > 0) {
-                const finalPrompt = messages.pop();
-                messages = [...contextMessages, finalPrompt];
-              } else {
-                messages = [...contextMessages];
-              }
-            }
-          }
-        }
-      }
-
-      const contextRefs = contextEntries.map(e => ({
-        context_node_id: e.context_node_id,
-        type: e.type,
-      }));
-
-      // When running in node mode, allow enough iterations for the LLM to
-      // call tools, see results, and produce a final text — all in one shot.
+      // A node chunk is bounded; exhaustion continues the same conversation/node.
       const nodeMaxIterations = instance_node_id ? 5 : 1;
 
       let executionResult: any;
+      let responseNodeIds: string[] = [];
+      let nodeDone = false;
 
       // --- MULTI-OUTPUT: N > 1 -> fan-out parallel LLM calls ---
       if (promptNode && expectedResults > 1) {
         console.log(`[Node Executor] Multi-output: creating ${expectedResults} response nodes`);
 
-        const responseNodeIds = await batchCreateResponseNodes(
+        responseNodeIds = await batchCreateResponseNodes(
           instance_node_id!, promptNode, expectedResults, contextRefs
         );
+        if (responseNodeIds.length !== expectedResults) {
+          throw new Error('Failed to create all response nodes');
+        }
 
         // Run N independent LLM calls in parallel
-        const initialOutputs = buildInitialNodeResult(promptNode).outputs;
         const parallelExecutor = new AIAgentExecutor({
           provider: options?.ai_provider,
           model: options?.ai_model,
@@ -355,9 +97,7 @@ Do NOT use general conversational history to infer which image/asset to edit. Us
         // and re-downloads the same images N times.
         const hydratedMessages = await hydrateMessageImages(messages);
         const parallelPromises = responseNodeIds.map(async (nodeId: string, index: number) => {
-          let accumulatedText = '';
-          let lastUpdate = Date.now();
-          const THROTTLE_MS = 500;
+          const writer = createNodeChunkWriter(nodeId, promptNode);
 
           try {
             const result = await parallelExecutor.act({
@@ -369,27 +109,17 @@ Do NOT use general conversational history to infer which image/asset to edit. Us
               onStreamStart: async () => {
                 return `node-stream-${nodeId}`;
               },
-              onStreamChunk: async (_logId: string, text: string) => {
-                accumulatedText = text;
-                const now = Date.now();
-                if (now - lastUpdate > THROTTLE_MS) {
-                  const chunkResult: any = { text: accumulatedText, status: 'streaming' };
-                  if (initialOutputs) chunkResult.outputs = initialOutputs;
-                  await updateNodeResult(nodeId, chunkResult);
-                  lastUpdate = now;
-                }
-              },
+              onStreamChunk: async (_logId: string, text: string, final = false) => writer.onChunk(text, final),
               maxIterations: nodeMaxIterations,
               enforceSingleTurn: options.enforceSingleTurn,
+              toolOverrides: options.tool_overrides,
               enforceContextBudget: Boolean(instance_id && site_id),
             });
 
-            const nodeResult = buildNodeResult(result.text || accumulatedText, 'done', result.steps);
-            await updateNodeResult(nodeId, nodeResult);
-            console.log(`[Node Executor] Response node ${index + 1}/${expectedResults} completed: ${nodeId}, outputs: ${nodeResult.outputs?.length || 0}`);
+            await writer.finish(result);
             return result;
           } catch (err: any) {
-            await failNode(nodeId, err.message || 'Unknown error');
+            await writer.fail(err.message || 'Unknown error');
             console.error(`[Node Executor] Response node ${index + 1}/${expectedResults} failed: ${nodeId}`, err);
             throw err; // Re-throw so Promise.allSettled can catch it
           }
@@ -408,6 +138,8 @@ Do NOT use general conversational history to infer which image/asset to edit. Us
         }
 
         const firstValid = successfulResults[0];
+        nodeDone = successfulResults.length === expectedResults &&
+          successfulResults.every(result => finalNodeAssistantText(result).length > 0);
 
         // Also run the primary instance_log streaming for the first result
         if (streamingCallbacks && firstValid) {
@@ -424,22 +156,20 @@ Do NOT use general conversational history to infer which image/asset to edit. Us
 
       // --- SINGLE OUTPUT: N = 1 -> original behavior ---
       } else {
-        let nodeCallbacks: Awaited<ReturnType<typeof createNodeStreamingCallbacks>> | undefined;
-        let nodeResponseId: string | null = null;
+        let nodeWriter: ReturnType<typeof createNodeChunkWriter> | undefined;
 
         if (promptNode) {
-          nodeCallbacks = createNodeStreamingCallbacks(instance_node_id!, promptNode, contextRefs);
-          // EAGERLY create the response node so it always exists, even if streaming is disabled
-          // or the LLM skips text generation.
-          try { 
-            nodeResponseId = await nodeCallbacks.onNodeStreamStart(); 
-          } catch (e) { 
-            console.error('[Node Executor] eager onNodeStreamStart error:', e); 
-          }
+          // Creation is eager and happens only once, before the first model call.
+          const nodeResponseId = responseNode?.id || await createNodeStreamingCallbacks(
+            instance_node_id!, promptNode, contextRefs,
+          ).onNodeStreamStart();
+          if (!nodeResponseId) throw new Error('Failed to create a response node');
+          responseNodeIds = [nodeResponseId];
+          nodeWriter = createNodeChunkWriter(nodeResponseId, promptNode, responseNode?.result);
         }
 
         // Wrap streaming callbacks to update instance_logs
-        const wrappedOnStreamStart = (streamingCallbacks || nodeCallbacks) ? async () => {
+        const wrappedOnStreamStart = (streamingCallbacks || nodeWriter) ? async () => {
           let logId = 'dummy-log-id';
           if (streamingCallbacks) {
             logId = await streamingCallbacks.onStreamStart();
@@ -447,7 +177,7 @@ Do NOT use general conversational history to infer which image/asset to edit. Us
           return logId;
         } : undefined;
 
-        const wrappedOnStreamChunk = (streamingCallbacks || nodeCallbacks) ? async (
+        const wrappedOnStreamChunk = (streamingCallbacks || nodeWriter) ? async (
           logId: string,
           accumulatedText: string,
           final = false,
@@ -455,13 +185,10 @@ Do NOT use general conversational history to infer which image/asset to edit. Us
           if (streamingCallbacks) {
             await streamingCallbacks.onStreamChunk(logId, accumulatedText, final);
           }
-          if (nodeCallbacks && nodeResponseId) {
+          if (nodeWriter) {
             try {
-              await nodeCallbacks.onNodeStreamChunk(
-                nodeResponseId,
-                accumulatedText,
-                final,
-              );
+              // A final streaming fragment is not proof that the node is done.
+              await nodeWriter.onChunk(accumulatedText, final);
             } catch (e) { /* checkpoint errors are non-fatal */ }
           }
         } : undefined;
@@ -474,7 +201,7 @@ Do NOT use general conversational history to infer which image/asset to edit. Us
                 system: activeSystemPrompt,
                 messages: hydratedMessages,
                 onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider, options?.plan_id, options?.step_id, options?.requirement_id),
-                stream: !!streamingCallbacks || !!nodeCallbacks,
+                stream: !!streamingCallbacks || !!nodeWriter,
                 onStreamStart: wrappedOnStreamStart,
                 onStreamChunk: wrappedOnStreamChunk,
                 onThinkingStreamStart: thinkingStreamCallbacks?.onThinkingStreamStart,
@@ -490,35 +217,30 @@ Do NOT use general conversational history to infer which image/asset to edit. Us
                 } : undefined,
             });
 
-        // Finalize node — pack text + tool outputs into unified result
-        if (nodeCallbacks && nodeResponseId) {
-          try {
-            const nodeResult = buildNodeResult(executionResult.text || '', 'done', executionResult.steps);
-            await nodeCallbacks.onNodeStreamEnd(nodeResponseId, nodeResult);
-          } catch (e) {
-            console.error('[Node Executor] onNodeStreamEnd error:', e);
-          }
-        }
+        if (nodeWriter) nodeDone = await nodeWriter.finish(executionResult);
       }
           
-          const lastMessage = executionResult.messages[executionResult.messages.length - 1];
+          const lastMessage = executionResult.messages?.[executionResult.messages.length - 1];
           const hasToolCalls = lastMessage?.tool_calls && lastMessage.tool_calls.length > 0;
           
           const lastRole = lastMessage?.role;
-          // Node executions are self-contained (higher maxIterations allows tool
-          // completion). Force isDone so the workflow doesn't loop and create
-          // duplicate response nodes.
           const isDone = instance_node_id
-            ? true
+            ? nodeDone
             : (lastRole === 'assistant' && !hasToolCalls);
           
-          const result = {
-              text: executionResult.text,
+          const result: AssistantStepExecutionResult = {
+              text: instance_node_id && nodeDone ? finalNodeAssistantText(executionResult) : executionResult.text,
               output: executionResult.output,
               usage: executionResult.usage,
               steps: executionResult.steps,
               messages: executionResult.messages,
-              isDone: isDone
+              isDone,
+              ...(instance_node_id ? {
+                continuation: { responseNodeIds },
+                executionStatus: isDone ? 'completed' as const : 'exhausted' as const,
+                // Fan-out only returns one transcript; it cannot be safely replayed.
+                resumable: !isDone && expectedResults === 1,
+              } : {}),
           };
           
           // Deduct credits for token usage
@@ -553,173 +275,5 @@ Do NOT use general conversational history to infer which image/asset to edit. Us
   } catch (error: any) {
       console.error(`₍ᐢ•(ܫ)•ᐢ₎ ❌ Error executing assistant step:`, error);
       throw error;
-  }
-}
-
-/**
- * Execute assistant with OpenAI/Azure (no Scrapybara tools)
- */
-export async function executeAssistant(
-  prompt: string,
-  instance?: any,
-  options?: AssistantExecutionOptions
-): Promise<AssistantExecutionResult> {
-  const {
-    use_sdk_tools = false,
-    system_prompt = 'You are a helpful AI assistant. Provide clear and concise responses.',
-    custom_tools = [],
-    instance_id,
-    site_id,
-    user_id,
-  } = options || {};
-  
-  const provider = options?.provider || process.env.ROBOT_SDK_PROVIDER || 'gemini';
-
-  if (site_id) {
-    try {
-      const hasCredits = await CreditService.validateCredits(site_id, 0.001); // minimal requirement to start
-      if (!hasCredits) {
-        throw new InsufficientCreditsError('Insufficient credits for assistant execution');
-      }
-    } catch (e: any) {
-      console.error('Credit validation failed:', e.message);
-      throw e;
-    }
-  }
-
-  console.log(`₍ᐢ•(ܫ)•ᐢ₎ Executing assistant with provider: ${provider}`);
-  console.log(`₍ᐢ•(ܫ)•ᐢ₎ Use SDK tools: ${use_sdk_tools}`);
-  console.log(`₍ᐢ•(ܫ)•ᐢ₎ Custom tools: ${custom_tools.length}`);
-  console.log(`₍ᐢ•(ܫ)•ᐢ₎ System prompt: ${system_prompt.substring(0, 200)}...`);
-
-  try {
-    let result: AssistantExecutionResult;
-    
-    // Reuse prepareAssistantTools logic implicitly or explicitly?
-    // Using prepareAssistantTools would be cleaner but let's stick to the original implementation 
-    // pattern to be absolutely safe, but I'll use the extracted logic if I can.
-    // Actually, I'll copy the logic back or use the new helper. 
-    // Using the new helper is better for consistency.
-    
-    const prepared = await prepareAssistantTools(instance, options || {});
-
-    console.log(`₍ᐢ•(ܫ)•ᐢ₎ Using AI assistant without Scrapybara tools`);
-
-    const executor = new AIAgentExecutor({
-      provider: options?.ai_provider,
-      model: options?.ai_model,
-    });
-    const streamingCallbacks =
-      instance_id && site_id
-        ? createStreamingLogCallbacks(instance_id, site_id, user_id, provider)
-        : undefined;
-    const thinkingStreamCallbacks =
-      instance_id && site_id
-        ? createThinkingStreamLogCallbacks(instance_id, site_id, user_id, provider)
-        : undefined;
-
-    const executionResult = await executor.act({
-        tools: prepared.tools, // Use tools from prepared
-        system: system_prompt,
-        prompt: prompt,
-        onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider, options?.plan_id, options?.step_id, options?.requirement_id),
-        stream: !!streamingCallbacks,
-        onStreamStart: streamingCallbacks?.onStreamStart,
-        onStreamChunk: streamingCallbacks?.onStreamChunk,
-        onThinkingStreamStart: thinkingStreamCallbacks?.onThinkingStreamStart,
-        onThinkingStreamChunk: thinkingStreamCallbacks?.onThinkingStreamChunk,
-        onReasoningTokensUsed: thinkingStreamCallbacks?.onReasoningTokensUsed,
-        toolOverrides: options?.tool_overrides,
-        enforceContextBudget: Boolean(instance_id && site_id),
-      });
-
-      console.log(`₍ᐢ•(ܫ)•ᐢ₎ [EXECUTOR RESULT] Text length: ${executionResult.text?.length || 0}`);
-      
-      let responseText = executionResult.text || '';
-      if (!responseText && executionResult.messages && executionResult.messages.length > 0) {
-        const lastMessage = executionResult.messages[executionResult.messages.length - 1];
-        if (lastMessage.role === 'assistant' && lastMessage.content) {
-          responseText = lastMessage.content;
-        }
-      }
-
-    result = {
-      text: responseText,
-      output: executionResult.output || null,
-      usage: executionResult.usage || {},
-      steps: executionResult.steps || [],
-    };
-
-    if (instance_id) {
-
-      // Deduct credits for token usage
-      let tokensCost = 0;
-      if (result.usage && ((result.usage as any).promptTokens || (result.usage as any).input_tokens)) {
-        const inputTokens = ((result.usage as any).promptTokens || (result.usage as any).input_tokens || 0);
-        const outputTokens = ((result.usage as any).completionTokens || (result.usage as any).output_tokens || 0);
-        const totalTokens = inputTokens + outputTokens;
-        
-        tokensCost = (inputTokens / 1_000_000) * CreditService.PRICING.ASSISTANT_INPUT_TOKEN_MILLION + 
-                     (outputTokens / 1_000_000) * CreditService.PRICING.ASSISTANT_OUTPUT_TOKEN_MILLION;
-        
-        if (tokensCost > 0 && site_id) {
-          try {
-            await CreditService.deductCredits(
-              site_id,
-              tokensCost,
-              'assistant_tokens',
-              `Assistant execution (${totalTokens} tokens)`,
-              {
-                tokens: totalTokens,
-                input_tokens: ((result.usage as any).promptTokens || (result.usage as any).input_tokens || 0),
-                output_tokens: ((result.usage as any).completionTokens || (result.usage as any).output_tokens || 0)
-              }
-            );
-          } catch (e) {
-            console.error('Failed to deduct credits for assistant tokens:', e);
-          }
-        }
-      }
-
-      await supabaseAdmin.from('instance_logs').insert({
-        log_type: 'execution_summary',
-        level: 'info',
-        message: `Assistant execution completed: ${result.text.substring(0, 200)}`,
-        details: {
-          provider,
-          use_sdk_tools,
-          custom_tools_count: custom_tools.length,
-          prompt_length: prompt.length,
-          response_length: result.text.length,
-          steps_count: result.steps?.length || 0,
-        },
-        instance_id: instance_id,
-        site_id: site_id,
-        user_id: user_id,
-        tokens_used: result.usage,
-      });
-    }
-
-    return result;
-  } catch (error: any) {
-    console.error(`₍ᐢ•(ܫ)•ᐢ₎ ❌ Error executing assistant:`, error);
-
-    if (instance_id) {
-      await supabaseAdmin.from('instance_logs').insert({
-        log_type: 'error',
-        level: 'error',
-        message: `Assistant execution failed: ${error.message}`,
-        details: {
-          error: error.message,
-          stack: error.stack,
-          provider,
-        },
-        instance_id: instance_id,
-        site_id: site_id,
-        user_id: user_id,
-      });
-    }
-
-    throw error;
   }
 }

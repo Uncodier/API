@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { v4 as uuidv4 } from 'uuid';
 import { normalizePhoneForSearch, normalizePhoneForStorage } from '@/lib/utils/phone-normalizer';
+import { manageOutstandCommentLead, outstandCommentIdentity } from './outstand-comment-identity';
 
 // Función para validar UUIDs
 function isValidUUID(uuid: string): boolean {
@@ -358,7 +359,8 @@ export async function manageLeadCreation({
   visitorId,
   origin = 'chat',
   createTask = false,
-  socialHandle
+  socialHandle,
+  socialCommentData
 }: {
   leadId?: string,
   name?: string,
@@ -368,12 +370,18 @@ export async function manageLeadCreation({
   visitorId?: string,
   origin?: string,
   createTask?: boolean,
-  socialHandle?: string
+  socialHandle?: string,
+  socialCommentData?: unknown
 }): Promise<{
   leadId: string | null,
   isNewLead: boolean,
   taskId: string | null
 }> {
+  const commentIdentity = outstandCommentIdentity(origin, socialCommentData);
+  if (commentIdentity) {
+    return manageOutstandCommentLead(siteId, commentIdentity, leadId);
+  }
+
   // Si ya tenemos un lead_id, verificamos que sea válido
   if (leadId && isValidUUID(leadId)) {
     console.log(`👤 Usando lead_id existente: ${leadId}`);

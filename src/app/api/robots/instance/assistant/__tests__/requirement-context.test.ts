@@ -1,6 +1,7 @@
 let requirementStatuses: Array<Record<string, any>> = [];
 let requirementSummary: Record<string, any> | null = null;
 let requirementDetails: Record<string, any> | null = null;
+let assignedRequirements: Array<{ id: string }> = [];
 
 const statusQuery: Record<string, jest.Mock> = {};
 statusQuery.select = jest.fn(() => statusQuery);
@@ -11,6 +12,8 @@ statusQuery.limit = jest.fn(async () => ({ data: requirementStatuses, error: nul
 const requirementQuery: Record<string, jest.Mock> = {};
 requirementQuery.select = jest.fn(() => requirementQuery);
 requirementQuery.eq = jest.fn(() => requirementQuery);
+requirementQuery.in = jest.fn(() => requirementQuery);
+requirementQuery.limit = jest.fn(async () => ({ data: assignedRequirements, error: null }));
 requirementQuery.maybeSingle = jest.fn(async () => ({
   data: requirementSummary,
   error: null,
@@ -36,6 +39,7 @@ describe('interactive assistant requirement context', () => {
     requirementStatuses = [];
     requirementSummary = null;
     requirementDetails = null;
+    assignedRequirements = [];
   });
 
   it('returns generic context when only a terminal requirement is present', async () => {
@@ -77,5 +81,18 @@ describe('interactive assistant requirement context', () => {
     expect(result.requirementStatusContext).toContain('Open requirement');
     expect(result.progressContext).toContain('Started');
     expect(result.backlogContext).toContain('Current item');
+  });
+
+  it('uses the original assignment before the first requirement status exists', async () => {
+    assignedRequirements = [{ id: 'new-requirement' }];
+    requirementSummary = { status: 'backlog', title: 'Created in this instance' };
+    const result = await loadAssistantRequirementContext('original-instance');
+    expect(result.activeRequirementId).toBe('new-requirement');
+    expect(requirementQuery.eq).toHaveBeenCalledWith('metadata->>runner_instance_id', 'original-instance');
+  });
+
+  it('does not guess when an instance has multiple assigned requirements', async () => {
+    assignedRequirements = [{ id: 'one' }, { id: 'two' }];
+    expect((await loadAssistantRequirementContext('original')).activeRequirementId).toBeNull();
   });
 });

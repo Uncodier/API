@@ -6,6 +6,11 @@ const mockBlockRequirementForProductAttemptBudget =
   jest.fn(async () => ({ state: 'applied', blocked: true }));
 const mockResumeRequirementExecution = jest.fn(async () => undefined);
 const mockRpc: any = jest.fn();
+const mockInspectHandoff: any = jest.fn();
+
+jest.mock('@/lib/services/requirement-runner-handoff', () => ({
+  inspectRequirementRunnerHandoff: mockInspectHandoff,
+}));
 
 // Mocks
 jest.mock('@/lib/database/supabase-client', () => ({
@@ -101,6 +106,9 @@ describe('Cron Requirements Apps Route', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockInspectHandoff.mockImplementation(async (requirement: any, resolvedInstanceId?: string) => ({
+      instanceId: resolvedInstanceId || requirement.metadata?.runner_instance_id,
+    }));
     process.env.CRON_SECRET = 'test-secret';
     delete process.env.CRON_REQUIREMENT_EVALUATION_LIMIT;
 
@@ -254,6 +262,23 @@ describe('Cron Requirements Apps Route', () => {
         metadata: expect.objectContaining({ cron_attempts: 1 }),
       }),
     );
+  });
+
+  it('does not create or start a runner while the originating assistant is working', async () => {
+    const requirement = {
+      id: 'req-original', site_id: 'site-1', status: 'backlog',
+      metadata: { runner_instance_id: 'original', assistant_origin_instance_id: 'original' },
+    };
+    mockClaimBatches([[{ state: 'claimed', requirement, run_id: 'lock-original', expires_at: '2099-01-01' }]]);
+    const values = [[], requirement];
+    mockSupabase.then = jest.fn((resolve: any) => resolve({ data: values.shift(), error: null }));
+    mockInspectHandoff.mockResolvedValue({ instanceId: 'original', skipReason: 'assistant_action_not_finished' });
+    const response = await GET(new Request('http://localhost', { headers: { authorization: 'Bearer test-secret' } }));
+    expect((await response.json()).results).toContainEqual({ reqId: 'req-original', skipped: true, reason: 'assistant_action_not_finished' });
+    expect(mockSupabase.insert).not.toHaveBeenCalled();
+    expect(mockSupabase.update).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
+    expect(releaseRunLock).toHaveBeenCalledWith('req-original', 'lock-original');
   });
   
   it('reverts on-review requirement to in-progress if there is outstanding work', async () => {

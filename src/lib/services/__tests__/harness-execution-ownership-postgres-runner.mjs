@@ -8,6 +8,8 @@ const id = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const migration = 'supabase/migrations/20260926070000_harness_execution_ownership.sql';
 const monthlyScopeMigration =
   'supabase/migrations/20260926090000_restore_current_month_requirement_cron_scope.sql';
+const fixedScopeMigration =
+  'supabase/migrations/20261001020000_fixed_september_requirement_cron_scope.sql';
 const claim = async (max = 8, excluded = []) => (await db.query(
   'SELECT public.claim_requirement_cron_candidates($1,7200,$2::uuid[]) AS result',
   [max, excluded],
@@ -187,7 +189,89 @@ try {
       (e) => e.code === '42501', `${role} can execute the restored service-only RPC`);
     await db.exec('RESET ROLE');
   }
-  console.log('PASS real PostgreSQL scheduler/ownership: UTC monthly scope, live leases, capacity, reclaim fencing, CAS, WIP, permissions');
+  // Regression: the cutoff is September 1, 2026, not the current UTC month.
+  await reset();
+  await insert(1);
+  await db.query(`UPDATE requirements SET created_at='2026-08-31T23:59:59.999999Z',
+    updated_at=now(),cron_lock_run_id='pre-cutoff-running',
+    cron_lock_expires_at=now()+interval '2 hours',cron_lock_active=true WHERE id=$1`, [id(1)]);
+  const beforeMigration = (await db.query('SELECT * FROM requirements')).rows;
+  const fixedScopeSql = readFileSync(fixedScopeMigration, 'utf8');
+  await db.exec(fixedScopeSql);
+  await db.exec(fixedScopeSql);
+  assert.deepEqual((await db.query('SELECT * FROM requirements')).rows, beforeMigration,
+    'applying/reapplying the cutoff migration must not rewrite existing work');
+  assert.equal((await owner(id(1), 'pre-cutoff-running', 4)).current, true);
+  assert.deepEqual((await claim(1))[0], { state: 'capacity_full', active_runs: 1 },
+    'healthy pre-cutoff work must retain its lease and capacity slot');
+
+  const datedInsert = async (n, createdAt, updatedAt, status = 'in-progress', cron = null) => {
+    await insert(n, status, cron);
+    await db.query('UPDATE requirements SET created_at=$1,updated_at=$2 WHERE id=$3',
+      [createdAt, updatedAt, id(n)]);
+  };
+  const cutoff = '2026-09-01T00:00:00Z';
+  const beforeCutoff = '2026-08-31T23:59:59.999999Z';
+  const october = '2026-10-01T00:00:54.876081Z';
+  await datedInsert(2, cutoff, cutoff, 'backlog');
+  await datedInsert(3, beforeCutoff, october);
+  await datedInsert(4, cutoff, beforeCutoff);
+  await datedInsert(5, '2026-09-29T22:16:48.812506Z', october);
+  await datedInsert(6, '2026-09-20T00:00:00Z', '2026-09-30T23:59:59Z', 'done', '* * * * *');
+  await datedInsert(7, october, october);
+  await datedInsert(8, cutoff, october, 'done');
+  await datedInsert(9, cutoff, october, 'blocked');
+  await datedInsert(10, cutoff, october);
+  await datedInsert(11, cutoff, october);
+  await db.query('UPDATE requirements SET metadata=metadata||jsonb_build_object(\'runner_instance_id\',id::text) WHERE id IN ($1,$2)',
+    [id(10), id(11)]);
+  await db.query("INSERT INTO remote_instances VALUES($1,'paused')", [id(10)]);
+  await db.query("INSERT INTO instance_plans VALUES($1,$2,'paused','{}',now(),now())", [id(110), id(11)]);
+  await db.query(`UPDATE requirements SET metadata=metadata||
+    '{"cron_attempts":3,"no_progress_cycles":2}'::jsonb WHERE id=$1`, [id(5)]);
+
+  for (const timezone of ['America/Los_Angeles', 'Asia/Tokyo']) {
+    await db.exec(`SET TIME ZONE '${timezone}'`);
+    [a] = await claim();
+    assert.equal(a.requirement.id, id(2), 'September 1 UTC boundary must be inclusive in any timezone');
+    assert.equal(a.requirement.metadata.requirement_execution_generation, 4);
+    assert.equal((await owner(id(2), a.run_id, 4, true)).current, true);
+    [b] = await claim(8, [id(2), id(6)]);
+    assert.equal(b.requirement.id, id(5), 'September work updated in October must remain eligible');
+    assert.equal(b.requirement.metadata.cron_attempts, 3, 'claim reset retry budget');
+    assert.equal(b.requirement.metadata.no_progress_cycles, 2, 'claim reset no-progress budget');
+    assert.equal(b.requirement.backlog.items[0].status, 'in_progress', 'claim rewrote backlog WIP');
+    assert.equal((await claim(8, [id(2), id(5)]))[0].requirement.id, id(6),
+      'September recurring work must remain eligible without an October update');
+    assert.equal((await claim(8, [id(2), id(5), id(6)]))[0].requirement.id, id(7),
+      'the cutoff has no September-only upper bound');
+    assert.equal((await claim(8, [id(2), id(5), id(6), id(7)])).length, 0,
+      'pre-cutoff dates, nonrecurring terminal/blocked work and paused instances/plans must stay excluded');
+    assert.equal((await activate(id(2), a.run_id)).state, 'active');
+    assert.deepEqual((await claim(2))[0], { state: 'capacity_full', active_runs: 2 });
+    await db.query(`UPDATE requirements SET cron_lock_run_id=NULL,cron_lock_expires_at=NULL,
+      cron_lock_active=false WHERE id<>$1`, [id(1)]);
+  }
+
+  // A released September execution must be claimable again; creation dates,
+  // retry accounting and the rollout boundary are not moved to make it work.
+  await db.query(`UPDATE requirements SET cron_lock_run_id=NULL,cron_lock_expires_at=NULL,
+    cron_lock_active=false WHERE id=$1`, [id(1)]);
+  [a] = await claim(8, [id(2), id(6), id(7)]);
+  assert.equal(a.requirement.id, id(5), 'September work was stranded after release');
+  assert.equal(a.requirement.metadata.requirement_execution_generation, 4);
+  assert.equal((await claim(8, [id(2), id(5), id(6), id(7)])).length, 0,
+    'released August work must remain outside the fixed cutoff');
+  for (const role of ['anon', 'authenticated']) {
+    await db.exec(`SET ROLE ${role}`);
+    await assert.rejects(db.query('SELECT public.claim_requirement_cron_candidates(8)'),
+      (e) => e.code === '42501', `${role} can execute the fixed-cutoff service-only RPC`);
+    await db.exec('RESET ROLE');
+  }
+  await db.exec('SET ROLE service_role');
+  assert.equal((await claim(8, [id(2), id(5), id(6), id(7)])).length, 0);
+  await db.exec('RESET ROLE');
+  console.log('PASS real PostgreSQL scheduler/ownership: fixed September 2026 cutoff, live leases, capacity, reclaim fencing, CAS, WIP, permissions');
 } finally {
   await db.close();
 }

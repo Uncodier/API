@@ -6,11 +6,12 @@ import { getActiveInstancePlan, executePlanStep, acquirePlanExecutionLockStep, r
 import { persistUserMessageStep, markAssistantFailedStep, completeUserMessageStep, pauseUserMessageStep } from './persist-and-fail-steps';
 import {
   isIncompleteTurn,
-  MAX_RESPAWNS,
   SILENT_CONTINUE_PROMPT,
 } from '@/lib/services/robot-instance/assistant-respawn';
-import { countRecentRespawnsStep, spawnSilentContinueStep } from './assistant-respawn-steps';
+import { spawnSilentContinueStep } from './assistant-respawn-steps';
 import type { AssistantSkillSelection } from './skill-selection';
+import { prepareRecoveryStep, guardRecoveryStep, checkpointRecoveryStep } from './assistant-recovery-steps';
+import type { AssistantRecoveryScope } from '@/lib/services/robot-instance/assistant-recovery';
 
 // Define the workflow step
 export async function runAssistantWorkflow(
@@ -27,7 +28,7 @@ export async function runAssistantWorkflow(
   expectedResultsAmount?: number,
   contextString?: string,
   toolOverrides?: Record<string, any>,
-   options?: { silentContinue?: boolean; selectedSkills?: AssistantSkillSelection; approvedImport?: { url: string; sha256: string; userId: string }; userMessageLogId?: string }
+   options?: { silentContinue?: boolean; selectedSkills?: AssistantSkillSelection; approvedImport?: { url: string; sha256: string; userId: string }; userMessageLogId?: string; resumeToken?: string }
 ) {
   'use workflow';
 
@@ -36,12 +37,43 @@ export async function runAssistantWorkflow(
   try {
     const isSilentContinue =
       options?.silentContinue === true || message === SILENT_CONTINUE_PROMPT;
+    const blockedResult = {
+      instance_id: instanceId, success: false, execution_status: 'paused',
+      message: 'Execution context is unavailable, changed, inactive, or already claimed; no automatic restart was performed',
+      assistant_response: 'This execution cannot continue safely with its original node and content. Check its status before retrying.',
+      instance_node_id: instanceNodeId,
+    };
+    if (isSilentContinue && (!userMessageLogId || !options?.resumeToken)) return blockedResult;
     if (!isSilentContinue && !userMessageLogId) {
       const logResult = await persistUserMessageStep(instanceId, message, siteId, userId, {
         prompt_source: 'assistant_workflow',
         selected_skills: options?.selectedSkills?.skills.map(({ slug, version }) => ({ slug, version })) ?? [],
+        status: 'running', instance_node_id: instanceNodeId,
       });
       userMessageLogId = logResult.id;
+    }
+    if (!userMessageLogId) return blockedResult;
+    const recoveryScope: AssistantRecoveryScope = { instanceId, siteId, userId, userMessageLogId };
+    const recovery = await prepareRecoveryStep(recoveryScope, {
+      customTools, useSdkTools, systemPrompt, agentType, userPhone, instanceNodeId,
+      expectedResultsAmount, contextString, toolOverrides, selectedSkills: options?.selectedSkills,
+      approvedImport: options?.approvedImport,
+    }, options?.resumeToken);
+    if (!recovery.ok) return blockedResult;
+    if (recovery.snapshot) {
+      const execution = recovery.snapshot.execution;
+      customTools = execution.customTools;
+      useSdkTools = execution.useSdkTools;
+      systemPrompt = execution.systemPrompt;
+      agentType = execution.agentType;
+      userPhone = execution.userPhone;
+      instanceNodeId = execution.instanceNodeId;
+      expectedResultsAmount = execution.expectedResultsAmount;
+      contextString = execution.contextString;
+      toolOverrides = execution.toolOverrides;
+      options = { ...options, selectedSkills: execution.selectedSkills as AssistantSkillSelection | undefined,
+        approvedImport: execution.approvedImport as { url: string; sha256: string; userId: string } | undefined };
+      recoveryScope.generation = recovery.snapshot.respawnCount;
     }
 
   // Step 1: Prepare context, including automatic history assessment and
@@ -63,6 +95,8 @@ export async function runAssistantWorkflow(
     options?.selectedSkills,
     options?.approvedImport,
   );
+  context.recoveryScope = recoveryScope;
+  context.nodeContinuation = recovery.snapshot?.continuation;
 
   let isDone = false;
   let finalResult: any = {
@@ -107,6 +141,7 @@ export async function runAssistantWorkflow(
       content: userContent
     }
   ];
+  if (recovery.snapshot) messages = recovery.snapshot.messages as typeof messages;
 
   // Step 2: Loop through turns for the main agent conversation
   // Safety limit to prevent infinite loops
@@ -114,38 +149,32 @@ export async function runAssistantWorkflow(
   let turns = 0;
 
   while (!isDone && turns < MAX_TURNS) {
+    if (!await guardRecoveryStep(recoveryScope, true)) return blockedResult;
     turns++;
     const stepResult = await processAssistantTurn(context, messages);
     
     // Update state
     messages = stepResult.messages;
-    isDone = stepResult.isDone;
+    isDone = stepResult.isDone && Boolean(stepResult.text?.trim());
+    context.nodeContinuation = stepResult.continuation;
+    if (!await checkpointRecoveryStep(recoveryScope, messages, stepResult.continuation)) return blockedResult;
     
     // Update final result
     finalResult = stepResult;
+    if (stepResult.executionStatus === 'exhausted' && stepResult.resumable === false) break;
   }
 
   // Check for stall/exhaustion before plan execution
   if (isIncompleteTurn(finalResult)) {
-    const respawnCount = await countRecentRespawnsStep(instanceId);
-    if (respawnCount < MAX_RESPAWNS) {
-      console.log(`[Workflow] Incomplete turn detected (turns: ${turns}), respawning... (count: ${respawnCount})`);
-      await spawnSilentContinueStep({
+    if (finalResult.resumable !== false) {
+      const spawned = await spawnSilentContinueStep({
         instanceId,
         siteId,
         userId,
-        customTools,
-        useSdkTools,
-        systemPrompt,
-        agentType,
-        userPhone,
-        instanceNodeId,
-        expectedResultsAmount,
-        contextString,
-        selectedSkills: options?.selectedSkills,
-        userMessageLogId: userMessageLogId ?? undefined,
+        userMessageLogId,
       });
-      return {
+      if (spawned) {
+        return {
         instance_id: instanceId,
         status: context.instance.status,
         success: false,
@@ -155,11 +184,14 @@ export async function runAssistantWorkflow(
         output: finalResult.output,
         usage: finalResult.usage,
         instance_node_id: instanceNodeId,
-      };
-    } else {
-      console.log(`[Workflow] Incomplete turn detected but max respawns reached (${respawnCount})`);
+        };
+      }
     }
+    if (await guardRecoveryStep(recoveryScope)) await pauseUserMessageStep(userMessageLogId);
+    return { ...blockedResult, execution_status: 'exhausted',
+      message: 'Execution paused without a final answer; original context and completed tool results were retained' };
   }
+  if (!await guardRecoveryStep(recoveryScope)) return blockedResult;
 
   // Step 3: Check for active instance plan AFTER the agent conversation
   // The agent might have just created or updated an instance_plan during its turn
@@ -195,6 +227,9 @@ export async function runAssistantWorkflow(
       }
       
       try {
+        // Plan steps own their continuation; the generic cron must not replay
+        // the preceding assistant conversation while a plan performs effects.
+        if (!await guardRecoveryStep(recoveryScope, true)) return blockedResult;
         for (const step of stepsToExecute) {
           console.log(`[Workflow] processing plan step: ${step.title}`);
           
@@ -229,6 +264,7 @@ export async function runAssistantWorkflow(
       }
       
       if (userMessageLogId) {
+        if (!await guardRecoveryStep(recoveryScope)) return blockedResult;
         await completeUserMessageStep(userMessageLogId);
       }
       return {
@@ -249,6 +285,7 @@ export async function runAssistantWorkflow(
   }
 
     if (userMessageLogId) {
+      if (!await guardRecoveryStep(recoveryScope)) return blockedResult;
       await completeUserMessageStep(userMessageLogId);
     }
   return {
@@ -261,6 +298,11 @@ export async function runAssistantWorkflow(
     instance_node_id: instanceNodeId,
   };
   } catch (error: any) {
+    if (error?.name === 'RecoveryError') {
+      return { instance_id: instanceId, success: false, execution_status: 'paused', instance_node_id: instanceNodeId,
+        message: 'Original execution is inactive or its bound context changed; no automatic restart was performed',
+        assistant_response: 'This execution was stopped because its original action or node context is no longer active.' };
+    }
     const errMsg = error instanceof Error ? error.message : String(error);
     console.error(`[Workflow] Assistant failed after retries for instance ${instanceId}:`, errMsg);
     try {

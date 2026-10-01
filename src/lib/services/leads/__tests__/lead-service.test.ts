@@ -6,6 +6,7 @@ jest.mock('@/lib/database/supabase-client', () => ({
     from: jest.fn(),
   },
 }));
+jest.mock('uuid', () => ({ v4: jest.fn() }));
 
 describe('manageLeadCreation social identity', () => {
   beforeEach(() => {

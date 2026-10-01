@@ -1,4 +1,6 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { claimAssistantRecovery, type AssistantRecoveryScope } from './assistant-recovery';
+import type { AssistantSkillSelection } from '@/app/api/robots/instance/assistant/skill-selection';
 
 export const MAX_RESPAWNS = 2;
 export const STALL_MS = 3 * 60 * 1000;
@@ -83,13 +85,17 @@ export async function countRecentRespawns(instanceId: string): Promise<number> {
   return count || 0;
 }
 
-export async function insertRespawnLog(instanceId: string, siteId: string, userId?: string | null): Promise<void> {
+export async function insertRespawnLog(instanceId: string, siteId: string, userId?: string | null,
+  recovery?: { userMessageLogId: string; instanceNodeId?: string; generation: number }): Promise<void> {
   const { error } = await supabaseAdmin.from('instance_logs').insert({
     log_type: 'infrastructure',
     level: 'info',
     message: 'Assistant execution respawned to continue incomplete turn.',
     details: {
       source: 'assistant_respawn',
+      user_message_log_id: recovery?.userMessageLogId,
+      instance_node_id: recovery?.instanceNodeId,
+      generation: recovery?.generation,
     },
     instance_id: instanceId,
     site_id: siteId,
@@ -101,57 +107,45 @@ export async function insertRespawnLog(instanceId: string, siteId: string, userI
   }
 }
 
-export async function spawnSilentContinueWorkflow({
-  instanceId,
-  siteId,
-  userId,
-  customTools = [],
-  useSdkTools = false,
-  systemPrompt,
-  agentType,
-  userPhone,
-  instanceNodeId,
-  expectedResultsAmount,
-  contextString,
-  selectedSkills,
-  userMessageLogId,
-}: {
-  instanceId: string;
-  siteId: string;
-  userId: string;
-  customTools?: any[];
-  useSdkTools?: boolean;
-  systemPrompt?: string;
-  agentType?: string;
-  userPhone?: string;
-  instanceNodeId?: string;
-  expectedResultsAmount?: number;
-  contextString?: string;
-  selectedSkills?: import('@/app/api/robots/instance/assistant/skill-selection').AssistantSkillSelection;
-  userMessageLogId?: string;
-}): Promise<void> {
-  console.log(`[AssistantRespawn] Spawning silent continue workflow for instance ${instanceId}`);
-
-  await insertRespawnLog(instanceId, siteId, userId);
+export async function spawnSilentContinueWorkflow(scope: AssistantRecoveryScope): Promise<boolean> {
+  // Only a complete checkpoint tied to a trusted, still-active user action may
+  // restart. Never infer node identity from whichever log happens to be latest.
+  let claimed;
+  try { claimed = await claimAssistantRecovery(scope); }
+  catch { return false; }
+  const { snapshot, resumeToken } = claimed;
+  const execution = snapshot.execution;
 
   const { start } = await import('workflow/api');
   const { runAssistantWorkflow } = await import('@/app/api/robots/instance/assistant/workflow');
 
   const workflowArgs: Parameters<typeof runAssistantWorkflow> = [
-    instanceId,
+    scope.instanceId,
     SILENT_CONTINUE_PROMPT,
-    siteId,
-    userId,
-    customTools,
-    useSdkTools,
-    systemPrompt,
-    agentType,
-    userPhone,
-    instanceNodeId,
-    expectedResultsAmount,
-    contextString,
-    undefined,
-    { silentContinue: true, selectedSkills, userMessageLogId },
+    scope.siteId,
+    scope.userId,
+    execution.customTools,
+    execution.useSdkTools,
+    execution.systemPrompt,
+    execution.agentType,
+    execution.userPhone,
+    execution.instanceNodeId,
+    execution.expectedResultsAmount,
+    execution.contextString,
+    execution.toolOverrides,
+    { silentContinue: true, selectedSkills: execution.selectedSkills as AssistantSkillSelection | undefined,
+      approvedImport: execution.approvedImport as { url: string; sha256: string; userId: string } | undefined,
+      userMessageLogId: scope.userMessageLogId, resumeToken },
   ];
-  await start(runAssistantWorkflow, workflowArgs);
+  try {
+    await start(runAssistantWorkflow, workflowArgs);
+    await insertRespawnLog(scope.instanceId, scope.siteId, scope.userId, {
+      userMessageLogId: scope.userMessageLogId, instanceNodeId: execution.instanceNodeId,
+      generation: snapshot.respawnCount,
+    });
+    return true;
+  } catch {
+    // Keep the durable claim: ambiguous workflow admission is not safe to replay.
+    return false;
+  }
 }

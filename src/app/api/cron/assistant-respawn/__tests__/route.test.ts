@@ -69,6 +69,8 @@ describe('assistant respawn cron route', () => {
     (supabaseAdmin.from as jest.Mock)
       .mockReturnValueOnce(recentLogsQuery)
       .mockReturnValueOnce(instanceLogsQuery)
+      .mockReturnValueOnce(activePlanQuery({ data: { id: 'user-log', site_id: 'site-1', user_id: 'user-1',
+        details: { status: 'running', assistant_recovery: { version: 1 } } }, error: null }))
       .mockReturnValueOnce(planQuery);
 
     const response = await GET(new Request('http://localhost', {
@@ -106,6 +108,8 @@ describe('assistant respawn cron route', () => {
     (supabaseAdmin.from as jest.Mock)
       .mockReturnValueOnce(recentLogsQuery)
       .mockReturnValueOnce(instanceLogsQuery)
+      .mockReturnValueOnce(activePlanQuery({ data: { id: 'user-log', site_id: 'site-1', user_id: 'user-1',
+        details: { status: 'running', assistant_recovery: { version: 1 } } }, error: null }))
       .mockReturnValueOnce(planQuery);
 
     const response = await GET(new Request('http://localhost', {

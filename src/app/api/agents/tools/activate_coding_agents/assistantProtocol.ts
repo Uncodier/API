@@ -1,14 +1,16 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { resumeRequirementExecutionOnUserAction } from '@/lib/services/requirement-execution-recovery';
+import { listMigrationLifecycle } from '@/lib/services/apps-platform/migration-lifecycle';
 
 export interface ActivateCodingAgentsParams {
   requirement_id: string;
 }
 
-export function activateCodingAgentsTool() {
+export function activateCodingAgentsTool(siteId: string, instanceId: string) {
   return {
     name: 'activate_coding_agents',
     description:
-      'Finds all remote instances and instance plans associated with a given requirement_id and sets their status to running/in_progress. Use this tool when the user asks to resume, continue, or make changes to a requirement that might be paused.',
+      'Resume a requirement only in its assigned instance, using the current trusted user instruction. Never starts another instance or resumes all agents. If another instance owns the requirement, send the instruction there instead.',
     parameters: {
       type: 'object',
       properties: {
@@ -22,72 +24,46 @@ export function activateCodingAgentsTool() {
         throw new Error('Missing required field: requirement_id');
       }
 
-      console.log(`[ActivateCodingAgentsTool] Activating agents for requirement: ${requirement_id}`);
-
-      // Find remote instances by name convention
-      const runnerName = `req-runner-${requirement_id}`;
-      const maintName = `req-maint-${requirement_id}`;
-
-      // Update remote_instances
-      const { data: updatedInstances, error: instancesError } = await supabaseAdmin
-        .from('remote_instances')
-        .update({ status: 'running' })
-        .in('name', [runnerName, maintName])
-        .select('id, name, status');
-
-      if (instancesError) {
-        console.error('[ActivateCodingAgentsTool] Error updating remote_instances:', instancesError);
-        throw new Error(`Failed to update remote_instances: ${instancesError.message}`);
+      const { data: requirement, error } = await supabaseAdmin.from('requirements')
+        .select('id, status, metadata')
+        .eq('id', requirement_id).eq('site_id', siteId).maybeSingle();
+      if (error || !requirement) throw new Error('Requirement is unavailable in this site');
+      const owner = requirement.metadata?.runner_instance_id;
+      const guarded = (reason: string) => ({
+        success: false, reason, owner_instance_id: owner || null,
+        activated_instances: 0, activated_plans: 0, requirement_unblocked: false,
+      });
+      // Names cannot establish ownership: a historical duplicate may be named
+      // req-runner even though another instance created the work.
+      if (!owner) return guarded('requirement_owner_not_confirmed');
+      if (owner !== instanceId) return guarded('requirement_owned_by_another_instance');
+      const { data: instance, error: instanceError } = await supabaseAdmin.from('remote_instances')
+        .select('id, is_archived').eq('id', owner).eq('site_id', siteId).maybeSingle();
+      if (instanceError || !instance || instance.is_archived) return guarded('original_instance_unavailable');
+      const migrations = await listMigrationLifecycle(requirement_id);
+      if (migrations.some(migration => migration.state !== 'validated')) {
+        return guarded('migration_review_pending');
       }
-
-      const instanceIds = updatedInstances?.map(i => i.id) || [];
-
-      let updatedPlans: any[] = [];
-      if (instanceIds.length > 0) {
-        // Update instance_plans
-        const { data: plans, error: plansError } = await supabaseAdmin
-          .from('instance_plans')
-          .update({ status: 'in_progress' })
-          .in('instance_id', instanceIds)
-          .eq('status', 'paused')
-          .select('id, status, instance_id');
-
-        if (plansError) {
-          console.error('[ActivateCodingAgentsTool] Error updating instance_plans:', plansError);
-          throw new Error(`Failed to update instance_plans: ${plansError.message}`);
-        }
-        updatedPlans = plans || [];
-      }
-
-      // Unblock requirement if it was blocked
-      const { data: req, error: reqError } = await supabaseAdmin
-        .from('requirements')
-        .select('status')
-        .eq('id', requirement_id)
-        .single();
-
-      let requirementUnblocked = false;
-      if (req && ['blocked', 'on-review', 'done'].includes(req.status)) {
-        const { error: updateReqError } = await supabaseAdmin
-          .from('requirements')
-          .update({ status: 'in-progress' })
-          .eq('id', requirement_id);
-          
-        if (!updateReqError) {
-          requirementUnblocked = true;
-        }
-      }
-
+      const { data: action, error: actionError } = await supabaseAdmin.from('instance_logs')
+        .select('id, details').eq('instance_id', instanceId).eq('site_id', siteId)
+        .eq('log_type', 'user_action').eq('trusted_user_action', true)
+        .order('created_at', { ascending: false }).order('id', { ascending: false })
+        .limit(1).maybeSingle();
+      if (actionError || !action || action.details?.requirement_id !== requirement_id ||
+          action.details?.status !== 'running') return guarded('trusted_requirement_action_required');
+      // The scoped RPC alone reopens plans and enforces review/terminal guards.
+      // A status update would not actually start work and could wake duplicates.
+      const recovery = await resumeRequirementExecutionOnUserAction(
+        requirement_id, instanceId, true, action.id,
+      );
+      if (!['applied', 'duplicate'].includes(recovery.state)) return guarded(`recovery_${recovery.state}`);
       return {
         success: true,
-        message: `Successfully activated coding agents for requirement ${requirement_id}`,
-        activated_instances: updatedInstances?.length || 0,
-        activated_plans: updatedPlans.length,
-        requirement_unblocked: requirementUnblocked,
-        details: {
-          instances: updatedInstances,
-          plans: updatedPlans
-        }
+        message: 'Recovery applied to the existing owner; no parallel instance was started.',
+        owner_instance_id: instanceId,
+        activated_instances: 0,
+        activated_plans: recovery.plans_updated,
+        requirement_unblocked: recovery.state === 'applied' && requirement.status === 'blocked',
       };
     },
   };

@@ -110,6 +110,18 @@ export async function setUserMessageStatus(logId: string, status: 'completed' | 
   if (error || !data) throw new Error('Failed to read the user message status');
   // An explicit cancellation must not be undone by a late workflow checkpoint.
   if (data.details?.status === 'cancelled' || data.details?.status === 'stopped') return;
+  if (data.details?.assistant_recovery) {
+    const revision = data.details.assistant_recovery.revision;
+    if (typeof revision !== 'string') throw new Error('Failed to save the user message status');
+    // Do not overwrite a cancellation or a newer recovery checkpoint after the read.
+    const { data: saved, error: saveError } = await supabaseAdmin.from('instance_logs').update({
+      details: { ...data.details, status },
+    }).eq('id', logId).eq('log_type', 'user_action')
+      .eq('details->>status', data.details.status)
+      .eq('details->assistant_recovery->>revision', revision).select('id').maybeSingle();
+    if (saveError || !saved) throw new Error('Failed to save the user message status');
+    return;
+  }
   const { error: updateError } = await supabaseAdmin.from('instance_logs').update({
     details: { ...(data.details || {}), status },
   }).eq('id', logId).eq('log_type', 'user_action');

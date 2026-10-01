@@ -4,28 +4,16 @@ import {
   countRecentRespawns,
   spawnSilentContinueWorkflow,
 } from '@/lib/services/robot-instance/assistant-respawn';
-import type { AssistantSkillSelection } from './skill-selection';
+import type { AssistantRecoveryScope } from '@/lib/services/robot-instance/assistant-recovery';
 
 export async function countRecentRespawnsStep(instanceId: string): Promise<number> {
   'use step';
   return countRecentRespawns(instanceId);
 }
 
-export async function spawnSilentContinueStep(params: {
-  instanceId: string;
-  siteId: string;
-  userId: string;
-  customTools?: any[];
-  useSdkTools?: boolean;
-  systemPrompt?: string;
-  agentType?: string;
-  userPhone?: string;
-  instanceNodeId?: string;
-  expectedResultsAmount?: number;
-  contextString?: string;
-  selectedSkills?: AssistantSkillSelection;
-  userMessageLogId?: string;
-}): Promise<void> {
+export async function spawnSilentContinueStep(params: AssistantRecoveryScope): Promise<boolean> {
   'use step';
-  await spawnSilentContinueWorkflow(params);
+  return spawnSilentContinueWorkflow(params);
 }
+
+spawnSilentContinueStep.maxRetries = 0;

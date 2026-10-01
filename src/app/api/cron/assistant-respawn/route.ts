@@ -15,7 +15,8 @@ const STALL_LOG_TYPES = ['user_action', 'agent_action', 'thinking', 'tool_call',
 
 export async function GET(req: Request) {
   const authHeader = req.headers.get('authorization');
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET?.trim()}`) {
+  const secret = process.env.CRON_SECRET?.trim();
+  if (!secret || authHeader !== `Bearer ${secret}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -49,6 +50,18 @@ export async function GET(req: Request) {
 
       if (logsError || !logs || logs.length === 0) continue;
 
+      // A tail of tool logs is not authorization to resume a stopped/old task.
+      const { data: action, error: actionError } = await supabaseAdmin
+        .from('instance_logs').select('id,site_id,user_id,details,created_at')
+        .eq('instance_id', instanceId).eq('log_type', 'user_action')
+        .eq('trusted_user_action', true).order('created_at', { ascending: false })
+        .limit(1).maybeSingle();
+      if (actionError || !action?.id || !action.site_id || !action.user_id
+        || action.details?.status !== 'running' || !action.details?.assistant_recovery) {
+        results.push({ instance_id: instanceId, status: 'skipped_no_active_checkpoint' });
+        continue;
+      }
+
       const recentRespawnCount = await countRecentRespawns(instanceId);
       const decision = evaluateInstanceStall({
         logs,
@@ -78,24 +91,18 @@ export async function GET(req: Request) {
         continue;
       }
 
-      const lastLog = logs.find((row) => row.log_type !== 'infrastructure');
-      const siteId = lastLog?.site_id;
-      if (!siteId) {
-        results.push({ instance_id: instanceId, status: 'skipped_no_site_id' });
-        continue;
-      }
-
       console.log(`[CronAssistantRespawn] Stall detected for instance ${instanceId}. Respawning (${recentRespawnCount + 1})`);
-      await spawnSilentContinueWorkflow({
+      const spawned = await spawnSilentContinueWorkflow({
         instanceId,
-        siteId,
-        userId: lastLog?.user_id || '',
+        siteId: action.site_id,
+        userId: action.user_id,
+        userMessageLogId: action.id,
       });
 
-      results.push({ instance_id: instanceId, status: 'respawned' });
+      results.push({ instance_id: instanceId, status: spawned ? 'respawned' : 'skipped_unsafe_checkpoint' });
     } catch (err: any) {
-      console.error(`[CronAssistantRespawn] Error processing instance ${instanceId}:`, err);
-      results.push({ instance_id: instanceId, status: `error: ${err.message}` });
+      console.error(`[CronAssistantRespawn] Recovery check failed for instance ${instanceId}`);
+      results.push({ instance_id: instanceId, status: 'recovery_check_failed' });
     }
   }
 

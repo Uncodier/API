@@ -32,6 +32,7 @@ export const RequirementMetadataSchema = z
 
 const RUNNER_OWNED_METADATA_KEYS = [
   'runner_instance_id',
+  'assistant_origin_instance_id',
   'requirement_execution_generation',
   'requirement_last_resume_action_id',
   'requirement_last_resume_reopened_plans',

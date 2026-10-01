@@ -161,7 +161,7 @@ export async function POST(request: NextRequest) {
         siteId: providedSiteId,
         userId,
         message,
-        details: { is_creation: true, request_id: parsedBody.request_id, status: 'running' },
+        details: { is_creation: true, request_id: parsedBody.request_id, status: 'running', instance_node_id: providedNodeId },
       }));
       failureContext.userMessageLogId = userAction.id;
 
@@ -209,7 +209,7 @@ export async function POST(request: NextRequest) {
       userId: user_id,
       message,
       skipDuplicateCheck: true,
-      details: { instance_status: instance.status || 'running', request_id: parsedBody.request_id, status: 'running' },
+      details: { instance_status: instance.status || 'running', request_id: parsedBody.request_id, status: 'running', instance_node_id: providedNodeId },
     }));
     failureContext.userMessageLogId = userAction.id;
     
@@ -240,6 +240,14 @@ export async function POST(request: NextRequest) {
     return assistantResponseStream(workflowRun, providedInstanceId, userAction.id, { signal: request.signal });
 
   } catch (err: any) {
+    if (err instanceof Error && err.message.includes('requirement_execution_busy')) {
+      // Admission was rejected before inserting the user action. Do not mark
+      // the healthy owner as failed or retry by creating another instance.
+      return NextResponse.json({
+        success: false,
+        error: { code: 'REQUIREMENT_EXECUTION_BUSY', message: 'This instance is already executing the requirement. Wait for the current cycle to finish before sending another instruction.' },
+      }, { status: 409 });
+    }
     console.error('Error in POST /robots/instance/assistant:', err);
     // A startup failure happens before the workflow's own catch can log it.
     // Only write after loading the instance/site scope. Logging failure must

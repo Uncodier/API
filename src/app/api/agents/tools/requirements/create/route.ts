@@ -45,14 +45,30 @@ async function resolveUserId(siteId: string, userId?: string): Promise<string> {
 /**
  * Core function to create a requirement
  */
-export async function createRequirementCore(params: any) {
+export async function createRequirementCore(params: any, originatingInstanceId?: string) {
   if (shouldUseRemoteApi()) {
+    if (originatingInstanceId) {
+      throw new Error('Instance-bound requirement creation requires local execution context');
+    }
     console.log('[Requirements Create] Using Remote API mode');
     return invokeRemoteTool('/api/agents/tools/requirements/create', params);
   }
 
   const validated = CreateRequirementSchema.parse(params);
   const effectiveUserId = await resolveUserId(validated.site_id, validated.user_id);
+
+  if (originatingInstanceId) {
+    const { data: instance, error } = await supabaseAdmin
+      .from('remote_instances')
+      .select('id, status, is_archived')
+      .eq('id', originatingInstanceId)
+      .eq('site_id', validated.site_id)
+      .maybeSingle();
+    if (error || !instance || instance.is_archived ||
+        ['paused', 'stopped', 'stopping'].includes(instance.status)) {
+      throw new Error('Cannot bind requirement to an unavailable instance in this site');
+    }
+  }
 
   // Auto-seed metadata.git when the caller did not provide a full binding,
   // so every new requirement has an explicit repo target that the sync
@@ -69,6 +85,12 @@ export async function createRequirementCore(params: any) {
   const seededMetadata: Record<string, unknown> = {
     ...incomingMetadata,
     git: seededBinding,
+    // Persist ownership in the INSERT itself. A later update leaves a window
+    // in which the scheduler sees an unassigned requirement and creates a runner.
+    ...(originatingInstanceId ? {
+      runner_instance_id: originatingInstanceId,
+      assistant_origin_instance_id: originatingInstanceId,
+    } : {}),
   };
 
   const requirement = await createRequirement({

@@ -16,6 +16,7 @@ function createChain(result: { data?: any; error?: any } = {}) {
   chain.insert = jest.fn().mockReturnValue(chain);
   chain.update = jest.fn().mockReturnValue(chain);
   chain.single = jest.fn().mockResolvedValue(result);
+  chain.maybeSingle = jest.fn().mockResolvedValue(result);
   chain.then = (resolve: any, reject: any) => Promise.resolve(result).then(resolve, reject);
   return chain;
 }
@@ -178,6 +179,16 @@ describe('setUserMessageStatus', () => {
     const update = createChain({ error: { message: 'database unavailable' } });
     (supabaseAdmin.from as jest.Mock).mockReturnValueOnce(lookup).mockReturnValueOnce(update);
     await expect(setUserMessageStatus('user-log', 'completed')).rejects.toThrow('Failed to save');
+  });
+
+  it('uses status and revision guards to preserve a concurrent cancellation or checkpoint', async () => {
+    const details = { status: 'running', assistant_recovery: { revision: 'original-revision', messages: [] } };
+    const lookup = createChain({ data: { details }, error: null });
+    const update = createChain({ data: null, error: null });
+    (supabaseAdmin.from as jest.Mock).mockReturnValueOnce(lookup).mockReturnValueOnce(update);
+    await expect(setUserMessageStatus('user-log', 'completed')).rejects.toThrow('Failed to save');
+    expect(update.eq).toHaveBeenCalledWith('details->>status', 'running');
+    expect(update.eq).toHaveBeenCalledWith('details->assistant_recovery->>revision', 'original-revision');
   });
 
   it('marks the current turn failed even when the instance update is rejected', async () => {

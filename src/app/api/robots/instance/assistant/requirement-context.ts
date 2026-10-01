@@ -10,6 +10,7 @@ export type AssistantRequirementContext = {
 const TERMINAL_STAGES = new Set(['done', 'completed', 'cancelled', 'failed']);
 const OPEN_REQUIREMENT_STATUSES = new Set([
   '',
+  'backlog',
   'pending',
   'in-progress',
   'blocked',
@@ -36,10 +37,18 @@ export async function loadAssistantRequirementContext(
     progressContext: '',
     backlogContext: '',
   };
-  if (!requirementStatuses || requirementStatuses.length === 0) return empty;
-
-  const candidateId = requirementStatuses[0].requirement_id;
-  const latestStage = String(requirementStatuses[0].stage || '').toLowerCase();
+  let candidateId = requirementStatuses?.[0]?.requirement_id;
+  if (!requirementStatuses?.length) {
+    const { data: assigned, error } = await supabaseAdmin.from('requirements')
+      .select('id')
+      .eq('metadata->>runner_instance_id', instanceId)
+      .in('status', ['backlog', 'pending', 'in-progress', 'blocked'])
+      .limit(2);
+    // Never guess between multiple requirements in a general chat session.
+    if (error || assigned?.length !== 1) return empty;
+    candidateId = assigned[0].id;
+  }
+  const latestStage = String(requirementStatuses?.[0]?.stage || '').toLowerCase();
   if (!candidateId || TERMINAL_STAGES.has(latestStage)) return empty;
 
   const { data: reqRow } = await supabaseAdmin

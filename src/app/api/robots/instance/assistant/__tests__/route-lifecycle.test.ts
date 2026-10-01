@@ -76,6 +76,16 @@ it('uses the same lifecycle for a newly created session', async () => {
   expect((start as jest.Mock).mock.calls[0][1][13]).toMatchObject({ userMessageLogId: LOG });
 });
 
+it('persists the initiating node identity with the trusted user action', async () => {
+  const nodeId = '00000000-0000-4000-8000-000000000005';
+  const response = await POST(request({ ...payload, instance_node_id: nodeId }));
+  await response.text();
+  expect(insertUserActionLog).toHaveBeenCalledWith(expect.objectContaining({
+    details: expect.objectContaining({ instance_node_id: nodeId, status: 'running' }),
+  }));
+  expect((start as jest.Mock).mock.calls[0][1][9]).toBe(nodeId);
+});
+
 it('waits for trusted user-action recovery before starting an interactive retry, not a cron workflow', async () => {
   let finishRecovery!: () => void;
   let recoveryStarted!: () => void;
@@ -120,6 +130,16 @@ it('does not acknowledge or start work when the user message could not be persis
   expect(response.status).toBe(500);
   expect(start).not.toHaveBeenCalled();
   expect(markRemoteInstanceError).toHaveBeenCalled();
+});
+
+it('returns conflict without marking the original runner as failed when cron owns execution', async () => {
+  (insertUserActionLog as jest.Mock).mockRejectedValue(new Error('Failed to persist user message: requirement_execution_busy'));
+  const response = await POST(request(payload));
+  expect(response.status).toBe(409);
+  expect((await response.json()).error.code).toBe('REQUIREMENT_EXECUTION_BUSY');
+  expect(start).not.toHaveBeenCalled();
+  expect(resetRequirementOnUserAction).not.toHaveBeenCalled();
+  expect(markRemoteInstanceError).not.toHaveBeenCalled();
 });
 
 it('does not write a session log for invalid input or insufficient credits', async () => {

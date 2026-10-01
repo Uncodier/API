@@ -1,6 +1,7 @@
 import type { UiMediaOutputType } from './ui-media-contract';
 import type { WorkflowToolExecutionTracker } from '@/lib/services/workflow-robot/execution-tracker';
 import type { AssistantSkillSelection } from './skill-selection';
+import type { AssistantRecoveryScope } from '@/lib/services/robot-instance/assistant-recovery';
 
 export interface AssistantContext {
   instance: any;
@@ -37,4 +38,6 @@ export interface AssistantContext {
   preResponseOnly?: boolean;
   selectedSkills?: AssistantSkillSelection;
   approvedImport?: { url: string; sha256: string; userId: string };
+  recoveryScope?: AssistantRecoveryScope;
+  nodeContinuation?: { responseNodeIds: string[] };
 }

@@ -3,6 +3,7 @@ import { PartialRequirementMetadataSchema } from '../git-binding-schema';
 describe('requirement metadata trust boundary', () => {
   it.each([
     'runner_instance_id',
+    'assistant_origin_instance_id',
     'requirement_execution_generation',
     'requirement_last_resume_action_id',
     'requirement_last_resume_reopened_plans',

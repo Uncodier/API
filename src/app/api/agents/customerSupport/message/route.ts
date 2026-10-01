@@ -12,6 +12,7 @@ import { isInternalServiceRequest } from '@/lib/security/request-rate-limit';
 import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { manageLeadCreation } from '@/lib/services/leads/lead-service';
+import { OutstandLeadIdentityError } from '@/lib/services/leads/outstand-comment-identity';
 import { WorkflowService } from '@/lib/services/workflow-service';
 import { WhatsAppLeadService } from '@/lib/services/whatsapp/WhatsAppLeadService';
 import { ConversationService } from '@/lib/services/conversation-service';
@@ -1324,6 +1325,9 @@ export async function POST(request: Request) {
           visitorId: visitor_id,
           origin: leadOrigin,
           createTask: website_chat_origin === true,
+          // The lead service gates the stable author lookup on the new contract;
+          // browser and legacy social/DM requests must retain their old behavior.
+          socialCommentData: browserIdentity ? undefined : inboundCustomData,
           socialHandle: typeof inboundCustomData?.account_username === 'string'
             ? inboundCustomData.account_username
             : (typeof inboundCustomData?.social_handle === 'string' ? inboundCustomData.social_handle : undefined)
@@ -1999,6 +2003,12 @@ export async function POST(request: Request) {
   } catch (error) {
     const authorizationResponse = visitorAuthorizationErrorResponse(error);
     if (authorizationResponse) return authorizationResponse;
+    if (error instanceof OutstandLeadIdentityError) {
+      return NextResponse.json(
+        { success: false, error: { code: 'LEAD_IDENTITY_UNAVAILABLE', message: error.message } },
+        { status: 503 }
+      );
+    }
     console.error(`❌ Error en el manejo de la solicitud:`, error);
     return NextResponse.json(
       { success: false, error: { code: 'INTERNAL_SERVER_ERROR', message: 'An unexpected error occurred' } },
