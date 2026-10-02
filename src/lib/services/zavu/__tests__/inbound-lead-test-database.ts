@@ -15,6 +15,35 @@ function field(row: Row, key: string) {
   return property ? row[column]?.[property] : row[column];
 }
 
+function equal(actual: unknown, expected: unknown) {
+  // PostgREST serializes JSONB equality operands as JSON text, not object identity.
+  if (actual !== null && typeof actual === "object" && typeof expected === "string") {
+    try { expected = JSON.parse(expected); } catch { return false; }
+  }
+  return JSON.stringify(canonical(actual ?? null)) === JSON.stringify(canonical(expected));
+}
+
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, item]) => [key, canonical(item)]));
+  }
+  return value;
+}
+
+function likePattern(pattern: string) {
+  let source = "^";
+  for (let i = 0; i < pattern.length; i++) {
+    let character = pattern[i];
+    if (character === "\\" && i + 1 < pattern.length) character = pattern[++i];
+    else if (character === "%") { source += ".*"; continue; }
+    else if (character === "_") { source += "."; continue; }
+    source += character.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`${source}$`, "i");
+}
+
 /** Isolated stateful PostgREST double: PK uniqueness and null-only updates are real test behavior. */
 export function inboundDatabase(mockFrom: jest.Mock, initial: Record<string, Row[]> = {}) {
   const tables: Record<string, Row[]> = {
@@ -36,7 +65,9 @@ export function inboundDatabase(mockFrom: jest.Mock, initial: Record<string, Row
     const filters: Filter[] = [];
     const contains: Filter[] = [];
     const excluded: Filter[] = [];
-    let pattern: string | undefined;
+    const patterns: Array<[string, RegExp]> = [];
+    const included: Array<[string, unknown[]]> = [];
+    const ordering: Array<[string, boolean]> = [];
     let max = Infinity;
     let update: Row | undefined;
     let upsert: Row[] | undefined;
@@ -54,16 +85,21 @@ export function inboundDatabase(mockFrom: jest.Mock, initial: Record<string, Row
       if (upsert) {
         for (const row of upsert) if (!tables[table].some(saved => saved.id === row.id)) tables[table].push(structuredClone(row));
       }
-      let rows = tables[table].filter(row => filters.every(([key, value]) => (field(row, key) ?? null) === value));
+      let rows = tables[table].filter(row => filters.every(([key, value]) => equal(field(row, key), value)));
+      rows = rows.filter(row => included.every(([key, values]) => values.some(value => equal(field(row, key), value))));
       rows = rows.filter(row => excluded.every(([key, value]) => (field(row, key) ?? null) !== value));
       rows = rows.filter(row => contains.every(([key, value]) => {
         const expected = value as { connections?: Array<{ zavu_sender_id: string }> };
         return expected.connections?.every(connection => row[key]?.connections?.some((saved: Row) => saved.zavu_sender_id === connection.zavu_sender_id));
       }));
-      if (pattern) {
-        const regex = new RegExp(`^${pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*')}$`, 'i');
-        rows = rows.filter(row => regex.test(row.phone || ''));
-      }
+      rows = rows.filter(row => patterns.every(([key, regex]) => typeof field(row, key) === 'string' && regex.test(field(row, key))));
+      if (ordering.length) rows.sort((a, b) => {
+        for (const [key, ascending] of ordering) {
+          const comparison = field(a, key) < field(b, key) ? -1 : field(a, key) > field(b, key) ? 1 : 0;
+          if (comparison) return ascending ? comparison : -comparison;
+        }
+        return 0;
+      });
       rows = rows.slice(0, max);
       if (update) rows.forEach(row => Object.assign(row, update));
       finished = { data: structuredClone(rows), error: null };
@@ -74,9 +110,11 @@ export function inboundDatabase(mockFrom: jest.Mock, initial: Record<string, Row
       contains: (key: string, value: unknown) => { contains.push([key, value]); return q; },
       eq: (key: string, value: unknown) => { filters.push([key, value]); return q; },
       is: (key: string, value: unknown) => { filters.push([key, value]); return q; },
+      in: (key: string, values: unknown[]) => { included.push([key, values]); return q; },
       not: (key: string, _operator: string, value: unknown) => { excluded.push([key, value]); return q; },
       neq: (key: string, value: unknown) => { excluded.push([key, value]); return q; },
-      ilike: (_key: string, value: string) => { pattern = value; return q; },
+      ilike: (key: string, value: string) => { patterns.push([key, likePattern(value)]); return q; },
+      order: (key: string, options?: { ascending?: boolean }) => { ordering.push([key, options?.ascending !== false]); return q; },
       limit: (value: number) => { max = value; return q; },
       update: (payload: Row) => { update = payload; return q; },
       upsert: (payload: Row | Row[]) => { upsert = Array.isArray(payload) ? payload : [payload]; return q; },

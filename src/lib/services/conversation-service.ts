@@ -50,6 +50,7 @@ export class ConversationService {
       let query = supabaseAdmin
         .from('conversations')
         .select('id, title, created_at, updated_at, status, channel')
+        .or('custom_data->>source.is.null,custom_data->>source.neq.comment')
         .eq('status', 'active')
         .gte('updated_at', cutoffDate)
         .order('updated_at', { ascending: false });

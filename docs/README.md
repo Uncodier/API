@@ -34,6 +34,7 @@ Read these first when changing the code-agent harness:
 - [Server-issued visitor identity tokens](./VISITOR_IDENTITY_TOKENS.md) — scoped issuers, first-party support identity, atomic exchange, logout, and offline tests.
 - [Instance context manual setup](./INSTANCE_CONTEXT_MANUAL_SETUP.md) — migration and model-limit configuration for robot context compaction.
 - [Outstand comments contract](./OUTSTAND_COMMENTS.md) — response normalization, upstream failures, and offline regression tests.
+- [Social comment conversations](./SOCIAL_COMMENT_CONVERSATIONS.md) — author/post/account grouping, explicit reply targets, preview metadata, and legacy rollout boundaries.
 - [Outstand Instagram DM identity](./OUTSTAND_DM_IDENTITY.md) — participant/lead linkage, safe retries, manual-name preservation, and provider limitations.
 - [Outstand deletion contract](./OUTSTAND_DELETION.md) — tenant authorization, remote deletion orchestration, and fail-closed retries.
 - [Social publishing contract](./SOCIAL_PUBLISHING.md) — scoped account IDs, media attachments, delivery state, and safe retries.

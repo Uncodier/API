@@ -2,7 +2,8 @@ const mockFrom = jest.fn();
 jest.mock('@/lib/database/supabase-server', () => ({ supabaseAdmin: { schema: () => ({ from: mockFrom }) } }));
 
 import { v5 as uuidv5 } from 'uuid';
-import { findInboundVoiceLead, resolveInboundVoiceLead, linkInboundVoiceLead } from '../inbound-voice-lead';
+import { InboundVoiceLeadAmbiguityError, findInboundVoiceLead, resolveInboundVoiceLead, linkInboundVoiceLead } from '../inbound-voice-lead';
+import { MAX_VOICE_PHONE_CANDIDATES } from '../voice-phone-match';
 import { persistVoiceTranscript } from '../voice-transcript';
 import { inboundDatabase, linkRows, SITE, OTHER_SITE, OWNER, PHONE, LEAD, CONVERSATION, DELIVERY, CALL } from './inbound-lead-test-database';
 
@@ -87,15 +88,24 @@ it('does not bind a Danish caller to a Mexican national-format contact with the 
   expect(state.operations.every(op => op.kind === 'read')).toBe(true);
 })
 
-it('rejects ambiguous and oversized candidate sets instead of choosing the first match', async () => {
-  for (const leads of [
-    [{ id: LEAD, site_id: SITE, phone: PHONE }, { id: CONVERSATION, site_id: SITE, phone: '+1 301 555 0100' }],
-    Array.from({ length: 51 }, (_, i) => ({ id: String(i), site_id: SITE, phone: PHONE })),
-  ]) {
-    const state = inboundDatabase(mockFrom, { leads });
-    await expect(resolveInboundVoiceLead(SITE, PHONE)).rejects.toThrow(/review/);
-    expect(state.operations.some(op => op.kind === 'insert')).toBe(false);
+it.each([
+  { count: 2, message: 'Ambiguous inbound Voice lead; human review required' },
+  { count: MAX_VOICE_PHONE_CANDIDATES + 1, message: 'Inbound Voice lead lookup requires human review' },
+])('uses typed ambiguity with the existing message for $count candidates and never selects or mutates a lead', async ({ count, message }) => {
+  const leads = Array.from({ length: count }, (_, i) => ({
+    id: uuidv5(`ambiguous-inbound-lead:${i}`, uuidv5.URL), site_id: SITE,
+    phone: i % 2 ? '+1 301 555 0100' : PHONE,
+    name: `Existing profile ${i}`, email: `caller-${i}@example.test`, voice_call_consent_status: 'denied',
+  }));
+  const original = structuredClone(leads);
+  const state = inboundDatabase(mockFrom, { leads });
+  for (const resolver of [findInboundVoiceLead, resolveInboundVoiceLead]) {
+    const result = resolver(SITE, PHONE);
+    await expect(result).rejects.toBeInstanceOf(InboundVoiceLeadAmbiguityError);
+    await expect(result).rejects.toMatchObject({ name: 'InboundVoiceLeadAmbiguityError', message });
   }
+  expect(state.tables.leads).toEqual(original);
+  expect(state.operations.every(op => op.kind === 'read')).toBe(true);
 })
 
 it('converges concurrent/repeated calls on the native voice identification PK', async () => {

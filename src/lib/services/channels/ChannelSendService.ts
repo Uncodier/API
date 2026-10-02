@@ -3,6 +3,7 @@ import { sendChannelMessage } from '@/lib/services/zavu/client';
 import { getOutstandClient } from '@/lib/integrations/outstand/client';
 import { authorizeOutstandConversation } from '@/lib/integrations/outstand/conversation-access';
 import { tryPrepareLongReplyAudio } from './long-reply-audio';
+import { sendCommentReply } from '@/lib/services/social-comments/delivery';
 
 export interface SendChannelMessageParams {
   site_id: string;
@@ -19,6 +20,8 @@ export interface SendChannelMessageParams {
 export interface SendChannelMessageResult {
   success: boolean;
   messageId?: string;
+  deliveryKind?: 'comment';
+  status?: number;
   error?: string;
 }
 
@@ -87,68 +90,7 @@ export class ChannelSendService {
           }
         }
         
-        let customData: any = {};
-        
-        // We need to fetch the original inbound message to get outstand metadata
-        if (params.conversation_id) {
-          // Find the last user message in this conversation
-          const { data: messages } = await supabaseAdmin
-            .from('messages')
-            .select('custom_data')
-            .eq('conversation_id', params.conversation_id)
-            .eq('role', 'user')
-            .order('created_at', { ascending: false })
-            .limit(1);
-            
-          if (messages && messages.length > 0 && messages[0].custom_data) {
-            customData = messages[0].custom_data;
-          }
-        }
-        
-        const outstandPostId = customData.outstand_post_id;
-        const platformPostId = customData.platform_post_id;
-        // Reply to the inbound comment itself, not that comment's parent
-        const parentCommentId =
-          customData.platform_comment_id || // <-- Alta prioridad (URN correcto)
-          customData.origin_message_id ||
-          customData.parent_comment_id;
-        const accountUsername = customData.account_username;
-        const outstandConversationId = customData.outstand_conversation_id;
-
-        if (params.channel === 'instagram' && outstandConversationId) {
-          const client = getOutstandClient();
-          await authorizeOutstandConversation(
-            client,
-            outstandConversationId,
-            params.site_id,
-          );
-          const result = await client.sendConversationMessage(
-            outstandConversationId,
-            { content: params.message },
-          );
-          return {
-            success: result.success !== false,
-            messageId: result.message?.id || `outstand-dm-${Date.now()}`,
-          };
-        }
-        
-        if (!outstandPostId) {
-          throw new Error(`No outstand_post_id found for conversation ${params.conversation_id}`);
-        }
-        
-        const outstandClient = getOutstandClient();
-        const result = await outstandClient.publishComment(outstandPostId, {
-          content: params.message,
-          network: params.channel === 'twitter' ? 'x' : params.channel,
-          platform_post_id: platformPostId,
-          parent_comment_id: parentCommentId,
-          account_username: accountUsername
-        }, params.site_id);
-        
-        return {
-          success: result.success !== false, // Some APIs might not return explicit success=true
-          messageId: result.reply_id || `outstand-${Date.now()}`
-        };
+        return await sendCommentReply(params);
       }
 
       // 1. Get site channels connections to find the zavu_sender_id for this channel type
@@ -227,6 +169,7 @@ export class ChannelSendService {
       console.error(`[ChannelSendService] Error sending ${params.channel} message:`, error);
       return {
         success: false,
+        status: typeof error?.status === 'number' ? error.status : undefined,
         error: error instanceof Error ? error.message : String(error)
       };
     }

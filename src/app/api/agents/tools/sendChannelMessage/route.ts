@@ -55,11 +55,16 @@ export async function POST(request: NextRequest) {
     if (!sendResult.success) {
       return NextResponse.json(
         { success: false, error: `Error sending message: ${sendResult.error}` },
-        { status: 500 }
+        { status: sendResult.status || 500 }
       );
     }
 
     const normalizedChannel = String(channel).toLowerCase();
+    // Comment delivery owns its compare-and-set receipt and must retain source/target metadata.
+    if (sendResult.deliveryKind === 'comment') return NextResponse.json({
+      success: true, messageId: sendResult.messageId, delivered: true, status: 'sent',
+      timestamp: new Date().toISOString(),
+    });
     if (
       normalizedChannel === 'instagram'
       && conversation_id

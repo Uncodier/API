@@ -188,14 +188,21 @@ export async function sendMessageByChannel(
       const result = await placeTrackedVoiceCall({
         siteId,
         to: recipient,
-        greeting: message,
         messageId: effectiveMessageId,
         conversationId,
         leadId: effectiveLeadId,
-        objective:
-          'Continue the customer conversation after the team-authored opening message and resolve the remaining request.',
+        // The composer can contain an instruction ("call to confirm Monday"),
+        // not a line to read verbatim to the customer. Keep it private.
+        objective: message.trim(),
         additionalContext:
-          'This follow-up was initiated by a Makinari team member. Use the private follow-up snapshot for continuity.',
+          'Team-requested outbound follow-up. Verify appointment state before claiming it is confirmed. '
+          + `Team request: ${message.trim()}`,
+        executionContext: {
+          version: 1,
+          site_id: siteId,
+          intent: message.trim(),
+          source: { tool: 'conversation_intervention', conversation_id: conversationId, message_id: effectiveMessageId },
+        },
         includeCurrentMessageInFollowUp: true,
       });
       return {

@@ -2,6 +2,7 @@ import { v5 as uuidv5 } from "uuid";
 import { getLeadById } from "@/lib/database/lead-db";
 import { supabaseAdmin } from "@/lib/database/supabase-server";
 import { placeTrackedVoiceCall } from "@/lib/services/zavu/voice-call-service";
+import { buildToolExecutionContext, readToolExecutionContext, sanitizeToolContextText, type ToolExecutionContext } from "@/lib/services/tool-execution-context";
 
 const E164_PHONE = /^\+[1-9]\d{6,14}$/;
 
@@ -9,7 +10,7 @@ export interface PlaceVoiceCallToolParams {
   lead_id: string;
   idempotency_key: string;
   greeting: string;
-  objective: string;
+  objective?: string;
   additional_context?: string;
   language?: string;
   max_duration_minutes?: number;
@@ -64,12 +65,13 @@ export function placeVoiceCallTool(siteId: string, userId?: string) {
       },
       required: ["lead_id", "idempotency_key", "greeting", "objective"],
     },
-    execute: async (args: PlaceVoiceCallToolParams) => {
+    execute: async (args: PlaceVoiceCallToolParams, executionContext?: ToolExecutionContext) => {
       const idempotencyKey = args.idempotency_key?.trim();
       const greeting = args.greeting?.trim();
       const objective = args.objective?.trim();
       const additionalContext = args.additional_context?.trim();
-      if (!args.lead_id || !idempotencyKey || !greeting || !objective) {
+      const inherited = readToolExecutionContext(executionContext, siteId);
+      if (!args.lead_id || !idempotencyKey || !greeting || (!objective && !inherited?.intent)) {
         throw new Error(
           "lead_id, idempotency_key, greeting, and objective are required"
         );
@@ -80,7 +82,7 @@ export function placeVoiceCallTool(siteId: string, userId?: string) {
       if (greeting.length > 1_000) {
         throw new Error("greeting must not exceed 1000 characters");
       }
-      if (objective.length > 500) {
+      if (objective && objective.length > 500) {
         throw new Error("objective must not exceed 500 characters");
       }
       if (additionalContext && additionalContext.length > 4_000) {
@@ -93,6 +95,11 @@ export function placeVoiceCallTool(siteId: string, userId?: string) {
           || args.max_duration_minutes > 120)
       ) {
         throw new Error("max_duration_minutes must be an integer from 1 to 120");
+      }
+      const safeObjective = sanitizeToolContextText(objective, 500);
+      const safeAdditionalContext = sanitizeToolContextText(additionalContext, 4_000);
+      if (!safeObjective && !inherited?.intent) {
+        throw new Error("lead_id, idempotency_key, greeting, and objective are required");
       }
 
       const lead = await getLeadById(args.lead_id);
@@ -107,13 +114,19 @@ export function placeVoiceCallTool(siteId: string, userId?: string) {
       const callIdentity = `${siteId}:${lead.id}:${idempotencyKey}`;
       const conversationId = uuidv5(`voice-conversation:${callIdentity}`, uuidv5.URL);
       const messageId = uuidv5(`voice-message:${callIdentity}`, uuidv5.URL);
+      const envelope = buildToolExecutionContext({
+        site_id: siteId,
+        intent: safeObjective || inherited?.intent,
+        background: safeAdditionalContext || inherited?.background,
+        source: { ...inherited?.source, tool: 'placeVoiceCall' },
+      });
       const contextData = {
         source: "placeVoiceCall",
         voice_mode: "agent_call",
         voice_call_idempotency_key: idempotencyKey,
-        voice_objective: objective,
-        ...(additionalContext
-          ? { voice_additional_context: additionalContext }
+        ...(safeObjective ? { voice_objective: safeObjective } : {}),
+        ...(safeAdditionalContext
+          ? { voice_additional_context: safeAdditionalContext }
           : {}),
       };
       const { error: conversationError } = await supabaseAdmin
@@ -123,7 +136,7 @@ export function placeVoiceCallTool(siteId: string, userId?: string) {
           site_id: siteId,
           lead_id: lead.id,
           channel: "voice",
-          title: `Voice call: ${objective}`.slice(0, 255),
+          title: safeObjective ? `Voice call: ${safeObjective}`.slice(0, 255) : 'Voice call',
           custom_data: contextData,
           ...(userId ? { user_id: userId } : {}),
         }, { onConflict: "id", ignoreDuplicates: true });
@@ -141,6 +154,7 @@ export function placeVoiceCallTool(siteId: string, userId?: string) {
           content: greeting,
           custom_data: {
             ...contextData,
+            ...(envelope ? { tool_execution_context: envelope } : {}),
             status: "placing",
           },
         }, { onConflict: "id", ignoreDuplicates: true });
@@ -155,8 +169,8 @@ export function placeVoiceCallTool(siteId: string, userId?: string) {
         messageId,
         conversationId,
         leadId: lead.id,
-        objective,
-        additionalContext,
+        objective: safeObjective,
+        additionalContext: safeAdditionalContext,
         language: args.language,
         maxDurationMinutes: args.max_duration_minutes,
       });

@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import { NextRequest } from 'next/server';
 
 const mockFrom = jest.fn();
@@ -32,12 +32,13 @@ import { buildVoiceFollowUpContext } from '@/lib/services/zavu/voice-follow-up-c
 import { setVoiceCallContactContext } from '@/lib/services/zavu/contact-client';
 
 const originalSecret = process.env.ZAVUDEV_WEBHOOK_SECRET;
+const signingSecret = randomBytes(32).toString('hex');
 function request(id: string, signed = true, type = 'call.completed') {
   const body = JSON.stringify({ id, type, senderId: 'sender-1', data: {
     callId: CALL, transcriptAvailable: true, site_id: OTHER_SITE, lead_id: OTHER_SITE,
   } });
   const t = Math.floor(Date.now() / 1000);
-  const digest = createHmac('sha256', 'test-only-secret').update(`${t}.${body}`).digest('hex');
+  const digest = createHmac('sha256', signingSecret).update(`${t}.${body}`).digest('hex');
   return new NextRequest('https://api.example.test/api/integrations/zavu/webhook', {
     method: 'POST', body, headers: signed ? { 'x-zavu-signature': `t=${t},v2=${digest}` } : {},
   });
@@ -45,7 +46,7 @@ function request(id: string, signed = true, type = 'call.completed') {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  process.env.ZAVUDEV_WEBHOOK_SECRET = 'test-only-secret';
+  process.env.ZAVUDEV_WEBHOOK_SECRET = signingSecret;
   mockClaim.mockResolvedValue({ state: 'claimed', token: 'claim' });
   mockFinish.mockResolvedValue(true);
   mockGetCall.mockResolvedValue({
@@ -93,7 +94,10 @@ it.each(['525543640787', '+5215543640787', '(55) 4364-0787'])(
   'recognizes Mexican caller stored as %s at call start and links the same lead on completion', async phone => {
     const lead = { id: LEAD, site_id: SITE, phone, name: 'Existing', do_not_call: true, voice_call_consent_status: 'denied' };
     const state = inboundDatabase(mockFrom, { leads: [structuredClone(lead)] });
-    mockGetCall.mockResolvedValue({
+    mockGetCall.mockResolvedValueOnce({
+      id: CALL, direction: 'inbound', from: '+525543640787', status: 'initiated',
+      createdAt: '2026-10-01T00:00:00Z',
+    }).mockResolvedValue({
       id: CALL, direction: 'inbound', from: '+525543640787', status: 'completed',
       createdAt: '2026-10-01T00:00:00Z', endedAt: '2026-10-01T00:01:00Z',
       transcript: [{ seq: 0, role: 'user', text: 'Hello again' }],
@@ -107,12 +111,23 @@ it.each(['525543640787', '+5215543640787', '(55) 4364-0787'])(
     expect(setVoiceCallContactContext).toHaveBeenCalledWith(expect.objectContaining({
       phone: '+525543640787', followUpContext: 'Existing customer context',
     }));
-    expect(state.operations.every(op => op.kind === 'read')).toBe(true);
+    expect(state.tables.leads).toEqual([lead]);
+    expect(state.operations.filter(op => op.table === 'leads').every(op => op.kind === 'read')).toBe(true);
+    expect(state.tables.conversations).toHaveLength(1);
+    expect(state.tables.voice_call_deliveries).toHaveLength(1);
+    expect(state.tables.messages).toHaveLength(1);
+    const earlyConversationId = state.tables.conversations[0].id;
+    const earlyDeliveryId = state.tables.voice_call_deliveries[0].id;
+    expect(state.tables.voice_call_deliveries[0]).toMatchObject({ status: 'ringing', lead_id: LEAD });
     expect((await POST(request('completed'))).status).toBe(200);
     expect((await POST(request('completed-again'))).status).toBe(200);
     expect(state.tables.leads).toEqual([lead]);
     expect(state.tables.conversations).toHaveLength(1);
     expect(state.tables.voice_call_deliveries).toHaveLength(1);
+    expect(state.tables.conversations[0].id).toBe(earlyConversationId);
+    expect(state.tables.conversations[0].custom_data.call_status).toBe('completed');
+    expect(state.tables.messages[0].content).toBe('Inbound Voice call completed.');
+    expect(state.tables.voice_call_deliveries[0]).toMatchObject({ id: earlyDeliveryId, status: 'completed' });
     expect(state.tables.messages).toHaveLength(2);
     expect([...state.tables.conversations, ...state.tables.voice_call_deliveries, ...state.tables.messages]
       .every(row => row.lead_id === LEAD)).toBe(true);

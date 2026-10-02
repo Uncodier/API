@@ -56,7 +56,7 @@ export async function getConversationsCore(params: GetConversationsParams): Prom
     .select(
       summaryOnly
         ? '*'
-        : '*, messages:messages(content, role, created_at, id)',
+        : '*, messages:messages(content, role, created_at, id, custom_data)',
       { count: 'exact' },
     )
     .order('created_at', { ascending: false })

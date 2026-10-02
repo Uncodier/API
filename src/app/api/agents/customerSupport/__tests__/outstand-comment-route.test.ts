@@ -7,6 +7,7 @@ import { visitorSessionAuthorizationService } from '@/lib/services/visitor-ident
 
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn(), schema: jest.fn() } }));
 jest.mock('@/lib/services/leads/lead-service', () => ({ manageLeadCreation: jest.fn() }));
+jest.mock('@/lib/services/social-comments/persistence', () => ({ findCommentProposal: jest.fn().mockResolvedValue(null) }));
 jest.mock('uuid', () => ({ v4: jest.fn() }));
 jest.mock('@/lib/agentbase', () => ({
   CommandFactory: {},
@@ -34,6 +35,7 @@ const siteId = '00000000-0000-4000-8000-000000000001';
 const contract = {
   source: 'comment', outstand_post_id: 'post-1', author_id: 'urn:li:person:one',
   author_identity_status: 'resolve_on_read', publisher_account_id: 'account-1',
+  platform_comment_id: 'comment-1', channel: 'linkedin', network: 'linkedin',
 };
 
 describe('Customer Support Outstand lead boundary (offline)', () => {

@@ -8,6 +8,7 @@ import {
 } from './reuse-intervention-message';
 import { getConversationChannel, sendMessageByChannel } from './send-intervention-by-channel';
 import { authorizeIntervention, InterventionRequestError } from './authorize-intervention';
+import { SocialCommentError } from '@/lib/services/social-comments/metadata';
 
 const PENDING_CUSTOM_DATA = {
   command_status: 'pending',
@@ -22,6 +23,7 @@ async function saveMessages(
   visitorId?: string,
   conversationTitle?: string,
   agentId?: string,
+  commentMetadata?: Record<string, unknown>,
 ) {
   try {
     const interventionMessageData: any = {
@@ -29,7 +31,7 @@ async function saveMessages(
       user_id: userId,
       content: interventionMessage,
       role: 'team_member',
-      custom_data: PENDING_CUSTOM_DATA,
+      custom_data: { ...commentMetadata, ...PENDING_CUSTOM_DATA },
     };
 
     if (leadId) interventionMessageData.lead_id = leadId;
@@ -69,6 +71,7 @@ export async function POST(request: Request) {
       conversationId, message, agentId, userId: user_id,
       leadId: lead_id, visitorId: visitor_id, siteId: site_id,
       messageId: requestMessageId, title: conversationTitle,
+      commentMetadata,
     } = await authorizeIntervention(request, body);
 
     if (requestMessageId && conversationId) {
@@ -87,7 +90,8 @@ export async function POST(request: Request) {
         lead_id,
         visitor_id,
         conversationTitle,
-        agentId
+        agentId,
+        commentMetadata
       );
     }
 
@@ -107,7 +111,10 @@ export async function POST(request: Request) {
     let channelSendResult = null;
 
     if (savedMessages.conversationId && site_id) {
-      const conversationInfo = await getConversationChannel(savedMessages.conversationId);
+      const conversationInfo = commentMetadata
+        ? { channel: commentMetadata.network as string, channelDelivery: true, leadId: lead_id,
+          leadPhone: undefined, leadEmail: undefined, visitorPhone: undefined }
+        : await getConversationChannel(savedMessages.conversationId);
 
       if (conversationInfo && conversationInfo.channel) {
         const {
@@ -166,7 +173,8 @@ export async function POST(request: Request) {
         content: message,
         message_id: savedMessages.interventionMessageId,
         role: 'team_member',
-        user_id: user_id
+        user_id: user_id,
+        custom_data: commentMetadata,
       }
     };
 
@@ -186,7 +194,7 @@ export async function POST(request: Request) {
       { status: 200 }
     );
   } catch (error) {
-    if (error instanceof InterventionRequestError) {
+    if (error instanceof InterventionRequestError || error instanceof SocialCommentError) {
       return NextResponse.json(
         { success: false, error: { code: 'INVALID_REQUEST', message: error.message } },
         { status: error.status },

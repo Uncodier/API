@@ -153,15 +153,46 @@ describe("identifyVoiceLead", () => {
   });
 
   it.each([
-    { name: "   " }, { name: "\n" }, { name: 42 }, { name: "x".repeat(201) },
-    { email: "" }, { email: undefined }, { email: "   " }, { email: "not-an-email" },
-    { phone: "" }, { phone: null }, { company: {} },
+    { name: undefined }, { name: null }, { name: "" }, { name: "   " }, { name: "\n" },
+    { name: 42 }, { name: "x".repeat(201) },
+    { email: "" }, { email: undefined }, { email: null }, { email: "   " }, { email: "not-an-email" },
+    { phone: "x".repeat(81) }, { callback_phone: "x".repeat(81) }, { company: "x".repeat(201) },
   ])("rejects invalid/blank contact details %p without querying", async (patch) => {
     database();
     await expect(identify({ ...validArgs, ...patch })).rejects.toMatchObject({
       code: "VOICE_LEAD_INVALID_DETAILS", fields: Object.keys(patch),
     });
     expect(mockSchema).not.toHaveBeenCalled();
+  });
+
+  it.each(["phone", "callback_phone", "company"].flatMap((field) =>
+    [0, 42, false, {}, { value: "not-a-string" }, []].map((value) => ({ field, value }))
+  ))("rejects wrong-type optional $field=$value without querying", async ({ field, value }) => {
+    database();
+    await expect(identify({ ...validArgs, [field]: value })).rejects.toMatchObject({
+      code: "VOICE_LEAD_INVALID_DETAILS", fields: [field],
+    });
+    expect(mockSchema).not.toHaveBeenCalled();
+  });
+
+  it.each([null, "", " \t\n "])("omits optional details %p on initial identification and retry", async (value) => {
+    const db = database();
+    const args = { ...validArgs, phone: value, callback_phone: value, company: value };
+    const first = await identify(args);
+    expect(first).toEqual({
+      success: true, lead_id: expect.any(String), is_new_lead: true, contact_details_saved: true,
+    });
+    expect(db.leads[0]).toMatchObject({ phone: PHONE, name: validArgs.name, email: EMAIL });
+    expect(db.inserts[0]).not.toHaveProperty("company");
+    expect(db.inserts[0].metadata.voice_identification).not.toHaveProperty("callback_phone");
+    expect(db.inserts[0].metadata.voice_identification).not.toHaveProperty("callback_phone_verified");
+    const saved = structuredClone(db.leads[0]);
+
+    const retry = await identify({ ...args, email: EMAIL.toUpperCase() }, SITE, "0013015550100");
+    expect(retry).toEqual({ ...first, is_new_lead: false });
+    expect(db.leads).toEqual([saved]);
+    expect(db.inserts).toHaveLength(1);
+    expect(db.updates).toEqual([]);
   });
 
   it.each([undefined, "", "3015550100", "+13015550100x", "+00000000000"])(
@@ -297,7 +328,7 @@ describe("identifyVoiceLead", () => {
     expect(db.leads[0].email).toBe("other@example.com");
   });
 
-  it.each([null, "", "4611721870", "+14155550199 ext 2", 14155550199])(
+  it.each(["4611721870", "+14155550199 ext 2", 14155550199])(
     "asks for a valid international callback_phone without guessing: %p", async (callback_phone) => {
       database();
       await expect(identify({ ...validArgs, callback_phone })).rejects.toMatchObject({
@@ -327,6 +358,28 @@ describe("identifyVoiceLead", () => {
       ["id", provisional.id], ["site_id", SITE], ["phone", PHONE], ["email", null],
       ["name", provisional.name], ["company", null], ["metadata", JSON.stringify(provisional.metadata)],
     ]));
+  });
+
+  it("completes a placeholder with null optional details and does not rewrite it on a blank retry", async () => {
+    const provisional = provisionalLead({ do_not_call: true, voice_call_consent_status: "revoked" });
+    const db = database([provisional]);
+    const first = await identify({ ...validArgs, phone: null, callback_phone: null, company: null });
+    expect(first).toEqual({
+      success: true, lead_id: provisional.id, is_new_lead: false, contact_details_saved: true,
+    });
+    expect(db.leads[0]).toMatchObject({
+      phone: PHONE, name: validArgs.name, email: EMAIL, company: null,
+      do_not_call: true, voice_call_consent_status: "revoked",
+      metadata: { voice_inbound: provisional.metadata.voice_inbound },
+    });
+    expect(db.updates[0].payload).not.toHaveProperty("company");
+    expect(db.updates[0].payload.metadata.voice_identification).not.toHaveProperty("callback_phone");
+    const saved = structuredClone(db.leads[0]);
+
+    await expect(identify({ ...validArgs, phone: "", callback_phone: " \t ", company: " " })).resolves.toEqual(first);
+    expect(db.leads).toEqual([saved]);
+    expect(db.inserts).toEqual([]);
+    expect(db.updates).toHaveLength(1);
   });
 
   it.each([

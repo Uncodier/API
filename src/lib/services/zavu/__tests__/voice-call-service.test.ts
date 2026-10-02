@@ -294,6 +294,7 @@ describe("placeTrackedVoiceCall idempotency", () => {
       leadId: "lead-1",
       phone: "+5215551234567",
       excludeMessageId: "message-1",
+      conversationId: "conversation-1",
     });
     expect(mockSetContactContext).toHaveBeenCalledWith(expect.objectContaining({
       phone: "+5215551234567",

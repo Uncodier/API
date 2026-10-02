@@ -23,6 +23,7 @@ export interface ZavuVoiceCallTurn {
 
 export interface ZavuVoiceCall {
   id: string;
+  senderId?: string;
   agentId?: string;
   direction: "inbound" | "outbound";
   from: string;
@@ -75,9 +76,9 @@ export async function placeVoiceCall(
   );
 }
 
-export async function getVoiceCall(callId: string): Promise<ZavuVoiceCall> {
+export async function getVoiceCall(callId: string, options?: { signal?: AbortSignal }): Promise<ZavuVoiceCall> {
   return unwrapCall(
-    await zavuFetch(`/calls/${encodeURIComponent(callId)}`)
+    await zavuFetch(`/calls/${encodeURIComponent(callId)}`, options?.signal ? { signal: options.signal } : {})
   );
 }
 

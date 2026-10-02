@@ -7,6 +7,7 @@ import { sendBulkMessagesTool } from '../sendBulkMessages/assistantProtocol';
 import { sendEmailCore } from '../sendEmail/route';
 import { WhatsAppSendService } from '@/lib/services/whatsapp/WhatsAppSendService';
 import { getLeadById } from '@/lib/database/lead-db';
+import { buildToolExecutionContext, readToolExecutionContext, type ToolExecutionContext } from '@/lib/services/tool-execution-context';
 import {
   fetchSiteNameForMerge,
   personalizeMergeTemplate,
@@ -62,7 +63,7 @@ export interface PublishToolParams {
 }
 
 export function publishTool(siteId: string, userId?: string, instanceId?: string) {
-  const execute = async (args: PublishToolParams) => {
+  const execute = async (args: PublishToolParams, executionContext?: ToolExecutionContext) => {
     const {
       is_test,
       test_recipient,
@@ -361,6 +362,27 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
           }
         } else {
           const bulkSender = sendBulkMessagesTool(siteId);
+          const inherited = readToolExecutionContext(executionContext, siteId);
+          const publishedFacts = [
+            typeof title === 'string' && title ? `Published title: ${title}` : undefined,
+            typeof type === 'string' && type ? `Published type: ${type}` : undefined,
+            publishText ? `Published text:\n${publishText}` : undefined,
+          ].filter(Boolean).join('\n');
+          const derivedContext = buildToolExecutionContext({
+            site_id: siteId,
+            intent: objective?.trim() || inherited?.intent,
+            // A lead conversation is not campaign background for other recipients.
+            background: additional_context?.trim() || [publishedFacts,
+              inherited?.source.conversation_id || inherited?.source.message_id ? undefined : inherited?.background,
+            ].filter(Boolean).join('\n\n'),
+            source: {
+              tool: 'publish',
+              instance_id: inherited?.source.instance_id ?? instanceId,
+              node_id: inherited?.source.node_id,
+              content_id: finalContentId,
+              audience_id,
+            },
+          });
           
           const audienceResult = await bulkSender.execute({
             audience_id: audience_id as string, // willSendAudience and !is_test ensures audience_id exists
@@ -373,7 +395,7 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
             ...(objective ? { objective } : {}),
             ...(additional_context ? { additional_context } : {}),
             ...(finalContentId ? { content_id: finalContentId } : {}),
-          });
+          }, derivedContext);
 
           results.audience = audienceResult;
           if (!audienceResult.success) {

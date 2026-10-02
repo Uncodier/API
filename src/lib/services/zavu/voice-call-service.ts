@@ -8,7 +8,8 @@ import {
 } from "./contact-client";
 import { buildVoiceFollowUpContext } from "./voice-follow-up-context";
 import { normalizeVoiceDeliveryStatus } from "./voice-status";
-import { ensureVoiceContactMetadataEnabled } from "./voice-agent-context";
+import { ensureVoiceContactMetadataEnabled, requireVoiceExecutionContextSupport } from "./voice-agent-context";
+import { readToolExecutionContext, sanitizeToolContextText, type ToolExecutionContext } from "../tool-execution-context";
 import {
   markMessagePlaced,
   markMessagePlacementError,
@@ -24,13 +25,14 @@ const TERMINAL_CLIENT_ERROR_MAX = 499;
 export interface PlaceTrackedVoiceCallInput {
   siteId: string;
   to: string;
-  greeting: string;
+  greeting?: string;
   messageId: string;
   conversationId?: string;
   leadId?: string;
   audienceId?: string;
   objective?: string;
   additionalContext?: string;
+  executionContext?: ToolExecutionContext;
   includeCurrentMessageInFollowUp?: boolean;
   language?: string;
   maxDurationMinutes?: number;
@@ -254,9 +256,13 @@ async function placeTrackedVoiceCallAttempt(
 ): Promise<PlaceTrackedVoiceCallResult> {
   const messageContext = await loadMessageContext(input.messageId, input.siteId);
   attempt.messageValidated = true;
-  const objective = input.objective || messageContext.objective;
-  const additionalContext =
-    input.additionalContext || messageContext.additionalContext;
+  const executionContext = readToolExecutionContext(
+    input.executionContext ?? messageContext.customData.tool_execution_context, input.siteId
+  );
+  const objective = sanitizeToolContextText(input.objective || messageContext.objective || executionContext?.intent, 500);
+  const additionalContext = sanitizeToolContextText(
+    input.additionalContext || messageContext.additionalContext || executionContext?.background, 4_000
+  );
   const leadId = messageContext.leadId || input.leadId;
   const previous = await existingDelivery(input.messageId);
   if (previous?.zavu_call_id) {
@@ -296,8 +302,11 @@ async function placeTrackedVoiceCallAttempt(
   if (!E164_PHONE.test(input.to)) {
     throw Object.assign(new Error('Voice call recipient must use E.164 format'), { status: 400 });
   }
-  if (typeof input.greeting !== 'string' || !input.greeting.trim() || input.greeting.length > 1_000) {
+  if (input.greeting !== undefined && (typeof input.greeting !== 'string' || !input.greeting.trim() || input.greeting.length > 1_000)) {
     throw Object.assign(new Error('Voice call greeting must contain 1 to 1000 characters'), { status: 400 });
+  }
+  if (!input.greeting && !objective) {
+    throw Object.assign(new Error('Voice calls without a scripted greeting require an objective'), { status: 400 });
   }
   await assertVoiceCallAllowed(
     input.siteId,
@@ -308,19 +317,24 @@ async function placeTrackedVoiceCallAttempt(
     siteId: input.siteId,
     leadId,
     phone: input.to,
+    conversationId: executionContext?.source.conversation_id || messageContext.conversationId,
     ...(input.includeCurrentMessageInFollowUp
       ? {}
       : { excludeMessageId: input.messageId }),
   });
   await persistCallGuidance(
     input.messageId,
-    messageContext.customData,
+    {
+      ...messageContext.customData,
+      ...(executionContext ? { tool_execution_context: executionContext } : {}),
+    },
     objective,
     additionalContext,
     followUp.context,
     followUp.sources
   );
   const senderId = await resolveVoiceSenderId(input.siteId, input.selectedConnectionId, input.selectedSenderId);
+  if (!input.greeting) await requireVoiceExecutionContextSupport(senderId);
   await ensureVoiceContactMetadataEnabled(senderId);
   const deliveryId = randomUUID();
   const attemptToken = randomUUID();
@@ -391,7 +405,7 @@ async function placeTrackedVoiceCallAttempt(
     call = await placeVoiceCall({
       to: input.to,
       senderId,
-      greeting: input.greeting,
+      ...(input.greeting ? { greeting: input.greeting } : {}),
       ...(input.language ? { language: input.language } : {}),
       ...(input.maxDurationMinutes
         ? { maxDurationMinutes: input.maxDurationMinutes }
@@ -399,6 +413,7 @@ async function placeTrackedVoiceCallAttempt(
       metadata: {
         voiceCallDeliveryId: deliveryId,
         messageId: input.messageId,
+        conversationId: messageContext.conversationId,
         ...(objective ? { objective } : {}),
         ...(additionalContext ? { additionalContext } : {}),
         ...(messageContext.audienceId

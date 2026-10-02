@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { canAccessSite, getRequestSitePrincipal } from '@/lib/security/site-access';
 import { hasAuthenticatedPrincipal } from '@/lib/security/request-rate-limit';
 import { createClient } from '@supabase/supabase-js';
+import { interventionCommentMetadata } from '@/lib/services/social-comments/reply-target';
 
 const optionalId = z.string().uuid().nullish();
 const requestSchema = z.object({
@@ -14,6 +15,7 @@ const requestSchema = z.object({
   lead_id: optionalId,
   visitor_id: optionalId,
   message_id: optionalId,
+  reply_to_message_id: optionalId,
   message: z.string().trim().min(1).max(20_000),
   conversation_title: z.string().trim().max(200).optional(),
 }).strict();
@@ -52,7 +54,7 @@ export async function authorizeIntervention(request: Request, body: unknown) {
     }
   }
   const { data: conversation, error } = await supabaseAdmin.from('conversations')
-    .select('id, site_id, agent_id, lead_id, visitor_id, title').eq('id', conversationId).maybeSingle();
+    .select('id, site_id, agent_id, lead_id, visitor_id, title, custom_data').eq('id', conversationId).maybeSingle();
   if (error) throw new InterventionRequestError('Conversation access is unavailable', 503);
   if (!conversation?.site_id || (input.site_id && input.site_id !== conversation.site_id)
     || !await canAccessSite(request, conversation.site_id)) {
@@ -84,6 +86,11 @@ export async function authorizeIntervention(request: Request, body: unknown) {
     if (supplied && supplied !== stored) throw new InterventionRequestError('Conversation resource mismatch', 403);
   }
   return {
+    commentMetadata: await interventionCommentMetadata({
+      siteId: conversation.site_id, conversationId, conversationData: conversation.custom_data,
+      replyToMessageId: input.reply_to_message_id || undefined,
+      retryMessageId: input.message_id || undefined, userId: principal.userId,
+    }),
     conversationId,
     siteId: conversation.site_id as string,
     userId: principal.userId,

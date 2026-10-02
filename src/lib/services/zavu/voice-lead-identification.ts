@@ -12,12 +12,17 @@ import {
 
 export { normalizeVoiceIdentityPhone } from "./voice-phone-match";
 
+function normalizeOptionalIdentityString(value: unknown): unknown {
+  // Treat absent optional details as omitted, but leave wrong types for validation.
+  return value === null || (typeof value === "string" && value.trim() === "") ? undefined : value;
+}
+
 const identitySchema = z.object({
   name: z.string().trim().min(1).max(200).regex(/^[^\u0000-\u001f\u007f]+$/),
   email: z.preprocess(normalizeVoiceIdentityEmail, z.string().max(254).email()),
-  phone: z.string().trim().min(1).max(80).optional(),
-  callback_phone: z.string().trim().min(1).max(80).optional(),
-  company: z.string().trim().max(200).optional(),
+  phone: z.preprocess(normalizeOptionalIdentityString, z.string().trim().min(1).max(80).optional()),
+  callback_phone: z.preprocess(normalizeOptionalIdentityString, z.string().trim().min(1).max(80).optional()),
+  company: z.preprocess(normalizeOptionalIdentityString, z.string().trim().max(200).optional()),
 });
 
 type ConfirmedIdentity = z.infer<typeof identitySchema>;

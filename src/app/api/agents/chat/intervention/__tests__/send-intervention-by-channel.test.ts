@@ -45,14 +45,17 @@ describe("Voice human intervention", () => {
     expect(mockPlaceTrackedVoiceCall).toHaveBeenCalledWith({
       siteId: "site-1",
       to: "+14155550100",
-      greeting: "Hello, I am following up about your appointment.",
       messageId: "message-1",
       conversationId: "conversation-1",
       leadId: "lead-1",
       objective:
-        "Continue the customer conversation after the team-authored opening message and resolve the remaining request.",
+        "Hello, I am following up about your appointment.",
       additionalContext:
-        "This follow-up was initiated by a Makinari team member. Use the private follow-up snapshot for continuity.",
+        "Team-requested outbound follow-up. Verify appointment state before claiming it is confirmed. Team request: Hello, I am following up about your appointment.",
+      executionContext: {
+        version: 1, site_id: 'site-1', intent: 'Hello, I am following up about your appointment.',
+        source: { tool: 'conversation_intervention', conversation_id: 'conversation-1', message_id: 'message-1' },
+      },
       includeCurrentMessageInFollowUp: true,
     });
     expect(result).toMatchObject({
@@ -61,6 +64,24 @@ describe("Voice human intervention", () => {
       callId: "call-1",
       workflowStarted: false,
     });
+  });
+
+  it('keeps the actual operator intent private instead of speaking an instruction as the greeting', async () => {
+    await sendMessageByChannel('voice', 'Llama para confirmar la cita del lunes a las cinco',
+      { leadId: 'lead-1', leadPhone: '+14155550100' }, 'site-1', null, 'conversation-1', undefined, 'message-1');
+    const call = mockPlaceTrackedVoiceCall.mock.calls[0][0];
+    expect(call.objective).toBe('Llama para confirmar la cita del lunes a las cinco');
+    expect(call.executionContext.intent).toBe(call.objective);
+    expect(call).not.toHaveProperty('greeting');
+    expect(call.additionalContext).toContain('Verify appointment state');
+  });
+
+  it('does not truncate operator text before the service redacts and budgets it', async () => {
+    const instruction = `${'Please review the earlier request. '.repeat(20)}Do not confirm without checking availability.`;
+    await sendMessageByChannel('voice', instruction, { leadId: 'lead-1', leadPhone: '+14155550100' },
+      'site-1', null, 'conversation-1', undefined, 'message-1');
+    expect(mockPlaceTrackedVoiceCall.mock.calls[0][0].objective).toBe(instruction);
+    expect(mockPlaceTrackedVoiceCall.mock.calls[0][0].executionContext.intent).toBe(instruction);
   });
 
   it.each(['failed', 'placement_unknown'] as const)('propagates typed voice outcome %s without claiming a workflow failure', async (status) => {

@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { buildToolExecutionContext, readToolExecutionContext, sanitizeToolContextText, type ToolExecutionContext } from '@/lib/services/tool-execution-context';
 import {
   getAudienceById,
   getAudiencePageForSending,
@@ -31,7 +32,7 @@ import {
 } from './voice-context';
 
 export function sendBulkMessagesTool(siteId: string) {
-  const execute = async (args: SendBulkMessagesToolParams) => {
+  const execute = async (args: SendBulkMessagesToolParams, executionContext?: ToolExecutionContext) => {
     const {
       audience_id,
       channel,
@@ -45,6 +46,25 @@ export function sendBulkMessagesTool(siteId: string) {
       additional_context,
     } = args;
     const audience_email_mode = args.audience_email_mode ?? 'mail';
+    const inherited = readToolExecutionContext(executionContext, siteId);
+    // Only campaign guidance and this recipient's explicit personalized guidance.
+    // Provenance IDs never trigger lookups or copy another lead's conversation.
+    const recipientContext = (voiceData: Record<string, string> = {}) => {
+      const envelope = buildToolExecutionContext({
+        site_id: siteId,
+        intent: voiceData.voice_objective || inherited?.intent,
+        background: voiceData.voice_additional_context || (inherited?.source.conversation_id || inherited?.source.message_id
+          ? undefined : inherited?.background),
+        source: {
+          tool: inherited?.source.tool === 'publish' ? 'publish' : 'sendBulkMessages',
+          instance_id: inherited?.source.instance_id,
+          node_id: inherited?.source.node_id,
+          audience_id,
+          content_id: contentIdArg ?? inherited?.source.content_id,
+        },
+      });
+      return envelope ? { tool_execution_context: envelope } : {};
+    };
 
     if (!audience_id) return { success: false, error: 'Missing required field: audience_id' };
     if (!channel) return { success: false, error: 'Missing required field: channel' };
@@ -271,7 +291,13 @@ export function sendBulkMessagesTool(siteId: string) {
               totalSkipped++;
               continue;
             }
-            const voiceContextData = voiceRecipient.customData;
+            // Legacy fields remain readable by existing workers, but must not
+            // retain an unredacted copy next to the sanitized envelope.
+            const voiceContextData: Record<string, string> = {};
+            const safeObjective = sanitizeToolContextText(voiceRecipient.customData.voice_objective, 500);
+            const safeBackground = sanitizeToolContextText(voiceRecipient.customData.voice_additional_context, 4_000);
+            if (safeObjective) voiceContextData.voice_objective = safeObjective;
+            if (safeBackground) voiceContextData.voice_additional_context = safeBackground;
 
             const conversationData: any = {
               site_id: siteId,
@@ -323,6 +349,7 @@ export function sendBulkMessagesTool(siteId: string) {
                 templated_body: abstractBody,
                 placeholder_map: placeholderMap,
                 content_variables: built.variables,
+                ...recipientContext(voiceContextData),
               },
             };
             if (agentId) messageData.agent_id = agentId;
@@ -441,6 +468,7 @@ export function sendBulkMessagesTool(siteId: string) {
               channel: 'email',
               audience_id: audience_id,
               subject: perLeadSubject,
+              ...recipientContext(),
             }
           };
 

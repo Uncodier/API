@@ -3,7 +3,11 @@ import type { OutstandClient } from '@/lib/integrations/outstand/client';
 
 const getComments = jest.fn<OutstandClient['getComments']>();
 const getOutstandClient = jest.fn(() => ({ getComments }));
+const getOwnedPost = jest.fn<(...args: unknown[]) => Promise<unknown>>();
+const canAccessSite = jest.fn<(...args: unknown[]) => Promise<boolean>>();
 jest.unstable_mockModule('@/lib/integrations/outstand/client', () => ({ getOutstandClient }));
+jest.unstable_mockModule('@/lib/integrations/outstand/post-ownership', () => ({ getOwnedPost }));
+jest.unstable_mockModule('@/lib/security/site-access', () => ({ canAccessSite }));
 jest.unstable_mockModule('next/server', () => ({ NextResponse: { json: Response.json } }));
 
 let GET: typeof import('../route').GET;
@@ -23,6 +27,11 @@ describe('Outstand comments GET author resolution', () => {
   beforeEach(() => {
     getComments.mockReset().mockResolvedValue(result);
     getOutstandClient.mockReset().mockReturnValue({ getComments });
+    canAccessSite.mockReset().mockResolvedValue(true);
+    getOwnedPost.mockReset().mockResolvedValue({ id: 'post-1', socialAccounts: [
+      { id: 'owned-1', network: 'instagram', username: 'first-owned' },
+      { id: 'owned-2', network: 'instagram', username: 'second-owned' },
+    ] });
     fetchMock = jest.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Unexpected fetch'));
   });
 
@@ -132,5 +141,44 @@ describe('Outstand comments GET author resolution', () => {
     expect(response.status).toBe(502);
     expect(await response.json()).toEqual({ error: 'Provider failure', upstream_status: 503 });
     expect(response.headers.get('Cache-Control')).toBeNull();
+  });
+
+  it('selects the exact owned account instead of the first account on a network', async () => {
+    const response = await GET(request('tenant_id=site-1&network=instagram&account_id=owned-2'), context);
+    expect(response.status).toBe(200);
+    expect(canAccessSite).toHaveBeenCalledWith(expect.any(Request), 'site-1');
+    expect(getOwnedPost).toHaveBeenCalledWith(expect.any(Object), 'post-1', 'site-1');
+    expect(getComments).toHaveBeenCalledWith('post-1', { network: 'instagram', username: 'second-owned', resolve_author_names: undefined }, 'site-1');
+    expect(response.headers.get('Cache-Control')).toBe('private, no-store');
+  });
+
+  it.each([
+    'account_id=owned-1', 'tenant_id=site-1&account_id=',
+    'tenant_id=site-1&account_id=owned-1&account_id=owned-2',
+  ])('rejects malformed scoped selectors: %s', async query => {
+    expect((await GET(request(query), context)).status).toBe(400);
+    expect(getComments).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'account_id=foreign', 'account_id=owned-2&network=facebook', 'account_id=owned-2&username=first-owned',
+  ])('rejects foreign or conflicting account identity: %s', async query => {
+    expect((await GET(request(`tenant_id=site-1&${query}`), context)).status).toBe(403);
+    expect(getComments).not.toHaveBeenCalled();
+  });
+
+  it('denies unauthorized account-scoped reads before provider access', async () => {
+    canAccessSite.mockResolvedValueOnce(false);
+    expect((await GET(request('tenant_id=site-1&account_id=owned-1'), context)).status).toBe(403);
+    expect(getOwnedPost).not.toHaveBeenCalled();
+    expect(getComments).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when the provider username selector is ambiguous across owned accounts', async () => {
+    getOwnedPost.mockResolvedValueOnce({ id: 'post-1', socialAccounts: [
+      { id: 'owned-1', network: 'instagram', username: 'same' }, { id: 'owned-2', network: 'instagram', username: 'same' },
+    ] });
+    expect((await GET(request('tenant_id=site-1&account_id=owned-2'), context)).status).toBe(409);
+    expect(getComments).not.toHaveBeenCalled();
   });
 });

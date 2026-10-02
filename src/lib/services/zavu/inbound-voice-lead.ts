@@ -11,6 +11,15 @@ import {
 const uuid = z.string().uuid();
 type Lead = { id: string; site_id: string; phone: string | null };
 
+/** No safe CRM identity can be chosen; the authenticated call may remain unlinked. */
+export class InboundVoiceLeadAmbiguityError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InboundVoiceLeadAmbiguityError";
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
 function database() {
   return supabaseAdmin.schema(
     process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA
@@ -42,9 +51,9 @@ export async function findInboundVoiceLead(siteId: string, phone: string): Promi
     .select("id, site_id, phone").eq("site_id", trusted.siteId).ilike("phone", pattern).limit(MAX_VOICE_PHONE_CANDIDATES + 1);
   if (error) throw new Error("Unable to resolve inbound Voice lead");
   const candidates = (data || []) as Lead[];
-  if (candidates.length > MAX_VOICE_PHONE_CANDIDATES) throw new Error("Inbound Voice lead lookup requires human review");
+  if (candidates.length > MAX_VOICE_PHONE_CANDIDATES) throw new InboundVoiceLeadAmbiguityError("Inbound Voice lead lookup requires human review");
   const matches = candidates.filter(lead => matchesVoiceLeadPhone(lead.phone, trusted.phone));
-  if (matches.length > 1) throw new Error("Ambiguous inbound Voice lead; human review required");
+  if (matches.length > 1) throw new InboundVoiceLeadAmbiguityError("Ambiguous inbound Voice lead; human review required");
   return matches[0] ? assertLead(matches[0], trusted.siteId, trusted.phone) : undefined;
 }
 

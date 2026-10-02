@@ -7,7 +7,24 @@ import {
 export function getCustomerSupportVoiceToolDefinitions(
   siteId?: string
 ): CustomerSupportToolDefinition[] {
-  return getCustomerSupportToolDefinitions(siteId).map((tool) => {
+  const contextTool: CustomerSupportToolDefinition = {
+    name: 'get_call_context',
+    description: 'Load the purpose, direction and private context of THIS call before responding. No IDs needed; server binds the caller.',
+    parameters: { type: 'object', properties: {}, required: [], additionalProperties: false },
+  };
+  return [contextTool, ...getCustomerSupportToolDefinitions(siteId).map((tool) => {
+    if (tool.name === "CONTACT_HUMAN") {
+      const { conversation_id, lead_id, ...properties } = tool.parameters.properties as Record<string, unknown>;
+      return {
+        ...tool,
+        description: "Request human assistance for this live call, even if identification failed. Call context is resolved by the server; never invent IDs. Success queues a request, not a live transfer.",
+        parameters: {
+          ...tool.parameters,
+          properties,
+          required: ["summary", "message", "priority"],
+        },
+      };
+    }
     if (tool.name === "catalog_commerce") {
       return {
         ...tool,
@@ -30,7 +47,7 @@ export function getCustomerSupportVoiceToolDefinitions(
           },
           phone: { type: "string", description: "Optional confirmed calling number in E.164. Must match the current call; omit if unknown. Never put an alternate contact number here." },
           callback_phone: { type: "string", description: "Optional alternate contact number, confirmed with country code in E.164. Stored as unverified contact metadata, never used to identify or merge leads or authorize outbound calls." },
-          company: { type: "string", description: "Company name, if supplied by the caller" },
+          company: { type: "string", description: "Optional company name as text; omit if not supplied. Never request it just to satisfy this tool." },
           consent: {
             type: "boolean",
             description:
@@ -41,5 +58,5 @@ export function getCustomerSupportVoiceToolDefinitions(
         additionalProperties: false,
       },
     };
-  });
+  })];
 }

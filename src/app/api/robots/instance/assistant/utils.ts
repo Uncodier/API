@@ -6,6 +6,7 @@ import { BackgroundBuilder } from '@/lib/agentbase/services/agent/BackgroundServ
 import { DataFetcher } from '@/lib/agentbase/services/agent/BackgroundServices/DataFetcher';
 import { resolveClientTimezone } from '@/lib/timezone';
 import { getComposioApiKeyForSite } from '@/lib/services/composio-service';
+import { readToolExecutionContext, type ToolExecutionContext } from '@/lib/services/tool-execution-context';
 
 // Tool imports
 import { generateImageTool } from '@/app/api/agents/tools/generateImage/assistantProtocol';
@@ -323,6 +324,7 @@ export const getAssistantToolDefinitions = (
   requirementId?: string,
   uiMediaOutputType?: UiMediaOutputType,
   approvedImport?: { url: string; sha256: string; userId: string },
+  executionContext?: ToolExecutionContext,
 ) => {
   const allowedMediaTool = uiMediaOutputType === 'image'
     ? 'generate_image'
@@ -457,7 +459,13 @@ export const getAssistantToolDefinitions = (
     tools.push(...diagnostics);
   }
 
-  return tools as RoutedTool[];
+  const privateContext = readToolExecutionContext(executionContext, siteId);
+  // Decorate BEFORE routeTools closes over the definitions. Keep private context
+  // out of schemas, enumerable metadata, model arguments, and tool-call logs.
+  return (privateContext ? tools.map((tool) => ({
+    ...tool,
+    execute: (args: any) => tool.execute(args, readToolExecutionContext(privateContext, siteId)),
+  })) : tools) as RoutedTool[];
 };
 
 export const getAssistantTools = (
@@ -470,6 +478,7 @@ export const getAssistantTools = (
   requirementId?: string,
   uiMediaOutputType?: UiMediaOutputType,
   approvedImport?: { url: string; sha256: string; userId: string },
+  executionContext?: ToolExecutionContext,
 ) => {
   return refreshHarnessToolManifest(routeTools(
     getAssistantToolDefinitions(
@@ -482,6 +491,7 @@ export const getAssistantTools = (
       requirementId,
       uiMediaOutputType,
       approvedImport,
+      executionContext,
     ),
   ));
 };
@@ -500,6 +510,7 @@ export async function getInstanceAssistantTools(
   requirementId?: string,
   uiMediaOutputType?: UiMediaOutputType,
   approvedImport?: { url: string; sha256: string; userId: string },
+  executionContext?: ToolExecutionContext,
 ) {
   const composioKey = await getComposioApiKeyForSite(siteId);
   const instanceTools = composioKey
@@ -516,5 +527,6 @@ export async function getInstanceAssistantTools(
     requirementId,
     uiMediaOutputType,
     approvedImport,
+    executionContext,
   );
 }

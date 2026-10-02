@@ -1,7 +1,8 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { after, NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { NotificationType, NotificationCategory, NotificationPriority } from '@/lib/services/notification-service';
-import { TeamNotificationService } from '@/lib/services/team-notification-service';
+import { TeamNotificationService, type NotifyTeamResult } from '@/lib/services/team-notification-service';
+import { extractApiKeyCredential, isServiceApiKeyCredential } from '@/lib/security/api-key-credential';
 import { VisitorNotificationService } from '@/lib/services/visitor-notification-service';
 import { WhatsAppSendService } from '@/lib/services/whatsapp/WhatsAppSendService';
 import { ChannelSendService, sanitizeZavuRecipient } from '@/lib/services/channels/ChannelSendService';
@@ -12,6 +13,34 @@ import { createHash } from 'crypto';
 function isValidUUID(uuid: string): boolean {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   return uuidRegex.test(uuid);
+}
+
+async function notifyVoiceTeamWithinBudget(
+  params: Parameters<typeof TeamNotificationService.notifyHumanIntervention>[0]
+): Promise<{ result: NotifyTeamResult | null; timedOut: boolean }> {
+  // The caller-facing voice tool has a short response budget. Keep the ongoing
+  // team notification alive after the response without claiming it was accepted.
+  const notification = Promise.resolve()
+    .then(() => TeamNotificationService.notifyHumanIntervention(params))
+    .catch(() => null);
+  try {
+    after(async () => { await notification; });
+  } catch {
+    // A missing request lifecycle must not hide a task that already persisted.
+    // The promise still handles late rejection, even without after support.
+  }
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      notification.then(result => ({ result, timedOut: false })),
+      new Promise<{ result: null; timedOut: boolean }>(resolve => {
+        timer = setTimeout(() => resolve({ result: null, timedOut: true }), 2_000);
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /**
@@ -352,7 +381,8 @@ export async function POST(request: NextRequest) {
       user_id,
       summary,
       name,
-      email
+      email,
+      voice_call_delivery_id
     } = body;
     
     // Validar parámetros requeridos
@@ -407,6 +437,23 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+
+    if (voice_call_delivery_id !== undefined && (
+      typeof voice_call_delivery_id !== 'string' || !isValidUUID(voice_call_delivery_id)
+    )) {
+      return NextResponse.json({
+        success: false,
+        error: { code: 'INVALID_REQUEST', message: 'voice_call_delivery_id must be a valid UUID when provided' }
+      }, { status: 400 });
+    }
+
+    if (voice_call_delivery_id !== undefined &&
+        !await isServiceApiKeyCredential(extractApiKeyCredential(request))) {
+      return NextResponse.json({
+        success: false,
+        error: { code: 'FORBIDDEN', message: 'Active voice call binding requires a service credential.' }
+      }, { status: 403 });
+    }
     
     // Verificar que la conversación existe y obtener información del origen
     const { data: conversationData, error: conversationError } = await supabaseAdmin
@@ -456,6 +503,42 @@ export async function POST(request: NextRequest) {
     // Verificar en custom_data.source (formato anterior)
     else if (conversationData.custom_data && conversationData.custom_data.source) {
       conversationOrigin = conversationData.custom_data.source;
+    }
+
+    if (voice_call_delivery_id !== undefined) {
+      // The voice executor resolves this binding server-side. Outbound calls can
+      // reuse chat conversations, so validate the active delivery before any
+      // writes/sends rather than relying on the conversation's original channel.
+      const invalidBinding = () => NextResponse.json({
+        success: false,
+        error: {
+          code: 'VOICE_CALL_BINDING_INVALID',
+          message: 'No active voice call is bound to this conversation.'
+        }
+      }, { status: 409 });
+      if (!conversationData.site_id) return invalidBinding();
+
+      const { data: delivery, error: deliveryError } = await supabaseAdmin
+        .from('voice_call_deliveries')
+        .select('id, zavu_call_id')
+        .eq('id', voice_call_delivery_id)
+        .eq('conversation_id', conversation_id)
+        .eq('site_id', conversationData.site_id)
+        .in('status', ['initiated', 'ringing', 'answered', 'in_progress'])
+        .is('ended_at', null)
+        .maybeSingle();
+
+      if (deliveryError) {
+        return NextResponse.json({
+          success: false,
+          error: { code: 'DATABASE_ERROR', message: 'Failed to verify active voice call' }
+        }, { status: 500 });
+      }
+      if (!delivery || delivery.id !== voice_call_delivery_id ||
+          typeof delivery.zavu_call_id !== 'string' || !delivery.zavu_call_id.trim()) {
+        return invalidBinding();
+      }
+      conversationOrigin = 'voice';
     }
     
     console.log(`📺 Origen de conversación detectado: "${conversationOrigin}" para conversación ${conversation_id}`);
@@ -520,6 +603,83 @@ export async function POST(request: NextRequest) {
         summary
       }
     };
+
+    if (conversationOrigin === 'voice') {
+      // Escalation is a pending request, not a live transfer or permission to
+      // contact the caller on another channel. Keep it out of the web fallback.
+      // Attempt each write independently so a failed audit message/notification
+      // cannot prevent a durable support task (or hide an accepted notification).
+      const [messageResult, notificationResult, taskResult] = await Promise.allSettled([
+        (async () => supabaseAdmin.from('messages').insert([systemMessageData]))(),
+        notifyVoiceTeamWithinBudget({
+          siteId,
+          conversationId: conversation_id,
+          message,
+          priority,
+          agentName: agentData?.name,
+          summary,
+          contactName: name,
+          contactEmail: email
+        }),
+        createSupportTask(
+          conversation_id,
+          conversationData.lead_id,
+          siteId,
+          conversationData.user_id,
+          message,
+          summary,
+          name,
+          priority
+        )
+      ]);
+
+      const teamNotification = notificationResult.status === 'fulfilled' ? notificationResult.value.result : null;
+      const notificationTimedOut = notificationResult.status === 'fulfilled' && notificationResult.value.timedOut;
+      const supportTaskId = taskResult.status === 'fulfilled' ? taskResult.value : null;
+      // notifyHumanIntervention can report success with no eligible recipients,
+      // or retain positive counts after a later failure. Counts are the evidence
+      // of persisted team notifications/provider-accepted team emails, not reads.
+      const notificationsSent = teamNotification?.notificationsSent || 0;
+      const emailsSent = teamNotification?.emailsSent || 0;
+      const teamNotificationAccepted = notificationsSent > 0 || emailsSent > 0;
+      const accepted = !!supportTaskId || teamNotificationAccepted;
+
+      return NextResponse.json({
+        success: accepted,
+        ...(!accepted ? {
+          error: {
+            code: 'HUMAN_INTERVENTION_UNAVAILABLE',
+            message: 'Unable to confirm queued human assistance. No support task or team notification acceptance was confirmed.'
+          }
+        } : {}),
+        data: {
+          intervention_id: interventionId,
+          conversation_id,
+          message,
+          priority,
+          status: accepted ? 'pending' : 'failed',
+          human_joined: false,
+          created_at: new Date().toISOString(),
+          summary,
+          contact_name: name,
+          contact_email: email,
+          conversation_origin: conversationOrigin,
+          team_notification: {
+            accepted: teamNotificationAccepted,
+            timed_out: notificationTimedOut,
+            notifications_sent: notificationsSent,
+            emails_sent: emailsSent,
+            total_members: teamNotification?.totalMembers || 0
+          },
+          channel_response: { sent: false, type: 'none', channel: 'voice' },
+          visitor_notification: { sent: false, email: email || null },
+          support_task: { created: !!supportTaskId, task_id: supportTaskId },
+          system_message: {
+            saved: messageResult.status === 'fulfilled' && !messageResult.value.error
+          }
+        }
+      }, { status: accepted ? 202 : 503 });
+    }
     
     const { error: messageError } = await supabaseAdmin
       .from('messages')

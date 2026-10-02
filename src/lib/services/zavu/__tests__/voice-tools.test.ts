@@ -73,7 +73,7 @@ describe("syncVoiceTools", () => {
     });
 
     expect(mockDeleteAgentTool).toHaveBeenCalledWith("agent_1", "tool_old");
-    expect(mockDeleteAgentTool).toHaveBeenCalledWith("agent_1", "tool_context");
+    expect(mockDeleteAgentTool).not.toHaveBeenCalledWith("agent_1", "tool_context");
     expect(mockDeleteAgentTool).toHaveBeenCalledWith("agent_1", "tool_capture");
     expect(mockDeleteAgentTool).toHaveBeenCalledWith("agent_1", "tool_keep");
     expect(mockUpsertAgentTool).toHaveBeenCalledWith(
@@ -92,7 +92,7 @@ describe("syncVoiceTools", () => {
       "agent_1",
       expect.objectContaining({ name: "GET_TASKS" })
     );
-    expect(mockUpsertAgentTool).toHaveBeenCalledTimes(16);
+    expect(mockUpsertAgentTool).toHaveBeenCalledTimes(17);
     expect(mockUpsertAgentTool).toHaveBeenCalledWith(
       "agent_1",
       expect.objectContaining({
@@ -131,7 +131,17 @@ describe("syncVoiceTools", () => {
     expect(chat.parameters.properties).toHaveProperty("conversation");
   });
 
-  it("keeps all 16 tools and enum guidance through the provider's type/description-only roundtrip", async () => {
+  it("allows human assistance without identification or model-supplied IDs in voice only", () => {
+    const voice = getCustomerSupportVoiceToolDefinitions().find(tool => tool.name === "CONTACT_HUMAN")!;
+    const chat = getCustomerSupportToolDefinitions().find(tool => tool.name === "CONTACT_HUMAN")!;
+    expect(voice.parameters.required).toEqual(["summary", "message", "priority"]);
+    expect(voice.parameters.properties).not.toHaveProperty("conversation_id");
+    expect(voice.parameters.properties).not.toHaveProperty("lead_id");
+    expect(chat.parameters.required).toEqual(expect.arrayContaining(["conversation_id", "name", "email"]));
+    expect(chat.parameters.properties).toHaveProperty("lead_id");
+  });
+
+  it("keeps all 17 tools and enum guidance through the provider's type/description-only roundtrip", async () => {
     mockUpsertAgentTool.mockImplementation(async (_agentId, input) => ({
       ...input,
       id: `tool_${input.name}`,
@@ -145,8 +155,8 @@ describe("syncVoiceTools", () => {
       })),
     }));
     const tools = await syncVoiceTools({ agentId: "agent_1", siteId: "site-1", webhookSecret });
-    expect(tools.map((tool) => tool.name)).toEqual(getCustomerSupportToolDefinitions().map((tool) => tool.name));
-    expect(tools).toHaveLength(16);
+    expect(tools.map((tool) => tool.name)).toEqual(getCustomerSupportVoiceToolDefinitions().map((tool) => tool.name));
+    expect(tools).toHaveLength(17);
     const catalog = tools.find((tool) => tool.name === "catalog_commerce")!;
     const properties = catalog.parameters.properties as any;
     expect(properties.resource.enum).toBeUndefined();
@@ -166,8 +176,8 @@ describe("syncVoiceTools", () => {
     const voice = getCustomerSupportVoiceToolDefinitions();
     for (const source of chat) {
       const projected = voice.find((tool) => tool.name === source.name)!;
-      if (source.name !== "IDENTIFY_LEAD") expect(projected.parameters).toEqual(source.parameters);
-      if (!["IDENTIFY_LEAD", "catalog_commerce"].includes(source.name)) {
+      if (!["IDENTIFY_LEAD", "CONTACT_HUMAN"].includes(source.name)) expect(projected.parameters).toEqual(source.parameters);
+      if (!["IDENTIFY_LEAD", "catalog_commerce", "CONTACT_HUMAN"].includes(source.name)) {
         expect(projected.description).toBe(source.description);
       }
     }
@@ -187,6 +197,8 @@ describe("syncVoiceTools", () => {
     expect(prompt).toContain("makinari_voice_call_objective");
     expect(prompt).toContain("makinari_voice_follow_up_context");
     expect(prompt).toContain("private call-specific guidance");
+    expect(prompt).toContain('First silently call get_call_context');
+    expect(prompt).toContain('never guess or deny calling');
     expect(prompt).toContain("Never provide, spell out, read aloud, or offer to send links or URLs");
     expect(prompt).toContain("content that requires a screen");
     expect(prompt).toContain("silently check the listed tools");

@@ -35,7 +35,8 @@ function fixture(overrides: Record<string, any> = {}) {
   const queues: Record<string, any[]> = {};
   const defaults: Record<string, any> = { remote_instances: { id: instance, site_id: site, status: 'running' },
     requirements: row(), instance_plans: [], instance_logs: [], requirement_migration_lifecycle: [],
-    requirement_migration_diagnostics: [], requirement_harness_decisions: [] };
+    requirement_migration_diagnostics: [], requirement_harness_decisions: [], requirement_migration_reconciliations: [],
+    requirement_migration_reconciliation_resumes: [] };
   const calls: Record<string, any[]> = {};
   (supabaseAdmin.from as jest.Mock).mockImplementation((table: string) => {
     const value = queues[table]?.length ? queues[table].shift() : table in overrides ? overrides[table] : defaults[table];
@@ -92,6 +93,20 @@ it('distinguishes caller tools from worker health and unknown lifecycle data', a
   expect(result.runtime).toMatchObject({ sandbox_tools_exposed: false, sandbox_health: 'not_probed', other_worker_capabilities: 'unknown' });
   expect(result.migrations.available).toBe(false);
   expect(JSON.stringify(result)).not.toContain('secret internal error');
+});
+
+it('exposes scoped reconciliation summaries, never selects the private historical SQL or operator prose', async () => {
+  const h = fixture({ requirement_migration_reconciliations: [{ id: request, file: 'migrations/0001.sql' }] });
+  const result = await inspectHarness(context());
+  expect(result.migration_reconciliations).toEqual({ available: true,
+    records: [{ id: request, file: 'migrations/0001.sql' }] });
+  const query = h.calls.requirement_migration_reconciliations[0];
+  expect(query.eq).toHaveBeenCalledWith('site_id', site);
+  expect(query.eq).toHaveBeenCalledWith('requirement_id', req);
+  const selected = query.select.mock.calls[0][0];
+  expect(selected).not.toMatch(/prior_lifecycle|operator_id|reason|evidence/);
+  fixture({ requirement_migration_reconciliations: { __error: { message: 'not deployed' } } });
+  expect((await inspectHarness(context())).migration_reconciliations.available).toBe(false);
 });
 
 it('exposes persisted HTTP fixtures and repair receipts instead of guessing from repository tests', async () => {

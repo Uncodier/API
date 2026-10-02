@@ -76,6 +76,21 @@ describe('central migration application review', () => {
     expect(result).toMatchObject({ allowed: true, lifecycle: { state: 'validation_pending', attempts: 5 } });
   });
 
+  it('an operator-reconciled binding is not SQL approval and still requires a diagnostic and fresh review', async () => {
+    // The operator RPC changes only the active specification binding and archives
+    // the old row. Ordinary application still follows exactly the same gates.
+    (listMigrationLifecycle as jest.Mock).mockResolvedValue([{ ...existing, version: 11,
+      attempts: 5, review: null, checksum: digest('unrepaired SQL') }]);
+    expect((await authorizeMigrationApplication({ context, target, sql, assertUnchanged: jest.fn() })).allowed).toBe(false);
+    expect(reviewMigrationSecurity).not.toHaveBeenCalled();
+    (loadMigrationDiagnostic as jest.Mock).mockResolvedValue({ state: 'followup_assigned', checksum: digest('unrepaired SQL') });
+    const result = await authorizeMigrationApplication({ context, target, sql, assertUnchanged: jest.fn() });
+    expect(result).toMatchObject({ allowed: true, lifecycle: { state: 'validation_pending', attempts: 5,
+      review: { binding: { specification_checksum: context.specificationChecksum } } } });
+    expect(reviewMigrationSecurity).toHaveBeenCalledWith(expect.objectContaining({ specification: context.specification }));
+    expect(beginMigrationDiagnosticReview).toHaveBeenCalledTimes(1);
+  });
+
   it.each(['followup_reviewing', 'exhausted'])('does not get another review after diagnostic state %s', async state => {
     (listMigrationLifecycle as jest.Mock).mockResolvedValue([{ ...existing, attempts: 5 }]);
     (loadMigrationDiagnostic as jest.Mock).mockResolvedValue({ state });

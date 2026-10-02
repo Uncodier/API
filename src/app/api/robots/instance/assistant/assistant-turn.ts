@@ -10,6 +10,26 @@ import type { AssistantContext } from './types';
 import { instrumentWorkflowTools } from '@/lib/services/workflow-robot/execution-tracker';
 import { assertAssistantRecoveryActive } from '@/lib/services/robot-instance/assistant-recovery';
 import { resolvePublishNodeBinding } from './publish-node-binding';
+import { buildToolExecutionContext } from '@/lib/services/tool-execution-context';
+import { SILENT_CONTINUE_PROMPT } from '@/lib/services/robot-instance/assistant-respawn-policy';
+
+function selectExecutionIntent(initialMessage: string, messages: any[]): string | undefined {
+  const usable = (text: unknown): text is string => typeof text === 'string'
+    && Boolean(text.trim()) && !text.includes(SILENT_CONTINUE_PROMPT)
+    && !text.includes('[Reference Context from linked node ');
+  if (usable(initialMessage)) return initialMessage;
+  // Recovery injects a synthetic user prompt. Select only the latest actual user
+  // text, never serialize assistant/tool history, images, or the system prompt.
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (message?.role !== 'user') continue;
+    const text = typeof message.content === 'string' ? message.content
+      : Array.isArray(message.content) ? message.content
+        .filter((part: any) => (part?.type === 'text' || part?.type === 'input_text') && typeof part.text === 'string')
+        .map((part: any) => part.text).join('\n') : undefined;
+    if (usable(text)) return text;
+  }
+}
 
 export async function processAssistantTurn(
   context: AssistantContext,
@@ -39,6 +59,14 @@ export async function processAssistantTurn(
         context.executionOptions.requirement_id,
         context.uiMediaOutputType,
         context.approvedImport,
+        buildToolExecutionContext({
+          site_id: context.executionOptions.site_id,
+          intent: selectExecutionIntent(context.initialMessage, messages),
+          source: {
+            instance_id: context.executionOptions.instance_id,
+            node_id: context.instanceNodeId,
+          },
+        }),
       );
   const trackedTools = context.toolExecutionTracker
     ? instrumentWorkflowTools(availableTools, context.toolExecutionTracker)

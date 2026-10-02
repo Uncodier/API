@@ -8,7 +8,7 @@ import {
 import { persistVoiceTranscript } from "./voice-transcript";
 import { normalizeVoiceDeliveryStatus } from "./voice-status";
 import { voiceCommandStatus } from './voice-call-message-state';
-import { resolveInboundVoiceLead, linkInboundVoiceLead } from './inbound-voice-lead';
+import { InboundVoiceLeadAmbiguityError, resolveInboundVoiceLead, linkInboundVoiceLead } from './inbound-voice-lead';
 
 function tenantDatabase() {
   return supabaseAdmin.schema(
@@ -84,11 +84,18 @@ export async function handleVoiceCallEvent(event: any): Promise<void> {
   if (delivery?.zavu_call_id && delivery.zavu_call_id !== callId) {
     throw new Error("Voice webhook does not match the persisted provider call");
   }
-  const senderId = event?.senderId ?? data?.senderId ?? event?.sender?.id;
+  const senderIds = [event?.senderId, data?.senderId, data?.call?.senderId, event?.sender?.id]
+    .filter(value => value != null);
+  if (senderIds.some(value => typeof value !== "string" || !value || value !== senderIds[0])) {
+    throw new Error("Voice webhook has conflicting sender IDs");
+  }
+  const senderId = senderIds[0];
   if (delivery && senderId && senderId !== delivery.zavu_sender_id) {
     throw new Error("Voice webhook does not match the persisted sender");
   }
   let callDetails: Awaited<ReturnType<typeof getVoiceCall>> | undefined;
+  // An untracked terminal event persists its own transcript and cleanup. An
+  // early delivery found by a later event must take the existing-delivery path.
   let untrackedInbound = false;
   if (!delivery) {
     const inbound = await handleUntrackedInboundVoiceEvent(event, callId);
@@ -107,12 +114,37 @@ export async function handleVoiceCallEvent(event: any): Promise<void> {
     && event.type !== "call.failed"
   ) return;
 
+  const { data: message, error: messageReadError } = await tenantDatabase()
+    .from("messages")
+    .select("custom_data")
+    .eq("id", delivery.message_id)
+    .maybeSingle();
+  if (messageReadError) {
+    throw new Error(`Failed to read Voice call message: ${messageReadError.message}`);
+  }
+  const customData =
+    message?.custom_data && typeof message.custom_data === "object"
+      ? message.custom_data as Record<string, unknown>
+      : {};
+  const inbound = customData.call_direction === "inbound";
+  const terminalEvent = event.type === "call.completed" || event.type === "call.failed";
   if (
     !callDetails
-    && event.type === "call.completed"
-    && data?.transcriptAvailable === true
+    && terminalEvent
+    && (inbound || data?.transcriptAvailable === true)
   ) {
+    // Early inbound deliveries have no final transcript yet. Fetch it even
+    // when the terminal event omits transcriptAvailable, including failed calls.
     callDetails = await getVoiceCall(callId);
+  }
+  if (callDetails) {
+    if (callDetails.id !== callId) {
+      throw new Error("Voice provider call does not match the webhook");
+    }
+    const providerSenderId = (callDetails as typeof callDetails & { senderId?: unknown }).senderId;
+    if (providerSenderId != null && providerSenderId !== delivery.zavu_sender_id) {
+      throw new Error("Voice provider call does not match the persisted sender");
+    }
   }
   if (
     event.type === "call.completed"
@@ -144,7 +176,7 @@ export async function handleVoiceCallEvent(event: any): Promise<void> {
   const turnCount = callDetails?.turnCount;
   const cost = data?.cost ?? callDetails?.cost;
   const currency = data?.currency;
-  const transcript = callDetails?.transcript;
+  const transcript = terminal ? callDetails?.transcript : undefined;
   const answeredAt =
     callDetails?.answeredAt ?? (event.type === "call.answered" ? now : undefined);
   const endedAt = callDetails?.endedAt ?? (terminal ? now : undefined);
@@ -153,7 +185,9 @@ export async function handleVoiceCallEvent(event: any): Promise<void> {
   if (turnCount != null) deliveryUpdate.turn_count = turnCount;
   if (cost != null) deliveryUpdate.cost = cost;
   if (typeof currency === "string") deliveryUpdate.currency = currency;
-  if (transcript != null) deliveryUpdate.transcript = transcript;
+  if (transcript != null && (transcript.length > 0 || !delivery.transcript?.length)) {
+    deliveryUpdate.transcript = transcript;
+  }
   if (answeredAt != null) deliveryUpdate.answered_at = answeredAt;
   if (endedAt != null) deliveryUpdate.ended_at = endedAt;
   let deliveryUpdateQuery = supabaseAdmin
@@ -177,26 +211,23 @@ export async function handleVoiceCallEvent(event: any): Promise<void> {
   }
   if (!updatedDelivery) return;
 
-  const { data: message, error: messageReadError } = await tenantDatabase()
-    .from("messages")
-    .select("custom_data")
-    .eq("id", delivery.message_id)
-    .maybeSingle();
-  if (messageReadError) {
-    throw new Error(`Failed to read Voice call message: ${messageReadError.message}`);
-  }
-  const customData =
-    message?.custom_data && typeof message.custom_data === "object"
-      ? message.custom_data as Record<string, unknown>
-      : {};
-  const inbound = customData.call_direction === "inbound";
   if (inbound && terminal && !untrackedInbound && delivery.site_id && delivery.conversation_id) {
     // Reconcile legacy/unlinked calls when a later terminal webhook arrives.
     // Do not trust a lead ID or contact details embedded in transcript/tool text.
-    const leadId = delivery.lead_id || await resolveInboundVoiceLead(delivery.site_id, delivery.recipient_phone);
-    await linkInboundVoiceLead({ siteId: delivery.site_id, conversationId: delivery.conversation_id,
-      deliveryId: delivery.id, callId, leadId });
-    delivery = { ...delivery, lead_id: leadId };
+    let leadId = delivery.lead_id;
+    if (!leadId) {
+      try {
+        leadId = await resolveInboundVoiceLead(delivery.site_id, delivery.recipient_phone);
+      } catch (error) {
+        if (!(error instanceof InboundVoiceLeadAmbiguityError)) throw error;
+        // Human review can resolve identity later; retain the final transcript now.
+      }
+    }
+    if (leadId) {
+      await linkInboundVoiceLead({ siteId: delivery.site_id, conversationId: delivery.conversation_id,
+        deliveryId: delivery.id, callId, leadId });
+      delivery = { ...delivery, lead_id: leadId };
+    }
   }
   const {
     voice_response_workflow_status: _oldStatus,
@@ -252,6 +283,7 @@ export async function handleVoiceCallEvent(event: any): Promise<void> {
     .update({
       custom_data: messageCustomData,
       updated_at: now,
+      ...(inbound ? { content: `Inbound Voice call ${status.replace(/_/g, " ")}.` } : {}),
     })
     .eq("id", delivery.message_id);
   if (messageError) {
@@ -294,7 +326,7 @@ export async function handleVoiceCallEvent(event: any): Promise<void> {
       throw new Error(`Failed to read inbound Voice conversation: ${conversationReadError.message}`);
     }
     const conversationData = conversation?.custom_data;
-    if (conversationData?.voice_response_workflow_status) {
+    if (conversationData && (conversationData.voice_response_workflow_status || conversationData.call_status !== status)) {
       const {
         voice_response_workflow_status: _oldStatus,
         voice_response_workflow_id: _oldWorkflowId,
@@ -302,7 +334,7 @@ export async function handleVoiceCallEvent(event: any): Promise<void> {
       } = conversationData as Record<string, unknown>;
       const { error: conversationUpdateError } = await tenantDatabase()
         .from("conversations")
-        .update({ custom_data: retainedConversationData })
+        .update({ custom_data: { ...retainedConversationData, call_status: status } })
         .eq("id", delivery.conversation_id)
         .eq("site_id", delivery.site_id);
       if (conversationUpdateError) {

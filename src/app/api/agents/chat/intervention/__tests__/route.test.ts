@@ -35,6 +35,7 @@ function createChain(result: { data?: any; error?: any } = { data: null, error: 
   chain.eq = jest.fn().mockReturnValue(chain);
   chain.single = jest.fn().mockResolvedValue(result);
   chain.maybeSingle = jest.fn().mockResolvedValue(result);
+  chain.limit = jest.fn().mockResolvedValue({ data: [], error: null });
   return chain;
 }
 

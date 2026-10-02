@@ -3,13 +3,14 @@ const mockPlace = jest.fn();
 jest.mock('@/lib/database/supabase-server', () => ({ supabaseAdmin: { from: mockFrom } }));
 jest.mock('../voice-call-client', () => ({ placeVoiceCall: mockPlace }));
 jest.mock('../contact-client', () => ({ setVoiceCallContactContext: jest.fn(), clearVoiceCallContactContext: jest.fn() }));
-jest.mock('../voice-agent-context', () => ({ ensureVoiceContactMetadataEnabled: jest.fn() }));
+jest.mock('../voice-agent-context', () => ({ ensureVoiceContactMetadataEnabled: jest.fn(), requireVoiceExecutionContextSupport: jest.fn() }));
 jest.mock('../voice-follow-up-context', () => ({
   buildVoiceFollowUpContext: jest.fn(async () => ({ context: 'Follow-up', sources: {} })),
 }));
 
 import { placeTrackedVoiceCall } from '../voice-call-service';
 import type { VoiceCallConsentRecord } from '../voice-call-consent';
+import { requireVoiceExecutionContextSupport } from '../voice-agent-context';
 
 describe('tracked voice placement outcomes', () => {
   let customData: Record<string, any>;
@@ -92,6 +93,33 @@ describe('tracked voice placement outcomes', () => {
     await expect(placeTrackedVoiceCall({ ...input, ...extra })).rejects.toMatchObject({ deliveryStatus: 'failed' });
     expect(customData.command_status).toBe('failed');
     expect(mockPlace).not.toHaveBeenCalled();
+  });
+
+  it('recovers durable publish intent after queued execution and does not speak internal instructions', async () => {
+    const siteId = '11111111-1111-4111-8111-111111111111';
+    const sourceConversation = '22222222-2222-4222-8222-222222222222';
+    customData.tool_execution_context = {
+      version: 1, site_id: siteId, intent: 'Confirm Monday appointment at five',
+      background: 'Check availability; previous booking failed.',
+      source: { tool: 'publish', conversation_id: sourceConversation },
+    };
+    await placeTrackedVoiceCall({ ...input, siteId, greeting: undefined });
+    expect(customData.tool_execution_context.intent).toBe('Confirm Monday appointment at five');
+    expect(customData.voice_objective).toBe('Confirm Monday appointment at five');
+    expect(mockPlace.mock.calls[0][0]).not.toHaveProperty('greeting');
+    expect(mockPlace.mock.calls[0][0].metadata).toMatchObject({ objective: 'Confirm Monday appointment at five', conversationId: 'conversation' });
+  });
+
+  it('rejects an instruction-only call without a valid objective before contacting the provider', async () => {
+    await expect(placeTrackedVoiceCall({ ...input, greeting: undefined })).rejects.toMatchObject({ status: 400 });
+    expect(mockPlace).not.toHaveBeenCalled();
+  });
+
+  it('does not dial an instruction-only call until context support has been synchronized', async () => {
+    jest.mocked(requireVoiceExecutionContextSupport).mockRejectedValueOnce(Object.assign(new Error('Re-sync required'), { status: 409 }));
+    await expect(placeTrackedVoiceCall({ ...input, greeting: undefined, objective: 'Confirm Monday' })).rejects.toMatchObject({ status: 409 });
+    expect(mockPlace).not.toHaveBeenCalled();
+    expect(delivery).toBeNull();
   });
 
   it.each([undefined, 408, 409, 425, 429, 500])('keeps ambiguous provider outcome pending (HTTP %s)', async (status) => {

@@ -189,6 +189,11 @@ describe('publish test delivery', () => {
       voice_mode: 'agent_call',
       objective: 'Confirm the appointment',
       additional_context: 'Offer a morning or afternoon slot.',
+    }), expect.objectContaining({
+      version: 1,
+      site_id: siteId,
+      intent: 'Confirm the appointment',
+      source: expect.objectContaining({ tool: 'publish' }),
     }));
   });
 
