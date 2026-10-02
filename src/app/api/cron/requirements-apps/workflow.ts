@@ -150,6 +150,8 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   let databaseMigrations: DatabaseMigrationOutcome | undefined;
   let migrationCorrectionScheduled = false;
   let migrationDiagnosticPending = false;
+  let migrationPlanRecoveryRequired = false;
+  let migrationValidationOnly = false;
   let migrationValidationRequired = false;
   let migrationFreshValidationCompleted = false;
   const repairedMigrations: MigrationRepairTarget[] = [];
@@ -217,14 +219,11 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     reqId,
   );
   if (!existingPlan && migrationLifecycle.some(row => row.state !== 'validated')) {
+    migrationPlanRecoveryRequired = true;
     existingPlan = await loadMigrationSourcePlanStep(reqId, instanceId, site_id);
-    if (!existingPlan) {
-      recoveryDisposition = 'internal_review';
-      await holdMigrationLifecycleStep({ requirementId: reqId,
-        executionOwnership: { requirementId: reqId, runId: cronLockRunId, executionGeneration },
-        reason: 'A pending migration has no requirement-bound implementation plan; technical review is required.' });
-      return { reqId, branch: null, previewUrl: null, status: 'blocked' as const };
-    }
+    // Missing orchestration is not a security verdict. Recover a bound plan via
+    // the normal bounded planner; keep all SQL/validation obligations intact.
+    migrationPlanRecoveryRequired = !existingPlan;
   }
   if (existingPlan && migrationLifecycle.some(row => row.state === 'correction_required')) {
     const handoff = await scheduleMigrationCorrectionStep({ requirementId: reqId, planId: existingPlan.id,
@@ -246,7 +245,10 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       existingPlan.id,
       actionableSteps[0].id,
       reqId,
+      migrationValidationRequired && !migrationLifecycle.some(row => row.state === 'correction_required')
+        ? 'migration_validation' : undefined,
     );
+    migrationValidationOnly = preflightGate.runnable && preflightGate.migrationValidationOnly === true;
     if (!preflightGate.runnable) {
       if (preflightGate.reason === 'infrastructure_circuit_open') {
         cycleOutcome = 'infrastructure_exhausted';
@@ -492,7 +494,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   }
   // A partially applied batch may depend on its next pending correction. Let
   // that scoped repair run first; the durable guard still prevents delivery.
-  if (migrationValidationRequired && !migrationLifecycle.some(row => row.state === 'correction_required')) {
+  if (migrationValidationRequired && !migrationPlanRecoveryRequired && !migrationLifecycle.some(row => row.state === 'correction_required')) {
     recoveryDisposition = 'internal_review';
     const validation = await verifyPendingMigrationLifecycleStep({ sandboxId: sandboxId!, requirementId: reqId,
       instanceId, siteId: site_id, userId: user_id, title, instanceType, requirementType: requirementKind,
@@ -507,6 +509,13 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     migrationValidationRequired = false;
     migrationFreshValidationCompleted = true;
     recoveryDisposition = undefined;
+    if (migrationValidationOnly) {
+      // Never run implementation or reopen a completed product item here.
+      cycleOutcome = 'remediation_handoff';
+      recoveryDisposition = 'retry';
+      wrapUpReason = 'Pending migrations passed fresh validation. The completed backlog item was not reopened; normal finalization can resume next cycle.';
+      return { reqId, branch: null, previewUrl: null, status: cycleOutcome };
+    }
   }
 
   if (requirementFlow.delivery.validate_deployment) {
@@ -616,9 +625,16 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   });
 
   // Step 4: Run orchestrator (if no pending plan)
-  if ((!skipOrchestrator || (!reqContext.backlog?.items || reqContext.backlog.items.length === 0)) && !isAllBacklogDone) {
+  if (migrationPlanRecoveryRequired || ((!skipOrchestrator || (!reqContext.backlog?.items || reqContext.backlog.items.length === 0)) && !isAllBacklogDone)) {
     console.log(`[CronAppsWorkflow|orchestrator] PHASE 1: Running orchestrator`);
-    const prompt = isNewBranch
+    const prompt = migrationPlanRecoveryRequired
+      ? `Recover the missing requirement-bound implementation plan for "${title}" on requirement ${reqId}. ` +
+        'Create an instance_plan bound to this requirement, reusing its existing backlog item and budgets. ' +
+        'Include a backend step with requires_sandbox=true to inspect migration receipts, correct only never-applied SQL, ' +
+        'and verify migrations and base setup. Applied files are immutable: restore them only from verified original bytes and use a new forward migration for changes. ' +
+        'Do not execute migrations or claim validation in this planning cycle. The next worker must use the central migration review and fresh verification. ' +
+        `Pending migration files: ${migrationLifecycle.filter(row => row.state !== 'validated').map(row => row.file).join(', ')}`
+      : isNewBranch
       ? `Process requirement "${title}". Read instructions, investigate, then create an instance_plan with actionable steps (each with a role).`
       : `Continue "${title}". All previous steps done — create a NEW plan for the next iteration.`;
 
@@ -635,6 +651,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       instanceContext: reqContext.instanceContext,
       git_repo_kind: gitRepoKind,
       validate_deployment: requirementFlow.delivery.validate_deployment,
+      migrationPlanRecovery: migrationPlanRecoveryRequired,
       executionOwnership: { requirementId: reqId, runId: cronLockRunId, executionGeneration },
     });
     sandboxId = orch.effectiveSandboxId;
@@ -654,7 +671,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
           console.warn(
             `[CronAppsWorkflow|orchestrator] Orchestrator timed out before creating instance_plan for req ${reqId} — skipping blocker to allow retry next cycle.`,
           );
-        } else {
+        } else if (!migrationPlanRecoveryRequired) {
           console.warn(
             `[CronAppsWorkflow|orchestrator] Orchestrator produced no instance_plan for req ${reqId} — creating fallback plan.`,
           );
@@ -684,6 +701,18 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     reqId,
   );
   latestPlanSteps = activePlan?.steps;
+
+  if (migrationPlanRecoveryRequired) {
+    // Never execute ordinary product steps or finalize while recovering the
+    // missing plan. The next cycle assigns correction/validation before work.
+    cycleOutcome = activePlan ? 'remediation_handoff' : 'infrastructure_retry';
+    recoveryDisposition = 'retry';
+    wrapUpRequiresUserFeedback = false;
+    wrapUpReason = activePlan
+      ? 'A requirement-bound plan is available. The next worker will assign migration correction or fresh validation before product work.'
+      : 'The migration plan is still unavailable. Planning will retry within the existing scheduler budget; the recovery planner did not execute or approve pending SQL.';
+    return { reqId, branch: null, previewUrl: null, status: cycleOutcome };
+  }
 
   let smokeError: string | null = null;
   let pushResult: {
@@ -1834,7 +1863,8 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     if (requirementFlow.delivery.apply_database_migrations) {
       try {
         const rows = await loadMigrationLifecycleStep(reqId);
-        if (rows.some(row => ['reviewing','validation_pending','platform_review'].includes(row.state))) {
+        if (rows.some(row => row.state === 'reviewing' || row.state === 'platform_review' ||
+          row.state === 'validation_pending' && !migrationPlanRecoveryRequired)) {
           recoveryDisposition = 'internal_review';
           wrapUpRequiresUserFeedback = false;
           await holdMigrationLifecycleStep({ requirementId: reqId,

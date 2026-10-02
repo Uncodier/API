@@ -11,7 +11,8 @@ import { getAssistantTools, fetchMemoriesContext, generateAgentBackground } from
 import { detectPlanningLoop, type AssistantToolCallSnapshot } from './loop-detectors';
 import { CronInfraEvent, logCronInfrastructureEvent, type CronAuditContext } from '@/lib/services/cron-audit-log';
 import { ensureInProgressItem, escalateStaleInProgressItems } from '@/lib/services/requirement-backlog';
-import { guardOrchestratorPlanTool } from './orchestrator-plan-tool-guard';
+import { guardOrchestratorPlanTool, guardMigrationPlanRecoveryTools } from './orchestrator-plan-tool-guard';
+import { refreshHarnessToolManifest } from '@/lib/services/harness-diagnostics/tools';
 import { assertCronExecutionOwnership, withCronExecutionOwnership, type CronExecutionOwnership } from './cron-execution-ownership';
 
 /**
@@ -91,6 +92,8 @@ export async function runOrchestratorStep(params: {
   instanceContext?: string;
   git_repo_kind?: 'applications' | 'automation';
   validate_deployment?: boolean;
+  /** Host-selected recovery: source reads and plan creation, no SQL or status tools. */
+  migrationPlanRecovery?: boolean;
   /** Used when reprovisioning the VM (branch title) */
   requirementTitle?: string;
   globalStartTime?: number;
@@ -129,7 +132,7 @@ export async function runOrchestratorStep(params: {
   //      orchestrator remembering to call `requirement_backlog action="start"`
   //      and is what enables the auto-bind of `metadata.backlog_item_id` on
   //      plan steps to work reliably.
-  if (reqId) {
+  if (reqId && !params.migrationPlanRecovery) {
     try {
       const { escalated } = await escalateStaleInProgressItems({ requirementId: reqId });
       if (escalated.length > 0) {
@@ -188,6 +191,12 @@ export async function runOrchestratorStep(params: {
     }
   }
 
+  if (reqId && params.migrationPlanRecovery) {
+    // Keep normal WIP admission, but not stale escalation or attempt resets.
+    if (params.executionOwnership) await assertCronExecutionOwnership(params.executionOwnership);
+    await ensureInProgressItem({ requirementId: reqId });
+  }
+
   let effectiveSandboxId = sandboxId;
   let sandbox: Sandbox;
   
@@ -221,10 +230,12 @@ export async function runOrchestratorStep(params: {
     createdPlan: false,
     updatedPlan: false,
   };
+  const assembledTools = getCronOrchestratorTools(sandboxTools, site_id, instanceId, user_id, reqId);
+  const recoveryTools = params.migrationPlanRecovery
+    ? guardMigrationPlanRecoveryTools(assembledTools, { requirementId: reqId, instanceId, siteId: site_id, userId: user_id })
+    : assembledTools;
   const guardedTools = guardOrchestratorPlanTool(
-    getCronOrchestratorTools(
-      sandboxTools, site_id, instanceId, user_id, reqId,
-    ),
+    refreshHarnessToolManifest(recoveryTools, 'coordinator'),
     planMutationState,
   );
   const fullTools = params.executionOwnership
@@ -232,7 +243,8 @@ export async function runOrchestratorStep(params: {
     : guardedTools;
   const routedCount = fullTools.find((t: any) => t?.name === 'tools') ? 1 : 0;
   console.log(
-    `[CronStep|orchestrator] Orchestrator tools visible to LLM: ${fullTools.length} (always-on + tools=${routedCount}). Routed tools are discoverable via tools.`,
+    `[CronStep|orchestrator] Orchestrator tools visible to LLM: ${fullTools.length} (always-on + tools=${routedCount}). ` +
+      (routedCount ? 'Routed tools are discoverable via tools.' : 'Only the listed direct tools are available.'),
   );
 
   // Gemini tends to explore the sandbox first; 15 turns isn't enough once you
@@ -266,7 +278,10 @@ export async function runOrchestratorStep(params: {
   let timedOut = false;
 
   const { HARNESS_DIAGNOSTIC_GUIDANCE } = await import('@/lib/services/harness-diagnostics/guidance');
-  const finalPrompt = orchestratorPrompt + instanceContext + '\n' + HARNESS_DIAGNOSTIC_GUIDANCE;
+  const finalPrompt = orchestratorPrompt + instanceContext + '\n' + HARNESS_DIAGNOSTIC_GUIDANCE +
+    (params.migrationPlanRecovery ? '\nMigration plan recovery: only source reads and instance_plan list/create are available. ' +
+      'Use harness_inspect with item_id for existing backlog detail. Do not alter backlog, execute SQL, change status or report completion. ' +
+      'Create the missing requirement-bound sandbox plan even if product backlog is complete: migration validation is still pending.' : '');
 
   while (!isDone && turns < MAX_TURNS) {
     if (Date.now() - globalStartTime > MAX_EXECUTION_TIME_MS) {
@@ -395,7 +410,7 @@ export async function runOrchestratorStep(params: {
     // Check if we are in core-done mode to adapt the reminder
     let coreDoneReminder = false;
     let onlyOrnamentalPending = false;
-    if (audit) {
+    if (audit && !params.migrationPlanRecovery) {
       try {
         const { getRequirementFullContextStep } = await import('./workflow-db-steps');
         const reqContext = await getRequirementFullContextStep(reqId, instanceId, site_id, user_id);
@@ -415,7 +430,9 @@ export async function runOrchestratorStep(params: {
       }
     }
 
-    const noPlanReminder = coreDoneReminder 
+    const noPlanReminder = params.migrationPlanRecovery
+      ? 'Create the missing requirement-bound instance_plan with a backend sandbox step. Reuse the existing backlog item from context/harness_inspect; do not clone work or change budgets. Do not run SQL or finalize. Only a persisted plan completes this recovery cycle.'
+      : coreDoneReminder
       ? [
           'REMINDER (system): The BACKLOG CORE is fully complete.',
           'Your ONLY valid action is to finalize the requirement.',

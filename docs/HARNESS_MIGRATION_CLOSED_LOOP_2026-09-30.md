@@ -17,6 +17,10 @@ five-attempt historical budget. Exhaustion now enters the bounded independent
 [diagnostic handoff](MIGRATION_DIAGNOSTIC_HANDOFF.md), not an immediate assertion
 of irreparability or a generic permission request. Genuine security holds remain.
 
+See [migration coordination recovery](MIGRATION_COORDINATION_RECOVERY.md) for the
+subsequent missing-plan recovery and lifecycle-bound assignment reuse. Repeating
+the same assignment in a new cron cycle no longer spends another attempt.
+
 ## Durable states and safety
 
 `requirement_migration_lifecycle` is a Makinari service-role-only table:

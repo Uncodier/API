@@ -1,5 +1,10 @@
 # Operator recovery after a missing-plan migration hold
 
+New missing-plan coordination failures now use
+[bounded plan recovery](MIGRATION_COORDINATION_RECOVERY.md) instead of creating
+this hold. The procedure below remains for **historical** holds; deploying the
+coordination fix alone does not release them.
+
 This is a narrow recovery for an **unapplied** migration whose historical hold
 reason was `A pending migration has no requirement-bound implementation plan;
 technical review is required.` A new requirement-bound sandbox plan now exists,

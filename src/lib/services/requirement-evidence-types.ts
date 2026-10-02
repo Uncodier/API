@@ -65,6 +65,16 @@ export interface FeatureCoverageEvidence {
     bytes?: number;
     content_excerpt?: string;
     error?: string;
+    kind?: 'file' | 'directory';
+    /** Inspected repository children, never evidence that SQL was applied. */
+    entries?: Array<{
+      path: string;
+      bytes: number;
+      content_excerpt: string;
+      content_truncated: boolean;
+    }>;
+    truncated?: boolean;
+    content_truncated?: boolean;
   }>;
   kind_requirements?: Array<{
     kind: string;

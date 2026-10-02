@@ -123,6 +123,11 @@ describe('independent read-only migration diagnostic agent', () => {
     await diagnoseMigration(input);
     const options = (executeAssistantStep as jest.Mock).mock.calls[0][2];
     expect(options.custom_tools.map((entry: Tool) => entry.name)).toEqual([readName, verdictName, 'harness_inspect']);
+    expect(options.custom_tools.some((entry: Tool) => entry.name.startsWith('sandbox_'))).toBe(false);
+    expect(options.system_prompt).toContain('sandbox_tools_exposed=false is invocation-local');
+    expect(options.system_prompt).toContain('not evidence that the execution runner cannot provision a sandbox');
+    expect(options.system_prompt).toContain('not a security finding or an application receipt');
+    expect(options.system_prompt).toContain('unknowns do not release the hold');
     expect(tool(options, verdictName)).toMatchObject({ description: expect.stringContaining('does not approve application') });
     expect(writeSql).not.toHaveBeenCalled();
     expect(applySql).not.toHaveBeenCalled();

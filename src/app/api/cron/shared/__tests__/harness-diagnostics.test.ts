@@ -95,6 +95,65 @@ it('distinguishes caller tools from worker health and unknown lifecycle data', a
   expect(JSON.stringify(result)).not.toContain('secret internal error');
 });
 
+it.each(['assistant', 'coordinator', 'migration_diagnostic', 'evidence_collection', 'cron_executor'])(
+  'keeps absent tools invocation-local in %s despite a running runner, plan flags and a migration hold', async runtime => {
+    const requirement = { ...row(), metadata: { runner_instance_id: other, assistant_origin_instance_id: instance } };
+    const hold = { file: 'migrations/0001.sql', state: 'platform_review', version: 3,
+      reason: 'A pending migration has no requirement-bound implementation plan; technical review is required.' };
+    const h = fixture({ requirements: requirement, requirement_migration_lifecycle: [hold],
+      instance_plans: [{ id: request, instance_id: other, status: 'in_progress',
+        steps: [{ id: 'step-1', status: 'pending', requires_sandbox: true, skill: 'makinari-rol-backend' }] }] });
+    h.queues.remote_instances = [{ id: instance, site_id: site }, [{ id: other, status: 'running' }]];
+    const result = await inspectHarness({ ...context(), runtime });
+    expect(result.runtime).toMatchObject({ kind: runtime, scope: 'current_invocation', observation: 'exposed_tool_manifest',
+      exposed_tools: ['harness_inspect'], sandbox_tools_exposed: false, sandbox_health: 'not_probed',
+      runner_provisioning: 'not_observed', other_worker_capabilities: 'unknown' });
+    expect(result.runtime.note).toContain('not that runner provisioning failed or other workers cannot execute');
+    expect(result.runtime.next_check).toContain('missing observations remain unknown');
+    expect(result.execution.owner_instance_id).toBe(other);
+    expect(result.instances.records).toEqual([{ id: other, status: 'running' }]);
+    expect(result.requirement.status).toBe('blocked');
+    expect(result.migrations.records).toEqual([hold]);
+    expect(result.migrations.note).toContain('not proof that SQL is sensitive, already applied or validated');
+    expect(result.migrations.note).toContain('diagnostics do not release holds');
+    expect(supabaseAdmin.rpc).not.toHaveBeenCalled();
+    for (const queries of Object.values(h.calls)) for (const query of queries) expect(query.update).not.toHaveBeenCalled();
+  },
+);
+
+it.each([
+  ['cron_executor', ['sandbox_run_command', 'sandbox_read_file', 'sandbox_read_file'], true],
+  ['evidence_collection', ['sandbox_read_file'], true],
+  ['migration_diagnostic', ['migration_read_context'], false],
+  ['assistant', ['tools', 'skill_lookup', 'not_sandbox_run_command'], false],
+] as const)('reports the exact %s tool surface without promoting exposure to health or authorization', async (runtime, names, exposed) => {
+  fixture();
+  const toolNames = ['harness_inspect', ...names];
+  const original = [...toolNames];
+  const result = await inspectHarness({ ...context(), runtime, toolNames });
+  expect(result.runtime).toMatchObject({ sandbox_tools_exposed: exposed, sandbox_health: 'not_probed',
+    runner_provisioning: 'not_observed', other_worker_capabilities: 'unknown',
+    exposed_tools: Array.from(new Set(toolNames)).sort() });
+  expect(result.runtime.note).toContain('not that every sandbox operation is available, healthy or authorized');
+  expect(toolNames).toEqual(original);
+});
+
+it('does not transfer tool exposure between separate invocations on the same instance', async () => {
+  fixture();
+  const chatContext = context();
+  const workerContext = context();
+  type InvocationTool = { name: string; execute: (args: unknown) => Promise<any> };
+  const chatTools = refreshHarnessToolManifest(createHarnessDiagnosticTools(chatContext), 'assistant');
+  const workerTools = refreshHarnessToolManifest<InvocationTool>([...createHarnessDiagnosticTools(workerContext),
+    { name: 'sandbox_read_file', execute: jest.fn(async () => ({})) }], 'cron_executor');
+  const inspect = (tools: typeof workerTools) => tools.find(tool => tool.name === 'harness_inspect')!.execute({});
+  expect((await inspect(chatTools)).runtime.sandbox_tools_exposed).toBe(false);
+  expect((await inspect(workerTools)).runtime.sandbox_tools_exposed).toBe(true);
+  const restrictedWorkerTools = refreshHarnessToolManifest(workerTools.filter(tool => !tool.name.startsWith('sandbox_')), 'evidence_collection');
+  expect((await inspect(restrictedWorkerTools)).runtime.sandbox_tools_exposed).toBe(false);
+  expect((await inspect(chatTools)).runtime.kind).toBe('assistant');
+});
+
 it('exposes scoped reconciliation summaries, never selects the private historical SQL or operator prose', async () => {
   const h = fixture({ requirement_migration_reconciliations: [{ id: request, file: 'migrations/0001.sql' }] });
   const result = await inspectHarness(context());
@@ -164,7 +223,8 @@ it('persists scoped support decisions and reports delivery separately from appro
 it('keeps read tools direct during restricted repair and refreshes the actual tool manifest', async () => {
   fixture();
   const ctx = context();
-  const all = routeTools(createHarnessDiagnosticTools(ctx));
+  const all = routeTools([...createHarnessDiagnosticTools(ctx),
+    { name: 'sandbox_write_file', description: 'Test-only write tool', parameters: { type: 'object' }, execute: jest.fn() }]);
   expect(all.every(tool => tool.parameters.type === 'object')).toBe(true);
   expect(all.find(tool => tool.name === 'harness_decide')?.parameters.properties.decision.enum)
     .toEqual(['approve_backlog', 'adapt_backlog', 'escalate_support']);
@@ -172,6 +232,9 @@ it('keeps read tools direct during restricted repair and refreshes the actual to
   expect(restricted.map(tool => tool.name)).toEqual(['harness_inspect', 'harness_events', 'harness_reference', 'harness_source']);
   const result: any = await restricted[0].execute({});
   expect(result.runtime.exposed_tools).not.toContain('harness_decide');
+  expect(result.runtime).toMatchObject({ kind: 'evidence_collection', sandbox_tools_exposed: false,
+    exposed_tools: ['harness_events', 'harness_inspect', 'harness_reference', 'harness_source'] });
+  expect(all.find(tool => tool.name === 'sandbox_write_file')!.execute).not.toHaveBeenCalled();
 });
 
 it.each(['http:', 'https:'])('redacts nested secrets and each URL credential before email redaction (%s)', protocol => {

@@ -52,7 +52,7 @@ export function createHarnessDiagnosticTools(context: HarnessDiagnosticContext, 
     if (context.requirementId) z.string().uuid().parse(context.requirementId);
   };
   const tools: Array<{ name: string; description: string; parameters: Record<string, any>; execute: (args: unknown) => Promise<any> }> = [
-    { name: 'harness_inspect', description: 'Inspect authoritative requirement/backlog/plan/migration state, caller runtime and exposed tools. Read-only; works while product execution is blocked. Returns a state version for decisions, not a health guess.', parameters: parameters(inspectSchema),
+    { name: 'harness_inspect', description: 'Inspect authoritative requirement/backlog/plan/migration state and invocation-local exposed tools. sandbox_tools_exposed=false is not a global execution blocker or a runner health result. Migration holds are not proof of SQL application or security findings. Read-only; works while product execution is blocked. Returns a state version for decisions, not a health guess.', parameters: parameters(inspectSchema),
       execute: async (args: unknown) => inspectHarness(context, inspectSchema.parse(args)) },
     { name: 'harness_events', description: 'List/read redacted events explicitly linked to this requirement across its instances. Trace who did what before a failure. Paginated; missing or unscoped logs are unknown, not proof of absence.', parameters: parameters(harnessEventsSchema),
       execute: async (args: unknown) => readHarnessEvents(context, args) },

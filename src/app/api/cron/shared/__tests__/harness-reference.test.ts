@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import { getHarnessReference, HARNESS_SOURCE_ALLOWLIST } from '@/lib/services/harness-diagnostics/reference';
 import { HARNESS_SOURCE_LIMITS, readHarnessSource } from '@/lib/services/harness-diagnostics/source';
+import { HARNESS_DIAGNOSTIC_GUIDANCE } from '@/lib/services/harness-diagnostics/guidance';
 
 // Importing the reference/reader must not initialize either runtime.
 jest.mock('@/lib/database/supabase-client', () => { throw new Error('DB must not load'); });
@@ -84,6 +85,44 @@ describe('getHarnessReference', () => {
     expect(JSON.stringify(getHarnessReference('recover'))).toContain('migration_review_pending');
     expect(JSON.stringify(getHarnessReference('report_blocker'))).toContain('cancellation receipts');
     expect(JSON.stringify(getHarnessReference('migrations'))).toContain('Reading it must not apply it');
+  });
+
+  it('distinguishes local tool exposure from runner provisioning and links the actual implementation', () => {
+    const runtime = getHarnessReference('runtime');
+    const capabilities = JSON.stringify(getHarnessReference('capabilities'));
+    for (const path of [
+      'src/app/api/cron/shared/cron-sandbox-lifecycle-steps.ts',
+      'src/lib/services/sandbox-recovery.ts',
+      'src/app/api/cron/shared/cron-orchestrator-step.ts',
+      'src/lib/services/workflow-robot/sandbox-workspace.ts',
+      'src/lib/services/apps-platform/migration-diagnostic-agent.ts',
+    ]) {
+      expect(HARNESS_SOURCE_ALLOWLIST).toContain(path);
+      expect(JSON.stringify(runtime)).toContain(path);
+    }
+    expect(JSON.stringify(runtime)).toContain('After admission/preflight gates');
+    expect(JSON.stringify(runtime)).toContain('sandbox-backed restricted migration_read_context reader');
+    expect(JSON.stringify(runtime)).toContain('role name alone does not determine exposure');
+    expect(capabilities).toContain('not a health probe or dispatch gate');
+    expect(capabilities).toContain('false does not prove global incapability');
+    expect(capabilities).toContain('true does not prove every sandbox operation is exposed or authorized');
+    expect(capabilities).toContain('Missing receipts remain unknown, not permanently unavailable');
+    expect(capabilities).toContain('Never auto-expose tools, bypass holds, reset budgets or change ownership');
+    expect(JSON.stringify(getHarnessReference('migrations'))).toContain('not proof of sensitive SQL or an already-applied migration');
+  });
+
+  it('keeps shared prompt and orchestration skill guidance invocation-local without bypass instructions', async () => {
+    const skill = await readFile(join(repoRoot, 'src/skills/makinari-rol-orchestrator/SKILL.md'), 'utf8');
+    expect(HARNESS_DIAGNOSTIC_GUIDANCE).toContain('sandbox_tools_exposed=false is invocation-local');
+    expect(HARNESS_DIAGNOSTIC_GUIDANCE).toContain('even the same instance can expose different tools on another invocation');
+    expect(HARNESS_DIAGNOSTIC_GUIDANCE).toContain('Missing evidence means unknown, not permanently unavailable');
+    expect(HARNESS_DIAGNOSTIC_GUIDANCE).toContain('Never invent or auto-expose tools');
+    expect(HARNESS_DIAGNOSTIC_GUIDANCE).toContain('unknowns do not release the hold');
+    expect(skill).toContain('Loading this skill does not provision it or expose tools');
+    expect(skill).toContain('sandbox_tools_exposed=false');
+    expect(skill).toContain('Missing observations remain unknown');
+    expect(skill).toContain('not proof of sensitive SQL or a previously applied migration');
+    expect(skill).toContain('Do not invent tools, auto-expose them');
   });
 
   it('selects exact normalized topics, rejects prototype keys and returns detached objects', () => {

@@ -29,6 +29,7 @@ function harness() {
   const steps = {
     getActiveInstancePlanStep: jest.fn(async () => plan),
     getInstancePlanByIdStep: jest.fn(async () => plan),
+    checkRecentPlansGuardStep: jest.fn(async () => ({ shouldSkipOrchestrator: false, shouldBlockRequirement: false, recentCount: 0 })),
     cleanupNestedProjectsStep: jest.fn(async () => ({ effectiveSandboxId: 'sandbox' })),
     reconcilePlanStep: jest.fn(async () => 'in_progress'),
     commitAndPushStep: jest.fn(async () => ({ ok: true, pushed: true, branch: 'feature', commitCount: 1 })),
@@ -54,11 +55,12 @@ function harness() {
   const technicalReviewBacklogItems = jest.fn((): any[] => []);
   const execution = {
     selectPlanStepsForExecution: (input: any[]) => input.filter(step => step.status === 'in_progress'),
-    getPlanExecutionGateStep: jest.fn(async () => ({ runnable: true })),
+    getPlanExecutionGateStep: jest.fn(async (): Promise<any> => ({ runnable: true })),
     clearStepInfrastructureStateStep: jest.fn(async () => ({ state: 'applied', cleared: true, generation: 1 })),
     updatePlanStepStatusStep: jest.fn(async () => ({ persisted: true })),
   };
   const provisionTrackingScriptStep = jest.fn(async (_params?: unknown): Promise<{ injected: boolean; error?: string }> => ({ injected: true }));
+  const orchestrator = { runOrchestratorStep: jest.fn(async (_params?: unknown) => ({ createdPlan: true, timedOut: false, effectiveSandboxId: 'sandbox' })) };
   const workflow = loadRuntimeModule<typeof import('../workflow')>(
     'src/app/api/cron/requirements-apps/workflow.ts', {
       '../shared/cron-steps': steps,
@@ -83,7 +85,7 @@ function harness() {
       '../shared/cron-blocker-scope-steps': {},
       '../shared/single-turn-executor': { executeSingleTurnStep },
       '../shared/gate-step-executor': gate,
-      '../shared/cron-orchestrator-step': {},
+      '../shared/cron-orchestrator-step': orchestrator,
       '../shared/cron-workflow-finalize': finalizer,
       '../shared/platform-key-step': { provisionPlatformKeyStep: async () => ({ injected_env_keys: [] }) },
       '../shared/admin-loop-step': { detectAdminLoopStep: async () => ({ triggered: false }) },
@@ -102,7 +104,7 @@ function harness() {
   const run = () => workflow.runCronAppsWorkflow({ reqId: 'req', title: 'Test', instructions: '', type: 'app',
     site_id: 'site', user_id: 'user', instanceId: 'instance', previousWorkContext: '', instance_type: 'applications',
     cronLockRunId: 'run', cycleStartedAt: '2026-09-26T00:00:00Z', executionGeneration: 3 });
-  return { run, plan, lifecycle, db, steps, executeSingleTurnStep, execution, migration, repair, gate, finalizer, wrapup, provisionTrackingScriptStep, migrationLifecycle, technicalReviewBacklogItems };
+  return { run, plan, lifecycle, db, steps, executeSingleTurnStep, execution, migration, repair, gate, finalizer, wrapup, provisionTrackingScriptStep, migrationLifecycle, technicalReviewBacklogItems, orchestrator };
 }
 
 describe('workflow recovery and truthful completion', () => {
@@ -146,6 +148,79 @@ describe('workflow recovery and truthful completion', () => {
     expect(h.migrationLifecycle.scheduleMigrationCorrectionStep).toHaveBeenCalledTimes(1);
     expect(h.repair.repairDatabaseMigrationStep).not.toHaveBeenCalled();
     expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({ recoveryDisposition: 'retry', requiresUserFeedback: false }));
+  });
+
+  it.each(['correction_required', 'validation_pending'])('recovers a missing %s plan without converting coordination into platform review', async state => {
+    const h = harness();
+    h.migrationLifecycle.loadMigrationLifecycleStep.mockResolvedValue([{ state, file: 'migrations/0001.sql' }]);
+    h.steps.getActiveInstancePlanStep.mockResolvedValueOnce(null);
+    h.migrationLifecycle.loadMigrationSourcePlanStep.mockResolvedValue(null);
+    await expect(h.run()).resolves.toMatchObject({ status: 'remediation_handoff' });
+    expect(h.orchestrator.runOrchestratorStep).toHaveBeenCalledWith(expect.objectContaining({
+      initialMessage: expect.stringContaining('requires_sandbox=true'),
+      migrationPlanRecovery: true,
+      executionOwnership: { requirementId: 'req', runId: 'run', executionGeneration: 3 },
+    }));
+    expect(h.migrationLifecycle.holdMigrationLifecycleStep).not.toHaveBeenCalled();
+    expect(h.migrationLifecycle.scheduleMigrationCorrectionStep).not.toHaveBeenCalled();
+    expect(h.migrationLifecycle.verifyPendingMigrationLifecycleStep).not.toHaveBeenCalled();
+    expect(h.executeSingleTurnStep).not.toHaveBeenCalled();
+    expect(h.migration.applyDatabaseMigrationsStep).not.toHaveBeenCalled();
+    expect(h.steps.commitAndPushStep).not.toHaveBeenCalled();
+    expect(h.finalizer.createFinalStatusStep).not.toHaveBeenCalled();
+    expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({
+      recoveryDisposition: 'retry', requiresUserFeedback: false,
+    }));
+  });
+
+  it('retains a missing plan as a bounded scheduling retry without unsafe fallback or delivery', async () => {
+    const h = harness();
+    h.migrationLifecycle.loadMigrationLifecycleStep.mockResolvedValue([{ state: 'correction_required', file: 'migrations/0001.sql' }]);
+    h.steps.getActiveInstancePlanStep.mockResolvedValue(null);
+    h.migrationLifecycle.loadMigrationSourcePlanStep.mockResolvedValue(null);
+    h.orchestrator.runOrchestratorStep.mockResolvedValue({ createdPlan: false, timedOut: false, effectiveSandboxId: 'sandbox' });
+    await expect(h.run()).resolves.toMatchObject({ status: 'infrastructure_retry' });
+    expect(h.orchestrator.runOrchestratorStep).toHaveBeenCalledTimes(1);
+    expect(h.migrationLifecycle.holdMigrationLifecycleStep).not.toHaveBeenCalled();
+    expect(h.db.recordRequirementBlockedStep).not.toHaveBeenCalled();
+    expect(h.finalizer.createFinalStatusStep).not.toHaveBeenCalled();
+    expect(h.lifecycle.releaseRunLockStep).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not turn a sandbox outage during plan recovery into a permanent migration hold', async () => {
+    const h = harness();
+    h.migrationLifecycle.loadMigrationLifecycleStep.mockResolvedValue([{ state: 'validation_pending', file: 'migrations/0001.sql' }]);
+    h.steps.getActiveInstancePlanStep.mockResolvedValue(null);
+    h.migrationLifecycle.loadMigrationSourcePlanStep.mockResolvedValue(null);
+    h.lifecycle.createSandboxStep.mockRejectedValue(new Error('Sandbox temporarily unavailable'));
+    await expect(h.run()).rejects.toThrow('Sandbox temporarily unavailable');
+    expect(h.migrationLifecycle.holdMigrationLifecycleStep).not.toHaveBeenCalled();
+    expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({
+      recoveryDisposition: 'retry', requiresUserFeedback: false,
+    }));
+    expect(h.lifecycle.releaseRunLockStep).toHaveBeenCalledTimes(1);
+  });
+
+  it('performs validation only for a completed backlog item, never executing the recovered product step', async () => {
+    const h = harness();
+    h.migrationLifecycle.loadMigrationLifecycleStep.mockResolvedValue([{ state: 'validation_pending', file: 'migrations/0001.sql' }]);
+    h.execution.getPlanExecutionGateStep.mockResolvedValue({ runnable: true, migrationValidationOnly: true });
+    h.db.getRequirementFullContextStep.mockResolvedValue({ backlog: { items: [{ id: 'item', status: 'done' }] } });
+    await expect(h.run()).resolves.toMatchObject({ status: 'remediation_handoff' });
+    expect(h.execution.getPlanExecutionGateStep).toHaveBeenCalledWith('plan', 'step', 'req', 'migration_validation');
+    expect(h.migrationLifecycle.verifyPendingMigrationLifecycleStep).toHaveBeenCalledTimes(1);
+    expect(h.executeSingleTurnStep).not.toHaveBeenCalled();
+    expect(h.migration.applyDatabaseMigrationsStep).not.toHaveBeenCalled();
+    expect(h.finalizer.createFinalStatusStep).not.toHaveBeenCalled();
+  });
+
+  it.each(['platform_review', 'reviewing'])('does not use plan recovery to reopen %s', async state => {
+    const h = harness();
+    h.migrationLifecycle.loadMigrationLifecycleStep.mockResolvedValue([{ state, file: 'migrations/0001.sql' }]);
+    await expect(h.run()).resolves.toMatchObject({ status: 'blocked' });
+    expect(h.orchestrator.runOrchestratorStep).not.toHaveBeenCalled();
+    expect(h.lifecycle.createSandboxStep).not.toHaveBeenCalled();
+    expect(h.executeSingleTurnStep).not.toHaveBeenCalled();
   });
 
   it('provisions a diagnostic workspace and hands the assigned correction to the next agent, not a blocked requirement', async () => {

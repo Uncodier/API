@@ -12,9 +12,13 @@ import {
   updatePlanStepStatusAtomically,
 } from '../instance-plan-infrastructure-state';
 import { cancelPlanStepsForBacklogItem } from '@/lib/helpers/plan-lifecycle';
+import { listMigrationLifecycle } from '@/lib/services/apps-platform/migration-lifecycle';
 
 jest.mock('@vercel/sandbox', () => ({}));
 jest.mock('workflow', () => ({}));
+jest.mock('@/lib/services/apps-platform/migration-lifecycle', () => ({
+  listMigrationLifecycle: jest.fn(),
+}));
 jest.mock('@/lib/helpers/plan-lifecycle', () => ({
   cancelPlanStepsForBacklogItem: jest.fn(),
 }));
@@ -274,6 +278,126 @@ describe('plan execution gate', () => {
       name: 'InfrastructureStateDatabaseError',
       code: '08006',
     });
+  });
+});
+
+describe('migration-validation-only plan gate', () => {
+  const mockedLifecycle = listMigrationLifecycle as jest.Mock;
+  const requirementId = 'requirement-1';
+  const validationGate = () => getPlanExecutionGateStep('plan_1', 'step_1', requirementId, 'migration_validation');
+
+  function fixture(itemPatch: Record<string, unknown> = {}, stepPatch: Record<string, unknown> = {}, planStatus = 'pending') {
+    const item = { id: 'item-1', status: 'done', ...itemPatch };
+    const step = { id: 'step_1', order: 1, status: 'pending', infrastructure_generation: 3,
+      metadata: { backlog_item_id: item.id }, ...stepPatch };
+    mockedSupabase.maybeSingle
+      .mockResolvedValueOnce({ data: { status: planStatus, steps: [step], metadata: { requirement_id: requirementId } } })
+      .mockResolvedValueOnce({ data: { backlog: { items: [item] } } });
+    return { item, step };
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockedSupabase.maybeSingle.mockReset();
+    mockedLifecycle.mockReset().mockResolvedValue([{ state: 'validation_pending' }]);
+    mockedCancelPlanSteps.mockResolvedValue({ plansTouched: 1, plansCancelled: 1,
+      stepsCancelled: 1, planIds: ['plan_1'], errors: [] });
+  });
+
+  it('admits a done item only for outstanding migration validation without cancellation or reopening', async () => {
+    const { item, step } = fixture();
+    mockedLifecycle.mockResolvedValue([{ state: 'validated' }, { state: 'validation_pending' }]);
+    await expect(validationGate()).resolves.toEqual({ runnable: true, dbStatus: 'pending', migrationValidationOnly: true });
+    expect(mockedLifecycle).toHaveBeenCalledWith(requirementId);
+    expect(mockedCancelPlanSteps).not.toHaveBeenCalled();
+    expect(mockedUpdateStatus).not.toHaveBeenCalled();
+    expect(mockedSupabase.update).not.toHaveBeenCalled();
+    expect(item.status).toBe('done');
+    expect(step.status).toBe('pending');
+    expect(step.infrastructure_generation).toBe(3);
+  });
+
+  it('still rejects and cancels ordinary product execution for the same done item', async () => {
+    fixture();
+    await expect(getPlanExecutionGateStep('plan_1', 'step_1', requirementId)).resolves.toEqual({
+      runnable: false, reason: 'backlog_item_not_active', backlogItemId: 'item-1',
+    });
+    expect(mockedLifecycle).not.toHaveBeenCalled();
+    expect(mockedCancelPlanSteps).toHaveBeenCalledWith({ requirementId, itemId: 'item-1',
+      reason: 'Runtime gate: backlog_item_not_active' });
+  });
+
+  it('does not validate a plan belonging to a different requirement', async () => {
+    mockedSupabase.maybeSingle.mockResolvedValueOnce({ data: { status: 'pending',
+      steps: [{ id: 'step_1', status: 'pending' }], metadata: { requirement_id: 'other' } } });
+    await expect(validationGate()).rejects.toThrow('does not belong');
+    expect(mockedLifecycle).not.toHaveBeenCalled();
+    expect(mockedCancelPlanSteps).not.toHaveBeenCalled();
+  });
+
+  it.each(['correction_required', 'platform_review', 'reviewing'])(
+    'fails closed when validation_pending coexists with %s', async state => {
+      fixture();
+      mockedLifecycle.mockResolvedValue([{ state: 'validation_pending' }, { state }]);
+      await expect(validationGate()).resolves.toEqual({
+        runnable: false, reason: 'backlog_item_not_active', backlogItemId: 'item-1',
+      });
+      expect(mockedLifecycle).toHaveBeenCalledWith(requirementId);
+      expect(mockedCancelPlanSteps).not.toHaveBeenCalled();
+      expect(mockedUpdateStatus).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([{ rows: [] }, { rows: [{ state: 'validated' }] }])('requires an actual outstanding validation obligation (%j)', async ({ rows }) => {
+    fixture();
+    mockedLifecycle.mockResolvedValue(rows);
+    await expect(validationGate()).resolves.toMatchObject({ runnable: false, reason: 'backlog_item_not_active' });
+    expect(mockedCancelPlanSteps).not.toHaveBeenCalled();
+  });
+
+  it('does not grant admission or cancel the plan when lifecycle lookup fails', async () => {
+    fixture();
+    mockedLifecycle.mockRejectedValue(new Error('Lifecycle lookup unavailable'));
+    await expect(validationGate()).rejects.toThrow('Lifecycle lookup unavailable');
+    expect(mockedCancelPlanSteps).not.toHaveBeenCalled();
+    expect(mockedUpdateStatus).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ review_quarantine: { active: true } }, 'backlog_item_quarantined'],
+    [{ plan_cancellation_pending: true }, 'backlog_item_quarantined'],
+    [{ blocked_by: [{ blocker_id: 'protected-hold' }] }, 'backlog_item_blocked'],
+  ])('does not override done-item protections (%j)', async (patch, reason) => {
+    fixture(patch as Record<string, unknown>);
+    await expect(validationGate()).resolves.toEqual({ runnable: false, reason, backlogItemId: 'item-1' });
+    expect(mockedLifecycle).not.toHaveBeenCalled();
+    expect(mockedCancelPlanSteps).toHaveBeenCalledWith({ requirementId, itemId: 'item-1', reason: `Runtime gate: ${reason}` });
+  });
+
+  it.each([
+    { infrastructure_circuit_open: true },
+    { infrastructure_state: 'intervention_required' },
+    { infra_retry_count: MAX_INFRA_RETRIES },
+  ])('preserves the infrastructure circuit even with valid migration evidence (%j)', async circuit => {
+    fixture({}, { ...circuit, infrastructure_kind: 'deployment', infrastructure_failure_provenance: 'deployment_infrastructure' });
+    await expect(validationGate()).resolves.toEqual({ runnable: false, reason: 'infrastructure_circuit_open',
+      infrastructureKind: 'deployment', infrastructureProvenance: 'deployment_infrastructure', infrastructureGeneration: 3 });
+    expect(mockedCancelPlanSteps).not.toHaveBeenCalled();
+    expect(mockedUpdateStatus).not.toHaveBeenCalled();
+  });
+
+  it('preserves a future infrastructure retry time rather than running validation early', async () => {
+    fixture({}, { infra_retry_after: '2999-01-01T00:00:00.000Z' });
+    await expect(validationGate()).resolves.toMatchObject({ runnable: false, reason: 'infrastructure_wait' });
+    expect(mockedCancelPlanSteps).not.toHaveBeenCalled();
+  });
+
+  it.each(['paused', 'cancelled'])('does not reopen a %s plan for migration validation', async status => {
+    fixture({}, {}, status);
+    await expect(validationGate()).resolves.toEqual({ runnable: false, reason: status });
+    expect(mockedLifecycle).not.toHaveBeenCalled();
+    expect(mockedCancelPlanSteps).not.toHaveBeenCalled();
+    expect(mockedUpdateStatus).not.toHaveBeenCalled();
   });
 });
 

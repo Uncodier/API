@@ -22,6 +22,7 @@ import {
   evaluateContractLinkClaims,
 } from './archetype-contract-link-evidence';
 import { buildAcceptanceDiagnostics } from './archetype-acceptance-diagnostics';
+import { changedDirectoryEntries } from './artifact-evidence-match';
 
 type RouteAnchor = Extract<AcceptanceAnchor, { kind: 'route' }>;
 type ContractCriterion = AcceptanceContract['criteria'][number];
@@ -252,6 +253,7 @@ function hasFileProof(
   if (
     !artifact?.exists ||
     artifact.outcome === 'not_evaluable' ||
+    artifact.outcome === 'fail' ||
     (artifact.bytes ?? 0) <= 0
   ) {
     return false;
@@ -261,7 +263,15 @@ function hasFileProof(
       normalized(file.replace(/^\.?\//, '')),
     ),
   );
-  if (!changed.has(expected)) return false;
+  const directoryEntries = artifact.kind === 'directory'
+    ? changedDirectoryEntries(artifact, evidence.changed_files || [])
+    : undefined;
+  if (directoryEntries ? directoryEntries.length === 0 : !changed.has(expected)) return false;
+  // Even a legacy/misdeclared file-only claim cannot promote directory source
+  // evidence to application/deployment success. That needs independent receipts.
+  if (directoryEntries && /\b(?:appl(?:y|ies|ied|ying)|aplica(?:r|n|da|das|do|dos)?|deploy(?:s|ed|ing)?|ejecuta(?:r|n|da|das|do|dos)?)\b/i.test(analysis.text)) {
+    return false;
+  }
 
   const criterionWithoutPath = analysis.text
     .replace(path, ' ')
@@ -276,7 +286,10 @@ function hasFileProof(
       ].includes(term),
     ) || [];
   if (semanticTerms.length === 0) return true;
-  const content = (artifact.content_excerpt || '').toLowerCase();
+  // Directory names/listings are not semantic proof; use inspected changed content.
+  const content = (directoryEntries
+    ? directoryEntries.map(entry => entry.content_excerpt).join('\n')
+    : artifact.content_excerpt || '').toLowerCase();
   const hits = semanticTerms.filter((term) => content.includes(term)).length;
   return hits >= Math.min(2, semanticTerms.length);
 }

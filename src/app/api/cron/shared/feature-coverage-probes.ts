@@ -6,6 +6,7 @@ import {
 import {
   analyzeProbeRoutePath,
 } from '@/lib/services/acceptance-route-path';
+import { READ_ARTIFACT_SCRIPT } from './feature-artifact-script';
 
 export type CoverageProbeOutcome = 'pass' | 'fail' | 'not_evaluable';
 
@@ -16,6 +17,16 @@ export interface ArtifactProof {
   bytes?: number;
   content_excerpt?: string;
   error?: string;
+  kind?: 'file' | 'directory';
+  /** Bounded source evidence only; not a migration application receipt. */
+  entries?: Array<{
+    path: string;
+    bytes: number;
+    content_excerpt: string;
+    content_truncated: boolean;
+  }>;
+  truncated?: boolean;
+  content_truncated?: boolean;
 }
 
 export interface FileProbeResult {
@@ -191,42 +202,30 @@ export async function readArtifactProof(
   if (/[*?]/.test(normalized)) {
     return readGlobArtifactProof(sandbox, normalized);
   }
-  const absolutePath = `${SandboxService.WORK_DIR}/${normalized}`;
   try {
-    const stat = await sandbox.runCommand({
-      cmd: 'stat',
-      args: ['-c', '%s', absolutePath],
-    });
-    if (stat.exitCode !== 0) {
-      return { path: normalized, exists: false, outcome: 'fail' };
-    }
-    const bytes = Number((await stat.stdout()).toString().trim());
     const read = await sandbox.runCommand({
-      cmd: 'head',
-      args: ['-c', '4000', absolutePath],
+      cmd: 'node',
+      args: ['-e', READ_ARTIFACT_SCRIPT, JSON.stringify({
+        root: SandboxService.WORK_DIR, path: normalized,
+      })],
+      timeoutMs: 5_000,
     });
-    if (read.exitCode !== 0) {
-      return {
-        path: normalized,
-        exists: true,
-        outcome: 'not_evaluable',
-        error: `Could not read ${normalized}`,
-      };
+    if (read.exitCode !== 0) throw new Error('Artifact command failed');
+    const output = (await read.stdout()).toString();
+    if (output.length > 32_000) throw new Error('Artifact output limit');
+    const proof = JSON.parse(output);
+    if (!proof || typeof proof.exists !== 'boolean' ||
+        !['pass', 'fail', 'not_evaluable'].includes(proof.outcome)) {
+      throw new Error('Invalid artifact result');
     }
-    const content = (await read.stdout()).toString();
-    return {
-      path: normalized,
-      exists: true,
-      outcome: 'pass',
-      bytes: Number.isFinite(bytes) ? bytes : undefined,
-      content_excerpt: content.replace(/\0/g, '').slice(0, 4000),
-    };
-  } catch (error: unknown) {
+    return { ...proof, path: normalized };
+  } catch {
     return {
       path: normalized,
       exists: false,
       outcome: 'not_evaluable',
-      error: error instanceof Error ? error.message : String(error),
+      // Transport/OS errors can contain credentials or paths outside the workspace.
+      error: 'Artifact probe unavailable.',
     };
   }
 }

@@ -26,9 +26,10 @@ import {
   evaluatePlanBacklogGate,
 } from '@/lib/services/requirement-plan-backlog-gate';
 import type { BacklogItem } from '@/lib/services/requirement-backlog-types';
+import { listMigrationLifecycle } from '@/lib/services/apps-platform/migration-lifecycle';
 
 export type PlanGate =
-  | { runnable: true; dbStatus: string }
+  | { runnable: true; dbStatus: string; migrationValidationOnly?: boolean }
   | {
       runnable: false;
       reason: PlanExecutionHaltReason;
@@ -76,6 +77,7 @@ export async function getPlanExecutionGateStep(
   planId: string,
   expectedStepId?: string,
   requirementId?: string,
+  purpose?: 'migration_validation',
 ): Promise<PlanGate> {
   'use step';
   const { data, error } = await supabaseAdmin
@@ -94,6 +96,9 @@ export async function getPlanExecutionGateStep(
   }
   const statusGate = getPlanExecutionGateFromStatus(data.status);
   if (!statusGate.runnable) return statusGate;
+  if (purpose === 'migration_validation' && (!requirementId || data.metadata?.requirement_id !== requirementId)) {
+    throw new Error('Migration validation plan does not belong to this requirement.');
+  }
 
   const activeStep = selectPlanStepsForExecution(
     Array.isArray(data.steps) ? data.steps : [],
@@ -124,7 +129,19 @@ export async function getPlanExecutionGateStep(
       ? requirement.backlog.items as BacklogItem[]
       : [];
     const backlogGate = evaluatePlanBacklogGate(activeStep, items);
-    if (!backlogGate.runnable) {
+    // A done product item may still owe fresh migration validation. This
+    // host-selected path admits verification only, never implementation.
+    const completedValidation = !backlogGate.runnable && purpose === 'migration_validation' &&
+      backlogGate.reason === 'backlog_item_not_active' && items.some(item => item.id === backlogGate.itemId && item.status === 'done');
+    if (completedValidation) {
+      const migrations = await listMigrationLifecycle(ownedRequirementId);
+      if (!migrations.some(row => row.state === 'validation_pending') ||
+        migrations.some(row => !['validation_pending', 'validated'].includes(row.state))) {
+        return { runnable: false, reason: 'backlog_item_not_active', backlogItemId: backlogGate.itemId };
+      }
+      statusGate.migrationValidationOnly = true;
+    }
+    if (!backlogGate.runnable && !completedValidation) {
       if (backlogGate.itemId) {
         const cancellation = await cancelPlanStepsForBacklogItem({
           requirementId: ownedRequirementId,

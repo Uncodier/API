@@ -39,6 +39,65 @@ This is a tool surface, not another judge or a replacement execution engine.
 
 ## Integration and safety
 
+### Interpreting `sandbox_tools_exposed=false`
+
+`harness_inspect.runtime` describes **only the current invocation**, not every
+worker on the instance or the platform. Its `scope` is `current_invocation` and
+its `observation` is `exposed_tool_manifest`:
+
+- `sandbox_tools_exposed=false`: no name in that manifest starts with `sandbox_`.
+  Do not turn this into a global execution blocker or permanent worker incapability.
+- `sandbox_tools_exposed=true`: at least one such tool is exposed. This does not
+  establish that a write/migrate tool is available, the sandbox is healthy, or the
+  requested operation is authorized. Restricted evidence collection can expose
+  read tools without write tools.
+- `sandbox_health=not_probed`, `runner_provisioning=not_observed` and
+  `other_worker_capabilities=unknown`: this inspection did not test these facts.
+  They do not mean provisioning was never attempted, failed, or succeeded.
+
+The manifest is refreshed after tool routing/restriction; diagnostics neither add
+tools nor infer them from a skill, `requires_sandbox`, a running instance row or a
+saved plan. Another invocation on the same instance can expose a different set.
+Chat/coordinator turns may lack sandbox tools, but the sandbox-backed cron
+orchestrator does supply them. A role label alone is not an exposure rule.
+
+The bounded migration diagnostic is an important counterexample: its host receives
+a sandbox and exposes a restricted `migration_read_context` reader, while the
+model receives no general `sandbox_*` tools. Its false flag is accurate; treating
+it as proof that the runner cannot execute is not.
+
+### Check the execution boundary, not just the local tools
+
+Continue with the diagnostic tools actually exposed. Identify the responsible
+runner, requirement, plan/step and current generation. Use `harness_events` for
+scoped dispatch, sandbox creation/reattachment and operation evidence, and
+`harness_reference` topics `runtime`/`capabilities` for the implementation map:
+
+| Boundary | Implementation and checks |
+| --- | --- |
+| Requirement admission | `src/app/api/cron/requirements-apps/workflow.ts` checks admission/preflight before sandbox creation; a hold is not a provisioning attempt. |
+| Requirement sandbox | `src/app/api/cron/shared/cron-sandbox-lifecycle-steps.ts` tries named/stored sandbox reuse, then `SandboxService.createRequirementSandbox`, with execution-ownership checks. |
+| Step execution | `src/app/api/cron/shared/single-turn-executor.ts` checks ownership and persisted step generation, calls `connectOrRecreateRequirementSandbox`, then assembles, guards and restricts `getSandboxTools`. Attach failures return a transient sandbox infrastructure wait, not a tool-manifest-based permanent failure. |
+| Reattachment/recovery | `src/lib/services/sandbox-recovery.ts` checks workspace readiness, handles warm recovery and VM replacement. It does not consume the chat's diagnostic boolean. |
+| Cron orchestrator | `src/app/api/cron/shared/cron-orchestrator-step.ts` connects the sandbox before supplying its tools. |
+| Reusable workflow | `src/lib/services/workflow-robot/run-plan.ts` conditionally calls `ensureWorkflowSandbox` in `sandbox-workspace.ts` for sandbox/browser steps. Pre-response runs prohibit these steps. |
+| Bounded migration diagnosis | `src/lib/services/apps-platform/migration-diagnostic-agent.ts` retains sandbox access in a host-bound reader without giving the model general sandbox tools or SQL approval. |
+
+These source references explain provisioning logic; they do not prove a live
+worker was dispatched or a provider operation succeeded. Report an observed
+provisioning failure with its scoped evidence and next check. Missing evidence is
+unknown, not a permanent failure or proof of recovery. Do not auto-expose tools,
+invent calls, launch a replacement worker, change ownership, reset budgets or
+bypass a hold to test availability. Provisioning/recovery defects need a separate
+execution-layer fix, not a diagnostic override.
+
+Migration lifecycle states/reasons also have a limited meaning. A reason such as
+“a pending migration has no requirement-bound implementation plan” does not prove
+sensitive SQL was detected or that the migration was already applied. Verify the
+recorded security review, protected application receipts and fresh validation
+separately. The inspection preserves the actual hold and reason; uncertainty is
+not permission to rewrite applied history or release a hold.
+
 Tools are bound by server closures to the site, instance and requirement. There
 are no model-selectable tenant/instance overrides. Only the owner/origin can
 author implementation; an explicitly linked instance can report support. Database
@@ -93,7 +152,21 @@ model diagnostic integration, and PGlite permission/CAS/idempotency/contract tes
 PGlite tests do not prove production multi-connection concurrency or email delivery.
 No live model inference, customer SQL application or support email is used by tests.
 
-Local validation for this change: 157 harness suites / 2,110 tests passed. Focused
+Invocation-local diagnostic regression verification (Node 22):
+
+- Focused harness diagnostics/reference, migration diagnostic, sandbox lifecycle,
+  single-turn ownership and sandbox fast-attach suites: **6 suites / 151 tests passed**.
+- `npm run test:harness`: **163 suites / 2,308 tests passed** on the shared worktree.
+- New assertions cover false flags across runtime labels, read-only/partial sandbox
+  tool exposure, different invocations on the same instance, manifest refresh after
+  restrictions, unchanged holds/no writes, prompt guidance and allowlisted sources.
+
+This verifies offline contracts, not live sandbox provisioning, deployment or
+release of existing holds. No tool-exposure or execution-policy change is made by
+the diagnostic correction.
+
+Historical validation for the original diagnostic-tool implementation: 157 harness
+suites / 2,110 tests passed. Focused
 TypeScript checking of the new diagnostic modules and migration diagnostic agent
 reported no errors. Whole-repository type checking still reports unrelated errors;
 Next is configured to skip that check during build. Tests do not certify deployment.

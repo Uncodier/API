@@ -10,6 +10,7 @@ import type {
 import {
   routeTemplateMatches,
 } from '@/lib/services/acceptance-route-path';
+import { changedDirectoryEntries } from './artifact-evidence-match';
 
 type CriterionStatus = AcceptanceCriterionDiagnostic['status'];
 
@@ -343,7 +344,27 @@ function gapsForClaim(
         suggested_action: 'Create or restore the required artifact.',
       }];
     }
-    if (!(evidence.changed_files || []).includes(claim.path)) {
+    if (proof.kind === 'directory' && proof.outcome === 'not_evaluable') {
+      return [{
+        code: 'missing_file_artifact',
+        class: 'evidence',
+        message: 'The directory artifact could not be safely inspected within probe limits.',
+        required: claim.path,
+        suggested_action: 'Collect bounded evidence for the specific child artifacts; do not infer migration application.',
+      }];
+    }
+    if (proof.kind === 'directory' && (proof.outcome === 'fail' || (proof.bytes ?? 0) <= 0)) {
+      return [{
+        code: 'missing_file_artifact',
+        class: 'product',
+        message: 'The directory contains no nonempty eligible source artifacts.',
+        required: claim.path,
+        suggested_action: 'Create the required source artifacts; an empty directory is not implementation evidence.',
+      }];
+    }
+    if (proof.kind === 'directory'
+      ? changedDirectoryEntries(proof, evidence.changed_files || []).length === 0
+      : !(evidence.changed_files || []).includes(claim.path)) {
       return [{
         code: 'file_not_changed',
         class: 'evidence',

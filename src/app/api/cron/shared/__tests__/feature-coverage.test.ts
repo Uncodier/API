@@ -158,11 +158,12 @@ describe('feature coverage', () => {
       const output =
         input.cmd === 'stat'
           ? '128\n'
-          : input.cmd === 'head'
-            ? 'export default function Page() { return <main />; }\n'
+          : input.cmd === 'node'
+            ? JSON.stringify({ exists: true, outcome: 'pass', kind: 'file', bytes: 128,
+              content_excerpt: 'export default function Page() { return <main />; }\n' })
             : '__MISS__\n';
       return {
-        exitCode: input.cmd === 'stat' || input.cmd === 'head' ? 0 : 1,
+        exitCode: input.cmd === 'stat' || input.cmd === 'node' ? 0 : 1,
         stdout: jest.fn(async () => Buffer.from(output)),
       };
     });
@@ -199,7 +200,8 @@ describe('feature coverage', () => {
       stdout: jest.fn(async () => Buffer.from(
         input.cmd === 'stat'
           ? '256\n'
-          : '# Technical design\n\nArchitecture details.\n',
+          : JSON.stringify({ exists: true, outcome: 'pass', kind: 'file', bytes: 256,
+            content_excerpt: '# Technical design\n\nArchitecture details.\n' }),
       )),
     }));
 
@@ -349,7 +351,8 @@ describe('feature coverage', () => {
     const runCommand = jest.fn(async (input: { cmd?: string }) => ({
       exitCode: 0,
       stdout: jest.fn(async () => Buffer.from(
-        input.cmd === 'stat' ? '128\n' : 'export default function Handler() {}',
+        input.cmd === 'stat' ? '128\n' : JSON.stringify({ exists: true, outcome: 'pass', kind: 'file', bytes: 128,
+          content_excerpt: 'export default function Handler() {}' }),
       )),
     }));
     const coverage = await computeFeatureCoverage({
@@ -431,7 +434,7 @@ describe('feature coverage', () => {
   it('keeps probe transport failures distinct from confirmed missing files', async () => {
     const coverage = await computeFeatureCoverage({
       sandbox: {
-        runCommand: jest.fn().mockRejectedValue(
+        runCommand: jest.fn<() => Promise<never>>().mockRejectedValue(
           new Error('sandbox transport unavailable'),
         ),
       } as any,
