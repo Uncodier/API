@@ -19,9 +19,7 @@ import {
   releaseRunLockStep,
   assertCronExecutionOwnershipStep,
 } from '../shared/cron-sandbox-lifecycle-steps';
-import { applyDatabaseMigrationsStep } from '../shared/step-db-migrations';
-import { repairDatabaseMigrationStep, type DatabaseMigrationRepairResult } from '../shared/step-db-migration-repair';
-import { loadMigrationLifecycleStep, loadMigrationSourcePlanStep, scheduleMigrationCorrectionStep, verifyPendingMigrationLifecycleStep, holdMigrationLifecycleStep } from '../shared/migration-lifecycle-steps';
+import { verifyDatabaseMigrationsStep, loadMigrationLifecycleStep } from '../shared/step-db-migration-verification';
 // Import directly — the 'use step' plugin forbids re-exports, so the step
 // lives in its own module.
 import { bootstrapRequirementSpecStep } from '../shared/bootstrap-spec-step';
@@ -56,7 +54,6 @@ import {
   scopeProductNoProgressCircuitStep,
 } from '../shared/cron-blocker-scope-steps';
 import { executeSingleTurnStep, type SingleTurnResult } from '../shared/single-turn-executor';
-import { runGateStep } from '../shared/gate-step-executor';
 import { runOrchestratorStep } from '../shared/cron-orchestrator-step';
 import { validateDeliverablesStep, createFinalStatusStep } from '../shared/cron-workflow-finalize';
 import { provisionPlatformKeyStep } from '../shared/platform-key-step';
@@ -92,9 +89,6 @@ import { shouldHoldNoProgressBlock } from '../shared/no-progress-adjudication';
 import { cycleFailureReason, recoveryAfterUnhandledError, type CycleRecoveryDisposition } from '../shared/cycle-recovery-policy';
 import { boundedFailureDetail, cronOwnershipRejectionReason } from '../shared/cron-ownership-rejection';
 import type { DatabaseMigrationOutcome } from '../shared/database-migration-outcome';
-import type { MigrationRepairTarget } from '@/lib/services/apps-platform/migration-repair-types';
-import type { MigrationFileRestoration } from '@/lib/services/apps-platform/migration-restoration';
-import type { MigrationSecurityReview } from '@/lib/services/apps-platform/migration-security-review';
 
 export interface CronAppsWorkflowInput {
   reqId: string;
@@ -146,16 +140,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   let wrapUpReason: string | null = null;
   let wrapUpRequiresUserFeedback = false;
   let recoveryDisposition: CycleRecoveryDisposition | undefined;
-  let productDecisionForWrapUp: Extract<MigrationSecurityReview, { decision: 'needs_product_decision' }> | undefined;
   let databaseMigrations: DatabaseMigrationOutcome | undefined;
-  let migrationCorrectionScheduled = false;
-  let migrationDiagnosticPending = false;
-  let migrationPlanRecoveryRequired = false;
-  let migrationValidationOnly = false;
-  let migrationValidationRequired = false;
-  let migrationFreshValidationCompleted = false;
-  const repairedMigrations: MigrationRepairTarget[] = [];
-  const restoredMigrations: MigrationFileRestoration[] = [];
   let tenantProvisioningFailed = false;
   let cycleOutcome: CronCycleOutcome = 'idle';
   let preservePausedState = false;
@@ -180,14 +165,14 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   });
   const migrationLifecycle = requirementFlow.delivery.apply_database_migrations
     ? await loadMigrationLifecycleStep(reqId) : [];
-  if (migrationLifecycle.some(row => row.state === 'platform_review' || row.state === 'reviewing')) {
+  // Legacy rows are historical obligations, not the state machine for new SQL.
+  // Never silently release an existing security hold or ambiguous application.
+  if (migrationLifecycle.some(row => row.state !== 'validated')) {
     recoveryDisposition = 'internal_review';
     wrapUpRequiresUserFeedback = false;
-    wrapUpReason = 'Technical migration review is pending; ordinary user messages cannot release this hold.';
-    await holdMigrationLifecycleStep({ requirementId: reqId, executionOwnership: { requirementId: reqId, runId: cronLockRunId, executionGeneration }, reason: wrapUpReason });
+    wrapUpReason = 'A historical migration obligation needs reconciliation before using the simplified executor. Deployment does not release existing holds.';
     return { reqId, branch: null, previewUrl: null, status: 'blocked' as const };
   }
-  migrationValidationRequired = migrationLifecycle.some(row => row.state === 'validation_pending');
   // Step 0: Check if instance or plan is paused
   let pausedCheck = await checkInstanceAndPlanStatusStep(instanceId);
   if (pausedCheck.isPaused) {
@@ -213,42 +198,22 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
 
   // Step 1: Check for active plan BEFORE creating the sandbox
   // This saves VM costs if we are in a re-plan loop cooldown or blocked state.
-  let existingPlan = await getActiveInstancePlanStep(
+  const existingPlan = await getActiveInstancePlanStep(
     instanceId,
     site_id,
     reqId,
   );
-  if (!existingPlan && migrationLifecycle.some(row => row.state !== 'validated')) {
-    migrationPlanRecoveryRequired = true;
-    existingPlan = await loadMigrationSourcePlanStep(reqId, instanceId, site_id);
-    // Missing orchestration is not a security verdict. Recover a bound plan via
-    // the normal bounded planner; keep all SQL/validation obligations intact.
-    migrationPlanRecoveryRequired = !existingPlan;
-  }
-  if (existingPlan && migrationLifecycle.some(row => row.state === 'correction_required')) {
-    const handoff = await scheduleMigrationCorrectionStep({ requirementId: reqId, planId: existingPlan.id,
-      executionOwnership: { requirementId: reqId, runId: cronLockRunId, executionGeneration } });
-    migrationDiagnosticPending = handoff.diagnosticPending === true;
-    if (handoff.internalReview) {
-      recoveryDisposition = 'internal_review';
-      return { reqId, branch: null, previewUrl: null, status: 'blocked' as const };
-    }
-    existingPlan = await getInstancePlanByIdStep(existingPlan.id);
-  }
   const actionableSteps = selectPlanStepsForExecution(
     Array.isArray(existingPlan?.steps) ? existingPlan.steps : [],
   );
-  const hasActivePlan = !!(existingPlan && (actionableSteps.length > 0 || migrationValidationRequired || migrationDiagnosticPending));
+  const hasActivePlan = !!(existingPlan && actionableSteps.length > 0);
 
   if (existingPlan && actionableSteps[0]) {
     const preflightGate = await getPlanExecutionGateStep(
       existingPlan.id,
       actionableSteps[0].id,
       reqId,
-      migrationValidationRequired && !migrationLifecycle.some(row => row.state === 'correction_required')
-        ? 'migration_validation' : undefined,
     );
-    migrationValidationOnly = preflightGate.runnable && preflightGate.migrationValidationOnly === true;
     if (!preflightGate.runnable) {
       if (preflightGate.reason === 'infrastructure_circuit_open') {
         cycleOutcome = 'infrastructure_exhausted';
@@ -475,48 +440,6 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   });
   sandboxId = created.sandboxId;
   const { branchName, workDir, isNewBranch, instanceType } = created;
-  if (migrationDiagnosticPending && existingPlan) {
-    const handoff = await scheduleMigrationCorrectionStep({ requirementId: reqId, planId: existingPlan.id, sandboxId,
-      executionOwnership: { requirementId: reqId, runId: cronLockRunId, executionGeneration } });
-    if (handoff.internalReview) {
-      recoveryDisposition = 'internal_review';
-      wrapUpReason = handoff.diagnosis ? `Unresolved automatically: ${handoff.diagnosis.reason}. ${handoff.diagnosis.next_action}` : 'Independent migration diagnosis requires technical reconciliation.';
-      wrapUpRequiresUserFeedback = false;
-      return { reqId, branch: null, previewUrl: null, status: 'blocked' as const };
-    }
-    // The next execution owns implementation; diagnosis cannot spend a second
-    // repair budget in this same cycle or skip downstream migration validation.
-    cycleOutcome = 'remediation_handoff';
-    recoveryDisposition = 'retry';
-    wrapUpRequiresUserFeedback = false;
-    wrapUpReason = 'Independent diagnosis assigned one evidence-backed correction to the existing plan. No user approval is required.';
-    return { reqId, branch: null, previewUrl: null, status: 'remediation_handoff' as const };
-  }
-  // A partially applied batch may depend on its next pending correction. Let
-  // that scoped repair run first; the durable guard still prevents delivery.
-  if (migrationValidationRequired && !migrationPlanRecoveryRequired && !migrationLifecycle.some(row => row.state === 'correction_required')) {
-    recoveryDisposition = 'internal_review';
-    const validation = await verifyPendingMigrationLifecycleStep({ sandboxId: sandboxId!, requirementId: reqId,
-      instanceId, siteId: site_id, userId: user_id, title, instanceType, requirementType: requirementKind,
-      plan: existingPlan, audit: cronAudit, executionOwnership: { requirementId: reqId, runId: cronLockRunId, executionGeneration } });
-    sandboxId = validation.effectiveSandboxId;
-    if (!validation.passed) {
-      await holdMigrationLifecycleStep({ requirementId: reqId,
-        executionOwnership: { requirementId: reqId, runId: cronLockRunId, executionGeneration },
-        reason: 'Pending migration requires fresh product verification before more work can run.' });
-      return { reqId, branch: null, previewUrl: null, status: 'blocked' as const };
-    }
-    migrationValidationRequired = false;
-    migrationFreshValidationCompleted = true;
-    recoveryDisposition = undefined;
-    if (migrationValidationOnly) {
-      // Never run implementation or reopen a completed product item here.
-      cycleOutcome = 'remediation_handoff';
-      recoveryDisposition = 'retry';
-      wrapUpReason = 'Pending migrations passed fresh validation. The completed backlog item was not reopened; normal finalization can resume next cycle.';
-      return { reqId, branch: null, previewUrl: null, status: cycleOutcome };
-    }
-  }
 
   if (requirementFlow.delivery.validate_deployment) {
     // Deployable flows enforce the canonical Next.js repository layout.
@@ -625,16 +548,9 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   });
 
   // Step 4: Run orchestrator (if no pending plan)
-  if (migrationPlanRecoveryRequired || ((!skipOrchestrator || (!reqContext.backlog?.items || reqContext.backlog.items.length === 0)) && !isAllBacklogDone)) {
+  if ((!skipOrchestrator || (!reqContext.backlog?.items || reqContext.backlog.items.length === 0)) && !isAllBacklogDone) {
     console.log(`[CronAppsWorkflow|orchestrator] PHASE 1: Running orchestrator`);
-    const prompt = migrationPlanRecoveryRequired
-      ? `Recover the missing requirement-bound implementation plan for "${title}" on requirement ${reqId}. ` +
-        'Create an instance_plan bound to this requirement, reusing its existing backlog item and budgets. ' +
-        'Include a backend step with requires_sandbox=true to inspect migration receipts, correct only never-applied SQL, ' +
-        'and verify migrations and base setup. Applied files are immutable: restore them only from verified original bytes and use a new forward migration for changes. ' +
-        'Do not execute migrations or claim validation in this planning cycle. The next worker must use the central migration review and fresh verification. ' +
-        `Pending migration files: ${migrationLifecycle.filter(row => row.state !== 'validated').map(row => row.file).join(', ')}`
-      : isNewBranch
+    const prompt = isNewBranch
       ? `Process requirement "${title}". Read instructions, investigate, then create an instance_plan with actionable steps (each with a role).`
       : `Continue "${title}". All previous steps done — create a NEW plan for the next iteration.`;
 
@@ -651,7 +567,6 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       instanceContext: reqContext.instanceContext,
       git_repo_kind: gitRepoKind,
       validate_deployment: requirementFlow.delivery.validate_deployment,
-      migrationPlanRecovery: migrationPlanRecoveryRequired,
       executionOwnership: { requirementId: reqId, runId: cronLockRunId, executionGeneration },
     });
     sandboxId = orch.effectiveSandboxId;
@@ -671,7 +586,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
           console.warn(
             `[CronAppsWorkflow|orchestrator] Orchestrator timed out before creating instance_plan for req ${reqId} — skipping blocker to allow retry next cycle.`,
           );
-        } else if (!migrationPlanRecoveryRequired) {
+        } else {
           console.warn(
             `[CronAppsWorkflow|orchestrator] Orchestrator produced no instance_plan for req ${reqId} — creating fallback plan.`,
           );
@@ -702,17 +617,6 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   );
   latestPlanSteps = activePlan?.steps;
 
-  if (migrationPlanRecoveryRequired) {
-    // Never execute ordinary product steps or finalize while recovering the
-    // missing plan. The next cycle assigns correction/validation before work.
-    cycleOutcome = activePlan ? 'remediation_handoff' : 'infrastructure_retry';
-    recoveryDisposition = 'retry';
-    wrapUpRequiresUserFeedback = false;
-    wrapUpReason = activePlan
-      ? 'A requirement-bound plan is available. The next worker will assign migration correction or fresh validation before product work.'
-      : 'The migration plan is still unavailable. Planning will retry within the existing scheduler budget; the recovery planner did not execute or approve pending SQL.';
-    return { reqId, branch: null, previewUrl: null, status: cycleOutcome };
-  }
 
   let smokeError: string | null = null;
   let pushResult: {
@@ -1349,7 +1253,8 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       const { isBacklogComplete, hasOutstandingWork } = require('@/lib/services/requirement-backlog');
       const reqContextAfter = await getRequirementFullContextStep(reqId, instanceId, site_id, user_id);
       const trulyDone = isBacklogComplete(reqContextAfter.backlog?.items || []) && !hasOutstandingWork(reqContextAfter.backlog?.items || []);
-      if (trulyDone) {
+      // App/site completion must wait for the authoritative receipt backstop.
+      if (trulyDone && !requirementFlow.delivery.apply_database_migrations) {
          console.log(`[CronAppsWorkflow] Plan completed and all backlog is done. Fast-tracking requirement to on-review.`);
            try {
              const { supabaseAdmin } = await import('@/lib/database/supabase-client');
@@ -1380,205 +1285,24 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       cycleOutcome,
     });
     
-    // Application database migrations only run on a successful app/site cycle.
-    if (
-      requirementFlow.delivery.apply_database_migrations &&
-      executionPhaseCompleted &&
-      !terminalProductHalt &&
-      !anyFail &&
-      !infrastructureHalt
-    ) {
-      await assertCronExecutionOwnershipStep({
+    // SQL is applied by the implementation tool, never during final cleanup.
+    // This receipt-only check is a backstop; the normal step gate checks first so
+    // pending SQL is returned to the same implementation step while it can edit.
+    if (requirementFlow.delivery.apply_database_migrations && executionPhaseCompleted &&
+        !terminalProductHalt && !anyFail && !infrastructureHalt) {
+      const verified = await verifyDatabaseMigrationsStep(sandboxId!, reqId, instanceType, title, cronAudit, {
         requirementId: reqId, runId: cronLockRunId, executionGeneration,
       });
-      let dbMig = await applyDatabaseMigrationsStep(sandboxId!, reqId, instanceType, title, cronAudit, {
-        requirementId: reqId, runId: cronLockRunId, executionGeneration,
-      });
-      sandboxId = dbMig.effectiveSandboxId;
-      restoredMigrations.push(...(dbMig.restored || []));
-      if (restoredMigrations.length) lightweightCycleFinalization = false;
-      databaseMigrations = dbMig;
-      if (dbMig.status === 'failed' && dbMig.correction?.state === 'correction_required' && activePlan?.id) {
-        const handoff = await scheduleMigrationCorrectionStep({ requirementId: reqId, planId: activePlan.id,
-          sandboxId,
-          sourceStepId: stepsPhase?.lastTouchedStepId,
-          executionOwnership: { requirementId: reqId, runId: cronLockRunId, executionGeneration } });
-        migrationCorrectionScheduled = handoff.scheduled;
-        if (handoff.internalReview && handoff.diagnosis) {
-          wrapUpReason = `Unresolved automatically: ${handoff.diagnosis.reason}. ${handoff.diagnosis.next_action}`;
-        }
-      }
-      // Same-cycle, bounded repair: never turn product defects into infinite infra retries.
-      // Only the applier can identify a safely editable, unapplied migration.
-      const migrationRepairBudget = Math.min(5, requirementFlow.cost_envelope.max_turns_per_step);
-      let migrationRepairMessages: any[] = [];
-      let migrationRepairContextPaths: string[] = [];
-      let ambiguousMigrationWrite = false;
-      let migrationSecurityReview: MigrationSecurityReview | undefined;
-      for (let attempt = 1;
-        attempt <= migrationRepairBudget && dbMig.status === 'failed' &&
-        dbMig.failureKind === 'product' && dbMig.repairTarget && !dbMig.correction;
-        attempt++) {
-        const repair: DatabaseMigrationRepairResult = await repairDatabaseMigrationStep({
-          sandboxId: sandboxId!, requirementId: reqId, instanceType, title, audit: cronAudit,
-          executionOwnership: { requirementId: reqId, runId: cronLockRunId, executionGeneration },
-          outcome: dbMig, attempt, maxAttempts: migrationRepairBudget, messages: migrationRepairMessages,
-          contextPaths: migrationRepairContextPaths,
-        });
-        sandboxId = repair.effectiveSandboxId;
-        migrationRepairMessages = repair.messages;
-        migrationRepairContextPaths = repair.contextPaths || [];
-        migrationSecurityReview = repair.securityReview;
-        // Both agents consume the same bounded budget; never add hidden review turns.
-        attempt += Math.max(0, (repair.turnsUsed ?? 1) - 1);
-        if (repair.error) {
-          ambiguousMigrationWrite = repair.writeAttempted === true;
-          dbMig = { status: 'failed', applied: dbMig.applied, errors: [...dbMig.errors, repair.error],
-            failureKind: 'infrastructure', effectiveSandboxId: sandboxId! };
-          break;
-        }
-        if (repair.changed) {
-          if (!repair.repairedTarget) throw new Error('Migration repair did not return a verified file checksum.');
-          const repairedIndex = repairedMigrations.findIndex(target => target.file === repair.repairedTarget!.file);
-          if (repairedIndex < 0) repairedMigrations.push(repair.repairedTarget);
-          else repairedMigrations[repairedIndex] = repair.repairedTarget;
-          const alreadyApplied = dbMig.applied;
-          dbMig = await applyDatabaseMigrationsStep(sandboxId!, reqId, instanceType, title, cronAudit, {
-            requirementId: reqId, runId: cronLockRunId, executionGeneration,
-          }, repairedMigrations);
-          restoredMigrations.push(...(dbMig.restored || []));
-          if (restoredMigrations.length) lightweightCycleFinalization = false;
-          dbMig.applied = Array.from(new Set([...alreadyApplied, ...dbMig.applied]));
-          sandboxId = dbMig.effectiveSandboxId;
-          if (dbMig.status === 'failed' && dbMig.repairTarget?.file !== repair.repairedTarget.file) {
-            migrationRepairMessages = [];
-            migrationRepairContextPaths = [];
-            migrationSecurityReview = undefined;
-          }
-        } else if (repair.done) {
-          break;
-        }
-      }
-      if (restoredMigrations.length) dbMig.restored = [...restoredMigrations];
-      databaseMigrations = dbMig;
-      const persistedMigrations = await loadMigrationLifecycleStep(reqId);
-      migrationValidationRequired = persistedMigrations.some(row => row.state === 'validation_pending' || row.state === 'reviewing');
-      if (migrationCorrectionScheduled) {
-        cycleOutcome = 'remediation_handoff';
+      sandboxId = verified.effectiveSandboxId;
+      databaseMigrations = verified;
+      if (verified.status === 'failed') {
+        lightweightCycleFinalization = false;
+        cycleOutcome = verified.failureKind === 'infrastructure' ? 'infrastructure_retry' : 'product_failure';
         recoveryDisposition = 'retry';
         wrapUpRequiresUserFeedback = false;
-        wrapUpReason = 'A bounded migration correction was assigned to the implementation plan. No customer approval is required.';
-        wrapUpAttempted = false;
-      } else if (dbMig.errors.length > 0) {
-        lightweightCycleFinalization = false;
-        cycleOutcome = dbMig.status === 'failed' && dbMig.failureKind === 'product'
-          ? 'product_failure' : 'infrastructure_retry';
-        const productDecision = migrationSecurityReview?.decision === 'needs_product_decision'
-          ? migrationSecurityReview : undefined;
-        productDecisionForWrapUp = productDecision;
-        const internalHold = ambiguousMigrationWrite || repairedMigrations.length > 0 ||
-          restoredMigrations.length > 0 || (dbMig.status === 'failed' && dbMig.restorationFailure?.writeAttempted === true);
-        recoveryDisposition = cycleOutcome === 'product_failure' || internalHold
-          ? productDecision ? 'blocked' : 'internal_review'
-          : 'retry';
-        wrapUpRequiresUserFeedback = !!productDecision && recoveryDisposition === 'blocked';
-        wrapUpReason = productDecision
-          ? `A product decision is required before changing data access. Ask this concrete question, not for permission to repair SQL: ${productDecision.question} Options: ${productDecision.options.join(' / ')}`
-          : 'The database update did not pass safety validation. Technical platform review is required before it can be applied. No customer authorization is needed to repair SQL. Do not claim the update was delivered or that further review is already scheduled.';
-        if (cycleOutcome === 'product_failure' || internalHold) {
-          // Persist the stop independently of the client-facing LLM and digest availability.
-          await assertCronExecutionOwnershipStep({ requirementId: reqId, runId: cronLockRunId, executionGeneration });
-          const blocked = await recordRequirementBlockedStep({
-            site_id, instance_id: instanceId, requirement_id: reqId,
-            provenance: 'product_failure', expected_execution_generation: executionGeneration,
-            event_id: `${cronLockRunId}:migration-review`,
-            message: productDecision
-              ? `Product decision required: ${productDecision.question}`
-              : 'Database update blocked for technical security review. No customer action is required.',
-          });
-          if (!blocked.ok) throw new Error(`Could not persist migration review stop: ${blocked.error}`);
-        }
-        wrapUpAttempted = false;
-        console.warn(`[CronAppsWorkflow] DB Migrations had errors:`, dbMig.errors);
-      } else if (dbMig.applied.length > 0) {
-        console.log(`[CronAppsWorkflow] Applied ${dbMig.applied.length} DB migrations.`);
-      }
-      if (dbMig.status === 'passed' && migrationValidationRequired) {
-        recoveryDisposition = 'internal_review';
-        wrapUpRequiresUserFeedback = false;
-        const verified = await verifyPendingMigrationLifecycleStep({ sandboxId: sandboxId!, requirementId: reqId, instanceId,
-          siteId: site_id, userId: user_id, instanceType, title, requirementType: requirementKind, plan: activePlan,
-          expectedRestorations: restoredMigrations,
-          audit: cronAudit, executionOwnership: { requirementId: reqId, runId: cronLockRunId, executionGeneration } });
-        sandboxId = verified.effectiveSandboxId;
-        if (!verified.passed) {
-          infrastructureHalt = true;
-          wrapUpReason = 'Migration application requires fresh verification before work can continue.';
-          await holdMigrationLifecycleStep({ requirementId: reqId,
-            executionOwnership: { requirementId: reqId, runId: cronLockRunId, executionGeneration }, reason: wrapUpReason });
-        } else {
-          migrationValidationRequired = false;
-          migrationFreshValidationCompleted = true;
-          recoveryDisposition = undefined;
-        }
-      }
-      if (dbMig.status === 'passed' && repairedMigrations.length > 0 && !infrastructureHalt && !migrationFreshValidationCompleted) {
-        // SQL repair changes runtime authorization. Prior product evidence is not reusable.
-        const refreshedPlan = activePlan?.id ? await getInstancePlanByIdStep(activePlan.id) : null;
-        const validationStep = refreshedPlan?.steps?.find((step: any) => step.id === stepsPhase?.lastTouchedStepId) ||
-          refreshedPlan?.steps?.[refreshedPlan.steps.length - 1];
-        const gate = validationStep ? await runGateStep({
-          sandboxId: sandboxId!, plan: refreshedPlan, step: validationStep,
-          requirementId: reqId, instanceId, siteId: site_id, userId: user_id,
-          title, instanceType, requirementType: requirementKind,
-          freshMigrationValidation: true,
-          expectedRepairs: repairedMigrations,
-          expectedRestorations: restoredMigrations,
-          executionOwnership: { requirementId: reqId, runId: cronLockRunId, executionGeneration },
-        }) : null;
-        if (gate) sandboxId = gate.effectiveSandboxId;
-        if (!gate?.passed) {
-          infrastructureHalt = true;
-          cycleOutcome = gate?.infrastructureFailure ? 'infrastructure_retry' : 'product_failure';
-          // A changed authorization model must not escape fresh verification in a
-          // new cycle that lacks this repair's receipts, even if the probe is down.
-          recoveryDisposition = 'internal_review';
-          wrapUpRequiresUserFeedback = false;
-          wrapUpAttempted = false;
-          wrapUpReason = `Migration repaired, but fresh product verification did not pass: ${gate?.error || gate?.gateErrorExcerpt || 'No verifiable plan step.'}`;
-          await assertCronExecutionOwnershipStep({ requirementId: reqId, runId: cronLockRunId, executionGeneration });
-          const blocked = await recordRequirementBlockedStep({
-            site_id, instance_id: instanceId, requirement_id: reqId,
-            provenance: 'product_failure', expected_execution_generation: executionGeneration,
-            event_id: `${cronLockRunId}:migration-verification-review`,
-            message: 'Database repair requires technical review because fresh product verification failed. No customer action is required.',
-          });
-          if (!blocked.ok) throw new Error(`Could not persist migration verification stop: ${blocked.error}`);
-        }
-      }
-    }
-
-    // Sandbox tools may apply SQL before a product step fails. This path must also
-    // retain and validate its durable receipt before any checkpoint/delivery.
-    if (requirementFlow.delivery.apply_database_migrations && !infrastructureHalt && !migrationCorrectionScheduled) {
-      const pending = await loadMigrationLifecycleStep(reqId);
-      if (pending.some(row => row.state === 'validation_pending')) {
-        migrationValidationRequired = true;
-        recoveryDisposition = 'internal_review';
-        const verified = await verifyPendingMigrationLifecycleStep({ sandboxId: sandboxId!, requirementId: reqId,
-          instanceId, siteId: site_id, userId: user_id, title, instanceType, requirementType: requirementKind,
-          expectedRestorations: restoredMigrations,
-          plan: activePlan, audit: cronAudit, executionOwnership: { requirementId: reqId, runId: cronLockRunId, executionGeneration } });
-        sandboxId = verified.effectiveSandboxId;
-        if (!verified.passed) {
-          infrastructureHalt = true;
-          await holdMigrationLifecycleStep({ requirementId: reqId, executionOwnership: { requirementId: reqId, runId: cronLockRunId, executionGeneration },
-            reason: 'Database changes from an execution tool still require fresh product verification.' });
-        } else {
-          migrationValidationRequired = false;
-          migrationFreshValidationCompleted = true;
-          recoveryDisposition = undefined;
-        }
+        wrapUpReason = verified.errors.join('\n');
+        // No migration lifecycle, secondary repair agent or security hold here.
+        // Delivery stays denied until the normal implementation/verification passes.
       }
     }
     if (executionPhaseCompleted && !terminalProductHalt && databaseMigrations?.status !== 'failed' && shouldPersistCycleWorkspace({
@@ -1604,8 +1328,6 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
           validateDeployment:
             requirementFlow.delivery.validate_deployment,
           lightweightCheckpoint: lightweightCycleFinalization,
-          expectedRepairs: repairedMigrations,
-          expectedRestorations: restoredMigrations,
           executionOwnership: { requirementId: reqId, runId: cronLockRunId, executionGeneration },
         },
       );
@@ -1725,6 +1447,23 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     };
   }
 
+  if (requirementFlow.delivery.apply_database_migrations) {
+    // Push/build recovery may have replaced files since the earlier check.
+    // Recheck the final effective workspace before any delivery status is emitted.
+    const verified = await verifyDatabaseMigrationsStep(sandboxId!, reqId, instanceType, title, cronAudit, {
+      requirementId: reqId, runId: cronLockRunId, executionGeneration,
+    });
+    sandboxId = verified.effectiveSandboxId;
+    databaseMigrations = verified;
+    if (verified.status === 'failed') {
+      cycleOutcome = verified.failureKind === 'infrastructure' ? 'infrastructure_retry' : 'product_failure';
+      recoveryDisposition = 'retry';
+      wrapUpRequiresUserFeedback = false;
+      wrapUpReason = verified.errors.join('\n');
+      return { reqId, branch: effectiveBranch, previewUrl, status: cycleOutcome };
+    }
+  }
+
   // Step 8.5: Emit Docs Digest and Cycle Wrap-Up
   if (sandboxId) {
     const { emitDocsDigestStep } = await import('../shared/docs-digest-step');
@@ -1802,7 +1541,6 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       forceWrapUp: wrapUpRequiresUserFeedback,
       wrapUpReason,
       requiresUserFeedback: wrapUpRequiresUserFeedback,
-      productDecision: productDecisionForWrapUp,
       recoveryDisposition: recoveryDisposition || (wrapUpRequiresUserFeedback ? 'blocked' : undefined),
     });
     // Intentional skips are handled. Actual failures remain retryable in the
@@ -1858,23 +1596,8 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   // late step (validate/final-status/preview) throws.
   return { reqId, branch: effectiveBranch, previewUrl, status: finalStatus };
   } catch (e: any) {
-    // Reload durable intent: an exception between application and verification must
-    // not fall back to an ordinary retry with an empty in-memory repair list.
-    if (requirementFlow.delivery.apply_database_migrations) {
-      try {
-        const rows = await loadMigrationLifecycleStep(reqId);
-        if (rows.some(row => row.state === 'reviewing' || row.state === 'platform_review' ||
-          row.state === 'validation_pending' && !migrationPlanRecoveryRequired)) {
-          recoveryDisposition = 'internal_review';
-          wrapUpRequiresUserFeedback = false;
-          await holdMigrationLifecycleStep({ requirementId: reqId,
-            executionOwnership: { requirementId: reqId, runId: cronLockRunId, executionGeneration },
-            reason: 'Migration execution stopped before its mandatory security/product validation completed.' });
-        }
-      } catch {
-        if (migrationValidationRequired || repairedMigrations.length) recoveryDisposition = 'internal_review';
-      }
-    }
+    // Application receipts remain authoritative in Apps. An interrupted tool
+    // is reconciled on its next call; failures do not manufacture a security hold.
     const ownershipReason = cronOwnershipRejectionReason(e);
     console.warn('[CronAppsWorkflow] Cycle stopped', {
       requirementId: reqId,
@@ -1961,8 +1684,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
           forceWrapUp: wrapUpRequiresUserFeedback,
           wrapUpReason: wrapUpReason || 'The work cycle ended before the normal wrap-up stage.',
           requiresUserFeedback: wrapUpRequiresUserFeedback,
-          productDecision: productDecisionForWrapUp,
-          recoveryDisposition: recoveryDisposition || (wrapUpRequiresUserFeedback ? 'blocked' : undefined),
+              recoveryDisposition: recoveryDisposition || (wrapUpRequiresUserFeedback ? 'blocked' : undefined),
         });
       } catch (wrapUpError: unknown) {
         console.warn(

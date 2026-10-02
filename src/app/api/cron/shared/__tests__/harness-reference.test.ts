@@ -18,6 +18,7 @@ const sourcePath = HARNESS_SOURCE_ALLOWLIST[0];
 const sqlPaths = [
   'supabase/migrations/20260930010000_requirement_migration_lifecycle.sql',
   'supabase/migrations/20261001220000_harness_diagnostic_decisions.sql',
+  'supabase/migrations/20261002100000_apps_migration_feedback.sql',
 ];
 const causalPaths = [
   'src/app/api/cron/shared/step-probe-validation-targets.ts',
@@ -85,6 +86,19 @@ describe('getHarnessReference', () => {
     expect(JSON.stringify(getHarnessReference('recover'))).toContain('migration_review_pending');
     expect(JSON.stringify(getHarnessReference('report_blocker'))).toContain('cancellation receipts');
     expect(JSON.stringify(getHarnessReference('migrations'))).toContain('Reading it must not apply it');
+  });
+
+  it('describes the simplified executor separately from historical migration holds', () => {
+    const migrations = JSON.stringify(getHarnessReference('migrations'));
+    expect(migrations).toContain('same implementation step');
+    expect(migrations).toContain('not an LLM review');
+    expect(migrations).toContain('deployment does not release');
+    for (const path of ['src/lib/services/apps-platform/migration-execution.ts',
+      'src/lib/services/apps-platform/migration-feedback.ts',
+      'src/app/api/cron/shared/gates/gate-database.ts']) {
+      expect(HARNESS_SOURCE_ALLOWLIST).toContain(path);
+      expect(migrations).toContain(path);
+    }
   });
 
   it('distinguishes local tool exposure from runner provisioning and links the actual implementation', () => {

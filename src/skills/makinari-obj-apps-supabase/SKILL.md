@@ -140,8 +140,12 @@ Never expose server credentials to the browser or put them in Next's `env` confi
 
 ## Migration contract (current linter; no exceptions)
 
-`src/lib/services/apps-platform/migration-linter.ts` is the enforcement contract.
-Fix rejected SQL; never weaken the linter or bypass the migration tools to make it apply.
+`src/lib/services/apps-platform/migration-linter.ts` and the shared deterministic
+execution checks enforce the tenant boundary. Fix rejected SQL; never weaken the
+linter or bypass the migration tools to make it apply. Normal implementation does
+not require an LLM migration approval or a special repair workflow. Static checks
+are not proof of arbitrary policy semantics; preserve product authorization and
+run the required role/access tests below.
 
 - Write **static, tenant-only SQL**. Prefer unqualified names such as `reservations`:
   the migration runner already sets the tenant `search_path`. If qualification is
@@ -167,6 +171,30 @@ Fix rejected SQL; never weaken the linter or bypass the migration tools to make 
   explicit deny predicate. Omitting predicates, unconditional access, and a
   standalone "user is logged in" check are not acceptable. `TO authenticated`
   alone is not tenant isolation: Supabase auth roles are shared across apps.
+
+## Apply, inspect feedback, and continue the normal implementation loop
+
+Use `sandbox_db_migrate` after writing pending SQL. Application is **atomic per
+file**, not per directory. The tool returns earlier successful filenames in
+`applied`, unresolved filenames in `pending` when known, and a `diagnostic` with
+the failing file, code, message and kind. `diagnostic.rolled_back` applies only to
+the failed file; absence of that flag can mean an unknown infrastructure outcome.
+An identical rejection may return `diagnostic.repeated` without executing the
+same rejected SQL again. Read the details, correct the never-applied file and
+retry within the existing general agent turn/time/cost limits. There is no
+migration-specific five-attempt budget, new lifecycle row, or separate repair
+agent. Do not loop blindly on repeated errors or rewrite SQL to bypass a
+permission/capability failure; report the concrete infrastructure gap.
+
+Failure feedback is not a success receipt. Keep partial `applied` evidence and
+verify durable receipts before deciding what may be edited. Do not delete,
+rename, or empty pending files to hide a failure: the Apps observed-files journal
+and tracked paths keep those obligations visible. Completion checks receipts and
+files without executing tenant SQL; it may register observation metadata, but it
+does not apply migrations after tests. Run migration, product and authorization
+checks in the normal implementation step before completion. Existing historical
+holds are not automatically released; legacy recovery tooling is for operators,
+not an alternative migration path.
 
 ## How to add a table (CRUD ready in 4 steps)
 
@@ -463,12 +491,13 @@ capabilities; keep them short-lived and never treat a private bucket as public.
   rewrite applied SQL to "fix" history. Checksum mismatches must not be bypassed.
   Restore the original applied file from version control if it was changed, then
   add a new forward migration for the repair.
-  The owned database delivery gate attempts exact-byte restoration from bounded
-  Git history or a platform recovery copy, verified against the protected SHA-256.
+  Historical recovery tooling can attempt exact-byte restoration from bounded
+  Git history or a platform recovery copy, verified against the protected SHA-256;
+  normal completion verification does not apply SQL or repair the file for you.
   Do not choose the first commit by age or rewrite SQL from memory. A restoration
   receipt is file recovery, not a new SQL application; pending migrations still
-  need normal review and validation. Unmatched sources require technical review,
-  not customer approval or another blind retry. Sandbox-local backups are not
+  need normal deterministic execution and product validation. Unmatched sources
+  require technical review, not customer approval or another blind retry. Sandbox-local backups are not
   durable checkpoints; normal successful-cycle publication remains required.
 - **Pending, never-applied migrations may be edited**, including a file rejected
   by the linter. Confirm application status from the migration tool's receipts /

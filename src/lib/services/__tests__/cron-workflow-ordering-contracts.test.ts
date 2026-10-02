@@ -39,6 +39,9 @@ describe('requirements workflow ordering contracts', () => {
   const stepGitGateSource = workspaceFile(
     'src/app/api/cron/shared/step-git-gate.ts',
   );
+  const migrationVerificationSource = workspaceFile(
+    'src/app/api/cron/shared/step-db-migration-verification.ts',
+  );
 
   it('derives progress from the persisted final plan delta', () => {
     const finalPlanRead = workflowSource.indexOf(
@@ -162,6 +165,51 @@ describe('requirements workflow ordering contracts', () => {
     expect(generationGuard).toBeLessThan(finalStatusCall);
     expect(finalizerSource).toContain('expectedExecutionGeneration: number');
     expect(finalizerSource).toContain("state: 'applied' | 'stale'");
+  });
+
+  it('uses receipt-only migration verification before checkpointing and again after recovery before delivery', () => {
+    const firstVerification = workflowSource.indexOf('await verifyDatabaseMigrationsStep(');
+    const checkpoint = workflowSource.indexOf('await commitAndPushStep(', firstVerification);
+    const buildRecovery = workflowSource.indexOf('await postFinallyBuildStep(', checkpoint);
+    const finalVerification = workflowSource.indexOf('await verifyDatabaseMigrationsStep(', firstVerification + 1);
+    const deliveryWrapup = workflowSource.indexOf('await emitCycleWrapUpStep(', finalVerification);
+    const finalStatus = workflowSource.indexOf('await createFinalStatusStep(', finalVerification);
+
+    expect(firstVerification).toBeGreaterThan(-1);
+    expect(checkpoint).toBeGreaterThan(firstVerification);
+    expect(buildRecovery).toBeGreaterThan(checkpoint);
+    expect(finalVerification).toBeGreaterThan(buildRecovery);
+    expect(deliveryWrapup).toBeGreaterThan(finalVerification);
+    expect(finalStatus).toBeGreaterThan(deliveryWrapup);
+    expect(workflowSource.match(/await verifyDatabaseMigrationsStep\(/g)).toHaveLength(2);
+    expect(workflowSource.slice(firstVerification, checkpoint)).toContain("databaseMigrations?.status !== 'failed'");
+    expect(workflowSource.slice(finalVerification, deliveryWrapup)).toContain("recoveryDisposition = 'retry'");
+    expect(workflowSource.slice(finalVerification, deliveryWrapup)).toContain('return { reqId, branch: effectiveBranch, previewUrl, status: cycleOutcome }');
+    expect(migrationVerificationSource).toContain('await verifyPendingMigrations(');
+    expect(migrationVerificationSource).not.toMatch(/\b(?:applyPendingMigrations|applyDatabaseMigrationsStep|repairDatabaseMigrationStep)\s*\(/);
+    expect(workflowSource).not.toMatch(/\b(?:applyDatabaseMigrationsStep|repairDatabaseMigrationStep|scheduleMigrationCorrectionStep|verifyPendingMigrationLifecycleStep|holdMigrationLifecycleStep)\s*\(/);
+  });
+
+  it('reads historical migration obligations without silently reopening or replacing them', () => {
+    const historicalRead = workflowSource.indexOf('await loadMigrationLifecycleStep(reqId)');
+    const historicalGuard = workflowSource.indexOf("migrationLifecycle.some(row => row.state !== 'validated')", historicalRead);
+    const activePlanRead = workflowSource.indexOf('await getActiveInstancePlanStep(');
+    expect(historicalRead).toBeGreaterThan(-1);
+    expect(historicalGuard).toBeGreaterThan(historicalRead);
+    expect(activePlanRead).toBeGreaterThan(historicalGuard);
+    expect(workflowSource.slice(historicalGuard, activePlanRead)).toContain("status: 'blocked' as const");
+    expect(workflowSource.match(/await loadMigrationLifecycleStep\(/g)).toHaveLength(1);
+    expect(workflowSource).not.toContain('migrationPlanRecovery');
+  });
+
+  it('does not fast-track app or site completion ahead of required receipt verification', () => {
+    const fastTrack = workflowSource.indexOf("update({ status: 'on-review'");
+    const receiptRequirementGuard = workflowSource.lastIndexOf(
+      'if (trulyDone && !requirementFlow.delivery.apply_database_migrations)', fastTrack,
+    );
+    expect(fastTrack).toBeGreaterThan(-1);
+    expect(receiptRequirementGuard).toBeGreaterThan(-1);
+    expect(receiptRequirementGuard).toBeLessThan(fastTrack);
   });
 
   it('claims one runnable candidate at a time under one global capacity lock', () => {

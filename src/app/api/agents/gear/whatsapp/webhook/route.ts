@@ -445,6 +445,7 @@ export async function POST(request: NextRequest) {
       details: {
         prompt_source: 'whatsapp_webhook',
         message_sid: messageSid,
+        status: 'running',
       },
     });
     console.log(`📝 Log de mensaje de usuario insertado en instance_logs para instancia ${instanceId}`);
@@ -462,6 +463,7 @@ export async function POST(request: NextRequest) {
       instanceId,
       message: messageContent,
       messageSid,
+      userMessageLogId: userAction.id,
       siteId,
       userId,
       userPhone: rawPhoneNumber, // Mantenemos el número crudo para que Twilio pueda responder correctamente

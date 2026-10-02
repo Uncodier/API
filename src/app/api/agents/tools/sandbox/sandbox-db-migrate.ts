@@ -1,5 +1,6 @@
-import { Sandbox } from '@vercel/sandbox';
+import type { Sandbox } from '@vercel/sandbox';
 import { applyPendingMigrations } from '@/lib/services/apps-platform/migration-applier';
+import { migrationFailure } from '@/lib/services/apps-platform/migration-execution';
 import { SandboxToolsContext, liveSandbox, deductSandboxToolCredits } from './assistantProtocol';
 
 export function sandboxDbMigrateTool(
@@ -9,7 +10,7 @@ export function sandboxDbMigrateTool(
 ) {
   return {
     name: 'sandbox_db_migrate',
-    description: 'Applies pending SQL migrations to the tenant database schema. Use this tool after writing new migration files (e.g. in migrations/ or supabase/migrations/) to execute them against the database. Do not use this for public or auth schemas. After migrating, use sandbox_db_inspect to verify tables instead of writing custom test scripts.',
+    description: 'Applies pending static SQL migrations to the bound tenant schema, atomically per file. Use after writing migrations/ or supabase/migrations/ files. On failure, inspect diagnostic and pending, correct the never-applied file in the normal implementation loop, and retry; do not delete pending files or alter applied history. Earlier successful files remain applied. Do not use for public or auth schemas. After migrating, use sandbox_db_inspect and product authorization tests to verify behavior.',
     parameters: {
       type: 'object',
       properties: {
@@ -30,13 +31,16 @@ export function sandboxDbMigrateTool(
         const s0 = liveSandbox(sandbox, toolsCtx);
         const result = await applyPendingMigrations(s0, requirementId);
         
-        if (result.errors.length > 0) {
+        if (result.errors.length > 0 || result.pending?.length) {
           return {
             success: false,
-            error: `Failed to apply some migrations:\n${result.errors.join('\n')}`,
+            error: result.errors.length > 0
+              ? `Failed to apply some migrations:\n${result.errors.join('\n')}`
+              : `Unapplied migrations remain: ${result.pending!.join(', ')}.`,
             applied: result.applied,
-            ...(result.correction ? { correction: { file: result.correction.file, state: result.correction.state,
-              reason: result.correction.reason, attempts: result.correction.attempts } } : {}),
+            ...(result.failureKind ? { failureKind: result.failureKind } : {}),
+            ...(result.diagnostic ? { diagnostic: result.diagnostic } : {}),
+            ...(result.pending ? { pending: result.pending } : {}),
           };
         }
         
@@ -44,6 +48,7 @@ export function sandboxDbMigrateTool(
           return {
             success: true,
             message: 'No pending migrations found. All migrations are already applied.',
+            applied: [],
             receipt: {
               kind: 'database_migration',
               applied: [],
@@ -62,10 +67,10 @@ export function sandboxDbMigrateTool(
             pending: 0,
           },
         };
-      } catch (err: any) {
+      } catch (err: unknown) {
         return {
           success: false,
-          error: `Error applying migrations: ${err?.message || String(err)}`
+          ...migrationFailure(err),
         };
       }
     }

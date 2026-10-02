@@ -65,6 +65,7 @@ import {
 } from './cron-execution-ownership';
 import {
   canResumeCachedGate,
+  hasImplementationFeedback,
   shouldEnterRepairGateOnlyPhase,
   shouldRunGateAfterTurn,
 } from './repair-execution-policy';
@@ -268,6 +269,7 @@ export async function executeSingleTurnStep(params: {
       infrastructure_generation: infrastructureGeneration,
     };
     const noProgressAdjudication =
+      !hasImplementationFeedback(persistedStep.error_message) &&
       isNoProgressAdjudicationRequested(
         persistedStep,
         executionGeneration,
@@ -492,7 +494,7 @@ export async function executeSingleTurnStep(params: {
       });
     }
 
-    if (shouldEnterRepairGateOnlyPhase(activeRepairRun)) {
+    if (shouldEnterRepairGateOnlyPhase(activeRepairRun, persistedStep.error_message)) {
       console.log(
         `[SingleTurn] Repair run ${activeRepairRun!.repair_run_id} is materialized; entering gate-only validation.`,
       );
@@ -532,7 +534,7 @@ export async function executeSingleTurnStep(params: {
           ) || undefined
         : undefined;
     if (
-      canResumeCachedGate(activeRepairRun, activeRepairAction) &&
+      canResumeCachedGate(activeRepairRun, activeRepairAction, persistedStep.error_message) &&
       effectiveBacklogItemId &&
       validationFingerprint &&
       (flow === 'app' || flow === 'site')

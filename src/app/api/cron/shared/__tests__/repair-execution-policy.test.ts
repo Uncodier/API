@@ -2,6 +2,8 @@ import {
   canResumeCachedGate,
   shouldEnterRepairGateOnlyPhase,
   shouldRunGateAfterTurn,
+  hasImplementationFeedback,
+  IMPLEMENTATION_FEEDBACK_PREFIX,
 } from '../repair-execution-policy';
 import type { JudgeRepairRun, RepairAction } from '../judge-repair-controller';
 
@@ -25,6 +27,17 @@ const run = (status: JudgeRepairRun['status']): JudgeRepairRun => ({
 });
 
 describe('repair execution policy', () => {
+  it('returns explicit implementation feedback to the agent instead of looping on a cached or materialized gate', () => {
+    const feedback = `${IMPLEMENTATION_FEEDBACK_PREFIX}Migration 0003 is pending.`;
+    expect(hasImplementationFeedback(feedback)).toBe(true);
+    expect(hasImplementationFeedback('untrusted prose mentioning [implementation_pending]')).toBe(false);
+    expect(canResumeCachedGate(undefined, undefined, feedback)).toBe(false);
+    expect(shouldEnterRepairGateOnlyPhase(run('materialized'), feedback)).toBe(false);
+    // Does not authorize an early pass, alter the repair, or reset its budget.
+    const original = run('materialized');
+    expect(shouldRunGateAfterTurn({ repairRun: original, assistantDone: false, completionRequested: false })).toBe(true);
+    expect(original).toEqual(run('materialized'));
+  });
   it('never resumes cached gate evidence over a pending repair action', () => {
     expect(canResumeCachedGate(run('in_progress'), action)).toBe(false);
     expect(canResumeCachedGate(run('in_progress'), undefined)).toBe(false);

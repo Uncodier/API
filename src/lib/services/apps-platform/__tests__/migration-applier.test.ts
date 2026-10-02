@@ -1,362 +1,345 @@
-import { createHash } from 'node:crypto';
-import { applyPendingMigrations } from '../migration-applier';
+import { applyPendingMigrations, verifyPendingMigrations } from '../migration-applier';
+import { migrationDigest, type MigrationExecutionContext } from '../migration-execution';
 import { getAppsAdminClient } from '@/lib/database/apps-supabase';
-import { syncPostgrestSchemas } from '../postgrest-config';
-import { authorizeMigrationApplication, loadMigrationApplicationContext } from '../migration-application-guard';
+import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { listMigrationLifecycle, transitionMigrationLifecycle } from '../migration-lifecycle';
 import { restoreAppliedMigration, verifyMigrationRestorations } from '../migration-restoration';
-jest.mock('../migration-restoration', () => ({ restoreAppliedMigration: jest.fn(), verifyMigrationRestorations: jest.fn() }));
-jest.mock('../migration-application-guard', () => ({ authorizeMigrationApplication: jest.fn(), loadMigrationApplicationContext: jest.fn() }));
-jest.mock('../migration-lifecycle', () => ({ transitionMigrationLifecycle: jest.fn(async input => ({ ...input.value, version: 2 })) }));
 
-jest.mock('@/lib/database/apps-supabase', () => ({
-  getAppsAdminClient: jest.fn(),
-}));
-jest.mock('../postgrest-config', () => ({
-  syncPostgrestSchemas: jest.fn(),
-}));
+jest.mock('@/lib/database/apps-supabase', () => ({ getAppsAdminClient: jest.fn() }));
+jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn() } }));
+jest.mock('../migration-lifecycle', () => ({ listMigrationLifecycle: jest.fn(), transitionMigrationLifecycle: jest.fn() }));
+jest.mock('../migration-restoration', () => ({ restoreAppliedMigration: jest.fn(), verifyMigrationRestorations: jest.fn() }));
+jest.mock('../migration-application-guard', () => { throw new Error('Normal path must not load LLM review'); });
+jest.mock('../postgrest-config', () => { throw new Error('Normal path must not load Management API'); });
 
 const requirementId = '12345678-1234-1234-1234-123456789012';
 const schema = 'app_aaaaaaaaaaaaaaaaaaaaaaaa';
-const migrationFile = 'supabase/migrations/001_create_campaigns.sql';
-const migrationSql = 'ALTER TABLE campaigns ENABLE ROW LEVEL SECURITY;';
+const tenantId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const file = 'supabase/migrations/001_records.sql';
+const sql = 'ALTER TABLE records ENABLE ROW LEVEL SECURITY;';
+const second = 'migrations/002_records.sql';
+const secondSql = 'ALTER TABLE records ADD COLUMN title text;';
+const context = (): MigrationExecutionContext => ({ requirementId, executionGeneration: 1,
+  instance: { requirement_id: requirementId, site_id: 'site', user_id: 'user' }, assertCurrent: jest.fn(async () => undefined) });
 
-function sandbox(
-  files = [migrationFile],
-  sqlByFile: Record<string, string> = { [migrationFile]: migrationSql },
-) {
-  return {
-    runCommand: jest.fn(async (command: string, args: string[]) => {
-      if (command === 'realpath') return { exitCode: 0, stdout: jest.fn().mockResolvedValue(args[1]) };
-      if (command === 'sh') {
-        return {
-          exitCode: 0,
-          stdout: jest.fn().mockResolvedValue(`${files.join('\n')}\n`),
-        };
-      }
-      return {
-        exitCode: 0,
-        stdout: jest.fn().mockResolvedValue(sqlByFile[args[0]] ?? ''),
-      };
-    }),
-  } as any;
-}
-
-function client(
-  metaRow: unknown,
-  metaError: unknown = null,
-  applyResult: boolean | null = true,
-) {
+function setup(initial: Record<string, string> = { [file]: sql }) {
+  const files = { ...initial };
+  let tracked: string[] = [];
+  let committed: string[] = [];
+  let fingerprint = 'a'.repeat(32);
+  const feedback = new Map<string, any>();
+  const receipts = new Map<string, any>();
+  let apply: (args: any) => any = args => {
+    receipts.set(args.p_migration_key, { checksum: args.p_migration_checksum });
+    return { data: true, error: null };
+  };
   const db = {
-    from: jest.fn(() => ({
-      select: jest.fn(() => ({
-        eq: jest.fn(() => ({
-          maybeSingle: jest.fn().mockResolvedValue({
-            data: { tenant_id: 'tenant-123', schema },
-            error: null,
-          }),
-        })),
-      })),
-    })),
-    rpc: jest.fn(async (name: string) => {
-      if (name === 'apps_get_migration_receipt') {
-        return {
-          data: metaRow
-            ? { found: true, value: (metaRow as any).value }
-            : { found: false },
-          error: metaError,
-        };
+    from: jest.fn(() => ({ select: jest.fn(() => ({ eq: jest.fn(() => ({ maybeSingle: jest.fn(async () => ({
+      data: { tenant_id: tenantId, schema, site_id: 'site', user_id: 'user', status: 'active' }, error: null,
+    })) })) })) })),
+    rpc: jest.fn(async (name: string, args: any) => {
+      if (name === 'apps_get_tenant_capabilities') return { data: {
+        version: 1, requirement_id: requirementId, tenant_id: tenantId, schema,
+        identity: { user_id: `${schema}._app_current_user_id`, claims: `${schema}._app_request_claims`, backend: `${schema}._app_is_backend_request` },
+        storage: { available: false, bucket: null }, backend: { role: 'authenticated', bypasses_rls: false, operations: [] },
+      }, error: null };
+      if (name === 'apps_get_migration_workspace') return { data: {
+        schema_fingerprint: fingerprint, files: Array.from(feedback.values()),
+        receipts: Array.from(receipts, ([migration_key, value]) => ({ migration_key, value })),
+      }, error: null };
+      if (name === 'apps_record_migration_feedback') {
+        const row = { target_schema: schema, tenant_id: tenantId, migration_key: args.p_migration_key,
+          checksum: args.p_migration_checksum, context_key: args.p_context_key, error: args.p_error, updated_at: '2026-10-02T00:00:00Z' };
+        feedback.set(row.migration_key, row);
+        return { data: row, error: null };
       }
-      return name === 'apps_apply_migration'
-        ? { data: applyResult, error: null }
-        : { data: null, error: null };
+      if (name === 'apps_apply_migration') return apply(args);
+      if (name === 'apps_reload_migration_schema') return { data: null, error: null };
+      throw new Error(`Unexpected RPC: ${name}`);
     }),
   };
-  return { db, rpc: db.rpc };
+  const sandbox = { runCommand: jest.fn(async (command: string, args: string[]) => {
+    const output = command === 'sh' ? Object.keys(files).join('\n') : command === 'git'
+      ? args[0] === 'rev-parse' ? 'a'.repeat(40) : args[0] === 'ls-tree' ? committed.join('\0') : tracked.join('\0') :
+      command === 'realpath' ? args[1] : files[args[0]];
+    return { exitCode: output === undefined ? 1 : 0, stdout: async () => output || '', stderr: async () => '' };
+  }) } as any;
+  (getAppsAdminClient as jest.Mock).mockReturnValue(db);
+  return { db, files, feedback, receipts, sandbox,
+    setTracked: (paths: string[]) => { tracked = paths; },
+    setCommitted: (paths: string[]) => { committed = paths; },
+    setFingerprint: (value: string) => { fingerprint = value; },
+    setApply: (fn: typeof apply) => { apply = fn; },
+    applications: () => db.rpc.mock.calls.filter(call => call[0] === 'apps_apply_migration'),
+  };
 }
 
-describe('applyPendingMigrations', () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-    (syncPostgrestSchemas as jest.Mock).mockResolvedValue({ ok: true });
-    (loadMigrationApplicationContext as jest.Mock).mockResolvedValue({ executionGeneration: 1, assertCurrent: jest.fn() });
-    (authorizeMigrationApplication as jest.Mock).mockResolvedValue({ allowed: true, lifecycle: { version: 1, attempts: 1 } });
-    (verifyMigrationRestorations as jest.Mock).mockResolvedValue(undefined);
+beforeEach(() => {
+  jest.clearAllMocks();
+  (listMigrationLifecycle as jest.Mock).mockResolvedValue([]);
+  (supabaseAdmin.from as jest.Mock).mockReturnValue({ select: jest.fn(() => ({ eq: jest.fn(() => ({
+    maybeSingle: jest.fn(async () => ({ data: { id: requirementId, site_id: 'site', user_id: 'user', status: 'in-progress',
+      metadata: { requirement_execution_generation: 1 } }, error: null })),
+  })) })) });
+  (verifyMigrationRestorations as jest.Mock).mockResolvedValue(undefined);
+});
+
+describe('deterministic migration batch', () => {
+  it('registers every pending file before first SQL and uses only protected atomic writes', async () => {
+    const state = setup({ [file]: sql, [second]: secondSql });
+    const result = await applyPendingMigrations(state.sandbox, requirementId);
+    expect(result).toEqual({ applied: [second, file], errors: [] });
+    const calls = state.db.rpc.mock.calls;
+    const firstApply = calls.findIndex(call => call[0] === 'apps_apply_migration');
+    const registered = calls.slice(0, firstApply).filter(call => call[0] === 'apps_record_migration_feedback').map(call => call[1].p_migration_key);
+    expect(registered).toEqual(expect.arrayContaining([`migration:${file}`, `migration:${second}`]));
+    expect(state.applications()).toHaveLength(2);
+    expect(transitionMigrationLifecycle).not.toHaveBeenCalled();
+    expect(calls.every(call => ['apps_get_tenant_capabilities', 'apps_get_migration_workspace', 'apps_record_migration_feedback', 'apps_apply_migration', 'apps_reload_migration_schema'].includes(call[0]))).toBe(true);
   });
 
-  it('reads the ledger through the protected RPC and skips applied SQL', async () => {
-    const checksum = createHash('sha256').update(migrationSql).digest('hex');
-    const mocked = client({
-      key: `migration:${migrationFile}`,
-      value: { checksum },
-    });
-    (getAppsAdminClient as jest.Mock).mockReturnValue(mocked.db);
-
-    const result = await applyPendingMigrations(sandbox(), requirementId);
-
-    expect(result).toEqual({ applied: [], errors: [] });
-    expect(mocked.rpc).toHaveBeenCalledWith(
-      'apps_get_migration_receipt',
-      expect.objectContaining({ p_target_schema: schema }),
-    );
-    expect(mocked.rpc).not.toHaveBeenCalledWith(
-      'apps_apply_migration',
-      expect.anything(),
-    );
-    expect(syncPostgrestSchemas).toHaveBeenCalled();
+  it('skips exact applied history even if SQL would fail current policy', async () => {
+    const state = setup({ [file]: 'DROP TABLE records;' });
+    state.receipts.set(`migration:${file}`, { checksum: migrationDigest(state.files[file]) });
+    expect(await applyPendingMigrations(state.sandbox, requirementId)).toEqual({ applied: [], errors: [] });
+    expect(state.applications()).toHaveLength(0);
+    expect(state.feedback.size).toBe(0);
   });
 
-  it('refuses to rerun a migration whose applied checksum changed', async () => {
-    const mocked = client({
-      key: `migration:${migrationFile}`,
-      value: { checksum: 'different-checksum' },
+  it('retains applied file on reload failure and the next batch retries reload only', async () => {
+    const state = setup();
+    const original = state.db.rpc.getMockImplementation()!;
+    let failReload = true;
+    state.db.rpc.mockImplementation(async (name, args) => name === 'apps_reload_migration_schema' && failReload
+      ? { data: null, error: { message: 'schema reload unavailable' } }
+      : original(name, args));
+    const result = await applyPendingMigrations(state.sandbox, requirementId);
+    expect(result).toMatchObject({ applied: [file], pending: [], failureKind: 'infrastructure',
+      diagnostic: { code: 'SCHEMA_RELOAD_PENDING' } });
+    expect(result.diagnostic?.rolled_back).toBeUndefined();
+    expect(await verifyPendingMigrations(state.sandbox, requirementId)).toEqual({ applied: [], errors: [] });
+    failReload = false;
+    expect(await applyPendingMigrations(state.sandbox, requirementId)).toEqual({ applied: [], errors: [] });
+    expect(state.applications()).toHaveLength(1);
+    expect(state.db.rpc.mock.calls.filter(call => call[0] === 'apps_reload_migration_schema')).toHaveLength(2);
+  });
+
+  it('requests a single scope reload for an entirely applied historical batch', async () => {
+    const state = setup({ [file]: sql, [second]: secondSql });
+    state.receipts.set(`migration:${file}`, { checksum: migrationDigest(sql) });
+    state.receipts.set(`migration:${second}`, { checksum: migrationDigest(secondSql) });
+    expect(await applyPendingMigrations(state.sandbox, requirementId)).toEqual({ applied: [], errors: [] });
+    expect(state.applications()).toHaveLength(0);
+    expect(state.db.rpc.mock.calls.filter(call => call[0] === 'apps_reload_migration_schema')).toHaveLength(1);
+  });
+
+  it('refuses changed applied bytes without backfilling the checksum', async () => {
+    const state = setup();
+    state.receipts.set(`migration:${file}`, { checksum: 'a'.repeat(64) });
+    expect(await applyPendingMigrations(state.sandbox, requirementId)).toMatchObject({
+      applied: [], failureKind: 'product', diagnostic: { code: 'APPLIED_MIGRATION_CHANGED', kind: 'history' },
     });
-    (getAppsAdminClient as jest.Mock).mockReturnValue(mocked.db);
-
-    const result = await applyPendingMigrations(sandbox(), requirementId);
-
-    expect(result.applied).toEqual([]);
-    expect(result.errors[0]).toContain('changed after it was applied');
-    expect(result.errors[0]).toContain('Restore the exact applied file bytes');
-    expect(result.errors[0]).toContain('earliest Git commit is not proof');
-    expect(result.errors[0]).toContain('Never change the ledger checksum');
-    expect(result.failureKind).toBe('product');
-    expect(result.repairTarget).toBeUndefined();
+    expect(state.applications()).toHaveLength(0);
     expect(restoreAppliedMigration).not.toHaveBeenCalled();
-    expect(mocked.rpc).not.toHaveBeenCalledWith(
-      'apps_apply_migration',
-      expect.anything(),
-    );
   });
 
-  it('owned gate restores an applied file then reviews only the pending migration', async () => {
-    const recorded = createHash('sha256').update('applied bytes').digest('hex');
-    const next = 'supabase/migrations/002.sql';
-    const restored = { file: migrationFile, schema, tenantId: 'tenant-123', checksum: recorded,
-      previousChecksum: createHash('sha256').update(migrationSql).digest('hex'),
-      source: { kind: 'git', revision: 'a'.repeat(40) }, backupPath: '/tmp/backup.sql' };
-    const mocked = client(null);
-    mocked.rpc.mockImplementation(async (name: string, args?: any) => name === 'apps_get_migration_receipt'
-      ? { data: { found: args.p_migration_key === `migration:${migrationFile}`, value: { checksum: recorded } }, error: null }
-      : { data: name === 'apps_apply_migration' ? true : null, error: null });
-    (getAppsAdminClient as jest.Mock).mockReturnValue(mocked.db);
-    (restoreAppliedMigration as jest.Mock).mockResolvedValue({ restored });
-    const context = { requirementId, assertCurrent: jest.fn(), executionGeneration: 1 } as any;
-    const owner = jest.fn();
-    const result = await applyPendingMigrations(sandbox([migrationFile, next], { [migrationFile]: migrationSql, [next]: migrationSql }),
-      requirementId, [], context, { assertCurrent: owner });
-    expect(result).toEqual({ applied: [next], errors: [], restored: [restored] });
-    expect(authorizeMigrationApplication).toHaveBeenCalledTimes(1);
-    expect(authorizeMigrationApplication).toHaveBeenCalledWith(expect.objectContaining({ target: expect.objectContaining({ file: next }) }));
-    expect(mocked.rpc).not.toHaveBeenCalledWith('apps_apply_migration', expect.objectContaining({ p_migration_key: `migration:${migrationFile}` }));
-    await (restoreAppliedMigration as jest.Mock).mock.calls[0][0].assertCurrent();
-    expect(owner).toHaveBeenCalled(); expect(context.assertCurrent).toHaveBeenCalled();
-    expect(verifyMigrationRestorations).toHaveBeenCalledWith(expect.anything(), [restored]);
-  });
-
-  it('retains structured failure and never executes SQL when exact recovery fails', async () => {
-    const recorded = 'a'.repeat(64);
-    const mocked = client({ value: { checksum: recorded } });
-    (getAppsAdminClient as jest.Mock).mockReturnValue(mocked.db);
-    const failure = { file: migrationFile, expectedChecksum: recorded, actualChecksum: 'b'.repeat(64),
-      reason: 'no_matching_applied_source', writeAttempted: false };
-    (restoreAppliedMigration as jest.Mock).mockResolvedValue({ failure, failureKind: 'product' });
-    const result = await applyPendingMigrations(sandbox(), requirementId, [], { requirementId } as any, { assertCurrent: jest.fn() });
-    expect(result).toMatchObject({ applied: [], failureKind: 'product', restorationFailure: failure });
-    expect(result.errors[0]).toContain('Expected SHA-256:');
-    expect(result.repairTarget).toBeUndefined();
-    expect(authorizeMigrationApplication).not.toHaveBeenCalled();
-    expect(mocked.rpc).not.toHaveBeenCalledWith('apps_apply_migration', expect.anything());
-    expect(syncPostgrestSchemas).not.toHaveBeenCalled();
-  });
-
-  it('preserves a restoration receipt even when exposure transport throws', async () => {
-    const mocked = client({ value: { checksum: 'a'.repeat(64) } });
-    (getAppsAdminClient as jest.Mock).mockReturnValue(mocked.db);
-    const restored = { file: migrationFile, checksum: 'a'.repeat(64) };
-    (restoreAppliedMigration as jest.Mock).mockResolvedValue({ restored });
-    (syncPostgrestSchemas as jest.Mock).mockRejectedValueOnce(new Error('transport'));
-    const result = await applyPendingMigrations(sandbox(), requirementId, [], { requirementId } as any, { assertCurrent: jest.fn() });
-    expect(result).toMatchObject({ restored: [restored], applied: [], failureKind: 'infrastructure' });
-    expect(result.errors).toHaveLength(1);
-  });
-
-  it('backfills a legacy ledger row without rerunning its migration', async () => {
-    const mocked = client({
-      key: `migration:${migrationFile}`,
-      value: { applied_at: '2026-09-20T00:00:00.000Z' },
-    }, null, false);
-    (getAppsAdminClient as jest.Mock).mockReturnValue(mocked.db);
-
-    const result = await applyPendingMigrations(sandbox(), requirementId);
-
-    expect(result).toEqual({ applied: [], errors: [] });
-    expect(mocked.rpc).toHaveBeenCalledWith(
-      'apps_apply_migration',
-      expect.objectContaining({
-        p_migration_key: `migration:${migrationFile}`,
-      }),
-    );
-    expect(syncPostgrestSchemas).toHaveBeenCalled();
-  });
-
-  it('uses the atomic migration RPC for a new migration', async () => {
-    const mocked = client(null);
-    (getAppsAdminClient as jest.Mock).mockReturnValue(mocked.db);
-
-    const result = await applyPendingMigrations(sandbox(), requirementId);
-
-    expect(result.errors).toEqual([]);
-    expect(result.applied).toEqual([migrationFile]);
-    expect(mocked.rpc).toHaveBeenCalledWith(
-      'apps_apply_migration',
-      expect.objectContaining({
-        p_target_schema: schema,
-        p_expected_tenant_id: 'tenant-123',
-        p_migration_key: `migration:${migrationFile}`,
-        p_migration_checksum: createHash('sha256')
-          .update(migrationSql)
-          .digest('hex'),
-        p_migration_sql: migrationSql,
-      }),
-    );
-  });
-
-  it('cannot apply a normal executor file that independent review rejected', async () => {
-    const mocked = client(null);
-    (getAppsAdminClient as jest.Mock).mockReturnValue(mocked.db);
-    (authorizeMigrationApplication as jest.Mock).mockResolvedValue({ allowed: false, error: 'Preserve ownership', lifecycle: { state: 'correction_required', file: migrationFile } });
-    const result = await applyPendingMigrations(sandbox(), requirementId);
-    expect(result.correction).toMatchObject({ state: 'correction_required' });
-    expect(mocked.rpc).not.toHaveBeenCalledWith('apps_apply_migration', expect.anything());
-  });
-
-  it('aborts when a file changes after independent review', async () => {
-    const mocked = client(null);
-    (getAppsAdminClient as jest.Mock).mockReturnValue(mocked.db);
-    const files = { [migrationFile]: migrationSql };
-    (authorizeMigrationApplication as jest.Mock).mockImplementation(async params => {
-      files[migrationFile] += '-- changed';
-      await params.assertUnchanged();
-      return { allowed: true };
+  it('refuses receipts without a checksum instead of guessing/backfilling history', async () => {
+    const state = setup();
+    state.receipts.set(`migration:${file}`, { applied_at: '2026-10-02' });
+    expect(await applyPendingMigrations(state.sandbox, requirementId)).toMatchObject({
+      failureKind: 'infrastructure', diagnostic: { code: 'LEGACY_MIGRATION_CHECKSUM' },
     });
-    const result = await applyPendingMigrations(sandbox([migrationFile], files), requirementId);
-    expect(result.errors).toEqual([expect.stringContaining('changed during')]);
-    expect(mocked.rpc).not.toHaveBeenCalledWith('apps_apply_migration', expect.anything());
+    expect(state.applications()).toHaveLength(0);
   });
 
-  it('preserves the first atomic receipt when review of a later file throws', async () => {
-    const mocked = client(null);
-    (getAppsAdminClient as jest.Mock).mockReturnValue(mocked.db);
-    (authorizeMigrationApplication as jest.Mock).mockResolvedValueOnce({ allowed: true, lifecycle: { version: 1 } })
-      .mockRejectedValueOnce(new Error('review transport unavailable'));
-    const next = 'migrations/0002.sql';
-    const result = await applyPendingMigrations(sandbox([migrationFile, next], { [migrationFile]: migrationSql, [next]: migrationSql }), requirementId);
-    expect(result.applied).toEqual([migrationFile]);
-    expect(result.errors).toEqual([expect.stringContaining('review transport unavailable')]);
-    expect(result.failureKind).toBe('infrastructure');
+  it.each(['journal', 'receipt', 'git'])('does not pass when a %s-observed file disappears', async source => {
+    const state = setup({});
+    if (source === 'journal') state.feedback.set(`migration:${file}`, { migration_key: `migration:${file}`, checksum: migrationDigest(sql), context_key: 'context', error: null });
+    if (source === 'receipt') state.receipts.set(`migration:${file}`, { checksum: migrationDigest(sql) });
+    if (source === 'git') state.setTracked([file]);
+    expect(await verifyPendingMigrations(state.sandbox, requirementId)).toMatchObject({ failureKind: 'product', diagnostic: { code: 'MISSING_MIGRATION' } });
+    expect(state.applications()).toHaveLength(0);
   });
 
-  it('retries exposure when another caller already applied the migration', async () => {
-    const mocked = client(null, null, false);
-    (getAppsAdminClient as jest.Mock).mockReturnValue(mocked.db);
-
-    const result = await applyPendingMigrations(sandbox(), requirementId);
-
-    expect(result).toEqual({ applied: [], errors: [] });
-    expect(syncPostgrestSchemas).toHaveBeenCalled();
-  });
-
-  it('fails closed when the tenant ledger cannot be read', async () => {
-    const mocked = client(null, { message: 'schema unavailable' });
-    (getAppsAdminClient as jest.Mock).mockReturnValue(mocked.db);
-
-    const result = await applyPendingMigrations(sandbox(), requirementId);
-
-    expect(result.errors).toEqual([
-      expect.stringContaining('schema unavailable'),
-    ]);
-    expect(mocked.rpc).not.toHaveBeenCalledWith(
-      'apps_apply_migration',
-      expect.anything(),
-    );
-  });
-
-  it('does not apply later migrations after an earlier migration fails', async () => {
-    const first = 'supabase/migrations/001_invalid.sql';
-    const second = 'supabase/migrations/002_valid.sql';
-    const mocked = client(null);
-    (getAppsAdminClient as jest.Mock).mockReturnValue(mocked.db);
-
-    const result = await applyPendingMigrations(
-      sandbox(
-        [first, second],
-        {
-          [first]: 'DROP SCHEMA public;',
-          [second]: migrationSql,
-        },
-      ),
-      requirementId,
-    );
-
-    expect(result.errors[0]).toContain('failed linting');
-    expect(result.repairTarget).toEqual({
-      file: first, schema, tenantId: 'tenant-123', reason: 'lint',
-      checksum: createHash('sha256').update('DROP SCHEMA public;').digest('hex'),
+  it('refuses committed migration deleted from both the working tree and index before first observation', async () => {
+    const state = setup({});
+    state.setCommitted([file]);
+    expect(await verifyPendingMigrations(state.sandbox, requirementId)).toMatchObject({
+      failureKind: 'product', diagnostic: { code: 'MISSING_MIGRATION' },
     });
-    expect(mocked.rpc).not.toHaveBeenCalledWith(
-      'apps_apply_migration',
-      expect.anything(),
-    );
-    expect(mocked.rpc).toHaveBeenCalledTimes(1);
+    expect(state.feedback.size).toBe(0);
+    expect(state.applications()).toHaveLength(0);
   });
 
-  it.each([
-    ['42601', 'product', true], ['23503', 'product', true],
-    ['42501', 'infrastructure', false], ['PGRST202', 'infrastructure', false],
-  ])('classifies SQLSTATE %s and limits automatic repair to SQL defects', async (code, failureKind, repairable) => {
-    const mocked = client(null);
-    mocked.rpc.mockImplementation(async (name: string): Promise<any> => name === 'apps_get_migration_receipt'
-      ? { data: { found: false }, error: null }
-      : { data: null, error: { code, message: 'Failure' } });
-    (getAppsAdminClient as jest.Mock).mockReturnValue(mocked.db);
-    const result = await applyPendingMigrations(sandbox(), requirementId);
-    expect(result.failureKind).toBe(failureKind);
-    expect(!!result.repairTarget).toBe(repairable);
+  it.each([true, false])('accepts missing HEAD only when the repository is explicitly unborn (%s)', async unborn => {
+    const state = setup({});
+    const original = state.sandbox.runCommand.getMockImplementation();
+    state.sandbox.runCommand.mockImplementation(async (command: string, args: string[]) => {
+      if (command === 'git') {
+        if (args[0] === 'rev-parse') return { exitCode: 1, stdout: async () => '' };
+        if (args[0] === 'symbolic-ref') return { exitCode: unborn ? 0 : 1, stdout: async () => unborn ? 'refs/heads/main' : '' };
+        if (args[0] === 'show-ref') return { exitCode: 1, stdout: async () => '' };
+      }
+      return original(command, args);
+    });
+    const result = await verifyPendingMigrations(state.sandbox, requirementId);
+    if (unborn) expect(result).toEqual({ applied: [], errors: [] });
+    else expect(result).toMatchObject({ failureKind: 'infrastructure' });
   });
 
-  it('does not edit product SQL to work around a simultaneous exposure failure', async () => {
-    const first = 'supabase/migrations/001.sql';
-    const second = 'supabase/migrations/002.sql';
-    const mocked = client(null);
-    (getAppsAdminClient as jest.Mock).mockReturnValue(mocked.db);
-    (syncPostgrestSchemas as jest.Mock).mockResolvedValue({ ok: false, error: 'API unavailable' });
-    const result = await applyPendingMigrations(sandbox([first, second], {
-      [first]: migrationSql, [second]: 'DROP SCHEMA public;',
-    }), requirementId);
-    expect(result.applied).toEqual([first]);
-    expect(result.errors).toHaveLength(2);
-    expect(result.failureKind).toBe('infrastructure');
-    expect(result.repairTarget).toBeUndefined();
+  it('fails closed when committed migration tree cannot be read', async () => {
+    const state = setup({});
+    const original = state.sandbox.runCommand.getMockImplementation();
+    state.sandbox.runCommand.mockImplementation(async (command: string, args: string[]) => command === 'git' && args[0] === 'ls-tree'
+      ? { exitCode: 128, stdout: async () => '' } : original(command, args));
+    expect(await verifyPendingMigrations(state.sandbox, requirementId)).toMatchObject({ failureKind: 'infrastructure' });
   });
 
-  it('fails closed if recovery loses a repaired file, even with an empty migration batch', async () => {
-    const mocked = client(null);
-    (getAppsAdminClient as jest.Mock).mockReturnValue(mocked.db);
-    const expected = { file: migrationFile, schema, tenantId: 'tenant-123',
-      checksum: createHash('sha256').update(migrationSql).digest('hex'), reason: 'lint' as const };
-    const lost = await applyPendingMigrations(sandbox([], {}), requirementId, [expected]);
-    expect(lost.failureKind).toBe('infrastructure');
-    expect(lost.errors[0]).toContain('missing or changed');
-    expect(mocked.rpc).not.toHaveBeenCalled();
-    const undiscovered = await applyPendingMigrations(sandbox([], { [migrationFile]: migrationSql }), requirementId, [expected]);
-    expect(undiscovered.errors[0]).toContain('absent from the discovered');
-    const withoutReceipt = await applyPendingMigrations(sandbox(), requirementId, [expected]);
-    expect(withoutReceipt.errors[0]).toContain('no matching atomic receipt');
-    mocked.rpc.mockImplementation(async (name: string): Promise<any> => name === 'apps_get_migration_receipt'
-      ? { data: { found: true, value: { checksum: expected.checksum } }, error: null }
-      : { data: null, error: null });
-    const valid = await applyPendingMigrations(sandbox(), requirementId, [expected]);
-    expect(valid.applied).toEqual([]);
-    expect(valid.errors).toEqual([]);
+  it('records observed proposals in verification but never applies tenant SQL', async () => {
+    const state = setup();
+    expect(await verifyPendingMigrations(state.sandbox, requirementId)).toMatchObject({
+      applied: [], pending: [file], failureKind: 'product', diagnostic: { kind: 'pending' },
+    });
+    expect(state.feedback.has(`migration:${file}`)).toBe(true);
+    expect(state.applications()).toHaveLength(0);
+    delete state.files[file];
+    expect(await verifyPendingMigrations(state.sandbox, requirementId)).toMatchObject({ diagnostic: { code: 'MISSING_MIGRATION' } });
+  });
+
+  it('does not allow a platform pending proposal to vanish from sandbox verification', async () => {
+    const state = setup({});
+    state.feedback.set('migration:platform/endpoint.sql', { migration_key: 'migration:platform/endpoint.sql', checksum: migrationDigest(sql), context_key: 'context', error: null });
+    expect(await verifyPendingMigrations(state.sandbox, requirementId)).toMatchObject({ pending: ['platform/endpoint.sql'], failureKind: 'product' });
+    state.receipts.set('migration:platform/endpoint.sql', { checksum: migrationDigest(sql) });
+    expect(await verifyPendingMigrations(state.sandbox, requirementId)).toEqual({ applied: [], errors: [] });
+  });
+
+  it('returns historical infrastructure feedback for a tool retry instead of permanently blocking a now-readable workspace', async () => {
+    const state = setup();
+    state.setApply(() => ({ data: null, error: { code: '42501', message: 'permission denied' } }));
+    expect(await applyPendingMigrations(state.sandbox, requirementId)).toMatchObject({ failureKind: 'infrastructure' });
+    expect(await verifyPendingMigrations(state.sandbox, requirementId)).toMatchObject({
+      failureKind: 'product', diagnostic: { kind: 'pending', code: 'MIGRATION_RETRY_REQUIRED',
+        message: expect.stringContaining('do not rewrite SQL') },
+    });
+    expect(state.applications()).toHaveLength(1);
+    state.setApply(args => {
+      state.receipts.set(args.p_migration_key, { checksum: args.p_migration_checksum });
+      return { data: true, error: null };
+    });
+    expect(await applyPendingMigrations(state.sandbox, requirementId)).toEqual({ applied: [file], errors: [] });
+    expect(state.applications()).toHaveLength(2);
+  });
+
+  it('treats receipts as authoritative over stale concurrent proposal feedback', async () => {
+    const state = setup();
+    state.feedback.set(`migration:${file}`, { migration_key: `migration:${file}`, checksum: migrationDigest(secondSql),
+      context_key: 'old-context', error: { code: '42601', kind: 'sql', message: 'stale rejected proposal' } });
+    state.receipts.set(`migration:${file}`, { checksum: migrationDigest(sql) });
+    expect(await verifyPendingMigrations(state.sandbox, requirementId)).toEqual({ applied: [], errors: [] });
+    expect(state.applications()).toHaveLength(0);
+    expect(state.feedback.get(`migration:${file}`).checksum).toBe(migrationDigest(secondSql));
+  });
+
+  it('catches files appearing only in the final workspace read', async () => {
+    const state = setup({});
+    let reads = 0;
+    const original = state.db.rpc.getMockImplementation()!;
+    state.db.rpc.mockImplementation(async (name, args) => {
+      if (name === 'apps_get_migration_workspace' && ++reads === 2) {
+        state.receipts.set(`migration:${file}`, { checksum: migrationDigest(sql) });
+      }
+      return original(name, args);
+    });
+    expect(await verifyPendingMigrations(state.sandbox, requirementId)).toMatchObject({ diagnostic: { code: 'MISSING_MIGRATION' } });
+  });
+
+  it('fails closed on malformed journal responses', async () => {
+    const state = setup({});
+    const original = state.db.rpc.getMockImplementation()!;
+    state.db.rpc.mockImplementation(async (name, args) => name === 'apps_get_migration_workspace'
+      ? { data: { schema_fingerprint: 'a'.repeat(32), files: null, receipts: [] }, error: null }
+      : original(name, args));
+    expect(await verifyPendingMigrations(state.sandbox, requirementId)).toMatchObject({ failureKind: 'infrastructure' });
+  });
+
+  it('fails an empty file and registers nonempty later proposals before SQL', async () => {
+    const state = setup({ [file]: ' \n', [second]: secondSql });
+    expect(await applyPendingMigrations(state.sandbox, requirementId)).toMatchObject({ diagnostic: { code: 'EMPTY_MIGRATION' } });
+    expect(state.feedback.has(`migration:${second}`)).toBe(true);
+    expect(state.applications()).toHaveLength(0);
+  });
+
+  it('retains earlier atomic receipts when a later file fails', async () => {
+    const state = setup({ 'migrations/001.sql': sql, 'migrations/002.sql': secondSql });
+    state.setApply(args => {
+      if (args.p_migration_key.endsWith('002.sql')) return { data: null, error: { code: '42601', message: 'syntax error' } };
+      state.receipts.set(args.p_migration_key, { checksum: args.p_migration_checksum });
+      return { data: true, error: null };
+    });
+    expect(await applyPendingMigrations(state.sandbox, requirementId)).toMatchObject({
+      applied: ['migrations/001.sql'], pending: ['migrations/002.sql'], diagnostic: { code: '42601', rolled_back: true },
+    });
+  });
+
+  it('caches deterministic rejection across batch registration and allows changed SQL', async () => {
+    const state = setup({ [file]: 'DROP TABLE records;' });
+    expect(await applyPendingMigrations(state.sandbox, requirementId)).toMatchObject({ diagnostic: { code: 'MIGRATION_POLICY' } });
+    const writes = state.db.rpc.mock.calls.filter(call => call[0] === 'apps_record_migration_feedback').length;
+    expect(await applyPendingMigrations(state.sandbox, requirementId)).toMatchObject({ diagnostic: { code: 'MIGRATION_POLICY', repeated: true } });
+    expect(state.db.rpc.mock.calls.filter(call => call[0] === 'apps_record_migration_feedback')).toHaveLength(writes);
+    expect(state.applications()).toHaveLength(0);
+    state.files[file] = sql;
+    expect(await applyPendingMigrations(state.sandbox, requirementId)).toEqual({ applied: [file], errors: [] });
+  });
+
+  it('rechecks final discovery instead of claiming success for a deleted applied file', async () => {
+    const state = setup();
+    state.setApply(args => {
+      state.receipts.set(args.p_migration_key, { checksum: args.p_migration_checksum });
+      delete state.files[file];
+      return { data: true, error: null };
+    });
+    expect(await applyPendingMigrations(state.sandbox, requirementId)).toMatchObject({ applied: [file], diagnostic: { code: 'MISSING_MIGRATION' } });
+  });
+
+  it('fails unavailable workspace even when there are no files', async () => {
+    const state = setup({});
+    state.db.rpc.mockResolvedValueOnce({ data: null, error: { message: 'unavailable' } });
+    expect(await verifyPendingMigrations(state.sandbox, requirementId)).toMatchObject({ failureKind: 'infrastructure' });
+  });
+
+  it('blocks unresolved historical recovery without any lifecycle transition', async () => {
+    const state = setup();
+    (listMigrationLifecycle as jest.Mock).mockResolvedValue([{ state: 'validation_pending' }]);
+    expect(await applyPendingMigrations(state.sandbox, requirementId)).toMatchObject({ diagnostic: { code: 'LEGACY_MIGRATION_HOLD' }, failureKind: 'infrastructure' });
+    expect(transitionMigrationLifecycle).not.toHaveBeenCalled();
+    expect(state.applications()).toHaveLength(0);
+  });
+
+  it('rejects paths outside the sandbox before journal or SQL', async () => {
+    const state = setup({ 'migrations/../../outside.sql': sql });
+    expect(await applyPendingMigrations(state.sandbox, requirementId)).toMatchObject({ diagnostic: { code: 'MIGRATION_PATH' } });
+    expect(state.applications()).toHaveLength(0);
+  });
+
+  it('detects a file changed just before atomic application', async () => {
+    const state = setup();
+    const owner = context();
+    let calls = 0;
+    (owner.assertCurrent as jest.Mock).mockImplementation(async () => { if (++calls === 4) state.files[file] += '\n-- concurrent change'; });
+    const result = await applyPendingMigrations(state.sandbox, requirementId, [], owner);
+    expect(result.errors).not.toEqual([]);
+    expect(state.applications()).toHaveLength(0);
+  });
+
+  it('restores only in an explicitly owned gate and never executes restored historical SQL', async () => {
+    const state = setup({ [file]: 'changed' });
+    state.receipts.set(`migration:${file}`, { checksum: migrationDigest(sql) });
+    const restored = { file, schema, tenantId, checksum: migrationDigest(sql), previousChecksum: migrationDigest('changed') };
+    (restoreAppliedMigration as jest.Mock).mockImplementation(async () => { state.files[file] = sql; return { restored }; });
+    expect(await applyPendingMigrations(state.sandbox, requirementId, [], context(), { assertCurrent: jest.fn() })).toEqual({ applied: [], errors: [], restored: [restored] });
+    expect(state.applications()).toHaveLength(0);
+    expect(verifyMigrationRestorations).toHaveBeenCalledWith(state.sandbox, [restored]);
   });
 });

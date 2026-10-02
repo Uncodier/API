@@ -6,7 +6,7 @@ import * as ownershipRejection from '../../shared/cron-ownership-rejection';
 import { getFlow, classifyRequirementType, productAttemptLimits } from '@/lib/services/requirement-flows';
 
 /** Real workflow control flow; every I/O dependency is an explicit local fake. */
-function harness() {
+function harness(options: { maxTurns?: number; type?: string } = {}) {
   const plan: any = { id: 'plan', title: 'Implement', steps: [{
     id: 'step', order: 1, title: 'Work', instructions: 'Build', status: 'in_progress', infrastructure_generation: 0, backlog_item_id: 'item',
   }] };
@@ -32,11 +32,13 @@ function harness() {
     checkRecentPlansGuardStep: jest.fn(async () => ({ shouldSkipOrchestrator: false, shouldBlockRequirement: false, recentCount: 0 })),
     cleanupNestedProjectsStep: jest.fn(async () => ({ effectiveSandboxId: 'sandbox' })),
     reconcilePlanStep: jest.fn(async () => 'in_progress'),
-    commitAndPushStep: jest.fn(async () => ({ ok: true, pushed: true, branch: 'feature', commitCount: 1 })),
-    postFinallyBuildStep: jest.fn(async () => ({ ok: true, effectiveSandboxId: 'sandbox' })),
+    commitAndPushStep: jest.fn(async (): Promise<any> => ({ ok: true, pushed: true, branch: 'feature', commitCount: 1 })),
+    postFinallyBuildStep: jest.fn(async (): Promise<any> => ({ ok: true, effectiveSandboxId: 'sandbox' })),
     getPreviewUrlStep: jest.fn(async () => 'https://preview.example.invalid'),
   };
   const executeSingleTurnStep = jest.fn(async (_params?: unknown): Promise<any> => ({ ok: true, isDone: false, durableProductProgress: true }));
+  const verification = { verifyDatabaseMigrationsStep: jest.fn(async (): Promise<any> => ({ status: 'passed', applied: [], errors: [], effectiveSandboxId: 'sandbox' })) };
+  // Legacy dependencies stay observable so regressions cannot silently reintroduce SQL writes or repair agents.
   const migration = { applyDatabaseMigrationsStep: jest.fn(async (): Promise<any> => ({ status: 'passed', applied: [], errors: [], effectiveSandboxId: 'sandbox' })) };
   const repair = { repairDatabaseMigrationStep: jest.fn(async (): Promise<any> => ({ changed: false, done: false, messages: [], effectiveSandboxId: 'sandbox' })) };
   const gate = { runGateStep: jest.fn(async (): Promise<any> => ({ passed: true, effectiveSandboxId: 'sandbox' })) };
@@ -58,6 +60,8 @@ function harness() {
     getPlanExecutionGateStep: jest.fn(async (): Promise<any> => ({ runnable: true })),
     clearStepInfrastructureStateStep: jest.fn(async () => ({ state: 'applied', cleared: true, generation: 1 })),
     updatePlanStepStatusStep: jest.fn(async () => ({ persisted: true })),
+    recordStepInfraTransientStep: jest.fn(async () => ({ state: 'applied', circuitOpen: false, generation: 1 })),
+    logCronInfrastructureEventStep: jest.fn(async () => {}),
   };
   const provisionTrackingScriptStep = jest.fn(async (_params?: unknown): Promise<{ injected: boolean; error?: string }> => ({ injected: true }));
   const orchestrator = { runOrchestratorStep: jest.fn(async (_params?: unknown) => ({ createdPlan: true, timedOut: false, effectiveSandboxId: 'sandbox' })) };
@@ -66,6 +70,7 @@ function harness() {
       '../shared/cron-steps': steps,
       '../shared/cron-sandbox-lifecycle-steps': lifecycle,
       '../shared/workflow-db-steps': db,
+      '../shared/step-db-migration-verification': { ...verification, loadMigrationLifecycleStep: migrationLifecycle.loadMigrationLifecycleStep },
       '../shared/step-db-migrations': migration,
       '../shared/step-db-migration-repair': repair,
       '../shared/migration-lifecycle-steps': migrationLifecycle,
@@ -75,7 +80,15 @@ function harness() {
       '@/lib/services/requirement-git-binding': { getRequirementGitBinding: async () => ({ org: 'fixture', repo: 'app' }) },
       '../shared/docs-digest-step': { emitDocsDigestStep: async () => ({}) },
       '../shared/sync-docs-to-backlog-step': { emitSyncDocsToBacklogStep: async () => {} },
-      '@/lib/services/requirement-flows': { getFlow, classifyRequirementType, productAttemptLimits },
+      '@/lib/services/requirement-flows': {
+        getFlow: (kind: Parameters<typeof getFlow>[0]) => {
+          const flow = getFlow(kind);
+          return options.maxTurns === undefined ? flow : {
+            ...flow, cost_envelope: { ...flow.cost_envelope, max_turns_per_step: options.maxTurns },
+          };
+        },
+        classifyRequirementType, productAttemptLimits,
+      },
       '@/lib/services/cycle-wrapup-prompt': {
         activeBacklogItemIdsFromPlanSteps: () => new Set(['item']), countPendingPlanSteps: () => 1,
         feedbackRequiredBacklogItems: () => [], technicalReviewBacklogItems,
@@ -101,10 +114,21 @@ function harness() {
       '@/lib/services/requirement-backlog': { isBacklogComplete: () => false, hasOutstandingWork: () => true, isOrnamentalOnlyOutstanding: () => false },
     },
   );
-  const run = () => workflow.runCronAppsWorkflow({ reqId: 'req', title: 'Test', instructions: '', type: 'app',
+  const run = () => workflow.runCronAppsWorkflow({ reqId: 'req', title: 'Test', instructions: '', type: options.type || 'app',
     site_id: 'site', user_id: 'user', instanceId: 'instance', previousWorkContext: '', instance_type: 'applications',
     cronLockRunId: 'run', cycleStartedAt: '2026-09-26T00:00:00Z', executionGeneration: 3 });
-  return { run, plan, lifecycle, db, steps, executeSingleTurnStep, execution, migration, repair, gate, finalizer, wrapup, provisionTrackingScriptStep, migrationLifecycle, technicalReviewBacklogItems, orchestrator };
+  return { run, plan, lifecycle, db, steps, executeSingleTurnStep, execution, verification, migration, repair, gate, finalizer, wrapup, provisionTrackingScriptStep, migrationLifecycle, technicalReviewBacklogItems, orchestrator };
+}
+
+function expectNoMigrationOrchestration(h: ReturnType<typeof harness>) {
+  expect(h.migration.applyDatabaseMigrationsStep).not.toHaveBeenCalled();
+  expect(h.repair.repairDatabaseMigrationStep).not.toHaveBeenCalled();
+  expect(h.gate.runGateStep).not.toHaveBeenCalled();
+  expect(h.migrationLifecycle.loadMigrationSourcePlanStep).not.toHaveBeenCalled();
+  expect(h.migrationLifecycle.scheduleMigrationCorrectionStep).not.toHaveBeenCalled();
+  expect(h.migrationLifecycle.verifyPendingMigrationLifecycleStep).not.toHaveBeenCalled();
+  expect(h.migrationLifecycle.holdMigrationLifecycleStep).not.toHaveBeenCalled();
+  expect(h.db.recordRequirementBlockedStep).not.toHaveBeenCalled();
 }
 
 describe('workflow recovery and truthful completion', () => {
@@ -140,140 +164,87 @@ describe('workflow recovery and truthful completion', () => {
     expect(h.lifecycle.releaseRunLockStep).toHaveBeenCalledTimes(1);
   });
 
-  it('assigns a classified correction without burning the restricted repair loop', async () => {
+  it.each(['correction_required', 'validation_pending', 'platform_review', 'reviewing', 'unknown', null, undefined])(
+    'keeps historical %s obligations blocked without reopening, writing holds, or creating a repair plan', async state => {
     const h = harness();
-    h.migration.applyDatabaseMigrationsStep.mockResolvedValue({ status: 'failed', applied: [], errors: ['Static SQL needed'],
-      failureKind: 'product', effectiveSandboxId: 'sandbox', correction: { state: 'correction_required' } });
-    await expect(h.run()).resolves.toMatchObject({ status: 'remediation_handoff' });
-    expect(h.migrationLifecycle.scheduleMigrationCorrectionStep).toHaveBeenCalledTimes(1);
-    expect(h.repair.repairDatabaseMigrationStep).not.toHaveBeenCalled();
-    expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({ recoveryDisposition: 'retry', requiresUserFeedback: false }));
-  });
-
-  it.each(['correction_required', 'validation_pending'])('recovers a missing %s plan without converting coordination into platform review', async state => {
-    const h = harness();
-    h.migrationLifecycle.loadMigrationLifecycleStep.mockResolvedValue([{ state, file: 'migrations/0001.sql' }]);
-    h.steps.getActiveInstancePlanStep.mockResolvedValueOnce(null);
-    h.migrationLifecycle.loadMigrationSourcePlanStep.mockResolvedValue(null);
-    await expect(h.run()).resolves.toMatchObject({ status: 'remediation_handoff' });
-    expect(h.orchestrator.runOrchestratorStep).toHaveBeenCalledWith(expect.objectContaining({
-      initialMessage: expect.stringContaining('requires_sandbox=true'),
-      migrationPlanRecovery: true,
-      executionOwnership: { requirementId: 'req', runId: 'run', executionGeneration: 3 },
-    }));
-    expect(h.migrationLifecycle.holdMigrationLifecycleStep).not.toHaveBeenCalled();
-    expect(h.migrationLifecycle.scheduleMigrationCorrectionStep).not.toHaveBeenCalled();
-    expect(h.migrationLifecycle.verifyPendingMigrationLifecycleStep).not.toHaveBeenCalled();
-    expect(h.executeSingleTurnStep).not.toHaveBeenCalled();
-    expect(h.migration.applyDatabaseMigrationsStep).not.toHaveBeenCalled();
-    expect(h.steps.commitAndPushStep).not.toHaveBeenCalled();
-    expect(h.finalizer.createFinalStatusStep).not.toHaveBeenCalled();
-    expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({
-      recoveryDisposition: 'retry', requiresUserFeedback: false,
-    }));
-  });
-
-  it('retains a missing plan as a bounded scheduling retry without unsafe fallback or delivery', async () => {
-    const h = harness();
-    h.migrationLifecycle.loadMigrationLifecycleStep.mockResolvedValue([{ state: 'correction_required', file: 'migrations/0001.sql' }]);
-    h.steps.getActiveInstancePlanStep.mockResolvedValue(null);
-    h.migrationLifecycle.loadMigrationSourcePlanStep.mockResolvedValue(null);
-    h.orchestrator.runOrchestratorStep.mockResolvedValue({ createdPlan: false, timedOut: false, effectiveSandboxId: 'sandbox' });
-    await expect(h.run()).resolves.toMatchObject({ status: 'infrastructure_retry' });
-    expect(h.orchestrator.runOrchestratorStep).toHaveBeenCalledTimes(1);
-    expect(h.migrationLifecycle.holdMigrationLifecycleStep).not.toHaveBeenCalled();
-    expect(h.db.recordRequirementBlockedStep).not.toHaveBeenCalled();
-    expect(h.finalizer.createFinalStatusStep).not.toHaveBeenCalled();
-    expect(h.lifecycle.releaseRunLockStep).toHaveBeenCalledTimes(1);
-  });
-
-  it('does not turn a sandbox outage during plan recovery into a permanent migration hold', async () => {
-    const h = harness();
-    h.migrationLifecycle.loadMigrationLifecycleStep.mockResolvedValue([{ state: 'validation_pending', file: 'migrations/0001.sql' }]);
-    h.steps.getActiveInstancePlanStep.mockResolvedValue(null);
-    h.migrationLifecycle.loadMigrationSourcePlanStep.mockResolvedValue(null);
-    h.lifecycle.createSandboxStep.mockRejectedValue(new Error('Sandbox temporarily unavailable'));
-    await expect(h.run()).rejects.toThrow('Sandbox temporarily unavailable');
-    expect(h.migrationLifecycle.holdMigrationLifecycleStep).not.toHaveBeenCalled();
-    expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({
-      recoveryDisposition: 'retry', requiresUserFeedback: false,
-    }));
-    expect(h.lifecycle.releaseRunLockStep).toHaveBeenCalledTimes(1);
-  });
-
-  it('performs validation only for a completed backlog item, never executing the recovered product step', async () => {
-    const h = harness();
-    h.migrationLifecycle.loadMigrationLifecycleStep.mockResolvedValue([{ state: 'validation_pending', file: 'migrations/0001.sql' }]);
-    h.execution.getPlanExecutionGateStep.mockResolvedValue({ runnable: true, migrationValidationOnly: true });
-    h.db.getRequirementFullContextStep.mockResolvedValue({ backlog: { items: [{ id: 'item', status: 'done' }] } });
-    await expect(h.run()).resolves.toMatchObject({ status: 'remediation_handoff' });
-    expect(h.execution.getPlanExecutionGateStep).toHaveBeenCalledWith('plan', 'step', 'req', 'migration_validation');
-    expect(h.migrationLifecycle.verifyPendingMigrationLifecycleStep).toHaveBeenCalledTimes(1);
-    expect(h.executeSingleTurnStep).not.toHaveBeenCalled();
-    expect(h.migration.applyDatabaseMigrationsStep).not.toHaveBeenCalled();
-    expect(h.finalizer.createFinalStatusStep).not.toHaveBeenCalled();
-  });
-
-  it.each(['platform_review', 'reviewing'])('does not use plan recovery to reopen %s', async state => {
-    const h = harness();
-    h.migrationLifecycle.loadMigrationLifecycleStep.mockResolvedValue([{ state, file: 'migrations/0001.sql' }]);
+    const row = { state, file: 'migrations/0001.sql', attempts: 5 };
+    h.migrationLifecycle.loadMigrationLifecycleStep.mockResolvedValue([row]);
     await expect(h.run()).resolves.toMatchObject({ status: 'blocked' });
+    expect(h.migrationLifecycle.loadMigrationLifecycleStep).toHaveBeenCalledTimes(1);
+    expect(h.migrationLifecycle.loadMigrationLifecycleStep).toHaveBeenCalledWith('req');
+    expect(row).toEqual({ state, file: 'migrations/0001.sql', attempts: 5 });
+    expect(h.steps.getActiveInstancePlanStep).not.toHaveBeenCalled();
     expect(h.orchestrator.runOrchestratorStep).not.toHaveBeenCalled();
     expect(h.lifecycle.createSandboxStep).not.toHaveBeenCalled();
     expect(h.executeSingleTurnStep).not.toHaveBeenCalled();
+    expect(h.verification.verifyDatabaseMigrationsStep).not.toHaveBeenCalled();
+    expect(h.steps.commitAndPushStep).not.toHaveBeenCalled();
+    expect(h.finalizer.createFinalStatusStep).not.toHaveBeenCalled();
+    expectNoMigrationOrchestration(h);
+    expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({
+      recoveryDisposition: 'internal_review', requiresUserFeedback: false,
+      wrapUpReason: expect.stringContaining('historical migration obligation needs reconciliation'),
+    }));
+    expect(h.lifecycle.releaseRunLockStep).toHaveBeenCalledTimes(1);
   });
 
-  it('provisions a diagnostic workspace and hands the assigned correction to the next agent, not a blocked requirement', async () => {
+  it.each(['correction_required', 'validation_pending'])('does not create a missing plan or diagnostic sandbox for historical %s', async state => {
     const h = harness();
-    h.migrationLifecycle.loadMigrationLifecycleStep.mockResolvedValue([{ state: 'correction_required', attempts: 5 }]);
-    h.migrationLifecycle.scheduleMigrationCorrectionStep
-      .mockResolvedValueOnce({ scheduled: false, internalReview: false, diagnosticPending: true })
-      .mockResolvedValueOnce({ scheduled: true, internalReview: false });
-    await expect(h.run()).resolves.toMatchObject({ status: 'remediation_handoff' });
-    expect(h.lifecycle.createSandboxStep).toHaveBeenCalledTimes(1);
-    expect(h.migrationLifecycle.scheduleMigrationCorrectionStep).toHaveBeenLastCalledWith(expect.objectContaining({ sandboxId: 'sandbox' }));
+    h.migrationLifecycle.loadMigrationLifecycleStep.mockResolvedValue([{ state, attempts: 5 }]);
+    h.steps.getActiveInstancePlanStep.mockResolvedValue(null);
+    h.migrationLifecycle.loadMigrationSourcePlanStep.mockResolvedValue(null);
+    await expect(h.run()).resolves.toMatchObject({ status: 'blocked' });
+    expect(h.steps.getActiveInstancePlanStep).not.toHaveBeenCalled();
+    expect(h.orchestrator.runOrchestratorStep).not.toHaveBeenCalled();
+    expect(h.lifecycle.createSandboxStep).not.toHaveBeenCalled();
     expect(h.executeSingleTurnStep).not.toHaveBeenCalled();
-    expect(h.db.recordRequirementBlockedStep).not.toHaveBeenCalled();
+    expectNoMigrationOrchestration(h);
+  });
+
+  it('does not let a completed backlog item bypass an unresolved historical validation obligation', async () => {
+    const h = harness();
+    h.migrationLifecycle.loadMigrationLifecycleStep.mockResolvedValue([{ state: 'validation_pending' }]);
+    h.db.getRequirementFullContextStep.mockResolvedValue({ backlog: { items: [{ id: 'item', status: 'done' }] } });
+    await expect(h.run()).resolves.toMatchObject({ status: 'blocked' });
+    expect(h.execution.getPlanExecutionGateStep).not.toHaveBeenCalled();
+    expect(h.executeSingleTurnStep).not.toHaveBeenCalled();
+    expect(h.verification.verifyDatabaseMigrationsStep).not.toHaveBeenCalled();
+    expect(h.finalizer.createFinalStatusStep).not.toHaveBeenCalled();
+    expectNoMigrationOrchestration(h);
+  });
+
+  it('keeps historical lifecycle read failures retryable without creating holds or touching SQL', async () => {
+    const h = harness();
+    h.migrationLifecycle.loadMigrationLifecycleStep.mockRejectedValue(new Error('Historical ledger unavailable'));
+    await expect(h.run()).rejects.toThrow('Historical ledger unavailable');
+    expect(h.lifecycle.createSandboxStep).not.toHaveBeenCalled();
+    expect(h.executeSingleTurnStep).not.toHaveBeenCalled();
+    expect(h.verification.verifyDatabaseMigrationsStep).not.toHaveBeenCalled();
+    expect(h.steps.commitAndPushStep).not.toHaveBeenCalled();
+    expectNoMigrationOrchestration(h);
     expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({ recoveryDisposition: 'retry', requiresUserFeedback: false }));
     expect(h.lifecycle.releaseRunLockStep).toHaveBeenCalledTimes(1);
   });
 
-  it('does not execute product work when independent diagnosis found no evidence-backed follow-up', async () => {
+  it('permits normal execution for validated history without creating or advancing a lifecycle', async () => {
     const h = harness();
-    h.migrationLifecycle.loadMigrationLifecycleStep.mockResolvedValue([{ state: 'correction_required', attempts: 5 }]);
-    h.migrationLifecycle.scheduleMigrationCorrectionStep
-      .mockResolvedValueOnce({ scheduled: false, internalReview: false, diagnosticPending: true })
-      .mockResolvedValueOnce({ scheduled: false, internalReview: true, diagnosis: { reason: 'Evidence missing', next_action: 'Inspect ownership' } });
-    await expect(h.run()).resolves.toMatchObject({ status: 'blocked' });
-    expect(h.executeSingleTurnStep).not.toHaveBeenCalled();
-    expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({ recoveryDisposition: 'internal_review', requiresUserFeedback: false }));
-  });
-
-  it('retains a durable validation obligation after an exception between apply and verification', async () => {
-    const h = harness();
-    h.migrationLifecycle.loadMigrationLifecycleStep.mockResolvedValueOnce([]).mockResolvedValue([{ state: 'validation_pending' }]);
-    h.migrationLifecycle.verifyPendingMigrationLifecycleStep.mockRejectedValue(new Error('plan service down'));
-    await expect(h.run()).rejects.toThrow('plan service down');
-    expect(h.migrationLifecycle.holdMigrationLifecycleStep).toHaveBeenCalled();
-    expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({ recoveryDisposition: 'internal_review', requiresUserFeedback: false }));
-    expect(h.steps.commitAndPushStep).not.toHaveBeenCalled();
-  });
-
-  it('cannot begin normal execution while an earlier migration needs technical review', async () => {
-    const h = harness();
-    h.migrationLifecycle.loadMigrationLifecycleStep.mockResolvedValue([{ state: 'platform_review' }]);
-    await expect(h.run()).resolves.toMatchObject({ status: 'blocked' });
-    expect(h.executeSingleTurnStep).not.toHaveBeenCalled();
-    expect(h.lifecycle.createSandboxStep).not.toHaveBeenCalled();
-  });
-
-  it('runs a dependent pending correction before verifying a partially applied batch', async () => {
-    const h = harness();
-    h.migrationLifecycle.loadMigrationLifecycleStep.mockResolvedValueOnce([{ state: 'validation_pending' }, { state: 'correction_required' }]).mockResolvedValue([]);
-    await h.run();
-    expect(h.migrationLifecycle.scheduleMigrationCorrectionStep).toHaveBeenCalled();
+    h.migrationLifecycle.loadMigrationLifecycleStep.mockResolvedValue([{ state: 'validated' }]);
+    await expect(h.run()).resolves.toMatchObject({ status: 'in-progress' });
+    expect(h.migrationLifecycle.loadMigrationLifecycleStep).toHaveBeenCalledTimes(1);
     expect(h.executeSingleTurnStep).toHaveBeenCalled();
-    expect(h.migrationLifecycle.verifyPendingMigrationLifecycleStep).not.toHaveBeenCalled();
+    expect(h.verification.verifyDatabaseMigrationsStep).toHaveBeenCalledTimes(1);
+    expectNoMigrationOrchestration(h);
+  });
+
+  it('does not ignore an unresolved row in a partially validated historical batch', async () => {
+    const h = harness();
+    h.migrationLifecycle.loadMigrationLifecycleStep.mockResolvedValue([
+      { state: 'validated' }, { state: 'validation_pending' }, { state: 'correction_required' },
+    ]);
+    await expect(h.run()).resolves.toMatchObject({ status: 'blocked' });
+    expect(h.executeSingleTurnStep).not.toHaveBeenCalled();
+    expect(h.verification.verifyDatabaseMigrationsStep).not.toHaveBeenCalled();
+    expectNoMigrationOrchestration(h);
   });
 
   it('releases the run lock even when the accounting ledger is unavailable', async () => {
@@ -445,193 +416,277 @@ describe('workflow recovery and truthful completion', () => {
     expect(h.lifecycle.releaseRunLockStep).toHaveBeenCalledTimes(1);
   });
 
-  it('does not push or finalize delivery after a required migration fails', async () => {
-    const h = harness();
-    h.migration.applyDatabaseMigrationsStep.mockResolvedValue({ status: 'failed', applied: [], errors: ['SQL syntax error'], failureKind: 'product', effectiveSandboxId: 'sandbox' });
-    await expect(h.run()).resolves.toMatchObject({ status: 'product_failure' });
-    expect(h.steps.commitAndPushStep).not.toHaveBeenCalled();
-    expect(h.finalizer.createFinalStatusStep).not.toHaveBeenCalled();
-    expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({ recoveryDisposition: 'internal_review', requiresUserFeedback: false }));
-    expect(h.lifecycle.releaseRunLockStep).toHaveBeenCalledTimes(1);
-    expect(h.repair.repairDatabaseMigrationStep).not.toHaveBeenCalled();
-    expect(h.db.recordRequirementBlockedStep).toHaveBeenCalledWith(expect.objectContaining({
-      event_id: 'run:migration-review', expected_execution_generation: 3,
-      message: expect.stringContaining('No customer action'),
-    }));
-  });
-
-  const repairableFailure = {
-    status: 'failed', applied: [], errors: ['RLS is unconditional'], failureKind: 'product', effectiveSandboxId: 'sandbox',
-    repairTarget: { file: 'supabase/migrations/0001.sql', schema: 'app_aaaaaaaaaaaaaaaaaaaaaaaa', tenantId: 'tenant', checksum: 'a'.repeat(64), reason: 'lint' },
+  const pendingReceipt = {
+    status: 'failed', applied: [], errors: ['migrations/0001.sql has no applied checksum receipt'],
+    failureKind: 'product', effectiveSandboxId: 'sandbox',
   };
 
-  it('revalidates a repaired migration before allowing any push', async () => {
-    const h = harness();
-    h.migration.applyDatabaseMigrationsStep.mockResolvedValueOnce(repairableFailure);
-    h.repair.repairDatabaseMigrationStep.mockResolvedValue({ changed: true, done: true, messages: [], effectiveSandboxId: 'recovered', repairedTarget: repairableFailure.repairTarget });
-    await expect(h.run()).resolves.toMatchObject({ status: 'in-progress' });
-    expect(h.repair.repairDatabaseMigrationStep).toHaveBeenCalledTimes(1);
-    expect(h.repair.repairDatabaseMigrationStep).toHaveBeenCalledWith(expect.objectContaining({
-      executionOwnership: { requirementId: 'req', runId: 'run', executionGeneration: 3 }, attempt: 1, maxAttempts: 5,
-    }));
-    expect(h.migration.applyDatabaseMigrationsStep).toHaveBeenCalledTimes(2);
-    expect(h.migration.applyDatabaseMigrationsStep).toHaveBeenLastCalledWith('recovered', 'req', 'applications', 'Test', expect.anything(), expect.anything(), [repairableFailure.repairTarget]);
-    expect(h.steps.commitAndPushStep.mock.invocationCallOrder[0]).toBeGreaterThan(h.migration.applyDatabaseMigrationsStep.mock.invocationCallOrder[1]);
-    expect(h.gate.runGateStep).toHaveBeenCalledTimes(1);
-  });
+  function completeExecution(h: ReturnType<typeof harness>) {
+    h.executeSingleTurnStep.mockResolvedValue({
+      ok: true, isDone: true, gatePassed: true, persistedTerminalStatus: 'completed',
+    });
+    h.steps.reconcilePlanStep.mockResolvedValue('completed');
+    h.db.getRequirementFullContextStep.mockResolvedValue({ backlog: { items: [{ id: 'item', status: 'done' }] } });
+  }
 
-  it('does not reuse stale product evidence after a repaired migration passes', async () => {
+  it('does not push or finalize delivery while a required receipt is missing', async () => {
     const h = harness();
-    h.migration.applyDatabaseMigrationsStep.mockResolvedValueOnce(repairableFailure);
-    h.repair.repairDatabaseMigrationStep.mockResolvedValue({ changed: true, done: true, messages: [], effectiveSandboxId: 'sandbox', repairedTarget: repairableFailure.repairTarget });
-    h.gate.runGateStep.mockResolvedValue({ passed: false, effectiveSandboxId: 'sandbox', error: 'RLS probe failed' });
+    h.verification.verifyDatabaseMigrationsStep.mockResolvedValue(pendingReceipt);
     await expect(h.run()).resolves.toMatchObject({ status: 'product_failure' });
+    expect(h.verification.verifyDatabaseMigrationsStep).toHaveBeenCalledTimes(1);
     expect(h.steps.commitAndPushStep).not.toHaveBeenCalled();
     expect(h.finalizer.createFinalStatusStep).not.toHaveBeenCalled();
+    expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({
+      recoveryDisposition: 'retry', requiresUserFeedback: false, wrapUpReason: pendingReceipt.errors[0],
+    }));
+    expect(h.lifecycle.releaseRunLockStep).toHaveBeenCalledTimes(1);
+    expectNoMigrationOrchestration(h);
   });
 
-  it('retains the recovered sandbox on an ambiguous repair error without reapplying SQL', async () => {
+  it('verifies receipts before checkpointing, without applying or repairing SQL during cleanup', async () => {
     const h = harness();
-    h.migration.applyDatabaseMigrationsStep.mockResolvedValueOnce(repairableFailure);
-    h.repair.repairDatabaseMigrationStep.mockResolvedValue({ changed: false, done: true, messages: [], effectiveSandboxId: 'recovered', error: 'transport failed' });
+    await expect(h.run()).resolves.toMatchObject({ status: 'in-progress' });
+    expect(h.verification.verifyDatabaseMigrationsStep).toHaveBeenCalledTimes(1);
+    expect(h.verification.verifyDatabaseMigrationsStep).toHaveBeenCalledWith('sandbox', 'req', 'applications', 'Test',
+      expect.objectContaining({ requirementId: 'req' }), { requirementId: 'req', runId: 'run', executionGeneration: 3 });
+    expect(h.steps.commitAndPushStep.mock.invocationCallOrder[0]).toBeGreaterThan(h.verification.verifyDatabaseMigrationsStep.mock.invocationCallOrder[0]);
+    expect(h.finalizer.createFinalStatusStep).not.toHaveBeenCalled();
+    expectNoMigrationOrchestration(h);
+  });
+
+  it('retains the effective sandbox after an ambiguous receipt read without replaying SQL', async () => {
+    const h = harness();
+    h.verification.verifyDatabaseMigrationsStep.mockResolvedValue({
+      ...pendingReceipt, errors: ['Application receipt is unknown after transport failure'],
+      failureKind: 'infrastructure', effectiveSandboxId: 'recovered',
+    });
     await expect(h.run()).resolves.toMatchObject({ status: 'infrastructure_retry' });
-    expect(h.migration.applyDatabaseMigrationsStep).toHaveBeenCalledTimes(1);
+    expect(h.verification.verifyDatabaseMigrationsStep).toHaveBeenCalledTimes(1);
     expect(h.lifecycle.stopSandboxStep).toHaveBeenCalledWith('recovered', expect.anything(), expect.anything());
     expect(h.steps.commitAndPushStep).not.toHaveBeenCalled();
+    expect(h.finalizer.createFinalStatusStep).not.toHaveBeenCalled();
+    expectNoMigrationOrchestration(h);
   });
 
-  it('passes restoration expectations to the normal checkpoint even with no pending SQL', async () => {
+  it('does not pass removed migration repair or restoration instructions to the checkpoint', async () => {
     const h = harness();
-    const restored = [{ file: 'supabase/migrations/001.sql', checksum: 'a'.repeat(64), source: { kind: 'git', revision: 'b'.repeat(40) } }];
-    h.migration.applyDatabaseMigrationsStep.mockResolvedValue({ status: 'passed', applied: [], errors: [], restored, effectiveSandboxId: 'sandbox' });
     await h.run();
-    expect(h.repair.repairDatabaseMigrationStep).not.toHaveBeenCalled();
-    expect(h.gate.runGateStep).not.toHaveBeenCalled();
     expect(h.steps.commitAndPushStep).toHaveBeenCalledWith('sandbox', expect.anything(), 'req', expect.anything(), expect.anything(), 'applications',
-      expect.objectContaining({ expectedRestorations: restored, expectedRepairs: [], lightweightCheckpoint: false }));
+      { validateDeployment: true, lightweightCheckpoint: true,
+        executionOwnership: { requirementId: 'req', runId: 'run', executionGeneration: 3 } });
+    expectNoMigrationOrchestration(h);
   });
 
-  it('does not publish a restoration when a later migration still fails', async () => {
+  it('does not publish a partially applied batch when a later receipt remains pending', async () => {
     const h = harness();
-    h.migration.applyDatabaseMigrationsStep.mockResolvedValue({ status: 'failed', applied: [], errors: ['Later SQL failed'], failureKind: 'product',
-      restored: [{ file: 'supabase/migrations/001.sql', checksum: 'a'.repeat(64) }], effectiveSandboxId: 'sandbox' });
+    h.verification.verifyDatabaseMigrationsStep.mockResolvedValue({ ...pendingReceipt, applied: ['migrations/0000.sql'] });
     await expect(h.run()).resolves.toMatchObject({ status: 'product_failure' });
     expect(h.steps.commitAndPushStep).not.toHaveBeenCalled();
     expect(h.finalizer.createFinalStatusStep).not.toHaveBeenCalled();
-    expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({ recoveryDisposition: 'internal_review', requiresUserFeedback: false }));
+    expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({ recoveryDisposition: 'retry', requiresUserFeedback: false }));
+    expectNoMigrationOrchestration(h);
   });
 
-  it('holds ambiguous restoration writes for technical review instead of replaying them', async () => {
+  it('does not convert a receipt verification outage into a new security hold', async () => {
     const h = harness();
-    h.migration.applyDatabaseMigrationsStep.mockResolvedValue({ status: 'failed', applied: [], errors: ['Write unverified'], failureKind: 'infrastructure',
-      restorationFailure: { writeAttempted: true }, effectiveSandboxId: 'sandbox' });
-    await h.run();
-    expect(h.db.recordRequirementBlockedStep).toHaveBeenCalledTimes(1);
+    h.verification.verifyDatabaseMigrationsStep.mockResolvedValue({ ...pendingReceipt, failureKind: 'infrastructure' });
+    await expect(h.run()).resolves.toMatchObject({ status: 'infrastructure_retry' });
     expect(h.steps.commitAndPushStep).not.toHaveBeenCalled();
-    expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({ recoveryDisposition: 'internal_review', requiresUserFeedback: false }));
+    expect(h.finalizer.createFinalStatusStep).not.toHaveBeenCalled();
+    expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({ recoveryDisposition: 'retry', requiresUserFeedback: false }));
+    expectNoMigrationOrchestration(h);
   });
 
-  it('blocks after the shared repair turn budget rather than retrying forever', async () => {
-    const h = harness();
-    h.migration.applyDatabaseMigrationsStep.mockResolvedValue(repairableFailure);
+  it('keeps pending SQL in the same implementation step beyond five turns until the existing flow limit', async () => {
+    const maxTurns = 8;
+    const h = harness({ maxTurns });
+    const snapshots: Array<{ id: string; generation: number; feedback?: string }> = [];
+    h.executeSingleTurnStep.mockImplementation(async (params: any) => {
+      snapshots.push({ id: params.step.id, generation: params.step.infrastructure_generation, feedback: params.step.error_message });
+      const turn = snapshots.length;
+      const feedback = `migrations/000${turn}.sql pending; apply through the implementation tool and retry validation`;
+      // Model the gate's persisted in_progress feedback, not a terminal failure.
+      params.step.error_message = feedback;
+      return { ok: true, isDone: false, gatePassed: false, gateFailureKind: 'product_defect',
+        gateErrorExcerpt: feedback, infrastructureGeneration: turn + 40, effectiveSandboxId: 'sandbox' };
+    });
+    h.execution.clearStepInfrastructureStateStep.mockImplementation(async () => ({
+      state: 'applied', cleared: true, generation: h.plan.steps[0].infrastructure_generation,
+    }));
+    h.verification.verifyDatabaseMigrationsStep.mockResolvedValue(pendingReceipt);
     await expect(h.run()).resolves.toMatchObject({ status: 'product_failure' });
-    expect(h.repair.repairDatabaseMigrationStep).toHaveBeenCalledTimes(5);
-    expect(h.migration.applyDatabaseMigrationsStep).toHaveBeenCalledTimes(1);
+    expect(h.executeSingleTurnStep).toHaveBeenCalledTimes(maxTurns);
+    expect(snapshots.map(snapshot => snapshot.id)).toEqual(Array(maxTurns).fill('step'));
+    expect(snapshots.map(snapshot => snapshot.generation)).toEqual([0, 41, 42, 43, 44, 45, 46, 47]);
+    expect(snapshots[7].feedback).toContain('migrations/0007.sql pending');
+    for (let turn = 1; turn <= maxTurns; turn++) {
+      expect(h.executeSingleTurnStep).toHaveBeenNthCalledWith(turn, expect.objectContaining({
+        plan: h.plan, step: h.plan.steps[0], requirementId: 'req', instanceId: 'instance',
+        executionGeneration: 3, cronLockRunId: 'run', executionEventId: `run:step:turn:${turn}`,
+      }));
+    }
+    expect(h.plan.steps[0]).toMatchObject({ status: 'in_progress', infrastructure_generation: 48,
+      error_message: expect.stringContaining('migrations/0008.sql pending') });
+    expect(h.execution.updatePlanStepStatusStep).not.toHaveBeenCalled();
+    expect(h.execution.recordStepInfraTransientStep).not.toHaveBeenCalled();
+    expect(h.orchestrator.runOrchestratorStep).not.toHaveBeenCalled();
     expect(h.steps.commitAndPushStep).not.toHaveBeenCalled();
-    expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({ recoveryDisposition: 'internal_review', requiresUserFeedback: false }));
+    expect(h.finalizer.createFinalStatusStep).not.toHaveBeenCalled();
+    expectNoMigrationOrchestration(h);
   });
 
-  it('shares the budget across files and never treats a write as an applied receipt', async () => {
+  it('allows the same implementation step to pass after six pending-SQL turns without a separate repair agent', async () => {
+    const h = harness({ maxTurns: 8 });
+    completeExecution(h);
+    for (let turn = 0; turn < 6; turn++) {
+      h.executeSingleTurnStep.mockResolvedValueOnce({ ok: true, isDone: false, gatePassed: false,
+        gateFailureKind: 'product_defect', gateErrorExcerpt: pendingReceipt.errors[0] });
+    }
+    await expect(h.run()).resolves.toMatchObject({ status: 'in-progress' });
+    expect(h.executeSingleTurnStep).toHaveBeenCalledTimes(7);
+    expect(h.plan.steps[0].status).toBe('completed');
+    expect(h.execution.updatePlanStepStatusStep).not.toHaveBeenCalled();
+    expect(h.verification.verifyDatabaseMigrationsStep).toHaveBeenCalledTimes(2);
+    expect(h.finalizer.createFinalStatusStep).toHaveBeenCalledTimes(1);
+    expectNoMigrationOrchestration(h);
+  });
+
+  it('preserves the ordinary infrastructure retry path instead of entering migration repair', async () => {
     const h = harness();
-    h.migration.applyDatabaseMigrationsStep.mockResolvedValue(repairableFailure);
-    h.repair.repairDatabaseMigrationStep.mockResolvedValue({ changed: true, done: false, messages: [], effectiveSandboxId: 'sandbox', repairedTarget: repairableFailure.repairTarget });
+    h.executeSingleTurnStep.mockResolvedValue({ ok: false, isDone: false, transient: true,
+      error: 'Database receipt service unavailable', infrastructureGeneration: 12 });
+    await expect(h.run()).resolves.toMatchObject({ status: 'infrastructure_retry' });
+    expect(h.executeSingleTurnStep).toHaveBeenCalledTimes(1);
+    expect(h.execution.recordStepInfraTransientStep).toHaveBeenCalledWith('plan', 'step', 'run:step:turn:1:failure',
+      'Database receipt service unavailable', undefined, { allowRetryableFailed: false, expectedGeneration: 12 });
+    expect(h.execution.clearStepInfrastructureStateStep).not.toHaveBeenCalled();
+    expect(h.execution.updatePlanStepStatusStep).not.toHaveBeenCalled();
+    expect(h.verification.verifyDatabaseMigrationsStep).not.toHaveBeenCalled();
+    expect(h.steps.commitAndPushStep).not.toHaveBeenCalled();
+    expect(h.finalizer.createFinalStatusStep).not.toHaveBeenCalled();
+    expectNoMigrationOrchestration(h);
+  });
+
+  it('keeps unsafe-policy feedback retryable without inventing a reviewer or customer question', async () => {
+    const h = harness();
+    const feedback = 'RLS is unconditional: preserve tenant membership predicates before application';
+    h.verification.verifyDatabaseMigrationsStep.mockResolvedValue({ ...pendingReceipt, errors: [feedback] });
     await expect(h.run()).resolves.toMatchObject({ status: 'product_failure' });
-    expect(h.repair.repairDatabaseMigrationStep).toHaveBeenCalledTimes(5);
-    expect(h.migration.applyDatabaseMigrationsStep).toHaveBeenCalledTimes(6);
-    expect(h.steps.commitAndPushStep).not.toHaveBeenCalled();
-  });
-
-  it('stops if the agent cannot safely repair and never repairs infrastructure failures', async () => {
-    const h = harness();
-    h.migration.applyDatabaseMigrationsStep.mockResolvedValue(repairableFailure);
-    h.repair.repairDatabaseMigrationStep.mockResolvedValue({ changed: false, done: true, messages: [], effectiveSandboxId: 'sandbox' });
-    await h.run();
-    expect(h.repair.repairDatabaseMigrationStep).toHaveBeenCalledTimes(1);
-    const infra = harness();
-    infra.migration.applyDatabaseMigrationsStep.mockResolvedValue({ ...repairableFailure, failureKind: 'infrastructure' });
-    await expect(infra.run()).resolves.toMatchObject({ status: 'infrastructure_retry' });
-    expect(infra.repair.repairDatabaseMigrationStep).not.toHaveBeenCalled();
-    expect(infra.steps.commitAndPushStep).not.toHaveBeenCalled();
-  });
-
-  it('asks only the concrete product decision returned by the independent reviewer', async () => {
-    const h = harness();
-    h.migration.applyDatabaseMigrationsStep.mockResolvedValue(repairableFailure);
-    h.repair.repairDatabaseMigrationStep.mockResolvedValue({ changed: false, done: true, messages: [], effectiveSandboxId: 'sandbox',
-      securityReview: { decision: 'needs_product_decision', reason: 'Ownership is unspecified.',
-        question: 'Who should see campaigns?', options: ['Creator', 'Organization'], specificationExcerpt: 'Campaigns' } });
-    await h.run();
     expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({
-      recoveryDisposition: 'blocked', requiresUserFeedback: true,
-      wrapUpReason: expect.stringContaining('Who should see campaigns?'),
+      recoveryDisposition: 'retry', requiresUserFeedback: false, wrapUpReason: feedback,
     }));
     expect(h.steps.commitAndPushStep).not.toHaveBeenCalled();
-    expect(h.migration.applyDatabaseMigrationsStep).toHaveBeenCalledTimes(1);
+    expect(h.finalizer.createFinalStatusStep).not.toHaveBeenCalled();
+    expectNoMigrationOrchestration(h);
   });
 
-  it('keeps the technical stop even when the wrap-up provider fails', async () => {
+  it('keeps delivery denied even when retry reporting fails', async () => {
     const h = harness();
-    h.migration.applyDatabaseMigrationsStep.mockResolvedValue(repairableFailure);
+    h.verification.verifyDatabaseMigrationsStep.mockResolvedValue(pendingReceipt);
     h.wrapup.emitCycleWrapUpStep.mockRejectedValue(new Error('provider unavailable'));
     await expect(h.run()).resolves.toMatchObject({ status: 'product_failure' });
-    expect(h.db.recordRequirementBlockedStep).toHaveBeenCalledTimes(1);
     expect(h.steps.commitAndPushStep).not.toHaveBeenCalled();
+    expect(h.finalizer.createFinalStatusStep).not.toHaveBeenCalled();
+    expect(h.db.recordCronCycleOutcomeStep).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'product_failure' }));
+    expect(h.lifecycle.releaseRunLockStep).toHaveBeenCalledTimes(1);
+    expectNoMigrationOrchestration(h);
   });
 
-  it('does not automatically re-enter migration application after an ambiguous file write', async () => {
+  it('does not replay or repair SQL after an unexpected verification exception', async () => {
     const h = harness();
-    h.migration.applyDatabaseMigrationsStep.mockResolvedValueOnce(repairableFailure);
-    h.repair.repairDatabaseMigrationStep.mockResolvedValue({ changed: false, done: true, messages: [],
-      effectiveSandboxId: 'recovered', error: 'write readback failed', writeAttempted: true });
-    await expect(h.run()).resolves.toMatchObject({ status: 'infrastructure_retry' });
-    expect(h.db.recordRequirementBlockedStep).toHaveBeenCalledTimes(1);
-    expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({ recoveryDisposition: 'internal_review', requiresUserFeedback: false }));
-    expect(h.migration.applyDatabaseMigrationsStep).toHaveBeenCalledTimes(1);
+    h.verification.verifyDatabaseMigrationsStep.mockRejectedValue(new Error('Receipt service unavailable'));
+    await expect(h.run()).rejects.toThrow('Receipt service unavailable');
+    expect(h.verification.verifyDatabaseMigrationsStep).toHaveBeenCalledTimes(1);
+    expect(h.steps.commitAndPushStep).not.toHaveBeenCalled();
+    expect(h.finalizer.createFinalStatusStep).not.toHaveBeenCalled();
+    expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({ recoveryDisposition: 'retry', requiresUserFeedback: false }));
+    expect(h.lifecycle.releaseRunLockStep).toHaveBeenCalledTimes(1);
+    expectNoMigrationOrchestration(h);
   });
 
-  it('holds changed authorization for fresh verification even if the verification service is unavailable', async () => {
-    const h = harness();
-    h.migration.applyDatabaseMigrationsStep.mockResolvedValueOnce(repairableFailure);
-    h.repair.repairDatabaseMigrationStep.mockResolvedValue({ changed: true, done: true, messages: [], effectiveSandboxId: 'sandbox', repairedTarget: repairableFailure.repairTarget });
-    h.gate.runGateStep.mockResolvedValue({ passed: false, infrastructureFailure: true, effectiveSandboxId: 'sandbox' });
-    await expect(h.run()).resolves.toMatchObject({ status: 'infrastructure_retry' });
-    expect(h.db.recordRequirementBlockedStep).toHaveBeenCalledTimes(1);
-    expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({ recoveryDisposition: 'internal_review', requiresUserFeedback: false }));
-  });
-
-  it('carries only source paths across repair turns and resets evidence on target advancement', async () => {
-    const h = harness();
-    const nextFailure = { ...repairableFailure, repairTarget: { ...repairableFailure.repairTarget, file: 'supabase/migrations/0002.sql' } };
-    h.migration.applyDatabaseMigrationsStep.mockResolvedValueOnce(repairableFailure).mockResolvedValue(nextFailure);
-    h.repair.repairDatabaseMigrationStep
-      .mockResolvedValueOnce({ changed: false, done: false, messages: ['old context'], contextPaths: ['src/access.ts'], effectiveSandboxId: 'sandbox' })
-      .mockResolvedValueOnce({ changed: true, done: false, messages: ['old context'], contextPaths: ['src/access.ts'], effectiveSandboxId: 'sandbox', repairedTarget: repairableFailure.repairTarget })
-      .mockResolvedValue({ changed: false, done: true, messages: [], effectiveSandboxId: 'sandbox' });
-    await h.run();
-    expect(h.repair.repairDatabaseMigrationStep).toHaveBeenNthCalledWith(2, expect.objectContaining({ contextPaths: ['src/access.ts'], messages: ['old context'] }));
-    expect(h.repair.repairDatabaseMigrationStep).toHaveBeenNthCalledWith(3, expect.objectContaining({ contextPaths: [], messages: [] }));
-  });
-
-  it('charges the independent reviewer to the shared model budget', async () => {
-    const h = harness();
-    h.migration.applyDatabaseMigrationsStep.mockResolvedValue(repairableFailure);
-    h.repair.repairDatabaseMigrationStep.mockResolvedValue({ changed: false, done: false, messages: [], effectiveSandboxId: 'sandbox',
-      turnsUsed: 2, securityReview: { decision: 'request_changes', reason: 'Preserve membership.' } });
-    await h.run();
-    expect(h.repair.repairDatabaseMigrationStep).toHaveBeenCalledTimes(3);
-    expect(h.repair.repairDatabaseMigrationStep.mock.calls.map((call: any[]) => call[0].attempt)).toEqual([1, 3, 5]);
-    expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({
-      recoveryDisposition: 'internal_review', requiresUserFeedback: false,
+  it.each(['app', 'site'])('rechecks %s receipts after push/build recovery before emitting delivery status', async type => {
+    const h = harness({ type });
+    completeExecution(h);
+    h.steps.commitAndPushStep.mockResolvedValue({ ok: true, pushed: true, branch: 'feature', effectiveSandboxId: 'push-recovered' });
+    h.steps.postFinallyBuildStep.mockResolvedValue({ ok: true, effectiveSandboxId: 'build-recovered' });
+    const finalReceipt = { status: 'passed', applied: ['migrations/0001.sql'], errors: [], effectiveSandboxId: 'build-recovered' };
+    h.verification.verifyDatabaseMigrationsStep
+      .mockResolvedValueOnce({ status: 'passed', applied: [], errors: [], effectiveSandboxId: 'sandbox' })
+      .mockResolvedValueOnce(finalReceipt);
+    await expect(h.run()).resolves.toMatchObject({ status: 'in-progress' });
+    expect(h.verification.verifyDatabaseMigrationsStep).toHaveBeenCalledTimes(2);
+    expect(h.verification.verifyDatabaseMigrationsStep).toHaveBeenLastCalledWith('build-recovered', 'req', 'applications', 'Test',
+      expect.anything(), { requirementId: 'req', runId: 'run', executionGeneration: 3 });
+    const [firstVerification, finalVerification] = h.verification.verifyDatabaseMigrationsStep.mock.invocationCallOrder;
+    expect(firstVerification).toBeLessThan(h.steps.commitAndPushStep.mock.invocationCallOrder[0]);
+    expect(finalVerification).toBeGreaterThan(h.steps.postFinallyBuildStep.mock.invocationCallOrder[0]);
+    expect(finalVerification).toBeLessThan(h.wrapup.emitCycleWrapUpStep.mock.invocationCallOrder[0]);
+    expect(finalVerification).toBeLessThan(h.finalizer.createFinalStatusStep.mock.invocationCallOrder[0]);
+    expect(h.finalizer.createFinalStatusStep).toHaveBeenCalledWith(expect.objectContaining({
+      databaseMigrations: finalReceipt, sandboxId: 'build-recovered', planCompleted: true, expectedExecutionGeneration: 3,
     }));
+    expect(h.lifecycle.stopSandboxStep).toHaveBeenCalledWith('build-recovered', expect.anything(), expect.anything());
+    expectNoMigrationOrchestration(h);
+  });
+
+  it.each([
+    ['app', 'product', 'product_failure'],
+    ['site', 'product', 'product_failure'],
+    ['app', 'infrastructure', 'infrastructure_retry'],
+  ])('does not finalize a completed %s plan when the post-recovery receipt check returns %s', async (type, failureKind, status) => {
+    const h = harness({ type });
+    completeExecution(h);
+    h.steps.postFinallyBuildStep.mockResolvedValue({ ok: true, effectiveSandboxId: 'recovered' });
+    h.verification.verifyDatabaseMigrationsStep
+      .mockResolvedValueOnce({ status: 'passed', applied: [], errors: [], effectiveSandboxId: 'sandbox' })
+      .mockResolvedValueOnce({ ...pendingReceipt, failureKind, effectiveSandboxId: 'recovered' });
+    await expect(h.run()).resolves.toMatchObject({ status });
+    expect(h.plan.steps[0].status).toBe('completed');
+    expect(h.steps.commitAndPushStep).toHaveBeenCalledTimes(1);
+    expect(h.verification.verifyDatabaseMigrationsStep).toHaveBeenCalledTimes(2);
+    expect(h.finalizer.createFinalStatusStep).not.toHaveBeenCalled();
+    expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledTimes(1);
+    expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({
+      recoveryDisposition: 'retry', requiresUserFeedback: false, wrapUpReason: pendingReceipt.errors[0],
+    }));
+    expect(h.lifecycle.stopSandboxStep).toHaveBeenCalledWith('recovered', expect.anything(), expect.anything());
+    expectNoMigrationOrchestration(h);
+  });
+
+  it('does not let completed product evidence bypass the first missing-receipt backstop', async () => {
+    const h = harness();
+    completeExecution(h);
+    h.verification.verifyDatabaseMigrationsStep.mockResolvedValue(pendingReceipt);
+    await expect(h.run()).resolves.toMatchObject({ status: 'product_failure' });
+    expect(h.verification.verifyDatabaseMigrationsStep).toHaveBeenCalledTimes(1);
+    expect(h.steps.commitAndPushStep).not.toHaveBeenCalled();
+    expect(h.steps.postFinallyBuildStep).not.toHaveBeenCalled();
+    expect(h.finalizer.createFinalStatusStep).not.toHaveBeenCalled();
+    expectNoMigrationOrchestration(h);
+  });
+
+  it('does not run the final receipt check or emit delivery status after execution generation changes', async () => {
+    const h = harness();
+    completeExecution(h);
+    h.steps.postFinallyBuildStep.mockImplementation(async () => {
+      h.db.isRequirementExecutionCurrentStep.mockResolvedValue(false);
+      return { ok: true, effectiveSandboxId: 'sandbox' };
+    });
+    await expect(h.run()).resolves.toMatchObject({ status: 'stale_execution' });
+    expect(h.verification.verifyDatabaseMigrationsStep).toHaveBeenCalledTimes(1);
+    expect(h.finalizer.createFinalStatusStep).not.toHaveBeenCalled();
+    expect(h.wrapup.emitCycleWrapUpStep).not.toHaveBeenCalled();
+    expect(h.lifecycle.stopSandboxStep).not.toHaveBeenCalled();
+    expectNoMigrationOrchestration(h);
+  });
+
+  it('does not add migration receipt checks to a non-application workflow', async () => {
+    const h = harness({ type: 'task' });
+    await expect(h.run()).resolves.toMatchObject({ status: 'in-progress' });
+    expect(h.executeSingleTurnStep).toHaveBeenCalledTimes(getFlow('task').cost_envelope.max_turns_per_step);
+    expect(h.migrationLifecycle.loadMigrationLifecycleStep).not.toHaveBeenCalled();
+    expect(h.verification.verifyDatabaseMigrationsStep).not.toHaveBeenCalled();
+    expect(h.steps.commitAndPushStep).toHaveBeenCalledTimes(1);
+    expectNoMigrationOrchestration(h);
   });
 });

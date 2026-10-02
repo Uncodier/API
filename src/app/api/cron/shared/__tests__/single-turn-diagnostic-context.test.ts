@@ -82,6 +82,7 @@ function harness() {
     './commit/pre-push-build-validation': { computeApplicationBuildFingerprint: fingerprint },
     '@/lib/services/requirement-constraints-persist': { loadConstraintSourceBlocks: async () => [] },
     './repair-execution-policy': { shouldEnterRepairGateOnlyPhase: () => false,
+      hasImplementationFeedback: () => false,
       canResumeCachedGate: () => false, shouldRunGateAfterTurn: () => false },
     '@/lib/services/apps-platform/tenant-capabilities-service': {},
     './cron-execution-ownership': {

@@ -134,6 +134,8 @@ export interface VercelDeployInfo {
 
 export interface FlowGateResult {
   ok: boolean;
+  /** Host-only feedback: keep the current implementation step open, not a separate repair. */
+  continueImplementation?: boolean;
   disposition?: 'pass' | 'hard_fail' | 'unknown' | 'advisory';
   failureKind?: FlowGateFailureKind;
   flow: RequirementKind;

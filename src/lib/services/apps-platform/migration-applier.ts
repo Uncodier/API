@@ -1,346 +1,277 @@
-import { getAppsAdminClient } from '@/lib/database/apps-supabase';
-import { lintMigration } from './migration-linter';
-import { Sandbox } from '@vercel/sandbox';
-import { syncPostgrestSchemas } from './postgrest-config';
-import { createHash } from 'node:crypto';
+import type { Sandbox } from '@vercel/sandbox';
 import type { MigrationRepairTarget } from './migration-repair-types';
-import { authorizeMigrationApplication, loadMigrationApplicationContext, type MigrationApplicationContext } from './migration-application-guard';
-import { transitionMigrationLifecycle, type MigrationLifecycleRecord } from './migration-lifecycle';
-import { migrationLifecycleValue } from './migration-lifecycle-value';
-import { restoreAppliedMigration, verifyMigrationRestorations, type MigrationFileRestoration, type MigrationRestorationFailure } from './migration-restoration';
+import {
+  assertMigrationExecutionCurrent, executeTenantMigration, loadMigrationExecutionContext, loadMigrationTenantScope,
+  migrationContextKey, migrationDigest, MigrationExecutionError, migrationFailure, reloadTenantMigrationSchema,
+  type MigrationExecutionContext,
+} from './migration-execution';
+import {
+  canonicalMigrationFile, getMigrationWorkspace, migrationReceiptChecksum, recordMigrationFeedback,
+  type MigrationDiagnostic, type MigrationScope, type MigrationWorkspace,
+} from './migration-feedback';
+import {
+  restoreAppliedMigration, verifyMigrationRestorations,
+  type MigrationFileRestoration, type MigrationRestorationFailure,
+} from './migration-restoration';
 
-function migrationChecksum(sql: string): string {
-  return createHash('sha256').update(sql).digest('hex');
+export interface MigrationBatchResult {
+  applied: string[];
+  errors: string[];
+  failureKind?: 'product' | 'infrastructure';
+  diagnostic?: MigrationDiagnostic;
+  pending?: string[];
+  /** Retained for historical callers. Normal execution never creates repair/lifecycle assignments. */
+  repairTarget?: MigrationRepairTarget;
+  restored?: MigrationFileRestoration[];
+  restorationFailure?: MigrationRestorationFailure;
 }
 
-export async function applyPendingMigrations(
-  sandbox: Sandbox,
-  requirementId: string,
-  expectedRepairs: MigrationRepairTarget[] = [],
-  applicationContext?: MigrationApplicationContext,
-  restoration?: { assertCurrent: () => Promise<void> },
-): Promise<{ applied: string[]; errors: string[]; failureKind?: 'product' | 'infrastructure'; repairTarget?: MigrationRepairTarget; correction?: MigrationLifecycleRecord;
-  restored?: MigrationFileRestoration[]; restorationFailure?: MigrationRestorationFailure }> {
-  const client = getAppsAdminClient();
+interface Proposal { file: string; sql: string; checksum: string }
+interface Batch {
+  context: MigrationExecutionContext;
+  scope: MigrationScope;
+  proposals: Proposal[];
+  workspace: MigrationWorkspace;
+}
+type RestorationOwner = { assertCurrent: () => Promise<void> };
 
-  const { data: tenantRow, error: tenantError } = await client
-    .from('apps_tenants')
-    .select('tenant_id, schema')
-    .eq('requirement_id', requirementId)
-    .maybeSingle();
+function refuse(code: string, message: string, kind: MigrationDiagnostic['kind'], file?: string,
+  failureKind: 'product' | 'infrastructure' = 'product'): never {
+  throw new MigrationExecutionError({ code, message, kind, ...(file ? { file } : {}) }, failureKind);
+}
 
-  if (tenantError) {
-    return {
-      applied: [],
-      errors: [`Could not load tenant registry: ${tenantError.message}`],
-    };
+async function readProposal(sandbox: Sandbox, file: string): Promise<Proposal> {
+  if (!canonicalMigrationFile(file, false)) refuse('MIGRATION_PATH', 'Non-canonical migration path rejected.', 'history', undefined, 'infrastructure');
+  const canonical = await sandbox.runCommand('realpath', ['--', `/vercel/sandbox/${file}`]);
+  if (canonical.exitCode !== 0 || (await canonical.stdout()).trim() !== `/vercel/sandbox/${file}`) {
+    refuse('MIGRATION_PATH', `Migration ${file} is not a canonical file.`, 'history', file);
   }
-  if (
-    !tenantRow?.tenant_id ||
-    typeof tenantRow.schema !== 'string' ||
-    !/^app_[a-f0-9]{24}$/.test(tenantRow.schema)
-  ) {
-    return { applied: [], errors: ['Tenant not provisioned for this requirement.'] };
-  }
-  const tenantId = tenantRow.tenant_id;
-  const schema = tenantRow.schema;
+  const read = await sandbox.runCommand('cat', [file]);
+  if (read.exitCode !== 0) refuse('MIGRATION_READ', `Could not read migration ${file}.`, 'infrastructure', file, 'infrastructure');
+  const sql = await read.stdout();
+  return { file, sql, checksum: migrationDigest(sql) };
+}
 
-  // A recovered sandbox must not turn a lost repair into an empty/passing batch.
-  for (const expected of expectedRepairs) {
-    if (expected.schema !== schema || expected.tenantId !== tenantId) {
-      return { applied: [], errors: ['Repaired migration tenant identity changed.'], failureKind: 'infrastructure' };
-    }
-    const read = await sandbox.runCommand('cat', [expected.file]);
-    if (read.exitCode !== 0 || migrationChecksum(await read.stdout()) !== expected.checksum) {
-      return { applied: [], errors: [`Repaired migration ${expected.file} is missing or changed after sandbox recovery.`], failureKind: 'infrastructure' };
-    }
-  }
-
-  // Find migration files in the sandbox
-  // Check both migrations/ and supabase/migrations/
-  const findCmd = await sandbox.runCommand('sh', [
-    '-c',
+async function discover(sandbox: Sandbox): Promise<{ proposals: Proposal[]; tracked: string[] }> {
+  const found = await sandbox.runCommand('sh', ['-c',
     'for dir in migrations supabase/migrations src/db/migrations; do ' +
-      'if [ -d "$dir" ]; then find "$dir" -name "*.sql" -type f; fi; ' +
-      'done | sort',
-  ]);
-  if (findCmd.exitCode !== 0) {
-    const stderr = await findCmd.stderr().catch(() => '');
-    return {
-      applied: [],
-      errors: [
-        `Could not list migration files: ${stderr.trim() || `exit ${findCmd.exitCode}`}`,
-      ],
-    };
+    'if [ -d "$dir" ]; then find "$dir" -name "*.sql" -type f || exit 1; fi; done']);
+  if (found.exitCode !== 0) throw new Error('Could not list migration files.');
+  const files = (await found.stdout()).split('\n').filter(Boolean).sort();
+  if (new Set(files).size !== files.length || files.some(file => !canonicalMigrationFile(file, false))) {
+    refuse('MIGRATION_PATH', 'Non-canonical or duplicate migration path rejected.', 'history', undefined, 'infrastructure');
   }
-  const stdout = await findCmd.stdout();
-  const files = stdout.trim().split('\n').filter(Boolean);
-  if (expectedRepairs.some(expected => !files.includes(expected.file))) {
-    return { applied: [], errors: ['Repaired migration is absent from the discovered migration batch.'], failureKind: 'infrastructure' };
+  // Git paths survive a working-tree deletion even before the first journal observation.
+  const git = await sandbox.runCommand('git', ['ls-files', '-z', '--', 'migrations', 'supabase/migrations', 'src/db/migrations']);
+  if (git.exitCode !== 0) throw new Error('Could not verify tracked migration files.');
+  const tracked = (await git.stdout()).split('\0').filter(file => file.endsWith('.sql'));
+  // The index omits staged deletions. HEAD remains the committed source of required paths.
+  const head = await sandbox.runCommand('git', ['rev-parse', '--verify', '--quiet', 'HEAD']);
+  if (head.exitCode === 0) {
+    const revision = (await head.stdout()).trim();
+    if (!/^[a-f0-9]{40,64}$/.test(revision)) throw new Error('Could not verify committed migration history.');
+    const tree = await sandbox.runCommand('git', ['ls-tree', '-r', '-z', '--name-only', revision, '--',
+      'migrations', 'supabase/migrations', 'src/db/migrations']);
+    if (tree.exitCode !== 0) throw new Error('Could not list committed migration history.');
+    tracked.push(...(await tree.stdout()).split('\0').filter(file => file.endsWith('.sql')));
+  } else {
+    // An explicitly unborn branch is legitimate; missing/corrupt/detached HEAD is not.
+    if (head.exitCode !== 1) throw new Error('Could not verify committed migration history.');
+    const branch = await sandbox.runCommand('git', ['symbolic-ref', '--quiet', 'HEAD']);
+    const ref = (await branch.stdout()).trim();
+    if (branch.exitCode !== 0 || !/^refs\/heads\/[A-Za-z0-9_./-]+$/.test(ref)) throw new Error('Could not verify an unborn migration repository.');
+    const exists = await sandbox.runCommand('git', ['show-ref', '--verify', '--quiet', ref]);
+    if (exists.exitCode !== 1) throw new Error('Could not verify an unborn migration repository.');
+  }
+  if (tracked.some(file => !canonicalMigrationFile(file, false))) refuse('MIGRATION_PATH', 'Non-canonical tracked migration path rejected.', 'history', undefined, 'infrastructure');
+  const proposals: Proposal[] = [];
+  for (const file of files) proposals.push(await readProposal(sandbox, file));
+  return { proposals, tracked };
+}
+
+async function loadBatch(sandbox: Sandbox, requirementId: string, supplied: MigrationExecutionContext | undefined,
+  result: MigrationBatchResult, restoration?: RestorationOwner, expectedRepairs: MigrationRepairTarget[] = []): Promise<Batch> {
+  const context = supplied || await loadMigrationExecutionContext(requirementId);
+  if (context.requirementId !== requirementId || context.instance.requirement_id !== requirementId) throw new Error('Migration requirement identity changed.');
+  await assertMigrationExecutionCurrent(context);
+  const scope = await loadMigrationTenantScope(context);
+  const workspace = await getMigrationWorkspace(scope);
+  const { proposals, tracked } = await discover(sandbox);
+  const byFile = new Map(proposals.map(proposal => [proposal.file, proposal]));
+  const receipts = new Map(workspace.receipts.map(row => [row.migration_key, row]));
+  const contextKey = migrationContextKey(context, scope, workspace);
+
+  // Register the whole discovered batch before attempting even its first SQL file.
+  // Registering an identical observation must not erase an existing rejection.
+  for (const proposal of proposals) {
+    if (!proposal.sql.trim() || receipts.has(`migration:${proposal.file}`)) continue;
+    const prior = workspace.files.find(row => row.migration_key === `migration:${proposal.file}`);
+    if (prior?.checksum === proposal.checksum && prior.context_key === contextKey) continue;
+    await assertMigrationExecutionCurrent(context);
+    await recordMigrationFeedback(scope, { migration_key: `migration:${proposal.file}`, checksum: proposal.checksum,
+      context_key: contextKey, error: null });
   }
 
-  if (files.length === 0) {
-    return { applied: [], errors: [] };
+  const expected = new Set(tracked);
+  for (const row of [...workspace.files, ...workspace.receipts]) {
+    const file = row.migration_key.slice(10);
+    if (!canonicalMigrationFile(file)) refuse('LEGACY_MIGRATION_RECEIPT', 'An unsupported historical migration key requires operator reconciliation.', 'history', undefined, 'infrastructure');
+    if (!file.startsWith('platform/')) expected.add(file);
   }
-
-  const applied: string[] = [];
-  const errors: string[] = [];
-  const restored: MigrationFileRestoration[] = [];
-  let restorationFailure: MigrationRestorationFailure | undefined;
-  let failureKind: 'product' | 'infrastructure' = 'infrastructure';
-  let repairTarget: MigrationRepairTarget | undefined;
-  let correction: MigrationLifecycleRecord | undefined;
-  let context = applicationContext;
-  let shouldSyncExposure = false;
-
-  for (const file of files) {
-    try {
-    if (!/^(?:migrations|supabase\/migrations|src\/db\/migrations)\/[A-Za-z0-9_./-]+\.sql$/.test(file) ||
-        file.split('/').some(part => !part || part === '.' || part === '..')) {
-      errors.push('Non-canonical migration path rejected.');
-      break;
-    }
-    const canonical = await sandbox.runCommand('realpath', ['--', `/vercel/sandbox/${file}`]);
-    if (canonical.exitCode !== 0 || (await canonical.stdout()).trim() !== `/vercel/sandbox/${file}`) {
-      errors.push(`Migration ${file} is not a canonical file.`);
-      break;
-    }
-    const migrationKey = `migration:${file}`;
-
-    // Read file content
-    const catCmd = await sandbox.runCommand('cat', [file]);
-    if (catCmd.exitCode !== 0) {
-      const stderr = await catCmd.stderr().catch(() => '');
-      errors.push(
-        `Could not read migration ${file}: ` +
-        (stderr.trim() || `exit ${catCmd.exitCode}`),
-      );
-      break;
-    }
-    const sql = await catCmd.stdout();
-
-    const checksum = migrationChecksum(sql);
-    const expectedRepair = expectedRepairs.find(expected => expected.file === file);
-    if (expectedRepair && expectedRepair.checksum !== checksum) {
-      errors.push(`Repaired migration ${file} changed during validation.`);
-      break;
-    }
-
-    const { data: receipt, error: metaError } = await client.rpc(
-      'apps_get_migration_receipt',
-      {
-        p_target_schema: schema,
-        p_expected_tenant_id: tenantId,
-        p_migration_key: migrationKey,
-      },
-    );
-    if (metaError) {
-      errors.push(
-        `Could not read migration ledger for ${file}: ${metaError.message}`,
-      );
-      break;
-    }
-    if (
-      !receipt ||
-      typeof receipt !== 'object' ||
-      typeof receipt.found !== 'boolean'
-    ) {
-      errors.push(`Could not validate migration ledger receipt for ${file}.`);
-      break;
-    }
-    if (receipt.found) {
-      shouldSyncExposure = true;
-      const recordedChecksum =
-        receipt.value &&
-        typeof receipt.value === 'object' &&
-        'checksum' in receipt.value
-          ? String(receipt.value.checksum)
-          : null;
-      if (recordedChecksum && recordedChecksum !== checksum) {
-        failureKind = 'product';
-        // Only the owned deterministic gate may restore history; no agent-selected SQL.
-        if (restoration && applicationContext?.requirementId === requirementId) {
-          const recovery = await restoreAppliedMigration({ sandbox, requirementId, file, schema, tenantId,
-            expectedChecksum: recordedChecksum, actualChecksum: checksum,
-            assertCurrent: async () => {
-              await restoration.assertCurrent();
-              await applicationContext.assertCurrent();
-            } });
-          if ('restored' in recovery) {
-            restored.push(recovery.restored);
-            continue; // Already applied: never re-lint, re-authorize or execute historical SQL.
-          }
-          restorationFailure = recovery.failure;
-          failureKind = recovery.failureKind;
+  for (const repair of expectedRepairs) {
+    if (repair.schema !== scope.schema || repair.tenantId !== scope.tenantId) throw new Error('Repaired migration tenant identity changed.');
+    expected.add(repair.file);
+    if (byFile.get(repair.file)?.checksum !== repair.checksum) throw new Error('A historical repaired migration is missing or changed.');
+  }
+  for (const file of Array.from(expected)) {
+    if (!byFile.has(file)) refuse('MISSING_MIGRATION', `Expected migration ${file} is missing. Restore the file; deleting it cannot satisfy validation.`, 'history', file);
+  }
+  for (const receipt of workspace.receipts) {
+    if (!migrationReceiptChecksum(receipt.value)) refuse('LEGACY_MIGRATION_CHECKSUM', 'An applied migration has no valid checksum. Operator reconciliation is required; normal execution never backfills unproven bytes.', 'history', receipt.migration_key.slice(10), 'infrastructure');
+  }
+  for (const proposal of proposals) {
+    const receipt = receipts.get(`migration:${proposal.file}`);
+    const appliedChecksum = receipt && migrationReceiptChecksum(receipt.value);
+    if (appliedChecksum && appliedChecksum !== proposal.checksum) {
+      if (restoration && supplied?.requirementId === requirementId) {
+        const recovery = await restoreAppliedMigration({ sandbox, requirementId, file: proposal.file, ...scope,
+          expectedChecksum: appliedChecksum, actualChecksum: proposal.checksum,
+          assertCurrent: async () => { await restoration.assertCurrent(); await assertMigrationExecutionCurrent(context); } });
+        if ('restored' in recovery) {
+          (result.restored ||= []).push(recovery.restored);
+          const recovered = await readProposal(sandbox, proposal.file);
+          if (recovered.checksum !== appliedChecksum || !recovered.sql.trim()) throw new Error('Restored migration bytes could not be verified.');
+          Object.assign(proposal, recovered);
+          continue;
         }
-        errors.push(
-          `Migration ${file} changed after it was applied. ` +
-          `Expected SHA-256: ${/^[a-f0-9]{64}$/.test(recordedChecksum) ? recordedChecksum : 'invalid ledger checksum'}; actual SHA-256: ${checksum}. ` +
-          (restorationFailure ? `Automatic restoration stopped: ${restorationFailure.reason}. ` : 'Exact-byte recovery is performed by the owned database gate. ') +
-          'Restore the exact applied file bytes from a trusted source and verify their SHA-256 against the protected ledger first; the earliest Git commit is not proof of the applied version. ' +
-          'Create a new migration for subsequent changes instead of editing applied SQL. Never change the ledger checksum to match the file.',
-        );
-        break;
+        result.restorationFailure = recovery.failure;
+        refuse('APPLIED_MIGRATION_CHANGED', `Migration ${proposal.file} changed after it was applied. Exact-byte restoration failed; never change the protected checksum.`,
+          'history', proposal.file, recovery.failureKind);
       }
-      if (!recordedChecksum) {
-        if (!sql.trim()) {
-          failureKind = 'product';
-          errors.push(`Migration ${file} is empty; a legacy receipt cannot prove the applied bytes.`);
-          break;
-        }
-        const { data: backfilled, error: backfillError } = await client.rpc(
-          'apps_apply_migration',
-          {
-            p_target_schema: schema,
-            p_expected_tenant_id: tenantId,
-            p_migration_key: migrationKey,
-            p_migration_checksum: checksum,
-            p_migration_sql: sql,
-          },
-        );
-        if (backfillError) {
-          errors.push(
-            `Could not backfill migration checksum for ${file}: ` +
-            backfillError.message,
-          );
-          break;
-        }
-        if (backfilled !== false) {
-          errors.push(
-            `Could not confirm checksum backfill for ${file}.`,
-          );
-          break;
-        }
-      }
-      continue;
+      refuse('APPLIED_MIGRATION_CHANGED', `Migration ${proposal.file} changed after it was applied. Expected SHA-256: ${appliedChecksum}; actual SHA-256: ${proposal.checksum}. Restore exact applied bytes from a trusted source; use a new migration for changes. Never change the protected checksum.`, 'history', proposal.file);
     }
-
-    if (!sql.trim()) {
-      errors.push(`Migration ${file} is empty; do not erase pending or applied SQL to skip validation.`);
-      failureKind = 'product';
-      break;
-    }
-    // Central review applies equally to normal executor writes and repair-tool writes.
-    context ||= await loadMigrationApplicationContext(requirementId);
-    const target: MigrationRepairTarget = { file, schema, tenantId, checksum, reason: 'lint' };
-    const decision = await authorizeMigrationApplication({
-      context, target, sql,
-      assertUnchanged: async () => {
-        const canonical = await sandbox.runCommand('realpath', ['--', `/vercel/sandbox/${file}`]);
-        if (canonical.exitCode !== 0 || (await canonical.stdout()).trim() !== `/vercel/sandbox/${file}`) throw new Error('Migration path changed during independent review.');
-        const read = await sandbox.runCommand('cat', [file]);
-        if (read.exitCode !== 0 || migrationChecksum(await read.stdout()) !== checksum) throw new Error('Migration changed during independent review.');
-      },
-    });
-    if (!decision.allowed) {
-      failureKind = 'product';
-      correction = decision.lifecycle;
-      repairTarget = target;
-      errors.push(decision.error || 'Migration requires correction or technical review.');
-      break;
-    }
-    await context.assertCurrent();
-    // Defense in depth: review never replaces deterministic lint.
-    const lintResult = lintMigration({
-      schema,
-      tenant_id: tenantId,
-      sql
-    });
-
-    if (!lintResult.ok) {
-      failureKind = 'product';
-      repairTarget = { file, schema, tenantId, checksum, reason: 'lint' };
-      const errorMsgs = lintResult.errors.map(e => `Line ${e.line}: ${e.message}`).join('\n');
-      errors.push(`File ${file} failed linting:\n${errorMsgs}`);
-      break;
-    }
-
-    const { data: didApply, error: execError } = await client.rpc(
-      'apps_apply_migration',
-      {
-        p_target_schema: schema,
-        p_expected_tenant_id: tenantId,
-        p_migration_key: migrationKey,
-        p_migration_checksum: checksum,
-        p_migration_sql: sql,
-      },
-    );
-
-    if (execError) {
-      // Syntax/constraint errors require product repair, not infrastructure retries.
-      // Unknown/transport/authentication failures remain infrastructure failures.
-      if (/^(?:22|23|42)/.test(execError.code || '') && execError.code !== '42501') {
-        failureKind = 'product';
-        repairTarget = { file, schema, tenantId, checksum, reason: 'sql' };
-        correction = await transitionMigrationLifecycle({ requirementId, file,
-          expectedVersion: decision.lifecycle.version, executionGeneration: context.executionGeneration,
-          value: migrationLifecycleValue(decision.lifecycle, { state: 'correction_required', reason: `Atomic SQL application rolled back (${execError.code}). Correct the tenant migration.` }) });
-      }
-      errors.push(`File ${file} failed to execute: ${execError.message}`);
-      break;
-    }
-    if (didApply === true) {
-      applied.push(file);
-      shouldSyncExposure = true;
-    } else if (didApply === false) {
-      shouldSyncExposure = true;
-    } else {
-      errors.push(
-        `File ${file} did not return an atomic migration receipt.`,
-      );
-      break;
-    }
-    } catch (error) {
-      // Preserve earlier atomic receipts when a later file's review/transport
-      // fails. Durable lifecycle intent still blocks unverified delivery.
-      failureKind = 'infrastructure';
-      errors.push(`Migration ${file} could not complete review/application: ${error instanceof Error ? error.message : String(error)}`);
-      break;
-    }
+    if (!proposal.sql.trim()) refuse('EMPTY_MIGRATION', `Migration ${proposal.file} is empty; erasing pending or applied SQL cannot satisfy validation.`, 'history', proposal.file);
   }
+  return { context, scope, proposals, workspace };
+}
 
+function verifyBatch(batch: Batch): void {
+  const { workspace, proposals } = batch;
+  const receipts = new Map(workspace.receipts.map(row => [row.migration_key, migrationReceiptChecksum(row.value)]));
+  const discovered = new Map(proposals.map(row => [row.file, row]));
+  for (const row of [...workspace.files, ...workspace.receipts]) {
+    const file = row.migration_key.slice(10);
+    if (!canonicalMigrationFile(file)) refuse('LEGACY_MIGRATION_RECEIPT', 'An unsupported historical migration key requires operator reconciliation.', 'history', undefined, 'infrastructure');
+    if (!file.startsWith('platform/') && !discovered.has(file)) refuse('MISSING_MIGRATION', `Expected migration ${file} is missing.`, 'history', file);
+  }
+  for (const row of workspace.receipts) {
+    const file = row.migration_key.slice(10);
+    const checksum = migrationReceiptChecksum(row.value);
+    if (!checksum) refuse('LEGACY_MIGRATION_CHECKSUM', 'An applied migration has no valid checksum.', 'history', file, 'infrastructure');
+    if (!file.startsWith('platform/') && discovered.get(file)?.checksum !== checksum) refuse('APPLIED_MIGRATION_CHANGED', `Migration ${file} no longer matches its protected receipt.`, 'history', file);
+  }
+  const pending = new Set<string>();
+  for (const proposal of proposals) {
+    if (receipts.get(`migration:${proposal.file}`) !== proposal.checksum) pending.add(proposal.file);
+  }
+  for (const row of workspace.files) {
+    if (!receipts.has(row.migration_key)) pending.add(row.migration_key.slice(10));
+    // A concurrent proposal may leave different feedback after another proposal commits.
+    // The receipt (compared with actual files above), never observation metadata, is truth.
+  }
+  if (pending.size) {
+    const file = Array.from(pending).sort()[0];
+    const feedback = workspace.files.find(row => row.migration_key === `migration:${file}`)?.error;
+    // A prior transport/permission failure is an observation, not a permanent
+    // circuit. Current reads succeeded; allow the agent to retry unchanged SQL
+    // through the tool, which will recheck the actual infrastructure and scope.
+    if (feedback?.kind === 'infrastructure') throw new MigrationExecutionError({
+      file, code: 'MIGRATION_RETRY_REQUIRED', kind: 'pending',
+      message: `Migration ${file} still has no application receipt. Previous infrastructure feedback: ${feedback.message} Retry sandbox_db_migrate to recheck the unchanged proposal; do not rewrite SQL to bypass infrastructure or permissions.`,
+    }, 'product');
+    throw new MigrationExecutionError(feedback || { file, code: 'PENDING_MIGRATIONS', kind: 'pending',
+      message: `Unapplied migration proposals remain: ${Array.from(pending).sort().join(', ')}.` },
+    'product');
+  }
+}
+
+function pendingFiles(batch: Batch): string[] {
+  const applied = new Set(batch.workspace.receipts.map(row => row.migration_key));
+  return Array.from(new Set([...batch.proposals.map(row => `migration:${row.file}`), ...batch.workspace.files.map(row => row.migration_key)]))
+    .filter(key => !applied.has(key)).map(key => key.slice(10)).sort();
+}
+
+/** No tenant SQL/receipt writes. Observation journal registration still prevents deletion skips. */
+export async function verifyPendingMigrations(sandbox: Sandbox, requirementId: string,
+  context?: MigrationExecutionContext, restoration?: RestorationOwner): Promise<MigrationBatchResult> {
+  const result: MigrationBatchResult = { applied: [], errors: [] };
   try {
-    if (errors.length === 0) {
-      for (const expected of expectedRepairs) {
-        const { data: receipt, error } = await client.rpc('apps_get_migration_receipt', {
-          p_target_schema: schema, p_expected_tenant_id: tenantId,
-          p_migration_key: `migration:${expected.file}`,
-        });
-        if (error || receipt?.found !== true || receipt.value?.checksum !== expected.checksum) {
-          errors.push(`Repaired migration ${expected.file} has no matching atomic receipt.`);
-          break;
-        }
-      }
-    }
-
-    if (restored.length) await verifyMigrationRestorations(sandbox, restored);
-    if (shouldSyncExposure && !restorationFailure) {
-      // Automatically expose schemas to PostgREST to ensure new tables/schemas are visible
-      // and reload the schema cache so introspection works immediately.
-      const syncResult = await syncPostgrestSchemas();
-      if (!syncResult.ok) {
-        failureKind = 'infrastructure';
-        repairTarget = undefined;
-        errors.push(`Failed to sync schemas with Supabase Management API: ${syncResult.error}`);
-      }
-      const exposeSql = `
-        notify pgrst, 'reload config';
-        notify pgrst, 'reload schema';
-      `;
-      const { error: exposeError } = await client.rpc('apps_exec_sql', { sql: exposeSql });
-      if (exposeError) {
-        failureKind = 'infrastructure';
-        repairTarget = undefined;
-        errors.push(`Failed to auto-expose schema to PostgREST: ${exposeError.message}`);
-      }
-    }
-  } catch {
-    failureKind = 'infrastructure';
-    repairTarget = undefined;
-    errors.push('Migration receipt, exposure or restored-file verification could not complete. Retain the recorded receipts and revalidate; do not replay applied SQL.');
+    const batch = await loadBatch(sandbox, requirementId, context, result, restoration);
+    batch.workspace = await getMigrationWorkspace(batch.scope);
+    result.pending = pendingFiles(batch);
+    verifyBatch(batch);
+    await assertMigrationExecutionCurrent(batch.context);
+    if (result.restored?.length) await verifyMigrationRestorations(sandbox, result.restored);
+    delete result.pending;
+  } catch (error) {
+    const failure = migrationFailure(error);
+    result.errors.push(failure.error);
+    result.failureKind = failure.failureKind;
+    result.diagnostic = failure.diagnostic;
   }
+  return result;
+}
 
-  return { applied, errors, ...(errors.length > 0 ? { failureKind } : {}),
-    ...(repairTarget ? { repairTarget } : {}), ...(correction ? { correction } : {}),
-    ...(restored.length ? { restored } : {}), ...(restorationFailure ? { restorationFailure } : {}) };
+/** Compatible call signature; no normal review/lifecycle writes or Management API work. */
+export async function applyPendingMigrations(sandbox: Sandbox, requirementId: string,
+  expectedRepairs: MigrationRepairTarget[] = [], applicationContext?: MigrationExecutionContext,
+  restoration?: RestorationOwner): Promise<MigrationBatchResult> {
+  const result: MigrationBatchResult = { applied: [], errors: [] };
+  try {
+    const batch = await loadBatch(sandbox, requirementId, applicationContext, result, restoration, expectedRepairs);
+    let reloadedHistory = false;
+    for (const proposal of batch.proposals) {
+      if (batch.workspace.receipts.some(row => row.migration_key === `migration:${proposal.file}`)) {
+        // All historical bytes were checked by loadBatch. One reload retries a previous
+        // notification failure without rechecking capabilities once per historical file.
+        if (!reloadedHistory) {
+          await assertMigrationExecutionCurrent(batch.context);
+          await reloadTenantMigrationSchema(batch.scope, proposal.file);
+          reloadedHistory = true;
+        }
+        continue;
+      }
+      const execution = await executeTenantMigration({ context: batch.context, ...batch.scope,
+        migrationKey: `migration:${proposal.file}`, sql: proposal.sql,
+        assertUnchanged: async () => {
+          if ((await readProposal(sandbox, proposal.file)).checksum !== proposal.checksum) throw new Error('Migration changed during validation.');
+        } });
+      if (execution.applied) result.applied.push(proposal.file);
+      if (execution.error) {
+        result.errors.push(execution.error);
+        result.failureKind = execution.failureKind;
+        result.diagnostic = execution.diagnostic;
+        result.pending = Array.from(new Set([
+          ...batch.proposals.filter(row => !batch.workspace.receipts.some(receipt => receipt.migration_key === `migration:${row.file}`)).map(row => row.file),
+          ...batch.workspace.files.filter(row => !batch.workspace.receipts.some(receipt => receipt.migration_key === row.migration_key)).map(row => row.migration_key.slice(10)),
+        ])).filter(file => !result.applied.includes(file)).sort();
+        return result;
+      }
+    }
+    // Re-discover and re-read the workspace. Missing, new or changed files,
+    // including unresolved platform feedback, cannot become an empty success.
+    const final = await loadBatch(sandbox, requirementId, batch.context, result, restoration, expectedRepairs);
+    final.workspace = await getMigrationWorkspace(final.scope);
+    result.pending = pendingFiles(final);
+    verifyBatch(final);
+    await assertMigrationExecutionCurrent(final.context);
+    if (result.restored?.length) await verifyMigrationRestorations(sandbox, result.restored);
+    delete result.pending;
+  } catch (error) {
+    const failure = migrationFailure(error);
+    result.errors.push(failure.error);
+    result.failureKind = failure.failureKind;
+    result.diagnostic = failure.diagnostic;
+  }
+  return result;
 }

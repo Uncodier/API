@@ -17,6 +17,7 @@ import { runSlidesGate } from './gate-slides';
 import { runTaskGate } from './gate-task';
 import { runBackendGate } from './gate-backend';
 import { runAppGate } from './gate-app';
+import { verifyDatabaseGate } from './gate-database';
 import { getFlow } from '@/lib/services/requirement-flows';
 import type { FlowGateInput, FlowGateResult } from './types';
 import type { RequirementKind } from '@/lib/services/requirement-flows';
@@ -41,6 +42,10 @@ const REGISTRY: Record<RequirementKind, (input: FlowGateInput) => Promise<FlowGa
  */
 export async function runGateForFlow(input: FlowGateInput): Promise<FlowGateResult> {
   const flowDef = getFlow(input.flow);
+  if (flowDef.delivery.apply_database_migrations) {
+    const databaseFailure = await verifyDatabaseGate(input);
+    if (databaseFailure) return databaseFailure;
+  }
   // Vitrina hook: `showcase.mode === 'vitrina-build-runtime'` means the
   // deliverable is meant to be visualised in a companion template repo. Once
   // implemented, the gate would clone the template, pipe the artefacts in,
@@ -52,5 +57,12 @@ export async function runGateForFlow(input: FlowGateInput): Promise<FlowGateResu
     );
   }
   const fn = REGISTRY[input.flow] ?? runTaskGate;
-  return fn(input);
+  const result = await fn(input);
+  if (result.ok && flowDef.delivery.apply_database_migrations) {
+    // Build/origin recovery can replace the workspace. Never approve a new
+    // workspace using the earlier workspace's migration-file verification.
+    const databaseFailure = await verifyDatabaseGate({ ...input, sandbox: result.sandboxReplacement || input.sandbox });
+    if (databaseFailure) return { ...result, ...databaseFailure, sandboxReplacement: result.sandboxReplacement };
+  }
+  return result;
 }

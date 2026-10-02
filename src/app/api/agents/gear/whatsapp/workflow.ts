@@ -7,6 +7,8 @@ interface GearAgentWorkflowInput {
   instanceId: string;
   message: string;
   messageSid?: string;
+  /** Server-persisted action ID; optional for workflows queued before this handoff existed. */
+  userMessageLogId?: string;
   siteId: string;
   userId: string;
   userPhone: string;
@@ -19,6 +21,7 @@ export async function runGearAgentWorkflow({
   instanceId,
   message,
   messageSid,
+  userMessageLogId,
   siteId,
   userId,
   userPhone,
@@ -49,7 +52,14 @@ export async function runGearAgentWorkflow({
       useSdkTools,
       systemPrompt,
       'gear',
-      userPhone
+      userPhone,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      // Never rediscover a webhook action by text: a repeated message may match
+      // an older completed action instead of the one admitted for this workflow.
+      userMessageLogId ? { userMessageLogId } : undefined
     );
 
     console.log(`[GearAgent] Assistant execution completed. Response length: ${result.assistant_response?.length || 0}`);
@@ -62,7 +72,8 @@ export async function runGearAgentWorkflow({
     }
 
     return {
-      success: true,
+      success: result.success !== false,
+      ...('execution_status' in result ? { execution_status: result.execution_status } : {}),
       assistant_response: result.assistant_response,
       instance_id: instanceId
     };

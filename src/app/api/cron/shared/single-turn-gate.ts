@@ -41,6 +41,7 @@ import {
 import type { RunSingleTurnGateInput } from './single-turn-gate-types';
 import { loadBacklogGateContext } from './single-turn-gate-context';
 import type { JudgeRepairRun } from './judge-repair-controller';
+import { IMPLEMENTATION_FEEDBACK_PREFIX } from './repair-execution-policy';
 
 /**
  * Runs and persists the gate phase after the one-tool assistant turn.
@@ -176,7 +177,9 @@ export async function runSingleTurnGate(
     step,
     persistedStep,
   });
-  const gateErrorExcerpt = gateFeedback.excerpt;
+  const gateErrorExcerpt = gateRes.continueImplementation
+    ? `${IMPLEMENTATION_FEEDBACK_PREFIX}${gateFeedback.excerpt}`
+    : gateFeedback.excerpt;
   // The input fingerprint predates origin recovery. Falling back to it can
   // resurrect invalidated evidence when the final tree could not be read.
   const needsWorkspaceEvidence = flow === 'app' || flow === 'site';
@@ -433,7 +436,7 @@ export async function runSingleTurnGate(
       planId: plan.id,
       stepId: step.id,
       status:
-        gateRes.remediationScheduled || missingPrecondition
+        gateRes.remediationScheduled || missingPrecondition || gateRes.continueImplementation
           ? 'in_progress'
           : 'failed',
       errorMessage: gateErrorExcerpt,
@@ -451,7 +454,7 @@ export async function runSingleTurnGate(
     }
     infrastructureGeneration =
       failureMutation.generation ?? infrastructureGeneration;
-    if (!gateRes.remediationScheduled && !missingPrecondition) {
+    if (!gateRes.remediationScheduled && !missingPrecondition && !gateRes.continueImplementation) {
       persistedTerminalStatus = 'failed';
     }
     await logCronInfrastructureEvent(audit, {
@@ -466,7 +469,7 @@ export async function runSingleTurnGate(
       },
     });
 
-    if (backlogItemId) {
+    if (backlogItemId && !gateRes.continueImplementation) {
       try {
         await applyGateFailureHealing({
           requirementId,
@@ -491,7 +494,7 @@ export async function runSingleTurnGate(
 
   return {
     ok: true,
-    isDone: !gateRes.remediationScheduled,
+    isDone: !gateRes.remediationScheduled && !gateRes.continueImplementation,
     effectiveSandboxId,
     gatePassed: gateRes.ok,
     gateErrorExcerpt,

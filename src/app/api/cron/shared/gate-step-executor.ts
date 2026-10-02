@@ -269,7 +269,7 @@ export async function runGateStep(params: {
        // the backlog item's attempts so the self-healing policy can eventually
        // trigger (e.g. rotate_strategy or downgrade_scope) instead of infinite loop.
        const backlogItemId = step.metadata?.backlog_item_id || step.backlog_item_id;
-       if (backlogItemId) {
+        if (backlogItemId && !gateRes.continueImplementation) {
           try {
              const errorMsg = gateRes.error || gateRes.reason || '';
              await applyGateFailureHealing({

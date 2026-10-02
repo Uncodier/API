@@ -102,6 +102,8 @@ jest.mock('../single-turn-helpers', () => ({
 import { runSingleTurnGate } from '../single-turn-gate';
 import { singleTurnGateInput as input } from './single-turn-gate.fixture';
 import { writeEvidence } from '@/lib/services/requirement-ground-truth';
+import { applyGateFailureHealing } from '../gate-failure-healing';
+import { buildGateErrorFeedback } from '../single-turn-helpers';
 
 describe('runSingleTurnGate', () => {
   beforeEach(() => {
@@ -147,6 +149,27 @@ describe('runSingleTurnGate', () => {
       concurrencyHalt: true,
     });
     expect(mockSetItemStatus).not.toHaveBeenCalled();
+  });
+
+  it('returns pending migrations to the same implementation step without terminal failure or special repair', async () => {
+    mockRunGateForFlow.mockResolvedValue({ ok: false, flow: 'app', continueImplementation: true,
+      failureKind: 'product_defect', error: 'Migration 0003 is pending. Call sandbox_db_migrate.',
+      signals: [{ name: 'database_migrations', ok: false, disposition: 'hard_fail' }] });
+    (buildGateErrorFeedback as jest.Mock).mockReturnValueOnce({
+      excerpt: 'Migration 0003 is pending. Call sandbox_db_migrate.', raw: 'pending SQL', categories: [],
+    });
+    mockUpdatePlanStepStatus.mockResolvedValueOnce({ persisted: true, state: 'applied', generation: 4 });
+    const result = await runSingleTurnGate(input());
+    expect(result).toMatchObject({ ok: true, isDone: false, gatePassed: false,
+      gateErrorExcerpt: expect.stringContaining('0003'), infrastructureGeneration: 4 });
+    expect(result.persistedTerminalStatus).toBeUndefined();
+    expect(mockUpdatePlanStepStatus).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'in_progress', errorMessage: expect.stringContaining('sandbox_db_migrate'),
+    }));
+    expect(mockCompletePlanStepAfterGate).not.toHaveBeenCalled();
+    expect(mockSetItemStatus).not.toHaveBeenCalled();
+    expect(mockRunArchetypePostGate).not.toHaveBeenCalled();
+    expect(applyGateFailureHealing).not.toHaveBeenCalled();
   });
 
   it('marks the backlog done only after the completion CAS succeeds', async () => {
