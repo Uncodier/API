@@ -36,7 +36,7 @@ export async function holdMigrationLifecycleStep(params: { requirementId: string
   'use step';
   await assertCronExecutionOwnership({ ...params.executionOwnership, allowTerminal: true });
   const rows = await listMigrationLifecycle(params.requirementId);
-  for (const row of rows.filter(candidate => candidate.state !== 'validated' && candidate.state !== 'platform_review')) {
+  for (const row of rows.filter(candidate => candidate.state !== 'validated' && candidate.state !== 'platform_review' && candidate.state !== 'transferred')) {
     await transitionMigrationLifecycle({ requirementId: params.requirementId, file: row.file,
       expectedVersion: row.version, executionGeneration: params.executionOwnership.executionGeneration,
       value: migrationLifecycleValue(row, { state: 'platform_review', reason: params.reason }) });

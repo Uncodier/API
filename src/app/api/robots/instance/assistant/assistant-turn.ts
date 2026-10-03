@@ -8,7 +8,7 @@ import {
 import { getInstanceAssistantTools } from './utils';
 import type { AssistantContext } from './types';
 import { instrumentWorkflowTools } from '@/lib/services/workflow-robot/execution-tracker';
-import { assertAssistantRecoveryActive } from '@/lib/services/robot-instance/assistant-recovery';
+import { assertAssistantRecoveryActive, runAssistantRecoveryTool } from '@/lib/services/robot-instance/assistant-recovery';
 import { resolvePublishNodeBinding } from './publish-node-binding';
 import { buildToolExecutionContext } from '@/lib/services/tool-execution-context';
 import { SILENT_CONTINUE_PROMPT } from '@/lib/services/robot-instance/assistant-respawn-policy';
@@ -87,7 +87,10 @@ export async function processAssistantTurn(
         }
         args[0] = { ...args[0], args: JSON.stringify(publishArgs) };
       }
-      return tool.execute(...args);
+      // Multi-output fan-outs have their own non-resumable boundary and parallel writers.
+      return context.recoveryScope && (context.expectedResultsAmount ?? 1) === 1
+        ? runAssistantRecoveryTool(context.recoveryScope, tool.name, args[0], () => tool.execute(...args))
+        : tool.execute(...args);
     },
   })) : trackedTools;
   const options = {

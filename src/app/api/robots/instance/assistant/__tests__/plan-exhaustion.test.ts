@@ -108,7 +108,7 @@ describe('interactive plan exhaustion and safe resumption', () => {
     h.processAssistantTurn.mockImplementation(async (_context, messages) => h.result(messages, true, 'Finished'));
     await h.run({ userMessageLogId: 'route-user-log' });
     expect(h.persistUserMessageStep).not.toHaveBeenCalled();
-    expect(h.completeUserMessageStep).toHaveBeenCalledWith('route-user-log');
+    expect(h.completeUserMessageStep).toHaveBeenCalledWith('route-user-log', 0);
   });
 
   it('preserves the original workflow failure even when writing its error log fails', async () => {
@@ -327,7 +327,7 @@ describe('interactive plan exhaustion and safe resumption', () => {
     expect(h.completeUserMessageStep).not.toHaveBeenCalled();
     expect(h.markAssistantFailedStep).not.toHaveBeenCalled();
     expect(h.spawnSilentContinueStep).not.toHaveBeenCalled();
-    expect(h.pauseUserMessageStep).toHaveBeenCalledWith('user-log');
+    expect(h.pauseUserMessageStep).toHaveBeenCalledWith('user-log', 0);
   });
 
   it('passes the original user log to a background continuation without claiming completion', async () => {
@@ -345,7 +345,7 @@ describe('interactive plan exhaustion and safe resumption', () => {
     const response = await h.run();
     expect(response.message).toBe('Plan execution completed successfully');
     expect(h.persisted.steps.map((step: any) => step.status)).toEqual(['completed', 'completed']);
-    expect(h.completeUserMessageStep).toHaveBeenCalledWith('user-log');
+    expect(h.completeUserMessageStep).toHaveBeenCalledWith('user-log', 0);
     expect(h.redis.eval).toHaveBeenCalledTimes(1);
   });
 

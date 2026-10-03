@@ -161,6 +161,24 @@ describe('deterministic migration batch', () => {
     expect(state.applications()).toHaveLength(0);
   });
 
+  it('keeps transferred SQL pending and rejects deletion instead of treating the operator release as validation', async () => {
+    const state = setup();
+    (listMigrationLifecycle as jest.Mock).mockResolvedValue([{ state: 'transferred' }]);
+    state.feedback.set(`migration:${file}`, { migration_key: `migration:${file}`, checksum: migrationDigest(sql), context_key: 'operator-handoff', error: null });
+    expect(await verifyPendingMigrations(state.sandbox, requirementId)).toMatchObject({
+      applied: [], diagnostic: { code: 'PENDING_MIGRATIONS' },
+    });
+    delete state.files[file];
+    expect(await verifyPendingMigrations(state.sandbox, requirementId)).toMatchObject({
+      applied: [], diagnostic: { code: 'MISSING_MIGRATION' },
+    });
+    expect(state.applications()).toHaveLength(0);
+    state.files[file] = sql;
+    expect(await applyPendingMigrations(state.sandbox, requirementId)).toEqual({ applied: [file], errors: [] });
+    expect(await verifyPendingMigrations(state.sandbox, requirementId)).toEqual({ applied: [], errors: [] });
+    expect(transitionMigrationLifecycle).not.toHaveBeenCalled();
+  });
+
   it('refuses committed migration deleted from both the working tree and index before first observation', async () => {
     const state = setup({});
     state.setCommitted([file]);

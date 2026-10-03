@@ -34,6 +34,7 @@ export async function runAssistantWorkflow(
 
   // The HTTP route supplies only the ID it just persisted (not a client ID).
   let userMessageLogId: string | null = options?.userMessageLogId ?? null;
+  let recoveryScope: AssistantRecoveryScope | undefined;
   try {
     const isSilentContinue =
       options?.silentContinue === true || message === SILENT_CONTINUE_PROMPT;
@@ -53,7 +54,7 @@ export async function runAssistantWorkflow(
       userMessageLogId = logResult.id;
     }
     if (!userMessageLogId) return blockedResult;
-    const recoveryScope: AssistantRecoveryScope = { instanceId, siteId, userId, userMessageLogId };
+    recoveryScope = { instanceId, siteId, userId, userMessageLogId };
     const recovery = await prepareRecoveryStep(recoveryScope, {
       customTools, useSdkTools, systemPrompt, agentType, userPhone, instanceNodeId,
       expectedResultsAmount, contextString, toolOverrides, selectedSkills: options?.selectedSkills,
@@ -97,6 +98,10 @@ export async function runAssistantWorkflow(
   );
   context.recoveryScope = recoveryScope;
   context.nodeContinuation = recovery.snapshot?.continuation;
+  if (recovery.snapshot?.interruptionContext) {
+    // Evidence, not a synthetic tool result or a replacement for the user's intent.
+    context.systemPrompt = `${context.systemPrompt}\n\n${recovery.snapshot.interruptionContext}`;
+  }
 
   let isDone = false;
   let finalResult: any = {
@@ -149,7 +154,7 @@ export async function runAssistantWorkflow(
   let turns = 0;
 
   while (!isDone && turns < MAX_TURNS) {
-    if (!await guardRecoveryStep(recoveryScope, true)) return blockedResult;
+    if (!await guardRecoveryStep(recoveryScope, true, messages)) return blockedResult;
     turns++;
     const stepResult = await processAssistantTurn(context, messages);
     
@@ -187,7 +192,7 @@ export async function runAssistantWorkflow(
         };
       }
     }
-    if (await guardRecoveryStep(recoveryScope)) await pauseUserMessageStep(userMessageLogId);
+    if (await guardRecoveryStep(recoveryScope)) await pauseUserMessageStep(userMessageLogId, recoveryScope.generation ?? 0);
     return { ...blockedResult, execution_status: 'exhausted',
       message: 'Execution paused without a final answer; original context and completed tool results were retained' };
   }
@@ -214,7 +219,7 @@ export async function runAssistantWorkflow(
         console.log(
           `[Workflow] Could not acquire execution lock for plan ${activePlan.id}: ${lock.state}`,
         );
-        if (userMessageLogId) await pauseUserMessageStep(userMessageLogId);
+        if (userMessageLogId) await pauseUserMessageStep(userMessageLogId, recoveryScope.generation ?? 0);
         return {
           instance_id: instanceId,
           status: context.instance.status,
@@ -229,7 +234,7 @@ export async function runAssistantWorkflow(
       try {
         // Plan steps own their continuation; the generic cron must not replay
         // the preceding assistant conversation while a plan performs effects.
-        if (!await guardRecoveryStep(recoveryScope, true)) return blockedResult;
+        if (!await guardRecoveryStep(recoveryScope, true, undefined, 'plan')) return blockedResult;
         for (const step of stepsToExecute) {
           console.log(`[Workflow] processing plan step: ${step.title}`);
           
@@ -243,7 +248,7 @@ export async function runAssistantWorkflow(
             // an exception that retries the multi-effect durable step. The
             // finally block releases ownership; a later invocation resumes the
             // same step from its persisted continuation before later steps.
-            if (userMessageLogId) await pauseUserMessageStep(userMessageLogId);
+            if (userMessageLogId) await pauseUserMessageStep(userMessageLogId, recoveryScope.generation ?? 0);
             return {
               instance_id: instanceId,
               status: context.instance.status,
@@ -265,7 +270,7 @@ export async function runAssistantWorkflow(
       
       if (userMessageLogId) {
         if (!await guardRecoveryStep(recoveryScope)) return blockedResult;
-        await completeUserMessageStep(userMessageLogId);
+        await completeUserMessageStep(userMessageLogId, recoveryScope.generation ?? 0);
       }
       return {
         instance_id: instanceId,
@@ -286,7 +291,7 @@ export async function runAssistantWorkflow(
 
     if (userMessageLogId) {
       if (!await guardRecoveryStep(recoveryScope)) return blockedResult;
-      await completeUserMessageStep(userMessageLogId);
+      await completeUserMessageStep(userMessageLogId, recoveryScope.generation ?? 0);
     }
   return {
     instance_id: instanceId,
@@ -298,6 +303,11 @@ export async function runAssistantWorkflow(
     instance_node_id: instanceNodeId,
   };
   } catch (error: any) {
+    // A late failure from the abandoned generation must not stop its continuation.
+    if (recoveryScope && !await guardRecoveryStep(recoveryScope)) {
+      return { instance_id: instanceId, success: false, execution_status: 'paused',
+        message: 'Execution ownership changed; the current continuation was left untouched' };
+    }
     if (error?.name === 'RecoveryError') {
       return { instance_id: instanceId, success: false, execution_status: 'paused', instance_node_id: instanceNodeId,
         message: 'Original execution is inactive or its bound context changed; no automatic restart was performed',
@@ -306,7 +316,7 @@ export async function runAssistantWorkflow(
     const errMsg = error instanceof Error ? error.message : String(error);
     console.error(`[Workflow] Assistant failed after retries for instance ${instanceId}:`, errMsg);
     try {
-      await markAssistantFailedStep(instanceId, siteId, userId, errMsg.slice(0, 500), userMessageLogId);
+      await markAssistantFailedStep(instanceId, siteId, userId, errMsg.slice(0, 500), userMessageLogId, recoveryScope?.generation ?? 0);
     } catch {
       console.error(`[Workflow] Unable to persist assistant failure for instance ${instanceId}`);
     }

@@ -7,7 +7,10 @@ const resolveBinding = jest.fn<AsyncMock>();
 const execute = jest.fn<AsyncMock>();
 const toolExecute = jest.fn<AsyncMock>();
 const getTools = jest.fn<AsyncMock>();
-jest.unstable_mockModule('@/lib/services/robot-instance/assistant-recovery', () => ({ assertAssistantRecoveryActive: assertActive }));
+const observeTool = jest.fn<AsyncMock>();
+jest.unstable_mockModule('@/lib/services/robot-instance/assistant-recovery', () => ({
+  assertAssistantRecoveryActive: assertActive, runAssistantRecoveryTool: observeTool,
+}));
 jest.unstable_mockModule('../publish-node-binding', () => ({ resolvePublishNodeBinding: resolveBinding }));
 jest.unstable_mockModule('@/lib/services/robot-instance/assistant-executor', () => ({ executeAssistantStep: execute }));
 jest.unstable_mockModule('../utils', () => ({ getInstanceAssistantTools: getTools }));
@@ -26,6 +29,7 @@ const context: AssistantContext = {
 };
 beforeEach(() => {
   jest.resetAllMocks(); assertActive.mockResolvedValue(undefined); toolExecute.mockResolvedValue('sent');
+  observeTool.mockImplementation(async (_scope, _name, _args, executeTool) => executeTool());
   getTools.mockResolvedValue([{ name: 'tools', execute: toolExecute }]);
   resolveBinding.mockResolvedValue({ instruction: 'Bound', toolOverrides: {
     publish: { social_accounts: ['tiktok'], media_urls: ['https://example.com/original.mp4'], urls: [], assets: [] },
@@ -45,6 +49,7 @@ describe('per-turn and per-tool recovery guards', () => {
     await options.custom_tools[0].execute({ action: 'call' });
     expect(assertActive).toHaveBeenCalledTimes(2);
     expect(toolExecute).toHaveBeenCalledTimes(1);
+    expect(observeTool).toHaveBeenCalledWith(scope, 'tools', { action: 'call' }, expect.any(Function));
   });
   it('blocks before the model when the original action or context changed', async () => {
     assertActive.mockRejectedValue(new Error('cancelled'));

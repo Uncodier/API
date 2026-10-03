@@ -5,6 +5,12 @@ New missing-plan coordination failures now use
 this hold. The procedure below remains for **historical** holds; deploying the
 coordination fix alone does not release them.
 
+For the simplified executor, this older procedure alone is insufficient:
+`correction_required` remains a historical hold. Eligible unapplied files can use
+the separate [audited execution handoff](MIGRATION_EXECUTION_HANDOFF.md) after
+its Makinari migration and compatible API deployment. It preserves this procedure's
+receipts and never converts a pending file into a fabricated validation.
+
 This is a narrow recovery for an **unapplied** migration whose historical hold
 reason was `A pending migration has no requirement-bound implementation plan;
 technical review is required.` A new requirement-bound sandbox plan now exists,

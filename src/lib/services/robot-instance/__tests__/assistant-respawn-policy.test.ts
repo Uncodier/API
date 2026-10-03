@@ -2,6 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 import {
   evaluateInstanceStall, isIncompleteTurn, LOOKBACK_MS, MAX_RESPAWNS,
   RESPAWN_COOLDOWN_MS, SILENT_CONTINUE_PROMPT, STALL_MS,
+  IN_FLIGHT_STALL_MS,
   type StallLogRow,
 } from '../assistant-respawn-policy';
 
@@ -43,8 +44,31 @@ describe('workflow-safe assistant respawn policy', () => {
   it('preserves the existing windows, limit and silent continuation marker', () => {
     expect(MAX_RESPAWNS).toBe(2);
     expect(STALL_MS).toBe(3 * 60 * 1000);
+    expect(IN_FLIGHT_STALL_MS).toBe(15 * 60 * 1000);
     expect(LOOKBACK_MS).toBe(30 * 60 * 1000);
     expect(RESPAWN_COOLDOWN_MS).toBe(2 * 60 * 1000);
     expect(SILENT_CONTINUE_PROMPT).toContain('previous execution was interrupted');
+  });
+
+  it.each(['user_action', 'tool_call', 'thinking', 'agent_action'])(
+    'recovers an expired in-flight %s even when its log is nonempty', log_type => {
+      expect(evaluateInstanceStall({ logs: [row(log_type, IN_FLIGHT_STALL_MS, { message: 'Partial output' })],
+        nowMs, recentRespawnCount: 0, inFlight: true })).toBe('respawn');
+      expect(evaluateInstanceStall({ logs: [row(log_type, IN_FLIGHT_STALL_MS - 1)],
+        nowMs, recentRespawnCount: 0, inFlight: true })).toBe('healthy_or_fresh');
+    },
+  );
+
+  it('does not interrupt a recent tool observation or accept an invalid activity timestamp', () => {
+    for (const lastActivityAt of [new Date(nowMs - 1000).toISOString(), 'invalid']) {
+      expect(evaluateInstanceStall({ logs: [row('tool_call', IN_FLIGHT_STALL_MS * 2)],
+        nowMs, recentRespawnCount: 0, inFlight: true, lastActivityAt })).toBe('healthy_or_fresh');
+    }
+  });
+
+  it('treats updates to existing streaming rows as activity', () => {
+    expect(evaluateInstanceStall({ logs: [row('thinking', IN_FLIGHT_STALL_MS * 2, {
+      details: { last_activity_at: new Date(nowMs - 1000).toISOString() },
+    })], nowMs, recentRespawnCount: 0, inFlight: true })).toBe('healthy_or_fresh');
   });
 });

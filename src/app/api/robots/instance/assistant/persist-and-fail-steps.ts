@@ -1,6 +1,7 @@
 'use step';
 
 import { insertUserActionLog, markRemoteInstanceError, setUserMessageStatus } from './user-message-log';
+import { RecoveryError } from '@/lib/services/robot-instance/assistant-recovery-schema';
 
 export async function persistUserMessageStep(
   instanceId: string,
@@ -25,6 +26,7 @@ export async function markAssistantFailedStep(
   userId: string | null | undefined,
   errorMessage: string,
   userMessageLogId?: string | null,
+  expectedGeneration?: number,
 ): Promise<void> {
   'use step';
   await markRemoteInstanceError({
@@ -33,15 +35,18 @@ export async function markAssistantFailedStep(
     userId,
     errorMessage,
     userMessageLogId,
+    expectedGeneration,
   });
 }
 
-export async function completeUserMessageStep(logId: string): Promise<void> {
+export async function completeUserMessageStep(logId: string, expectedGeneration?: number): Promise<void> {
   'use step';
-  await setUserMessageStatus(logId, 'completed');
+  const saved = await setUserMessageStatus(logId, 'completed', expectedGeneration);
+  if (expectedGeneration !== undefined && !saved) throw new RecoveryError('inactive');
 }
 
-export async function pauseUserMessageStep(logId: string): Promise<void> {
+export async function pauseUserMessageStep(logId: string, expectedGeneration?: number): Promise<void> {
   'use step';
-  await setUserMessageStatus(logId, 'paused');
+  const saved = await setUserMessageStatus(logId, 'paused', expectedGeneration);
+  if (expectedGeneration !== undefined && !saved) throw new RecoveryError('inactive');
 }

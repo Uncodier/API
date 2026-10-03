@@ -6,7 +6,9 @@ export type MigrationLifecycleState =
   | 'reviewing'
   | 'validation_pending'
   | 'validated'
-  | 'platform_review';
+  | 'platform_review'
+  /** Audited handoff to normal execution; NOT an applied/validation receipt. */
+  | 'transferred';
 
 export interface MigrationLifecycleRecord {
   requirement_id: string;
@@ -54,6 +56,8 @@ const valueSchema = z.object({
   attempts: z.number().int().min(0).max(5),
 }); // Strip row identity/version fields when callers spread a prior receipt.
 const recordSchema = valueSchema.extend({
+  // Only the operator handoff RPC can create this terminal legacy state.
+  state: z.enum(['correction_required', 'reviewing', 'validation_pending', 'validated', 'platform_review', 'transferred']),
   requirement_id: z.string().uuid(),
   file: fileSchema,
   version: z.number().int().min(1).max(2147483647),

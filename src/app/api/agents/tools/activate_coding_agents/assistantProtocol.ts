@@ -41,7 +41,7 @@ export function activateCodingAgentsTool(siteId: string, instanceId: string) {
         .select('id, is_archived').eq('id', owner).eq('site_id', siteId).maybeSingle();
       if (instanceError || !instance || instance.is_archived) return guarded('original_instance_unavailable');
       const migrations = await listMigrationLifecycle(requirement_id);
-      if (migrations.some(migration => migration.state !== 'validated')) {
+      if (migrations.some(migration => migration.state !== 'validated' && migration.state !== 'transferred')) {
         return guarded('migration_review_pending');
       }
       const { data: action, error: actionError } = await supabaseAdmin.from('instance_logs')

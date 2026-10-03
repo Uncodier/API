@@ -192,7 +192,7 @@ describe('requirements workflow ordering contracts', () => {
 
   it('reads historical migration obligations without silently reopening or replacing them', () => {
     const historicalRead = workflowSource.indexOf('await loadMigrationLifecycleStep(reqId)');
-    const historicalGuard = workflowSource.indexOf("migrationLifecycle.some(row => row.state !== 'validated')", historicalRead);
+    const historicalGuard = workflowSource.indexOf("migrationLifecycle.some(row => row.state !== 'validated' && row.state !== 'transferred')", historicalRead);
     const activePlanRead = workflowSource.indexOf('await getActiveInstancePlanStep(');
     expect(historicalRead).toBeGreaterThan(-1);
     expect(historicalGuard).toBeGreaterThan(historicalRead);

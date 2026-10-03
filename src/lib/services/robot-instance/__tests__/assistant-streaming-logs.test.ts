@@ -64,8 +64,11 @@ describe('assistant streaming Redis snapshots', () => {
     await callbacks.onStreamChunk(id, 'one two three', true);
 
     expect(mockUpdateEq).toHaveBeenCalledTimes(2);
+    expect(mockUpdate).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      details: expect.objectContaining({ streaming: true, last_activity_at: expect.any(String) }),
+    }));
     expect(mockUpdate).toHaveBeenLastCalledWith(expect.objectContaining({
-      message: 'one two three', details: expect.objectContaining({ streaming: false }),
+      message: 'one two three', details: expect.objectContaining({ streaming: false, last_activity_at: expect.any(String) }),
     }));
     expect(mockHdel).toHaveBeenCalledWith(
       'live:ai-stream:instance:instance-1',

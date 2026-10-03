@@ -55,4 +55,8 @@ describe('durable bound respawn', () => {
     expect(start).toHaveBeenCalledTimes(1);
     expect(claim).toHaveBeenCalledTimes(1);
   });
+  it('opts into the time heuristic only when requested by the server cron', async () => {
+    expect(await spawnSilentContinueWorkflow(scope, { allowStaleInFlight: true })).toBe(true);
+    expect(claim).toHaveBeenCalledWith(scope, { allowStaleInFlight: true });
+  });
 });

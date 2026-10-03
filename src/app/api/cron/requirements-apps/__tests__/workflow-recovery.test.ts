@@ -226,13 +226,24 @@ describe('workflow recovery and truthful completion', () => {
     expect(h.lifecycle.releaseRunLockStep).toHaveBeenCalledTimes(1);
   });
 
-  it('permits normal execution for validated history without creating or advancing a lifecycle', async () => {
+  it.each(['validated', 'transferred'])('permits normal execution for %s history without creating or advancing a lifecycle', async state => {
     const h = harness();
-    h.migrationLifecycle.loadMigrationLifecycleStep.mockResolvedValue([{ state: 'validated' }]);
+    h.migrationLifecycle.loadMigrationLifecycleStep.mockResolvedValue([{ state }]);
     await expect(h.run()).resolves.toMatchObject({ status: 'in-progress' });
     expect(h.migrationLifecycle.loadMigrationLifecycleStep).toHaveBeenCalledTimes(1);
     expect(h.executeSingleTurnStep).toHaveBeenCalled();
     expect(h.verification.verifyDatabaseMigrationsStep).toHaveBeenCalledTimes(1);
+    expectNoMigrationOrchestration(h);
+  });
+
+  it('does not complete a transferred obligation when normal SQL receipt verification fails', async () => {
+    const h = harness();
+    h.migrationLifecycle.loadMigrationLifecycleStep.mockResolvedValue([{ state: 'transferred' }]);
+    h.verification.verifyDatabaseMigrationsStep.mockResolvedValue({ status: 'failed', applied: [],
+      errors: ['Unapplied migration proposals remain'], failureKind: 'product', effectiveSandboxId: 'sandbox' });
+    await h.run();
+    expect(h.executeSingleTurnStep).toHaveBeenCalled();
+    expect(h.steps.commitAndPushStep).not.toHaveBeenCalled();
     expectNoMigrationOrchestration(h);
   });
 

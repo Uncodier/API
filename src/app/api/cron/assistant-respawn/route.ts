@@ -23,19 +23,28 @@ export async function GET(req: Request) {
   const nowMs = Date.now();
   const since = new Date(nowMs - LOOKBACK_MS).toISOString();
 
-  const { data: recentLogs, error } = await supabaseAdmin
+  const [recent, stranded] = await Promise.all([supabaseAdmin
     .from('instance_logs')
     .select('instance_id')
     .in('log_type', STALL_LOG_TYPES)
     .gte('created_at', since)
     .order('created_at', { ascending: false })
-    .limit(2000);
+    .limit(2000),
+    // A blocked turn must not disappear merely because the 30-minute log window elapsed.
+    supabaseAdmin.from('instance_logs').select('instance_id')
+      .eq('log_type', 'user_action').eq('trusted_user_action', true)
+      .eq('details->>status', 'running').eq('details->assistant_recovery->>inFlight', 'true')
+      .gte('created_at', new Date(nowMs - 24 * 60 * 60 * 1000).toISOString())
+      .order('created_at', { ascending: false }).limit(200),
+  ]);
+  const error = recent.error || stranded.error;
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  const activeInstanceIds = Array.from(new Set((recentLogs || []).map((log) => log.instance_id).filter(Boolean)));
+  const activeInstanceIds = Array.from(new Set([...(recent.data || []), ...(stranded.data || [])]
+    .map((log) => log.instance_id).filter(Boolean)));
   const results: Array<{ instance_id: string; status: string }> = [];
 
   for (const instanceId of activeInstanceIds) {
@@ -54,7 +63,7 @@ export async function GET(req: Request) {
       const { data: action, error: actionError } = await supabaseAdmin
         .from('instance_logs').select('id,site_id,user_id,details,created_at')
         .eq('instance_id', instanceId).eq('log_type', 'user_action')
-        .eq('trusted_user_action', true).order('created_at', { ascending: false })
+        .eq('trusted_user_action', true).order('created_at', { ascending: false }).order('id', { ascending: false })
         .limit(1).maybeSingle();
       if (actionError || !action?.id || !action.site_id || !action.user_id
         || action.details?.status !== 'running' || !action.details?.assistant_recovery) {
@@ -67,6 +76,8 @@ export async function GET(req: Request) {
         logs,
         nowMs,
         recentRespawnCount,
+        inFlight: action.details.assistant_recovery.inFlight === true,
+        lastActivityAt: action.details.assistant_recovery.lastActivityAt,
       });
 
       if (decision !== 'respawn') {
@@ -97,7 +108,7 @@ export async function GET(req: Request) {
         siteId: action.site_id,
         userId: action.user_id,
         userMessageLogId: action.id,
-      });
+      }, { allowStaleInFlight: true });
 
       results.push({ instance_id: instanceId, status: spawned ? 'respawned' : 'skipped_unsafe_checkpoint' });
     } catch (err: any) {

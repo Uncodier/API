@@ -36,6 +36,13 @@ beforeEach(() => {
 });
 
 describe('service-role migration lifecycle client', () => {
+  it('reads an operator-transferred row without misrepresenting validation or allowing ordinary transfer writes', async () => {
+    eq.mockResolvedValueOnce({ data: [row({ state: 'transferred', attempts: 5 })], error: null });
+    await expect(listMigrationLifecycle(requirementId)).resolves.toEqual([row({ state: 'transferred', attempts: 5 })]);
+    await expect(transitionMigrationLifecycle({ ...input(), value: { ...input().value, state: 'transferred' } })).rejects.toThrow();
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
   it('loads explicitly selected full rows scoped to the requirement without tenant I/O', async () => {
     await expect(listMigrationLifecycle(requirementId)).resolves.toEqual([row()]);
     expect(from).toHaveBeenCalledWith('requirement_migration_lifecycle');

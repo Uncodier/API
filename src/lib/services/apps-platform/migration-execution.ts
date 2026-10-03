@@ -32,7 +32,9 @@ export class MigrationExecutionError extends Error {
 export async function assertMigrationExecutionCurrent(context: MigrationExecutionContext): Promise<void> {
   await context.assertCurrent();
   const legacy = await listMigrationLifecycle(context.requirementId);
-  if (legacy.some(row => row.state !== 'validated')) throw new MigrationExecutionError({
+  // A transferred row is protected by an immutable operator handoff receipt in
+  // Makinari. Its pending Apps journal entry still requires real SQL application.
+  if (legacy.some(row => row.state !== 'validated' && row.state !== 'transferred')) throw new MigrationExecutionError({
     code: 'LEGACY_MIGRATION_HOLD', kind: 'infrastructure',
     message: 'Historical migration recovery is unresolved. An operator must reconcile it; normal execution cannot release this hold.',
   });

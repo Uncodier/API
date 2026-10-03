@@ -1,3 +1,5 @@
+import type { RecoveryToolObservation } from './assistant-recovery-context';
+
 export type AssistantRecoveryScope = {
   instanceId: string;
   siteId: string;
@@ -30,6 +32,12 @@ export type AssistantRecoverySnapshot = {
   messages: unknown[];
   continuation?: { responseNodeIds: string[] };
   inFlight: boolean;
+  /** Optional for checkpoints written before heuristic recovery was introduced. */
+  inFlightSince?: string;
+  inFlightKind?: 'turn' | 'plan';
+  lastActivityAt?: string;
+  toolObservations?: RecoveryToolObservation[];
+  interruptionContext?: string;
   respawnCount: number;
   lease_token?: string;
 };
@@ -176,11 +184,38 @@ export function parseRecoveryCheckpoint(value: unknown): Pick<AssistantRecoveryS
 export function parseRecoverySnapshot(value: unknown): AssistantRecoverySnapshot {
   const result = cloneRecoveryJson(value, 2 * MAX_RECOVERY_MESSAGES_BYTES + 64 * 1024);
   if (!isRecord(result)) throw new RecoveryError('invalid_state');
-  onlyKeys(result, ['version', 'revision', 'execution', 'nodeFingerprint', 'messages', 'continuation', 'inFlight', 'respawnCount', 'lease_token']);
+  onlyKeys(result, ['version', 'revision', 'execution', 'nodeFingerprint', 'messages', 'continuation', 'inFlight', 'respawnCount', 'lease_token',
+    'inFlightSince', 'inFlightKind', 'lastActivityAt', 'toolObservations', 'interruptionContext']);
   if (result.version !== 1 || typeof result.revision !== 'string' || !UUID.test(result.revision) || typeof result.inFlight !== 'boolean' ||
       !Number.isSafeInteger(result.respawnCount) || (result.respawnCount as number) < 0 ||
       ('lease_token' in result && (typeof result.lease_token !== 'string' || !UUID.test(result.lease_token)))) {
     throw new RecoveryError('invalid_state');
+  }
+  for (const key of ['inFlightSince', 'lastActivityAt']) {
+    if (key in result && (typeof result[key] !== 'string' || !Number.isFinite(Date.parse(result[key] as string)))) {
+      throw new RecoveryError('invalid_state');
+    }
+  }
+  if ('inFlightKind' in result && result.inFlightKind !== 'turn' && result.inFlightKind !== 'plan') {
+    throw new RecoveryError('invalid_state');
+  }
+  if ('interruptionContext' in result && (typeof result.interruptionContext !== 'string' ||
+      Buffer.byteLength(result.interruptionContext, 'utf8') > 24 * 1024 || DATA_URL.test(result.interruptionContext))) {
+    throw new RecoveryError('invalid_state');
+  }
+  if ('toolObservations' in result) {
+    if (!Array.isArray(result.toolObservations) || result.toolObservations.length > 8) throw new RecoveryError('invalid_state');
+    for (const observation of result.toolObservations) {
+      if (!isRecord(observation)) throw new RecoveryError('invalid_state');
+      onlyKeys(observation, ['name', 'args', 'outcome', 'result', 'observedAt']);
+      if (typeof observation.name !== 'string' || Buffer.byteLength(observation.name) > 128 ||
+          typeof observation.args !== 'string' || Buffer.byteLength(observation.args) > 1024 ||
+          !['unknown', 'returned', 'threw'].includes(observation.outcome as string) ||
+          typeof observation.observedAt !== 'string' || !Number.isFinite(Date.parse(observation.observedAt)) ||
+          ('result' in observation && (typeof observation.result !== 'string' || Buffer.byteLength(observation.result) > 1024))) {
+        throw new RecoveryError('invalid_state');
+      }
+    }
   }
   const execution = parseRecoveryExecution(result.execution);
   if (execution.instanceNodeId

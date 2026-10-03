@@ -202,7 +202,7 @@ export async function prepareRequirementForCronRun(params: {
     // Check before creating a new backlog item: a scheduled tick is not a
     // technical review receipt, even when the requirement was explicitly blocked.
     const migrations = await listMigrationLifecycle(requirementId);
-    if (migrations.some(row => row.state !== 'validated')) {
+    if (migrations.some(row => row.state !== 'validated' && row.state !== 'transferred')) {
       return { status, backlog, metadata, skipReason: 'migration_review_pending' };
     }
     try {

@@ -47,6 +47,11 @@ describe('single-owner coding agent activation', () => {
     expect(await run()).toMatchObject({ success: false, reason: 'migration_review_pending' });
     expect(mockResume).not.toHaveBeenCalled();
   });
+  it('can resume operator-transferred history only with the usual trusted action', async () => {
+    owner(); action(); mockMigrations.mockResolvedValue([{ state: 'transferred' }]);
+    expect(await run()).toMatchObject({ success: true });
+    expect(mockResume).toHaveBeenCalledWith('req', 'original', true, 'user-action');
+  });
   it('does not turn a guarded recovery into a success', async () => {
     owner(); action(); mockResume.mockResolvedValue({ state: 'guarded', plans_updated: 0 });
     expect(await run()).toMatchObject({ success: false, reason: 'recovery_guarded' });

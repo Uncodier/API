@@ -148,6 +148,13 @@ tools remain incident-recovery tooling only; follow the existing audited
 those incidents. Older repair-loop documents describe that historical path,
 not a prerequisite for new normal implementation work.
 
+For a verified **unapplied** historical obligation moving to the simplified
+executor, use the [operator execution handoff](MIGRATION_EXECUTION_HANDOFF.md).
+Its receipt-backed `transferred` state ends only the legacy execution authority;
+it is not `validated`. The pending Apps journal entry, immutable applied receipts,
+static SQL policy and normal product gates remain mandatory. Ordinary
+`correction_required` rows still do not bypass the historical admission guard.
+
 Operator rollout order (not performed here):
 
 1. Verify the isolated Apps tenant bootstrap, atomic migration RPCs and tenant

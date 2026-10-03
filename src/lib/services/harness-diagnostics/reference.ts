@@ -113,7 +113,7 @@ const reference = {
       'Resolve a direct blocker only through its authorized resolver. User/platform blockers cannot be cleared by an agent.',
       'A finished chat turn may hand work to cron on the same instance. Silence, a timeout or a paused action is not authorization to replace the owner.',
       'Re-read state and obtain actual dispatch evidence before claiming resumed. A migration hold needs technical reconciliation, not generic approval text.',
-      'Cron admission still checks historical non-validated migration lifecycle rows before reactivation; migration_review_pending is a skip reason, not successful recovery. New execution does not create those lifecycle rows.',
+      'Cron admission still checks historical migration lifecycle rows before reactivation; only validated history or an explicit operator-transferred obligation is admitted. transferred is not SQL approval: its pending Apps journal entry and actual application receipts still gate delivery. migration_review_pending is a skip reason, not successful recovery. New execution does not create those lifecycle rows.',
     ],
     sources: [sources.recovery, sources.handoff, sources.blockerPolicy, sources.migrationDiagnosis, sources.statusRecovery, sources.cronAdmission, sources.cronWorkflow],
   },

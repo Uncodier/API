@@ -2,6 +2,9 @@
 // assistant-respawn.ts, called through the assistant respawn steps.
 export const MAX_RESPAWNS = 2;
 export const STALL_MS = 3 * 60 * 1000;
+// Heuristic, not proof of a failed tool: exceeds the 800s API budget plus margin.
+// Do not infer a 300s limit from generated Workflow deployment configuration.
+export const IN_FLIGHT_STALL_MS = 15 * 60 * 1000;
 export const LOOKBACK_MS = 30 * 60 * 1000;
 export const RESPAWN_COOLDOWN_MS = 2 * 60 * 1000;
 
@@ -20,7 +23,7 @@ export type StallLogRow = {
   log_type: string;
   message?: string | null;
   created_at: string;
-  details?: { source?: string } | null;
+  details?: { source?: string; last_activity_at?: string } | null;
 };
 
 export function isIncompleteTurn(result: { isDone?: boolean; text?: string | null }) {
@@ -35,21 +38,28 @@ export function evaluateInstanceStall(params: {
   logs: StallLogRow[];
   nowMs: number;
   recentRespawnCount: number;
+  inFlight?: boolean;
+  lastActivityAt?: string;
 }): StallDecision {
   const { logs, nowMs, recentRespawnCount } = params;
   const interactionLogs = logs.filter((row) => row.log_type !== 'infrastructure');
   if (interactionLogs.length === 0) return 'no_logs';
 
   const lastLog = interactionLogs[0];
-  if (lastLog.log_type === 'user_action') return 'has_user_action';
+  if (lastLog.log_type === 'user_action' && !params.inFlight) return 'has_user_action';
 
   const lastLogTime = new Date(lastLog.created_at).getTime();
-  const isStallState =
+  const isStallState = params.inFlight ||
     lastLog.log_type === 'thinking' ||
     lastLog.log_type === 'tool_call' ||
     (lastLog.log_type === 'agent_action' && !lastLog.message?.trim());
 
-  if (!isStallState || nowMs - lastLogTime < STALL_MS) {
+  const activityTimes = [lastLogTime, ...logs.flatMap(row => row.details?.last_activity_at
+    ? [Date.parse(row.details.last_activity_at)] : []),
+    ...(params.lastActivityAt === undefined ? [] : [Date.parse(params.lastActivityAt)])];
+  const activityTime = Math.max(...activityTimes);
+  const threshold = params.inFlight ? IN_FLIGHT_STALL_MS : STALL_MS;
+  if (!isStallState || !Number.isFinite(activityTime) || nowMs - activityTime < threshold) {
     return 'healthy_or_fresh';
   }
 

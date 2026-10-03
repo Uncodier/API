@@ -155,6 +155,38 @@ describe('withRetries', () => {
 describe('setUserMessageStatus', () => {
   beforeEach(() => jest.clearAllMocks());
 
+  it.each(['completed', 'paused', 'failed'] as const)('rejects a late %s from the previous generation', async status => {
+    const lookup = createChain({ data: { details: { status: 'running', assistant_recovery: { respawnCount: 1, revision: 'current' } } }, error: null });
+    (supabaseAdmin.from as jest.Mock).mockReturnValue(lookup);
+    expect(await setUserMessageStatus('user-log', status, 0)).toBe(false);
+    expect(lookup.update).not.toHaveBeenCalled();
+  });
+
+  it('does not mark the instance failed when a newer continuation owns the turn', async () => {
+    const lookup = createChain({ data: { details: { status: 'running', assistant_recovery: { respawnCount: 1 } } }, error: null });
+    (supabaseAdmin.from as jest.Mock).mockReturnValue(lookup);
+    await markRemoteInstanceError({ instanceId: 'instance', siteId: 'site', errorMessage: 'late error',
+      userMessageLogId: 'user-log', expectedGeneration: 0 });
+    expect(lookup.update).not.toHaveBeenCalled();
+    expect(lookup.insert).not.toHaveBeenCalled();
+  });
+
+  it('lets the same failed generation retry incomplete error reporting', async () => {
+    const details = { status: 'failed', assistant_recovery: { respawnCount: 0, revision: 'same-generation' } };
+    const lookup = createChain({ data: { details }, error: null });
+    const instance = createChain({ error: { message: 'temporary write failure' } });
+    const logged = createChain({ error: null });
+    (supabaseAdmin.from as jest.Mock).mockReturnValueOnce(lookup).mockReturnValueOnce(instance).mockReturnValueOnce(logged);
+    const params = { instanceId: 'instance', siteId: 'site', errorMessage: 'provider failed',
+      userMessageLogId: 'user-log', expectedGeneration: 0 };
+    await expect(markRemoteInstanceError(params)).rejects.toThrow('Failed to mark robot');
+    const saved = createChain({ error: null });
+    (supabaseAdmin.from as jest.Mock).mockReturnValueOnce(lookup).mockReturnValueOnce(saved).mockReturnValueOnce(logged);
+    await markRemoteInstanceError(params);
+    expect(saved.update).toHaveBeenCalledWith(expect.objectContaining({ status: 'error' }));
+    expect(lookup.update).not.toHaveBeenCalled();
+  });
+
   it('preserves request correlation when completing a persisted user turn', async () => {
     const lookup = createChain({ data: { details: { request_id: 'request-1', status: 'running' } }, error: null });
     const update = createChain({ error: null });

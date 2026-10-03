@@ -72,7 +72,8 @@ describe('prepareRequirementForCronRun', () => {
     jest.useRealTimers();
   });
 
-  it('reactivates a due cron requirement through the atomic backlog writer', async () => {
+  it.each([{ migrations: [] }, { migrations: [{ state: 'transferred' }] }])('reactivates a due cron requirement with admitted history through the atomic backlog writer (%#)', async ({ migrations }) => {
+    mockListMigrationLifecycle.mockResolvedValue(migrations);
     const result = await prepareRequirementForCronRun({
       requirement: {
         id: 'requirement-1',

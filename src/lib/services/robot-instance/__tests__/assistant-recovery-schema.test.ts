@@ -103,6 +103,11 @@ describe('lossless recovery serialization', () => {
     { ...snapshot, continuation: { responseNodeIds: [null] } },
     { ...snapshot, continuation: { responseNodeIds: [], extra: true } },
     { ...snapshot, legacy: true },
+    { ...snapshot, lastActivityAt: 'invalid' }, { ...snapshot, inFlightSince: null },
+    { ...snapshot, inFlightKind: 'other' },
+    { ...snapshot, interruptionContext: 'x'.repeat(24 * 1024 + 1) },
+    { ...snapshot, toolObservations: [{}] },
+    { ...snapshot, toolObservations: Array(9).fill({ name: 'tool', args: '{}', outcome: 'unknown', observedAt: '2026-10-03T00:00:00Z' }) },
   ])('rejects malformed persisted snapshot %j', value => {
     expect(() => parseRecoverySnapshot(value)).toThrow(RecoveryError);
   });
@@ -113,5 +118,13 @@ describe('lossless recovery serialization', () => {
       nodeFingerprint: 'f'.repeat(64), lease_token: 'a599c3ec-cbbe-4078-829f-3beff8bb8c7f', respawnCount: 2,
     };
     expect(parseRecoverySnapshot(value)).toEqual(value);
+  });
+
+  it('round trips bounded interrupted-turn evidence and accepts older snapshots', () => {
+    const value = { ...snapshot, inFlight: true, inFlightSince: '2026-10-03T00:00:00Z',
+      lastActivityAt: '2026-10-03T00:01:00Z', inFlightKind: 'turn', interruptionContext: 'Inspect current state',
+      toolObservations: [{ name: 'content', args: '{"id":"draft-1"}', outcome: 'returned', result: '{}', observedAt: '2026-10-03T00:01:00Z' }] };
+    expect(parseRecoverySnapshot(value)).toEqual(value);
+    expect(parseRecoverySnapshot(snapshot)).toEqual(snapshot);
   });
 });

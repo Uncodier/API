@@ -1491,6 +1491,7 @@ export class AIAgentExecutor {
                     result = await tool.execute(toolCall.args);
                     break;
                   } catch (e: any) {
+                    if (e?.name === 'RecoveryError') throw e;
                     executeAttempts++;
                     const msg = e.message || '';
                     const isTransient = msg.includes('410') || msg.includes('422') || msg.includes('sandbox_stopping') || msg.includes('timeout') || msg.includes('socket');
@@ -1618,6 +1619,9 @@ export class AIAgentExecutor {
               console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOL_MSG] ✅ Added tool message for ${toolCall.toolCallId}`);
 
             } catch (error: any) {
+              // A lost owner or unpersisted observation is not proof the tool failed.
+              // Stop the turn without retrying or inventing a failed tool reply.
+              if (error?.name === 'RecoveryError') throw error;
               const toolEndTime = Date.now();
               const toolDuration = toolEndTime - toolStartTime;
               const errorMessage = error.message || String(error);
@@ -1765,6 +1769,7 @@ export class AIAgentExecutor {
         console.log(`₍ᐢ•(ܫ)•ᐢ₎ [EXECUTOR] Continuing to next iteration...`);
 
       } catch (error: any) {
+        if (error?.name === 'RecoveryError') throw error;
         console.error('Error in agent execution:', error);
 
         // Azure-specific content filter; other providers surface their own error shapes.

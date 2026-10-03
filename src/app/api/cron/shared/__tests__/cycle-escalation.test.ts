@@ -226,10 +226,14 @@ it('normalizes legacy generation zero and numeric strings to the same identity',
   expect(supabaseAdmin.rpc).toHaveBeenCalledTimes(1);
 });
 
-it.each(['harness_decision_stale_state', 'harness_decision_scope_denied', 'storage_unavailable'])
-('never claims a ticket, sends email or retries the RPC on %s', async message => {
+it.each([
+  { message: 'harness_decision_stale_state', code: 'PT409' },
+  { message: 'harness_decision_stale_state', code: '40001' }, // Legacy deployments still fail closed.
+  { message: 'harness_decision_scope_denied', code: '42501' },
+  { message: 'storage_unavailable', code: '08006' },
+])('never claims a ticket, sends email or retries the RPC on $message ($code)', async error => {
   fixture();
-  (supabaseAdmin.rpc as jest.Mock).mockResolvedValue({ data: null, error: { message, code: '40001' } });
+  (supabaseAdmin.rpc as jest.Mock).mockResolvedValue({ data: null, error });
   expect(await ensureCycleTechnicalEscalation(context(), {})).toEqual(UNAVAILABLE);
   expect(supabaseAdmin.rpc).toHaveBeenCalledTimes(1);
   expect(deliverHarnessSupportTicket).not.toHaveBeenCalled();

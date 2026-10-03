@@ -107,6 +107,58 @@ describe('harness diagnostic decisions SQL', () => {
         assert.ok(migration.split('\n').length <= 500);
         await db.exec(migration);
 
+        const conflictMigration = readFileSync('supabase/migrations/20261003020000_harness_decision_conflict_http_status.sql','utf8');
+        const signature = 'public.record_harness_diagnostic_decision(uuid,uuid,uuid,bigint,timestamptz,uuid,text,text,text,jsonb)';
+        const oldRaise = "RAISE EXCEPTION USING ERRCODE = '40001', MESSAGE = 'harness_decision_stale_state';";
+        const newRaise = oldRaise.replace('40001','PT409');
+        const readFunction = async () => (await rows('SELECT oid,pg_get_functiondef(oid) AS definition,proowner,proacl::text,prosecdef,proconfig FROM pg_proc WHERE oid=to_regprocedure($1)',[signature]))[0];
+        const rejectMigration = async (code, message) => rejected(async () => {
+          try { await db.exec(conflictMigration); }
+          finally { await db.exec('ROLLBACK'); }
+        },code,message);
+
+        await check('conflict migration changes only SQLSTATE and preserves receipts, privileges and replay', async () => {
+          const original = await readFunction();
+          assert.equal(original.definition.split(oldRaise).length,2);
+          await unchangedFailure({revision:6},'40001','^harness_decision_stale_state$');
+          const receipt = await rpc({decision:'escalate_support',item:null,payload:support});
+          const before = await readReq(), decisions = await readDecisions(), protectedBefore = await protectedRows();
+          await db.exec(conflictMigration);
+          const patched = await readFunction();
+          assert.deepEqual(patched,{...original,definition:original.definition.replace(oldRaise,newRaise)});
+          assert.equal(patched.definition.includes("ERRCODE = '40001'"),false);
+          assert.deepEqual(await readReq(),before);
+          assert.deepEqual(await readDecisions(),decisions);
+          assert.deepEqual(await protectedRows(),protectedBefore);
+          assert.deepEqual(await rpc({decision:'escalate_support',item:null,payload:support}),receipt);
+          // Reapplying the forward migration must not change any state or grants.
+          await db.exec(conflictMigration);
+          assert.deepEqual(await readFunction(),patched);
+          assert.deepEqual(await readReq(),before);
+          assert.deepEqual(await readDecisions(),decisions);
+          assert.deepEqual(await protectedRows(),protectedBefore);
+        });
+
+        await check('conflict migration fails closed on missing or unexpected function definitions', async () => {
+          const patched = await readFunction();
+          await db.exec('ALTER FUNCTION ' + signature + ' RENAME TO fixture_harness_decision');
+          try {
+            await rejectMigration('42883','Apply harness diagnostic decisions migration');
+            assert.equal(await readFunction(),undefined);
+          } finally {
+            await db.exec('ALTER FUNCTION public.fixture_harness_decision(uuid,uuid,uuid,bigint,timestamptz,uuid,text,text,text,jsonb) RENAME TO record_harness_diagnostic_decision');
+          }
+          for (const replacement of [newRaise.replace('PT409','P0001'),oldRaise+'\n'+oldRaise,oldRaise+'\n'+newRaise]) {
+            await db.exec(patched.definition.replace(newRaise,replacement));
+            const drifted = await readFunction();
+            try {
+              await rejectMigration('P0001','Unexpected harness diagnostic decision definition');
+              assert.deepEqual(await readFunction(),drifted);
+            } finally { await db.exec(patched.definition); }
+          }
+          assert.deepEqual(await readFunction(),patched);
+        });
+
         await check('authoring preserves all guards and original contracts', async () => {
           const before = await readReq(), protectedBefore = await protectedRows();
           const receipt = await rpc();
@@ -171,14 +223,16 @@ describe('harness diagnostic decisions SQL', () => {
         });
 
         await check('CAS and exact replay prevent stale or conflicting writes', async () => {
-          await unchangedFailure({revision:6},'40001');
-          await unchangedFailure({updated:'2026-09-01T00:00:00Z'},'40001');
+          for (const [decision,payload] of [['adapt_backlog',adapt],['approve_backlog',approve],['escalate_support',support]]) {
+            await unchangedFailure({decision,payload,revision:6},'PT409','^harness_decision_stale_state$');
+            await unchangedFailure({decision,payload,updated:'2026-09-01T00:00:00Z'},'PT409','^harness_decision_stale_state$');
+          }
           const receipt = await rpc();
           assert.deepEqual(await rpc(),receipt); // Old revision and timestamp are intentional.
           for (const overrides of [{reason:'Different reason'},{payload:{...adapt,verification:'Different'}},
             {decision:'approve_backlog',payload:approve},{item:'held'},{instance:origin}])
             await unchangedFailure(overrides,'23505','request_conflict');
-          await unchangedFailure({request:id(21)},'40001');
+          await unchangedFailure({request:id(21)},'PT409','^harness_decision_stale_state$');
           await db.query('UPDATE requirements SET status=$1,cron_lock_active=true,cron_lock_expires_at=now()+interval $$1 hour$$ WHERE id=$2',['done',req]);
           await setItem({status:'done'});
           assert.deepEqual(await rpc(),receipt);
@@ -485,6 +539,8 @@ describe('harness diagnostic decisions SQL', () => {
   }, 55_000);
 
   it.each([
+    'conflict migration changes only SQLSTATE and preserves receipts, privileges and replay',
+    'conflict migration fails closed on missing or unexpected function definitions',
     'authoring preserves all guards and original contracts',
     'approval and support are receipts, never completion or execution',
     'tenant and current instance ownership are mandatory',

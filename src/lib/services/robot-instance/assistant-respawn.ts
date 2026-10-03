@@ -51,11 +51,13 @@ export async function insertRespawnLog(instanceId: string, siteId: string, userI
   }
 }
 
-export async function spawnSilentContinueWorkflow(scope: AssistantRecoveryScope): Promise<boolean> {
-  // Only a complete checkpoint tied to a trusted, still-active user action may
-  // restart. Never infer node identity from whichever log happens to be latest.
+export async function spawnSilentContinueWorkflow(
+  scope: AssistantRecoveryScope, options?: { allowStaleInFlight: boolean },
+): Promise<boolean> {
+  // A stale turn resumes the agent with evidence, never by replaying a tool call.
+  // Original scope, context binding and atomic ownership remain mandatory.
   let claimed;
-  try { claimed = await claimAssistantRecovery(scope); }
+  try { claimed = options ? await claimAssistantRecovery(scope, options) : await claimAssistantRecovery(scope); }
   catch { return false; }
   const { snapshot, resumeToken } = claimed;
   const execution = snapshot.execution;

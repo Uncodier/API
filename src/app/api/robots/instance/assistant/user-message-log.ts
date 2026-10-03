@@ -67,7 +67,11 @@ export async function markRemoteInstanceError(params: {
   userId?: string | null;
   errorMessage: string;
   userMessageLogId?: string | null;
+  expectedGeneration?: number;
 }): Promise<void> {
+  // Fence late failures before writing either the instance status or its error log.
+  if (params.expectedGeneration !== undefined && params.userMessageLogId &&
+      !await setUserMessageStatus(params.userMessageLogId, 'failed', params.expectedGeneration)) return;
   const update = async () => supabaseAdmin
     .from('remote_instances')
     .update({
@@ -90,7 +94,7 @@ export async function markRemoteInstanceError(params: {
   });
   // A denied status update must not suppress the error log, or vice versa.
   const [updated, logged, userLog] = await Promise.allSettled([
-    update(), insert(), params.userMessageLogId
+    update(), insert(), params.userMessageLogId && params.expectedGeneration === undefined
       ? setUserMessageStatus(params.userMessageLogId, 'failed') : Promise.resolve(),
   ]);
   const updateError = updated.status === 'rejected' ? updated.reason : updated.value.error;
@@ -104,12 +108,20 @@ export async function markRemoteInstanceError(params: {
   if (userLog.status === 'rejected') throw userLog.reason;
 }
 
-export async function setUserMessageStatus(logId: string, status: 'completed' | 'failed' | 'paused'): Promise<void> {
+export async function setUserMessageStatus(
+  logId: string, status: 'completed' | 'failed' | 'paused', expectedGeneration?: number,
+): Promise<boolean> {
   const { data, error } = await supabaseAdmin.from('instance_logs').select('details')
     .eq('id', logId).eq('log_type', 'user_action').single();
   if (error || !data) throw new Error('Failed to read the user message status');
   // An explicit cancellation must not be undone by a late workflow checkpoint.
-  if (data.details?.status === 'cancelled' || data.details?.status === 'stopped') return;
+  if (data.details?.status === 'cancelled' || data.details?.status === 'stopped') return false;
+  if (expectedGeneration !== undefined) {
+    if (data.details?.assistant_recovery?.respawnCount !== expectedGeneration || data.details?.assistant_recovery?.lease_token) return false;
+    // Durable retries may finish the remaining error-log/instance writes for this owner.
+    if (data.details?.status === status) return true;
+    if (data.details?.status !== 'running') return false;
+  }
   if (data.details?.assistant_recovery) {
     const revision = data.details.assistant_recovery.revision;
     if (typeof revision !== 'string') throw new Error('Failed to save the user message status');
@@ -119,13 +131,14 @@ export async function setUserMessageStatus(logId: string, status: 'completed' | 
     }).eq('id', logId).eq('log_type', 'user_action')
       .eq('details->>status', data.details.status)
       .eq('details->assistant_recovery->>revision', revision).select('id').maybeSingle();
-    if (saveError || !saved) throw new Error('Failed to save the user message status');
-    return;
+    if (saveError || (!saved && expectedGeneration === undefined)) throw new Error('Failed to save the user message status');
+    return Boolean(saved);
   }
   const { error: updateError } = await supabaseAdmin.from('instance_logs').update({
     details: { ...(data.details || {}), status },
   }).eq('id', logId).eq('log_type', 'user_action');
   if (updateError) throw new Error('Failed to save the user message status');
+  return true;
 }
 
 export async function withRetries<T>(

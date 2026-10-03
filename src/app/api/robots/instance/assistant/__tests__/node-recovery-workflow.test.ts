@@ -62,7 +62,7 @@ describe('node execution continuation workflow', () => {
     expect(sends).toBe(1);
     expect(h.checkpointRecoveryStep).toHaveBeenCalledTimes(2);
     expect(h.spawnSilentContinueStep).not.toHaveBeenCalled();
-    expect(h.completeUserMessageStep).toHaveBeenCalledWith('user-log');
+    expect(h.completeUserMessageStep).toHaveBeenCalledWith('user-log', 0);
   });
 
   it('restores the original node, overrides, response ID and messages from a claimed checkpoint', async () => {
@@ -127,7 +127,7 @@ describe('node execution continuation workflow', () => {
     h.processAssistantTurn.mockImplementation(async (_context, messages) => h.result(messages));
     const result = await h.run();
     expect(result).toMatchObject({ success: false, execution_status: 'exhausted' });
-    expect(h.pauseUserMessageStep).toHaveBeenCalledWith('user-log');
+    expect(h.pauseUserMessageStep).toHaveBeenCalledWith('user-log', 0);
     expect(h.completeUserMessageStep).not.toHaveBeenCalled();
   });
 
@@ -138,5 +138,28 @@ describe('node execution continuation workflow', () => {
     expect((await h.run()).execution_status).toBe('exhausted');
     expect(h.processAssistantTurn).toHaveBeenCalledTimes(1);
     expect(h.spawnSilentContinueStep).not.toHaveBeenCalled();
+  });
+
+  it('delivers uncertain last-tool context to the model without adding invented tool replies', async () => {
+    const h = setup();
+    h.prepareRecoveryStep.mockResolvedValue({ ok: true, snapshot: {
+      execution: h.execution, respawnCount: 1, messages: h.transcript,
+      continuation: { responseNodeIds: ['response'] }, interruptionContext: 'Interrupted: inspect last content update before repeating it',
+    } });
+    h.processAssistantTurn.mockImplementation(async (context, messages) => {
+      expect(context.systemPrompt).toContain('inspect last content update');
+      expect(messages).toEqual(h.transcript);
+      return h.result(messages, 'Continued from current state', true);
+    });
+    await h.run({ silentContinue: true, userMessageLogId: 'user-log', resumeToken: 'token' });
+    expect(h.completeUserMessageStep).toHaveBeenCalledWith('user-log', 1);
+  });
+
+  it('does not let a late abandoned worker failure mark the continuation failed', async () => {
+    const h = setup();
+    h.processAssistantTurn.mockRejectedValue(new Error('late provider error'));
+    h.guardRecoveryStep.mockResolvedValueOnce(true).mockResolvedValue(false);
+    expect((await h.run()).success).toBe(false);
+    expect(h.markAssistantFailedStep).not.toHaveBeenCalled();
   });
 });

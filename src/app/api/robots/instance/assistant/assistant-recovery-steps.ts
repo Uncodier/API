@@ -19,10 +19,12 @@ export async function prepareRecoveryStep(
   }
 }
 
-export async function guardRecoveryStep(scope: AssistantRecoveryScope, startTurn = false): Promise<boolean> {
+export async function guardRecoveryStep(
+  scope: AssistantRecoveryScope, startTurn = false, messages?: unknown[], kind: 'turn' | 'plan' = 'turn',
+): Promise<boolean> {
   'use step';
   try {
-    if (startTurn) await markAssistantRecoveryInFlight(scope);
+    if (startTurn) await markAssistantRecoveryInFlight(scope, messages, kind);
     else await assertAssistantRecoveryActive(scope);
     return true;
   } catch { return false; }

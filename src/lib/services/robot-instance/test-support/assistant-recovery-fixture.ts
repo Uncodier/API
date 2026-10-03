@@ -6,7 +6,7 @@ export const scope: AssistantRecoveryScope = {
 };
 export const execution: AssistantRecoveryExecution = { customTools: [], useSdkTools: false };
 type Row = Record<string, any>;
-type Filter = { column: string; value: unknown; operator: 'eq' | 'is' | 'in' };
+type Filter = { column: string; value: unknown; operator: 'eq' | 'is' | 'in' | 'gte' };
 export type Query = { table: string; filters: Filter[]; update?: Row; orders: string[]; columns?: string };
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 
@@ -16,8 +16,9 @@ export function recoveryDatabase() {
       id: scope.userMessageLogId, instance_id: scope.instanceId, site_id: scope.siteId,
       user_id: scope.userId, log_type: 'user_action', trusted_user_action: true,
       created_at: '2026-09-30T12:00:00Z', details: { status: 'running', request_id: 'request-1' },
+      message: 'Continue the requested task',
     }],
-    instance_nodes: [], instance_node_contexts: [],
+    instance_nodes: [], instance_node_contexts: [], instance_plans: [],
   };
   const queries: Query[] = [];
   const database = {
@@ -37,7 +38,7 @@ export function recoveryDatabase() {
       const chain: any = {};
       chain.select = (columns: string) => { query.columns = columns; return chain; };
       chain.update = (update: Row) => { query.update = update; return chain; };
-      for (const operator of ['eq', 'is', 'in'] as const) {
+      for (const operator of ['eq', 'is', 'in', 'gte'] as const) {
         chain[operator] = (column: string, value: unknown) => {
           query.filters.push({ column, value, operator }); return chain;
         };
@@ -57,6 +58,7 @@ export function recoveryDatabase() {
         }
         let rows = tables[table].filter(row => query.filters.every(filter => {
           if (filter.operator === 'in') return (filter.value as unknown[]).includes(row[filter.column]);
+          if (filter.operator === 'gte') return Date.parse(row[filter.column]) >= Date.parse(filter.value as string);
           if (filter.column === 'details' && typeof filter.value === 'string') {
             return JSON.stringify(row.details) === JSON.stringify(JSON.parse(filter.value));
           }

@@ -227,6 +227,23 @@ describe('single deterministic atomic execution', () => {
 });
 
 describe('execution context', () => {
+  it('admits an explicitly transferred obligation but still executes static SQL checks and requires an actual receipt', async () => {
+    const state = harness();
+    (listMigrationLifecycle as jest.Mock).mockResolvedValue([{ state: 'transferred' }]);
+    expect(await state.run('TRUNCATE records;')).toMatchObject({ applied: false, failureKind: 'product' });
+    expect(state.calls()).toHaveLength(0);
+    expect(await state.run()).toEqual({ applied: true });
+    expect(state.workspace.receipts).toEqual([{ migration_key: migrationKey, value: { checksum: migrationDigest(sql) } }]);
+    expect(listMigrationLifecycle).toHaveBeenCalledWith(requirementId);
+  });
+
+  it('does not let one transferred file release another unresolved hold', async () => {
+    const state = harness();
+    (listMigrationLifecycle as jest.Mock).mockResolvedValue([{ state: 'transferred' }, { state: 'correction_required' }]);
+    expect(await state.run()).toMatchObject({ applied: false, diagnostic: { code: 'LEGACY_MIGRATION_HOLD' } });
+    expect(state.calls()).toHaveLength(0);
+  });
+
   it('selects no instructions/specification hash and fences status, generation, site and owner', async () => {
     const row = { id: requirementId, site_id: 'site', user_id: 'user', status: 'in-progress', metadata: { requirement_execution_generation: 1 } };
     const select = jest.fn(() => ({ eq: jest.fn(() => ({ maybeSingle: jest.fn(async () => ({ data: row, error: null })) })) }));

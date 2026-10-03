@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { captureRecoveryNodeFingerprint } from './assistant-recovery-fingerprint';
+import { buildInterruptedRecoveryContext, mergeInterruptedRecoveryContext, summarizeRecoveryTool } from './assistant-recovery-context';
+import { IN_FLIGHT_STALL_MS } from './assistant-respawn-policy';
 import {
   assertRecoveryScope, canonicalRecoveryJson, cloneRecoveryJson, isRecord,
   MAX_RECOVERY_RESPAWNS, parseRecoveryCheckpoint, parseRecoveryExecution,
@@ -13,8 +15,8 @@ export type {
   AssistantRecoveryExecution, AssistantRecoveryScope, AssistantRecoverySnapshot, RecoveryErrorCode,
 } from './assistant-recovery-schema';
 
-const ACTION_COLUMNS = 'id,instance_id,site_id,user_id,log_type,trusted_user_action,details';
-type Action = { details: Record<string, unknown> };
+const ACTION_COLUMNS = 'id,instance_id,site_id,user_id,log_type,trusted_user_action,details,created_at,message';
+type Action = { details: Record<string, unknown>; createdAt?: string; message?: string };
 type ActiveRecovery = Action & { snapshot: AssistantRecoverySnapshot };
 
 /** Internal server boundary only. The caller must already authorize this trusted scope. */
@@ -49,7 +51,7 @@ async function readAction(scope: AssistantRecoveryScope, initializing = false): 
     throw new RecoveryError('inactive');
   }
   await assertLatest(scope);
-  return { details };
+  return { details, createdAt: data.created_at, message: data.message };
 }
 
 async function readRecovery(scope: AssistantRecoveryScope): Promise<ActiveRecovery> {
@@ -145,12 +147,17 @@ export async function assertAssistantRecoveryActive(scope: AssistantRecoveryScop
   });
 }
 
-export async function markAssistantRecoveryInFlight(scope: AssistantRecoveryScope): Promise<void> {
+export async function markAssistantRecoveryInFlight(
+  scope: AssistantRecoveryScope, messages?: unknown[], kind: 'turn' | 'plan' = 'turn',
+): Promise<void> {
   return safeRecovery(async () => {
     const active = await readRecovery(scope);
     assertOwner(scope, active.snapshot);
     if (active.snapshot.inFlight) throw new RecoveryError('in_flight');
-    await compareAndSwap(scope, active, { ...active.snapshot, inFlight: true });
+    const now = new Date().toISOString();
+    const checkpoint = messages ? parseRecoveryCheckpoint({ messages }) : undefined;
+    await compareAndSwap(scope, active, { ...active.snapshot, ...checkpoint, inFlight: true,
+      inFlightSince: now, inFlightKind: kind, lastActivityAt: now, toolObservations: [] });
   });
 }
 
@@ -165,26 +172,97 @@ export async function checkpointAssistantRecovery(
       messages: checkpoint.messages,
       ...(checkpoint.continuation !== undefined ? { continuation: checkpoint.continuation } : {}),
     });
-    await compareAndSwap(scope, active, { ...active.snapshot, ...frozen, inFlight: false });
+    // Interrupted evidence remains until the action ends, including across another respawn.
+    const { inFlightSince: _started, inFlightKind: _kind, toolObservations: _tools, ...snapshot } = active.snapshot;
+    await compareAndSwap(scope, active, { ...snapshot, ...frozen, inFlight: false, lastActivityAt: new Date().toISOString() });
   });
 }
 
-export async function claimAssistantRecovery(scope: AssistantRecoveryScope): Promise<{
+/** Persist bounded evidence before/after an effect, without claiming it is a checkpoint. */
+export async function runAssistantRecoveryTool<T>(
+  scope: AssistantRecoveryScope, name: string, args: unknown, execute: () => Promise<T>,
+): Promise<T> {
+  const observation = summarizeRecoveryTool({ name, args, outcome: 'unknown', observedAt: new Date().toISOString() });
+  await safeRecovery(async () => {
+    const active = await readRecovery(scope);
+    assertOwner(scope, active.snapshot);
+    if (!active.snapshot.inFlight) throw new RecoveryError('inactive');
+    await compareAndSwap(scope, active, { ...active.snapshot, lastActivityAt: observation.observedAt,
+      toolObservations: [...(active.snapshot.toolObservations ?? []).slice(-7), observation] });
+  });
+  let result: T | undefined;
+  let failure: unknown;
+  let threw = false;
+  try { result = await execute(); }
+  catch (error) { threw = true; failure = error; }
+  await safeRecovery(async () => {
+    const active = await readRecovery(scope);
+    assertOwner(scope, active.snapshot);
+    const observations = active.snapshot.toolObservations ?? [];
+    if (canonicalRecoveryJson(observations.at(-1)) !== canonicalRecoveryJson(observation)) throw new RecoveryError('conflict');
+    const completed = summarizeRecoveryTool({ name, args, outcome: threw ? 'threw' : 'returned',
+      result: threw ? failure : result, observedAt: new Date().toISOString() });
+    await compareAndSwap(scope, active, { ...active.snapshot, lastActivityAt: completed.observedAt,
+      toolObservations: [...observations.slice(0, -1), completed] });
+  });
+  if (threw) throw failure;
+  return result!;
+}
+
+async function interruptedContext(scope: AssistantRecoveryScope, active: ActiveRecovery): Promise<string> {
+  const since = active.snapshot.inFlightSince ?? active.createdAt;
+  if (!since || !Number.isFinite(Date.parse(since))) throw new RecoveryError('in_flight');
+  const [latest, tools] = await Promise.all([
+    supabaseAdmin.from('instance_logs').select('created_at,details')
+      .eq('instance_id', scope.instanceId).eq('site_id', scope.siteId).gte('created_at', since)
+      .in('log_type', ['user_action', 'agent_action', 'thinking', 'tool_call', 'infrastructure'])
+      .order('created_at', { ascending: false }).limit(10),
+    supabaseAdmin.from('instance_logs').select('created_at,log_type,tool_name,tool_args,tool_result,message')
+      .eq('instance_id', scope.instanceId).eq('site_id', scope.siteId).gte('created_at', since)
+      .eq('log_type', 'tool_call').order('created_at', { ascending: false }).limit(5),
+  ]);
+  if (latest.error || tools.error) throw new RecoveryError('conflict');
+  const activity = [since, active.snapshot.lastActivityAt, ...(latest.data ?? [])
+    .flatMap(row => [row.created_at, row.details?.last_activity_at])]
+    .filter((value): value is string => value !== undefined && value !== null).map(value => Date.parse(value));
+  if (activity.some(time => !Number.isFinite(time)) || Date.now() - Math.max(...activity) < IN_FLIGHT_STALL_MS) {
+    throw new RecoveryError('in_flight');
+  }
+  return buildInterruptedRecoveryContext(active.snapshot.toolObservations ?? [], tools.data ?? []);
+}
+
+export async function claimAssistantRecovery(scope: AssistantRecoveryScope, options?: { allowStaleInFlight: boolean }): Promise<{
   snapshot: AssistantRecoverySnapshot;
   resumeToken: string;
 }> {
   return safeRecovery(async () => {
     const active = await readRecovery(scope);
-    if (active.snapshot.inFlight) throw new RecoveryError('in_flight');
     if (active.snapshot.lease_token) throw new RecoveryError('conflict');
-    if (!active.snapshot.messages.length) throw new RecoveryError('missing');
+    if (active.snapshot.inFlight && (!options?.allowStaleInFlight || active.snapshot.inFlightKind === 'plan' ||
+        active.snapshot.execution.instanceNodeId)) {
+      throw new RecoveryError('in_flight');
+    }
+    if (active.snapshot.inFlight && !active.snapshot.inFlightKind) {
+      // Legacy checkpoints do not distinguish a model turn from plan execution.
+      const plans = await supabaseAdmin.from('instance_plans').select('id')
+        .eq('instance_id', scope.instanceId).eq('site_id', scope.siteId)
+        .in('status', ['pending', 'in_progress', 'active', 'paused']).limit(1);
+      if (plans.error) throw new RecoveryError('conflict');
+      if (plans.data?.length) throw new RecoveryError('in_flight');
+    }
     if (active.snapshot.respawnCount >= MAX_RECOVERY_RESPAWNS) throw new RecoveryError('limit');
     if (active.snapshot.execution.instanceNodeId &&
         ((active.snapshot.execution.expectedResultsAmount ?? 1) > 1 ||
          active.snapshot.continuation?.responseNodeIds.length !== 1)) throw new RecoveryError('invalid_state');
+    const interruptionContext = active.snapshot.inFlight ? await interruptedContext(scope, active) : undefined;
+    const messages = active.snapshot.messages.length ? active.snapshot.messages
+      : interruptionContext && active.message ? parseRecoveryCheckpoint({ messages: [{ role: 'user', content: active.message }] }).messages : [];
+    if (!messages.length) throw new RecoveryError('missing');
     const resumeToken = randomUUID();
     const snapshot = await compareAndSwap(scope, active, {
-      ...active.snapshot, respawnCount: active.snapshot.respawnCount + 1, lease_token: resumeToken,
+      ...active.snapshot, messages, inFlight: false,
+      ...(interruptionContext ? { interruptionContext: mergeInterruptedRecoveryContext(active.snapshot.interruptionContext, interruptionContext) } : {}),
+      lastActivityAt: new Date().toISOString(), respawnCount: active.snapshot.respawnCount + 1, lease_token: resumeToken,
     });
     return { snapshot, resumeToken };
   });

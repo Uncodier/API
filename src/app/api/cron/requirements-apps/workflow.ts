@@ -167,7 +167,9 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     ? await loadMigrationLifecycleStep(reqId) : [];
   // Legacy rows are historical obligations, not the state machine for new SQL.
   // Never silently release an existing security hold or ambiguous application.
-  if (migrationLifecycle.some(row => row.state !== 'validated')) {
+  // Explicitly transferred obligations use the normal receipt/product gates;
+  // they are not validated and cannot bypass final migration verification.
+  if (migrationLifecycle.some(row => row.state !== 'validated' && row.state !== 'transferred')) {
     recoveryDisposition = 'internal_review';
     wrapUpRequiresUserFeedback = false;
     wrapUpReason = 'A historical migration obligation needs reconciliation before using the simplified executor. Deployment does not release existing holds.';
