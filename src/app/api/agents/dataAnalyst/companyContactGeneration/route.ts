@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { CommandFactory, ProcessorInitializer } from '@/lib/agentbase';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { waitForSubmittedCommand } from '@/lib/agentbase/services/command/waitForSubmittedCommand';
 
 // Configure maximum timeout to 5 minutes (300 seconds)
 // Maximum for Vercel Pro plan
@@ -351,76 +352,21 @@ IMPORTANT: Return the emails in strict order of probability considering both uni
     
     console.log(`📝 Generic contact email generation command created: ${internalCommandId}`);
     
-    // Get the real UUID of the command by searching in the database
-    let realCommandId = null;
-    try {
-      // Find the most recent command for this agent
-      const { data: recentCommands, error } = await supabaseAdmin
-        .from('commands')
-        .select('id')
-        .eq('agent_id', dataAnalystAgent.agentId)
-        .eq('description', `Company Generic Contact Email Generation for ${domain}`)
-        .order('created_at', { ascending: false })
-        .limit(1);
-      
-      if (!error && recentCommands && recentCommands.length > 0) {
-        realCommandId = recentCommands[0].id;
-        console.log(`🔍 Real command UUID found: ${realCommandId}`);
-      }
-    } catch (error) {
-      console.log('Could not get command UUID from database, using internal ID');
-    }
-    
-    // If we don't have the real UUID, use the internal ID
-    const commandIdToSearch = realCommandId || internalCommandId;
-    
-    // Wait for command to complete
-    let completedCommand = null;
-    // Detect if we're in test environment to reduce wait times
-    const isTestEnvironment = process.env.NODE_ENV === 'test' || process.env.JEST_WORKER_ID !== undefined;
-    const maxRetries = isTestEnvironment ? 5 : 580; // 5 attempts in test, 580 in production (~4.8 minutes)
-    const retryDelay = isTestEnvironment ? 10 : 500; // 10ms in test, 500ms in production
-    
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-      try {
-        // Search for command in database by ID
-        const { data: commandData, error } = await supabaseAdmin
-          .from('commands')
-          .select('*')
-          .eq('id', commandIdToSearch)
-          .single();
-        
-        if (!error && commandData) {
-          if (commandData.status === 'completed') {
-            completedCommand = commandData;
-            console.log(`✅ Command completed after ${attempt + 1} attempts`);
-            break;
-          } else if (commandData.status === 'failed') {
-            console.error(`❌ Command failed after ${attempt + 1} attempts`);
-            return NextResponse.json(
-              { 
-                success: false, 
-                error: { 
-                  code: 'COMMAND_EXECUTION_FAILED', 
-                  message: 'Company generic contact email generation command failed to execute',
-                  commandId: commandIdToSearch
-                } 
-              },
-              { status: 500 }
-            );
-          }
-        }
-        
-        // If not completed, wait before next attempt
-        if (attempt < maxRetries - 1) {
-          await new Promise(resolve => setTimeout(resolve, retryDelay));
-        }
-      } catch (error) {
-        console.log(`Attempt ${attempt + 1}/${maxRetries}: Command still processing...`);
-        if (attempt < maxRetries - 1) {
-          await new Promise(resolve => setTimeout(resolve, retryDelay));
-        }
-      }
+    const { commandId: commandIdToSearch, command: completedCommand } =
+      await waitForSubmittedCommand(commandService, internalCommandId);
+
+    if (completedCommand && completedCommand.status !== 'completed') {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'COMMAND_EXECUTION_FAILED',
+            message: 'Company generic contact email generation command failed to execute',
+            commandId: commandIdToSearch,
+          },
+        },
+        { status: 500 },
+      );
     }
     
     if (!completedCommand) {

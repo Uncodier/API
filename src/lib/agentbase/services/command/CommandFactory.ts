@@ -87,7 +87,8 @@ export class CommandFactory {
   }
   
   /**
-   * Generate a unique command ID
+   * Generate a process-local ID for memory-only fallback commands.
+   * Persisted commands must use their database UUID instead.
    */
   static generateCommandId(): string {
     return `cmd_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;

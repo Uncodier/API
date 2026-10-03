@@ -51,19 +51,15 @@ export class CommandSubmitService {
         console.log(`✅ [CommandSubmitService] agent_background preservado correctamente en BD (${createdCommand.agent_background.length} caracteres)`);
       }
       
-      // Crear un ID en formato antiguo para compatibilidad
-      const legacyId = CommandFactory.generateCommandId();
-      console.log(`🔑 [CommandSubmitService] ID legacy generado: ${legacyId}`);
-      
-      // Guardar la relación entre el ID de formato antiguo y el UUID
-      CommandStore.setIdMapping(legacyId, createdCommand.id);
-      console.log(`🔗 [CommandSubmitService] Mapeos registrados: ${legacyId} -> ${createdCommand.id}, ${createdCommand.id} -> ${createdCommand.id}`);
-      
-      // Store command in memory as a fallback (usando el ID antiguo)
-      // Añadir el uuid de la BD como metadato para facilitar actualizaciones
-      const memoryCommand = { 
+      // Use the persisted UUID across requests/isolates. A process-local alias
+      // cannot be resolved by another worker or used in a Postgres UUID filter.
+      const commandId = createdCommand.id;
+      CommandStore.setIdMapping(commandId, commandId);
+
+      // Keep the same identity in memory, events and the submission response.
+      const memoryCommand: DbCommand = {
         ...createdCommand, 
-        id: legacyId,
+        id: commandId,
         // Almacenar el UUID de BD como metadato
         metadata: {
           ...(createdCommand.metadata || {}),
@@ -127,17 +123,16 @@ export class CommandSubmitService {
       }
       
       // Guardar comando en memoria
-      CommandStore.setCommand(legacyId, memoryCommand);
-      console.log(`📦 [CommandSubmitService] Comando almacenado en memoria con ID: ${legacyId}`);
+      CommandStore.setCommand(commandId, memoryCommand);
+      console.log(`📦 [CommandSubmitService] Comando almacenado en memoria con ID: ${commandId}`);
       
-      // Emit event for command creation with the old ID format but include the DB UUID
+      // Emit the persisted identity used by the command processor.
       this.eventEmitter.emit('commandCreated', memoryCommand);
-      console.log(`📣 [CommandSubmitService] Evento 'commandCreated' emitido para ID: ${legacyId}`);
+      console.log(`📣 [CommandSubmitService] Evento 'commandCreated' emitido para ID: ${commandId}`);
       
-      console.log(`✅ [CommandSubmitService] FIN submitCommand, devolviendo ID: ${legacyId}`);
+      console.log(`✅ [CommandSubmitService] FIN submitCommand, devolviendo ID: ${commandId}`);
       
-      // Devolver el ID en formato antiguo
-      return legacyId;
+      return commandId;
     } catch (error) {
       console.error('Error creating command in database:', error);
       

@@ -1,5 +1,6 @@
 import { supabaseAdmin } from './supabase-client'
 import { circuitBreakers } from '@/lib/utils/circuit-breaker'
+import { isValidUUID } from '@/lib/agentbase/utils/UuidUtils'
 
 /**
  * Type for command status enum
@@ -267,7 +268,7 @@ async function retryWithBackoff<T>(
       lastError = error;
       
       // Don't retry for certain error types
-      if (error.code === 'PGRST116' || error.message?.includes('not found')) {
+      if (error.code === '22P02' || error.code === 'PGRST116' || error.message?.includes('not found')) {
         throw error;
       }
       
@@ -293,6 +294,9 @@ async function retryWithBackoff<T>(
  * @returns The command or null if not found
  */
 export async function getCommandById(commandId: string): Promise<DbCommand | null> {
+  // Reject process-local aliases before touching PostgREST or the circuit breaker.
+  if (!isValidUUID(commandId)) return null;
+
   return circuitBreakers.database.execute(async () => {
     return retryWithBackoff(async () => {
       try {
@@ -313,7 +317,7 @@ export async function getCommandById(commandId: string): Promise<DbCommand | nul
           hint: error.hint || '',
           code: error.code || ''
         });
-        throw new Error(`Error getting command: ${error.message}`);
+        throw Object.assign(new Error(`Error getting command: ${error.message}`), { code: error.code });
       }
       
       // Log if agent_background is present

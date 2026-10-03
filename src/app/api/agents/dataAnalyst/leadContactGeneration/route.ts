@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { CommandFactory, ProcessorInitializer } from '@/lib/agentbase';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { waitForSubmittedCommand } from '@/lib/agentbase/services/command/waitForSubmittedCommand';
 
 // Configurar timeout máximo a 5 minutos (300 segundos)
 // Máximo para plan Pro de Vercel
@@ -884,76 +885,21 @@ IMPORTANT: Return the emails in strict order of probability considering both uni
     
     console.log(`📝 Comando de generación de emails creado: ${internalCommandId}`);
     
-    // Obtener el UUID real del comando buscando en la base de datos
-    let realCommandId = null;
-    try {
-      // Buscar el comando más reciente para este agente
-      const { data: recentCommands, error } = await supabaseAdmin
-        .from('commands')
-        .select('id')
-        .eq('agent_id', dataAnalystAgent.agentId)
-        .eq('description', `Lead Contact Email Generation for ${name} at ${domain}`)
-        .order('created_at', { ascending: false })
-        .limit(1);
-      
-      if (!error && recentCommands && recentCommands.length > 0) {
-        realCommandId = recentCommands[0].id;
-        console.log(`🔍 UUID real del comando encontrado: ${realCommandId}`);
-      }
-    } catch (error) {
-      console.log('No se pudo obtener el UUID del comando desde BD, usando ID interno');
-    }
-    
-    // Si no tenemos el UUID real, usar el ID interno
-    const commandIdToSearch = realCommandId || internalCommandId;
-    
-    // Esperar a que el comando se complete
-    let completedCommand = null;
-    // Detectar si estamos en entorno de test para reducir tiempos
-    const isTestEnvironment = process.env.NODE_ENV === 'test' || process.env.JEST_WORKER_ID !== undefined;
-    const maxRetries = isTestEnvironment ? 5 : 580; // 5 intentos en test, 580 en producción (~4.8 minutos)
-    const retryDelay = isTestEnvironment ? 10 : 500; // 10ms en test, 500ms en producción
-    
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-      try {
-        // Buscar comando en base de datos por ID
-        const { data: commandData, error } = await supabaseAdmin
-          .from('commands')
-          .select('*')
-          .eq('id', commandIdToSearch)
-          .single();
-        
-        if (!error && commandData) {
-          if (commandData.status === 'completed') {
-            completedCommand = commandData;
-            console.log(`✅ Comando completado después de ${attempt + 1} intentos`);
-            break;
-          } else if (commandData.status === 'failed') {
-            console.error(`❌ Comando falló después de ${attempt + 1} intentos`);
-            return NextResponse.json(
-              { 
-                success: false, 
-                error: { 
-                  code: 'COMMAND_EXECUTION_FAILED', 
-                  message: 'Lead contact email generation command failed to execute',
-                  commandId: commandIdToSearch
-                } 
-              },
-              { status: 500 }
-            );
-          }
-        }
-        
-        // Si no está completado, esperar antes del siguiente intento
-        if (attempt < maxRetries - 1) {
-          await new Promise(resolve => setTimeout(resolve, retryDelay));
-        }
-      } catch (error) {
-        console.log(`Intento ${attempt + 1}/${maxRetries}: Comando aún procesándose...`);
-        if (attempt < maxRetries - 1) {
-          await new Promise(resolve => setTimeout(resolve, retryDelay));
-        }
-      }
+    const { commandId: commandIdToSearch, command: completedCommand } =
+      await waitForSubmittedCommand(commandService, internalCommandId);
+
+    if (completedCommand && completedCommand.status !== 'completed') {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'COMMAND_EXECUTION_FAILED',
+            message: 'Lead contact email generation command failed to execute',
+            commandId: commandIdToSearch,
+          },
+        },
+        { status: 500 },
+      );
     }
     
     if (!completedCommand) {

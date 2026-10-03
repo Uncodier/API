@@ -7,9 +7,10 @@ import { CommandStore } from './CommandStore';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { EventEmitter } from 'events';
 import { CommandCache } from './CommandCache';
+import { isValidUUID } from '../../utils/UuidUtils';
 
 export type GetCommandByIdOptions = {
-  /** Always read Postgres. Use from pollers so isolate cache cannot hide DB status. */
+  /** Refresh persisted commands from Postgres; memory-only commands stay local. */
   fresh?: boolean;
 };
 
@@ -36,17 +37,36 @@ export class CommandQueryService {
    */
   async getCommandById(commandId: string, options?: GetCommandByIdOptions): Promise<DbCommand | null> {
     try {
-      const cachedCommand = CommandCache.getCachedCommand(commandId);
+      const cachedCommand = CommandCache.getCachedCommand(commandId)
+        || CommandStore.getCommand(commandId)
+        || null;
 
       if (!shouldReadDatabase(cachedCommand, options)) {
         return cachedCommand;
       }
 
-      const dbId = CommandStore.getMappedId(commandId) || commandId;
+      const dbId = [
+        commandId,
+        CommandStore.getMappedId(commandId),
+        CommandCache.getMappedId(commandId),
+        cachedCommand?.metadata?.dbUuid,
+      ].find((id): id is string => typeof id === 'string' && isValidUUID(id));
+
+      // Legacy IDs are only resolvable inside their original process. Never
+      // send an unresolved alias to a UUID column, even for fresh polling.
+      if (!dbId) return cachedCommand;
+
       const command = await DatabaseAdapter.getCommandById(dbId);
 
       if (command) {
-        const resultCommand = { ...command };
+        const resultCommand = {
+          ...command,
+          metadata: {
+            ...cachedCommand?.metadata,
+            ...command.metadata,
+            dbUuid: dbId,
+          },
+        };
         if (commandId !== dbId) {
           resultCommand.id = commandId;
         }
@@ -56,6 +76,7 @@ export class CommandQueryService {
           resultCommand.agent_background = cachedCommand.agent_background;
         }
 
+        CommandStore.setIdMapping(commandId, dbId);
         CommandStore.setCommand(commandId, resultCommand);
         CommandCache.cacheCommand(commandId, resultCommand);
         return resultCommand;
