@@ -3,8 +3,6 @@ import OpenAI from 'openai';
 import {
   createOpenRouterClient,
   getOpenRouterChatModel,
-  getOpenRouterTtsModel,
-  getOpenRouterTtsVoice,
   isOpenRouterReasoningModel,
   OPENROUTER_BASE_URL,
   resolveOpenRouterModel,
@@ -14,13 +12,6 @@ jest.mock('openai', () => ({ __esModule: true, default: jest.fn() }));
 
 describe('OpenRouter configuration', () => {
   beforeEach(() => jest.clearAllMocks());
-
-  it('provides a matched speech model/Spanish voice without Azure configuration', () => {
-    expect(getOpenRouterTtsModel({})).toBe('microsoft/mai-voice-2.1');
-    expect(getOpenRouterTtsVoice(getOpenRouterTtsModel({}), {})).toBe('es-MX-Valeria:MAI-Voice-2.1');
-    expect(getOpenRouterTtsVoice('vendor/other-model', {})).toBeUndefined();
-    expect(getOpenRouterTtsVoice('vendor/other-model', { OPENROUTER_TTS_VOICE: 'voice-id' })).toBe('voice-id');
-  });
 
   it('uses only OpenRouter credentials and a fixed trusted endpoint', () => {
     const key = randomBytes(24).toString('hex');

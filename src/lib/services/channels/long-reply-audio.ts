@@ -1,5 +1,5 @@
 import { CreditService } from '@/lib/services/billing/CreditService';
-import { synthesizeSpeech } from '@/lib/services/ai/tts-service';
+import { synthesizeSpeech, validateSpeechOptions } from '@/lib/services/ai/tts-service';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 
 export const AUDIO_REPLY_CHANNELS = ['whatsapp', 'telegram', 'messenger'];
@@ -37,11 +37,18 @@ export function stripMarkdownForSpeech(text: string): string {
 }
 
 async function synthesizeReplyAudio(
-  text: string
+  text: string,
+  options: ReturnType<typeof validateSpeechOptions>
 ): Promise<{ buffer: Buffer; ext: string; mimeType: string }> {
-  // All messaging channels accept MP3. Use OpenRouter on WhatsApp too;
+  // All messaging channels accept MP3. Use Azure direct on WhatsApp too;
   // never switch providers/accounts on error.
-  const { audio, mimeType } = await synthesizeSpeech({ text, format: 'mp3' });
+  const { audio, mimeType } = await synthesizeSpeech({
+    text,
+    provider: options.provider,
+    format: options.format,
+    voice: options.voice,
+    model: options.deployment,
+  });
   return { buffer: audio, ext: 'mp3', mimeType };
 }
 
@@ -74,6 +81,8 @@ export async function tryPrepareLongReplyAudio({
   }
 
   try {
+    // Fail invalid speech options/configuration before billing the reply.
+    const speechOptions = validateSpeechOptions({ text: cleanText, format: 'mp3' });
     const estimatedMinutes = cleanText.length / 1000;
     const requiredCredits = Math.max(0.01, estimatedMinutes * CreditService.PRICING.AUDIO_GENERATION_MINUTE);
     const hasCredits = await CreditService.validateCredits(siteId, requiredCredits);
@@ -92,7 +101,7 @@ export async function tryPrepareLongReplyAudio({
     );
 
     console.log(`[long-reply-audio] Synthesizing audio for ${channel} reply (${cleanText.length} chars)`);
-    const { buffer, ext, mimeType } = await synthesizeReplyAudio(cleanText);
+    const { buffer, ext, mimeType } = await synthesizeReplyAudio(cleanText, speechOptions);
 
     const fileName = `reply_audio_${Date.now()}_${Math.random().toString(36).substring(7)}.${ext}`;
     const filePath = `${siteId}/${fileName}`;

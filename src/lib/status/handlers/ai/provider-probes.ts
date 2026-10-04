@@ -1,13 +1,14 @@
 import {
   createOpenRouterClient,
   getOpenRouterChatModel,
-  getOpenRouterTtsModel,
   isOpenRouterReasoningModel,
   resolveOpenRouterModel,
 } from '@/lib/services/ai/openrouter';
 import type { ProviderProbeResult } from '@/lib/status/types';
 import { isAiProbeEnabled } from '@/lib/status/types';
 import { getAzureImageConfig } from '@/lib/services/image/azure-image-config';
+import { getAzureTranscriptionConfig } from '@/lib/services/ai/azure-transcription-config';
+import { getAzureTtsConfig } from '@/lib/services/ai/azure-tts-config';
 
 const PROBE_TIMEOUT_MS = 15_000;
 
@@ -85,14 +86,12 @@ export async function probeOpenRouterText(): Promise<ProviderProbeResult> {
 
 /** Readiness only: a text completion does not verify image/video/audio generation. */
 export function checkOpenRouterMedia(
-  capability: 'video' | 'tts' | 'transcription',
+  capability: 'video',
 ): ProviderProbeResult {
-  const model = getEnv(`OPENROUTER_${capability.toUpperCase()}_MODEL`)
-    || (capability === 'tts' ? getOpenRouterTtsModel() : undefined);
+  const model = getEnv(`OPENROUTER_${capability.toUpperCase()}_MODEL`);
   return configurationResult(
     model ? resolveOpenRouterModel(model) : `${capability}-model-not-configured`,
-    !!model && ((capability !== 'tts' && capability !== 'transcription') || model.includes('/'))
-      && hasEnv('OPENROUTER_API_KEY'),
+    !!model && hasEnv('OPENROUTER_API_KEY'),
   );
 }
 
@@ -107,9 +106,19 @@ export function checkAzureImage(): ProviderProbeResult {
 }
 
 export function checkTtsProvider(): { provider: string; result: ProviderProbeResult } {
-  return { provider: 'openrouter', result: checkOpenRouterMedia('tts') };
+  try {
+    const config = getAzureTtsConfig();
+    return { provider: 'azure', result: configurationResult(config.deployment, true) };
+  } catch {
+    return { provider: 'azure', result: skippedResult('azure-tts-not-configured') };
+  }
 }
 
 export function checkTranscriptionProvider(): { provider: string; result: ProviderProbeResult } {
-  return { provider: 'openrouter', result: checkOpenRouterMedia('transcription') };
+  try {
+    const config = getAzureTranscriptionConfig();
+    return { provider: 'azure-direct', result: configurationResult(config.deployment, true) };
+  } catch {
+    return { provider: 'azure-direct', result: skippedResult('azure-transcription-not-configured') };
+  }
 }

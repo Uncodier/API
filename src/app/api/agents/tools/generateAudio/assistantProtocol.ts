@@ -1,5 +1,5 @@
 import { CreditService } from '@/lib/services/billing/CreditService';
-import { resolveTTSProvider, ttsMimeType, TTSProvider, TTSAudioFormat } from '@/lib/services/ai/tts-service';
+import { validateSpeechOptions, ttsMimeType, TTSProvider, TTSAudioFormat } from '@/lib/services/ai/tts-service';
 /**
  * Assistant Protocol Wrapper for Generate Audio Tool
  * Formats the tool for OpenAI/assistant compatibility
@@ -30,7 +30,7 @@ export function generateAudioTool(
 ) {
   return {
     name: 'generate_audio',
-    description: 'Convert written text into speech or a voiceover through OpenRouter. Returns a URL to the generated audio file. This is speech synthesis, not a music-generation tool.',
+    description: 'Convert written text into speech or a voiceover through Azure directly. Returns a URL to the generated audio file. This is speech synthesis, not a music-generation tool.',
     parameters: {
       type: 'object',
       properties: {
@@ -40,21 +40,21 @@ export function generateAudioTool(
         },
         provider: {
           type: 'string',
-          enum: ['openrouter'],
-          description: 'OpenRouter is the only supported gateway; normally omit this field.'
+          enum: ['azure'],
+          description: 'Azure direct is the only supported speech provider; normally omit this field.'
         },
         voice: {
           type: 'string',
-          description: 'Optional voice supported by the selected speech model. Omit to use the server default Spanish voice.'
+          description: 'Optional Azure OpenAI speech voice supported by the selected deployment. Omit to use the configured multilingual voice.'
         },
         format: {
           type: 'string',
-          enum: ['mp3', 'pcm'],
+          enum: ['mp3', 'pcm', 'wav', 'opus', 'aac', 'flac'],
           description: 'The audio format. Defaults to mp3.'
         },
         model: {
           type: 'string',
-          description: 'Optional qualified OpenRouter speech model ID. Omit to use the configured model. Supply a compatible voice when overriding the model.'
+          description: 'Optional Azure speech deployment name, not a qualified provider/model ID. Omit to use the configured deployment.'
         }
       },
       required: ['text']
@@ -65,8 +65,14 @@ export function generateAudioTool(
           return { success: false, error: 'text is required and must be a string', provider: 'none' };
         }
         // WhatsApp constrains the container, not the provider/account or model.
-        const format = options.forceWhatsAppCompatible ? 'mp3' : args.format || 'mp3';
-        const provider = resolveTTSProvider(args.provider);
+        const speechOptions = validateSpeechOptions({
+          text: args.text,
+          provider: args.provider,
+          voice: args.voice,
+          format: options.forceWhatsAppCompatible ? 'mp3' : args.format,
+          model: args.model,
+        });
+        const { provider, format } = speechOptions;
         
         console.log(`[GenerateAudioTool] 🎙️ Executing audio generation`);
         if (site_id) {
@@ -89,9 +95,9 @@ export function generateAudioTool(
         const requestBody = {
           text: args.text,
           provider: provider,
-          voice: args.voice,
+          voice: speechOptions.voice,
           format,
-          model: args.model
+          model: speechOptions.deployment
         };
 
         const response = await fetch(apiUrl, {
@@ -175,7 +181,7 @@ export function generateAudioTool(
           mimeType,
           metadata: {
             format: fileExt,
-            voice: args.voice,
+            voice: speechOptions.voice,
             generated_at: new Date().toISOString()
           },
           message: `Successfully generated audio using ${provider}. Audio is saved and ready to use. URL: ${publicUrl}`

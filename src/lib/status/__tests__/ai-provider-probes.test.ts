@@ -81,7 +81,7 @@ describe('evaluateAiProviders', () => {
   });
 });
 
-describe('OpenRouter status probes (offline)', () => {
+describe('capability-specific status probes (offline)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     jest.replaceProperty(process, 'env', { NODE_ENV: 'test' });
@@ -151,7 +151,7 @@ describe('OpenRouter status probes (offline)', () => {
       MICROSOFT_AZURE_OPENAI_API_KEY: randomBytes(32).toString('hex'),
     });
     expect(checkAzureImage()).toMatchObject({ configured: true, model: 'gpt-image-2.5-sunburst', liveProbe: false });
-    for (const mode of ['video', 'transcription'] as const) {
+    for (const mode of ['video'] as const) {
       expect(checkOpenRouterMedia(mode)).toMatchObject({ configured: false, skipped: true });
       process.env[`OPENROUTER_${mode.toUpperCase()}_MODEL`] = `test/${mode}`;
       expect(checkOpenRouterMedia(mode)).toMatchObject({ configured: true, model: `test/${mode}`, verification: 'configuration' });
@@ -175,27 +175,90 @@ describe('OpenRouter status probes (offline)', () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
-  it('uses OpenRouter TTS defaults and ignores legacy audio settings', async () => {
-    process.env.AZURE_TTS_API_KEY = randomBytes(32).toString('hex');
-    process.env.AZURE_TTS_ENDPOINT = 'https://example.invalid';
-    process.env.AI_TTS_PROVIDER = 'azure';
-    process.env.AI_TRANSCRIPTION_PROVIDER = 'gemini';
-    expect(checkTtsProvider()).toMatchObject({ provider: 'openrouter', result: { configured: false } });
+  it('checks TTS configuration on Azure directly and ignores OpenRouter readiness', async () => {
+    process.env.AI_TTS_PROVIDER = 'openrouter';
+    process.env.OPENROUTER_TTS_MODEL = 'microsoft/mai-voice-2.1';
     process.env.OPENROUTER_API_KEY = randomBytes(32).toString('hex');
-    expect(checkTtsProvider()).toMatchObject({ provider: 'openrouter', result: { configured: true, model: 'microsoft/mai-voice-2.1' } });
-    expect(await aiAudioHandler.runCheck()).toMatchObject({ status: 'degraded', checks: { ttsProvider: 'openrouter', transcriptionProvider: 'openrouter' } });
-    expect(checkTranscriptionProvider().result.configured).toBe(false);
-    process.env.OPENROUTER_TRANSCRIPTION_MODEL = 'vendor/stt';
-    expect(checkTranscriptionProvider()).toMatchObject({ provider: 'openrouter', result: { configured: true } });
+    expect(checkTtsProvider()).toMatchObject({ provider: 'azure', result: { configured: false, skipped: true } });
+    Object.assign(process.env, {
+      AZURE_TTS_API_KEY: randomBytes(32).toString('hex'),
+      AZURE_TTS_ENDPOINT: 'https://test.openai.azure.com/openai/v1/',
+      STATUS_AI_PROBE_ENABLED: 'true',
+    });
+    expect(checkTtsProvider()).toEqual({ provider: 'azure', result: {
+      configured: true, model: 'tts-hd', verification: 'configuration', liveProbe: false, latencyMs: 0,
+    } });
+    delete process.env.OPENROUTER_API_KEY;
+    process.env.AZURE_TTS_DEPLOYMENT = 'custom-speech';
+    expect(checkTtsProvider()).toMatchObject({ provider: 'azure', result: { configured: true, model: 'custom-speech' } });
+    expect(await aiAudioHandler.runCheck()).toMatchObject({
+      status: 'degraded', checks: { ttsProvider: 'azure', transcriptionProvider: 'azure-direct', verification: 'configuration' },
+    });
+    expect(createOpenRouterClient).not.toHaveBeenCalled();
+    expect(mockCompletion).not.toHaveBeenCalled();
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
-  it('rejects unqualified old deployment names in readiness', () => {
+  it('checks transcription on Azure direct only', async () => {
+    process.env.AI_TRANSCRIPTION_PROVIDER = 'gemini';
+    process.env.OPENROUTER_API_KEY = randomBytes(32).toString('hex');
+    expect(checkTranscriptionProvider().result.configured).toBe(false);
+    process.env.OPENROUTER_TRANSCRIPTION_MODEL = 'vendor/stt';
+    expect(checkTranscriptionProvider().result.configured).toBe(false);
+    Object.assign(process.env, {
+      MICROSOFT_AZURE_OPENAI_ENDPOINT: 'https://test.openai.azure.com',
+      MICROSOFT_AZURE_OPENAI_API_KEY: randomBytes(32).toString('hex'),
+      AZURE_OPENAI_TRANSCRIPTION_DEPLOYMENT: 'test-transcribe',
+    });
+    expect(checkTranscriptionProvider()).toMatchObject({ provider: 'azure-direct', result: {
+      configured: true, model: 'test-transcribe', verification: 'configuration', liveProbe: false,
+    } });
+    delete process.env.OPENROUTER_API_KEY;
+    expect(checkTranscriptionProvider().result.configured).toBe(true);
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it('does not expose invalid transcription endpoint credentials in readiness', () => {
+    const url = new URL('https://config.example.invalid');
+    url.username = randomBytes(12).toString('hex'); url.password = randomBytes(24).toString('hex');
+    Object.assign(process.env, { AZURE_OPENAI_TRANSCRIPTION_ENDPOINT: url.toString(),
+      AZURE_OPENAI_TRANSCRIPTION_API_KEY: randomBytes(24).toString('hex'),
+      AZURE_OPENAI_TRANSCRIPTION_DEPLOYMENT: 'test-transcribe' });
+    const result = checkTranscriptionProvider();
+    expect(result.result.configured).toBe(false);
+    for (const value of [url.username, url.password, url.toString(), process.env.AZURE_OPENAI_TRANSCRIPTION_API_KEY!]) {
+      expect(JSON.stringify(result)).not.toContain(value);
+    }
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it('does not count obsolete OpenRouter speech or transcription configuration as readiness', () => {
     process.env.OPENROUTER_API_KEY = randomBytes(32).toString('hex');
     process.env.OPENROUTER_TTS_MODEL = 'tts-hd';
     process.env.OPENROUTER_TRANSCRIPTION_MODEL = 'whisper-1';
     expect(checkTtsProvider().result.configured).toBe(false);
     expect(checkTranscriptionProvider().result.configured).toBe(false);
+  });
+
+  it.each(['credentials', 'query', 'host', 'deployment', 'version', 'voice'])('fails Azure TTS configuration closed without exposing sensitive settings (%s)', async mode => {
+    const key = randomBytes(32).toString('hex');
+    const username = randomBytes(12).toString('hex');
+    const password = randomBytes(24).toString('hex');
+    const token = randomBytes(24).toString('hex');
+    const url = new URL(mode === 'host' ? 'https://config.example.invalid' : 'https://test.openai.azure.com');
+    if (mode === 'credentials') { url.username = username; url.password = password; }
+    if (mode === 'query') url.searchParams.set('token', token);
+    Object.assign(process.env, { AZURE_TTS_ENDPOINT: url.toString(), AZURE_TTS_API_KEY: key, STATUS_AI_PROBE_ENABLED: 'true' });
+    if (mode === 'deployment') process.env.AZURE_TTS_DEPLOYMENT = 'provider/tts-hd';
+    if (mode === 'version') process.env.AZURE_TTS_API_VERSION = 'v1';
+    if (mode === 'voice') process.env.AZURE_TTS_VOICE = ' ';
+    const result = await aiAudioHandler.runCheck();
+    expect(result).toMatchObject({ status: 'skipped', checks: { ttsProvider: 'azure', providers: { tts: { configured: false, skipped: true } } } });
+    for (const sensitive of [key, username, password, token, url.toString()]) {
+      expect(JSON.stringify(result)).not.toContain(sensitive);
+    }
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(createOpenRouterClient).not.toHaveBeenCalled();
   });
 
   it('retains the persisted ai_portkey key while labeling and checking OpenRouter', async () => {

@@ -2,11 +2,11 @@
 
 ## Runtime direction
 
-OpenRouter handles text, agents, embeddings, speech, transcription and video,
-without Portkey in between. **Image generation is the explicit exception: Azure
-direct**, using the existing server credentials. The existing OpenAI SDK is reused
-for compatible OpenRouter endpoints; video uses its dedicated API. Gateway,
-model vendor and Azure deployment names are distinct.
+OpenRouter handles text, agents, embeddings and video, without
+Portkey in between. **Image generation, text-to-speech and transcription use Azure directly**,
+using existing server credentials; TTS requires its dedicated endpoint and key.
+The existing OpenAI SDK is reused for compatible OpenRouter endpoints; video uses
+its dedicated API. Gateway, model vendor and Azure deployment names are distinct.
 
 | Capability | Default / required selection |
 | --- | --- |
@@ -14,9 +14,10 @@ model vendor and Azure deployment names are distinct.
 | Embeddings | `openai/text-embedding-3-small`, 1536 dimensions by default |
 | Image generation | Azure direct: `AZURE_OPENAI_IMAGE_DEPLOYMENT`, default `gpt-image-2.5-sunburst` |
 | Video generation | Explicit `OPENROUTER_VIDEO_MODEL` required |
-| Text to speech | `OPENROUTER_TTS_MODEL`, default `microsoft/mai-voice-2.1` |
-| Speech voice | `OPENROUTER_TTS_VOICE`, default `es-MX-Valeria:MAI-Voice-2.1` |
-| Transcription | Explicit `OPENROUTER_TRANSCRIPTION_MODEL` |
+| Text to speech | Azure direct: `AZURE_TTS_DEPLOYMENT`, default `tts-hd` |
+| Speech API version | `AZURE_TTS_API_VERSION`, default `2025-04-01-preview` |
+| Speech voice | `AZURE_TTS_VOICE`, default `alloy` (multilingual Azure OpenAI voice) |
+| Transcription | Azure direct: required `AZURE_OPENAI_TRANSCRIPTION_DEPLOYMENT` (existing deployment: `gpt-transcribe`) |
 
 Historical OpenRouter image check on 2026-10-03: one `POST /images` for Sunburst, 1024x1024,
 low quality, pinned to Azure, returned HTTP 404 in 588 ms. OpenRouter explicitly
@@ -45,10 +46,9 @@ overrides must support the chosen parameters; Azure validates their actual model
 capabilities because deployment aliases cannot reliably identify a model. Quality aliases `standard`/`hd`
 map to `medium`/`high`; Sunburst supports `auto`, `low`, `medium`, `high`, `xhigh`, `max`.
 
-Public catalog inspection found `openai/sora-2-pro`, not the selected Sora 2 base,
-and did not find `tts-hd`/`tts-1-hd`. TTS now uses MAI-Voice-2.1 through OpenRouter,
-with a catalog-verified Spanish voice; speech remains on OpenRouter.
-The code must not silently replace the video
+Public OpenRouter catalog inspection found `openai/sora-2-pro`, not the selected
+Sora 2 base. The OpenRouter catalog does not determine the availability of the
+direct Azure TTS deployment. The code must not silently replace the video
 model with Pro or assume Azure deployment names are OpenRouter model IDs.
 Catalog presence is not an inference test or a guarantee of account eligibility.
 
@@ -68,16 +68,19 @@ different embedding model as an automatic fallback.
    need mapping to real OpenRouter model IDs, not just a vendor prefix; the agent
    executor rejects explicit Azure endpoint/deployment configuration.
 3. Optionally set `OPENROUTER_APP_URL` and `OPENROUTER_APP_NAME` for attribution.
-4. Speech needs only the same `OPENROUTER_API_KEY`. Optional `OPENROUTER_TTS_MODEL`
-   and `OPENROUTER_TTS_VOICE` override the defaults above. When changing the model,
-   supply a voice supported by it; OpenAI voices such as `alloy` are not universal.
-   Speech output is MP3 by default; PCM is also supported. Other containers are
-   rejected rather than returning mislabeled bytes. No `AZURE_TTS_*` or speech
-   provider selector is required. Old `AI_TTS_PROVIDER` and
-   `AI_TRANSCRIPTION_PROVIDER` environment settings cannot redirect traffic.
-5. Select video and transcription models explicitly after checking the current
-   catalog and pricing. Until then these capabilities are intentionally not
-   enabled. Existing voice-note ingestion needs a transcription model before rollout.
+4. For speech, configure the existing dedicated `AZURE_TTS_ENDPOINT` and
+   `AZURE_TTS_API_KEY` in the server secret store. Set optional
+   `AZURE_TTS_DEPLOYMENT=tts-hd`, `AZURE_TTS_API_VERSION=2025-04-01-preview` and
+   `AZURE_TTS_VOICE=alloy`, or omit them to use these defaults. Do not set empty
+   overrides. TTS does not inherit the chat deployment/API version or other
+   Azure credentials, and has no OpenRouter fallback. Remove stale
+   `OPENROUTER_TTS_MODEL` / `OPENROUTER_TTS_VOICE`; they are ignored. Old
+   `AI_TTS_PROVIDER` and `AI_TRANSCRIPTION_PROVIDER` environment settings cannot
+   redirect traffic. See the direct TTS contract below.
+5. Select the video model explicitly after checking the current catalog and pricing.
+   For voice-note ingestion, set `AZURE_OPENAI_TRANSCRIPTION_DEPLOYMENT=gpt-transcribe`
+   on the existing Azure resource. Transcription does not use OpenRouter's catalog,
+   credentials or `OPENROUTER_TRANSCRIPTION_MODEL`. See the direct transcription contract below.
 6. Configure the existing Upstash service for distributed media admission and
    retained video jobs. Storage, site authorization and product credit checks
    remain prerequisites for media generation.
@@ -93,9 +96,9 @@ different embedding model as an automatic fallback.
    Remove stale `OPENROUTER_IMAGE_MODEL` / `OPENROUTER_IMAGE_PROVIDER`; they cannot
    redirect image traffic. No new Azure resource or deployment is created.
 
-Direct image requests use Azure credentials and Azure billing, not OpenRouter
+Direct image, TTS and transcription requests use Azure credentials and Azure billing, not OpenRouter
 credits or BYOK. Azure invoices/usage still require validation; application credits
-remain separate. For the other capabilities, using OpenRouter credits bills
+remain separate. For OpenRouter capabilities, using OpenRouter credits bills
 OpenRouter; selecting an Azure provider does **not**
 automatically use this application's Azure subscription. To use your Azure
 subscription, configure Azure BYOK in OpenRouter and validate support for each
@@ -103,11 +106,94 @@ model/endpoint. Check BYOK fees, regional routing, data retention and fallback
 settings in OpenRouter. In particular, disallow shared-capacity fallback there
 if requests must stay on your own Azure credentials.
 
+## Direct Azure text-to-speech
+
+- `AZURE_TTS_ENDPOINT` must be an HTTPS Azure resource origin or an
+  `/openai/v1/` base, not a full speech/deployment URL. Do not include credentials,
+  query parameters or fragments in the endpoint. The adapter resolves either
+  accepted base to the dated Azure OpenAI API:
+  `POST /openai/deployments/{deployment}/audio/speech?api-version=2025-04-01-preview`
+  by default. A `/openai/v1/` base does **not** select the v1 speech API.
+- `AZURE_TTS_DEPLOYMENT` names an Azure deployment, not an OpenRouter model ID.
+  The existing resource and selected deployment must actually host a compatible
+  Azure OpenAI TTS model. An image/chat deployment or a deployment merely named
+  `tts-hd` is not proof of TTS support. This change creates no new Azure resource
+  or deployment; verify the existing deployment's model, region and access before
+  rollout.
+- Use Azure OpenAI multilingual voices, with `alloy` as the default. Spanish text
+  uses these voices too; MAI voice IDs are not valid for this integration.
+  Verify supported voices against the selected TTS
+  deployment before changing them.
+- Supported response formats are `mp3` (default), `pcm`, `wav`, `opus`, `aac` and
+  `flac`. Input is limited to 4,096 characters; speed must be between `0.25` and
+  `4`, inclusive. Unsupported formats and out-of-range inputs are rejected, not
+  silently substituted or sent to another provider.
+- Missing or invalid dedicated configuration fails closed. There is no chat
+  deployment/version inheritance, generic Azure credential inheritance or
+  OpenRouter fallback. Transcription uses its separate direct Azure configuration below.
+- The system-status workflow reads `AZURE_TTS_ENDPOINT` and `AZURE_TTS_API_KEY`
+  from dedicated GitHub secrets. Optional GitHub variables `AZURE_TTS_DEPLOYMENT`,
+  `AZURE_TTS_API_VERSION` and `AZURE_TTS_VOICE` use explicit defaults when unset
+  or empty, so missing repository variables do not inject invalid empty overrides.
+
+### Live validation (2026-10-04)
+
+1. The initially configured dedicated endpoint returned HTTP 200 with an empty
+   deployment list (`api-version=2023-03-15-preview`). One minimal speech request
+   to `tts-hd` with `api-version=2024-10-21`, input `Hola.` and voice `alloy`
+   returned HTTP 404 in 878 ms (error code `404`), with no audio.
+2. A read-only query on the existing `MICROSOFT_AZURE_OPENAI_ENDPOINT`, with its
+   matched key, returned HTTP 200 and 28 deployments, including deployment
+   `tts-hd`, model `tts-hd`, with status `succeeded`. The local dedicated TTS
+   endpoint/key were then explicitly repointed to that existing matched resource;
+   this is configuration, not runtime credential fallback. An adapter smoke test
+   still returned HTTP 404 with the dated `2024-10-21` API version.
+3. With `AZURE_TTS_API_VERSION=2025-04-01-preview`, the real adapter call
+   `synthesizeSpeech({ text: 'Hola, tu pedido cuesta 250 pesos.', format: 'mp3' })`
+   succeeded using the default `tts-hd` deployment and `alloy` voice: `audio/mpeg`,
+   70,739 bytes, a valid MP3 signature and 2,881 ms latency.
+
+**Successful direct Azure TTS inference was performed.** No storage uploads,
+database charges, new resources or new deployments were made by this check.
+This validates one adapter/deployment/version/format combination, not a production
+deployment or subjective Spanish pronunciation quality. Server and CI environment
+configuration must use the matched speech resource endpoint/key and the validated
+`2025-04-01-preview` speech API version; local configuration changes do not deploy
+those settings. Production acceptance still requires pronunciation review,
+representative names/brands/prices, latency and format coverage, end-to-end
+storage/billing checks and Azure usage reconciliation.
+
+## Direct Azure transcription
+
+- Required deployment: `AZURE_OPENAI_TRANSCRIPTION_DEPLOYMENT`. Reuse the existing
+  `MICROSOFT_AZURE_OPENAI_ENDPOINT` and `MICROSOFT_AZURE_OPENAI_API_KEY`, or generic
+  `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_API_KEY`. Dedicated
+  `AZURE_OPENAI_TRANSCRIPTION_ENDPOINT` / `AZURE_OPENAI_TRANSCRIPTION_API_KEY`
+  override those credentials; explicitly empty overrides fail closed.
+- Endpoints accept HTTPS Azure resource origins or `/openai/v1/` bases, without
+  userinfo, query parameters or fragments. Never inherit the chat deployment/version.
+  `AZURE_OPENAI_TRANSCRIPTION_API_VERSION` defaults to `2024-10-21` and uses
+  `POST /openai/deployments/{deployment}/audio/transcriptions`. Explicit `v1` or
+  `preview` selects `/openai/v1/audio/transcriptions` instead.
+- Upload original audio bytes with multipart `file`, `model` and `response_format=json`;
+  do not route base64 audio through OpenRouter. The file must be non-empty and at
+  most 25 MiB. Unknown MIME types fail rather than being mislabeled as MP3.
+- No retry or fallback to another provider/account. API keys, upstream error bodies
+  and user audio are not included in adapter error logs. Preserve Azure usage and
+  request IDs when available, without inventing currency costs.
+- On 2026-10-04, the existing `gpt-transcribe` deployment was confirmed active by
+  a read-only deployment-list request. One direct transcription of the saved
+  WhatsApp OGG (6,751 bytes) returned HTTP 200 and non-empty text using the default
+  dated API. No format conversion, agent replay, WhatsApp send or database write
+  was performed by this check. The live check used Azure inference, not OpenRouter.
+  This validates that audio/deployment pair, not all formats, deployment overrides
+  or end-to-end production rollout. Health checks remain configuration-only.
+
 ## Errors, visibility and billing
 
-AI text, video, speech and transcription requests use OpenRouter and reject
+AI text and video requests use OpenRouter and reject
 direct provider overrides (`azure`, `gemini`, `vercel`); model vendors are selected
-with qualified OpenRouter IDs. Image endpoints accept only Azure direct.
+with qualified OpenRouter IDs. Images, speech and transcription use Azure direct only.
 Legacy provider keys/endpoints are not fallback credentials. Scrapybara supplies
 sandbox tools, not the hosted model for plan execution. Separate telephony
 platform integrations (Zavu/Vapi) are not replaced by this generation gateway.
@@ -116,9 +202,10 @@ Specialized `AI_CODE_MODEL`, `AI_VISUAL_MODEL`, `AI_VISUAL_FALLBACK_MODEL` and
 leave them unset to use the central chat default.
 
 Keep returned usage metadata and generation IDs when available. A missing cost
-is unknown, not a free generation. Azure image usage tokens are not currency and
-are not represented as an invented dollar cost. OpenRouter activity/logs provide provider-side
-visibility. Product credits remain the application's existing pricing policy,
+is unknown, not a free generation. Azure usage is not represented as an invented
+dollar cost; image usage tokens are not currency. OpenRouter activity/logs provide
+visibility only for requests routed through OpenRouter, not direct Azure TTS,
+transcription or images. Product credits remain the application's existing pricing policy,
 not a promise to bill customers exactly OpenRouter's invoice cost.
 Image asset metadata identifies `cost_scope=generation`: when one request returns
 multiple images, do not sum the repeated request cost across its assets.
@@ -186,4 +273,5 @@ No authenticated live inference is part of the offline tests.
 - [Image generation](https://openrouter.ai/docs/guides/overview/multimodal/image-generation)
 - [Direct Azure image generation and editing](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/dall-e)
 - [Video generation](https://openrouter.ai/docs/guides/overview/multimodal/video-generation)
-- [Text-to-speech API](https://openrouter.ai/docs/guides/overview/multimodal/tts)
+- [Direct Azure OpenAI text-to-speech](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/text-to-speech)
+- [Azure OpenAI dated API reference](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/reference#text-to-speech)

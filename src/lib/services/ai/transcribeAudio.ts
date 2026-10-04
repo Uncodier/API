@@ -1,10 +1,10 @@
 import { fetchTwilioMedia, isTwilioMediaUrl } from '@/lib/services/twilio/fetchTwilioMedia';
 import { recordTelemetry } from '@/lib/status/telemetry';
-import { createOpenRouterClient } from './openrouter';
+import { getAzureTranscriptionConfig } from './azure-transcription-config';
 
 const LOG_PREFIX = '[TranscribeAudio]';
 
-export type TranscriptionAttempt = { provider: 'openrouter'; model: string };
+export type TranscriptionAttempt = { provider: 'azure-direct'; model: string };
 
 export interface TranscribeAudioInput {
   buffer: Buffer;
@@ -21,16 +21,14 @@ export interface TranscribeAudioResult {
   generationId?: string;
 }
 
-function envValue(env: NodeJS.Dict<string>, name: string): string | undefined {
-  const value = env[name]?.trim();
-  return value || undefined;
-}
-
-/** Only the selected OpenRouter account can receive transcription requests. */
+/** Never route user audio through OpenRouter or fall back to another account. */
 export function buildTranscriptionPlan(env: NodeJS.Dict<string> = process.env): TranscriptionAttempt[] {
-  const model = envValue(env, 'OPENROUTER_TRANSCRIPTION_MODEL');
-  return model && model.includes('/') && envValue(env, 'OPENROUTER_API_KEY')
-    ? [{ provider: 'openrouter', model }] : [];
+  try {
+    const config = getAzureTranscriptionConfig(env);
+    return [{ provider: 'azure-direct', model: config.deployment }];
+  } catch {
+    return [];
+  }
 }
 
 export function normalizeAudioMimeType(contentType?: string): string {
@@ -43,14 +41,14 @@ export function normalizeAudioMimeType(contentType?: string): string {
   return raw || 'audio/mpeg';
 }
 
-function openRouterAudioFormat(mimeType: string): string {
+function audioFileExtension(mimeType: string): string {
   const formats: Record<string, string> = {
     'audio/mp3': 'mp3', 'audio/wav': 'wav', 'audio/ogg': 'ogg',
     'audio/webm': 'webm', 'audio/mp4': 'm4a', 'audio/m4a': 'm4a',
     'audio/flac': 'flac', 'audio/x-flac': 'flac', 'audio/aac': 'aac',
   };
   const format = formats[mimeType];
-  if (!format) throw new Error('Unsupported OpenRouter transcription audio format');
+  if (!format) throw new Error('Unsupported Azure transcription audio format');
   return format;
 }
 
@@ -60,18 +58,28 @@ async function runAttempt(
   mimeType: string,
   env: NodeJS.Dict<string>
 ): Promise<{ text: string; usage?: Record<string, unknown>; generationId?: string }> {
-  const client = createOpenRouterClient({ env, timeout: 120_000 });
-  // OpenRouter STT uses JSON/base64, not the OpenAI multipart upload API.
-  const { data, response } = await client.post<unknown, {
-    text?: string; usage?: Record<string, unknown>; id?: string;
-  }>('/audio/transcriptions', {
-    body: { model: attempt.model, input_audio: {
-      data: buffer.toString('base64'), format: openRouterAudioFormat(mimeType),
-    } },
-  }).withResponse();
+  const config = getAzureTranscriptionConfig(env);
+  const path = config.apiVersion === 'v1' || config.apiVersion === 'preview'
+    ? '/openai/v1/audio/transcriptions'
+    : `/openai/deployments/${encodeURIComponent(attempt.model)}/audio/transcriptions`;
+  const url = new URL(path, config.origin);
+  if (config.apiVersion !== 'v1') url.searchParams.set('api-version', config.apiVersion);
+  const form = new FormData();
+  form.append('file', new Blob([new Uint8Array(buffer)], { type: mimeType }), `audio.${audioFileExtension(mimeType)}`);
+  form.append('model', attempt.model);
+  form.append('response_format', 'json');
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'api-key': config.apiKey },
+    body: form,
+    redirect: 'error',
+    signal: AbortSignal.timeout(120_000),
+  });
+  if (!response.ok) throw new Error('Azure transcription request failed');
+  const data = await response.json() as { text?: string; usage?: Record<string, unknown> };
   const text = typeof data?.text === 'string' ? data.text.trim() : '';
-  if (!text) throw new Error('OpenRouter returned empty transcription');
-  return { text, usage: data.usage, generationId: response.headers.get('x-generation-id') || data.id };
+  if (!text) throw new Error('Azure returned empty transcription');
+  return { text, usage: data.usage, generationId: response.headers.get('apim-request-id') || undefined };
 }
 
 export async function transcribeAudioBuffer(
@@ -84,8 +92,12 @@ export async function transcribeAudioBuffer(
   if (plan.length === 0) {
     return {
       success: false,
-      error: 'Audio transcription is not configured. Set OPENROUTER_API_KEY and a qualified OPENROUTER_TRANSCRIPTION_MODEL.',
+      error: 'Azure transcription is not configured or invalid. Set AZURE_OPENAI_TRANSCRIPTION_DEPLOYMENT and Azure endpoint/API key credentials.',
     };
+  }
+
+  if (input.buffer.length === 0 || input.buffer.length > 25 * 1024 * 1024) {
+    return { success: false, error: 'Audio must be non-empty and no larger than 25 MiB' };
   }
 
   const start = Date.now();
@@ -102,7 +114,7 @@ export async function transcribeAudioBuffer(
         model: attempt.model,
       };
     } catch {
-      // Do not log SDK errors: upstream bodies can echo credentials or user audio.
+      // Do not log provider errors: upstream bodies can echo credentials or user audio.
       console.warn(`${LOG_PREFIX} ${attempt.provider} transcription failed.`);
     }
   }

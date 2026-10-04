@@ -172,6 +172,7 @@ it.each([
   { AZURE_OPENAI_IMAGE_ENDPOINT: 'https://untrusted.example.test' },
   { AZURE_OPENAI_IMAGE_ENDPOINT: 'https://test.openai.azure.com/?key=invalid' },
   { AZURE_OPENAI_IMAGE_ENDPOINT: 'https://test.openai.azure.com/openai/deployments/chat' },
+  { AZURE_OPENAI_IMAGE_ENDPOINT: 'https://test.services.ai.azure.com/mai/v1/images/generations' },
 ])('fails closed on invalid image configuration; never switches credentials: %j', async extra => {
   Object.assign(process.env, extra);
   await expect(generateWithAzure(options)).rejects.toMatchObject({ status: 503 });
@@ -208,7 +209,7 @@ it.each(['gpt-image-2.5', 'gpt-image-1-custom-alias', 'my-image-deployment'])(
   },
 );
 
-it.each([401, 404, 429, 500])('does not retry/fallback or expose provider error bodies (HTTP %s)', async status => {
+it.each([401, 404, 429, 500, 503])('does not retry/fallback or expose provider error bodies (HTTP %s)', async status => {
   const secret = randomBytes(32).toString('hex');
   fetchMock.mockResolvedValueOnce(json({ error: { message: secret } }, status));
   let message = '';

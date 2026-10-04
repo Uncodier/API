@@ -57,6 +57,61 @@ it('does not retry uncertain Azure transport failures or expose exception detail
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });
 
+it.each([
+  'Azure image generation is not configured',
+  'Invalid Azure image endpoint configuration',
+  'Invalid Azure image deployment or API version configuration',
+])('preserves the safe local configuration diagnosis for a 503: %s', async error => {
+  fetchMock.mockResolvedValueOnce(Response.json({ error }, { status: 503 }));
+  const result = await ImageGenerationService.generateImage({ prompt: 'cat', site_id: 'site' });
+  expect(result).toMatchObject({ success: false, provider: 'azure', images: [] });
+  expect(result.error).toContain(`Image API request failed (503): ${error}`);
+  expect(result.error).toContain('Azure inference was not submitted');
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+it('distinguishes local admission failure from an Azure inference outage without exposing its message', async () => {
+  const secret = randomBytes(32).toString('hex');
+  fetchMock.mockResolvedValueOnce(Response.json({ error: { code: 'RATE_LIMIT_UNAVAILABLE', message: secret } }, { status: 503 }));
+  const result = await ImageGenerationService.generateImage({ prompt: 'cat', site_id: 'site' });
+  expect(result.error).toContain('Image request admission is temporarily unavailable');
+  expect(result.error).toContain('Azure inference was not submitted');
+  expect(JSON.stringify(result)).not.toContain(secret);
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+it('does not publish arbitrary 503 bodies, credential-bearing URLs or decorated configuration errors', async () => {
+  const key = randomBytes(32).toString('hex');
+  const url = new URL('https://provider.example.invalid/image');
+  url.username = randomBytes(12).toString('hex');
+  url.password = randomBytes(32).toString('hex');
+  url.searchParams.set('token', randomBytes(32).toString('hex'));
+  const errors = [
+    { error: `${key} ${url}` },
+    { error: `Invalid Azure image endpoint configuration ${key} ${url}` },
+    { error: { code: key, message: url.toString() } },
+  ];
+  for (const error of errors) {
+    fetchMock.mockResolvedValueOnce(Response.json(error, { status: 503 }));
+    const result = await ImageGenerationService.generateImage({ prompt: 'cat', site_id: 'site' });
+    expect(result.error).toBe('Image API request failed (503)');
+    for (const value of [key, url.username, url.password, url.searchParams.get('token')!, url.toString()]) {
+      expect(JSON.stringify(result)).not.toContain(value);
+    }
+  }
+  expect(fetchMock).toHaveBeenCalledTimes(errors.length);
+});
+
+it.each([
+  { name: 'malformed', body: 'invalid JSON' },
+  { name: 'oversized', body: 'x'.repeat(16 * 1024 + 1) },
+])('retains 503 status for $name bodies', async ({ body }) => {
+  fetchMock.mockResolvedValueOnce(new Response(body, { status: 503 }));
+  const result = await ImageGenerationService.generateImage({ prompt: 'cat', site_id: 'site' });
+  expect(result.error).toBe('Image API request failed (503)');
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
 it('fails without a second request when Azure returns no images', async () => {
   fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ provider: 'azure', images: [] })));
   expect(await ImageGenerationService.generateImage({ prompt: 'cat', site_id: 'site' })).toMatchObject({ success: false, provider: 'azure', images: [], error: 'Image API returned no images' });

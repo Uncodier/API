@@ -1,4 +1,5 @@
 import type { ImageRequestBody, ImageProvider } from '@/app/api/ai/image/image-types';
+import { imageApiError } from './image-api-error';
 
 export type ImageGenerationParams = ImageRequestBody;
 export interface ImageGenerationResult {
@@ -23,7 +24,7 @@ export class ImageGenerationService {
         signal: AbortSignal.timeout(240_000),
       });
       if (!response.ok) {
-        return { success: false, provider, images: [], error: `Image API request failed (${response.status})` };
+        return { success: false, provider, images: [], error: await imageApiError(response) };
       }
       const data = await response.json();
       if (data.provider !== provider) {

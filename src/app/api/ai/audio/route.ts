@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { synthesizeSpeech, TTSServiceError, TTSProvider as Provider, TTSAudioFormat } from '@/lib/services/ai/tts-service';
-import { getOpenRouterTtsModel, getOpenRouterTtsVoice } from '@/lib/services/ai/openrouter';
+import { AZURE_TTS_MAX_CHARS, DEFAULT_AZURE_TTS_DEPLOYMENT, DEFAULT_AZURE_TTS_VOICE } from '@/lib/services/ai/azure-tts-config';
 import {
   enforceRequestRateLimit,
   getAuthenticatedRateIdentity,
@@ -29,13 +29,16 @@ export async function POST(request: NextRequest) {
     });
     if (limited) return limited;
 
-    const body = (await request.json()) as AudioRequestBody;
+    let body: AudioRequestBody;
+    try { body = await request.json() as AudioRequestBody; } catch {
+      return NextResponse.json({ error: 'Request body must be valid JSON' }, { status: 400 });
+    }
     const { text, voice, format, provider, model, speed } = body || {};
 
     if (!text || typeof text !== 'string') {
       return NextResponse.json({ error: 'Parameter "text" is required' }, { status: 400 });
     }
-    if (text.length > 20_000) {
+    if (text.length > AZURE_TTS_MAX_CHARS) {
       return NextResponse.json({ error: 'Parameter "text" is too long' }, { status: 413 });
     }
 
@@ -51,6 +54,7 @@ export async function POST(request: NextRequest) {
         'Content-Type': result.mimeType,
         'Content-Length': String(result.audio.length),
         'X-TTS-Provider': result.provider,
+        'Cache-Control': 'no-store',
       },
     });
   } catch (error) {
@@ -70,22 +74,26 @@ export async function GET() {
       method: 'POST',
       body: {
         text: 'string',
-        voice: 'optional; must be supported by the selected OpenRouter speech model',
-        format: "'mp3' | 'pcm' (default: 'mp3')",
-        provider: "'openrouter' (only supported gateway)",
-        model: 'optional qualified OpenRouter speech model ID',
+        voice: 'optional Azure OpenAI voice; alloy, echo, fable, onyx, nova or shimmer for tts/tts-hd',
+        format: "'mp3' | 'pcm' | 'wav' | 'opus' | 'aac' | 'flac' (default: 'mp3')",
+        provider: "'azure' (direct; normally omit)",
+        model: 'optional Azure speech deployment name, not a gateway model ID',
         speed: 'optional number from 0.25 to 4, where supported'
       },
     },
-    providers: ['openrouter'],
-    defaults: { model: getOpenRouterTtsModel(), voice: getOpenRouterTtsVoice(getOpenRouterTtsModel()) },
+    providers: ['azure'],
+    defaults: {
+      model: process.env.AZURE_TTS_DEPLOYMENT?.trim() ?? DEFAULT_AZURE_TTS_DEPLOYMENT,
+      voice: process.env.AZURE_TTS_VOICE?.trim() ?? DEFAULT_AZURE_TTS_VOICE,
+    },
     env: {
-      required: ['OPENROUTER_API_KEY'],
-      optional: ['OPENROUTER_TTS_MODEL', 'OPENROUTER_TTS_VOICE'],
+      required: ['AZURE_TTS_ENDPOINT', 'AZURE_TTS_API_KEY'],
+      optional: ['AZURE_TTS_DEPLOYMENT', 'AZURE_TTS_API_VERSION', 'AZURE_TTS_VOICE'],
     },
     notes: {
-      routing: 'Uses the same OpenRouter key and fixed gateway as chat. No Azure endpoint or provider keys required.',
-      voices: 'When selecting a different model, also select a compatible voice.'
+      routing: 'Calls Azure OpenAI directly with the dedicated speech resource key. No gateway fallback or retries.',
+      voices: 'Azure OpenAI voices are multilingual; do not use MAI/OpenRouter voice IDs.',
+      maxCharacters: AZURE_TTS_MAX_CHARS,
     }
   });
 }

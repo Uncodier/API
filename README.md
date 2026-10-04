@@ -66,7 +66,8 @@ Before you begin, ensure you have the following installed:
    - `SERVICE_API_KEY` - Internal API key for service-to-service communication
    - `CRON_SECRET` - Bearer secret used by Vercel Cron
    - `ENCRYPTION_KEY` - 32-byte encryption key for API keys
-   - `OPENROUTER_API_KEY` for chat, embeddings, images and speech through the same gateway
+   - `OPENROUTER_API_KEY` for chat, embeddings and video through OpenRouter; transcription uses direct Azure credentials and `AZURE_OPENAI_TRANSCRIPTION_DEPLOYMENT`
+   - `AZURE_TTS_ENDPOINT` / `AZURE_TTS_API_KEY` for direct Azure text-to-speech, using the existing dedicated resource credentials
 
    See `src/config/env.example` for all available configuration options.
 
@@ -166,17 +167,36 @@ Key environment variables (see `src/config/env.example` for complete list):
 - `CRON_SECRET` - Vercel Cron authentication secret
 - `ENCRYPTION_KEY` - 32-byte encryption key
 
-### AI Gateway
-- `OPENROUTER_API_KEY` - Gateway key for chat, tools, embeddings, video and audio (not image generation)
+### AI Providers
+- `OPENROUTER_API_KEY` - Gateway key for chat, tools, embeddings and video (not images, TTS or transcription)
 - `OPENROUTER_CHAT_MODEL` - Defaults to `openai/gpt-6.1-sol`
 - `AZURE_OPENAI_IMAGE_DEPLOYMENT` - Direct Azure image deployment, default `gpt-image-2.5-sunburst`
 - `MICROSOFT_AZURE_OPENAI_ENDPOINT` / `MICROSOFT_AZURE_OPENAI_API_KEY` - Existing Azure resource credentials for images; optional dedicated `AZURE_OPENAI_IMAGE_ENDPOINT` / `AZURE_OPENAI_IMAGE_API_KEY`
 - `AZURE_OPENAI_IMAGE_API_VERSION` - Default `preview` on `/openai/v1/images`; separate from the chat API version
-- `OPENROUTER_VIDEO_MODEL` / `OPENROUTER_TRANSCRIPTION_MODEL` - Explicit model selection required
-- `OPENROUTER_TTS_MODEL` / `OPENROUTER_TTS_VOICE` - Defaults to MAI-Voice-2.1 with a Spanish (Mexico) voice
+- `OPENROUTER_VIDEO_MODEL` - Explicit video model selection required
+- `AZURE_OPENAI_TRANSCRIPTION_DEPLOYMENT` - Required direct Azure transcription deployment; existing deployment is `gpt-transcribe`
+- `AZURE_OPENAI_TRANSCRIPTION_API_VERSION` - Default `2024-10-21`; independent of the chat API version
+- Transcription reuses `MICROSOFT_AZURE_OPENAI_ENDPOINT` / `MICROSOFT_AZURE_OPENAI_API_KEY` (or generic `AZURE_OPENAI_*` credentials); optional dedicated `AZURE_OPENAI_TRANSCRIPTION_ENDPOINT` / `AZURE_OPENAI_TRANSCRIPTION_API_KEY` take precedence
+- `AZURE_TTS_ENDPOINT` / `AZURE_TTS_API_KEY` - Required existing dedicated credentials for direct Azure TTS; endpoint must be an HTTPS Azure resource origin or `/openai/v1/` base
+- `AZURE_TTS_DEPLOYMENT` - Defaults to `tts-hd`; the resource/deployment must actually host a compatible Azure OpenAI TTS model
+- `AZURE_TTS_API_VERSION` - Defaults to `2025-04-01-preview`; uses the dated `/openai/deployments/{deployment}/audio/speech` API even for an `/openai/v1/` base
+- `AZURE_TTS_VOICE` - Defaults to `alloy`, an Azure OpenAI multilingual voice; do not use MAI voice IDs
 
 See [OpenRouter migration and deployment checks](docs/OPENROUTER_MIGRATION.md).
-Portkey credentials are no longer used by the migrated runtime paths. Images use Azure directly (`provider: 'azure'`), without fallback. Other AI capabilities remain on OpenRouter.
+Portkey credentials are no longer used by the migrated runtime paths. Images,
+TTS and transcription use Azure directly, without OpenRouter fallback. The other
+listed gateway capabilities remain on OpenRouter. TTS does not inherit chat
+deployment/API-version settings or generic Azure credentials; stale
+`OPENROUTER_TTS_MODEL` / `OPENROUTER_TTS_VOICE` settings are ignored. Supported TTS
+formats are `mp3` (default), `pcm`, `wav`, `opus`, `aac` and `flac`; input is limited
+to 4,096 characters and speed to `0.25`–`4`, inclusive. No new Azure resource or
+deployment is created. After initial HTTP 404 failures, a real adapter smoke test
+on the existing resource hosting `tts-hd`, with `2025-04-01-preview`, succeeded:
+70,739 bytes of `audio/mpeg` with a valid MP3 signature in 2,881 ms. Server and CI
+must explicitly configure the matched speech resource endpoint/key and this
+speech API version. This was Azure inference, not a production deployment or
+subjective pronunciation validation; no storage upload or database charge was
+performed. See the migration guide for chronology and remaining acceptance checks.
 
 ### Temporal Configuration
 - `TEMPORAL_ENV=development` - Environment mode

@@ -5,7 +5,10 @@ jest.mock('@/lib/services/billing/CreditService', () => ({
     PRICING: { AUDIO_GENERATION_MINUTE: 1 }
   }
 }));
-jest.mock('@/lib/services/ai/tts-service', () => ({ synthesizeSpeech: jest.fn() }));
+jest.mock('@/lib/services/ai/tts-service', () => ({
+  synthesizeSpeech: jest.fn(),
+  validateSpeechOptions: jest.fn(),
+}));
 jest.mock('@/lib/database/supabase-client', () => ({
   supabaseAdmin: {
     storage: {
@@ -18,7 +21,7 @@ jest.mock('@/lib/database/supabase-client', () => ({
 
 import { stripMarkdownForSpeech, tryPrepareLongReplyAudio } from '../long-reply-audio';
 import { CreditService } from '@/lib/services/billing/CreditService';
-import { synthesizeSpeech } from '@/lib/services/ai/tts-service';
+import { synthesizeSpeech, validateSpeechOptions } from '@/lib/services/ai/tts-service';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 
 describe('long-reply-audio', () => {
@@ -39,13 +42,22 @@ describe('long-reply-audio', () => {
 
     beforeEach(() => {
       jest.clearAllMocks();
+      jest.spyOn(global, 'fetch').mockRejectedValue(new Error('Network forbidden in offline tests'));
+      (validateSpeechOptions as jest.Mock).mockReset().mockImplementation(options => ({
+        provider: 'azure', format: options.format, voice: 'alloy', deployment: 'tts-hd',
+      }));
       (CreditService.validateCredits as jest.Mock).mockResolvedValue(true);
       (CreditService.deductCredits as jest.Mock).mockResolvedValue(true);
-      (synthesizeSpeech as jest.Mock).mockResolvedValue({ audio: Buffer.from('audio'), provider: 'openrouter', format: 'mp3', mimeType: 'audio/mpeg' });
+      (synthesizeSpeech as jest.Mock).mockResolvedValue({ audio: Buffer.from('audio'), provider: 'azure', format: 'mp3', mimeType: 'audio/mpeg' });
       (supabaseAdmin.storage.from as jest.Mock).mockReturnValue({
         upload: jest.fn().mockResolvedValue({ data: { path: 'file.mp3' }, error: null }),
         getPublicUrl: jest.fn().mockReturnValue({ data: { publicUrl: 'https://example.invalid/audio.mp3' } })
       });
+    });
+
+    afterEach(() => {
+      expect(global.fetch).not.toHaveBeenCalled();
+      jest.restoreAllMocks();
     });
 
     it('returns null if channel is not supported', async () => {
@@ -72,17 +84,35 @@ describe('long-reply-audio', () => {
       (CreditService.validateCredits as jest.Mock).mockResolvedValue(false);
       const result = await tryPrepareLongReplyAudio(defaultParams);
       expect(result).toBeNull();
+      expect(CreditService.deductCredits).not.toHaveBeenCalled();
+      expect(synthesizeSpeech).not.toHaveBeenCalled();
     });
 
-    it('uses the configured provider with MP3 for WhatsApp', async () => {
+    it('validates speech configuration before checking or deducting credits', async () => {
+      (validateSpeechOptions as jest.Mock).mockImplementation(() => {
+        throw new Error('Azure speech is not configured');
+      });
+      expect(await tryPrepareLongReplyAudio(defaultParams)).toBeNull();
+      expect(validateSpeechOptions).toHaveBeenCalledWith({ text: defaultParams.text, format: 'mp3' });
+      expect(CreditService.validateCredits).not.toHaveBeenCalled();
+      expect(CreditService.deductCredits).not.toHaveBeenCalled();
+      expect(synthesizeSpeech).not.toHaveBeenCalled();
+      expect(supabaseAdmin.storage.from).not.toHaveBeenCalled();
+    });
+
+    it('uses Azure direct with MP3 for WhatsApp', async () => {
       (supabaseAdmin.storage.from as jest.Mock).mockReturnValue({
         upload: jest.fn().mockResolvedValue({ data: { path: 'file.mp3' }, error: null }),
-        getPublicUrl: jest.fn().mockReturnValue({ data: { publicUrl: 'https://audio.mp3' } })
+        getPublicUrl: jest.fn().mockReturnValue({ data: { publicUrl: 'https://example.invalid/audio.mp3' } })
       });
 
       const result = await tryPrepareLongReplyAudio(defaultParams);
-      expect(result).toEqual({ audioUrl: 'https://audio.mp3', mimeType: 'audio/mpeg' });
-      expect(synthesizeSpeech).toHaveBeenCalledWith({ text: 'a'.repeat(500), format: 'mp3' });
+      expect(result).toEqual({ audioUrl: 'https://example.invalid/audio.mp3', mimeType: 'audio/mpeg' });
+      expect(synthesizeSpeech).toHaveBeenCalledWith({
+        text: 'a'.repeat(500), provider: 'azure', voice: 'alloy', model: 'tts-hd', format: 'mp3',
+      });
+      expect((validateSpeechOptions as jest.Mock).mock.invocationCallOrder[0])
+        .toBeLessThan((CreditService.deductCredits as jest.Mock).mock.invocationCallOrder[0]);
     });
 
     it('falls back to text when WhatsApp MP3 synthesis fails', async () => {
@@ -93,10 +123,12 @@ describe('long-reply-audio', () => {
       expect(synthesizeSpeech).toHaveBeenCalledTimes(1);
     });
 
-    it('uses configured provider MP3 for other supported channels', async () => {
+    it('uses Azure direct MP3 for other supported channels', async () => {
       const result = await tryPrepareLongReplyAudio({ ...defaultParams, channel: 'telegram' });
       expect(result).toEqual({ audioUrl: 'https://example.invalid/audio.mp3', mimeType: 'audio/mpeg' });
-      expect(synthesizeSpeech).toHaveBeenCalledWith({ text: 'a'.repeat(500), format: 'mp3' });
+      expect(synthesizeSpeech).toHaveBeenCalledWith({
+        text: 'a'.repeat(500), provider: 'azure', voice: 'alloy', model: 'tts-hd', format: 'mp3',
+      });
     });
 
     it('retains text rather than falling back across accounts for other channels', async () => {

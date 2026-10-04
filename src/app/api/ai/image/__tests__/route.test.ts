@@ -23,6 +23,7 @@ import { GET, POST } from '../route';
 import { generateWithAzure } from '../provider-azure';
 import { CreditService } from '@/lib/services/billing/CreditService';
 import { mediaInstanceBelongsToSite } from '@/lib/services/ai/media-instance-access';
+import { MediaRequestError } from '@/lib/services/image/media-request-error';
 
 describe('AI image route', () => {
   beforeEach(() => { jest.clearAllMocks(); });
@@ -61,6 +62,16 @@ describe('AI image route', () => {
       method: 'POST', body: JSON.stringify({ prompt: 'cat', site_id: '11111111-1111-4111-8111-111111111111' }),
     }));
     expect(response.status).toBe(500);
+    expect(generateWithAzure).toHaveBeenCalledTimes(1);
+    expect(CreditService.deductCredits).not.toHaveBeenCalled();
+  });
+  it('returns the safe configuration error as 503 without deducting credits', async () => {
+    jest.mocked(generateWithAzure).mockRejectedValueOnce(new MediaRequestError('Invalid Azure image endpoint configuration', 503));
+    const response = await POST(new NextRequest('http://localhost/api/ai/image', {
+      method: 'POST', body: JSON.stringify({ prompt: 'cat', site_id: '11111111-1111-4111-8111-111111111111' }),
+    }));
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: 'Invalid Azure image endpoint configuration' });
     expect(generateWithAzure).toHaveBeenCalledTimes(1);
     expect(CreditService.deductCredits).not.toHaveBeenCalled();
   });

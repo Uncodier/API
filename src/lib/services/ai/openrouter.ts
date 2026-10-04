@@ -2,18 +2,6 @@ import OpenAI from 'openai';
 
 export const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 export const DEFAULT_OPENROUTER_CHAT_MODEL = 'openai/gpt-6.1-sol';
-export const DEFAULT_OPENROUTER_TTS_MODEL = 'microsoft/mai-voice-2.1';
-export const DEFAULT_OPENROUTER_TTS_VOICE = 'es-MX-Valeria:MAI-Voice-2.1';
-
-export function getOpenRouterTtsModel(env: NodeJS.Dict<string> = process.env): string {
-  return env.OPENROUTER_TTS_MODEL?.trim() || DEFAULT_OPENROUTER_TTS_MODEL;
-}
-
-export function getOpenRouterTtsVoice(model: string, env: NodeJS.Dict<string> = process.env): string | undefined {
-  return env.OPENROUTER_TTS_VOICE?.trim()
-    || (model === DEFAULT_OPENROUTER_TTS_MODEL ? DEFAULT_OPENROUTER_TTS_VOICE : undefined);
-}
-
 /** Keep the gateway separate from the model vendor. Qualified IDs are never rewritten. */
 export function resolveOpenRouterModel(model?: string, family = 'openai'): string {
   const value = model?.trim();

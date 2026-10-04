@@ -1,143 +1,171 @@
 import { randomBytes } from 'node:crypto';
-import 'openai/shims/web';
-import {
-  buildTranscriptionPlan, normalizeAudioMimeType,
-  transcribeAudioBuffer,
-} from '@/lib/services/ai/transcribeAudio';
+import { buildTranscriptionPlan, normalizeAudioMimeType, transcribeAudioBuffer } from '@/lib/services/ai/transcribeAudio';
+import { getAzureTranscriptionConfig } from '@/lib/services/ai/azure-transcription-config';
 import { recordTelemetry } from '@/lib/status/telemetry';
 
 jest.mock('@/lib/status/telemetry', () => ({ recordTelemetry: jest.fn().mockResolvedValue(undefined) }));
 jest.mock('@/lib/services/twilio/fetchTwilioMedia', () => ({ fetchTwilioMedia: jest.fn(), isTwilioMediaUrl: jest.fn() }));
-jest.mock('openai', () => {
-  const Actual = jest.requireActual('openai').default;
-  const Constructor = jest.fn((options: object) => new Actual({
-    ...options, fetch: (...args: Parameters<typeof fetch>) => global.fetch(...args),
-  }));
-  return { __esModule: true, default: Object.assign(Constructor, { toFile: Actual.toFile }) };
-});
 
 const syntheticKey = () => randomBytes(24).toString('hex');
+const azureEnv = (): NodeJS.Dict<string> => ({
+  MICROSOFT_AZURE_OPENAI_ENDPOINT: 'https://test-resource.openai.azure.com',
+  MICROSOFT_AZURE_OPENAI_API_KEY: syntheticKey(),
+  AZURE_OPENAI_TRANSCRIPTION_DEPLOYMENT: 'test-transcribe',
+});
 
-describe('transcribeAudio helpers', () => {
-  it('never uses legacy transcription provider selectors or credentials', () => {
-    expect(buildTranscriptionPlan({ AI_TRANSCRIPTION_PROVIDER: 'gemini', GEMINI_API_KEY: syntheticKey() })).toEqual([]);
-    expect(buildTranscriptionPlan({ AI_TRANSCRIPTION_PROVIDER: 'gemini', OPENROUTER_API_KEY: syntheticKey(),
-      OPENROUTER_TRANSCRIPTION_MODEL: 'vendor/stt', GEMINI_API_KEY: syntheticKey() }))
-      .toEqual([{ provider: 'openrouter', model: 'vendor/stt' }]);
-  });
-
-  it('never selects Portkey or reuses Azure chat virtual keys', () => {
-    expect(buildTranscriptionPlan({
-      PORTKEY_API_KEY: syntheticKey(), PORTKEY_VIRTUAL_KEY_OPENAI: syntheticKey(),
-      AZURE_OPENAI_API_KEY: syntheticKey(),
-    })).toEqual([]);
-  });
-
-  it('requires a qualified OpenRouter model AND key, never guessing a transcription model', () => {
-    expect(buildTranscriptionPlan({ OPENROUTER_API_KEY: syntheticKey() })).toEqual([]);
-    expect(buildTranscriptionPlan({ OPENROUTER_TRANSCRIPTION_MODEL: 'vendor/stt' })).toEqual([]);
-    expect(buildTranscriptionPlan({ OPENROUTER_API_KEY: syntheticKey(), OPENROUTER_TRANSCRIPTION_MODEL: 'whisper-1' })).toEqual([]);
-  });
-
-  it('selects only configured OpenRouter even if all legacy credentials exist', () => {
-    expect(buildTranscriptionPlan({
+describe('Azure transcription configuration', () => {
+  it('selects only the explicit Azure transcription deployment, not chat or routed credentials', () => {
+    expect(buildTranscriptionPlan({ ...azureEnv(), MICROSOFT_AZURE_OPENAI_DEPLOYMENT: 'chat',
       OPENROUTER_API_KEY: syntheticKey(), OPENROUTER_TRANSCRIPTION_MODEL: 'vendor/stt',
-      GEMINI_API_KEY: syntheticKey(), OPENAI_API_KEY: syntheticKey(),
-      VERCEL_AI_GATEWAY_OPENAI: 'https://gateway.example.invalid', VERCEL_AI_GATEWAY_API_KEY: syntheticKey(),
-    })).toEqual([{ provider: 'openrouter', model: 'vendor/stt' }]);
+      AI_TRANSCRIPTION_PROVIDER: 'gemini', GEMINI_API_KEY: syntheticKey() }))
+      .toEqual([{ provider: 'azure-direct', model: 'test-transcribe' }]);
+    expect(buildTranscriptionPlan({ OPENROUTER_API_KEY: syntheticKey(), OPENROUTER_TRANSCRIPTION_MODEL: 'vendor/stt',
+      PORTKEY_API_KEY: syntheticKey(), PORTKEY_VIRTUAL_KEY_OPENAI: syntheticKey(),
+      OPENAI_API_KEY: syntheticKey(), GEMINI_API_KEY: syntheticKey(),
+      VERCEL_AI_GATEWAY_OPENAI: 'https://gateway.example.invalid', VERCEL_AI_GATEWAY_API_KEY: syntheticKey() })).toEqual([]);
   });
 
-  it('normalizes Twilio MIME types and maps extensions without losing FLAC/AAC', () => {
+  it.each(['MICROSOFT_AZURE_OPENAI_ENDPOINT', 'MICROSOFT_AZURE_OPENAI_API_KEY', 'AZURE_OPENAI_TRANSCRIPTION_DEPLOYMENT'])
+    ('requires %s without guessing a deployment', (name) => {
+      const env = azureEnv(); delete env[name];
+      expect(buildTranscriptionPlan(env)).toEqual([]);
+    });
+
+  it('supports generic Azure credentials and independent transcription overrides', () => {
+    const key = syntheticKey();
+    expect(getAzureTranscriptionConfig({ AZURE_OPENAI_ENDPOINT: 'https://generic.openai.azure.com',
+      AZURE_OPENAI_API_KEY: key, AZURE_OPENAI_TRANSCRIPTION_DEPLOYMENT: 'stt' }))
+      .toEqual({ origin: 'https://generic.openai.azure.com', apiKey: key, deployment: 'stt', apiVersion: '2024-10-21' });
+    expect(getAzureTranscriptionConfig({ ...azureEnv(),
+      AZURE_OPENAI_TRANSCRIPTION_ENDPOINT: 'https://dedicated.services.ai.azure.com/openai/v1/',
+      AZURE_OPENAI_TRANSCRIPTION_API_KEY: key, AZURE_OPENAI_TRANSCRIPTION_API_VERSION: 'v1',
+      MICROSOFT_AZURE_OPENAI_API_VERSION: 'chat-version' }))
+      .toEqual({ origin: 'https://dedicated.services.ai.azure.com', apiKey: key, deployment: 'test-transcribe', apiVersion: 'v1' });
+  });
+
+  it.each(['AZURE_OPENAI_TRANSCRIPTION_ENDPOINT', 'AZURE_OPENAI_TRANSCRIPTION_API_KEY', 'AZURE_OPENAI_TRANSCRIPTION_API_VERSION'])
+    ('fails closed on an explicit empty %s override', (name) => {
+      expect(buildTranscriptionPlan({ ...azureEnv(), [name]: ' ' })).toEqual([]);
+    });
+
+  it.each([
+    ['AZURE_OPENAI_TRANSCRIPTION_DEPLOYMENT', 'vendor/stt'],
+    ['AZURE_OPENAI_TRANSCRIPTION_API_VERSION', 'invalid-version'],
+  ])('rejects invalid %s', (name, value) => {
+    expect(buildTranscriptionPlan({ ...azureEnv(), [name]: value })).toEqual([]);
+  });
+
+  it('normalizes WhatsApp OGG and common MIME aliases', () => {
     expect(normalizeAudioMimeType('audio/ogg; codecs=opus')).toBe('audio/ogg');
     expect(normalizeAudioMimeType('application/octet-stream')).toBe('audio/ogg');
     expect(normalizeAudioMimeType('audio/mpeg')).toBe('audio/mp3');
+    expect(normalizeAudioMimeType('audio/x-wav')).toBe('audio/wav');
   });
 });
 
-describe('OpenRouter transcription adapter', () => {
+describe('Azure direct transcription adapter', () => {
   let fetchMock: jest.SpyInstance;
   let env: NodeJS.Dict<string>;
   beforeEach(() => {
-    jest.restoreAllMocks();
     jest.clearAllMocks();
     fetchMock = jest.spyOn(global, 'fetch').mockRejectedValue(new Error('Unexpected network call'));
     jest.spyOn(console, 'log').mockImplementation(() => {});
     jest.spyOn(console, 'warn').mockImplementation(() => {});
-    env = {
-      OPENROUTER_API_KEY: syntheticKey(), OPENROUTER_TRANSCRIPTION_MODEL: 'vendor/configured-stt',
-      OPENAI_API_KEY: syntheticKey(), GEMINI_API_KEY: syntheticKey(),
-      PORTKEY_API_KEY: syntheticKey(), AZURE_OPENAI_API_KEY: syntheticKey(),
-    };
+    env = { ...azureEnv(), OPENROUTER_API_KEY: syntheticKey(), OPENROUTER_TRANSCRIPTION_MODEL: 'vendor/stt',
+      OPENAI_API_KEY: syntheticKey(), GEMINI_API_KEY: syntheticKey(), PORTKEY_API_KEY: syntheticKey() };
   });
-  afterAll(() => jest.restoreAllMocks());
+  afterEach(() => { jest.restoreAllMocks(); });
 
-  it('posts base64 JSON to /audio/transcriptions and preserves text, actual cost and generation ID', async () => {
-    const usage = { cost: 0.0123, input_tokens: 10, output_tokens: 3 };
-    fetchMock.mockResolvedValue(new Response(JSON.stringify({ text: '  Transcript.  ', usage }), {
-      headers: { 'Content-Type': 'application/json', 'X-Generation-Id': 'offline-generation' },
-    }));
-    const buffer = Buffer.from('offline audio');
+  it('uploads original OGG bytes as multipart to Azure with no gateway headers or invented cost', async () => {
+    const buffer = Buffer.from('test OGG bytes');
+    fetchMock.mockResolvedValue(Response.json({ text: ' Transcripción ', usage: { duration: 2 } },
+      { headers: { 'apim-request-id': 'azure-request' } }));
     const result = await transcribeAudioBuffer({ buffer, contentType: 'audio/ogg; codecs=opus' }, env);
-    expect(result).toEqual({ success: true, text: 'Transcript.', provider: 'openrouter',
-      model: 'vendor/configured-stt', usage, generationId: 'offline-generation' });
+    expect(result).toMatchObject({ success: true, text: 'Transcripción', provider: 'azure-direct',
+      model: 'test-transcribe', generationId: 'azure-request', usage: { duration: 2 } });
+    expect(result.usage?.cost).toBeUndefined();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const request = new Request(...fetchMock.mock.calls[0] as [RequestInfo, RequestInit]);
-    expect(request.url).toBe('https://openrouter.ai/api/v1/audio/transcriptions');
-    expect(request.headers.get('authorization')).toBe(`Bearer ${env.OPENROUTER_API_KEY}`);
-    expect(request.headers.get('content-type')).toBe('application/json');
+    expect(request.url).toBe('https://test-resource.openai.azure.com/openai/deployments/test-transcribe/audio/transcriptions?api-version=2024-10-21');
+    expect(request.headers.get('api-key')).toBe(env.MICROSOFT_AZURE_OPENAI_API_KEY);
+    expect(request.headers.get('authorization')).toBeNull();
     expect(request.headers.get('x-portkey-api-key')).toBeNull();
-    expect(await request.json()).toEqual({ model: 'vendor/configured-stt',
-      input_audio: { data: buffer.toString('base64'), format: 'ogg' } });
+    expect(request.headers.get('content-type')).toMatch(/^multipart\/form-data; boundary=/);
+    const form = await request.formData();
+    expect(form.get('model')).toBe('test-transcribe'); expect(form.get('response_format')).toBe('json');
+    const file = form.get('file') as File;
+    expect(file.name).toBe('audio.ogg'); expect(file.type).toBe('audio/ogg');
+    expect(Buffer.from(await file.arrayBuffer())).toEqual(buffer);
+    expect(fetchMock.mock.calls[0][1].redirect).toBe('error');
+    expect(fetchMock.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
   });
 
-  it.each(['audio/mpeg', 'audio/mp4', 'audio/flac', 'audio/aac'])('maps %s to the declared audio format', async (mime) => {
+  it.each([['audio/mpeg', 'mp3'], ['audio/mp4', 'm4a'], ['audio/flac', 'flac'], ['audio/aac', 'aac'],
+    ['audio/x-wav', 'wav'], ['audio/webm', 'webm'], ['application/ogg', 'ogg']])
+    ('preserves %s with a matching file extension', async (mime, extension) => {
+      fetchMock.mockResolvedValue(Response.json({ text: 'Transcript' }));
+      await transcribeAudioBuffer({ buffer: Buffer.from('audio'), contentType: mime }, env);
+      expect(((fetchMock.mock.calls[0][1].body as FormData).get('file') as File).name).toBe(`audio.${extension}`);
+    });
+
+  it.each(['v1', 'preview', '2025-03-01-preview'])('uses the explicitly configured %s API', async (version) => {
+    env.AZURE_OPENAI_TRANSCRIPTION_API_VERSION = version;
     fetchMock.mockResolvedValue(Response.json({ text: 'Transcript' }));
-    await transcribeAudioBuffer({ buffer: Buffer.from('audio'), contentType: mime }, env);
-    const request = new Request(...fetchMock.mock.calls[0] as [RequestInfo, RequestInit]);
-    const expected: Record<string, string> = { 'audio/mpeg': 'mp3', 'audio/mp4': 'm4a', 'audio/flac': 'flac', 'audio/aac': 'aac' };
-    expect((await request.json()).input_audio.format).toBe(expected[mime]);
+    await transcribeAudioBuffer({ buffer: Buffer.from('audio') }, env);
+    const url = new URL(fetchMock.mock.calls[0][0]);
+    expect(url.pathname).toBe(version.includes('-') ? '/openai/deployments/test-transcribe/audio/transcriptions' : '/openai/v1/audio/transcriptions');
+    expect(url.searchParams.get('api-version')).toBe(version === 'v1' ? null : version);
   });
 
-  it('fails closed with no network when model is unselected', async () => {
-    delete env.OPENROUTER_TRANSCRIPTION_MODEL;
+  it('fails without network when Azure is not configured, even when OpenRouter is', async () => {
+    delete env.AZURE_OPENAI_TRANSCRIPTION_DEPLOYMENT;
     const result = await transcribeAudioBuffer({ buffer: Buffer.from('audio') }, env);
-    expect(result.success).toBe(false);
-    expect(result.error).toContain('OPENROUTER_TRANSCRIPTION_MODEL');
+    expect(result.success).toBe(false); expect(result.error).toContain('AZURE_OPENAI_TRANSCRIPTION_DEPLOYMENT');
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('does not retry/fall back or leak upstream credentials on configured OpenRouter failure', async () => {
-    const errorSecret = syntheticKey();
-    fetchMock.mockResolvedValue(Response.json({ error: { message: `${errorSecret} ${env.OPENROUTER_API_KEY}` } }, { status: 503 }));
-    const result = await transcribeAudioBuffer({ buffer: Buffer.from('audio') }, env);
-    expect(result).toMatchObject({ success: false, provider: 'openrouter', error: 'Configured audio transcription provider failed' });
+  it('does not retry, fall back or expose credentials/audio when Azure fails', async () => {
+    const secret = syntheticKey(); const buffer = Buffer.from(syntheticKey());
+    fetchMock.mockResolvedValue(Response.json({ error: { message: `${secret} ${buffer} ${env.MICROSOFT_AZURE_OPENAI_API_KEY}` } }, { status: 503 }));
+    const result = await transcribeAudioBuffer({ buffer }, env);
+    expect(result).toMatchObject({ success: false, provider: 'azure-direct', error: 'Configured audio transcription provider failed' });
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    const exposed = JSON.stringify([result, jest.mocked(console.warn).mock.calls, jest.mocked(recordTelemetry).mock.calls]);
-    for (const value of [errorSecret, ...Object.values(env).filter((value) => value !== env.OPENROUTER_TRANSCRIPTION_MODEL)]) {
+    const exposed = JSON.stringify([result, jest.mocked(console.log).mock.calls, jest.mocked(console.warn).mock.calls, jest.mocked(recordTelemetry).mock.calls]);
+    for (const value of [secret, buffer.toString(), ...Object.entries(env).filter(([name]) => name.endsWith('_KEY')).map(([, value]) => value!)]) {
       expect(exposed).not.toContain(value);
     }
   });
 
-  it('rejects unknown formats without falsely labeling audio as MP3', async () => {
-    const result = await transcribeAudioBuffer({ buffer: Buffer.from('audio'), contentType: 'audio/unknown' }, env);
-    expect(result.success).toBe(false);
+  it('rejects credential-bearing endpoints without leaking or fetching', async () => {
+    const url = new URL('https://config.example.invalid');
+    url.username = syntheticKey(); url.password = syntheticKey();
+    env.AZURE_OPENAI_TRANSCRIPTION_ENDPOINT = url.toString();
+    const result = await transcribeAudioBuffer({ buffer: Buffer.from('audio') }, env);
+    for (const value of [url.username, url.password, url.toString()]) expect(JSON.stringify(result)).not.toContain(value);
+    expect(result.success).toBe(false); expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each(['http://test.openai.azure.com', 'https://openrouter.ai', 'https://test.openai.azure.com/evil',
+    'https://test.openai.azure.com?key=unsafe'])('rejects unsafe endpoint %s', async (endpoint) => {
+      env.AZURE_OPENAI_TRANSCRIPTION_ENDPOINT = endpoint;
+      expect((await transcribeAudioBuffer({ buffer: Buffer.from('audio') }, env)).success).toBe(false);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+  it.each([0, 25 * 1024 * 1024 + 1])('rejects invalid audio size %i', async (size) => {
+    const buffer = Buffer.alloc(size);
+    expect((await transcribeAudioBuffer({ buffer }, env)).success).toBe(false);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('rejects empty transcription without switching account', async () => {
+  it('rejects unknown formats without relabeling or fetching', async () => {
+    expect((await transcribeAudioBuffer({ buffer: Buffer.from('audio'), contentType: 'audio/unknown' }, env)).success).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects empty transcription without switching provider', async () => {
     fetchMock.mockResolvedValue(Response.json({ text: '  ' }));
     expect((await transcribeAudioBuffer({ buffer: Buffer.from('audio') }, env)).success).toBe(false);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('ignores a stale OpenAI-direct selector without leaving OpenRouter', async () => {
-    env.AI_TRANSCRIPTION_PROVIDER = 'openai-direct';
-    fetchMock.mockResolvedValue(Response.json({ text: 'Transcript' }));
-    const result = await transcribeAudioBuffer({ buffer: Buffer.from('audio'), contentType: 'audio/wav' }, env);
-    expect(result).toMatchObject({ success: true, provider: 'openrouter', model: 'vendor/configured-stt' });
-    const request = new Request(...fetchMock.mock.calls[0] as [RequestInfo, RequestInit]);
-    expect(request.url).toBe('https://openrouter.ai/api/v1/audio/transcriptions');
-    expect(request.headers.get('authorization')).toBe(`Bearer ${env.OPENROUTER_API_KEY}`);
-    expect(request.headers.get('content-type')).toBe('application/json');
   });
 });

@@ -1,14 +1,7 @@
-import 'openai/shims/web';
 import { randomBytes } from 'node:crypto';
 import { NextRequest } from 'next/server';
 import { GET, POST } from '../route';
 
-jest.mock('openai', () => {
-  const Actual = jest.requireActual('openai').default;
-  return { __esModule: true, default: jest.fn((options: object) => new Actual({
-    ...options, fetch: (...args: Parameters<typeof fetch>) => global.fetch(...args),
-  })) };
-});
 jest.mock('@/lib/security/request-rate-limit', () => ({
   enforceRequestRateLimit: jest.fn().mockResolvedValue(null),
   getAuthenticatedRateIdentity: jest.fn().mockReturnValue('offline-user'),
@@ -23,31 +16,33 @@ describe('audio route routing contract', () => {
   }));
   beforeEach(() => {
     jest.restoreAllMocks();
-    process.env = { NODE_ENV: 'test', OPENROUTER_API_KEY: randomBytes(24).toString('hex') };
+    process.env = { NODE_ENV: 'test', AZURE_TTS_API_KEY: randomBytes(24).toString('hex'),
+      AZURE_TTS_ENDPOINT: 'https://speech.openai.azure.com' };
     fetchMock = jest.spyOn(global, 'fetch').mockRejectedValue(new Error('Unexpected network call'));
   });
   afterAll(() => { process.env = originalEnv; jest.restoreAllMocks(); });
 
-  it('defaults to OpenRouter and returns binary MP3 with correct headers', async () => {
-    fetchMock.mockResolvedValue(new Response('audio-data'));
+  it('defaults to direct Azure and returns binary MP3 with correct headers', async () => {
+    fetchMock.mockResolvedValue(new Response('audio-data', { headers: { 'Content-Type': 'audio/mpeg' } }));
     const result = await post({ text: 'Hello' });
     expect(result.status).toBe(200);
     expect(result.headers.get('Content-Type')).toBe('audio/mpeg');
     expect(result.headers.get('Content-Length')).toBe('10');
-    expect(result.headers.get('X-TTS-Provider')).toBe('openrouter');
+    expect(result.headers.get('X-TTS-Provider')).toBe('azure');
+    expect(result.headers.get('Cache-Control')).toBe('no-store');
     expect(await result.text()).toBe('audio-data');
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0][0]).toBe('https://openrouter.ai/api/v1/audio/speech');
+    expect(String(fetchMock.mock.calls[0][0])).toBe('https://speech.openai.azure.com/openai/deployments/tts-hd/audio/speech?api-version=2025-04-01-preview');
   });
 
-  it.each(['azure', 'gemini', 'vercel'])('rejects explicit direct provider %s', async provider => {
+  it.each(['openrouter', 'gemini', 'vercel'])('rejects unsupported provider %s', async provider => {
     expect((await post({ text: 'Hola', provider })).status).toBe(400);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('requires OpenRouter credentials and ignores legacy provider keys', async () => {
-    delete process.env.OPENROUTER_API_KEY;
-    process.env.AZURE_TTS_API_KEY = randomBytes(24).toString('hex');
+  it('requires Azure credentials without gateway fallback', async () => {
+    delete process.env.AZURE_TTS_API_KEY;
+    process.env.OPENROUTER_API_KEY = randomBytes(24).toString('hex');
     process.env.GEMINI_API_KEY = randomBytes(24).toString('hex');
     expect((await post({ text: 'Hola' })).status).toBe(503);
     expect(fetchMock).not.toHaveBeenCalled();
@@ -55,7 +50,7 @@ describe('audio route routing contract', () => {
 
   it.each([
     { text: '' }, { text: 'Hello', provider: 'unsupported' }, { text: 'Hello', model: 123 },
-    { text: 'Hello', format: 'invalid' }, { text: 'Hello', speed: 10 }, { text: 'Hello', model: 'tts-hd' },
+    { text: 'Hello', format: 'invalid' }, { text: 'Hello', speed: 10 }, { text: 'Hello', model: 'vendor/speech' },
   ])('validates bad request before network access: %j', async (body) => {
     expect((await post(body)).status).toBe(400);
     expect(fetchMock).not.toHaveBeenCalled();
@@ -68,15 +63,22 @@ describe('audio route routing contract', () => {
     expect(response.status).toBe(502);
     const body = await response.text();
     expect(body).not.toContain(secret);
-    expect(body).not.toContain(process.env.OPENROUTER_API_KEY);
+    expect(body).not.toContain(process.env.AZURE_TTS_API_KEY);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('describes a single gateway, defaults and no Azure environment requirement', async () => {
+  it('describes direct Azure defaults and dedicated environment requirements', async () => {
     const body = await (await GET()).json();
-    expect(body.providers).toEqual(['openrouter']);
-    expect(body.env.required).toEqual(['OPENROUTER_API_KEY']);
-    expect(body.defaults.model).toBe('microsoft/mai-voice-2.1');
-    expect(body.defaults.voice).toBe('es-MX-Valeria:MAI-Voice-2.1');
+    expect(body.providers).toEqual(['azure']);
+    expect(body.env.required).toEqual(['AZURE_TTS_ENDPOINT', 'AZURE_TTS_API_KEY']);
+    expect(body.defaults.model).toBe('tts-hd');
+    expect(body.defaults.voice).toBe('alloy');
+    expect(body.notes.maxCharacters).toBe(4096);
+  });
+
+  it('rejects overlong text and malformed JSON before network access', async () => {
+    expect((await post({ text: 'a'.repeat(4097) })).status).toBe(413);
+    expect((await POST(new NextRequest('https://example.invalid/api/ai/audio', { method: 'POST', body: '{' }))).status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
