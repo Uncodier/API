@@ -124,6 +124,20 @@ if requests must stay on your own Azure credentials.
   uses these voices too; MAI voice IDs are not valid for this integration.
   Verify supported voices against the selected TTS
   deployment before changing them.
+- `generate_audio` exposes `voice` (`auto`, `alloy`, `echo`, `fable`, `onyx`, `nova`,
+  `shimmer`) and `language` (`auto` or a listed ISO 639-1 code). Both selectors
+  default to `auto`: the agent may choose a suitable voice and infer the language
+  from the request/context. If the agent leaves voice unset, the configured Azure
+  voice remains the final fallback; `auto` is never sent as an Azure voice ID.
+  Content Creator selections are preserved as authoritative tool overrides;
+  resetting to Auto removes stale forced selections.
+- Language is text-preparation guidance, not an Azure `tts-hd` request field.
+  The agent must write or translate the spoken content into the selected language
+  **before** calling `generate_audio`. The adapter validates language choices but
+  neither translates text nor sends unsupported language/instruction fields to
+  Azure. Direct `/api/ai/audio` callers must supply text already in that language.
+  `X-TTS-Text-Language` describes requested text-language guidance, not a detected
+  or verified language. Only the intended spoken content is synthesized.
 - Supported response formats are `mp3` (default), `pcm`, `wav`, `opus`, `aac` and
   `flac`. Input is limited to 4,096 characters; speed must be between `0.25` and
   `4`, inclusive. Unsupported formats and out-of-range inputs are rejected, not
@@ -162,6 +176,32 @@ configuration must use the matched speech resource endpoint/key and the validate
 those settings. Production acceptance still requires pronunciation review,
 representative names/brands/prices, latency and format coverage, end-to-end
 storage/billing checks and Azure usage reconciliation.
+
+### Production 404 investigation
+
+A subsequent `generate_audio` call returned `502` with
+`Azure TTS request failed (404)`. The running local API successfully synthesized
+the same four-line Spanish verse (HTTP 200, `X-TTS-Provider: azure`, valid MP3,
+199,859 bytes in 4,764 ms). The production environment still pointed its dedicated
+TTS endpoint/key at the original resource without the speech deployment; the
+generic production Azure credentials matched the locally verified resource.
+
+The production-only `AZURE_TTS_ENDPOINT` and `AZURE_TTS_API_KEY` were explicitly
+updated to that existing matched resource, with deployment `tts-hd`, API version
+`2025-04-01-preview` and voice `alloy`. A redeploy of the already-published
+production version completed; it did not include unrelated uncommitted local
+changes. The production alias was verified to point to the new ready deployment
+before inference. The same four-line verse then succeeded on production
+`POST /api/ai/audio`: HTTP 200, `X-TTS-Provider: azure`, `audio/mpeg`, 194,099 bytes
+with a valid MP3 signature in 5,210 ms. This check did not rerun the original agent
+node, upload an asset or deduct application credits; those end-to-end steps and
+subjective pronunciation validation remain separate acceptance checks.
+Sensitive Vercel variables are not returned by environment pulls; an omitted
+secret in that readback is not an empty deployed value.
+
+The `provider: openrouter` in an assistant-tool-call event describes the model
+that requested the tool, not the provider used for speech synthesis. The audio
+response header and the direct Azure adapter identify the TTS provider.
 
 ## Direct Azure transcription
 

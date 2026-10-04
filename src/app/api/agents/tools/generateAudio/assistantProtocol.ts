@@ -1,5 +1,6 @@
 import { CreditService } from '@/lib/services/billing/CreditService';
 import { validateSpeechOptions, ttsMimeType, TTSProvider, TTSAudioFormat } from '@/lib/services/ai/tts-service';
+import { TTS_VOICES, TTS_LANGUAGES } from '@/lib/services/ai/speech-options';
 /**
  * Assistant Protocol Wrapper for Generate Audio Tool
  * Formats the tool for OpenAI/assistant compatibility
@@ -9,6 +10,7 @@ export interface GenerateAudioToolParams {
   text: string;
   provider?: TTSProvider;
   voice?: string;
+  language?: string;
   format?: TTSAudioFormat;
   model?: string;
 }
@@ -30,7 +32,7 @@ export function generateAudioTool(
 ) {
   return {
     name: 'generate_audio',
-    description: 'Convert written text into speech or a voiceover through Azure directly. Returns a URL to the generated audio file. This is speech synthesis, not a music-generation tool.',
+    description: 'Convert written text into speech or a voiceover through Azure directly. Choose a listed voice and language to suit the request unless the user selected them. Write the spoken text in the selected language before calling this tool; Azure detects language from that text and does not translate it. Auto leaves the choice to the request/context (voice falls back to the configured voice if omitted). Returns a URL to the generated audio file. This is speech synthesis, not a music-generation tool.',
     parameters: {
       type: 'object',
       properties: {
@@ -45,7 +47,15 @@ export function generateAudioTool(
         },
         voice: {
           type: 'string',
-          description: 'Optional Azure OpenAI speech voice supported by the selected deployment. Omit to use the configured multilingual voice.'
+          enum: ['auto', ...TTS_VOICES],
+          default: 'auto',
+          description: 'Select an Azure multilingual voice: alloy, echo, fable, onyx, nova or shimmer. Honor an explicit user choice; otherwise choose one appropriate for the request. Auto or omission uses the configured voice if no choice is made.'
+        },
+        language: {
+          type: 'string',
+          enum: ['auto', ...TTS_LANGUAGES],
+          default: 'auto',
+          description: 'Spoken text language (ISO 639-1). Honor the user selection or infer it from the request/context for auto. Write or translate the text into this language BEFORE calling the tool; synthesis itself does not translate text or force an accent.'
         },
         format: {
           type: 'string',
@@ -69,6 +79,7 @@ export function generateAudioTool(
           text: args.text,
           provider: args.provider,
           voice: args.voice,
+          language: args.language,
           format: options.forceWhatsAppCompatible ? 'mp3' : args.format,
           model: args.model,
         });
@@ -96,6 +107,7 @@ export function generateAudioTool(
           text: args.text,
           provider: provider,
           voice: speechOptions.voice,
+          ...(speechOptions.language ? { language: speechOptions.language } : {}),
           format,
           model: speechOptions.deployment
         };
@@ -182,6 +194,7 @@ export function generateAudioTool(
           metadata: {
             format: fileExt,
             voice: speechOptions.voice,
+            language: speechOptions.language ?? 'auto',
             generated_at: new Date().toISOString()
           },
           message: `Successfully generated audio using ${provider}. Audio is saved and ready to use. URL: ${publicUrl}`

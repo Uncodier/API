@@ -47,6 +47,11 @@ describe('generate audio tool with direct Azure speech (offline)', () => {
     expect(tool.parameters.properties.format.enum).toEqual(['mp3', 'pcm', 'wav', 'opus', 'aac', 'flac']);
     expect(tool.parameters.properties.model.description).toContain('Azure speech deployment name');
     expect(tool.parameters.properties.model.description).not.toContain('OpenRouter');
+    expect(tool.parameters.properties.voice.enum).toEqual(['auto', 'alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer']);
+    expect(tool.parameters.properties.voice.default).toBe('auto');
+    expect(tool.parameters.properties.language.enum).toContain('es');
+    expect(tool.parameters.properties.language.default).toBe('auto');
+    expect(tool.parameters.properties.language.description).toContain('BEFORE');
   });
 
   it.each([
@@ -54,6 +59,9 @@ describe('generate audio tool with direct Azure speech (offline)', () => {
     { format: 'ogg' },
     { model: 'vendor/tts-hd' },
     { voice: ' ' },
+    { voice: 'unsupported' },
+    { language: 'unsupported' },
+    { language: 123 },
     { text: ' ' },
     { text: 'a'.repeat(4097) },
   ])('rejects invalid speech options before checking or deducting credits (%j)', async overrides => {
@@ -107,5 +115,22 @@ describe('generate audio tool with direct Azure speech (offline)', () => {
       .toEqual({ text: 'Hola', provider: 'azure', voice: 'shimmer', format: 'mp3', model: 'configured-speech' });
     expect(JSON.stringify(request)).not.toContain(process.env.AZURE_TTS_API_KEY!);
     expect(JSON.stringify(request)).not.toContain(process.env.AZURE_TTS_ENDPOINT!);
+  });
+
+  it('passes explicit voice and text-language selection to the audio API and result metadata', async () => {
+    const result = await generateAudioTool('site-test').execute({ text: 'Bonjour', voice: 'nova', language: 'fr' });
+    expect(JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body)).toEqual({
+      text: 'Bonjour', provider: 'azure', voice: 'nova', language: 'fr', format: 'mp3', model: 'tts-hd',
+    });
+    expect(result.metadata).toMatchObject({ voice: 'nova', language: 'fr' });
+  });
+
+  it('treats auto as no forced selection, never an Azure voice ID', async () => {
+    process.env.AZURE_TTS_VOICE = 'echo';
+    const result = await generateAudioTool('site-test').execute({ text: 'Hello', voice: 'auto', language: 'auto' });
+    expect(JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body)).toEqual({
+      text: 'Hello', provider: 'azure', voice: 'echo', format: 'mp3', model: 'tts-hd',
+    });
+    expect(result.metadata).toMatchObject({ voice: 'echo', language: 'auto' });
   });
 });

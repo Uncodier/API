@@ -148,6 +148,11 @@ function shortDescription(desc: string | undefined, max = 180): string {
 function isValidationErrorMessage(msg: string | undefined): boolean {
   if (!msg) return false;
   const lower = msg.toLowerCase();
+  // Server configuration and transport failures cannot be fixed by changing
+  // tool arguments. Do not let words such as "invalid" trigger paid retries.
+  if (/\bconfiguration\b|\brequest failed\s*\(5\d{2}\)|\brequest admission\b|\bgeneration outcome may be uncertain\b/.test(lower)) {
+    return false;
+  }
   return (
     lower.includes('invalid') ||
     lower.includes('required') ||

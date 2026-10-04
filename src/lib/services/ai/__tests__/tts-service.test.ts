@@ -37,6 +37,21 @@ describe('direct Azure speech', () => {
     await expect(synthesizeSpeech({ text: 'Hola', provider: 'azure' })).resolves.toMatchObject({ provider: 'azure' });
   });
 
+  it('accepts explicit language guidance without changing text or sending unsupported Azure fields', async () => {
+    fetchMock.mockResolvedValue(audioResponse());
+    const result = await synthesizeSpeech({ text: 'Bonjour, le monde.', voice: 'nova', language: 'fr' });
+    expect(result.language).toBe('fr');
+    expect(await sentRequest().json()).toEqual({
+      input: 'Bonjour, le monde.', voice: 'nova', model: 'tts-hd', response_format: 'mp3',
+    });
+  });
+
+  it('never forwards the auto sentinel to Azure', async () => {
+    fetchMock.mockResolvedValue(audioResponse());
+    await synthesizeSpeech({ text: 'Hola', voice: 'auto', language: 'auto' });
+    expect(await sentRequest().json()).toEqual({ input: 'Hola', voice: 'alloy', model: 'tts-hd', response_format: 'mp3' });
+  });
+
   it.each(['AZURE_TTS_API_KEY', 'AZURE_TTS_ENDPOINT'])('fails closed without %s and never falls back', async name => {
     delete process.env[name];
     await expect(synthesizeSpeech({ text: 'Hola' })).rejects.toMatchObject({ status: 503 });
@@ -71,6 +86,7 @@ describe('direct Azure speech', () => {
   it.each([
     { text: ' ' }, { text: 'a'.repeat(4097) }, { text: 'Hola', model: 'vendor/speech' },
     { text: 'Hola', voice: '' }, { text: 'Hola', format: 'ogg' }, { text: 'Hola', format: 'toString' },
+    { text: 'Hola', voice: 'MAI-Voice' }, { text: 'Hola', language: 'unsupported' }, { text: 'Hola', language: null },
     { text: 'Hola', speed: 4.1 }, { text: 'Hola', speed: NaN }, { text: 'Hola', speed: '1' },
   ])('bounds options before network access', async options => {
     await expect(synthesizeSpeech(options as any)).rejects.toMatchObject({ status: 400 });

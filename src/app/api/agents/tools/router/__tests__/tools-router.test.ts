@@ -48,3 +48,38 @@ describe('tools router webSearch forwarding', () => {
     expect(out).toHaveProperty('results.0.url', 'https://ampi.org.mx');
   });
 });
+
+describe('tools router error classification', () => {
+  const parameters = {
+    type: 'object', required: ['prompt'], properties: { prompt: { type: 'string' } },
+  };
+
+  it.each([
+    'Image generation failed: Image API request failed (503): Invalid Azure image endpoint configuration. Check Azure image endpoint, credentials, deployment and API version; Azure inference was not submitted. No alternate provider was called.',
+    'Image generation failed: Invalid Azure image deployment or API version configuration',
+    'Image generation failed: Azure image generation is not configured; missing credentials in server configuration',
+    'Image API request failed (503): Image request admission is temporarily unavailable; Azure inference was not submitted',
+    'Azure image request failed (502): invalid upstream response',
+    'Image API request failed or timed out; generation outcome may be uncertain; unexpected response',
+  ])('does not attach schema retry advice to infrastructure failures: %s', async message => {
+    const execute = jest.fn(async () => { throw new Error(message); });
+    const router = toolsRouterTool([{ name: 'generate_image', description: 'Generate an image', parameters, execute }]);
+    const out = await router.execute({ action: 'call', name: 'generate_image', args: JSON.stringify({ prompt: 'A red cube' }) });
+    expect(out).toMatchObject({ success: false, name: 'generate_image', error: message });
+    expect(out).not.toHaveProperty('parameters');
+    expect(out).not.toHaveProperty('hint');
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['prompt is required', 'n must be an integer between 1 and 4', 'Invalid tool arguments', 'Validation failed: expected string'])(
+    'retains schema correction advice for argument errors: %s', async message => {
+      const router = toolsRouterTool([{
+        name: 'generate_image', description: 'Generate an image', parameters,
+        execute: async () => { throw new Error(message); },
+      }]);
+      const out = await router.execute({ action: 'call', name: 'generate_image', args: '{}' });
+      expect(out).toMatchObject({ success: false, error: message, parameters });
+      expect(out).toHaveProperty('hint', 'The error looks schema-related. Retry with args matching the parameters schema above.');
+    },
+  );
+});

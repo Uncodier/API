@@ -51,6 +51,7 @@ describe('audio route routing contract', () => {
   it.each([
     { text: '' }, { text: 'Hello', provider: 'unsupported' }, { text: 'Hello', model: 123 },
     { text: 'Hello', format: 'invalid' }, { text: 'Hello', speed: 10 }, { text: 'Hello', model: 'vendor/speech' },
+    { text: 'Hello', language: 'unsupported' }, { text: 'Hello', language: 123 }, { text: 'Hello', voice: 'unsupported' },
   ])('validates bad request before network access: %j', async (body) => {
     expect((await post(body)).status).toBe(400);
     expect(fetchMock).not.toHaveBeenCalled();
@@ -73,7 +74,19 @@ describe('audio route routing contract', () => {
     expect(body.env.required).toEqual(['AZURE_TTS_ENDPOINT', 'AZURE_TTS_API_KEY']);
     expect(body.defaults.model).toBe('tts-hd');
     expect(body.defaults.voice).toBe('alloy');
+    expect(body.defaults.language).toBe('auto');
+    expect(body.options.voices).toEqual(['auto', 'alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer']);
+    expect(body.options.languages).toContain('es');
     expect(body.notes.maxCharacters).toBe(4096);
+  });
+
+  it('accepts selected voice/language while Azure receives only supported synthesis fields', async () => {
+    fetchMock.mockResolvedValue(new Response('audio-data', { headers: { 'Content-Type': 'audio/mpeg' } }));
+    const response = await post({ text: 'Hola mundo', voice: 'shimmer', language: 'es' });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('X-TTS-Text-Language')).toBe('es');
+    const request = new Request(...fetchMock.mock.calls[0] as [RequestInfo, RequestInit]);
+    expect(await request.json()).toEqual({ input: 'Hola mundo', voice: 'shimmer', model: 'tts-hd', response_format: 'mp3' });
   });
 
   it('rejects overlong text and malformed JSON before network access', async () => {

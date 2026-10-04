@@ -1,5 +1,10 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { fetchNodeContexts } from '@/lib/services/robot-instance/assistant-logging';
+import {
+  normalizeSpeechLanguage,
+  normalizeSpeechVoice,
+  TTS_VOICES,
+} from '@/lib/services/ai/speech-options';
 
 export type UiMediaOutputType = 'image' | 'video' | 'audio' | 'text';
 
@@ -110,12 +115,50 @@ function videoQuality(parameters: Record<string, any>): 'preview' | 'standard' |
   return undefined;
 }
 
-function audioFormat(parameters: Record<string, any>): 'mp3' | 'wav' | 'ogg' | undefined {
+function audioFormat(parameters: Record<string, any>): string | undefined {
   const value = typeof parameters.format === 'string'
     ? parameters.format.trim().toLowerCase()
     : '';
-  if (value === 'mp3' || value === 'wav' || value === 'ogg') return value;
-  return value === 'aac' ? 'mp3' : undefined;
+  if (value === 'ogg') return 'opus';
+  return ['mp3', 'pcm', 'wav', 'opus', 'aac', 'flac'].includes(value) ? value : undefined;
+}
+
+function parameterRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function audioOverrides(
+  current: Record<string, unknown>,
+  parameters: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  // A saved parameter object is authoritative, including missing/auto selections.
+  // Only legacy nodes with no parameters may keep concrete tool overrides.
+  const selections = parameters ?? current;
+  const voice = normalizeSpeechVoice(selections.voice);
+  const language = normalizeSpeechLanguage(selections.language);
+  const format = audioFormat({ format: parameters?.format ?? current.format });
+  const remaining = { ...current };
+  delete remaining.voice;
+  delete remaining.language;
+  delete remaining.format;
+  return {
+    ...remaining,
+    ...(format ? { format } : {}),
+    ...(voice ? { voice } : {}),
+    ...(language ? { language } : {}),
+  };
+}
+
+function audioInstruction(overrides: Record<string, unknown>): string {
+  const languageRule = overrides.language
+    ? `Before calling generate_audio, write or rewrite the speech text in the selected language (${overrides.language}), even if the prompt or source text uses another language.`
+    : 'Before calling generate_audio, infer the speech language from the user request and context and write the speech text in that language.';
+  const voiceRule = overrides.voice
+    ? `You MUST honor the selected voice (${overrides.voice}).`
+    : `Choose an appropriate voice from ${TTS_VOICES.join(', ')}; auto is not a concrete voice.`;
+  return `${languageRule} Do not read prompt directives, language instructions, or voice instructions aloud; pass only the intended spoken content as text. ${voiceRule} Azure tts-hd detects language from the speech text; language guides text preparation, not a downstream synthesis field.`;
 }
 
 function restrictMediaOverrides(
@@ -209,9 +252,13 @@ export function buildUiMediaContract(params: {
       ...(generic.length > 0 ? { reference_images: Array.from(new Set(generic)) } : {}),
     });
   } else if (type === 'audio') {
-    toolOverrides = mergeOverrides(toolOverrides, 'generate_audio', {
-      ...(audioFormat(parameters) ? { format: audioFormat(parameters) } : {}),
-    });
+    toolOverrides = {
+      ...toolOverrides,
+      generate_audio: audioOverrides(
+        record(toolOverrides.generate_audio),
+        parameterRecord(settings.parameters) ?? parameterRecord(context.parameters),
+      ),
+    };
   }
 
   const referenceRule = type === 'video' && (start || end)
@@ -223,7 +270,7 @@ export function buildUiMediaContract(params: {
     requiredTool,
     toolOverrides,
     instruction: requiredTool
-      ? `UI OUTPUT CONTRACT: This node must produce ${type}. You MUST call ${requiredTool}; no other media generation tool is allowed. ${referenceRule}`
+      ? `UI OUTPUT CONTRACT: This node must produce ${type}. You MUST call ${requiredTool}; no other media generation tool is allowed. ${type === 'audio' ? audioInstruction(toolOverrides.generate_audio) : referenceRule}`
       : 'UI OUTPUT CONTRACT: This is a text node. Do not call any media generation tool.',
   };
 }

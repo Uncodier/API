@@ -26,6 +26,24 @@ The local correction removed `AZURE_OPENAI_IMAGE_ENDPOINT` and
 The deployment and image API version remained unchanged. No model substitution,
 fallback, resource creation or paid image inference was needed for this check.
 
+The follow-up failure persisted remotely because the production Vercel settings
+still contained the dedicated `/mai/v1/images/generations` endpoint override.
+Live configuration checks on both backend domains reported Azure images as not
+configured while the local API remained healthy. The production Azure OpenAI
+credentials successfully listed the existing Sunburst deployment. The production
+endpoint/key overrides were removed and a redeploy of the existing published
+source completed successfully. Both `backend.makinari.com` and
+`backend.uncodie.com` then returned HTTP 200 from the live image configuration
+health check, identifying `gpt-image-2.5-sunburst`. No paid image inference was
+submitted by these checks. Environment changes alone do not update an already
+published deployment. The router correction is a separate local source change;
+redeploying the previous published source does not include it.
+
+The tool router previously mistook the word `invalid` in a server configuration
+error for an argument validation failure. Its offline regressions now ensure
+configuration, admission, HTTP 5xx and uncertain generation errors do not attach
+schema-retry advice. Real argument validation errors still include the schema.
+
 ## Correct configuration
 
 - `AZURE_OPENAI_IMAGE_DEPLOYMENT` must name a deployment in the selected resource.

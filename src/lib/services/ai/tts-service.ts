@@ -1,12 +1,13 @@
 import { getAzureTtsConfig, AZURE_TTS_MAX_CHARS, TTSServiceError } from './azure-tts-config';
 import { readResponseWithLimit } from '@/lib/security/limited-response';
+import { normalizeSpeechVoice, normalizeSpeechLanguage } from './speech-options';
 
 export { TTSServiceError } from './azure-tts-config';
 export type TTSProvider = 'azure';
 export type TTSAudioFormat = 'mp3' | 'pcm' | 'wav' | 'opus' | 'aac' | 'flac';
 
 export interface SpeechOptions {
-  text: string; provider?: TTSProvider; voice?: string; format?: TTSAudioFormat; model?: string; speed?: number;
+  text: string; provider?: TTSProvider; voice?: string; language?: string; format?: TTSAudioFormat; model?: string; speed?: number;
 }
 
 /** Stale gateway/provider environment selectors cannot redirect speech traffic. */
@@ -35,10 +36,9 @@ export function validateSpeechOptions(options: SpeechOptions) {
   if (!Object.hasOwn(MIME_TYPES, format)) {
     throw new TTSServiceError('Azure speech supports mp3, pcm, wav, opus, aac or flac', 400);
   }
-  const { voice, model, speed } = options;
-  if (voice !== undefined && (typeof voice !== 'string' || !voice.trim())) {
-    throw new TTSServiceError('Speech voice must be a non-empty Azure OpenAI voice', 400);
-  }
+  const { model, speed } = options;
+  const voice = normalizeSpeechVoice(options.voice);
+  const language = normalizeSpeechLanguage(options.language);
   if (model !== undefined && (typeof model !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(model))) {
     throw new TTSServiceError('model must be an Azure speech deployment name, not a qualified gateway model ID', 400);
   }
@@ -47,20 +47,22 @@ export function validateSpeechOptions(options: SpeechOptions) {
   }
   const config = getAzureTtsConfig();
   // Deployment aliases cannot identify the underlying model; Azure validates voice support.
-  return { provider, format, config, deployment: model ?? config.deployment, voice: voice?.trim() ?? config.voice };
+  return { provider, format, config, deployment: model ?? config.deployment, voice: voice ?? config.voice, language };
 }
 
 /** Direct Azure OpenAI data plane, with bounded output and no retries or account fallback. */
 export async function synthesizeWithAzure(
-  text: string, voice?: string, format: TTSAudioFormat = 'mp3', model?: string, speed?: number,
+  text: string, voice?: string, format: TTSAudioFormat = 'mp3', model?: string, speed?: number, language?: string,
 ): Promise<Buffer> {
   if (typeof window !== 'undefined') throw new TTSServiceError('Azure speech credentials are server-only', 503);
-  const selected = validateSpeechOptions({ text, voice, format, model, speed });
+  const selected = validateSpeechOptions({ text, voice, format, model, speed, language });
   const url = new URL(`/openai/deployments/${encodeURIComponent(selected.deployment)}/audio/speech`, selected.config.origin);
   url.searchParams.set('api-version', selected.config.apiVersion);
   try {
     const response = await fetch(url, {
       method: 'POST', headers: { 'api-key': selected.config.apiKey, 'Content-Type': 'application/json' },
+      // tts-hd detects language from input. Never send an unsupported language field
+      // or prepend language instructions that would be read aloud.
       body: JSON.stringify({ input: text, model: selected.deployment, voice: selected.voice, response_format: format,
         ...(speed !== undefined ? { speed } : {}) }),
       redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(120_000),
@@ -81,10 +83,11 @@ export async function synthesizeWithAzure(
 }
 
 export async function synthesizeSpeech(options: SpeechOptions): Promise<{
-  audio: Buffer; provider: TTSProvider; format: TTSAudioFormat; mimeType: string;
+  audio: Buffer; provider: TTSProvider; format: TTSAudioFormat; mimeType: string; language?: string;
 }> {
   const provider = resolveTTSProvider(options.provider);
   const format = options.format ?? 'mp3';
-  const audio = await synthesizeWithAzure(options.text, options.voice, format, options.model, options.speed);
-  return { audio, provider, format, mimeType: ttsMimeType(format) };
+  const audio = await synthesizeWithAzure(options.text, options.voice, format, options.model, options.speed, options.language);
+  const language = normalizeSpeechLanguage(options.language);
+  return { audio, provider, format, mimeType: ttsMimeType(format), ...(language ? { language } : {}) };
 }
