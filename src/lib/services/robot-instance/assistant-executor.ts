@@ -28,7 +28,7 @@ export async function executeAssistantStep(
     user_id,
   } = options || {};
   
-  const provider = options?.provider || process.env.ROBOT_SDK_PROVIDER || 'gemini';
+  const provider = 'openrouter';
 
   if (site_id) {
     try {
@@ -53,6 +53,7 @@ export async function executeAssistantStep(
       const executor = new AIAgentExecutor({
         provider: options.ai_provider,
         model: options.ai_model,
+        siteId: site_id,
       });
       
       const streamingCallbacks = instance_id && site_id
@@ -91,6 +92,7 @@ export async function executeAssistantStep(
         const parallelExecutor = new AIAgentExecutor({
           provider: options?.ai_provider,
           model: options?.ai_model,
+          siteId: site_id,
         });
         // Hydrate once before fan-out. hydrateMessageImages mutates content in
         // place; running it inside each parallel call races on shared objects

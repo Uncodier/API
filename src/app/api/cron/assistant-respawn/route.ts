@@ -6,7 +6,7 @@ import {
   LOOKBACK_MS,
   spawnSilentContinueWorkflow,
 } from '@/lib/services/robot-instance/assistant-respawn';
-import { isRespawnManagedPlan } from '@/lib/services/workflow-robot/plan-ownership';
+import { isRespawnManagedPlan, isWorkflowManagedPlan } from '@/lib/services/workflow-robot/plan-ownership';
 
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
@@ -89,6 +89,7 @@ export async function GET(req: Request) {
         .from('instance_plans')
         .select('metadata')
         .eq('instance_id', instanceId)
+        .eq('site_id', action.site_id)
         .in('status', ['pending', 'in_progress', 'active', 'paused'])
         .order('updated_at', { ascending: false })
         .limit(1)
@@ -97,7 +98,11 @@ export async function GET(req: Request) {
         results.push({ instance_id: instanceId, status: 'skipped_plan_lookup_error' });
         continue;
       }
-      if (isRespawnManagedPlan(activePlan)) {
+      const snapshot = action.details.assistant_recovery;
+      const conversationOnly = isRespawnManagedPlan(activePlan) && !isWorkflowManagedPlan(activePlan)
+        && !snapshot.execution?.instanceNodeId
+        && (snapshot.inFlightKind === 'turn' || snapshot.conversationOnly === true);
+      if (isRespawnManagedPlan(activePlan) && !conversationOnly) {
         results.push({ instance_id: instanceId, status: 'skipped_workflow_managed' });
         continue;
       }
@@ -108,7 +113,7 @@ export async function GET(req: Request) {
         siteId: action.site_id,
         userId: action.user_id,
         userMessageLogId: action.id,
-      }, { allowStaleInFlight: true });
+      }, { allowStaleInFlight: true, ...(conversationOnly ? { conversationOnly: true } : {}) });
 
       results.push({ instance_id: instanceId, status: spawned ? 'respawned' : 'skipped_unsafe_checkpoint' });
     } catch (err: any) {

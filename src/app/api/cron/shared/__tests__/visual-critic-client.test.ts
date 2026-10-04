@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { randomBytes } from 'node:crypto';
 import { requestVisualCriticCompletion } from '../visual-critic-client';
 
 jest.mock('openai', () => ({
@@ -15,7 +16,7 @@ describe('visual critic client', () => {
     process.env = {
       ...ORIGINAL_ENV,
       AI_PROVIDER: 'gemini',
-      GEMINI_API_KEY: 'gemini-key',
+      OPENROUTER_API_KEY: randomBytes(24).toString('hex'),
     };
   });
 
@@ -43,6 +44,7 @@ describe('visual critic client', () => {
       system: 'Return JSON.',
       content: [{ type: 'text', text: 'Review this.' }],
       signal: controller.signal,
+      siteId: 'site-visual',
     });
 
     expect(result.model).toBe('gemini-2.5-flash');
@@ -50,7 +52,8 @@ describe('visual critic client', () => {
     expect(result.responseFormat).toBe('json_schema');
     expect(create).toHaveBeenCalledWith(
       expect.objectContaining({
-        model: 'gemini-2.5-flash',
+        model: 'google/gemini-2.5-flash',
+        user: 'site-visual',
         max_tokens: 1_200,
         response_format: expect.objectContaining({
           type: 'json_schema',
@@ -62,6 +65,11 @@ describe('visual critic client', () => {
       }),
       { signal: controller.signal },
     );
+    expect(mockedOpenAI).toHaveBeenCalledWith(expect.objectContaining({
+      apiKey: process.env.OPENROUTER_API_KEY,
+      baseURL: 'https://openrouter.ai/api/v1',
+      maxRetries: 0,
+    }));
   });
 
   it('raises the output budget only when requested for a truncated retry', async () => {
@@ -111,5 +119,22 @@ describe('visual critic client', () => {
     expect(create.mock.calls[1][0]).toEqual(expect.objectContaining({
       response_format: { type: 'json_object' },
     }));
+  });
+
+  it('omits sampling for namespaced reasoning models and preserves gateway cost', async () => {
+    const create = jest.fn().mockResolvedValue({ model: 'openai/gpt-6.1-sol', choices: [{ message: { content: '{}' } }], usage: { cost: 0.02, total_tokens: 20 } });
+    mockedOpenAI.mockImplementation(() => ({ chat: { completions: { create } } }));
+    const result = await requestVisualCriticCompletion({ model: 'openai/gpt-6.1-sol', system: 'JSON', content: [], signal: new AbortController().signal });
+    expect(create.mock.calls[0][0]).not.toHaveProperty('temperature');
+    expect(create.mock.calls[0][0].max_tokens).toBe(8_192);
+    expect(result.usage).toEqual({ cost: 0.02, total_tokens: 20 });
+  });
+
+  it('does not fall back to a different account or vendor on authentication failure', async () => {
+    const failure = Object.assign(new Error('Unauthorized'), { status: 401 });
+    const create = jest.fn().mockRejectedValue(failure);
+    mockedOpenAI.mockImplementation(() => ({ chat: { completions: { create } } }));
+    await expect(requestVisualCriticCompletion({ model: 'openai/gpt-6.1-sol', system: 'JSON', content: [], signal: new AbortController().signal })).rejects.toBe(failure);
+    expect(create).toHaveBeenCalledTimes(1);
   });
 });

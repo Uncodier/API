@@ -4,7 +4,7 @@
  * Same format as analyzeICPTotalCount - flat finder payload or query object
  */
 
-import { createIcpMiningCoreFromRoute } from './route';
+import { createIcpMiningCoreFromRoute } from './core';
 
 export interface CreateIcpMiningToolParams {
   query?: Record<string, unknown>;

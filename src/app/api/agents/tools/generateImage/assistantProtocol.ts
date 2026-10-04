@@ -1,25 +1,16 @@
-import { CreditService } from '@/lib/services/billing/CreditService';
 /**
  * Assistant Protocol Wrapper for Generate Image Tool
  * Formats the tool for OpenAI/assistant compatibility
  */
 
 import { ImageGenerationService, ImageGenerationParams } from '@/lib/services/image/ImageGenerationService';
-import { createInstanceLogCore } from '@/app/api/agents/tools/instance_logs/route';
+import { createInstanceLogCore } from '@/lib/tools/instance-log-core';
 import { tool } from 'scrapybara/tools';
 import { z } from 'zod';
 import type { UbuntuInstance } from 'scrapybara';
+import type { ImageRequestBody } from '@/app/api/ai/image/image-types';
 
-export interface GenerateImageToolParams {
-  prompt: string;
-  provider?: 'azure' | 'gemini' | 'vercel';
-  size?: '256x256' | '512x512' | '1024x1024';
-  n?: number;
-  quality?: 'standard' | 'hd';
-    ratio?: '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '3:2' | '2:3';
-    aspect_ratio?: '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '3:2' | '2:3';
-    reference_images?: string[];
-}
+export type GenerateImageToolParams = Omit<ImageRequestBody, 'site_id' | 'instance_id'>;
 
 /**
  * Creates a generateImage tool for OpenAI/assistant compatibility
@@ -30,7 +21,7 @@ export interface GenerateImageToolParams {
 export function generateImageTool(site_id: string, instance_id?: string) {
   return {
     name: 'generate_image',
-    description: 'Generate images using AI with automatic provider fallback. Supports multiple AI providers (Gemini, Azure, Vercel) with automatic fallback if one fails. Images are automatically saved to storage and can be used in conversations or content.',
+    description: 'Generate images exclusively via Azure OpenAI using the configured image deployment. Images are automatically saved to storage and can be used in conversations or content.',
     parameters: {
       type: 'object',
       properties: {
@@ -40,13 +31,14 @@ export function generateImageTool(site_id: string, instance_id?: string) {
         },
         provider: {
           type: 'string',
-          enum: ['gemini'],
-          description: 'AI provider to use for generation. Only Gemini is currently supported.'
+          enum: ['azure'],
+          description: 'Azure is the only supported image provider; no provider fallback.'
         },
+        model: { type: 'string', description: 'Azure image deployment override; defaults to AZURE_OPENAI_IMAGE_DEPLOYMENT.' },
         size: {
           type: 'string',
-          enum: ['256x256', '512x512', '1024x1024'],
-          description: 'Size of the generated image. Defaults to 1024x1024 for best quality.'
+          pattern: '^(auto|[1-9][0-9]*x[1-9][0-9]*)$',
+          description: 'Image size: auto, 1024x1024, 1536x1024, 1024x1536, or custom WIDTHxHEIGHT supported by the Azure deployment. Defaults to 1024x1024.'
         },
         n: {
           type: 'number',
@@ -56,8 +48,8 @@ export function generateImageTool(site_id: string, instance_id?: string) {
         },
         quality: {
           type: 'string',
-          enum: ['standard', 'hd'],
-          description: 'Quality of the generated image. HD quality is higher resolution but may take longer. Defaults to standard.'
+          enum: ['auto', 'low', 'medium', 'high', 'xhigh', 'max', 'standard', 'hd'],
+          description: 'Azure image quality hint; supported labels are normalized by the image adapter.'
         },
         ratio: {
           type: 'string',
@@ -74,26 +66,18 @@ export function generateImageTool(site_id: string, instance_id?: string) {
           items: {
             type: 'string'
           },
-          description: 'Array of image URLs to use as reference/context for generation. Images will be converted to base64 and sent as context to the AI model.'
+          description: 'Array of image URLs to use as reference/context for generation with the Azure image deployment.'
         }
       },
       required: ['prompt']
     },
     execute: async (args: GenerateImageToolParams) => {
+      if (args.provider !== undefined && args.provider !== 'azure') throw new Error('Unsupported image provider');
       try {
         console.log(`[GenerateImageTool] 🎨 Executing image generation`);
-        if (site_id) {
-          const requiredCredits = CreditService.PRICING.IMAGE_GENERATION * (args.n || 1);
-          const hasCredits = await CreditService.validateCredits(site_id, requiredCredits);
-          if (!hasCredits) {
-            throw new Error('Insufficient credits for image generation');
-          }
-          await CreditService.deductCredits(site_id, requiredCredits, 'image_generation', `Image generation (${args.n || 1} images)`, { prompt: args.prompt });
-        }
+        // Authorization and billing belong exclusively to the local media API.
 
-        console.log(`[GenerateImageTool] 📝 Prompt: ${args.prompt.substring(0, 100)}...`);
         console.log(`[GenerateImageTool] 🏢 Site ID: ${site_id}`);
-        console.log(`[GenerateImageTool] 🤖 Provider: gemini (only supported provider)`);
 
         // Validate required parameters
         if (!args.prompt || typeof args.prompt !== 'string') {
@@ -105,12 +89,13 @@ export function generateImageTool(site_id: string, instance_id?: string) {
           };
         }
 
-        // Prepare parameters for the service - only Gemini supported
+        // Prepare parameters for the service; never switch provider accounts on failure
         const serviceParams: ImageGenerationParams = {
           prompt: args.prompt,
           site_id: site_id,
           instance_id: instance_id,
-          provider: 'gemini', // Force Gemini only
+          provider: args.provider ?? 'azure',
+          model: args.model,
           size: args.size,
           n: args.n,
           quality: args.quality,
@@ -128,10 +113,6 @@ export function generateImageTool(site_id: string, instance_id?: string) {
           console.log(`[GenerateImageTool] 🖼️ Generated ${result.images.length} image(s)`);
           console.log(`[GenerateImageTool] 🤖 Provider used: ${result.provider}`);
           
-          if (result.fallbackFrom) {
-            console.log(`[GenerateImageTool] 🔄 Fallback from: ${result.fallbackFrom}`);
-          }
-
           // Format response for the assistant
           // CRITICAL: Do not return any base64 data to prevent OpenAI executor errors
           const imageUrls = result.images.map(img => img.url);
@@ -176,16 +157,15 @@ export function generateImageTool(site_id: string, instance_id?: string) {
             success: true,
             provider: result.provider,
             images: imageUrls.map(url => ({ url })),
-            fallbackFrom: result.fallbackFrom,
             metadata: result.metadata,
-            message: `Successfully generated ${result.images.length} image(s) using ${result.provider}${result.fallbackFrom ? ` (fallback from ${result.fallbackFrom})` : ''}. Images are saved and ready to use. URLs: ${imageUrls.join(', ')}`
+            message: `Successfully generated ${result.images.length} image(s) using ${result.provider}. Images are saved and ready to use. URLs: ${imageUrls.join(', ')}`
           };
         } else {
           console.error(`[GenerateImageTool] ❌ Image generation failed: ${result.error}`);
           
           // CRITICAL: For failed tool executions, we need to throw an error
           // This ensures the calling code treats it as an error, not as successful output
-          throw new Error(`Image generation failed: ${result.error}. All providers (gemini, azure, vercel) were unable to generate the image.`);
+          throw new Error(`Image generation failed: ${result.error}. No alternate provider was called.`);
         }
 
       } catch (error: any) {
@@ -221,32 +201,25 @@ export function createGenerateImageTool(site_id: string) {
 export function generateImageToolScrapybara(instance: UbuntuInstance, site_id: string) {
   return tool({
     name: 'generate_image',
-    description: 'Generate images using AI with automatic provider fallback. Supports multiple AI providers (Gemini, Azure, Vercel) with automatic fallback if one fails. Images are automatically saved to storage and can be used in conversations or content.',
+    description: 'Generate images exclusively via Azure OpenAI using the configured image deployment. Images are automatically saved to storage and can be used in conversations or content.',
     parameters: z.object({
       prompt: z.string().describe('Detailed text description of the image to generate. Be specific about style, colors, composition, and any important details.'),
-      provider: z.enum(['gemini']).optional().describe('AI provider to use for generation. Only Gemini is currently supported.'),
-      size: z.enum(['256x256', '512x512', '1024x1024']).optional().describe('Size of the generated image. Defaults to 1024x1024 for best quality.'),
+      provider: z.enum(['azure']).optional().describe('Azure is the only supported image provider; no provider fallback.'),
+      model: z.string().optional().describe('Azure image deployment override; defaults to AZURE_OPENAI_IMAGE_DEPLOYMENT.'),
+      size: z.string().regex(/^(auto|[1-9][0-9]*x[1-9][0-9]*)$/).optional().describe('Image size: auto, 1024x1024, 1536x1024, 1024x1536, or custom WIDTHxHEIGHT supported by the Azure deployment. Defaults to 1024x1024.'),
       n: z.number().min(1).max(4).optional().describe('Number of images to generate. Defaults to 1.'),
-      quality: z.enum(['standard', 'hd']).optional().describe('Quality of the generated image. HD quality is higher resolution but may take longer. Defaults to standard.'),
+      quality: z.enum(['auto', 'low', 'medium', 'high', 'xhigh', 'max', 'standard', 'hd']).optional().describe('Azure image quality hint; supported labels are normalized by the image adapter.'),
       ratio: z.enum(['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3']).optional().describe('Aspect ratio of the generated image. Defaults to 1:1 (square).'),
       aspect_ratio: z.enum(['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3']).optional().describe('Aspect ratio of the generated image. Defaults to 1:1 (square). Use this instead of ratio for consistency.'),
-      reference_images: z.array(z.string()).optional().describe('Array of image URLs to use as reference/context for generation. Images will be converted to base64 and sent as context to the AI model.')
+      reference_images: z.array(z.string()).optional().describe('Array of image URLs to use as reference/context for generation with the Azure image deployment.')
     }),
     execute: async (args) => {
+      if (args.provider !== undefined && args.provider !== 'azure') throw new Error('Unsupported image provider');
       try {
         console.log(`[GenerateImageTool-Scrapybara] 🎨 Executing image generation`);
-        if (site_id) {
-          const requiredCredits = CreditService.PRICING.IMAGE_GENERATION * (args.n || 1);
-          const hasCredits = await CreditService.validateCredits(site_id, requiredCredits);
-          if (!hasCredits) {
-            throw new Error('Insufficient credits for image generation');
-          }
-          await CreditService.deductCredits(site_id, requiredCredits, 'image_generation', `Image generation (${args.n || 1} images)`, { prompt: args.prompt });
-        }
+        // Authorization and billing belong exclusively to the local media API.
 
-        console.log(`[GenerateImageTool-Scrapybara] 📝 Prompt: ${args.prompt.substring(0, 100)}...`);
         console.log(`[GenerateImageTool-Scrapybara] 🏢 Site ID: ${site_id}`);
-        console.log(`[GenerateImageTool-Scrapybara] 🤖 Provider: gemini (only supported provider)`);
 
         // Validate required parameters
         if (!args.prompt || typeof args.prompt !== 'string') {
@@ -258,11 +231,12 @@ export function generateImageToolScrapybara(instance: UbuntuInstance, site_id: s
           };
         }
 
-        // Prepare parameters for the service - only Gemini supported
+        // Prepare parameters for the service; never switch provider accounts on failure
         const serviceParams: ImageGenerationParams = {
           prompt: args.prompt,
           site_id: site_id,
-          provider: 'gemini', // Force Gemini only
+          provider: args.provider ?? 'azure',
+          model: args.model,
           size: args.size,
           n: args.n,
           quality: args.quality,
@@ -279,10 +253,6 @@ export function generateImageToolScrapybara(instance: UbuntuInstance, site_id: s
           console.log(`[GenerateImageTool-Scrapybara] 🖼️ Generated ${result.images.length} image(s)`);
           console.log(`[GenerateImageTool-Scrapybara] 🤖 Provider used: ${result.provider}`);
           
-          if (result.fallbackFrom) {
-            console.log(`[GenerateImageTool-Scrapybara] 🔄 Fallback from: ${result.fallbackFrom}`);
-          }
-
           // Format response for the assistant
           const imageUrls = result.images.map(img => img.url);
           
@@ -290,13 +260,12 @@ export function generateImageToolScrapybara(instance: UbuntuInstance, site_id: s
             success: true,
             provider: result.provider,
             images: imageUrls.map(url => ({ url })),
-            fallbackFrom: result.fallbackFrom,
             metadata: result.metadata,
-            message: `Successfully generated ${result.images.length} image(s) using ${result.provider}${result.fallbackFrom ? ` (fallback from ${result.fallbackFrom})` : ''}. Images are saved and ready to use. URLs: ${imageUrls.join(', ')}`
+            message: `Successfully generated ${result.images.length} image(s) using ${result.provider}. Images are saved and ready to use. URLs: ${imageUrls.join(', ')}`
           };
         } else {
           console.error(`[GenerateImageTool-Scrapybara] ❌ Image generation failed: ${result.error}`);
-          throw new Error(`Image generation failed: ${result.error}. All providers (gemini, azure, vercel) were unable to generate the image.`);
+          throw new Error(`Image generation failed: ${result.error}. No alternate provider was called.`);
         }
 
       } catch (error: any) {

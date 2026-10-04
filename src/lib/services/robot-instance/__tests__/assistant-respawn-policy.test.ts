@@ -32,6 +32,8 @@ describe('workflow-safe assistant respawn policy', () => {
     [[row('thinking', STALL_MS)], 0, 'respawn'],
     [[row('agent_action', STALL_MS, { message: '   ' })], 0, 'respawn'],
     [[row('agent_action', STALL_MS, { message: 'Done' })], 0, 'healthy_or_fresh'],
+    [[row('thinking', STALL_MS)], 2, 'respawn'],
+    [[row('thinking', STALL_MS)], 4, 'respawn'],
     [[row('thinking', STALL_MS)], MAX_RESPAWNS, 'max_respawns_reached'],
     [[row('infrastructure', RESPAWN_COOLDOWN_MS - 1, { details: { source: 'assistant_respawn' } }),
       row('tool_call', STALL_MS)], 1, 'in_cooldown'],
@@ -41,8 +43,8 @@ describe('workflow-safe assistant respawn policy', () => {
     expect(evaluateInstanceStall({ logs, recentRespawnCount, nowMs })).toBe(expected);
   });
 
-  it('preserves the existing windows, limit and silent continuation marker', () => {
-    expect(MAX_RESPAWNS).toBe(2);
+  it('permits five respawns while preserving the existing windows and continuation marker', () => {
+    expect(MAX_RESPAWNS).toBe(5);
     expect(STALL_MS).toBe(3 * 60 * 1000);
     expect(IN_FLIGHT_STALL_MS).toBe(15 * 60 * 1000);
     expect(LOOKBACK_MS).toBe(30 * 60 * 1000);

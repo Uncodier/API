@@ -8,8 +8,8 @@
  * knows which columns are available before filtering or selecting.
  */
 
-import { runReportQuery, type FilterCondition } from './query/route';
-import { getSchemaCore } from './schema/route';
+import { runReportQuery, type FilterCondition } from './query/core';
+import { getSchemaCore } from './schema/core';
 
 export interface ReportToolParams {
   action: 'list' | 'count';

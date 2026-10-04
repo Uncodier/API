@@ -1,12 +1,19 @@
 import { jest } from '@jest/globals';
 import { externalSkillLookupTool } from '../external-skill-lookup-tool';
 
+jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: {} }));
+
 const url = 'https://github.com/team/agent-skills/blob/main/sample/SKILL.md';
+type SkillService = NonNullable<Parameters<typeof externalSkillLookupTool>[3]>;
 
 describe('external_skill_lookup import boundary', () => {
-  const searchExternalSkills = jest.fn(async (_query: string) => []);
-  const previewExternalSkill = jest.fn(async (_url: string) => ({ slug: 'sample', name: 'Sample', content: 'instructions', description: '', types: [], source_url: url }));
-  const importExternalSkill = jest.fn(async (_siteId: string, _url: string, _userId?: string, _sha256?: string) => ({ slug: 'sample', name: 'Sample', description: '' } as any));
+  const searchExternalSkills = jest.fn<SkillService['searchExternalSkills']>(async () => []);
+  const previewExternalSkill = jest.fn<SkillService['previewExternalSkill']>(async () => ({ slug: 'sample', name: 'Sample', content: 'instructions', description: '', types: [], source_url: url, sha256 }));
+  const importExternalSkill = jest.fn<SkillService['importExternalSkill']>(async (siteId) => ({
+    id: 'skill-1', site_id: siteId, slug: 'sample', name: 'Sample', description: '',
+    content: 'instructions', types: [], source: 'github', source_url: url, enabled: true,
+    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+  }));
   const isSiteSkillManager = jest.fn(async (_siteId: string, _userId: string) => true);
   const service = { searchExternalSkills, previewExternalSkill, importExternalSkill, isSiteSkillManager };
   const sha256 = 'a'.repeat(64);

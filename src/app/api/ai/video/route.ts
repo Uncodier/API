@@ -12,11 +12,11 @@ import {
   sha256,
 } from '@/lib/security/upstash-rest';
 import { assertSafeRemoteUrl } from '@/lib/security/safe-remote-url';
-import {
-  generateVideoWithGemini,
-  normalizeVideoDuration,
-} from './generate-video';
 import type { VideoRequestBody } from './video-types';
+import { MediaRequestError } from '@/lib/services/image/openrouter-media';
+import { prepareOpenRouterVideo } from './provider-openrouter';
+import { resumeVideoJob, startVideoJob } from './openrouter-jobs';
+import { mediaInstanceBelongsToSite } from '@/lib/services/ai/media-instance-access';
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -73,7 +73,11 @@ export async function POST(request: NextRequest) {
     if (!await canAccessSite(request, body.site_id)) {
       return NextResponse.json({ error: 'Site access denied' }, { status: 403 });
     }
-    if (body.provider && body.provider !== 'gemini') {
+    if (!await mediaInstanceBelongsToSite(body.site_id, body.instance_id)) {
+      return NextResponse.json({ error: 'Instance does not belong to the authorized site' }, { status: 403 });
+    }
+    const provider = body.provider ?? 'openrouter';
+    if (provider !== 'openrouter') {
       return NextResponse.json({ error: 'Unsupported video provider' }, { status: 400 });
     }
     if (
@@ -91,6 +95,9 @@ export async function POST(request: NextRequest) {
     }
     if (body.aspect_ratio && !VALID_RATIOS.has(body.aspect_ratio)) {
       return NextResponse.json({ error: 'Invalid aspect_ratio' }, { status: 400 });
+    }
+    if (body.model !== undefined && (typeof body.model !== 'string' || !body.model.trim())) {
+      return NextResponse.json({ error: 'model must be a nonempty string' }, { status: 400 });
     }
 
     let referenceImages: string[] | undefined;
@@ -113,7 +120,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const duration = lastFrameUrl ? 8 : normalizeVideoDuration(body.duration_seconds);
+    const prepared = await prepareOpenRouterVideo(body);
+    const duration = prepared.duration;
     const requiredCredits =
       (duration / 60) * CreditService.PRICING.VIDEO_GENERATION_MINUTE;
     if (!await CreditService.validateCredits(body.site_id, requiredCredits)) {
@@ -145,34 +153,15 @@ export async function POST(request: NextRequest) {
     }
     generationLock = { key: lockKey, token: lock.token };
 
-    const result = await generateVideoWithGemini({
-      prompt: body.prompt,
-      siteId: body.site_id,
-      instanceId: body.instance_id,
-      aspectRatio: body.aspect_ratio,
-      durationSeconds: duration,
-      referenceImages,
-      firstFrameUrl,
-      lastFrameUrl,
-      quality: body.quality,
-      model: body.model,
+    const result = await startVideoJob(body, prepared);
+    return NextResponse.json(result, {
+      status: result.status === 'completed' ? 200 : 202,
+      headers: { 'Cache-Control': 'no-store', 'Retry-After': '30' },
     });
-    const deduction = await CreditService.deductCredits(
-      body.site_id,
-      requiredCredits * result.videos.length,
-      'video_generation',
-      `Video generation (${result.videos.length} videos)`,
-      { prompt: body.prompt, provider: 'gemini' },
-    );
-    if (!deduction.success) {
-      throw new Error(deduction.error || 'Unable to deduct video credits');
-    }
-    return NextResponse.json(result);
   } catch (error) {
-    console.error('[Video API] Request failed:', error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Video generation failed' },
-      { status: 500 },
+      { error: error instanceof MediaRequestError ? error.message : 'Video generation failed' },
+      { status: error instanceof MediaRequestError ? error.status : 500 },
     );
   } finally {
     if (generationLock) {
@@ -181,10 +170,50 @@ export async function POST(request: NextRequest) {
   }
 }
 
-export async function GET() {
-  return NextResponse.json({
-    message: 'AI Video Generation API',
-    providers: ['gemini'],
-    duration_seconds: '1-60, normalized to a supported 4, 6, or 8 seconds',
-  });
+export async function GET(request: NextRequest) {
+  const params = new URL(request.url).searchParams;
+  if (!params.has('job_id')) {
+    return NextResponse.json({
+      message: 'AI Video Generation API', providers: ['openrouter'],
+      default_provider: 'openrouter', requires: 'OPENROUTER_VIDEO_MODEL',
+      polling: 'GET ?site_id=<site UUID>&job_id=<local job UUID> every 30 seconds',
+      duration_seconds: 'Must match selected OpenRouter model capabilities',
+    });
+  }
+  let generationLock: { key: string; token: string } | null = null;
+  try {
+    const limited = await enforceRequestRateLimit(request, {
+      namespace: 'ai-video-poll', identity: getAuthenticatedRateIdentity(request),
+      limit: 30, windowSeconds: 60, failClosed: true,
+    });
+    if (limited) return limited;
+    const siteId = params.get('site_id') || '';
+    const jobId = params.get('job_id') || '';
+    if (!UUID_PATTERN.test(siteId) || !UUID_PATTERN.test(jobId)) {
+      return NextResponse.json({ error: 'site_id and job_id must be UUIDs' }, { status: 400 });
+    }
+    if (!await canAccessSite(request, siteId)) {
+      return NextResponse.json({ error: 'Site access denied' }, { status: 403 });
+    }
+    const key = `lock:ai-video:${await sha256(siteId)}`;
+    const lock = await acquireLock(key, 11 * 60);
+    if (lock.state !== 'acquired') {
+      return NextResponse.json({ error: 'Video job is busy or unavailable; retry status only', job_id: jobId }, {
+        status: lock.state === 'contended' ? 409 : 503, headers: { 'Retry-After': '30' },
+      });
+    }
+    generationLock = { key, token: lock.token };
+    const result = await resumeVideoJob(siteId, jobId);
+    return NextResponse.json(result, {
+      status: result.status === 'completed' || result.status === 'failed' ? 200 : 202,
+      headers: { 'Cache-Control': 'no-store', 'Retry-After': '30' },
+    });
+  } catch (error) {
+    return NextResponse.json({
+      error: error instanceof MediaRequestError ? error.message : 'Video status unavailable; retry status only',
+      job_id: params.get('job_id'),
+    }, { status: error instanceof MediaRequestError ? error.status : 503 });
+  } finally {
+    if (generationLock) await releaseLock(generationLock.key, generationLock.token);
+  }
 }

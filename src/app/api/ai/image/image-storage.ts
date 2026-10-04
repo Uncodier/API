@@ -1,50 +1,5 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { assertSafeRemoteUrl } from '@/lib/security/safe-remote-url';
-import { readResponseWithLimit } from '@/lib/security/limited-response';
-
-export function getImageEnv(name: string): string | undefined {
-  const value = process.env[name];
-  if (!value) console.warn(`[Image API] Missing environment variable ${name}`);
-  return value;
-}
-
-export async function remoteImageAsBase64(
-  url: string,
-): Promise<{ data: string; mimeType: string } | null> {
-  try {
-    const safeUrl = await assertSafeRemoteUrl(url);
-    const headers: Record<string, string> = {};
-    if (safeUrl.hostname === 'api.twilio.com') {
-      const accountSid =
-        process.env.GEAR_TWILIO_ACCOUNT_SID || process.env.TWILIO_ACCOUNT_SID;
-      const authToken =
-        process.env.GEAR_TWILIO_AUTH_TOKEN || process.env.TWILIO_AUTH_TOKEN;
-      if (accountSid && authToken) {
-        headers.Authorization = `Basic ${Buffer.from(
-          `${accountSid}:${authToken}`,
-        ).toString('base64')}`;
-      }
-    }
-
-    const response = await fetch(safeUrl, {
-      headers,
-      redirect: 'error',
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!response.ok) return null;
-    const buffer = await readResponseWithLimit(response, 15 * 1024 * 1024);
-    return {
-      data: buffer.toString('base64'),
-      mimeType: response.headers.get('content-type') || 'image/png',
-    };
-  } catch (error) {
-    console.warn(
-      '[Image API] Unable to load reference image:',
-      error instanceof Error ? error.message : error,
-    );
-    return null;
-  }
-}
+import type { ImageProvider } from './image-types';
 
 export async function uploadGeneratedImage(input: {
   base64Data: string;
@@ -55,6 +10,8 @@ export async function uploadGeneratedImage(input: {
   const extension = input.mimeType.includes('jpeg')
     || input.mimeType.includes('jpg')
     ? 'jpg'
+    : input.mimeType.includes('webp')
+      ? 'webp'
     : input.mimeType.includes('gif')
       ? 'gif'
       : 'png';
@@ -95,10 +52,12 @@ export async function saveGeneratedImageRecord(input: {
   url: string;
   size: number;
   mimeType: string;
-  provider: string;
+  provider: ImageProvider;
   prompt: string;
   model?: string;
   instanceId?: string;
+  generationId?: string;
+  cost?: number;
 }): Promise<void> {
   if (input.siteId === '00000000-0000-0000-0000-000000000000') return;
 
@@ -120,6 +79,10 @@ export async function saveGeneratedImageRecord(input: {
       model: input.model || 'unknown',
       storage_path: input.path,
       bucket: 'generative_images',
+      generation_id: input.generationId,
+      cost: input.cost,
+      // The same generation cost may appear on multiple assets; do not sum per image.
+      cost_scope: input.cost === undefined ? undefined : 'generation',
     },
     is_public: true,
   };
@@ -136,10 +99,12 @@ export async function persistGeneratedImage(input: {
   base64Data: string;
   mimeType: string;
   siteId: string;
-  provider: string;
+  provider: ImageProvider;
   prompt: string;
   model?: string;
   instanceId?: string;
+  generationId?: string;
+  cost?: number;
 }): Promise<{ url: string; b64_json: null }> {
   const uploaded = await uploadGeneratedImage(input);
   await saveGeneratedImageRecord({
@@ -149,6 +114,8 @@ export async function persistGeneratedImage(input: {
     prompt: input.prompt,
     model: input.model,
     instanceId: input.instanceId,
+    generationId: input.generationId,
+    cost: input.cost,
   });
   return { url: uploaded.url, b64_json: null };
 }

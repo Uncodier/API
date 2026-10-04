@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import type { cancelPlanStepsForBacklogItem } from '@/lib/helpers/plan-lifecycle';
+import type { mutateBacklogAtomically } from '../requirement-backlog-mutation';
+import { emptyBacklog } from '../requirement-backlog-types';
+import { getFlow } from '../requirement-flows';
 
-const mockCancelPlanSteps = jest.fn();
-const mockMutateBacklogAtomically = jest.fn();
+const mockCancelPlanSteps = jest.fn<typeof cancelPlanStepsForBacklogItem>();
+const mockMutateBacklogAtomically = jest.fn<typeof mutateBacklogAtomically>();
 
 jest.mock('@/lib/helpers/plan-lifecycle', () => ({
   cancelPlanStepsForBacklogItem: mockCancelPlanSteps,
@@ -42,9 +46,13 @@ describe('durable plan cancellation requests', () => {
         errors: [],
       });
     mockMutateBacklogAtomically.mockImplementation(
-      async (_requirementId: string, mutate: any) => {
-        const backlog = { items: [item] };
-        const outcome = await mutate({ backlog });
+      async (requirementId, mutate) => {
+        const backlog = { ...emptyBacklog('default'), items: [item] };
+        const outcome = await mutate({
+          backlog,
+          flow: getFlow('app'),
+          requirement: { id: requirementId, type: null, metadata: null, backlog: null, backlog_revision: 0 },
+        });
         Object.assign(item, backlog.items[0]);
         for (const key of Object.keys(item)) {
           if (!(key in backlog.items[0])) delete item[key];

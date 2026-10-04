@@ -5,7 +5,7 @@ jest.mock('@/lib/services/billing/CreditService', () => ({
     PRICING: { AUDIO_GENERATION_MINUTE: 1 }
   }
 }));
-jest.mock('@/lib/services/ai/tts-service');
+jest.mock('@/lib/services/ai/tts-service', () => ({ synthesizeSpeech: jest.fn() }));
 jest.mock('@/lib/database/supabase-client', () => ({
   supabaseAdmin: {
     storage: {
@@ -18,7 +18,7 @@ jest.mock('@/lib/database/supabase-client', () => ({
 
 import { stripMarkdownForSpeech, tryPrepareLongReplyAudio } from '../long-reply-audio';
 import { CreditService } from '@/lib/services/billing/CreditService';
-import { synthesizeWithGemini, synthesizeWithVercel } from '@/lib/services/ai/tts-service';
+import { synthesizeSpeech } from '@/lib/services/ai/tts-service';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 
 describe('long-reply-audio', () => {
@@ -41,11 +41,10 @@ describe('long-reply-audio', () => {
       jest.clearAllMocks();
       (CreditService.validateCredits as jest.Mock).mockResolvedValue(true);
       (CreditService.deductCredits as jest.Mock).mockResolvedValue(true);
-      (synthesizeWithGemini as jest.Mock).mockResolvedValue(Buffer.from('audio'));
-      (synthesizeWithVercel as jest.Mock).mockResolvedValue(Buffer.from('audio-mp3'));
+      (synthesizeSpeech as jest.Mock).mockResolvedValue({ audio: Buffer.from('audio'), provider: 'openrouter', format: 'mp3', mimeType: 'audio/mpeg' });
       (supabaseAdmin.storage.from as jest.Mock).mockReturnValue({
-        upload: jest.fn().mockResolvedValue({ data: { path: 'file.wav' }, error: null }),
-        getPublicUrl: jest.fn().mockReturnValue({ data: { publicUrl: 'https://audio.wav' } })
+        upload: jest.fn().mockResolvedValue({ data: { path: 'file.mp3' }, error: null }),
+        getPublicUrl: jest.fn().mockReturnValue({ data: { publicUrl: 'https://example.invalid/audio.mp3' } })
       });
     });
 
@@ -75,7 +74,7 @@ describe('long-reply-audio', () => {
       expect(result).toBeNull();
     });
 
-    it('encodes Gemini audio as MP3 for WhatsApp', async () => {
+    it('uses the configured provider with MP3 for WhatsApp', async () => {
       (supabaseAdmin.storage.from as jest.Mock).mockReturnValue({
         upload: jest.fn().mockResolvedValue({ data: { path: 'file.mp3' }, error: null }),
         getPublicUrl: jest.fn().mockReturnValue({ data: { publicUrl: 'https://audio.mp3' } })
@@ -83,35 +82,28 @@ describe('long-reply-audio', () => {
 
       const result = await tryPrepareLongReplyAudio(defaultParams);
       expect(result).toEqual({ audioUrl: 'https://audio.mp3', mimeType: 'audio/mpeg' });
-      expect(synthesizeWithGemini).toHaveBeenCalledWith('a'.repeat(500), 'Puck', 'mp3', 'gemini-3.1-flash-tts-preview');
-      expect(synthesizeWithVercel).not.toHaveBeenCalled();
+      expect(synthesizeSpeech).toHaveBeenCalledWith({ text: 'a'.repeat(500), format: 'mp3' });
     });
 
     it('falls back to text when WhatsApp MP3 synthesis fails', async () => {
-      (synthesizeWithGemini as jest.Mock).mockRejectedValue(new Error('Gemini down'));
+      (synthesizeSpeech as jest.Mock).mockRejectedValue(new Error('Configured provider down'));
 
       const result = await tryPrepareLongReplyAudio(defaultParams);
       expect(result).toBeNull();
-      expect(synthesizeWithVercel).not.toHaveBeenCalled();
+      expect(synthesizeSpeech).toHaveBeenCalledTimes(1);
     });
 
-    it('uses Gemini WAV for other supported channels', async () => {
+    it('uses configured provider MP3 for other supported channels', async () => {
       const result = await tryPrepareLongReplyAudio({ ...defaultParams, channel: 'telegram' });
-      expect(result).toEqual({ audioUrl: 'https://audio.wav', mimeType: 'audio/wav' });
-      expect(synthesizeWithGemini).toHaveBeenCalledWith('a'.repeat(500), 'Puck', 'wav', 'gemini-3.1-flash-tts-preview');
-      expect(synthesizeWithVercel).not.toHaveBeenCalled();
+      expect(result).toEqual({ audioUrl: 'https://example.invalid/audio.mp3', mimeType: 'audio/mpeg' });
+      expect(synthesizeSpeech).toHaveBeenCalledWith({ text: 'a'.repeat(500), format: 'mp3' });
     });
 
-    it('falls back to Vercel for other channels when Gemini fails', async () => {
-      (synthesizeWithGemini as jest.Mock).mockRejectedValue(new Error('Gemini down'));
-      (supabaseAdmin.storage.from as jest.Mock).mockReturnValue({
-        upload: jest.fn().mockResolvedValue({ data: { path: 'file.mp3' }, error: null }),
-        getPublicUrl: jest.fn().mockReturnValue({ data: { publicUrl: 'https://audio.mp3' } })
-      });
-
+    it('retains text rather than falling back across accounts for other channels', async () => {
+      (synthesizeSpeech as jest.Mock).mockRejectedValue(new Error('Configured provider down'));
       const result = await tryPrepareLongReplyAudio({ ...defaultParams, channel: 'telegram' });
-      expect(result).toEqual({ audioUrl: 'https://audio.mp3', mimeType: 'audio/mpeg' });
-      expect(synthesizeWithVercel).toHaveBeenCalledWith('a'.repeat(500), 'alloy', 'mp3', 'tts-1');
+      expect(result).toBeNull();
+      expect(synthesizeSpeech).toHaveBeenCalledTimes(1);
     });
   });
 });

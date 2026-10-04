@@ -16,7 +16,7 @@ export type VercelDeploymentEventType =
   | 'deployment.canceled'
   | 'deployment.promoted';
 
-export const VERCEL_DEPLOYMENT_EVENT_TYPES: ReadonlySet<VercelDeploymentEventType> = new Set([
+export const VERCEL_DEPLOYMENT_EVENT_TYPES: ReadonlySet<VercelDeploymentEventType> = new Set<VercelDeploymentEventType>([
   'deployment.created',
   'deployment.building',
   'deployment.ready',

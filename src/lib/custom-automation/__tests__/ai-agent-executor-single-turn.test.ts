@@ -1,4 +1,5 @@
 import { jest } from '@jest/globals';
+import * as openrouter from '@/lib/services/ai/openrouter';
 import * as zod from 'zod';
 import * as jsonSchema from 'zod-to-json-schema';
 import * as azureVision from '../azure-vision-message-sanitize';
@@ -15,6 +16,7 @@ class OfflineOpenAI {
 const { AIAgentExecutor } = loadRuntimeModule<typeof import('../ai-agent-executor')>(
   'src/lib/custom-automation/ai-agent-executor.ts', {
     openai: OfflineOpenAI,
+    '@/lib/services/ai/openrouter': { ...openrouter, createOpenRouterClient: () => new OfflineOpenAI() },
     'google-auth-library': { GoogleAuth: class {} },
     zod,
     'zod-to-json-schema': jsonSchema,
@@ -44,8 +46,7 @@ function stream(calls: ReturnType<typeof call>[]) {
   })();
 }
 function executor(provider: AIProvider = 'openai') {
-  return new AIAgentExecutor({ provider, apiKey: 'test-key', model: 'test-model',
-    baseURL: 'http://localhost/never-called', endpoint: 'http://localhost/never-called', deployment: 'test-model' });
+  return new AIAgentExecutor({ provider, model: 'openai/test-model' });
 }
 function toolResponses(messages: Message[], ids: string[]) {
   const assistantIndex = messages.findIndex(message => message.role === 'assistant' && message.tool_calls?.length);
@@ -63,7 +64,7 @@ describe('enforceSingleTurn is an actual execution boundary', () => {
   });
   afterEach(() => jest.restoreAllMocks());
 
-  it.each((['openai', 'azure', 'gemini', 'xai'] as AIProvider[])
+  it.each((['openrouter', 'openai', 'azure', 'gemini', 'xai'] as AIProvider[])
     .flatMap(provider => [false, true].map(streaming => ({ provider, streaming }))))(
     'executes one call and answers all IDs with $provider (stream=$streaming)', async ({ provider, streaming }) => {
       const agent = executor(provider);
@@ -80,13 +81,9 @@ describe('enforceSingleTurn is an actual execution boundary', () => {
       expect(create).toHaveBeenCalledTimes(1);
       expect(execute).toHaveBeenCalledTimes(1);
       const request = create.mock.calls[0][0];
-      if (provider === 'openai' || provider === 'azure') {
-        expect(request.parallel_tool_calls).toBe(false);
-        if (streaming) expect(request.stream_options).toEqual({ include_usage: true });
-      } else {
-        expect(request).not.toHaveProperty('parallel_tool_calls');
-        expect(request).not.toHaveProperty('stream_options');
-      }
+      expect(agent.getProvider()).toBe('openrouter');
+      expect(request.parallel_tool_calls).toBe(false);
+      if (streaming) expect(request.stream_options).toEqual({ include_usage: true });
       const responses = toolResponses(result.messages, ['first', 'second', 'third']);
       for (const response of responses.slice(1)) {
         expect(JSON.parse(response.content as string)).toMatchObject({

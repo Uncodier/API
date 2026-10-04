@@ -1,7 +1,7 @@
 'use step';
 
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { AIAgentExecutor } from '@/lib/custom-automation/ai-agent-executor';
+import { AIAgentExecutor, type Tool } from '@/lib/custom-automation/ai-agent-executor';
 import { createAccountTool, verifyAccountTool } from '../whatsapp/tools';
 import { instanceProjectTool } from '@/app/api/agents/tools/instance_project/assistantProtocol';
 import { AgentMailSendService } from '@/lib/services/email/AgentMailSendService';
@@ -143,11 +143,11 @@ export async function processUnregisteredUserEmailStep(
     }
 
     // 2. Run the assistant using AIAgentExecutor
-    const customTools = [createAccountTool(), verifyAccountTool()];
+    const customTools: Tool[] = [createAccountTool(), verifyAccountTool()];
     if (userId) {
       customTools.push(instanceProjectTool(userId, userEmail));
     }
-    const executor = new AIAgentExecutor();
+    const executor = new AIAgentExecutor({ siteId });
     
     console.log(`[GearAgent] Executing assistant for email unregistered user (history size: ${messages.length})`);
     

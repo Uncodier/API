@@ -60,20 +60,24 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { embeddings, usage } = await EmbeddingsService.generateEmbeddings(input, modelId, dimensions);
+    if (typeof modelId !== 'string' || !modelId.trim()) {
+      return NextResponse.json({ error: 'Parameter "modelId" must be a non-empty string' }, { status: 400 });
+    }
+    const { embeddings, usage, model } = await EmbeddingsService.generateEmbeddings(input, modelId, dimensions);
 
     return NextResponse.json({
       success: true,
-      model: modelId,
+      model,
+      provider: 'openrouter',
       embedding: embeddings[0],
       embeddings,
       usage,
     });
-  } catch (error: any) {
-    console.error('[embeddings api] Error:', error);
+  } catch {
+    console.error('[embeddings api] OpenRouter embeddings request failed');
     return NextResponse.json(
       {
-        error: error?.message || 'Failed to generate embedding',
+        error: 'Failed to generate embedding',
       },
       { status: 500 }
     );
@@ -92,7 +96,7 @@ export async function GET() {
       },
     },
     env: {
-      required: ['PORTKEY_API_KEY', 'AZURE_OPENAI_API_KEY'],
+      required: ['OPENROUTER_API_KEY'],
     },
   });
 }

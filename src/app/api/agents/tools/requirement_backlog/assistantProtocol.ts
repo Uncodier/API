@@ -1,4 +1,4 @@
-import { executeBacklogCore, type BacklogAction, type BacklogCoreParams } from './route';
+import { executeBacklogCore, type BacklogAction, type BacklogCoreParams } from './core';
 import type { BacklogItemKind, BacklogItemStatus, BacklogItemTier } from '@/lib/services/requirement-backlog';
 import { BACKLOG_LIST_STATUSES } from '@/lib/services/requirement-backlog-view';
 

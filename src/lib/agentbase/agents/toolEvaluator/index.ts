@@ -5,6 +5,8 @@
 import { Base } from '../Base';
 import { PortkeyConnector } from '../../services/PortkeyConnector';
 import { DbCommand, CommandExecutionResult, PortkeyModelOptions } from '../../models/types';
+import { parseAgentModel } from '../../models/model-selection';
+import { getOpenRouterChatModel } from '@/lib/services/ai/openrouter';
 import { TOOL_EVALUATOR_SYSTEM_PROMPT } from '../../prompts/tool-evaluator-prompt';
 
 // Import utilities
@@ -136,8 +138,8 @@ export class ToolEvaluator extends Base {
         console.log(`[ToolEvaluator] DEBUG - model_id: ${command.model_id || 'undefined'}`);
         
         // Simple 3-case logic for model selection
-        let parsedModelType = 'openai';
-        let parsedModelId = 'gpt-4o';
+        let parsedModelType: PortkeyModelOptions['modelType'] = 'openrouter';
+        let parsedModelId = getOpenRouterChatModel();
         
         // Case 1: Tools model defined (highest priority)
         if (command.tools_model_type && command.tools_model_id) {
@@ -146,13 +148,10 @@ export class ToolEvaluator extends Base {
           console.log(`[ToolEvaluator] Using tools model: ${parsedModelType}:${parsedModelId}`);
         }
         // Check combined tools_model field as fallback
-        else if (command.tools_model && command.tools_model.includes(':')) {
-          const [modelType, modelId] = command.tools_model.split(':');
-          if (['anthropic', 'openai', 'gemini'].includes(modelType)) {
-            parsedModelType = modelType as 'anthropic' | 'openai' | 'gemini';
-            parsedModelId = modelId;
-            console.log(`[ToolEvaluator] Using tools model (combined): ${parsedModelType}:${parsedModelId}`);
-          }
+        else if (command.tools_model) {
+          const parsed = parseAgentModel(command.tools_model, command.tools_model_type);
+          parsedModelType = parsed.modelType;
+          parsedModelId = parsed.modelId;
         }
         // Case 2: Main command model defined
         else if (command.model_type && command.model_id) {
@@ -160,10 +159,15 @@ export class ToolEvaluator extends Base {
           parsedModelId = command.model_id;
           console.log(`[ToolEvaluator] Using main model: ${parsedModelType}:${parsedModelId}`);
         }
+        else if (command.model) {
+          const parsed = parseAgentModel(command.model, command.model_type);
+          parsedModelType = parsed.modelType;
+          parsedModelId = parsed.modelId;
+        }
         // Case 3: No model defined, use defaults
         else {
-          parsedModelType = this.defaultOptions.modelType || 'openai';
-          parsedModelId = this.defaultOptions.modelId || 'gpt-4o';
+          parsedModelType = this.defaultOptions.modelType || 'openrouter';
+          parsedModelId = this.defaultOptions.modelId || getOpenRouterChatModel();
           console.log(`[ToolEvaluator] Using default model: ${parsedModelType}:${parsedModelId}`);
         }
         
@@ -173,20 +177,11 @@ export class ToolEvaluator extends Base {
           modelId: parsedModelId,
           responseFormat: command.response_format || this.defaultOptions.responseFormat || 'text',
           siteId: command.site_id,
+          reasoningEffort: command.reasoning_effort ?? this.defaultOptions.reasoningEffort,
         };
         
-        // Set temperature based on model type
-        if (parsedModelId.startsWith('gpt-5')) {
-          // GPT-5.6 Sol family doesn't support custom temperature, must use default 1.0
-          modelOptions.temperature = 1.0;
-        } else {
-          // For other models (like gpt-4o), use command temperature or default
-          if (command.temperature !== undefined) {
-            modelOptions.temperature = command.temperature;
-          } else if (this.defaultOptions.temperature !== undefined) {
-            modelOptions.temperature = this.defaultOptions.temperature;
-          }
-        }
+        // The connector applies model-specific sampling compatibility.
+        modelOptions.temperature = command.temperature ?? this.defaultOptions.temperature;
         
         console.log(`[ToolEvaluator] Debug - command.model: ${command.model}`);
         console.log(`[ToolEvaluator] Debug - command.model_id: ${command.model_id}`);

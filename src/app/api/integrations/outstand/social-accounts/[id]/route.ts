@@ -15,7 +15,7 @@ export async function DELETE(
 
     const client = getOutstandClient();
     const result = await client.deleteSocialAccount(params.id, tenantId);
-    return NextResponse.json({ success: true, ...result });
+    return NextResponse.json(result);
   } catch (error: any) {
     const status = error.status || 500;
     return NextResponse.json(

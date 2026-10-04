@@ -3,7 +3,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@j
 jest.unstable_mockModule('../../content/create/core', () => ({
   createContentCore: jest.fn(),
 }));
-jest.unstable_mockModule('../../content/update/route', () => ({
+jest.unstable_mockModule('../../content/update/core', () => ({
   updateContentCore: jest.fn(),
 }));
 jest.unstable_mockModule('@/lib/integrations/outstand/client', () => ({
@@ -18,7 +18,7 @@ jest.unstable_mockModule('@/lib/integrations/outstand/inbox-sync', () => ({
 jest.unstable_mockModule('../../sendBulkMessages/assistantProtocol', () => ({
   sendBulkMessagesTool: jest.fn(),
 }));
-jest.unstable_mockModule('../../sendEmail/route', () => ({
+jest.unstable_mockModule('../../sendEmail/core', () => ({
   sendEmailCore: jest.fn(),
 }));
 jest.unstable_mockModule('@/lib/services/whatsapp/WhatsAppSendService', () => ({
@@ -33,7 +33,7 @@ jest.unstable_mockModule('@/lib/database/supabase-client', () => ({ supabaseAdmi
 
 let publishTool: typeof import('../assistantProtocol').publishTool;
 type GetLead = typeof import('@/lib/database/lead-db').getLeadById;
-type SendEmail = typeof import('../../sendEmail/route').sendEmailCore;
+type SendEmail = typeof import('../../sendEmail/core').sendEmailCore;
 type SendBulk = typeof import('../../sendBulkMessages/assistantProtocol').sendBulkMessagesTool;
 type GetClient = typeof import('@/lib/integrations/outstand/client').getOutstandClient;
 type Authorize = typeof import('@/lib/integrations/outstand/conversation-access').authorizeOutstandConversation;
@@ -48,7 +48,7 @@ let mockedRecordOutstandMessage: jest.MockedFunction<RecordMessage>;
 beforeAll(async () => {
   ({ publishTool } = await import('../assistantProtocol'));
   mockedGetLeadById = jest.mocked((await import('@/lib/database/lead-db')).getLeadById);
-  mockedSendEmailCore = jest.mocked((await import('../../sendEmail/route')).sendEmailCore);
+  mockedSendEmailCore = jest.mocked((await import('../../sendEmail/core')).sendEmailCore);
   mockedSendBulkMessagesTool = jest.mocked((await import('../../sendBulkMessages/assistantProtocol')).sendBulkMessagesTool);
   mockedGetOutstandClient = jest.mocked((await import('@/lib/integrations/outstand/client')).getOutstandClient);
   mockedAuthorizeOutstandConversation = jest.mocked((await import('@/lib/integrations/outstand/conversation-access')).authorizeOutstandConversation);

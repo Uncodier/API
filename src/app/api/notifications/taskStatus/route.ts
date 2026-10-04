@@ -203,6 +203,7 @@ function getCompanyName(): string {
 // Función para generar HTML del email para el lead
 function generateLeadNotificationHtml(data: {
   leadName: string;
+  locale?: string;
   message: string;
   siteName: string;
   taskTitle?: string;

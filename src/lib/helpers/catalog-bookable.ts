@@ -2,14 +2,14 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 
 export type BookableParent = {
   id: string;
-  name?: string;
+  name?: string | null;
   status?: string | null;
   availability_status?: string | null;
 };
 
 export type BookableCatalogItem = {
   id: string;
-  name?: string;
+  name?: string | null;
   status?: string | null;
   availability_status?: string | null;
   parent_id?: string | null;

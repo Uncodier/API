@@ -143,6 +143,7 @@ export async function handleTwilioMediaAndCreateTask(params: {
     bucket: string;
     path: string;
     url: string;
+    transcription?: string;
   }> = [];
 
   // Almacenar también como assets para la instancia
@@ -225,7 +226,7 @@ export async function handleTwilioMediaAndCreateTask(params: {
       path: up!.path,
       url,
       transcription: transcriptionText || undefined // Añadimos la transcripción si existe
-    } as any);
+    });
 
     
     // Crear el registro de asset si se proporcionó instanceId

@@ -15,7 +15,7 @@ import { cronHandler } from '@/lib/status/handlers/cron';
 import { redisHandler } from '@/lib/status/handlers/redis';
 import { platformHandler } from '@/lib/status/handlers/platform';
 import { notificationsHandler } from '@/lib/status/handlers/notifications';
-import { aiPortkeyHandler } from '@/lib/status/handlers/ai/portkey';
+import { aiOpenRouterHandler } from '@/lib/status/handlers/ai/openrouter';
 import { aiTextHandler } from '@/lib/status/handlers/ai/text';
 import { aiTextContinuationHandler } from '@/lib/status/handlers/ai/text-continuation';
 import { aiImageHandler } from '@/lib/status/handlers/ai/image';
@@ -39,7 +39,7 @@ const HANDLERS: SystemHealthHandler[] = [
   redisHandler,
   platformHandler,
   notificationsHandler,
-  aiPortkeyHandler,
+  aiOpenRouterHandler,
   aiTextHandler,
   aiTextContinuationHandler,
   aiImageHandler,

@@ -20,6 +20,7 @@ import { DatabaseAdapter } from '../adapters/DatabaseAdapter';
 import { ProcessorInitializer } from '../services/processor/ProcessorInitializer';
 import { CommandFactory } from '../services/command/CommandFactory';
 import { v4 as uuidv4 } from 'uuid';
+import { getOpenRouterChatModel } from '@/lib/services/ai/openrouter';
 
 export interface SupervisorAnalysis {
   analysis: {
@@ -71,21 +72,14 @@ export class SupervisorService {
     this.processorInitializer = ProcessorInitializer.getInstance();
     this.processorInitializer.initialize();
     this.commandService = this.processorInitializer.getCommandService();
-    // Initialize Portkey connector with GPT-5.6 Sol configuration
-    // Use same Azure configuration as other agents (ProcessorConfigurationService)
+    // Use the same OpenRouter account and model defaults as other agents.
     const portkeyConfig: PortkeyConfig = {
-      apiKey: process.env.PORTKEY_API_KEY || '',
-      virtualKeys: {
-        'anthropic': process.env.ANTHROPIC_API_KEY || '',
-        'openai': process.env.AZURE_OPENAI_API_KEY || '',
-        'gemini': process.env.GEMINI_API_KEY || ''
-      },
-      baseURL: 'https://api.portkey.ai/v1'
+      apiKey: process.env.OPENROUTER_API_KEY,
     };
 
     this.connector = new PortkeyConnector(portkeyConfig, {
-      modelType: 'openai',
-      modelId: 'gpt-5.6-sol',
+      modelType: 'openrouter',
+      modelId: getOpenRouterChatModel(),
       maxTokens: 32768,
       temperature: 1, // GPT-5.6 Sol uses default temperature
       reasoningEffort: 'high',
@@ -299,8 +293,8 @@ export class SupervisorService {
         tools: command.tools || [],
         context: userPrompt, // Use formatted prompt as context
         systemPrompt: SUPERVISOR_SYSTEM_PROMPT, // Set supervisor system prompt
-        model: 'gpt-5.6-sol',
-        modelType: 'openai',
+        model: getOpenRouterChatModel(),
+        modelType: 'openrouter',
         reasoningEffort: 'high',
         verbosity: 'medium',
         responseFormat: 'json'
@@ -937,8 +931,9 @@ export class SupervisorService {
 
       console.log(`[SupervisorService] Calling GPT-5.6 Sol for similarity analysis...`);
       const response = await this.connector.callAgent(messages, {
-        modelType: 'openai',
-        modelId: 'gpt-5.6-sol',
+        modelType: 'openrouter',
+        modelId: getOpenRouterChatModel(),
+        siteId: command.site_id,
         maxTokens: 32768,
         responseFormat: 'json',
         reasoningEffort: 'high',

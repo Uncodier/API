@@ -1,0 +1,242 @@
+import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { getSchemaCore } from '../schema/core';
+import {
+  DATE_PERIODS,
+  computeAppliedRange,
+  resolveClientTimezone,
+  type AppliedRange,
+  type DatePeriod,
+} from '@/lib/timezone';
+
+// Tables the agent is allowed to query
+const ALLOWED_TABLES = [
+  'agents', 'agent_memories', 'audiences', 'audience_leads', 'campaigns',
+  'commands', 'content', 'conversations', 'leads', 'messages',
+  'requirements', 'segments', 'sites', 'tasks', 'visitors',
+] as const;
+
+type AllowedTable = typeof ALLOWED_TABLES[number];
+
+// Tables that don't have a direct site_id column and how to scope them
+const SITE_SCOPE: Record<string, { via: 'join'; join: string; filter: string } | { via: 'direct' }> = {
+  messages:       { via: 'join', join: 'conversations!inner(site_id)', filter: 'conversations.site_id' },
+  agent_memories: { via: 'join', join: 'agents!inner(site_id)',        filter: 'agents.site_id' },
+  audience_leads: { via: 'join', join: 'audiences!inner(site_id)',     filter: 'audiences.site_id' },
+};
+
+export interface FilterCondition {
+  column: string;
+  operator: 'eq' | 'neq' | 'gt' | 'gte' | 'lt' | 'lte' | 'like' | 'ilike' | 'is' | 'in';
+  value: unknown;
+}
+
+export interface ReportQueryParams {
+  table: AllowedTable;
+  site_id: string;
+  user_id: string;
+  columns?: string[];       // which columns to select; omit for all
+  filters?: FilterCondition[];
+  order_by?: string;
+  order_dir?: 'asc' | 'desc';
+  limit?: number;
+  offset?: number;
+  count_only?: boolean;     // return just the total count
+  period?: DatePeriod;
+  date_from?: string;
+  date_to?: string;
+  date_column?: string;
+}
+
+export interface ReportQueryResult {
+  success: boolean;
+  rows?: Record<string, unknown>[];
+  total?: number;
+  has_more?: boolean;
+  error?: string;
+  applied_range?: AppliedRange;
+}
+
+function isAllowedTable(t: string): t is AllowedTable {
+  return (ALLOWED_TABLES as readonly string[]).includes(t);
+}
+
+function isSimpleColumn(col: string): boolean {
+  // Only allow plain column names — no expressions, no injections
+  return /^[a-z_][a-z0-9_]*$/.test(col);
+}
+
+export async function runReportQuery(params: ReportQueryParams): Promise<ReportQueryResult> {
+  const {
+    table,
+    site_id,
+    user_id,
+    columns,
+    order_by = 'created_at',
+    order_dir = 'desc',
+    limit = 50,
+    offset = 0,
+    count_only = false,
+    period,
+    date_from,
+    date_to,
+    date_column = 'created_at',
+  } = params;
+  const filters: FilterCondition[] = [...(params.filters ?? [])];
+
+  if (!isAllowedTable(table)) {
+    return { success: false, error: `Table "${table}" is not allowed. Allowed: ${ALLOWED_TABLES.join(', ')}` };
+  }
+
+  if (!site_id) {
+    return { success: false, error: 'site_id is required' };
+  }
+
+  // Validate column names
+  const selectColumns = columns && columns.length > 0 ? columns : ['*'];
+  
+  // Get schema to validate columns
+  const schemaResult = getSchemaCore(site_id, user_id);
+  const tableSchema = schemaResult.tables?.find(t => t.table_name === table);
+  const validColumns = tableSchema ? new Set(tableSchema.columns.map(c => c.column_name)) : null;
+
+  for (const col of selectColumns) {
+    if (col !== '*') {
+      if (!isSimpleColumn(col)) {
+        return { success: false, error: `Invalid column name: "${col}"` };
+      }
+      if (validColumns && !validColumns.has(col)) {
+        return { 
+          success: false, 
+          error: `Column "${col}" does not exist in table "${table}". Available columns: ${Array.from(validColumns).join(', ')}` 
+        };
+      }
+    }
+  }
+
+  if (!isSimpleColumn(order_by)) {
+    return { success: false, error: `Invalid order_by column: "${order_by}"` };
+  }
+  if (validColumns && !validColumns.has(order_by)) {
+    return { success: false, error: `Order by column "${order_by}" does not exist in table "${table}".` };
+  }
+
+  if (period && !(DATE_PERIODS as readonly string[]).includes(period)) {
+    return { success: false, error: `Invalid period "${period}". Allowed: ${DATE_PERIODS.join(', ')}` };
+  }
+
+  let applied_range: AppliedRange | undefined;
+  if (period || date_from || date_to) {
+    if (!isSimpleColumn(date_column)) {
+      return { success: false, error: `Invalid date_column: "${date_column}"` };
+    }
+    if (validColumns && !validColumns.has(date_column)) {
+      return { success: false, error: `date_column "${date_column}" does not exist in table "${table}".` };
+    }
+
+    try {
+      const timezone = await resolveClientTimezone({ userId: user_id, siteId: site_id });
+      const range = computeAppliedRange(timezone, { period, date_from, date_to });
+      if (range) {
+        applied_range = range;
+        filters.push(
+          { column: date_column, operator: 'gte', value: range.start_utc },
+          { column: date_column, operator: 'lt', value: range.end_utc },
+        );
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Invalid date range';
+      return { success: false, error: message };
+    }
+  }
+
+  const safeLimit = Math.min(Math.max(1, limit), 100);
+
+  try {
+    const scope = SITE_SCOPE[table];
+    const useJoin = scope && scope.via === 'join';
+
+    // Build the select string — for join-scoped tables, include the join relation
+    const baseSelect = selectColumns.join(', ');
+    const selectStr = useJoin
+      ? `${baseSelect}, ${(scope as { via: 'join'; join: string }).join}`
+      : baseSelect;
+
+    let query = supabaseAdmin
+      .from(table)
+      .select(selectStr, { count: 'exact' });
+
+    // Apply site scoping
+    if (useJoin) {
+      query = query.eq((scope as { via: 'join'; filter: string }).filter, site_id);
+    } else {
+      query = query.eq('site_id', site_id);
+    }
+
+    // Apply caller-provided filters
+    for (const f of filters) {
+      if (!isSimpleColumn(f.column)) {
+        return { success: false, error: `Invalid filter column: "${f.column}"` };
+      }
+      if (validColumns && !validColumns.has(f.column)) {
+        return { success: false, error: `Filter column "${f.column}" does not exist in table "${table}".` };
+      }
+      switch (f.operator) {
+        case 'eq':    query = query.eq(f.column, f.value); break;
+        case 'neq':   query = query.neq(f.column, f.value); break;
+        case 'gt':    query = query.gt(f.column, f.value); break;
+        case 'gte':   query = query.gte(f.column, f.value); break;
+        case 'lt':    query = query.lt(f.column, f.value); break;
+        case 'lte':   query = query.lte(f.column, f.value); break;
+        case 'like':  query = query.like(f.column, String(f.value)); break;
+        case 'ilike': query = query.ilike(f.column, String(f.value)); break;
+        case 'is':    query = query.is(f.column, f.value as null); break;
+        case 'in':    query = query.in(f.column, f.value as unknown[]); break;
+      }
+    }
+
+    if (count_only) {
+      query = query.limit(0);
+    } else {
+      query = query
+        .order(order_by, { ascending: order_dir === 'asc' })
+        .range(offset, offset + safeLimit - 1);
+    }
+
+    const { data, error, count } = await query;
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    const total = count ?? 0;
+
+    if (count_only) {
+      return { success: true, total, applied_range };
+    }
+
+    // Strip the join relation key from rows (it was only needed for scoping)
+    const joinKey = useJoin
+      ? (scope as { via: 'join'; join: string }).join.split('!')[0]
+      : null;
+
+    const rows = (data ?? []).map((row: any) => {
+      if (joinKey && joinKey in row) {
+        const { [joinKey]: _dropped, ...rest } = row;
+        return rest;
+      }
+      return row;
+    }) as Record<string, unknown>[];
+
+    return {
+      success: true,
+      rows,
+      total,
+      has_more: offset + safeLimit < total,
+      applied_range,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    return { success: false, error: message };
+  }
+}
+

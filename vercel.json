@@ -1,23 +1,24 @@
 {
   "functions": {
     "src/app/api/public/image/prompt/[...prompt]/route.ts": { "maxDuration": 300 },
+    "src/app/api/public/video/prompt/[...prompt]/route.ts": { "maxDuration": 180 },
     "src/app/api/public/summary/prompt/[...prompt]/route.ts": { "maxDuration": 60 },
     "src/app/api/agents/growth/segments/route.ts": { "maxDuration": 60 },
     "src/app/api/site/segments/route.ts": { "maxDuration": 60 },
     "src/app/api/agents/chat/websocket/route.ts": { "maxDuration": 300 },
     "src/app/api/agents/email/route.ts": { "maxDuration": 300 },
     "src/app/api/agents/email/deliveryStatus/route.ts": { "maxDuration": 300 },
-    "src/app/api/ai/image/route.ts": { "maxDuration": 60 },
+    "src/app/api/ai/image/route.ts": { "maxDuration": 300 },
     "src/app/api/ai/video/route.ts": { "maxDuration": 300 },
     "src/app/api/cron/system-status/route.ts": { "maxDuration": 60 },
     "src/app/api/robots/instance/assistant/route.ts": { "maxDuration": 800 },
     "src/app/.well-known/workflow/v1/step/route.js": {
       "maxDuration": 300,
-      "includeFiles": "node_modules/{openai,zod,zod-to-json-schema,@google/generative-ai,scrapybara,uuid,crypto-js,portkey-ai,@sparticuz/chromium,puppeteer-core}/**"
+      "includeFiles": "node_modules/{openai,zod,zod-to-json-schema,@google/generative-ai,scrapybara,uuid,crypto-js,@sparticuz/chromium,puppeteer-core}/**"
     },
     "src/app/.well-known/workflow/v1/flow/route.js": {
       "maxDuration": 300,
-      "includeFiles": "node_modules/{openai,zod,zod-to-json-schema,@google/generative-ai,scrapybara,uuid,crypto-js,portkey-ai,@sparticuz/chromium,puppeteer-core}/**"
+      "includeFiles": "node_modules/{openai,zod,zod-to-json-schema,@google/generative-ai,scrapybara,uuid,crypto-js,@sparticuz/chromium,puppeteer-core}/**"
     }
   },
   "regions": ["iad1"],

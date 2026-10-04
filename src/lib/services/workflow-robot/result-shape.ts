@@ -186,19 +186,19 @@ class ShapeParser {
       }
       this.advance();
 
-      if (this.current.kind === ':') {
+      if (this.at(':')) {
         this.advance();
         fields[field] = this.parseValue();
       } else {
         fields[field] = { kind: 'scalar', valueType: 'any' };
       }
 
-      if (this.current.kind === ',') {
+      if (this.at(',')) {
         this.advance();
-        if (this.current.kind === '}') break;
+        if (this.at('}')) break;
         continue;
       }
-      if (this.current.kind !== '}') {
+      if (!this.at('}')) {
         throw new Error(`Expected "," or "}" at offset ${this.current.offset}.`);
       }
     }
@@ -220,6 +220,10 @@ class ShapeParser {
     }
     this.expect(']');
     return { kind: 'array', item };
+  }
+
+  private at(kind: TokenKind): boolean {
+    return this.current.kind === kind;
   }
 
   private expect(kind: TokenKind): void {

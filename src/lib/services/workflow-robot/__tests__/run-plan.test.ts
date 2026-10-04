@@ -29,7 +29,7 @@ jest.mock('@/lib/database/supabase-client', () => ({
     }),
   },
 }));
-jest.mock('@/app/api/agents/tools/instance_plan/update/route', () => ({
+jest.mock('@/app/api/agents/tools/instance_plan/update/core', () => ({
   updateInstancePlanCore: mockUpdatePlan,
 }));
 jest.mock('@/app/api/robots/instance/assistant/steps', () => ({

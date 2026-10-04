@@ -323,7 +323,7 @@ export async function executeCopywriterRefinement(
         }
       ],
       context: copywriterContext,
-      model: 'openai:gpt-5.6-sol',
+      modelType: 'openrouter',
       supervisor: [
         {
           agent_role: 'creative_director',

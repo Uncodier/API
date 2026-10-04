@@ -3,9 +3,9 @@
  * Unified tool for managing requirements (create, list, update)
  */
 
-import { getRequirementsCore } from './get/route';
-import { createRequirementCore } from './create/route';
-import { updateRequirementCore } from './update/route';
+import { getRequirementsCore } from './get/core';
+import { createRequirementCore } from './create/core';
+import { updateRequirementCore } from './update/core';
 
 export interface RequirementsToolParams {
   action: 'create' | 'list' | 'update';

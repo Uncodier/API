@@ -263,8 +263,7 @@ export class CommandManagementService {
         { agent_role: "sales_manager", status: "not_initialized" },
         { agent_role: "customer_service_manager", status: "not_initialized" }
       ],
-      model: "gpt-5.6-sol",
-      modelType: "openai"
+      modelType: "openrouter"
     });
     
     console.log(`[COMMAND_MGMT] ✅ CommandFactory.createCommand completado`);

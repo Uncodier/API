@@ -1,354 +1,115 @@
-import { Portkey } from 'portkey-ai';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import {
+  createOpenRouterClient,
+  getOpenRouterChatModel,
+  getOpenRouterTtsModel,
+  isOpenRouterReasoningModel,
+  resolveOpenRouterModel,
+} from '@/lib/services/ai/openrouter';
 import type { ProviderProbeResult } from '@/lib/status/types';
 import { isAiProbeEnabled } from '@/lib/status/types';
+import { getAzureImageConfig } from '@/lib/services/image/azure-image-config';
 
 const PROBE_TIMEOUT_MS = 15_000;
-const PROBE_MESSAGE = 'ping';
 
 function getEnv(name: string): string | undefined {
-  const v = process.env[name]?.trim();
-  return v || undefined;
+  return process.env[name]?.trim() || undefined;
 }
 
 function hasEnv(...names: string[]): boolean {
-  return names.every((n) => !!getEnv(n));
+  return names.every((name) => !!getEnv(name));
 }
 
-export function isAzureConfigured(): boolean {
-  return (
-    hasEnv('AZURE_OPENAI_ENDPOINT', 'AZURE_OPENAI_API_KEY', 'AZURE_OPENAI_CHAT_DEPLOYMENT') ||
-    hasEnv(
-      'MICROSOFT_AZURE_OPENAI_ENDPOINT',
-      'MICROSOFT_AZURE_OPENAI_API_KEY',
-      'MICROSOFT_AZURE_OPENAI_DEPLOYMENT',
-    )
-  );
-}
-
-function getAzureConfig(): {
-  endpoint: string;
-  apiKey: string;
-  deployment: string;
-  apiVersion: string;
-} | null {
-  const endpoint =
-    getEnv('MICROSOFT_AZURE_OPENAI_ENDPOINT') || getEnv('AZURE_OPENAI_ENDPOINT');
-  let apiKey =
-    getEnv('MICROSOFT_AZURE_OPENAI_API_KEY') || getEnv('AZURE_OPENAI_API_KEY');
-    
-  if (apiKey?.startsWith('azure-') && getEnv('MICROSOFT_AZURE_OPENAI_API_KEY')) {
-    apiKey = getEnv('MICROSOFT_AZURE_OPENAI_API_KEY');
-  }
-
-  const deployment =
-    getEnv('MICROSOFT_AZURE_OPENAI_DEPLOYMENT') ||
-    getEnv('AZURE_OPENAI_CHAT_DEPLOYMENT') ||
-    'gpt-5-mini';
-  const apiVersion =
-    getEnv('MICROSOFT_AZURE_OPENAI_API_VERSION') ||
-    getEnv('AZURE_OPENAI_API_VERSION') ||
-    '2024-09-01-preview';
-  if (!endpoint || !apiKey) return null;
-  return { endpoint, apiKey, deployment, apiVersion };
-}
-
-function usesMaxCompletionTokens(model: string): boolean {
-  return model.startsWith('gpt-5') || model.startsWith('o1') || model.startsWith('o3');
-}
-
-function buildChatCompletionBody(model: string): Record<string, unknown> {
-  const body: Record<string, unknown> = {
-    messages: [{ role: 'user', content: PROBE_MESSAGE }],
-    stream: false,
-  };
-  if (usesMaxCompletionTokens(model)) {
-    body.max_completion_tokens = 100;
-  } else {
-    body.max_tokens = 10;
-  }
-  return body;
-}
-
-function getGeminiProbeModel(): string {
-  return getEnv('GEMINI_STATUS_PROBE_MODEL') || getEnv('AI_MODEL') || 'gemini-3.1-pro-preview';
-}
-
-async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout>;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error('PROBE_TIMEOUT')), ms);
-  });
-  try {
-    return await Promise.race([promise, timeout]);
-  } finally {
-    clearTimeout(timer!);
-  }
-}
-
+// Provider errors can contain credentials, URLs and request bodies. Never publish them.
 function mapProbeError(err: unknown): { errorCode: string; errorMessage: string } {
-  const msg = err instanceof Error ? err.message : String(err);
-  if (msg.includes('PROBE_TIMEOUT') || msg.includes('timeout')) {
+  const message = err instanceof Error ? err.message : '';
+  const status = err && typeof err === 'object' && 'status' in err ? err.status : undefined;
+  if (/timeout|timed out/i.test(message)) {
     return { errorCode: 'PROVIDER_TIMEOUT', errorMessage: 'Probe timed out' };
   }
-  if (msg.includes('401') || msg.includes('403') || /unauthorized|invalid.*key/i.test(msg)) {
+  if (status === 401 || status === 403 || /\b40[13]\b|unauthorized|invalid.*key/i.test(message)) {
     return { errorCode: 'AUTH_FAILED', errorMessage: 'Authentication failed' };
   }
-  if (msg.includes('429') || /rate limit/i.test(msg)) {
+  if (status === 429 || /\b429\b|rate limit/i.test(message)) {
     return { errorCode: 'QUOTA_EXCEEDED', errorMessage: 'Rate limited' };
   }
-  let safe = msg.slice(0, 200);
-  safe = safe.replace(/AIza[0-9A-Za-z_-]{20,}/g, '[redacted]');
-  safe = safe.replace(/Following keys are not valid:\s*[^\s"]+/gi, 'Following keys are not valid: [redacted]');
-  return { errorCode: 'PROVIDER_ERROR', errorMessage: safe.slice(0, 120) };
-}
-
-async function retryOnce<T>(fn: () => Promise<T>): Promise<T> {
-  try {
-    return await fn();
-  } catch (err) {
-    const { errorCode } = mapProbeError(err);
-    if (errorCode === 'QUOTA_EXCEEDED') {
-      await new Promise((r) => setTimeout(r, 2000));
-      return await fn();
-    }
-    throw err;
-  }
+  return { errorCode: 'PROVIDER_ERROR', errorMessage: 'Provider probe failed' };
 }
 
 export function skippedResult(model: string): ProviderProbeResult {
-  return {
-    configured: false,
-    liveProbe: false,
-    latencyMs: 0,
-    model,
-    skipped: true,
-  };
+  return { configured: false, liveProbe: false, latencyMs: 0, model, skipped: true };
 }
 
-function notProbedResult(model: string, reason: string): ProviderProbeResult {
+function configurationResult(model: string, configured: boolean): ProviderProbeResult {
+  if (!configured) return skippedResult(model);
   return {
     configured: true,
     liveProbe: false,
     latencyMs: 0,
     model,
-    errorCode: 'PROBE_DISABLED',
-    errorMessage: reason,
+    verification: 'configuration',
   };
 }
 
-export async function probePortkeyProvider(
-  modelType: 'openai' | 'gemini',
-): Promise<ProviderProbeResult> {
-  const virtualKeyMap: Record<string, string | undefined> = {
-    openai: getEnv('AZURE_OPENAI_API_KEY'),
-    gemini: getEnv('GEMINI_API_KEY'),
-  };
-  const defaultModels: Record<string, string> = {
-    openai: 'gpt-5-mini',
-    gemini: getGeminiProbeModel(),
-  };
-
-  const virtualKey = virtualKeyMap[modelType];
-  const portkeyKey = getEnv('PORTKEY_API_KEY');
-  
-  if (!portkeyKey || !virtualKey) {
-    return skippedResult(defaultModels[modelType]);
-  }
-  
-  // Skip Portkey probe if a raw Google API key (AIza) is passed as virtual key, 
-  // as Portkey will reject it with "Following keys are not valid"
-  if (modelType === 'gemini' && virtualKey.startsWith('AIza')) {
-    return skippedResult(defaultModels[modelType]);
-  }
-
+export async function probeOpenRouterText(): Promise<ProviderProbeResult> {
+  const model = getOpenRouterChatModel();
+  if (!getEnv('OPENROUTER_API_KEY')) return skippedResult(model);
   if (!isAiProbeEnabled()) {
-    return notProbedResult(defaultModels[modelType], 'Live probes disabled locally');
+    return {
+      ...configurationResult(model, true),
+      errorCode: 'PROBE_DISABLED',
+      errorMessage: 'Live probes require STATUS_AI_PROBE_ENABLED=true',
+    };
   }
 
   const start = Date.now();
   try {
-    const portkey = new Portkey({
-      apiKey: portkeyKey,
-      virtualKey,
-      baseURL: 'https://api.portkey.ai/v1',
+    const client = createOpenRouterClient({ timeout: PROBE_TIMEOUT_MS, maxRetries: 0 });
+    await client.chat.completions.create({
+      model,
+      messages: [{ role: 'user', content: 'ping' }],
+      stream: false,
+      ...(isOpenRouterReasoningModel(model) ? { max_completion_tokens: 100 } : { max_tokens: 10 }),
     });
-    const model = defaultModels[modelType];
-
-    const completionBody: Record<string, unknown> = {
-      messages: [{ role: 'user', content: PROBE_MESSAGE }],
-      model,
-      ...buildChatCompletionBody(model),
-    };
-    delete completionBody.stream;
-
-    await retryOnce(() =>
-      withTimeout(
-        portkey.chat.completions.create(
-          completionBody as Parameters<typeof portkey.chat.completions.create>[0],
-        ),
-        PROBE_TIMEOUT_MS,
-      ),
-    );
-
-    return {
-      configured: true,
-      liveProbe: true,
-      latencyMs: Date.now() - start,
-      model,
-    };
+    return { configured: true, liveProbe: true, verification: 'inference', latencyMs: Date.now() - start, model };
   } catch (err) {
-    const { errorCode, errorMessage } = mapProbeError(err);
     return {
       configured: true,
       liveProbe: false,
+      verification: 'inference',
       latencyMs: Date.now() - start,
-      model: defaultModels[modelType],
-      errorCode,
-      errorMessage,
+      model,
+      ...mapProbeError(err),
     };
   }
 }
 
-export async function probeAzureText(): Promise<ProviderProbeResult> {
-  const azure = getAzureConfig();
-  const model = azure?.deployment || 'gpt-5-mini';
-  if (!azure) {
-    return skippedResult(model);
-  }
-  if (!isAiProbeEnabled()) {
-    return notProbedResult(model, 'Live probes disabled locally');
-  }
+/** Readiness only: a text completion does not verify image/video/audio generation. */
+export function checkOpenRouterMedia(
+  capability: 'video' | 'tts' | 'transcription',
+): ProviderProbeResult {
+  const model = getEnv(`OPENROUTER_${capability.toUpperCase()}_MODEL`)
+    || (capability === 'tts' ? getOpenRouterTtsModel() : undefined);
+  return configurationResult(
+    model ? resolveOpenRouterModel(model) : `${capability}-model-not-configured`,
+    !!model && ((capability !== 'tts' && capability !== 'transcription') || model.includes('/'))
+      && hasEnv('OPENROUTER_API_KEY'),
+  );
+}
 
-  const url = `${azure.endpoint.replace(/\/$/, '')}/openai/deployments/${encodeURIComponent(azure.deployment)}/chat/completions?api-version=${encodeURIComponent(azure.apiVersion)}`;
-
-  const start = Date.now();
+/** Configuration only: never infer availability, quality or billing from readiness. */
+export function checkAzureImage(): ProviderProbeResult {
   try {
-    await retryOnce(() =>
-      withTimeout(
-        fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'api-key': azure.apiKey },
-          body: JSON.stringify(buildChatCompletionBody(azure.deployment)),
-        }).then(async (resp) => {
-          if (!resp.ok) {
-            const text = await resp.text().catch(() => '');
-            throw new Error(`Azure probe failed: ${resp.status} ${text}`);
-          }
-        }),
-        PROBE_TIMEOUT_MS,
-      ),
-    );
-    return { configured: true, liveProbe: true, latencyMs: Date.now() - start, model: azure.deployment };
-  } catch (err) {
-    const { errorCode, errorMessage } = mapProbeError(err);
-    return {
-      configured: true,
-      liveProbe: false,
-      latencyMs: Date.now() - start,
-      model: azure.deployment,
-      errorCode,
-      errorMessage,
-    };
+    const config = getAzureImageConfig();
+    return configurationResult(config.deployment, true);
+  } catch {
+    return skippedResult('azure-image-not-configured');
   }
 }
 
-export async function probeGeminiText(): Promise<ProviderProbeResult> {
-  const model = getGeminiProbeModel();
-  const apiKey = getEnv('GEMINI_API_KEY');
-  if (!apiKey) {
-    return skippedResult(model);
-  }
-  if (!isAiProbeEnabled()) {
-    return notProbedResult(model, 'Live probes disabled locally');
-  }
-
-  const start = Date.now();
-  try {
-    await retryOnce(() =>
-      withTimeout(
-        (async () => {
-          const genAI = new GoogleGenerativeAI(apiKey);
-          const m = genAI.getGenerativeModel({ model });
-          await m.generateContent({
-            contents: [{ role: 'user', parts: [{ text: PROBE_MESSAGE }] }],
-            generationConfig: { maxOutputTokens: 10 },
-          });
-        })(),
-        PROBE_TIMEOUT_MS,
-      ),
-    );
-    return { configured: true, liveProbe: true, latencyMs: Date.now() - start, model };
-  } catch (err) {
-    const { errorCode, errorMessage } = mapProbeError(err);
-    return {
-      configured: true,
-      liveProbe: false,
-      latencyMs: Date.now() - start,
-      model,
-      errorCode,
-      errorMessage,
-    };
-  }
+export function checkTtsProvider(): { provider: string; result: ProviderProbeResult } {
+  return { provider: 'openrouter', result: checkOpenRouterMedia('tts') };
 }
 
-export async function probeVercelGateway(): Promise<ProviderProbeResult> {
-  const model = 'gpt-5-mini';
-  const baseURL = getEnv('VERCEL_AI_GATEWAY_OPENAI');
-  const apiKey = getEnv('VERCEL_AI_GATEWAY_API_KEY');
-  if (!baseURL || !apiKey) {
-    return skippedResult(model);
-  }
-  if (!isAiProbeEnabled()) {
-    return notProbedResult(model, 'Live probes disabled locally');
-  }
-
-  const start = Date.now();
-  try {
-    await retryOnce(() =>
-      withTimeout(
-        fetch(`${baseURL.replace(/\/$/, '')}/v1/chat/completions`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({
-            model,
-            messages: [{ role: 'user', content: PROBE_MESSAGE }],
-            ...buildChatCompletionBody(model),
-          }),
-        }).then(async (resp) => {
-          if (!resp.ok) {
-            const text = await resp.text().catch(() => '');
-            throw new Error(`Vercel gateway probe failed: ${resp.status} ${text}`);
-          }
-        }),
-        PROBE_TIMEOUT_MS,
-      ),
-    );
-    return { configured: true, liveProbe: true, latencyMs: Date.now() - start, model };
-  } catch (err) {
-    const { errorCode, errorMessage } = mapProbeError(err);
-    return {
-      configured: true,
-      liveProbe: false,
-      latencyMs: Date.now() - start,
-      model,
-      errorCode,
-      errorMessage,
-    };
-  }
-}
-
-/** Image/video/audio: live probe via same text path when only env is set */
-export async function probeMediaProvider(
-  name: string,
-  requiredEnv: string[],
-  fallbackProbe: () => Promise<ProviderProbeResult>,
-): Promise<ProviderProbeResult> {
-  if (!hasEnv(...requiredEnv)) {
-    return skippedResult(name);
-  }
-  return fallbackProbe();
+export function checkTranscriptionProvider(): { provider: string; result: ProviderProbeResult } {
+  return { provider: 'openrouter', result: checkOpenRouterMedia('transcription') };
 }

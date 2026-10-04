@@ -115,27 +115,39 @@ export abstract class Base {
   }
   
   /**
-   * Extract token usage from Portkey response
+   * Extract token counts and provider-reported accounting metadata without estimating cost.
    */
-  protected extractTokenUsage(response: any): { inputTokens?: number, outputTokens?: number } {
+  protected extractTokenUsage(response: any): {
+    inputTokens?: number; outputTokens?: number; usage?: Record<string, unknown>;
+    cost?: number; cost_details?: Record<string, unknown>; is_byok?: boolean;
+    generationId?: string; provider?: string; model?: string;
+  } {
     try {
-      console.log(`[Base] Examinando estructura de respuesta para tokens: ${
-        JSON.stringify(
-          response?.usage || 
-          response?.usageMetadata || 
-          (response?.metadata?.usage ? 'Tiene metadata.usage' : 'No usage data')
-        ).substring(0, 200)
-      }`);
+      const usage = response?.usage ?? response?.metadata?.usage ?? response?.content?.usage;
+      const generationId = response?.generationId ?? response?.id;
+      const provider = response?.modelInfo?.provider ?? response?.provider;
+      const model = response?.modelInfo?.model ?? response?.model;
+      const metadata = {
+        ...(usage ? { usage } : {}),
+        ...(typeof usage?.cost === 'number' && Number.isFinite(usage.cost) ? { cost: usage.cost } : {}),
+        ...(usage?.cost_details !== undefined ? { cost_details: usage.cost_details } : {}),
+        ...(typeof usage?.is_byok === 'boolean' ? { is_byok: usage.is_byok } : {}),
+        ...(generationId ? { generationId } : {}),
+        ...(provider ? { provider } : {}),
+        ...(model ? { model } : {}),
+      };
       
       if (typeof response === 'object' && response !== null) {
         // Try to extract from usage field
         if (response.usage) {
           // Check if standard OpenAI/Anthropic format
-          if (response.usage.prompt_tokens !== undefined || response.usage.input_tokens !== undefined) {
-            const inputTokens = response.usage.prompt_tokens || response.usage.input_tokens || 0;
-            const outputTokens = response.usage.completion_tokens || response.usage.output_tokens || 0;
+          if (response.usage.prompt_tokens !== undefined || response.usage.input_tokens !== undefined ||
+              response.usage.promptTokens !== undefined || response.usage.completion_tokens !== undefined ||
+              response.usage.output_tokens !== undefined || response.usage.completionTokens !== undefined) {
+            const inputTokens = response.usage.prompt_tokens ?? response.usage.input_tokens ?? response.usage.promptTokens ?? 0;
+            const outputTokens = response.usage.completion_tokens ?? response.usage.output_tokens ?? response.usage.completionTokens ?? 0;
             console.log(`[Base] Tokens detectados de usage estándar: input=${inputTokens}, output=${outputTokens}`);
-            return { inputTokens, outputTokens };
+            return { inputTokens, outputTokens, ...metadata };
           }
         }
         
@@ -144,7 +156,7 @@ export abstract class Base {
           const inputTokens = response.usageMetadata.promptTokenCount || 0;
           const outputTokens = response.usageMetadata.candidatesTokenCount || 0;
           console.log(`[Base] Tokens detectados de usageMetadata: input=${inputTokens}, output=${outputTokens}`);
-          return { inputTokens, outputTokens };
+          return { inputTokens, outputTokens, ...metadata };
         }
         
         // Try to extract from inputTokenCount/outputTokenCount format
@@ -152,32 +164,32 @@ export abstract class Base {
           const inputTokens = response.inputTokenCount || 0;
           const outputTokens = response.outputTokenCount || 0;
           console.log(`[Base] Tokens detectados de tokenCount directo: input=${inputTokens}, output=${outputTokens}`);
-          return { inputTokens, outputTokens };
+          return { inputTokens, outputTokens, ...metadata };
         }
         
         // Try to extract from metadata.usage
         if (response.metadata && response.metadata.usage) {
-          const inputTokens = response.metadata.usage.prompt_tokens || 
-                             response.metadata.usage.input_tokens || 0;
-          const outputTokens = response.metadata.usage.completion_tokens || 
-                              response.metadata.usage.output_tokens || 0;
+          const inputTokens = response.metadata.usage.prompt_tokens ??
+                             response.metadata.usage.input_tokens ?? response.metadata.usage.promptTokens ?? 0;
+          const outputTokens = response.metadata.usage.completion_tokens ??
+                              response.metadata.usage.output_tokens ?? response.metadata.usage.completionTokens ?? 0;
           console.log(`[Base] Tokens detectados de metadata.usage: input=${inputTokens}, output=${outputTokens}`);
-          return { inputTokens, outputTokens };
+          return { inputTokens, outputTokens, ...metadata };
         }
         
         // If content is an object with token usage
         if (response.content && typeof response.content === 'object' && response.content.usage) {
-          const inputTokens = response.content.usage.prompt_tokens || 
-                             response.content.usage.input_tokens || 0;
-          const outputTokens = response.content.usage.completion_tokens || 
-                              response.content.usage.output_tokens || 0;
+          const inputTokens = response.content.usage.prompt_tokens ??
+                             response.content.usage.input_tokens ?? response.content.usage.promptTokens ?? 0;
+          const outputTokens = response.content.usage.completion_tokens ??
+                              response.content.usage.output_tokens ?? response.content.usage.completionTokens ?? 0;
           console.log(`[Base] Tokens detectados de content.usage: input=${inputTokens}, output=${outputTokens}`);
-          return { inputTokens, outputTokens };
+          return { inputTokens, outputTokens, ...metadata };
         }
       }
       
       console.log(`[Base] No se detectaron tokens en la respuesta`);
-      return { inputTokens: 0, outputTokens: 0 };
+      return { inputTokens: 0, outputTokens: 0, ...metadata };
     } catch (e) {
       console.error('[Base] Error extracting token usage:', e);
       return { inputTokens: 0, outputTokens: 0 };

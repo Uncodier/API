@@ -1,25 +1,12 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import OpenAI from 'openai';
+import type OpenAI from 'openai';
+import { createOpenRouterClient, getOpenRouterChatModel, isOpenRouterReasoningModel } from '@/lib/services/ai/openrouter';
 
 /**
- * Get OpenAI client for Azure OpenAI
+ * OpenAI-compatible client, using the primary OpenRouter account only.
  */
 export function getOpenAIClient(): OpenAI {
-  const apiKey = process.env.MICROSOFT_AZURE_OPENAI_API_KEY;
-  const endpoint = process.env.MICROSOFT_AZURE_OPENAI_ENDPOINT;
-  const deployment = process.env.MICROSOFT_AZURE_OPENAI_DEPLOYMENT || 'gpt-4o';
-  const apiVersion = process.env.MICROSOFT_AZURE_OPENAI_API_VERSION || '2024-08-01-preview';
-
-  if (!endpoint || !apiKey) {
-    throw new Error('Azure OpenAI configuration is required');
-  }
-
-  return new OpenAI({
-    apiKey: apiKey,
-    baseURL: `${endpoint}/openai/deployments/${deployment}`,
-    defaultQuery: { 'api-version': apiVersion },
-    defaultHeaders: { 'api-key': apiKey },
-  });
+  return createOpenRouterClient();
 }
 
 /**
@@ -133,8 +120,7 @@ export function extractDescriptiveNameFromContext(context: string): string {
  * Generate a descriptive name based on context using AI
  */
 export async function generateInstanceName(context: string, currentName?: string): Promise<string> {
-  const client = getOpenAIClient();
-  const deployment = process.env.MICROSOFT_AZURE_OPENAI_DEPLOYMENT || 'gpt-4o';
+  const model = getOpenRouterChatModel();
 
   // Check if current name is generic
   const genericNames = ['Assistant Session', 'New Instance', 'Untitled', 'Instance', 'Session', 'Assistant'];
@@ -169,8 +155,9 @@ Based on the context above, generate the name now:
 Name:`;
 
   try {
+    const client = getOpenAIClient();
     const response = await client.chat.completions.create({
-      model: deployment,
+      model,
       messages: [
         {
           role: 'system',
@@ -181,8 +168,8 @@ Name:`;
           content: prompt,
         },
       ],
-      temperature: 0.8,
-      max_completion_tokens: 30,
+      ...(!isOpenRouterReasoningModel(model) ? { temperature: 0.8 } : {}),
+      max_tokens: 2048,
     });
 
     let generatedName = response.choices[0]?.message?.content?.trim() || '';
@@ -221,7 +208,7 @@ Name:`;
 
     return generatedName;
   } catch (error: any) {
-    console.error('[INSTANCE_TOOL] Error generating name:', error);
+    console.warn('[INSTANCE_TOOL] Name generation unavailable; using local context fallback');
     // Fallback: extract descriptive name from context
     return extractDescriptiveNameFromContext(context);
   }
@@ -239,8 +226,7 @@ export async function compareObjectives(
     return { similar: false, similarity: 0 };
   }
 
-  const client = getOpenAIClient();
-  const deployment = process.env.MICROSOFT_AZURE_OPENAI_DEPLOYMENT || 'gpt-4o';
+  const model = getOpenRouterChatModel();
 
   const prompt = `Compare these two objectives and determine if they are similar (same or related purpose).
 
@@ -254,8 +240,9 @@ Respond with a JSON object containing:
 Only respond with valid JSON, nothing else.`;
 
   try {
+    const client = getOpenAIClient();
     const response = await client.chat.completions.create({
-      model: deployment,
+      model,
       messages: [
         {
           role: 'system',
@@ -266,8 +253,8 @@ Only respond with valid JSON, nothing else.`;
           content: prompt,
         },
       ],
-      temperature: 0.3,
-      max_completion_tokens: 100,
+      ...(!isOpenRouterReasoningModel(model) ? { temperature: 0.3 } : {}),
+      max_tokens: 2048,
       response_format: { type: 'json_object' },
     });
 
@@ -277,7 +264,7 @@ Only respond with valid JSON, nothing else.`;
       similarity: typeof result.similarity === 'number' ? result.similarity : 0,
     };
   } catch (error: any) {
-    console.error('[INSTANCE_TOOL] Error comparing objectives:', error);
+    console.warn('[INSTANCE_TOOL] Objective comparison unavailable');
     // On error, default to not similar (allow rename)
     return { similar: false, similarity: 0 };
   }

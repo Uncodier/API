@@ -202,13 +202,13 @@ export async function GET(req: Request) {
         instanceId = newInstance?.id;
       }
 
-      if (!instanceId) {
+      const maintenanceInstanceId = instanceId ?? '';
+      if (!maintenanceInstanceId) {
         console.error(`[Cron Maintenance] Failed to create or find remote_instance for req ${reqId}`);
         results.push({ reqId, error: 'Failed to create or find remote_instance' });
         await releaseRunLock(maintenanceLockKey, maintenanceRunId);
         continue;
       }
-      const maintenanceInstanceId = instanceId;
 
       // Validate instance and plan are not paused, otherwise put them in play
       const { data: instanceData } = await supabaseAdmin

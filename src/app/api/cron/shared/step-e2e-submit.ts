@@ -111,7 +111,7 @@ export async function runE2eSubmitStep(
     };
   }
 
-  const expectedMethod = (step.response.method || 'POST').toUpperCase();
+  const expectedMethod = step.response.method || 'POST';
   const expectedPath = normalizedPath(step.response.path);
   const expectedOrigin = new URL(baseUrl).origin;
   await page.waitForSelector(step.selector, { timeout: timeoutMs });

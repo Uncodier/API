@@ -3,7 +3,7 @@
  * Unified tool for managing leads (create, list, update, qualify, identify)
  */
 
-import { getLeadCore } from './get/route';
+import { getLeadCore } from './get/core';
 import { fetchApiTool } from '@/app/api/agents/tools/utils/fetch-helper';
 
 

@@ -5,7 +5,10 @@ const fetchQuery = {
   eq: jest.fn(),
   in: jest.fn(),
   neq: jest.fn(),
-  lt: jest.fn(),
+  lt: jest.fn<(column: string, value: string) => Promise<{
+    data: { id: string; status: string; steps: { id: string; status: string }[]; metadata: Record<string, unknown> }[];
+    error: null;
+  }>>(),
 };
 fetchQuery.select.mockReturnValue(fetchQuery);
 fetchQuery.eq.mockReturnValue(fetchQuery);

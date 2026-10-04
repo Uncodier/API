@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/route';
+import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/core';
 import { processAssistantTurn } from './assistant-turn';
 import type { AssistantContext } from './types';
 import { SkillsService } from '@/lib/services/skills-service';

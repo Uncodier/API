@@ -136,16 +136,18 @@ export async function getLeadConversations(leadId: string, includeMessages: bool
     
     // Si se solicitan mensajes, obtener los últimos mensajes de cada conversación
     if (includeMessages) {
+      const conversationsWithMessages = [];
       for (const conversation of data) {
         try {
           // Aumentado el límite de mensajes por conversación para dar más contexto
           const messages = await getConversationMessages(conversation.id, 20);
-          conversation.messages = messages;
+          conversationsWithMessages.push({ ...conversation, messages });
         } catch (msgError) {
           console.error(`Error obteniendo mensajes para conversación ${conversation.id}:`, msgError);
-          conversation.messages = [];
+          conversationsWithMessages.push({ ...conversation, messages: [] });
         }
       }
+      return conversationsWithMessages;
     }
     
     return data;

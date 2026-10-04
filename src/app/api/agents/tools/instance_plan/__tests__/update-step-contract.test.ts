@@ -21,7 +21,7 @@ jest.mock('@/lib/services/requirement-backlog-store', () => ({
   toBacklog,
 }));
 
-import { updateInstancePlanCore } from '../update/route';
+import { updateInstancePlanCore } from '../update/core';
 import { requirementStepExecutionBlock } from '@/lib/services/requirement-execution-visibility';
 jest.mock('@/lib/services/requirement-execution-visibility', () => ({ requirementStepExecutionBlock: jest.fn() }));
 

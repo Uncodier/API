@@ -3,7 +3,7 @@
  * Unified tool for managing deals (create, list, update, delete)
  */
 
-import { getDealsCore } from '@/app/api/agents/tools/deals/get/route';
+import { getDealsCore } from '@/app/api/agents/tools/deals/get/core';
 import { fetchApiTool } from '@/app/api/agents/tools/utils/fetch-helper';
 
 

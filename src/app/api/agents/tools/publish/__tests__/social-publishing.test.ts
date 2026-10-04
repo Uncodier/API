@@ -16,13 +16,13 @@ const bulkSend = jest.fn();
 const client = { listAccounts, createPost, getMedia, getUploadUrl, confirmUpload };
 
 jest.unstable_mockModule('../../content/create/core', () => ({ createContentCore: createContent }));
-jest.unstable_mockModule('../../content/update/route', () => ({ updateContentCore: updateContent }));
+jest.unstable_mockModule('../../content/update/core', () => ({ updateContentCore: updateContent }));
 jest.unstable_mockModule('@/lib/database/content-db', () => ({ getContentById: getContent }));
 jest.unstable_mockModule('../content-attempt', () => ({ claimSocialContent: claimContent }));
 jest.unstable_mockModule('../media-transfer-http', () => ({ downloadMedia, putMedia }));
 jest.unstable_mockModule('@/lib/integrations/outstand/client', () => ({ getOutstandClient: () => client }));
 jest.unstable_mockModule('../../sendBulkMessages/assistantProtocol', () => ({ sendBulkMessagesTool: bulkSend }));
-jest.unstable_mockModule('../../sendEmail/route', () => ({ sendEmailCore: jest.fn() }));
+jest.unstable_mockModule('../../sendEmail/core', () => ({ sendEmailCore: jest.fn() }));
 jest.unstable_mockModule('@/lib/services/whatsapp/WhatsAppSendService', () => ({ WhatsAppSendService: {} }));
 jest.unstable_mockModule('@/lib/database/lead-db', () => ({ getLeadById: jest.fn() }));
 jest.unstable_mockModule('@/lib/messaging/lead-merge-fields', () => ({

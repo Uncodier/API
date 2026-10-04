@@ -3,6 +3,8 @@
 import { ImageGenerationService } from '@/lib/services/image/ImageGenerationService';
 import { uploadToCache } from '@/lib/services/image/promptImageCache';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { assertSafeRemoteUrl } from '@/lib/security/safe-remote-url';
+import { readResponseWithLimit } from '@/lib/security/limited-response';
 
 export async function generateAndCacheImageStep(
   prompt: string, 
@@ -14,12 +16,15 @@ export async function generateAndCacheImageStep(
   'use step';
   
   // Platform requests use the system site; signed site requests charge that site.
+  const generationSize = size === '256x256' || size === '512x512' ? '1024x1024' : size;
   const result = await ImageGenerationService.generateImage({
     prompt,
     site_id: siteId,
-    size,
+    // Cache dimensions stay unchanged. Azure does not generate legacy tiny sizes;
+    // let its adapter map non-square ratios to supported landscape/portrait sizes.
+    size: ratio && ratio !== '1:1' ? undefined : generationSize,
     ratio,
-    provider: 'gemini'
+    provider: 'azure'
   });
 
   if (!result.success || !result.images?.[0]?.url) {
@@ -29,13 +34,14 @@ export async function generateAndCacheImageStep(
   const generatedUrl = result.images[0].url;
 
   // 2. Fetch the generated image to get the buffer
-  const imageRes = await fetch(generatedUrl);
+  const imageRes = await fetch(await assertSafeRemoteUrl(generatedUrl), {
+    redirect: 'error', signal: AbortSignal.timeout(30_000),
+  });
   if (!imageRes.ok) {
-    throw new Error(`Failed to download generated image from ${generatedUrl}`);
+    throw new Error('Failed to download generated image');
   }
 
-  const arrayBuffer = await imageRes.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
+  const buffer = await readResponseWithLimit(imageRes, 20 * 1024 * 1024);
   const mimeType = imageRes.headers.get('content-type') || 'image/jpeg';
 
   // 3. Upload to the deterministic cache path
@@ -51,7 +57,8 @@ export async function generateAndCacheImageStep(
         file_type: mimeType,
         file_size: buffer.length,
         metadata: {
-          provider: 'gemini',
+          provider: result.provider,
+          model: result.metadata?.model,
           prompt,
           prompt_hash: hash,
           source: 'public_prompt',

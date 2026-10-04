@@ -5,6 +5,8 @@
 import { Base } from './Base';
 import { PortkeyConnector } from '../services/PortkeyConnector';
 import { DbCommand, CommandExecutionResult, PortkeyModelOptions } from '../models/types';
+import { parseAgentModel } from '../models/model-selection';
+import { getOpenRouterChatModel, isOpenRouterReasoningModel, resolveOpenRouterModel } from '@/lib/services/ai/openrouter';
 import { TARGET_PROCESSOR_SYSTEM_PROMPT, formatTargetProcessorPrompt } from '../prompts/target-processor-prompt';
 import { prepareMessagesForTarget } from './targetEvaluator/formatters/target-message-formatter';
 import { extractTokenUsage } from './toolEvaluator/tokenUtils';
@@ -36,8 +38,8 @@ export class TargetProcessor extends Base {
     super(id, name, capabilities);
     this.connector = connector;
     this.defaultOptions = defaultOptions || {
-      modelType: 'openai',
-      modelId: 'gpt-5.6-sol',
+      modelType: 'openrouter',
+      modelId: getOpenRouterChatModel(),
       maxTokens: 32768,
       temperature: 0.7,
       responseFormat: 'text'
@@ -135,29 +137,21 @@ export class TargetProcessor extends Base {
       let parsedModelType = command.model_type || this.defaultOptions.modelType;
       let parsedModelId = command.model_id || this.defaultOptions.modelId;
 
-      if (command.model && command.model.includes(':')) {
-        const [modelType, modelId] = command.model.split(':');
-        // Validate modelType
-        if (['anthropic', 'openai', 'gemini'].includes(modelType)) {
-          parsedModelType = modelType as 'anthropic' | 'openai' | 'gemini';
-          parsedModelId = modelId;
-          console.log(`[TargetProcessor] Parsed model field: ${modelType}:${modelId}`);
-        } else {
-          console.warn(`[TargetProcessor] Invalid modelType: ${modelType}, using default`);
-          parsedModelId = command.model; // Use the whole string as modelId
-        }
-      } else if (command.model) {
-        parsedModelId = command.model;
+      if (command.model) {
+        const parsed = parseAgentModel(command.model, parsedModelType);
+        parsedModelType = parsed.modelType;
+        parsedModelId = parsed.modelId;
       }
 
       // Configure model options - default to non-streaming for stability
-      const isGpt55Family = parsedModelType === 'openai' && (parsedModelId === 'gpt-5.6-sol' || parsedModelId === 'gpt-5-mini');
+      const isGpt55Family = isOpenRouterReasoningModel(resolveOpenRouterModel(parsedModelId, parsedModelType));
       const defaultMax = isGpt55Family ? 32768 : (this.defaultOptions.maxTokens || 16384);
       const modelOptions: PortkeyModelOptions = {
         modelType: parsedModelType,
         modelId: parsedModelId,
         maxTokens: command.max_tokens || defaultMax,
-        temperature: command.temperature || this.defaultOptions.temperature,
+        temperature: command.temperature ?? this.defaultOptions.temperature,
+        reasoningEffort: command.reasoning_effort ?? this.defaultOptions.reasoningEffort,
         stream: this.defaultOptions.stream || false,
         streamOptions: {
           includeUsage: true

@@ -8,6 +8,11 @@ const execute = jest.fn<AsyncMock>();
 const toolExecute = jest.fn<AsyncMock>();
 const getTools = jest.fn<AsyncMock>();
 const observeTool = jest.fn<AsyncMock>();
+const statusRead = jest.fn<AsyncMock>();
+jest.unstable_mockModule('../conversation-recovery-tools', () => ({
+  CONVERSATION_RECOVERY_INSTRUCTION: 'CONVERSATION-ONLY RECOVERY: do not execute the plan',
+  getConversationRecoveryTools: () => [{ name: 'conversation_status', execute: statusRead }],
+}));
 jest.unstable_mockModule('@/lib/services/robot-instance/assistant-recovery', () => ({
   assertAssistantRecoveryActive: assertActive, runAssistantRecoveryTool: observeTool,
 }));
@@ -35,6 +40,7 @@ beforeEach(() => {
     publish: { social_accounts: ['tiktok'], media_urls: ['https://example.com/original.mp4'], urls: [], assets: [] },
   } });
   execute.mockResolvedValue({ messages: [], text: 'Done', isDone: true });
+  statusRead.mockResolvedValue({ success: true, read_only: true });
   jest.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Unexpected network request'));
 });
 afterEach(() => { jest.restoreAllMocks(); });
@@ -90,5 +96,23 @@ describe('per-turn and per-tool recovery guards', () => {
   });
   it('disables replay of an effectful durable step', () => {
     expect(processAssistantTurn.maxRetries).toBe(0);
+  });
+  it('never rebuilds the effectful router or custom tools for a conversation-only continuation', async () => {
+    await processAssistantTurn({ ...context, instanceNodeId: undefined, conversationRecoveryOnly: true,
+      customTools: [{ name: 'update_repo', execute: toolExecute }],
+      executionOptions: { ...context.executionOptions, plan_id: 'plan', step_id: 'step' } }, []);
+    expect(getTools).not.toHaveBeenCalled();
+    expect(resolveBinding).not.toHaveBeenCalled();
+    const options = execute.mock.calls[0][2];
+    expect(options.custom_tools.map((tool: any) => tool.name)).toEqual(['conversation_status']);
+    expect(options.system_prompt).toContain('CONVERSATION-ONLY RECOVERY');
+    expect(options).not.toHaveProperty('plan_id');
+    expect(options).not.toHaveProperty('step_id');
+    await options.custom_tools[0].execute({ action: 'status' });
+    expect(statusRead).toHaveBeenCalledTimes(1);
+    expect(toolExecute).not.toHaveBeenCalled();
+    assertActive.mockRejectedValue(new Error('cancelled'));
+    await expect(options.custom_tools[0].execute({ action: 'status' })).rejects.toThrow('cancelled');
+    expect(statusRead).toHaveBeenCalledTimes(1);
   });
 });

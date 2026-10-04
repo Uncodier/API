@@ -2,7 +2,7 @@ import type { AIProvider } from '@/lib/custom-automation/ai-agent-executor';
 
 export interface AssistantExecutionOptions {
   use_sdk_tools?: boolean;
-  provider?: 'azure' | 'openai' | 'gemini';
+  provider?: AIProvider;
   system_prompt?: string;
   custom_tools?: any[];
   instance_id?: string;
@@ -41,5 +41,5 @@ export async function prepareAssistantTools(
   _instance: any,
   options: AssistantExecutionOptions,
 ) {
-  return { type: 'openai', tools: options.custom_tools || [] };
+  return { type: 'openrouter', tools: options.custom_tools || [] };
 }

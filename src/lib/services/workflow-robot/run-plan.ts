@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/route';
+import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/core';
 import { processAssistantTurn } from '@/app/api/robots/instance/assistant/assistant-turn';
 import { prepareAssistantContext } from '@/app/api/robots/instance/assistant/steps';
 import { fetchStepLogHistoryText } from '@/app/api/cron/shared/step-history-builder';
@@ -202,7 +202,8 @@ export async function runWorkflowPlan(runPlanId: string, options?: { deadline?: 
       const maxRetries = resolveMaxRetries(step.max_retries);
       if (step.status === 'failed' && !canRetryStep(step.retry_count || 0, maxRetries)) {
         recordPreviousStepOutput(previousOutputs, step);
-        if (!steps.some((candidate) => candidate.metadata?.parent_node_id === step.metadata?.node_id &&
+        if (!steps.some((candidate) => step.metadata?.node_id && candidate !== step &&
+          candidate.metadata?.parent_node_id === step.metadata.node_id &&
           shouldRunWorkflowStep(candidate, steps))) {
           anyFailed = true;
           break;
@@ -385,7 +386,8 @@ export async function runWorkflowPlan(runPlanId: string, options?: { deadline?: 
             recordPreviousStepOutput(previousOutputs, step);
             // Only continue if a downstream failure branch handles this step.
             // Existing linear workflows still stop immediately on exhausted retries.
-            if (!steps.some((candidate) => candidate.metadata?.parent_node_id === step.metadata?.node_id &&
+            if (!steps.some((candidate) => step.metadata?.node_id && candidate !== step &&
+              candidate.metadata?.parent_node_id === step.metadata.node_id &&
               shouldRunWorkflowStep(candidate, steps))) {
               anyFailed = true;
             }

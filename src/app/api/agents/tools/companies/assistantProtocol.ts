@@ -3,7 +3,7 @@
  * Unified tool for managing companies (create, list, update, delete)
  */
 
-import { getCompaniesCore } from '@/app/api/agents/tools/companies/get/route';
+import { getCompaniesCore } from '@/app/api/agents/tools/companies/get/core';
 import { fetchApiTool } from '@/app/api/agents/tools/utils/fetch-helper';
 
 export interface CompaniesToolParams {

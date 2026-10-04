@@ -299,9 +299,8 @@ export class RegionLeadsCommandService {
             status: "not_initialized"
           }
         ],
-        // Set model
-        model: "gpt-5.6-sol",
-        modelType: "openai",
+        // Use the configured OpenRouter model.
+        modelType: "openrouter",
         // Add metadata
         metadata: webhook ? { 
           webhook_url: webhook.url,

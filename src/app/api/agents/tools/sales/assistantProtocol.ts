@@ -3,7 +3,7 @@
  * Unified tool for managing sales (create, list, update)
  */
 
-import { getSalesCore } from '@/app/api/agents/tools/sales/get/route';
+import { getSalesCore } from '@/app/api/agents/tools/sales/get/core';
 import { fetchApiTool } from '@/app/api/agents/tools/utils/fetch-helper';
 
 

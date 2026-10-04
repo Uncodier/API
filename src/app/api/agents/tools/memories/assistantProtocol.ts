@@ -9,7 +9,7 @@ import { z } from 'zod';
 import type { UbuntuInstance } from 'scrapybara';
 import { getAgentMemories, saveOnAgentMemory } from '@/lib/services/agent-memory-tools-service';
 import { findGrowthRobotAgent } from '@/lib/helpers/agent-finder';
-import { getMemoriesCore } from './get/route';
+import { getMemoriesCore } from './get/core';
 import { fetchApiTool } from '@/app/api/agents/tools/utils/fetch-helper';
 
 

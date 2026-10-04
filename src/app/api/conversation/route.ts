@@ -8,35 +8,12 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { Portkey } from 'portkey-ai';
+import { createOpenRouterClient, getOpenRouterChatModel, isOpenRouterReasoningModel } from '@/lib/services/ai/openrouter';
 import { getRequestOptions } from '@/lib/config/analyzer-config';
-import { handleIncompleteJsonResponse, formatJsonResponse } from '@/lib/utils/api-utils';
-import { fetchHtml } from '@/lib/utils/html-utils';
-import { captureScreenshot, prepareImageForAPI } from '@/lib/utils/image-utils';
+import { prepareImageForAPI } from '@/lib/utils/image-utils';
 import { prepareAnalysisData } from '@/lib/utils/api-utils';
 import { AnalyzeRequest } from '@/lib/types/analyzer-types';
-import { continueJsonGeneration, isIncompleteJson, attemptJsonRepair } from '@/lib/services/continuation-service';
-
-// Verificar claves disponibles
-if (!process.env.PORTKEY_API_KEY) {
-  console.warn('ADVERTENCIA: No se encontró PORTKEY_API_KEY en las variables de entorno');
-}
-if (!process.env.ANTHROPIC_API_KEY) {
-  console.warn('ADVERTENCIA: No se encontró ANTHROPIC_API_KEY en las variables de entorno');
-}
-if (!process.env.AZURE_OPENAI_API_KEY) {
-  console.warn('ADVERTENCIA: No se encontró AZURE_OPENAI_API_KEY en las variables de entorno');
-}
-if (!process.env.GEMINI_API_KEY) {
-  console.warn('ADVERTENCIA: No se encontró GEMINI_API_KEY en las variables de entorno');
-}
-
-// Mapeo de proveedores a claves virtuales
-const PROVIDER_TO_VIRTUAL_KEY: Record<string, string> = {
-  'anthropic': process.env.ANTHROPIC_API_KEY || '',
-  'openai': process.env.AZURE_OPENAI_API_KEY || '',
-  'gemini': process.env.GEMINI_API_KEY || ''
-};
+import { isIncompleteJson, attemptJsonRepair, extractResponseContent, updateResponseContent } from '@/lib/services/continuation-service';
 
 // Añadir almacén temporal para conversaciones
 // Este objeto mantendrá el contexto de las conversaciones activas
@@ -65,8 +42,7 @@ function cleanupOldConversations() {
   });
 }
 
-// Programar limpieza de conversaciones cada 15 minutos
-setInterval(cleanupOldConversations, 15 * 60 * 1000);
+// Cleanup on requests, without a process-lifetime timer in serverless route modules.
 
 /**
  * Procesa una solicitud de conversación con modelos de IA
@@ -83,8 +59,8 @@ export async function processConversation(options: {
     role: 'system' | 'user' | 'assistant';
     content: string | any;
   }>;
-  modelType: 'anthropic' | 'openai' | 'gemini';
-  modelId: string;
+  modelType?: 'anthropic' | 'openai' | 'gemini';
+  modelId?: string;
   includeScreenshot?: boolean;
   siteUrl?: string;
   responseFormat?: 'json' | 'text';
@@ -93,22 +69,11 @@ export async function processConversation(options: {
   isContinuation?: boolean; // Indica si es continuación de una respuesta incompleta
   userId?: string;
 }): Promise<any> {
-  console.log('[Conversation Service] Iniciando procesamiento con opciones:', JSON.stringify({
-    modelType: options.modelType,
-    modelId: options.modelId,
-    includeScreenshot: options.includeScreenshot,
-    siteUrl: options.siteUrl,
-    responseFormat: options.responseFormat,
-    messagesCount: options.messages?.length,
-    timeout: options.timeout,
-    conversationId: options.conversationId,
-    isContinuation: options.isContinuation,
-    userId: options.userId
-  }));
+  cleanupOldConversations();
   
   const { 
     messages, 
-    modelType = 'anthropic', 
+    modelType = 'openai',
     modelId, 
     includeScreenshot = false, 
     siteUrl,
@@ -168,59 +133,8 @@ export async function processConversation(options: {
     ];
   }
   
-  // Obtener la clave virtual para el proveedor seleccionado
-  const virtualKey = PROVIDER_TO_VIRTUAL_KEY[modelType] || PROVIDER_TO_VIRTUAL_KEY['anthropic'];
-  console.log('[Conversation Service] Using provider:', modelType);
-  console.log('[Conversation Service] Virtual key available:', !!virtualKey);
-  
-  // Crear un cliente Portkey con la API key y virtual key específica
-  console.log('[Conversation Service] Creating Portkey client');
-  const portkey = new Portkey({
-    apiKey: process.env.PORTKEY_API_KEY || '',
-    virtualKey: virtualKey,
-    baseURL: 'https://api.portkey.ai/v1'
-  });
-  console.log('[Conversation Service] Portkey client created');
-  
-  // Obtener opciones de solicitud
-  console.log('[Conversation Service] Getting request options for model:', modelType, modelId);
-  const requestOptions: any = getRequestOptions(modelType, modelId);
-  console.log('[Conversation Service] Request options obtained');
-  
-  // Configurar opciones del modelo según el tipo
-  let modelOptions;
-  
-  switch(modelType) {
-    case 'anthropic':
-      modelOptions = {
-        model: requestOptions.anthropic.model,
-        max_tokens: requestOptions.anthropic.max_tokens,
-      };
-      break;
-    case 'openai':
-      modelOptions = {
-        model: requestOptions.openai.model,
-      };
-      // Use max_completion_tokens for GPT-5 family
-      if (requestOptions.openai.model && requestOptions.openai.model.startsWith('gpt-5')) {
-        if (requestOptions.openai.max_tokens) (modelOptions as any).max_completion_tokens = requestOptions.openai.max_tokens;
-      } else {
-        if (requestOptions.openai.max_tokens) (modelOptions as any).max_tokens = requestOptions.openai.max_tokens;
-      }
-      break;
-    case 'gemini':
-      modelOptions = {
-        model: requestOptions.gemini.model,
-        max_tokens: requestOptions.gemini.max_tokens,
-      };
-      break;
-    default:
-      modelOptions = {
-        model: requestOptions.anthropic.model,
-        max_tokens: requestOptions.anthropic.max_tokens,
-      };
-  }
-  console.log('[Conversation Service] Model options configured:', JSON.stringify(modelOptions));
+  const modelOptions = getRequestOptions(modelType, modelId).openrouter;
+  const openrouter = createOpenRouterClient({ timeout });
   
   // Si se incluye la URL del sitio, añadir información contextual
   if (siteUrl) {
@@ -236,14 +150,6 @@ export async function processConversation(options: {
         modelId
       }
     };
-    
-    console.log(`[Conversation Service] Configuración de analyzeRequest:`, {
-      url: analyzeRequest.url,
-      timeout: analyzeRequest.options?.timeout,
-      includeScreenshot: analyzeRequest.options?.includeScreenshot,
-      provider: analyzeRequest.options?.provider,
-      modelId: analyzeRequest.options?.modelId
-    });
     
     // Utilizar la función prepareAnalysisData para obtener HTML y screenshot de manera consistente
     console.log(`[Conversation Service] Obteniendo datos del sitio con prepareAnalysisData`);
@@ -269,28 +175,8 @@ export async function processConversation(options: {
       if (imageData) {
         console.log(`[Conversation Service] Imagen preparada para ${modelType}`);
         
-        switch (modelType) {
-          case 'anthropic':
-            enhancedMessages.unshift({
-              role: 'user',
-              content: [
-                {
-                  type: 'image',
-                  source: {
-                    type: 'base64',
-                    media_type: 'image/png',
-                    data: imageData
-                  }
-                },
-                {
-                  type: 'text',
-                  text: `Aquí hay una captura de pantalla del sitio ${siteUrl} para tu análisis.`
-                }
-              ]
-            });
-            break;
-          case 'openai':
-            enhancedMessages.unshift({
+        // The gateway requires image_url parts for every model vendor.
+        enhancedMessages.unshift({
               role: 'user',
               content: [
                 {
@@ -304,15 +190,7 @@ export async function processConversation(options: {
                   }
                 }
               ]
-            });
-            break;
-          case 'gemini':
-            enhancedMessages.unshift({
-              role: 'user',
-              content: `Aquí hay una captura de pantalla del sitio ${siteUrl} para tu análisis: [IMAGE: ${imageData.startsWith('data:image/') ? imageData : `data:image/png;base64,${imageData}`}]`
-            });
-            break;
-        }
+        });
       }
     }
   }
@@ -331,12 +209,12 @@ export async function processConversation(options: {
     
     // Realizar la solicitud a la API del modelo
     console.log('[Conversation Service] Sending request to model API');
-    let modelResponse = await portkey.chat.completions.create({
+    const modelResponse = await openrouter.chat.completions.create({
       ...modelOptions,
       messages: enhancedMessages,
-      temperature: 0.7,
+      ...(isOpenRouterReasoningModel(modelOptions.model) ? {} : { temperature: 0.7 }),
       stream: false
-    });
+    }, { signal: controller.signal });
     
     // Registrar fin del análisis y calcular duración
     const endTime = Date.now();
@@ -354,14 +232,19 @@ export async function processConversation(options: {
       console.log('[Conversation Service] Verificando si la respuesta es un JSON válido');
       
       // Extraer el contenido de la respuesta según el proveedor
-      let content: string = '';
-      
-      if (modelType === 'anthropic' && modelResponse.content?.[0]?.text) {
-        content = modelResponse.content[0].text as string;
-      } else if (modelType === 'openai' && modelResponse.choices?.[0]?.message?.content) {
-        content = modelResponse.choices[0].message.content as string;
-      } else if (modelType === 'gemini' && modelResponse.candidates?.[0]?.content?.parts?.[0]?.text) {
-        content = modelResponse.candidates[0].content.parts[0].text as string;
+      let content = extractResponseContent(modelResponse);
+      if (isContinuation && conversationStore[conversationId]?.incompleteJson) {
+        const combined = conversationStore[conversationId].incompleteJson + content;
+        if (!isIncompleteJson(combined)) {
+          content = combined;
+          updateResponseContent(modelResponse, content);
+          conversationStore[conversationId].closed = true;
+          delete conversationStore[conversationId].incompleteJson;
+        }
+        if (!isIncompleteJson(content)) {
+          conversationStore[conversationId].closed = true;
+          delete conversationStore[conversationId].incompleteJson;
+        }
       }
       
       // Verificar si la respuesta parece ser un JSON incompleto
@@ -393,13 +276,7 @@ export async function processConversation(options: {
           // Actualizar la respuesta con el JSON reparado
           const repairedJsonString = JSON.stringify(repairedJson);
           
-          if (modelType === 'anthropic' && modelResponse.content?.[0]) {
-            modelResponse.content[0].text = repairedJsonString;
-          } else if (modelType === 'openai' && modelResponse.choices?.[0]?.message) {
-            modelResponse.choices[0].message.content = repairedJsonString;
-          } else if (modelType === 'gemini' && modelResponse.candidates?.[0]?.content?.parts?.[0]) {
-            modelResponse.candidates[0].content.parts[0].text = repairedJsonString;
-          }
+          updateResponseContent(modelResponse, repairedJsonString);
         } else {
           console.log('[Conversation Service] No se pudo reparar el JSON, usando servicio de continuación');
           
@@ -415,7 +292,7 @@ export async function processConversation(options: {
               const continuationResult = await processConversation({
                 messages: enhancedMessages,
                 modelType,
-                modelId,
+                modelId: modelOptions.model,
                 includeScreenshot,
                 siteUrl,
                 responseFormat,
@@ -428,17 +305,27 @@ export async function processConversation(options: {
               console.log('[Conversation Service] Continuación automática completada');
               
               // Si la continuación fue exitosa, usar su resultado
-              if (!isIncompleteJson(getContinuationContent(continuationResult, modelType))) {
+              if (!isIncompleteJson(extractResponseContent(continuationResult))) {
                 console.log('[Conversation Service] Continuación exitosa, usando resultado');
                 // Marcar la conversación como cerrada ya que la continuación fue exitosa
                 if (conversationStore[conversationId]) {
                   conversationStore[conversationId].closed = true;
                   delete conversationStore[conversationId].incompleteJson;
+                  conversationStore[conversationId].messages = [
+                    ...enhancedMessages,
+                    { role: 'assistant', content: extractResponseContent(continuationResult) },
+                  ];
                 }
+                // Preserve the first billable generation alongside continuation metadata.
+                continuationResult.continuation_generations = [
+                  { id: modelResponse.id, provider: (modelResponse as any).provider,
+                    model: modelResponse.model, usage: modelResponse.usage },
+                  ...(continuationResult.continuation_generations || []),
+                ];
                 return continuationResult;
               }
             } catch (continuationError) {
-              console.error('[Conversation Service] Error en continuación automática:', continuationError);
+              console.error('[Conversation Service] Error en continuación automática');
             }
           }
           
@@ -455,15 +342,7 @@ export async function processConversation(options: {
     if (!isContinuation) {
       console.log(`[Conversation Service] Actualizando contexto de conversación: ${conversationId}`);
       // Extraer el contenido de la respuesta
-      let assistantContent: string | any = '';
-      
-      if (modelType === 'anthropic' && modelResponse.content?.[0]?.text) {
-        assistantContent = modelResponse.content[0].text;
-      } else if (modelType === 'openai' && modelResponse.choices?.[0]?.message?.content) {
-        assistantContent = modelResponse.choices[0].message.content;
-      } else if (modelType === 'gemini' && modelResponse.candidates?.[0]?.content?.parts?.[0]?.text) {
-        assistantContent = modelResponse.candidates[0].content.parts[0].text;
-      }
+      const assistantContent = extractResponseContent(modelResponse);
       
       // Crear o actualizar la entrada en el almacén de conversaciones
       const updatedMessages: Array<{
@@ -482,6 +361,8 @@ export async function processConversation(options: {
         lastUpdated: Date.now(),
         modelType,
         modelId,
+        ...(conversationStore[conversationId]?.incompleteJson
+          ? { incompleteJson: conversationStore[conversationId].incompleteJson } : {}),
         closed: !requestJsonResponse || (requestJsonResponse && !isIncompleteJson(assistantContent)) // Marcar como cerrada si no es JSON o si es JSON válido
       };
       
@@ -495,7 +376,8 @@ export async function processConversation(options: {
         timestamp: new Date().toISOString(),
         duration: duration,
         modelType: modelType,
-        modelId: modelId,
+        modelId: modelOptions.model,
+        gateway: 'openrouter',
         siteUrl: siteUrl,
         includeScreenshot: includeScreenshot,
         conversationId: conversationId,
@@ -508,7 +390,7 @@ export async function processConversation(options: {
     // Limpiar el timeout
     clearTimeout(timeoutId);
     
-    console.error('[Conversation Service] Error calling model API:', apiError);
+    console.error('[Conversation Service] OpenRouter request failed');
     
     // Marcar la conversación como cerrada en caso de error
     // Esto evita que se intente continuar con una conversación que ha fallado
@@ -519,7 +401,7 @@ export async function processConversation(options: {
     
     // Añadir metadatos incluso en caso de error
     const errorResponse = {
-      error: apiError.message || 'Unknown error',
+      error: 'OpenRouter request failed',
       _requestMetadata: {
         timestamp: new Date().toISOString(),
         modelType: modelType,
@@ -535,18 +417,6 @@ export async function processConversation(options: {
     // pero con información del error y marcada como cerrada
     return errorResponse;
   }
-}
-
-// Función auxiliar para extraer contenido de continuación según el proveedor
-function getContinuationContent(response: any, modelType: string): string {
-  if (modelType === 'anthropic' && response.content?.[0]?.text) {
-    return response.content[0].text as string;
-  } else if (modelType === 'openai' && response.choices?.[0]?.message?.content) {
-    return response.choices[0].message.content as string;
-  } else if (modelType === 'gemini' && response.candidates?.[0]?.content?.parts?.[0]?.text) {
-    return response.candidates[0].content.parts[0].text as string;
-  }
-  return '';
 }
 
 /**
@@ -617,25 +487,9 @@ export async function POST(request: NextRequest) {
     console.log('[API:conversation] Parsing request body');
     const body = await request.json();
     
-    // Log completo del body para depuración
-    console.log('[API:conversation] Request body completo:', JSON.stringify(body));
-    
-    console.log('[API:conversation] Request body parsed:', JSON.stringify({
-      modelType: body.modelType,
-      modelId: body.modelId,
-      includeScreenshot: body.includeScreenshot,
-      siteUrl: body.siteUrl,
-      url: body.url, // Añadir log para url
-      responseFormat: body.responseFormat,
-      toJSON: body.toJSON, // Añadir log para toJSON
-      messagesCount: body.messages?.length,
-      conversationId: body.conversationId,
-      userId: body.userId
-    }));
-    
     const { 
       messages, 
-      modelType = 'anthropic', 
+      modelType = 'openai',
       modelId, 
       includeScreenshot = false, 
       siteUrl = body.url, // Usar url como fallback para siteUrl
@@ -662,14 +516,14 @@ export async function POST(request: NextRequest) {
       });
       
       // Devolver la respuesta
-      return NextResponse.json(result);
+       return NextResponse.json(result, { status: result.error ? 500 : 200 });
     } catch (error: any) {
-      console.error('[API:conversation] Error processing conversation:', error);
+      console.error('[API:conversation] Error processing conversation');
       // Crear una respuesta de error con el campo closed establecido a true
       // para evitar que el cliente intente continuar con una conversación fallida
       return NextResponse.json(
         { 
-          error: error.message || 'Error al procesar la conversación',
+          error: 'Error al procesar la conversación de OpenRouter',
           _requestMetadata: {
             timestamp: new Date().toISOString(),
             conversationId: conversationId || 'unknown',
@@ -680,7 +534,7 @@ export async function POST(request: NextRequest) {
       );
     }
   } catch (error: any) {
-    console.error('[API:conversation] Error parsing request:', error);
+    console.error('[API:conversation] Error parsing request');
     return NextResponse.json(
       { 
         error: 'Error al procesar la solicitud',
@@ -711,8 +565,8 @@ export async function GET(request: NextRequest) {
         messages: [
           { role: 'user', content: 'Hola, ¿puedes ayudarme con mi sitio web?' }
         ],
-        modelType: 'anthropic',
-        modelId: 'claude-3-5-sonnet-20240620',
+        modelType: 'openai',
+        modelId: getOpenRouterChatModel(),
         includeScreenshot: false,
         siteUrl: 'https://example.com',
         responseFormat: 'json', // Opcional: solicitar respuesta en formato JSON
@@ -728,6 +582,7 @@ export async function GET(request: NextRequest) {
         }
       },
       features: {
+        gateway: 'openrouter',
         html_processing: "Si se proporciona una URL en siteUrl, se capturará automáticamente el HTML del sitio y se incluirá como contexto en la conversación",
         screenshot: "Si includeScreenshot es true y se proporciona una URL en siteUrl, se capturará una imagen del sitio y se incluirá como contexto visual (solo compatible con modelos que soporten imágenes)",
         json_format: "Si responseFormat es 'json' o toJSON es true, se solicitará al modelo que estructure su respuesta como un objeto JSON y se devolverá formateado",
@@ -736,7 +591,7 @@ export async function GET(request: NextRequest) {
         providers: {
           anthropic: "Soporta HTML y capturas de pantalla como imágenes",
           openai: "Soporta HTML y capturas de pantalla como imágenes",
-          gemini: "Soporta HTML pero no capturas de pantalla como imágenes"
+          gemini: "Soporta HTML e imágenes si el modelo seleccionado admite visión"
         }
       }
     },

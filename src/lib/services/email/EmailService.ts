@@ -3,6 +3,7 @@ import * as nodemailer from 'nodemailer';
 import { ImapFlow } from 'imapflow';
 import { MailboxDetectorService, MailboxInfo } from './MailboxDetectorService';
 import * as quotedPrintable from 'quoted-printable';
+import { requireImapSearchResults } from './imap-search-results';
 
 export interface EmailMessage {
   id: string;
@@ -242,7 +243,7 @@ export class EmailService {
         const messages = [];
         try {
           // First, search to get UIDs
-          const searchResults = await client.search(searchQuery);
+          const searchResults = requireImapSearchResults(await client.search(searchQuery));
           
           // Order by UID descending (usually correlates with newest first)
           const sortedUIDs = searchResults.sort((a, b) => b - a);
@@ -547,7 +548,7 @@ export class EmailService {
 
         const messages: any[] = [];
         try {
-          const searchResults = await client.search(searchQuery);
+          const searchResults = requireImapSearchResults(await client.search(searchQuery));
           // Ordenar más nuevos primero
           const sortedUIDs = searchResults.sort((a, b) => b - a);
           // Limitar por seguridad la cantidad máxima a traer
@@ -762,7 +763,7 @@ export class EmailService {
 
         const messages: any[] = [];
         try {
-          const searchResults = await client.search(searchQuery);
+          const searchResults = requireImapSearchResults(await client.search(searchQuery));
           const sortedUIDs = searchResults.sort((a, b) => b - a);
           const limitedUIDs = sortedUIDs.slice(0, Math.max(0, maxFetch));
           if (limitedUIDs.length > 0) {
@@ -1140,7 +1141,7 @@ export class EmailService {
       for (const uid of uids) {
         try {
           // Buscar el email por UID
-          const searchResult = await client.search({ uid: uid });
+          const searchResult = requireImapSearchResults(await client.search({ uid: uid }));
           
           if (searchResult.length > 0) {
             // Marcar como eliminado y expunge inmediatamente
@@ -1240,7 +1241,7 @@ export class EmailService {
             console.log(`[EmailService] 🔍 Buscando bounces con criterios:`, criteria);
             
             // Buscar emails que coincidan con los criterios
-            const searchResults = await client.search(criteria);
+            const searchResults = requireImapSearchResults(await client.search(criteria));
             console.log(`[EmailService] 📊 Encontrados ${searchResults.length} bounces con criterios especificados`);
 
             if (searchResults.length === 0) {
@@ -1524,7 +1525,7 @@ export class EmailService {
         const messages = [];
         try {
           // First, search to get UIDs
-          const searchResults = await client.search(searchQuery);
+          const searchResults = requireImapSearchResults(await client.search(searchQuery));
           console.log(`[EmailService] 🔍 Búsqueda de enviados encontró ${searchResults.length} emails matching criterios`);
           
           // Sort UIDs in descending order to get newest first

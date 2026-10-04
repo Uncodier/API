@@ -5,7 +5,7 @@
  */
 
 import { configureWhatsAppCore } from './core';
-import type { ConfigureWhatsAppAction } from './route';
+import type { ConfigureWhatsAppAction } from './core';
 
 export interface ConfigureWhatsAppToolParams {
   action: ConfigureWhatsAppAction;

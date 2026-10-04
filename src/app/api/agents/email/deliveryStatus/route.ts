@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { EmailService } from '@/lib/services/email/EmailService';
 import { EmailConfigService } from '@/lib/services/email/EmailConfigService';
+import { EmailSyncErrorService } from '@/lib/services/email/EmailSyncErrorService';
 import { EmailTextExtractorService } from '@/lib/services/email/EmailTextExtractorService';
 import { WorkflowService } from '@/lib/services/workflow-service';
 import { supabaseAdmin } from '@/lib/database/supabase-client';

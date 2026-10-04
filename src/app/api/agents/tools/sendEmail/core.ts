@@ -1,0 +1,283 @@
+import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { getLeadById } from '@/lib/database/lead-db';
+import {
+  type ContentPlaceholderPolicy,
+  fetchSiteNameForMerge,
+  personalizeMergeSubjectAndMessage,
+  placeholderPolicyToMergePolicy,
+} from '@/lib/messaging/lead-merge-fields';
+import { EmailSendService } from '@/lib/services/email/EmailSendService';
+import { EmailSignatureService } from '@/lib/services/email/EmailSignatureService';
+import { SyncedObjectsService } from '@/lib/services/synced-objects/SyncedObjectsService';
+import { AgentMailSendService } from '@/lib/services/email/AgentMailSendService';
+import {
+  acquireEmailSendPermit,
+  releaseEmailSendPermit,
+} from '@/lib/services/email/email-send-rate-limit';
+
+export interface SendEmailCoreParams {
+  email: string;
+  subject: string;
+  message: string;
+  from?: string;
+  agent_id?: string;
+  conversation_id?: string;
+  lead_id?: string;
+  site_id: string;
+  instance_id?: string;
+  /** When true (e.g. newsletter sends), do not append agent/site HTML signature. */
+  omit_signature?: boolean;
+  /** When lead_id is set, policy for unknown {{...}} tokens. Defaults to strip_tokens. */
+  placeholder_policy?: ContentPlaceholderPolicy;
+}
+
+export interface SendEmailCoreResult {
+  success: boolean;
+  status?: string;
+  envelope_id?: string;
+  email_id?: string;
+  external_message_id?: string;
+  error?: { code: string; message: string };
+}
+
+/**
+ * Core logic to send email from agent - callable directly (assistant) or via HTTP (API).
+ * Avoids fetch round-trip when assistant runs server-side.
+ */
+export async function sendEmailCore(params: SendEmailCoreParams): Promise<SendEmailCoreResult> {
+  const {
+    email,
+    from,
+    subject,
+    message,
+    agent_id,
+    conversation_id,
+    lead_id,
+    site_id,
+    instance_id,
+    omit_signature = false,
+    placeholder_policy,
+  } = params;
+
+  if (!email || !subject || !message || !site_id) {
+    return {
+      success: false,
+      error: { code: 'INVALID_REQUEST', message: 'email, subject, message, and site_id are required' },
+    };
+  }
+
+  try {
+    const { resolveEmailLocale, buildComposeLanguageInstruction } = await import('@/lib/i18n/email-locale');
+    const locale = await resolveEmailLocale({ siteId: site_id, leadId: lead_id });
+    console.log(`[sendEmail] Outbound locale=${locale}. ${buildComposeLanguageInstruction(locale)}`);
+  } catch (err) {
+    console.warn('[sendEmail] Could not resolve email locale:', err);
+  }
+
+  if (email !== 'no-email@example.com' && !EmailSendService.isValidEmail(email)) {
+    return {
+      success: false,
+      error: { code: 'INVALID_REQUEST', message: 'Invalid recipient email format' },
+    };
+  }
+
+  let effectiveSubject = subject;
+  
+  // If message doesn't look like HTML, assume it's Markdown and convert it.
+  // We use a simple heuristic to detect HTML tags.
+  // We will NOT use markdownToHtml here directly because EmailSendService.renderMessageWithLists 
+  // is called downstream and it ALSO does markdown parsing, leading to double-parsing.
+  let effectiveMessage = message;
+
+  if (lead_id) {
+    const lead = await getLeadById(lead_id);
+    if (!lead) {
+      return {
+        success: false,
+        error: { code: 'LEAD_NOT_FOUND', message: 'Lead not found for merge fields' },
+      };
+    }
+    const siteName = await fetchSiteNameForMerge(site_id);
+    const mergePol = placeholderPolicyToMergePolicy(placeholder_policy);
+    const merged = personalizeMergeSubjectAndMessage(subject, effectiveMessage, lead, siteName, mergePol);
+    if (merged.aborted) {
+      return {
+        success: false,
+        status: 'skipped',
+        error: {
+          code: 'PLACEHOLDERS_UNRESOLVED',
+          message: `Unresolved merge fields: ${merged.unresolved.join(', ')}`,
+        },
+      };
+    }
+    effectiveSubject = merged.subject ?? subject;
+    effectiveMessage = merged.message;
+  }
+
+  const { data: siteSettings, error: settingsError } = await supabaseAdmin
+    .from('settings')
+    .select('channels')
+    .eq('site_id', site_id)
+    .single();
+
+  if (settingsError || !siteSettings) {
+    return {
+      success: false,
+      error: { code: 'SITE_CONFIG_NOT_FOUND', message: 'Site configuration not found' },
+    };
+  }
+
+  const agentEmailConfig = siteSettings.channels?.agent_email || siteSettings.channels?.agent_mail || siteSettings.channels?.agent;
+  const isAgentEmailActive = agentEmailConfig && (String(agentEmailConfig.status) === 'active' || String(agentEmailConfig.status) === 'synced') && agentEmailConfig.enabled !== false;
+  const configuredEmail = siteSettings.channels?.email?.email;
+  const sendPermit = await acquireEmailSendPermit({
+    instanceId: instance_id,
+    siteId: site_id,
+    email,
+  });
+  if (!sendPermit.acquired) {
+    console.log(`[sendEmail] Rate limited for key: ${sendPermit.key}`);
+    return {
+      success: false,
+      error: { code: 'RATE_LIMITED', message: 'Email skipped due to rate limit (once per hour per instance per email).' },
+    };
+  }
+
+  let trackingId: string | undefined;
+  if (conversation_id) {
+    try {
+      const { data: newMessage } = await supabaseAdmin
+        .from('messages')
+        .insert([{
+          conversation_id, lead_id, agent_id, content: effectiveMessage, role: 'assistant',
+          custom_data: {
+            subject: effectiveSubject,
+            recipient: email,
+            sender: configuredEmail || 'pending',
+            source: 'email_tool',
+          },
+        }])
+        .select('id')
+        .single();
+      if (newMessage) trackingId = newMessage.id;
+    } catch (err) {
+      console.warn(`[SEND_EMAIL] Tracking message error:`, err);
+    }
+  }
+
+  if (isAgentEmailActive && process.env.AGENTMAIL_API_KEY) {
+    const username = agentEmailConfig.username || agentEmailConfig.data?.username;
+    const domain = agentEmailConfig.domain || agentEmailConfig.data?.domain;
+
+    if (username && domain) {
+      try {
+        const signature = omit_signature
+          ? { formatted: '' as string }
+          : await EmailSignatureService.generateAgentSignature(site_id, from).catch(() => ({ formatted: '' }));
+
+        const result = await AgentMailSendService.sendViaAgentMail({
+          email,
+          subject: effectiveSubject,
+          message: effectiveMessage,
+          agent_id,
+          conversation_id,
+          lead_id,
+          site_id,
+          username,
+          domain,
+          senderEmail: `${username}@${domain}`,
+          signatureHtml: omit_signature ? undefined : signature.formatted,
+          trackingId,
+        });
+
+        return { ...result, success: true };
+      } catch (error: any) {
+        console.error(`[SEND_EMAIL] AgentMail error:`, error);
+        if (!configuredEmail) {
+          await releaseEmailSendPermit(sendPermit);
+          return {
+            success: false,
+            error: { code: 'AGENTMAIL_FAILED', message: error.message },
+          };
+        }
+        console.warn(`[SEND_EMAIL] Falling back to standard SMTP due to AgentMail error`);
+      }
+    }
+  }
+
+  if (!configuredEmail || !EmailSendService.isValidEmail(configuredEmail)) {
+    await releaseEmailSendPermit(sendPermit);
+    return {
+      success: false,
+      error: { code: 'EMAIL_NOT_CONFIGURED', message: 'Valid SMTP email not configured' },
+    };
+  }
+
+  const signature = omit_signature
+    ? { formatted: '' as string }
+    : await EmailSignatureService.generateAgentSignature(site_id, from).catch(() => ({ formatted: '' }));
+
+  if (trackingId) {
+    try {
+      await supabaseAdmin
+        .from('messages')
+        .update({
+          custom_data: {
+            subject: effectiveSubject,
+            recipient: email,
+            sender: configuredEmail,
+            source: 'smtp_tool',
+          },
+        })
+        .eq('id', trackingId);
+    } catch (updateErr) {
+      console.warn(`[SEND_EMAIL] Error updating tracking message for SMTP fallback:`, updateErr);
+    }
+  }
+
+  const emailParams: any = {
+    email,
+    from: from || '',
+    fromEmail: configuredEmail,
+    subject: effectiveSubject,
+    message: effectiveMessage,
+    signatureHtml: omit_signature ? undefined : signature.formatted,
+    agent_id,
+    conversation_id,
+    lead_id,
+    site_id,
+    trackingId,
+  };
+
+  let result;
+  try {
+    result = await EmailSendService.sendEmail(emailParams);
+  } catch (error) {
+    await releaseEmailSendPermit(sendPermit);
+    throw error;
+  }
+  if (!result.success) {
+    await releaseEmailSendPermit(sendPermit);
+    return { success: false, error: result.error };
+  }
+
+  const externalId = result.envelope_id || result.email_id;
+  if (externalId && result.status === 'sent') {
+    try {
+      await SyncedObjectsService.createObject({
+        external_id: externalId, site_id, object_type: 'sent_email', status: 'processed', provider: 'smtp_send_service',
+        metadata: {
+          recipient: result.recipient, sender: result.sender, subject: result.subject,
+          message_preview: result.message_preview, sent_at: result.sent_at,
+          agent_id, conversation_id, lead_id, smtp_message_id: result.email_id,
+          envelope_id: result.envelope_id, source: 'api_send', processed_at: new Date().toISOString(),
+        },
+      });
+    } catch (syncError) {
+      console.warn(`[SEND_EMAIL] SyncedObject error:`, syncError);
+    }
+  }
+
+  return { ...result, external_message_id: externalId };
+}
+

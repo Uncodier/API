@@ -5,6 +5,7 @@ import { upsertSiteAnalysis } from '@/lib/database/site-analysis-db'
 import { DataFetcher } from '@/lib/agentbase/services/agent/BackgroundServices/DataFetcher'
 import { DatabaseAdapter } from '@/lib/agentbase/adapters/DatabaseAdapter'
 import { getSiteHtml } from '@/lib/actions/analyze-site'
+import { getOpenRouterChatModel } from '@/lib/services/ai/openrouter'
 
 /**
  * API DE ANÁLISIS UX Y BRANDING
@@ -94,7 +95,7 @@ const RequestSchema = z.object({
     timeout: z.number().min(5000).max(120000).default(60000),
     includeScreenshot: z.boolean().default(true),
     provider: z.enum(['anthropic', 'openai', 'gemini']).default('openai'),
-    modelId: z.string().default('gpt-5.6-sol'),
+    modelId: z.string().default(() => getOpenRouterChatModel()),
     updateBranding: z.boolean().default(true).optional(),
     language: z.enum(['es', 'en']).default('es')
   }).optional(),
@@ -249,7 +250,7 @@ export async function POST(request: NextRequest) {
       timeout: options?.timeout || 60000,
       includeScreenshot: options?.includeScreenshot !== false,
       provider: options?.provider || 'openai',
-      modelId: options?.modelId || 'gpt-5.6-sol'
+      modelId: options?.modelId || getOpenRouterChatModel()
     }
 
     const startTime = Date.now()
@@ -1522,7 +1523,7 @@ export async function GET(request: NextRequest) {
         timeout: 60000,
         includeScreenshot: true,
         provider: 'openai',
-        modelId: 'gpt-5.6-sol',
+        modelId: getOpenRouterChatModel(),
         updateBranding: false,
         language: 'es'
       },

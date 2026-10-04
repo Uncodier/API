@@ -314,7 +314,7 @@ async function syncJunctions(promotionId: string, siteId: string, input: Junctio
   );
 }
 
-function parseOrThrow<T>(schema: z.ZodType<T>, input: unknown): T {
+function parseOrThrow<T, Input>(schema: z.ZodType<T, z.ZodTypeDef, Input>, input: unknown): T {
   const parsed = schema.safeParse(input);
   if (!parsed.success) {
     const first = parsed.error.issues[0];
@@ -391,7 +391,7 @@ export async function createPromotion(input: unknown) {
 
 export async function updatePromotion(input: unknown) {
   const data = parseOrThrow(UpdateSchema, input);
-  const payload = {
+  const payload: Record<string, unknown> = {
     ...pickDefined(data as Record<string, unknown>, WRITABLE_FIELDS),
     updated_at: new Date().toISOString(),
   };

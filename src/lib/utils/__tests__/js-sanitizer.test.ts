@@ -1,7 +1,8 @@
 /**
  * Tests for JS sanitizer utilities
  */
-import { sanitizeJsCode, createSafePersonalizationScript, parsePersonalizationCode } from './js-sanitizer';
+import { sanitizeJsCode, createSafePersonalizationScript, parsePersonalizationCode } from '../js-sanitizer';
+import assert from 'node:assert/strict';
 
 /**
  * A simple function to test the sanitization process when run in Node.js
@@ -16,6 +17,8 @@ function testSanitization() {
   console.log('\nBasic Sanitization:');
   console.log('Raw:', rawCode);
   console.log('Sanitized:', sanitized);
+  // sanitizeJsCode escapes source for embedding, rather than executing it.
+  assert.equal(sanitized, rawCode.replace(/'/g, '\\"'));
   
   // Test creating personalization script
   const selectors = ['.framer-1feiza5', '.framer-18f7db3-container button'];
@@ -27,6 +30,7 @@ function testSanitization() {
   const script = createSafePersonalizationScript(selectors, contents);
   console.log('\nSafe Personalization Script:');
   console.log(script);
+  assert.doesNotThrow(() => new Function(script));
   
   // Test parsing code
   const testCode = `document.addEventListener("DOMContentLoaded",function(){function a(s,c){try{const e=document.querySelector(s);if(e){c(e);return true}return false}catch(e){return false}}function b(e,h){try{e.innerHTML=h}catch(e){}}a(".framer-1feiza5",function(e){b(e,"Empower Your Digital Content Creation");});a(".framer-18f7db3-container button",function(e){b(e,"Start Creating Now");});});`;
@@ -35,9 +39,11 @@ function testSanitization() {
   console.log('\nParsed Personalization Code:');
   console.log('Selectors:', parsed.selectors);
   console.log('Contents:', parsed.contents);
+  assert.deepEqual(parsed.selectors, selectors);
+  assert.deepEqual(parsed.contents, contents);
   
   // Test with problematic content
-  const complexSelectors = ['#hero .framer-1feiza5', '#features .framer-1pu7w1o .framer-13id5ue'];
+  const complexSelectors = ['#hero [data-title="quoted"]', '#features .escaped\\:name'];
   const complexContents = [
     'Line 1\nLine 2\nLine "3"',
     'This has "quotes" and a \\ backslash'
@@ -46,19 +52,26 @@ function testSanitization() {
   const complexScript = createSafePersonalizationScript(complexSelectors, complexContents);
   console.log('\nComplex Personalization Script:');
   console.log(complexScript);
+  assert.doesNotThrow(() => new Function(complexScript));
   
   // Verify that we can parse our own output
   const parsedComplex = parsePersonalizationCode(complexScript);
   console.log('\nVerification of Complex Script Parsing:');
   console.log('Selectors match:', JSON.stringify(parsedComplex.selectors) === JSON.stringify(complexSelectors));
   
-  // Don't compare directly because of the escaping transformations
+  // Parsing must recover the original content, not leave serialized escapes.
   console.log('Content lengths match:', parsedComplex.contents.length === complexContents.length);
+  assert.deepEqual(parsedComplex.selectors, complexSelectors);
+  assert.deepEqual(parsedComplex.contents, complexContents);
 }
 
 // Run the test if this file is executed directly
 if (require.main === module) {
   testSanitization();
+}
+
+if (typeof test === 'function') {
+  test('sanitizes and round-trips personalization scripts, including escaped content', testSanitization);
 }
 
 export { testSanitization }; 

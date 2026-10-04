@@ -6,6 +6,7 @@ import { captureScreenshot } from '../utils/image-utils';
 import { createBasicMessage } from '../utils/message-utils';
 import fs from 'fs';
 import path from 'path';
+import { getOpenRouterChatModel } from '@/lib/services/ai/openrouter';
 
 // Extend the AnalyzeRequest interface to include language
 interface ExtendedAnalyzeRequest extends AnalyzeRequest {
@@ -545,7 +546,7 @@ export async function structuredAnalyzerAgent(request: ExtendedAnalyzeRequest): 
     
          // Preparar el mensaje para la API
      const provider = request.options?.provider || 'openai';
-     const modelId = request.options?.modelId || (provider === 'openai' ? 'gpt-5.6-sol' : 'claude-3-sonnet-20240229');
+     const modelId = request.options?.modelId || getOpenRouterChatModel();
      const systemPrompt = STRUCTURED_ANALYZER_SYSTEM_PROMPT;
      
      const apiMessage = prepareApiMessage(enhancedUserMessage, processedImage, systemPrompt, provider);

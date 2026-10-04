@@ -52,13 +52,10 @@ export function createSafePersonalizationScript(
   
   // Add each personalization with properly escaped values
   selectors.forEach((selector, index) => {
-    const safeSelector = selector.replace(/"/g, '\\"');
-    const safeContent = contents[index]
-      .replace(/\\/g, '\\\\')
-      .replace(/"/g, '\\"')
-      .replace(/\n/g, '\\n');
+    const safeSelector = JSON.stringify(selector);
+    const safeContent = JSON.stringify(contents[index]);
     
-    script += `a("${safeSelector}",function(e){b(e,"${safeContent}");});`;
+    script += `a(${safeSelector},function(e){b(e,${safeContent});});`;
   });
   
   script += '});';
@@ -77,13 +74,14 @@ export function parsePersonalizationCode(code: string): { selectors: string[], c
   const contents: string[] = [];
   
   // Regular expression to extract selectors and content
-  const regex = /a\("([^"]+)",function\(e\)\{b\(e,"([^"]*)"\);\}\);/g;
+  const quotedString = String.raw`"(?:\\.|[^"\\])*"`;
+  const regex = new RegExp(String.raw`a\((${quotedString}),function\(e\)\{b\(e,(${quotedString})\);\}\);`, 'g');
   let match;
   
   while ((match = regex.exec(code)) !== null) {
     // match[1] is the selector, match[2] is the content
-    selectors.push(match[1]);
-    contents.push(match[2]);
+    selectors.push(JSON.parse(match[1]));
+    contents.push(JSON.parse(match[2]));
   }
   
   return { selectors, contents };

@@ -12,8 +12,8 @@ jest.mock('@/lib/utils/redis-client', () => ({
 
 describe('email send rate limit', () => {
   const redis = {
-    set: jest.fn(),
-    del: jest.fn(),
+    set: jest.fn<(...args: unknown[]) => Promise<'OK' | null>>(),
+    del: jest.fn<(key: string) => Promise<number>>(),
   };
 
   beforeEach(() => {

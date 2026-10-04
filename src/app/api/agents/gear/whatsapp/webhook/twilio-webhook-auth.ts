@@ -25,16 +25,17 @@ export async function authenticateGearWebhook(
   if (contentType.includes('application/x-www-form-urlencoded')) {
     const formData = new URLSearchParams(await request.text());
     webhookData = {};
-    formSignatureData = {};
+    const signatureData: Record<string, string | string[]> = {};
     formData.forEach((value, key) => {
       webhookData[key] = value;
-      const existing = formSignatureData[key];
-      formSignatureData[key] = existing === undefined
+      const existing = signatureData[key];
+      signatureData[key] = existing === undefined
         ? value
         : Array.isArray(existing)
           ? [...existing, value]
           : [existing, value];
     });
+    formSignatureData = signatureData;
   } else if (contentType.includes('application/json')) {
     rawJsonBody = await request.text();
     try {

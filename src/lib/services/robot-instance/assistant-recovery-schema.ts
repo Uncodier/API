@@ -1,4 +1,5 @@
 import type { RecoveryToolObservation } from './assistant-recovery-context';
+import { MAX_RESPAWNS } from './assistant-respawn-policy';
 
 export type AssistantRecoveryScope = {
   instanceId: string;
@@ -38,6 +39,8 @@ export type AssistantRecoverySnapshot = {
   lastActivityAt?: string;
   toolObservations?: RecoveryToolObservation[];
   interruptionContext?: string;
+  /** Server-owned restriction: finish the conversation without executing managed work. */
+  conversationOnly?: true;
   respawnCount: number;
   lease_token?: string;
 };
@@ -58,8 +61,12 @@ export class RecoveryError extends Error {
   }
 }
 
-export const MAX_RECOVERY_MESSAGES_BYTES = 512 * 1024;
-export const MAX_RECOVERY_RESPAWNS = 2;
+// Transcripts include full tool receipts. Keep their budget separate from the
+// immutable execution configuration, and leave headroom in the 4 MiB action read.
+export const MAX_RECOVERY_MESSAGES_BYTES = 2 * 1024 * 1024;
+export const MAX_RECOVERY_EXECUTION_BYTES = 512 * 1024;
+export const MAX_RECOVERY_SNAPSHOT_BYTES = MAX_RECOVERY_MESSAGES_BYTES + MAX_RECOVERY_EXECUTION_BYTES + 64 * 1024;
+export const MAX_RECOVERY_RESPAWNS = MAX_RESPAWNS;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DATA_URL = /\bdata:[^\s,;]*[;,]/i;
 
@@ -153,7 +160,7 @@ export function parseRecoveryExecution(value: unknown): AssistantRecoveryExecuti
     if (descriptor.value === undefined && optionalKeys.includes(key)) continue;
     present[key] = descriptor.value;
   }
-  const result = cloneRecoveryJson(present, MAX_RECOVERY_MESSAGES_BYTES);
+  const result = cloneRecoveryJson(present, MAX_RECOVERY_EXECUTION_BYTES);
   if (!Array.isArray(result.customTools) || typeof result.useSdkTools !== 'boolean' ||
       stringKeys.some(key => key in result && typeof result[key] !== 'string') ||
       ('instanceNodeId' in result && !(result.instanceNodeId as string).trim()) ||
@@ -182,10 +189,10 @@ export function parseRecoveryCheckpoint(value: unknown): Pick<AssistantRecoveryS
 }
 
 export function parseRecoverySnapshot(value: unknown): AssistantRecoverySnapshot {
-  const result = cloneRecoveryJson(value, 2 * MAX_RECOVERY_MESSAGES_BYTES + 64 * 1024);
+  const result = cloneRecoveryJson(value, MAX_RECOVERY_SNAPSHOT_BYTES);
   if (!isRecord(result)) throw new RecoveryError('invalid_state');
   onlyKeys(result, ['version', 'revision', 'execution', 'nodeFingerprint', 'messages', 'continuation', 'inFlight', 'respawnCount', 'lease_token',
-    'inFlightSince', 'inFlightKind', 'lastActivityAt', 'toolObservations', 'interruptionContext']);
+    'inFlightSince', 'inFlightKind', 'lastActivityAt', 'toolObservations', 'interruptionContext', 'conversationOnly']);
   if (result.version !== 1 || typeof result.revision !== 'string' || !UUID.test(result.revision) || typeof result.inFlight !== 'boolean' ||
       !Number.isSafeInteger(result.respawnCount) || (result.respawnCount as number) < 0 ||
       ('lease_token' in result && (typeof result.lease_token !== 'string' || !UUID.test(result.lease_token)))) {
@@ -197,6 +204,10 @@ export function parseRecoverySnapshot(value: unknown): AssistantRecoverySnapshot
     }
   }
   if ('inFlightKind' in result && result.inFlightKind !== 'turn' && result.inFlightKind !== 'plan') {
+    throw new RecoveryError('invalid_state');
+  }
+  if ('conversationOnly' in result && (result.conversationOnly !== true ||
+      result.inFlightKind === 'plan' || (isRecord(result.execution) && result.execution.instanceNodeId))) {
     throw new RecoveryError('invalid_state');
   }
   if ('interruptionContext' in result && (typeof result.interruptionContext !== 'string' ||

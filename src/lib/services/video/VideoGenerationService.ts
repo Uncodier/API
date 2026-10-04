@@ -1,212 +1,54 @@
-/**
- * Video Generation Service
- * Wraps the /ai/video API with fallback logic and error handling
- */
+import type { VideoRequestBody, VideoGenerationResult as ApiResult, VideoAspectRatio } from '@/app/api/ai/video/video-types';
 
-export type AspectRatio = '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '3:2' | '2:3';
+export type AspectRatio = VideoAspectRatio;
 export type VideoQuality = 'preview' | 'standard' | 'pro';
-
-export interface VideoGenerationParams {
-  prompt: string;
-  site_id: string;
-  instance_id?: string;
-  provider?: 'gemini';
-  duration_seconds?: number;
-  aspect_ratio?: AspectRatio;
-  reference_images?: string[];
-  first_frame_url?: string;
-  last_frame_url?: string;
-  quality?: VideoQuality;
-  model?: string;
-}
-
-export interface VideoGenerationResult {
+export type VideoGenerationParams = VideoRequestBody;
+export interface VideoGenerationResult extends Omit<ApiResult, 'metadata'> {
   success: boolean;
-  provider: string;
-  videos: Array<{
-    url: string;
-    mimeType: string;
-  }>;
   fallbackFrom?: string;
-  error?: string;
-  metadata?: {
-    model: string;
-    duration_seconds?: number;
-    aspect_ratio?: AspectRatio;
-    quality?: VideoQuality;
-    resolution?: '720p' | '1080p';
-    generated_at: string;
-  };
+  metadata?: ApiResult['metadata'];
 }
 
+/** Async-first wrapper. Pending success means accepted, never a completed video. */
 export class VideoGenerationService {
-  private static readonly FALLBACK_PROVIDERS: Array<'gemini'> = ['gemini'];
-  
-  /**
-   * Generate video with automatic fallback logic
-   */
   static async generateVideo(params: VideoGenerationParams): Promise<VideoGenerationResult> {
-    const {
-      prompt,
-      site_id,
-      instance_id,
-      provider = 'gemini', // Default to gemini as specified
-      duration_seconds,
-      aspect_ratio,
-      reference_images,
-      first_frame_url,
-      last_frame_url,
-      quality,
-      model
-    } = params;
-
-    // Try the requested provider first
-    const providersToTry = [provider, ...this.FALLBACK_PROVIDERS.filter(p => p !== provider)];
-    
-    let lastError: Error | null = null;
-    
-    for (const currentProvider of providersToTry) {
-      try {
-        const result = await this.callVideoAPI({
-          prompt,
-          site_id,
-          instance_id,
-          provider: currentProvider,
-          duration_seconds,
-          aspect_ratio,
-          reference_images,
-          first_frame_url,
-          last_frame_url,
-          quality,
-          model
-        });
-
-        if (result.success) {
-          return {
-            ...result,
-            fallbackFrom: currentProvider !== provider ? provider : undefined
-          };
-        }
-      } catch (error: any) {
-        lastError = error;
-        continue;
-      }
+    if (params.provider !== undefined && params.provider !== 'openrouter') {
+      return { success: false, provider: 'openrouter', videos: [], error: 'Unsupported video provider' };
     }
-
-    // All providers failed
-    return {
-      success: false,
-      provider: 'none',
-      videos: [],
-      error: `All video generation providers failed. Last error: ${lastError?.message || 'Unknown error'}`,
-      metadata: {
-        model: model || 'veo-3.1-generate-preview',
-        duration_seconds,
-        aspect_ratio,
-        quality,
-        generated_at: new Date().toISOString()
-      }
-    };
+    if (params.job_id) return this.getVideoJob(params.site_id, params.job_id);
+    return this.call({ ...params, provider: params.provider ?? 'openrouter' });
   }
 
-  /**
-   * Call the /ai/video API endpoint
-   */
-  private static async callVideoAPI(params: {
-    prompt: string;
-    site_id: string;
-    instance_id?: string;
-    provider: 'gemini';
-    duration_seconds?: number;
-    aspect_ratio?: AspectRatio;
-    reference_images?: string[];
-    first_frame_url?: string;
-    last_frame_url?: string;
-    quality?: VideoQuality;
-    model?: string;
-  }): Promise<VideoGenerationResult> {
-    const apiUrl = `${process.env.NEXT_PUBLIC_API_SERVER_URL || 'http://localhost:3000'}/api/ai/video`;
-    
-    console.log(`[VideoGenService] 🌐 Calling: ${apiUrl}`);
-    console.log(`[VideoGenService] 🔑 API Key: ${process.env.SERVICE_API_KEY ? 'SET' : 'NOT_SET'}`);
-    console.log(`[VideoGenService] 🤖 Provider: ${params.provider}`);
-    
-    const requestBody: any = {
-      prompt: params.prompt,
-      site_id: params.site_id,
-      provider: params.provider,
-    };
-    
-    // Pass instance_id explicitly down to API payload if we have it
-    if (params.instance_id) requestBody.instance_id = params.instance_id;
-    if (params.duration_seconds !== undefined) requestBody.duration_seconds = params.duration_seconds;
-    if (params.aspect_ratio) requestBody.aspect_ratio = params.aspect_ratio;
-    if (params.reference_images) requestBody.reference_images = params.reference_images;
-    if (params.first_frame_url) requestBody.first_frame_url = params.first_frame_url;
-    if (params.last_frame_url) requestBody.last_frame_url = params.last_frame_url;
-    if (params.quality) requestBody.quality = params.quality;
-    if (params.model) requestBody.model = params.model;
+  static async getVideoJob(siteId: string, jobId: string): Promise<VideoGenerationResult> {
+    return this.call({ site_id: siteId, job_id: jobId, prompt: '', provider: 'openrouter' });
+  }
 
+  private static async call(params: VideoGenerationParams): Promise<VideoGenerationResult> {
+    const provider = params.provider ?? 'openrouter';
+    const url = new URL('/api/ai/video', process.env.NEXT_PUBLIC_API_SERVER_URL || 'http://localhost:3000');
+    if (params.job_id) {
+      url.searchParams.set('site_id', params.site_id);
+      url.searchParams.set('job_id', params.job_id);
+    }
     try {
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': process.env.SERVICE_API_KEY || '',
-        },
-        body: JSON.stringify(requestBody)
+      const response = await fetch(url, {
+        method: params.job_id ? 'GET' : 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.SERVICE_API_KEY || '' },
+        body: params.job_id ? undefined : JSON.stringify(params),
+        redirect: 'error',
+        signal: AbortSignal.timeout(120_000),
       });
-
-      console.log(`[VideoGenService] ✅ Fetch completed - Status: ${response.status}`);
-
       if (!response.ok) {
-        const errorText = await response.text().catch(() => 'Unknown error');
-        console.error(`[VideoGenService] ❌ Response not OK: ${errorText.substring(0, 200)}`);
-        throw new Error(`API request failed: ${response.status} ${errorText}`);
+        return { success: false, provider, videos: [], job_id: params.job_id, error: `Video API request failed (${response.status}); retry status only if a job_id exists` };
       }
-
-      const data = await response.json();
-      
-      if (data.error) {
-        throw new Error(data.error);
-      }
-
+      const data = await response.json() as ApiResult;
       return {
-        success: true,
-        provider: data.provider,
-        videos: data.videos || [],
-        fallbackFrom: data.fallbackFrom,
-        metadata: {
-          model: data.metadata?.model || params.model || 'veo-3.1-generate-preview',
-          duration_seconds: data.metadata?.duration_seconds ?? params.duration_seconds,
-          aspect_ratio: data.metadata?.aspect_ratio || params.aspect_ratio,
-          quality: data.metadata?.quality || params.quality,
-          resolution: data.metadata?.resolution,
-          generated_at: data.metadata?.generated_at || new Date().toISOString()
-        }
+        ...data,
+        success: data.status !== 'failed' && !data.error
+          && (data.status === 'pending' || data.status === 'in_progress' || Boolean(data.videos?.length)),
       };
-    } catch (error: any) {
-      console.error(`[VideoGenService] ❌ Fetch error:`, {
-        name: error.name,
-        message: error.message,
-        code: error.code,
-        cause: error.cause
-      });
-      throw error;
+    } catch {
+      return { success: false, provider, videos: [], job_id: params.job_id, error: 'Video API request failed or timed out; do not resubmit an uncertain generation' };
     }
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-

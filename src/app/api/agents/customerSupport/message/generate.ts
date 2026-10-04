@@ -50,21 +50,17 @@ const { effectiveUserId, effectiveAgentId, effectiveSiteId, effectiveLeadId, con
           status: 'not_initialized'
         }
       ],
-      // Set model for customer support
-      // Use GPT-5-mini with minimal reasoning effort for deep thinking
-      modelType: 'openai',
-      modelId: 'gpt-5.6-sol',
-      reasoningEffort: 'minimal',
+      // Replies and tools share the centrally configured OpenRouter model.
+      modelType: 'openrouter',
+      reasoningEffort: 'low',
       verbosity: 'low',
-      // Add tools-specific model
-      toolsModelType: 'openai',
-      toolsModelId: 'gpt-4o'
+      toolsModelType: 'openrouter'
     });
     
     // Submit the command for processing
     const internalCommandId = await commandService.submitCommand(command);
     console.log(`📝 Comando creado con ID interno: ${internalCommandId}`);
-    console.log(`[CustomerSupport] Using GPT-5-mini for responses, GPT-4o for tools`);
+    console.log(`[CustomerSupport] Using the configured OpenRouter model for responses and tools`);
     
     // Intentar obtener el UUID de la base de datos inmediatamente después de crear el comando
     let initialDbUuid = await getCommandDbUuid(internalCommandId);

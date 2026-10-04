@@ -12,7 +12,7 @@ jest.mock("@/lib/database/audience-db", () => ({
   getAudiencePageForSending: mockGetAudiencePageForSending,
   updateAudienceLeadStatus: mockUpdateAudienceLeadStatus,
 }));
-jest.mock("../sendEmail/route", () => ({ sendEmailCore: jest.fn() }));
+jest.mock("../sendEmail/core", () => ({ sendEmailCore: jest.fn() }));
 jest.mock("@/lib/services/whatsapp/WhatsAppSendService", () => ({
   WhatsAppSendService: {},
 }));

@@ -47,6 +47,10 @@ export function outputReserveForModel(provider: string, model: string): number {
 // Documented model IDs only. Azure deployment aliases and Vertex endpoints may
 // differ from their displayed model IDs and must be configured explicitly.
 const KNOWN_MODEL_CAPACITIES: Readonly<Record<string, ModelCapacity>> = {
+  // OpenRouter public catalog: verified 2026-10-03. Keep exact qualified IDs.
+  'openrouter:openai/gpt-6.1-sol': { availableTokens: 1_050_000, reservedOutputTokens: 128_000 },
+  'openrouter:openai/gpt-4o': { availableTokens: 128_000, reservedOutputTokens: 16_384 },
+  'openrouter:openai/gpt-5.2': { availableTokens: 400_000, reservedOutputTokens: 128_000 },
   'gemini:gemini-3.1-pro-preview': { availableTokens: 1_048_576, reservedOutputTokens: 0 },
   'gemini:gemini-3.1-pro-preview-customtools': { availableTokens: 1_048_576, reservedOutputTokens: 0 },
   'openai:gpt-4o': { availableTokens: 128_000, reservedOutputTokens: 16_384 },
@@ -93,10 +97,12 @@ export function modelContextCapacity(provider: string, model: string): ModelCapa
     || KNOWN_MODEL_CAPACITIES[`${provider}:${model}`] || null;
 }
 
-/** Discover Gemini model metadata for new exact IDs (bounded network call). */
+/** Discover exact model metadata (bounded, non-inference request). */
 export async function resolveModelContextCapacity(provider: string, model: string): Promise<ModelCapacity | null> {
   const known = modelContextCapacity(provider, model);
-  if (known || provider !== 'gemini' || !/^gemini-[a-zA-Z0-9.-]+$/.test(model) || !process.env.GEMINI_API_KEY) {
+  const openrouter = provider === 'openrouter' && model.includes('/');
+  const legacyGemini = provider === 'gemini' && /^gemini-[a-zA-Z0-9.-]+$/.test(model) && Boolean(process.env.GEMINI_API_KEY);
+  if (known || (!openrouter && !legacyGemini)) {
     return known;
   }
   const key = `${provider}:${model}`;
@@ -107,12 +113,17 @@ export async function resolveModelContextCapacity(provider: string, model: strin
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 2500);
         try {
-          const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}`, {
-            headers: { 'x-goog-api-key': process.env.GEMINI_API_KEY! }, signal: controller.signal,
-          });
+          const response = openrouter
+            ? await fetch('https://openrouter.ai/api/v1/models', { signal: controller.signal })
+            : await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}`, {
+                headers: { 'x-goog-api-key': process.env.GEMINI_API_KEY! }, signal: controller.signal,
+              });
           if (!response.ok) return null;
-          const metadata = await response.json() as { inputTokenLimit?: unknown };
-          const capacity = capacityFromConfig({ inputTokens: metadata.inputTokenLimit });
+          const metadata = await response.json();
+          const entry = openrouter ? metadata.data?.find((entry: any) => entry.id === model) : undefined;
+          const capacity = openrouter
+            ? capacityFromConfig({ contextTokens: entry?.context_length, outputTokens: entry?.top_provider?.max_completion_tokens })
+            : capacityFromConfig({ inputTokens: metadata.inputTokenLimit });
           if (capacity) discoveredModelCapacities.set(key, capacity);
           return capacity;
         } finally { clearTimeout(timeout); }

@@ -1,15 +1,7 @@
-import Portkey from 'portkey-ai';
+import { createOpenRouterClient, resolveOpenRouterModel } from './ai/openrouter';
 
 const DEFAULT_MODEL = 'text-embedding-3-small';
 const DEFAULT_DIMENSIONS = 1536;
-
-function getEnv(name: string): string | undefined {
-  const value = process.env[name]?.trim();
-  if (!value) {
-    console.warn(`[embeddings service] Missing environment variable ${name}`);
-  }
-  return value;
-}
 
 export class EmbeddingsService {
   /**
@@ -19,40 +11,30 @@ export class EmbeddingsService {
     input: string | string[],
     modelId: string = DEFAULT_MODEL,
     dimensions: number = DEFAULT_DIMENSIONS
-  ): Promise<{ embeddings: number[][]; usage?: any }> {
-    const apiKey = getEnv('PORTKEY_API_KEY');
-    const virtualKey = getEnv('AZURE_OPENAI_API_KEY');
-
-    if (!apiKey || !virtualKey) {
-      throw new Error('Portkey embeddings are not configured');
-    }
-
-    const portkey = new Portkey({
-      apiKey,
-      virtualKey,
-      baseURL: 'https://api.portkey.ai/v1',
-    });
-
-    console.log(`[embeddings service] Creating embeddings with model ${modelId} via Portkey`);
-
-    const response = await portkey.embeddings.create({
+  ): Promise<{ embeddings: number[][]; usage?: any; model: string }> {
+    const model = resolveOpenRouterModel(modelId);
+    const client = createOpenRouterClient();
+    const response = await client.embeddings.create({
       input,
-      model: modelId,
+      model,
       dimensions,
+      encoding_format: 'float',
     });
 
-    const embeddings = (response.data || [])
-      .map((item) => item?.embedding)
-      .filter((vector): vector is number[] => Array.isArray(vector));
-
-    if (embeddings.length === 0) {
-      console.error('[embeddings service] Portkey returned no valid vectors:', response);
-      throw new Error('Portkey did not return a valid embedding');
+    // Preserve batch input order and reject partial/malformed vectors before storage.
+    const expectedCount = Array.isArray(input) ? input.length : 1;
+    const ordered = [...(response.data || [])].sort((a, b) => a.index - b.index);
+    if (ordered.length !== expectedCount || ordered.some((item, index) => (
+      item.index !== index || !Array.isArray(item.embedding)
+      || item.embedding.length !== dimensions || !item.embedding.every(Number.isFinite)
+    ))) {
+      throw new Error('OpenRouter returned invalid or incomplete embeddings');
     }
 
     return {
-      embeddings,
+      embeddings: ordered.map((item) => item.embedding),
       usage: response.usage,
+      model: response.model || model,
     };
   }
 

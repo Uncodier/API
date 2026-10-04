@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { InstanceContextManager } from '../InstanceContextManager';
 import { estimateTokens, measureInstanceContext } from '../instance-context-budget';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
@@ -90,20 +91,16 @@ function historyLogs(count: number) {
 
 describe('InstanceContextManager', () => {
   const oldModel = process.env.INSTANCE_CONTEXT_SUMMARY_MODEL;
-  const oldPortkey = process.env.PORTKEY_API_KEY;
-  const oldAzureEmbeddings = process.env.AZURE_OPENAI_API_KEY;
+  const oldOpenRouter = process.env.OPENROUTER_API_KEY;
   beforeEach(() => {
     jest.clearAllMocks();
-    process.env.PORTKEY_API_KEY = 'unit-test-key';
-    process.env.AZURE_OPENAI_API_KEY = 'unit-test-key';
+    process.env.OPENROUTER_API_KEY = randomBytes(24).toString('hex');
   });
   afterAll(() => {
     if (oldModel === undefined) delete process.env.INSTANCE_CONTEXT_SUMMARY_MODEL;
     else process.env.INSTANCE_CONTEXT_SUMMARY_MODEL = oldModel;
-    if (oldPortkey === undefined) delete process.env.PORTKEY_API_KEY;
-    else process.env.PORTKEY_API_KEY = oldPortkey;
-    if (oldAzureEmbeddings === undefined) delete process.env.AZURE_OPENAI_API_KEY;
-    else process.env.AZURE_OPENAI_API_KEY = oldAzureEmbeddings;
+    if (oldOpenRouter === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = oldOpenRouter;
   });
 
   it('does not advance the cursor when embeddings fail and retains tactical logs', async () => {
@@ -124,7 +121,7 @@ describe('InstanceContextManager', () => {
 
   it('keeps tactical evidence when embeddings are unavailable and skips an unpersistable summary call', async () => {
     delete process.env.INSTANCE_CONTEXT_SUMMARY_MODEL;
-    delete process.env.PORTKEY_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
     (admin.from as jest.Mock).mockImplementation((table: string) => {
       if (table === 'instance_context_state') return chain({ data: null, error: null });
       if (table === 'instance_logs') return chain({ data: [...logs].reverse(), error: null });
@@ -282,7 +279,7 @@ describe('InstanceContextManager', () => {
     }));
     const text = await new InstanceContextManager('instance', 'site')
       .buildHistory('hello', 'azure', 'private-gpt52-deployment');
-    expect(AIAgentExecutor).toHaveBeenCalledWith({ provider: 'azure', model: 'private-gpt52-deployment' });
+    expect(AIAgentExecutor).toHaveBeenCalledWith({ provider: 'azure', model: 'private-gpt52-deployment', siteId: 'site' });
     expect((AIAgentExecutor as jest.Mock).mock.results[0].value.act).toHaveBeenCalledWith(
       expect.objectContaining({ enforceContextBudget: true, maxIterations: 1 }));
     expect(admin.rpc).toHaveBeenCalledWith('commit_instance_context_memory', expect.objectContaining({
@@ -303,7 +300,7 @@ describe('InstanceContextManager', () => {
       data: name === 'commit_instance_context_memory' ? true : [], error: null,
     }));
     await new InstanceContextManager('instance', 'site').buildHistory('hello', 'azure', 'actual-deployment');
-    expect(AIAgentExecutor).toHaveBeenCalledWith({ provider: 'azure', model: 'actual-deployment' });
+    expect(AIAgentExecutor).toHaveBeenCalledWith({ provider: 'azure', model: 'actual-deployment', siteId: 'site' });
   });
 
   it('fails closed if cursor exists but memory cannot be read', async () => {
@@ -420,7 +417,7 @@ describe('InstanceContextManager', () => {
   it('reserves history budget for an older error outside the last 30 logs', async () => {
     const original = process.env.INSTANCE_CONTEXT_SUMMARY_MODEL;
     delete process.env.INSTANCE_CONTEXT_SUMMARY_MODEL;
-    delete process.env.PORTKEY_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
     const history = logs.map((log, index) => index === 0
       ? { ...log, log_type: 'error', level: 'error', message: 'CRITICAL_FAILURE_FROM_EARLY_TURN' }
       : log);
@@ -469,7 +466,7 @@ describe('InstanceContextManager', () => {
   });
 
   it('includes all un-compacted rows, including decisions earlier than the last 30', async () => {
-    delete process.env.PORTKEY_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
     const history = logs.map((log, index) => index === 1
       ? { ...log, message: 'UNCOMPACTED_EARLY_DECISION' } : log);
     (admin.from as jest.Mock).mockImplementation((table: string) => {
@@ -541,7 +538,7 @@ describe('InstanceContextManager', () => {
   });
 
   it('pages back from the newest 200 when summarization is unavailable, preserving the first turn', async () => {
-    delete process.env.PORTKEY_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
     const history = historyLogs(230);
     mockPagedLogs(history);
 
@@ -567,7 +564,7 @@ describe('InstanceContextManager', () => {
   });
 
   it('pages through rows sharing a timestamp without dropping the keyset boundary', async () => {
-    delete process.env.PORTKEY_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
     const history = historyLogs(230).map(log => ({ ...log, created_at: timestamp(0) }));
     mockPagedLogs(history);
 
@@ -591,7 +588,7 @@ describe('InstanceContextManager', () => {
   });
 
   it('loads only un-compacted pages after a cursor and skips queued actions', async () => {
-    delete process.env.PORTKEY_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
     const history = historyLogs(240);
     history[12] = { ...history[12], details: { status: 'queued' } };
     const cursor = { cursor_at: history[4].created_at, cursor_log_id: history[4].id };
@@ -635,7 +632,7 @@ describe('InstanceContextManager', () => {
   });
 
   it('uses an explicit retrieval view when un-compacted history exceeds the bounded fallback', async () => {
-    delete process.env.PORTKEY_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
     mockPagedLogs(historyLogs(2001));
 
     const text = await new InstanceContextManager('instance', 'site').buildHistory('hello', 'azure', 'gpt-4o');

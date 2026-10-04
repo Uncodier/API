@@ -95,9 +95,8 @@ export async function launchPuppeteerForGate(): Promise<Browser> {
         '--disable-dev-shm-usage',
         '--disable-features=IsolateOrigins,site-per-process',
       ],
-      defaultViewport: chromium.defaultViewport,
       executablePath,
-      headless: chromium.headless,
+      headless: 'shell',
     });
   }
 

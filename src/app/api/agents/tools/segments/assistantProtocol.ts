@@ -3,7 +3,7 @@
  * Unified tool for managing segments (create, list, update)
  */
 
-import { getSegmentCore } from './get/route';
+import { getSegmentCore } from './get/core';
 import { fetchApiTool } from '@/app/api/agents/tools/utils/fetch-helper';
 
 

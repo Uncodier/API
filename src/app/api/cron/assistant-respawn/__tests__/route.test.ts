@@ -108,6 +108,7 @@ function expectTrustedActionQuery(builder: ReturnType<typeof query>, instanceId 
 function expectPlanQuery(builder: ReturnType<typeof query>) {
   expect(builder.select).toHaveBeenCalledWith('metadata');
   expect(builder.eq).toHaveBeenCalledWith('instance_id', INSTANCE_ID);
+  expect(builder.eq).toHaveBeenCalledWith('site_id', 'trusted-site');
   expect(builder.in).toHaveBeenCalledWith('status', ['pending', 'in_progress', 'active', 'paused']);
   expect(builder.order).toHaveBeenCalledWith('updated_at', { ascending: false });
   expect(builder.limit).toHaveBeenCalledWith(1);
@@ -228,6 +229,15 @@ describe('assistant respawn cron route (offline)', () => {
     expect(spawnSilentContinueWorkflow).toHaveBeenCalledTimes(1);
   });
 
+  it.each([2, 4, 5])('applies the five-respawn ceiling after %i recent recoveries', async (count) => {
+    candidates();
+    checkpoint();
+    countRecentRespawns.mockResolvedValue(count);
+    if (count < 5) enqueue('instance_plans', ok(null), true);
+    await expectResult(await GET(request()), count < 5 ? 'respawned' : 'max_respawns_reached');
+    expect(spawnSilentContinueWorkflow).toHaveBeenCalledTimes(count < 5 ? 1 : 0);
+  });
+
   it.each([15, 16])('allows stale in-flight recovery at %i minutes with the trusted action scope', async (minutes) => {
     candidates();
     const action = activeAction({ lastActivityAt: ago(minutes * MINUTE) });
@@ -306,6 +316,42 @@ describe('assistant respawn cron route (offline)', () => {
     await expectResult(await GET(request()), 'skipped_workflow_managed');
     expectPlanQuery(plan);
     expect(evaluateInstanceStall.mock.results[0].value).toBe('respawn');
+    expect(spawnSilentContinueWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('resumes a known conversational turn alongside a requirement plan in conversation-only mode', async () => {
+    candidates();
+    const action = activeAction();
+    Object.assign(action.details.assistant_recovery, { inFlightKind: 'turn', execution: { customTools: [], useSdkTools: false } });
+    checkpoint(action);
+    enqueue('instance_plans', ok({ metadata: { requirement_id: 'requirement-1' } }), true);
+    await expectResult(await GET(request()), 'respawned');
+    expect(spawnSilentContinueWorkflow).toHaveBeenCalledWith({
+      instanceId: INSTANCE_ID, siteId: 'trusted-site', userId: 'trusted-user', userMessageLogId: 'trusted-user-log',
+    }, { allowStaleInFlight: true, conversationOnly: true });
+  });
+
+  it('retains conversation-only recovery after the first resumed turn saved its checkpoint', async () => {
+    candidates(); const action = activeAction({ inFlight: false });
+    Object.assign(action.details.assistant_recovery, { conversationOnly: true });
+    checkpoint(action);
+    enqueue('instance_plans', ok({ metadata: { requirement_id: 'requirement-1' } }), true);
+    await expectResult(await GET(request()), 'respawned');
+    expect(spawnSilentContinueWorkflow).toHaveBeenCalledWith(expect.any(Object), {
+      allowStaleInFlight: true, conversationOnly: true,
+    });
+  });
+
+  it.each([
+    { snapshot: { inFlightKind: 'plan' }, metadata: { requirement_id: 'requirement-1' } },
+    { snapshot: { inFlightKind: 'turn', execution: { instanceNodeId: 'node' } }, metadata: { requirement_id: 'requirement-1' } },
+    { snapshot: { inFlightKind: 'turn' }, metadata: { workflow_run: true, requirement_id: 'requirement-1' } },
+    { snapshot: { inFlightKind: 'turn' }, metadata: { workflow_template: true } },
+  ])('does not misclassify managed execution as conversation: %j', async ({ snapshot, metadata }) => {
+    candidates(); const action = activeAction();
+    Object.assign(action.details.assistant_recovery, snapshot);
+    checkpoint(action); enqueue('instance_plans', ok({ metadata }), true);
+    await expectResult(await GET(request()), 'skipped_workflow_managed');
     expect(spawnSilentContinueWorkflow).not.toHaveBeenCalled();
   });
 

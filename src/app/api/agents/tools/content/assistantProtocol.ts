@@ -3,9 +3,9 @@
  * Unified tool for managing content (create, list, update)
  */
 
-import { getContentCore } from './get/route';
+import { getContentCore } from './get/core';
 import { createContentCore } from './create/core';
-import { updateContentCore } from './update/route';
+import { updateContentCore } from './update/core';
 
 
 

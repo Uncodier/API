@@ -372,7 +372,8 @@ export class GoogleSearchService {
       
       // Intentar el siguiente método disponible
       try {
-        if (this.serpApiKey && !error.message.includes('SerpAPI')) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        if (this.serpApiKey && !errorMessage.includes('SerpAPI')) {
           return await this.searchWithSerpAPI(options);
         }
         return await this.searchWithTavilyFallback(options);

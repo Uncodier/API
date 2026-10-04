@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { createInstancePlanCore } from '@/app/api/agents/tools/instance_plan/create/route';
+import { createInstancePlanCore } from '@/app/api/agents/tools/instance_plan/create/core';
 import { getActivePlans, planCancelledBySaneo, resumePlan } from '@/lib/helpers/plan-lifecycle';
 
 /**

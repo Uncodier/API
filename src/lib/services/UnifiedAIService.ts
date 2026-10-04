@@ -1,11 +1,13 @@
 /*
   UnifiedAIService
   - One entry point to consume local AI routes: /api/ai/text, /image, /audio, /video
-  - Provider-aware with intelligent fallbacks
+  - Azure owns images; OpenRouter owns the other AI capabilities
   - All code and comments in English per project rules
 */
 
-export type AIProvider = 'azure' | 'gemini' | 'vercel';
+import type { ImageRequestBody } from '@/app/api/ai/image/image-types';
+
+export type AIProvider = 'openrouter';
 
 export interface TextRequestOptions {
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
@@ -16,25 +18,29 @@ export interface TextRequestOptions {
   topP?: number;
 }
 
-export interface ImageRequestOptions {
-  prompt: string;
-  provider?: Exclude<AIProvider, 'gemini'>; // not implemented yet
-  size?: '256x256' | '512x512' | '1024x1024';
-  n?: number;
-  quality?: 'standard' | 'hd';
-}
+export type ImageRequestOptions = ImageRequestBody;
 
 export interface AudioRequestOptions {
   text: string;
-  provider?: 'vercel'; // only vercel implemented
+  provider?: AIProvider;
   voice?: string;
-  format?: 'mp3' | 'wav' | 'ogg';
+  format?: 'mp3' | 'pcm';
   model?: string;
 }
 
 export interface VideoRequestOptions {
   prompt: string;
-  provider?: string;
+  site_id: string;
+  instance_id?: string;
+  provider?: AIProvider;
+  model?: string;
+  duration_seconds?: number;
+  aspect_ratio?: string;
+  resolution?: string;
+  reference_images?: string[];
+  first_frame_url?: string;
+  last_frame_url?: string;
+  job_id?: string;
 }
 
 interface FetcherInit {
@@ -61,60 +67,32 @@ async function doFetch(path: string, init: FetcherInit): Promise<Response> {
 }
 
 export class UnifiedAIService {
-  // Intelligent provider order per resource
-  private static providerOrder = {
-    text: ['azure', 'gemini', 'vercel'] as AIProvider[],
-    image: ['azure', 'vercel'] as AIProvider[],
-    audio: ['vercel'] as AIProvider[],
-    video: [] as AIProvider[],
-  };
+  private static assertProvider(provider?: string) {
+    if (provider !== undefined && provider !== 'openrouter') throw new Error('Only OpenRouter is supported');
+  }
 
   static async generateText(opts: TextRequestOptions) {
-    const preferred = opts.provider ? [opts.provider] : this.providerOrder.text;
-    let lastError: any = null;
-
-    for (const provider of preferred) {
-      try {
-        const res = await doFetch('/api/ai/text', {
-          body: { ...opts, provider },
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data?.error || `Text generation failed: ${res.status}`);
-        return data;
-      } catch (err: any) {
-        lastError = err;
-        // continue to next provider
-      }
-    }
-    throw lastError || new Error('All text providers failed');
+    this.assertProvider(opts.provider);
+    const res = await doFetch('/api/ai/text', { body: { ...opts, provider: 'openrouter' } });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || `Text generation failed: ${res.status}`);
+    return data;
   }
 
   static async generateImage(opts: ImageRequestOptions) {
-    const preferred = opts.provider ? [opts.provider] : this.providerOrder.image;
-    let lastError: any = null;
-
-    for (const provider of preferred) {
-      try {
-        const res = await doFetch('/api/ai/image', {
-          body: { ...opts, provider },
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data?.error || `Image generation failed: ${res.status}`);
-        return data;
-      } catch (err: any) {
-        lastError = err;
-      }
-    }
-    throw lastError || new Error('All image providers failed');
+    if (opts.provider !== undefined && opts.provider !== 'azure') throw new Error('Only Azure is supported for images');
+    const res = await doFetch('/api/ai/image', { body: { ...opts, provider: 'azure' } });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || `Image generation failed: ${res.status}`);
+    return data;
   }
 
   static async synthesizeAudio(opts: AudioRequestOptions): Promise<ArrayBuffer> {
-    const provider = opts.provider || 'vercel';
-    // Only vercel implemented; still keep hook for future fallbacks
+    this.assertProvider(opts.provider);
     const res = await fetch('/api/ai/audio', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...opts, provider }),
+      body: JSON.stringify(opts),
     });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
@@ -124,8 +102,15 @@ export class UnifiedAIService {
   }
 
   static async generateVideo(opts: VideoRequestOptions) {
-    // Currently not implemented on server (returns 501). Still passthrough for forward-compat.
-    const res = await doFetch('/api/ai/video', { body: opts });
+    this.assertProvider(opts.provider);
+    if (opts.job_id) {
+      const query = new URLSearchParams({ site_id: opts.site_id, job_id: opts.job_id });
+      const res = await doFetch(`/api/ai/video?${query}`, { method: 'GET' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `Video status failed: ${res.status}`);
+      return data;
+    }
+    const res = await doFetch('/api/ai/video', { body: { ...opts, provider: opts.provider || 'openrouter' } });
     const data = await res.json();
     if (!res.ok) throw new Error(data?.error || `Video generation failed: ${res.status}`);
     return data;

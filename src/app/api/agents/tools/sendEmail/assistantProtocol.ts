@@ -7,7 +7,7 @@
  */
 
 import type { ContentPlaceholderPolicy } from '@/lib/messaging/lead-merge-fields';
-import { sendEmailCore } from './route';
+import { sendEmailCore } from './core';
 
 export interface SendEmailToolParams {
   email: string;

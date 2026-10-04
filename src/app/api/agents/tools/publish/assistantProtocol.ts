@@ -1,10 +1,10 @@
 import { publishToolDefinition } from './publish-schema';
 import { createContentCore } from '../content/create/core';
-import { updateContentCore } from '../content/update/route';
+import { updateContentCore } from '../content/update/core';
 import { publishSocialContent } from './social-publishing';
 import type { TikTokPublishInput } from './tiktok-options';
 import { sendBulkMessagesTool } from '../sendBulkMessages/assistantProtocol';
-import { sendEmailCore } from '../sendEmail/route';
+import { sendEmailCore } from '../sendEmail/core';
 import { WhatsAppSendService } from '@/lib/services/whatsapp/WhatsAppSendService';
 import { getLeadById } from '@/lib/database/lead-db';
 import { buildToolExecutionContext, readToolExecutionContext, type ToolExecutionContext } from '@/lib/services/tool-execution-context';

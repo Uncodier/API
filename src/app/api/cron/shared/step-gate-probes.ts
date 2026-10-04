@@ -385,6 +385,7 @@ export async function runRuntimeAndVisualProbes(params: {
       }
       if (visual.visual_raw.screenshots.length) {
         const critic = await runVisualCritic({
+          siteId: audit?.siteId,
           screenshots: visual.visual_raw.screenshots,
           step: {
             order: stepOrder,
@@ -409,6 +410,8 @@ export async function runRuntimeAndVisualProbes(params: {
             summary: critic.summary,
             defects: critic.defects.slice(0, 20),
             model_used: critic.model_used,
+            provider: 'openrouter',
+            usage: critic.usage,
             completion_attempts: critic.completion_attempts,
             finish_reason: critic.finish_reason,
             response_format: critic.response_format,

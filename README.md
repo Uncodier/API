@@ -35,7 +35,7 @@ contract, offline tests and recovery runbook](docs/README-IcyPeas-Durable-Email-
 
 Before you begin, ensure you have the following installed:
 
-- **Node.js** 18.0.0 or higher
+- **Node.js** 22.12.0 or higher (see `package.json` engines)
 - **npm** 9.0.0 or higher (or yarn)
 - **Temporal Server** (for workflow orchestration) - optional for basic functionality
 - **Supabase Account** (for database) - optional for local development
@@ -66,7 +66,7 @@ Before you begin, ensure you have the following installed:
    - `SERVICE_API_KEY` - Internal API key for service-to-service communication
    - `CRON_SECRET` - Bearer secret used by Vercel Cron
    - `ENCRYPTION_KEY` - 32-byte encryption key for API keys
-   - AI Provider keys (at least one): `PORTKEY_API_KEY`, `ANTHROPIC_API_KEY`, `AZURE_OPENAI_API_KEY`, or `GEMINI_API_KEY`
+   - `OPENROUTER_API_KEY` for chat, embeddings, images and speech through the same gateway
 
    See `src/config/env.example` for all available configuration options.
 
@@ -102,10 +102,18 @@ This uses `concurrently` to run both:
 
 ### Production Build
 
+Check TypeScript before building (including generated Next.js route types and tests):
+```bash
+npm run typecheck
+```
+
 Build the application for production:
 ```bash
 npm run build
 ```
+
+Production builds also run TypeScript validation and fail on type errors; do not
+enable `typescript.ignoreBuildErrors` to bypass a failing check.
 
 Start the production server:
 ```bash
@@ -122,6 +130,7 @@ The server will start on port 3001 (configurable via environment variables).
 | `npm run ws` | Start WebSocket server only |
 | `npm run dev:all` | Start both API and WebSocket servers concurrently |
 | `npm run build` | Build production bundle |
+| `npm run typecheck` | Generate Next.js route types and check TypeScript without emitting code |
 | `npm start` | Start production server |
 | `npm run lint` | Run ESLint |
 | `npm test` | Run Jest test suite |
@@ -157,11 +166,17 @@ Key environment variables (see `src/config/env.example` for complete list):
 - `CRON_SECRET` - Vercel Cron authentication secret
 - `ENCRYPTION_KEY` - 32-byte encryption key
 
-### AI Providers (at least one required)
-- `PORTKEY_API_KEY` - Portkey API key for AI gateway
-- `ANTHROPIC_API_KEY` - Anthropic Claude API key
-- `AZURE_OPENAI_API_KEY` - Azure OpenAI API key
-- `GEMINI_API_KEY` - Google Gemini API key
+### AI Gateway
+- `OPENROUTER_API_KEY` - Gateway key for chat, tools, embeddings, video and audio (not image generation)
+- `OPENROUTER_CHAT_MODEL` - Defaults to `openai/gpt-6.1-sol`
+- `AZURE_OPENAI_IMAGE_DEPLOYMENT` - Direct Azure image deployment, default `gpt-image-2.5-sunburst`
+- `MICROSOFT_AZURE_OPENAI_ENDPOINT` / `MICROSOFT_AZURE_OPENAI_API_KEY` - Existing Azure resource credentials for images; optional dedicated `AZURE_OPENAI_IMAGE_ENDPOINT` / `AZURE_OPENAI_IMAGE_API_KEY`
+- `AZURE_OPENAI_IMAGE_API_VERSION` - Default `preview` on `/openai/v1/images`; separate from the chat API version
+- `OPENROUTER_VIDEO_MODEL` / `OPENROUTER_TRANSCRIPTION_MODEL` - Explicit model selection required
+- `OPENROUTER_TTS_MODEL` / `OPENROUTER_TTS_VOICE` - Defaults to MAI-Voice-2.1 with a Spanish (Mexico) voice
+
+See [OpenRouter migration and deployment checks](docs/OPENROUTER_MIGRATION.md).
+Portkey credentials are no longer used by the migrated runtime paths. Images use Azure directly (`provider: 'azure'`), without fallback. Other AI capabilities remain on OpenRouter.
 
 ### Temporal Configuration
 - `TEMPORAL_ENV=development` - Environment mode

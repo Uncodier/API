@@ -1,4 +1,5 @@
 // Configuración para el analizador de sitios web
+import { getOpenRouterChatModel, resolveOpenRouterModel } from '@/lib/services/ai/openrouter';
 
 // Definición de los modelos disponibles
 export const AVAILABLE_MODELS = {
@@ -11,7 +12,7 @@ export const AVAILABLE_MODELS = {
     { id: 'claude-instant-1.2', name: 'Claude Instant' }
   ],
   openai: [
-    { id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol' },
+    { id: getOpenRouterChatModel(), name: 'OpenRouter chat default' },
     { id: 'gpt-5-mini', name: 'GPT-5 Mini' },
     { id: 'gpt-4-vision-preview', name: 'GPT-4 Vision' },
     { id: 'gpt-4-turbo', name: 'GPT-4 Turbo' },
@@ -93,26 +94,11 @@ Always respond with a complete, well-structured JSON object following exactly th
 
 // Obtener opciones de solicitud según el proveedor y modelo
 export function getRequestOptions(provider = 'openai', modelId?: string) {
-  // Opciones para Anthropic
-  const anthropicOptions = {
-    model: modelId || 'claude-3-5-sonnet-20240620',
-    max_tokens: 200000 // Aumentado para aprovechar capacidades completas
+  const options = {
+    model: resolveOpenRouterModel(modelId, provider),
+    // OpenRouter normalizes this limit for each underlying model vendor.
+    max_tokens: 8192,
   };
-  
-  // Opciones para OpenAI (Azure OpenAI)
-  const openaiOptions = {
-    model: modelId || 'gpt-5-mini'
-  };
-  
-  // Opciones para Gemini
-  const geminiOptions = {
-    model: modelId || 'gemini-1.5-pro',
-    max_tokens: 200000 // Aumentado para aprovechar capacidades completas
-  };
-  
-  return {
-    anthropic: anthropicOptions,
-    openai: openaiOptions,
-    gemini: geminiOptions
-  };
+  // Keep the keyed contract for legacy callers, but route every vendor via OpenRouter.
+  return { openrouter: options, anthropic: options, openai: options, gemini: options };
 } 

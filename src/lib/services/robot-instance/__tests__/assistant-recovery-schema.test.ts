@@ -1,6 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 import {
-  cloneRecoveryJson, MAX_RECOVERY_MESSAGES_BYTES, parseRecoveryCheckpoint,
+  cloneRecoveryJson, MAX_RECOVERY_MESSAGES_BYTES, MAX_RECOVERY_EXECUTION_BYTES, MAX_RECOVERY_SNAPSHOT_BYTES, parseRecoveryCheckpoint,
   parseRecoveryExecution, parseRecoverySnapshot, RecoveryError,
 } from '../assistant-recovery-schema';
 
@@ -73,12 +73,37 @@ describe('lossless recovery serialization', () => {
     expect(parseRecoveryCheckpoint(value)).toEqual(value);
   });
 
-  it('uses a 512 KiB byte cap, never a character cap or lossy truncation', () => {
+  it('uses a 2 MiB byte cap, never a character cap or lossy truncation', () => {
+    expect(MAX_RECOVERY_MESSAGES_BYTES).toBe(2 * 1024 * 1024);
     const exact = ['x'.repeat(MAX_RECOVERY_MESSAGES_BYTES - 4)];
     expect(Buffer.byteLength(JSON.stringify(exact))).toBe(MAX_RECOVERY_MESSAGES_BYTES);
     expect(parseRecoveryCheckpoint({ messages: exact }).messages).toEqual(exact);
     expect(() => parseRecoveryCheckpoint({ messages: ['x'.repeat(MAX_RECOVERY_MESSAGES_BYTES - 3)] })).toThrow(RecoveryError);
-    expect(() => parseRecoveryCheckpoint({ messages: ['界'.repeat(180_000)] })).toThrow(RecoveryError);
+    expect(() => parseRecoveryCheckpoint({ messages: ['界'.repeat(Math.ceil(MAX_RECOVERY_MESSAGES_BYTES / 3))] })).toThrow(RecoveryError);
+  });
+
+  it('retains successful tool receipts when the transcript crosses the former 512 KiB limit', () => {
+    const messages = [
+      { role: 'user', content: 'Review the requirement status' },
+      { role: 'tool', tool_call_id: 'earlier', content: 'h'.repeat(262_000) },
+      { role: 'assistant', content: null, tool_calls: [{ id: 'status', type: 'function', function: { name: 'requirement_status', arguments: '{}' } }] },
+      { role: 'tool', tool_call_id: 'status', content: JSON.stringify({ success: true, result: 's'.repeat(320_000) }) },
+    ];
+    expect(Buffer.byteLength(JSON.stringify(messages))).toBeGreaterThan(512 * 1024);
+    expect(parseRecoveryCheckpoint({ messages }).messages).toEqual(messages);
+    expect(parseRecoverySnapshot({ ...snapshot, messages }).messages).toEqual(messages);
+  });
+
+  it('keeps the execution budget at 512 KiB and admits a full transcript with separate execution headroom', () => {
+    expect(MAX_RECOVERY_EXECUTION_BYTES).toBe(512 * 1024);
+    const overhead = Buffer.byteLength(JSON.stringify({ ...execution, systemPrompt: '' }));
+    const fullExecution = { ...execution, systemPrompt: 'p'.repeat(MAX_RECOVERY_EXECUTION_BYTES - overhead) };
+    const messages = ['x'.repeat(MAX_RECOVERY_MESSAGES_BYTES - 4)];
+    const value = { ...snapshot, execution: fullExecution, messages };
+    expect(Buffer.byteLength(JSON.stringify(value))).toBeLessThan(MAX_RECOVERY_SNAPSHOT_BYTES);
+    expect(MAX_RECOVERY_SNAPSHOT_BYTES).toBeLessThan(4 * 1024 * 1024);
+    expect(parseRecoverySnapshot(value)).toEqual(value);
+    expect(() => parseRecoveryExecution({ ...fullExecution, systemPrompt: fullExecution.systemPrompt + 'x' })).toThrow(RecoveryError);
   });
 
   it.each([
@@ -105,6 +130,8 @@ describe('lossless recovery serialization', () => {
     { ...snapshot, legacy: true },
     { ...snapshot, lastActivityAt: 'invalid' }, { ...snapshot, inFlightSince: null },
     { ...snapshot, inFlightKind: 'other' },
+    { ...snapshot, conversationOnly: false }, { ...snapshot, conversationOnly: 'true' },
+    { ...snapshot, conversationOnly: true, inFlightKind: 'plan' },
     { ...snapshot, interruptionContext: 'x'.repeat(24 * 1024 + 1) },
     { ...snapshot, toolObservations: [{}] },
     { ...snapshot, toolObservations: Array(9).fill({ name: 'tool', args: '{}', outcome: 'unknown', observedAt: '2026-10-03T00:00:00Z' }) },
@@ -126,5 +153,6 @@ describe('lossless recovery serialization', () => {
       toolObservations: [{ name: 'content', args: '{"id":"draft-1"}', outcome: 'returned', result: '{}', observedAt: '2026-10-03T00:01:00Z' }] };
     expect(parseRecoverySnapshot(value)).toEqual(value);
     expect(parseRecoverySnapshot(snapshot)).toEqual(snapshot);
+    expect(parseRecoverySnapshot({ ...snapshot, conversationOnly: true }).conversationOnly).toBe(true);
   });
 });

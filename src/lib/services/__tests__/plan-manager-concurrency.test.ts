@@ -15,7 +15,7 @@ function readBuilder(plan: Record<string, unknown>) {
   const builder: any = {};
   builder.select = jest.fn(() => builder);
   builder.eq = jest.fn(() => builder);
-  builder.single = jest.fn().mockResolvedValue({ data: plan, error: null });
+  builder.single = jest.fn(async () => ({ data: plan, error: null }));
   return builder;
 }
 
@@ -26,10 +26,10 @@ function racedWriteBuilder() {
   builder.in = jest.fn(() => builder);
   builder.is = jest.fn(() => builder);
   builder.select = jest.fn(() => builder);
-  builder.maybeSingle = jest.fn().mockResolvedValue({
+  builder.maybeSingle = jest.fn(async () => ({
     data: null,
     error: null,
-  });
+  }));
   return builder;
 }
 

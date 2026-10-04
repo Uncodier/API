@@ -20,6 +20,7 @@ import { loadAssistantRequirementContext } from './requirement-context';
 import { resolveUiMediaContract } from './ui-media-contract';
 import { requiredSkillsPrompt, type AssistantSkillSelection } from './skill-selection';
 import { resolvePublishNodeBinding } from './publish-node-binding';
+import { resolveAssistantHistoryModel } from './history-model';
 
 export async function prepareAssistantContext(
   instanceId: string,
@@ -65,7 +66,7 @@ export async function prepareAssistantContext(
   console.log(`[Workflow] Starting assistant execution for instance: ${instanceId}`);
 
   // Determine execution parameters
-  const { isScrapybaraInstance, shouldUseSDKTools, provider, capabilities } = determineInstanceCapabilities(instance, useSdkTools);
+  const { isScrapybaraInstance, shouldUseSDKTools, capabilities } = determineInstanceCapabilities(instance, useSdkTools);
   
   const useAssistantOnly =
     instance.status === 'uninstantiated' ||
@@ -76,10 +77,9 @@ export async function prepareAssistantContext(
 
   let baseSystemPrompt = '';
   let toolsContext = '';
-  let finalProvider = provider;
+  const { provider: finalProvider, model: finalModel } = resolveAssistantHistoryModel();
 
   if (useAssistantOnly) {
-     finalProvider = 'azure'; // Force Azure for assistant-only
      baseSystemPrompt =
         instance.status === 'paused' || instance.status === 'stopped'
           ? 'You are a helpful AI assistant. This instance is currently paused, so browser automation tools are not available.'
@@ -195,9 +195,7 @@ export async function prepareAssistantContext(
   const historyContext = instanceNodeId || (systemPrompt || '').includes('WORKFLOW MODE')
     ? ''
     : await new InstanceContextManager(instanceId, siteId)
-        .buildHistory(message, finalProvider, finalProvider === 'azure'
-          ? process.env.MICROSOFT_AZURE_OPENAI_DEPLOYMENT || 'gpt-4o'
-          : process.env.AI_MODEL || (finalProvider === 'gemini' ? 'gemini-3.1-pro-preview' : 'gpt-4o'));
+        .buildHistory(message, finalProvider, finalModel);
   
   // Get tools list just for counting/prompt purposes here
   // We do NOT pass these instantiated tools in the return value to avoid serialization issues
@@ -422,6 +420,7 @@ Follow the loaded SKILL.md playbooks before calling tools via \`tools\`. \`skill
       use_sdk_tools: shouldUseSDKTools && !useAssistantOnly,
       provider: finalProvider,
       ai_provider: finalProvider,
+      ai_model: finalModel,
       instance_id: instanceId,
       site_id: siteId,
       user_id: userId,

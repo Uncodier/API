@@ -22,7 +22,7 @@ export async function executeAssistant(
     user_id,
   } = options || {};
   
-  const provider = options?.provider || process.env.ROBOT_SDK_PROVIDER || 'gemini';
+  const provider = 'openrouter';
 
   if (site_id) {
     try {
@@ -51,6 +51,7 @@ export async function executeAssistant(
     const executor = new AIAgentExecutor({
       provider: options?.ai_provider,
       model: options?.ai_model,
+      siteId: site_id,
     });
     const streamingCallbacks =
       instance_id && site_id

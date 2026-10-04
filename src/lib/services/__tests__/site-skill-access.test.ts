@@ -11,7 +11,7 @@ function row(data: any, error: any = null) {
   const query: any = { then: (resolve: (value: any) => any) => Promise.resolve({ data, error }).then(resolve) };
   query.select = jest.fn().mockReturnValue(query);
   query.eq = jest.fn().mockReturnValue(query);
-  query.maybeSingle = jest.fn().mockResolvedValue({ data, error });
+  query.maybeSingle = jest.fn(async () => ({ data, error }));
   return query;
 }
 

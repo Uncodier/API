@@ -1,18 +1,9 @@
 /**
  * AI Agent Executor
  *
- * Provider-agnostic agent executor that reuses the OpenAI chat completions
- * protocol (with tool calling) but can target Gemini (default), Azure OpenAI
- * or OpenAI via the same client.
- *
- * Provider selection order:
- *   1. `config.provider` (constructor arg)
- *   2. `process.env.AI_PROVIDER`
- *   3. `'gemini'` (default)
- *
- * For Gemini we use Google's OpenAI-compatible endpoint
- * (`https://generativelanguage.googleapis.com/v1beta/openai/`) so tool calling
- * and streaming keep working unchanged.
+ * OpenRouter-only agent executor using Chat Completions with tool calling.
+ * Legacy provider labels are model-family hints, never alternate transports.
+ * The default model is configured through OPENROUTER_CHAT_MODEL.
  *
  * CRITICAL: OpenAI/Azure Image Handling Pattern
  * =============================================
@@ -32,10 +23,10 @@
  * @see https://platform.openai.com/docs/guides/vision
  */
 
-import OpenAI from 'openai';
+import type OpenAI from 'openai';
+import { createOpenRouterClient, isOpenRouterReasoningModel, resolveOpenRouterModel } from '@/lib/services/ai/openrouter';
 import { fitInstanceRequest, resolveModelContextCapacity } from '@/lib/services/robot-instance/instance-context-budget';
 import { normalizeToolOperationResult } from '@/lib/services/tool-operation-result';
-import { GoogleAuth } from 'google-auth-library';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import {
@@ -138,6 +129,9 @@ export interface ToolResult {
 
 export interface Step {
   text: string;
+  provider?: string;
+  model?: string;
+  generationId?: string;
   toolCalls?: ToolCall[];
   toolResults?: ToolResult[];
   output?: any;
@@ -145,6 +139,9 @@ export interface Step {
     promptTokens: number;
     completionTokens: number;
     totalTokens: number;
+    cost?: number;
+    cost_details?: Record<string, unknown>;
+    is_byok?: boolean;
   };
 }
 
@@ -161,6 +158,8 @@ export interface Message {
   }>;
   tool_call_id?: string;
   name?: string;
+  /** OpenRouter reasoning blocks must be replayed verbatim with tool calls. */
+  reasoning_details?: any[];
 }
 
 export interface Tool {
@@ -172,6 +171,7 @@ export interface Tool {
 
 export interface ActOptions {
   model?: string;
+  siteId?: string;
   tools: Tool[];
   system?: string;
   prompt?: string;
@@ -198,6 +198,8 @@ export interface ActOptions {
   onReasoningTokensUsed?: (reasoningTokensCount: number) => Promise<void>;
   /** One model turn and at most one actual tool execution attempt; remaining calls receive skipped results. */
   enforceSingleTurn?: boolean;
+  /** SDK plan wrappers own their wait semantics and remote retries. */
+  preserveToolExecution?: boolean;
   toolOverrides?: Record<string, any>;
   onContextUsage?: (params: { system: string; messages: Message[]; tools: unknown[];
     provider: AIProvider; model: string; providerInputTokens?: number;
@@ -214,19 +216,21 @@ export interface ActResponse {
     promptTokens: number;
     completionTokens: number;
     totalTokens: number;
+    cost?: number;
   };
 }
 
-export type AIProvider = 'gemini' | 'azure' | 'openai' | 'xai';
+export type AIProvider = 'openrouter' | 'gemini' | 'azure' | 'openai' | 'xai';
 
 export interface AIAgentExecutorConfig {
-  /** Provider to use. Defaults to process.env.AI_PROVIDER ?? 'gemini'. */
+  /** Legacy model-family hint. Transport is always OpenRouter. */
   provider?: AIProvider;
-  /** Model id. Defaults to process.env.AI_MODEL or a provider-specific default. */
+  /** OpenRouter model id. Defaults to OPENROUTER_CHAT_MODEL. */
   model?: string;
-  /** Provider API key. Falls back to provider-specific env var. */
+  /** OpenRouter API key. Falls back to OPENROUTER_API_KEY only. */
   apiKey?: string;
-  /** Base URL override. Useful for self-hosted OpenAI-compatible gateways. */
+  siteId?: string;
+  /** @deprecated Ignored: OpenRouter uses a fixed endpoint. */
   baseURL?: string;
   /** Azure-only: resource endpoint, e.g. https://my-resource.openai.azure.com */
   endpoint?: string;
@@ -242,16 +246,10 @@ export interface AIAgentExecutorConfig {
  */
 export type AzureOpenAIConfig = AIAgentExecutorConfig;
 
-const GEMINI_DEFAULT_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
-const OPENAI_DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 
 /**
- * Produce a rich diagnostic line for a failed chat.completions.create call.
- * OpenAI SDK APIError messages like "400 status code (no body)" give us
- * virtually nothing useful on their own; this helper pulls out the request id,
- * provider headers, base URL, model, message count and rough payload size so
- * we can actually troubleshoot provider-side rejections (bad model id,
- * context-window overflow, invalid tool schema, etc.).
+ * Log routing and status only. SDK error bodies, headers and prompt excerpts
+ * can echo credentials and must not be included in application logs.
  */
 function logChatCompletionFailure(
   err: unknown,
@@ -265,150 +263,19 @@ function logChatCompletionFailure(
     tools?: unknown[];
   },
 ): void {
-  const e = err as {
-    status?: number;
-    message?: string;
-    code?: string;
-    type?: string;
-    param?: string;
-    request_id?: string;
-    headers?: Record<string, string> | Headers;
-    error?: unknown;
-    response?: { status?: number; headers?: unknown; data?: unknown };
-    cause?: unknown;
-  } | undefined;
-
-  const headersObj: Record<string, string> = {};
-  const rawHeaders = e?.headers;
-  try {
-    if (rawHeaders && typeof (rawHeaders as Headers).forEach === 'function') {
-      (rawHeaders as Headers).forEach((value: string, key: string) => {
-        if (
-          key.startsWith('x-') ||
-          key === 'content-type' ||
-          key === 'content-length' ||
-          key === 'server'
-        ) {
-          headersObj[key] = value;
-        }
-      });
-    } else if (rawHeaders && typeof rawHeaders === 'object') {
-      for (const [k, v] of Object.entries(rawHeaders as Record<string, string>)) {
-        if (
-          k.startsWith('x-') ||
-          k.toLowerCase() === 'content-type' ||
-          k.toLowerCase() === 'content-length' ||
-          k.toLowerCase() === 'server'
-        ) {
-          headersObj[k] = String(v);
-        }
-      }
-    }
-  } catch {
-    /* ignore header introspection errors */
-  }
-
-  let approxPayloadChars: number | undefined;
-  if (Array.isArray(ctx.messages)) {
-    try {
-      approxPayloadChars = JSON.stringify(ctx.messages).length;
-    } catch {
-      approxPayloadChars = undefined;
-    }
-  }
-
-  // When the provider returns 400 with an empty body (Gemini's
-  // openai-compat layer does this often) the only way to diagnose the
-  // rejection is to inspect what we sent. Attach a compact preview of the
-  // last few messages and the tool names so operators can spot the offender
-  // (e.g. tool with unresolved parameters, malformed image, null content).
-  const isEmptyBody400 =
-    e?.status === 400 &&
-    (!e?.error || (typeof e?.message === 'string' && /no body|400 status code \(no body\)/i.test(e.message)));
-
-  const TRUNCATE = (s: string, n = 600): string => (s.length > n ? s.slice(0, n) + '…' : s);
-  const previewMessage = (m: any) => {
-    if (!m || typeof m !== 'object') return { role: '?', content: String(m) };
-    const out: Record<string, unknown> = { role: m.role };
-    if (m.name) out.name = String(m.name).slice(0, 64);
-    if (m.tool_call_id) out.tool_call_id = String(m.tool_call_id).slice(0, 64);
-    if (Array.isArray(m.tool_calls)) {
-      out.tool_calls = m.tool_calls.map((tc: any) => ({
-        id: tc?.id,
-        name: tc?.function?.name,
-        argsPreview: typeof tc?.function?.arguments === 'string' ? TRUNCATE(tc.function.arguments, 200) : tc?.function?.arguments,
-      }));
-    }
-    if (typeof m.content === 'string') {
-      out.content = TRUNCATE(m.content, 800);
-    } else if (Array.isArray(m.content)) {
-      out.content = m.content.map((p: any) => {
-        if (!p || typeof p !== 'object') return p;
-        if (p.type === 'text') return { type: 'text', text: TRUNCATE(String(p.text ?? ''), 400) };
-        if (p.type === 'image_url') {
-          const url = typeof p.image_url === 'string' ? p.image_url : p.image_url?.url;
-          return {
-            type: 'image_url',
-            urlPreview: typeof url === 'string' ? url.slice(0, 64) + (url.length > 64 ? '…' : '') : typeof url,
-            urlBytes: typeof url === 'string' ? url.length : null,
-          };
-        }
-        return { type: p.type };
-      });
-    } else if (m.content === null || m.content === undefined) {
-      out.content = m.content;
-    } else {
-      out.content = `[${typeof m.content}]`;
-    }
-    return out;
-  };
-
-  let messagesPreview: unknown[] | undefined;
-  if (isEmptyBody400 && Array.isArray(ctx.messages)) {
-    const tail = ctx.messages.slice(-4);
-    messagesPreview = tail.map(previewMessage);
-  }
-
-  let toolNames: string[] | undefined;
-  if (isEmptyBody400 && Array.isArray(ctx.tools)) {
-    toolNames = ctx.tools
-      .map((t: any) => t?.function?.name || t?.name)
-      .filter((x: unknown): x is string => typeof x === 'string')
-      .slice(0, 30);
-  }
-
-  const payload = {
+  const error = err as { status?: unknown; request_id?: unknown } | undefined;
+  // Never log SDK error bodies/headers or prompt previews: gateways can echo
+  // credentials, tool arguments or private context in their rejection details.
+  console.error('[AI EXECUTOR] OpenRouter request failed', {
     provider: ctx.provider,
     stage: ctx.stage,
-    baseURL: ctx.baseURL,
     model: ctx.modelName,
-    messageCount: Array.isArray(ctx.messages) ? ctx.messages.length : undefined,
-    approxPayloadChars,
+    messageCount: ctx.messages?.length,
     toolCount: ctx.toolCount,
-    status: e?.status,
-    code: e?.code,
-    type: e?.type,
-    param: e?.param,
-    request_id: e?.request_id,
-    headers: Object.keys(headersObj).length > 0 ? headersObj : undefined,
-    errorMessage: e?.message,
-    errorBody: e?.error,
-    ...(messagesPreview ? { messagesPreview } : {}),
-    ...(toolNames ? { toolNames } : {}),
-  };
-
-  console.error(
-    `❌ [LLM_ERROR][${ctx.provider}][${ctx.stage}] chat.completions.create failed:`,
-    JSON.stringify(payload, null, 2),
-  );
+    status: typeof error?.status === 'number' ? error.status : undefined,
+  });
 }
 
-const DEFAULT_MODEL_BY_PROVIDER: Record<AIProvider, string> = {
-  gemini: 'gemini-3.1-pro-preview',
-  azure: 'gpt-4o',
-  openai: 'gpt-4o',
-  xai: 'grok-4.6',
-};
 
 /**
  * Extract the first balanced JSON value (object or array) from a string.
@@ -489,6 +356,7 @@ export class AIAgentExecutor {
   private client: OpenAI;
   private model: string;
   private provider: AIProvider;
+  private readonly siteId?: string;
   private contextModelId: string | null = null;
 
   constructor(config?: AIAgentExecutorConfig | string) {
@@ -497,101 +365,20 @@ export class AIAgentExecutor {
       config = { apiKey: config };
     }
 
-    const provider = this.resolveProvider(config?.provider);
-    this.provider = provider;
-
-    if (provider === 'azure') {
-      const apiKey = config?.apiKey || process.env.MICROSOFT_AZURE_OPENAI_API_KEY;
-      const endpoint = config?.endpoint || process.env.MICROSOFT_AZURE_OPENAI_ENDPOINT;
-      const deployment = config?.deployment || process.env.MICROSOFT_AZURE_OPENAI_DEPLOYMENT || DEFAULT_MODEL_BY_PROVIDER.azure;
-      this.contextModelId = deployment;
-      const apiVersion = config?.apiVersion || process.env.MICROSOFT_AZURE_OPENAI_API_VERSION || '2024-08-01-preview';
-
-      if (!endpoint) {
-        throw new Error('Azure OpenAI endpoint is required. Set MICROSOFT_AZURE_OPENAI_ENDPOINT environment variable.');
-      }
-      if (!apiKey) {
-        throw new Error('Azure OpenAI API key is required. Set MICROSOFT_AZURE_OPENAI_API_KEY environment variable.');
-      }
-
-      this.client = new OpenAI({
-        apiKey,
-        baseURL: `${endpoint}/openai/deployments/${deployment}`,
-        defaultQuery: { 'api-version': apiVersion },
-        defaultHeaders: { 'api-key': apiKey },
-      });
-
-      // For Azure the model in the body is informational (deployment is in baseURL).
-      this.model = config?.model || process.env.AI_MODEL || deployment;
-    } else if (provider === 'openai') {
-      const apiKey = config?.apiKey || process.env.OPENAI_API_KEY;
-      const baseURL = config?.baseURL || process.env.OPENAI_BASE_URL || OPENAI_DEFAULT_BASE_URL;
-
-      if (!apiKey) {
-        throw new Error('OpenAI API key is required. Set OPENAI_API_KEY environment variable.');
-      }
-
-      this.client = new OpenAI({ apiKey, baseURL });
-      this.model = config?.model || process.env.AI_MODEL || DEFAULT_MODEL_BY_PROVIDER.openai;
-    } else if (provider === 'xai') {
-      const apiKey = config?.apiKey || process.env.XAI_API_KEY;
-      const isVertex = !!process.env.GOOGLE_CLOUD_PROJECT_ID && !apiKey; // Use Vertex AI if XAI API key is missing but GCP project is set
-
-      let baseURL = config?.baseURL || process.env.XAI_BASE_URL || 'https://api.x.ai/v1';
-      let fetchFn: typeof fetch | undefined;
-
-      if (isVertex) {
-        baseURL = `https://aiplatform.googleapis.com/v1/projects/${process.env.GOOGLE_CLOUD_PROJECT_ID}/locations/global/endpoints/openapi/`;
-        
-        const auth = new GoogleAuth({
-          scopes: 'https://www.googleapis.com/auth/cloud-platform',
-        });
-        
-        fetchFn = async (url, init) => {
-          const authClient = await auth.getClient();
-          const token = await authClient.getAccessToken();
-          init = init || {};
-          init.headers = {
-            ...init.headers,
-            Authorization: `Bearer ${token.token}`
-          };
-          return fetch(url, init);
-        };
-      }
-
-      if (!apiKey && !isVertex) {
-        throw new Error('xAI API key is required, or GCP configuration for Vertex AI.');
-      }
-
-      this.client = new OpenAI({ 
-        apiKey: apiKey || 'dummy-for-vertex', 
-        baseURL,
-        fetch: fetchFn 
-      });
-      this.model = config?.model || process.env.AI_MODEL || (isVertex ? 'xai/grok-4.6' : 'grok-4.6');
-    } else {
-      // Gemini via OpenAI-compatible endpoint (default).
-      const apiKey = config?.apiKey || process.env.GEMINI_API_KEY;
-      const baseURL = config?.baseURL || process.env.GEMINI_OPENAI_BASE_URL || GEMINI_DEFAULT_BASE_URL;
-
-      if (!apiKey) {
-        throw new Error('Gemini API key is required. Set GEMINI_API_KEY environment variable.');
-      }
-
-      this.client = new OpenAI({ apiKey, baseURL });
-      this.model = config?.model || process.env.AI_MODEL || DEFAULT_MODEL_BY_PROVIDER.gemini;
+    if (config?.apiKey !== undefined && config.provider && config.provider !== 'openrouter') {
+      throw new Error('Legacy provider credentials are not accepted by OpenRouter. Use provider: openrouter with an OpenRouter API key.');
     }
+    if (config?.endpoint || config?.deployment || config?.apiVersion ||
+        (config?.provider === 'azure' && config.model && !config.model.includes('/') && !/^(gpt-|o\d)/.test(config.model))) {
+      throw new Error('Azure deployment configuration cannot be migrated automatically. Select an OpenRouter catalog model ID.');
+    }
+
+    this.provider = 'openrouter';
+    this.siteId = config?.siteId;
+    this.client = createOpenRouterClient({ apiKey: config?.apiKey });
+    this.model = resolveOpenRouterModel(config?.model, config?.provider);
 
     console.log(`₍ᐢ•(ܫ)•ᐢ₎ [AI EXECUTOR] provider=${this.provider} model=${this.model}`);
-  }
-
-  private resolveProvider(explicit?: AIProvider): AIProvider {
-    const raw = (explicit || process.env.AI_PROVIDER || 'gemini').toLowerCase();
-    if (raw === 'azure' || raw === 'openai' || raw === 'gemini' || raw === 'xai') {
-      return raw as AIProvider;
-    }
-    console.warn(`₍ᐢ•(ܫ)•ᐢ₎ [AI EXECUTOR] Unknown AI_PROVIDER="${raw}", falling back to 'gemini'`);
-    return 'gemini';
   }
 
   /** Expose the resolved provider (useful for callers that log/route). */
@@ -691,6 +478,8 @@ export class AIAgentExecutor {
     },
   ): Promise<{
     message: any;
+    generationId?: string;
+    model?: string;
     usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
     finish_reason?: string;
     streamingLogId?: string;
@@ -698,21 +487,19 @@ export class AIAgentExecutor {
     const opts = {
       ...completionOptions,
       stream: true,
-      // OpenAI and Azure OpenAI send a final, choices-free usage chunk only
-      // when requested. Do not send this option to other compatibility APIs.
-      ...(this.provider === 'openai' || this.provider === 'azure'
-        ? { stream_options: { include_usage: true } } : {}),
+      stream_options: { include_usage: true },
     };
     const stream = await this.client.chat.completions.create(opts as any).catch(err => {
-      console.error(`❌ [AI STREAM INIT ERROR][${this.provider}]`, err.message);
+      console.error(`[AI STREAM INIT ERROR][${this.provider}] Provider stream unavailable`);
       if (err.status) console.error(`   Status: ${err.status}`);
-      if (err.headers) console.error(`   Headers:`, JSON.stringify(err.headers, null, 2));
-      if (err.error) console.error(`   Error object:`, JSON.stringify(err.error, null, 2));
       throw err;
     });
 
     let content = '';
+    let generationId: string | undefined;
+    let responseModel: string | undefined;
     let reasoningContent = '';
+    const reasoningDetails: any[] = [];
     // `extra_content` carries Gemini 3's thought_signature
     // (`extra_content.google.thought_signature`). We MUST persist it verbatim
     // across the history or the next call 400s with "Function call is missing
@@ -730,6 +517,8 @@ export class AIAgentExecutor {
     let lastThinkingEmitTime = 0;
 
     for await (const chunk of stream as unknown as AsyncIterable<any>) {
+      if (chunk.id) generationId = chunk.id;
+      if (chunk.model) responseModel = chunk.model;
       if (chunk.usage) {
         usage = chunk.usage;
       }
@@ -742,6 +531,21 @@ export class AIAgentExecutor {
       }
 
       const delta = choice.delta || {};
+
+      // OpenRouter reasoning blocks carry encrypted state required for tool replay.
+      // Merge streamed fragments by their index; never expose these as tool arguments.
+      for (const detail of delta.reasoning_details || []) {
+        const previous = detail.index !== undefined
+          ? reasoningDetails.find(value => value.index === detail.index && value.type === detail.type)
+          : undefined;
+        if (!previous) reasoningDetails.push({ ...detail });
+        else {
+          const fragments = Object.fromEntries(['text', 'data', 'summary', 'signature']
+            .filter(key => typeof detail[key] === 'string')
+            .map(key => [key, (previous[key] || '') + detail[key]]));
+          Object.assign(previous, detail, fragments);
+        }
+      }
 
       const reasoningDelta = typeof delta.reasoning_content === 'string' ? delta.reasoning_content : (typeof delta.reasoning === 'string' ? delta.reasoning : '');
       if (reasoningDelta && callbacks.onThinkingStreamStart && callbacks.onThinkingStreamChunk) {
@@ -834,6 +638,7 @@ export class AIAgentExecutor {
     const message: any = {
       role: 'assistant',
       content: content || null,
+      ...(reasoningDetails.length ? { reasoning_details: reasoningDetails } : {}),
     };
     if (toolCallsArray.length > 0) {
       message.tool_calls = toolCallsArray.map((tc) => {
@@ -847,7 +652,7 @@ export class AIAgentExecutor {
       });
     }
 
-    return { message, usage, finish_reason: finishReason, streamingLogId };
+    return { message, usage, generationId, model: responseModel, finish_reason: finishReason, streamingLogId };
   }
 
   /**
@@ -873,19 +678,15 @@ export class AIAgentExecutor {
       onThinkingStreamChunk,
       onReasoningTokensUsed,
       enforceSingleTurn = false,
+      preserveToolExecution = false,
       toolOverrides,
       onContextUsage,
       enforceContextBudget = false,
     } = options;
 
-    const modelName = model || this.model;
+    const modelName = model ? resolveOpenRouterModel(model) : this.model;
     const provider = this.provider;
-    // Azure/OpenAI reasoning-tuned models accept extra params (reasoning_effort,
-    // verbosity, no temperature override). Gemini does NOT — skip all that.
-    const supportsReasoningParams = provider === 'azure' || provider === 'openai';
-    const isReasoningModel = supportsReasoningParams && (
-      modelName.includes('o1') || modelName.includes('o3') || modelName.includes('gpt-5.6-sol')
-    );
+    const isReasoningModel = isOpenRouterReasoningModel(modelName);
 
     const uniqueTools: any[] = [];
     const seenToolNames = new Set<string>();
@@ -967,11 +768,12 @@ export class AIAgentExecutor {
     });
 
     const steps: Step[] = [];
-    let totalUsage = {
+    let totalUsage: ActResponse['usage'] = {
       promptTokens: 0,
       completionTokens: 0,
       totalTokens: 0,
     };
+    let allCompletionCostsKnown = true;
     let iterations = 0;
     let finalText = '';
     let finalOutput: any = undefined;
@@ -1061,6 +863,7 @@ export class AIAgentExecutor {
         const completionOptions: any = {
           model: modelName,
           messages,
+          ...((options.siteId || this.siteId) ? { user: options.siteId || this.siteId } : {}),
         };
 
         // After enough iterations with a schema, drop tools to force JSON output.
@@ -1068,9 +871,9 @@ export class AIAgentExecutor {
 
         if (!shouldForceJson && openaiTools.length > 0) {
           completionOptions.tools = openaiTools;
-          // Only these providers have a supported parallel-tool control. The
-          // local execution limit below remains authoritative if it is ignored.
-          if (enforceSingleTurn && (provider === 'openai' || provider === 'azure')) {
+          // The selected GPT-6 model does not advertise parallel_tool_calls.
+          // Local single-turn execution remains authoritative for all models.
+          if (enforceSingleTurn && !isReasoningModel) {
             completionOptions.parallel_tool_calls = false;
           }
           console.log(`₍ᐢ•(ܫ)•ᐢ₎ [EXECUTOR] Including tools in API call`);
@@ -1083,14 +886,10 @@ export class AIAgentExecutor {
           completionOptions.temperature = temperature;
         }
 
-        // reasoning_effort / verbosity only for Azure/OpenAI o-series style deployments.
+        // OpenRouter normalizes reasoning controls for namespaced models.
         if (isReasoningModel) {
-          if (modelName === 'o3-mini' || modelName === 'o1') {
-            completionOptions.reasoning_effort = reasoningEffort;
-            console.log(`₍ᐢ•(ܫ)•ᐢ₎ [EXECUTOR] Using reasoning_effort=${reasoningEffort} for model: ${modelName}`);
-          } else {
-            console.log(`₍ᐢ•(ܫ)•ᐢ₎ [EXECUTOR] Skipping reasoning_effort for model: ${modelName}`);
-          }
+          completionOptions.reasoning = { effort: reasoningEffort };
+          completionOptions.verbosity = verbosity;
         }
 
         if (schema) {
@@ -1120,15 +919,13 @@ export class AIAgentExecutor {
           }
         }
 
-        console.log(`🔍 [DEBUG] First 2000 chars of messages:`, JSON.stringify(messages, null, 2).substring(0, 2000));
-
         const useStreamingPath = useStreaming && onStreamStart && onStreamChunk && !schema;
         const useThinkingStream = useStreamingPath && onThinkingStreamStart && onThinkingStreamChunk;
 
         const optsForLog = { ...completionOptions, stream: useStreamingPath, stream_options: undefined, messages: `[${messages.length} messages omitted]` };
         console.log(`🔍 [DEBUG][${provider}] API Payload Options:`, JSON.stringify(optsForLog, null, 2));
 
-        let response: { message: any; usage?: any; finish_reason?: string };
+        let response: { message: any; usage?: any; finish_reason?: string; generationId?: string; model?: string };
 
         if (useStreamingPath) {
           try {
@@ -1146,7 +943,6 @@ export class AIAgentExecutor {
               streamCallbacks
             );
           } catch (streamError: any) {
-            console.error(`❌ [STREAM_ERROR][${provider}] Streaming failed (${streamError.status || streamError.message}), falling back to non-streaming...`);
             logChatCompletionFailure(streamError, {
               provider,
               stage: 'stream',
@@ -1157,54 +953,9 @@ export class AIAgentExecutor {
               tools: openaiTools,
             });
 
-            if (provider === 'azure' && isAzureInvalidImageError(streamError)) {
-              sanitizeMessagesForAzureVisionImages(messages);
-              console.warn(
-                `₍ᐢ•(ܫ)•ᐢ₎ [AZURE_VISION] Re-sanitized messages after invalid image on stream; using non-streaming fallback`
-              );
-            }
-
-            console.log(`⏱️ [TIMING] Calling ${provider.toUpperCase()} API with NON-streaming fallback...`);
-            const fallbackOptions = { ...completionOptions };
-            delete fallbackOptions.stream;
-            delete fallbackOptions.stream_options;
-
-            const apiStartTime = Date.now();
-            let completion;
-            try {
-              completion = await this.client.chat.completions.create(fallbackOptions);
-            } catch (fallbackErr: any) {
-              if (provider === 'azure' && isAzureInvalidImageError(fallbackErr)) {
-                sanitizeMessagesForAzureVisionImages(messages);
-                completion = await this.client.chat.completions.create(fallbackOptions);
-              } else {
-                logChatCompletionFailure(fallbackErr, {
-                  provider,
-                  stage: 'fallback',
-                  baseURL: (this.client as any)?.baseURL,
-                  modelName,
-                  messages,
-                  toolCount: openaiTools.length,
-                  tools: openaiTools,
-                });
-                throw fallbackErr;
-              }
-            }
-            const apiEndTime = Date.now();
-            const apiDuration = apiEndTime - apiStartTime;
-            console.log(`⏱️ [TIMING][${provider}] Fallback response received in ${apiDuration}ms (${(apiDuration/1000).toFixed(1)}s)`);
-
-            const choice = completion.choices[0];
-            response = {
-              message: choice.message,
-              usage: completion.usage,
-              finish_reason: choice.finish_reason ?? undefined,
-            } as any;
-
-            if (choice.message.content) {
-              const streamingLogId = await onStreamStart!();
-              await onStreamChunk!(streamingLogId, choice.message.content, true);
-            }
+            // A broken stream/callback can follow an accepted, billed generation.
+            // Never create another generation to hide that ambiguous outcome.
+            throw streamError;
           }
         } else {
           console.log(`⏱️ [TIMING] Calling ${provider.toUpperCase()} API...`);
@@ -1237,6 +988,8 @@ export class AIAgentExecutor {
           response = {
             message: choice.message,
             usage: completion.usage,
+            generationId: completion.id,
+            model: completion.model,
             finish_reason: choice.finish_reason ?? undefined,
           } as any;
         }
@@ -1258,15 +1011,28 @@ export class AIAgentExecutor {
           totalUsage.completionTokens += response.usage.completion_tokens || 0;
           totalUsage.totalTokens += response.usage.total_tokens || 0;
         }
+        // A partial sum must never be presented as the actual cost of the whole run.
+        if (typeof response.usage?.cost !== 'number' || !Number.isFinite(response.usage.cost)) {
+          allCompletionCostsKnown = false;
+          delete totalUsage.cost;
+        } else if (allCompletionCostsKnown) {
+          totalUsage.cost = (totalUsage.cost ?? 0) + response.usage.cost;
+        }
 
         messages.push(message as Message);
 
         const step: Step = {
           text: message.content || '',
+          provider,
+          model: response.model || modelName,
+          ...(response.generationId ? { generationId: response.generationId } : {}),
           usage: {
             promptTokens: response.usage?.prompt_tokens || 0,
             completionTokens: response.usage?.completion_tokens || 0,
             totalTokens: response.usage?.total_tokens || 0,
+            ...(response.usage?.cost !== undefined ? { cost: response.usage.cost } : {}),
+            ...(response.usage?.cost_details !== undefined ? { cost_details: response.usage.cost_details } : {}),
+            ...(response.usage?.is_byok !== undefined ? { is_byok: response.usage.is_byok } : {}),
           },
         };
 
@@ -1452,7 +1218,7 @@ export class AIAgentExecutor {
               let result: any;
 
               // Execute wait actions locally instead of round-trip to Scrapybara.
-              if (toolCall.toolName === 'computer' && toolCall.args.action === 'wait') {
+              if (!preserveToolExecution && toolCall.toolName === 'computer' && toolCall.args.action === 'wait') {
                 const duration = toolCall.args.duration || 1000;
                 console.log(`⚡ [WAIT_LOCAL] Executing wait locally for ${duration}ms instead of calling Scrapybara`);
 
@@ -1485,7 +1251,7 @@ export class AIAgentExecutor {
                 }
 
                 let executeAttempts = 0;
-                const maxExecuteAttempts = enforceSingleTurn ? 1 : 2;
+                const maxExecuteAttempts = enforceSingleTurn || preserveToolExecution ? 1 : 2;
                 while (executeAttempts < maxExecuteAttempts) {
                   try {
                     result = await tool.execute(toolCall.args);
@@ -1770,7 +1536,7 @@ export class AIAgentExecutor {
 
       } catch (error: any) {
         if (error?.name === 'RecoveryError') throw error;
-        console.error('Error in agent execution:', error);
+        console.error('[AI EXECUTOR] Execution stopped after an error');
 
         // Azure-specific content filter; other providers surface their own error shapes.
         if (error.code === 'content_filter' || error.message?.includes('content management policy')) {

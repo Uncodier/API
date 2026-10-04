@@ -1,5 +1,28 @@
 import { analyzeWithConversationApi } from './conversation-client';
 
+/** OpenRouter uses the same chat envelope for every model vendor. */
+export function extractResponseContent(response: any): string {
+  if (typeof response === 'string') return response;
+  const message = response?.choices?.[0]?.message;
+  if (message && 'content' in message) {
+    if (typeof message.content === 'string') return message.content;
+    return Array.isArray(message.content)
+      ? message.content.map((part: any) => part.text || '').join('') : '';
+  }
+  // Read historical native envelopes only when no canonical content exists.
+  if (typeof response?.content === 'string') return response.content;
+  if (Array.isArray(response?.content)) return response.content.map((part: any) => part.text || '').join('');
+  return response?.candidates?.[0]?.content?.parts?.map((part: any) => part.text || '').join('') || '';
+}
+
+/** Update just text, retaining provider, generation ID, usage/cost and other fields. */
+export function updateResponseContent(response: any, content: string): void {
+  if (response?.choices?.[0]?.message) response.choices[0].message.content = content;
+  else if (typeof response?.content === 'string') response.content = content;
+  else if (response?.content?.[0]) response.content[0].text = content;
+  else if (response?.candidates?.[0]?.content?.parts?.[0]) response.candidates[0].content.parts[0].text = content;
+}
+
 interface ContinuationOptions {
   incompleteJson: string;
   modelType: 'anthropic' | 'openai' | 'gemini';
@@ -18,6 +41,7 @@ interface ContinuationResult {
   completeJson: any;
   error?: string;
   retries?: number;
+  generations?: Array<{ id?: string; provider?: string; model?: string; usage?: any }>;
 }
 
 /**
@@ -41,7 +65,7 @@ export async function continueJsonGeneration(options: ContinuationOptions): Prom
 
   // Verificar si el input es válido
   if (!incompleteJson || typeof incompleteJson !== 'string') {
-    console.error('[ContinuationService] Input inválido:', incompleteJson);
+    console.error('[ContinuationService] Input inválido');
     return {
       success: false,
       completeJson: null,
@@ -64,7 +88,7 @@ export async function continueJsonGeneration(options: ContinuationOptions): Prom
       completeJson: parsedIncomplete
     };
   } catch (error: any) {
-    console.log('[ContinuationService] JSON incompleto o inválido:', error.message);
+    console.log('[ContinuationService] JSON incompleto o inválido');
     
     // Continuar con el proceso de recuperación
   }
@@ -133,9 +157,6 @@ export async function continueJsonGeneration(options: ContinuationOptions): Prom
       // Extraer las partes de la cadena
       const lastPart = incompleteJson.trim().substring(lastQuotePos - 20, lastQuotePos);
       const firstPart = continuationPart.trim().substring(0, firstQuotePos + 1);
-      
-      console.log('[ContinuationService] Final del incompleto:', lastPart);
-      console.log('[ContinuationService] Inicio de la continuación:', firstPart);
       
       // Buscar palabras que podrían estar cortadas
       const lastWords = lastPart.split(' ');
@@ -218,8 +239,7 @@ export async function continueJsonGeneration(options: ContinuationOptions): Prom
     combinedJson = combinedJson.replace('] "', '], "');
     combinedJson = combinedJson.replace('" [', '", [');
     
-    console.log('[ContinuationService] JSON concatenado (últimos 50 caracteres):', 
-      combinedJson.substring(Math.max(0, combinedJson.length - 50), combinedJson.length));
+    console.log('[ContinuationService] JSON concatenado');
     
     return combinedJson;
   };
@@ -230,7 +250,7 @@ export async function continueJsonGeneration(options: ContinuationOptions): Prom
   
   try {
     partialStructure = JSON.parse(cleanedJson);
-    console.log('[ContinuationService] Se pudo reparar el JSON para análisis:', Object.keys(partialStructure));
+    console.log('[ContinuationService] Se pudo reparar el JSON para análisis');
     
     // Si pudimos reparar el JSON, podríamos devolverlo directamente
     // pero vamos a verificar si parece completo
@@ -323,6 +343,7 @@ IMPORTANTE: Tu respuesta debe ser SOLO la parte faltante, no el JSON completo.`;
   let success = false;
   let completeJson: any = null;
   let lastError: string = '';
+  const generations: NonNullable<ContinuationResult['generations']> = [];
   
   // Variable para almacenar el ID de conversación para continuación
   let conversationId: string | undefined;
@@ -384,7 +405,7 @@ IMPORTANTE: Tu respuesta debe ser SOLO la parte faltante, no el JSON completo.`;
       console.log(`[ContinuationService] Esperando respuesta del modelo (timeout: ${continuationTimeout}ms)...`);
       
       // Si tenemos un ID de conversación, utilizarlo para la continuación
-      const response = await analyzeWithConversationApi(
+      const rawResponse = await analyzeWithConversationApi(
         prompt,
         modelType,
         modelId,
@@ -392,16 +413,21 @@ IMPORTANTE: Tu respuesta debe ser SOLO la parte faltante, no el JSON completo.`;
         includeScreenshot,
         continuationTimeout, // Usar un timeout más largo para la continuación
         debugMode,
-        true, // Siempre solicitar JSON
+        false, // Preserve the chat envelope, generation ID and usage/cost.
         conversationId // Usar el conversationId si está disponible
       );
       
       console.log(`[ContinuationService] Respuesta recibida del modelo, procesando...`);
       
       // Verificar si la respuesta contiene metadatos y un ID de conversación
-      if (response && typeof response === 'object') {
-        const respConversationId = getConversationId(response);
-        const isClosed = isConversationClosed(response);
+      if (rawResponse && typeof rawResponse === 'object') {
+        const respConversationId = getConversationId(rawResponse);
+        const isClosed = isConversationClosed(rawResponse);
+        if (rawResponse.error) throw new Error('OpenRouter continuation failed');
+        if (rawResponse.id || rawResponse.usage) {
+          generations.push({ id: rawResponse.id, provider: rawResponse.provider,
+            model: rawResponse.model, usage: rawResponse.usage });
+        }
         
         if (respConversationId) {
           console.log('[ContinuationService] Respuesta contiene ID de conversación:', respConversationId);
@@ -414,6 +440,8 @@ IMPORTANTE: Tu respuesta debe ser SOLO la parte faltante, no el JSON completo.`;
           console.log('[ContinuationService] Conversación marcada como cerrada, probablemente el JSON está completo');
         }
       }
+
+      const response = typeof rawResponse === 'string' ? rawResponse : extractResponseContent(rawResponse);
       
       // Verificar si la respuesta es un string (posiblemente JSON)
       if (typeof response === 'string') {
@@ -426,7 +454,7 @@ IMPORTANTE: Tu respuesta debe ser SOLO la parte faltante, no el JSON completo.`;
               console.log('[ContinuationService] El JSON ya estaba completo según el modelo');
             } catch (parseError) {
               lastError = `El JSON original no es válido a pesar de que el modelo indica que está completo`;
-              console.error('[ContinuationService] Error al analizar el JSON original:', parseError);
+              console.error('[ContinuationService] Error al analizar el JSON original');
             }
           } else {
             // Intentar extraer la continuación de la respuesta si está en formato markdown
@@ -444,10 +472,8 @@ IMPORTANTE: Tu respuesta debe ser SOLO la parte faltante, no el JSON completo.`;
               success = true;
               console.log('[ContinuationService] JSON concatenado y parseado correctamente');
             } catch (parseError: any) {
-              lastError = `Error al concatenar y parsear el JSON: ${parseError.message}`;
-              console.error('[ContinuationService] Error al concatenar y parsear:', parseError);
-              console.log('[ContinuationService] JSON incompleto:', incompleteJson.substring(incompleteJson.length - 100));
-              console.log('[ContinuationService] Continuación:', continuationPart.substring(0, 100));
+              lastError = 'Error al concatenar y parsear el JSON';
+              console.error('[ContinuationService] Error al concatenar y parsear');
               
               // Intentar reparar el JSON concatenado
               try {
@@ -479,8 +505,8 @@ IMPORTANTE: Tu respuesta debe ser SOLO la parte faltante, no el JSON completo.`;
             }
           }
         } catch (parseError: any) {
-          lastError = `La respuesta no es un JSON válido: ${parseError.message}`;
-          console.error('[ContinuationService] Error al analizar respuesta como JSON:', parseError);
+          lastError = 'La respuesta no es un JSON válido';
+          console.error('[ContinuationService] Error al analizar respuesta como JSON');
           
           // Intentar reparar el JSON de la respuesta
           try {
@@ -492,20 +518,14 @@ IMPORTANTE: Tu respuesta debe ser SOLO la parte faltante, no el JSON completo.`;
             console.error('[ContinuationService] No se pudo reparar la respuesta JSON');
           }
         }
-      } else if (response && typeof response === 'object') {
+      }
+      if (!success && rawResponse && typeof rawResponse === 'object') {
         // Verificar si la respuesta está marcada como no cerrada
-        if (!isConversationClosed(response) && conversationId) {
+        if (!isConversationClosed(rawResponse) && conversationId) {
           console.log('[ContinuationService] La conversación no está cerrada, intentaremos continuar en el siguiente intento');
           
           // Intentar extraer el contenido parcial para la próxima iteración
-          let content = '';
-          if ('content' in response && typeof response.content === 'string') {
-            content = response.content;
-          } else if ('choices' in response && Array.isArray(response.choices) && 
-                     response.choices[0] && 'message' in response.choices[0] && 
-                     response.choices[0].message && 'content' in response.choices[0].message) {
-            content = response.choices[0].message.content as string;
-          }
+          const content = extractResponseContent(rawResponse);
           
           // Actualizar jsonForPrompt solo si tenemos algo útil
           if (content && content.trim().length > 0) {
@@ -515,7 +535,7 @@ IMPORTANTE: Tu respuesta debe ser SOLO la parte faltante, no el JSON completo.`;
               jsonForPrompt = combinedJson;
               console.log('[ContinuationService] Actualizando el JSON para el próximo intento');
             } catch (concatError) {
-              console.error('[ContinuationService] Error al actualizar el JSON para el próximo intento:', concatError);
+              console.error('[ContinuationService] Error al actualizar el JSON para el próximo intento');
             }
           }
         }
@@ -524,8 +544,8 @@ IMPORTANTE: Tu respuesta debe ser SOLO la parte faltante, no el JSON completo.`;
       retries++;
     } catch (error: any) {
       retries++;
-      lastError = `Error en la solicitud: ${error.message || 'Error desconocido'}`;
-      console.error(`[ContinuationService] Error en intento ${retries}:`, error);
+      lastError = 'OpenRouter continuation request failed';
+      console.error(`[ContinuationService] Error en intento ${retries}`);
       
       // Añadir espera creciente después de un error
       const waitTime = 2000 * retries; // Espera más larga después de un error: 2s, 4s, 6s...
@@ -539,7 +559,8 @@ IMPORTANTE: Tu respuesta debe ser SOLO la parte faltante, no el JSON completo.`;
     return {
       success: true,
       completeJson,
-      retries
+      retries,
+      generations,
     };
   } else {
     console.error('[ContinuationService] No se pudo completar el JSON después de', retries, 'intentos');
@@ -551,7 +572,8 @@ IMPORTANTE: Tu respuesta debe ser SOLO la parte faltante, no el JSON completo.`;
         success: true,
         completeJson: partialStructure,
         error: 'JSON parcialmente reparado, puede estar incompleto',
-        retries
+        retries,
+        generations,
       };
     }
     
@@ -559,7 +581,8 @@ IMPORTANTE: Tu respuesta debe ser SOLO la parte faltante, no el JSON completo.`;
       success: false,
       completeJson: null,
       error: lastError || 'No se pudo completar el JSON después de varios intentos',
-      retries
+      retries,
+      generations,
     };
   }
 }

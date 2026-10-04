@@ -3,7 +3,7 @@
  * Unified tool for managing copywriting templates (create, list, update, delete)
  */
 
-import { getCopywritingsCore } from './get/route';
+import { getCopywritingsCore } from './get/core';
 import { fetchApiTool } from '@/app/api/agents/tools/utils/fetch-helper';
 
 

@@ -6,7 +6,7 @@
 import { tool } from 'scrapybara/tools';
 import { z } from 'zod';
 import type { UbuntuInstance } from 'scrapybara';
-import { siteSettingsCore } from './route';
+import { siteSettingsCore } from './core';
 
 export interface SiteSettingsToolParams {
   action: 'get' | 'update';

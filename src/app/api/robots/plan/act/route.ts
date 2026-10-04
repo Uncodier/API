@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { AIAgentExecutor } from '@/lib/custom-automation';
-import { anthropic } from 'scrapybara/anthropic';
+import { adaptPlanTools } from './plan-tools';
 import { autoAuthenticateInstance } from '@/lib/helpers/automation-auth';
 import { generateImageToolScrapybara } from '@/app/api/agents/tools/generateImage/assistantProtocol';
 import { generateVideoToolScrapybara } from '@/app/api/agents/tools/generateVideo/assistantProtocol';
@@ -433,13 +433,11 @@ export async function POST(request: NextRequest) {
     // 11. Setup and validate tools
     const ubuntuInstance = remoteInstance as any;
     const effective_site_id = plan.site_id || instance.site_id;
-    let tools = setupTools(ubuntuInstance, effective_site_id);
+    const tools = setupTools(ubuntuInstance, effective_site_id);
     
-    // Add generateImage and generateVideo tools to the tools array (Scrapybara-compatible version)
+    // Preserve the existing SDK-compatible media executors.
     const generateImageToolInstance = generateImageToolScrapybara(ubuntuInstance, instance.site_id);
     const generateVideoToolInstance = generateVideoToolScrapybara(ubuntuInstance, instance.site_id);
-    tools.push(generateImageToolInstance);
-    tools.push(generateVideoToolInstance);
     
     const toolsValidation = await validateTools(tools, client, instance.provider_instance_id, effective_site_id);
     if (!toolsValidation.valid) {
@@ -450,7 +448,11 @@ export async function POST(request: NextRequest) {
         provider_instance_id: instance.provider_instance_id
       }, { status: 500 });
     }
-    const validatedTools = toolsValidation.tools;
+    // Validation can reconnect and rebuild SDK tools. Append media tools afterwards
+    // so a successful reconnect does not silently remove these capabilities.
+    const validatedTools = adaptPlanTools([
+      ...toolsValidation.tools, generateImageToolInstance, generateVideoToolInstance,
+    ]);
 
     // ✓ Check status after setting up tools
     const statusCheck6 = await verifyActiveStatus(instance_id, effective_plan_id);
@@ -472,48 +474,27 @@ export async function POST(request: NextRequest) {
     let executionStartTime = Date.now();
     let executionResult: any;
     
-    const USE_SCRAPYBARA_SDK = true;
-    
     const stepStatusRef = { value: stepStatus };
     const stepResultRef = { value: stepResult };
     
     try {
-      if (USE_SCRAPYBARA_SDK) {
-        executionResult = await client.act({
-          model: anthropic(),
-          tools: validatedTools,
-          schema: AgentResponseSchema,
-          system: systemPromptWithContext,
-          prompt: planPrompt,
-          onStep: createOnStepHandler(
-            remoteInstance,
-            currentStep,
-            effective_plan_id!,
-            plan,
-            instance_id,
-            stepStatusRef,
-            stepResultRef
-          )
-        });
-      } else {
-        const executor = new AIAgentExecutor();
-        executionResult = await executor.act({
-          tools: validatedTools,
-          schema: AgentResponseSchema,
-          system: systemPromptWithContext,
-          prompt: planPrompt,
-          onStep: createOnStepHandler(
-            remoteInstance,
-            currentStep,
-            effective_plan_id!,
-            plan,
-            instance_id,
-            stepStatusRef,
-            stepResultRef
-          )
-        });
-      }
-
+      const executor = new AIAgentExecutor({ provider: 'openrouter', siteId: effective_site_id });
+      executionResult = await executor.act({
+        tools: validatedTools,
+        preserveToolExecution: true,
+        schema: AgentResponseSchema,
+        system: systemPromptWithContext,
+        prompt: planPrompt,
+        onStep: createOnStepHandler(
+          remoteInstance,
+          currentStep,
+          effective_plan_id!,
+          plan,
+          instance_id,
+          stepStatusRef,
+          stepResultRef
+        )
+      });
       stepStatus = stepStatusRef.value;
       stepResult = stepResultRef.value;
     } catch (error: any) {

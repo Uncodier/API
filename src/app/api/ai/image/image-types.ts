@@ -1,4 +1,5 @@
-export type ImageProvider = 'azure' | 'gemini' | 'vercel';
+export type ImageProvider = 'azure';
+export type ImageQuality = 'auto' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'standard' | 'hd';
 export type ImageRatio =
   | '1:1'
   | '4:3'
@@ -13,9 +14,10 @@ export interface ImageRequestBody {
   site_id: string;
   instance_id?: string;
   provider?: ImageProvider;
-  size?: '256x256' | '512x512' | '1024x1024';
+  model?: string;
+  size?: string;
   n?: number;
-  quality?: 'standard' | 'hd' | number;
+  quality?: ImageQuality;
   ratio?: ImageRatio;
   aspect_ratio?: ImageRatio;
   reference_images?: string[];
@@ -25,6 +27,7 @@ export interface ImageGenerationResult {
   provider: ImageProvider;
   images: Array<{ url: string; b64_json: null }>;
   fallbackFrom?: ImageProvider;
+  metadata?: { model: string; generation_id?: string; cost?: number };
 }
 
 export interface GenerateImageOptions {
@@ -33,7 +36,8 @@ export interface GenerateImageOptions {
   instanceId?: string;
   size?: string;
   count: number;
-  quality?: 'standard' | 'hd' | number;
+  quality?: ImageQuality;
+  model?: string;
   ratio?: ImageRatio;
   referenceImages?: string[];
 }

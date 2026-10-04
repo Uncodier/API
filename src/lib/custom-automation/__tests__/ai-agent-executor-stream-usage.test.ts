@@ -1,4 +1,5 @@
 import { AIAgentExecutor } from '../ai-agent-executor';
+import { randomBytes } from 'node:crypto';
 
 function completionStream(chunks: unknown[]) {
   return (async function* () {
@@ -16,7 +17,7 @@ describe('AIAgentExecutor streaming usage', () => {
   });
 
   it('requests provider usage and passes each completion to billing exactly once', async () => {
-    const executor = new AIAgentExecutor({ provider: 'openai', model: 'test-model', apiKey: 'test-key' });
+    const executor = new AIAgentExecutor({ provider: 'openrouter', model: 'test-model', apiKey: randomBytes(24).toString('hex') });
     const create = jest.fn().mockResolvedValue(completionStream([
       { choices: [{ delta: { content: 'Hello' }, finish_reason: null }] },
       { choices: [{ delta: { content: ' world' }, finish_reason: 'stop' }],
@@ -48,7 +49,7 @@ describe('AIAgentExecutor streaming usage', () => {
   });
 
   it('keeps unknown streamed output distinct from a reported zero', async () => {
-    const executor = new AIAgentExecutor({ provider: 'openai', model: 'test-model', apiKey: 'test-key' });
+    const executor = new AIAgentExecutor({ provider: 'openrouter', model: 'test-model', apiKey: randomBytes(24).toString('hex') });
     const create = jest.fn().mockResolvedValue(completionStream([
       { choices: [{ delta: { content: 'Answer' }, finish_reason: 'stop' }] },
     ]));

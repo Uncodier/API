@@ -1,5 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { execution, recoveryDatabase, scope } from '../test-support/assistant-recovery-fixture';
+import { MAX_RECOVERY_MESSAGES_BYTES, MAX_RECOVERY_RESPAWNS } from '../assistant-recovery-schema';
 
 let database: ReturnType<typeof recoveryDatabase>;
 jest.unstable_mockModule('@/lib/database/supabase-client', () => ({
@@ -186,16 +187,18 @@ describe('checkpoint, token ownership, and effect fencing', () => {
     expect(database.snapshot().messages).toHaveLength(4);
   });
 
-  it('rejects an empty checkpoint and caps claims persistently at two', async () => {
+  it('rejects an empty checkpoint and caps claims persistently at five', async () => {
+    expect(MAX_RECOVERY_RESPAWNS).toBe(5);
     await recovery.initializeAssistantRecovery(scope, execution);
     await expect(recovery.claimAssistantRecovery(scope)).rejects.toMatchObject({ code: 'missing' });
     await recovery.checkpointAssistantRecovery(scope, { messages: receipts });
-    for (let generation = 1; generation <= 2; generation++) {
+    for (let generation = 1; generation <= MAX_RECOVERY_RESPAWNS; generation++) {
       const { resumeToken } = await recovery.claimAssistantRecovery(scope);
       const loaded = await recovery.loadAssistantRecovery(scope, resumeToken);
       expect(loaded.respawnCount).toBe(generation);
     }
     await expect(recovery.claimAssistantRecovery(scope)).rejects.toMatchObject({ code: 'limit' });
+    expect(database.snapshot().respawnCount).toBe(5);
   });
 
   it('allows only one simultaneous claimant', async () => {
@@ -223,7 +226,7 @@ describe('checkpoint, token ownership, and effect fencing', () => {
 
   it.each([
     [{ role: 'tool', content: 'data:image/png;base64,AAAA' }],
-    [{ role: 'tool', content: 'x'.repeat(512 * 1024) }],
+    [{ role: 'tool', content: 'x'.repeat(MAX_RECOVERY_MESSAGES_BYTES) }],
     [{ role: 'tool', content: undefined }],
     [{ role: 'tool', content: () => 'receipt' }],
   ])('rejects unsafe messages without losing the previous receipt or in-flight fence', async message => {
@@ -232,5 +235,24 @@ describe('checkpoint, token ownership, and effect fencing', () => {
     await expect(recovery.checkpointAssistantRecovery(scope, { messages: [message] })).rejects.toMatchObject({ code: 'invalid_state' });
     expect(database.snapshot().messages).toEqual(receipts);
     expect(database.snapshot().inFlight).toBe(true);
+  });
+
+  it('saves, claims and reloads a full 2 MiB transcript without losing tool receipts', async () => {
+    const messages = [...receipts, { role: 'assistant', content: '' }];
+    const overhead = Buffer.byteLength(JSON.stringify(messages));
+    messages[messages.length - 1].content = 'x'.repeat(MAX_RECOVERY_MESSAGES_BYTES - overhead);
+    expect(Buffer.byteLength(JSON.stringify(messages))).toBe(MAX_RECOVERY_MESSAGES_BYTES);
+    await recovery.initializeAssistantRecovery(scope, execution);
+    await recovery.markAssistantRecoveryInFlight(scope, receipts);
+    await recovery.checkpointAssistantRecovery(scope, { messages });
+    expect(database.snapshot().inFlight).toBe(false);
+    const { resumeToken } = await recovery.claimAssistantRecovery(scope);
+    const loaded = await recovery.loadAssistantRecovery(scope, resumeToken);
+    expect(loaded.messages).toEqual(messages);
+    expect(loaded.messages[2]).toEqual(receipts[2]);
+    await recovery.assertAssistantRecoveryActive({ ...scope, generation: loaded.respawnCount });
+    const write = database.writes().at(-1)!;
+    expect(write.filters.some(filter => filter.column === 'details')).toBe(false);
+    expect(write.filters.some(filter => filter.column === 'details->assistant_recovery->>revision')).toBe(true);
   });
 });

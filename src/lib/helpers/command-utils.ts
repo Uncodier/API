@@ -1,4 +1,5 @@
 import { ProcessorInitializer } from '@/lib/agentbase';
+import type { DbCommand } from '@/lib/agentbase/models/types';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 
 // Función para validar UUIDs
@@ -76,7 +77,7 @@ export async function getCommandDbUuid(internalId: string): Promise<string | nul
 
 // Función para esperar a que un comando se complete con mejor manejo de errores
 export async function waitForCommandCompletion(commandId: string, maxAttempts = 120, delayMs = 1000) {
-  let executedCommand = null;
+  let executedCommand: DbCommand | null = null;
   let attempts = 0;
   let dbUuid: string | null = null;
   let consecutiveErrors = 0;

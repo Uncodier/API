@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { randomBytes } from 'node:crypto';
 
 const mockFrom: any = jest.fn();
 const mockProcessRecordEmbeddingsById: any = jest.fn();
@@ -17,7 +18,7 @@ import { GET } from '../route';
 describe('record embedding cron', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    process.env.CRON_SECRET = 'test-secret';
+    process.env.CRON_SECRET = randomBytes(32).toString('hex');
   });
 
   it('rejects requests when the cron secret is missing', async () => {
@@ -38,14 +39,14 @@ describe('record embedding cron', () => {
       in: jest.fn(() => jobsQuery),
       lt: jest.fn(() => jobsQuery),
       order: jest.fn(() => jobsQuery),
-      limit: jest.fn().mockResolvedValue({
+      limit: jest.fn(async () => ({
         data: [{
           record_id: '00000000-0000-4000-8000-000000000100',
           status: 'pending',
           claimed_at: null,
         }],
         error: null,
-      }),
+      })),
     };
     mockFrom.mockReturnValue(jobsQuery);
     mockProcessRecordEmbeddingsById.mockResolvedValue({
@@ -57,7 +58,7 @@ describe('record embedding cron', () => {
 
     const response = await GET(new Request(
       'http://localhost/api/cron/record-embeddings',
-      { headers: { authorization: 'Bearer test-secret' } },
+      { headers: { authorization: `Bearer ${process.env.CRON_SECRET}` } },
     ));
 
     expect(mockFrom).toHaveBeenCalledWith('record_embedding_jobs');

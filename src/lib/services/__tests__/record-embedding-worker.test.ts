@@ -43,7 +43,7 @@ describe('record embedding worker', () => {
     const recordQuery: any = {
       select: jest.fn(() => recordQuery),
       eq: jest.fn(() => recordQuery),
-      maybeSingle: jest.fn().mockResolvedValue({
+      maybeSingle: jest.fn(async () => ({
         data: {
           id: recordId,
           site_id: '00000000-0000-4000-8000-000000000200',
@@ -52,20 +52,20 @@ describe('record embedding worker', () => {
           category: { name: 'Discovery' },
         },
         error: null,
-      }),
+      })),
     };
     const diagramQuery: any = {
       select: jest.fn(() => diagramQuery),
       eq: jest.fn(() => diagramQuery),
-      maybeSingle: jest.fn().mockResolvedValue({
+      maybeSingle: jest.fn(async () => ({
         data: { revision: 2 },
         error: null,
-      }),
+      })),
     };
     const nodeQuery: any = {
       select: jest.fn(() => nodeQuery),
       eq: jest.fn(() => nodeQuery),
-      in: jest.fn().mockResolvedValue({
+      in: jest.fn(async () => ({
         data: [{
           id: nodeId,
           kind: 'concept',
@@ -75,12 +75,12 @@ describe('record embedding worker', () => {
           embedding_source_hash: 'old-hash',
         }],
         error: null,
-      }),
+      })),
     };
     const jobUpdateQuery: any = {
       update: jest.fn(() => jobUpdateQuery),
       in: jest.fn(() => jobUpdateQuery),
-      eq: jest.fn().mockResolvedValue({ error: null }),
+      eq: jest.fn(async () => ({ error: null })),
     };
     mockRpc.mockImplementation(async (name: string) => {
       if (name === 'claim_record_embedding_jobs') {

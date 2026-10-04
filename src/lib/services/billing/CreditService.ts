@@ -256,7 +256,14 @@ export class CreditService {
    * Pre-check if site has enough credits before execution.
    */
   static async validateCredits(siteId: string, requiredCredits: number): Promise<boolean> {
-    if (!siteId) return false;
+    if (!siteId || !Number.isFinite(requiredCredits) || requiredCredits < 0) return false;
+
+    // Refresh only the included-plan period before checking the aggregate.
+    // An RPC failure must not fall back to spending stale, expired credits.
+    const { data: renewal, error: renewalError } = await supabaseAdmin.rpc(
+      'renew_site_plan_credits', { p_site_id: siteId },
+    );
+    if (renewalError || !renewal?.success) return false;
 
     const { data: billing, error } = await supabaseAdmin
       .from('billing')
@@ -288,7 +295,7 @@ export class CreditService {
     description: string,
     metadata: Record<string, any> = {}
   ): Promise<{ success: boolean; remaining?: number; error?: string }> {
-    if (!siteId || amount <= 0) {
+    if (!siteId || !Number.isFinite(amount) || amount <= 0) {
       return { success: false, error: 'Invalid siteId or amount' };
     }
 
@@ -305,7 +312,8 @@ export class CreditService {
       return { success: false, error: error.message };
     }
 
-    if (!data.success) {
+    if (!data?.success) {
+      if (!data) return { success: false, error: 'Invalid credit deduction response' };
       if (data.error === 'Insufficient credits') {
         // Fire-and-forget the notification
         this.notifyInsufficientCredits(siteId, data.required, data.available).catch(console.error);

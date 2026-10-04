@@ -1,5 +1,6 @@
 // @ts-nocheck -- ESM Jest mocks are dynamically imported under the ES5 TS target.
 import { jest } from '@jest/globals';
+import { randomBytes } from 'node:crypto';
 
 const from = jest.fn();
 const rpc = jest.fn();
@@ -73,9 +74,9 @@ it('fails closed on an interrupted model turn instead of replaying it', async ()
 });
 
 it('runs at most one tool-limited provider turn per advance and persists completed steps', async () => {
-  const previousKey = process.env.OPENAI_API_KEY;
+  const previousKey = process.env.OPENROUTER_API_KEY;
   const previousProvider = process.env.ROBOT_SDK_PROVIDER;
-  process.env.OPENAI_API_KEY = 'test-key';
+  process.env.OPENROUTER_API_KEY = randomBytes(24).toString('hex');
   process.env.ROBOT_SDK_PROVIDER = 'openai';
   const accepted = { status: 'completed', summary: 'Advised the support team', data: {}, evidence: [],
     criteria: [], validation: [] };
@@ -91,16 +92,16 @@ it('runs at most one tool-limited provider turn per advance and persists complet
     expect(chatCreate).toHaveBeenCalledTimes(2);
     expect(plan.steps[1].status).toBe('completed');
   } finally {
-    if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
-    else process.env.OPENAI_API_KEY = previousKey;
+    if (previousKey === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = previousKey;
     if (previousProvider === undefined) delete process.env.ROBOT_SDK_PROVIDER;
     else process.env.ROBOT_SDK_PROVIDER = previousProvider;
   }
 });
 
 it('rejects a response without exactly one plan_result tool call', async () => {
-  const previousKey = process.env.OPENAI_API_KEY;
-  process.env.OPENAI_API_KEY = 'test-key';
+  const previousKey = process.env.OPENROUTER_API_KEY;
+  process.env.OPENROUTER_API_KEY = randomBytes(24).toString('hex');
   chatCreate.mockResolvedValueOnce({ usage: { prompt_tokens: 100, completion_tokens: 20 }, choices: [{ message: { tool_calls: [] } }] });
   try {
     await expect(modelTurn({ provider: 'openai', prompt: 'Only analysis', userContent: 'Hi',
@@ -111,7 +112,7 @@ it('rejects a response without exactly one plan_result tool call', async () => {
       type: 'function', function: { name: 'plan_result' },
     } }), expect.objectContaining({ timeout: 90_000, maxRetries: 0, signal: expect.any(AbortSignal) }));
   } finally {
-    if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
-    else process.env.OPENAI_API_KEY = previousKey;
+    if (previousKey === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = previousKey;
   }
 });

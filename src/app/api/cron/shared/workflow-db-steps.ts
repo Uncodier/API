@@ -392,7 +392,7 @@ export async function createFallbackInstancePlanStep(params: {
 }): Promise<void> {
   'use step';
   try {
-    const { createInstancePlanCore } = await import('@/app/api/agents/tools/instance_plan/create/route');
+    const { createInstancePlanCore } = await import('@/app/api/agents/tools/instance_plan/create/core');
     await createInstancePlanCore({
       instance_id: params.instanceId,
       site_id: params.siteId,

@@ -8,7 +8,7 @@ import {
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { CreditService } from '@/lib/services/billing/CreditService';
 import { persistActiveSandboxId } from '@/lib/tools/requirement-status-core';
-import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/route';
+import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/core';
 import {
   commitWorkspaceToOrigin,
   syncLatestRequirementStatusWithPreview,

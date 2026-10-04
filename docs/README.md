@@ -29,6 +29,7 @@ Read these first when changing the code-agent harness:
 
 ## Active integration guides
 
+- [Monthly credit reset and protected balances](./BILLING_CREDIT_RESET.md) — atomic signup, non-accumulating plan allowances, bought/withdrawable funds and coordinated rollout.
 - [Zavu Voice business context](./ZAVU_VOICE_BUSINESS_CONTEXT.md) — shared AgentBase sources, section-aware prompt limits and resynchronization.
 - [Zavu inbound voice lead linkage](./ZAVU_INBOUND_VOICE_LEAD_LINKAGE.md) — webhook-owned CRM contacts, transcript links, consent separation and retry behavior.
 - [Server-issued visitor identity tokens](./VISITOR_IDENTITY_TOKENS.md) — scoped issuers, first-party support identity, atomic exchange, logout, and offline tests.
@@ -37,6 +38,7 @@ Read these first when changing the code-agent harness:
 - [Social comment conversations](./SOCIAL_COMMENT_CONVERSATIONS.md) — author/post/account grouping, explicit reply targets, preview metadata, and legacy rollout boundaries.
 - [Outstand Instagram DM identity](./OUTSTAND_DM_IDENTITY.md) — participant/lead linkage, safe retries, manual-name preservation, and provider limitations.
 - [Outstand deletion contract](./OUTSTAND_DELETION.md) — tenant authorization, remote deletion orchestration, and fail-closed retries.
+- [Instance and requirement deletion](./INSTANCE_REQUIREMENT_DELETION.md) — explicit owner/admin authorization, exclusive requirement scope, and atomic database cleanup.
 - [Social publishing contract](./SOCIAL_PUBLISHING.md) — scoped account IDs, media attachments, delivery state, and safe retries.
 
 These integrations still exist, but verify configuration details against the referenced implementation before operational changes:

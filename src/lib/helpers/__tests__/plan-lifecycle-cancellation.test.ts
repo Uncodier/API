@@ -6,7 +6,16 @@ import {
   jest,
 } from '@jest/globals';
 
-const mockRpc = jest.fn();
+const mockRpc = jest.fn<(name: string, args: Record<string, unknown>) => Promise<{
+  data: {
+    plans_touched: number;
+    plans_cancelled: number;
+    steps_cancelled: number;
+    plan_ids: string[];
+    errors: string[];
+  } | null;
+  error: { message: string } | null;
+}>>();
 
 jest.mock('@/lib/database/supabase-client', () => ({
   supabaseAdmin: { rpc: mockRpc },

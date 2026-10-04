@@ -1,13 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it } from '@jest/globals';
+import { randomBytes } from 'node:crypto';
 import { issueVisitorSessionToken } from '../visitor-session-token';
-// @ts-expect-error The standalone WebSocket server intentionally uses JavaScript.
 import { authorizeWebSocketUpgrade } from '../../../../wsServerAuth.cjs';
 
 const originalSecret = process.env.VISITOR_SESSION_TOKEN_SECRET;
 
 describe('WebSocket visitor session authentication', () => {
   beforeAll(() => {
-    process.env.VISITOR_SESSION_TOKEN_SECRET = 'test-session-secret';
+    process.env.VISITOR_SESSION_TOKEN_SECRET = randomBytes(32).toString('hex');
   });
 
   afterAll(() => {

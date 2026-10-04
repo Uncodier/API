@@ -12,6 +12,22 @@ export {
 } from './assistant-streaming-logs';
 export type { NodeContextRef } from './assistant-streaming-logs';
 
+/** Preserve provider-reported usage; missing actual cost is unknown, not zero. */
+function loggedUsage(usage: any): Record<string, unknown> {
+  if (!usage) return {};
+  const promptTokens = usage.promptTokens ?? usage.prompt_tokens ?? usage.input_tokens;
+  const completionTokens = usage.completionTokens ?? usage.completion_tokens ?? usage.output_tokens;
+  const totalTokens = usage.totalTokens ?? usage.total_tokens ??
+    (typeof promptTokens === 'number' && typeof completionTokens === 'number'
+      ? promptTokens + completionTokens : undefined);
+  return {
+    ...usage,
+    ...(promptTokens !== undefined ? { promptTokens } : {}),
+    ...(completionTokens !== undefined ? { completionTokens } : {}),
+    ...(totalTokens !== undefined ? { totalTokens } : {}),
+  };
+}
+
 /**
  * Create onStep callback handler for assistant execution
  * Logs steps and tool calls in real-time during execution
@@ -41,13 +57,11 @@ export function createAssistantOnStepHandler(
     const logMessage = step.text?.trim() || 'Assistant step execution';
     const logPayload = {
       message: logMessage,
-      tokens_used: step.usage ? {
-        promptTokens: step.usage.promptTokens || step.usage.input_tokens,
-        completionTokens: step.usage.completionTokens || step.usage.output_tokens,
-        totalTokens: step.usage.totalTokens || (step.usage.input_tokens + step.usage.output_tokens),
-      } : {},
+      tokens_used: loggedUsage(step.usage),
       details: {
-        provider,
+        provider: step.provider || provider,
+        ...(step.model ? { model: step.model } : {}),
+        ...(step.generationId ? { generation_id: step.generationId } : {}),
         response_type: 'assistant_step',
         raw_text: step.text,
         total_tool_calls: step.toolCalls?.length || 0,
@@ -186,13 +200,11 @@ export function createAssistantOnStepHandler(
           screenshot_base64: screenshotBase64,
           parent_log_id: parentLogId,
           duration_ms: step.usage?.duration_ms || null,
-          tokens_used: step.usage ? {
-            promptTokens: step.usage.promptTokens || step.usage.input_tokens,
-            completionTokens: step.usage.completionTokens || step.usage.output_tokens,
-            totalTokens: step.usage.totalTokens || (step.usage.input_tokens + step.usage.output_tokens),
-          } : {},
+          tokens_used: loggedUsage(step.usage),
           details: {
-            provider,
+            provider: step.provider || provider,
+            ...(step.model ? { model: step.model } : {}),
+            ...(step.generationId ? { generation_id: step.generationId } : {}),
             response_type: 'assistant_tool_call',
             tool_sequence_number: step.toolCalls.indexOf(toolCall) + 1,
             total_tool_calls: step.toolCalls.length,

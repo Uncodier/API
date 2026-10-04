@@ -128,7 +128,7 @@ describe('reservations.create creates a sale_order', () => {
             description: null,
             target_sale_price: opts.catalogPrice,
             site_id: siteId,
-            is_reservation: true, status: "active", availability_status: "available",
+            is_reservation: true,
             currency: opts.catalogCurrency === undefined ? 'USD' : opts.catalogCurrency,
           },
           error: null,

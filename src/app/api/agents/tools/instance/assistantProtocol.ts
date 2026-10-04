@@ -4,7 +4,7 @@
  */
 
 import { z } from 'zod';
-import { instanceCore } from './route';
+import { instanceCore } from './core';
 
 export interface InstanceToolParams {
   action: 'create' | 'read' | 'update';

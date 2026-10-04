@@ -8,7 +8,7 @@ jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: mock
 jest.mock('@/lib/database/audience-db', () => ({
   getAudienceById: mockAudience, getAudiencePageForSending: mockPage, updateAudienceLeadStatus: mockStatus,
 }));
-jest.mock('../../sendEmail/route', () => ({ sendEmailCore: jest.fn() }));
+jest.mock('../../sendEmail/core', () => ({ sendEmailCore: jest.fn() }));
 jest.mock('@/lib/services/whatsapp/WhatsAppSendService', () => ({ WhatsAppSendService: {} }));
 jest.mock('@/lib/services/whatsapp/WhatsAppTemplateService', () => ({ WhatsAppTemplateService: {} }));
 jest.mock('../support', () => ({

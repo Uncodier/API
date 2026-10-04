@@ -76,7 +76,7 @@ function chunk<T>(arr: T[], size: number): T[][] {
 
 async function withRetries<T extends { error: { message: string; code?: string } | null }>(
   label: string,
-  run: () => Promise<T>,
+  run: () => PromiseLike<T>,
 ): Promise<T> {
   for (let attempt = 1; attempt <= DELETE_MAX_ATTEMPTS; attempt++) {
     const result = await run();

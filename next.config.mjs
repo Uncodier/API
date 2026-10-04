@@ -61,11 +61,8 @@ const nextraConfig = withNextra({
     ],
   },
   typescript: {
-    // !! WARN !!
-    // Dangerously allow production builds to successfully complete even if
-    // your project has type errors. Temporarily disabled for build.
-    // !! WARN !!
-    ignoreBuildErrors: true,
+    // Production builds must fail when TypeScript reports errors.
+    ignoreBuildErrors: false,
   },
   // Configuración para imágenes optimizadas
   images: {

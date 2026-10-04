@@ -19,7 +19,7 @@ import {
   getSandboxWithRetriesOrThrow,
 } from '@/lib/services/sandbox-recovery';
 import { getActiveInstancePlan as _getActiveInstancePlan } from '@/app/api/robots/instance/assistant/plan-steps';
-import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/route';
+import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/core';
 import { commitWorkspaceToOrigin, type GitRepoKind } from './cron-commit-helpers';
 import { validateBuildForStep } from './step-git-gate';
 import { consumePrePushBuildMarker } from './commit/pre-push-build-validation';

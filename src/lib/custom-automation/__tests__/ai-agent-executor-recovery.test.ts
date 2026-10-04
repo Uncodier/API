@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import * as openrouter from '@/lib/services/ai/openrouter';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import * as zod from 'zod';
 import * as jsonSchema from 'zod-to-json-schema';
@@ -15,6 +16,7 @@ class OfflineOpenAI {
 const { AIAgentExecutor } = loadRuntimeModule<typeof import('../ai-agent-executor')>(
   'src/lib/custom-automation/ai-agent-executor.ts', {
     openai: OfflineOpenAI, 'google-auth-library': { GoogleAuth: class {} }, zod,
+    '@/lib/services/ai/openrouter': { ...openrouter, createOpenRouterClient: () => new OfflineOpenAI() },
     'zod-to-json-schema': jsonSchema, './azure-vision-message-sanitize': azureVision,
     './gemini-message-sanitize': geminiMessages, './coerce-tool-args': toolArguments,
     '@/lib/services/tool-operation-result': toolResults,
@@ -40,7 +42,7 @@ describe('recovery errors remain control flow, not tool failures', () => {
     { afterEffect: true, contentFilter: true },
   ])('does not retry or fabricate receipts: %j', async ({ afterEffect, contentFilter }) => {
     const endpoint = new URL('https://example.invalid');
-    const agent = new AIAgentExecutor({ provider: 'openai', apiKey: randomBytes(24).toString('hex'),
+    const agent = new AIAgentExecutor({ provider: 'openrouter', apiKey: randomBytes(24).toString('hex'),
       model: 'test-model', baseURL: endpoint.href });
     const calls = ['write', 'forbidden'].map((name, index) => ({ id: `call-${index}`, type: 'function', function: { name, arguments: '{}' } }));
     const create = jest.fn<() => Promise<any>>().mockResolvedValue({

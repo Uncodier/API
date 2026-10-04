@@ -59,4 +59,10 @@ describe('durable bound respawn', () => {
     expect(await spawnSilentContinueWorkflow(scope, { allowStaleInFlight: true })).toBe(true);
     expect(claim).toHaveBeenCalledWith(scope, { allowStaleInFlight: true });
   });
+  it('passes the conversation-only hint to the claim without treating it as a client workflow argument', async () => {
+    expect(await spawnSilentContinueWorkflow(scope, { allowStaleInFlight: true, conversationOnly: true })).toBe(true);
+    expect(claim).toHaveBeenCalledWith(scope, { allowStaleInFlight: true, conversationOnly: true });
+    const args = start.mock.calls[0][1] as unknown[];
+    expect(args[13]).not.toHaveProperty('conversationOnly'); // Loaded from the persisted snapshot only.
+  });
 });

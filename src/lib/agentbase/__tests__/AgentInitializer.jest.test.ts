@@ -1,5 +1,33 @@
-import { ProcessorInitializer } from '../services/AgentInitializer';
+import { AgentBackgroundService } from '../services/agent/AgentBackgroundService';
+import { BackgroundBuilder } from '../services/agent/BackgroundServices/BackgroundBuilder';
 import { Base } from '../agents/Base';
+import type { CommandExecutionResult, DbCommand } from '../models/types';
+
+class PromptTestAgent extends Base {
+  readonly description = 'A test processor for unit tests';
+  readonly prompt = 'This is a custom agent prompt that should be included in a specific section';
+
+  constructor() {
+    super('test-processor', 'Test Processor', ['test', 'mock']);
+  }
+
+  async executeCommand(_command: DbCommand): Promise<CommandExecutionResult> {
+    return { status: 'completed', results: [] };
+  }
+}
+
+jest.mock('@/lib/timezone', () => ({
+  ...jest.requireActual<typeof import('@/lib/timezone')>('@/lib/timezone'),
+  resolveClientTimezone: jest.fn(async () => 'UTC'),
+}));
+jest.mock('../services/agent/AgentCacheService', () => ({
+  AgentCacheService: jest.fn(() => ({
+    getAgentData: jest.fn(async () => null),
+    setAgentData: jest.fn(async () => undefined),
+  })),
+}));
+jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: {} }));
+jest.mock('@/lib/utils/redis-client', () => ({ getRedisClient: jest.fn(() => null) }));
 
 // Mock dependencies
 jest.mock('../adapters/DatabaseAdapter', () => ({
@@ -15,38 +43,32 @@ jest.mock('../adapters/DatabaseAdapter', () => ({
       }
     }),
     getAgentFiles: jest.fn().mockResolvedValue([]),
+    getAgentTools: jest.fn().mockResolvedValue([]),
     updateCommand: jest.fn().mockResolvedValue({})
   }
 }));
 
-describe('ProcessorInitializer', () => {
-  let processorInitializer: any;
-  let mockProcessor: Partial<Base>;
+describe('Agent background construction', () => {
+  let processorInitializer: AgentBackgroundService;
+  let mockProcessor: PromptTestAgent;
   
   beforeEach(() => {
-    // Get singleton instance
-    processorInitializer = ProcessorInitializer.getInstance();
+    processorInitializer = new AgentBackgroundService();
     
     // Create mock processor
-    mockProcessor = {
-      getId: () => 'test-processor',
-      getName: () => 'Test Processor',
-      getCapabilities: () => ['test', 'mock'],
-      prompt: 'This is a custom agent prompt that should be included in a specific section'
-    };
+    mockProcessor = new PromptTestAgent();
     
     // Add a spy on console.log for verification
     jest.spyOn(console, 'log').mockImplementation();
   });
   
   afterEach(() => {
-    jest.clearAllMocks();
+    jest.restoreAllMocks();
   });
   
   describe('buildAgentPrompt', () => {
     it('should correctly include agentPrompt in the final prompt', () => {
-      // Access the private method using any cast
-      const buildAgentPrompt = (processorInitializer as any).buildAgentPrompt.bind(processorInitializer);
+      const buildAgentPrompt = BackgroundBuilder.buildAgentPrompt.bind(BackgroundBuilder);
       
       const result = buildAgentPrompt(
         'test-id',
@@ -54,6 +76,7 @@ describe('ProcessorInitializer', () => {
         'A test agent description',
         ['capability1', 'capability2'],
         'This is the backstory',
+        undefined,
         'This is the agent prompt content'
       );
       
@@ -61,13 +84,13 @@ describe('ProcessorInitializer', () => {
       expect(result).toContain('# Agent Custom Instructions');
       expect(result).toContain('This is the agent prompt content');
       
-      // Verify section order - agent prompt should come before backstory
+      // The current builder establishes backstory before custom instructions.
       const promptIndex = result.indexOf('# Agent Custom Instructions');
       const backstoryIndex = result.indexOf('# Backstory');
       
       expect(promptIndex).toBeGreaterThan(0);
       expect(backstoryIndex).toBeGreaterThan(0);
-      expect(promptIndex).toBeLessThan(backstoryIndex);
+      expect(backstoryIndex).toBeLessThan(promptIndex);
       
       // Log the generated prompt for debugging
       console.log('Generated prompt structure for testing:');
@@ -75,7 +98,7 @@ describe('ProcessorInitializer', () => {
     });
     
     it('should correctly generate prompt when only backstory is provided', () => {
-      const buildAgentPrompt = (processorInitializer as any).buildAgentPrompt.bind(processorInitializer);
+      const buildAgentPrompt = BackgroundBuilder.buildAgentPrompt.bind(BackgroundBuilder);
       
       const result = buildAgentPrompt(
         'test-id',
@@ -95,13 +118,14 @@ describe('ProcessorInitializer', () => {
     });
     
     it('should correctly generate prompt when only agentPrompt is provided', () => {
-      const buildAgentPrompt = (processorInitializer as any).buildAgentPrompt.bind(processorInitializer);
+      const buildAgentPrompt = BackgroundBuilder.buildAgentPrompt.bind(BackgroundBuilder);
       
       const result = buildAgentPrompt(
         'test-id',
         'Test Agent',
         'A test agent description',
         ['capability1', 'capability2'],
+        undefined,
         undefined,
         'This is the agent prompt content'
       );
@@ -118,10 +142,9 @@ describe('ProcessorInitializer', () => {
   describe('generateAgentBackground', () => {
     it('should correctly extract and use agentPrompt from processor', async () => {
       // Create a spy on buildAgentPrompt to verify its arguments
-      const buildAgentPromptSpy = jest.spyOn(processorInitializer as any, 'buildAgentPrompt');
+      const buildAgentPromptSpy = jest.spyOn(BackgroundBuilder, 'buildAgentPrompt');
       
-      // Access the private method using any cast
-      const generateAgentBackground = (processorInitializer as any).generateAgentBackground.bind(processorInitializer);
+      const generateAgentBackground = processorInitializer.generateAgentBackground.bind(processorInitializer);
       
       // Call the method with our mock processor
       await generateAgentBackground(mockProcessor);
@@ -129,9 +152,9 @@ describe('ProcessorInitializer', () => {
       // Verify that buildAgentPrompt was called with the correct prompt from the processor
       expect(buildAgentPromptSpy).toHaveBeenCalledTimes(1);
       
-      // Check that the agentPrompt parameter was passed correctly as the 6th argument
+      // The current builder accepts systemPrompt before agentPrompt.
       const args = buildAgentPromptSpy.mock.calls[0];
-      expect(args[5]).toBe('This is a custom agent prompt that should be included in a specific section');
+      expect(args[6]).toBe('This is a custom agent prompt that should be included in a specific section');
     });
     
     it('should log what agent.prompt it finds and is using', async () => {
@@ -139,36 +162,36 @@ describe('ProcessorInitializer', () => {
       const consoleLogSpy = jest.spyOn(console, 'log');
       
       // Access the private method
-      const generateAgentBackground = (processorInitializer as any).generateAgentBackground.bind(processorInitializer);
+      const generateAgentBackground = processorInitializer.generateAgentBackground.bind(processorInitializer);
       
       // Call the method with our mock processor
       await generateAgentBackground(mockProcessor);
       
       // Verify that the agent prompt was logged
       expect(consoleLogSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Usando prompt personalizado del agente test-processor')
+        expect.stringContaining('[DataFetcher] Extrayendo prompt del procesador')
       );
     });
     
     it('should correctly extract and use agent prompt from DB', async () => {
       // Spy on both buildAgentPrompt and console.log
-      const buildAgentPromptSpy = jest.spyOn(processorInitializer as any, 'buildAgentPrompt');
+      const buildAgentPromptSpy = jest.spyOn(BackgroundBuilder, 'buildAgentPrompt');
       const consoleLogSpy = jest.spyOn(console, 'log');
       
       // Access the private method
-      const generateAgentBackground = (processorInitializer as any).generateAgentBackground.bind(processorInitializer);
+      const generateAgentBackground = processorInitializer.generateAgentBackground.bind(processorInitializer);
       
       // Call with a DB agent ID
       await generateAgentBackground(mockProcessor, 'test-agent-id');
       
       // Verify that the prompt from DB was used
       expect(consoleLogSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Usando prompt específico de la base de datos')
+        expect.stringContaining('[DataFetcher] Encontrado prompt en config')
       );
       
       // Verify buildAgentPrompt was called with DB prompt
       const args = buildAgentPromptSpy.mock.calls[0];
-      expect(args[5]).toBe('This is a specific agent prompt that should be included in Agent Custom Instructions section');
+      expect(args[6]).toBe('This is a specific agent prompt that should be included in Agent Custom Instructions section');
     });
   });
 }); 

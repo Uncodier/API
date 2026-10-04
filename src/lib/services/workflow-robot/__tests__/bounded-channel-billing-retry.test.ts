@@ -1,5 +1,6 @@
 // @ts-nocheck -- ESM Jest mocks use dynamic imports under the repository's ES5 target.
 import { jest } from '@jest/globals';
+import { randomBytes } from 'node:crypto';
 
 const from = jest.fn();
 const rpc = jest.fn();
@@ -30,13 +31,14 @@ const completion = (result = accepted) => ({ usage, choices: [{ message: { tool_
   type: 'function', function: { name: 'plan_result', arguments: JSON.stringify(result) },
 }] } }] });
 let plan, run, activeToken, writes;
-const envKeys = ['OPENAI_API_KEY', 'ROBOT_SDK_PROVIDER', 'AI_MODEL'];
+const envKeys = ['OPENROUTER_API_KEY', 'OPENROUTER_CHAT_MODEL', 'ROBOT_SDK_PROVIDER', 'AI_MODEL'];
 let savedEnv;
 
 beforeEach(() => {
   jest.resetAllMocks();
   savedEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
-  process.env.OPENAI_API_KEY = 'test-key';
+  process.env.OPENROUTER_API_KEY = randomBytes(24).toString('hex');
+  delete process.env.OPENROUTER_CHAT_MODEL;
   process.env.ROBOT_SDK_PROVIDER = 'openai';
   delete process.env.AI_MODEL;
   plan = { id: input.runPlanId, site_id: input.siteId, instance_id: instanceId, status: 'pending',
@@ -131,7 +133,7 @@ it.each(['missing tool', 'malformed JSON', 'rejected capture'])(
     expect(type).toBe('assistant_tokens');
     expect(metadata).toMatchObject({ site_id: input.siteId, instance_id: instanceId, plan_id: input.runPlanId,
       run_plan_id: input.runPlanId, step_id: 'step-1', message_id: input.messageId,
-      attempt: 1, retry_count: 0, provider: 'openai', model: 'gpt-4o', tokens: 1050, input_tokens: 1000, output_tokens: 50 });
+      attempt: 1, retry_count: 0, provider: 'openrouter', model: 'openai/gpt-6.1-sol', tokens: 1050, input_tokens: 1000, output_tokens: 50 });
     expect(validateCredits.mock.invocationCallOrder[0]).toBeLessThan(chatCreate.mock.invocationCallOrder[0]);
     expect(chatCreate).toHaveBeenCalledTimes(1);
   },

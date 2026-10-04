@@ -50,7 +50,7 @@ describe('Reservations Availability Lib', () => {
           maybeSingle: jest.fn().mockResolvedValue({
             data: {
               id: catalogItemId,
-              is_reservation: true, status: "active", availability_status: "available",
+              is_reservation: true,
               parent_id: null,
               site_id: siteId,
               redeem_assignment_mode: 'user_choice',

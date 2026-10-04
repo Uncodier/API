@@ -87,17 +87,23 @@ IMPORTANT: You MUST include these three message types in your communication to e
               content: completeVapiPrompt
             }
           ]
-        } as any,
+        },
         voice: {
           provider: "11labs",
           voiceId: "alloy"
         },
+        serverMessages: [],
         firstMessage: meetingDetails.title ? 
           `Hola, esto es una llamada para coordinar la reunión "${meetingDetails.title}". ${meetingDetails.objective ? `El objetivo es ${meetingDetails.objective}.` : ''}` : 
           "Hola, esto es una llamada para coordinar una reunión de stakeholders de marketing."
       });
       
-      console.log(`✅ Asistente Vapi creado con ID: ${assistant.id}`);
+      // Accept the REST response ID as well as the SDK's assistant reference shape.
+      const assistantId = 'id' in assistant && typeof assistant.id === 'string'
+        ? assistant.id
+        : assistant.assistantId;
+      if (!assistantId) throw new Error('Vapi returned an assistant without an ID');
+      console.log(`✅ Asistente Vapi creado con ID: ${assistantId}`);
       
       // Crear llamada en Vapi con aserción de tipo para evitar todos los errores de tipos
       const callResponse = await client.calls.create({
@@ -105,7 +111,7 @@ IMPORTANT: You MUST include these three message types in your communication to e
           to: phoneNumber
         } as any,
         assistant: {
-          id: assistant.id
+          id: assistantId
         } as any,
         recordingEnabled: true
       } as any);

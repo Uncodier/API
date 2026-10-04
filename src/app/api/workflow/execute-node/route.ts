@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { Portkey } from 'portkey-ai';
+import { createOpenRouterClient, resolveOpenRouterModel, isOpenRouterReasoningModel } from '@/lib/services/ai/openrouter';
 import {
   batchCreateResponseNodes,
   updateNodeResult,
@@ -150,40 +150,40 @@ async function streamLLMIntoNode(
   responseNodeId: string,
   promptNode: any
 ): Promise<string> {
-  const virtualKey = promptNode.settings?.provider === 'anthropic'
-    ? process.env.PORTKEY_VIRTUAL_KEY_ANTHROPIC
-    : process.env.PORTKEY_VIRTUAL_KEY_OPENAI;
-
-  const portkey = new Portkey({
-    apiKey: process.env.PORTKEY_API_KEY || '',
-    virtualKey: virtualKey,
-    baseURL: 'https://api.portkey.ai/v1'
-  });
-
-  const model = promptNode.settings?.model || 'gpt-4o';
+  const openrouter = createOpenRouterClient();
+  const model = resolveOpenRouterModel(promptNode.settings?.model, promptNode.settings?.provider);
   const temperature = promptNode.settings?.temperature ?? 0.7;
 
-  const stream = await portkey.chat.completions.create({
-    model, temperature, messages, stream: true
+  const stream = await openrouter.chat.completions.create({
+    model, messages, stream: true,
+    ...(isOpenRouterReasoningModel(model) ? {} : { temperature }),
+    stream_options: { include_usage: true },
   });
 
   let accumulatedText = '';
+  const generation: { gateway: string; model: string; id?: string; generation_id?: string;
+    provider?: string; usage?: Record<string, any> } = { gateway: 'openrouter', model };
   let lastUpdate = Date.now();
   const THROTTLE_MS = 500;
 
   for await (const chunk of stream) {
-    const token = chunk.choices[0]?.delta?.content || '';
+    // The final usage-only frame can have an empty choices array.
+    if (chunk.id) generation.id = generation.generation_id = chunk.id;
+    if (chunk.model) generation.model = chunk.model;
+    if ((chunk as any).provider) generation.provider = (chunk as any).provider;
+    if (chunk.usage) generation.usage = { ...generation.usage, ...chunk.usage };
+    const token = chunk.choices?.[0]?.delta?.content || '';
     if (token) {
       accumulatedText += token;
       const now = Date.now();
       if (now - lastUpdate > THROTTLE_MS) {
-        await updateNodeResult(responseNodeId, { text: accumulatedText, status: 'streaming' });
+        await updateNodeResult(responseNodeId, { text: accumulatedText, status: 'streaming', ...generation });
         lastUpdate = now;
       }
     }
   }
 
-  await updateNodeResult(responseNodeId, { text: accumulatedText, status: 'done' });
+  await updateNodeResult(responseNodeId, { text: accumulatedText, status: 'done', ...generation });
   return accumulatedText;
 }
 
@@ -235,9 +235,9 @@ export async function POST(request: NextRequest) {
           console.log(`[Node Executor] Response ${index + 1}/${expectedResults} done: ${nodeId}`);
           return { node_id: nodeId, status: 'completed', text };
         } catch (err: any) {
-          await failNode(nodeId, err.message || 'Unknown error');
+          await failNode(nodeId, 'OpenRouter generation failed');
           console.error(`[Node Executor] Response ${index + 1}/${expectedResults} failed: ${nodeId}`);
-          return { node_id: nodeId, status: 'failed', error: err.message };
+          return { node_id: nodeId, status: 'failed', error: 'OpenRouter generation failed' };
         }
       })
     );
@@ -249,12 +249,12 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error: any) {
-    console.error('[Node Executor] Error:', error);
+    console.error('[Node Executor] Request failed');
 
     for (const nodeId of responseNodeIds) {
-      await failNode(nodeId, error.message || 'Unknown error');
+      await failNode(nodeId, 'Node execution failed');
     }
 
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: 'Node execution failed' }, { status: 500 });
   }
 }

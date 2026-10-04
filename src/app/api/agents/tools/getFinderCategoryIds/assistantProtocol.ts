@@ -4,7 +4,7 @@
  * MUST be used BEFORE analyzeICPTotalCount and createIcpMining - those tools require IDs, not free text.
  */
 
-import { getFinderCategoryIdsCore } from './route';
+import { getFinderCategoryIdsCore } from './core';
 
 const CATEGORIES = [
   'industries',

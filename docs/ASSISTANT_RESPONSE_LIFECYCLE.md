@@ -55,12 +55,19 @@ cannot be replayed safely and is paused instead of duplicated.
 
 Both workflow and cron recovery must claim this checkpoint for the original
 user action. They cannot infer work from the latest tool log. Recovery refuses
-legacy/missing checkpoints, stopped/cancelled/completed/failed/paused or superseded
-actions, changed node context, concurrent owners, and in-flight tool/model work.
-An in-flight crash is ambiguous and is never automatically replayed. Revision
+missing/unbound checkpoints, stopped/cancelled/completed/failed/paused or superseded
+actions, changed node context, concurrent owners, and in-flight node/plan work.
+Ordinary in-flight conversations may resume using the
+[15-minute heuristic](ASSISTANT_HEURISTIC_RECOVERY.md), without automatically
+replaying a tool. An in-flight crash still has an uncertain outcome. Revision
 compare-and-set and generation fencing prevent stale executions from resuming
-after another owner claims recovery. The maximum of two background restarts is
+after another owner claims recovery. The maximum of five background restarts is
 per action, not reset when the cron lookback window expires.
+
+A known conversational turn alongside a requirement plan may recover in
+conversation-only mode. It can read status and finish the user's answer without
+resuming the plan or releasing its holds. Only that user action is completed;
+the response reports `conversation_completed` and `managed_work_resumed: false`.
 
 Before each model chunk and tool invocation the active action and fingerprint are
 checked again. `publish` arguments are bound to persisted Content output URLs and
@@ -69,11 +76,14 @@ replaced by its reference images or all instance assets. Model-authored captions
 and explicit TikTok options remain configurable. Blog-only nodes cannot add a
 social destination. Missing/unsafe Content fails closed.
 
-Checkpoints are JSON-only and limited to 512 KiB of messages, without inline data
+Checkpoints are JSON-only and limited to 2 MiB of messages, without inline data
 URIs. Oversized/nonserializable context pauses rather than dropping receipts.
+Execution configuration retains its separate 512 KiB limit; the snapshot reserves
+another 64 KiB for recovery metadata and fits within the existing 4 MiB action reader.
 These are safety checks, not an atomic transaction across external providers:
 already-started external requests cannot be undone by a later cancellation.
-No historical rows are backfilled, and no old execution is restarted on rollout.
+No historical rows or respawn counters are reset on rollout. Eligible running
+conversations in the cron discovery window can resume automatically.
 No remote schema migration is required. Deploy the API before relying on recovery.
 
 New offline suites cover `node-recovery-workflow`, `recovery-turn-guard`,

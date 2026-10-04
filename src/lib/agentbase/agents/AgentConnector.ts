@@ -5,6 +5,8 @@
 import { Base } from './Base';
 import { PortkeyConnector } from '../services/PortkeyConnector';
 import { DbCommand, CommandExecutionResult, PortkeyModelOptions } from '../models/types';
+import { parseAgentModel } from '../models/model-selection';
+import { getOpenRouterChatModel } from '@/lib/services/ai/openrouter';
 
 export class AgentConnector extends Base {
   private connector: PortkeyConnector;
@@ -58,22 +60,13 @@ export class AgentConnector extends Base {
       `);
       
       // Parse model field if it contains modelType:modelId format
-      let parsedModelType = command.model_type || this.defaultOptions.modelType || 'openai';
-      let parsedModelId = command.model_id || this.defaultOptions.modelId || 'gpt-4o';
+      let parsedModelType = command.model_type || this.defaultOptions.modelType || 'openrouter';
+      let parsedModelId = command.model_id || this.defaultOptions.modelId || getOpenRouterChatModel();
       
-      if (command.model && command.model.includes(':')) {
-        const [modelType, modelId] = command.model.split(':');
-        // Validate modelType
-        if (['anthropic', 'openai', 'gemini'].includes(modelType)) {
-          parsedModelType = modelType as 'anthropic' | 'openai' | 'gemini';
-          parsedModelId = modelId;
-          console.log(`📝 [AgentConnector:${this.id}] Parsed model field: ${modelType}:${modelId}`);
-        } else {
-          console.warn(`📝 [AgentConnector:${this.id}] Invalid modelType: ${modelType}, using default`);
-          parsedModelId = command.model; // Use the whole string as modelId
-        }
-      } else if (command.model) {
-        parsedModelId = command.model;
+      if (command.model) {
+        const parsed = parseAgentModel(command.model, parsedModelType);
+        parsedModelType = parsed.modelType;
+        parsedModelId = parsed.modelId;
       }
       
       // Configure model options for portkey
@@ -86,13 +79,8 @@ export class AgentConnector extends Base {
       };
       
       // Add reasoning_effort if present in command
-      // Skip for custom Azure deployment names that may return 500, unless strictly 'o3-mini' or 'o1'
       if (command.reasoning_effort) {
-        if (parsedModelId === 'o3-mini' || parsedModelId === 'o1' || parsedModelId.startsWith('o1-') || parsedModelId.startsWith('o3-')) {
-          modelOptions.reasoningEffort = command.reasoning_effort;
-        } else {
-          console.log(`[AgentConnector:${this.id}] Skipping reasoning_effort for model: ${parsedModelId} to avoid HTTP 500`);
-        }
+        modelOptions.reasoningEffort = command.reasoning_effort;
       }
       // Note: OpenAI does not support a 'verbosity' parameter. Passing it may cause errors.
       // if (command.metadata?.verbosity) {
@@ -203,8 +191,7 @@ export class AgentConnector extends Base {
       return {
         status: 'completed',
         results: processedResults,
-        inputTokens: portkeyUsage.inputTokens,
-        outputTokens: portkeyUsage.outputTokens
+        ...portkeyUsage,
       };
     } catch (error: any) {
       console.error(`[AgentConnector:${this.id}] Error executing command:`, error);

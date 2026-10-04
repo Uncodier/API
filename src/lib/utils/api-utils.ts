@@ -5,7 +5,8 @@ import { captureScreenshot, prepareImageForAPI } from './image-utils';
 import { preprocessHtml } from './html-preprocessor';
 import { createVisionMessage } from './message-utils';
 import * as cheerio from 'cheerio';
-import { continueJsonGeneration, isIncompleteJson as isJsonIncomplete, attemptJsonRepair } from '@/lib/services/continuation-service';
+import { continueJsonGeneration, isIncompleteJson as isJsonIncomplete, attemptJsonRepair, extractResponseContent, updateResponseContent } from '@/lib/services/continuation-service';
+import { createOpenRouterClient } from '@/lib/services/ai/openrouter';
 
 /**
  * Prepara los datos para un análisis (screenshot y HTML)
@@ -19,8 +20,7 @@ export async function prepareAnalysisData(request: AnalyzeRequest): Promise<{
   const timeout = request.options?.timeout || 60000; // Aumentar a 60 segundos para sitios complejos
   const includeScreenshot = request.options?.includeScreenshot === true; // Asegurarse de que sea booleano
   
-  console.log(`[prepareAnalysisData] Iniciando preparación de datos para ${request.url}`);
-  console.log(`[prepareAnalysisData] Opciones recibidas:`, request.options);
+  console.log('[prepareAnalysisData] Iniciando preparación de datos');
   console.log(`[prepareAnalysisData] Opciones procesadas: includeScreenshot=${includeScreenshot}, timeout=${timeout}ms`);
   
   // Log all properties of the request object to check what's available
@@ -53,7 +53,7 @@ export async function prepareAnalysisData(request: AnalyzeRequest): Promise<{
       screenshotData = await captureScreenshot(request.url, { timeout });
       console.log(`[prepareAnalysisData] Screenshot capturado: ${screenshotData ? screenshotData.length : 0} bytes`);
     } catch (error) {
-      console.error(`[prepareAnalysisData] Error al capturar screenshot: ${error}`);
+      console.error('[prepareAnalysisData] Error al capturar screenshot');
       screenshotData = undefined;
     }
   } else if (!includeScreenshot) {
@@ -204,7 +204,7 @@ export async function prepareAnalysisData(request: AnalyzeRequest): Promise<{
         console.log(`[prepareAnalysisData] HTML después del truncado inteligente: ${htmlContent.length} bytes`);
       }
     } catch (error) {
-      console.error(`[prepareAnalysisData] Error al obtener o procesar HTML: ${error}`);
+      console.error('[prepareAnalysisData] Error al obtener o procesar HTML');
       // Si hay un error, intentar devolver al menos un HTML básico con la información disponible
       htmlContent = `
 <!DOCTYPE html>
@@ -217,7 +217,7 @@ export async function prepareAnalysisData(request: AnalyzeRequest): Promise<{
     <h1>Sitio: ${request.url}</h1>
   </header>
   <main>
-    <p>No se pudo obtener el HTML completo debido a un error: ${error}</p>
+    <p>No se pudo obtener el HTML completo.</p>
   </main>
 </body>
 </html>`;
@@ -241,8 +241,9 @@ export async function prepareAnalysisData(request: AnalyzeRequest): Promise<{
  */
 export async function callApiWithMessage(
   messages: any[],
-  modelType: 'anthropic' | 'openai' | 'gemini' = 'anthropic',
-  modelId?: string
+  modelType: 'anthropic' | 'openai' | 'gemini' = 'openai',
+  modelId?: string,
+  processIncomplete = true
 ): Promise<any> {
   console.log(`[callApiWithMessage] Enviando solicitud a la API usando ${modelType} ${modelId || 'default'}...`);
   
@@ -273,89 +274,22 @@ export async function callApiWithMessage(
       
       response = await apiResponse.json();
     } else {
-      // En el servidor, llamamos directamente a la API de Portkey
-      // Importar Portkey usando require para evitar problemas
-      const Portkey = require('portkey-ai').default;
-      const { getRequestOptions } = require('../config/analyzer-config');
-      
-      // Mapeo de proveedores a claves virtuales
-      const PROVIDER_TO_VIRTUAL_KEY: Record<string, string> = {
-        'anthropic': process.env.ANTHROPIC_API_KEY || '',
-        'openai': process.env.AZURE_OPENAI_API_KEY || '',
-        'gemini': process.env.GEMINI_API_KEY || ''
-      };
-      
-      // Obtener la clave virtual para el proveedor seleccionado
-      const virtualKey = PROVIDER_TO_VIRTUAL_KEY[modelType] || PROVIDER_TO_VIRTUAL_KEY['anthropic'];
-      
-      // Crear una instancia de Portkey
-      const portkey = new Portkey({
-        apiKey: process.env.PORTKEY_API_KEY || '',
-        virtualKey: virtualKey
+      response = await createOpenRouterClient().chat.completions.create({
+        ...getRequestOptions(modelType, modelId).openrouter,
+        messages,
+        stream: false,
       });
-      
-      // Obtener opciones de solicitud
-      const requestOptions = getRequestOptions(modelType, modelId);
-      
-      // Configurar opciones del modelo según el tipo
-      let modelOptions;
-      
-      switch(modelType) {
-        case 'anthropic':
-          modelOptions = {
-            model: requestOptions.anthropic.model,
-            max_tokens: requestOptions.anthropic.max_tokens,
-          };
-          break;
-        case 'openai':
-          modelOptions = {
-            model: requestOptions.openai.model,
-          };
-          // Use max_completion_tokens for GPT-5 family
-          if (requestOptions.openai.model && requestOptions.openai.model.startsWith('gpt-5')) {
-            if (requestOptions.openai.max_tokens) (modelOptions as any).max_completion_tokens = requestOptions.openai.max_tokens;
-          } else {
-            if (requestOptions.openai.max_tokens) (modelOptions as any).max_tokens = requestOptions.openai.max_tokens;
-          }
-          break;
-        case 'gemini':
-          modelOptions = {
-            model: requestOptions.gemini.model,
-            max_tokens: requestOptions.gemini.max_tokens,
-          };
-          break;
-        default:
-          modelOptions = {
-            model: requestOptions.anthropic.model,
-            max_tokens: requestOptions.anthropic.max_tokens,
-          };
-      }
-      
-      // Realizar la solicitud directamente a Portkey
-      console.log(`[callApiWithMessage] Llamando directamente a Portkey desde el servidor`);
-      console.log(`[callApiWithMessage] Modelo: ${modelOptions.model}, Max tokens: ${modelOptions.max_tokens}, Proveedor: ${modelType}, Clave virtual: ${virtualKey}`);
-      
-      try {
-        response = await portkey.chat.completions.create({
-          messages: messages,
-          ...modelOptions
-        });
-        
-        console.log(`[callApiWithMessage] Respuesta de Portkey recibida correctamente`);
-      } catch (portkeyError) {
-        console.error(`[callApiWithMessage] Error de Portkey:`, portkeyError);
-        throw portkeyError;
-      }
     }
     
     // Verificar si la respuesta contiene un JSON incompleto y manejarlo
     // Esto solo se aplica a respuestas que parecen ser JSON (comienzan con '{')
-    const processedResponse = await handleIncompleteJsonResponse(response, messages, modelType, modelId);
+    const processedResponse = processIncomplete
+      ? await handleIncompleteJsonResponse(response, messages, modelType, modelId) : response;
     
     return processedResponse;
   } catch (error) {
-    console.error('[callApiWithMessage] Error:', error);
-    throw error;
+    console.error('[callApiWithMessage] OpenRouter request failed');
+    throw new Error('OpenRouter request failed');
   }
 }
 
@@ -366,9 +300,10 @@ export function prepareApiMessage(
   textContent: string,
   imageUrl: string | undefined,
   systemPrompt: string,
-  provider: 'anthropic' | 'openai' | 'gemini' = 'anthropic'
+  provider: 'anthropic' | 'openai' | 'gemini' = 'openai'
 ): any[] {
-  return createVisionMessage(textContent, imageUrl, systemPrompt, provider);
+  // All OpenRouter vendors accept the OpenAI-compatible image_url format.
+  return createVisionMessage(textContent, imageUrl, systemPrompt, 'openai');
 }
 
 /**
@@ -380,19 +315,10 @@ export function prepareApiMessage(
 export async function handleIncompleteJsonResponse(
   response: any,
   messages: any[],
-  modelType: 'anthropic' | 'openai' | 'gemini' = 'anthropic',
+  modelType: 'anthropic' | 'openai' | 'gemini' = 'openai',
   modelId?: string
 ): Promise<any> {
-  // Extraer el contenido de la respuesta según el proveedor
-  let content = '';
-  
-  if (modelType === 'anthropic') {
-    content = response.content?.[0]?.text || '';
-  } else if (modelType === 'openai') {
-    content = response.choices?.[0]?.message?.content || '';
-  } else if (modelType === 'gemini') {
-    content = response.candidates?.[0]?.content?.parts?.[0]?.text || '';
-  }
+  const content = extractResponseContent(response);
   
   // Verificar si la respuesta parece ser un JSON incompleto
   if (content && content.trim().startsWith('{') && isJsonIncomplete(content)) {
@@ -404,13 +330,7 @@ export async function handleIncompleteJsonResponse(
       console.log('[handleIncompleteJsonResponse] JSON reparado exitosamente sin usar IA');
       
       // Actualizar la respuesta con el JSON reparado
-      if (modelType === 'anthropic') {
-        response.content[0].text = JSON.stringify(repairedJson);
-      } else if (modelType === 'openai') {
-        response.choices[0].message.content = JSON.stringify(repairedJson);
-      } else if (modelType === 'gemini') {
-        response.candidates[0].content.parts[0].text = JSON.stringify(repairedJson);
-      }
+      updateResponseContent(response, JSON.stringify(repairedJson));
       
       return response;
     }
@@ -422,11 +342,16 @@ export async function handleIncompleteJsonResponse(
       const continuationResult = await continueJsonGeneration({
         incompleteJson: content,
         modelType,
-        modelId: modelId || getDefaultModelId(modelType),
-        siteUrl: 'https://example.com', // URL genérica para contexto
+        modelId: modelId || getRequestOptions(modelType).openrouter.model,
+        siteUrl: '', // No synthetic site fetch is needed for a text continuation.
         timeout: 30000,
         maxRetries: 2
       });
+      if (continuationResult.generations?.length) {
+        response.continuation_generations = [
+          ...(response.continuation_generations || []), ...continuationResult.generations,
+        ];
+      }
       
       if (continuationResult.success && continuationResult.completeJson) {
         console.log('[handleIncompleteJsonResponse] JSON completado exitosamente con el servicio de continuación');
@@ -436,13 +361,7 @@ export async function handleIncompleteJsonResponse(
           ? continuationResult.completeJson 
           : JSON.stringify(continuationResult.completeJson);
         
-        if (modelType === 'anthropic') {
-          response.content[0].text = completedJsonString;
-        } else if (modelType === 'openai') {
-          response.choices[0].message.content = completedJsonString;
-        } else if (modelType === 'gemini') {
-          response.candidates[0].content.parts[0].text = completedJsonString;
-        }
+        updateResponseContent(response, completedJsonString);
         
         return response;
       }
@@ -450,7 +369,7 @@ export async function handleIncompleteJsonResponse(
       // Si el servicio de continuación falló, intentar con el método tradicional
       console.log('[handleIncompleteJsonResponse] El servicio de continuación falló, intentando con el método tradicional');
     } catch (error) {
-      console.error('[handleIncompleteJsonResponse] Error en el servicio de continuación:', error);
+      console.error('[handleIncompleteJsonResponse] Error en el servicio de continuación');
       console.log('[handleIncompleteJsonResponse] Intentando con el método tradicional');
     }
     
@@ -468,18 +387,16 @@ export async function handleIncompleteJsonResponse(
     ];
     
     // Realizar una nueva llamada a la API para obtener la continuación
-    const continuationResponse = await callApiWithMessage(continuationMessage, modelType, modelId);
+    // A continuation must not recursively launch another unbounded repair sequence.
+    const continuationResponse = await callApiWithMessage(continuationMessage, modelType, modelId, false);
+    response.continuation_generations = [
+      ...(response.continuation_generations || []),
+      { id: continuationResponse.id, provider: continuationResponse.provider,
+        model: continuationResponse.model, usage: continuationResponse.usage },
+    ];
     
     // Extraer el contenido de la continuación según el proveedor
-    let continuationContent = '';
-    
-    if (modelType === 'anthropic') {
-      continuationContent = continuationResponse.content?.[0]?.text || '';
-    } else if (modelType === 'openai') {
-      continuationContent = continuationResponse.choices?.[0]?.message?.content || '';
-    } else if (modelType === 'gemini') {
-      continuationContent = continuationResponse.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    }
+    const continuationContent = extractResponseContent(continuationResponse);
     
     // Concatenar la respuesta original con la continuación
     const combinedContent = content + continuationContent;
@@ -489,13 +406,7 @@ export async function handleIncompleteJsonResponse(
       console.log('[handleIncompleteJsonResponse] Respuesta JSON completada correctamente');
       
       // Actualizar la respuesta con el contenido combinado
-      if (modelType === 'anthropic') {
-        response.content[0].text = combinedContent;
-      } else if (modelType === 'openai') {
-        response.choices[0].message.content = combinedContent;
-      } else if (modelType === 'gemini') {
-        response.candidates[0].content.parts[0].text = combinedContent;
-      }
+      updateResponseContent(response, combinedContent);
       
       return response;
     } else {
@@ -507,13 +418,7 @@ export async function handleIncompleteJsonResponse(
         console.log('[handleIncompleteJsonResponse] JSON válido extraído correctamente');
         
         // Actualizar la respuesta con el JSON extraído
-        if (modelType === 'anthropic') {
-          response.content[0].text = extractedJson;
-        } else if (modelType === 'openai') {
-          response.choices[0].message.content = extractedJson;
-        } else if (modelType === 'gemini') {
-          response.candidates[0].content.parts[0].text = extractedJson;
-        }
+        updateResponseContent(response, extractedJson);
       }
       
       return response;
@@ -522,22 +427,6 @@ export async function handleIncompleteJsonResponse(
   
   // Si la respuesta ya es válida, devolverla sin cambios
   return response;
-}
-
-/**
- * Obtiene el ID de modelo predeterminado para un proveedor
- */
-function getDefaultModelId(modelType: 'anthropic' | 'openai' | 'gemini'): string {
-  switch (modelType) {
-    case 'anthropic':
-      return 'claude-3-opus-20240229';
-    case 'openai':
-      return 'gpt-5.6-sol';
-    case 'gemini':
-      return 'gemini-pro';
-    default:
-      return 'gpt-5.6-sol';
-  }
 }
 
 /**

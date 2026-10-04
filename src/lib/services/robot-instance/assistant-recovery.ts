@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { captureRecoveryNodeFingerprint } from './assistant-recovery-fingerprint';
 import { buildInterruptedRecoveryContext, mergeInterruptedRecoveryContext, summarizeRecoveryTool } from './assistant-recovery-context';
 import { IN_FLIGHT_STALL_MS } from './assistant-respawn-policy';
+import { isWorkflowManagedPlan } from '@/lib/services/workflow-robot/plan-ownership';
 import {
   assertRecoveryScope, canonicalRecoveryJson, cloneRecoveryJson, isRecord,
   MAX_RECOVERY_RESPAWNS, parseRecoveryCheckpoint, parseRecoveryExecution,
@@ -84,7 +85,7 @@ async function compareAndSwap(scope: AssistantRecoveryScope, action: Action, sna
     .eq('id', scope.userMessageLogId).eq('instance_id', scope.instanceId)
     .eq('site_id', scope.siteId).eq('user_id', scope.userId)
     .eq('log_type', 'user_action').eq('trusted_user_action', true);
-  // Bounded JSON-path filters work even with 512 KiB receipts. Recovery writers
+  // Bounded JSON-path filters work even with multi-MiB receipts. Recovery writers
   // own the revision; all status writers must CAS the observed status/revision.
   // Unrelated details are preserved from this read, not merged transactionally.
   if (Object.hasOwn(action.details, 'assistant_recovery')) {
@@ -154,6 +155,7 @@ export async function markAssistantRecoveryInFlight(
     const active = await readRecovery(scope);
     assertOwner(scope, active.snapshot);
     if (active.snapshot.inFlight) throw new RecoveryError('in_flight');
+    if (active.snapshot.conversationOnly && kind === 'plan') throw new RecoveryError('inactive');
     const now = new Date().toISOString();
     const checkpoint = messages ? parseRecoveryCheckpoint({ messages }) : undefined;
     await compareAndSwap(scope, active, { ...active.snapshot, ...checkpoint, inFlight: true,
@@ -231,13 +233,29 @@ async function interruptedContext(scope: AssistantRecoveryScope, active: ActiveR
   return buildInterruptedRecoveryContext(active.snapshot.toolObservations ?? [], tools.data ?? []);
 }
 
-export async function claimAssistantRecovery(scope: AssistantRecoveryScope, options?: { allowStaleInFlight: boolean }): Promise<{
+export async function claimAssistantRecovery(scope: AssistantRecoveryScope, options?: {
+  allowStaleInFlight: boolean; conversationOnly?: boolean;
+}): Promise<{
   snapshot: AssistantRecoverySnapshot;
   resumeToken: string;
 }> {
   return safeRecovery(async () => {
     const active = await readRecovery(scope);
     if (active.snapshot.lease_token) throw new RecoveryError('conflict');
+    if (options?.conversationOnly && !active.snapshot.conversationOnly) {
+      // The cron hint is not authority: re-read the phase and managed plan here.
+      if (active.snapshot.inFlightKind !== 'turn' || active.snapshot.execution.instanceNodeId) {
+        throw new RecoveryError('invalid_state');
+      }
+      const { data: plan, error } = await supabaseAdmin.from('instance_plans').select('metadata')
+        .eq('instance_id', scope.instanceId).eq('site_id', scope.siteId)
+        .in('status', ['pending', 'in_progress', 'active', 'paused'])
+        .order('updated_at', { ascending: false }).limit(1).maybeSingle();
+      if (error) throw new RecoveryError('conflict');
+      if (!plan || isWorkflowManagedPlan(plan) || typeof plan.metadata?.requirement_id !== 'string') {
+        throw new RecoveryError('invalid_state');
+      }
+    }
     if (active.snapshot.inFlight && (!options?.allowStaleInFlight || active.snapshot.inFlightKind === 'plan' ||
         active.snapshot.execution.instanceNodeId)) {
       throw new RecoveryError('in_flight');
@@ -261,6 +279,7 @@ export async function claimAssistantRecovery(scope: AssistantRecoveryScope, opti
     const resumeToken = randomUUID();
     const snapshot = await compareAndSwap(scope, active, {
       ...active.snapshot, messages, inFlight: false,
+      ...(options?.conversationOnly ? { conversationOnly: true as const } : {}),
       ...(interruptionContext ? { interruptionContext: mergeInterruptedRecoveryContext(active.snapshot.interruptionContext, interruptionContext) } : {}),
       lastActivityAt: new Date().toISOString(), respawnCount: active.snapshot.respawnCount + 1, lease_token: resumeToken,
     });

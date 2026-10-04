@@ -10,7 +10,7 @@ import {
   getFlexibleProperty,
   setFlexibleProperty,
   CaseConverterService
-} from './case-converter';
+} from '../case-converter';
 
 describe('CaseConverterService', () => {
   describe('camelToSnake', () => {

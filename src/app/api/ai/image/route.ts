@@ -7,15 +7,10 @@ import {
 } from '@/lib/security/request-rate-limit';
 import { assertSafeRemoteUrl } from '@/lib/security/safe-remote-url';
 import { canAccessSite } from '@/lib/security/site-access';
-import type {
-  GenerateImageOptions,
-  ImageGenerationResult,
-  ImageProvider,
-  ImageRequestBody,
-} from './image-types';
+import type { ImageRequestBody } from './image-types';
 import { generateWithAzure } from './provider-azure';
-import { generateWithGemini } from './provider-gemini';
-import { generateWithVercelGateway } from './provider-vercel';
+import { MediaRequestError } from '@/lib/services/image/media-request-error';
+import { mediaInstanceBelongsToSite } from '@/lib/services/ai/media-instance-access';
 
 const SYSTEM_SITE_ID = '00000000-0000-0000-0000-000000000000';
 const UUID_PATTERN =
@@ -35,31 +30,6 @@ async function validateReferenceImages(
     await assertSafeRemoteUrl(value);
   }
   return values;
-}
-
-async function generate(
-  provider: ImageProvider,
-  options: GenerateImageOptions,
-): Promise<ImageGenerationResult> {
-  if (provider === 'vercel') return generateWithVercelGateway(options);
-  if (provider === 'azure') {
-    try {
-      return await generateWithAzure(options);
-    } catch (azureError) {
-      const result = await generateWithGemini(options);
-      result.fallbackFrom = 'azure';
-      console.warn('[Image API] Azure failed; Gemini fallback succeeded:', azureError);
-      return result;
-    }
-  }
-  try {
-    return await generateWithGemini(options);
-  } catch (geminiError) {
-    const result = await generateWithAzure(options);
-    result.fallbackFrom = 'gemini';
-    console.warn('[Image API] Gemini failed; Azure fallback succeeded:', geminiError);
-    return result;
-  }
 }
 
 export async function POST(request: NextRequest) {
@@ -97,6 +67,9 @@ export async function POST(request: NextRequest) {
     if (systemRequest ? !internal : !await canAccessSite(request, body.site_id)) {
       return NextResponse.json({ error: 'Site access denied' }, { status: 403 });
     }
+    if (!await mediaInstanceBelongsToSite(body.site_id, body.instance_id)) {
+      return NextResponse.json({ error: 'Instance does not belong to the authorized site' }, { status: 403 });
+    }
 
     let referenceImages: string[] | undefined;
     try {
@@ -108,15 +81,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const parsedCount = Number(body.n);
-    const count = Number.isFinite(parsedCount)
-      ? Math.min(4, Math.max(1, Math.trunc(parsedCount)))
-      : 1;
-    const provider: ImageProvider = ['azure', 'gemini', 'vercel'].includes(
-      body.provider || '',
-    )
-      ? body.provider as ImageProvider
-      : 'gemini';
+    const count = body.n ?? 1;
+    if (!Number.isInteger(count) || count < 1 || count > 4) {
+      return NextResponse.json({ error: 'n must be an integer between 1 and 4' }, { status: 400 });
+    }
+    const provider = body.provider ?? 'azure';
+    if (provider !== 'azure') {
+      return NextResponse.json({ error: 'Unsupported image provider' }, { status: 400 });
+    }
+    if (body.model !== undefined && (typeof body.model !== 'string' || !body.model.trim())) {
+      return NextResponse.json({ error: 'model must be a nonempty string' }, { status: 400 });
+    }
 
     const requiredCredits = CreditService.PRICING.IMAGE_GENERATION * count;
     if (!systemRequest && !await CreditService.validateCredits(
@@ -135,7 +110,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const result = await generate(provider, {
+    const result = await generateWithAzure({
       prompt: body.prompt,
       siteId: body.site_id,
       instanceId: body.instance_id,
@@ -144,6 +119,7 @@ export async function POST(request: NextRequest) {
       quality: body.quality,
       ratio: body.aspect_ratio || body.ratio,
       referenceImages,
+      model: body.model,
     });
     if (!systemRequest) {
       const deduction = await CreditService.deductCredits(
@@ -151,7 +127,7 @@ export async function POST(request: NextRequest) {
         CreditService.PRICING.IMAGE_GENERATION * result.images.length,
         'image_generation',
         `Image generation (${result.images.length} images)`,
-        { prompt: body.prompt, provider },
+        { prompt: body.prompt, provider, ...result.metadata },
       );
       if (!deduction.success) {
         throw new Error(deduction.error || 'Unable to deduct image credits');
@@ -159,10 +135,9 @@ export async function POST(request: NextRequest) {
     }
     return NextResponse.json(result);
   } catch (error) {
-    console.error('[Image API] Request failed:', error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Image generation failed' },
-      { status: 500 },
+      { error: error instanceof MediaRequestError ? error.message : 'Image generation failed' },
+      { status: error instanceof MediaRequestError ? error.status : 500 },
     );
   }
 }
@@ -170,6 +145,7 @@ export async function POST(request: NextRequest) {
 export async function GET() {
   return NextResponse.json({
     message: 'AI Image Generation API',
-    providers: ['azure', 'gemini', 'vercel'],
+    providers: ['azure'],
+    default_provider: 'azure',
   });
 }

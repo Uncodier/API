@@ -16,7 +16,8 @@ jest.mock('@/lib/services/requirement-cron-reset', () => ({
 jest.mock('@/lib/services/requirement-backlog-blocker-service', () => ({}));
 
 import { NextRequest } from 'next/server';
-import { executeBacklogCore, POST } from '../route';
+import { executeBacklogCore } from '../core';
+import { POST } from '../route';
 import { requirementBacklogTool } from '../assistantProtocol';
 import { normalizeToolOperationResult } from '@/lib/services/tool-operation-result';
 import type { BacklogItem, RequirementBacklog } from '@/lib/services/requirement-backlog-types';

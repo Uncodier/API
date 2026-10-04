@@ -1,7 +1,7 @@
-import { createRecordCategoryCore } from "./create/route";
-import { getRecordCategoriesCore } from "./get/route";
-import { updateRecordCategoryCore } from "./update/route";
-import { deleteRecordCategoryCore } from "./delete/route";
+import { createRecordCategoryCore } from "./create/core";
+import { getRecordCategoriesCore } from "./get/core";
+import { updateRecordCategoryCore } from "./update/core";
+import { deleteRecordCategoryCore } from "./delete/core";
 
 export interface RecordCategoryToolParams {
   action: "create" | "list" | "update" | "delete";

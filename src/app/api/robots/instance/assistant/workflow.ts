@@ -98,6 +98,7 @@ export async function runAssistantWorkflow(
   );
   context.recoveryScope = recoveryScope;
   context.nodeContinuation = recovery.snapshot?.continuation;
+  context.conversationRecoveryOnly = recovery.snapshot?.conversationOnly === true;
   if (recovery.snapshot?.interruptionContext) {
     // Evidence, not a synthetic tool result or a replacement for the user's intent.
     context.systemPrompt = `${context.systemPrompt}\n\n${recovery.snapshot.interruptionContext}`;
@@ -201,7 +202,9 @@ export async function runAssistantWorkflow(
   // Step 3: Check for active instance plan AFTER the agent conversation
   // The agent might have just created or updated an instance_plan during its turn
   // If instanceNodeId is present, we SKIP auto-executing plans because Node (Imprenta) executions are single-shot and should not spawn ghost nodes.
-  const activePlan = await getActiveInstancePlan(instanceId, siteId);
+  // A resumed status conversation must never fall through to plan execution,
+  // even if requirement linkage disappears while preparing its context.
+  const activePlan = context.conversationRecoveryOnly ? null : await getActiveInstancePlan(instanceId, siteId);
   
   if (activePlan && !context.hasLinkedRequirement && !instanceNodeId) {
     console.log(`[Workflow] Found active plan: ${activePlan.title} (${activePlan.id})`);
@@ -296,7 +299,8 @@ export async function runAssistantWorkflow(
   return {
     instance_id: instanceId,
     status: context.instance.status,
-    message: 'Execution completed successfully',
+    message: context.conversationRecoveryOnly ? 'Conversation completed; managed work was not resumed' : 'Execution completed successfully',
+    ...(context.conversationRecoveryOnly ? { execution_status: 'conversation_completed', managed_work_resumed: false } : {}),
     assistant_response: finalResult.text,
     output: finalResult.output,
     usage: finalResult.usage,

@@ -15,7 +15,7 @@ export const SYSTEM_LABELS: Record<string, string> = {
   redis: 'Redis Queues',
   platform: 'Platform API',
   notifications: 'Notifications',
-  ai_portkey: 'AI Portkey',
+  ai_portkey: 'AI OpenRouter',
   ai_text: 'AI Text',
   ai_text_continuation: 'AI Text Continuation',
   ai_image: 'AI Image',

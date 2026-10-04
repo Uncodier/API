@@ -149,7 +149,7 @@ ${getStepCheckpointPromptFragment(reqId, instanceId)}`;
   let result: any;
   let messages: any[] = [{ role: 'user', content: `Execute the following instruction on the repository: ${instruction}` }];
 
-  const agentModel = process.env.AI_CODE_MODEL || 'gemini-3.1-pro-preview-customtools';
+  const agentModel = process.env.AI_CODE_MODEL || process.env.OPENROUTER_CHAT_MODEL;
   const globalStartTime = params.globalStartTime ?? Date.now();
   const MAX_EXECUTION_TIME_MS = 12 * 60 * 1000; // 12 minutes
   let timedOut = false;
@@ -168,8 +168,8 @@ ${getStepCheckpointPromptFragment(reqId, instanceId)}`;
         { id: instanceId, site_id, user_id, requirement_id: reqId },
         {
           use_sdk_tools: false,
-          provider: 'gemini',
-          ai_provider: 'gemini',
+          provider: 'openrouter',
+          ai_provider: 'openrouter',
           instance_id: instanceId,
           site_id,
           user_id,

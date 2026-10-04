@@ -1,11 +1,10 @@
-import OpenAI from 'openai';
-import { GoogleAuth } from 'google-auth-library';
+import { createOpenRouterClient, isOpenRouterReasoningModel, resolveOpenRouterModel } from '@/lib/services/ai/openrouter';
 
-type VisualProvider = 'gemini' | 'openai' | 'azure' | 'xai';
 export type VisualCriticResponseFormat = 'json_schema' | 'json_object';
 
 export interface VisualCriticCompletionInput {
   model: string;
+  siteId?: string;
   system: string;
   content: Array<
     | { type: 'text'; text: string }
@@ -21,6 +20,7 @@ export interface VisualCriticCompletion {
   finishReason?: string;
   refusal?: string;
   responseFormat: VisualCriticResponseFormat;
+  usage?: { cost?: number; [key: string]: unknown };
 }
 
 const VISUAL_CRITIC_RESPONSE_FORMAT = {
@@ -83,120 +83,25 @@ function isStructuredOutputCompatibilityError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
   const candidate = error as { status?: unknown; message?: unknown };
   const status = typeof candidate.status === 'number' ? candidate.status : 0;
-  const message = typeof candidate.message === 'string'
-    ? candidate.message
-    : String(error);
-  return (
-    (status === 400 || status === 422) &&
-    /response.?format|json.?schema|structured output/i.test(message)
-  );
-}
-
-function resolveProvider(env: NodeJS.ProcessEnv = process.env): VisualProvider {
-  const provider = (env.AI_PROVIDER || 'gemini').toLowerCase();
-  if (
-    provider === 'gemini' ||
-    provider === 'openai' ||
-    provider === 'azure' ||
-    provider === 'xai'
-  ) {
-    return provider;
-  }
-  return 'gemini';
-}
-
-function createVisualClient(
-  provider: VisualProvider,
-  model: string,
-  env: NodeJS.ProcessEnv = process.env,
-): OpenAI {
-  if (provider === 'azure') {
-    const apiKey = env.MICROSOFT_AZURE_OPENAI_API_KEY;
-    const endpoint = env.MICROSOFT_AZURE_OPENAI_ENDPOINT;
-    const deployment =
-      env.AI_VISUAL_AZURE_DEPLOYMENT ||
-      env.MICROSOFT_AZURE_OPENAI_DEPLOYMENT ||
-      model;
-    const apiVersion =
-      env.MICROSOFT_AZURE_OPENAI_API_VERSION || '2024-08-01-preview';
-    if (!apiKey || !endpoint || !deployment) {
-      throw new Error('Azure visual critic credentials are incomplete');
-    }
-    return new OpenAI({
-      apiKey,
-      baseURL: `${endpoint.replace(/\/+$/, '')}/openai/deployments/${deployment}`,
-      defaultQuery: { 'api-version': apiVersion },
-      defaultHeaders: { 'api-key': apiKey },
-    });
-  }
-
-  if (provider === 'openai') {
-    if (!env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY is missing');
-    return new OpenAI({
-      apiKey: env.OPENAI_API_KEY,
-      baseURL: env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
-    });
-  }
-
-  if (provider === 'xai') {
-    if (env.XAI_API_KEY) {
-      return new OpenAI({
-        apiKey: env.XAI_API_KEY,
-        baseURL: env.XAI_BASE_URL || 'https://api.x.ai/v1',
-      });
-    }
-    if (!env.GOOGLE_CLOUD_PROJECT_ID) {
-      throw new Error(
-        'XAI_API_KEY or GOOGLE_CLOUD_PROJECT_ID is required for the visual critic',
-      );
-    }
-    const auth = new GoogleAuth({
-      scopes: 'https://www.googleapis.com/auth/cloud-platform',
-    });
-    return new OpenAI({
-      apiKey: 'vertex-managed-token',
-      baseURL:
-        `https://aiplatform.googleapis.com/v1/projects/` +
-        `${env.GOOGLE_CLOUD_PROJECT_ID}/locations/global/endpoints/openapi/`,
-      fetch: async (url, init) => {
-        const client = await auth.getClient();
-        const token = await client.getAccessToken();
-        return fetch(url, {
-          ...init,
-          headers: {
-            ...init?.headers,
-            Authorization: `Bearer ${token.token}`,
-          },
-        });
-      },
-    });
-  }
-
-  if (!env.GEMINI_API_KEY) throw new Error('GEMINI_API_KEY is missing');
-  return new OpenAI({
-    apiKey: env.GEMINI_API_KEY,
-    baseURL:
-      env.GEMINI_OPENAI_BASE_URL ||
-      'https://generativelanguage.googleapis.com/v1beta/openai/',
-  });
+  const message = typeof candidate.message === 'string' ? candidate.message : String(error);
+  return (status === 400 || status === 422) && /response.?format|json.?schema|structured output/i.test(message);
 }
 
 export async function requestVisualCriticCompletion(
   input: VisualCriticCompletionInput,
 ): Promise<VisualCriticCompletion> {
-  const provider = resolveProvider();
-  const client = createVisualClient(provider, input.model);
-  const reasoningModel = /^(?:o[134]|gpt-5)/i.test(input.model);
-  const tokenLimit = reasoningModel
-    ? { max_completion_tokens: input.maxOutputTokens ?? 1_200 }
-    : { max_tokens: input.maxOutputTokens ?? 1_200 };
+  const client = createOpenRouterClient();
+  const model = resolveOpenRouterModel(input.model);
+  const reasoningModel = isOpenRouterReasoningModel(model);
+  const tokenLimit = { max_tokens: input.maxOutputTokens ?? (reasoningModel ? 8_192 : 1_200) };
   const createCompletion = (
     responseFormat:
       | typeof VISUAL_CRITIC_RESPONSE_FORMAT
       | { type: 'json_object' },
   ) => client.chat.completions.create(
     {
-      model: input.model,
+      model,
+      ...(input.siteId ? { user: input.siteId } : {}),
       messages: [
         { role: 'system', content: input.system },
         { role: 'user', content: input.content as any },
@@ -222,9 +127,10 @@ export async function requestVisualCriticCompletion(
     | undefined;
   return {
     text: message?.content || '',
-    model: response.model || input.model,
+    model: response.model || model,
     finishReason: choice?.finish_reason || undefined,
     refusal: message?.refusal || undefined,
     responseFormat,
+    ...(response.usage ? { usage: { ...response.usage } } : {}),
   };
 }

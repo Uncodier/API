@@ -1,5 +1,5 @@
-import { updateInstancePlanCore } from '../update/route';
-import { createInstancePlanCore } from '../create/route';
+import { updateInstancePlanCore } from '../update/core';
+import { createInstancePlanCore } from '../create/core';
 import { instancePlanTool } from '../assistantProtocol';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { requirementStepExecutionBlock } from '@/lib/services/requirement-execution-visibility';
@@ -13,17 +13,17 @@ workflowQuery.limit = jest.fn(() => workflowQuery);
 workflowQuery.maybeSingle = jest.fn(async () => ({ data: null, error: null }));
 const from = jest.fn(() => workflowQuery);
 
-jest.mock('../update/route', () => ({
+jest.mock('../update/core', () => ({
   updateInstancePlanCore: jest.fn(),
 }));
-jest.mock('../get/route', () => ({
+jest.mock('../get/core', () => ({
   getInstancePlansCore: jest.fn(),
 }));
-jest.mock('../create/route', () => ({
+jest.mock('../create/core', () => ({
   createInstancePlanCore: jest.fn(),
 }));
 jest.mock('@/lib/database/supabase-client', () => ({
-  supabaseAdmin: { from },
+  supabaseAdmin: { from: jest.fn() },
 }));
 
 const mockedUpdateInstancePlanCore =

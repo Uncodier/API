@@ -1,105 +1,128 @@
-import { ProcessorInitializer } from '../services/AgentInitializer';
-import { CommandService } from '../services/CommandService';
+import { AgentInitializer } from '../services/agent/AgentInitializer';
+import { AgentBackgroundService } from '../services/agent/AgentBackgroundService';
+import { CommandService } from '../services/command/CommandService';
 import { DatabaseAdapter } from '../adapters/DatabaseAdapter';
-import { DbCommand } from '../models/types';
-import sinon from 'sinon';
+import type { CommandExecutionResult, DbCommand } from '../models/types';
+import type CommandProcessor from '../services/command/CommandProcessor';
+import { Base } from '../agents/Base';
 
-describe('AgentPrompt Integration Tests', () => {
-  let processorInitializer: ProcessorInitializer;
-  let commandService: CommandService;
-  
-  beforeEach(() => {
-    // Get singleton instance
-    processorInitializer = ProcessorInitializer.getInstance();
-    commandService = processorInitializer.getCommandService();
-    
-    // Stub the DatabaseAdapter methods we'll need
-    sinon.stub(DatabaseAdapter, 'isValidUUID').returns(true);
-    sinon.stub(DatabaseAdapter, 'getAgentById').resolves({
+class PromptTestAgent extends Base {
+  constructor() {
+    super('test-processor', 'Test Processor', ['test', 'mock']);
+  }
+
+  async executeCommand(_command: DbCommand): Promise<CommandExecutionResult> {
+    return { status: 'completed', results: [] };
+  }
+}
+
+const mockProcessCommand = jest.fn<ReturnType<CommandProcessor['processCommand']>, Parameters<CommandProcessor['processCommand']>>();
+
+// Keep prompt generation real, but stop before any provider, database or Redis IO.
+jest.mock('../services/command/CommandProcessor', () => ({
+  __esModule: true,
+  default: jest.fn(() => ({ processCommand: mockProcessCommand })),
+}));
+jest.mock('../services/processor/ProcessorConfigurationService', () => ({
+  __esModule: true,
+  default: jest.fn(() => ({
+    configureProcessors: () => ({ tool_evaluator: new PromptTestAgent() }),
+  })),
+}));
+jest.mock('../adapters/DatabaseAdapter', () => ({
+  DatabaseAdapter: {
+    isValidUUID: jest.fn(() => true),
+    getAgentById: jest.fn(async () => ({
       id: 'test-agent-id',
       name: 'Test Agent',
       configuration: {
         capabilities: ['test', 'prompt_testing'],
         description: 'An agent for testing prompts',
-        prompt: 'This is a specific agent prompt that should be included in Agent Custom Instructions section'
-      }
-    });
-    sinon.stub(DatabaseAdapter, 'getAgentFiles').resolves([]);
-    sinon.stub(DatabaseAdapter, 'updateCommand').resolves({});
+        prompt: 'This is a specific agent prompt that should be included in Agent Custom Instructions section',
+      },
+    })),
+    getAgentFiles: jest.fn(async () => []),
+    getAgentTools: jest.fn(async () => []),
+    updateCommand: jest.fn(async () => null),
+    getCommandById: jest.fn(async () => null),
+  },
+}));
+jest.mock('../services/agent/AgentCacheService', () => ({
+  AgentCacheService: jest.fn(() => ({
+    getAgentData: jest.fn(async () => null),
+    setAgentData: jest.fn(async () => undefined),
+  })),
+}));
+jest.mock('@/lib/timezone', () => ({
+  ...jest.requireActual<typeof import('@/lib/timezone')>('@/lib/timezone'),
+  resolveClientTimezone: jest.fn(async () => 'UTC'),
+}));
+jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: {} }));
+jest.mock('@/lib/utils/redis-client', () => ({ getRedisClient: jest.fn(() => null) }));
+jest.mock('uuid', () => ({ v4: jest.fn(() => '00000000-0000-4000-8000-000000000001') }));
+
+function command(overrides: Partial<DbCommand> = {}): DbCommand {
+  return {
+    id: 'test-command-id',
+    task: 'test',
+    status: 'pending',
+    user_id: 'test-user-id',
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+    agent_id: 'test-agent-id',
+    targets: [{ type: 'text', content: 'Test content' }],
+    metadata: { dbUuid: 'test-db-uuid' },
+    ...overrides,
+  };
+}
+
+describe('AgentPrompt Integration Tests', () => {
+  let commandService: CommandService;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockProcessCommand.mockImplementation(async value => value);
+    const initializer = AgentInitializer.createAndInitialize();
+    commandService = initializer.getCommandService();
   });
-  
-  afterEach(() => {
-    sinon.restore();
-  });
-  
+
+  afterEach(() => jest.restoreAllMocks());
+
+  // EventEmitter does not await asynchronous listeners. Await their actual work
+  // directly instead of relying on an arbitrary timer or starting live workers.
+  async function dispatchCreated(value: DbCommand) {
+    const listeners = commandService.getEventEmitter().listeners('commandCreated');
+    expect(listeners).toHaveLength(1);
+    await Promise.all(listeners.map(listener => listener(value)));
+  }
+
   it('should correctly include agent prompt in agent_background when processing command', async () => {
-    // Stub the command service methods
-    const updateCommandStub = sinon.stub(commandService, 'updateCommand').resolves({});
-    
-    // Create a spy on the private method generateAgentBackground to capture its output
-    const generateAgentBackgroundSpy = sinon.spy(processorInitializer as any, 'generateAgentBackground');
-    
-    // Set up an event handler to capture the command before processing
-    const commandBeforeProcessing: DbCommand = {
-      id: 'test-command-id',
-      task: 'test',
-      status: 'created',
-      agent_id: 'test-agent-id',
-      targets: [{ type: 'text', content: 'Test content' }],
-      metadata: { dbUuid: 'test-db-uuid' }
-    };
-    
-    // Manually trigger the command created event with our test command
-    commandService.emit('commandCreated', commandBeforeProcessing);
-    
-    // Wait for async operations
-    await new Promise(resolve => setTimeout(resolve, 100));
-    
-    // Verify that generateAgentBackground was called with the correct agent ID
-    expect(generateAgentBackgroundSpy.calledWith(sinon.match.any, 'test-agent-id')).to.be.true;
-    
-    // Get the agent background that was generated
-    const generatedBackground = generateAgentBackgroundSpy.returnValues[0];
-    
-    // Verify that the background contains the agent prompt in the correct section
-    expect(generatedBackground).to.include('# Agent Custom Instructions');
-    expect(generatedBackground).to.include('This is a specific agent prompt that should be included');
-    
-    // Verify the agent background was set in the command update
-    expect(updateCommandStub.calledWith('test-command-id', sinon.match({ 
-      agent_background: sinon.match.string 
-    }))).to.be.true;
-    
-    // Extra check: verify the specific content is in the updated agent_background
-    const updateArg = updateCommandStub.firstCall.args[1];
-    expect(updateArg.agent_background).to.include('# Agent Custom Instructions');
+    const generateAgentBackgroundSpy = jest.spyOn(AgentBackgroundService.prototype, 'generateAgentBackground');
+    await dispatchCreated(command());
+
+    expect(generateAgentBackgroundSpy).toHaveBeenCalledWith(expect.any(PromptTestAgent), 'test-agent-id', 'test-command-id');
+    const generatedBackground = await generateAgentBackgroundSpy.mock.results[0].value;
+    expect(generatedBackground).toContain('# Agent Custom Instructions');
+    expect(generatedBackground).toContain('This is a specific agent prompt that should be included');
+
+    // The current handler persists through DatabaseAdapter, then forwards the
+    // same background to CommandProcessor.
+    expect(DatabaseAdapter.updateCommand).toHaveBeenCalledWith('test-command-id', expect.objectContaining({
+      agent_background: expect.any(String),
+    }));
+    const updateArg = jest.mocked(DatabaseAdapter.updateCommand).mock.calls[0][1];
+    expect(updateArg.agent_background).toContain('# Agent Custom Instructions');
+    expect(mockProcessCommand).toHaveBeenCalledWith(expect.objectContaining({ agent_background: generatedBackground }));
   });
-  
-  it('should log the prompt that is actually sent to the LLM', async () => {
-    // Create stub for the TargetProcessor executeCommand method to capture what's sent to the LLM
-    const consoleLogSpy = sinon.spy(console, 'log');
-    
-    // Set up an event handler to capture the command before processing
-    const commandBeforeProcessing: DbCommand = {
-      id: 'test-command-id',
-      task: 'test',
-      status: 'created',
-      agent_id: 'test-agent-id',
-      agent_background: '# Test agent background with custom prompt',
-      targets: [{ type: 'text', content: 'Test content' }],
-      metadata: { dbUuid: 'test-db-uuid' }
-    };
-    
-    // Manually trigger the command created event with our test command
-    commandService.emit('commandCreated', commandBeforeProcessing);
-    
-    // Wait for async operations
-    await new Promise(resolve => setTimeout(resolve, 100));
-    
-    // Verify that the agent background was logged properly
-    const logs = consoleLogSpy.getCalls().map(call => call.args[0]).join('\n');
-    
-    expect(logs).to.include('agent_background');
-    expect(logs).to.include('# Test agent background with custom prompt');
+
+  it('preserves the exact existing prompt passed to command processing without regenerating it', async () => {
+    const generateBackgroundSpy = jest.spyOn(AgentBackgroundService.prototype, 'generateEnhancedAgentBackground');
+    const value = command({ agent_background: '# Test agent background with custom prompt' });
+    await dispatchCreated(value);
+
+    expect(generateBackgroundSpy).not.toHaveBeenCalled();
+    expect(DatabaseAdapter.updateCommand).not.toHaveBeenCalled();
+    expect(mockProcessCommand).toHaveBeenCalledTimes(1);
+    expect(mockProcessCommand).toHaveBeenCalledWith(expect.objectContaining({ agent_background: value.agent_background }));
   });
-}); 
+});

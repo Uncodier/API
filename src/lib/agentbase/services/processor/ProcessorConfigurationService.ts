@@ -6,6 +6,7 @@ import { PortkeyConfig, PortkeyModelOptions } from '../../models/types';
 import { ToolEvaluator } from '../../agents/ToolEvaluator';
 import { TargetProcessor } from '../../agents/TargetProcessor';
 import { Base } from '../../agents/Base';
+import { getOpenRouterChatModel } from '@/lib/services/ai/openrouter';
 
 export class ProcessorConfigurationService {
   // Configurar los procesadores para el system
@@ -26,8 +27,8 @@ export class ProcessorConfigurationService {
       connector,
       ['tool_evaluation'],
       {
-        modelType: 'openai',
-        modelId: 'gpt-4o'
+        modelType: 'openrouter',
+        modelId: getOpenRouterChatModel()
         // No temperature - let command or PortkeyConnector defaults handle it
       }
     );
@@ -39,8 +40,8 @@ export class ProcessorConfigurationService {
       connector,
       ['target_processing'],
       {
-        modelType: 'openai',
-        modelId: 'gpt-4o',
+        modelType: 'openrouter',
+        modelId: getOpenRouterChatModel(),
         temperature: 0.7,
         stream: false, // Default to non-streaming for stability
         streamOptions: {
@@ -56,8 +57,8 @@ export class ProcessorConfigurationService {
       connector,
       ['copywriting', 'content_creation', 'marketing'],
       {
-        modelType: 'openai',
-        modelId: 'gpt-4o',
+        modelType: 'openrouter',
+        modelId: getOpenRouterChatModel(),
         temperature: 0.7
       }
     );
@@ -71,19 +72,13 @@ export class ProcessorConfigurationService {
   private createPortkeyConnector(): PortkeyConnector {
     // Configurar las opciones para Portkey
     const portkeyConfig: PortkeyConfig = {
-      apiKey: process.env.PORTKEY_API_KEY || '',
-      virtualKeys: {
-        'anthropic': process.env.ANTHROPIC_API_KEY || '',
-        'openai': process.env.AZURE_OPENAI_API_KEY || '',
-        'gemini': process.env.GEMINI_API_KEY || ''
-      },
-      baseURL: 'https://api.portkey.ai/v1'
+      apiKey: process.env.OPENROUTER_API_KEY,
     };
     
     // Opciones por defecto para el modelo con streaming habilitado
     const defaultModelOptions: PortkeyModelOptions = {
-      modelType: 'openai',
-      modelId: 'gpt-4o',
+      modelType: 'openrouter',
+      modelId: getOpenRouterChatModel(),
       temperature: 0.7,
       stream: false, // Default to non-streaming for stability
       streamOptions: {

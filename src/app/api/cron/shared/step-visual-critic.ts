@@ -13,6 +13,7 @@ import { sanitizeTelemetryText } from './step-telemetry-sanitize';
 import { fetchVisualScreenshotDataUrl } from './visual-screenshot-data';
 import { requestVisualCriticCompletion } from './visual-critic-client';
 import { parseVisualCriticVerdict } from './visual-critic-parser';
+import { getOpenRouterChatModel, resolveOpenRouterModel } from '@/lib/services/ai/openrouter';
 
 export { parseVisualCriticVerdict } from './visual-critic-parser';
 
@@ -27,6 +28,7 @@ export type VisualCriticInput = {
   rubric?: string;
   brand_context?: string;
   requirementId?: string;
+  siteId?: string;
   model?: string;
   timeoutMs?: number;
   maxScreenshots?: number;
@@ -44,6 +46,7 @@ export type VisualCriticResult = {
   finish_reason?: string;
   response_format?: 'json_schema' | 'json_object';
   response_excerpt?: string;
+  usage?: { cost?: number; generations: Array<{ model: string; [key: string]: unknown }> };
 };
 
 const DEFAULT_RUBRIC = `
@@ -66,28 +69,8 @@ export function resolveVisualCriticModel(
   requestedModel?: string,
   env: Record<string, string | undefined> = process.env,
 ): string {
-  if (requestedModel?.trim()) return requestedModel.trim();
-  if (env.AI_VISUAL_MODEL?.trim()) return env.AI_VISUAL_MODEL.trim();
-  const provider = (env.AI_PROVIDER || 'gemini').toLowerCase();
-  if (provider === 'gemini') return 'gemini-2.5-flash';
-  if (provider === 'openai') return 'gpt-4o-mini';
-  if (provider === 'azure') {
-    return (
-      env.AI_VISUAL_AZURE_DEPLOYMENT ||
-      env.MICROSOFT_AZURE_OPENAI_DEPLOYMENT ||
-      env.AI_MODEL ||
-      'gpt-4o'
-    );
-  }
-  if (provider === 'xai') {
-    return (
-      env.AI_MODEL ||
-      (env.GOOGLE_CLOUD_PROJECT_ID && !env.XAI_API_KEY
-        ? 'xai/grok-4.6'
-        : 'grok-4.6')
-    );
-  }
-  return 'gemini-2.5-flash';
+  const requested = requestedModel?.trim() || env.AI_VISUAL_MODEL?.trim();
+  return requested ? resolveOpenRouterModel(requested) : getOpenRouterChatModel(env);
 }
 
 export async function runVisualCritic(input: VisualCriticInput): Promise<VisualCriticResult> {
@@ -126,6 +109,8 @@ export async function runVisualCritic(input: VisualCriticInput): Promise<VisualC
   let finalFinishReason: string | undefined;
   let finalResponseFormat: 'json_schema' | 'json_object' | undefined;
   let invalidResponseExcerpt: string | undefined;
+  const generations: Array<{ model: string; [key: string]: unknown }> = [];
+  let cost: number | undefined;
   const abortController = new AbortController();
   let timedOut = false;
   const timeoutHandle = setTimeout(() => {
@@ -240,6 +225,7 @@ export async function runVisualCritic(input: VisualCriticInput): Promise<VisualC
             }];
         const response = await requestVisualCriticCompletion({
           model: attemptModels[attempt],
+          siteId: input.siteId,
           system: systemPrompt,
           content: [...userBlocks, ...retryInstruction],
           signal: abortController.signal,
@@ -248,6 +234,10 @@ export async function runVisualCritic(input: VisualCriticInput): Promise<VisualC
         finalModelUsed = response.model;
         finalFinishReason = response.finishReason;
         finalResponseFormat = response.responseFormat;
+        if (response.usage) {
+          generations.push({ model: response.model, ...response.usage });
+          if (typeof response.usage.cost === 'number') cost = (cost ?? 0) + response.usage.cost;
+        }
         if (response.refusal) {
           batchFailure = 'model_refusal';
           invalidResponseExcerpt = sanitizeTelemetryText(response.refusal)
@@ -315,6 +305,7 @@ export async function runVisualCritic(input: VisualCriticInput): Promise<VisualC
     finish_reason: finalFinishReason,
     response_format: finalResponseFormat,
     response_excerpt: invalidResponseExcerpt,
+    ...(generations.length ? { usage: { ...(cost !== undefined ? { cost } : {}), generations } } : {}),
   };
 }
 

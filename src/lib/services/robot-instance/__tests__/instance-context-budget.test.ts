@@ -1,5 +1,6 @@
 import { estimateInputBreakdown, estimatePromptTokens, estimateTokens, fitInstanceRequest, InstanceContextOverflowError, measureInstanceContext, modelContextLimit, outputReserveForModel, projectNextTurn, readInputTokenBreakdown, resolveModelContextCapacity } from '../instance-context-budget';
 import { selectTacticalLogs } from '../InstanceContextManager';
+import { randomBytes } from 'node:crypto';
 
 describe('instance context budget', () => {
   const previous = process.env.INSTANCE_CONTEXT_MODEL_LIMITS;
@@ -98,6 +99,9 @@ describe('instance context budget', () => {
     expect(modelContextLimit('xai', 'grok-4.6')).toBe(500_000);
     expect(modelContextLimit('azure', 'custom-production-deployment')).toBeNull();
     expect(modelContextLimit('xai', 'xai/grok-4.6')).toBeNull();
+    expect(modelContextLimit('openrouter', 'openai/gpt-6.1-sol')).toBe(1_050_000);
+    expect(outputReserveForModel('openrouter', 'openai/gpt-6.1-sol')).toBe(128_000);
+    expect(modelContextLimit('openrouter', 'openai/gpt-6.1-sol-private')).toBeNull();
   });
 
   it('uses the full documented Gemini input limit instead of a 10% reduction', () => {
@@ -121,7 +125,7 @@ describe('instance context budget', () => {
     const previousKey = process.env.GEMINI_API_KEY;
     const previousFetch = global.fetch;
     delete process.env.INSTANCE_CONTEXT_MODEL_LIMITS;
-    process.env.GEMINI_API_KEY = 'unit-test-key';
+    process.env.GEMINI_API_KEY = randomBytes(24).toString('hex');
     const fetchMock = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ inputTokenLimit: 262_144 }) });
     global.fetch = fetchMock as unknown as typeof fetch;
     try {
@@ -131,13 +135,27 @@ describe('instance context budget', () => {
       expect(modelContextLimit('gemini', 'gemini-test-exact-model')).toBe(262_144);
       expect(fetchMock).toHaveBeenCalledWith(
         'https://generativelanguage.googleapis.com/v1beta/models/gemini-test-exact-model',
-        expect.objectContaining({ headers: { 'x-goog-api-key': 'unit-test-key' } }),
+        expect.objectContaining({ headers: { 'x-goog-api-key': process.env.GEMINI_API_KEY } }),
       );
     } finally {
       global.fetch = previousFetch;
       if (previousKey === undefined) delete process.env.GEMINI_API_KEY;
       else process.env.GEMINI_API_KEY = previousKey;
     }
+  });
+
+  it('discovers exact namespaced models through the public OpenRouter catalog without credentials', async () => {
+    const model = `vendor/model-${randomBytes(6).toString('hex')}:free`;
+    const fetchMock = jest.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: true, json: async () => ({ data: [
+      { id: model, context_length: 64_000, top_provider: { max_completion_tokens: 8_000 } },
+    ] }) } as Response);
+    try {
+      expect(await resolveModelContextCapacity('openrouter', model)).toEqual({ availableTokens: 64_000, reservedOutputTokens: 8_000 });
+      expect(fetchMock).toHaveBeenCalledWith('https://openrouter.ai/api/v1/models', expect.objectContaining({ signal: expect.any(AbortSignal) }));
+      expect(fetchMock.mock.calls[0][1]).not.toHaveProperty('headers');
+      expect(await resolveModelContextCapacity('openrouter', model)).toEqual({ availableTokens: 64_000, reservedOutputTokens: 8_000 });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally { fetchMock.mockRestore(); }
   });
 
   it('does not enforce an invented 24k budget when the model is unconfigured', () => {

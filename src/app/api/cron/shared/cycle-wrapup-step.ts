@@ -274,7 +274,7 @@ export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<Cy
       `[CycleWrapUpStep] Running wrap-up for req ${requirementId} with history mode=${history.mode} digestFiles=${digestFiles?.length ?? 0}`,
     );
 
-    const wrapupModel = process.env.AI_CODE_MODEL || 'gemini-3.1-pro-preview-customtools';
+    const wrapupModel = process.env.AI_CODE_MODEL || process.env.OPENROUTER_CHAT_MODEL;
     let turns = 0;
     let isDone = false;
 
@@ -284,8 +284,8 @@ export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<Cy
         { id: instanceId, site_id: siteId, user_id: userId, requirement_id: requirementId },
         {
           use_sdk_tools: false,
-          provider: 'gemini',
-          ai_provider: 'gemini',
+          provider: 'openrouter',
+          ai_provider: 'openrouter',
           ai_model: wrapupModel,
           instance_id: instanceId,
           site_id: siteId,

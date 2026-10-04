@@ -37,7 +37,7 @@ function harness() {
   const planSteps = loadRuntimeModule<typeof import('../plan-steps')>(
     'src/app/api/robots/instance/assistant/plan-steps.ts', {
       '@/lib/database/supabase-client': { supabaseAdmin: { from: () => query } },
-      '@/app/api/agents/tools/instance_plan/update/route': { updateInstancePlanCore },
+      '@/app/api/agents/tools/instance_plan/update/core': { updateInstancePlanCore },
       './assistant-turn': { processAssistantTurn },
       '@/lib/services/skills-service': { SkillsService: { getSkillBySlugForSite: async () => null } },
       './skill-selection': { requiredSkillsPrompt: () => '' },
@@ -67,7 +67,7 @@ function harness() {
       },
       '@/lib/services/robot-instance/assistant-respawn-policy': {
         isIncompleteTurn: (result: any) => !result.isDone || !result.text?.trim(),
-        MAX_RESPAWNS: 2, SILENT_CONTINUE_PROMPT: 'silent continue',
+        MAX_RESPAWNS: 5, SILENT_CONTINUE_PROMPT: 'silent continue',
       },
       './assistant-respawn-steps': { countRecentRespawnsStep, spawnSilentContinueStep },
       './assistant-recovery-steps': {

@@ -86,9 +86,9 @@ export interface UpdateLeadParams {
   notes?: string;
   status?: string;
   origin?: string;
-  segment_id?: string;
-  campaign_id?: string;
-  assignee_id?: string;
+  segment_id?: string | null;
+  campaign_id?: string | null;
+  assignee_id?: string | null;
 }
 
 export async function getLeads(filters: LeadFilters): Promise<{

@@ -33,7 +33,8 @@ test.each(['sms', 'telegram', 'voice', 'instagram', 'custom_chat'])('real manage
   if (channel === 'telegram') expect(result.messages[channel]).toMatchObject({ message_type: 'audio', media_url: 'https://cdn.example.com/reply.mp3' });
   const command = (CommandFactory.createCommand as jest.Mock).mock.calls[0][0];
   expect(command.targets[1].follow_up_content.channel).toContain(channel);
-  expect(command).toMatchObject({ task: 'lead follow-up strategy', userId: 'user', site_id: siteId, model: 'openai:gpt-5.6-sol' });
+  expect(command).toMatchObject({ task: 'lead follow-up strategy', userId: 'user', site_id: siteId, modelType: 'openrouter' });
+  expect(command).not.toHaveProperty('model');
   expect(command.tools[0].function.parameters.properties.site_id.enum).toEqual([siteId]);
   if (channel === 'voice') {
     expect(command.context).toContain('Voice blocks explicit call opt-outs (do_not_call, revoked, or legacy denied)');

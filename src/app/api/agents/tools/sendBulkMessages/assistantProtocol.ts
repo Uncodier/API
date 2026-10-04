@@ -13,7 +13,7 @@ import {
   personalizeMergeSubjectAndMessage,
   placeholderPolicyToMergePolicy,
 } from '@/lib/messaging/lead-merge-fields';
-import { sendEmailCore } from '../sendEmail/route';
+import { sendEmailCore } from '../sendEmail/core';
 import { WhatsAppSendService } from '@/lib/services/whatsapp/WhatsAppSendService';
 import { WhatsAppTemplateService } from '@/lib/services/whatsapp/WhatsAppTemplateService';
 import {

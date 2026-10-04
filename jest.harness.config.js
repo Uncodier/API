@@ -17,6 +17,7 @@ export default {
     '<rootDir>/src/app/api/robots/instance/assistant/__tests__/route-lifecycle.test.ts',
     '<rootDir>/src/app/api/robots/instance/assistant/__tests__/response-stream.test.ts',
     '<rootDir>/src/app/api/robots/instance/assistant/__tests__/user-message-log.test.ts',
+    '<rootDir>/src/app/api/robots/instance/delete/__tests__/**/*.test.ts',
     '<rootDir>/src/lib/custom-automation/__tests__/ai-agent-executor*.test.ts',
     '<rootDir>/src/lib/services/__tests__/cron-*.test.ts',
     '<rootDir>/src/lib/services/__tests__/cycle-wrapup-prompt.test.ts',

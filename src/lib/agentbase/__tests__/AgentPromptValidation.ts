@@ -3,7 +3,7 @@
  * Run this with: npx ts-node src/lib/agentbase/test/AgentPromptValidation.ts
  */
 
-import { AgentInitializer } from '../services/agent/AgentInitializer';
+import { AgentBackgroundService } from '../services/agent/AgentBackgroundService';
 import { Base } from '../agents/Base';
 import { DbCommand, CommandExecutionResult, ToolExecutionResult } from '../models/types';
 
@@ -44,9 +44,7 @@ async function runTests() {
   console.log('=== AGENT PROMPT VALIDATION TESTS ===\n');
   
   try {
-    // Get the AgentInitializer instance
-    const initializer = AgentInitializer.getInstance();
-    initializer.initialize();
+    const initializer = new AgentBackgroundService();
     
     // Create a test agent with custom prompt
     const testAgent = new MockAgent(
@@ -56,8 +54,7 @@ async function runTests() {
       'This is a custom agent prompt that should be included in the Agent Custom Instructions section'
     );
     
-    // Access the private generateAgentBackground method using a type cast
-    const generateAgentBackground = (initializer as any).generateAgentBackground.bind(initializer);
+    const generateAgentBackground = initializer.generateAgentBackground.bind(initializer);
     
     if (!generateAgentBackground) {
       console.error('❌ ERROR: Could not access generateAgentBackground method');

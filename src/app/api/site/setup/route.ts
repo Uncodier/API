@@ -114,35 +114,16 @@ export async function POST(request: NextRequest) {
       console.error(`❌ Exception persisting default_locale:`, settingsErr);
     }
     
-    // Crear registro de billing inicial con 30 créditos
+    // All signup issuers share one atomic database operation.
     try {
-      // Verificar si ya existe un registro de billing para este sitio
-      const { data: existingBilling } = await supabaseAdmin
-        .from('billing')
-        .select('id')
-        .eq('site_id', site_id)
-        .maybeSingle();
-        
-      if (!existingBilling) {
-        console.log(`💳 Creando registro de billing inicial para el sitio: ${site_id} con 30 créditos`);
-        const { error: billingError } = await supabaseAdmin
-          .from('billing')
-          .insert({
-            site_id,
-            plan: 'free',
-            credits_available: 30,
-            credits_used: 0,
-            status: 'active'
-          });
-          
-        if (billingError) {
-          console.error(`❌ Error al crear registro de billing para el sitio ${site_id}:`, billingError);
-        } else {
-          console.log(`✅ Registro de billing creado exitosamente`);
-        }
-      } else {
-        console.log(`ℹ️ El sitio ${site_id} ya tiene un registro de billing`);
+      const { data: billingResult, error: billingError } = await supabaseAdmin.rpc(
+        'initialize_site_billing',
+        { p_site_id: site_id },
+      );
+      if (billingError || !billingResult?.success) {
+        throw new Error(billingError?.message || billingResult?.error || 'Billing initialization failed');
       }
+      console.log(`✅ Billing initialization: ${billingResult.outcome}`);
     } catch (billingErr) {
       console.error(`❌ Excepción al intentar crear billing:`, billingErr);
       // Continuamos con el setup aunque falle la creación de billing

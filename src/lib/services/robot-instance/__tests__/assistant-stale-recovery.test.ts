@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { execution, recoveryDatabase, scope, seedRecoveryNodes } from '../test-support/assistant-recovery-fixture';
 import { IN_FLIGHT_STALL_MS } from '../assistant-respawn-policy';
+import { MAX_RECOVERY_RESPAWNS } from '../assistant-recovery-schema';
 
 let database: ReturnType<typeof recoveryDatabase>;
 jest.unstable_mockModule('@/lib/database/supabase-client', () => ({
@@ -126,17 +127,72 @@ describe('expired in-flight turns resume the agent, not the tool', () => {
   it('does not bypass leases, respawn caps or plan-owned execution', async () => {
     await ready(); expire(); database.snapshot().inFlightKind = 'plan';
     await expect(recovery.claimAssistantRecovery(scope, staleOptions)).rejects.toMatchObject({ code: 'in_flight' });
-    database.snapshot().inFlightKind = 'turn'; database.snapshot().respawnCount = 2;
+    database.snapshot().inFlightKind = 'turn'; database.snapshot().respawnCount = MAX_RECOVERY_RESPAWNS;
     await expect(recovery.claimAssistantRecovery(scope, staleOptions)).rejects.toMatchObject({ code: 'limit' });
     database.snapshot().respawnCount = 0;
     database.snapshot().lease_token = 'a599c3ec-cbbe-4078-829f-3beff8bb8c7f';
     await expect(recovery.claimAssistantRecovery(scope, staleOptions)).rejects.toMatchObject({ code: 'conflict' });
   });
 
+  it('recovers an action at the old two-restart cap without resetting its history or generation', async () => {
+    await ready(); expire();
+    database.snapshot().respawnCount = 2;
+    database.tables.instance_logs.push(toolLog());
+    const { snapshot, resumeToken } = await recovery.claimAssistantRecovery(scope, staleOptions);
+    expect(snapshot.respawnCount).toBe(3);
+    expect(snapshot.messages).toEqual(messages);
+    expect(snapshot.interruptionContext).toContain('draft-1');
+    await recovery.loadAssistantRecovery(scope, resumeToken);
+    await expect(recovery.assertAssistantRecoveryActive({ ...scope, generation: 2 })).rejects.toMatchObject({ code: 'conflict' });
+    await recovery.assertAssistantRecoveryActive({ ...scope, generation: 3 });
+  });
+
   it('does not guess whether a legacy in-flight checkpoint belonged to an active plan', async () => {
     await ready(); expire(); delete database.snapshot().inFlightKind;
     database.tables.instance_plans.push({ id: 'plan', instance_id: scope.instanceId, site_id: scope.siteId, status: 'in_progress' });
     await expect(recovery.claimAssistantRecovery(scope, staleOptions)).rejects.toMatchObject({ code: 'in_flight' });
+  });
+
+  it('claims and preserves a conversation-only restriction without touching its requirement plan', async () => {
+    await ready(); expire();
+    const plan = { id: 'plan', instance_id: scope.instanceId, site_id: scope.siteId,
+      status: 'pending', metadata: { requirement_id: 'requirement-1' } };
+    database.tables.instance_plans.push(plan);
+    const claimed = await recovery.claimAssistantRecovery(scope, { ...staleOptions, conversationOnly: true });
+    expect(claimed.snapshot.conversationOnly).toBe(true);
+    const loaded = await recovery.loadAssistantRecovery(scope, claimed.resumeToken);
+    const owner = { ...scope, generation: loaded.respawnCount };
+    await expect(recovery.markAssistantRecoveryInFlight(owner, undefined, 'plan')).rejects.toMatchObject({ code: 'inactive' });
+    await recovery.markAssistantRecoveryInFlight(owner, messages);
+    await recovery.checkpointAssistantRecovery(owner, { messages });
+    const next = await recovery.claimAssistantRecovery(scope);
+    expect(next.snapshot.conversationOnly).toBe(true);
+    expect(database.tables.instance_plans).toEqual([plan]);
+    expect(database.writes().every(query => query.table === 'instance_logs')).toBe(true);
+  });
+
+  it.each(['plan', 'legacy', 'workflow', 'foreign', 'missing'])(
+    'rejects a conversation-only hint for %s work', async kind => {
+      await ready(); expire();
+      if (kind !== 'missing') database.tables.instance_plans.push({ id: 'plan',
+        instance_id: scope.instanceId, site_id: kind === 'foreign' ? 'other-site' : scope.siteId,
+        status: 'pending', metadata: { requirement_id: 'requirement-1', ...(kind === 'workflow' ? { workflow_run: true } : {}) } });
+      if (kind === 'plan') database.snapshot().inFlightKind = 'plan';
+      if (kind === 'legacy') delete database.snapshot().inFlightKind;
+      await expect(recovery.claimAssistantRecovery(scope, { ...staleOptions, conversationOnly: true }))
+        .rejects.toMatchObject({ code: 'invalid_state' });
+      expect(database.snapshot().respawnCount).toBe(0);
+    },
+  );
+
+  it('does not let the conversation-only option bypass fresh activity or cancellation', async () => {
+    await ready(); expire(1000);
+    database.tables.instance_plans.push({ id: 'plan', instance_id: scope.instanceId, site_id: scope.siteId,
+      status: 'pending', metadata: { requirement_id: 'requirement-1' } });
+    const options = { ...staleOptions, conversationOnly: true };
+    await expect(recovery.claimAssistantRecovery(scope, options)).rejects.toMatchObject({ code: 'in_flight' });
+    expire(); database.beforeUpdate = () => { database.action().details.status = 'cancelled'; };
+    await expect(recovery.claimAssistantRecovery(scope, options)).rejects.toMatchObject({ code: 'conflict' });
   });
 
   it('retains previous uncertain evidence across checkpoints and another stale takeover', async () => {

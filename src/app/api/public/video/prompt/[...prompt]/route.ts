@@ -76,11 +76,16 @@ export async function GET(
     }
 
     const searchParams = request.nextUrl.searchParams;
-    let durationSeconds = parseInt(searchParams.get('duration') || '5', 10);
+    if (searchParams.has('provider') && searchParams.get('provider') !== 'openrouter') {
+      return jsonError('Unsupported video provider', 400);
+    }
+    let durationSeconds = Number(searchParams.get('duration') || '4');
     const expectedSiteId = searchParams.get('site_id');
     const ratioParam = searchParams.get('ratio') || '16:9';
 
-    if (isNaN(durationSeconds) || durationSeconds <= 0) durationSeconds = 5;
+    if (!Number.isInteger(durationSeconds) || durationSeconds < 1 || durationSeconds > 60) {
+      return jsonError('duration must be an integer between 1 and 60', 400);
+    }
 
     let ratio: '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '3:2' | '2:3' = '16:9';
     if (['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3'].includes(ratioParam)) {
@@ -108,7 +113,7 @@ export async function GET(
     }
 
     const hash = getVideoPromptHash(
-      `v2:${siteId}:${promptStr}`,
+      `v3:openrouter:${process.env.OPENROUTER_VIDEO_MODEL || 'unconfigured'}:${siteId}:${promptStr}`,
       durationSeconds,
       ratio,
     );
@@ -151,13 +156,18 @@ export async function GET(
       };
       const run = await start(generatePromptVideoWorkflow, [workflowInput]);
       try {
-        await run.returnValue;
+        const outcome = await run.returnValue;
+        if (outcome.status !== 'completed') {
+          return NextResponse.json(outcome, {
+            status: outcome.status === 'failed' ? 502 : 202,
+            headers: { ...NO_STORE_HEADERS, 'Retry-After': '30' },
+          });
+        }
       } catch (workflowError: any) {
-        console.error('[PublicPromptVideo] Workflow failed:', workflowError);
         return jsonError(
           'Video generation failed',
           502,
-          workflowError?.message || String(workflowError)
+          'Retry the existing job status; do not resubmit an uncertain generation'
         );
       }
 
@@ -176,7 +186,6 @@ export async function GET(
       await releaseLock(lockKey, lock.token);
     }
   } catch (error: any) {
-    console.error('[PublicPromptVideo] Unhandled error:', error);
-    return jsonError('Internal server error', 500, error?.message || String(error));
+    return jsonError('Internal server error', 500);
   }
 }

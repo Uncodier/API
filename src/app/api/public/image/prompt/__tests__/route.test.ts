@@ -13,6 +13,7 @@ const acquireLock = jest.fn();
 const releaseLock = jest.fn();
 
 jest.mock('workflow/api', () => ({ start }));
+jest.mock('../workflow', () => ({ generatePromptImageWorkflow: jest.fn() }));
 jest.mock('@/lib/services/image/promptImageCache', () => ({
   getPromptHash,
   downloadFromCache,
@@ -64,6 +65,33 @@ describe('public prompt image route caching', () => {
     verifyPublicImageSignature.mockReturnValue(false as never);
   });
 
+  it.each(['openrouter', 'gemini', 'vercel'])('rejects non-Azure provider query %s without opening a workflow or alias', async provider => {
+    const response = await GET(request(`?provider=${provider}&model=raw-deployment`), context);
+    expect(response.status).toBe(400);
+    expect(start).not.toHaveBeenCalled();
+    expect(downloadFromCache).not.toHaveBeenCalled();
+  });
+
+  it('accepts an explicit Azure provider without bypassing existing cache/site ownership', async () => {
+    downloadFromCache.mockResolvedValue({ buffer: Buffer.from('cached-image'), mimeType: 'image/png' } as never);
+    const response = await GET(request('?provider=azure'), context);
+    expect(response.status).toBe(200);
+    expect(getPromptHash).toHaveBeenCalledWith('v2:site-id:a cat', 1024, 1024);
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it.each<[number, number, '256x256' | '512x512']>([[256, 256, '256x256'], [400, 400, '512x512'], [512, 512, '512x512']])('keeps tiny %sx%s cache requests while passing legacy size %s for normalization', async (width, height, size) => {
+    hasAuthenticatedPrincipal.mockReturnValue(true as never);
+    downloadFromCache.mockResolvedValueOnce(null as never).mockResolvedValueOnce(null as never)
+      .mockResolvedValueOnce({ buffer: Buffer.from('generated-image'), mimeType: 'image/png' } as never);
+    start.mockResolvedValue({ returnValue: Promise.resolve({ status: 'completed' }) } as never);
+    const response = await GET(request(`?provider=azure&site_id=site-id&width=${width}&height=${height}`), context);
+    expect(response.status).toBe(200);
+    expect(getPromptHash).toHaveBeenCalledWith('v2:site-id:a cat', width, height);
+    expect(start).toHaveBeenCalledWith(expect.any(Function), [expect.objectContaining({ siteId: 'site-id', size, ratio: '1:1' })]);
+    expect(canAccessSite).toHaveBeenCalledWith(expect.any(NextRequest), 'site-id');
+  });
+
   it('serves a cached image for a resolved site before authentication or limiting', async () => {
     downloadFromCache.mockResolvedValue({
       buffer: Buffer.from('cached-image'),
@@ -103,6 +131,16 @@ describe('public prompt image route caching', () => {
     });
     expect(enforceRequestRateLimit).not.toHaveBeenCalled();
     expect(acquireLock).not.toHaveBeenCalled();
+  });
+
+  it('does not serve or generate Azure images when the authenticated principal lacks site access', async () => {
+    hasAuthenticatedPrincipal.mockReturnValue(true as never);
+    canAccessSite.mockResolvedValue(false as never);
+    const response = await GET(request('?provider=azure&site_id=site-id'), context);
+    expect(response.status).toBe(403);
+    expect(downloadFromCache).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
+    expect(enforceRequestRateLimit).not.toHaveBeenCalled();
   });
 
   it('uses platform billing for unsigned requests from app.makinari.com', async () => {

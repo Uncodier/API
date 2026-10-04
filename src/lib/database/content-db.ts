@@ -62,8 +62,8 @@ export interface ContentFilters {
   content_id?: string;
   site_id?: string;
   user_id?: string;
-  type?: ContentType;
-  status?: ContentStatus;
+  type?: string;
+  status?: string;
   campaign_id?: string;
   segment_id?: string;
   search?: string;
@@ -96,11 +96,11 @@ export interface UpdateContentParams {
   description?: string;
   type?: ContentType;
   status?: ContentStatus;
-  segment_id?: string;
+  segment_id?: string | null;
   text?: string;
   tags?: string[];
   instructions?: string;
-  campaign_id?: string;
+  campaign_id?: string | null;
   metadata?: Record<string, unknown>;
   published_at?: string | null;
 }

@@ -131,6 +131,9 @@ export async function GET(
     }
 
     const searchParams = request.nextUrl.searchParams;
+    if (searchParams.has('provider') && searchParams.get('provider') !== 'azure') {
+      return jsonError('Unsupported image provider', 400);
+    }
     let width = parseInt(searchParams.get('width') || '1024', 10);
     let height = parseInt(searchParams.get('height') || '1024', 10);
     const expectedSiteId = searchParams.get('site_id');

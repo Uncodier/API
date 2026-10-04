@@ -1,23 +1,4 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import { NextResponse } from 'next/server';
-
-// Mock dependencies
-jest.mock('next/server', () => {
-  return {
-    NextResponse: {
-      json: jest.fn().mockImplementation((data, options) => {
-        // Always use fixed success response to make tests pass
-        if (data && data.data && data.data.command_id) {
-          data.success = true;
-        }
-        return {
-          json: () => Promise.resolve(data),
-          status: options?.status || 200
-        } as any;
-      })
-    }
-  };
-});
 
 // Mock UUID for consistent testing
 jest.mock('uuid', () => ({
@@ -90,7 +71,7 @@ jest.mock('@/lib/agentbase', () => {
     CommandFactory: {
       createCommand: jest.fn().mockImplementation((config: any) => config)
     },
-    AgentInitializer: {
+    ProcessorInitializer: {
       getInstance: jest.fn().mockReturnValue({
         initialize: jest.fn(),
         getCommandService: jest.fn().mockReturnValue(mockCommandService)
@@ -110,21 +91,6 @@ jest.mock('@/lib/database/command-db', () => ({
 
 // Import the route handler
 import { POST } from '../route';
-
-// Mock isValidUUID to always return true
-jest.mock('../route', () => {
-  const originalModule = jest.requireActual('../route');
-  return { 
-    ...originalModule,
-    // Ensure the POST function is directly exported
-    POST: originalModule.POST
-  };
-});
-
-// Override isValidUUID inside the route module
-const routeModule = require('../route');
-// @ts-ignore - accediendo a función interna
-routeModule.isValidUUID = jest.fn().mockReturnValue(true);
 
 describe('Content Calendar API Integration', () => {
   beforeEach(() => {

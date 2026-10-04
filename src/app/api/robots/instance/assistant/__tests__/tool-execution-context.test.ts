@@ -87,6 +87,7 @@ describe('assistant private execution context wiring', () => {
       'src/app/api/robots/instance/assistant/assistant-turn.ts', {
         './utils': { getInstanceAssistantTools: getTools },
         './publish-node-binding': { resolvePublishNodeBinding: async () => null },
+        './conversation-recovery-tools': { CONVERSATION_RECOVERY_INSTRUCTION: '', getConversationRecoveryTools: () => [] },
         '@/lib/services/tool-execution-context': contextModule,
         '@/lib/services/robot-instance/assistant-respawn-policy': { SILENT_CONTINUE_PROMPT },
         '@/lib/services/robot-instance/assistant-recovery': { assertAssistantRecoveryActive: async () => undefined },

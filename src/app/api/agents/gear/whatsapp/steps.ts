@@ -9,7 +9,7 @@ import { createAccountTool, verifyAccountTool } from './tools';
 import { instanceProjectTool } from '@/app/api/agents/tools/instance_project/assistantProtocol';
 import { normalizePhoneForStorage } from '@/lib/utils/phone-normalizer';
 
-import { AIAgentExecutor } from '@/lib/custom-automation/ai-agent-executor';
+import { AIAgentExecutor, type Tool } from '@/lib/custom-automation/ai-agent-executor';
 
 export async function processUnregisteredUserStep(
   phoneNumber: string,
@@ -153,12 +153,12 @@ export async function processUnregisteredUserStep(
     }
 
     // 2. Run the assistant using AIAgentExecutor
-    const customTools = [createAccountTool(), verifyAccountTool()];
+    const customTools: Tool[] = [createAccountTool(), verifyAccountTool()];
     if (userId) {
       const normalizedForTool = normalizePhoneForStorage(phoneNumber) || phoneNumber.trim();
       customTools.push(instanceProjectTool(userId, normalizedForTool));
     }
-    const executor = new AIAgentExecutor();
+    const executor = new AIAgentExecutor({ siteId });
     
     console.log(`[GearAgent] Executing assistant for whatsapp unregistered user (history size: ${messages.length})`);
     

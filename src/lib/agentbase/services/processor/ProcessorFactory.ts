@@ -7,6 +7,7 @@ import { ToolEvaluator } from '../../agents/ToolEvaluator';
 import { TargetProcessor } from '../../agents/TargetProcessor';
 import { PortkeyConfig } from '../../models/types';
 import { Base } from '../../agents/Base';
+import { getOpenRouterChatModel } from '@/lib/services/ai/openrouter';
 
 export class ProcessorFactory {
   /**
@@ -35,18 +36,12 @@ export class ProcessorFactory {
    */
   private createPortkeyConnector(): PortkeyConnector {
     const portkeyConfig: PortkeyConfig = {
-      apiKey: process.env.PORTKEY_API_KEY || '',
-      virtualKeys: {
-        'anthropic': process.env.ANTHROPIC_API_KEY || '',
-        'openai': process.env.AZURE_OPENAI_API_KEY || '',
-        'gemini': process.env.GEMINI_API_KEY || ''
-      },
-      baseURL: 'https://api.portkey.ai/v1'
+      apiKey: process.env.OPENROUTER_API_KEY,
     };
     
     return new PortkeyConnector(portkeyConfig, {
-      modelType: 'openai',
-      modelId: 'gpt-4o',
+      modelType: 'openrouter',
+      modelId: getOpenRouterChatModel(),
       temperature: 0.7
     });
   }
@@ -62,8 +57,8 @@ export class ProcessorFactory {
       ['customer_support', 'order_tracking', 'issue_resolution'],
       {
         defaultOptions: {
-          modelType: 'openai',
-          modelId: 'gpt-4o',
+          modelType: 'openrouter',
+          modelId: getOpenRouterChatModel(),
           temperature: 0.7
         },
         description: "Agente de soporte al cliente especializado en resolver problemas relacionados con pedidos, productos y servicios.",
@@ -98,8 +93,8 @@ Remember that you represent the company and should maintain a helpful, positive 
       actualConnector,
       ['tool_evaluation'],
       {
-        modelType: 'openai',
-        modelId: 'gpt-4o'
+        modelType: 'openrouter',
+        modelId: getOpenRouterChatModel()
         // No temperature - let command or PortkeyConnector defaults handle it
       },
       "Evaluador de herramientas que analiza y selecciona las mejores herramientas para una tarea."
@@ -116,8 +111,8 @@ Remember that you represent the company and should maintain a helpful, positive 
       connector,
       ['target_processing'],
       {
-        modelType: 'openai',
-        modelId: 'gpt-4o',
+        modelType: 'openrouter',
+        modelId: getOpenRouterChatModel(),
         temperature: 0.7
       },
       "Procesador de targets que genera respuestas específicas para diferentes tipos de contenido.",

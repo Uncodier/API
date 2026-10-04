@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { createInstanceLogCore } from '@/app/api/agents/tools/instance_logs/route';
+import { createInstanceLogCore } from '@/lib/tools/instance-log-core';
 import { readLiveInstanceLogSnapshots } from '@/lib/services/robot-instance/assistant-streaming-logs';
 import { canAccessSite } from '@/lib/security/site-access';
 import {

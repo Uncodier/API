@@ -1,7 +1,7 @@
-import { createRecordCore } from "./create/route";
-import { getRecordsCore } from "./get/route";
-import { updateRecordCore } from "./update/route";
-import { deleteRecordCore } from "./delete/route";
+import { createRecordCore } from "./create/core";
+import { getRecordsCore } from "./get/core";
+import { updateRecordCore } from "./update/core";
+import { deleteRecordCore } from "./delete/core";
 
 export interface RecordToolParams {
   action: "create" | "list" | "update" | "delete";

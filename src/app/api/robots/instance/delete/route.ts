@@ -1,154 +1,60 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { z } from 'zod';
-import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { deleteRemoteInstanceChildren } from '@/lib/services/robot-instance/delete-remote-instance-children';
+import {
+  DeletionError, readDeletionRequest, requireDeletionUser, resultSchema, rpcFailure,
+  scopeSchema, stopDeletionProvider, unconfirmedDeletion, withSignal,
+} from './deletion-request';
 
-// ------------------------------------------------------------------------------------
-// POST /api/robots/instance/delete
-// Stop instance in Scrapybara and delete the instance record from database
-// ------------------------------------------------------------------------------------
-
-/** Batched cleanup (especially instance_logs) can run many minutes on large instances */
 export const maxDuration = 600;
 
-const DeleteInstanceSchema = z.object({
-  instance_id: z.string().uuid('instance_id must be a valid UUID'),
-});
-
 export async function POST(request: NextRequest) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 550_000);
+  const abort = () => controller.abort();
+  request.signal.addEventListener('abort', abort, { once: true });
+  if (request.signal.aborted) abort();
+  const signal = controller.signal;
+  const headers = { 'Cache-Control': 'no-store' };
   try {
-    const rawBody = await request.json();
-    const { instance_id } = DeleteInstanceSchema.parse(rawBody);
-
-    // 1) Fetch instance from DB ------------------------------------------------------
-    const { data: instance, error: instanceError } = await supabaseAdmin
-      .from('remote_instances')
-      .select('*')
-      .eq('id', instance_id)
-      .single();
-
-    if (instanceError || !instance) {
-      return NextResponse.json({ error: 'Instance not found' }, { status: 404 });
+    const client = await requireDeletionUser(request, signal);
+    const { instance_id } = await readDeletionRequest(request, signal);
+    // This read-only RPC derives the site and checks owner/admin plus all linked ownership.
+    const preflight = await withSignal(() => client.rpc('get_robot_instance_deletion_scope', {
+      p_instance_id: instance_id,
+    }), signal);
+    if (preflight.error) throw rpcFailure(preflight.error, false);
+    const scope = scopeSchema.safeParse(preflight.data);
+    if (!scope.success || scope.data.instance_id !== instance_id) {
+      throw new DeletionError(503, 'deletion_unavailable', 'Instance deletion authorization could not be verified.');
     }
-
-    // 2) Stop/terminate in Scrapybara (only if instance exists and not already stopped) -------------------
-    let scrapybaraStopped = false;
-    
-    // Only try to stop in Scrapybara if we have a provider_instance_id and it's not already stopped
-    if (instance.provider_instance_id && instance.status !== 'uninstantiated' && instance.status !== 'stopped') {
-      console.log(`₍ᐢ•(ܫ)•ᐢ₎ Stopping Scrapybara instance: ${instance.provider_instance_id}`);
-      
-      const stopResponse = await fetch(
-        `https://api.scrapybara.com/v1/instance/${instance.provider_instance_id}/stop`,
-        {
-          method: 'POST',
-          headers: {
-            'x-api-key': process.env.SCRAPYBARA_API_KEY || '',
-            'Content-Type': 'application/json',
-          },
-        },
-      );
-
-      if (stopResponse.ok) {
-        scrapybaraStopped = true;
-        console.log(`₍ᐢ•(ܫ)•ᐢ₎ ✅ Scrapybara instance stopped successfully`);
-      } else {
-        const errorText = await stopResponse.text();
-        console.error('Error stopping/terminating instance in Scrapybara:', errorText);
-        // Continue anyway - we'll still mark as stopped in DB
-        console.log(`₍ᐢ•(ܫ)•ᐢ₎ ⚠️ Scrapybara stop failed, but continuing with DB cleanup`);
-      }
-    } else {
-      console.log(`₍ᐢ•(ܫ)•ᐢ₎ Instance is uninstantiated or has no provider_instance_id, skipping Scrapybara stop`);
+    await stopDeletionProvider(scope.data, signal);
+    // No plan updates, log batches, or fallback deletes: all DB mutation belongs to one transaction.
+    const deletion = await withSignal(() => client.rpc('delete_robot_instance_with_requirements', {
+      p_instance_id: instance_id,
+      p_expected_requirement_ids: scope.data.requirement_ids,
+      p_expected_provider: scope.data.provider,
+      p_expected_provider_instance_id: scope.data.provider_instance_id,
+      p_expected_status: scope.data.status,
+    }), signal);
+    if (deletion.error) throw rpcFailure(deletion.error, true);
+    const result = resultSchema.safeParse(deletion.data);
+    if (!result.success || result.data.instance_id !== instance_id
+      || result.data.deleted_requirement_ids.length !== scope.data.requirement_ids.length
+      || result.data.deleted_requirement_ids.some(id => !scope.data.requirement_ids.includes(id))) {
+      throw unconfirmedDeletion();
     }
-
-    console.log('[instance/delete] marking plans / cleaning dependents…', { instance_id });
-
-    // 3) Mark in-progress/paused plans as failed before deletion -------------------
-    const { data: affectedPlans } = await supabaseAdmin
-      .from('instance_plans')
-      .select('id, title')
-      .eq('instance_id', instance_id)
-      .in('status', ['in_progress', 'paused']);
-
-    if (affectedPlans && affectedPlans.length > 0) {
-      await supabaseAdmin
-        .from('instance_plans')
-        .update({
-          status: 'failed',
-          error_message: 'Instance was deleted',
-          updated_at: new Date().toISOString(),
-        })
-        .eq('instance_id', instance_id)
-        .in('status', ['in_progress', 'paused']);
-    }
-
-    // 4) Remove dependent rows (logs, nodes, assets, plans, etc.) so the parent delete stays under DB timeouts
-    const childCleanup = await deleteRemoteInstanceChildren(instance_id);
-    if (!childCleanup.ok) {
-      console.error('Error cleaning up instance dependents:', childCleanup.error);
-      return NextResponse.json(
-        { error: childCleanup.error ?? 'Failed to remove instance-related data' },
-        { status: 500 },
-      );
-    }
-
-    console.log('[instance/delete] dependents removed, deleting remote_instances row…', { instance_id });
-
-    // 5) Delete instance record from DB ---------------------------------------------
-    // PostgREST returns no error when zero rows match — must verify a row was removed.
-    const { data: deletedRows, error: deleteError } = await supabaseAdmin
-      .from('remote_instances')
-      .delete()
-      .eq('id', instance_id)
-      .select('id');
-
-    if (deleteError) {
-      console.error('Error deleting instance from database:', deleteError);
-      return NextResponse.json({ error: 'Failed to delete instance from database' }, { status: 500 });
-    }
-
-    if (!deletedRows?.length) {
-      const { data: stillThere } = await supabaseAdmin
-        .from('remote_instances')
-        .select('id')
-        .eq('id', instance_id)
-        .maybeSingle();
-
-      if (stillThere) {
-        console.error('Instance delete no-op: row still present after DELETE', { instance_id });
-        return NextResponse.json(
-          {
-            error:
-              'Could not remove the instance row (delete matched no rows but record still exists). Check DB triggers, RLS, or conflicting writes.',
-          },
-          { status: 500 },
-        );
-      }
-
-      return NextResponse.json(
-        { instance_id, message: 'Instance was already deleted', idempotent: true },
-        { status: 200 },
-      );
-    }
-
-    return NextResponse.json(
-      {
-        instance_id,
-        provider_instance_id: instance.provider_instance_id,
-        message: scrapybaraStopped 
-          ? 'Instance stopped in Scrapybara and deleted from database successfully' 
-          : 'Instance deleted from database (no Scrapybara instance to stop)',
-        scrapybara_stopped: scrapybaraStopped,
-        affected_plans: affectedPlans?.length || 0,
-      },
-      { status: 200 },
-    );
-  } catch (err: any) {
-    console.error('Error in POST /robots/instance/delete:', err);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json({
+      success: true,
+      instance_id,
+      deleted_requirement_ids: result.data.deleted_requirement_ids,
+      message: 'Instance and associated requirements deleted successfully.',
+    }, { headers });
+  } catch (error) {
+    const safe = error instanceof DeletionError ? error : unconfirmedDeletion();
+    return NextResponse.json({ success: false, error: { code: safe.code, message: safe.message } }, {
+      status: safe.status, headers,
+    });
+  } finally {
+    clearTimeout(timer);
+    request.signal.removeEventListener('abort', abort);
   }
 }
-
-
-

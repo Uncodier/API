@@ -7,7 +7,7 @@
  * ```ts
  * import { AIAgentExecutor } from '@/lib/custom-automation';
  *
- * const executor = new AIAgentExecutor(); // reads AI_PROVIDER/AI_MODEL/GEMINI_API_KEY
+ * const executor = new AIAgentExecutor(); // reads OPENROUTER_API_KEY/OPENROUTER_CHAT_MODEL
  * const result = await executor.act({
  *   tools: myTools,
  *   prompt: 'Your task here',
@@ -16,7 +16,7 @@
  *
  * @example Azure OpenAI
  * ```ts
- * const executor = new AIAgentExecutor({ provider: 'azure' });
+ * const executor = new AIAgentExecutor({ provider: 'openrouter' });
  * ```
  */
 

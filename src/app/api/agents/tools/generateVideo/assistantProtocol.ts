@@ -1,18 +1,17 @@
-import { CreditService } from '@/lib/services/billing/CreditService';
 /**
  * Assistant Protocol Wrapper for Generate Video Tool
  * Formats the tool for OpenAI/assistant compatibility
  */
 
 import { VideoGenerationService, VideoGenerationParams } from '@/lib/services/video/VideoGenerationService';
-import { createInstanceLogCore } from '@/app/api/agents/tools/instance_logs/route';
+import { createInstanceLogCore } from '@/lib/tools/instance-log-core';
 import { tool } from 'scrapybara/tools';
 import { z } from 'zod';
 import type { UbuntuInstance } from 'scrapybara';
 
 export interface GenerateVideoToolParams {
   prompt: string;
-  provider?: 'gemini';
+  provider?: 'openrouter';
   duration_seconds?: number;
   duration?: number;
   aspect_ratio?: '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '3:2' | '2:3';
@@ -21,6 +20,8 @@ export interface GenerateVideoToolParams {
   last_frame_url?: string;
   quality?: 'preview' | 'standard' | 'pro';
   model?: string;
+  job_id?: string;
+  resolution?: string;
 }
 
 /**
@@ -32,7 +33,7 @@ export interface GenerateVideoToolParams {
 export function generateVideoTool(site_id: string, instance_id?: string) {
   return {
     name: 'generate_video',
-    description: 'Generate videos using AI with automatic provider fallback. Supports Gemini Veo 3.1 for video generation. Videos are automatically saved to storage and can be used in conversations or content.',
+    description: 'Submit or poll asynchronous OpenRouter video generation. Requires an explicitly configured video model. Return pending job_id to poll; never claim completion while pending. Videos are automatically saved to storage and can be used in conversations or content.',
     parameters: {
       type: 'object',
       properties: {
@@ -42,14 +43,14 @@ export function generateVideoTool(site_id: string, instance_id?: string) {
         },
         provider: {
           type: 'string',
-          enum: ['gemini'],
-          description: 'AI provider to use for generation. Only Gemini is currently supported.'
+          enum: ['openrouter'],
+          description: 'OpenRouter is the only supported provider; no direct provider fallback.'
         },
         duration_seconds: {
           type: 'number',
           minimum: 1,
           maximum: 60,
-          description: 'Desired duration of the video in seconds. Will be mapped to valid values (4, 6, or 8 seconds) by the API. Defaults to 8 seconds.'
+          description: 'Desired duration of the video in seconds. Must be supported by the selected model; defaults to 4 seconds. No OpenRouter duration coercion.'
         },
         duration: {
           type: 'number',
@@ -60,7 +61,7 @@ export function generateVideoTool(site_id: string, instance_id?: string) {
         aspect_ratio: {
           type: 'string',
           enum: ['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3'],
-          description: 'Aspect ratio of the generated video. Note: Gemini only supports 16:9 and 9:16, other ratios will be mapped to 16:9. Defaults to 16:9.'
+          description: 'Aspect ratio of the generated video. Must be supported by the selected model; defaults to 16:9.'
         },
         reference_images: {
           type: 'array',
@@ -75,36 +76,29 @@ export function generateVideoTool(site_id: string, instance_id?: string) {
         },
         last_frame_url: {
           type: 'string',
-          description: 'Authoritative last frame URL. When provided, generation uses an 8-second first-to-last-frame transition.'
+          description: 'Last frame URL, only when the selected model advertises last_frame support.'
         },
         quality: {
           type: 'string',
           enum: ['preview', 'standard', 'pro'],
-          description: 'Quality of the generated video. "preview" and "standard" use 720p. "pro" uses 1080p but requires duration=8 and aspect_ratio=16:9. Defaults to standard.'
+          description: 'Deprecated and rejected. Omit quality and use resolution instead.'
         },
+        job_id: { type: 'string', description: 'Previously returned local job UUID. Polls it without creating or billing another generation.' },
+        resolution: { type: 'string', description: 'Model-supported resolution, e.g. 720p or 1080p.' },
         model: {
           type: 'string',
-          description: 'Override the Gemini model to use (default: veo-3.1-generate-preview).'
+          description: 'OpenRouter model override; OPENROUTER_VIDEO_MODEL must be configured. No implicit Sora Pro substitution.'
         }
       },
       required: ['prompt']
     },
     execute: async (args: GenerateVideoToolParams) => {
+      if (args.provider !== undefined && args.provider !== 'openrouter') throw new Error('Unsupported video provider');
       try {
         console.log(`[GenerateVideoTool] 🎬 Executing video generation`);
-        if (site_id) {
-          const duration = args.duration !== undefined ? args.duration : (args.duration_seconds || 8);
-          const requiredCredits = (duration / 60) * CreditService.PRICING.VIDEO_GENERATION_MINUTE;
-          const hasCredits = await CreditService.validateCredits(site_id, requiredCredits);
-          if (!hasCredits) {
-            throw new Error('Insufficient credits for video generation');
-          }
-          await CreditService.deductCredits(site_id, requiredCredits, 'video_generation', 'Video generation', { prompt: args.prompt });
-        }
+        // Authorization and billing belong exclusively to the local media API.
 
-        console.log(`[GenerateVideoTool] 📝 Prompt: ${args.prompt.substring(0, 100)}...`);
         console.log(`[GenerateVideoTool] 🏢 Site ID: ${site_id}`);
-        console.log(`[GenerateVideoTool] 🤖 Provider: gemini (only supported provider)`);
 
         // Validate required parameters
         if (!args.prompt || typeof args.prompt !== 'string') {
@@ -116,19 +110,21 @@ export function generateVideoTool(site_id: string, instance_id?: string) {
           };
         }
 
-        // Prepare parameters for the service - only Gemini supported
+        // Prepare parameters for the service; never switch provider accounts on failure
         const actualDuration = args.duration !== undefined ? args.duration : args.duration_seconds;
         const serviceParams: VideoGenerationParams = {
           prompt: args.prompt,
           site_id: site_id,
           instance_id: instance_id,
-          provider: 'gemini', // Force Gemini only
+          provider: args.provider ?? 'openrouter',
           duration_seconds: actualDuration,
           aspect_ratio: args.aspect_ratio,
           reference_images: args.reference_images,
           first_frame_url: args.first_frame_url,
           last_frame_url: args.last_frame_url,
           quality: args.quality,
+          job_id: args.job_id,
+          resolution: args.resolution,
           model: args.model
         };
         
@@ -136,6 +132,9 @@ export function generateVideoTool(site_id: string, instance_id?: string) {
         // Call the video generation service
         const result = await VideoGenerationService.generateVideo(serviceParams);
 
+        if (result.job_id && (result.status !== 'completed' || !result.success)) {
+          return { ...result, message: result.error || 'Video is not ready. Retain job_id and poll this same job after 30 seconds; do not submit again.' };
+        }
         if (result.success) {
           console.log(`[GenerateVideoTool] ✅ Video generation successful`);
           console.log(`[GenerateVideoTool] 🎥 Generated ${result.videos.length} video(s)`);
@@ -190,6 +189,8 @@ export function generateVideoTool(site_id: string, instance_id?: string) {
             provider: result.provider,
             videos: result.videos.map(video => ({ url: video.url, mimeType: video.mimeType })),
             fallbackFrom: result.fallbackFrom,
+            status: result.status,
+            job_id: result.job_id,
             metadata: result.metadata,
             message: `Successfully generated ${result.videos.length} video(s) using ${result.provider}${result.fallbackFrom ? ` (fallback from ${result.fallbackFrom})` : ''}. Videos are saved and ready to use. URLs: ${videoUrls.join(', ')}`
           };
@@ -198,7 +199,7 @@ export function generateVideoTool(site_id: string, instance_id?: string) {
           
           // CRITICAL: For failed tool executions, we need to throw an error
           // This ensures the calling code treats it as an error, not as successful output
-          throw new Error(`Video generation failed: ${result.error}. All providers (gemini) were unable to generate the video.`);
+          throw new Error(`Video generation failed: ${result.error}. No alternate provider was called.`);
         }
 
       } catch (error: any) {
@@ -234,35 +235,28 @@ export function createGenerateVideoTool(site_id: string) {
 export function generateVideoToolScrapybara(instance: UbuntuInstance, site_id: string) {
   return tool({
     name: 'generate_video',
-    description: 'Generate videos using AI with automatic provider fallback. Supports Gemini Veo 3.1 for video generation. Videos are automatically saved to storage and can be used in conversations or content.',
+    description: 'Submit or poll asynchronous OpenRouter video generation. Requires an explicitly configured video model. Return pending job_id to poll; never claim completion while pending. Videos are automatically saved to storage and can be used in conversations or content.',
     parameters: z.object({
       prompt: z.string().describe('Detailed text description of the video to generate. Be specific about style, colors, composition, movement, and any important details.'),
-      provider: z.enum(['gemini']).optional().describe('AI provider to use for generation. Only Gemini is currently supported.'),
-      duration_seconds: z.number().min(1).max(60).optional().describe('Desired duration of the video in seconds. Will be mapped to valid values (4, 6, or 8 seconds) by the API. Defaults to 8 seconds.'),
+      provider: z.enum(['openrouter']).optional().describe('OpenRouter is the only supported provider; no direct provider fallback.'),
+      duration_seconds: z.number().min(1).max(60).optional().describe('Desired duration of the video in seconds. Must be supported by the selected model; defaults to 4 seconds. No OpenRouter duration coercion.'),
       duration: z.number().min(1).max(60).optional().describe('Desired duration of the video in seconds.'),
-      aspect_ratio: z.enum(['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3']).optional().describe('Aspect ratio of the generated video. Note: Gemini only supports 16:9 and 9:16, other ratios will be mapped to 16:9. Defaults to 16:9.'),
+      aspect_ratio: z.enum(['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3']).optional().describe('Aspect ratio of the generated video. Must be supported by the selected model; defaults to 16:9.'),
       reference_images: z.array(z.string()).optional().describe('Array of image URLs (up to 3) to use as reference/context for generation. IMPORTANT: If there are Image URLs for reference provided in the context, you MUST include them here as strings.'),
       first_frame_url: z.string().optional().describe('Authoritative first frame URL for image-to-video generation.'),
-      last_frame_url: z.string().optional().describe('Authoritative last frame URL. Uses an 8-second first-to-last-frame transition.'),
-      quality: z.enum(['preview', 'standard', 'pro']).optional().describe('Quality of the generated video. "preview" and "standard" use 720p. "pro" uses 1080p but requires duration=8 and aspect_ratio=16:9. Defaults to standard.'),
-      model: z.string().optional().describe('Override the Gemini model to use (default: veo-3.1-generate-preview).')
+      last_frame_url: z.string().optional().describe('Last frame URL, only when the selected model advertises last_frame support.'),
+      quality: z.enum(['preview', 'standard', 'pro']).optional().describe('Deprecated and rejected. Omit quality and use resolution instead.'),
+      job_id: z.string().uuid().optional(),
+      resolution: z.string().optional(),
+      model: z.string().optional().describe('OpenRouter model override; OPENROUTER_VIDEO_MODEL must be configured. No implicit Sora Pro substitution.')
     }),
     execute: async (args) => {
+      if (args.provider !== undefined && args.provider !== 'openrouter') throw new Error('Unsupported video provider');
       try {
         console.log(`[GenerateVideoTool-Scrapybara] 🎬 Executing video generation`);
-        if (site_id) {
-          const duration = args.duration !== undefined ? args.duration : (args.duration_seconds || 8);
-          const requiredCredits = (duration / 60) * CreditService.PRICING.VIDEO_GENERATION_MINUTE;
-          const hasCredits = await CreditService.validateCredits(site_id, requiredCredits);
-          if (!hasCredits) {
-            throw new Error('Insufficient credits for video generation');
-          }
-          await CreditService.deductCredits(site_id, requiredCredits, 'video_generation', 'Video generation', { prompt: args.prompt });
-        }
+        // Authorization and billing belong exclusively to the local media API.
 
-        console.log(`[GenerateVideoTool-Scrapybara] 📝 Prompt: ${args.prompt.substring(0, 100)}...`);
         console.log(`[GenerateVideoTool-Scrapybara] 🏢 Site ID: ${site_id}`);
-        console.log(`[GenerateVideoTool-Scrapybara] 🤖 Provider: gemini (only supported provider)`);
 
         // Validate required parameters
         if (!args.prompt || typeof args.prompt !== 'string') {
@@ -274,24 +268,29 @@ export function generateVideoToolScrapybara(instance: UbuntuInstance, site_id: s
           };
         }
 
-        // Prepare parameters for the service - only Gemini supported
+        // Prepare parameters for the service; never switch provider accounts on failure
         const actualDuration = args.duration !== undefined ? args.duration : args.duration_seconds;
         const serviceParams: VideoGenerationParams = {
           prompt: args.prompt,
           site_id: site_id,
-          provider: 'gemini', // Force Gemini only
+          provider: args.provider ?? 'openrouter',
           duration_seconds: actualDuration,
           aspect_ratio: args.aspect_ratio,
           reference_images: args.reference_images,
           first_frame_url: args.first_frame_url,
           last_frame_url: args.last_frame_url,
           quality: args.quality,
+          job_id: args.job_id,
+          resolution: args.resolution,
           model: args.model
         };
 
         // Call the video generation service
         const result = await VideoGenerationService.generateVideo(serviceParams);
 
+        if (result.job_id && (result.status !== 'completed' || !result.success)) {
+          return { ...result, message: result.error || 'Video is not ready. Retain job_id and poll this same job after 30 seconds; do not submit again.' };
+        }
         if (result.success) {
           console.log(`[GenerateVideoTool-Scrapybara] ✅ Video generation successful`);
           console.log(`[GenerateVideoTool-Scrapybara] 🎥 Generated ${result.videos.length} video(s)`);
@@ -309,12 +308,14 @@ export function generateVideoToolScrapybara(instance: UbuntuInstance, site_id: s
             provider: result.provider,
             videos: result.videos.map(video => ({ url: video.url, mimeType: video.mimeType })),
             fallbackFrom: result.fallbackFrom,
+            status: result.status,
+            job_id: result.job_id,
             metadata: result.metadata,
             message: `Successfully generated ${result.videos.length} video(s) using ${result.provider}${result.fallbackFrom ? ` (fallback from ${result.fallbackFrom})` : ''}. Videos are saved and ready to use. URLs: ${videoUrls.join(', ')}`
           };
         } else {
           console.error(`[GenerateVideoTool-Scrapybara] ❌ Video generation failed: ${result.error}`);
-          throw new Error(`Video generation failed: ${result.error}. All providers (gemini) were unable to generate the video.`);
+          throw new Error(`Video generation failed: ${result.error}. No alternate provider was called.`);
         }
 
       } catch (error: any) {

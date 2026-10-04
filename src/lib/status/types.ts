@@ -9,6 +9,8 @@ export interface ProviderProbeResult {
   liveProbe: boolean;
   latencyMs: number;
   model: string;
+  /** Configuration readiness must not be mistaken for successful generation. */
+  verification?: 'configuration' | 'inference';
   skipped?: boolean;
   errorCode?: string;
   errorMessage?: string;
@@ -44,27 +46,17 @@ export interface ProbeRunResult {
 }
 
 const SECRET_PATTERNS = [
-  /api[_-]?key/i,
-  /secret/i,
-  /password/i,
-  /token/i,
-  /authorization/i,
-  /bearer\s+/i,
-  /sk-[a-zA-Z0-9]+/,
-  /eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/,
+  /\b(?:Bearer|Basic)\s+[^\s,;"']+/gi,
+  /(?:api[_-]?key|secret|password|token|authorization)\s*[=:]\s*(?:"[^"]*"|'[^']*'|[^\s,;&]+)/gi,
+  /sk-[a-zA-Z0-9_-]+/g,
+  /eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+(?:\.[a-zA-Z0-9_-]+)?/g,
   /AIza[0-9A-Za-z_-]{20,}/g,
   /Following keys are not valid:\s*[^\s"]+/gi,
 ];
 
 export function isAiProbeEnabled(): boolean {
-  if (process.env.STATUS_AI_PROBE_ENABLED !== 'false') {
-    return true;
-  }
-  // Allow opt-out locally only; CI and production always probe live
-  if (process.env.CI === 'true') return true;
-  if (process.env.NODE_ENV === 'production') return true;
-  if (process.env.VERCEL === '1') return true;
-  return false;
+  // Billable inference is always explicit, including CI and production.
+  return process.env.STATUS_AI_PROBE_ENABLED === 'true';
 }
 
 export function evaluateAiProviders(
@@ -81,12 +73,12 @@ export function evaluateAiProviders(
 
   for (const [key, probe] of configured) {
     if (!probe.liveProbe) {
-      degradedReasons.push(`${key}_live_probe_failed`);
+      degradedReasons.push(`${key}_${probe.verification === 'configuration' ? 'generation_unverified' : 'live_probe_failed'}`);
     }
   }
 
   const primaryConfigured = primaryKeys.filter((k) => providers[k]?.configured && !providers[k]?.skipped);
-  const primaryFailed = primaryConfigured.filter((k) => !providers[k]?.liveProbe);
+  const primaryFailed = primaryConfigured.filter((k) => !providers[k]?.liveProbe && providers[k]?.verification !== 'configuration');
 
   if (primaryConfigured.length > 0 && primaryFailed.length === primaryConfigured.length) {
     return { status: 'down', degradedReasons };
@@ -111,7 +103,26 @@ export function sanitizePublicPayload<T>(value: T): T {
     return value;
   }
   if (typeof value === 'string') {
-    let s = value;
+    let s: string = value;
+    // Redact configured credentials before truncation, including unlabelled provider errors.
+    for (const [name, secret] of Object.entries(process.env)) {
+      if (/(?:api_?key|secret|password|token|credential)$/i.test(name) && secret && secret.length >= 8) {
+        s = s.split(secret).join('[redacted]');
+      }
+    }
+    s = s.replace(/https?:\/\/[^\s<>"']+/gi, (raw) => {
+      try {
+        const url = new URL(raw);
+        url.username = '';
+        url.password = '';
+        for (const key of Array.from(url.searchParams.keys())) {
+          if (/key|secret|password|token|authorization|signature/i.test(key)) {
+            url.searchParams.set(key, '[redacted]');
+          }
+        }
+        return url.toString();
+      } catch { return '[redacted-url]'; }
+    });
     for (const pattern of SECRET_PATTERNS) {
       s = s.replace(pattern, '[redacted]');
     }
@@ -126,7 +137,7 @@ export function sanitizePublicPayload<T>(value: T): T {
   if (typeof value === 'object') {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      if (/key|secret|token|password|authorization/i.test(k) && typeof v === 'string') {
+      if (k !== 'systemKey' && /key|secret|token|password|authorization/i.test(k) && typeof v === 'string') {
         out[k] = v ? '[set]' : '[unset]';
         continue;
       }

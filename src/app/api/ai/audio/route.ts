@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { synthesizeWithVercel, synthesizeWithGemini, TTSProvider as Provider } from '@/lib/services/ai/tts-service';
+import { synthesizeSpeech, TTSServiceError, TTSProvider as Provider, TTSAudioFormat } from '@/lib/services/ai/tts-service';
+import { getOpenRouterTtsModel, getOpenRouterTtsVoice } from '@/lib/services/ai/openrouter';
 import {
   enforceRequestRateLimit,
   getAuthenticatedRateIdentity,
@@ -9,10 +10,13 @@ import {
 interface AudioRequestBody {
   text: string;
   voice?: string;
-  format?: 'mp3' | 'wav' | 'ogg';
+  format?: TTSAudioFormat;
   provider?: Provider;
   model?: string;
+  speed?: number;
 }
+
+export const runtime = 'nodejs';
 
 export async function POST(request: NextRequest) {
   try {
@@ -26,23 +30,7 @@ export async function POST(request: NextRequest) {
     if (limited) return limited;
 
     const body = (await request.json()) as AudioRequestBody;
-    let { text, voice, format, provider, model } = body || {};
-
-    if (model === 'gpt-4o-mini-tts') {
-      model = 'tts-1';
-    }
-
-    // Force provider to vercel if an OpenAI model is passed
-    if (model && (model.includes('gpt') || model.includes('tts'))) {
-      provider = 'vercel';
-    } else if (!provider) {
-      provider = 'gemini';
-    }
-
-    // If Gemini is the provider but a non-gemini model was somehow passed, clear it so the default is used
-    if (provider === 'gemini' && model && !model.includes('gemini')) {
-      model = undefined;
-    }
+    const { text, voice, format, provider, model, speed } = body || {};
 
     if (!text || typeof text !== 'string') {
       return NextResponse.json({ error: 'Parameter "text" is required' }, { status: 400 });
@@ -51,46 +39,26 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Parameter "text" is too long' }, { status: 413 });
     }
 
-    if (provider === 'vercel') {
-      const audio = await synthesizeWithVercel(text, voice, format, model);
-      return new NextResponse(audio as any, {
-        status: 200,
-        headers: {
-          'Content-Type': format === 'wav' ? 'audio/wav' : format === 'ogg' ? 'audio/ogg' : 'audio/mpeg',
-          'Content-Length': String(audio.length),
-        },
-      });
-    }
-    
-    if (provider === 'gemini') {
-      try {
-        const audio = await synthesizeWithGemini(text, voice, format, model);
-        return new NextResponse(audio as any, {
-          status: 200,
-          headers: {
-            'Content-Type': format === 'mp3' ? 'audio/mpeg' : 'audio/wav',
-            'Content-Length': String(audio.length),
-          },
-        });
-      } catch (geminiError: any) {
-        console.warn(`[audio api] Gemini provider failed.`, geminiError);
-        throw new Error(`Gemini failed: ${geminiError.message}`);
+    for (const value of [voice, format, provider, model]) {
+      if (value !== undefined && typeof value !== 'string') {
+        return NextResponse.json({ error: 'Audio options must be strings' }, { status: 400 });
       }
     }
-
-    if (provider === 'azure') {
-      return NextResponse.json(
-        { error: 'TTS via Azure is not implemented here. Use provider: "gemini" or "vercel".' },
-        { status: 501 }
-      );
-    }
-
-    return NextResponse.json({ error: `Unsupported provider: ${provider}` }, { status: 400 });
-  } catch (error: any) {
-    console.error('[audio api] Error:', error);
+    const result = await synthesizeSpeech({ text, voice, format, provider, model, speed });
+    return new NextResponse(new Uint8Array(result.audio), {
+      status: 200,
+      headers: {
+        'Content-Type': result.mimeType,
+        'Content-Length': String(result.audio.length),
+        'X-TTS-Provider': result.provider,
+      },
+    });
+  } catch (error) {
+    const status = error instanceof TTSServiceError ? error.status : error instanceof SyntaxError ? 400 : 502;
+    // Raw SDK errors can echo keys or input. Expose only our safe adapter errors.
     return NextResponse.json(
-      { error: error?.message || 'Failed to process request' },
-      { status: 500 }
+      { error: error instanceof TTSServiceError ? error.message : 'Failed to process audio request' },
+      { status }
     );
   }
 }
@@ -102,20 +70,22 @@ export async function GET() {
       method: 'POST',
       body: {
         text: 'string',
-        voice: 'string (optional)',
-        format: "'mp3' | 'wav' | 'ogg' (optional, default: 'mp3' or 'wav' depending on provider)",
-        provider: "'gemini' | 'vercel' | 'azure' (default: 'gemini')",
-        model: 'optional model id (provider specific)'
+        voice: 'optional; must be supported by the selected OpenRouter speech model',
+        format: "'mp3' | 'pcm' (default: 'mp3')",
+        provider: "'openrouter' (only supported gateway)",
+        model: 'optional qualified OpenRouter speech model ID',
+        speed: 'optional number from 0.25 to 4, where supported'
       },
     },
-    providers: ['gemini', 'vercel'],
+    providers: ['openrouter'],
+    defaults: { model: getOpenRouterTtsModel(), voice: getOpenRouterTtsVoice(getOpenRouterTtsModel()) },
     env: {
-      requiredForGemini: ['GEMINI_API_KEY'],
-      requiredForVercel: ['VERCEL_AI_GATEWAY_OPENAI', 'VERCEL_AI_GATEWAY_API_KEY'],
+      required: ['OPENROUTER_API_KEY'],
+      optional: ['OPENROUTER_TTS_MODEL', 'OPENROUTER_TTS_VOICE'],
     },
     notes: {
-      gemini: 'Uses models/gemini-3.1-flash-tts-preview and can return WAV or MP3 audio.',
-      voices: 'Gemini supports Aoede, Charon, Fenrir, Kore, Puck (default).'
+      routing: 'Uses the same OpenRouter key and fixed gateway as chat. No Azure endpoint or provider keys required.',
+      voices: 'When selecting a different model, also select a compatible voice.'
     }
   });
 }

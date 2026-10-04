@@ -1,4 +1,5 @@
-import { describe, expect, it } from '@jest/globals';
+import { describe, expect, it, jest } from '@jest/globals';
+jest.mock('@/lib/services/embeddings-service', () => ({ EmbeddingsService: {} }));
 import {
   hoistRoutedToolResult,
   isAlwaysOnToolName,
@@ -44,6 +45,6 @@ describe('tools router webSearch forwarding', () => {
       args: '{"query":"AMPI Mexico"}',
     });
     expect(out.success).toBe(true);
-    expect(out.results[0].url).toBe('https://ampi.org.mx');
+    expect(out).toHaveProperty('results.0.url', 'https://ampi.org.mx');
   });
 });

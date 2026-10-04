@@ -192,6 +192,7 @@ function getCompanyName(): string {
 // Función para generar HTML del reminder para el lead
 function generateLeadReminderHtml(data: {
   leadName: string;
+  locale?: string;
   message: string;
   siteName: string;
   taskTitle?: string;

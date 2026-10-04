@@ -17,13 +17,15 @@ function setup() {
   const completeUserMessageStep = jest.fn<AsyncMock>();
   const pauseUserMessageStep = jest.fn<AsyncMock>();
   const markAssistantFailedStep = jest.fn<AsyncMock>();
+  const getActiveInstancePlan = jest.fn<AsyncMock>().mockResolvedValue(null);
+  const executePlanStep = jest.fn<AsyncMock>();
   const prepareAssistantContext = jest.fn<AsyncMock>().mockResolvedValue(context);
   const result = (messages: any[], text = '', isDone = false) => ({
     messages, text, isDone, continuation: { responseNodeIds: ['response'] }, steps: [], usage: {}, output: null,
   });
   const workflow = loadRuntimeModule<typeof import('../workflow')>('src/app/api/robots/instance/assistant/workflow.ts', {
     './assistant-turn': { processAssistantTurn }, './steps': { prepareAssistantContext },
-    './plan-steps': { getActiveInstancePlan: async () => null },
+    './plan-steps': { getActiveInstancePlan, executePlanStep },
     './persist-and-fail-steps': { completeUserMessageStep, pauseUserMessageStep, markAssistantFailedStep,
       persistUserMessageStep: async () => ({ id: 'user-log' }) },
     '@/lib/services/robot-instance/assistant-respawn-policy': {
@@ -39,7 +41,7 @@ function setup() {
   );
   return { run, context, execution, transcript, processAssistantTurn, prepareRecoveryStep, guardRecoveryStep,
     checkpointRecoveryStep, spawnSilentContinueStep, completeUserMessageStep, pauseUserMessageStep,
-    markAssistantFailedStep, prepareAssistantContext, result };
+    markAssistantFailedStep, prepareAssistantContext, getActiveInstancePlan, executePlanStep, result };
 }
 
 describe('node execution continuation workflow', () => {
@@ -161,5 +163,26 @@ describe('node execution continuation workflow', () => {
     h.guardRecoveryStep.mockResolvedValueOnce(true).mockResolvedValue(false);
     expect((await h.run()).success).toBe(false);
     expect(h.markAssistantFailedStep).not.toHaveBeenCalled();
+  });
+
+  it('finishes a conversation without dispatching the linked plan even when context linkage is missing', async () => {
+    const h = setup();
+    const { instanceNodeId: _node, ...conversationExecution } = h.execution;
+    h.context.instanceNodeId = undefined;
+    h.context.hasLinkedRequirement = false;
+    h.getActiveInstancePlan.mockResolvedValue({ id: 'pending-plan', steps: [{ status: 'pending' }] });
+    h.prepareRecoveryStep.mockResolvedValue({ ok: true, snapshot: {
+      execution: conversationExecution, respawnCount: 1, messages: h.transcript, conversationOnly: true,
+    } });
+    h.processAssistantTurn.mockImplementation(async (context, messages) => {
+      expect(context.conversationRecoveryOnly).toBe(true);
+      return { messages, text: 'The requirement remains blocked by platform review.', isDone: true, usage: {} };
+    });
+    const result = await h.run({ silentContinue: true, userMessageLogId: 'user-log', resumeToken: 'token' });
+    expect(result).toMatchObject({ execution_status: 'conversation_completed', managed_work_resumed: false });
+    expect(h.completeUserMessageStep).toHaveBeenCalledWith('user-log', 1);
+    expect(h.getActiveInstancePlan).not.toHaveBeenCalled();
+    expect(h.executePlanStep).not.toHaveBeenCalled();
+    expect(h.pauseUserMessageStep).not.toHaveBeenCalled();
   });
 });

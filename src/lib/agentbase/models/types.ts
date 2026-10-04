@@ -2,6 +2,8 @@
  * Agentbase Core Types
  */
 
+export type AgentModelType = 'openrouter' | 'anthropic' | 'openai' | 'gemini';
+
 // Command Status Types
 export type CommandStatus = 'pending' | 'running' | 'completed' | 'failed' | 'pending_supervision';
 
@@ -15,7 +17,7 @@ export interface CreateCommandParams {
   context?: string;
   supervisor?: any[];
   model?: string;
-  model_type?: 'anthropic' | 'openai' | 'gemini';
+  model_type?: AgentModelType;
   model_id?: string;
   max_tokens?: number;
   temperature?: number;
@@ -41,7 +43,7 @@ export interface CreateCommandParams {
   };
   reasoning_effort?: 'low' | 'medium' | 'high' | 'minimal';
   tools_model?: string;
-  tools_model_type?: 'anthropic' | 'openai' | 'gemini';
+  tools_model_type?: AgentModelType;
   tools_model_id?: string;
 }
 
@@ -55,7 +57,7 @@ export interface DbCommand {
   context?: string;
   supervisor?: any[];
   model?: string;
-  model_type?: 'anthropic' | 'openai' | 'gemini';
+  model_type?: AgentModelType;
   model_id?: string;
   max_tokens?: number;
   temperature?: number;
@@ -79,7 +81,7 @@ export interface DbCommand {
   site_id?: string;
   reasoning_effort?: 'low' | 'medium' | 'high' | 'minimal';
   tools_model?: string;
-  tools_model_type?: 'anthropic' | 'openai' | 'gemini';
+  tools_model_type?: AgentModelType;
   tools_model_id?: string;
   metadata?: {
     dbUuid?: string;
@@ -102,6 +104,14 @@ export interface CommandExecutionResult {
   warning?: string;
   inputTokens?: number;
   outputTokens?: number;
+  /** Provider accounting metadata, distinct from product credit pricing. */
+  usage?: Record<string, unknown>;
+  cost?: number;
+  cost_details?: Record<string, unknown>;
+  is_byok?: boolean;
+  generationId?: string;
+  provider?: string;
+  model?: string;
 }
 
 // Tool Execution Result
@@ -147,9 +157,9 @@ export interface SupervisionParams {
   escalationPath?: string[];
 }
 
-// Portkey Model Options
-export interface PortkeyModelOptions {
-  modelType: 'anthropic' | 'openai' | 'gemini';
+// Model vendor hints are independent from the OpenRouter transport.
+export interface OpenRouterModelOptions {
+  modelType: AgentModelType;
   modelId?: string;
   maxTokens?: number;
   temperature?: number;
@@ -171,10 +181,18 @@ export interface AzureOpenAIOptions {
   apiVersion?: string;
 }
 
-export interface PortkeyConfig {
-  apiKey: string;
-  virtualKeys: Record<string, string>;
+export interface OpenRouterConfig {
+  apiKey?: string;
+  timeout?: number;
+  /** @deprecated Rejected. Remove legacy virtual keys before using OpenRouter. */
+  virtualKeys?: Record<string, string>;
+  /** @deprecated Ignored. */
   baseURL?: string;
+  /** @deprecated Azure transport configuration is rejected by the connector. */
   useAzure?: boolean;
   azureOptions?: AzureOpenAIOptions;
-} 
+}
+
+/** @deprecated Use OpenRouterModelOptions / OpenRouterConfig. */
+export type PortkeyModelOptions = OpenRouterModelOptions;
+export type PortkeyConfig = OpenRouterConfig;

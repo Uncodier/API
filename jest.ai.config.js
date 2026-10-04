@@ -1,0 +1,37 @@
+import base from './jest.config.js';
+
+// Offline migration contracts only; never load Next configuration or developer .env.
+export default {
+  ...base,
+  testMatch: [
+    '<rootDir>/src/lib/services/ai/__tests__/**/*.test.ts',
+    '<rootDir>/src/lib/services/__tests__/embeddings-service.test.ts',
+    '<rootDir>/src/lib/services/__tests__/transcribeAudio.test.ts',
+    '<rootDir>/src/lib/services/channels/__tests__/long-reply-audio.test.ts',
+    '<rootDir>/src/app/api/agents/tools/generateAudio/__tests__/**/*.test.ts',
+    '<rootDir>/src/app/api/agents/tools/generateImage/__tests__/**/*.test.ts',
+    '<rootDir>/src/lib/services/__tests__/UnifiedAIService.test.ts',
+    '<rootDir>/src/lib/services/image/__tests__/media-services.test.ts',
+    '<rootDir>/src/app/api/agents/tools/generateVideo/__tests__/openrouter-tools.test.ts',
+    '<rootDir>/src/app/api/public/video/prompt/__tests__/openrouter*.test.ts',
+    '<rootDir>/src/app/api/public/image/prompt/__tests__/**/*.test.ts',
+    '<rootDir>/src/lib/services/robot-instance/__tests__/InstanceContextManager.test.ts',
+    '<rootDir>/src/lib/services/robot-instance/__tests__/instance-naming.test.ts',
+    '<rootDir>/src/lib/services/robot-instance/__tests__/instance-context-budget.test.ts',
+    '<rootDir>/src/lib/services/robot-instance/__tests__/assistant-logging*.test.ts',
+    '<rootDir>/src/lib/services/workflow-robot/__tests__/bounded-channel-openrouter.test.ts',
+    '<rootDir>/src/lib/agentbase/services/__tests__/*OpenRouter*.test.ts',
+    '<rootDir>/src/lib/agentbase/services/__tests__/PortkeyConnector*.test.ts',
+    '<rootDir>/src/lib/agentbase/agents/__tests__/Base-openrouter-usage.test.ts',
+    '<rootDir>/src/app/api/ai/**/__tests__/**/*.test.ts',
+    '<rootDir>/src/app/api/workflow/execute-node/__tests__/route.test.ts',
+    '<rootDir>/src/lib/status/__tests__/ai-provider-probes.test.ts',
+    '<rootDir>/src/lib/custom-automation/__tests__/ai-agent-executor*.test.ts',
+    '<rootDir>/src/app/api/cron/shared/__tests__/visual-critic-client.test.ts',
+    '<rootDir>/src/app/api/cron/shared/__tests__/step-visual-feedback.test.ts',
+  ],
+  extensionsToTreatAsEsm: [],
+  transform: {
+    '^.+\\.tsx?$': ['ts-jest', { useESM: false, tsconfig: 'tsconfig.json' }],
+  },
+};

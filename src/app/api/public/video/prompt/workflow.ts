@@ -13,13 +13,11 @@ export interface GeneratePromptVideoInput {
 export async function generatePromptVideoWorkflow(input: GeneratePromptVideoInput) {
   'use workflow';
   
-  await generateAndCacheVideoStep(
+  return await generateAndCacheVideoStep(
     input.prompt,
     input.siteId,
     input.durationSeconds,
     input.ratio,
     input.hash
   );
-  
-  return { status: 'completed' };
 }

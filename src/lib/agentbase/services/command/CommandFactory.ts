@@ -1,7 +1,7 @@
 /**
  * Command Factory for creating standardized command objects
  */
-import { CreateCommandParams, SupervisionParams } from '../../models/types';
+import { AgentModelType, CreateCommandParams, SupervisionParams } from '../../models/types';
 
 export class CommandFactory {
   /**
@@ -18,7 +18,7 @@ export class CommandFactory {
     agentId?: string;
     agentRole?: string;
     model?: string;
-    modelType?: 'anthropic' | 'openai' | 'gemini';
+    modelType?: AgentModelType;
     modelId?: string;
     maxTokens?: number;
     temperature?: number;
@@ -32,7 +32,7 @@ export class CommandFactory {
     reasoningEffort?: 'low' | 'medium' | 'high' | 'minimal';
     verbosity?: 'low' | 'medium' | 'high';
     toolsModel?: string;
-    toolsModelType?: 'anthropic' | 'openai' | 'gemini';
+    toolsModelType?: AgentModelType;
     toolsModelId?: string;
     metadata?: Record<string, any>;
   }): CreateCommandParams {

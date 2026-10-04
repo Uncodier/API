@@ -885,9 +885,7 @@ export async function POST(request: Request) {
           status: 'not_initialized'
         }
       ],
-      // Set model instead of model_id
-      model: 'gpt-5.6-sol',
-      modelType: 'openai'
+      modelType: 'openrouter'
     });
     
     // Submit the command for processing

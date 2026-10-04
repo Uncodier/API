@@ -48,10 +48,14 @@ export async function validateEmail(email: string): Promise<EmailValidationResul
     }
 
     return result;
-  } catch (error: any) {
+  } catch (error: unknown) {
     return {
-      error: 'Validation failed',
-      message: error.message || 'Unknown error occurred',
+      success: false,
+      error: {
+        code: 'VALIDATION_FAILED',
+        message: 'Validation failed',
+        details: error instanceof Error ? error.message : 'Unknown error occurred',
+      },
     };
   }
 }

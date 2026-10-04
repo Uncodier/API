@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import type { VideoProvider } from './video-types';
 
 const VIDEO_BUCKET = 'generative_videos';
 
@@ -8,6 +9,7 @@ export async function persistGeneratedVideo(input: {
   siteId: string;
   prompt: string;
   model: string;
+  provider?: VideoProvider;
   instanceId?: string;
   metadata: Record<string, unknown>;
 }): Promise<{ url: string; mimeType: string }> {
@@ -49,12 +51,12 @@ export async function persistGeneratedVideo(input: {
     .maybeSingle();
   const asset: Record<string, unknown> = {
     site_id: input.siteId,
-    name: `gemini_video_${Date.now()}.${extension}`,
+    name: `${input.provider || 'openrouter'}_video_${Date.now()}.${extension}`,
     file_path: url,
     file_type: input.mimeType,
     file_size: input.buffer.length,
     metadata: {
-      provider: 'gemini',
+      provider: input.provider || 'openrouter',
       prompt: input.prompt,
       generated_at: new Date().toISOString(),
       model: input.model,

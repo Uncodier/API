@@ -30,7 +30,7 @@ jest.mock('@/lib/database/requirement-db', () => ({
   getRequirementById,
 }));
 
-import { executeBacklogCore } from '../route';
+import { executeBacklogCore } from '../core';
 import { requirementBacklogTool } from '../assistantProtocol';
 
 describe('model-facing requirement backlog terminal transitions', () => {

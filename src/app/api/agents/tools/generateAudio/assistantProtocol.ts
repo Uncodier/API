@@ -1,4 +1,5 @@
 import { CreditService } from '@/lib/services/billing/CreditService';
+import { resolveTTSProvider, ttsMimeType, TTSProvider, TTSAudioFormat } from '@/lib/services/ai/tts-service';
 /**
  * Assistant Protocol Wrapper for Generate Audio Tool
  * Formats the tool for OpenAI/assistant compatibility
@@ -6,9 +7,9 @@ import { CreditService } from '@/lib/services/billing/CreditService';
 
 export interface GenerateAudioToolParams {
   text: string;
-  provider?: 'vercel' | 'azure' | 'gemini';
+  provider?: TTSProvider;
   voice?: string;
-  format?: 'mp3' | 'wav' | 'ogg';
+  format?: TTSAudioFormat;
   model?: string;
 }
 
@@ -29,7 +30,7 @@ export function generateAudioTool(
 ) {
   return {
     name: 'generate_audio',
-    description: 'Generate audio (Text-to-Speech, Rap, Song, Voiceover) using AI. ALWAYS use this tool when the user requests an audio, speech, song, rap, or voice generation. Returns a URL to the generated audio file.',
+    description: 'Convert written text into speech or a voiceover through OpenRouter. Returns a URL to the generated audio file. This is speech synthesis, not a music-generation tool.',
     parameters: {
       type: 'object',
       properties: {
@@ -39,47 +40,33 @@ export function generateAudioTool(
         },
         provider: {
           type: 'string',
-          enum: ['gemini', 'vercel'],
-          description: 'AI provider to use for generation. Gemini is the default and recommended.'
+          enum: ['openrouter'],
+          description: 'OpenRouter is the only supported gateway; normally omit this field.'
         },
         voice: {
           type: 'string',
-          description: 'The voice to use for generation. E.g., "alloy", "echo", "fable", "onyx", "nova", "shimmer" (for OpenAI models).'
+          description: 'Optional voice supported by the selected speech model. Omit to use the server default Spanish voice.'
         },
         format: {
           type: 'string',
-          enum: ['mp3', 'wav', 'ogg'],
+          enum: ['mp3', 'pcm'],
           description: 'The audio format. Defaults to mp3.'
         },
         model: {
           type: 'string',
-          description: 'The TTS model to use. E.g., "tts-1" or "tts-1-hd".'
+          description: 'Optional qualified OpenRouter speech model ID. Omit to use the configured model. Supply a compatible voice when overriding the model.'
         }
       },
       required: ['text']
     },
     execute: async (args: GenerateAudioToolParams) => {
       try {
-        if (options.forceWhatsAppCompatible) {
-          args.provider = 'gemini';
-          args.format = 'mp3';
-          args.model = 'gemini-3.1-flash-tts-preview';
+        if (!args.text || typeof args.text !== 'string') {
+          return { success: false, error: 'text is required and must be a string', provider: 'none' };
         }
-
-        if (args.model === 'gpt-4o-mini-tts') {
-          args.model = 'tts-1';
-        }
-
-        let provider = args.provider;
-        
-        // Force provider to vercel if an OpenAI model is explicitly requested
-        if (args.model && (args.model.includes('gpt') || args.model.includes('tts'))) {
-          provider = 'vercel';
-        }
-        
-        if (!provider) {
-          provider = 'gemini';
-        }
+        // WhatsApp constrains the container, not the provider/account or model.
+        const format = options.forceWhatsAppCompatible ? 'mp3' : args.format || 'mp3';
+        const provider = resolveTTSProvider(args.provider);
         
         console.log(`[GenerateAudioTool] 🎙️ Executing audio generation`);
         if (site_id) {
@@ -97,22 +84,13 @@ export function generateAudioTool(
         console.log(`[GenerateAudioTool] 🏢 Site ID: ${site_id}`);
         console.log(`[GenerateAudioTool] 🤖 Provider: ${provider}`);
 
-        // Validate required parameters
-        if (!args.text || typeof args.text !== 'string') {
-          return {
-            success: false,
-            error: 'text is required and must be a string',
-            provider: 'none',
-          };
-        }
-
         const apiUrl = `${process.env.NEXT_PUBLIC_API_SERVER_URL || 'http://localhost:3000'}/api/ai/audio`;
         
         const requestBody = {
           text: args.text,
           provider: provider,
           voice: args.voice,
-          format: args.format,
+          format,
           model: args.model
         };
 
@@ -131,20 +109,14 @@ export function generateAudioTool(
           throw new Error(`Audio generation failed: ${response.status} ${errorText}`);
         }
         
-        // The API returns the raw audio buffer. We need to upload it to storage to get a URL, 
-        // similar to how ImageGenerationService does it implicitly.
-        // Wait, ImageGenerationService handles the storage upload in the /api/ai/image endpoint or inside the service itself?
-        // Let's check how audio route works: It returns `new NextResponse(audio, ...)` which is binary data.
-        // Since we are inside the tool, we need to store it somewhere to give the LLM a URL back.
-        
-        // We will read the blob and upload to supabase storage here.
+        // The audio API returns bytes; store them to give the tool a media URL.
         const audioBlob = await response.blob();
         
         const { supabaseAdmin } = await import('@/lib/database/supabase-client');
-        const { createInstanceLogCore } = await import('@/app/api/agents/tools/instance_logs/route');
+        const { createInstanceLogCore } = await import('@/lib/tools/instance-log-core');
         
-        const isGemini = provider === 'gemini';
-        const fileExt = args.format || (isGemini ? 'wav' : 'mp3');
+        const fileExt = format;
+        const mimeType = ttsMimeType(format);
         const fileName = `generated_audio_${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
         const filePath = `${site_id}/${fileName}`;
         
@@ -152,7 +124,7 @@ export function generateAudioTool(
           .storage
           .from('assets')
           .upload(filePath, audioBlob, {
-            contentType: `audio/${fileExt === 'mp3' ? 'mpeg' : fileExt}`
+            contentType: mimeType
           });
           
         if (uploadError) {
@@ -200,7 +172,7 @@ export function generateAudioTool(
           success: true,
           provider: provider,
           audio_url: publicUrl,
-          mimeType: `audio/${fileExt === 'mp3' ? 'mpeg' : fileExt === 'wav' ? 'wav' : fileExt}`,
+          mimeType,
           metadata: {
             format: fileExt,
             voice: args.voice,

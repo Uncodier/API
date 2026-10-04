@@ -68,8 +68,8 @@ substitutes pgvector, so the real HNSW index still needs validation in Supabase.
   endpoint is always used; changing the model name in the request body does not
   change deployments, so the summary-model override is ignored there. For
   other providers, override only with an ID that the provider accepts.
-- `PORTKEY_API_KEY` and `AZURE_OPENAI_API_KEY`: already used by
-  `EmbeddingsService` to generate 1536-dimensional vectors via Portkey. Without
+- `OPENROUTER_API_KEY`: used by
+  `EmbeddingsService` to generate 1536-dimensional `text-embedding-3-small` vectors via OpenRouter. Without
   them, the workflow skips the summarizer and does not move the cursor.
 
 The workflow's context-preparation step checks eligible instance logs before

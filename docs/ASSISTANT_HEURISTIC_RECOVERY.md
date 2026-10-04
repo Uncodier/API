@@ -17,7 +17,8 @@ exactly-once execution guarantee.
   to 200 trusted running in-flight actions created in the last 24 hours, so a
   stranded turn does not immediately disappear from discovery after 30 minutes.
   These bounded scans are not an unlimited historical backfill.
-- The existing two-respawn cap and cooldown remain. Cancellation, superseding
+- Up to **five respawns per action** and **five per instance in the 30-minute
+  lookback window** are allowed. The two-minute cooldown remains. Cancellation, superseding
   user input, changed node bindings, ambiguous workflow admission, and work
   owned by another workflow/requirement remain protected.
 - This heuristic applies to ordinary assistant conversations. Plan execution
@@ -25,6 +26,32 @@ exactly-once execution guarantee.
   need separate ownership fencing. Existing complete-checkpoint node recovery
   still requires its original response-node continuation. Legacy snapshots with
   an active plan are skipped because they cannot identify the execution phase.
+- A requirement-linked plan no longer blocks recovery of a known, non-node
+  conversational turn (`inFlightKind: turn`). Such claims persist
+  `conversationOnly: true` and recheck the scoped plan before taking ownership.
+  Actual workflow/template runs, plan execution, and ambiguous legacy phases
+  remain excluded.
+
+## Closing conversations while managed work remains blocked
+
+Conversation-only recovery exposes just `conversation_status`, a new read-only
+tool bound to the trusted instance/site. It reads current plan statuses and their
+linked requirement statuses/holds; it cannot accept arbitrary IDs, SQL, actions,
+or routed tools. Custom tools, sandbox, sending, plan writes and activation tools
+are not available. This is an execution boundary, not just a prompt instruction.
+
+The assistant can explain the verified blocker and finish its response without
+executing the pending plan. The workflow marks only the trusted user action as
+completed and returns `execution_status: conversation_completed` with
+`managed_work_resumed: false`. It skips automatic plan lookup/dispatch even if
+the requirement linkage is missing from prepared context. Requirements, plans,
+backlogs, holds and their budgets are unchanged.
+
+The restriction survives saved turns and subsequent respawns. Cancellation,
+generation fencing, inactivity checks and the five-recovery cap still apply.
+A successful conversation answer is **not** successful completion of the managed
+task. If the model cannot finish within its budgets, existing pause/exhaustion
+handling remains; this change does not guarantee that every conversation finishes.
 
 ## Evidence and ownership
 
@@ -62,6 +89,14 @@ uses the trusted action creation time and scoped logs as fallback; if a first
 turn has no transcript, its original trusted message supplies the starting intent.
 
 ## Limits
+
+The message checkpoint holds up to **2 MiB** of UTF-8 JSON (previously 512 KiB).
+Tool receipts remain complete, without truncation. Execution configuration keeps
+its separate 512 KiB cap, with 64 KiB of snapshot metadata headroom; the existing
+4 MiB action reader can read the entire supported snapshot. Neither limit change
+resets persisted counters or releases requirement/plan holds. An eligible action
+that previously stopped at two respawns has three additional attempts after
+deployment, while retaining its original history and monotonic generation.
 
 This policy trades indefinite stalls for autonomous continuation. It does not
 guarantee that the model will never duplicate an external effect. Provider-side

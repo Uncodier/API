@@ -1,5 +1,6 @@
-import OpenAI from 'openai';
+import type OpenAI from 'openai';
 import { CreditService } from '@/lib/services/billing/CreditService';
+import { createOpenRouterClient, getOpenRouterChatModel } from '@/lib/services/ai/openrouter';
 import type { WorkflowPlanResult, WorkflowPlanResultCapture } from './plan-result';
 
 const MODEL_TIMEOUT_MS = 90_000;
@@ -22,33 +23,18 @@ export interface ChannelTurnBilling {
   attempt: number;
 }
 
-function configuredProvider(provider: string): { client: OpenAI; model: string } {
-  const options = { maxRetries: 0, timeout: MODEL_TIMEOUT_MS };
-  if (provider === 'azure') {
-    const endpoint = process.env.MICROSOFT_AZURE_OPENAI_ENDPOINT?.replace(/\/$/, '');
-    const key = process.env.MICROSOFT_AZURE_OPENAI_API_KEY;
-    const deployment = process.env.MICROSOFT_AZURE_OPENAI_DEPLOYMENT || 'gpt-4o';
-    if (!endpoint || !key) throw new ChannelModelTurnError('Azure provider is not configured', false, true);
-    return { client: new OpenAI({ ...options, apiKey: key, baseURL: `${endpoint}/openai/deployments/${deployment}`,
-      defaultQuery: { 'api-version': process.env.MICROSOFT_AZURE_OPENAI_API_VERSION || '2024-08-01-preview' },
-      defaultHeaders: { 'api-key': key } }), model: process.env.AI_MODEL || deployment };
+function configuredProvider(): { client: OpenAI; model: string } {
+  try {
+    return { client: createOpenRouterClient({ maxRetries: 0, timeout: MODEL_TIMEOUT_MS }),
+      model: getOpenRouterChatModel() };
+  } catch {
+    throw new ChannelModelTurnError('OpenRouter provider is not configured', false, true);
   }
-  if (provider === 'openai') {
-    if (!process.env.OPENAI_API_KEY) throw new ChannelModelTurnError('OpenAI provider is not configured', false, true);
-    return { client: new OpenAI({ ...options, apiKey: process.env.OPENAI_API_KEY,
-      baseURL: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1' }), model: process.env.AI_MODEL || 'gpt-4o' };
-  }
-  if (provider === 'gemini') {
-    if (!process.env.GEMINI_API_KEY) throw new ChannelModelTurnError('Gemini provider is not configured', false, true);
-    return { client: new OpenAI({ ...options, apiKey: process.env.GEMINI_API_KEY,
-      baseURL: process.env.GEMINI_OPENAI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta/openai/' }),
-    model: process.env.AI_MODEL || 'gemini-3.1-pro-preview' };
-  }
-  throw new ChannelModelTurnError('Channel message model provider is unsupported', false, true);
 }
 
 async function chargeUsage(
   usage: OpenAI.CompletionUsage | undefined, billing: ChannelTurnBilling, provider: string, model: string,
+  generationId?: string,
 ): Promise<void> {
   if (!usage || !Number.isFinite(usage.prompt_tokens) || usage.prompt_tokens < 0 ||
     !Number.isFinite(usage.completion_tokens) || usage.completion_tokens < 0) {
@@ -66,6 +52,7 @@ async function chargeUsage(
         run_plan_id: billing.runPlanId, step_id: billing.stepId, message_id: billing.messageId,
         attempt: billing.attempt, retry_count: billing.attempt - 1, provider, model,
         tokens: inputTokens + outputTokens, input_tokens: inputTokens, output_tokens: outputTokens,
+        usage, ...(generationId ? { generation_id: generationId } : {}),
       });
     if (charged.success !== true) throw new Error('Credit deduction was not confirmed');
   } catch {
@@ -86,8 +73,8 @@ export async function boundedChannelModelTurn(input: {
   } catch {
     throw new ChannelModelTurnError('Insufficient credits or credit validation unavailable for channel workflow', false, true);
   }
-  const provider = input.provider || process.env.ROBOT_SDK_PROVIDER || 'gemini';
-  const { client, model } = configuredProvider(provider);
+  const provider = 'openrouter';
+  const { client, model } = configuredProvider();
   // Credit validation is asynchronous; recheck ownership immediately before invoking the provider.
   await input.beforeProvider?.();
   const controller = new AbortController();
@@ -95,7 +82,7 @@ export async function boundedChannelModelTurn(input: {
   let completion: OpenAI.Chat.Completions.ChatCompletion;
   try {
     completion = await client.chat.completions.create({
-      model, stream: false,
+      model, stream: false, user: input.billing.siteId,
       messages: [{ role: 'system', content: input.prompt }, { role: 'user', content: input.userContent }],
       tools: [{ type: 'function', function: {
         name: input.capture.tool.name, description: input.capture.tool.description,
@@ -116,7 +103,7 @@ export async function boundedChannelModelTurn(input: {
 
   // Usage is billable even for missing tools, malformed JSON, rejected output, and explicit failures.
   // A crash after charging leaves the durable step in_progress: reconciliation must not recharge it.
-  await chargeUsage(completion.usage, input.billing, provider, model);
+  await chargeUsage(completion.usage, input.billing, provider, completion.model || model, completion.id);
   const calls = completion.choices[0]?.message?.tool_calls || [];
   if (calls.length !== 1 || calls[0].type !== 'function' || calls[0].function.name !== 'plan_result') {
     throw new ChannelModelTurnError('A single plan_result call is required', true);

@@ -5,7 +5,7 @@
  */
 
 import { configureEmailCore } from './core';
-import type { ConfigureEmailAction } from './route';
+import type { ConfigureEmailAction } from './core';
 
 export interface ConfigureEmailToolParams {
   action: ConfigureEmailAction;

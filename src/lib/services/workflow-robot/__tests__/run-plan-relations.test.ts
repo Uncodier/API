@@ -13,7 +13,7 @@ jest.unstable_mockModule('@/lib/database/supabase-client', () => ({
     update: () => ({ eq: updateEq }),
   }) },
 }));
-jest.unstable_mockModule('@/app/api/agents/tools/instance_plan/update/route', () => ({ updateInstancePlanCore: updatePlan }));
+jest.unstable_mockModule('@/app/api/agents/tools/instance_plan/update/core', () => ({ updateInstancePlanCore: updatePlan }));
 jest.unstable_mockModule('@/app/api/robots/instance/assistant/steps', () => ({ prepareAssistantContext }));
 jest.unstable_mockModule('@/app/api/robots/instance/assistant/assistant-turn', () => ({ processAssistantTurn }));
 jest.unstable_mockModule('@/app/api/cron/shared/step-history-builder', () => ({ fetchStepLogHistoryText: jest.fn() }));

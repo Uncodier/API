@@ -1,496 +1,62 @@
-/**
- * PortkeyConnector for standardized LLM access
- */
-import { PortkeyModelOptions, PortkeyConfig } from '../models/types';
-import Portkey from 'portkey-ai';
-import { AIGatewayService } from './AIGatewayService';
+/** OpenRouter Chat Completions connector. The old export is a source compatibility alias. */
+import type { OpenRouterConfig, OpenRouterModelOptions } from '../models/types';
+import { createOpenRouterClient, isOpenRouterReasoningModel, resolveOpenRouterModel } from '@/lib/services/ai/openrouter';
 import { recordTelemetry } from '@/lib/status/telemetry';
-import {
-  isRateLimitError,
-  isTimeoutOrConnectError,
-  tryNonStreamModelFallback,
-  tryStreamingGpt55Fallback,
-} from './llm-fallback';
+import { formatOpenAiNonStreamResponse, throwIfCompletionError } from './llm-fallback';
 
-export class PortkeyConnector {
-  private portkeyConfig: PortkeyConfig;
-  private defaultOptions: Partial<PortkeyModelOptions>;
-  private aiGateway: AIGatewayService;
-  
-  constructor(config: PortkeyConfig, defaultOptions?: Partial<PortkeyModelOptions>) {
-    this.portkeyConfig = config;
-    this.defaultOptions = defaultOptions || {
-      modelType: 'openai',
-      temperature: 0.7,
-      responseFormat: 'text',
-      stream: false, // Default to non-streaming for stability
-      streamOptions: {
-        includeUsage: true
-      }
-    };
-    this.aiGateway = new AIGatewayService();
-  }
-  
-  /**
-   * Call an LLM with messages using Portkey
-   */
+export class OpenRouterConnector {
+  constructor(
+    private readonly config: OpenRouterConfig = {},
+    private readonly defaultOptions: Partial<OpenRouterModelOptions> = {},
+  ) {}
+
   async callAgent(
-    messages: Array<{
-      role: 'system' | 'user' | 'assistant';
-      content: string | any;
-    }>,
-    options?: Partial<PortkeyModelOptions>
+    messages: Array<{ role: 'system' | 'user' | 'assistant' | 'tool'; content: any; [key: string]: any }>,
+    options?: Partial<OpenRouterModelOptions>,
   ): Promise<any> {
+    if (this.config.virtualKeys || this.config.useAzure || this.config.azureOptions) {
+      throw new Error('Legacy Portkey/Azure credentials are not accepted. Configure an OpenRouter API key without virtualKeys.');
+    }
+    if (!messages.some(message => message.role === 'system')) {
+      throw new Error('OpenRouter requires a system message with agent_background');
+    }
+    const merged = { modelType: 'openrouter', stream: false, ...this.defaultOptions, ...options };
+    const model = resolveOpenRouterModel(merged.modelId, merged.modelType);
+    const reasoningModel = isOpenRouterReasoningModel(model);
+    // Fixed OpenRouter transport. No virtual keys, custom base URL, or other-account fallback.
+    const client = createOpenRouterClient({ apiKey: this.config.apiKey, timeout: this.config.timeout, maxRetries: 0 });
+    const request: any = {
+      model,
+      messages,
+      stream: merged.stream === true,
+      ...(merged.siteId ? { user: merged.siteId } : {}),
+      ...(merged.maxTokens !== undefined ? { max_tokens: merged.maxTokens } : {}),
+      ...(merged.responseFormat === 'json' ? { response_format: { type: 'json_object' } } : {}),
+    };
+    if (merged.stream) request.stream_options = { include_usage: true };
+    if (reasoningModel) {
+      // OpenRouter's namespaced GPT/o-series models do not accept sampling controls.
+      if (merged.reasoningEffort) request.reasoning = { effort: merged.reasoningEffort === 'minimal' && /^openai\/gpt-6/.test(model) ? 'low' : merged.reasoningEffort };
+      if (merged.verbosity) request.verbosity = merged.verbosity;
+    } else {
+      if (merged.temperature !== undefined) request.temperature = merged.temperature;
+      if (merged.topP !== undefined) request.top_p = merged.topP;
+    }
+
+    const startedAt = Date.now();
     try {
-      // Merge default options with provided options (options override defaults)
-      const mergedOptions = { ...this.defaultOptions, ...options };
-      const { modelType, modelId, maxTokens, temperature, topP, responseFormat, stream, streamOptions, reasoningEffort, verbosity, siteId } = mergedOptions;
-      
-      console.log(`[PortkeyConnector] Debug - defaultOptions.modelId: ${this.defaultOptions.modelId}`);
-      console.log(`[PortkeyConnector] Debug - options.modelId: ${options?.modelId}`);
-      console.log(`[PortkeyConnector] Debug - merged modelId: ${modelId}`);
-      // Only include token limits when explicitly provided by the caller
-      const hasExplicitMaxTokens = options !== undefined && Object.prototype.hasOwnProperty.call(options, 'maxTokens') && options.maxTokens !== undefined;
-      
-      // Get virtual key for the selected provider
-      const provider = modelType || this.defaultOptions.modelType || 'openai';
-      const virtualKey = this.portkeyConfig.virtualKeys[provider] || '';
-      
-      console.log(`[PortkeyConnector] Using Portkey with ${provider} model and virtual key: ${virtualKey.substring(0, 5)}...`);
-      
-      // Create Portkey client using direct import - using any type to avoid typing issues
-      // Configurar timeouts más generosos para evitar UND_ERR_BODY_TIMEOUT
-      const portkey: any = new Portkey({
-        apiKey: this.portkeyConfig.apiKey,
-        virtualKey,
-        baseURL: this.portkeyConfig.baseURL || 'https://api.portkey.ai/v1',
-        // Configuraciones de timeout alineadas con Vercel maxDuration (300s)
-        timeout: 4 * 60 * 1000, // 4 minutos para requests largos (menor que Vercel)
-        bodyTimeout: 4 * 60 * 1000, // 4 minutos para recibir el body completo
-        headersTimeout: 30 * 1000, // 30 segundos para headers
-        connectTimeout: 15 * 1000 // 15 segundos para establecer conexión
-      });
-      
-      const customHeaders: Record<string, string> = {};
-      if (siteId) {
-        customHeaders['x-portkey-custom-metadata'] = JSON.stringify({ site_id: siteId });
-      }
-      
-      // Determine model options based on provider
-      const modelOptions: any = {
-        model: ''
-      };
-      
-      // Set model ID based on provider
-      if (modelType === 'openai') {
-        modelOptions.model = modelId;
-        console.log(`[PortkeyConnector] Setting OpenAI model to: ${modelId}`);
-        
-        // Handle gpt-5 models specific parameters - check the final model name
-        const finalModelId = modelOptions.model;
-        const isGpt55Family = finalModelId === 'gpt-5-mini' || finalModelId === 'gpt-5.6-sol';
-        if (hasExplicitMaxTokens) {
-          if (isGpt55Family) {
-            // Apply upper cap per model family but only when explicitly provided
-            let maxCompletionTokens: number = maxTokens as number;
-            if (finalModelId === 'gpt-5.6-sol') {
-              maxCompletionTokens = Math.min(maxCompletionTokens, 32768);
-            } else if (finalModelId === 'gpt-5-mini') {
-              maxCompletionTokens = Math.min(maxCompletionTokens, 32768);
-            } else {
-              maxCompletionTokens = Math.min(maxCompletionTokens, 16384);
-            }
-            modelOptions.max_completion_tokens = maxCompletionTokens;
-          } else {
-            modelOptions.max_tokens = maxTokens;
-          }
-        }
-      } else if (modelType === 'anthropic') {
-        modelOptions.model = modelId;
-        if (hasExplicitMaxTokens) {
-          modelOptions.max_tokens = maxTokens;
-        }
-      } else if (modelType === 'gemini') {
-        modelOptions.model = modelId;
-        
-        // Gemini uses different parameter names
-        if (hasExplicitMaxTokens) {
-          modelOptions.maxOutputTokens = maxTokens;
-        }
-      }
-      
-      // Add response format if specified
-      if (responseFormat === 'json') {
-        if (modelType === 'anthropic') {
-          modelOptions.response_format = { type: 'json' };
-        } else if (modelType === 'openai') {
-          modelOptions.response_format = { type: 'json_object' };
-        }
-      }
-      
-      // Set temperature if provided (but skip for gpt-5 models which only support default value of 1)
-      if (temperature !== undefined) {
-        const finalModelId = modelOptions.model;
-        const isGpt55Model = modelType === 'openai' && (finalModelId === 'gpt-5.6-sol' || finalModelId === 'gpt-5-mini');
-        if (!isGpt55Model) {
-          modelOptions.temperature = temperature;
-        } else {
-          console.log(`[PortkeyConnector] Skipping temperature parameter for ${finalModelId} (only supports default value of 1)`);
-        }
-      }
-      
-      // Set top_p if provided
-      if (topP !== undefined) {
-        modelOptions.top_p = topP;
-      }
-      
-      // Add reasoning and verbosity for GPT-5.6 Sol family models at the same level as max_completion_tokens
-      const finalModelId = modelOptions.model;
-      const isGpt55Family = modelType === 'openai' && (
-        finalModelId === 'gpt-5.6-sol' || 
-        finalModelId === 'gpt-5-mini'
-      );
-      
-      if (isGpt55Family) {
-        if (reasoningEffort !== undefined) {
-          modelOptions.reasoning = {
-            effort: reasoningEffort
-          };
-          console.log(`[PortkeyConnector] Using reasoning.effort=${reasoningEffort} for GPT-5.6 Sol model: ${finalModelId}`);
-        }
-        // Note: OpenAI does not support a 'verbosity' parameter. Passing it may cause errors on some providers.
-        // if (verbosity !== undefined) {
-        //   modelOptions.verbosity = verbosity;
-        //   console.log(`[PortkeyConnector] Using verbosity=${verbosity} for GPT-5.6 Sol model: ${finalModelId}`);
-        // }
-      }
-      
-      // Set streaming options if enabled
-      if (stream === true) {
-        modelOptions.stream = true;
-        
-        // Add stream options if provided
-        if (streamOptions) {
-          modelOptions.stream_options = {
-            include_usage: streamOptions.includeUsage || false
-          };
-        }
-
-        console.log(`[PortkeyConnector] Streaming enabled for this request`);
-      }
-      
-      // Guardar el modelo y provider que realmente se está usando
-      const usedModel = modelOptions.model || 'default';
-      console.log(`[PortkeyConnector] Calling ${provider} with model ${usedModel}`);
-      
-      // Log the system messages for debugging
-      const systemMessages = messages.filter(msg => msg.role === 'system');
-      if (systemMessages.length > 0) {
-        console.log(`[PortkeyConnector] Sending ${systemMessages.length} system messages:`);
-        systemMessages.forEach((msg, index) => {
-          const contentLength = typeof msg.content === 'string' ? msg.content.length : JSON.stringify(msg.content).length;
-          console.log(`[PortkeyConnector] System message #${index + 1}: ${typeof msg.content === 'string' ? msg.content.substring(0, 100) : JSON.stringify(msg.content).substring(0, 100)}... (${contentLength} caracteres)`);
-          
-          // Verificar contenido del mensaje
-          if (typeof msg.content === 'string' && contentLength < 10) {
-            console.error(`[PortkeyConnector] ⚠️ ADVERTENCIA: System message #${index + 1} es muy corto (${contentLength} caracteres)`);
-          }
-        });
-      } else {
-        // No se permite operar sin mensaje del sistema
-        const errorMsg = `[PortkeyConnector] ERROR FATAL: No hay mensajes de sistema. Se requiere agent_background para operar.`;
-        console.error(errorMsg);
-        throw new Error(errorMsg);
-      }
-      
-      // Log all messages in detail for debugging
-      console.log(`[PortkeyConnector] Sending total of ${messages.length} messages to LLM:`);
-      messages.forEach((msg, index) => {
-        const contentLength = typeof msg.content === 'string' ? msg.content.length : JSON.stringify(msg.content).length;
-        console.log(`[PortkeyConnector] Message #${index + 1} (${msg.role}): ${typeof msg.content === 'string' ? msg.content.substring(0, 50) + '...' : JSON.stringify(msg.content).substring(0, 50) + '...'} (${contentLength} caracteres)`);
-      });
-      
-      // Execute the appropriate API call using portkey.chat.completions.create
-      // This works for both OpenAI and Anthropic
-      let response;
-      let content;
-      let usage;
-      const startTime = Date.now();
-      
-      try {
-        console.log(`[PortkeyConnector] Iniciando llamada al LLM con modelo ${usedModel} a las ${new Date().toISOString()}`);
-        
-        // Retry logic with exponential backoff
-        const maxRetries = 3;
-        let lastError;
-        
-        for (let attempt = 1; attempt <= maxRetries; attempt++) {
-          try {
-            console.log(`[PortkeyConnector] Intento ${attempt}/${maxRetries} para llamada al LLM`);
-            
-            // Si streaming está habilitado, manejar de forma diferente
-            if (stream === true) {
-              console.log(`[PortkeyConnector] Ejecutando llamada en modo streaming`);
-              const streamResponse = await portkey.chat.completions.create({
-                messages,
-                ...modelOptions,
-                stream: true, // Explicitly ensure streaming is enabled
-                stream_options: { include_usage: true } // Request token usage in stream
-              }, { headers: customHeaders });
-              
-              // Check if the response contains an error (even if it's a successful HTTP response)
-              if (streamResponse && typeof streamResponse === 'object' && streamResponse.body?.error) {
-                const errorBody = streamResponse.body;
-                if (errorBody.status === 429 || 
-                    errorBody.body?.error?.message?.includes('exceeded token rate limit') ||
-                    errorBody.body?.error?.message?.includes('AIServices S0 pricing tier')) {
-                  throw {
-                    status: 429,
-                    body: errorBody.body,
-                    message: errorBody.body?.error?.message || 'Rate limit exceeded'
-                  };
-                }
-              }
-
-              const duration = Date.now() - startTime;
-              console.log(`[PortkeyConnector] Stream iniciado correctamente en ${duration}ms, devolviendo stream para procesamiento`);
-              recordTelemetry('ai_portkey', 'up', `Stream started for ${usedModel}`, duration).catch(console.error);
-              console.log(`[PortkeyConnector] 🔍 Stream response type: ${typeof streamResponse}`);
-              console.log(`[PortkeyConnector] 🔍 Stream response constructor: ${streamResponse?.constructor?.name}`);
-              console.log(`[PortkeyConnector] 🔍 Stream has asyncIterator: ${!!streamResponse?.[Symbol.asyncIterator]}`);
-              console.log(`[PortkeyConnector] 🔍 Stream properties: ${Object.keys(streamResponse || {}).slice(0, 5).join(', ')}`);
-              
-              // Return the stream directly - caller must handle iteration
-              return {
-                stream: streamResponse,
-                isStream: true,
-                modelInfo: {
-                  model: usedModel,
-                  provider: provider
-                }
-              };
-            } else {
-              // Modo sin streaming (comportamiento actual)
-              if (modelType === 'gemini') {
-                // Gemini requires special format
-                response = await portkey.gemini.generateContent({
-                  contents: messages.map(msg => ({
-                    role: msg.role === 'system' ? 'user' : msg.role,
-                    parts: [{ text: msg.content }]
-                  })),
-                  ...modelOptions
-                });
-                
-                // Check if the response contains an error (even if it's a successful HTTP response)
-                if (response && typeof response === 'object' && response.body?.error) {
-                  const errorBody = response.body;
-                  if (errorBody.status === 429 || 
-                      errorBody.body?.error?.message?.includes('exceeded token rate limit') ||
-                      errorBody.body?.error?.message?.includes('AIServices S0 pricing tier')) {
-                    throw {
-                      status: 429,
-                      body: errorBody.body,
-                      message: errorBody.body?.error?.message || 'Rate limit exceeded'
-                    };
-                  }
-                }
-                
-                // Extract content and usage from Gemini response
-                content = response.candidates?.[0]?.content?.parts?.[0]?.text || '';
-                if (response.usageMetadata) {
-                  console.log(`[PortkeyConnector] Datos de uso (Gemini): promptTokenCount=${response.usageMetadata?.promptTokenCount}, candidatesTokenCount=${response.usageMetadata?.candidatesTokenCount}`);
-                  usage = {
-                    prompt_tokens: response.usageMetadata?.promptTokenCount || 0,
-                    completion_tokens: response.usageMetadata?.candidatesTokenCount || 0,
-                    total_tokens: (response.usageMetadata?.promptTokenCount || 0) + (response.usageMetadata?.candidatesTokenCount || 0)
-                  };
-                  console.log(`[PortkeyConnector] Total tokens (Gemini): ${usage.total_tokens}`);
-                }
-              } else {
-                // Use unified chat completions API for OpenAI and Anthropic
-                response = await portkey.chat.completions.create({
-                  messages,
-                  ...modelOptions
-                }, { headers: customHeaders });
-                
-                // Check if the response contains an error (even if it's a successful HTTP response)
-                if (response && typeof response === 'object' && response.body?.error) {
-                  const errorBody = response.body;
-                  if (errorBody.status === 429 || 
-                      errorBody.body?.error?.message?.includes('exceeded token rate limit') ||
-                      errorBody.body?.error?.message?.includes('AIServices S0 pricing tier')) {
-                    throw {
-                      status: 429,
-                      body: errorBody.body,
-                      message: errorBody.body?.error?.message || 'Rate limit exceeded'
-                    };
-                  }
-                }
-                
-                // Extract content and usage based on model type
-                if (modelType === 'anthropic') {
-                  content = response.content?.[0]?.text || '';
-                } else {
-                  // Default to OpenAI format
-                  content = response.choices?.[0]?.message?.content || '';
-                }
-                
-                if (response.usage) {
-                  console.log(`[PortkeyConnector] Datos de uso estándar: ${JSON.stringify(response.usage)}`);
-                  usage = {
-                    ...response.usage,
-                    // Asegurar que total_tokens esté calculado
-                    total_tokens: response.usage.total_tokens || 
-                                 (response.usage.prompt_tokens || 0) + (response.usage.completion_tokens || 0)
-                  };
-                  console.log(`[PortkeyConnector] Total tokens (Estándar): ${usage.total_tokens}`);
-                } else {
-                  console.log(`[PortkeyConnector] No se encontraron datos de uso en la respuesta. Estructura: ${JSON.stringify(Object.keys(response))}`);
-                  // Si no hay información de uso, crear un objeto vacío con valores 0
-                  usage = {
-                    prompt_tokens: 0,
-                    completion_tokens: 0,
-                    total_tokens: 0
-                  };
-                }
-              }
-              
-              const duration = Date.now() - startTime;
-              console.log(`[PortkeyConnector] LLM respondió exitosamente en ${duration}ms con ${content?.length || 0} caracteres`);
-              recordTelemetry('ai_portkey', 'up', `Successful call to ${usedModel}`, duration).catch(console.error);
-              
-              // Return standardized response format with model information
-              return {
-                content,
-                usage,
-                modelInfo: {
-                  model: usedModel,
-                  provider: provider
-                }
-              };
-            }
-            
-            // If we reach here, the attempt was successful, break out of retry loop
-            break;
-            
-          } catch (retryError: any) {
-            lastError = retryError;
-            console.error(`[PortkeyConnector] Intento ${attempt}/${maxRetries} falló:`, retryError.message);
-
-            const isRateLimit = isRateLimitError(retryError);
-            const isRetryableError =
-              isTimeoutOrConnectError(retryError) || isRateLimit;
-
-            // Non-stream 429/timeout should fall through to gpt-4o / AI Gateway instead of waiting 60s.
-            if (isRateLimit && stream !== true) {
-              throw retryError;
-            }
-
-            if (!isRetryableError || attempt === maxRetries) {
-              throw retryError;
-            }
-
-            const waitTime = isRateLimit ? 60 * 1000 : Math.pow(2, attempt - 1) * 1000;
-            console.log(`[PortkeyConnector] Esperando ${waitTime / 1000}s antes del siguiente intento...`);
-            await new Promise((resolve) => setTimeout(resolve, waitTime));
-          }
-        }
-      } catch (apiCallError: any) {
-        const duration = Date.now() - startTime;
-        console.error(`[PortkeyConnector] Error calling provider API después de ${duration}ms:`, apiCallError);
-
-        const nonStreamFallback = await tryNonStreamModelFallback({
-          error: apiCallError,
-          stream,
-          provider,
-          usedModel,
-          messages,
-          modelOptions,
-          customHeaders,
-          portkey,
-          aiGateway: this.aiGateway,
-        });
-        if (nonStreamFallback) {
-          recordTelemetry('ai_portkey', 'degraded', `Non-stream fallback used for ${usedModel}`, duration).catch(console.error);
-          return nonStreamFallback;
-        }
-
-        if (isRateLimitError(apiCallError)) {
-          console.warn(`🔄 [PortkeyConnector] Rate limit error detected (429), this should have been handled by retry logic`);
-          const errorMessage = apiCallError.body?.error?.message ||
-                              apiCallError.body?.error?.param?.error ||
-                              apiCallError.message ||
-                              'Rate limit exceeded';
-          recordTelemetry('ai_portkey', 'down', `Rate limit exceeded: ${errorMessage}`, duration).catch(console.error);
-          throw new Error(`Rate limit exceeded: ${errorMessage}`);
-        }
-        
-        const streamingFallback = await tryStreamingGpt55Fallback({
-          error: apiCallError,
-          stream,
-          provider,
-          messages,
-          modelOptions,
-          customHeaders,
-          portkey,
-        });
-        if (streamingFallback) {
-          recordTelemetry('ai_portkey', 'degraded', `Streaming fallback used for ${usedModel}`, duration).catch(console.error);
-          return streamingFallback;
-        }
-        
-        if (isTimeoutOrConnectError(apiCallError) && provider === 'openai') {
-          console.warn(`🔄 [PortkeyConnector] Portkey falló, intentando fallback con AI Gateway...`);
-          
-          if (!this.aiGateway.isAvailable()) {
-            console.error(`❌ [PortkeyConnector] AI Gateway no está disponible`);
-            throw new Error(`Portkey falló y AI Gateway no está configurado: ${apiCallError.message}`);
-          }
-          
-          try {
-            const fallbackResponse = await this.aiGateway.callAgent(messages, {
-              model: modelOptions.model,
-              maxTokens: modelOptions.max_tokens,
-              temperature: modelOptions.temperature,
-              topP: modelOptions.top_p,
-              stream: stream,
-              streamOptions: streamOptions
-            });
-            
-            // Note: AI Gateway responses don't have the same error structure as Portkey
-            // Errors from AI Gateway would be thrown as exceptions, not contained in response body
-            
-            console.log(`✅ [PortkeyConnector] Fallback con AI Gateway exitoso`);
-            recordTelemetry('ai_portkey', 'degraded', `AI Gateway fallback used for ${usedModel}`, duration).catch(console.error);
-            return fallbackResponse;
-          } catch (fallbackError: any) {
-            console.error(`❌ [PortkeyConnector] Fallback con AI Gateway también falló:`, fallbackError.message);
-            recordTelemetry('ai_portkey', 'down', `AI Gateway fallback failed: ${fallbackError.message}`, duration).catch(console.error);
-            throw new Error(`Portkey y AI Gateway fallaron: ${apiCallError.message} | Fallback: ${fallbackError.message}`);
-          }
-        }
-        
-        // Check if it's a timeout error
-        if (apiCallError.message?.includes('timeout') || apiCallError.code === 'timeout') {
-          console.error(`⏰ [PortkeyConnector] TIMEOUT ERROR: LLM no respondió en tiempo esperado (${duration}ms)`);
-          recordTelemetry('ai_portkey', 'down', `Timeout: ${usedModel} (${duration}ms)`, duration).catch(console.error);
-          throw new Error(`LLM Timeout: El modelo ${usedModel} no respondió en tiempo esperado (${duration}ms)`);
-        }
-        
-        recordTelemetry('ai_portkey', 'down', `Error: ${apiCallError.message}`, duration).catch(console.error);
-        throw new Error(`Error calling ${provider} API: ${apiCallError.message}`);
-      }
-    } catch (error: any) {
-      console.error('[PortkeyConnector] API call error:', error?.message || error);
-      // IMPORTANT: Do not return a success-shaped object here. Propagate the error
-      // so upstream processors can mark the command as failed instead of
-      // accidentally storing an error string as a completion.
-      if (error instanceof Error) {
-        throw error;
-      }
-      throw new Error(typeof error === 'string' ? error : (error?.message || 'Unknown error'));
+      const response = await client.chat.completions.create(request);
+      throwIfCompletionError(response);
+      // Keep the historical telemetry system key for database compatibility.
+      void recordTelemetry('ai_portkey', 'up', `OpenRouter: ${model}`, Date.now() - startedAt).catch(() => {});
+      if (merged.stream) return { stream: response, isStream: true, modelInfo: { model, provider: 'openrouter' } };
+      return formatOpenAiNonStreamResponse(response, 'openrouter', model);
+    } catch (error) {
+      void recordTelemetry('ai_portkey', 'down', `OpenRouter request failed: ${model}`, Date.now() - startedAt).catch(() => {});
+      // Preserve SDK status/code and never turn failures into success-shaped responses.
+      throw error;
     }
   }
-
-
 }
+
+export { OpenRouterConnector as PortkeyConnector };

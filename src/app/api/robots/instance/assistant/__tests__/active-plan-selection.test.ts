@@ -28,7 +28,7 @@ jest.mock('@/lib/database/supabase-client', () => ({
   },
 }));
 
-jest.mock('@/app/api/agents/tools/instance_plan/update/route', () => ({
+jest.mock('@/app/api/agents/tools/instance_plan/update/core', () => ({
   updateInstancePlanCore: jest.fn(),
 }));
 jest.mock('../assistant-turn', () => ({ processAssistantTurn: jest.fn() }));

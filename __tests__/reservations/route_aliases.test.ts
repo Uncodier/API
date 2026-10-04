@@ -308,14 +308,14 @@ describe('Reservations tool route — id aliases', () => {
 
   it('does not assign a barber when cancelling a round-robin folio', async () => {
     (classifyRoundRobinRole as jest.Mock).mockReturnValueOnce('round_robin_parent');
-    let updatePayload: Record<string, unknown> | null = null;
+    const captured: { updatePayload?: Record<string, unknown> } = {};
     let fromCalls = 0;
     (supabaseAdmin.from as jest.Mock).mockImplementation(() => {
       fromCalls += 1;
       const chain: any = {
         select: jest.fn().mockReturnThis(),
         update: jest.fn().mockImplementation((payload: Record<string, unknown>) => {
-          updatePayload = payload;
+          captured.updatePayload = payload;
           return chain;
         }),
         eq: jest.fn().mockReturnThis(),
@@ -342,7 +342,7 @@ describe('Reservations tool route — id aliases', () => {
     expect(res.status).toBe(200);
     expect(json.reservation.status).toBe('cancelled');
     expect(resolveReservationUpdateTarget).not.toHaveBeenCalled();
-    expect(updatePayload).toMatchObject({ status: 'cancelled' });
-    expect(updatePayload?.catalog_item_id).toBeUndefined();
+    expect(captured.updatePayload).toMatchObject({ status: 'cancelled' });
+    expect(captured.updatePayload?.catalog_item_id).toBeUndefined();
   });
 });

@@ -1,5 +1,5 @@
 import { CreditService } from '@/lib/services/billing/CreditService';
-import { synthesizeWithGemini, synthesizeWithVercel } from '@/lib/services/ai/tts-service';
+import { synthesizeSpeech } from '@/lib/services/ai/tts-service';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 
 export const AUDIO_REPLY_CHANNELS = ['whatsapp', 'telegram', 'messenger'];
@@ -37,24 +37,12 @@ export function stripMarkdownForSpeech(text: string): string {
 }
 
 async function synthesizeReplyAudio(
-  text: string,
-  channel: string
+  text: string
 ): Promise<{ buffer: Buffer; ext: string; mimeType: string }> {
-  // WhatsApp does not support WAV audio. Gemini returns PCM, which the TTS
-  // service encodes locally as MP3 when this format is requested.
-  if (channel === 'whatsapp') {
-    const buffer = await synthesizeWithGemini(text, 'Puck', 'mp3', 'gemini-3.1-flash-tts-preview');
-    return { buffer, ext: 'mp3', mimeType: 'audio/mpeg' };
-  }
-
-  try {
-    const buffer = await synthesizeWithGemini(text, 'Puck', 'wav', 'gemini-3.1-flash-tts-preview');
-    return { buffer, ext: 'wav', mimeType: 'audio/wav' };
-  } catch (geminiError) {
-    console.warn('[long-reply-audio] Gemini TTS failed, falling back to Vercel tts-1.', geminiError);
-    const buffer = await synthesizeWithVercel(text, 'alloy', 'mp3', 'tts-1');
-    return { buffer, ext: 'mp3', mimeType: 'audio/mpeg' };
-  }
+  // All messaging channels accept MP3. Use OpenRouter on WhatsApp too;
+  // never switch providers/accounts on error.
+  const { audio, mimeType } = await synthesizeSpeech({ text, format: 'mp3' });
+  return { buffer: audio, ext: 'mp3', mimeType };
 }
 
 /**
@@ -104,7 +92,7 @@ export async function tryPrepareLongReplyAudio({
     );
 
     console.log(`[long-reply-audio] Synthesizing audio for ${channel} reply (${cleanText.length} chars)`);
-    const { buffer, ext, mimeType } = await synthesizeReplyAudio(cleanText, channel);
+    const { buffer, ext, mimeType } = await synthesizeReplyAudio(cleanText);
 
     const fileName = `reply_audio_${Date.now()}_${Math.random().toString(36).substring(7)}.${ext}`;
     const filePath = `${siteId}/${fileName}`;
@@ -125,8 +113,8 @@ export async function tryPrepareLongReplyAudio({
       audioUrl: publicUrl,
       mimeType,
     };
-  } catch (error) {
-    console.error('[long-reply-audio] Failed to prepare audio, falling back to text. Error:', error);
+  } catch {
+    console.error('[long-reply-audio] Failed to prepare audio, falling back to text.');
     return null;
   }
 }

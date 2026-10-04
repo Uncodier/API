@@ -52,7 +52,7 @@ export async function insertRespawnLog(instanceId: string, siteId: string, userI
 }
 
 export async function spawnSilentContinueWorkflow(
-  scope: AssistantRecoveryScope, options?: { allowStaleInFlight: boolean },
+  scope: AssistantRecoveryScope, options?: { allowStaleInFlight: boolean; conversationOnly?: boolean },
 ): Promise<boolean> {
   // A stale turn resumes the agent with evidence, never by replaying a tool call.
   // Original scope, context binding and atomic ownership remain mandatory.

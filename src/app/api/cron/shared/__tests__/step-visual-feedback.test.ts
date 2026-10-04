@@ -424,13 +424,14 @@ describe('visual probe script', () => {
 });
 
 describe('visual critic model selection', () => {
-  it('uses a low-cost vision model unless explicitly overridden', () => {
+  it('uses the OpenRouter vision-capable chat default unless explicitly overridden', () => {
     expect(resolveVisualCriticModel(undefined, { AI_PROVIDER: 'gemini' })).toBe(
-      'gemini-2.5-flash',
+      'openai/gpt-6.1-sol',
     );
     expect(
       resolveVisualCriticModel('custom-vision-model', { AI_PROVIDER: 'gemini' }),
-    ).toBe('custom-vision-model');
+    ).toBe('openai/custom-vision-model');
+    expect(resolveVisualCriticModel('google/gemini-2.5-flash', {})).toBe('google/gemini-2.5-flash');
   });
 
   it('uses deterministic defect thresholds instead of the model pass boolean', () => {

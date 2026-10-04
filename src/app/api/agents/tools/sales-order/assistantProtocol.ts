@@ -3,7 +3,7 @@
  * Unified tool for managing sales orders (create, list, update)
  */
 
-import { getSalesOrdersCore } from '@/app/api/agents/tools/sales-order/get/route';
+import { getSalesOrdersCore } from '@/app/api/agents/tools/sales-order/get/core';
 import { fetchApiTool } from '@/app/api/agents/tools/utils/fetch-helper';
 
 

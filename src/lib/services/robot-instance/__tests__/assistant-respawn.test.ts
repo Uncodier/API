@@ -138,7 +138,7 @@ describe('Assistant Respawn', () => {
       expect(STALL_MS).toBe(3 * 60 * 1000);
       expect(LOOKBACK_MS).toBe(30 * 60 * 1000);
       expect(RESPAWN_COOLDOWN_MS).toBe(2 * 60 * 1000);
-      expect(MAX_RESPAWNS).toBe(2);
+      expect(MAX_RESPAWNS).toBe(5);
     });
   });
 

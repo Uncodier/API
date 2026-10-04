@@ -16,7 +16,7 @@ export const aiTextContinuationHandler: SystemHealthHandler = {
     const latencyMs = Date.now() - start;
     const parentOk = parent.status === 'up';
     const routeOk = route.status < 500;
-    let status = parentOk && routeOk ? 'up' : 'degraded';
+    let status: 'up' | 'degraded' | 'down' = parentOk && routeOk ? 'up' : 'degraded';
     if (!parentOk && parent.status === 'down') status = 'down';
     return buildHealthResponse({
       systemKey: 'ai_text_continuation',

@@ -3,9 +3,9 @@
  * Unified tool for managing instance plans (create, list, update)
  */
 
-import { getInstancePlansCore } from '@/app/api/agents/tools/instance_plan/get/route';
-import { createInstancePlanCore } from '@/app/api/agents/tools/instance_plan/create/route';
-import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/route';
+import { getInstancePlansCore } from '@/app/api/agents/tools/instance_plan/get/core';
+import { createInstancePlanCore } from '@/app/api/agents/tools/instance_plan/create/core';
+import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/core';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { requirementStepExecutionBlock } from '@/lib/services/requirement-execution-visibility';
 import {

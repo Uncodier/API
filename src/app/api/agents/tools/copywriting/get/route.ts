@@ -1,9 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getCopywritings, CopywritingFilters } from '@/lib/database/copywriting-db';
-
-export async function getCopywritingsCore(filters: CopywritingFilters) {
-  return getCopywritings(filters);
-}
+import { CopywritingFilters } from '@/lib/database/copywriting-db';
+import { getCopywritingsCore } from './core';
 
 export async function GET(request: NextRequest) {
   try {

@@ -3,7 +3,7 @@ import { resolveSocialAccounts, SocialAccountResolutionError } from '@/lib/integ
 import { randomUUID } from 'node:crypto';
 import { getContentById } from '@/lib/database/content-db';
 import { createContentCore } from '../content/create/core';
-import { updateContentCore } from '../content/update/route';
+import { updateContentCore } from '../content/update/core';
 import { prepareSocialMedia } from './social-media';
 import { claimSocialContent } from './content-attempt';
 import { ensureOutstandMedia, type MediaUploadReceipt } from './outstand-media-upload';

@@ -46,7 +46,7 @@ VALIDATION CHECKLIST:
       }
     ],
     context,
-    model: 'openai:gpt-5.6-sol',
+    modelType: 'openrouter',
     supervisor: [
       {
         agent_role: 'sales_manager',

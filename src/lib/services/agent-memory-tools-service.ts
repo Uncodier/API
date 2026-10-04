@@ -291,10 +291,10 @@ export async function getContextMemories(
 /**
  * Filter rows by scope (instance_id, client_id, project_id, task_id) in metadata
  */
-function filterByScope(
-  rows: Array<{ metadata?: Record<string, unknown> | null }>,
+function filterByScope<T extends { metadata?: Record<string, unknown> | null }>(
+  rows: T[],
   scope: { instance_id?: string; client_id?: string; project_id?: string; task_id?: string }
-): typeof rows {
+): T[] {
   return rows.filter((row) => {
     const meta = row.metadata || {};
     if (scope.instance_id && meta.instance_id !== scope.instance_id) return false;

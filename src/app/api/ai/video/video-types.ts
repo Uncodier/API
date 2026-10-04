@@ -1,4 +1,4 @@
-export type VideoProvider = 'gemini';
+export type VideoProvider = 'openrouter';
 export type VideoAspectRatio =
   | '1:1'
   | '4:3'
@@ -21,17 +21,24 @@ export interface VideoRequestBody {
   last_frame_url?: string;
   quality?: VideoQuality;
   model?: string;
+  resolution?: string;
+  job_id?: string;
 }
 
 export interface VideoGenerationResult {
   provider: VideoProvider;
+  status?: 'pending' | 'in_progress' | 'completed' | 'failed';
+  job_id?: string;
+  error?: string;
   videos: Array<{ url: string; mimeType: string }>;
   metadata: {
     model: string;
+    generation_id?: string;
+    cost?: number;
     duration_seconds?: number;
     aspect_ratio?: VideoAspectRatio;
     quality?: VideoQuality;
-    resolution?: '720p' | '1080p';
+    resolution?: string;
     generated_at: string;
   };
 }

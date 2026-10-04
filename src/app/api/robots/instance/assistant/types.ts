@@ -12,16 +12,16 @@ export interface AssistantContext {
   executionOptions: {
     use_sdk_tools: boolean;
     /** Logging/credits label (NOT the underlying LLM provider). */
-    provider: 'azure' | 'openai' | 'gemini';
+    provider: 'openrouter' | 'azure' | 'openai' | 'gemini';
     instance_id: string;
     site_id: string;
     user_id: string;
     requirement_id?: string;
     plan_id?: string;
     step_id?: string;
-    /** Optional LLM provider override (gemini | azure | openai). Defaults to env AI_PROVIDER. */
-    ai_provider?: 'gemini' | 'azure' | 'openai';
-    /** Optional LLM model override. Defaults to env AI_MODEL / provider default. */
+    /** Legacy labels are model-family hints; inference always uses OpenRouter. */
+    ai_provider?: 'openrouter' | 'gemini' | 'azure' | 'openai';
+    /** OpenRouter model ID, pinned to the history budget model during preparation. */
     ai_model?: string;
     // Inherited baseline time to determine if a sandbox file was modified this cycle.
     cycle_baseline_at?: string;
@@ -39,5 +39,7 @@ export interface AssistantContext {
   selectedSkills?: AssistantSkillSelection;
   approvedImport?: { url: string; sha256: string; userId: string };
   recoveryScope?: AssistantRecoveryScope;
+  /** Derived only from the claimed snapshot, not request/model arguments. */
+  conversationRecoveryOnly?: boolean;
   nodeContinuation?: { responseNodeIds: string[] };
 }

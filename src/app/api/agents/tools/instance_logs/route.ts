@@ -2,11 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   createInstanceLogCore,
   listInstanceLogsCore,
-  type CreateInstanceLogParams,
 } from '@/lib/tools/instance-log-core';
-
-export type { CreateInstanceLogParams };
-export { createInstanceLogCore, listInstanceLogsCore };
 
 export async function POST(request: NextRequest) {
   try {

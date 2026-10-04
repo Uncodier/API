@@ -1,6 +1,6 @@
 // Workflow-safe policy only. Keep database, Node.js and workflow/api imports in
 // assistant-respawn.ts, called through the assistant respawn steps.
-export const MAX_RESPAWNS = 2;
+export const MAX_RESPAWNS = 5;
 export const STALL_MS = 3 * 60 * 1000;
 // Heuristic, not proof of a failed tool: exceeds the 800s API budget plus margin.
 // Do not infer a 300s limit from generated Workflow deployment configuration.

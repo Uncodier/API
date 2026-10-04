@@ -6,9 +6,9 @@ query.maybeSingle = mockSingle;
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn(() => query) } }));
 jest.mock('@/lib/database/requirement-db', () => ({ createRequirement: mockCreate }));
 jest.mock('@/lib/mcp/remote-client', () => ({ shouldUseRemoteApi: () => false, RemoteToolError: class extends Error {} }));
-jest.mock('../get/route', () => ({ getRequirementsCore: jest.fn() }));
-jest.mock('../update/route', () => ({ updateRequirementCore: jest.fn() }));
-import { createRequirementCore } from '../create/route';
+jest.mock('../get/core', () => ({ getRequirementsCore: jest.fn() }));
+jest.mock('../update/core', () => ({ updateRequirementCore: jest.fn() }));
+import { createRequirementCore } from '../create/core';
 import { requirementsTool } from '../assistantProtocol';
 
 const site = '11111111-1111-4111-8111-111111111111';
