@@ -41,6 +41,7 @@ try {
   await db.query("INSERT INTO payments(site_id,credits,status,transaction_type,payment_method) VALUES($1,100,'completed','credit','credit_renewal')", [unprovenStripe]);
   await migration('20261003230000_credit_buckets_and_monthly_reset.sql');
   await migration('20261003230002_classified_credit_operations.sql');
+  await migration('20261005230000_exact_credit_accounting_precision.sql');
 
   await check('migration resets canceled allowance and preserves bought/withdrawable money', async () => {
     const b = await row(canceled);

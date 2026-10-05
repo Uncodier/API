@@ -150,6 +150,41 @@ try {
     '20261003230001_stripe_plan_credit_reset.sql', '20261003230002_classified_credit_operations.sql'])
     await sql(readFileSync(resolve(root, 'supabase/migrations', file), 'utf8'));
 
+  await check('precision migration invalidates warmed pooled trigger typmods across real PostgreSQL sessions', async () => {
+    const site = uuid();
+    // Keep the same backend open across DDL from a different backend, just as
+    // a pooled API connection survives a production migration. No row locks held.
+    const warmed = client(`INSERT INTO sites(id,name) VALUES(${site},'Synthetic warmed precision');
+      ${rpc('initialize_site_billing', [site])}
+      UPDATE billing SET plan='foundry' WHERE site_id=${site};
+      UPDATE billing SET plan_credits_available=96,purchased_credits_available=20 WHERE site_id=${site};
+      DO $$ BEGIN
+        PERFORM deduct_credits(${site},0.502249,'credit_usage','Synthetic','{}');
+        RAISE EXCEPTION 'Expected original precision CHECK failure';
+      EXCEPTION WHEN check_violation THEN NULL; END $$;
+      \\echo CREDIT_PRECISION_WARMED`, undefined, true);
+    try {
+      await waitFor(() => warmed.output().includes('CREDIT_PRECISION_WARMED'), 'original warmed CHECK failure');
+      await sql(readFileSync(resolve(root, 'supabase/migrations',
+        '20261005230000_exact_credit_accounting_precision.sql'), 'utf8'));
+      warmed.child.stdin.end(`SELECT deduct_credits(${site},0.502249,'credit_usage','Synthetic','{}');
+        SELECT deduct_credits(${site},0.00000007,'credit_usage','Synthetic','{}');
+        DO $$ BEGIN
+          IF NOT EXISTS (SELECT 1 FROM billing WHERE site_id=${site} AND credits_available=115.49775093
+            AND credits_used=0.50224907 AND monthly_credits_used=0.50224907
+            AND credits_available=plan_credits_available+purchased_credits_available+legacy_credits_available)
+            OR (SELECT sum(amount) FROM credit_transactions WHERE site_id=${site}) <> -0.50224907 THEN
+            RAISE EXCEPTION 'Warmed precision balance/ledger not conserved';
+          END IF;
+        END $$;
+        \\echo CREDIT_PRECISION_EXACT\n`);
+      assert.ok((await warmed.done).includes('CREDIT_PRECISION_EXACT'));
+    } finally {
+      if (!warmed.child.stdin.writableEnded) warmed.child.stdin.end();
+      await warmed.done.catch(() => {});
+    }
+  });
+
   await check('migration cannot fabricate paid Stripe periods from missing or expired dates', async () => {
     for (const site of unverified) {
       balances(await row(site), 0, 20, 7, 0);

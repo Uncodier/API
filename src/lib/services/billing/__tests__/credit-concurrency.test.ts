@@ -7,6 +7,6 @@ describe('credit migrations (disposable socket-only real PostgreSQL)', () => {
       'src/lib/services/billing/__tests__/credit-concurrency-runner.mjs')],
     { cwd: process.cwd(), encoding: 'utf8', timeout: 110_000 });
     if (child.status !== 0) throw new Error(child.stderr || child.error?.message || child.stdout);
-    expect(child.stdout).toContain('Validated 14 real PostgreSQL concurrency scenarios');
+    expect(child.stdout).toContain('Validated 15 real PostgreSQL concurrency scenarios');
   }, 120_000);
 });

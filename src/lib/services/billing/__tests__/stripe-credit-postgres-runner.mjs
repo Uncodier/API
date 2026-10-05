@@ -70,7 +70,8 @@ try {
     SELECT $2,$1,id,$3,$4,49,'USD',100 FROM payments WHERE transaction_id=$5`,
   [bootstrap.site_id, oldInvoice, bootstrap.customer_id, bootstrap.subscription_id, `stripe_invoice_${oldInvoice}`]);
   for (const migration of ['20261003230000_credit_buckets_and_monthly_reset.sql',
-    '20261003230001_stripe_plan_credit_reset.sql', '20261003230002_classified_credit_operations.sql'])
+    '20261003230001_stripe_plan_credit_reset.sql', '20261003230002_classified_credit_operations.sql',
+    '20261005230000_exact_credit_accounting_precision.sql'])
     await db.exec(readFileSync(resolve(root, 'supabase/migrations', migration), 'utf8'));
   dates = await one(`SELECT now()::text now,(now()-interval '40 days')::text old_start,
     (now()-interval '10 days')::text old_end,(now()-interval '5 days')::text start,
