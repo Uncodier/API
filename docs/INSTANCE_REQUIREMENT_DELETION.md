@@ -69,6 +69,20 @@ dispatched external effects. Active execution must be stopped before permanent
 deletion. Large histories still depend on the database's existing indexes and
 statement timeout; no global timeout setting is changed here.
 
+## Failure diagnosis
+
+The route logs the failing stage (`authentication`, `request_validation`,
+`preflight`, `provider_stop`, `database_deletion`, or `receipt_validation`), its
+public error code/status, and a validated SQLSTATE/PostgREST code when available.
+Raw errors, SQL/provider payloads, credentials, and resource IDs are not logged.
+These diagnostics require deployment before new requests produce them. They do
+not change deletion authorization, retry behavior, or the database transaction.
+
+The matching web proxy recognizes only allowlisted error code/status pairs and
+maps them to fixed messages; unknown or lost responses remain unconfirmed. A
+generic HTTP 502 in the browser is not evidence of the underlying SQL error or
+whether a transaction committed. Inspect the instance before any manual retry.
+
 ## Rollout
 
 The new forward migrations target **Makinari**, never the separate Apps database:
@@ -86,6 +100,24 @@ and an authenticated owner/admin user session. Do not deploy the new UI alone
 against the old endpoint: the old implementation cannot guarantee atomic cleanup.
 
 ## Offline tests
+
+### Empty-scope timeout correction
+
+The read-only preflight can hit SQLSTATE `57014` on a large `instance_logs` table:
+the original lateral tag expansion scans unrelated logs even when the instance
+owns no requirements. Small fixtures do not reveal that workload difference.
+
+`20261005220000_bound_empty_instance_deletion_preflight.sql` changes only that
+query to direct tag comparisons guarded by `cardinality(ids) > 0`. It preserves
+all authorization and shared-history checks, including deployed changes elsewhere
+in the function. An unexpected function definition blocks the migration rather
+than silently replacing it. Apply only to the explicitly approved Makinari
+target after review; this change has not been applied remotely.
+
+The isolated regression verifies the empty-set plan does not scan logs and that
+20,000 unrelated logs survive deletion. All existing shared-tag denial cases
+still run. This fixes the empty-scope scan; it is not a benchmark or a general
+performance guarantee for large nonempty requirement graphs.
 
 From the API repository:
 

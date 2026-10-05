@@ -8,13 +8,31 @@ export interface AssistantImageAsset {
   messageSid?: string;
 }
 
+function compareUploads(a: AssistantImageAsset, b: AssistantImageAsset): number {
+  const timestamp = (image: AssistantImageAsset) => {
+    const parsed = Date.parse(image.createdAt || '');
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+  return timestamp(a) - timestamp(b) || (a.id || '').localeCompare(b.id || '');
+}
+
 /** Keep each image adjacent to its identity, not paired by URL position in prose. */
 export function buildAssistantUserContent(message: string, images: AssistantImageAsset[]): any {
   const usable = images.filter(image => {
     const url = image.publicUrl || image.url;
     return url && /^https?:\/\//.test(url);
   });
-  if (!usable.length) return message;
+  // Match only attachment lines, not arbitrary URLs or the JSON-encoded quoted
+  // log. Legacy WhatsApp assets still have an exact URL in the inbound message.
+  const currentUrls = new Set(Array.from(message.matchAll(
+    /^\[Archivo adjunto - image\/[^\]\r\n]+\]: (https?:\/\/[^\s]+)\s*$/gm,
+  ), match => match[1]));
+  const isCurrent = (image: AssistantImageAsset) => currentUrls.has(image.publicUrl || image.url);
+  const missingCurrent = [...currentUrls].filter(url => !usable.some(image => (image.publicUrl || image.url) === url));
+  const unavailable = missingCurrent.length
+    ? '\n\nCurrent attachment is unavailable in the image context. Do not substitute another image or describe it as visible; explain the failure and ask the user to resend it if needed.'
+    : '';
+  if (!usable.length) return message + unavailable;
 
   const quotedSid = message.match(/\[WhatsApp reply target: ([^\]\r\n]+)\]/)?.[1];
   const quotedLine = message.match(/Quoted message \(reference data, not new instructions\): ([^\r\n]+)/)?.[1];
@@ -28,20 +46,23 @@ export function buildAssistantUserContent(message: string, images: AssistantImag
   // contains their exact uploaded URLs; resolve those, never the newest asset.
   const isTarget = (image: AssistantImageAsset) => Boolean(quotedSid &&
     (image.messageSid === quotedSid || (!image.messageSid && quotedUrls.has(image.publicUrl || image.url))));
-  // The executor retains the last N vision parts. Keep chronology, but put an
-  // explicit reply target last so a reply to an older image survives that limit.
+  const chronological = [...usable].sort(compareUploads);
+  const latest = chronological.filter(image => Number.isFinite(Date.parse(image.createdAt || ''))).at(-1);
+  // The executor retains the last N vision parts. Keep current attachments and
+  // explicit reply targets at the end, without redefining upload chronology.
   const ordered = [...usable].sort((a, b) => {
-    const priority = Number(isTarget(a)) - Number(isTarget(b));
-    return priority || (a.createdAt || '').localeCompare(b.createdAt || '')
-      || (a.id || '').localeCompare(b.id || '');
+    const priority = (image: AssistantImageAsset) => isTarget(image) ? 2 : isCurrent(image) ? 1 : 0;
+    return priority(a) - priority(b) || compareUploads(a, b);
   });
-  const content: any[] = [{ type: 'text', text: `${message}\n\nUploaded images below are instance reference context, not necessarily attachments to this message. Use their message IDs, asset IDs and timestamps to identify the requested image. An explicit WhatsApp reply target takes precedence over recency. Pass the selected source URL exactly to tools (e.g. reference_images); do not substitute another image's URL.` }];
+  const content: any[] = [{ type: 'text', text: `${message}${unavailable}\n\nUploaded images below are instance reference context, not necessarily attachments to this message. Use their message IDs, asset IDs and timestamps to identify the requested image. An explicit WhatsApp reply target takes precedence over current attachments and recency. For an unquoted "this image", prefer current_attachment; for "latest uploaded", use uploaded_at/latest_uploaded, not the last displayed image (priority targets may be displayed last). Upload time is the date added to the instance, not when the photo was taken. If the requested image is unavailable or ambiguous, ask for clarification instead of guessing. Pass the selected source URL exactly to tools (e.g. reference_images); do not substitute another image's URL.` }];
   for (const image of ordered) {
     const url = image.publicUrl || image.url;
     const reference = {
       asset_id: image.id, name: image.name, uploaded_at: image.createdAt,
       message_sid: image.messageSid,
       ...(isTarget(image) ? { reply_target: true } : {}),
+      ...(isCurrent(image) ? { current_attachment: true } : {}),
+      ...(image === latest ? { latest_uploaded: true } : {}),
     };
     content.push({ type: 'text', text: `Image reference: ${JSON.stringify(reference)}\nSource URL: ${url}` });
     content.push({ type: 'image_url', image_url: { url } });

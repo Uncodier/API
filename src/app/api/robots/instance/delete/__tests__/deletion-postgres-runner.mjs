@@ -92,6 +92,11 @@ try {
   await db.exec('ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO PUBLIC,anon,authenticated,service_role');
   await load('20261003180000_robot_instance_requirement_deletion.sql');
   await load('20261003180001_robot_instance_requirement_deletion_rpc.sql');
+  const installedScope = (await one("SELECT pg_get_functiondef('get_robot_instance_deletion_scope(uuid)'::regprocedure) v")).v;
+  await db.exec(installedScope.replace('DECLARE i public.remote_instances',
+    '-- synthetic deployed customization must survive\nDECLARE i public.remote_instances'));
+  await load('20261005220000_bound_empty_instance_deletion_preflight.sql');
+  await load('20261005220000_bound_empty_instance_deletion_preflight.sql');
   assert.equal((await one("SELECT pg_get_functiondef('check_delete_permission()'::regprocedure) v")).v, legacy);
 
   await check('authenticated-only RPCs despite hostile default ACLs', async () => {
@@ -362,6 +367,30 @@ try {
     await db.exec('CREATE POLICY test_receipt_delete ON requirement_migration_execution_handoffs FOR ALL TO authenticated USING(true) WITH CHECK(true)');
     assert.equal((await role('authenticated', () => one('SELECT count(*)::int n FROM requirements'))).n, 0);
     await rejected(() => role('authenticated', () => db.exec('DELETE FROM requirement_migration_execution_handoffs')), '23514');
+  });
+
+  await check('empty requirement scope avoids lateral expansion of unrelated log history', async () => {
+    const definition = (await one("SELECT pg_get_functiondef('get_robot_instance_deletion_scope(uuid)'::regprocedure) v")).v;
+    assert.ok(definition.includes('-- synthetic deployed customization must survive'));
+    assert.ok(definition.includes('WHERE cardinality(ids) > 0 AND l.instance_id <> i.id'));
+    assert.ok(!definition.includes('tags(value) WHERE l.instance_id <> i.id'));
+    const queryPlan = await db.query(`EXPLAIN (FORMAT JSON) SELECT EXISTS (
+      SELECT 1 FROM instance_logs l WHERE cardinality('{}'::uuid[]) > 0
+        AND l.instance_id <> $1 AND (
+          lower(l.details->>'requirement_id') = ANY('{}'::text[])
+          OR lower(l.details->>'requirementId') = ANY('{}'::text[])
+          OR lower(l.tool_args->>'requirement_id') = ANY('{}'::text[])
+          OR lower(l.tool_args->>'requirementId') = ANY('{}'::text[])
+        ))`, [instance]);
+    assert.ok(!JSON.stringify(queryPlan.rows).includes('"Relation Name":"instance_logs"'),
+      'an empty scope must not scan unrelated logs');
+    await db.query('INSERT INTO instance_logs(site_id,instance_id,log_type,message) SELECT $1,$2,\'system\',\'unrelated history\' FROM generate_series(1,20000)',
+      [otherSite, otherInstance]);
+    await db.query('DELETE FROM requirements WHERE id=$1', [req]);
+    await db.query('UPDATE instance_plans SET metadata=$1 WHERE id=$2', [{}, plan]);
+    assert.deepEqual((await scope()).requirement_ids, []);
+    assert.deepEqual(await remove([]), { instance_id: instance, deleted_requirement_ids: [] });
+    assert.equal((await one('SELECT count(*)::int n FROM instance_logs WHERE instance_id=$1', [otherInstance])).n, 20000);
   });
 
   console.log('PASS PostgreSQL atomic robot instance deletion');

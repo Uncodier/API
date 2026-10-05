@@ -83,15 +83,24 @@ export class InstanceAssetsService {
     try {
       console.log(`🔍 [InstanceAssetsService] Querying assets for instance_id: ${instance_id}`);
       
-      const { data: assets, error } = await supabaseAdmin
-        .from('assets')
-        .select('*')
-        .eq('instance_id', instance_id)
-        .order('created_at', { ascending: true }).order('id', { ascending: true });
-
-      if (error) {
-        console.error(`❌ [InstanceAssetsService] Database error fetching assets:`, error);
-        return [];
+      // A single ascending PostgREST query returns only the oldest server-sized
+      // page. Explicitly page through the inventory, preserving stable order.
+      const pageSize = 200;
+      const assets: any[] = [];
+      for (let offset = 0; ; offset += pageSize) {
+        const { data: page, error } = await supabaseAdmin
+          .from('assets')
+          .select('*')
+          .eq('instance_id', instance_id)
+          .order('created_at', { ascending: true }).order('id', { ascending: true })
+          .range(offset, offset + pageSize - 1);
+        if (error) {
+          // Never return a partial oldest-only inventory as if it were complete.
+          console.error(`❌ [InstanceAssetsService] Database error fetching assets:`, error);
+          return [];
+        }
+        assets.push(...(page || []));
+        if (!page || page.length < pageSize) break;
       }
 
       if (!assets || assets.length === 0) {

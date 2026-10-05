@@ -102,6 +102,9 @@ export async function hydrateMessageImages(messages: any[]): Promise<any[]> {
         // Never send unreadable/auth-protected URLs to the vision provider;
         // it cannot fetch Twilio images using our Basic Auth credentials.
         console.error(`❌ [vision-message-images] Failed to hydrate ${raw}:`, error);
+        // Preserve the failed image's position/identity. Silently dropping it
+        // leaves other (older) images visible and encourages false descriptions.
+        nextContent.push({ type: 'text', text: `Image unavailable: ${JSON.stringify(raw)}. The image could not be downloaded and is NOT visible. Do not substitute another image or infer its contents from past descriptions. If this is the requested image, explain the failure and ask the user to resend it.` });
       }
     }
     msg.content = nextContent;

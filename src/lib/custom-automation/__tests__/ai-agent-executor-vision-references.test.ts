@@ -54,3 +54,42 @@ it.each([
     .map((part: any) => part.image_url.url)).toEqual(expected.map(index => images[index].url));
   expect(create).toHaveBeenCalledTimes(2);
 });
+
+it('retains the exact current legacy attachment through the five-image limit and checkpoint', async () => {
+  const executor = new AIAgentExecutor();
+  const create = jest.fn().mockResolvedValue({ choices: [{
+    message: { role: 'assistant', content: 'Current image identified' }, finish_reason: 'stop',
+  }] });
+  (executor as any).client.chat.completions.create = create;
+  const legacy = images.map(image => ({ ...image, messageSid: undefined }));
+  const content = buildAssistantUserContent(`[Archivo adjunto - image/png]: ${legacy[0].url}`, legacy);
+  const result = await executor.act({ messages: await hydrateMessageImages([{ role: 'user', content }]),
+    tools: [], maxIterations: 1 });
+  const checkpoint = dehydrateMessageImages(result.messages!);
+  const retained = checkpoint.find(message => message.role === 'user').content;
+  expect(retained.filter((part: any) => part.type === 'image_url').map((part: any) => part.image_url.url))
+    .toEqual([3, 4, 5, 6, 0].map(index => legacy[index].url));
+  expect(retained.at(-2).text).toContain('"current_attachment":true');
+  expect(retained.find((part: any) => part.text?.includes('"latest_uploaded":true')).text).toContain(legacy[6].url);
+});
+
+it('sends an explicit failed-current-image warning even when older images are still visible', async () => {
+  const current = images[6];
+  (globalThis.fetch as jest.Mock).mockImplementation(async (url: string) => url === current.url
+    ? new Response('', { status: 401 })
+    : new Response(Buffer.from('synthetic-image-bytes'), { headers: { 'content-type': 'image/png' } }));
+  const executor = new AIAgentExecutor();
+  const requests: any[] = [];
+  (executor as any).client.chat.completions.create = jest.fn().mockImplementation(async request => {
+    requests.push(JSON.parse(JSON.stringify(request)));
+    return { choices: [{ message: { role: 'assistant', content: 'Please resend the image' }, finish_reason: 'stop' }] };
+  });
+  const content = buildAssistantUserContent(`[Archivo adjunto - image/png]: ${current.url}`, [images[0], current]);
+  const result = await executor.act({ messages: await hydrateMessageImages([{ role: 'user', content }]),
+    tools: [], maxIterations: 1 });
+  const sent = requests[0].messages.find((message: any) => message.role === 'user').content;
+  expect(sent.filter((part: any) => part.type === 'image_url')).toHaveLength(1);
+  expect(sent.at(-1).text).toContain(`Image unavailable: ${JSON.stringify(current.url)}`);
+  expect(sent.at(-1).text).toContain('Do not substitute another image');
+  expect(JSON.stringify(dehydrateMessageImages(result.messages!))).toContain('Image unavailable');
+});

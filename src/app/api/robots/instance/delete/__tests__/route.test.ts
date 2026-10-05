@@ -64,6 +64,7 @@ async function expectFailure(response: Response, status: number, code: string) {
 
 beforeEach(() => {
   jest.resetAllMocks();
+  jest.spyOn(console, 'error').mockImplementation(() => {});
   global.fetch = fetchMock;
   process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://auth.example.test';
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = ANON_KEY;
@@ -82,6 +83,7 @@ afterEach(() => {
   expect(supabaseAdmin.rpc).not.toHaveBeenCalled();
   expect(deleteRemoteInstanceChildren).not.toHaveBeenCalled();
   jest.useRealTimers();
+  jest.restoreAllMocks();
 });
 
 afterAll(() => {
@@ -356,4 +358,26 @@ it('bounds streamed auth/RPC responses and rejects redirects using the scoped tr
   expect(fetchMock).toHaveBeenLastCalledWith('https://auth.example.test/auth/v1/user', expect.objectContaining({
     method: 'GET', signal: expect.any(AbortSignal), redirect: 'error', cache: 'no-store',
   }));
+});
+
+it.each([PREFLIGHT, DELETE])('logs only the stage and SQLSTATE for a coded %s failure', async rpcName => {
+  failRpc(rpcName, '23503');
+  await expectFailure(await POST(request()), 500, 'deletion_failed');
+  expect(console.error).toHaveBeenCalledWith('[instance/delete] Failed', {
+    stage: rpcName === PREFLIGHT ? 'preflight' : 'database_deletion',
+    status: 500, code: 'deletion_failed', database_code: '23503',
+  });
+  const logged = JSON.stringify((console.error as jest.Mock).mock.calls);
+  for (const sensitive of [TOKEN, ANON_KEY, PROVIDER_KEY, PRIVATE_ERROR, INSTANCE]) {
+    expect(logged).not.toContain(sensitive);
+  }
+});
+
+it('does not log an arbitrary provider error code as a SQLSTATE', async () => {
+  failRpc(PREFLIGHT, TOKEN);
+  await expectFailure(await POST(request()), 500, 'deletion_failed');
+  expect(console.error).toHaveBeenCalledWith('[instance/delete] Failed', {
+    stage: 'preflight', status: 500, code: 'deletion_failed', database_code: null,
+  });
+  expect(JSON.stringify((console.error as jest.Mock).mock.calls)).not.toContain(TOKEN);
 });

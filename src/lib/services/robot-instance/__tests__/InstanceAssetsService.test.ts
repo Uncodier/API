@@ -197,7 +197,7 @@ describe('InstanceAssetsService + vision-message-images', () => {
       expect(dehydrated[0].content[1].image_url.url).toBe('https://example.com/image.png');
     });
 
-    it('drops image_url parts that cannot be hydrated so Azure never fetches them', async () => {
+    it('replaces unreadable images with an explicit warning so the provider never fetches them or guesses another image', async () => {
       global.fetch = jest.fn().mockResolvedValue({
         ok: false,
         status: 401,
@@ -220,7 +220,11 @@ describe('InstanceAssetsService + vision-message-images', () => {
       ];
 
       const hydrated = await hydrateMessageImages(messages);
-      expect(hydrated[0].content).toEqual([{ type: 'text', text: 'photo' }]);
+      expect(hydrated[0].content[0]).toEqual({ type: 'text', text: 'photo' });
+      expect(hydrated[0].content[1]).toMatchObject({ type: 'text', text: expect.stringContaining('Image unavailable') });
+      expect(hydrated[0].content[1].text).toContain('/Messages/MM1/Media/ME1');
+      expect(hydrated[0].content[1].text).toContain('Do not substitute another image');
+      expect(hydrated[0].content.some((part: any) => part.type === 'image_url')).toBe(false);
     });
 
     it('never guesses an image source from unrelated prose when provenance is unavailable', () => {
@@ -256,13 +260,14 @@ describe('InstanceAssetsService + vision-message-images', () => {
         ...urls.map(url => ({ type: 'image_url', image_url: { url, detail: 'high' } })),
       ] }];
       const hydrated = await hydrateMessageImages(messages);
-      expect(hydrated[0].content).toHaveLength(3);
+      expect(hydrated[0].content).toHaveLength(4);
+      expect(hydrated[0].content[1].text).toContain(urls[0]);
       expect(JSON.stringify(hydrated)).not.toContain('visionSourceUrl');
       // The executor can remove images for its vision budget. Remaining parts
       // keep identity even when two URLs downloaded identical bytes.
-      hydrated[0].content.splice(1, 1);
+      hydrated[0].content.splice(2, 1);
       const dehydrated = dehydrateMessageImages(hydrated);
-      expect(dehydrated[0].content[1]).toEqual({ type: 'image_url', image_url: { url: urls[2], detail: 'high' } });
+      expect(dehydrated[0].content[2]).toEqual({ type: 'image_url', image_url: { url: urls[2], detail: 'high' } });
       expect(JSON.stringify(dehydrated)).not.toContain('data:image');
     });
 
@@ -288,14 +293,48 @@ describe('InstanceAssetsService + vision-message-images', () => {
 
   it('retains upload/message identity in both image parts and the asset inventory', async () => {
     const query: any = {};
-    for (const method of ['select', 'eq', 'order']) query[method] = jest.fn().mockReturnValue(query);
+    for (const method of ['select', 'eq', 'order', 'range']) query[method] = jest.fn().mockReturnValue(query);
     query.then = (resolve: any) => Promise.resolve({ data: [{ id: 'asset-1', name: 'image', file_type: 'png',
       file_path: 'https://example.invalid/a.png', created_at: '2026-10-01T12:00:00Z', metadata: { message_sid: 'image-message' } }], error: null }).then(resolve);
     (supabaseAdmin.from as jest.Mock).mockReturnValue(query);
     const context = await InstanceAssetsService.getAssetsContext('instance');
     expect(query.order.mock.calls).toEqual([['created_at', { ascending: true }], ['id', { ascending: true }]]);
+    expect(query.range).toHaveBeenCalledWith(0, 199);
     expect(context.images[0]).toMatchObject({ id: 'asset-1', messageSid: 'image-message', createdAt: '2026-10-01T12:00:00Z' });
     expect(context.text).toContain('WhatsApp message ID: image-message');
+  });
+
+  it('paginates the chronological asset inventory so the newest image is not lost at the server row limit', async () => {
+    const assets = Array.from({ length: 201 }, (_, index) => ({
+      id: `asset-${index}`, name: `Image ${index}`, file_type: 'png',
+      file_path: `https://example.invalid/image-${index}.png`,
+      created_at: new Date(Date.UTC(2026, 9, 1, 0, 0, index)).toISOString(),
+    }));
+    const ranges: number[][] = [];
+    (supabaseAdmin.from as jest.Mock).mockImplementation(() => {
+      const query: any = {};
+      for (const method of ['select', 'eq', 'order']) query[method] = jest.fn().mockReturnValue(query);
+      query.range = (start: number, end: number) => {
+        ranges.push([start, end]);
+        return Promise.resolve({ data: assets.slice(start, end + 1), error: null });
+      };
+      return query;
+    });
+    const context = await InstanceAssetsService.getAssetsContext('instance');
+    expect(ranges).toEqual([[0, 199], [200, 399]]);
+    expect(context.images).toHaveLength(201);
+    expect(context.images.at(-1)?.id).toBe('asset-200');
+  });
+
+  it('does not expose an oldest-only inventory if a subsequent page fails', async () => {
+    const page = Array.from({ length: 200 }, (_, index) => ({ id: `asset-${index}` }));
+    const query: any = {};
+    for (const method of ['select', 'eq', 'order']) query[method] = jest.fn().mockReturnValue(query);
+    query.range = jest.fn().mockResolvedValueOnce({ data: page, error: null })
+      .mockResolvedValueOnce({ data: null, error: { message: 'Page unavailable' } });
+    (supabaseAdmin.from as jest.Mock).mockReturnValue(query);
+    expect(await InstanceAssetsService.getAssetsContext('instance')).toEqual({ text: '', images: [] });
+    expect(query.range).toHaveBeenCalledTimes(2);
   });
 
   it('maps partial uploads to their original media URLs rather than shifted positions', () => {
