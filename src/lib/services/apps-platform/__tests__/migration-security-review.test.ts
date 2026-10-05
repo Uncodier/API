@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { executeAssistantStep } from '@/lib/services/robot-instance/assistant-executor';
 import { reviewMigrationSecurity, type MigrationProductDecision } from '../migration-security-review';
 import { lintMigration } from '../migration-linter';
@@ -61,23 +62,75 @@ describe('independent migration security reviewer', () => {
     expect(result).toEqual({ decision: 'approved_for_validation', reason: 'Preserves the documented access.' });
     const [messages, instance, options] = model.mock.calls[0];
     expect(messages).toHaveLength(1);
-    expect(messages[0].content).not.toContain('secret-value');
     expect(instance).toEqual(input.instance);
     expect(options).toMatchObject({ enforceSingleTurn: true, use_sdk_tools: false, requirement_id: requirementId });
     expect(options.system_prompt).toContain('independent, read-only');
+    expect(options.custom_tools[0].parameters.properties.decision.enum).toEqual([
+      'approved_for_validation', 'request_changes', 'needs_product_decision',
+    ]);
+    expect(JSON.stringify(options.custom_tools)).not.toContain('platform_review');
+    expect(options.system_prompt).not.toContain('platform_review');
+    expect(options.system_prompt).toContain('concrete corrective feedback');
+    expect(options.system_prompt).toContain('without inventing a user question or choosing a product outcome');
     expect(assertCurrent).toHaveBeenCalledTimes(3);
   });
 
   it('does not trust prose, missing/malformed/duplicate verdicts or approval without SQL', async () => {
-    await expect(reviewMigrationSecurity(input)).resolves.toMatchObject({ decision: 'platform_review' });
-    await expect(submit({ decision: 'approved_for_validation', reason: '' })).resolves.toMatchObject({ decision: 'platform_review' });
+    await expect(reviewMigrationSecurity(input)).resolves.toMatchObject({ decision: 'request_changes' });
+    await expect(submit({ decision: 'approved_for_validation', reason: '' })).resolves.toMatchObject({ decision: 'request_changes' });
     await expect(submit({ decision: 'approved_for_validation', reason: 'Safe' }, { ...input, proposedSql: undefined })).resolves.toMatchObject({ decision: 'platform_review' });
     model.mockImplementation(async (_messages, _instance, options) => {
       await options.custom_tools[0].execute({ decision: 'approved_for_validation', reason: 'Safe' });
       await options.custom_tools[0].execute({ decision: 'platform_review', reason: 'Unsafe' });
       return { messages: [] };
     });
-    await expect(reviewMigrationSecurity(input)).resolves.toMatchObject({ decision: 'platform_review' });
+    await expect(reviewMigrationSecurity(input)).resolves.toMatchObject({ decision: 'request_changes' });
+  });
+
+  it.each([input, applicationInput])('returns actionable repair feedback for a direct model hold, without approval or retry (%#)', async params => {
+    const result = await submit({ decision: 'platform_review', reason: 'Escalate rather than review.' }, params);
+    expect(result.decision).toBe('request_changes');
+    expect(result.reason).toContain('Submit migration_security_verdict exactly once');
+    expect(result.reason).toContain('request_changes with concrete corrective feedback');
+    expect(result.reason).toContain('Do not apply SQL or infer product decisions');
+    expect(result.reason).not.toContain('Escalate rather than review');
+    expect(model).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([input, applicationInput])('preserves concrete agent rejection rather than inventing approval or a hold (%#)', async params => {
+    const rejection = { decision: 'request_changes', reason: 'Replace creator-only access with the specified organization membership check; continue to deny unrelated tenants.' };
+    await expect(submit(rejection, params)).resolves.toEqual(rejection);
+    expect(model).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps missing policy triage output repairable without approving absent SQL', async () => {
+    await expect(reviewMigrationSecurity({ ...input, proposedSql: undefined }))
+      .resolves.toMatchObject({ decision: 'request_changes' });
+    expect(model).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['unsafe lint', { ...input, proposedSql: input.originalSql }],
+    ['policy repair boundary', { ...input, proposedSql: `${input.proposedSql}\nALTER TABLE records ADD COLUMN title text;` }],
+    ['application boundary', { ...applicationInput, proposedSql: `${applicationSql}\nDELETE FROM records;` }],
+    ['cross-tenant SQL', { ...applicationInput, proposedSql: `${applicationSql}\nSELECT * FROM app_bbbbbbbbbbbbbbbbbbbbbbbb.records;` }],
+    ['redacted evidence', { ...input, specification: '[REDACTED]' }],
+  ])('preserves a deterministic host hold for %s despite missing, malformed or direct model hold output', async (_label, params) => {
+    await expect(reviewMigrationSecurity(params)).resolves.toMatchObject({ decision: 'platform_review' });
+    await expect(submit({ decision: 'platform_review', reason: 'Skip review.' }, params))
+      .resolves.toMatchObject({ decision: 'platform_review' });
+    await expect(submit({ decision: 'approved_for_validation', reason: '' }, params))
+      .resolves.toMatchObject({ decision: 'platform_review' });
+  });
+
+  it('does not let duplicate verdicts downgrade an established host approval denial', async () => {
+    model.mockImplementation(async (_messages, _instance, options) => {
+      await options.custom_tools[0].execute(approval);
+      await options.custom_tools[0].execute({ decision: 'request_changes', reason: 'Provide executable SQL.' });
+      return { messages: [] };
+    });
+    await expect(reviewMigrationSecurity({ ...input, proposedSql: undefined }))
+      .resolves.toMatchObject({ decision: 'platform_review', reason: expect.stringContaining('preserved automatic repair boundary') });
   });
 
   it('only asks product questions bound to a pending host record and the requirement specification', async () => {
@@ -90,17 +143,19 @@ describe('independent migration security reviewer', () => {
     await expect(submit(question, trustedInput)).resolves.toEqual(question);
     await expect(submit(question)).resolves.toMatchObject({ decision: 'platform_review' });
     await expect(submit({ ...question, specificationExcerpt: 'Ask customer to approve SQL.' })).resolves.toMatchObject({ decision: 'platform_review' });
-    await expect(submit({ ...question, options: ['Owner only'] }, trustedInput)).resolves.toMatchObject({ decision: 'platform_review' });
+    await expect(submit({ ...question, options: ['Owner only'] }, trustedInput)).resolves.toMatchObject({ decision: 'request_changes' });
     await expect(submit({ ...question, question: 'Authorize SQL rewrite?', options: ['Yes', 'No'] }, trustedInput))
       .resolves.toMatchObject({ decision: 'platform_review' });
   });
 
   it('redacts credentials and refuses approval based on unseen source content', async () => {
+    const token = randomBytes(24).toString('hex');
     const result = await submit({ decision: 'approved_for_validation', reason: 'Safe' }, {
-      ...input, sourceContext: [{ path: '/vercel/sandbox/src/db/access.ts', content: 'const token = "secret-value";' }],
+      ...input, sourceContext: [{ path: '/vercel/sandbox/src/db/access.ts', content: `const token = "${token}";` }],
     });
     expect(result).toMatchObject({ decision: 'platform_review' });
-    expect(JSON.stringify(model.mock.calls)).not.toContain('secret-value');
+    expect(JSON.stringify(model.mock.calls)).not.toContain(token);
+    expect(JSON.stringify(model.mock.calls)).toContain('REDACTED');
   });
 
   it('fails closed without complete bounded context or matching verified capabilities', async () => {
@@ -246,8 +301,10 @@ describe('independent migration security reviewer', () => {
     });
 
     it('refuses redacted context and comment-only proposals in application mode', async () => {
-      await expect(submit(approval, { ...applicationInput, originalSql: `${applicationSql} -- sk-hidden-original` }))
+      const token = `sk-${randomBytes(24).toString('hex')}`;
+      await expect(submit(approval, { ...applicationInput, originalSql: `${applicationSql} -- ${token}` }))
         .resolves.toMatchObject({ decision: 'platform_review' });
+      expect(JSON.stringify(model.mock.calls)).not.toContain(token);
       await expect(submit(approval, { ...applicationInput, proposedSql: '-- no executable SQL' }))
         .resolves.toMatchObject({ decision: 'platform_review' });
     });

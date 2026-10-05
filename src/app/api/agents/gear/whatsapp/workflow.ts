@@ -1,7 +1,7 @@
 'use workflow';
 
 import { runAssistantWorkflow } from '@/app/api/robots/instance/assistant/workflow';
-import { sendWhatsAppResponse, sendWhatsAppError, sendWhatsAppTypingIndicator } from './steps';
+import { sendWhatsAppResponse, sendWhatsAppTypingIndicator } from './steps';
 
 interface GearAgentWorkflowInput {
   instanceId: string;
@@ -64,9 +64,18 @@ export async function runGearAgentWorkflow({
 
     console.log(`[GearAgent] Assistant execution completed. Response length: ${result.assistant_response?.length || 0}`);
 
-    if (result.assistant_response) {
-      // Send the response back to WhatsApp via step
-      await sendWhatsAppResponse(userPhone, result.assistant_response, siteId);
+    const executionStatus = 'execution_status' in result ? result.execution_status : undefined;
+    const safetyStop = result.success === false || [
+      'paused', 'stopped', 'cancelled', 'superseded', 'already_completed', 'continuing', 'exhausted',
+    ].includes(executionStatus ?? '');
+    if (safetyStop) {
+      // Recovery diagnostics remain in the result, never as abandoned-worker replies.
+      console.warn('[GearAgent] Suppressed unsuccessful or inactive execution reply');
+    } else if (result.assistant_response) {
+      // The send step rechecks the persisted action after assistant completion.
+      const sent = await sendWhatsAppResponse(userPhone, result.assistant_response, siteId, undefined,
+        userMessageLogId ? { instanceId, siteId, userId, userMessageLogId } : undefined);
+      if (!sent) console.warn('[GearAgent] Reply was suppressed or could not be delivered; no automatic resend');
     } else {
       console.warn(`[GearAgent] No assistant response generated`);
     }
@@ -81,9 +90,7 @@ export async function runGearAgentWorkflow({
   } catch (error: any) {
     console.error(`[GearAgent] Workflow failed:`, error);
     
-    // Attempt to send error message to user via step
-    await sendWhatsAppError(userPhone, siteId);
-
+    // Do not add another message after an internal failure or a partial send.
     throw error;
   }
 }
@@ -148,7 +155,6 @@ export async function runUnregisteredGearAgentWorkflow({
     };
   } catch (error: any) {
     console.error(`[GearAgent] Unregistered workflow failed:`, error);
-    await sendWhatsAppError(userPhone, siteId);
     throw error;
   }
 }

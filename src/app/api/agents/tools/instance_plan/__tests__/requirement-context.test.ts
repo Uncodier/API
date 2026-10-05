@@ -77,6 +77,15 @@ describe('instance plan requirement context', () => {
     );
   });
 
+  it('defers host state echo validation to the authoritative core without dropping metadata', async () => {
+    const tool = instancePlanTool('site-1', 'instance-1', 'user-1', 'req-1');
+    const steps = [{ id: 'step-1', retry_count: 3, metadata: { repair_run: { attempt_count: 3 }, custom: 'keep' } }];
+    await expect(tool.execute({ action: 'update', plan_id: 'plan-1', steps } as any)).resolves.toEqual({ success: true });
+    expect(mockedUpdateInstancePlanCore).toHaveBeenCalledWith(expect.objectContaining({ steps, requirement_id: 'req-1' }));
+    mockedUpdateInstancePlanCore.mockRejectedValueOnce(new Error('metadata.repair_run is runner-owned'));
+    await expect(tool.execute({ action: 'update', plan_id: 'plan-1', steps } as any)).rejects.toThrow('runner-owned');
+  });
+
   it('preserves generic instance plan creation outside requirements', async () => {
     const tool = instancePlanTool('site-1', 'instance-1', 'user-1');
 

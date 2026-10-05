@@ -287,7 +287,7 @@ export function instancePlanTool(
                 },
                 metadata: {
                   type: 'object',
-                  description: 'Step metadata. For an exceptional standalone research step in build phase, blocking_unknown must name the concrete implementation blocker.',
+                  description: 'Step metadata. For an exceptional standalone research step in build phase, blocking_unknown must name the concrete implementation blocker. Requirement repair_run, no_progress_adjudication, cron_cycle_id, cron_execution_generation and retry_count are host-owned: omit them on creation; updates may only echo exact persisted values, never create or change them.',
                   properties: {
                     backlog_item_id: { type: 'string' },
                     blocking_unknown: { type: 'string' },
@@ -459,7 +459,9 @@ export function instancePlanTool(
         assertRequirementPlanUpdateAllowed({
           requirementId: requirement_id,
           status: params.status,
-          steps: params.steps,
+          // This preliminary status check has no stored snapshot. The core
+          // validates full metadata/counter echoes against authoritative steps.
+          steps: params.steps?.map(({ id, order, status }: { id?: string; order?: number; status?: string }) => ({ id, order, status })),
         });
         const body = {
           ...params,

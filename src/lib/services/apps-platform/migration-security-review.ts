@@ -19,6 +19,7 @@ export interface MigrationProductDecision {
 }
 
 export type MigrationSecurityReview =
+  // platform_review is host-owned: never a selectable model verdict.
   | { decision: 'approved_for_validation' | 'request_changes' | 'platform_review'; reason: string }
   | { decision: 'needs_product_decision'; reason: string; decisionId: string; question: string; options: string[]; specificationExcerpt: string };
 
@@ -34,7 +35,7 @@ export interface MigrationSecurityReviewParams {
   errors: string[];
   /** Verified host capability receipt; required in application mode. */
   capabilities?: TenantCapabilities;
-  /** No decisions by default: free-form model questions always become platform_review. */
+  /** No decisions by default: host checks reject invented or altered product questions. */
   productDecisions?: MigrationProductDecision[];
   instance: { id?: string; site_id: string; user_id?: string; requirement_id: string };
   assertCurrent: () => Promise<void>;
@@ -86,13 +87,13 @@ const contextSchema = z.object({
 const verdictSchema = z.discriminatedUnion('decision', [
   z.object({ decision: z.literal('approved_for_validation'), reason: nonempty(limits.reason) }).strict(),
   z.object({ decision: z.literal('request_changes'), reason: nonempty(limits.reason) }).strict(),
-  z.object({ decision: z.literal('platform_review'), reason: nonempty(limits.reason) }).strict(),
   z.object({
     decision: z.literal('needs_product_decision'), reason: nonempty(limits.reason), decisionId: nonempty(limits.decisionId),
     question: nonempty(limits.question), options: z.array(nonempty(limits.option)).min(2).max(4),
     specificationExcerpt: nonempty(limits.excerpt),
   }).strict(),
 ]);
+type ModelVerdict = z.infer<typeof verdictSchema>;
 
 function sanitizeText(value: string): string {
   return sanitizeMigrationRepairContext(value)
@@ -119,10 +120,13 @@ function safeSourcePath(path: string, file: string): boolean {
 }
 
 const platformReview = (reason: string): MigrationSecurityReview => ({ decision: 'platform_review', reason });
-const invalidVerdict = () => platformReview('Security review did not provide one valid, complete verdict. Platform review is required.');
+const invalidVerdict = (): MigrationSecurityReview => ({
+  decision: 'request_changes',
+  reason: 'Security review did not provide one valid, complete verdict. Submit migration_security_verdict exactly once with approved_for_validation only when all safety checks pass, request_changes with concrete corrective feedback, or needs_product_decision copied exactly from a pending host record. Do not apply SQL or infer product decisions.',
+});
 
 /** A tool result is the only authority for a verdict. Assistant prose is never an approval. */
-function parseVerdict(value: unknown): MigrationSecurityReview | null {
+function parseVerdict(value: unknown): ModelVerdict | null {
   const raw = verdictSchema.safeParse(value);
   const safe = raw.success ? verdictSchema.safeParse(sanitizeStrings(raw.data)) : undefined;
   if (!raw.success || !safe?.success) return null;
@@ -237,8 +241,16 @@ export async function reviewMigrationSecurity(params: MigrationSecurityReviewPar
     ? isStaticNonDestructiveApplication(proposed, target.schema)
     : canAutomaticallyReplaceMigration(parsed.data.originalSql, proposed));
   const canApprove = !redacted && lintPassed && boundaryPreserved;
+  const approvalDenied = () => platformReview(reviewMode === 'application'
+    ? 'The proposal lacks complete unredacted evidence, passing lint or a static non-destructive application boundary.'
+    : 'The proposal lacks complete unredacted evidence, passing lint or the preserved automatic repair boundary.');
+  // Invalid model output is repairable within the caller's existing turn budget.
+  // It cannot mask a deterministic failure in a supplied proposal or redacted evidence.
+  // No-proposal policy triage is allowed, but cannot produce an approval.
+  const invalidReview = () => !canApprove && (!!proposed?.trim() || redacted) ? approvalDenied() : invalidVerdict();
 
-  let verdict: MigrationSecurityReview | null = null;
+  let verdict: ModelVerdict | null = null;
+  let hostHold: MigrationSecurityReview | null = null;
   let submissions = 0;
   let ownershipFailure: { error: unknown } | undefined;
   const tools = [{
@@ -249,7 +261,7 @@ export async function reviewMigrationSecurity(params: MigrationSecurityReviewPar
       // enforced in execute, including all decision-specific required fields.
       type: 'object', additionalProperties: false,
       properties: {
-        decision: { type: 'string', enum: ['approved_for_validation', 'request_changes', 'platform_review', 'needs_product_decision'] },
+        decision: { type: 'string', enum: ['approved_for_validation', 'request_changes', 'needs_product_decision'] },
         reason: { type: 'string', minLength: 1, maxLength: limits.reason },
         decisionId: { type: 'string', minLength: 1, maxLength: limits.decisionId },
         question: { type: 'string', minLength: 1, maxLength: limits.question },
@@ -267,15 +279,13 @@ export async function reviewMigrationSecurity(params: MigrationSecurityReviewPar
       }
       verdict = parseVerdict(args);
       if (verdict?.decision === 'approved_for_validation' && !canApprove) {
-        verdict = platformReview(reviewMode === 'application'
-          ? 'The proposal lacks complete unredacted evidence, passing lint or a static non-destructive application boundary.'
-          : 'The proposal lacks complete unredacted evidence, passing lint or the preserved automatic repair boundary.');
+        hostHold = approvalDenied();
       } else if (verdict?.decision === 'needs_product_decision') {
         const choice = verdict;
         const trusted = productDecisions.find(decision => decision.id === choice.decisionId);
         if (!trusted || trusted.question !== choice.question || trusted.specificationExcerpt !== choice.specificationExcerpt ||
             JSON.stringify(trusted.options) !== JSON.stringify(choice.options)) {
-          verdict = platformReview('A product question must exactly match a pending host-supplied decision. No model-invented user questions are allowed.');
+          hostHold = platformReview('A product question must exactly match a pending host-supplied decision. No model-invented user questions are allowed.');
         }
       }
       return { accepted: verdict !== null };
@@ -301,8 +311,8 @@ export async function reviewMigrationSecurity(params: MigrationSecurityReviewPar
       'Compare original and proposed SQL against the complete specification. Preserve the specified ownership, membership and organization access model; deny unrelated users and tenants without weakening tenant isolation. Creator-only access is not a safe substitute for specified organization collaboration.',
       'Approval requires a complete specification, passing deterministic lint and the mode-specific boundary. No destructive DML, table/schema DROP, TRUNCATE, ALTER DROP or dynamic SQL. Idempotent DROP POLICY followed by recreation of the same policy is not standalone policy removal. Redacted context cannot establish approval; lint alone is not authorization proof.',
       'A login check alone is not authorization. Never authorize anonymous table writes, user-assignable roles, global grants, bypass RLS, SECURITY DEFINER, dynamic SQL or missing identity capabilities.',
-      'When a proposal needs changes, use request_changes with specific corrective feedback. Ambiguous technical/security access semantics require platform_review, not an approval.',
-      'needs_product_decision is ONLY for a pending host-supplied productDecisions record of kind data_ownership, access_audience or destructive_business_action. Return its id as decisionId and copy its question, options (including order), and specificationExcerpt EXACTLY. Never invent or paraphrase a record. Without a matching supplied record use platform_review. Use the user\'s language as evidenced in the specification and host record.',
+      'When a proposal needs changes or technical/security access semantics are ambiguous, use request_changes with concrete corrective feedback: identify the unsafe SQL or missing evidence and the correction or evidence needed. Never approve uncertainty, weaken tenant boundaries or infer product decisions. The host alone determines safety holds and the bounded recovery budget.',
+      'needs_product_decision is ONLY for a pending host-supplied productDecisions record of kind data_ownership, access_audience or destructive_business_action. Return its id as decisionId and copy its question, options (including order), and specificationExcerpt EXACTLY. Never invent or paraphrase a record. Without a matching supplied record use request_changes and identify the missing canonical evidence without inventing a user question or choosing a product outcome. Use the user\'s language as evidenced in the specification and host record.',
       'Never ask the user for authorization to fix SQL, satisfy security compliance, disable protections, grant privileges or perform ordinary technical remediation. Missing helpers or migration failures are platform issues, not product decisions. Do not invent questions from missing evidence.',
       'Do not promise automatic resumption, future execution or completion after an answer. Never include secrets, tokens, credentials or raw diagnostics in any output field.',
       'Without proposed SQL, policy_repair may triage only; application requires a proposal. Approval never means the migration is applied or the product is delivered.',
@@ -313,5 +323,6 @@ export async function reviewMigrationSecurity(params: MigrationSecurityReviewPar
   // The executor can convert tool exceptions into results; ownership loss still
   // has to bubble to the host, even if its later ownership check succeeds.
   if (ownershipFailure) throw ownershipFailure.error;
-  return submissions === 1 && verdict && !hasUnexpectedCalls(result) ? verdict : invalidVerdict();
+  // A malformed/duplicate response cannot downgrade an already-established host hold.
+  return hostHold ?? (submissions === 1 && verdict && !hasUnexpectedCalls(result) ? verdict : invalidReview());
 }

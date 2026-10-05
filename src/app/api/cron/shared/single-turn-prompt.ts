@@ -19,6 +19,7 @@ import { extractRequirementConstraints, formatConstraintsPromptBlock } from '@/l
 import { PLAN_ROLE_TO_SKILL } from '@/lib/services/instance-plan-step-contract';
 import { tenantCapabilitiesPrompt, type TenantCapabilities } from '@/lib/services/apps-platform/tenant-capabilities';
 import { isTestRepairRun } from './judge-test-repair';
+import { hasCommandRepair } from './judge-command-repair';
 
 export { firstActionsPromptLine } from './step-git-prompts';
 
@@ -71,9 +72,12 @@ export function buildSingleTurnSystemPrompt(p: SingleTurnPromptParams): string {
     constraintSources,
   } = p;
   const testRepair = isTestRepairRun(step?.metadata?.repair_run);
+  const commandRepair = hasCommandRepair(step?.metadata?.repair_run);
+  const implementationRepair = step?.metadata?.repair_run?.status === 'in_progress' &&
+    step.metadata.repair_run.failure_kind === 'product_defect';
   const verificationOnly =
     p.noProgressAdjudication ||
-    (!testRepair && /\bFailure kind:\s*evidence_gap\b/i.test(retryContext));
+    (!testRepair && !implementationRepair && /\bFailure kind:\s*evidence_gap\b/i.test(retryContext));
 
   const constraintBlock = formatConstraintsPromptBlock(extractRequirementConstraints(
     ...(constraintSources || []),
@@ -124,6 +128,9 @@ ${verificationOnly
   : firstActionsPromptLine(effectiveRole)}
 ${testRepair && !p.noProgressAdjudication
   ? '- AUTOMATIC TEST REPAIR: prioritize the structured missing-test action over earlier implementation instructions. Inspect the existing test framework, add or repair relevant tests/fixtures as needed, and execute them without customer permission. Do not weaken assertions or change acceptance. Use sandbox_run_tests with the existing direct test command; this host-owned tool waits with a bounded timeout and persists fresh evidence before independent validation. Ordinary shell/background execution and deployment are unavailable during this action. A read, edit, or build is not test completion. No production data changes are authorized.'
+  : ''}
+${commandRepair && !p.noProgressAdjudication
+  ? '- BOUNDED VALIDATION EVIDENCE: use sandbox_run_validation for the active typed missing-command action. The host binds the exact existing lint/build/typecheck script and records its own result. Do not substitute a build or a test for lint, request customer permission, run shell/background commands, edit files or deploy. If validation fails, the same repair returns to implementation with the failure output; do not fabricate a passing receipt.'
   : ''}
 ${verificationOnly || testRepair
   ? ''

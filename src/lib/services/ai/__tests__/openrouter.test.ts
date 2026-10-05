@@ -56,8 +56,25 @@ describe('OpenRouter configuration', () => {
     ['text-embedding-3-small', 'openai/text-embedding-3-small'],
     ['openai/sora-2', 'openai/sora-2'],
     ['vendor/custom-model', 'vendor/custom-model'],
+    ['vendor/gpt-5.6-sol', 'vendor/gpt-5.6-sol'],
+    ['openai/gpt-5.6-pro', 'openai/gpt-5.6-pro'],
+    ['openai/gpt-5.2', 'openai/gpt-5.2'],
   ])('qualifies %s without substituting the model', (input, expected) => {
     expect(resolveOpenRouterModel(input)).toBe(expected);
+  });
+
+  it.each([
+    ['gpt-5.6', 'openai/gpt-6.1-sol'],
+    ['gpt-5.6-sol', 'openai/gpt-6.1-sol'],
+    ['openai/gpt-5.6', 'openai/gpt-6.1-sol'],
+    ['openai/gpt-5.6-sol', 'openai/gpt-6.1-sol'],
+    ['  openai/gpt-5.6-sol  ', 'openai/gpt-6.1-sol'],
+    ['openai/gpt-5.6-sol:extended', 'openai/gpt-6.1-sol:extended'],
+    ['gpt-5.6:free', 'openai/gpt-6.1-sol:free'],
+  ])('migrates legacy chat model %s in explicit requests and environment defaults', (input, expected) => {
+    expect(resolveOpenRouterModel(input)).toBe(expected);
+    expect(resolveOpenRouterModel(input, 'azure')).toBe(expected);
+    expect(getOpenRouterChatModel({ OPENROUTER_CHAT_MODEL: input })).toBe(expected);
   });
 
   it('defaults to Sol and handles namespaced reasoning models', () => {

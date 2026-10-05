@@ -11,6 +11,7 @@ import {
   routeTemplateMatches,
 } from '@/lib/services/acceptance-route-path';
 import { changedDirectoryEntries } from './artifact-evidence-match';
+import { matchCommandEvidence } from '@/lib/services/requirement-command-evidence';
 
 type CriterionStatus = AcceptanceCriterionDiagnostic['status'];
 
@@ -311,6 +312,7 @@ function linkGaps(
 function gapsForClaim(
   claim: AcceptanceClaim,
   evidence: EvidenceRecord,
+  criterionId?: string,
 ): AcceptanceEvidenceGap[] {
   if (claim.kind === 'http_response' || claim.kind === 'page_response') {
     return routeGaps(claim, evidence);
@@ -376,19 +378,13 @@ function gapsForClaim(
     return [];
   }
   if (claim.kind === 'command') {
-    const passed = claim.command === 'build'
-      ? evidence.build?.exit_code === 0
-      : (evidence.tests || []).some((test) =>
-          test.exit_code === 0 &&
-          test.ran_after_changes &&
-          (
-            claim.command === 'test' ||
-            test.command.toLowerCase().includes(claim.command.toLowerCase())
-          ));
-    return passed ? [] : [{
+    const outcome = matchCommandEvidence(claim.command, evidence, criterionId);
+    return outcome === 'pass' ? [] : [{
       code: 'missing_command_receipt',
-      class: 'evidence',
-      message: 'The required command has no fresh passing receipt.',
+      class: outcome === 'fail' ? 'product' : 'evidence',
+      message: outcome === 'fail'
+        ? 'The exact required command has a current nonzero exit receipt.'
+        : 'The required command has no fresh passing receipt.',
       required: claim.command,
       suggested_action: 'Run the exact bounded command declared by the contract.',
     }];
@@ -424,7 +420,7 @@ export function buildAcceptanceDiagnostics(params: {
       gaps: status === 'matched'
         ? []
         : criterion.all_of.flatMap((claim) =>
-            gapsForClaim(claim, params.evidence)),
+            gapsForClaim(claim, params.evidence, criterion.id)),
     };
   });
 }

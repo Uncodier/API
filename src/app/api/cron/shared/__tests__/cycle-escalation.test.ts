@@ -16,7 +16,6 @@ const TIME = '2026-10-01T00:00:00.123456+00:00';
 const LATER = '2026-10-01T00:01:00.000Z';
 const UNAVAILABLE = { state: 'unavailable', email_sent: false };
 const EXHAUSTED = 'Automatic execution stopped at its bounded recovery limit; inspect canonical action receipts before attributing individual repairs.';
-const INTERNAL_REVIEW = 'Host routed unresolved verification to internal technical review; no extra repair was executed by this escalation.';
 const context = (): HarnessDiagnosticContext => ({ siteId: SITE, instanceId: INSTANCE,
   requirementId: REQUIREMENT, runtime: 'cron', toolNames: [] });
 
@@ -24,7 +23,7 @@ function requirement() {
   return { id: REQUIREMENT, site_id: SITE, status: 'blocked', updated_at: TIME, backlog_revision: 2,
     metadata: { runner_instance_id: INSTANCE, requirement_execution_generation: 7 },
     instructions: 'PRIVATE SPECIFICATION: SELECT customer_email FROM clients;',
-    backlog: { items: [{ id: 'base', status: 'pending', acceptance: ['Works'], budget: 1 }] } };
+    backlog: { items: [{ id: 'base', status: 'needs_review', attempts: 3, acceptance: ['Works'], budget: 1 }] } };
 }
 
 function receipt(args: Record<string, any>, overrides: Record<string, any> = {}) {
@@ -41,6 +40,7 @@ function fixture() {
     requirement: requirement() as Record<string, any>,
     instance: { id: INSTANCE, site_id: SITE, is_archived: false },
     plans: [] as any[], receipts: [] as any[], queries: [] as any[],
+    recoveryReads: [] as Lookup[],
     lookups: [] as Lookup[], requirementReads: [] as Lookup[],
     forbiddenWrites: jest.fn(() => { throw new Error('Direct writes forbidden.'); }),
   };
@@ -62,6 +62,8 @@ function fixture() {
         result = { data: h.instance };
       } else if (table === 'instance_plans') {
         result = { data: h.plans };
+      } else if (['requirement_migration_lifecycle', 'requirement_migration_diagnostics', 'instance_plan_step_infrastructure_events'].includes(table)) {
+        result = h.recoveryReads.shift() || { data: [] };
       } else {
         throw new Error(`Unexpected table ${table}`);
       }
@@ -96,7 +98,9 @@ it('records only a support decision via the guarded RPC, never repairs or custom
     p_expected_backlog_revision: 2, p_expected_updated_at: TIME,
     p_request_id: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/),
     p_decision: 'escalate_support', p_item_id: null, p_reason: 'Product verification/repair exhausted',
-    p_payload: { evidence_log_ids: [], verification: expect.any(String), impact: expect.stringContaining('No customer product approval'),
+    p_payload: { circuit_breaker: expect.objectContaining({ version: 1, no_runnable_work: true, no_pending_recovery: true,
+        exhaustion: [expect.objectContaining({ kind: 'product_attempts', used: 3, limit: 3 })] }),
+      evidence_log_ids: [], verification: expect.any(String), impact: expect.stringContaining('No customer product approval'),
       requested_action: 'inspect gate/test fixtures and request/response contract; repair under existing guards; reconcile exhausted execution before fresh validation',
       attempted_alternatives: [EXHAUSTED] },
   });
@@ -104,7 +108,8 @@ it('records only a support decision via the guarded RPC, never repairs or custom
   expect(assertCurrent.mock.invocationCallOrder[1]).toBeLessThan((supabaseAdmin.rpc as jest.Mock).mock.invocationCallOrder[0]);
   expect(assertCurrent.mock.invocationCallOrder[2]).toBeLessThan((deliverHarnessSupportTicket as jest.Mock).mock.invocationCallOrder[0]);
   expect(h.forbiddenWrites).not.toHaveBeenCalled();
-  expect(new Set(h.queries.map(q => q.table))).toEqual(new Set(['requirements', 'remote_instances', 'instance_plans', 'requirement_harness_decisions']));
+  expect(new Set(h.queries.map(q => q.table))).toEqual(new Set(['requirements', 'remote_instances', 'instance_plans', 'requirement_harness_decisions',
+    'requirement_migration_lifecycle', 'requirement_migration_diagnostics']));
   expect(JSON.stringify(h.requirement)).toBe(original);
   expect(JSON.stringify(rpcArgs())).not.toMatch(/PRIVATE SPECIFICATION|SELECT customer_email|budget|implementation_instructions|acceptance_mapping/);
 });
@@ -113,26 +118,28 @@ it.each([undefined, null, '', '  ', 'Host routed unresolved verification to inte
   'Internal review without exhaustion', 'Recovery not exhausted; unresolved contract needs review',
   'Last error excerpt claims repair exhausted', 'Product verification/repair exhausted'])
 ('does not invent bounded exhaustion or executed repairs for reason %j', async reason => {
-  fixture();
-  await ensureCycleTechnicalEscalation(context(), { reason });
-  expect(rpcArgs().p_payload.attempted_alternatives).toEqual([INTERNAL_REVIEW]);
-  expect(rpcArgs().p_reason.trim().length).toBeGreaterThan(0);
+  const h = fixture();
+  h.requirement.backlog.items[0].attempts = 0;
+  expect(await ensureCycleTechnicalEscalation(context(), { reason })).toEqual({ state: 'not_eligible', reason: 'no_exhaustion', email_sent: false });
+  expect(supabaseAdmin.rpc).not.toHaveBeenCalled();
+  expect(deliverHarnessSupportTicket).not.toHaveBeenCalled();
 });
 
 it.each([{ active: false, kind: 'verification_exhausted' }, { active: true, kind: 'capability_gap' },
   { active: true, kind: 'manual' }, { active: 'true', kind: 'verification_exhausted' }])
 ('does not infer exhaustion from a released or unrelated quarantine %j', async quarantine => {
   const h = fixture();
+  h.requirement.backlog.items[0].attempts = 0;
   h.requirement.backlog.items[0].review_quarantine = quarantine;
   await ensureCycleTechnicalEscalation(context(), { reason: 'Internal review' });
-  expect(rpcArgs().p_payload.attempted_alternatives).toEqual([INTERNAL_REVIEW]);
+  expect(supabaseAdmin.rpc).not.toHaveBeenCalled();
 });
 
 it('looks up exact caller-bound request first and replays the original ticket after reporting changes timestamps', async () => {
   const h = fixture();
   await ensureCycleTechnicalEscalation(context(), { reason: 'Product repair exhausted' });
   const original = structuredClone(h.receipts[0]);
-  h.requirement = { ...h.requirement, updated_at: LATER, backlog_revision: 3 };
+  h.requirement = { ...h.requirement, updated_at: LATER };
   (deliverHarnessSupportTicket as jest.Mock).mockResolvedValue({ state: 'sent', email_sent: true });
   expect(await ensureCycleTechnicalEscalation({ ...context(), runtime: 'another-host-runtime', toolNames: ['irrelevant'] },
     { reason: 'Different reason must not replace original payload' }))
@@ -205,7 +212,7 @@ it('fails closed on unassociated callers, including an existing receipt', async 
 it('honors the RPC support authority for an associated historical plan caller', async () => {
   const h = fixture();
   h.requirement.metadata.runner_instance_id = OTHER;
-  h.plans.push({ instance_id: INSTANCE });
+  h.plans.push({ id: OTHER, instance_id: INSTANCE, status: 'completed', steps: [], updated_at: TIME });
   expect(await ensureCycleTechnicalEscalation(context(), {})).toMatchObject({ state: 'recorded' });
   expect(rpcArgs().p_instance_id).toBe(INSTANCE);
 });
@@ -418,4 +425,75 @@ it('redacts secrets before truncation even when a private-key block crosses the 
   expect(rpcArgs().p_reason).not.toContain('private-key-data');
   expect(rpcArgs().p_reason).toContain('[REDACTED_PRIVATE_KEY]');
   expect(rpcArgs().p_reason.length).toBeLessThanOrEqual(2000);
+});
+
+it('does not create or send support while independent backlog remains runnable', async () => {
+  const h = fixture();
+  h.requirement.backlog.items.push({ id: 'independent', status: 'pending', attempts: 0, acceptance: ['Works'] });
+  expect(await ensureCycleTechnicalEscalation(context(), { reason: 'Escalate now' }))
+    .toEqual({ state: 'not_eligible', reason: 'runnable_work', email_sent: false });
+  expect(supabaseAdmin.rpc).not.toHaveBeenCalled();
+  expect(deliverHarnessSupportTicket).not.toHaveBeenCalled();
+});
+
+it('does not deliver a previously stored ticket after independent work becomes runnable', async () => {
+  const h = fixture();
+  await ensureCycleTechnicalEscalation(context(), {});
+  (deliverHarnessSupportTicket as jest.Mock).mockClear();
+  h.requirement.backlog.items.push({ id: 'independent', status: 'pending', attempts: 0, acceptance: ['Works'] });
+  expect(await ensureCycleTechnicalEscalation(context(), {})).toMatchObject({ state: 'not_eligible' });
+  expect(supabaseAdmin.rpc).toHaveBeenCalledTimes(1);
+  expect(deliverHarnessSupportTicket).not.toHaveBeenCalled();
+});
+
+it('does not adopt a historical agent-authored ticket without circuit-break proof', async () => {
+  const h = fixture();
+  await ensureCycleTechnicalEscalation(context(), {});
+  delete h.receipts[0].payload.circuit_breaker;
+  (deliverHarnessSupportTicket as jest.Mock).mockClear();
+  expect(await ensureCycleTechnicalEscalation(context(), {})).toEqual(UNAVAILABLE);
+  expect(supabaseAdmin.rpc).toHaveBeenCalledTimes(1);
+  expect(deliverHarnessSupportTicket).not.toHaveBeenCalled();
+});
+
+it('does not send an old circuit ticket after the backlog revision changes', async () => {
+  const h = fixture();
+  await ensureCycleTechnicalEscalation(context(), {});
+  (deliverHarnessSupportTicket as jest.Mock).mockClear();
+  h.requirement.backlog_revision++;
+  expect(await ensureCycleTechnicalEscalation(context(), {})).toEqual(UNAVAILABLE);
+  expect(supabaseAdmin.rpc).toHaveBeenCalledTimes(1);
+  expect(deliverHarnessSupportTicket).not.toHaveBeenCalled();
+});
+
+it('compares proof semantically after jsonb object-key and array reordering', async () => {
+  const h = fixture();
+  const reorder = (value: any): any => Array.isArray(value) ? value.map(reorder).reverse()
+    : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).reverse().map(([key, entry]) => [key, reorder(entry)])) : value;
+  (supabaseAdmin.rpc as jest.Mock).mockImplementationOnce(async (_name, args) => {
+    const ticket = reorder(receipt(args));
+    h.receipts.push(ticket);
+    return { data: { decision: ticket }, error: null };
+  });
+  expect(await ensureCycleTechnicalEscalation(context(), {})).toMatchObject({ state: 'recorded' });
+  expect(await ensureCycleTechnicalEscalation(context(), {})).toMatchObject({ state: 'recorded' });
+  expect(supabaseAdmin.rpc).toHaveBeenCalledTimes(1);
+});
+
+it('fails closed when recovery state cannot be verified', async () => {
+  const h = fixture();
+  h.recoveryReads.push({ data: null, error: { message: 'database unavailable' } });
+  expect(await ensureCycleTechnicalEscalation(context(), {})).toEqual({ state: 'unavailable', reason: 'snapshot_unknown', email_sent: false });
+  expect(supabaseAdmin.rpc).not.toHaveBeenCalled();
+  expect(deliverHarnessSupportTicket).not.toHaveBeenCalled();
+});
+
+it('rechecks recovery immediately before delivery after a ticket has been persisted', async () => {
+  const h = fixture();
+  const changed = structuredClone(h.requirement);
+  changed.backlog.items.push({ id: 'independent', status: 'pending', attempts: 0, acceptance: ['Works'] });
+  h.requirementReads.push({ data: h.requirement }, { data: changed });
+  expect(await ensureCycleTechnicalEscalation(context(), {})).toMatchObject({ state: 'not_eligible', reason: 'runnable_work' });
+  expect(supabaseAdmin.rpc).toHaveBeenCalledTimes(1);
+  expect(deliverHarnessSupportTicket).not.toHaveBeenCalled();
 });

@@ -82,12 +82,14 @@ export async function fetchTwilioMedia(
 export function replaceTwilioMediaUrls(
   text: string,
   originals: Array<{ url: string }>,
-  uploaded: Array<{ url?: string }>
+  uploaded: Array<{ url?: string; originalUrl?: string }>
 ): string {
   let next = text;
   for (let i = 0; i < originals.length; i++) {
     const from = originals[i]?.url;
-    const to = uploaded[i]?.url;
+    // Failed downloads compact the result array; position is no longer identity.
+    const hasProvenance = uploaded.some(file => file.originalUrl);
+    const to = (hasProvenance ? uploaded.find(file => file.originalUrl === from) : uploaded[i])?.url;
     if (from && to && from !== to) {
       next = next.split(from).join(to);
     }

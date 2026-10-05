@@ -6,6 +6,9 @@
 import { fetchTwilioMedia, isTwilioMediaUrl } from '@/lib/services/twilio/fetchTwilioMedia';
 
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+// Symbols survive in-process object spreads but are never sent in JSON to the
+// provider or persisted in workflow checkpoints. No metadata field on the wire.
+const SOURCE_URL = Symbol('visionSourceUrl');
 
 const MIME_BY_EXT: Record<string, string> = {
   png: 'image/png',
@@ -94,10 +97,10 @@ export async function hydrateMessageImages(messages: any[]): Promise<any[]> {
           dataUrl = await downloadUrlAsDataImage(raw);
           cache.set(raw, dataUrl);
         }
-        nextContent.push(withImageUrl(part, dataUrl));
+        nextContent.push({ ...withImageUrl(part, dataUrl), [SOURCE_URL]: raw });
       } catch (error) {
-        // Leave auth-protected URLs out of the Azure payload. Azure fetches
-        // image_url itself and cannot send Twilio Basic Auth.
+        // Never send unreadable/auth-protected URLs to the vision provider;
+        // it cannot fetch Twilio images using our Basic Auth credentials.
         console.error(`❌ [vision-message-images] Failed to hydrate ${raw}:`, error);
       }
     }
@@ -116,16 +119,6 @@ export function dehydrateMessageImages(messages: any[]): any[] {
   for (const msg of messages) {
     if (!msg || !Array.isArray(msg.content)) continue;
 
-    const publicUrls: string[] = [];
-    const textPart = msg.content.find((p: any) => p?.type === 'text' && typeof p.text === 'string');
-    if (textPart?.text) {
-      const matches = textPart.text.match(/https?:\/\/[^\s)]+/g);
-      if (matches) {
-        publicUrls.push(...matches.filter((candidate: string) => !isTwilioMediaUrl(candidate)));
-      }
-    }
-
-    let httpIdx = 0;
     const nextContent: any[] = [];
     for (const part of msg.content) {
       if (part?.type !== 'image_url') {
@@ -134,12 +127,10 @@ export function dehydrateMessageImages(messages: any[]): any[] {
       }
       const raw = imagePartUrl(part);
       if (typeof raw === 'string' && raw.startsWith('data:image/')) {
-        const replacement = publicUrls[httpIdx++];
+        const replacement = part[SOURCE_URL];
         if (replacement) {
-          nextContent.push({
-            type: 'image_url',
-            image_url: { url: replacement },
-          });
+          const { [SOURCE_URL]: _source, ...cleanPart } = part;
+          nextContent.push(withImageUrl(cleanPart, replacement));
         }
         continue;
       }

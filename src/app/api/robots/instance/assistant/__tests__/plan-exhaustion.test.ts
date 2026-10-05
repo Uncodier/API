@@ -1,5 +1,6 @@
 import { jest } from '@jest/globals';
 import { loadRuntimeModule } from '@/lib/custom-automation/test-helpers/load-runtime-module';
+import { buildAssistantUserContent } from '@/lib/services/robot-instance/assistant-image-content';
 import type { AssistantContext } from '../types';
 
 type AsyncMock = (...args: any[]) => Promise<any>;
@@ -59,6 +60,7 @@ function harness() {
   const spawnSilentContinueStep = jest.fn<AsyncMock>().mockResolvedValue(true);
   const workflow = loadRuntimeModule<typeof import('../workflow')>(
     'src/app/api/robots/instance/assistant/workflow.ts', {
+      '@/lib/services/robot-instance/assistant-image-content': { buildAssistantUserContent },
       './assistant-turn': { processAssistantTurn },
       './steps': { prepareAssistantContext },
       './plan-steps': planSteps,

@@ -5,6 +5,7 @@
 
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { AgentService } from '@/lib/agentbase/adapters/AgentService';
+import type { AssistantImageAsset } from './assistant-image-content';
 
 export interface ProcessedAsset {
   id: string;
@@ -15,6 +16,8 @@ export interface ProcessedAsset {
   publicUrl?: string;
   metadata?: any;
   error?: string;
+  createdAt?: string;
+  messageSid?: string;
 }
 
 export class InstanceAssetsService {
@@ -23,7 +26,7 @@ export class InstanceAssetsService {
    */
   public static async getAssetsContext(
     instance_id: string
-  ): Promise<{ text: string; images: { url: string; fileType: string; publicUrl?: string }[] }> {
+  ): Promise<{ text: string; images: AssistantImageAsset[] }> {
     try {
       console.log(`📁 [InstanceAssetsService] Fetching assets for instance: ${instance_id}`);
       
@@ -51,7 +54,11 @@ export class InstanceAssetsService {
         .map(asset => ({
           url: asset.publicUrl || asset.base64Image!,
           fileType: asset.file_type,
-          publicUrl: asset.publicUrl
+          publicUrl: asset.publicUrl,
+          id: asset.id,
+          name: asset.name,
+          createdAt: asset.createdAt,
+          messageSid: asset.messageSid,
         }));
 
       if (!assetsContext.trim()) {
@@ -80,7 +87,7 @@ export class InstanceAssetsService {
         .from('assets')
         .select('*')
         .eq('instance_id', instance_id)
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: true }).order('id', { ascending: true });
 
       if (error) {
         console.error(`❌ [InstanceAssetsService] Database error fetching assets:`, error);
@@ -113,6 +120,8 @@ export class InstanceAssetsService {
         
         const processedAsset = await this.processAssetContent(asset);
         if (processedAsset) {
+          processedAsset.createdAt = asset.created_at;
+          processedAsset.messageSid = asset.metadata?.message_sid;
           processedAssets.push(processedAsset);
         }
       } catch (error) {
@@ -376,6 +385,9 @@ export class InstanceAssetsService {
     for (const asset of processedAssets) {
       context += `## Asset: ${asset.name}\n`;
       context += `- Type: ${asset.file_type}\n`;
+      context += `- Asset ID: ${asset.id}\n`;
+      if (asset.createdAt) context += `- Uploaded at: ${asset.createdAt}\n`;
+      if (asset.messageSid) context += `- WhatsApp message ID: ${asset.messageSid}\n`;
       
       if (asset.error) {
         context += `- Status: Error - ${asset.error}\n`;

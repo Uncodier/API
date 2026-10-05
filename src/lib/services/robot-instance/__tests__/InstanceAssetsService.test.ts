@@ -5,6 +5,12 @@ import {
   hydrateMessageImages,
 } from '../vision-message-images';
 import { AgentService } from '@/lib/agentbase/adapters/AgentService';
+import { randomBytes } from 'node:crypto';
+import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { replaceTwilioMediaUrls } from '@/lib/services/twilio/fetchTwilioMedia';
+import { sanitizeMessagesForAzureVisionImages } from '@/lib/custom-automation/azure-vision-message-sanitize';
+
+jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn() } }));
 
 jest.mock('@/lib/agentbase/adapters/AgentService', () => ({
   AgentService: {
@@ -122,7 +128,8 @@ describe('InstanceAssetsService + vision-message-images', () => {
         'https://api.twilio.com/2010-04-01/Accounts/ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Messages/MM1/Media/ME1';
       const s3Url = 'https://s3.amazonaws.com/bucket/image.jpg';
       const mockBuffer = Buffer.from('twilio-image');
-      process.env.GEAR_TWILIO_AUTH_TOKEN = 'secret-token';
+      const token = randomBytes(24).toString('hex');
+      process.env.GEAR_TWILIO_AUTH_TOKEN = token;
 
       global.fetch = jest
         .fn()
@@ -151,7 +158,7 @@ describe('InstanceAssetsService + vision-message-images', () => {
       );
       const firstHeaders = (global.fetch as jest.Mock).mock.calls[0][1].headers as Headers;
       expect(firstHeaders.get('Authorization')).toBe(
-        `Basic ${Buffer.from('ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:secret-token').toString('base64')}`
+        `Basic ${Buffer.from(`ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:${token}`).toString('base64')}`
       );
       expect(global.fetch).toHaveBeenNthCalledWith(2, s3Url);
     });
@@ -216,7 +223,7 @@ describe('InstanceAssetsService + vision-message-images', () => {
       expect(hydrated[0].content).toEqual([{ type: 'text', text: 'photo' }]);
     });
 
-    it('dehydrate prefers public URLs over Twilio media URLs', () => {
+    it('never guesses an image source from unrelated prose when provenance is unavailable', () => {
       const messages = [
         {
           role: 'user',
@@ -234,7 +241,67 @@ describe('InstanceAssetsService + vision-message-images', () => {
       ];
 
       const dehydrated = dehydrateMessageImages(messages);
-      expect(dehydrated[0].content[1].image_url.url).toBe('https://cdn.example.com/photo.jpg');
+      expect(dehydrated[0].content).toHaveLength(1);
     });
+
+    it('preserves exact image identity after an unrelated URL, failed download and image removal', async () => {
+      const urls = ['https://example.invalid/failed.png', 'https://example.invalid/a.png', 'https://example.invalid/b.png'];
+      global.fetch = jest.fn().mockImplementation(async url => ({
+        ok: url !== urls[0], status: url === urls[0] ? 401 : 200,
+        arrayBuffer: async () => Buffer.from('same-image-bytes'),
+        headers: new Headers({ 'content-type': 'image/png' }),
+      }));
+      const messages: any[] = [{ role: 'user', content: [
+        { type: 'text', text: `Visit https://example.invalid/unrelated ${urls.join(' ')}` },
+        ...urls.map(url => ({ type: 'image_url', image_url: { url, detail: 'high' } })),
+      ] }];
+      const hydrated = await hydrateMessageImages(messages);
+      expect(hydrated[0].content).toHaveLength(3);
+      expect(JSON.stringify(hydrated)).not.toContain('visionSourceUrl');
+      // The executor can remove images for its vision budget. Remaining parts
+      // keep identity even when two URLs downloaded identical bytes.
+      hydrated[0].content.splice(1, 1);
+      const dehydrated = dehydrateMessageImages(hydrated);
+      expect(dehydrated[0].content[1]).toEqual({ type: 'image_url', image_url: { url: urls[2], detail: 'high' } });
+      expect(JSON.stringify(dehydrated)).not.toContain('data:image');
+    });
+
+    it('retains the exact source after MIME normalization and object-spread transformations', async () => {
+      const source = 'https://example.invalid/photo.png';
+      global.fetch = jest.fn().mockResolvedValue({ ok: true,
+        arrayBuffer: async () => Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]),
+        headers: new Headers({ 'content-type': 'image/jpeg' }),
+      });
+      const hydrated = await hydrateMessageImages([{ role: 'user', content: [
+        { type: 'image_url', image_url: { url: source, detail: 'high' } },
+      ] }]);
+      expect(sanitizeMessagesForAzureVisionImages(hydrated)).toBe(0);
+      expect(hydrated[0].content[0].image_url.url).toMatch(/^data:image\/png;/);
+      const transformed = hydrated.map(message => ({ ...message,
+        content: message.content.map((part: any) => ({ ...part, image_url: { ...part.image_url } })),
+      }));
+      expect(dehydrateMessageImages(transformed)[0].content[0]).toEqual({
+        type: 'image_url', image_url: { url: source, detail: 'high' },
+      });
+    });
+  });
+
+  it('retains upload/message identity in both image parts and the asset inventory', async () => {
+    const query: any = {};
+    for (const method of ['select', 'eq', 'order']) query[method] = jest.fn().mockReturnValue(query);
+    query.then = (resolve: any) => Promise.resolve({ data: [{ id: 'asset-1', name: 'image', file_type: 'png',
+      file_path: 'https://example.invalid/a.png', created_at: '2026-10-01T12:00:00Z', metadata: { message_sid: 'image-message' } }], error: null }).then(resolve);
+    (supabaseAdmin.from as jest.Mock).mockReturnValue(query);
+    const context = await InstanceAssetsService.getAssetsContext('instance');
+    expect(query.order.mock.calls).toEqual([['created_at', { ascending: true }], ['id', { ascending: true }]]);
+    expect(context.images[0]).toMatchObject({ id: 'asset-1', messageSid: 'image-message', createdAt: '2026-10-01T12:00:00Z' });
+    expect(context.text).toContain('WhatsApp message ID: image-message');
+  });
+
+  it('maps partial uploads to their original media URLs rather than shifted positions', () => {
+    const originals = [{ url: 'https://example.invalid/failed' }, { url: 'https://example.invalid/success' }];
+    const uploaded = [{ originalUrl: originals[1].url, url: 'https://example.invalid/uploaded.png' }];
+    expect(replaceTwilioMediaUrls(originals.map(item => item.url).join(' '), originals, uploaded))
+      .toBe('https://example.invalid/failed https://example.invalid/uploaded.png');
   });
 });

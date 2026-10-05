@@ -9,6 +9,7 @@ import { normalizePhoneForSearch, normalizePhoneForStorage } from '@/lib/utils/p
 import { handleTwilioMediaAndCreateTask, TwilioMediaDownload } from '@/lib/services/twilio/TwilioMediaTaskService';
 import { replaceTwilioMediaUrls } from '@/lib/services/twilio/fetchTwilioMedia';
 import { fetchAudioBuffer, transcribeAudioBuffer } from '@/lib/services/ai/transcribeAudio';
+import { resolveWhatsAppReplyContext } from './reply-context';
 import {
   authenticateGearWebhook,
   finishGearWebhookClaim,
@@ -411,6 +412,7 @@ export async function POST(request: NextRequest) {
             siteId,
             userId,
             instanceId,
+            messageSid,
             messageText: messageContent,
             workflowOrigin: 'whatsapp',
             media: mediaDownloads,
@@ -434,6 +436,10 @@ export async function POST(request: NextRequest) {
       }
     }
     
+    const quotedSid = webhookData.OriginalRepliedMessageSid;
+    const replyContext = await resolveWhatsAppReplyContext(instanceId, siteId, userId, quotedSid);
+    if (replyContext) messageContent += `\n\n${replyContext}`;
+
     // 4.5. INSERTAR MENSAJE DEL USUARIO EN instance_logs ANTES DE INICIAR EL WORKFLOW
     // Esto es crucial para que el workflow.ts encuentre el historial y el contexto de qué responder.
     const userAction = await insertUserActionLog({
@@ -445,6 +451,7 @@ export async function POST(request: NextRequest) {
       details: {
         prompt_source: 'whatsapp_webhook',
         message_sid: messageSid,
+        ...(quotedSid ? { quoted_message_sid: quotedSid } : {}),
         status: 'running',
       },
     });

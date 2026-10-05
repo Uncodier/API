@@ -10,6 +10,7 @@ import { instanceProjectTool } from '@/app/api/agents/tools/instance_project/ass
 import { normalizePhoneForStorage } from '@/lib/utils/phone-normalizer';
 
 import { AIAgentExecutor, type Tool } from '@/lib/custom-automation/ai-agent-executor';
+import type { AssistantRecoveryScope } from '@/lib/services/robot-instance/assistant-recovery-schema';
 
 export async function processUnregisteredUserStep(
   phoneNumber: string,
@@ -337,16 +338,50 @@ function chunkMessage(text: string, maxLength = 1500): string[] {
   return chunks;
 }
 
+async function canSendWhatsAppResponse(siteId: string, scope?: AssistantRecoveryScope): Promise<boolean> {
+  // Only omission preserves already-queued legacy and lobby sends. A supplied but
+  // incomplete/foreign scope must fail closed, never fall back to an unscoped send.
+  if (scope === undefined) return true;
+  if (!scope || scope.siteId !== siteId ||
+      [scope.instanceId, scope.siteId, scope.userId, scope.userMessageLogId]
+        .some(value => typeof value !== 'string' || !value.trim() || value.length > 200) ||
+      (scope.generation !== undefined && (!Number.isSafeInteger(scope.generation) || scope.generation < 0))) return false;
+  try {
+    // Do not filter by user: input from another authorized member also supersedes
+    // this action. Check ownership on the latest instance/site row instead.
+    const { data, error } = await supabaseAdmin.from('instance_logs')
+      .select('id,instance_id,site_id,user_id,log_type,trusted_user_action,details')
+      .eq('instance_id', scope.instanceId).eq('site_id', scope.siteId)
+      .eq('log_type', 'user_action').eq('trusted_user_action', true)
+      .order('created_at', { ascending: false }).order('id', { ascending: false })
+      .limit(1).maybeSingle();
+    if (error || !data || data.id !== scope.userMessageLogId || data.user_id !== scope.userId ||
+        data.instance_id !== scope.instanceId || data.site_id !== scope.siteId ||
+        data.log_type !== 'user_action' || data.trusted_user_action !== true ||
+        !['running', 'completed'].includes(data.details?.status)) return false;
+    // Completion precedes delivery; assertAssistantRecoveryActive requires running
+    // and cannot be reused here. Still fence a newly claimed recovery generation.
+    const recovery = data.details?.assistant_recovery;
+    return !recovery || (!recovery.lease_token && recovery.respawnCount === (scope.generation ?? 0));
+  } catch {
+    console.warn('[GearAgent] Outbound action eligibility unavailable; reply suppressed');
+    return false;
+  }
+}
+
 export async function sendWhatsAppResponse(
   userPhone: string,
   message: string,
   siteId: string,
-  mediaUrls?: string[]
+  mediaUrls?: string[],
+  scope?: AssistantRecoveryScope
 ) {
   'use step';
+
+  if (!await canSendWhatsAppResponse(siteId, scope)) return false;
   
   let formattedMessage = formatMarkdownForWhatsApp(message);
-  let finalMediaUrls = mediaUrls || [];
+  let finalMediaUrls = [...(mediaUrls || [])];
   
   // EXTRACCIÓN DE URL PARA AUDIOS GENERADOS POR EL AGENTE
   const extractedUrlRegex = /(https?:\/\/[^\s]+?\/storage\/v1\/object\/public\/[^\s]+?\.(?:wav|mp3|ogg))/i;
@@ -380,8 +415,6 @@ export async function sendWhatsAppResponse(
   if (chunks.length === 0 && finalMediaUrls && finalMediaUrls.length > 0) {
     chunks.push('');
   }
-  
-  let allSuccess = true;
   
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
@@ -433,6 +466,7 @@ export async function sendWhatsAppResponse(
           });
         }
         
+        if (!await canSendWhatsAppResponse(siteId, scope)) return false;
         const response = await fetch(apiUrl, {
           method: 'POST',
           headers: {
@@ -445,28 +479,32 @@ export async function sendWhatsAppResponse(
         if (!response.ok) {
           const errorData = await response.json();
           console.error(`[GearAgent] Twilio API Error for chunk ${i + 1}:`, errorData);
-          console.warn(`[GearAgent] Custom Twilio setup failed for chunk ${i + 1}, falling back to platform service`);
+          return false;
         } else {
           console.log(`[GearAgent] Chunk ${i + 1} sent successfully via custom Twilio setup`);
           chunkSent = true;
         }
       } catch (error) {
         console.error(`[GearAgent] Exception sending chunk ${i + 1} via custom Twilio setup:`, error);
-        console.warn(`[GearAgent] Custom Twilio setup threw exception for chunk ${i + 1}, falling back to platform service`);
+        // Acceptance is uncertain; never send the same chunk through another provider.
+        return false;
       }
     }
 
     if (!chunkSent) {
-      // Fallback to standard platform service
+      // Use the platform only when no custom sender was configured, not after
+      // an attempted custom send with an uncertain or rejected outcome.
       console.log(`[GearAgent] Using platform WhatsAppSendService for chunk ${i + 1}`);
       try {
-        await WhatsAppSendService.sendMessage({
+        if (!await canSendWhatsAppResponse(siteId, scope)) return false;
+        const delivery = await WhatsAppSendService.sendMessage({
           phone_number: userPhone,
           message: chunk,
           site_id: siteId,
           responseWindowEnabled: true,
           media_urls: i === 0 ? finalMediaUrls : undefined // Add media only to the first chunk
         });
+        if (!delivery.success) return false;
 
         console.log(`[GearAgent] Chunk ${i + 1} sent successfully via platform WhatsAppSendService`);
         chunkSent = true;
@@ -476,7 +514,7 @@ export async function sendWhatsAppResponse(
     }
     
     if (!chunkSent) {
-      allSuccess = false;
+      return false;
     }
     
     // Small delay between chunks to ensure arrival order in WhatsApp
@@ -485,8 +523,11 @@ export async function sendWhatsAppResponse(
     }
   }
   
-  return allSuccess;
+  return true;
 }
+
+// Delivery may already have been accepted even when the worker loses the reply.
+sendWhatsAppResponse.maxRetries = 0;
 
 export async function sendWhatsAppError(
   userPhone: string,
@@ -506,3 +547,5 @@ export async function sendWhatsAppError(
     return false;
   }
 }
+
+sendWhatsAppError.maxRetries = 0;

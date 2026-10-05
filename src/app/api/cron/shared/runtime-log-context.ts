@@ -7,6 +7,8 @@ const IMPORTANT_LINE =
 function redactSecrets(value: string): string {
   return value
     .replace(/\u001b\[[0-9;]*m/g, '')
+    // Redact URL userinfo before email matching can consume only its password.
+    .replace(/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, '$1[REDACTED]@')
     .replace(
       /(["'](?:authorization|cookie|set-cookie|x-api-key|api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret)["']\s*:\s*["'])[^"']+(["'])/gi,
       '$1[REDACTED]$2',

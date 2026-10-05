@@ -35,8 +35,9 @@ export function verificationAttemptCount(
   return Number.isFinite(count) && count > 0 ? count : 0;
 }
 
-function requiredAction(failureKind: JudgeFailureKind | undefined, testsRequired = false): string {
+function requiredAction(failureKind: JudgeFailureKind | undefined, testsRequired = false, commandRequired = false): string {
   if (testsRequired) return 'Execute the structured test repair automatically in the same backlog item: inspect the existing test framework, author or repair relevant tests if necessary, run them to completion, and request fresh independent validation. No customer permission is required. Do not weaken acceptance or substitute a build for tests.';
+  if (commandRequired) return 'Use the host-bound sandbox_run_validation tool for the structured missing lint/build/typecheck command receipt. No customer permission is required. Collect the exact fresh result without edits, shell/background commands or deployment; a failing validator returns to implementation repair in the same item with the same budget. Do not substitute unrelated evidence.';
   if (failureKind === 'evidence_gap') {
     return [
       'Inspect any relevant repository file, test, route, and runtime receipt.',
@@ -126,6 +127,8 @@ export function formatJudgeRepairFeedback(
     diagnostics.length > 0
       ? JSON.stringify(diagnostics, null, 2)
       : '[]',
-    `Required next action: ${requiredAction(judge.failure_kind, judge.acceptance_diagnostics?.some(diagnostic => diagnostic.gaps.some(gap => gap.code === 'missing_test_evidence')) === true)}`,
+    `Required next action: ${requiredAction(judge.failure_kind,
+      judge.acceptance_diagnostics?.some(diagnostic => diagnostic.gaps.some(gap => gap.code === 'missing_test_evidence')) === true,
+      judge.acceptance_diagnostics?.some(diagnostic => diagnostic.gaps.some(gap => gap.code === 'missing_command_receipt' && /^(?:(?:npm|pnpm|yarn|bun) (?:run )?)?(?:lint|build|typecheck)(?::[a-z0-9_.-]+)?$/.test(gap.required))) === true)}`,
   ].join('\n').slice(0, 8_000);
 }

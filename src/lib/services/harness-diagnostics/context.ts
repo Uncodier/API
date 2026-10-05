@@ -53,7 +53,7 @@ export async function loadHarnessScope(context: HarnessDiagnosticContext) {
   const owner = requirement.metadata?.runner_instance_id;
   const origin = requirement.metadata?.assistant_origin_instance_id;
   const { data: plans, error: planError } = await supabaseAdmin.from('instance_plans')
-    .select('id,instance_id,site_id,status,title,steps,updated_at,created_at')
+    .select('id,instance_id,site_id,status,title,metadata,steps,updated_at,created_at')
     .eq('site_id', context.siteId).contains('metadata', { requirement_id: requirementId })
     .order('created_at', { ascending: false }).limit(51);
   if (planError) throw new Error('Cannot verify requirement-linked plans.');

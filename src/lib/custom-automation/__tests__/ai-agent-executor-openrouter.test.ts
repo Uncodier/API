@@ -53,6 +53,19 @@ it('normalizes model overrides, omits unsupported sampling and retains cost meta
   expect(result.steps[0].usage).toMatchObject({ cost: 0.005, cost_details: { upstream_inference_cost: 0.004 }, is_byok: false });
 });
 
+it.each(['gpt-5.6', 'openai/gpt-5.6-sol'])('migrates executor configuration and turn override %s', async model => {
+  const executor = new AIAgentExecutor({ model });
+  expect(executor.getModel()).toBe('openai/gpt-6.1-sol');
+  const create = jest.fn().mockResolvedValue({ choices: [{ message: { role: 'assistant', content: 'Done' }, finish_reason: 'stop' }] });
+  (executor as any).client.chat.completions.create = create;
+  const result = await executor.act({ model, prompt: 'Run', tools: [], temperature: 0.3, maxIterations: 1 });
+  expect(create).toHaveBeenCalledTimes(1);
+  expect(create.mock.calls[0][0].model).toBe('openai/gpt-6.1-sol');
+  expect(create.mock.calls[0][0]).not.toHaveProperty('temperature');
+  expect(result.steps[0].model).toBe('openai/gpt-6.1-sol');
+  expect(globalThis.fetch).not.toHaveBeenCalled();
+});
+
 it('replays streamed reasoning and tool results on the same model/account and counts final usage once', async () => {
   const executor = new AIAgentExecutor({ siteId: 'site-test' });
   const requests: any[] = [];

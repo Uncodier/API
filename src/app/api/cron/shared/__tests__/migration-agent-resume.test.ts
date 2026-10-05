@@ -2,6 +2,7 @@ import { loadRuntimeModule } from '@/lib/custom-automation/test-helpers/load-run
 import * as repairPolicy from '../repair-execution-policy';
 import * as repairController from '../judge-repair-controller';
 import * as testRepairPolicy from '../judge-test-repair';
+import * as commandRepairPolicy from '../judge-command-repair';
 import * as gateCache from '../gate-validation-cache';
 import * as noProgressPolicy from '../no-progress-adjudication';
 
@@ -14,23 +15,25 @@ function harness(options: {
   feedback?: boolean;
   shortcut?: 'cached' | 'materialized' | 'no-progress';
   testRepairStatus?: 'in_progress' | 'materialized';
+  commandRepair?: boolean;
 } = {}) {
   const shortcut = options.shortcut || 'cached';
   const repairRun: repairController.JudgeRepairRun | undefined =
-    shortcut === 'materialized' || options.testRepairStatus ? {
+    shortcut === 'materialized' || options.testRepairStatus || options.commandRepair ? {
       schema_version: 1, diagnostic_id: 'diagnostic', repair_run_id: 'repair',
-      status: options.testRepairStatus || 'materialized',
-      failure_kind: options.testRepairStatus ? 'evidence_gap' : 'product_defect',
+      status: options.commandRepair ? 'in_progress' : options.testRepairStatus || 'materialized',
+      failure_kind: options.testRepairStatus || options.commandRepair ? 'evidence_gap' : 'product_defect',
       contract_revision: 'contract', created_at: '2026-10-02T00:00:00Z',
       max_attempts: 5, attempt_count: 4, action_receipts: [],
-      actions: [{ action_id: 'action', kind: options.testRepairStatus ? 'repair_tests' : 'repair_implementation',
+      actions: [{ action_id: 'action', kind: options.commandRepair ? 'collect_evidence' : options.testRepairStatus ? 'repair_tests' : 'repair_implementation',
+        ...(options.commandRepair ? { gap_code: 'missing_command_receipt' as const, command: 'npm run lint', expected_receipt: 'command_execution' } : {}),
         ...(options.testRepairStatus ? { gap_code: 'missing_test_evidence' as const } : {}),
         instruction: 'Preserve acceptance and authorization while repairing', verification: 'Run independent tests' }],
     } : undefined;
   const step = {
     id: 'step', order: 1, title: 'Implement', instructions: 'Implement safely',
     status: 'in_progress', infrastructure_generation: 7,
-    error_message: options.feedback === false ? undefined : feedback,
+    error_message: options.commandRepair ? 'Failure kind: evidence_gap' : options.feedback === false ? undefined : feedback,
     metadata: {
       backlog_item_id: 'item', ...(repairRun ? { repair_run: repairRun } : {}),
       ...(shortcut === 'no-progress' ? {
@@ -59,6 +62,7 @@ function harness(options: {
       './step-iteration-signals': {}, './step-action-guard': {},
       '@/lib/services/sandbox-gone-error': {}, '@/lib/services/instance-plan-step-contract': {},
       '@/lib/services/tool-operation-result': {}, './judge-test-repair': testRepairPolicy,
+      './judge-command-repair': commandRepairPolicy,
       '@/app/api/agents/tools/instance_history/assistantProtocol': {},
     });
   const state = loadRuntimeModule<typeof import('../single-turn-step-state')>(
@@ -123,6 +127,8 @@ function harness(options: {
       },
       './repair-execution-policy': repairPolicy, './judge-test-repair': testRepairPolicy,
       './judge-test-tool': { createJudgeTestTool: () => ({ name: 'sandbox_run_tests', execute: jest.fn() }) },
+      './judge-command-repair': commandRepairPolicy,
+      './judge-command-tool': { createJudgeCommandTool: () => ({ name: 'sandbox_run_validation', execute: jest.fn() }) },
       '@/lib/services/apps-platform/tenant-capabilities-service': {},
       './step-action-guard': { loadStepActionObservations: async () => [] },
       './step-action-observation': { formatActionObservationFeedback: () => '' },
@@ -139,6 +145,19 @@ function harness(options: {
 describe('pending migration feedback resumes the implementation agent', () => {
   beforeEach(() => { jest.spyOn(console, 'log').mockImplementation(() => {}); });
   afterEach(() => { jest.restoreAllMocks(); });
+
+  it('dispatches an executable lint evidence action rather than repeating a no-progress gate', async () => {
+    const h = harness({ commandRepair: true, shortcut: 'no-progress' });
+    await expect(h.run()).resolves.toMatchObject({ ok: true });
+    expect(h.executeAssistantStep).toHaveBeenCalledTimes(1);
+    expect(h.runGateOnlyNoProgressAdjudication).not.toHaveBeenCalled();
+    expect(h.runSingleTurnGate).not.toHaveBeenCalled();
+    const names = h.executeAssistantStep.mock.calls[0][2].custom_tools.map((tool: any) => tool.name);
+    expect(names).toEqual(['sandbox_read_file', 'instance_plan', 'sandbox_run_validation']);
+    expect(names).not.toContain('sandbox_db_migrate');
+    expect(names).not.toContain('sandbox_run_command');
+    expect(h.step.metadata.repair_run).toMatchObject({ repair_run_id: 'repair', attempt_count: 4, max_attempts: 5 });
+  });
 
   it('calls the assistant despite matching cached build/test evidence when implementation feedback is pending', async () => {
     const h = harness();

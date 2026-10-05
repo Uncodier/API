@@ -19,6 +19,12 @@ its dedicated API. Gateway, model vendor and Azure deployment names are distinct
 | Speech voice | `AZURE_TTS_VOICE`, default `alloy` (multilingual Azure OpenAI voice) |
 | Transcription | Azure direct: required `AZURE_OPENAI_TRANSCRIPTION_DEPLOYMENT` (existing deployment: `gpt-transcribe`) |
 
+The shared model resolver migrates `gpt-5.6` and `gpt-5.6-sol` (including
+`openai/`-qualified IDs) to `openai/gpt-6.1-sol` before inference. This applies
+to explicit chat requests, persisted agent/workflow model selections and stale
+`OPENROUTER_CHAT_MODEL` values. OpenRouter `:variant` suffixes are preserved;
+other model IDs and vendors are unchanged. No database records are rewritten.
+
 Historical OpenRouter image check on 2026-10-03: one `POST /images` for Sunburst, 1024x1024,
 low quality, pinned to Azure, returned HTTP 404 in 588 ms. OpenRouter explicitly
 reported that only `openai` serves the selected model and `provider.only=["azure"]`
@@ -63,9 +69,10 @@ different embedding model as an automatic fallback.
 2. Remove stale `AI_PROVIDER` and `AI_MODEL` settings. The migrated
    agent executor deliberately ignores legacy provider/model environment defaults.
    Use `OPENROUTER_CHAT_MODEL` for chat and `AZURE_OPENAI_IMAGE_DEPLOYMENT` for
-   images. Existing persisted model choices remain
-   explicit choices; review them before rollout. Private Azure deployment aliases
-   need mapping to real OpenRouter model IDs, not just a vendor prefix; the agent
+   images. Existing persisted model choices remain explicit choices, except for
+   the GPT-5.6 chat IDs migrated above; review other selections before rollout.
+   Private Azure deployment aliases need mapping to real OpenRouter model IDs,
+   not just a vendor prefix; the agent
    executor rejects explicit Azure endpoint/deployment configuration.
 3. Optionally set `OPENROUTER_APP_URL` and `OPENROUTER_APP_NAME` for attribution.
 4. For speech, configure the existing dedicated `AZURE_TTS_ENDPOINT` and

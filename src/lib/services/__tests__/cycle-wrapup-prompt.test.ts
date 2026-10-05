@@ -129,7 +129,8 @@ describe('cycle-wrapup-prompt', () => {
       expect(prompt).toContain('do NOT ask the customer for permission, feedback, or another iteration');
       expect(prompt).toContain('verified product impact and the safe paused state in simple terms');
       expect(prompt).toContain('Do NOT claim that review is queued, assigned, or active');
-      expect(prompt).toContain('or promise automatic continuation, unless explicitly evidenced');
+      expect(prompt).toContain('or promise automatic continuation.');
+      expect(prompt).toContain('A technical hold alone does not establish support eligibility or a human handoff');
       expect(prompt).toContain('Successful wrap-up only reports the hold; it does not resume work');
       expect(prompt).not.toContain('USER FEEDBACK REQUIRED');
       expect(prompt).not.toContain('VERDICT: Executable work remains');
@@ -255,6 +256,22 @@ describe('cycle-wrapup-prompt', () => {
     expect(shouldRunCycleWrapUp({ hasDigest: false, userMessageCount: 0 })).toBe(false);
     expect(shouldRunCycleWrapUp({ hasDigest: true, userMessageCount: 0 })).toBe(true);
     expect(shouldRunCycleWrapUp({ hasDigest: false, userMessageCount: 2 })).toBe(true);
+  });
+
+  it.each(['not_exhausted', 'active_recovery'])('keeps holds safe without inventing a support handoff for %s', reason => {
+    const prompt = buildCycleWrapUpSystemPrompt({
+      title: 'Update', requirementId: 'req', instructions: '', historyPromptText: '',
+      historyMode: 'empty', digestFiles: [], planCompleted: false,
+      internalReviewRequired: true,
+      technicalSupport: { state: 'not_eligible', reason, email_sent: false },
+    });
+    expect(prompt).toContain("Keep stage='blocked'");
+    expect(prompt).toContain('no support ticket was recorded by this decision');
+    expect(prompt).toContain('no human review is assigned or queued');
+    expect(prompt).toContain('await the backend policy decision for actual support');
+    expect(prompt).toContain('Neither result releases a safety hold, resets budgets, or authorizes more attempts');
+    expect(prompt).not.toContain('"ticket_id"');
+    expect(prompt).not.toContain('USER FEEDBACK REQUIRED');
   });
 
   it('does not let historical review items block runnable work', () => {

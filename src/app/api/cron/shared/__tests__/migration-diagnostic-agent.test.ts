@@ -116,6 +116,10 @@ describe('independent read-only migration diagnostic agent', () => {
     expect(options.system_prompt).toMatch(/No permission question for routine repair/);
     expect(options.system_prompt).toMatch(/not irreparable/);
     expect(options.system_prompt).not.toContain('Old implementation conversation');
+    expect(options.system_prompt).toContain('Harness decisions are limited to approve_backlog and adapt_backlog');
+    expect(options.system_prompt).toContain('Agents cannot request, create or send support tickets');
+    expect(options.system_prompt).toContain('Do not claim an applied decision from a rejected tool response');
+    expect(options.system_prompt).not.toMatch(/escalate_support|approach\/support receipts|may record a technical support ticket/);
   });
 
   it('exposes only a restricted reader and diagnosis submission, never repair/apply/status tools', async () => {

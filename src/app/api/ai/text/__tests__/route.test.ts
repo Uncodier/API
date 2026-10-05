@@ -49,6 +49,17 @@ describe('OpenRouter text route', () => {
     expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({ model: 'custom/persisted-id', temperature: 0.2 }));
   });
 
+  it.each(['gpt-5.6', 'openai/gpt-5.6-sol'])('migrates explicit text request model %s', async model => {
+    mockCreate.mockResolvedValueOnce({ choices: [] });
+    const response = await POST(request({ model, temperature: 0.2, topP: 0.5 }));
+    expect(response.status).toBe(200);
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    expect(mockCreate.mock.calls[0][0].model).toBe('openai/gpt-6.1-sol');
+    expect(mockCreate.mock.calls[0][0]).not.toHaveProperty('temperature');
+    expect(mockCreate.mock.calls[0][0]).not.toHaveProperty('top_p');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it('never falls back when OpenRouter fails and does not leak error credentials', async () => {
     const credential = randomBytes(24).toString('hex');
     process.env.AZURE_OPENAI_API_KEY = credential;

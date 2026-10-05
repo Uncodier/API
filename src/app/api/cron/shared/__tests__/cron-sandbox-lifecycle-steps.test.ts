@@ -34,7 +34,7 @@ const { checkBackgroundCommandStep, createSandboxStep, stopSandboxStep, assertCr
       './cron-run-lock': { releaseRunLock: jest.fn(), extendRunLock: jest.fn(), CRON_RUN_LOCK_TTL_MS: 60_000 },
       './cron-execution-ownership': { ...ownershipModule, assertCronExecutionOwnership: mockAssertOwner },
       './runtime-log-context': { sanitizeRuntimeLog },
-      '@/lib/services/cron-audit-log': { CronInfraEvent: { STEP_STATUS: 'step_status' }, logCronInfrastructureEvent: mockLogEvent },
+      '@/lib/services/cron-audit-log': { CronInfraEvent: { STEP_STATUS: 'step_status', SANDBOX_STOP: 'sandbox_stop' }, logCronInfrastructureEvent: mockLogEvent },
       '@/app/api/agents/tools/sandbox/sandbox-test-receipt': {
         captureSandboxTestFingerprint: mockCaptureFingerprint,
         isSandboxTestCommand: (command: string) => command === 'npm test',
@@ -149,4 +149,59 @@ describe('durable lifecycle execution fencing', () => {
       expect(mockAssertOwner).toHaveBeenCalledTimes(1);
     },
   );
+});
+
+describe('sandbox shutdown proof', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockAssertOwner.mockResolvedValue(undefined);
+    mockLogEvent.mockResolvedValue(undefined);
+    jest.spyOn(console, 'log').mockImplementation(() => {});
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    jest.useFakeTimers();
+  });
+  afterEach(() => { jest.useRealTimers(); jest.restoreAllMocks(); });
+
+  it('returns verified shutdown only after the stop call succeeds', async () => {
+    const stop = jest.fn().mockResolvedValue(undefined);
+    mockGetSandboxHandle.mockResolvedValue({ stop });
+    await expect(stopSandboxStep('sandbox')).resolves.toEqual({ stopped: true });
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(mockLogEvent).toHaveBeenCalledWith(undefined, expect.objectContaining({ event: 'sandbox_stop' }));
+  });
+
+  it.each([404, 410])('recognizes definitive sandbox absence %s without claiming a retry', async status => {
+    mockGetSandboxHandle.mockRejectedValue({ status, message: 'Sandbox absent' });
+    await expect(stopSandboxStep('sandbox')).resolves.toEqual({ stopped: true });
+    expect(mockGetSandboxHandle).toHaveBeenCalledTimes(1);
+    expect(mockLogEvent).toHaveBeenCalledWith(undefined, expect.objectContaining({ message: 'Sandbox already absent (sandbox)' }));
+  });
+
+  it('returns false after exhausted failures and retains zombie logging', async () => {
+    const stop = jest.fn().mockRejectedValue(new Error('Transport unavailable'));
+    mockGetSandboxHandle.mockResolvedValue({ stop });
+    const result = stopSandboxStep('sandbox');
+    await jest.runAllTimersAsync();
+    await expect(result).resolves.toEqual({ stopped: false });
+    expect(stop).toHaveBeenCalledTimes(3);
+    expect(mockLogEvent).toHaveBeenCalledWith(undefined, expect.objectContaining({ level: 'warn', message: expect.stringContaining('ZOMBIE ALERT') }));
+  });
+
+  it('returns true when a bounded stop retry succeeds', async () => {
+    const stop = jest.fn().mockRejectedValueOnce(new Error('Transport unavailable')).mockResolvedValue(undefined);
+    mockGetSandboxHandle.mockResolvedValue({ stop });
+    const result = stopSandboxStep('sandbox');
+    await jest.runAllTimersAsync();
+    await expect(result).resolves.toEqual({ stopped: true });
+    expect(stop).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not treat a missing stop endpoint as proof that the located sandbox is absent', async () => {
+    const stop = jest.fn().mockRejectedValue({ status: 404, message: 'Endpoint unavailable' });
+    mockGetSandboxHandle.mockResolvedValue({ stop });
+    const result = stopSandboxStep('sandbox');
+    await jest.runAllTimersAsync();
+    await expect(result).resolves.toEqual({ stopped: false });
+    expect(stop).toHaveBeenCalledTimes(3);
+  });
 });

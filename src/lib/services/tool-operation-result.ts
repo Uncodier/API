@@ -174,5 +174,17 @@ export function hasExpectedToolReceipt(
           value?.step_id === receipt.step_id;
       });
   }
+  if (expectedReceipt === 'command_execution') {
+    return typeof receipt.requirement_id === 'string' && !!receipt.requirement_id &&
+      typeof receipt.item_id === 'string' && !!receipt.item_id &&
+      typeof receipt.step_id === 'string' && !!receipt.step_id &&
+      typeof receipt.workspace_fingerprint === 'string' && !!receipt.workspace_fingerprint &&
+      Array.isArray(receipt.commands) && receipt.commands.length === 1 && receipt.commands.every((command: unknown) => {
+        const value = parseRecord(command);
+        return typeof value?.command === 'string' && !!value.command && value.exit_code === 0 &&
+          value.ran_after_changes === true && value.step_id === receipt.step_id &&
+          value.workspace_fingerprint === receipt.workspace_fingerprint;
+      });
+  }
   return true;
 }

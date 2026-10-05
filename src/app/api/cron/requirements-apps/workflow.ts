@@ -1214,9 +1214,10 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
         }
         hasRunnableBacklog = hasRunnableBacklogWork(finalItems, feedbackAttemptLimits);
         // Quarantine is item-scoped: do not block independent runnable work.
-        if (hasRunnableBacklog) {
+        if (hasRunnableBacklog && recoveryDisposition !== 'internal_review') {
           wrapUpAttempted = true;
           wrapUpRequiresUserFeedback = false;
+          recoveryDisposition = undefined;
         }
       }
 
@@ -1490,7 +1491,10 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       finalBacklogItems,
       feedbackAttemptLimits,
     );
-    if (postFinallyBuildError) {
+    if (recoveryDisposition === 'internal_review') {
+      // Historical migration/security holds are independent of item-local work.
+      wrapUpRequiresUserFeedback = false;
+    } else if (postFinallyBuildError) {
       wrapUpRequiresUserFeedback = true;
       recoveryDisposition = 'delivery_failure';
       wrapUpReason = postFinallyBuildError;
@@ -1515,12 +1519,14 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
         recoveryDisposition = 'internal_review';
         wrapUpRequiresUserFeedback = false;
         wrapUpReason ||= 'Backlog verification or repair requires technical review; no independent work remains runnable.';
-      } else if (stepsPhase?.anyStepFailed && !hasRunnableBacklog) {
+      } else if (stepsPhase?.anyStepFailed && !hasRunnableBacklog && pendingPlanSteps === 0) {
         wrapUpRequiresUserFeedback = false;
         recoveryDisposition = 'product_failure';
         wrapUpReason = `${wrapUpReason ? `${wrapUpReason} ` : ''}A confirmed product failure exhausted the current item and no independent backlog work remains runnable.`;
       } else if (stepsPhase?.anyStepFailed) {
-        wrapUpReason = `${wrapUpReason ? `${wrapUpReason} ` : ''}The failed item was isolated; independent backlog work remains runnable and will continue automatically.`;
+        recoveryDisposition = undefined;
+        wrapUpRequiresUserFeedback = false;
+        wrapUpReason = 'The failed item remains isolated; independent plan or backlog work remains runnable. This does not release the failed item or authorize extra attempts.';
       }
     }
 
@@ -1704,11 +1710,13 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       }
     }
     
+    let sandboxStopped = false;
     if (sandboxId && executionIsCurrent) {
       try {
-        await stopSandboxStep(sandboxId, cronAudit, {
+        const stopped = await stopSandboxStep(sandboxId, cronAudit, {
           requirementId: reqId, runId: cronLockRunId, executionGeneration, allowTerminal: true,
         });
+        sandboxStopped = stopped?.stopped === true;
       } catch (e: unknown) {
         console.warn(
           '[CronAppsWorkflow] stopSandboxStep threw in finally:',
@@ -1878,6 +1886,15 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
             });
           } else if (scopedCircuit.requirementBlocked) {
             console.warn(`[CronAppsWorkflow] ${message}`);
+            if (!sandboxId || sandboxStopped) {
+              const { emitCycleTechnicalEscalationStep } = await import('../shared/cycle-wrapup-step');
+              await emitCycleTechnicalEscalationStep({ siteId: site_id, instanceId, requirementId: reqId,
+                runId: cronLockRunId, executionGeneration, reason: message,
+                requirementBlocked: true, sandboxStopped,
+                ...(sandboxStopped ? { settle: { planId: stillActivePlan.id, stepId: stillActiveStep.id,
+                  expectedGeneration: Number(stillActiveStep.infrastructure_generation || 0) } } : {}),
+              });
+            }
           }
         }
       } else {
@@ -1893,7 +1910,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       const message =
         `Infrastructure persistence failed for ${accounting.infrastructure_failure_cycles} consecutive retry attempts without a successful remediation handoff. Automatic execution is blocked pending operator intervention.`;
       console.warn(`[CronAppsWorkflow] ${message}`);
-      await blockRequirementForCronInfrastructureCyclesStep({
+      const requirementBlocked = await blockRequirementForCronInfrastructureCyclesStep({
         requirementId: reqId,
         siteId: site_id,
         instanceId,
@@ -1902,6 +1919,19 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
         message,
         expectedExecutionGeneration: executionGeneration,
       });
+      if (requirementBlocked && (!sandboxId || sandboxStopped)) {
+        const stoppedPlan = sandboxStopped && attemptedPlanId ? await getInstancePlanByIdStep(attemptedPlanId) : null;
+        const stoppedStep = Array.isArray(stoppedPlan?.steps)
+          ? stoppedPlan.steps.find((step: any) => step.id === attemptedStepId && ['pending', 'in_progress', 'failed'].includes(step.status))
+          : undefined;
+        const { emitCycleTechnicalEscalationStep } = await import('../shared/cycle-wrapup-step');
+        await emitCycleTechnicalEscalationStep({ siteId: site_id, instanceId, requirementId: reqId,
+          runId: cronLockRunId, executionGeneration, reason: message,
+          requirementBlocked: true, sandboxStopped,
+          ...(stoppedStep ? { settle: { planId: stoppedPlan!.id, stepId: stoppedStep.id,
+            expectedGeneration: Number(stoppedStep.infrastructure_generation || 0) } } : {}),
+        });
+      }
     }
     } catch (accountingError: unknown) {
       console.warn('[CronAppsWorkflow] Cycle accounting failed', {

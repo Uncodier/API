@@ -169,6 +169,18 @@ export type ScenarioAssertionReceipt =
       actual?: string | number;
     };
 
+/** A completed non-test command, scoped to the exact validated workspace. */
+export interface CommandEvidenceSignal {
+  command: string;
+  exit_code: number;
+  output_tail: string;
+  ran_after_changes: boolean;
+  captured_at: string;
+  step_id: string;
+  workspace_fingerprint: string;
+  criterion_id?: string;
+}
+
 export interface EvidenceRecord {
   schema_version: 1;
   item_id: string;
@@ -196,6 +208,7 @@ export interface EvidenceRecord {
     step_id?: string;
     workspace_fingerprint?: string;
   }[];
+  commands?: CommandEvidenceSignal[];
   build?: { command: string; exit_code: number; duration_ms: number };
   runtime?: { route: string; http_status: number; screenshot_url?: string };
   scenarios?: { name: string; pass: boolean; duration_ms: number }[];

@@ -5,6 +5,8 @@ import { writeEvidence } from '@/lib/services/requirement-ground-truth';
 import { extractTestEvidenceFromResult } from './step-test-evidence';
 import { extractAgentProbeEvidence } from './step-agent-probe-evidence';
 import type { JudgeRepairRun } from './judge-repair-controller';
+import { extractCommandEvidenceFromResult } from './step-command-evidence';
+import { commandEvidenceIsCurrent, commandEvidenceKey } from '@/lib/services/requirement-command-evidence';
 
 interface GateTest {
   command: string;
@@ -34,11 +36,29 @@ export async function prepareSingleTurnGateEvidence(params: {
   repairRun?: JudgeRepairRun;
 }): Promise<{
   tests: GateTest[];
+  commands: NonNullable<EvidenceRecord['commands']>;
   observations: NonNullable<EvidenceRecord['observations']>;
   scenarioAssertions: NonNullable<EvidenceRecord['scenario_assertions']>;
   evidenceRunId: string;
   build?: NonNullable<EvidenceRecord['build']>;
 }> {
+  const persistedCommands = (params.backlogEvidence?.item_id === params.backlogItemId
+    ? params.backlogEvidence?.commands || [] : [])
+    .filter((command) => commandEvidenceIsCurrent(
+      command, params.stepId, params.validatedFingerprint,
+    ));
+  const currentCommands = extractCommandEvidenceFromResult({
+    result: params.result,
+    requirementId: params.requirementId,
+    itemId: params.backlogItemId,
+    stepId: params.stepId,
+    validatedFingerprint: params.validatedFingerprint,
+  });
+  const commands = Array.from(new Map(
+    [...persistedCommands, ...currentCommands].map((command) => [
+      commandEvidenceKey(command), command,
+    ]),
+  ).values());
   const persistedTests = params.validatedFingerprint
     ? (params.backlogEvidence?.tests || [])
         .filter((test) =>
@@ -105,11 +125,11 @@ export async function prepareSingleTurnGateEvidence(params: {
   // Every gate attempt gets its own identity. Reusing the rejected run made it
   // impossible to prove that a repair produced fresh evidence.
   const evidenceRunId = randomUUID();
-  const reusedEvidenceRunIds = persistedTests.length > 0 &&
+  const reusedEvidenceRunIds = (persistedTests.length > 0 || persistedCommands.length > 0) &&
     params.backlogEvidence?.evidence_run_id
       ? [params.backlogEvidence.evidence_run_id]
       : [];
-  const capturedEvidence = currentTests.length > 0 || gateTests.length > 0 ||
+  const capturedEvidence = currentCommands.length > 0 || currentTests.length > 0 || gateTests.length > 0 ||
     observations.length > 0 || agentEvidence.scenario_assertions.length > 0 ||
     !!params.gateBuild;
   const evidenceProvenance: NonNullable<EvidenceRecord['evidence_provenance']> = {
@@ -145,6 +165,7 @@ export async function prepareSingleTurnGateEvidence(params: {
     params.backlogItemId &&
     (
       tests.length > 0 ||
+      commands.length > 0 ||
       observations.length > 0 ||
       agentEvidence.scenario_assertions.length > 0 ||
       build
@@ -163,6 +184,7 @@ export async function prepareSingleTurnGateEvidence(params: {
         evidence_provenance: evidenceProvenance,
         repair_provenance: repairProvenance,
         tests,
+        commands,
         build,
         observations,
         target_resolutions: targetResolutions,
@@ -184,6 +206,7 @@ export async function prepareSingleTurnGateEvidence(params: {
 
   return {
     tests,
+    commands,
     observations,
     scenarioAssertions: agentEvidence.scenario_assertions,
     evidenceRunId,

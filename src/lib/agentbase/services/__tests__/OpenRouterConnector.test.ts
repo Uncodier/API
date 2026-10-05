@@ -50,6 +50,20 @@ it('returns raw streaming chunks and requests usage without another transport', 
   expect(create.mock.calls[0][0]).toMatchObject({ stream: true, stream_options: { include_usage: true }, user: 'site-a' });
 });
 
+it.each(['openai:gpt-5.6', 'openrouter:openai/gpt-5.6-sol'])(
+  'migrates persisted command model %s before inference', async commandModel => {
+    const options = parseAgentModel(commandModel);
+    const result = await new OpenRouterConnector().callAgent(messages, {
+      ...options, temperature: 0.2, topP: 0.5, reasoningEffort: 'minimal',
+    });
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(create.mock.calls[0][0]).toMatchObject({ model: 'openai/gpt-6.1-sol', reasoning: { effort: 'low' } });
+    expect(create.mock.calls[0][0]).not.toHaveProperty('temperature');
+    expect(create.mock.calls[0][0]).not.toHaveProperty('top_p');
+    expect(result.modelInfo).toEqual({ model: 'openai/gpt-6.1-sol', provider: 'openrouter' });
+  },
+);
+
 it.each([429, 503])('propagates %s without Portkey, Vercel, or model fallback', async status => {
   const failure = Object.assign(new Error('Provider unavailable'), { status });
   create.mockRejectedValue(failure);

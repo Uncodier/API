@@ -20,6 +20,8 @@ This is a tool surface, not another judge or a replacement execution engine.
 - `harness_source`: bounded literal search and paginated line reads of allowlisted
   host source. No customer files, shell, credentials or source writes. Revision is
   the server build SHA if configured; it does not prove database migration state.
+  Existing support, cycle and SQL source entries remain diagnostic references,
+  not callable agent capabilities or permission to request a ticket.
 - `harness_decide`: evidence-backed agent choice, with a stable request UUID and
   the exact `updated_at`/`backlog_revision` obtained by inspection:
   - `approve_backlog`: records approval of the approach, **not completion**, a
@@ -33,9 +35,12 @@ This is a tool surface, not another judge or a replacement execution engine.
     A precisely linked owner/origin plan may be updated atomically only when its
     status and every step are still pending. Active/mixed/manual-paused plans are
     not overwritten. Cancelled/blocked plans are not reopened by adaptation.
-  - `escalate_support`: persists a technical ticket with impact, alternatives tried,
-    scoped evidence IDs and a specific requested intervention. Delivery is reported
-    separately; no generic customer approval is requested.
+
+These are the only agent decisions. Agents cannot request, create or send support
+tickets. Runtime parsing rejects legacy escalation requests before database access,
+including direct/cast calls with no evidence. When neither approach decision is
+supported, report observed facts, unknowns and the next diagnostic check; do not
+bypass acceptance, security or execution guards.
 
 ## Integration and safety
 
@@ -100,8 +105,16 @@ not permission to rewrite applied history or release a hold.
 
 Tools are bound by server closures to the site, instance and requirement. There
 are no model-selectable tenant/instance overrides. Only the owner/origin can
-author implementation; an explicitly linked instance can report support. Database
+author implementation; an explicitly linked instance can read diagnostics. Database
 RPC checks repeat scope, current state, authority and evidence validation.
+
+Requirement plan creation and updates cannot author host-owned step metadata:
+`repair_run`, `no_progress_adjudication`, `cron_cycle_id`, or
+`cron_execution_generation`. Step `retry_count` is also host-owned. Updates may
+echo exact persisted values; omitted host fields and unrelated metadata remain
+intact. New steps must omit these fields. The trusted runner update path remains
+separate. Model backlog upserts whitelist authored fields and do not forward
+`attempts` or `tool_failures`, including from cast/direct inputs.
 
 Direct diagnostic reads remain exposed in restricted evidence collection;
 `harness_decide` does not. The migration diagnostic has 12 model turns, at most
@@ -115,7 +128,12 @@ a worker. Rejected decisions are not instructions to bypass guards. A new plan
 or claimed capability is not evidence of recovery. These tools make decisions
 inspectable; they do not repair every existing execution-state deadlock.
 
-## Technical support delivery
+## Host-only technical support delivery
+
+Host cycle escalation remains separate and unchanged. It is not an agent tool or
+a model-selectable decision. The retained support delivery and database code serve
+that host path and historical receipts; their presence in source references does
+not authorize agents to request tickets.
 
 Configure `HARNESS_SUPPORT_EMAIL` to the platform operator's inbox. Existing
 `UNCODIE_SUPPORT_EMAIL` or `SUPPORT_EMAIL` is used as fallback. No address is
@@ -128,8 +146,8 @@ automatically resent. Failed/unconfigured delivery must not be described as sent
 Missing support configuration still allows the ticket to be recorded.
 Missing SendGrid configuration is detected before claiming delivery, allowing
 the same ticket to be sent after configuration without retrying uncertain sends.
-Another request ID cannot create a second support ticket for the same item and
-observed requirement state; reuse the existing receipt in `recent_decisions`.
+Historical ticket receipts remain visible in `recent_decisions`; observing one
+does not authorize a new ticket, delivery attempt or resumed execution.
 
 ## Deployment
 
@@ -147,7 +165,8 @@ not reopen the Crowdrage instance.
 ## Validation
 
 `npm run test:harness` includes diagnostic scope/visibility, cross-instance events,
-source traversal/redaction/limits, direct-tool routing, support delivery claims,
+source traversal/redaction/limits, direct-tool routing, agent escalation rejection,
+host support delivery claims,
 model diagnostic integration, and PGlite permission/CAS/idempotency/contract tests.
 PGlite tests do not prove production multi-connection concurrency or email delivery.
 No live model inference, customer SQL application or support email is used by tests.

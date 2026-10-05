@@ -2,6 +2,7 @@ import type { UiMediaOutputType } from './ui-media-contract';
 import type { WorkflowToolExecutionTracker } from '@/lib/services/workflow-robot/execution-tracker';
 import type { AssistantSkillSelection } from './skill-selection';
 import type { AssistantRecoveryScope } from '@/lib/services/robot-instance/assistant-recovery';
+import type { AssistantImageAsset } from '@/lib/services/robot-instance/assistant-image-content';
 
 export interface AssistantContext {
   instance: any;
@@ -27,7 +28,7 @@ export interface AssistantContext {
     cycle_baseline_at?: string;
   };
   initialMessage: string;
-  imageAssets: { url: string; fileType: string; publicUrl?: string }[];
+  imageAssets: AssistantImageAsset[];
   hasLinkedRequirement: boolean;
   instanceNodeId?: string;
   expectedResultsAmount: number;

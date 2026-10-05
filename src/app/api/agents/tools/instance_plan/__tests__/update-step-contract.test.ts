@@ -44,6 +44,7 @@ function existingPlan(steps: any[] = []) {
 describe('updateInstancePlanCore step contracts', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    single.mockReset();
     (requirementStepExecutionBlock as jest.Mock).mockResolvedValue(null);
     resolveBacklogContextForInstance.mockResolvedValue({
       requirementId: REQUIREMENT_ID,
@@ -83,6 +84,50 @@ describe('updateInstancePlanCore step contracts', () => {
     await expect(updateInstancePlanCore({ plan_id: PLAN_ID, site_id: SITE_ID, status: 'in_progress' }))
       .rejects.toThrow('0016.sql requires technical review');
     expect(builder.update).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { metadata: { repair_run: { attempt_count: 3, status: 'exhausted' } } },
+    { metadata: { no_progress_adjudication: { state: 'consumed' } } },
+    { metadata: { cron_cycle_id: 'forged-cycle' } },
+    { metadata: { cron_execution_generation: 99 } },
+    { retry_count: 0 },
+    { retry_count: 99 },
+  ])('rejects host execution state before writes, using stored requirement scope: %j', async patch => {
+    single.mockResolvedValueOnce({ data: existingPlan([{ id: 'step-1', retry_count: 3 }]), error: null });
+    await expect(updateInstancePlanCore({ plan_id: PLAN_ID, site_id: SITE_ID,
+      steps: [{ id: 'step-1', ...patch }], trustedRunner: true,
+    } as never)).rejects.toThrow('runner-owned');
+    expect(builder.update).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('preserves host and other metadata while accepting exact echoes=%s', async echo => {
+    const metadata = { backlog_item_id: 'item-1', repair_run: { attempt_count: 3, status: 'exhausted' },
+      no_progress_adjudication: { state: 'consumed' }, cron_cycle_id: 'cycle-1', cron_execution_generation: 7,
+      custom: { preserved: true } };
+    const step = { id: 'step-1', order: 1, title: 'Implement feature', instructions: 'Implement it',
+      status: 'in_progress', retry_count: 3, metadata };
+    single.mockResolvedValueOnce({ data: existingPlan([step]), error: null })
+      .mockResolvedValueOnce({ data: { id: PLAN_ID }, error: null });
+    await updateInstancePlanCore({ plan_id: PLAN_ID, site_id: SITE_ID,
+      steps: [{ id: 'step-1', ...(echo ? { retry_count: 3 } : {}),
+        metadata: { ...(echo ? JSON.parse(JSON.stringify(metadata)) : {}), diagnostic_note: 'Keep acceptance unchanged' } }],
+    });
+    expect(builder.update).toHaveBeenCalledWith(expect.objectContaining({ steps: [expect.objectContaining({
+      retry_count: 3, metadata: { ...metadata, diagnostic_note: 'Keep acceptance unchanged' },
+    })] }));
+    expect(step.metadata).toEqual(metadata);
+  });
+
+  it('retains the trusted runner update path for host execution state', async () => {
+    single.mockResolvedValueOnce({ data: existingPlan([{ id: 'step-1', title: 'Implement feature', status: 'in_progress', retry_count: 1 }]), error: null })
+      .mockResolvedValueOnce({ data: { id: PLAN_ID }, error: null });
+    const metadata = { repair_run: { status: 'exhausted', attempt_count: 3 }, cron_execution_generation: 7 };
+    await updateInstancePlanCore({ plan_id: PLAN_ID, site_id: SITE_ID, steps: [{ id: 'step-1', retry_count: 3, metadata }] },
+      { trustedRunner: true });
+    expect(builder.update).toHaveBeenCalledWith(expect.objectContaining({ steps: [expect.objectContaining({
+      retry_count: 3, metadata: expect.objectContaining(metadata),
+    })] }));
   });
 
   it('normalizes an appended implementation step before persistence', async () => {

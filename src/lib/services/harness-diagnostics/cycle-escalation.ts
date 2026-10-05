@@ -3,16 +3,18 @@ import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { loadHarnessScope, sanitizeHarnessData, type HarnessDiagnosticContext } from './context';
 import { deliverHarnessSupportTicket } from './support';
+import { cycleCircuitBreakerSchema, loadCycleCircuitBreaker, type CycleCircuitBreaker } from './cycle-circuit-breaker';
 
 export interface CycleTechnicalEscalationResult {
-  state: 'recorded' | 'unavailable';
+  state: 'recorded' | 'unavailable' | 'not_eligible';
+  reason?: string;
   ticket_id?: string;
   email_sent: boolean;
   delivery_state?: string;
 }
 
 const UNAVAILABLE = { state: 'unavailable', email_sent: false } as const;
-const DEFAULT_REASON = 'Host routed unresolved verification to internal technical review.';
+const DEFAULT_REASON = 'Automatic recovery exhausted and no independent work or pending recovery remains; the host circuit breaker stopped this cycle.';
 const REQUESTED_ACTION = 'inspect gate/test fixtures and request/response contract; repair under existing guards; reconcile exhausted execution before fresh validation';
 const TICKET_COLUMNS = 'id,site_id,requirement_id,instance_id,request_id,decision,item_id,status,reason,payload,contract_snapshot';
 const ticketSchema = z.object({
@@ -49,6 +51,9 @@ function scopedTicket(value: unknown, context: HarnessDiagnosticContext, require
   const parsed = ticketSchema.safeParse(value);
   if (!parsed.success || parsed.data.site_id !== context.siteId || parsed.data.requirement_id !== requirementId ||
     parsed.data.instance_id !== context.instanceId) return null;
+  // Historical/manual tickets are not circuit-break receipts and cannot be adopted as one.
+  const breaker = cycleCircuitBreakerSchema.safeParse(parsed.data.payload.circuit_breaker);
+  if (!breaker.success) return null;
   return parsed.data;
 }
 
@@ -71,6 +76,18 @@ function timestampMicros(value: string): bigint | null {
   return Number.isFinite(seconds) ? BigInt(seconds) * BigInt(1000) + BigInt((match[2] || '').padEnd(6, '0')) : null;
 }
 
+function proofFingerprint({ requirement_updated_at: _, ...proof }: CycleCircuitBreaker): string {
+  // Report-only timestamps can move. Semantic work/plan/recovery changes cannot.
+  // PostgreSQL jsonb reorders object keys; row/receipt order is not authority either.
+  const canonical = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(canonical).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+    if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value)
+      .sort(([a], [b]) => a.localeCompare(b)).map(([key, child]) => [key, canonical(child)]));
+    return value;
+  };
+  return JSON.stringify(canonical(proof));
+}
+
 async function snapshotTicket(context: HarnessDiagnosticContext, requirementId: string, revision: number, updatedAt: string): Promise<Ticket | null> {
   // The SQL snapshot guard spans callers. Never adopt another instance's receipt.
   const { data, error } = await supabaseAdmin.from('requirement_harness_decisions').select(TICKET_COLUMNS)
@@ -87,8 +104,8 @@ async function snapshotTicket(context: HarnessDiagnosticContext, requirementId: 
 }
 
 /**
- * Host-only internal review, not a model/tool decision or execution admission.
- * The caller selects technical failures and supplies the original ownership closure.
+ * Host-only circuit break, not a model/tool decision or execution admission.
+ * A generic technical hold/reason is insufficient: fresh canonical state must prove exhaustion.
  * Only the diagnostic RPC and existing delivery service may write; no repair is executed.
  */
 export async function ensureCycleTechnicalEscalation(
@@ -101,10 +118,15 @@ export async function ensureCycleTechnicalEscalation(
   let generation: number;
   let requestId: string;
   let ticket: Ticket | null;
+  let proof: CycleCircuitBreaker;
   try {
-    ({ requirement } = await loadHarnessScope(context));
+    const scope = await loadHarnessScope(context);
+    ({ requirement } = scope);
     const currentGeneration = executionGeneration(requirement.metadata);
     if (requirement.status !== 'blocked' || currentGeneration === null) return { ...UNAVAILABLE };
+    const evaluation = await loadCycleCircuitBreaker(scope);
+    if (evaluation.state !== 'eligible') return { state: evaluation.state, reason: evaluation.reason, email_sent: false };
+    proof = evaluation.proof;
     generation = currentGeneration;
     requestId = cycleRequestId(context, requirement.id, generation);
     // Replay precedes payload construction: later host reasons must never rewrite a receipt.
@@ -120,17 +142,13 @@ export async function ensureCycleTechnicalEscalation(
     const hostReason = (params.reason || DEFAULT_REASON).replace(/(https?:\/\/)[^\s/@]+:[^\s/@]+@/gi, '$1[REDACTED]@');
     const reason = (sanitizeHarnessData(hostReason) as string)
       .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').trim().slice(0, 2000) || DEFAULT_REASON;
-    // Host prose may contain raw failure excerpts. Only canonical quarantine attests exhaustion.
-    const exhausted = Array.isArray(requirement.backlog?.items) && requirement.backlog.items.some((item: any) =>
-      item?.review_quarantine?.active === true && item.review_quarantine.kind === 'verification_exhausted');
     const payload = {
+      circuit_breaker: proof,
       evidence_log_ids: [],
       verification: 'Inspect canonical action receipts and reproduce the failed gate under existing guards before fresh validation; this escalation verifies no repair or acceptance.',
       impact: 'Requirement execution is blocked pending internal technical review. No customer product approval is requested.',
       requested_action: REQUESTED_ACTION,
-      attempted_alternatives: [exhausted
-        ? 'Automatic execution stopped at its bounded recovery limit; inspect canonical action receipts before attributing individual repairs.'
-        : 'Host routed unresolved verification to internal technical review; no extra repair was executed by this escalation.'],
+      attempted_alternatives: ['Automatic execution stopped at its bounded recovery limit; inspect canonical action receipts before attributing individual repairs.'],
     };
     await params.assertCurrent?.();
     try {
@@ -161,6 +179,11 @@ export async function ensureCycleTechnicalEscalation(
     const current = await loadHarnessScope(context);
     if (current.requirement.id !== requirement.id || current.requirement.status !== 'blocked' ||
       executionGeneration(current.requirement.metadata) !== generation) return { ...UNAVAILABLE };
+    const evaluation = await loadCycleCircuitBreaker(current);
+    if (evaluation.state !== 'eligible') return { state: evaluation.state, reason: evaluation.reason, email_sent: false };
+    // A report timestamp may change, but changed plans/recovery/exhaustion cannot reuse a stale decision.
+    if (proofFingerprint(evaluation.proof) !== proofFingerprint(proof) ||
+        proofFingerprint(ticket.payload.circuit_breaker as CycleCircuitBreaker) !== proofFingerprint(proof)) return { ...UNAVAILABLE };
   } catch {
     return { ...UNAVAILABLE };
   }

@@ -1,7 +1,17 @@
 import { describe, expect, it } from '@jest/globals';
+import { randomBytes } from 'node:crypto';
 import { sanitizeRuntimeLog } from '../runtime-log-context';
 
 describe('sanitizeRuntimeLog', () => {
+  it('removes all authenticated URL sensitive values before truncation', () => {
+    const username = randomBytes(18).toString('hex');
+    const password = randomBytes(24).toString('hex');
+    const token = randomBytes(24).toString('hex');
+    const url = new URL('https://example.invalid/validation');
+    url.username = username; url.password = password; url.searchParams.set('token', token);
+    const result = sanitizeRuntimeLog(`Error: request ${url}`);
+    for (const secret of [username, password, token]) expect(result).not.toContain(secret);
+  });
   it('keeps pertinent error context and redacts credentials and personal data', () => {
     const result = sanitizeRuntimeLog([
       'ordinary startup noise',

@@ -1,9 +1,10 @@
 import { randomBytes } from 'node:crypto';
+import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { loadHarnessScope, sanitizeHarnessData } from '@/lib/services/harness-diagnostics/context';
 import { readHarnessEvents } from '@/lib/services/harness-diagnostics/events';
 import { inspectHarness } from '@/lib/services/harness-diagnostics/inspect';
-import { decideHarness } from '@/lib/services/harness-diagnostics/decisions';
+import { decideHarness, harnessDecisionSchema } from '@/lib/services/harness-diagnostics/decisions';
 import { deliverHarnessSupportTicket } from '@/lib/services/harness-diagnostics/support';
 import { createHarnessDiagnosticTools, refreshHarnessToolManifest } from '@/lib/services/harness-diagnostics/tools';
 import { restrictToolsForEvidenceCollection } from '../single-turn-helpers';
@@ -26,6 +27,13 @@ const time = '2026-10-01T00:00:00.000Z';
 const context = () => ({ siteId: site, instanceId: instance, requirementId: req, runtime: 'assistant', toolNames: ['harness_inspect'] });
 const row = () => ({ id: req, site_id: site, status: 'blocked', updated_at: time, backlog_revision: 2,
   metadata: { runner_instance_id: instance }, backlog: { items: [{ id: 'base', status: 'pending', acceptance: ['Works'] }] } });
+const approachDecision = (decision: 'approve_backlog' | 'adapt_backlog') => ({
+  decision, request_id: request, expected_backlog_revision: 2, expected_updated_at: time,
+  item_id: 'base', reason: 'Preserve the existing contract', evidence_log_ids: [event], verification: 'Run tests',
+  ...(decision === 'adapt_backlog' ? { implementation_instructions: 'Use the existing scoped API',
+    equivalence_reason: 'Preserves the original behavior',
+    acceptance_mapping: [{ criterion_index: 0, implementation: 'Existing scoped API', verification: 'Test original behavior' }] } : {}),
+});
 function chain(data: any, error: any = null) {
   const q: any = { then: (resolve: any, reject: any) => Promise.resolve({ data, error }).then(resolve, reject) };
   for (const name of ['select', 'eq', 'in', 'or', 'contains', 'order', 'limit', 'gte', 'lte', 'ilike', 'maybeSingle', 'update']) q[name] = jest.fn(() => q);
@@ -206,18 +214,79 @@ it('resolves redacted acceptance by server-side index without weakening or leaki
   expect(JSON.stringify(result)).not.toContain('help@example.com');
 });
 
-it('persists scoped support decisions and reports delivery separately from approval/execution', async () => {
-  fixture({ instance_logs: [{ id: event, details: { requirement_id: req } }] });
-  (supabaseAdmin.rpc as jest.Mock).mockResolvedValue({ data: { id: event, requirement_id: req, instance_id: instance,
-    decision: 'escalate_support', request_id: request, status: 'recorded' }, error: null });
-  (deliverHarnessSupportTicket as jest.Mock).mockResolvedValue({ state: 'unconfigured', email_sent: false });
-  const result = await decideHarness(context(), { decision: 'escalate_support', request_id: request,
+it.each([
+  { label: 'scoped evidence', evidence_log_ids: [event] },
+  { label: 'no evidence', evidence_log_ids: [] },
+])('rejects legacy escalation with $label before any I/O, even for cast direct calls', async ({ evidence_log_ids }) => {
+  fixture();
+  const legacy = { decision: 'escalate_support', request_id: request,
     expected_updated_at: time, expected_backlog_revision: 2, reason: 'Missing operational recovery',
-    evidence_log_ids: [event], verification: 'Worker executes the pending step', impact: 'Cannot continue',
-    attempted_alternatives: ['Inspected runner and lifecycle'], requested_action: 'Repair dispatch' });
+    evidence_log_ids, verification: 'Worker executes the pending step', impact: 'Cannot continue',
+    attempted_alternatives: ['Inspected runner and lifecycle'], requested_action: 'Repair dispatch' };
+  expect(harnessDecisionSchema.safeParse(legacy).success).toBe(false);
+  await expect(decideHarness(context(), legacy as unknown as z.infer<typeof harnessDecisionSchema>)).rejects.toBeInstanceOf(z.ZodError);
+  const tool = createHarnessDiagnosticTools(context()).find(entry => entry.name === 'harness_decide')!;
+  await expect(tool.execute(legacy)).rejects.toBeInstanceOf(z.ZodError);
+  expect(supabaseAdmin.from).not.toHaveBeenCalled();
+  expect(supabaseAdmin.rpc).not.toHaveBeenCalled();
+  expect(deliverHarnessSupportTicket).not.toHaveBeenCalled();
+});
+
+it.each(['runner_instance_id', 'assistant_origin_instance_id'])('preserves scoped approval for %s without delivery or execution', async ownerKey => {
+  fixture({ requirements: { ...row(), metadata: { [ownerKey]: instance } },
+    instance_logs: [{ id: event, details: { requirement_id: req } }] });
+  (supabaseAdmin.rpc as jest.Mock).mockResolvedValue({ data: { id: event, requirement_id: req, instance_id: instance,
+    decision: 'approve_backlog', request_id: request, status: 'recorded' }, error: null });
+  const result = await decideHarness(context(), approachDecision('approve_backlog'));
   expect(result).toMatchObject({ success: true, execution_started: false, acceptance_approved: false,
-    support_delivery: { email_sent: false } });
-  expect(supabaseAdmin.rpc).toHaveBeenCalledWith('record_harness_diagnostic_decision', expect.objectContaining({ p_site_id: site, p_instance_id: instance, p_requirement_id: req }));
+    decision: 'approve_backlog' });
+  expect(result).not.toHaveProperty('support_delivery');
+  expect(deliverHarnessSupportTicket).not.toHaveBeenCalled();
+  expect(supabaseAdmin.rpc).toHaveBeenCalledWith('record_harness_diagnostic_decision', {
+    p_site_id: site, p_instance_id: instance, p_requirement_id: req, p_request_id: request,
+    p_expected_backlog_revision: 2, p_expected_updated_at: time, p_decision: 'approve_backlog', p_item_id: 'base',
+    p_reason: 'Preserve the existing contract', p_payload: { evidence_log_ids: [event], verification: 'Run tests' },
+  });
+});
+
+describe.each(['approve_backlog', 'adapt_backlog'] as const)('%s guards', decision => {
+  it('denies authoring by an associated non-owner instance', async () => {
+    fixture({ requirements: { ...row(), metadata: { runner_instance_id: other } },
+      instance_plans: [{ id: request, instance_id: instance }] });
+    await expect(decideHarness(context(), approachDecision(decision))).rejects.toThrow('Only the requirement owner');
+    expect(supabaseAdmin.rpc).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { evidence_log_ids: [], error: 'Read supporting requirement events' },
+    { evidence_log_ids: [event, event], error: 'Evidence IDs must be unique' },
+  ])('rejects invalid evidence: $error', async ({ evidence_log_ids, error }) => {
+    fixture({ instance_logs: [{ id: event, details: { requirement_id: req } }] });
+    await expect(decideHarness(context(), { ...approachDecision(decision), evidence_log_ids })).rejects.toThrow(error);
+    expect(supabaseAdmin.rpc).not.toHaveBeenCalled();
+  });
+
+  it('rejects sensitive authored content before persistence', async () => {
+    fixture({ instance_logs: [{ id: event, details: { requirement_id: req } }] });
+    const credential = randomBytes(16).toString('hex');
+    const input = { ...approachDecision(decision), reason: `Bearer ${credential}` };
+    await expect(decideHarness(context(), input)).rejects.toThrow('Remove sensitive values');
+    expect(JSON.stringify(sanitizeHarnessData(input))).not.toContain(credential);
+    expect(supabaseAdmin.rpc).not.toHaveBeenCalled();
+  });
+});
+
+it.each([
+  { label: 'incomplete', indices: [0] },
+  { label: 'reordered', indices: [1, 0] },
+  { label: 'duplicate', indices: [0, 0] },
+])('rejects $label acceptance mapping', async ({ indices }) => {
+  fixture({ requirements: { ...row(), backlog: { items: [{ id: 'base', acceptance: ['Works', 'Preserves authorization'] }] } },
+    instance_logs: [{ id: event, details: { requirement_id: req } }] });
+  await expect(decideHarness(context(), { ...approachDecision('adapt_backlog'),
+    acceptance_mapping: indices.map(criterion_index => ({ criterion_index, implementation: 'Scoped API', verification: 'Run tests' })),
+  })).rejects.toThrow('Map every canonical acceptance criterion exactly once');
+  expect(supabaseAdmin.rpc).not.toHaveBeenCalled();
 });
 
 it('keeps read tools direct during restricted repair and refreshes the actual tool manifest', async () => {
@@ -227,7 +296,11 @@ it('keeps read tools direct during restricted repair and refreshes the actual to
     { name: 'sandbox_write_file', description: 'Test-only write tool', parameters: { type: 'object' }, execute: jest.fn() }]);
   expect(all.every(tool => tool.parameters.type === 'object')).toBe(true);
   expect(all.find(tool => tool.name === 'harness_decide')?.parameters.properties.decision.enum)
-    .toEqual(['approve_backlog', 'adapt_backlog', 'escalate_support']);
+    .toEqual(['approve_backlog', 'adapt_backlog']);
+  const decisionTool = all.find(tool => tool.name === 'harness_decide')!;
+  expect(decisionTool.parameters.required).toContain('item_id');
+  expect(JSON.stringify(decisionTool.parameters)).not.toMatch(/escalate_support|impact|requested_action|attempted_alternatives/);
+  expect(decisionTool.description).toContain('agents cannot request support tickets');
   const restricted = refreshHarnessToolManifest(restrictToolsForEvidenceCollection(all, 'Failure kind: evidence_gap'), 'evidence_collection');
   expect(restricted.map(tool => tool.name)).toEqual(['harness_inspect', 'harness_events', 'harness_reference', 'harness_source']);
   const result: any = await restricted[0].execute({});

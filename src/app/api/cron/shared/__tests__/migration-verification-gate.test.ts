@@ -48,6 +48,15 @@ describe('receipt verification is part of the ordinary product gate', () => {
       continueImplementation: false, infrastructureFailure: true, failureKind: 'infrastructure_unavailable' });
   });
 
+  it.each(['MISSING_MIGRATION', 'APPLIED_MIGRATION_CHANGED'])('directs %s to exact history restoration in the same step, never SQL rewrite or customer permission', async code => {
+    (verifyPendingMigrations as jest.Mock).mockResolvedValue({ applied: [], errors: ['History mismatch'], failureKind: 'product', diagnostic: { code } });
+    const result = await verifyDatabaseGate(input);
+    expect(result).toMatchObject({ continueImplementation: true, infrastructureFailure: false });
+    expect(result?.error).toContain('exact bytes');
+    expect(result?.error).toContain('do not request customer permission');
+    expect(result?.error).not.toContain('correct only pending SQL');
+  });
+
   it('does not run verification after ownership fails', async () => {
     (loadMigrationExecutionContext as jest.Mock).mockRejectedValueOnce(new Error('stale owner'));
     await expect(verifyDatabaseGate(input)).resolves.toMatchObject({ ok: false, infrastructureFailure: true });

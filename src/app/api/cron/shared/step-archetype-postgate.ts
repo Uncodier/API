@@ -34,6 +34,7 @@ import type { InteractionSignal } from './step-interaction-audit';
 import type { ScenarioSignal } from './step-iteration-signals';
 import type {
   AcceptanceCriterionDiagnostic,
+  CommandEvidenceSignal,
   ScenarioAssertionReceipt,
 } from '@/lib/services/requirement-evidence-types';
 import {
@@ -70,6 +71,7 @@ export interface PostGateGateSignals {
   scenarios?: ScenarioSignal;
   scenario_assertions?: ScenarioAssertionReceipt[];
   tests?: TestSignal;
+  commands?: CommandEvidenceSignal[];
   observations?: ProbeObservation[];
   interaction?: InteractionSignal;
   /**
@@ -171,6 +173,7 @@ export async function runArchetypePostGate(
       !!signalsWithDiff.scenarios ||
       (signalsWithDiff.scenario_assertions?.length ?? 0) > 0 ||
       !!signalsWithDiff.tests ||
+      (signalsWithDiff.commands?.length ?? 0) > 0 ||
       !!signalsWithDiff.interaction ||
       (signalsWithDiff.changed_files?.length ?? 0) > 0 ||
       (signalsWithDiff.observations?.length ?? 0) > 0;
@@ -196,6 +199,7 @@ export async function runArchetypePostGate(
       .map((receipt) => receipt.receipt_id);
     const evidenceRecord = {
       ...baseEvidenceRecord,
+      producer_step_id: input.stepId,
       ...(input.repairRun?.status === 'materialized' &&
       successfulRepairReceipts.length > 0
         ? {
@@ -481,6 +485,7 @@ function buildEvidenceRecord(
         }
       : undefined,
     tests: signals.tests?.tests,
+    commands: signals.commands,
     runtime: runtimePage
       ? {
           route: runtimePage.path ?? '/',

@@ -11,6 +11,7 @@ import { inferPlanStepTestCommand } from '@/lib/services/instance-plan-step-cont
 import { normalizeToolOperationResult } from '@/lib/services/tool-operation-result';
 import { isTestRepairRun } from './judge-test-repair';
 import type { JudgeRepairRun } from './judge-repair-controller';
+import { hasCommandRepair } from './judge-command-repair';
 import { instanceHistoryTool } from '@/app/api/agents/tools/instance_history/assistantProtocol';
 
 const WORK_DIR = '/vercel/sandbox';
@@ -116,7 +117,8 @@ export function restrictToolsForEvidenceCollection<
     return tools;
   }
   return tools.filter(
-    (tool) => !!tool.name && EVIDENCE_COLLECTION_TOOLS.has(tool.name),
+    (tool) => !!tool.name && (EVIDENCE_COLLECTION_TOOLS.has(tool.name) ||
+      (hasCommandRepair(repairRun) && tool.name === 'sandbox_run_validation')),
   );
 }
 
@@ -125,6 +127,9 @@ export function isEvidenceCollectionRetry(
   repairRun?: JudgeRepairRun,
 ): boolean {
   if (isTestRepairRun(repairRun)) return false;
+  // A validator failure promotes the same action to implementation repair.
+  // Stale evidence-gap prose cannot keep its required tools read-only.
+  if (repairRun?.status === 'in_progress' && repairRun.failure_kind === 'product_defect') return false;
   return /\bFailure kind:\s*evidence_gap\b/i.test(previousError || '');
 }
 

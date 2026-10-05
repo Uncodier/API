@@ -77,6 +77,29 @@ describe('model-facing requirement backlog terminal transitions', () => {
     expect(JSON.stringify(properties.acceptance_contract))
       .not.toContain('"oneOf"');
     expect(properties.confirm_reopen).toBeUndefined();
+    expect(properties.attempts).toBeUndefined();
+    expect(properties.tool_failures).toBeUndefined();
+  });
+
+  it.each(['adapter', 'direct core'] as const)('does not forward forged counters through %s upsert, even cast input', async entry => {
+    const current = { id: 'item-1', status: 'in_progress', attempts: 2,
+      tool_failures: { judge_evidence_collector: 1, judge_acceptance_contract: 2 } };
+    listBacklog.mockResolvedValue({ kind: 'app', backlog: { items: [current] } });
+    upsertBacklogItem.mockResolvedValue(current);
+    const input = { action: 'upsert', requirement_id: 'req-1', item_id: 'item-1',
+      title: 'Campaigns', kind: 'page', phase_id: 'build', acceptance: ['GET /campaigns returns 200'],
+      attempts: 99, tool_failures: { judge_evidence_collector: 99, judge_acceptance_contract: 99 },
+      item: { attempts: 99 }, metadata: { tool_failures: { judge_evidence_collector: 99 } },
+    };
+    const result = entry === 'adapter'
+      ? await requirementBacklogTool('site-1', 'req-1').execute(input as never)
+      : await executeBacklogCore(input as never);
+    expect(upsertBacklogItem).toHaveBeenCalledWith({ requirementId: 'req-1', item: {
+      id: 'item-1', title: 'Campaigns', kind: 'page', phase_id: 'build', acceptance: input.acceptance,
+      touches: undefined, scope_level: undefined, tier: undefined, depends_on: undefined,
+    } });
+    expect(result).toMatchObject({ item: { attempts: 2,
+      tool_failures: { judge_evidence_collector: 1, judge_acceptance_contract: 2 } } });
   });
 
   it('passes a declared acceptance contract to backlog persistence', async () => {

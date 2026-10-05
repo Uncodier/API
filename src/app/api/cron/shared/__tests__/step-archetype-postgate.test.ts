@@ -183,6 +183,20 @@ describe('runArchetypePostGate verification budget', () => {
     }));
   });
 
+  it('passes scoped validator command evidence through canonical persistence to the independent Judge', async () => {
+    runJudge.mockReturnValue({ verdict: 'approved', reason: 'All required evidence present',
+      matched_acceptance: ['npm run lint exits 0'], unmatched_acceptance: [] });
+    const commands = [{ command: 'npm run lint', exit_code: 0, output_tail: 'No lint findings',
+      captured_at: input().capturedAt, ran_after_changes: true,
+      step_id: 'step-1', workspace_fingerprint: 'current' }];
+    const result = await runArchetypePostGate({ ...input(), signals: { ...input().signals,
+      workspace_fingerprint: 'current', commands } });
+    expect(result).toMatchObject({ ran: true, judge_verdict: 'approved' });
+    expect(writeEvidence).toHaveBeenCalledWith(expect.objectContaining({ requireCanonicalPersistence: true,
+      record: expect.objectContaining({ producer_step_id: 'step-1', workspace_fingerprint: 'current', commands }) }));
+    expect(runJudge).toHaveBeenCalledWith(expect.objectContaining({ evidence: expect.objectContaining({ commands }) }));
+  });
+
   it('resets repair state when the new Judge produces a different diagnostic', async () => {
     recordToolFailure.mockResolvedValue({
       ...item,

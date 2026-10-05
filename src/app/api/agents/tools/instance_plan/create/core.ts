@@ -3,6 +3,7 @@ import { completeInProgressPlans } from '@/lib/helpers/plan-lifecycle';
 import { resolveBacklogContextForInstance } from '@/lib/services/requirement-backlog';
 import {
   activeRequirementPlanError,
+  assertRequirementPlanUpdateAllowed,
   getBlockingActivePlans,
   shouldProtectRequirementPlanCreation,
 } from '../requirement-plan-lock';
@@ -136,6 +137,13 @@ export async function createInstancePlanCore(params: any) {
     (!validatedData.is_template
       ? fallbackBacklogCtx.requirementId || undefined
       : undefined);
+  // New requirement steps have no host execution state to echo. Creation must
+  // not seed forged repair proofs that the update guard would later preserve.
+  assertRequirementPlanUpdateAllowed({
+    requirementId: effectiveRequirementId,
+    steps: validatedData.steps,
+    existingSteps: [],
+  });
   const protectRequirementPlan = shouldProtectRequirementPlanCreation({
     requirementId: effectiveRequirementId,
     isTemplate: validatedData.is_template,

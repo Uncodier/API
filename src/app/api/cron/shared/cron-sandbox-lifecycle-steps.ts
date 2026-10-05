@@ -267,7 +267,7 @@ export async function stopSandboxStep(
   sandboxId: string,
   audit?: CronAuditContext,
   ownership?: CronExecutionOwnership,
-) {
+): Promise<{ stopped: boolean }> {
   'use step';
 
   if (ownership) await assertCronExecutionOwnership(ownership);
@@ -284,8 +284,10 @@ export async function stopSandboxStep(
   let delayMs = 1000;
   for (let attempt = 0; attempt < 3; attempt++) {
     if (ownership) await assertCronExecutionOwnership(ownership);
+    let sandboxLocated = false;
     try {
       const sandbox = await getSandboxHandle(sandboxId);
+      sandboxLocated = true;
       if (ownership) await assertCronExecutionOwnership(ownership);
       await sandbox.stop();
       console.log(`[CronStep] CLEANUP: Sandbox ${sandboxId} stopped`);
@@ -294,9 +296,23 @@ export async function stopSandboxStep(
         message: `Sandbox stopped (${sandboxId})`,
         details: { sandboxId },
       });
-      return;
+      return { stopped: true };
     } catch (e: unknown) {
       if (e instanceof CronExecutionOwnershipError) throw e;
+      // Only definitive SDK absence responses attest an already stopped worker.
+      // Network failures / unavailable VMs are not proof of shutdown.
+      const status = e && typeof e === 'object'
+        ? (e as { status?: unknown; statusCode?: unknown }).status ?? (e as { statusCode?: unknown }).statusCode
+        : undefined;
+      if (!sandboxLocated && (status === 404 || status === 410)) {
+        if (ownership) await assertCronExecutionOwnership(ownership);
+        await logCronInfrastructureEvent(audit, {
+          event: CronInfraEvent.SANDBOX_STOP,
+          message: `Sandbox already absent (${sandboxId})`,
+          details: { sandboxId, status },
+        });
+        return { stopped: true };
+      }
       if (attempt < 2) {
         console.warn(`[CronStep] CLEANUP: Sandbox stop attempt ${attempt + 1} failed (${sandboxId}). Retrying in ${delayMs}ms...`);
         await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
@@ -312,6 +328,7 @@ export async function stopSandboxStep(
       }
     }
   }
+  return { stopped: false };
 }
 
 export async function extendRunLockStep(

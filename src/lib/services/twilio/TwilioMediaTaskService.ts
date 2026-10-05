@@ -55,6 +55,7 @@ export async function handleTwilioMediaAndCreateTask(params: {
   conversationId?: string | null;
   instanceId?: string | null; // Nuevo parámetro para vincular assets
   messageText?: string;
+  messageSid?: string;
   workflowOrigin?: 'whatsapp' | 'website_chat';
   media: Array<TwilioMediaDownload>;
   twilioAuth: { accountSid: string; authToken: string };
@@ -143,6 +144,7 @@ export async function handleTwilioMediaAndCreateTask(params: {
     bucket: string;
     path: string;
     url: string;
+    originalUrl?: string;
     transcription?: string;
   }> = [];
 
@@ -225,6 +227,7 @@ export async function handleTwilioMediaAndCreateTask(params: {
       bucket: BUCKET,
       path: up!.path,
       url,
+      originalUrl: item.url,
       transcription: transcriptionText || undefined // Añadimos la transcripción si existe
     });
 
@@ -241,6 +244,8 @@ export async function handleTwilioMediaAndCreateTask(params: {
         instance_id: instanceId,
         metadata: {
           source: 'whatsapp_webhook',
+          message_sid: params.messageSid,
+          media_index: idx,
           conversation_id: conversationId,
           original_url: item.url,
           storage_path: objPath,

@@ -9,6 +9,8 @@ export default {
     '<rootDir>/src/app/api/agents/tools/requirement_backlog/__tests__/**/*.test.ts',
     '<rootDir>/src/app/api/agents/tools/requirements/__tests__/**/*.test.ts',
     '<rootDir>/src/app/api/agents/tools/instance_plan/__tests__/requirement-context.test.ts',
+    '<rootDir>/src/app/api/agents/tools/instance_plan/__tests__/requirement-plan-lock.test.ts',
+    '<rootDir>/src/app/api/agents/tools/instance_plan/__tests__/create-requirement-lock.test.ts',
     '<rootDir>/src/app/api/agents/tools/instance_plan/__tests__/update-step-contract.test.ts',
     '<rootDir>/src/lib/services/__tests__/requirement-execution-visibility.test.ts',
     '<rootDir>/src/app/api/agents/tools/activate_coding_agents/__tests__/**/*.test.ts',

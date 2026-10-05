@@ -71,6 +71,8 @@ function harness() {
       markVisualFeedbackDelivered: async () => undefined,
     },
     './judge-repair-controller': {}, './judge-test-repair': { isTestRepairRun: () => false }, './judge-test-tool': {},
+    './judge-command-repair': { isCommandRepairAction: () => false, pendingCommandRecovery: () => false },
+    './judge-command-tool': {},
     '@/lib/services/cron-infrastructure-state': { CRON_INFRASTRUCTURE_PROVENANCE: 'infra' },
     '@/lib/services/instance-plan-infrastructure-state': {
       patchPlanStepAtomically: async () => ({ persisted: true, generation: 0 }),

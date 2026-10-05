@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { loadHarnessScope, logBelongsToRequirement, sanitizeHarnessData, type HarnessDiagnosticContext } from './context';
-import { deliverHarnessSupportTicket } from './support';
 
 const text = (max: number) => z.string().trim().min(1).max(max);
 const base = {
@@ -16,17 +15,15 @@ export const harnessDecisionSchema = z.discriminatedUnion('decision', [
     implementation_instructions: text(8000), equivalence_reason: text(2500),
     acceptance_mapping: z.array(z.object({ criterion_index: z.number().int().min(0).max(39), implementation: text(4000), verification: text(4000) }).strict()).min(1).max(40),
   }).strict(),
-  z.object({ ...base, decision: z.literal('escalate_support'), item_id: text(200).optional(),
-    impact: text(2500), requested_action: text(2500), attempted_alternatives: z.array(text(1500)).min(1).max(8),
-  }).strict(),
 ]);
 
 export async function decideHarness(context: HarnessDiagnosticContext, raw: unknown) {
+  // Validate every caller before I/O, including direct calls with cast/legacy inputs.
   const args = harnessDecisionSchema.parse(raw);
   const { requirement, canAuthor } = await loadHarnessScope(context);
-  if (args.decision !== 'escalate_support' && !canAuthor) throw new Error('Only the requirement owner or originating assistant can author its implementation strategy.');
+  if (!canAuthor) throw new Error('Only the requirement owner or originating assistant can author its implementation strategy.');
   if (new Set(args.evidence_log_ids).size !== args.evidence_log_ids.length) throw new Error('Evidence IDs must be unique.');
-  if (!args.evidence_log_ids.length && args.decision !== 'escalate_support') throw new Error('Read supporting requirement events before deciding.');
+  if (!args.evidence_log_ids.length) throw new Error('Read supporting requirement events before deciding.');
   if (args.evidence_log_ids.length) {
     const { data, error } = await supabaseAdmin.from('instance_logs').select('id,details,tool_args')
       .eq('site_id', context.siteId).in('id', args.evidence_log_ids);
@@ -53,8 +50,6 @@ export async function decideHarness(context: HarnessDiagnosticContext, raw: unkn
     evidence_log_ids: args.evidence_log_ids, verification: args.verification,
     ...(args.decision === 'adapt_backlog' ? { implementation_instructions: args.implementation_instructions,
       equivalence_reason: args.equivalence_reason, acceptance_mapping: mapping } : {}),
-    ...(args.decision === 'escalate_support' ? { impact: args.impact, requested_action: args.requested_action,
-      attempted_alternatives: args.attempted_alternatives } : {}),
   };
   const { data, error } = await supabaseAdmin.rpc('record_harness_diagnostic_decision', {
     p_site_id: context.siteId, p_requirement_id: requirement.id, p_instance_id: context.instanceId,
@@ -72,13 +67,10 @@ export async function decideHarness(context: HarnessDiagnosticContext, raw: unkn
     receipt.instance_id !== context.instanceId || receipt.decision !== args.decision || receipt.request_id !== args.request_id) {
     throw new Error('Invalid diagnostic decision receipt. Do not repeat with a different request ID.');
   }
-  const delivery = args.decision === 'escalate_support' ? await deliverHarnessSupportTicket(receipt, context) : undefined;
   return { success: true, decision_id: receipt.id, decision: receipt.decision, status: receipt.status,
-    execution_started: false, acceptance_approved: false, ...(delivery ? { support_delivery: delivery } : {}),
+    execution_started: false, acceptance_approved: false,
     message: args.decision === 'adapt_backlog'
       ? 'Implementation strategy persisted on the existing item. Acceptance, constraints, dependencies, budgets and security holds are unchanged. The normal executor must implement and verify it.'
-      : args.decision === 'approve_backlog'
-        ? 'Backlog approach approved as an agent decision, not verified delivery or a worker start. Existing execution guards still apply.'
-        : 'Technical support ticket persisted. Check support_delivery before claiming a message was sent. No customer product approval was requested.',
+      : 'Backlog approach approved as an agent decision, not verified delivery or a worker start. Existing execution guards still apply.',
   };
 }

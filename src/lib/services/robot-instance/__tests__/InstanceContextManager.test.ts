@@ -119,6 +119,21 @@ describe('InstanceContextManager', () => {
     warn.mockRestore();
   });
 
+  it('retains WhatsApp message IDs and quotes alongside image-then-text history', async () => {
+    const history = [{ ...logs[0], log_type: 'user_action', message: '[Archivo adjunto - image/png]: https://example.invalid/photo.png',
+      details: { message_sid: 'image-message' } },
+    { ...logs[1], log_type: 'user_action', message: 'Edit this image', details: { message_sid: 'text-message', quoted_message_sid: 'image-message' } }];
+    (admin.from as jest.Mock).mockImplementation((table: string) => {
+      if (table === 'instance_context_state') return chain({ data: null, error: null });
+      if (table === 'instance_logs') return chain({ data: [...history].reverse(), error: null });
+      return chain({ data: [], error: null });
+    });
+    const text = await new InstanceContextManager('instance', 'site').buildHistory('Edit this image', 'openrouter', 'openai/gpt-6.1-sol');
+    expect(text).toContain('"message_sid":"image-message"');
+    expect(text).toContain('"quoted_message_sid":"image-message"');
+    expect(text.indexOf('photo.png')).toBeLessThan(text.indexOf('Edit this image'));
+  });
+
   it('keeps tactical evidence when embeddings are unavailable and skips an unpersistable summary call', async () => {
     delete process.env.INSTANCE_CONTEXT_SUMMARY_MODEL;
     delete process.env.OPENROUTER_API_KEY;

@@ -21,6 +21,7 @@ function setup() {
   const resetRequirementOnUserAction = jest.fn<AsyncMock>().mockResolvedValue(undefined);
   const start = jest.fn<AsyncMock>().mockResolvedValue({ runId: 'run-1' });
   const runGearAgentWorkflow = jest.fn();
+  const resolveWhatsAppReplyContext = jest.fn<AsyncMock>().mockResolvedValue('');
   const results: Record<string, unknown> = {
     sites: [{ id: 'site-1', name: 'Test site' }],
     site_members: [],
@@ -55,11 +56,12 @@ function setup() {
       '@/lib/services/twilio/fetchTwilioMedia': {},
       '@/lib/services/ai/transcribeAudio': {},
       './twilio-webhook-auth': { authenticateGearWebhook, finishGearWebhookClaim },
+      './reply-context': { resolveWhatsAppReplyContext },
     },
   );
   const post = () => route.POST(new NextRequest('https://example.invalid/api/agents/gear/whatsapp/webhook', { method: 'POST' }));
   return { post, actionId, claim, authenticateGearWebhook, finishGearWebhookClaim,
-    insertUserActionLog, resetRequirementOnUserAction, start, runGearAgentWorkflow, supabaseAdmin };
+    insertUserActionLog, resetRequirementOnUserAction, start, runGearAgentWorkflow, supabaseAdmin, resolveWhatsAppReplyContext };
 }
 
 describe('Gear WhatsApp trusted user-action handoff', () => {
@@ -90,6 +92,25 @@ describe('Gear WhatsApp trusted user-action handoff', () => {
     expect(h.start).not.toHaveBeenCalled();
     expect(h.resetRequirementOnUserAction).not.toHaveBeenCalled();
     expect(h.finishGearWebhookClaim).toHaveBeenCalledWith(h.claim, 'failed', expect.stringContaining('Persistence unavailable'));
+  });
+
+  it('persists and forwards the exact scoped reply target alongside the current action', async () => {
+    const h = setup();
+    h.authenticateGearWebhook.mockResolvedValue({ ok: true, claim: h.claim, webhookData: {
+      From: 'whatsapp:+15555550100', To: 'whatsapp:+15555550101',
+      MessageSid: 'message-1', Body: 'Edit this image', NumMedia: '0', OriginalRepliedMessageSid: 'image-message',
+    } });
+    const context = '[WhatsApp reply target: image-message]\nQuoted image reference';
+    h.resolveWhatsAppReplyContext.mockResolvedValue(context);
+    expect((await h.post()).status).toBe(200);
+    expect(h.resolveWhatsAppReplyContext).toHaveBeenCalledWith('instance-1', 'site-1', 'user-1', 'image-message');
+    expect(h.insertUserActionLog).toHaveBeenCalledWith(expect.objectContaining({
+      message: `Edit this image\n\n${context}`,
+      details: expect.objectContaining({ message_sid: 'message-1', quoted_message_sid: 'image-message' }),
+    }));
+    expect(h.start).toHaveBeenCalledWith(h.runGearAgentWorkflow, [expect.objectContaining({
+      message: `Edit this image\n\n${context}`, userMessageLogId: h.actionId,
+    })]);
   });
 
   it('does not persist or launch work when webhook admission is denied', async () => {

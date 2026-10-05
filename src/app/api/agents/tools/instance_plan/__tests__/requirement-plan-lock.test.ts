@@ -243,3 +243,68 @@ describe('requirement plan creation lock', () => {
     })).toBe(false);
   });
 });
+
+describe('requirement step host execution state', () => {
+  const hostMetadata = {
+    repair_run: { repair_run_id: 'repair-1', attempt_count: 3, status: 'exhausted', receipts: ['event-1'] },
+    no_progress_adjudication: { state: 'consumed', execution_generation: 7 },
+    cron_cycle_id: 'cycle-1',
+    cron_execution_generation: 7,
+  };
+  // Database rows and model arguments arrive as JSON in the same runtime realm.
+  const jsonCopy = <T>(value: T): T => JSON.parse(JSON.stringify(value));
+  const existing = () => ({ id: 'step-1', order: 1, status: 'in_progress', retry_count: 3,
+    metadata: { ...jsonCopy(hostMetadata), backlog_item_id: 'item-1', custom: { keep: true } } });
+  const check = (steps: Parameters<typeof assertRequirementPlanUpdateAllowed>[0]['steps'],
+    existingSteps: Parameters<typeof assertRequirementPlanUpdateAllowed>[0]['existingSteps'] = [existing()]) =>
+    assertRequirementPlanUpdateAllowed({ requirementId: 'req-1', steps, existingSteps });
+
+  it.each(Object.keys(hostMetadata))('rejects forged, reset and partial metadata.%s, even cast values', key => {
+    for (const value of [null, undefined, 0, {}, 'forged', { attempt_count: 3 }]) {
+      expect(() => check([{ id: 'step-1', metadata: { [key]: value } }])).toThrow(`metadata.${key} is runner-owned`);
+    }
+  });
+
+  it.each(Object.entries(hostMetadata))('rejects newly introduced metadata.%s on existing or appended steps', (key, value) => {
+    const current = existing();
+    delete (current.metadata as Record<string, unknown>)[key];
+    expect(() => check([{ id: 'step-1', metadata: { [key]: value } }], [current])).toThrow('runner-owned');
+    expect(() => check([{ id: 'new-step', metadata: { [key]: value } }])).toThrow('runner-owned');
+    expect(() => assertRequirementPlanUpdateAllowed({ requirementId: 'req-1',
+      steps: [{ metadata: { [key]: value } }] })).toThrow('runner-owned');
+  });
+
+  it.each([0, 2, 4, -1, undefined, null, '3'])('rejects retry_count changes: %j', retry_count => {
+    expect(() => check([{ id: 'step-1', retry_count } as never])).toThrow('retry_count is runner-owned');
+  });
+
+  it('rejects explicit retry counters on new steps, including zero', () => {
+    expect(() => check([{ id: 'new-step', retry_count: 0 }])).toThrow('retry_count is runner-owned');
+    const { retry_count: _, ...legacyStep } = existing();
+    expect(() => check([{ id: 'step-1', retry_count: 0 }], [legacyStep]))
+      .toThrow('retry_count is runner-owned');
+  });
+
+  it.each([{ id: 'step-1' }, { order: 1 }])('permits exact echoes by %j without mutating either input', identity => {
+    const current = existing();
+    const incoming = { ...identity, retry_count: 3, metadata: { ...jsonCopy(hostMetadata), custom: { changed: true } } };
+    // Object key order is irrelevant; nested values must remain identical.
+    incoming.metadata.repair_run = { receipts: ['event-1'], status: 'exhausted', attempt_count: 3, repair_run_id: 'repair-1' };
+    const before = structuredClone({ current, incoming });
+    expect(() => check([incoming], [current])).not.toThrow();
+    expect({ current, incoming }).toEqual(before);
+  });
+
+  it('does not allow an ID match to mask a different order-matched step', () => {
+    const other = { ...existing(), id: 'step-2', order: 2, retry_count: 0,
+      metadata: { ...existing().metadata, cron_execution_generation: 8 } };
+    expect(() => check([{ id: 'step-1', order: 2, retry_count: 3 }], [existing(), other])).toThrow('runner-owned');
+    expect(() => check([{ id: 'step-1', order: 2, metadata: hostMetadata }], [existing(), other])).toThrow('runner-owned');
+  });
+
+  it('allows omitted host fields, ordinary metadata and generic plans', () => {
+    expect(() => check([{ id: 'step-1', metadata: { custom: 'updated' } }, { id: 'new-step' }])).not.toThrow();
+    expect(() => check([{ id: 'step-1', metadata: {} }])).not.toThrow();
+    expect(() => assertRequirementPlanUpdateAllowed({ steps: [{ retry_count: 8, metadata: hostMetadata }] })).not.toThrow();
+  });
+});

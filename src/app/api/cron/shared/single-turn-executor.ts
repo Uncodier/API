@@ -72,6 +72,8 @@ import {
 import type { TenantCapabilities } from '@/lib/services/apps-platform/tenant-capabilities';
 import { isTestRepairRun } from './judge-test-repair';
 import { createJudgeTestTool } from './judge-test-tool';
+import { isCommandRepairAction, pendingCommandRecovery } from './judge-command-repair';
+import { createJudgeCommandTool } from './judge-command-tool';
 import { getTenantCapabilities } from '@/lib/services/apps-platform/tenant-capabilities-service';
 import { captureLocalReadState, loadStepActionObservations, persistStepActionObservation } from './step-action-guard';
 import { actionStateFingerprint, formatActionObservationFeedback } from './step-action-observation';
@@ -270,6 +272,7 @@ export async function executeSingleTurnStep(params: {
     };
     const noProgressAdjudication =
       !hasImplementationFeedback(persistedStep.error_message) &&
+      !pendingCommandRecovery(persistedStep.metadata?.repair_run) &&
       isNoProgressAdjudicationRequested(
         persistedStep,
         executionGeneration,
@@ -458,12 +461,17 @@ export async function executeSingleTurnStep(params: {
     const actionObservations = await loadStepActionObservations(audit);
     const observationFeedback = formatActionObservationFeedback(actionObservations);
     if (observationFeedback) messages.push({ role: 'user', content: observationFeedback });
+    const repairTools = isCommandRepairAction(activeRepairAction) && effectiveBacklogItemId
+      ? [...guardedTools, createJudgeCommandTool({ sandbox: () => activeSandboxRef.current,
+          requirementId, backlogItemId: effectiveBacklogItemId, stepId: persistedStep.id,
+          action: activeRepairAction!, assertCurrent: () => assertCronExecutionOwnership(ownership) })]
+      : guardedTools;
     const fullTools = withCronExecutionOwnership(withActionLoopGuard(restrictToolsForEvidenceCollection(
       isTestRepairRun(activeRepairRun) && effectiveBacklogItemId
-        ? [...guardedTools, createJudgeTestTool({ sandbox: () => activeSandboxRef.current,
+        ? [...repairTools, createJudgeTestTool({ sandbox: () => activeSandboxRef.current,
           requirementId, backlogItemId: effectiveBacklogItemId, stepId: persistedStep.id,
           assertCurrent: () => assertCronExecutionOwnership(ownership) })]
-        : guardedTools,
+        : repairTools,
       persistedStep.error_message,
       activeRepairRun,
     ), historyText, {

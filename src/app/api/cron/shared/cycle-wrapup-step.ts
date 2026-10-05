@@ -23,8 +23,9 @@ import type { CycleRecoveryDisposition } from './cycle-recovery-policy';
 import { assertCronExecutionOwnership } from './cron-execution-ownership';
 import { loadCycleInterventionState } from '@/lib/services/cycle-wrapup-state';
 import { createHarnessDiagnosticTools, refreshHarnessToolManifest } from '@/lib/services/harness-diagnostics/tools';
-import { ensureCycleTechnicalEscalation } from '@/lib/services/harness-diagnostics/cycle-escalation';
+import { ensureCycleTechnicalEscalation, type CycleTechnicalEscalationResult } from '@/lib/services/harness-diagnostics/cycle-escalation';
 import type { MigrationSecurityReview } from '@/lib/services/apps-platform/migration-security-review';
+import { patchPlanStepAtomically } from '@/lib/services/instance-plan-infrastructure-state';
 
 const STEP_FAILURE_REASON_PREFIX = 'One or more execution steps failed';
 const AUTOMATED_RECOVERY_ERROR = /^(?:Build failed|Post-finally|Pre-push)/i;
@@ -62,6 +63,44 @@ export type CycleWrapUpResult =
   | { ran: true; outcome: 'completed' }
   | { ran: false; outcome: 'skipped' | 'failed' };
 
+/** Latest accounting may establish a circuit after reporting; never rerun the model. */
+export async function emitCycleTechnicalEscalationStep(params: {
+  siteId: string; instanceId: string; requirementId: string;
+  runId: string; executionGeneration: number; reason: string;
+  /** Host receipts only: never inferred from prose or model tool arguments. */
+  requirementBlocked?: boolean; sandboxStopped?: boolean;
+  settle?: { planId: string; stepId: string; expectedGeneration: number };
+}): Promise<CycleTechnicalEscalationResult> {
+  'use step';
+  const assertCurrent = () => assertCronExecutionOwnership({
+    requirementId: params.requirementId, runId: params.runId,
+    executionGeneration: params.executionGeneration, allowTerminal: true,
+  });
+  if (params.settle) {
+    if (params.requirementBlocked !== true || params.sandboxStopped !== true) {
+      return { state: 'unavailable', reason: 'worker_stop_unverified', email_sent: false };
+    }
+    await assertCurrent();
+    try {
+      const settled = await patchPlanStepAtomically({
+        ...params.settle,
+        eventId: `${params.runId}:circuit-quiesced:${params.settle.stepId}`,
+        patch: { status: 'cancelled', completed_at: new Date().toISOString(),
+          error_message: 'The host circuit stopped this execution after bounded recovery. Work remains safely paused.' },
+      });
+      // Leave adjudication/repair metadata and independent work untouched. A stale
+      // generation or unknown write cannot establish quiescence for support.
+      if (!settled.persisted) return { state: 'unavailable', reason: 'worker_settlement_unverified', email_sent: false };
+    } catch {
+      return { state: 'unavailable', reason: 'worker_settlement_unverified', email_sent: false };
+    }
+  }
+  return ensureCycleTechnicalEscalation({
+    siteId: params.siteId, instanceId: params.instanceId,
+    requirementId: params.requirementId, runtime: 'cycle_accounting', toolNames: [],
+  }, { reason: params.reason, assertCurrent });
+}
+
 export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<CycleWrapUpResult> {
   'use step';
   const {
@@ -74,7 +113,6 @@ export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<Cy
     digest,
     planCompleted,
     pendingPlanSteps,
-    hasRunnableBacklogWork,
     previewUrl,
     repoUrl,
     forceWrapUp,
@@ -86,10 +124,19 @@ export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<Cy
   try {
     const ownership = params.audit?.executionOwnership;
     if (ownership) await assertCronExecutionOwnership({ ...ownership, allowTerminal: true });
-    // Terminal product failures cannot be reopened by stale plan retry counts.
-    const explicitTechnicalHold = recoveryDisposition === 'internal_review' ||
-      recoveryDisposition === 'product_failure';
-    const retryableStepFailure = recoveryDisposition
+    // Caller hints and stale plan counts cannot release a safety hold or turn an
+    // item-local failure into a requirement-wide block. Read before any effects.
+    const decisionState = await loadCycleInterventionState(requirementId, siteId, instanceId);
+    if (decisionState === null) {
+      await createRequirementStatusCore({ site_id: siteId, instance_id: instanceId, requirement_id: requirementId,
+        stage: 'blocked', message: 'Work remains paused. The current blocker could not be verified; no recovery or customer decision is being claimed.' });
+      return { ran: false, outcome: 'failed' };
+    }
+    const explicitTechnicalHold = recoveryDisposition === 'internal_review';
+    const hasRunnableBacklogWork = decisionState.hasRunnableBacklogWork;
+    const independentWorkRemains = !explicitTechnicalHold &&
+      (hasRunnableBacklogWork || decisionState.hasRunnablePlanWork);
+    const retryCandidate = recoveryDisposition
       ? recoveryDisposition === 'retry' ||
         (recoveryDisposition === 'delivery_failure' &&
           await hasRunnableRequirementPlan(instanceId, requirementId))
@@ -100,26 +147,21 @@ export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<Cy
             : AUTOMATED_RECOVERY_ERROR.test(wrapUpReason) &&
               await hasRunnableRequirementPlan(instanceId, requirementId)
         );
-    const interventionRequired = !retryableStepFailure &&
+    const interventionRequired = !retryCandidate &&
       (!!recoveryDisposition || !!requiresUserFeedback);
     const verifiedDecision = params.productDecision;
-    const decisionState = interventionRequired ? await loadCycleInterventionState(requirementId, siteId)
-      : { userDecisionBlockers: [], technicalReviewRequired: false };
-    if (decisionState === null) {
-      await createRequirementStatusCore({ site_id: siteId, instance_id: instanceId, requirement_id: requirementId,
-        stage: 'blocked', message: 'Work remains paused. The current blocker could not be verified; no recovery or customer decision is being claimed.' });
-      return { ran: false, outcome: 'failed' };
-    }
     const userDecisionBlockers = [...decisionState.userDecisionBlockers];
     if (interventionRequired && verifiedDecision?.decisionId && verifiedDecision.question && verifiedDecision.options?.length >= 2) {
       userDecisionBlockers.push({ blocker_id: verifiedDecision.decisionId, category: 'user_decision', resolution_actor: 'user',
         reason: `${verifiedDecision.question} Options: ${verifiedDecision.options.join(' / ')}` });
     }
-    const technicalReviewRequired = explicitTechnicalHold || decisionState.technicalReviewRequired ||
-      (interventionRequired && userDecisionBlockers.length === 0);
-    const effectiveRequiresUserFeedback = interventionRequired && userDecisionBlockers.length > 0;
+    const technicalReviewRequired = explicitTechnicalHold || (!independentWorkRemains && (
+      recoveryDisposition === 'product_failure' || decisionState.technicalReviewRequired ||
+      (interventionRequired && userDecisionBlockers.length === 0)));
+    const retryableStepFailure = retryCandidate && !technicalReviewRequired;
+    const effectiveRequiresUserFeedback = !independentWorkRemains && interventionRequired && userDecisionBlockers.length > 0;
     const internalReviewRequired = technicalReviewRequired && !effectiveRequiresUserFeedback;
-    const effectiveForceWrapUp = forceWrapUp || technicalReviewRequired;
+    const effectiveForceWrapUp = technicalReviewRequired || (forceWrapUp && !independentWorkRemains);
     // Internal diagnostics stay in execution logs, not client-facing status/prose inputs.
     const effectiveWrapUpReason = internalReviewRequired
       ? INTERNAL_REVIEW_MESSAGE
@@ -129,6 +171,17 @@ export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<Cy
       ? userDecisionBlockers.map(blocker => blocker.reason).join('\n') +
         (technicalReviewRequired ? '\nInternal technical review is also required. The customer reply does not release that hold or restart execution.' : '')
       : wrapUpReason;
+
+    // Suppress reporting before status writes, support policy, or model calls.
+    // This does not reopen the failed item, reset attempts, or release legacy holds.
+    if (independentWorkRemains || (shouldSkipWrapUpForPendingSteps({
+      planCompleted: planCompleted && !independentWorkRemains,
+      pendingPlanSteps,
+      hasRunnableBacklogWork,
+      forceWrapUp: effectiveForceWrapUp,
+    }) && !retryableStepFailure && !effectiveRequiresUserFeedback)) {
+      return { ran: false, outcome: 'skipped' };
+    }
 
     if (retryableStepFailure) {
       try {
@@ -169,7 +222,8 @@ export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<Cy
     const diagnosticContext = { siteId, instanceId, requirementId, runtime: 'cycle_wrapup', toolNames: ['requirement_status'] };
     const assertCurrent = ownership
       ? () => assertCronExecutionOwnership({ ...ownership, allowTerminal: true }) : undefined;
-    // Host-owned and replay-safe: reporting/model failure must not lose the technical handoff.
+    // A hold is not support eligibility. Only the host policy may record a ticket;
+    // not_eligible leaves the safe hold intact without inventing a human handoff.
     const technicalSupport = technicalReviewRequired
       ? await ensureCycleTechnicalEscalation(diagnosticContext, { reason: wrapUpReason, assertCurrent })
       : undefined;

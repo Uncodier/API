@@ -74,7 +74,24 @@ describe('getHarnessReference', () => {
     expect(JSON.stringify(getHarnessReference('acceptance'))).toContain('do not weaken');
     expect(JSON.stringify(getHarnessReference('migrations'))).toContain('Never apply migrations');
     expect(JSON.stringify(getHarnessReference('capabilities'))).toContain('do not register themselves');
-    expect(JSON.stringify(getHarnessReference('decisions'))).toContain('stored is not sent');
+    expect(JSON.stringify(getHarnessReference('decisions'))).toContain('No decision applies SQL');
+  });
+
+  it('limits agent decisions to approve/adapt while retaining host support sources as diagnostic evidence', () => {
+    const { decisions } = getHarnessReference('decisions').reference as any;
+    expect(Object.keys(decisions.actions)).toEqual(['approve_backlog', 'adapt_backlog']);
+    expect(JSON.stringify(getHarnessReference())).not.toContain('escalate_support');
+    expect(JSON.stringify(decisions)).toContain('not callable agent capabilities');
+    const boundary = 'Agents cannot request, create or send support tickets';
+    expect(JSON.stringify(decisions)).toContain(boundary);
+    expect(HARNESS_DIAGNOSTIC_GUIDANCE).toContain(boundary);
+    expect(HARNESS_DIAGNOSTIC_GUIDANCE).not.toContain('escalate_support');
+    expect(HARNESS_DIAGNOSTIC_GUIDANCE).toContain('report observed facts, unknowns and the next diagnostic check');
+    expect(JSON.stringify(getHarnessReference('validation_failures'))).toContain('Host cycle escalation is separate');
+    for (const path of ['src/lib/services/harness-diagnostics/support.ts', ...sqlPaths]) {
+      expect(HARNESS_SOURCE_ALLOWLIST).toContain(path);
+      expect(JSON.stringify(getHarnessReference())).toContain(path);
+    }
   });
 
   it('links causal admission, cancellation and migration sources without claiming live DB state', () => {

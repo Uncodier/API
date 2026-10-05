@@ -217,6 +217,7 @@ export async function runSingleTurnGate(
   });
   const {
     tests,
+    commands,
     observations,
     scenarioAssertions,
     evidenceRunId,
@@ -323,6 +324,7 @@ export async function runSingleTurnGate(
         stepId: step.id,
         signals: {
           ...(gateRes.richSignals as any),
+          commands,
           ...(tests.length > 0
             ? {
                 tests: {

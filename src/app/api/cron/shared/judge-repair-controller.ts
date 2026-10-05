@@ -13,6 +13,7 @@ import {
   type ToolOperationOutcome,
 } from '@/lib/services/tool-operation-result';
 import type { RepairVerificationObservation } from './judge-repair-observations';
+import { commandReceiptProvesAction, isCommandRepairAction, validationCommand } from './judge-command-repair';
 export { continueJudgeRepairRun } from './judge-repair-observations';
 
 export type RepairKind =
@@ -36,6 +37,8 @@ export interface RepairAction {
   instruction: string;
   verification: string;
   expected_receipt?: string;
+  /** Host-selected exact validation invocation from a typed missing-command gap. */
+  command?: string;
 }
 
 export interface RepairActionReceipt {
@@ -139,6 +142,8 @@ function actionsFromDiagnostics(
     diagnostic.gaps.map((gap, gapIndex) => {
       const kind = gap.code === 'missing_test_evidence' && gap.class === 'evidence'
         ? 'repair_tests' : repairKindFor(failureKind, gap.class);
+      const command = gap.code === 'missing_command_receipt' && gap.class === 'evidence'
+        ? validationCommand(gap.required) : undefined;
       const expectedReceipt = expectedReceiptFor([
         diagnostic.criterion,
         gap.required,
@@ -149,9 +154,12 @@ function actionsFromDiagnostics(
         kind,
         criterion_id: diagnostic.criterion_id,
         gap_code: gap.code,
-        instruction: gap.suggested_action,
+        instruction: command
+          ? `Use sandbox_run_validation to execute ${command} and persist its own fresh receipt. No customer permission is required. Do not substitute tests/build for this command or change acceptance.`
+          : gap.suggested_action,
         verification: verificationFor(kind, gap.required),
-        ...(expectedReceipt ? { expected_receipt: expectedReceipt } : {}),
+        ...(command ? { command, expected_receipt: 'command_execution' }
+          : expectedReceipt ? { expected_receipt: expectedReceipt } : {}),
       } satisfies RepairAction;
     }),
   );
@@ -323,17 +331,25 @@ export function extractRepairActionReceipts(params: {
       const operation = normalizedToolResult(result);
       // Only the bounded host test tool spends this action's test budget.
       if (action.kind === 'repair_tests' && toolName !== 'sandbox_run_tests') continue;
+      if (isCommandRepairAction(action) && toolName !== 'sandbox_run_validation') continue;
       const expectedReceipt = action.kind === 'repair_tests' ? 'test_execution' : action.expected_receipt;
-      const canExecute = toolCanExecuteRepair(action.kind, toolName);
+      const canExecute = isCommandRepairAction(action)
+        ? toolName === 'sandbox_run_validation'
+        : toolCanExecuteRepair(action.kind, toolName);
       const operationOutcome: ToolOperationOutcome = !canExecute
         ? 'failed'
         : operation.outcome === 'passed' &&
             !hasExpectedToolReceipt(toolName, operation, expectedReceipt ?? '')
           ? 'unknown'
           : operation.outcome;
-      const status = operationOutcome === 'passed'
+      // A receipt for another command cannot materialize this action.
+      const commandReceiptMatches = !isCommandRepairAction(action) ||
+        commandReceiptProvesAction(operation.payload, action.command!);
+      const verifiedOutcome = operationOutcome === 'passed' && !commandReceiptMatches
+        ? 'unknown' : operationOutcome;
+      const status = verifiedOutcome === 'passed'
         ? 'succeeded'
-        : operationOutcome;
+        : verifiedOutcome;
       receipts.push({
         receipt_id: createHash('sha256')
           .update(`${params.run.repair_run_id}:${attempt}:${params.actionId}:${callId}:${status}`)
@@ -350,7 +366,7 @@ export function extractRepairActionReceipts(params: {
           .slice(0, 16),
         tool_arguments_excerpt: resultExcerpt(call.args),
         status,
-        operation_outcome: operationOutcome,
+        operation_outcome: verifiedOutcome,
         ...(expectedReceipt ? { expected_receipt: expectedReceipt } : {}),
         ...(operation.error ? { operational_error: operation.error } : {}),
         attempted_at: attemptedAt,
@@ -375,6 +391,21 @@ export function recordJudgeRepairAttempt(params: {
   // repair attempt. Failed tool receipts do count, successful or otherwise.
   if (params.receipts.length === 0) return params.run;
   const attemptCount = (params.run.attempt_count || 0) + 1;
+  const failedCommandActions = new Set(params.receipts.filter(receipt =>
+    receipt.tool_name === 'sandbox_run_validation' && receipt.status === 'failed' &&
+    receipt.operational_error?.code === 'VALIDATION_PRODUCT_FAILURE' &&
+    isCommandRepairAction(params.run.actions.find(action => action.action_id === receipt.action_id)))
+    .map(receipt => receipt.action_id));
+  if (failedCommandActions.size && attemptCount < params.run.max_attempts) {
+    // A real failed validator/script needs implementation tools, not repeated
+    // evidence-only attempts. Keep the same run/item and its consumed budget.
+    return { ...params.run, status: 'in_progress', failure_kind: 'product_defect', attempt_count: attemptCount,
+      action_receipts: [...(params.run.action_receipts || []), ...params.receipts],
+      actions: params.run.actions.map(action => failedCommandActions.has(action.action_id)
+        ? { ...action, kind: 'repair_implementation', command: undefined, expected_receipt: undefined,
+          instruction: `Repair the repository validation failure for ${action.command}. Inspect the actual command output and existing tooling; do not weaken checks or acceptance. Then collect fresh validation evidence in this same item.` }
+        : action) };
+  }
   const existing = params.run.action_receipts || [];
   const receipts = Array.from(new Map(
     [...existing, ...params.receipts]

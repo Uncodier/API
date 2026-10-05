@@ -3,7 +3,9 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { mutateBacklogAtomically } from './requirement-backlog-mutation';
 import { patchRequirementMetadataKeys } from './requirement-metadata-patch';
 import type { EvidenceRecord } from './requirement-evidence-types';
+import { commandEvidenceIsCurrent, commandEvidenceKey } from './requirement-command-evidence';
 export type {
+  CommandEvidenceSignal,
   EvidenceRecord,
   FeatureCoverageEvidence,
   InteractionEvidence,
@@ -174,6 +176,17 @@ export function mergeEvidenceRecords(
     startsLegacyChangeSet ||
     startsNewWorkspaceFingerprint;
   const prior = startsNewChangeSet ? undefined : existing;
+  // Command receipts are independently scoped: a new Judge run is not a new
+  // workspace. Preserve only exact same-step/fingerprint receipts across it.
+  const commandStepId = incoming.producer_step_id || existing?.producer_step_id;
+  const commandFingerprint = incoming.workspace_fingerprint ||
+    (!startsNewChangeSet ? existing?.workspace_fingerprint : undefined);
+  const commands = new Map<string, NonNullable<EvidenceRecord['commands']>[number]>();
+  for (const command of [...(existing?.commands || []), ...(incoming.commands || [])]) {
+    if (commandEvidenceIsCurrent(command, commandStepId, commandFingerprint)) {
+      commands.set(commandEvidenceKey(command), command);
+    }
+  }
   const tests = new Map<string, NonNullable<EvidenceRecord['tests']>[number]>();
   const testCandidates = startsNewChangeSet
     ? incoming.tests || []
@@ -227,6 +240,10 @@ export function mergeEvidenceRecords(
   return {
     ...prior,
     ...definedIncoming,
+    ...(commands.size && !definedIncoming.producer_step_id
+      ? { producer_step_id: commandStepId }
+      : {}),
+    commands: commands.size ? Array.from(commands.values()).slice(-20) : undefined,
     tests: tests.size ? Array.from(tests.values()).slice(-20) : undefined,
     observations: observations.size
       ? Array.from(observations.values()).slice(-100)

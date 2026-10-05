@@ -29,6 +29,7 @@ jest.mock('@/lib/services/requirement-backlog-store', () => ({
   toBacklog,
 }));
 jest.mock('../requirement-plan-lock', () => ({
+  assertRequirementPlanUpdateAllowed: jest.requireActual('../requirement-plan-lock').assertRequirementPlanUpdateAllowed,
   shouldProtectRequirementPlanCreation: jest.fn(
     ({ requirementId, isTemplate }) => Boolean(requirementId && !isTemplate),
   ),
@@ -136,6 +137,23 @@ describe('createInstancePlanCore requirement lock', () => {
     })).rejects.toThrow();
 
     expect(builder.insert).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { metadata: { repair_run: { attempt_count: 3, status: 'exhausted' } } },
+    { metadata: { no_progress_adjudication: { state: 'consumed' } } },
+    { metadata: { cron_cycle_id: 'forged-cycle' } },
+    { metadata: { cron_execution_generation: 99 } },
+    { retry_count: 99 },
+  ])('rejects forged initial host state before plan writes: %j', async patch => {
+    single.mockResolvedValueOnce({ data: { site_id: SITE_ID }, error: null });
+    resolveBacklogContextForInstance.mockResolvedValueOnce({ requirementId: REQUIREMENT_ID, inProgressItemId: 'item-1' });
+    await expect(createInstancePlanCore({ instance_id: INSTANCE_ID, site_id: SITE_ID, user_id: USER_ID,
+      steps: [{ title: 'Implement feature', ...patch }],
+    })).rejects.toThrow('runner-owned');
+    expect(builder.insert).not.toHaveBeenCalled();
+    expect(builder.delete).not.toHaveBeenCalled();
+    expect(completeInProgressPlans).not.toHaveBeenCalled();
   });
 
   it('preserves generic plan supersession outside requirement context', async () => {

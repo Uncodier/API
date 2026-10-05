@@ -23,6 +23,7 @@ import {
 } from './archetype-contract-link-evidence';
 import { buildAcceptanceDiagnostics } from './archetype-acceptance-diagnostics';
 import { changedDirectoryEntries } from './artifact-evidence-match';
+import { matchCommandEvidence } from '@/lib/services/requirement-command-evidence';
 
 type RouteAnchor = Extract<AcceptanceAnchor, { kind: 'route' }>;
 type ContractCriterion = AcceptanceContract['criteria'][number];
@@ -294,43 +295,6 @@ function hasFileProof(
   return hits >= Math.min(2, semanticTerms.length);
 }
 
-function hasCommandProof(
-  command: string,
-  evidence: EvidenceRecord,
-): boolean {
-  if (command === 'build') return evidence.build?.exit_code === 0;
-  const expectedCommand = command.toLowerCase().replace(/\s+/g, ' ').trim();
-  if (!expectedCommand) return false;
-  return (evidence.tests || []).some((test) =>
-    test.exit_code === 0 &&
-    test.ran_after_changes &&
-    (
-      command === 'test' ||
-      test.command.toLowerCase().replace(/\s+/g, ' ')
-        .includes(expectedCommand)
-    ),
-  );
-}
-
-function hasCommandContradiction(
-  command: string,
-  evidence: EvidenceRecord,
-): boolean {
-  if (command === 'build') {
-    return !!evidence.build && evidence.build.exit_code !== 0;
-  }
-  const expectedCommand = command.toLowerCase().replace(/\s+/g, ' ').trim();
-  if (!expectedCommand) return false;
-  return (evidence.tests || []).some((test) =>
-    test.exit_code !== 0 &&
-    (
-      command === 'test' ||
-      test.command.toLowerCase().replace(/\s+/g, ' ')
-        .includes(expectedCommand)
-    ),
-  );
-}
-
 type ClaimEvidenceResult = 'pass' | 'fail' | 'unknown';
 
 function semanticAssertionHasProof(
@@ -369,8 +333,7 @@ function evaluateClaimEvidence(params: {
       : 'unknown';
   }
   if (claim.kind === 'command') {
-    if (hasCommandContradiction(claim.command, evidence)) return 'fail';
-    return hasCommandProof(claim.command, evidence) ? 'pass' : 'unknown';
+    return matchCommandEvidence(claim.command, evidence, criterionId);
   }
   if (claim.kind === 'semantic_assertion') {
     const scopedHaystacks = genericEvidenceReceipts(evidence, criterionId).map(

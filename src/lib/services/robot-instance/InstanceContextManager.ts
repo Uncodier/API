@@ -25,7 +25,13 @@ function logText(log: Log): string {
   // summarize an excerpt and then mark the *whole* log as compacted.
   const tool = log.log_type === 'tool_call'
     ? ` args=${JSON.stringify(log.tool_args ?? {})} result=${JSON.stringify(log.tool_result ?? '')}` : '';
-  return `[${log.log_type}${log.tool_name ? `:${log.tool_name}` : ''}] ${JSON.stringify(log.message)}${tool}`;
+  const reference = log.log_type === 'user_action' ? {
+    message_sid: log.details?.message_sid,
+    quoted_message_sid: log.details?.quoted_message_sid,
+  } : {};
+  const provenance = Object.values(reference).some(value => typeof value === 'string')
+    ? ` whatsapp=${JSON.stringify(reference)}` : '';
+  return `[${log.log_type}${log.tool_name ? `:${log.tool_name}` : ''}] ${JSON.stringify(log.message)}${provenance}${tool}`;
 }
 
 export class InstanceContextManager {

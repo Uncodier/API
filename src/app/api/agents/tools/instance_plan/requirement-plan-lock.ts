@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { PLAN_STEP_MAX_RETRIES } from '@/lib/helpers/plan-status';
 import { isWorkflowManagedPlan } from '@/lib/services/workflow-robot/plan-ownership';
@@ -91,19 +92,49 @@ export function activeRequirementPlanError(
   );
 }
 
+type RequirementPlanStepUpdate = {
+  id?: string;
+  order?: number;
+  status?: string;
+  retry_count?: number;
+  metadata?: Record<string, unknown>;
+};
+
+const HOST_STEP_METADATA_KEYS = [
+  'repair_run', 'no_progress_adjudication', 'cron_cycle_id', 'cron_execution_generation',
+] as const;
+
+// Match the update core's ID-or-order merge, including ambiguous dual matches.
+const matchesRequirementStep = (current: RequirementPlanStepUpdate, incoming: RequirementPlanStepUpdate) =>
+  Boolean((incoming.id && incoming.id === current.id) ||
+    (incoming.order !== undefined && incoming.order === current.order));
+
 export function assertRequirementPlanUpdateAllowed(input: {
   requirementId?: string;
   status?: string;
   /** Cancellation remains available only when executable replacement work remains. */
-  steps?: Array<{ id?: string; order?: number; status?: string }>;
-  existingSteps?: Array<{
-    id?: string;
-    order?: number;
-    status?: string;
-    retry_count?: number;
-  }>;
+  steps?: RequirementPlanStepUpdate[];
+  existingSteps?: RequirementPlanStepUpdate[];
 }): void {
   if (!input.requirementId) return;
+
+  for (const incoming of input.steps || []) {
+    const existing = (input.existingSteps || []).filter(current => matchesRequirementStep(current, incoming));
+    const rejectHostWrite = (key: string) => {
+      throw new Error(`Requirement ${input.requirementId} step ${key} is runner-owned. ` +
+        'Omit host execution state or echo its exact persisted value; agents cannot create, replace or reset it.');
+    };
+    if (Object.hasOwn(incoming, 'retry_count') && (!existing.length || existing.some(current =>
+      !Object.hasOwn(current, 'retry_count') || !isDeepStrictEqual(incoming.retry_count, current.retry_count)))) {
+      rejectHostWrite('retry_count');
+    }
+    for (const key of HOST_STEP_METADATA_KEYS) {
+      if (Object.hasOwn(incoming.metadata || {}, key) && (!existing.length || existing.some(current =>
+        !Object.hasOwn(current.metadata || {}, key) || !isDeepStrictEqual(incoming.metadata![key], current.metadata![key])))) {
+        rejectHostWrite(`metadata.${key}`);
+      }
+    }
+  }
 
   const terminalStatuses = new Set(['completed', 'failed', 'cancelled']);
   const changesPlanTerminalState =
@@ -115,25 +146,14 @@ export function assertRequirementPlanUpdateAllowed(input: {
     (step) => step.status === 'cancelled',
   );
   if (changesStepCancellation) {
-    const matches = (
-      current: { id?: string; order?: number },
-      incoming: { id?: string; order?: number },
-    ) =>
-      Boolean(
-        (incoming.id && incoming.id === current.id) ||
-        (
-          incoming.order !== undefined &&
-          incoming.order === current.order
-        ),
-      );
     const incomingSteps = input.steps || [];
     const existingSteps = input.existingSteps || [];
     const projectedSteps = existingSteps.map((current) => ({
       ...current,
-      ...(incomingSteps.find((incoming) => matches(current, incoming)) || {}),
+      ...(incomingSteps.find((incoming) => matchesRequirementStep(current, incoming)) || {}),
     }));
     for (const incoming of incomingSteps) {
-      if (!existingSteps.some((current) => matches(current, incoming))) {
+      if (!existingSteps.some((current) => matchesRequirementStep(current, incoming))) {
         projectedSteps.push({
           ...incoming,
           status: incoming.status || 'pending',

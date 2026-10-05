@@ -12,10 +12,13 @@ export async function verifyDatabaseGate(input: FlowGateInput): Promise<FlowGate
     const result = await verifyPendingMigrations(input.sandbox, input.requirementId, context);
     if (!result.errors.length && !result.pending?.length) return null;
     const infrastructure = result.failureKind !== 'product';
+    const historyRecovery = ['MISSING_MIGRATION', 'APPLIED_MIGRATION_CHANGED', 'APPLIED_MIGRATION_RENAMED'].includes(result.diagnostic?.code || '');
     const message = (result.errors.join('\n') || `Pending migrations: ${result.pending!.join(', ')}`) + (infrastructure
       ? '\nReconcile infrastructure/receipts before retrying; do not rewrite SQL to bypass permissions.'
       : result.diagnostic?.code === 'MIGRATION_RETRY_REQUIRED'
         ? '\nContinue this step by retrying sandbox_db_migrate without changing SQL. Infrastructure errors do not authorize permission changes.'
+        : historyRecovery
+          ? '\nContinue this same implementation step by restoring the original migration path and exact bytes from verified repository history matching its protected checksum. Do not reconstruct SQL, edit receipts, rename applied SQL or reapply it. A new forward migration is for subsequent changes, not a substitute for restoring missing history. If exact original bytes are unavailable, report that technical recovery condition; do not request customer permission to repair SQL.'
         : '\nContinue this implementation step: inspect the database, correct only pending SQL, then call sandbox_db_migrate. Do not delete migrations or edit applied history.');
     return {
       flow: input.flow, ok: false, error: message, reason: message,

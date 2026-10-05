@@ -3,7 +3,9 @@ import { loadRuntimeModule } from '@/lib/custom-automation/test-helpers/load-run
 import * as cyclePolicy from '../../shared/plan-cycle-outcome';
 import * as recoveryPolicy from '../../shared/cycle-recovery-policy';
 import * as ownershipRejection from '../../shared/cron-ownership-rejection';
+import * as adjudication from '../../shared/no-progress-adjudication';
 import { getFlow, classifyRequirementType, productAttemptLimits } from '@/lib/services/requirement-flows';
+import { activeBacklogItemIdsFromPlanSteps, countPendingPlanSteps, hasRunnableBacklogWork } from '@/lib/services/cycle-wrapup-prompt';
 
 /** Real workflow control flow; every I/O dependency is an explicit local fake. */
 function harness(options: { maxTurns?: number; type?: string } = {}) {
@@ -13,7 +15,7 @@ function harness(options: { maxTurns?: number; type?: string } = {}) {
   const lifecycle = {
     assertCronExecutionOwnershipStep: jest.fn(async (_ownership?: unknown) => {}),
     createSandboxStep: jest.fn(async () => ({ sandboxId: 'sandbox', branchName: 'feature', workDir: '/sandbox', instanceType: 'applications', isNewBranch: false })),
-    stopSandboxStep: jest.fn(async () => {}),
+    stopSandboxStep: jest.fn(async (): Promise<{ stopped: boolean } | undefined> => ({ stopped: true })),
     extendRunLockStep: jest.fn(async () => {}),
     releaseRunLockStep: jest.fn(async () => {}),
   };
@@ -24,7 +26,7 @@ function harness(options: { maxTurns?: number; type?: string } = {}) {
     isRequirementExecutionCurrentStep: jest.fn(async () => true),
     updateInstanceStatusStep: jest.fn(async () => {}),
     syncCompletedPlanBacklogStep: jest.fn(async () => ({})),
-    recordCronCycleOutcomeStep: jest.fn(async (_params?: unknown) => ({ is_latest: false })),
+    recordCronCycleOutcomeStep: jest.fn(async (_params?: unknown): Promise<any> => ({ is_latest: false })),
   };
   const steps = {
     getActiveInstancePlanStep: jest.fn(async () => plan),
@@ -53,7 +55,11 @@ function harness(options: { maxTurns?: number; type?: string } = {}) {
     createFinalStatusStep: jest.fn(async () => ({ state: 'applied', effectiveStatus: 'in-progress' })),
     validateDeliverablesStep: jest.fn(async () => ({ repoOk: true, previewOk: true })),
   };
-  const wrapup = { emitCycleWrapUpStep: jest.fn(async (_params?: unknown) => ({ ran: true, outcome: 'completed' })) };
+  const wrapup = {
+    emitCycleWrapUpStep: jest.fn(async (_params?: unknown) => ({ ran: true, outcome: 'completed' })),
+    emitCycleTechnicalEscalationStep: jest.fn(async (_params?: unknown) => ({ state: 'not_eligible', email_sent: false })),
+  };
+  const circuits = { scopeProductNoProgressCircuitStep: jest.fn(async (_params?: unknown) => ({ requirementBlocked: false, itemIsolated: false })) };
   const technicalReviewBacklogItems = jest.fn((): any[] => []);
   const execution = {
     selectPlanStepsForExecution: (input: any[]) => input.filter(step => step.status === 'in_progress'),
@@ -62,6 +68,7 @@ function harness(options: { maxTurns?: number; type?: string } = {}) {
     updatePlanStepStatusStep: jest.fn(async () => ({ persisted: true })),
     recordStepInfraTransientStep: jest.fn(async () => ({ state: 'applied', circuitOpen: false, generation: 1 })),
     logCronInfrastructureEventStep: jest.fn(async () => {}),
+    blockRequirementForCronInfrastructureCyclesStep: jest.fn(async (_params?: unknown) => false),
   };
   const provisionTrackingScriptStep = jest.fn(async (_params?: unknown): Promise<{ injected: boolean; error?: string }> => ({ injected: true }));
   const orchestrator = { runOrchestratorStep: jest.fn(async (_params?: unknown) => ({ createdPlan: true, timedOut: false, effectiveSandboxId: 'sandbox' })) };
@@ -90,12 +97,12 @@ function harness(options: { maxTurns?: number; type?: string } = {}) {
         classifyRequirementType, productAttemptLimits,
       },
       '@/lib/services/cycle-wrapup-prompt': {
-        activeBacklogItemIdsFromPlanSteps: () => new Set(['item']), countPendingPlanSteps: () => 1,
+        activeBacklogItemIdsFromPlanSteps, countPendingPlanSteps,
         feedbackRequiredBacklogItems: () => [], technicalReviewBacklogItems,
-        hasRunnableBacklogWork: (items: any[]) => items.some(item => item.status === 'in_progress'),
+        hasRunnableBacklogWork,
       },
       '../shared/cron-execute-steps-phase': execution,
-      '../shared/cron-blocker-scope-steps': {},
+      '../shared/cron-blocker-scope-steps': circuits,
       '../shared/single-turn-executor': { executeSingleTurnStep },
       '../shared/gate-step-executor': gate,
       '../shared/cron-orchestrator-step': orchestrator,
@@ -107,7 +114,7 @@ function harness(options: { maxTurns?: number; type?: string } = {}) {
       workflow: { sleep: async () => {} },
       '@/lib/services/cron-infrastructure-state': {},
       '../shared/plan-cycle-outcome': cyclePolicy,
-      '../shared/no-progress-adjudication': {},
+      '../shared/no-progress-adjudication': adjudication,
       '../shared/cycle-recovery-policy': recoveryPolicy,
       '../shared/cron-ownership-rejection': ownershipRejection,
       '../shared/cycle-wrapup-step': wrapup,
@@ -117,7 +124,7 @@ function harness(options: { maxTurns?: number; type?: string } = {}) {
   const run = () => workflow.runCronAppsWorkflow({ reqId: 'req', title: 'Test', instructions: '', type: options.type || 'app',
     site_id: 'site', user_id: 'user', instanceId: 'instance', previousWorkContext: '', instance_type: 'applications',
     cronLockRunId: 'run', cycleStartedAt: '2026-09-26T00:00:00Z', executionGeneration: 3 });
-  return { run, plan, lifecycle, db, steps, executeSingleTurnStep, execution, verification, migration, repair, gate, finalizer, wrapup, provisionTrackingScriptStep, migrationLifecycle, technicalReviewBacklogItems, orchestrator };
+  return { run, plan, lifecycle, db, steps, executeSingleTurnStep, execution, verification, migration, repair, gate, finalizer, wrapup, provisionTrackingScriptStep, migrationLifecycle, technicalReviewBacklogItems, orchestrator, circuits };
 }
 
 function expectNoMigrationOrchestration(h: ReturnType<typeof harness>) {
@@ -266,6 +273,66 @@ describe('workflow recovery and truthful completion', () => {
     expect(h.lifecycle.releaseRunLockStep).toHaveBeenCalledTimes(1);
   });
 
+  it.each([false, true])('checks support only after latest no-progress accounting actually blocks the requirement: %s', async requirementBlocked => {
+    const h = harness();
+    h.plan.steps[0].metadata = { no_progress_adjudication: { state: 'consumed', execution_generation: 3 } };
+    h.db.recordCronCycleOutcomeStep.mockResolvedValue({ is_latest: true, recorded_outcome: 'product_no_progress', no_progress_cycles: 3 });
+    h.circuits.scopeProductNoProgressCircuitStep.mockResolvedValue({ requirementBlocked, itemIsolated: !requirementBlocked });
+    await h.run();
+    expect(h.wrapup.emitCycleTechnicalEscalationStep).toHaveBeenCalledTimes(requirementBlocked ? 1 : 0);
+    if (requirementBlocked) {
+      expect(h.wrapup.emitCycleTechnicalEscalationStep).toHaveBeenCalledWith(expect.objectContaining({
+        requirementId: 'req', runId: 'run', executionGeneration: 3,
+        sandboxStopped: true, requirementBlocked: true,
+        settle: { planId: 'plan', stepId: 'step', expectedGeneration: 1 },
+      }));
+      expect(h.wrapup.emitCycleTechnicalEscalationStep.mock.invocationCallOrder[0])
+        .toBeGreaterThan(h.circuits.scopeProductNoProgressCircuitStep.mock.invocationCallOrder[0]);
+      expect(h.wrapup.emitCycleTechnicalEscalationStep.mock.invocationCallOrder[0])
+        .toBeGreaterThan(h.lifecycle.stopSandboxStep.mock.invocationCallOrder[0]);
+    }
+    expect(h.wrapup.emitCycleWrapUpStep).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('checks support only after latest infrastructure accounting actually blocks: %s', async requirementBlocked => {
+    const h = harness();
+    h.db.recordCronCycleOutcomeStep.mockResolvedValue({ is_latest: true, recorded_outcome: 'infrastructure_retry', infrastructure_failure_cycles: 4 });
+    h.execution.blockRequirementForCronInfrastructureCyclesStep.mockResolvedValue(requirementBlocked);
+    await h.run();
+    expect(h.wrapup.emitCycleTechnicalEscalationStep).toHaveBeenCalledTimes(requirementBlocked ? 1 : 0);
+    if (requirementBlocked) expect(h.wrapup.emitCycleTechnicalEscalationStep).toHaveBeenCalledWith(expect.objectContaining({
+      sandboxStopped: true, requirementBlocked: true, settle: { planId: 'plan', stepId: 'step', expectedGeneration: 1 },
+    }));
+    expect(h.wrapup.emitCycleWrapUpStep).not.toHaveBeenCalled();
+  });
+
+  it('does not check support for superseded accounting or a pending adjudication', async () => {
+    const h = harness();
+    h.db.recordCronCycleOutcomeStep.mockResolvedValue({ is_latest: false, recorded_outcome: 'product_no_progress', no_progress_cycles: 3 });
+    await h.run();
+    expect(h.wrapup.emitCycleTechnicalEscalationStep).not.toHaveBeenCalled();
+    h.plan.steps[0].metadata = { no_progress_adjudication: { state: 'requested', execution_generation: 3 } };
+    h.db.recordCronCycleOutcomeStep.mockResolvedValue({ is_latest: true, recorded_outcome: 'product_no_progress', no_progress_cycles: 3 });
+    await h.run();
+    expect(h.circuits.scopeProductNoProgressCircuitStep).not.toHaveBeenCalled();
+    expect(h.wrapup.emitCycleTechnicalEscalationStep).not.toHaveBeenCalled();
+  });
+
+  it.each(['product_no_progress', 'infrastructure_retry'])('does not settle or escalate %s when sandbox shutdown is false or unknown', async recorded_outcome => {
+    for (const stopResult of [{ stopped: false }, undefined]) {
+      const h = harness();
+      h.lifecycle.stopSandboxStep.mockResolvedValue(stopResult);
+      h.plan.steps[0].metadata = { no_progress_adjudication: { state: 'consumed', execution_generation: 3 } };
+      h.db.recordCronCycleOutcomeStep.mockResolvedValue({ is_latest: true, recorded_outcome, no_progress_cycles: 3, infrastructure_failure_cycles: 4 });
+      h.circuits.scopeProductNoProgressCircuitStep.mockResolvedValue({ requirementBlocked: true, itemIsolated: false });
+      h.execution.blockRequirementForCronInfrastructureCyclesStep.mockResolvedValue(true);
+      await h.run();
+      expect(h.wrapup.emitCycleTechnicalEscalationStep).not.toHaveBeenCalled();
+      expect(h.plan.steps[0].status).toBe('in_progress');
+      expect(h.lifecycle.releaseRunLockStep).toHaveBeenCalledTimes(1);
+    }
+  });
+
   it('does not touch the sandbox or report status after ownership has been lost', async () => {
     const h = harness();
     h.lifecycle.assertCronExecutionOwnershipStep.mockRejectedValue(new Error('Stale owner'));
@@ -324,6 +391,50 @@ describe('workflow recovery and truthful completion', () => {
     expect(h.wrapup.emitCycleWrapUpStep).not.toHaveBeenCalled();
     expect(h.steps.commitAndPushStep).not.toHaveBeenCalled();
   });
+
+  it('lets wrap-up recheck independent plan work after cancellation instead of trusting pending counts', async () => {
+    const h = harness();
+    h.plan.steps.push({ id: 'independent-step', status: 'pending', backlog_item_id: 'independent' });
+    exhaustProduct(h);
+    await expect(h.run()).resolves.toMatchObject({ status: 'product_failure' });
+    expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({
+      recoveryDisposition: 'product_failure', pendingPlanSteps: 1, hasRunnableBacklogWork: false,
+    }));
+    expect(h.steps.commitAndPushStep).not.toHaveBeenCalled();
+    expect(h.plan.steps[0].status).toBe('cancelled');
+    expect(h.plan.steps[1].status).toBe('pending');
+    expect(h.db.recordCronCycleOutcomeStep).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'product_failure' }));
+  });
+
+  it.each(['plan', 'backlog', 'neither'] as const)(
+    'scopes final product failure to the item when independent %s work remains', async independent => {
+      const h = harness();
+      if (independent === 'plan') h.plan.steps.push({ id: 'next-step', status: 'pending', backlog_item_id: 'next' });
+      h.executeSingleTurnStep.mockImplementation(async () => {
+        h.plan.steps[0].status = 'failed';
+        h.plan.steps[0].retry_count = 2;
+        h.db.getRequirementFullContextStep.mockResolvedValue({ backlog: { items: [
+          { id: 'item', status: 'needs_review', attempts: 4 },
+          ...(independent === 'backlog' ? [{ id: 'next', status: 'pending', attempts: 0 }] : []),
+        ] } });
+        return { ...exhaustedTurn, persistedTerminalStatus: 'failed' };
+      });
+      await h.run();
+      expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({
+        recoveryDisposition: independent === 'neither' ? 'product_failure' : undefined,
+        requiresUserFeedback: false,
+        pendingPlanSteps: independent === 'plan' ? 1 : 0,
+        hasRunnableBacklogWork: independent === 'backlog',
+      }));
+      if (independent !== 'neither') {
+        expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({
+          wrapUpReason: expect.stringContaining('independent plan or backlog work remains runnable'),
+        }));
+      }
+      expect(h.db.recordCronCycleOutcomeStep).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'product_failure' }));
+      expect(h.plan.steps[0]).toMatchObject({ status: 'failed', retry_count: 2 });
+    },
+  );
 
   it('preserves original evidence after wrapped cleanup, ledger, and release errors', async () => {
     const h = harness();
