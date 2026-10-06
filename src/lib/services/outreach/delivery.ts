@@ -7,9 +7,10 @@ import { prepareOutreachDelivery, type DeliveryContext, type PreparedDelivery } 
 import { summarizeOutreachHistory } from './history';
 import { resolveOutreachRecipient } from './recipients';
 import { loadOutreachConversations } from './recipient-repository';
+import { invoiceMessageReason, loadInvoiceState, markInvoiceSent } from './invoice-state';
 
 export interface OutreachResult { success: boolean; deferred?: boolean; reason?: string; messageId?: string; alreadySent?: boolean; retryAt?: string; channel?: string; recipient?: string }
-export interface Snapshot { message: any; conversation: any; lead: any; settings: any; conversations?: any[] }
+export interface Snapshot { message: any; conversation: any; lead: any; settings: any; conversations?: any[]; sale?: any; reminder?: any; site?: any; lastSentAt?: string | null }
 export interface OutreachRepository {
   load(siteId: string, messageId: string): Promise<Snapshot | null>;
   history(siteId: string, leadId: string): Promise<any[]>;
@@ -39,7 +40,9 @@ export const outreachRepository: OutreachRepository = {
       supabaseAdmin.from('settings').select('channels,activities,business_hours').eq('site_id', siteId).maybeSingle(),
     ]);
     if (le || se) throw le || se;
-    return lead ? { message, conversation, lead, settings,
+    const invoice = resolveOutreachActivity(message.custom_data) === 'invoices_due'
+      ? await loadInvoiceState(siteId, message.custom_data?.sale_id, message.custom_data?.invoice_reminder_id) : {};
+    return lead ? { message, conversation, lead, settings, ...invoice,
       conversations: await loadOutreachConversations(siteId, lead.id) } : null;
   },
   async history(siteId, leadId) {
@@ -77,6 +80,11 @@ export const outreachRepository: OutreachRepository = {
       .eq('id', message.id).eq('conversation_id', message.conversation_id)
       .eq('custom_data->outreach_delivery->>attempt_id', marker.attempt_id).select('id');
     if (error || !data?.length) throw error || new Error('Durable outreach ownership lost');
+    if (marker.state === 'sent' && message.custom_data?.outreach_activity === 'invoices_due') {
+      const { data: conversation, error: ce } = await supabaseAdmin.from('conversations').select('site_id').eq('id', message.conversation_id).single();
+      if (ce || !conversation) throw ce || new Error('Invoice conversation unavailable');
+      await markInvoiceSent(conversation.site_id, message, marker.provider_message_id, marker.sent_at);
+    }
   },
   async reservedCount(siteId, activity, day) {
     const { count, error } = await supabaseAdmin.from('messages')
@@ -110,6 +118,9 @@ export function createOutreachDelivery(deps: {
       // Already-sent is checked before current eligibility: this only finalizes
       // a lost successful response and never starts a new provider delivery.
       if (oldMarker?.state === 'sent' || data.status === 'sent' || data.delivery?.success === true) {
+        if (data.outreach_activity === 'invoices_due' && oldMarker?.provider_message_id) {
+          try { await markInvoiceSent(siteId, message, oldMarker.provider_message_id, oldMarker.sent_at); } catch { return uncertain(); }
+        }
         return { success: true, alreadySent: true, messageId: oldMarker?.provider_message_id || data.provider_message_id || data.provider_call_id || data.delivery?.details?.message_id,
           ...(oldMarker?.recipient ? { recipient: oldMarker.recipient, channel: oldMarker.channel } : {}) };
       }
@@ -117,20 +128,25 @@ export function createOutreachDelivery(deps: {
       if (message.role !== 'assistant' || !['accepted', 'sending'].includes(data.status)) return defer('message_not_approved');
       const activity = resolveOutreachActivity(data);
       if (!activity) return defer('outreach_activity_required');
+      const invoice = activity === 'invoices_due';
+      if (invoice) {
+        const reason = invoiceMessageReason(siteId, snapshot, now);
+        if (reason) return defer(reason);
+      }
       const policy = getOutreachPolicy(settings, activity);
       if (!policy) return defer('invalid_outreach_configuration');
       if (policy.status !== 'active') return defer('activity_inactive');
       const timingReason = outreachTimingReason(settings, activity, now);
       if (timingReason) return defer(timingReason);
-      if (!policy.all_segments && (!lead.segment_id || !policy.segment_ids.includes(lead.segment_id))) return defer('segment_not_selected');
-      if (!policy.all_segments && !await repo.segmentBelongsToSite(siteId, lead.segment_id)) return defer('segment_not_selected');
-      if (!['new', 'contacted', 'qualified'].includes(lead.status)) return defer('lead_ineligible');
-      if (lead.metadata?.quarantined_cross_tenant || lead.assignee_id || lead.unsubscribed
+      if (!invoice && !policy.all_segments && (!lead.segment_id || !policy.segment_ids.includes(lead.segment_id))) return defer('segment_not_selected');
+      if (!invoice && !policy.all_segments && !await repo.segmentBelongsToSite(siteId, lead.segment_id)) return defer('segment_not_selected');
+      if (!invoice && !['new', 'contacted', 'qualified'].includes(lead.status)) return defer('lead_ineligible');
+      if (lead.metadata?.quarantined_cross_tenant || (!invoice && lead.assignee_id) || lead.unsubscribed
         || lead.metadata?.unsubscribed === true || lead.metadata?.do_not_contact === true) return defer('lead_ineligible');
       const timezone = outreachTimezone(settings);
       let day: ReturnType<typeof localDay>;
       try { day = localDay(now, timezone); } catch { return defer('invalid_timezone'); }
-      if (activity === 'leads_follow_up' && !policy.weekdays.includes(day.weekday)) return defer('outside_weekdays', nextLocalDay(now, timezone).toISOString());
+      if (activity !== 'leads_initial_cold_outreach' && !policy.weekdays.includes(day.weekday)) return defer('outside_weekdays', nextLocalDay(now, timezone).toISOString());
       const channel = data.channel || conversation.channel;
       if (!isOutreachChannel(channel)) return defer('unsupported_channel');
       if (conversation.channel && conversation.channel !== channel) return defer('channel_mismatch');
@@ -148,6 +164,7 @@ export function createOutreachDelivery(deps: {
       const historyReason = (history: any[]) => {
         const h = summarizeOutreachHistory(history.filter(m => m.id !== message.id));
         if (h.uncertain) return 'delivery_uncertain';
+        if (invoice) return undefined;
         if ((activity === 'leads_initial_cold_outreach') === h.hasInbound) return 'audience_mismatch';
         if (h.unanswered >= policy.max_unanswered_messages) return 'unanswered_limit';
         return undefined;
@@ -162,6 +179,22 @@ export function createOutreachDelivery(deps: {
       // Preparation can be slow and preferences may have changed since the first read.
       const current = await repo.load(siteId, messageId);
       if (!current) return defer('message_changed');
+      const invoiceCurrentReason = (state: Snapshot, at: Date) => {
+        const reason = invoiceMessageReason(siteId, state, at);
+        if (reason) return reason;
+        const currentPolicy = getOutreachPolicy(state.settings, activity);
+        const currentAccount = currentPolicy && selectedOutreachAccounts(state.settings, currentPolicy, channel).find(a => a.id === account.id);
+        const currentRecipient = resolveOutreachRecipient({ siteId, lead: state.lead, channel, conversations: state.conversations || [state.conversation] });
+        if (!currentAccount || JSON.stringify(currentAccount) !== JSON.stringify(account)) return 'selected_account_changed';
+        if (currentRecipient?.recipient !== recipient.recipient) return 'recipient_changed';
+        if (state.message.content !== message.content || JSON.stringify(state.message.custom_data) !== JSON.stringify(message.custom_data)
+          || state.conversation.id !== conversation.id || state.conversation.channel !== conversation.channel) return 'message_changed';
+        if (currentPolicy!.daily_message_limit !== policy.daily_message_limit) return 'configuration_changed';
+      };
+      if (invoice) {
+        const reason = invoiceCurrentReason(current, dispatchNow);
+        if (reason) return defer(reason);
+      }
       const currentTimingReason = outreachTimingReason(current.settings, activity, dispatchNow);
       if (currentTimingReason) return defer(currentTimingReason);
       if (outreachTimezone(current.settings) !== timezone) return defer('timezone_changed');
@@ -201,6 +234,27 @@ export function createOutreachDelivery(deps: {
           await repo.mark(message, { ...marker, state: 'blocked', reason: finalTimingReason });
           await ledger.release(lease);
           return defer(finalTimingReason);
+        }
+        // A queued collection message is sale-bound even when called through
+        // sendOutreachMessage. Re-read immediately before its provider closure.
+        if (invoice) {
+          const final = await repo.load(siteId, messageId);
+          const finalNow = deps.now?.() || new Date();
+          const finalDayChanged = localDay(finalNow, timezone).day !== day.day;
+          const finalData = { ...final?.message.custom_data };
+          // Ignore only our own freshly claimed marker while comparing the
+          // original approved content. Unknown ownership still fails closed.
+          if (finalData.outreach_delivery?.attempt_id !== lease.attemptId) return uncertain();
+          if (Object.prototype.hasOwnProperty.call(message.custom_data, 'outreach_delivery')) finalData.outreach_delivery = message.custom_data.outreach_delivery;
+          else delete finalData.outreach_delivery;
+          const reason = final ? invoiceCurrentReason({ ...final, message: { ...final.message,
+            custom_data: finalData } }, finalNow) : 'message_changed';
+          if (reason || finalDayChanged) {
+            const blockedReason = reason || 'local_day_changed';
+            await repo.mark(message, { ...marker, state: 'blocked', reason: blockedReason });
+            await ledger.release(lease);
+            return defer(blockedReason);
+          }
         }
         const sent = await prepared.send();
         if (!sent.success || !sent.messageId) return uncertain();

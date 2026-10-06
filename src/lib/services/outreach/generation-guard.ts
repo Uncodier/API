@@ -10,6 +10,9 @@ import { outreachTimingReason } from './timing';
 /** Managed-only boundary: caller leadData never authorizes generation/logging. */
 export async function assertOutreachGeneration(request: Request, siteId: string, leadId: string, activity: OutreachActivityKey) {
   const denied = (message: string, status = 400): never => { throw { code: 'OUTREACH_NOT_ELIGIBLE', message, status }; };
+  // Collection reminders must go through the sale-bound endpoint, never a
+  // caller-supplied lead or the qualification/prospecting command.
+  if (activity === 'invoices_due') denied('Use the dueInvoices endpoint for invoice reminders');
   if (!await canAccessSite(request, siteId)) denied('Site access denied', 403);
   const [{ data: lead, error: le }, { data: settings, error: se }] = await Promise.all([
     supabaseAdmin.from('leads').select('*').eq('id', leadId).eq('site_id', siteId).maybeSingle(),

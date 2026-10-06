@@ -1,6 +1,6 @@
 import { validOutreachTiming } from './timing';
 
-export type OutreachActivityKey = 'leads_initial_cold_outreach' | 'leads_follow_up';
+export type OutreachActivityKey = 'leads_initial_cold_outreach' | 'leads_follow_up' | 'invoices_due';
 export type OutreachChannel = string;
 /** Channel names become record keys. Audio is a message format, not an account. */
 export function isOutreachChannel(value: unknown): value is string {
@@ -21,10 +21,11 @@ export interface OutreachPolicy {
   daily_message_limit: number;
   max_unanswered_messages: number;
   weekdays: number[];
+  repeat_interval_days: number;
 }
 
 export function isOutreachActivity(value: unknown): value is OutreachActivityKey {
-  return value === 'leads_initial_cold_outreach' || value === 'leads_follow_up';
+  return value === 'leads_initial_cold_outreach' || value === 'leads_follow_up' || value === 'invoices_due';
 }
 
 /** Kept in sync with Workflows/utils/outreachActivity.ts for historical queued work. */
@@ -60,10 +61,12 @@ export function getOutreachPolicy(settings: any, activity: OutreachActivityKey):
   for (const [channel, ids] of Object.entries(selections || {})) channelAccounts[channel] = strings(ids);
   const limit = raw.daily_message_limit === undefined ? 30 : raw.daily_message_limit;
   if (!Number.isInteger(limit) || limit < 1 || limit > 10000) return null;
-  const maxUnanswered = raw.max_unanswered_messages === undefined ? 3 : raw.max_unanswered_messages;
+  const maxUnanswered = activity === 'invoices_due' || raw.max_unanswered_messages === undefined ? 3 : raw.max_unanswered_messages;
   if (!Number.isInteger(maxUnanswered) || maxUnanswered < 1 || maxUnanswered > 100) return null;
-  const weekdays = raw.weekdays === undefined ? [2, 3, 4] : raw.weekdays;
-  if (activity === 'leads_follow_up' && (!Array.isArray(weekdays)
+  const repeatInterval = raw.repeat_interval_days === undefined ? 3 : raw.repeat_interval_days;
+  if (activity === 'invoices_due' && (!Number.isInteger(repeatInterval) || repeatInterval < 1 || repeatInterval > 365)) return null;
+  const weekdays = raw.weekdays === undefined ? (activity === 'invoices_due' ? [1, 2, 3, 4, 5] : [2, 3, 4]) : raw.weekdays;
+  if (activity !== 'leads_initial_cold_outreach' && (!Array.isArray(weekdays)
     || weekdays.some((d: unknown) => !Number.isInteger(d) || Number(d) < 0 || Number(d) > 6))) return null;
   return {
     status: raw.status,
@@ -73,6 +76,7 @@ export function getOutreachPolicy(settings: any, activity: OutreachActivityKey):
     daily_message_limit: limit,
     max_unanswered_messages: maxUnanswered,
     weekdays,
+    repeat_interval_days: activity === 'invoices_due' ? repeatInterval : 3,
   };
 }
 

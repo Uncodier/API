@@ -26,7 +26,8 @@ export function requiredApiKeyScope(
   if (pathname.startsWith('/api/integrations/outstand/conversations')) {
     return method === 'GET' ? 'read' : 'write';
   }
-  if (pathname === '/api/agents/tools/sendChannelMessage' || pathname === '/api/agents/tools/sendOutreachMessage') {
+  if (pathname === '/api/agents/tools/sendChannelMessage' || pathname === '/api/agents/tools/sendOutreachMessage'
+    || pathname === '/api/agents/sales/dueInvoices') {
     return 'write';
   }
   if (

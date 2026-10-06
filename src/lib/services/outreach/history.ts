@@ -11,6 +11,8 @@ export function summarizeOutreachHistory(messages: any[]) {
   for (const m of messages) {
     const d = m.custom_data || {};
     if (d.outreach_delivery?.state === 'dispatching') uncertain = true;
+    // A collection touch is not an unanswered sales-prospecting touch.
+    if (d.outreach_activity === 'invoices_due' || d.outreach_delivery?.activity === 'invoices_due') continue;
     if (m.role !== 'assistant' || !(d.status === 'sent' || d.delivery?.success === true || d.outreach_delivery?.state === 'sent')) continue;
     const at = Date.parse(d.outreach_delivery?.sent_at || d.delivery?.timestamp || d.timestamp_sync?.delivery_timestamp || m.created_at);
     if (!Number.isFinite(at) || at <= lastInboundAt) continue;

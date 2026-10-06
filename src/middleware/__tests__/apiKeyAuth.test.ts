@@ -1,5 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { NextRequest } from 'next/server';
+import { randomBytes } from 'node:crypto';
 
 const validateApiKey = jest.fn();
 
@@ -85,6 +86,17 @@ describe('apiKeyAuth', () => {
       'POST',
     )).toBe('write');
     expect(requiredApiKeyScope('/api/public/posts', 'GET')).toBeNull();
+    expect(requiredApiKeyScope('/api/agents/sales/dueInvoices', 'POST')).toBe('write');
+  });
+
+  it('requires write scope on the authenticated invoice reminder action', async () => {
+    (validateApiKey as any).mockResolvedValue({ isValid: true, keyData: {
+      id: 'invoice-test-key', name: 'Read only', site_id: '00000000-0000-4000-8000-000000000001', scopes: ['read'],
+    } });
+    const response = await apiKeyAuth(new NextRequest('https://api.example.com/api/agents/sales/dueInvoices', {
+      method: 'POST', headers: { 'x-api-key': randomBytes(32).toString('hex') },
+    }));
+    expect(response.status).toBe(403);
   });
 
   it('rejects a read-only key on a generation route', async () => {

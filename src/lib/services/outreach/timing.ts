@@ -24,7 +24,7 @@ export function outreachTimingReason(settings: any, activity: OutreachActivityKe
     }).formatToParts(now);
     const get = (key: string) => parts.find(part => part.type === key)!.value;
     const weekday = WEEKDAYS.indexOf(get('weekday').toLowerCase());
-    const mode = raw?.start_time_mode ?? (raw?.start_time === undefined ? undefined : 'custom');
+    const mode = raw?.start_time_mode ?? (raw?.start_time === undefined ? (activity === 'invoices_due' ? 'business_opening' : undefined) : 'custom');
     if (mode === undefined) return undefined;
     const day = hours?.days?.[WEEKDAYS[weekday]] ?? hours?.[WEEKDAYS[weekday]];
     if (activity === 'leads_initial_cold_outreach'
