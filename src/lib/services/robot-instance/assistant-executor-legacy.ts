@@ -1,5 +1,6 @@
 import { AIAgentExecutor } from '@/lib/custom-automation/ai-agent-executor';
-import { CreditService, InsufficientCreditsError } from '@/lib/services/billing/CreditService';
+import { CreditService } from '@/lib/services/billing/CreditService';
+import { isInsufficientCreditsError } from '@/lib/services/billing/credit-exhaustion-message';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { createAssistantOnStepHandler } from './assistant-logging';
 import { createStreamingLogCallbacks, createThinkingStreamLogCallbacks } from './assistant-streaming-logs';
@@ -26,10 +27,7 @@ export async function executeAssistant(
 
   if (site_id) {
     try {
-      const hasCredits = await CreditService.validateCredits(site_id, 0.001); // minimal requirement to start
-      if (!hasCredits) {
-        throw new InsufficientCreditsError('Insufficient credits for assistant execution');
-      }
+      await CreditService.requireCredits(site_id, 0.001);
     } catch (e: any) {
       console.error('Credit validation failed:', e.message);
       throw e;
@@ -121,6 +119,7 @@ export async function executeAssistant(
             );
           } catch (e) {
             console.error('Failed to deduct credits for assistant tokens:', e);
+            if (isInsufficientCreditsError(e)) throw e;
           }
         }
       }

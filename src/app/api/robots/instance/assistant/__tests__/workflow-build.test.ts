@@ -42,6 +42,11 @@ describe('assistant workflow build boundary', () => {
     const { inputs, code } = JSON.parse(output) as { inputs: string[]; code: string };
 
     expect(inputs).toContain('src/lib/services/robot-instance/assistant-respawn-policy.ts');
+    // The generated workflow must use the source image context, not a stale
+    // flattened URL-list builder. No manual edits to generated route bundles.
+    expect(inputs).toContain('src/lib/services/robot-instance/assistant-image-content.ts');
+    expect(code).toContain('image-entity-v2');
+    expect(code).toContain('current_attachment');
     for (const serverModule of [
       'src/lib/services/robot-instance/assistant-respawn.ts',
       'src/lib/services/robot-instance/assistant-recovery.ts',

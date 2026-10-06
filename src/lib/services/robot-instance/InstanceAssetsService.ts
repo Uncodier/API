@@ -406,8 +406,8 @@ export class InstanceAssetsService {
         if (asset.publicUrl) {
           context += `- URL: ${asset.publicUrl}\n`;
         }
-        context += `- Content: [Image attached as a multimodal vision part in your user message - ${asset.file_type}]\n`;
-        context += `- Note: You ALREADY have native vision capabilities. Analyze and describe this image directly. Do NOT claim you lack vision/OCR tools.\n`;
+        context += `- Content: [Image reference in the instance inventory - ${asset.file_type}; not proof of visibility]\n`;
+        context += '- Note: Describe this image only if its matching vision part is present in the current request. Download-failure and image-budget omission notices take precedence over this inventory. Never substitute a different visible image or a past description.\n';
       } else if (asset.metadata) {
         context += `- Metadata: ${JSON.stringify(asset.metadata, null, 2)}\n`;
       }

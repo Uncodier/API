@@ -26,6 +26,7 @@
 import type OpenAI from 'openai';
 import { createOpenRouterClient, isOpenRouterReasoningModel, resolveOpenRouterModel } from '@/lib/services/ai/openrouter';
 import { fitInstanceRequest, resolveModelContextCapacity } from '@/lib/services/robot-instance/instance-context-budget';
+import { getVisionImageSourceUrl } from '@/lib/services/robot-instance/vision-message-images';
 import { normalizeToolOperationResult } from '@/lib/services/tool-operation-result';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
@@ -56,45 +57,89 @@ function isLikelyBase64ImagePayload(value: string): boolean {
   );
 }
 
+/** Only the generated linked-reference envelope, never arbitrary URL mentions. */
+function linkedImageSources(content: any[]): Set<string> {
+  const text = content[0]?.type === 'text' ? content[0].text : undefined;
+  if (typeof text !== 'string') return new Set();
+  const match = text.match(/^\[Reference Context from linked node ([^\]\r\n]+)\]:\nNode reference: (\{[^\r\n]*\})\n/);
+  if (!match) return new Set();
+  try {
+    const reference = JSON.parse(match[2]);
+    if (typeof reference.node_id !== 'string' || !reference.node_id || reference.reference_type !== match[1]) return new Set();
+    // The generated URL list is appended after untrusted linked-node prose.
+    const listStart = text.lastIndexOf('\n\nCRITICAL - Image URLs for reference (');
+    const list = listStart >= 0
+      ? text.slice(listStart).match(/^\n\nCRITICAL - Image URLs for reference \([^\r\n]*\):\n([\s\S]*)$/)?.[1] : undefined;
+    return new Set(list?.split('\n') || []);
+  } catch {
+    return new Set();
+  }
+}
+
+function imageReferencePriority(content: any[], index: number, source: string, linked: Set<string>): number {
+  // Node execution must use linked assets, not unrelated conversation history.
+  if (linked.has(source)) return 3;
+  const label = content[index - 1];
+  const match = label?.type === 'text' && typeof label.text === 'string'
+    ? label.text.match(/^Image reference: (\{[^\r\n]*\})\nSource URL: ([^\r\n]+)$/) : undefined;
+  if (!match || match[2] !== source) return 0;
+  try {
+    const reference = JSON.parse(match[1]);
+    return reference.reply_target === true ? 2 : reference.current_attachment === true ? 1 : 0;
+  } catch {
+    return 0;
+  }
+}
+
 /**
- * Helper function to filter base64 images in messages, keeping only the latest ones up to specified limit.
- * This prevents the context window from growing infinitely with accumulated screenshots.
- * Based on Scrapybara's implementation pattern.
- *
- * @param messages - List of messages to filter (modifies in place)
- * @param imagesToKeep - Maximum number of images to keep
+ * Bound vision parts without letting new tool screenshots evict explicit targets.
+ * Rank linked-node, reply, then current references before other images; break ties
+ * by latest occurrence. Select exact sources once, but never reorder identity or
+ * chronology text. All selection state is local, with no extra provider fields.
  */
 function filterImages(messages: any[], imagesToKeep: number): void {
-  let imagesKept = 0;
+  type Candidate = { messageIndex: number; partIndex: number; source: string; priority: number };
+  const candidates: Candidate[] = [];
+  const invalid = new Map<any, string>();
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+    const msg = messages[messageIndex];
+    if (msg.role !== 'user' || !Array.isArray(msg.content)) continue;
+    const linked = linkedImageSources(msg.content);
+    for (let partIndex = 0; partIndex < msg.content.length; partIndex++) {
+      const part = msg.content[partIndex];
+      if (part?.type !== 'image_url') continue;
+      const raw = typeof part.image_url === 'string' ? part.image_url : part.image_url?.url;
+      const source = getVisionImageSourceUrl(part);
+      if (typeof raw !== 'string' || !/^(data:image\/|https?:\/\/)/.test(raw) || !source) {
+        invalid.set(part, 'Image unavailable: invalid image source. This image is NOT visible. Do not substitute another image or infer its contents.');
+        continue;
+      }
+      candidates.push({ messageIndex, partIndex, source,
+        priority: imageReferencePriority(msg.content, partIndex, source, linked) });
+    }
+  }
 
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i];
+  candidates.sort((a, b) => b.priority - a.priority || b.messageIndex - a.messageIndex || b.partIndex - a.partIndex);
+  const selected = new Map<string, Candidate>();
+  for (const candidate of candidates) {
+    if (selected.size >= imagesToKeep) break;
+    if (!selected.has(candidate.source)) selected.set(candidate.source, candidate);
+  }
+  for (const candidate of candidates) {
+    if (selected.get(candidate.source) === candidate) continue;
+    const { messageIndex, partIndex, source } = candidate;
+    // Never turn large inline bytes into text or a provider-specific metadata field.
+    const identity = /^https?:\/\//.test(source) ? JSON.stringify(source)
+      : `inline image at message ${messageIndex + 1}, part ${partIndex + 1}`;
+    const reason = selected.has(source)
+      ? 'Duplicate image occurrence omitted; exact-source duplicates share one vision slot'
+      : `Image omitted from vision due to the ${imagesToKeep}-image limit`;
+    messages[messageIndex].content[partIndex] = { type: 'text', text: `${reason}: ${identity}. This occurrence is NOT visible; identity text alone is not image access. Do not describe or infer its contents unless this exact source is attached elsewhere in this request. If a requested image is not attached, explain the limit and ask for fewer images; do not substitute another image.` };
+  }
 
+  for (const msg of messages) {
     if (msg.role === 'user' && Array.isArray(msg.content)) {
-      for (let j = msg.content.length - 1; j >= 0; j--) {
-        const contentPart = msg.content[j];
-
-        if (contentPart.type === 'image_url' && contentPart.image_url) {
-          const imageUrl = contentPart.image_url.url;
-          if (imageUrl && (imageUrl.startsWith('data:image/') || imageUrl.startsWith('http://') || imageUrl.startsWith('https://'))) {
-            if (imagesKept < imagesToKeep) {
-              imagesKept++;
-            } else {
-              msg.content.splice(j, 1);
-            }
-          } else {
-            console.log(`🧹 [IMAGE_FILTER] Removing invalid image URL: ${imageUrl?.substring(0, 100)}...`);
-            msg.content.splice(j, 1);
-          }
-        }
-      }
-
-      if (msg.content.length === 0) {
-        messages.splice(i, 1);
-      } else if (msg.content.length === 1 && msg.content[0].type === 'text' &&
-                 msg.content[0].text.includes('Here are the')) {
-        messages.splice(i, 1);
-      }
+      msg.content = msg.content.map((part: any) => invalid.has(part) ? { type: 'text', text: invalid.get(part) } : part);
     }
 
     if (msg.role === 'tool' && typeof msg.content === 'string') {
@@ -814,7 +859,7 @@ export class AIAgentExecutor {
         ).length;
 
         if (imagesBefore > imagesAfter) {
-          console.log(`₍ᐢ•(ܫ)•ᐢ₎ [IMAGE_FILTER] Cleaned ${imagesBefore - imagesAfter} old image(s), kept ${imagesAfter} most recent`);
+          console.log(`₍ᐢ•(ܫ)•ᐢ₎ [IMAGE_FILTER] Reduced image-bearing messages by ${imagesBefore - imagesAfter}; explicit references take priority over recency`);
         }
 
         // Gemini's OpenAI-compat layer 400s (no body) when assistant turns

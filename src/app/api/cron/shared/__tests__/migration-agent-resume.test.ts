@@ -1,4 +1,5 @@
 import { loadRuntimeModule } from '@/lib/custom-automation/test-helpers/load-runtime-module';
+import { isInsufficientCreditsError } from '@/lib/services/billing/credit-exhaustion-message';
 import * as repairPolicy from '../repair-execution-policy';
 import * as repairController from '../judge-repair-controller';
 import * as testRepairPolicy from '../judge-test-repair';
@@ -81,6 +82,7 @@ function harness(options: {
   });
   const { executeSingleTurnStep } = loadRuntimeModule<typeof import('../single-turn-executor')>(
     'src/app/api/cron/shared/single-turn-executor.ts', {
+      '@/lib/services/billing/credit-exhaustion-message': { isInsufficientCreditsError },
       '@vercel/sandbox': {},
       '@/lib/database/supabase-client': { supabaseAdmin: { from } },
       '@/lib/services/robot-instance/assistant-executor': { executeAssistantStep },

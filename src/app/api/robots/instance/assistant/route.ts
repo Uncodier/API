@@ -11,6 +11,7 @@ import { normalizePublishToolOverrides } from './publish-tool-overrides';
 import { approvedCommunityImport, assistantSkillSelectionSchema, resolveAssistantSkillSelection } from './skill-selection';
 import { canAccessSite } from '@/lib/security/site-access';
 import { isSiteSkillManager } from '@/lib/services/site-skill-access';
+import { isNodeSpecificContext, NODE_CONTEXT_REQUIRES_NODE, NODE_CONTEXT_REQUIRES_NODE_MESSAGE } from './node-context-boundary';
 
 // ------------------------------------------------------------------------------------
 // POST /api/robots/instance/assistant
@@ -49,6 +50,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Invalid request data', details: zodError.errors }, { status: 400 });
     }
 
+    // Node-shaped requests must not fall through to conversation execution or
+    // normalize node overrides before a scoped node can be resolved durably.
+    const hasNodeContext = isNodeSpecificContext(parsedBody.context);
+    if (hasNodeContext && !parsedBody.instance_node_id) {
+      return NextResponse.json({
+        success: false,
+        error: { code: NODE_CONTEXT_REQUIRES_NODE, message: NODE_CONTEXT_REQUIRES_NODE_MESSAGE },
+      }, { status: 400 });
+    }
+
     // Validate credits PRE-FLIGHT before starting any workflow
     const site_id_for_validation = parsedBody.site_id || (parsedBody.instance_id ? (await supabaseAdmin.from('remote_instances').select('site_id').eq('id', parsedBody.instance_id).single()).data?.site_id : null);
     
@@ -73,10 +84,10 @@ export async function POST(request: NextRequest) {
       use_sdk_tools,
       system_prompt,
     } = parsedBody;
-    const normalizedToolOverrides = normalizePublishToolOverrides(
+    const normalizedToolOverrides = hasNodeContext ? normalizePublishToolOverrides(
       parsedBody.context,
       parsedBody.tool_overrides,
-    );
+    ) : parsedBody.tool_overrides;
 
     if (providedInstanceId && providedSiteId) {
       const { data: scope } = await supabaseAdmin.from('remote_instances')

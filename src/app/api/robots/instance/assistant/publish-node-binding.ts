@@ -13,6 +13,7 @@ export interface PublishNodeBinding {
 }
 
 const MAX_ENTRIES = 20;
+const MAX_TOTAL_OUTPUTS = 1000;
 const MAX_RESULT_LENGTH = 1_000_000;
 const MAX_TEXT_LENGTH = 100_000;
 const MAX_URL_LENGTH = 8192;
@@ -122,7 +123,9 @@ function sourceContent(node: RecordValue): { media: MediaOutput[]; hasText: bool
   let media: MediaOutput[] = [];
   if (result.outputs !== undefined && !Array.isArray(result.outputs)) fail('Invalid Content outputs.');
   const outputs: unknown[] = Array.isArray(result.outputs) ? result.outputs : [];
-  if (outputs.length > MAX_ENTRIES) fail('Too many Content outputs.');
+  // Entity lookup candidates share outputs with generated media. Bound the
+  // complete result separately without charging those references as media.
+  if (outputs.length > MAX_TOTAL_OUTPUTS) fail('Too many Content outputs.');
   const candidates: Array<{ type: MediaType; url: unknown }> = [];
   for (const output of outputs) {
     if (!isRecord(output) || typeof output.type !== 'string') fail('Invalid Content output.');
@@ -131,6 +134,8 @@ function sourceContent(node: RecordValue): { media: MediaOutput[]; hasText: bool
     if (output.data !== undefined && !isRecord(output.data)) fail('Invalid Content output data.');
     const data = isRecord(output.data) ? output.data : {};
     candidates.push({ type, url: data.url ?? output.url });
+    // Enforce before video preference/deduplication, not just on selected URLs.
+    if (candidates.length > MAX_ENTRIES) fail('Too many Content media outputs.');
   }
   if (candidates.length) {
     // A video result can retain image references. Never publish those as photos.

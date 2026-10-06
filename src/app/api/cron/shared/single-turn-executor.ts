@@ -1,6 +1,7 @@
 import { Sandbox } from '@vercel/sandbox';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { executeAssistantStep } from '@/lib/services/robot-instance/assistant-executor';
+import { isInsufficientCreditsError } from '@/lib/services/billing/credit-exhaustion-message';
 import { getAssistantTools, fetchMemoriesContext, generateAgentBackground } from '@/app/api/robots/instance/assistant/utils';
 import { fetchStepLogHistoryText } from './step-history-builder';
 import { SkillsService } from '@/lib/services/skills-service';
@@ -799,6 +800,10 @@ export async function executeSingleTurnStep(params: {
     };
   } catch (e: any) {
     if (isCronExecutionOwnershipError(e)) return ownershipHalt(e, effectiveSandboxId);
+    if (isInsufficientCreditsError(e)) {
+      return { ok: false, isDone: false, creditExhausted: true,
+        effectiveSandboxId, infrastructureGeneration, error: e.message };
+    }
     console.error('[SingleTurn] Executor wrapper failed:', e);
     return {
       ok: false,

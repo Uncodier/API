@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { type NodeResult, buildInitialNodeResult } from './node-result-collector';
+import { assistantRuntimeProvenance } from './assistant-context-version';
 import type { NodeContextRef } from './assistant-streaming-logs';
 import {
   normalizeToolOperationResult,
@@ -40,8 +41,12 @@ export function createAssistantOnStepHandler(
   provider: string,
   plan_id?: string,
   step_id?: string,
-  requirement_id?: string
+  requirement_id?: string,
+  instance_node_id?: string
 ) {
+  const provenance = { ...assistantRuntimeProvenance(),
+    execution_mode: instance_node_id ? 'node' : 'conversation',
+    ...(instance_node_id ? { instance_node_id } : {}) };
   return async (step: any, meta?: { streamingLogId?: string }) => {
     // Log step information
     console.log(`₍ᐢ•(ܫ)•ᐢ₎ [ASSISTANT STEP] Text: ${step.text?.substring(0, 100) || 'No text'}...`);
@@ -68,6 +73,7 @@ export function createAssistantOnStepHandler(
         ...(plan_id ? { plan_id } : {}),
         ...(step_id ? { step_id } : {}),
         ...(requirement_id ? { requirement_id } : {}),
+        ...provenance,
       },
     };
 
@@ -211,6 +217,7 @@ export function createAssistantOnStepHandler(
             ...(plan_id ? { plan_id } : {}),
             ...(step_id ? { step_id } : {}),
             ...(requirement_id ? { requirement_id } : {}),
+            ...provenance,
           },
           instance_id: instance_id,
           site_id: site_id,

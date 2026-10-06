@@ -1,6 +1,7 @@
 import { jest } from '@jest/globals';
 import { loadRuntimeModule } from '@/lib/custom-automation/test-helpers/load-runtime-module';
 import { buildAssistantUserContent } from '@/lib/services/robot-instance/assistant-image-content';
+import { isInsufficientCreditsError } from '@/lib/services/billing/credit-exhaustion-message';
 import type { AssistantContext } from '../types';
 
 type AsyncMock = (...args: any[]) => Promise<any>;
@@ -40,6 +41,7 @@ function harness() {
       '@/lib/database/supabase-client': { supabaseAdmin: { from: () => query } },
       '@/app/api/agents/tools/instance_plan/update/core': { updateInstancePlanCore },
       './assistant-turn': { processAssistantTurn },
+      '@/lib/services/billing/credit-exhaustion-message': { isInsufficientCreditsError },
       '@/lib/services/skills-service': { SkillsService: { getSkillBySlugForSite: async () => null } },
       './skill-selection': { requiredSkillsPrompt: () => '' },
       '@/app/api/cron/shared/step-git-prompts': {
@@ -54,6 +56,7 @@ function harness() {
   const completeUserMessageStep = jest.fn<AsyncMock>();
   const pauseUserMessageStep = jest.fn<AsyncMock>();
   const markAssistantFailedStep = jest.fn<AsyncMock>();
+  const pauseAssistantForCreditsStep = jest.fn<AsyncMock>().mockResolvedValue({ message: 'Tus créditos se han agotado.', nextResetAt: '2026-11-01T00:00:00.000Z' });
   const persistUserMessageStep = jest.fn<AsyncMock>().mockResolvedValue({ id: 'user-log' });
   const prepareAssistantContext = jest.fn<AsyncMock>().mockResolvedValue(context);
   const countRecentRespawnsStep = jest.fn<AsyncMock>().mockResolvedValue(0);
@@ -61,11 +64,12 @@ function harness() {
   const workflow = loadRuntimeModule<typeof import('../workflow')>(
     'src/app/api/robots/instance/assistant/workflow.ts', {
       '@/lib/services/robot-instance/assistant-image-content': { buildAssistantUserContent },
+      '@/lib/services/billing/credit-exhaustion-message': { isInsufficientCreditsError },
       './assistant-turn': { processAssistantTurn },
       './steps': { prepareAssistantContext },
       './plan-steps': planSteps,
       './persist-and-fail-steps': {
-        persistUserMessageStep, completeUserMessageStep, markAssistantFailedStep, pauseUserMessageStep,
+        persistUserMessageStep, completeUserMessageStep, markAssistantFailedStep, pauseUserMessageStep, pauseAssistantForCreditsStep,
       },
       '@/lib/services/robot-instance/assistant-respawn-policy': {
         isIncompleteTurn: (result: any) => !result.isDone || !result.text?.trim(),
@@ -94,7 +98,7 @@ function harness() {
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, options);
   return { context, persisted, result, doTurn, effects: () => effects, run,
     processAssistantTurn, updateInstancePlanCore, planSteps, redis, maybeSingle, query,
-    completeUserMessageStep, pauseUserMessageStep, markAssistantFailedStep, persistUserMessageStep, prepareAssistantContext, countRecentRespawnsStep, spawnSilentContinueStep };
+    completeUserMessageStep, pauseUserMessageStep, markAssistantFailedStep, pauseAssistantForCreditsStep, persistUserMessageStep, prepareAssistantContext, countRecentRespawnsStep, spawnSilentContinueStep };
 }
 
 describe('interactive plan exhaustion and safe resumption', () => {
@@ -104,6 +108,38 @@ describe('interactive plan exhaustion and safe resumption', () => {
     jest.spyOn(console, 'error').mockImplementation(() => {});
   });
   afterEach(() => jest.restoreAllMocks());
+
+  it('settles the owned action with a free credit notice and reset date without restarting', async () => {
+    const h = harness();
+    h.processAssistantTurn.mockRejectedValue(Object.assign(new Error('Not enough credits'), { name: 'InsufficientCreditsError' }));
+    await expect(h.run()).resolves.toMatchObject({ success: false, execution_status: 'paused',
+      code: 'INSUFFICIENT_CREDITS', next_credit_reset_at: '2026-11-01T00:00:00.000Z',
+      assistant_response: 'Tus créditos se han agotado.' });
+    expect(h.pauseAssistantForCreditsStep).toHaveBeenCalledWith('instance', 'site', 'user', 'user-log', 0);
+    expect(h.markAssistantFailedStep).not.toHaveBeenCalled();
+    expect(h.completeUserMessageStep).not.toHaveBeenCalled();
+    expect(h.spawnSilentContinueStep).not.toHaveBeenCalled();
+  });
+
+  it('does not fail or complete an interactive plan step because credits were rejected', async () => {
+    const h = harness();
+    const error = Object.assign(new Error('Not enough credits'), { name: 'InsufficientCreditsError' });
+    h.processAssistantTurn.mockRejectedValue(error);
+    await expect(h.planSteps.executePlanStep(h.context, clone(h.persisted), clone(h.persisted.steps[0]))).rejects.toBe(error);
+    expect(h.persisted.steps[0].status).toBe('in_progress');
+    expect(h.persisted.steps[0].completed_at).toBeNull();
+    expect(h.updateInstancePlanCore.mock.calls.some(([request]) => request.steps.some((step: any) => ['completed', 'failed'].includes(step.status)))).toBe(false);
+  });
+
+  it('ends the action on a durable credit result without an exception, respawn, or false success', async () => {
+    const h = harness();
+    h.processAssistantTurn.mockResolvedValue({ creditExhausted: true, isDone: false, messages: [] });
+    await expect(h.run()).resolves.toMatchObject({ success: false, code: 'INSUFFICIENT_CREDITS', execution_status: 'paused' });
+    expect(h.pauseAssistantForCreditsStep).toHaveBeenCalledTimes(1);
+    expect(h.processAssistantTurn).toHaveBeenCalledTimes(1);
+    expect(h.markAssistantFailedStep).not.toHaveBeenCalled();
+    expect(h.spawnSilentContinueStep).not.toHaveBeenCalled();
+  });
 
   it('does not duplicate the user log already persisted by the HTTP route', async () => {
     const h = harness();

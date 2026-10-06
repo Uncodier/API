@@ -19,6 +19,7 @@ jest.unstable_mockModule('../plan-steps', () => ({
 jest.unstable_mockModule('../persist-and-fail-steps', () => ({
   persistUserMessageStep: async () => ({ id: scope.userMessageLogId }),
   completeUserMessageStep: complete, pauseUserMessageStep: jest.fn(), markAssistantFailedStep: jest.fn(),
+  pauseAssistantForCreditsStep: jest.fn(),
 }));
 jest.unstable_mockModule('../assistant-respawn-steps', () => ({
   spawnSilentContinueStep: async (request: typeof scope) => {

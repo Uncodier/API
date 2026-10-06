@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/core';
 import { processAssistantTurn } from './assistant-turn';
+import { isInsufficientCreditsError } from '@/lib/services/billing/credit-exhaustion-message';
 import type { AssistantContext } from './types';
 import { SkillsService } from '@/lib/services/skills-service';
 import { requiredSkillsPrompt } from './skill-selection';
@@ -33,7 +34,7 @@ export type PlanStepExecutionResult = {
   turns: number;
 } & (
   | { executionStatus: 'completed'; isDone: true }
-  | { executionStatus: 'exhausted'; isDone: false; resumeFromStepId: string }
+  | { executionStatus: 'exhausted'; isDone: false; resumeFromStepId: string; creditExhausted?: boolean }
 );
 
 const ROLE_TO_SKILL: Record<string, string> = {
@@ -100,9 +101,7 @@ export async function getActiveInstancePlan(
   return null;
 }
 
-// Persistence acknowledgements are part of the execution boundary. A returned
-// error (or missing acknowledgement) must not allow tools, resumption, or a
-// success response, even if the writer did not throw.
+// Require persistence acknowledgement before tools, resumption or success.
 async function persistPlanStepUpdate(params: any, phase: string): Promise<void> {
   const result: { success?: boolean; error?: unknown } | null | undefined =
     await updateInstancePlanCore(params, { trustedRunner: true });
@@ -111,9 +110,7 @@ async function persistPlanStepUpdate(params: any, phase: string): Promise<void> 
   }
 }
 
-/**
- * Execute a single step of the instance plan.
- */
+/** Execute a single step of the instance plan. */
 export async function executePlanStep(
   context: AssistantContext,
   plan: any,
@@ -374,14 +371,15 @@ RULES:
       console.log(`[PlanSteps] Executing turn ${turns} for step ${step.order}`);
       
       stepResult = await processAssistantTurn(modifiedContext, currentMessages);
+      if (stepResult.creditExhausted) {
+        return { ...stepResult, output: null, usage: {}, steps: [], turns,
+          executionStatus: 'exhausted', isDone: false, resumeFromStepId: step.id };
+      }
       
       // Update state
       currentMessages = stepResult.messages;
       isStepDone = stepResult.isDone;
 
-      // If the assistant provides a text response, we consider the step "done" 
-      // unless there are pending tool calls (which isDone handles usually)
-      // But checking stepResult.text might be useful if we want to ensure we have an output.
     }
     
     if (!stepResult) {
@@ -389,6 +387,9 @@ RULES:
     }
 
   } catch (error: any) {
+      // Billing is not a product failure. Keep the incomplete step and its
+      // consumed checkpoint; never replay effects after an unpaid model turn.
+      if (isInsufficientCreditsError(error)) throw error;
       console.error(`[PlanSteps] Step execution failed:`, error);
       
       // Update step status to failed
@@ -449,12 +450,6 @@ RULES:
       result: { ...step.result, assistant_execution: null },
     }]
   }, 'completion');
-
-  // Si hay instanceNodeId, actualizamos el nodo de respuesta con el resultado
-  if (context.instanceNodeId) {
-     // ya deberia estar en responseNodeIds, pero node_result_collector se encarga de updateNodeResult si le pasamos
-     // no lo pasamos directamente aca, lo hara el executor.
-  }
 
   return { ...stepResult, isDone: true, executionStatus: 'completed', turns };
 }

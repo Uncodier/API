@@ -1,6 +1,7 @@
 /** Bounded assistant execution, including resumable canvas node chunks. */
 import { AIAgentExecutor } from '@/lib/custom-automation/ai-agent-executor';
-import { CreditService, InsufficientCreditsError } from '@/lib/services/billing/CreditService';
+import { CreditService } from '@/lib/services/billing/CreditService';
+import { isInsufficientCreditsError } from '@/lib/services/billing/credit-exhaustion-message';
 import { createAssistantOnStepHandler, batchCreateResponseNodes } from './assistant-logging';
 import { createNodeStreamingCallbacks, createStreamingLogCallbacks, createThinkingStreamLogCallbacks } from './assistant-streaming-logs';
 import { hydrateMessageImages } from './vision-message-images';
@@ -32,10 +33,7 @@ export async function executeAssistantStep(
 
   if (site_id) {
     try {
-      const hasCredits = await CreditService.validateCredits(site_id, 0.001); // minimal requirement to start
-      if (!hasCredits) {
-        throw new InsufficientCreditsError('Insufficient credits for assistant step execution');
-      }
+      await CreditService.requireCredits(site_id, 0.001);
     } catch (e: any) {
       console.error('Credit validation failed in step:', e.message);
       throw e;
@@ -106,7 +104,7 @@ export async function executeAssistantStep(
               tools: prepared.tools,
               system: activeSystemPrompt,
               messages: [...hydratedMessages],
-              onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider, options?.plan_id, options?.step_id, options?.requirement_id),
+              onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider, options?.plan_id, options?.step_id, options?.requirement_id, instance_node_id),
               stream: true,
               onStreamStart: async () => {
                 return `node-stream-${nodeId}`;
@@ -202,7 +200,7 @@ export async function executeAssistantStep(
                 tools: prepared.tools,
                 system: activeSystemPrompt,
                 messages: hydratedMessages,
-                onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider, options?.plan_id, options?.step_id, options?.requirement_id),
+                onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider, options?.plan_id, options?.step_id, options?.requirement_id, instance_node_id),
                 stream: !!streamingCallbacks || !!nodeWriter,
                 onStreamStart: wrappedOnStreamStart,
                 onStreamChunk: wrappedOnStreamChunk,
@@ -269,6 +267,8 @@ export async function executeAssistantStep(
                 );
               } catch (e) {
                 console.error('Failed to deduct credits for assistant tokens:', e);
+                // Do not run another turn after a confirmed billing rejection.
+                if (isInsufficientCreditsError(e)) throw e;
               }
             }
           }

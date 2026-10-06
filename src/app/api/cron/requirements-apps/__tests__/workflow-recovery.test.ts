@@ -3,6 +3,7 @@ import { loadRuntimeModule } from '@/lib/custom-automation/test-helpers/load-run
 import * as cyclePolicy from '../../shared/plan-cycle-outcome';
 import * as recoveryPolicy from '../../shared/cycle-recovery-policy';
 import * as ownershipRejection from '../../shared/cron-ownership-rejection';
+import { isInsufficientCreditsError } from '@/lib/services/billing/credit-exhaustion-message';
 import * as adjudication from '../../shared/no-progress-adjudication';
 import { getFlow, classifyRequirementType, productAttemptLimits } from '@/lib/services/requirement-flows';
 import { activeBacklogItemIdsFromPlanSteps, countPendingPlanSteps, hasRunnableBacklogWork } from '@/lib/services/cycle-wrapup-prompt';
@@ -60,6 +61,10 @@ function harness(options: { maxTurns?: number; type?: string } = {}) {
     emitCycleTechnicalEscalationStep: jest.fn(async (_params?: unknown) => ({ state: 'not_eligible', email_sent: false })),
   };
   const circuits = { scopeProductNoProgressCircuitStep: jest.fn(async (_params?: unknown) => ({ requirementBlocked: false, itemIsolated: false })) };
+  const credits = {
+    checkCycleCreditsStep: jest.fn(async () => true),
+    emitCreditExhaustionStep: jest.fn(async (_params?: unknown) => ({})),
+  };
   const technicalReviewBacklogItems = jest.fn((): any[] => []);
   const execution = {
     selectPlanStepsForExecution: (input: any[]) => input.filter(step => step.status === 'in_progress'),
@@ -75,6 +80,8 @@ function harness(options: { maxTurns?: number; type?: string } = {}) {
   const workflow = loadRuntimeModule<typeof import('../workflow')>(
     'src/app/api/cron/requirements-apps/workflow.ts', {
       '../shared/cron-steps': steps,
+      '../shared/credit-exhaustion-step': credits,
+      '@/lib/services/billing/credit-exhaustion-message': { isInsufficientCreditsError },
       '../shared/cron-sandbox-lifecycle-steps': lifecycle,
       '../shared/workflow-db-steps': db,
       '../shared/step-db-migration-verification': { ...verification, loadMigrationLifecycleStep: migrationLifecycle.loadMigrationLifecycleStep },
@@ -124,7 +131,7 @@ function harness(options: { maxTurns?: number; type?: string } = {}) {
   const run = () => workflow.runCronAppsWorkflow({ reqId: 'req', title: 'Test', instructions: '', type: options.type || 'app',
     site_id: 'site', user_id: 'user', instanceId: 'instance', previousWorkContext: '', instance_type: 'applications',
     cronLockRunId: 'run', cycleStartedAt: '2026-09-26T00:00:00Z', executionGeneration: 3 });
-  return { run, plan, lifecycle, db, steps, executeSingleTurnStep, execution, verification, migration, repair, gate, finalizer, wrapup, provisionTrackingScriptStep, migrationLifecycle, technicalReviewBacklogItems, orchestrator, circuits };
+  return { run, plan, lifecycle, db, steps, executeSingleTurnStep, execution, verification, migration, repair, gate, finalizer, wrapup, provisionTrackingScriptStep, migrationLifecycle, technicalReviewBacklogItems, orchestrator, circuits, credits };
 }
 
 function expectNoMigrationOrchestration(h: ReturnType<typeof harness>) {
@@ -145,6 +152,52 @@ describe('workflow recovery and truthful completion', () => {
     jest.spyOn(console, 'error').mockImplementation(() => {});
   });
   afterEach(() => { jest.restoreAllMocks(); });
+
+  it('closes an inadmissible credit cycle without a sandbox or paid wrap-up', async () => {
+    const h = harness();
+    h.credits.checkCycleCreditsStep.mockResolvedValue(false);
+    await expect(h.run()).resolves.toMatchObject({ status: 'credits_exhausted' });
+    expect(h.lifecycle.createSandboxStep).not.toHaveBeenCalled();
+    expect(h.wrapup.emitCycleWrapUpStep).not.toHaveBeenCalled();
+    expect(h.credits.emitCreditExhaustionStep).toHaveBeenCalledWith(expect.objectContaining({
+      instanceId: 'instance', siteId: 'site', cycleId: 'run',
+      ownership: { requirementId: 'req', runId: 'run', executionGeneration: 3 },
+    }));
+    expect(h.db.recordCronCycleOutcomeStep).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'paused' }));
+    expect(h.lifecycle.releaseRunLockStep).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not spend infrastructure retries or fail product work on credit exhaustion mid-turn', async () => {
+    const h = harness();
+    h.executeSingleTurnStep.mockResolvedValue({ ok: false, isDone: false, creditExhausted: true, effectiveSandboxId: 'sandbox' });
+    await h.run();
+    expect(h.executeSingleTurnStep).toHaveBeenCalledTimes(1);
+    expect(h.execution.recordStepInfraTransientStep).not.toHaveBeenCalled();
+    expect(h.execution.updatePlanStepStatusStep).not.toHaveBeenCalledWith(expect.anything(), expect.anything(), 'failed', expect.anything());
+    expect(h.wrapup.emitCycleWrapUpStep).not.toHaveBeenCalled();
+    expect(h.lifecycle.stopSandboxStep).toHaveBeenCalledTimes(1);
+    expect(h.credits.emitCreditExhaustionStep.mock.invocationCallOrder[0]).toBeGreaterThan(h.lifecycle.stopSandboxStep.mock.invocationCallOrder[0]);
+    expect(h.credits.emitCreditExhaustionStep).toHaveBeenCalledTimes(1);
+    expect(h.db.recordCronCycleOutcomeStep).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'paused' }));
+  });
+
+  it('does not publish an exhaustion notice from a superseded cycle', async () => {
+    const h = harness();
+    h.credits.checkCycleCreditsStep.mockResolvedValue(false);
+    h.db.isRequirementExecutionCurrentStep.mockResolvedValue(false);
+    await h.run();
+    expect(h.credits.emitCreditExhaustionStep).not.toHaveBeenCalled();
+  });
+
+  it('uses a free notice when the final reporting model runs out of credits', async () => {
+    const h = harness();
+    h.db.checkInstanceAndPlanStatusStep.mockRejectedValueOnce(new Error('Transient database unavailable'));
+    h.wrapup.emitCycleWrapUpStep.mockResolvedValue({ ran: false, outcome: 'failed', creditExhausted: true } as any);
+    await expect(h.run()).rejects.toThrow('Transient database unavailable');
+    expect(h.credits.emitCreditExhaustionStep).toHaveBeenCalledTimes(1);
+    expect(h.db.updateInstanceStatusStep).not.toHaveBeenCalledWith('instance', 'pending');
+    expect(h.db.recordCronCycleOutcomeStep).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'paused' }));
+  });
 
   it('reports terminal backlog review without a new sandbox, plan, attempt reset or customer question', async () => {
     const h = harness();

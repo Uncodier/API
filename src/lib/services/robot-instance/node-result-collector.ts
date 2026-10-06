@@ -103,6 +103,31 @@ registerExtractor('generate_audio', (raw) => {
   };
 });
 
+/** Preserve entity references, not entire CRM/content payloads or private data.
+ * These are candidates/output identities, never an implicit mutation target.
+ */
+for (const [toolName, entity, singleKey, listKey] of [
+  ['content', 'content', 'content', 'contents'],
+  ['leads', 'lead', 'lead', 'leads'],
+  ['catalog_commerce', 'catalog_item', 'item', 'items'],
+]) {
+  registerExtractor(toolName, (raw) => {
+    if (raw.success !== true) return null;
+    const payload = raw.data && typeof raw.data === 'object' ? raw.data : raw;
+    const rows = payload[singleKey] ? [payload[singleKey]] : payload[listKey];
+    if (!Array.isArray(rows)) return null;
+    return rows.filter(row => row && typeof row.id === 'string').map(row => {
+      const data: Record<string, any> = { entity, id: row.id };
+      for (const key of ['site_id', 'created_at', 'updated_at', 'status']) {
+        if (typeof row[key] === 'string') data[key] = row[key];
+      }
+      const name = entity === 'content' ? row.title : row.name;
+      if (typeof name === 'string') data.name = name;
+      return { tool_name: toolName, type: 'data', data };
+    });
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Core helpers
 // ---------------------------------------------------------------------------

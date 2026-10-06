@@ -3,13 +3,11 @@ import { sendGridService } from '@/lib/services/sendgrid-service';
 import { resolveEmailLocale } from '@/lib/i18n/email-locale';
 import { platformT } from '@/lib/i18n/email-messages/platform';
 import { EmailSendService } from '@/lib/services/email/EmailSendService';
+import { formatCreditExhaustionNotice, InsufficientCreditsError } from './credit-exhaustion-message';
+import type { CreditExhaustionNotice } from './credit-exhaustion-message';
 
-export class InsufficientCreditsError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'InsufficientCreditsError';
-  }
-}
+// Preserve the existing import path and error identity without coupling pure helpers to I/O.
+export { InsufficientCreditsError } from './credit-exhaustion-message';
 
 export class CreditService {
   /**
@@ -253,36 +251,66 @@ export class CreditService {
   }
 
   /**
-   * Pre-check if site has enough credits before execution.
+   * Pre-check only (not a reservation). Billing failures are ordinary Errors;
+   * only a successfully renewed and read, valid balance can establish a shortage.
    */
+  static async requireCredits(siteId: string, required: number): Promise<void> {
+    if (typeof siteId !== 'string' || !siteId.trim() || !Number.isFinite(required) || required < 0) {
+      throw new Error('Invalid siteId or required credits');
+    }
+
+    let available: unknown;
+    try {
+      // An RPC failure must not fall back to spending stale, expired credits.
+      const { data: renewal, error: renewalError } = await supabaseAdmin.rpc(
+        'renew_site_plan_credits', { p_site_id: siteId },
+      );
+      if (renewalError || renewal?.success !== true) throw new Error('Credit renewal unavailable');
+
+      const { data: billing, error } = await supabaseAdmin
+        .from('billing')
+        .select('credits_available')
+        .eq('site_id', siteId)
+        .single();
+      if (error || !billing) throw new Error('Billing record unavailable');
+      available = billing.credits_available;
+    } catch {
+      // Do not expose provider errors or misclassify an I/O exception as a shortage.
+      throw new Error('Unable to verify billing credits');
+    }
+
+    if (typeof available !== 'number' || !Number.isFinite(available) || available < 0) {
+      throw new Error('Invalid billing credit balance');
+    }
+    if (available < required) {
+      this.notifyInsufficientCredits(siteId, required, available).catch(console.error);
+      throw new InsufficientCreditsError(`Not enough credits. Available: ${available}, Required: ${required}`);
+    }
+  }
+
+  /** Boolean compatibility API: all validation failures remain false. */
   static async validateCredits(siteId: string, requiredCredits: number): Promise<boolean> {
-    if (!siteId || !Number.isFinite(requiredCredits) || requiredCredits < 0) return false;
-
-    // Refresh only the included-plan period before checking the aggregate.
-    // An RPC failure must not fall back to spending stale, expired credits.
-    const { data: renewal, error: renewalError } = await supabaseAdmin.rpc(
-      'renew_site_plan_credits', { p_site_id: siteId },
-    );
-    if (renewalError || !renewal?.success) return false;
-
-    const { data: billing, error } = await supabaseAdmin
-      .from('billing')
-      .select('credits_available')
-      .eq('site_id', siteId)
-      .single();
-
-    if (error || !billing) {
-      console.error(`[CreditService] Error fetching billing info for site ${siteId}:`, error);
+    try {
+      await this.requireCredits(siteId, requiredCredits);
+      return true;
+    } catch {
       return false;
     }
+  }
 
-    if (billing.credits_available < requiredCredits) {
-      // Fire-and-forget the notification
-      this.notifyInsufficientCredits(siteId, requiredCredits, billing.credits_available).catch(console.error);
-      return false;
+  /** Best-effort, read-only notice. Unavailable fields remain null, never assumed zero. */
+  static async getCreditExhaustionNotice(siteId: string): Promise<CreditExhaustionNotice> {
+    if (typeof siteId !== 'string' || !siteId.trim()) return formatCreditExhaustionNotice();
+    try {
+      const { data: billing, error } = await supabaseAdmin
+        .from('billing')
+        .select('credits_available,status,plan_credit_period_end,plan_credit_allowance,stripe_subscription_id,subscription_status')
+        .eq('site_id', siteId)
+        .single();
+      return formatCreditExhaustionNotice(error ? null : billing);
+    } catch {
+      return formatCreditExhaustionNotice();
     }
-
-    return true;
   }
 
   /**

@@ -8,6 +8,7 @@ const createResponse = jest.fn<() => Promise<string>>();
 const createBatch = jest.fn<(...args: any[]) => Promise<string[]>>();
 const hydrate = jest.fn<(messages: any[]) => Promise<any[]>>();
 const validateCredits = jest.fn<(...args: any[]) => Promise<boolean>>();
+const requireCredits = jest.fn<(...args: any[]) => Promise<void>>();
 const deductCredits = jest.fn<(...args: any[]) => Promise<void>>();
 const streamChunk = jest.fn<(...args: any[]) => Promise<void>>();
 const createCallbacks = jest.fn<(...args: any[]) => any>(() => ({ onNodeStreamStart: createResponse }));
@@ -50,7 +51,7 @@ jest.unstable_mockModule('@/lib/custom-automation/ai-agent-executor', () => ({
 jest.unstable_mockModule('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from } }));
 jest.unstable_mockModule('@/lib/services/billing/CreditService', () => ({
   CreditService: {
-    validateCredits, deductCredits,
+    validateCredits, requireCredits, deductCredits,
     PRICING: { ASSISTANT_INPUT_TOKEN_MILLION: 1, ASSISTANT_OUTPUT_TOKEN_MILLION: 2 },
   },
   InsufficientCreditsError: class extends Error {},
@@ -112,6 +113,7 @@ beforeEach(() => {
   };
   nodes['response-2'] = { ...nodes['response-1'], id: 'response-2' };
   validateCredits.mockResolvedValue(true);
+  requireCredits.mockResolvedValue(undefined);
   deductCredits.mockResolvedValue();
   hydrate.mockImplementation(async messages => messages);
   fetchContexts.mockResolvedValue([]);
@@ -125,6 +127,23 @@ beforeEach(() => {
 });
 
 describe('node executor chunk continuation', () => {
+  it('propagates a confirmed token deduction rejection instead of permitting another turn', async () => {
+    const error = Object.assign(new Error('Not enough credits'), { name: 'InsufficientCreditsError' });
+    deductCredits.mockRejectedValueOnce(error);
+    act.mockResolvedValue({ ...execution([{ role: 'assistant', content: 'Finished' }], 'Finished'),
+      usage: { promptTokens: 100, completionTokens: 10 } });
+    await expect(executeAssistantStep([prompt], null, options)).rejects.toBe(error);
+    expect(act).toHaveBeenCalledTimes(1);
+    expect(deductCredits).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not call a model if credit verification is unavailable', async () => {
+    requireCredits.mockRejectedValueOnce(new Error('Unable to verify billing credits'));
+    await expect(executeAssistantStep([prompt], null, options)).rejects.toThrow('Unable to verify billing credits');
+    expect(act).not.toHaveBeenCalled();
+    expect(deductCredits).not.toHaveBeenCalled();
+  });
+
   it('assembles initial references once, then retains all messages and the same response node', async () => {
     fetchContexts.mockResolvedValue([{
       context_node_id: 'reference-1', type: 'result',
@@ -373,7 +392,7 @@ describe('parallel nodes and legacy compatibility', () => {
     expect(act.mock.calls[0][0]).toMatchObject({ maxIterations: 1, messages: [prompt, toolCall, toolReply] });
     expect(from).not.toHaveBeenCalled();
     expect(typeof executeAssistant).toBe('function');
-    await expect(prepareAssistantTools(null, { custom_tools: ['tool'] })).resolves.toEqual({ type: 'openai', tools: ['tool'] });
+    await expect(prepareAssistantTools(null, { custom_tools: ['tool'] })).resolves.toEqual({ type: 'openrouter', tools: ['tool'] });
   });
 
   it('retains the legacy executeAssistant tool options and response contract', async () => {

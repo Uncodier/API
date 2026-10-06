@@ -1,9 +1,10 @@
 import { loadRuntimeModule } from '@/lib/custom-automation/test-helpers/load-runtime-module';
+import { isInsufficientCreditsError } from '@/lib/services/billing/credit-exhaustion-message';
 import * as guards from '../orchestrator-plan-tool-guard';
 import { evaluatePlanBacklogGate } from '@/lib/services/requirement-plan-backlog-gate';
 
 describe('migration plan recovery orchestrator', () => {
-  it.each([true, false])('enforces the host-selected tool boundary (recovery=%s)', async migrationPlanRecovery => {
+  it.each([[true, false], [false, false], [true, true]])('enforces the host-selected tool boundary (recovery=%s, credits=%s)', async (migrationPlanRecovery, creditExhausted) => {
     const item = { id: 'base_setup', title: 'Base setup', phase_id: 'build', status: 'pending', attempts: 2 };
     const create = jest.fn(async () => ({ success: true, data: { id: 'plan' } }));
     const watchdog = jest.fn(async () => ({ escalated: [] }));
@@ -14,6 +15,7 @@ describe('migration plan recovery orchestrator', () => {
       'requirement_status', 'harness_inspect'].map(name => ({ name, execute: jest.fn() }));
     available.push({ name: 'instance_plan', execute: create });
     const model = jest.fn(async (_messages, _instance, options) => {
+      if (creditExhausted) throw Object.assign(new Error('Not enough credits'), { name: 'InsufficientCreditsError' });
       const names = options.custom_tools.map((tool: any) => tool.name);
       if (migrationPlanRecovery) {
         expect(names).toEqual(['sandbox_read_file', 'harness_inspect', 'instance_plan']);
@@ -29,6 +31,7 @@ describe('migration plan recovery orchestrator', () => {
     });
     const runtime = loadRuntimeModule<typeof import('../cron-orchestrator-step')>(
       'src/app/api/cron/shared/cron-orchestrator-step.ts', {
+        '@/lib/services/billing/credit-exhaustion-message': { isInsufficientCreditsError },
         '@/app/api/agents/tools/sandbox/assistantProtocol': { getSandboxTools: () => available },
         '@/lib/services/robot-instance/assistant-executor': { executeAssistantStep: model },
         '@/lib/services/sandbox-recovery': { connectOrRecreateRequirementSandbox: async () => ({ sandbox: {}, sandboxId: 'recovered' }) },
@@ -47,6 +50,12 @@ describe('migration plan recovery orchestrator', () => {
       orchestratorPrompt: 'Plan', instanceId: 'instance', site_id: 'site', user_id: 'user', initialMessage: 'Recover plan',
       migrationPlanRecovery, executionOwnership: { requirementId: 'req', runId: 'run', executionGeneration: 1 },
     });
+    if (creditExhausted) {
+      expect(result).toMatchObject({ creditExhausted: true, createdPlan: false, turns: 1, effectiveSandboxId: 'recovered' });
+      expect(model).toHaveBeenCalledTimes(1);
+      expect(create).not.toHaveBeenCalled();
+      return;
+    }
     expect(result).toMatchObject({ createdPlan: true, turns: 1, effectiveSandboxId: 'recovered' });
     expect(watchdog).toHaveBeenCalledTimes(migrationPlanRecovery ? 0 : 1);
     expect(promote).toHaveBeenCalledTimes(1);

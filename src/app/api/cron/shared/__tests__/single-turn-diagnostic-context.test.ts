@@ -1,4 +1,5 @@
 import { loadRuntimeModule } from '@/lib/custom-automation/test-helpers/load-runtime-module';
+import { isInsufficientCreditsError } from '@/lib/services/billing/credit-exhaustion-message';
 import { withActionLoopGuard, type ActionGuardContext } from '../step-action-guard';
 import { makeActionObservation, actionStateFingerprint, formatActionObservationFeedback } from '../step-action-observation';
 import { restrictToolsForEvidenceCollection } from '../single-turn-helpers';
@@ -32,6 +33,7 @@ function harness() {
   });
   const record = jest.fn().mockResolvedValue(undefined);
   const deps = {
+    '@/lib/services/billing/credit-exhaustion-message': { isInsufficientCreditsError },
     '@/lib/services/harness-diagnostics/tools': { refreshHarnessToolManifest: (tools: any[]) => tools },
     '@/lib/database/supabase-client': { supabaseAdmin: { from } },
     '@/lib/services/robot-instance/assistant-executor': { executeAssistantStep: execute },
@@ -117,6 +119,16 @@ it('real executor exposes scoped retrieval during repair and gives diagnostic fe
   const tools = h.execute.mock.calls[0][2].custom_tools;
   expect(tools.map((tool: any) => tool.name)).toContain('instance_history');
   expect(tools.map((tool: any) => tool.name)).not.toContain('tools');
+});
+
+it('returns a typed billing halt instead of an infrastructure retry when the assistant cannot pay', async () => {
+  const h = harness();
+  h.execute.mockRejectedValue(Object.assign(new Error('Not enough credits'), { name: 'InsufficientCreditsError' }));
+  const result = await h.run();
+  expect(result).toMatchObject({ ok: false, isDone: false, creditExhausted: true, effectiveSandboxId: 'sandbox' });
+  expect(result.transient).toBeUndefined();
+  expect(result.infrastructureWait).toBeUndefined();
+  expect(h.execute).toHaveBeenCalledTimes(1);
 });
 
 it('real executor permits the same test after a workspace change and persists the observation', async () => {

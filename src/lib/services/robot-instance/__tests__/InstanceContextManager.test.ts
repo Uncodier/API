@@ -134,6 +134,70 @@ describe('InstanceContextManager', () => {
     expect(text.indexOf('photo.png')).toBeLessThan(text.indexOf('Edit this image'));
   });
 
+  it('preserves entity identity, timestamps and interleaved tool chronology for a follow-up', async () => {
+    const history = historyLogs(5);
+    history[0] = { ...history[0], log_type: 'user_action', message: 'Busca el contenido, lead y producto de QA' };
+    history[1] = { ...history[1], log_type: 'tool_call', tool_name: 'tools', message: 'QA_LOOKUP_RESULT',
+      tool_result: { success: true, result: [{ entity: 'content', id: 'content-reference', name: 'QA Content' },
+        { entity: 'lead', id: 'lead-reference', name: 'QA Lead' },
+        { entity: 'catalog_item', id: 'product-reference', name: 'QA Product' }] } as any };
+    history[2] = { ...history[2], message: 'El seleccionado es QA Product',
+      details: { catalog_item_id: 'product-reference', instance_node_id: 'linked-node', status: 'completed' } };
+    history[3] = { ...history[3], log_type: 'tool_call', message: 'NODE_TOOL_RESULT',
+      details: { instance_node_id: 'other-node', execution_mode: 'node' } };
+    history[4] = { ...history[4], log_type: 'user_action', message: 'Ahora cambia ese producto' };
+    mockPagedLogs(history);
+    const text = await new InstanceContextManager('instance', 'site').buildHistory(history[4].message, 'openrouter', 'openai/gpt-6.1-sol');
+    for (const log of history) {
+      expect(text).toContain(`log_id=${log.id}`);
+      expect(text).toContain(`created_at=${log.created_at}`);
+    }
+    expect(text).toContain('"catalog_item_id":"product-reference"');
+    expect(text).toContain('"instance_node_id":"other-node"');
+    expect(text).toContain('"execution_mode":"node"');
+    expect(text.indexOf('QA_LOOKUP_RESULT')).toBeLessThan(text.indexOf('El seleccionado'));
+    expect(text.indexOf('NODE_TOOL_RESULT')).toBeLessThan(text.indexOf('Ahora cambia'));
+    for (const id of ['content-reference', 'lead-reference', 'product-reference']) expect(text).toContain(id);
+  });
+
+  it('protects the latest assistant referent from noisy audit logs in partial history', async () => {
+    delete process.env.OPENROUTER_API_KEY;
+    const history = historyLogs(2200);
+    history[2] = { ...history[2], log_type: 'user_action', message: 'Busca mis tres elementos de QA' };
+    history[3] = { ...history[3], message: 'SELECTED_QA_PRODUCT product-reference',
+      details: { catalog_item_id: 'product-reference' } };
+    for (let index = 4; index < history.length - 1; index++) {
+      history[index] = { ...history[index], log_type: 'tool_call', message: `AUDIT_${index}`, tool_result: {} as any };
+    }
+    history[history.length - 1] = { ...history.at(-1)!, log_type: 'user_action', message: 'Cambia ese producto' };
+    mockPagedLogs(history);
+    const text = await new InstanceContextManager('instance', 'site').buildHistory('Cambia ese producto', 'openrouter', 'openai/gpt-6.1-sol');
+    expect(text).toContain('PARTIAL INSTANCE HISTORY');
+    expect(text).toContain('SELECTED_QA_PRODUCT');
+    expect(text).toContain('"catalog_item_id":"product-reference"');
+    expect(text).toContain('Cambia ese producto');
+    expect(estimateTokens(text)).toBeLessThanOrEqual(6000);
+    expect(admin.rpc).not.toHaveBeenCalled();
+  });
+
+  it('preserves structured selection identity when assistant prose is too large for the preview', async () => {
+    delete process.env.OPENROUTER_API_KEY;
+    const history = historyLogs(2200);
+    history[2198] = { ...history[2198], message: `SELECTED_PRODUCT ${'Long explanation '.repeat(2000)}`,
+      details: { catalog_item_id: 'exact-product-reference', instance_node_id: 'origin-node',
+        assistant_recovery: { private: 'DO_NOT_INCLUDE_RAW_RECOVERY' } } };
+    history[2199] = { ...history[2199], log_type: 'user_action', message: 'Cambia ese producto' };
+    mockPagedLogs(history);
+    const text = await new InstanceContextManager('instance', 'site').buildHistory('Cambia ese producto', 'openrouter', 'openai/gpt-6.1-sol');
+    expect(text).toContain('PARTIAL INSTANCE HISTORY');
+    expect(text).toContain('EXCERPT');
+    expect(text).toContain('"catalog_item_id":"exact-product-reference"');
+    expect(text).toContain('"instance_node_id":"origin-node"');
+    expect(text).not.toContain('DO_NOT_INCLUDE_RAW_RECOVERY');
+    expect(estimateTokens(text)).toBeLessThanOrEqual(6000);
+    expect(admin.rpc).not.toHaveBeenCalled();
+  });
+
   it('keeps tactical evidence when embeddings are unavailable and skips an unpersistable summary call', async () => {
     delete process.env.INSTANCE_CONTEXT_SUMMARY_MODEL;
     delete process.env.OPENROUTER_API_KEY;
@@ -642,7 +706,17 @@ describe('InstanceContextManager', () => {
     const text = await new InstanceContextManager('instance', 'site').buildHistory('hello', 'azure', 'gpt-4o');
     expect(commits.length).toBeGreaterThan(10);
     expect(text).toContain('Earlier decisions saved.');
-    expect(text).toContain(`Decision ${commits.flat().length}`);
+    // Timestamp/identity provenance increases the actual history budget. If the
+    // remaining gap no longer fits, it must be explicitly retrievable, never
+    // hidden by advancing the durable cursor over those uncommitted rows.
+    if (text.includes('PARTIAL INSTANCE HISTORY')) {
+      expect(text).toContain('instance_history');
+      expect(text).toContain('NOT a complete transcript');
+      expect(cursor!.cursor_log_id).toBe(history[commits.flat().length - 1].id);
+      expect(commits.flat()).not.toContain(history[commits.flat().length].id);
+    } else {
+      expect(text).toContain(`Decision ${commits.flat().length}`);
+    }
     expect(text).toContain('Decision 1999');
   });
 
@@ -672,7 +746,7 @@ describe('InstanceContextManager', () => {
     expect(text).toContain('CURRENT_QUESTION');
     expect(text).toContain('EXCERPT');
     expect(estimateTokens(text)).toBeLessThanOrEqual(6000);
-    expect(admin.from).toHaveBeenCalledTimes(7); // state, recent, memory, gap, metadata probe, first/latest user
+    expect(admin.from).toHaveBeenCalledTimes(8); // state, recent, memory, gap, metadata probe, first/latest user, latest assistant
     expect(admin.rpc).not.toHaveBeenCalled();
     expect(AIAgentExecutor).not.toHaveBeenCalled();
   });

@@ -22,9 +22,13 @@ No production rows, credentials or configuration were changed.
   pages instead of one server-limited oldest-only result.
 - `created_at` means date added to the instance, not photo capture date or
   guaranteed WhatsApp send/arrival order.
-- The executor retains five trailing vision images. Reply targets are displayed
-  last, and current attachments immediately before them. This display priority
-  does not redefine upload chronology.
+- The executor retains at most five distinct exact image sources, prioritizing
+  linked-node references, explicit reply targets, then current attachments over
+  ordinary images and later tool screenshots. Display order is not upload order:
+  reply targets are displayed last, with current attachments immediately before.
+- Duplicate exact sources use one vision slot. Different URLs remain different
+  identities even when a download returns identical bytes. Every budget omission
+  leaves an explicit NOT-visible notice; identity text is not proof of visibility.
 - Each image has an adjacent exact URL, asset ID, timestamp and optional message
   ID. `reply_target`, `current_attachment` and `latest_uploaded` distinguish
   quoted, current and chronological references.
@@ -34,13 +38,22 @@ No production rows, credentials or configuration were changed.
   scoped target. "Latest uploaded" uses the upload timestamp/latest marker.
 - Unresolved attachments and failed downloads include explicit unavailable-image
   instructions instead of silently leaving older images for the model to guess.
+- Inventory prose no longer claims that every asset is visible. The actual vision
+  parts and download/budget notices determine whether an image can be described.
+- Image context includes `image-entity-v2`; assistant/tool logs include
+  `details.context_version`, execution mode and validated Vercel commit/deployment
+  identifiers when supplied by the runtime. Missing identifiers stay absent.
+  These identify local construction/runtime, not the pixels seen by a provider.
 
 ## Validation
 
 Offline regressions cover current/quoted/latest references, timezone ordering,
-seven-image filtering, mocked provider requests, checkpoint URL identity,
-failed current-image download with an older visible image, pagination and failure
-of a subsequent page. No customer image was sent to a live model.
+seven-image filtering, current/reply/linked overflow, two successive screenshot
+tool rounds (streaming and nonstreaming), exact-source deduplication, mocked
+provider requests, checkpoint URL identity, failed current-image download with
+an older visible image, pagination and failure of a subsequent page. A real
+Workflow compiler regression checks the generated source includes the current
+versioned image builder. No customer image was sent to a live model.
 
 Run from the repository root:
 
@@ -50,13 +63,18 @@ npm run test:ai -- --runTestsByPath src/lib/services/robot-instance/__tests__/as
 
 ## Remaining limitations
 
-1. The webhook persists user actions after transcription/download/upload. A slow
-   earlier image can be registered after later text and supersede that instruction;
-   later text can also build context before the image is ready. Durable inbound
-   ordering and per-instance processing coordination are needed. This patch does
-   not implement that coordination.
-2. More than five requested images, or tool screenshots in subsequent iterations,
-   can exceed/evict relevant vision context. Labels do not guarantee visibility.
+1. Registered webhook actions are now admitted before download/upload/transcription.
+   Completion enriches the same scoped row using a details compare-and-swap,
+   preserving its timestamp, cancellation, requirement tags and recovery state.
+   Superseded uploads can finish enriching history without restarting their turn.
+   Later text receives a conservative pending/partial/failed-media notice; it is
+   not automatically replayed when the attachment becomes ready. This is not a
+   distributed FIFO or tool-level media dependency lock: ordering starts after
+   authorization/instance resolution, the ownership-check/requirement-reset race
+   remains across rows, and a process crash may leave pending media for retry.
+2. More than five distinct requested images still exceed the configured vision
+   budget. Explicit targets are now protected against later tool screenshots,
+   but overflow is reported, not magically visible; ask for a smaller batch.
 3. Pagination retrieves the full inventory without a new token/asset budget or
    snapshot isolation against concurrent deletion.
 4. Legacy reply identity is parsed from textual markers. A future structured

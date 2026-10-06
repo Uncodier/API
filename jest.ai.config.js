@@ -20,6 +20,8 @@ export default {
     '<rootDir>/src/lib/services/robot-instance/__tests__/InstanceContextManager.test.ts',
     '<rootDir>/src/lib/services/robot-instance/__tests__/InstanceAssetsService.test.ts',
     '<rootDir>/src/lib/services/robot-instance/__tests__/assistant-image-content.test.ts',
+    '<rootDir>/src/lib/services/robot-instance/__tests__/assistant-node-context.test.ts',
+    '<rootDir>/src/lib/services/robot-instance/__tests__/node-result-collector.test.ts',
     '<rootDir>/src/app/api/agents/gear/whatsapp/webhook/__tests__/**/*.test.ts',
     '<rootDir>/src/lib/services/robot-instance/__tests__/instance-naming.test.ts',
     '<rootDir>/src/lib/services/robot-instance/__tests__/instance-context-budget.test.ts',

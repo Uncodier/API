@@ -5,6 +5,7 @@
 
 import { getSandboxTools } from '@/app/api/agents/tools/sandbox/assistantProtocol';
 import { executeAssistantStep } from '@/lib/services/robot-instance/assistant-executor';
+import { isInsufficientCreditsError } from '@/lib/services/billing/credit-exhaustion-message';
 import { connectOrRecreateRequirementSandbox } from '@/lib/services/sandbox-recovery';
 import { Sandbox } from '@vercel/sandbox';
 import { getAssistantTools, fetchMemoriesContext, generateAgentBackground } from '@/app/api/robots/instance/assistant/utils';
@@ -312,6 +313,10 @@ export async function runOrchestratorStep(params: {
         },
       );
     } catch (rawErr: any) {
+      if (isInsufficientCreditsError(rawErr)) {
+        return { createdPlan: planMutationState.createdPlan, turns, effectiveSandboxId,
+          timedOut: false, creditExhausted: true as const };
+      }
       // Re-throw a *plain* Error with a serializable, TRUNCATED message so
       // Vercel Workflow can record it inline on the `run_failed` event.
       // Previously we attached `cause`, `status`, `provider`, `model` as extra

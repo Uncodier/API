@@ -54,6 +54,8 @@ import {
   scopeProductNoProgressCircuitStep,
 } from '../shared/cron-blocker-scope-steps';
 import { executeSingleTurnStep, type SingleTurnResult } from '../shared/single-turn-executor';
+import { checkCycleCreditsStep, emitCreditExhaustionStep } from '../shared/credit-exhaustion-step';
+import { isInsufficientCreditsError } from '@/lib/services/billing/credit-exhaustion-message';
 import { runOrchestratorStep } from '../shared/cron-orchestrator-step';
 import { validateDeliverablesStep, createFinalStatusStep } from '../shared/cron-workflow-finalize';
 import { provisionPlatformKeyStep } from '../shared/platform-key-step';
@@ -152,6 +154,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   let lightweightCycleFinalization = false;
   let terminalProductHalt = false;
   let workflowErrorInFlight = false;
+  let creditExhausted = false;
   const requirementKind = classifyRequirementType(type);
   const requirementFlow = getFlow(requirementKind);
   const gitRepoKind: GitRepoKind =
@@ -163,6 +166,15 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   await assertCronExecutionOwnershipStep({
     requirementId: reqId, runId: cronLockRunId, executionGeneration,
   });
+  // No VM or model work when the usable balance cannot admit a turn.
+  const creditAdmission = await checkCycleCreditsStep(site_id);
+  if (!creditAdmission) {
+    creditExhausted = true;
+    cycleOutcome = 'paused';
+    wrapUpAttempted = true;
+    preservePausedState = true;
+    return { reqId, branch: null, previewUrl: null, status: 'credits_exhausted' as const };
+  }
   const migrationLifecycle = requirementFlow.delivery.apply_database_migrations
     ? await loadMigrationLifecycleStep(reqId) : [];
   // Legacy rows are historical obligations, not the state machine for new SQL.
@@ -572,6 +584,13 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       executionOwnership: { requirementId: reqId, runId: cronLockRunId, executionGeneration },
     });
     sandboxId = orch.effectiveSandboxId;
+    if (orch.creditExhausted) {
+      creditExhausted = true;
+      cycleOutcome = 'paused';
+      wrapUpAttempted = true;
+      preservePausedState = true;
+      return { reqId, branch: null, previewUrl: null, status: 'credits_exhausted' as const };
+    }
 
     // Safety net: if the orchestrator finished without creating a plan AND no
     // active plan exists yet, the cron would otherwise commit empty and flip
@@ -763,6 +782,14 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
               break outer;
             }
             
+            if (turnRes.creditExhausted) {
+              creditExhausted = true;
+              cycleOutcome = 'paused';
+              wrapUpAttempted = true;
+              preservePausedState = true;
+              infrastructureHalt = true;
+              break outer;
+            }
             if (!turnRes.ok) {
                if (turnRes.transient || isSandboxGoneError(turnRes.error)) {
                  console.warn(`[CronAppsWorkflow] Step ${workingStep.order} transient infra error: ${turnRes.error}`);
@@ -1554,6 +1581,13 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     // Intentional skips are handled. Actual failures remain retryable in the
     // outer finally block.
     wrapUpAttempted = wrapUpResult.outcome !== 'failed';
+    if (wrapUpResult.creditExhausted) {
+      creditExhausted = true;
+      cycleOutcome = 'paused';
+      preservePausedState = true;
+      wrapUpAttempted = true;
+      return { reqId, branch: null, previewUrl: null, status: 'credits_exhausted' as const };
+    }
 
     const { emitSyncDocsToBacklogStep } = await import('../shared/sync-docs-to-backlog-step');
     await emitSyncDocsToBacklogStep({
@@ -1604,6 +1638,13 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   // late step (validate/final-status/preview) throws.
   return { reqId, branch: effectiveBranch, previewUrl, status: finalStatus };
   } catch (e: any) {
+    if (isInsufficientCreditsError(e)) {
+      creditExhausted = true;
+      cycleOutcome = 'paused';
+      wrapUpAttempted = true;
+      preservePausedState = true;
+      return { reqId, branch: null, previewUrl: null, status: 'credits_exhausted' as const };
+    }
     // Application receipts remain authoritative in Apps. An interrupted tool
     // is reconciled on its next call; failures do not manufacture a security hold.
     const ownershipReason = cronOwnershipRejectionReason(e);
@@ -1674,7 +1715,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     if (!wrapUpAttempted) {
       try {
         const { emitCycleWrapUpStep } = await import('../shared/cycle-wrapup-step');
-        await emitCycleWrapUpStep({
+        const finalWrapUp = await emitCycleWrapUpStep({
           sandboxId: sandboxId || undefined,
           siteId: site_id,
           instanceId,
@@ -1694,6 +1735,11 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
           requiresUserFeedback: wrapUpRequiresUserFeedback,
               recoveryDisposition: recoveryDisposition || (wrapUpRequiresUserFeedback ? 'blocked' : undefined),
         });
+        if (finalWrapUp.creditExhausted) {
+          creditExhausted = true;
+          cycleOutcome = 'paused';
+          preservePausedState = true;
+        }
       } catch (wrapUpError: unknown) {
         console.warn(
           '[CronAppsWorkflow] Final wrap-up failed:',
@@ -1722,6 +1768,19 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
           '[CronAppsWorkflow] stopSandboxStep threw in finally:',
           e instanceof Error ? e.message : e,
         );
+      }
+    }
+
+    if (creditExhausted && executionIsCurrent) {
+      // Deterministic and free: never ask the model to explain a billing halt.
+      try {
+        await emitCreditExhaustionStep({
+          instanceId, siteId: site_id, userId: user_id, cycleId: cronLockRunId!,
+          ownership: { requirementId: reqId, runId: cronLockRunId, executionGeneration },
+          planId: attemptedPlanId, stepId: attemptedStepId,
+        });
+      } catch (noticeError: unknown) {
+        console.warn('[CronAppsWorkflow] Credit exhaustion notice failed:', boundedFailureDetail(noticeError));
       }
     }
 

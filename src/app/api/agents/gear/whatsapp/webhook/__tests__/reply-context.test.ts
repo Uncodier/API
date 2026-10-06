@@ -39,3 +39,12 @@ it('does no database lookup for an unquoted message', async () => {
   expect(await resolveWhatsAppReplyContext('instance', 'site', 'user')).toBe('');
   expect(supabaseAdmin.from).not.toHaveBeenCalled();
 });
+
+it.each(['pending', 'failed', 'partial'])('does not use %s quoted media as image evidence', async status => {
+  setup({ id: 'quoted-action', message: 'https://example.invalid/not-ready.png',
+    details: { message_sid: 'image-message', whatsapp_media: { status } } });
+  const text = await resolveWhatsAppReplyContext('instance', 'site', 'user', 'image-message');
+  expect(text).toContain(`Quoted media is ${status}`);
+  expect(text).toContain('Do not guess its contents or substitute another image/asset');
+  expect(text).not.toContain('https://example.invalid/not-ready.png');
+});

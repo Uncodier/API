@@ -104,6 +104,14 @@ describe('emitCycleWrapUpStep outcomes', () => {
     expect(result).toEqual({ ran: false, outcome: 'failed' });
   });
 
+  it('returns a billing halt rather than retrying a paid wrap-up after a rejection', async () => {
+    (executeAssistantStep as jest.Mock).mockRejectedValue(Object.assign(new Error('Not enough credits'), { name: 'InsufficientCreditsError' }));
+    await expect(emitCycleWrapUpStep({ ...baseParams, pendingPlanSteps: 0 })).resolves.toEqual({
+      ran: false, outcome: 'failed', creditExhausted: true,
+    });
+    expect(executeAssistantStep).toHaveBeenCalledTimes(1);
+  });
+
   it.each([undefined, 'product_failure', 'blocked'] as const)(
     'checks fresh independent backlog before any wrap-up side effect under %s', async recoveryDisposition => {
       (loadCycleInterventionState as jest.Mock).mockResolvedValue({

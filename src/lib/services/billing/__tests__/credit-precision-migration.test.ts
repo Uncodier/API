@@ -7,7 +7,7 @@ describe('exact credit accounting migration (offline PostgreSQL)', () => {
       process.cwd(), 'src/lib/services/billing/__tests__/credit-precision-postgres-runner.mjs',
     )], {
       cwd: process.cwd(), encoding: 'utf8', timeout: 90_000,
-      env: { PATH: process.env.PATH, HOME: process.env.HOME },
+      env: { PATH: process.env.PATH, HOME: process.env.HOME, NODE_ENV: 'test' },
     });
     if (child.status !== 0) throw new Error(child.stderr || child.error?.message || child.stdout);
     expect(child.stdout).toContain('Validated 8 PostgreSQL credit precision scenarios');

@@ -6,6 +6,7 @@ import { resetRequirementOnUserAction } from '@/lib/services/requirement-cron-re
 import { runAssistantWorkflow } from '../workflow';
 import { insertUserActionLog, markRemoteInstanceError } from '../user-message-log';
 import { POST } from '../route';
+import { normalizePublishToolOverrides } from '../publish-tool-overrides';
 
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn() } }));
 jest.mock('@/lib/services/billing/CreditService', () => ({ CreditService: { validateCredits: jest.fn() } }));
@@ -15,7 +16,7 @@ jest.mock('@/lib/services/requirement-cron-reset', () => ({ resetRequirementOnUs
 jest.mock('../user-message-log', () => ({
   insertUserActionLog: jest.fn(), markRemoteInstanceError: jest.fn(), withRetries: (fn: () => unknown) => fn(),
 }));
-jest.mock('../publish-tool-overrides', () => ({ normalizePublishToolOverrides: () => ({}) }));
+jest.mock('../publish-tool-overrides', () => ({ normalizePublishToolOverrides: jest.fn(() => ({})) }));
 jest.mock('../skill-selection', () => {
   const { z } = jest.requireActual('zod');
   return { assistantSkillSelectionSchema: z.object({}), approvedCommunityImport: () => null,
@@ -151,4 +152,57 @@ it('does not write a session log for invalid input or insufficient credits', asy
   expect(insertUserActionLog).not.toHaveBeenCalled();
   expect(start).not.toHaveBeenCalled();
   expect(markRemoteInstanceError).not.toHaveBeenCalled();
+});
+
+it.each([
+  { nodeType: 'publish', publish_destinations: ['tiktok'] },
+  { publish_destinations: [] },
+  { mediaType: 'audience', audience_channels: ['email'] },
+  { output_type: 'text' },
+  { media_type: 'video', parameters: { duration: 8 } },
+  { ui_contract: { version: 1, output_type: 'image' } },
+  { instance_node_id: 'embedded-node', nodeType: 'generate-image' },
+])('rejects unscoped node context before credits, admission or overrides: %j', async context => {
+  for (const instance_id of [INSTANCE, undefined]) {
+    const response = await POST(request({ ...payload, instance_id, context: JSON.stringify(context) }));
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toMatchObject({
+      code: 'NODE_CONTEXT_REQUIRES_NODE',
+      message: expect.stringContaining('instance_node_id'),
+    });
+  }
+  expect(CreditService.validateCredits).not.toHaveBeenCalled();
+  expect(supabaseAdmin.from).not.toHaveBeenCalled();
+  expect(normalizePublishToolOverrides).not.toHaveBeenCalled();
+  expect(insertUserActionLog).not.toHaveBeenCalled();
+  expect(resetRequirementOnUserAction).not.toHaveBeenCalled();
+  expect(start).not.toHaveBeenCalled();
+  expect(markRemoteInstanceError).not.toHaveBeenCalled();
+});
+
+it.each([
+  'A conversation about a publish node, not a node execution.',
+  'null',
+  '[]',
+  '{"nodeType":',
+  JSON.stringify({ output_type: 'json', parameters: { tone: 'friendly' } }),
+  JSON.stringify({ records: [{ nodeType: 'publish', output_type: 'image' }], assets: ['image-1'] }),
+])('preserves ordinary conversational context without node identity: %s', async context => {
+  const tool_overrides = { search: { limit: 3 } };
+  const response = await POST(request({ ...payload, context, tool_overrides }));
+  expect(response.status).toBe(200);
+  expect(await response.text()).toContain('event: completed');
+  expect((start as jest.Mock).mock.calls[0][1][9]).toBeUndefined();
+  expect((start as jest.Mock).mock.calls[0][1][11]).toBe(context);
+  expect((start as jest.Mock).mock.calls[0][1][12]).toEqual(tool_overrides);
+  expect(normalizePublishToolOverrides).not.toHaveBeenCalled();
+});
+
+it('passes a node-specific request to durable scoped resolution without adopting embedded identity', async () => {
+  const nodeId = '00000000-0000-4000-8000-000000000005';
+  const context = JSON.stringify({ nodeType: 'publish', instance_node_id: 'untrusted-other-node' });
+  const response = await POST(request({ ...payload, instance_node_id: nodeId, context }));
+  expect(await response.text()).toContain('event: completed');
+  expect(normalizePublishToolOverrides).toHaveBeenCalledWith(context, undefined);
+  expect((start as jest.Mock).mock.calls[0][1][9]).toBe(nodeId);
 });

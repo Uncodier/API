@@ -1,6 +1,7 @@
 'use step';
 
 import { executeAssistantStep } from '@/lib/services/robot-instance/assistant-executor';
+import { isInsufficientCreditsError } from '@/lib/services/billing/credit-exhaustion-message';
 import { loadUserActionHistory } from '@/lib/services/instance-user-history';
 import {
   buildCycleWrapUpSystemPrompt,
@@ -60,8 +61,8 @@ export interface CycleWrapUpParams {
 
 export type CycleWrapUpResult =
   // Completion refers only to reporting, never authorization to resume the requirement.
-  | { ran: true; outcome: 'completed' }
-  | { ran: false; outcome: 'skipped' | 'failed' };
+  | { ran: true; outcome: 'completed'; creditExhausted?: false }
+  | { ran: false; outcome: 'skipped' | 'failed'; creditExhausted?: boolean };
 
 /** Latest accounting may establish a circuit after reporting; never rerun the model. */
 export async function emitCycleTechnicalEscalationStep(params: {
@@ -359,6 +360,7 @@ export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<Cy
     console.log(`[CycleWrapUpStep] Completed in ${turns} turns for req ${requirementId}`);
     return { ran: true, outcome: 'completed' };
   } catch (error: unknown) {
+    if (isInsufficientCreditsError(error)) return { ran: false, outcome: 'failed', creditExhausted: true };
     console.warn(
       `[CycleWrapUpStep] Failed to run wrap-up for req ${requirementId}:`,
       error instanceof Error ? error.message : error,

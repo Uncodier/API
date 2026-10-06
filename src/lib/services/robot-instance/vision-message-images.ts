@@ -63,6 +63,12 @@ function imagePartUrl(part: any): string | undefined {
   return typeof raw === 'string' ? raw : undefined;
 }
 
+/** Exact source identity, not hydrated bytes: distinct URLs may return identical images. */
+export function getVisionImageSourceUrl(part: any): string | undefined {
+  if (!part || part.type !== 'image_url') return undefined;
+  return typeof part[SOURCE_URL] === 'string' ? part[SOURCE_URL] : imagePartUrl(part);
+}
+
 function withImageUrl(part: any, dataUrl: string): any {
   if (typeof part.image_url === 'string') {
     return { ...part, image_url: dataUrl };

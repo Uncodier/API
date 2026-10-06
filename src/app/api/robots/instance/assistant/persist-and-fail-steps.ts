@@ -2,6 +2,7 @@
 
 import { insertUserActionLog, markRemoteInstanceError, setUserMessageStatus } from './user-message-log';
 import { RecoveryError } from '@/lib/services/robot-instance/assistant-recovery-schema';
+import { persistCreditExhaustionNotice } from '@/lib/services/robot-instance/credit-exhaustion';
 
 export async function persistUserMessageStep(
   instanceId: string,
@@ -49,4 +50,15 @@ export async function pauseUserMessageStep(logId: string, expectedGeneration?: n
   'use step';
   const saved = await setUserMessageStatus(logId, 'paused', expectedGeneration);
   if (expectedGeneration !== undefined && !saved) throw new RecoveryError('inactive');
+}
+
+export async function pauseAssistantForCreditsStep(
+  instanceId: string, siteId: string, userId: string,
+  userMessageLogId: string, expectedGeneration: number,
+) {
+  'use step';
+  return persistCreditExhaustionNotice({
+    instanceId, siteId, userId, userMessageLogId, expectedGeneration,
+    eventId: `${userMessageLogId}:${expectedGeneration}:credits_exhausted`,
+  });
 }

@@ -7,6 +7,7 @@ import * as azureVision from '../azure-vision-message-sanitize';
 import * as geminiMessages from '../gemini-message-sanitize';
 import * as toolArguments from '../coerce-tool-args';
 import * as toolResults from '@/lib/services/tool-operation-result';
+import * as visionImages from '@/lib/services/robot-instance/vision-message-images';
 import type { Message } from '../ai-agent-executor';
 import { loadRuntimeModule } from '../test-helpers/load-runtime-module';
 
@@ -20,6 +21,7 @@ const { AIAgentExecutor } = loadRuntimeModule<typeof import('../ai-agent-executo
     'zod-to-json-schema': jsonSchema, './azure-vision-message-sanitize': azureVision,
     './gemini-message-sanitize': geminiMessages, './coerce-tool-args': toolArguments,
     '@/lib/services/tool-operation-result': toolResults,
+    '@/lib/services/robot-instance/vision-message-images': visionImages,
     '@/lib/services/robot-instance/instance-context-budget': {
       fitInstanceRequest: () => { throw new Error('Unexpected context I/O'); },
       resolveModelContextCapacity: () => { throw new Error('Unexpected context I/O'); },

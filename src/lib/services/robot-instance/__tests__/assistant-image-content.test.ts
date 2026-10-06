@@ -1,4 +1,5 @@
 import { buildAssistantUserContent } from '../assistant-image-content';
+import { ASSISTANT_CONTEXT_VERSION } from '../assistant-context-version';
 
 const images = Array.from({ length: 7 }, (_, index) => ({
   id: `asset-${index}`, name: `Photo ${index}`, fileType: 'png',
@@ -8,6 +9,7 @@ const images = Array.from({ length: 7 }, (_, index) => ({
 
 it('orders recent images chronologically and labels each image next to its exact URL', () => {
   const content = buildAssistantUserContent('Compare the last two', [...images].reverse());
+  expect(content[0].text).toContain(`[Assistant image context: ${ASSISTANT_CONTEXT_VERSION}]`);
   const parts = content.filter((part: any) => part.type === 'image_url');
   expect(parts.map((part: any) => part.image_url.url)).toEqual(images.map(image => image.url));
   images.forEach(image => {
@@ -28,6 +30,9 @@ it('prioritizes a quote to a specific older image, even with more than five newe
 it('never infers the quoted target from recency when its message ID is unavailable', () => {
   const content = buildAssistantUserContent('[WhatsApp reply target: unknown]', images);
   expect(content.some((part: any) => part.text?.includes('"reply_target":true'))).toBe(false);
+  expect(content[0].text).toContain('Do not substitute a current or newer image');
+  expect(buildAssistantUserContent('[WhatsApp reply target: unknown]', []))
+    .toContain('No image from the quoted message is available');
   expect(buildAssistantUserContent('Text only', [])).toBe('Text only');
 });
 

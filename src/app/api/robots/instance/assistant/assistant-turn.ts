@@ -1,6 +1,7 @@
 'use step';
 
 import { executeAssistantStep } from '@/lib/services/robot-instance/assistant-executor';
+import { isInsufficientCreditsError } from '@/lib/services/billing/credit-exhaustion-message';
 import {
   dehydrateMessageImages,
   hydrateMessageImages,
@@ -116,7 +117,15 @@ export async function processAssistantTurn(
   }
 
   const hydratedMessages = await hydrateMessageImages(messages);
-  const result = await executeAssistantStep(hydratedMessages, context.instance, options);
+  let result;
+  try {
+    result = await executeAssistantStep(hydratedMessages, context.instance, options);
+  } catch (error) {
+    // Carry billing as data across the durable boundary: exhausted retry wrappers
+    // can otherwise discard the original error name/cause.
+    if (isInsufficientCreditsError(error)) return { creditExhausted: true, isDone: false, text: '', messages };
+    throw error;
+  }
 
   if (result?.messages) {
     result.messages = dehydrateMessageImages(result.messages);

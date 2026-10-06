@@ -1,6 +1,7 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { loadRuntimeModule } from '@/lib/custom-automation/test-helpers/load-runtime-module';
 import { buildAssistantUserContent } from '@/lib/services/robot-instance/assistant-image-content';
+import { isInsufficientCreditsError } from '@/lib/services/billing/credit-exhaustion-message';
 
 type AsyncMock = (...args: any[]) => Promise<any>;
 function setup() {
@@ -25,6 +26,7 @@ function setup() {
     messages, text, isDone, continuation: { responseNodeIds: ['response'] }, steps: [], usage: {}, output: null,
   });
   const workflow = loadRuntimeModule<typeof import('../workflow')>('src/app/api/robots/instance/assistant/workflow.ts', {
+    '@/lib/services/billing/credit-exhaustion-message': { isInsufficientCreditsError },
     '@/lib/services/robot-instance/assistant-image-content': { buildAssistantUserContent },
     './assistant-turn': { processAssistantTurn }, './steps': { prepareAssistantContext },
     './plan-steps': { getActiveInstancePlan, executePlanStep },

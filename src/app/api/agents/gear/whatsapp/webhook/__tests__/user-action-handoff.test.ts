@@ -22,6 +22,8 @@ function setup() {
   const start = jest.fn<AsyncMock>().mockResolvedValue({ runId: 'run-1' });
   const runGearAgentWorkflow = jest.fn();
   const resolveWhatsAppReplyContext = jest.fn<AsyncMock>().mockResolvedValue('');
+  const finalizeWhatsAppAction = jest.fn<AsyncMock>().mockResolvedValue(true);
+  const isCurrentWhatsAppAction = jest.fn<AsyncMock>().mockResolvedValue(true);
   const results: Record<string, unknown> = {
     sites: [{ id: 'site-1', name: 'Test site' }],
     site_members: [],
@@ -57,11 +59,17 @@ function setup() {
       '@/lib/services/ai/transcribeAudio': {},
       './twilio-webhook-auth': { authenticateGearWebhook, finishGearWebhookClaim },
       './reply-context': { resolveWhatsAppReplyContext },
+      './inbound-action': {
+        finalizeWhatsAppAction, isCurrentWhatsAppAction,
+        unresolvedWhatsAppMediaContext: jest.fn<AsyncMock>().mockResolvedValue(''),
+      },
+      './inbound-media': {},
     },
   );
   const post = () => route.POST(new NextRequest('https://example.invalid/api/agents/gear/whatsapp/webhook', { method: 'POST' }));
   return { post, actionId, claim, authenticateGearWebhook, finishGearWebhookClaim,
-    insertUserActionLog, resetRequirementOnUserAction, start, runGearAgentWorkflow, supabaseAdmin, resolveWhatsAppReplyContext };
+    insertUserActionLog, resetRequirementOnUserAction, start, runGearAgentWorkflow, supabaseAdmin,
+    resolveWhatsAppReplyContext, finalizeWhatsAppAction, isCurrentWhatsAppAction };
 }
 
 describe('Gear WhatsApp trusted user-action handoff', () => {
@@ -105,9 +113,11 @@ describe('Gear WhatsApp trusted user-action handoff', () => {
     expect((await h.post()).status).toBe(200);
     expect(h.resolveWhatsAppReplyContext).toHaveBeenCalledWith('instance-1', 'site-1', 'user-1', 'image-message');
     expect(h.insertUserActionLog).toHaveBeenCalledWith(expect.objectContaining({
-      message: `Edit this image\n\n${context}`,
+      message: 'Edit this image',
       details: expect.objectContaining({ message_sid: 'message-1', quoted_message_sid: 'image-message' }),
     }));
+    expect(h.finalizeWhatsAppAction).toHaveBeenCalledWith(expect.objectContaining({ userMessageLogId: h.actionId }),
+      `Edit this image\n\n${context}`, undefined);
     expect(h.start).toHaveBeenCalledWith(h.runGearAgentWorkflow, [expect.objectContaining({
       message: `Edit this image\n\n${context}`, userMessageLogId: h.actionId,
     })]);
@@ -119,6 +129,21 @@ describe('Gear WhatsApp trusted user-action handoff', () => {
     expect((await h.post()).status).toBe(503);
     expect(h.supabaseAdmin.rpc).not.toHaveBeenCalled();
     expect(h.insertUserActionLog).not.toHaveBeenCalled();
+    expect(h.start).not.toHaveBeenCalled();
+  });
+
+  it('does not reset requirements or start when a newer action already owns the instance', async () => {
+    const h = setup();
+    h.isCurrentWhatsAppAction.mockResolvedValue(false);
+    expect((await h.post()).status).toBe(200);
+    expect(h.resetRequirementOnUserAction).not.toHaveBeenCalled();
+    expect(h.start).not.toHaveBeenCalled();
+  });
+
+  it('does not restart an action whose input was frozen by recovery before finalization', async () => {
+    const h = setup();
+    h.finalizeWhatsAppAction.mockResolvedValue(false);
+    expect((await h.post()).status).toBe(200);
     expect(h.start).not.toHaveBeenCalled();
   });
 });

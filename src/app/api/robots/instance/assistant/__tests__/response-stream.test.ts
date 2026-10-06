@@ -36,6 +36,18 @@ describe('assistant lifecycle SSE', () => {
     expect(text).not.toContain('event: completed');
   });
 
+  it('reports the credit-specific error and renewal date, then reaches EOF', async () => {
+    const text = await assistantResponseStream({ runId: 'run', status: Promise.resolve('completed'),
+      returnValue: Promise.resolve({ success: false, code: 'INSUFFICIENT_CREDITS', execution_status: 'paused',
+        message: 'Tus créditos se han agotado.', next_credit_reset_at: '2026-11-01T00:00:00.000Z' }) }, 'instance', 'log').text();
+    expect(text).toContain('event: error');
+    expect(text).toContain('INSUFFICIENT_CREDITS');
+    expect(text).toContain('Tus créditos se han agotado.');
+    expect(text).toContain('2026-11-01T00:00:00.000Z');
+    expect(text).not.toContain('event: completed');
+    expect(text).not.toContain('ASSISTANT_WORKFLOW_INCOMPLETE');
+  });
+
   it('reports a background continuation honestly rather than a successful answer', async () => {
     const text = await assistantResponseStream({ runId: 'run', status: Promise.resolve('completed'),
       returnValue: Promise.resolve({ success: false, execution_status: 'continuing' }) }, 'instance', 'log').text();

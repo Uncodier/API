@@ -21,6 +21,7 @@ import { resolveUiMediaContract } from './ui-media-contract';
 import { requiredSkillsPrompt, type AssistantSkillSelection } from './skill-selection';
 import { resolvePublishNodeBinding } from './publish-node-binding';
 import { resolveAssistantHistoryModel } from './history-model';
+import { assertNodeContextHasNode } from './node-context-boundary';
 
 export async function prepareAssistantContext(
   instanceId: string,
@@ -40,6 +41,10 @@ export async function prepareAssistantContext(
     approvedImport?: { url: string; sha256: string; userId: string },
   ): Promise<AssistantContext> {
   'use step';
+  // Direct workflow starts and recovery snapshots also cross this boundary.
+  // Reject before reading conversation history/assets or constructing tools.
+  assertNodeContextHasNode(contextString, instanceNodeId);
+
   // We need to fetch the instance data inside the workflow to ensure we have the latest state
   let instanceResult = await supabaseAdmin
     .from('remote_instances')

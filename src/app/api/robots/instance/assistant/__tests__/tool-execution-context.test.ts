@@ -5,6 +5,7 @@ import ts from 'typescript';
 import { loadRuntimeModule } from '@/lib/custom-automation/test-helpers/load-runtime-module';
 import * as contextModule from '@/lib/services/tool-execution-context';
 import { SILENT_CONTINUE_PROMPT } from '@/lib/services/robot-instance/assistant-respawn-policy';
+import { isInsufficientCreditsError } from '@/lib/services/billing/credit-exhaustion-message';
 
 const siteId = randomUUID();
 const instanceId = randomUUID();
@@ -81,10 +82,11 @@ describe('assistant private execution context wiring', () => {
     expect(privateContext.source).toEqual({});
   });
 
-  function turn() {
+  function turn(creditExhausted = false) {
     const getTools = jest.fn(async (..._args: any[]) => []);
     const run = loadRuntimeModule<typeof import('../assistant-turn')>(
       'src/app/api/robots/instance/assistant/assistant-turn.ts', {
+        '@/lib/services/billing/credit-exhaustion-message': { isInsufficientCreditsError },
         './utils': { getInstanceAssistantTools: getTools },
         './publish-node-binding': { resolvePublishNodeBinding: async () => null },
         './conversation-recovery-tools': { CONVERSATION_RECOVERY_INSTRUCTION: '', getConversationRecoveryTools: () => [] },
@@ -92,7 +94,10 @@ describe('assistant private execution context wiring', () => {
         '@/lib/services/robot-instance/assistant-respawn-policy': { SILENT_CONTINUE_PROMPT },
         '@/lib/services/robot-instance/assistant-recovery': { assertAssistantRecoveryActive: async () => undefined },
         '@/lib/services/workflow-robot/execution-tracker': {},
-        '@/lib/services/robot-instance/assistant-executor': { executeAssistantStep: async () => ({ messages: [] }) },
+        '@/lib/services/robot-instance/assistant-executor': { executeAssistantStep: async () => {
+          if (creditExhausted) throw Object.assign(new Error('Not enough credits'), { name: 'InsufficientCreditsError' });
+          return { messages: [] };
+        } },
         '@/lib/services/robot-instance/vision-message-images': {
           hydrateMessageImages: async (messages: unknown) => messages, dehydrateMessageImages: (messages: unknown) => messages,
         },
@@ -114,6 +119,12 @@ describe('assistant private execution context wiring', () => {
     for (const forbidden of [secret, context.systemPrompt, context.toolOverrides.private, 'DO NOT COPY HISTORY']) {
       expect(JSON.stringify(privateContext)).not.toContain(forbidden);
     }
+  });
+
+  it('carries a credit rejection as data across the durable turn boundary', async () => {
+    const { run, context } = turn(true);
+    const messages = [{ role: 'user', content: 'Continue' }];
+    await expect(run(context, messages)).resolves.toMatchObject({ creditExhausted: true, isDone: false, messages });
   });
 
   it('recovery skips sentinels and uses the most recent real user text, including multipart', async () => {

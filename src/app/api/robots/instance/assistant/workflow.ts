@@ -3,7 +3,8 @@
 import { processAssistantTurn } from './assistant-turn';
 import { prepareAssistantContext } from './steps';
 import { getActiveInstancePlan, executePlanStep, acquirePlanExecutionLockStep, releasePlanExecutionLockStep } from './plan-steps';
-import { persistUserMessageStep, markAssistantFailedStep, completeUserMessageStep, pauseUserMessageStep } from './persist-and-fail-steps';
+import { persistUserMessageStep, markAssistantFailedStep, completeUserMessageStep, pauseUserMessageStep, pauseAssistantForCreditsStep } from './persist-and-fail-steps';
+import { isInsufficientCreditsError } from '@/lib/services/billing/credit-exhaustion-message';
 import {
   isIncompleteTurn,
   SILENT_CONTINUE_PROMPT,
@@ -136,6 +137,13 @@ export async function runAssistantWorkflow(
     if (!await guardRecoveryStep(recoveryScope, true, messages)) return blockedResult;
     turns++;
     const stepResult = await processAssistantTurn(context, messages);
+    if (stepResult.creditExhausted) {
+      if (!await guardRecoveryStep(recoveryScope)) return blockedResult;
+      const notice = await pauseAssistantForCreditsStep(instanceId, siteId, userId, userMessageLogId, recoveryScope.generation ?? 0);
+      return { instance_id: instanceId, success: false, execution_status: 'paused',
+        code: 'INSUFFICIENT_CREDITS', next_credit_reset_at: notice.nextResetAt,
+        message: notice.message, assistant_response: notice.message, instance_node_id: instanceNodeId };
+    }
     
     // Update state
     messages = stepResult.messages;
@@ -221,6 +229,13 @@ export async function runAssistantWorkflow(
           
           // Execute the step
           const stepResult = await executePlanStep(context, activePlan, step);
+          if (stepResult.executionStatus === 'exhausted' && stepResult.creditExhausted) {
+            if (!await guardRecoveryStep(recoveryScope)) return blockedResult;
+            const notice = await pauseAssistantForCreditsStep(instanceId, siteId, userId, userMessageLogId, recoveryScope.generation ?? 0);
+            return { instance_id: instanceId, success: false, execution_status: 'paused',
+              code: 'INSUFFICIENT_CREDITS', next_credit_reset_at: notice.nextResetAt,
+              message: notice.message, assistant_response: notice.message, instance_node_id: instanceNodeId };
+          }
           
           // Accumulate results
           finalResult = stepResult;
@@ -294,6 +309,14 @@ export async function runAssistantWorkflow(
       return { instance_id: instanceId, success: false, execution_status: 'paused', instance_node_id: instanceNodeId,
         message: 'Original execution is inactive or its bound context changed; no automatic restart was performed',
         assistant_response: 'This execution was stopped because its original action or node context is no longer active.' };
+    }
+    if (isInsufficientCreditsError(error) && userMessageLogId) {
+      const notice = await pauseAssistantForCreditsStep(
+        instanceId, siteId, userId, userMessageLogId, recoveryScope?.generation ?? 0,
+      );
+      return { instance_id: instanceId, success: false, execution_status: 'paused',
+        code: 'INSUFFICIENT_CREDITS', next_credit_reset_at: notice.nextResetAt,
+        message: notice.message, assistant_response: notice.message, instance_node_id: instanceNodeId };
     }
     const errMsg = error instanceof Error ? error.message : String(error);
     console.error(`[Workflow] Assistant failed after retries for instance ${instanceId}:`, errMsg);

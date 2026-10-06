@@ -42,8 +42,8 @@ export function assistantResponseStream(
           type, run_id: run.runId, instance_id: instanceId, ...fields,
         })}\n\n`));
       };
-      const fail = (code: string, message: string) => {
-        event('error', { success: false, error: { code, message } });
+      const fail = (code: string, message: string, details: Record<string, unknown> = {}) => {
+        event('error', { success: false, error: { code, message, ...details } });
         finish();
       };
       const onAbort = () => finish();
@@ -68,7 +68,13 @@ export function assistantResponseStream(
               const result = await run.returnValue;
               if (closed) return;
               if (result && typeof result === 'object' && (result as { success?: boolean }).success === false) {
-                if ((result as { execution_status?: string }).execution_status === 'continuing') {
+                if ((result as { code?: string }).code === 'INSUFFICIENT_CREDITS') {
+                  const creditResult = result as { message?: unknown; next_credit_reset_at?: unknown };
+                  fail('INSUFFICIENT_CREDITS', typeof creditResult.message === 'string' ? creditResult.message
+                    : 'Tus créditos se han agotado para continuar este ciclo.', {
+                    next_credit_reset_at: typeof creditResult.next_credit_reset_at === 'string' ? creditResult.next_credit_reset_at : null,
+                  });
+                } else if ((result as { execution_status?: string }).execution_status === 'continuing') {
                   fail('ASSISTANT_WORKFLOW_CONTINUING', 'Assistant execution is continuing in the background. Check this session before sending again.');
                 } else {
                   fail('ASSISTANT_WORKFLOW_INCOMPLETE', 'Assistant execution paused before completion. Its progress is saved in this session.');

@@ -6,6 +6,8 @@ export interface SingleTurnResult {
   ok: boolean;
   isDone: boolean;
   transient?: boolean;
+  /** Billing halt, never an infrastructure retry or product failure. */
+  creditExhausted?: boolean;
   error?: string;
   effectiveSandboxId: string;
   sleepRequested?: number;

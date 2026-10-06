@@ -6,10 +6,11 @@ import { resetRequirementOnUserAction } from '@/lib/services/requirement-cron-re
 import { insertUserActionLog } from '@/app/api/robots/instance/assistant/user-message-log';
 
 import { normalizePhoneForSearch, normalizePhoneForStorage } from '@/lib/utils/phone-normalizer';
-import { handleTwilioMediaAndCreateTask, TwilioMediaDownload } from '@/lib/services/twilio/TwilioMediaTaskService';
-import { replaceTwilioMediaUrls } from '@/lib/services/twilio/fetchTwilioMedia';
+import type { TwilioMediaDownload } from '@/lib/services/twilio/TwilioMediaTaskService';
 import { fetchAudioBuffer, transcribeAudioBuffer } from '@/lib/services/ai/transcribeAudio';
 import { resolveWhatsAppReplyContext } from './reply-context';
+import { finalizeWhatsAppAction, isCurrentWhatsAppAction, unresolvedWhatsAppMediaContext } from './inbound-action';
+import { pendingWhatsAppMedia, pendingWhatsAppMessage, prepareRegisteredWhatsAppMedia } from './inbound-media';
 import {
   authenticateGearWebhook,
   finishGearWebhookClaim,
@@ -70,42 +71,6 @@ export async function POST(request: NextRequest) {
       const address = webhookData.Address || 'Ubicación compartida';
       messageContent += (messageContent ? '\n\n' : '') + `[Ubicación adjunta]: ${address} (Lat: ${webhookData.Latitude}, Lng: ${webhookData.Longitude})`;
     }
-
-    // ------------------------------------------------------------------------------------
-    // PROCESAR TRANSCRIPCIÓN DE AUDIOS (Para que el agente entienda mensajes de voz)
-    // ------------------------------------------------------------------------------------
-    if (mediaDownloads.length > 0) {
-      const accountSid = businessAccountId || process.env.GEAR_TWILIO_ACCOUNT_SID;
-      const authToken = process.env.GEAR_TWILIO_AUTH_TOKEN;
-      
-      if (accountSid && authToken) {
-        for (let i = 0; i < mediaDownloads.length; i++) {
-          const media = mediaDownloads[i];
-          if (media.contentType && media.contentType.toLowerCase().startsWith('audio/')) {
-            try {
-              console.log(`🎙️ Transcribiendo audio adjunto: ${media.url}`);
-              const { buffer, contentType } = await fetchAudioBuffer(media.url, {
-                twilioAccountSid: accountSid,
-                twilioAuthToken: authToken,
-              });
-              const result = await transcribeAudioBuffer({
-                buffer,
-                contentType: contentType || media.contentType,
-              });
-              if (result.success && result.text) {
-                console.log(`✅ Transcripción exitosa (${result.provider}): "${result.text.substring(0, 50)}..."`);
-                messageContent += `\n\n[Mensaje de voz transcrito]: "${result.text}"`;
-              } else {
-                console.warn(`⚠️ Error al transcribir audio: ${result.error}`);
-              }
-            } catch (err: any) {
-              console.warn(`⚠️ Error al transcribir audio en el webhook:`, err.message);
-            }
-          }
-        }
-      }
-    }
-    // ------------------------------------------------------------------------------------
 
     if (!messageContent.trim()) {
        messageContent = '[Mensaje vacío o formato no soportado]';
@@ -277,6 +242,24 @@ export async function POST(request: NextRequest) {
     
     // 3. Trigger Unregistered Workflow si no hay usuario o necesita seleccionar proyecto
     if (!userId || needsProjectSelection) {
+      // Lobby has no trusted instance action. Preserve its voice-message behavior,
+      // but never do this work before registered instance admission below.
+      const accountSid = businessAccountId || process.env.GEAR_TWILIO_ACCOUNT_SID;
+      const authToken = process.env.GEAR_TWILIO_AUTH_TOKEN;
+      if (accountSid && authToken) {
+        for (const media of mediaDownloads) {
+          if (!media.contentType?.toLowerCase().startsWith('audio/')) continue;
+          try {
+            const { buffer, contentType } = await fetchAudioBuffer(media.url, {
+              twilioAccountSid: accountSid, twilioAuthToken: authToken,
+            });
+            const result = await transcribeAudioBuffer({ buffer, contentType: contentType || media.contentType });
+            if (result.success && result.text) messageContent += `\n\n[Mensaje de voz transcrito]: ${JSON.stringify(result.text)}`;
+          } catch {
+            messageContent += '\n[Voice transcription unavailable; do not guess its contents.]';
+          }
+        }
+      }
       console.log(`🚀 Iniciando unregistered GearAgent workflow (o Lobby) para ${phoneNumber}...`);
       await start(runUnregisteredGearAgentWorkflow, [{
         message: messageContent,
@@ -399,69 +382,58 @@ export async function POST(request: NextRequest) {
       throw new Error('No instance is available for the Gear WhatsApp message');
     }
 
-    // 4.1 PROCESAR MEDIOS (IMÁGENES, ARCHIVOS) SI LOS HAY
-    // Solo si el usuario está registrado, tiene un sitio y una instancia válida.
-    if (mediaDownloads.length > 0 && userId && siteId && instanceId) {
-      console.log(`📎 Procesando ${mediaDownloads.length} archivos adjuntos de WhatsApp...`);
-      try {
-        const accountSid = businessAccountId || process.env.GEAR_TWILIO_ACCOUNT_SID;
-        const authToken = process.env.GEAR_TWILIO_AUTH_TOKEN;
-        
-        if (accountSid && authToken) {
-          const mediaResult = await handleTwilioMediaAndCreateTask({
-            siteId,
-            userId,
-            instanceId,
-            messageSid,
-            messageText: messageContent,
-            workflowOrigin: 'whatsapp',
-            media: mediaDownloads,
-            twilioAuth: { accountSid, authToken },
-          });
-          
-          if (mediaResult.success) {
-            if ('files' in mediaResult && Array.isArray(mediaResult.files)) {
-              messageContent = replaceTwilioMediaUrls(messageContent, mediaDownloads, mediaResult.files);
-            }
-            console.log(`✅ ${mediaDownloads.length} archivos procesados y guardados exitosamente como assets de la instancia`);
-            messageContent += `\n[System Note: User has successfully uploaded ${mediaDownloads.length} media file(s). They have been attached to your instance context.]`;
-          } else {
-            console.warn(`⚠️ Error procesando archivos: ${mediaResult.error}`);
-          }
-        } else {
-          console.warn(`⚠️ Faltan credenciales de Twilio para descargar los archivos de WhatsApp`);
-        }
-      } catch (err) {
-        console.error(`❌ Error inesperado al procesar medios de Twilio:`, err);
-      }
-    }
-    
     const quotedSid = webhookData.OriginalRepliedMessageSid;
-    const replyContext = await resolveWhatsAppReplyContext(instanceId, siteId, userId, quotedSid);
-    if (replyContext) messageContent += `\n\n${replyContext}`;
-
-    // 4.5. INSERTAR MENSAJE DEL USUARIO EN instance_logs ANTES DE INICIAR EL WORKFLOW
-    // Esto es crucial para que el workflow.ts encuentre el historial y el contexto de qué responder.
+    // Admit before ALL downloads/uploads/transcription and quote resolution. This
+    // row's created_at/id defines ordering; slow media must never become a new turn.
+    let mediaState = mediaDownloads.length ? pendingWhatsAppMedia(mediaDownloads) : undefined;
     const userAction = await insertUserActionLog({
       instanceId,
       siteId,
       userId,
-      message: messageContent,
+      message: mediaState ? pendingWhatsAppMessage(messageContent, mediaDownloads, messageSid) : messageContent,
       skipDuplicateCheck: true,
       details: {
         prompt_source: 'whatsapp_webhook',
         message_sid: messageSid,
         ...(quotedSid ? { quoted_message_sid: quotedSid } : {}),
+        ...(mediaState ? { whatsapp_media: mediaState } : {}),
         status: 'running',
       },
     });
     console.log(`📝 Log de mensaje de usuario insertado en instance_logs para instancia ${instanceId}`);
     
-    // Finish recovery before starting the workflow.
-    await resetRequirementOnUserAction(
-      instanceId,
-      userAction.id,
-    );
+    const scope = { instanceId, siteId, userId, userMessageLogId: userAction.id, messageSid };
+    // Do not defer requirement recovery until media completion: an older slow
+    // action must not reopen effects after a newer message has taken ownership.
+    if (await isCurrentWhatsAppAction(scope)) {
+      await resetRequirementOnUserAction(instanceId, userAction.id);
+    }
+
+    // Even a superseded attachment may finish enriching its historical row. It
+    // never gets a new admission or restarts the requirement/workflow afterward.
+    if (mediaState) {
+      const prepared = await prepareRegisteredWhatsAppMedia({
+        instanceId, siteId, userId, messageSid, message: messageContent, media: mediaDownloads,
+        accountSid: businessAccountId || process.env.GEAR_TWILIO_ACCOUNT_SID,
+        authToken: process.env.GEAR_TWILIO_AUTH_TOKEN,
+      });
+      messageContent = prepared.message;
+      mediaState = prepared.media;
+    }
+    const replyContext = await resolveWhatsAppReplyContext(instanceId, siteId, userId, quotedSid);
+    if (replyContext) messageContent += `\n\n${replyContext}`;
+    if (!await finalizeWhatsAppAction(scope, messageContent, mediaState)) {
+      await finishGearWebhookClaim(webhookClaim, 'completed');
+      return NextResponse.json({ success: true, superseded: true }, { status: 200 });
+    }
+    const mediaContext = await unresolvedWhatsAppMediaContext(scope);
+    if (mediaContext) systemPromptOverride += `\n\n${mediaContext}`;
+    // This is a recheck, not cross-row serialization. Workflow recovery and send
+    // steps also recheck the exact persisted owner before performing their effects.
+    if (!await isCurrentWhatsAppAction(scope)) {
+      await finishGearWebhookClaim(webhookClaim, 'completed');
+      return NextResponse.json({ success: true, superseded: true }, { status: 200 });
+    }
     
     // Trigger Workflow normal
     console.log(`🚀 Iniciando workflow GearAgent normal para ${phoneNumber}...`);

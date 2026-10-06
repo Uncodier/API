@@ -34,6 +34,16 @@ describe('InstanceAssetsService + vision-message-images', () => {
   });
 
   describe('processAssetContent / MIME detection', () => {
+    it('does not claim that inventory images are visible when hydration or the vision budget can omit them', () => {
+      // @ts-expect-error testing private method
+      const context = InstanceAssetsService.buildAssetsContext([{ id: 'image', name: 'Photo',
+        file_type: 'png', publicUrl: 'https://example.invalid/photo.png' }]);
+      expect(context).toContain('not proof of visibility');
+      expect(context).toContain('image-budget omission notices take precedence');
+      expect(context).not.toContain('Analyze and describe this image directly');
+      expect(context).not.toContain('Image attached as a multimodal vision part');
+    });
+
     it('treats file_type image/png as an image (not metadata-only)', async () => {
       const mockAsset = {
         id: '123',

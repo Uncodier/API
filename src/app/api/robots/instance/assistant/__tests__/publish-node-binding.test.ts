@@ -1,4 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { buildNodeResult } from '@/lib/services/robot-instance/node-result-collector';
 
 type Row = Record<string, any>;
 type Query = { table: string; filters: Row; ids?: string[]; limit?: number; columns?: string };
@@ -43,6 +44,21 @@ const target = () => tables.instance_nodes[0];
 const content = () => tables.instance_nodes[1];
 const ref = () => tables.instance_node_contexts[0];
 
+function collectedEntityResult(count: number, mediaCount = 0) {
+  return buildNodeResult(`Final caption [not a structured media output](${imageUrl})`, 'done', [{
+    toolResults: [
+      { toolName: 'tools', result: { success: true, name: 'catalog_commerce', result: {
+        success: true, items: Array.from({ length: count }, (_, index) => ({
+          id: `catalog-${index}`, name: `Product ${index}`, site_id: scope.siteId,
+        })),
+      } } },
+      ...(mediaCount ? [{ toolName: 'tools', result: { success: true, name: 'generate_video',
+        result: { success: true, videos: Array.from({ length: mediaCount }, () => ({ url: videoUrl })) },
+      } }] : []),
+    ],
+  }]);
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
   queries.length = 0;
@@ -60,6 +76,71 @@ beforeEach(() => {
       { target_node_id: 'publish-1', context_node_id: 'content-1', site_id: 'site-1', type: 'content' },
     ],
   };
+});
+
+describe('stored entity outputs coexist with publish media', () => {
+  it.each([false, true])('accepts 50 collected candidates as text-only Content (serialized=%s)', async serialized => {
+    target().settings.publish_destinations = ['linkedin'];
+    content().settings = { media_type: 'text' };
+    const result = collectedEntityResult(50);
+    expect(result.outputs).toHaveLength(50);
+    content().result = serialized ? JSON.stringify(result) : JSON.parse(JSON.stringify(result));
+
+    const binding = await resolveBinding(scope);
+    expect(binding?.toolOverrides.publish).toMatchObject({ social_accounts: ['linkedin'], media_urls: [] });
+    expect(JSON.stringify(binding)).not.toContain('catalog-');
+    expect(JSON.stringify(binding)).not.toContain(imageUrl);
+  });
+
+  it.each([1, 20])('publishes only generated media alongside 50 candidates and %s video outputs', async mediaCount => {
+    const result = collectedEntityResult(50, mediaCount);
+    expect(result.outputs).toHaveLength(50 + mediaCount);
+    content().result = JSON.stringify(result);
+
+    const binding = await resolveBinding(scope);
+    expect(binding?.toolOverrides.publish).toMatchObject({ social_accounts: ['tiktok'], media_urls: [videoUrl] });
+    expect(JSON.stringify(binding)).not.toContain('catalog-');
+    expect(JSON.stringify(binding)).not.toContain(imageUrl);
+  });
+
+  it('never promotes entity URLs or prose URLs when structured data outputs exist', async () => {
+    target().settings.publish_destinations = ['linkedin'];
+    content().settings = { media_type: 'text' };
+    const result = collectedEntityResult(50);
+    result.outputs![0].data.url = videoUrl;
+    content().result = JSON.stringify(result);
+    expect((await resolveBinding(scope))?.toolOverrides.publish.media_urls).toEqual([]);
+
+    // Data-only output cannot satisfy a node that requires a video, either.
+    content().settings.media_type = 'video';
+    await expect(resolveBinding(scope)).rejects.toThrow('requires a completed video output URL');
+  });
+
+  it('keeps the 20 media limit independent of data outputs and URL deduplication', async () => {
+    content().result = JSON.stringify(collectedEntityResult(50, 21));
+    await expect(resolveBinding(scope)).rejects.toThrow('Too many Content media outputs');
+
+    const mixed = collectedEntityResult(50, 20);
+    mixed.outputs!.push(output('image', imageUrl) as any);
+    content().result = JSON.stringify(mixed);
+    await expect(resolveBinding(scope)).rejects.toThrow('Too many Content media outputs');
+  });
+
+  it('bounds all structured outputs at 1000 separately from the 20 media limit', async () => {
+    target().settings.publish_destinations = ['linkedin'];
+    content().settings = { media_type: 'text' };
+    content().result = JSON.stringify(collectedEntityResult(1000));
+    expect((await resolveBinding(scope))?.toolOverrides.publish.media_urls).toEqual([]);
+    content().result = JSON.stringify(collectedEntityResult(1001));
+    await expect(resolveBinding(scope)).rejects.toThrow('Too many Content outputs');
+  });
+
+  it.each([false, true])('retains the existing result-size cap for oversized data (serialized=%s)', async serialized => {
+    const result = collectedEntityResult(50);
+    result.outputs![0].data.name = 'x'.repeat(1_000_001);
+    content().result = serialized ? JSON.stringify(result) : result;
+    await expect(resolveBinding(scope)).rejects.toThrow('Invalid or oversized source data');
+  });
 });
 
 describe('persisted publish selection', () => {
@@ -268,7 +349,7 @@ describe('fail-closed Content validation', () => {
 
   it('rejects over-limit outputs and oversized text/URLs', async () => {
     content().result.outputs = Array.from({ length: 21 }, () => output('video', videoUrl));
-    await expect(resolveBinding(scope)).rejects.toThrow('Too many Content outputs');
+    await expect(resolveBinding(scope)).rejects.toThrow('Too many Content media outputs');
     content().result = { text: 'x'.repeat(100_001) };
     await expect(resolveBinding(scope)).rejects.toThrow('oversized Content text');
     content().result = { outputs: [output('video', `${videoUrl}?x=${'x'.repeat(8192)}`)] };

@@ -22,7 +22,7 @@ it.each([
   ['--project=rnjgeloamtszdjplmqxy', '--all', '--operator=offline', '--reason=Retire obsolete authority'],
   ['--sql=SELECT 1'],
   ['--reset'],
-])('fails closed on missing credentials or invalid flags (%#)', args => {
+].map(args => ({ args })))('fails closed on missing credentials or invalid flags (%#)', ({ args }) => {
   const result = run(args);
   expect(result.status).toBe(1);
   expect(result.stdout).toBe('');

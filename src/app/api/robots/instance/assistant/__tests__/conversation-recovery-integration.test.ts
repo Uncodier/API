@@ -22,6 +22,7 @@ jest.unstable_mockModule('../plan-steps', () => ({ getActiveInstancePlan: getPla
 jest.unstable_mockModule('../persist-and-fail-steps', () => ({
   persistUserMessageStep: jest.fn(), completeUserMessageStep: complete,
   pauseUserMessageStep: jest.fn(), markAssistantFailedStep: jest.fn(),
+  pauseAssistantForCreditsStep: jest.fn(),
 }));
 jest.unstable_mockModule('../assistant-respawn-steps', () => ({ spawnSilentContinueStep: jest.fn() }));
 jest.unstable_mockModule('../publish-node-binding', () => ({ resolvePublishNodeBinding: jest.fn() }));
