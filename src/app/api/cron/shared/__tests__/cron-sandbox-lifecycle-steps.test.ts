@@ -8,6 +8,14 @@ const mockCaptureFingerprint = jest.fn();
 const mockPersistReceipt = jest.fn();
 const mockLogEvent = jest.fn();
 const mockAssertOwner = jest.fn();
+const mockCreateSandbox = jest.fn();
+const mockInspectWorkspace = jest.fn();
+const mockCurrentBranch = jest.fn();
+const mockMissingSnapshot = jest.fn();
+const mockWarmStart = jest.fn();
+class SandboxAPIError extends Error {
+  constructor(public response: { status: number }, public json: { error: { code: string } }) { super('Sandbox API failure'); }
+}
 
 const ownershipModule = loadRuntimeModule<typeof import('../cron-execution-ownership')>(
   'src/app/api/cron/shared/cron-execution-ownership.ts', {
@@ -25,12 +33,14 @@ const { checkBackgroundCommandStep, createSandboxStep, stopSandboxStep, assertCr
   loadRuntimeModule<typeof import('../cron-sandbox-lifecycle-steps')>(
     'src/app/api/cron/shared/cron-sandbox-lifecycle-steps.ts', {
       workflow: { FatalError },
+      '@vercel/sandbox': { APIError: SandboxAPIError },
+      '@/lib/services/sandbox-missing-snapshot': { isMissingSandboxSnapshotError: mockMissingSnapshot },
       '@/lib/services/sandbox-sdk': { getSandboxHandle: mockGetSandboxHandle, sandboxIdentity: () => 'sandbox-1' },
-      '@/lib/services/sandbox-service': { SandboxService: { runCommandInSandbox: mockRunCommand } },
+      '@/lib/services/sandbox-service': { SandboxService: { runCommandInSandbox: mockRunCommand, createRequirementSandbox: mockCreateSandbox, getCurrentBranch: mockCurrentBranch, WORK_DIR: '/vercel/sandbox' } },
       '@/lib/services/sandbox-constants': { requirementSandboxName: () => 'sandbox-name' },
       '@/lib/database/supabase-client': { supabaseAdmin: {} },
-      '@/lib/services/sandbox-recovery': { inspectSandboxWorkspace: jest.fn() },
-      '@/lib/services/sandbox-on-resume': { warmStartNamedSandbox: jest.fn() },
+      '@/lib/services/sandbox-recovery': { inspectSandboxWorkspace: mockInspectWorkspace },
+      '@/lib/services/sandbox-on-resume': { warmStartNamedSandbox: mockWarmStart },
       './cron-run-lock': { releaseRunLock: jest.fn(), extendRunLock: jest.fn(), CRON_RUN_LOCK_TTL_MS: 60_000 },
       './cron-execution-ownership': { ...ownershipModule, assertCronExecutionOwnership: mockAssertOwner },
       './runtime-log-context': { sanitizeRuntimeLog },
@@ -203,5 +213,66 @@ describe('sandbox shutdown proof', () => {
     await jest.runAllTimersAsync();
     await expect(result).resolves.toEqual({ stopped: false });
     expect(stop).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('sandbox reuse admission', () => {
+  beforeEach(() => {
+    jest.resetAllMocks();
+    mockAssertOwner.mockResolvedValue(undefined);
+    mockMissingSnapshot.mockReturnValue(false);
+    mockInspectWorkspace.mockResolvedValue({ ok: true, fatal: false });
+    mockCurrentBranch.mockResolvedValue('feature/req');
+    mockWarmStart.mockResolvedValue(undefined);
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    jest.spyOn(console, 'log').mockImplementation(() => {});
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  it('reuses a healthy sandbox without provisioning', async () => {
+    mockGetSandboxHandle.mockResolvedValue({ resume: jest.fn().mockResolvedValue(undefined) });
+    await expect(createSandboxStep('req', 'applications', '')).resolves.toMatchObject({ sandboxId: 'sandbox-1' });
+    expect(mockCreateSandbox).not.toHaveBeenCalled();
+    expect(mockWarmStart).toHaveBeenCalledWith(expect.anything(), 'req', 'applications', { syncToOrigin: false });
+  });
+
+  it.each(['auth denied', 'transport timeout', 'unknown 410'])(
+    'propagates %s rather than interpreting it as absence', async message => {
+      const error = new Error(message);
+      mockGetSandboxHandle.mockRejectedValue(error);
+      await expect(createSandboxStep('req', 'applications', '')).rejects.toBe(error);
+      expect(mockCreateSandbox).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([[404, 'not_found'], [410, 'snapshot_not_found']])(
+    'passes definitive %s/%s to named provisioning', async (status, code) => {
+      mockGetSandboxHandle.mockRejectedValue(new SandboxAPIError({ status: Number(status) }, { error: { code: String(code) } }));
+      mockCreateSandbox.mockResolvedValue({ sandbox: {}, branchName: 'feature/req', workDir: '/vercel/sandbox', isNewBranch: false, instanceType: 'applications' });
+      await createSandboxStep('req', 'applications', '');
+      expect(mockCreateSandbox).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('passes legacy missing-snapshot errors to guarded recovery', async () => {
+    mockGetSandboxHandle.mockRejectedValue(new Error('missing snapshot'));
+    mockMissingSnapshot.mockReturnValue(true);
+    mockCreateSandbox.mockResolvedValue({ sandbox: {}, branchName: 'feature/req', workDir: '/vercel/sandbox', isNewBranch: false, instanceType: 'applications' });
+    await createSandboxStep('req', 'applications', '');
+    expect(mockCreateSandbox).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves a sandbox whose workspace layout requires repair', async () => {
+    mockGetSandboxHandle.mockResolvedValue({});
+    mockInspectWorkspace.mockResolvedValue({ ok: false, fatal: true, reason: 'nested layout' });
+    await expect(createSandboxStep('req', 'applications', '')).rejects.toThrow('workspace requires repair');
+    expect(mockCreateSandbox).not.toHaveBeenCalled();
+  });
+
+  it('preserves the VM when branch inspection fails', async () => {
+    mockGetSandboxHandle.mockResolvedValue({});
+    mockCurrentBranch.mockRejectedValue(new Error('git unavailable'));
+    await expect(createSandboxStep('req', 'applications', '')).rejects.toThrow('git unavailable');
+    expect(mockCreateSandbox).not.toHaveBeenCalled();
   });
 });

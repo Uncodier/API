@@ -29,6 +29,8 @@ export interface SendEmailCoreParams {
   omit_signature?: boolean;
   /** When lead_id is set, policy for unknown {{...}} tokens. Defaults to strip_tokens. */
   placeholder_policy?: ContentPlaceholderPolicy;
+  /** Setup claims forbid fallback after an ambiguous provider attempt. */
+  disable_provider_fallback?: boolean;
 }
 
 export interface SendEmailCoreResult {
@@ -193,7 +195,7 @@ export async function sendEmailCore(params: SendEmailCoreParams): Promise<SendEm
         return { ...result, success: true };
       } catch (error: any) {
         console.error(`[SEND_EMAIL] AgentMail error:`, error);
-        if (!configuredEmail) {
+        if (!configuredEmail || params.disable_provider_fallback) {
           await releaseEmailSendPermit(sendPermit);
           return {
             success: false,

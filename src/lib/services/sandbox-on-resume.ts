@@ -41,7 +41,7 @@ export async function resumeRequirementWorkspace(
   await fetchOriginBranch(sandbox, usableBranch, cwd);
 
   const featureBranch = await resolveResumeFeatureBranch(sandbox, cwd, opts?.requirementId);
-  if (featureBranch && isDefaultGitBranch(usableBranch)) {
+  if (featureBranch && isDefaultGitBranch(usableBranch) && opts?.syncToOrigin !== false) {
     const attached = await checkoutResumeFeatureBranch(sandbox, cwd, featureBranch);
     if (attached) usableBranch = attached;
   } else if (featureBranch) {

@@ -12,6 +12,15 @@ Apply the forward migrations in order using the approved database-owner workflow
 2. `supabase/migrations/20261003230001_stripe_plan_credit_reset.sql`
 3. `supabase/migrations/20261003230002_classified_credit_operations.sql`
 
+Subsequent forward corrections include
+`20261005230000_exact_credit_accounting_precision.sql` and
+`20261007003000_remove_signup_credit_bonus.sql`. The latter replaces the initial
+30-credit signup bonus with Toolbox's **one current-month credit**. It does not
+claw back existing balances or rewrite historical payments. Apply it before
+deploying the independent market-fit billing initialization endpoint. Do not
+rerun the bucket bootstrap on an already-installed schema; verify actual objects
+as well as migration history, which can omit dashboard-applied migrations.
+
 Pause signup/fallback initialization, renewal, subscription webhook and credit
 purchase writers during the coordinated rollout. The database rejects legacy
 aggregate-only writes and the old unclassified `add_credits(uuid,integer)` RPC;
@@ -68,10 +77,19 @@ An inactive or archived account cannot spend an included allowance. Historical
 Stripe rows without a proven current period have no included grant until a live
 paid invoice establishes that period; the migration does not invent a paid month.
 
-Signup remains a **one-time 30-credit** welcome allowance through the first UTC
-calendar-month boundary, followed by Toolbox's one credit per month. All issuers
-call `initialize_site_billing`. Existing billing is never topped up just because
-its welcome payment marker is missing; consumed signup credits are not replaced.
+Signup receives **one credit for the current UTC calendar month**, the same
+Toolbox allowance as subsequent months, with no additional welcome bonus. All
+issuers call `initialize_site_billing`. Existing billing is never topped up just
+because its initial payment marker is missing; consumed credits are not replaced.
+The `signup` source label is retained for compatibility with the first verified
+same-period Stripe upgrade; it no longer implies a larger allowance.
+
+Market-fit initializes billing through its authorized same-origin endpoint,
+independently of optional site setup and Temporal availability. API setup must
+reject failed billing initialization instead of launching a workflow and claiming
+success without credits. The daily worker remains recovery, not the normal
+initial credit delivery path. These application changes require deployment;
+creating local files does not alter production balances or function definitions.
 
 Actual terminal states `canceled`, `cancelled`, and `incomplete_expired` become
 `commission` (Toolbox), with zero addons and one included credit. Replaying the

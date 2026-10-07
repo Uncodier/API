@@ -1,291 +1,123 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { WorkflowService } from '@/lib/services/workflow-service';
-import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { authenticateSetupUser, authorizeSetupManager } from './setup-access';
+import { initializeSetupBilling, persistSetupLocale } from './setup-initialization';
+import { parseSetupRequest, parseSetupWorkflowId, SiteSetupError } from './setup-request';
+import { readSetupFeedback, withinSetupDeadline } from './setup-feedback';
 
-// Función para validar UUIDs
-function isValidUUID(uuid: string): boolean {
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  return uuidRegex.test(uuid);
-}
+export const maxDuration = 30;
 
-// Interface para los parámetros del workflow de setup del sitio
-interface SiteSetupWorkflowArgs {
-  site_id: string;
-  user_id?: string;
-  setup_type?: 'basic' | 'advanced' | 'complete';
-  options?: {
-    enable_analytics?: boolean;
-    enable_chat?: boolean;
-    enable_leads?: boolean;
-    enable_email_tracking?: boolean;
-    default_timezone?: string;
-    default_language?: string;
-    default_locale?: string;
-  };
+function errorResponse(error: unknown) {
+  if (error instanceof SiteSetupError) {
+    return NextResponse.json(
+      { success: false, error: { code: error.code, message: error.message } },
+      { status: error.status, headers: { 'Cache-Control': 'private, no-store' } },
+    );
+  }
+  console.error('[Site setup] Request failed');
+  return NextResponse.json(
+    { success: false, error: { code: 'INTERNAL_SERVER_ERROR', message: 'Unable to process site setup' } },
+    { status: 500, headers: { 'Cache-Control': 'private, no-store' } },
+  );
 }
 
 export async function POST(request: NextRequest) {
+  let launchWorkflowId: string | undefined;
   try {
-    const body = await request.json();
-    
-    // Extraer parámetros requeridos de la solicitud
-    const { site_id, user_id, setup_type, options } = body;
-    
-    // Validar que site_id sea requerido
-    if (!site_id) {
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: { 
-            code: 'INVALID_REQUEST', 
-            message: 'site_id is required' 
-          } 
-        },
-        { status: 400 }
-      );
+    const userId = await withinSetupDeadline(authenticateSetupUser(request), 3_000);
+    const { site_id, user_id, setup_type, options } = await withinSetupDeadline(parseSetupRequest(request), 1_000);
+    if (user_id && user_id !== userId) {
+      throw new SiteSetupError(403, 'FORBIDDEN', 'user_id must match the authenticated user');
     }
-    
-    // Validar que site_id sea un UUID válido
-    if (!isValidUUID(site_id)) {
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: { 
-            code: 'INVALID_REQUEST', 
-            message: 'site_id must be a valid UUID' 
-          } 
-        },
-        { status: 400 }
-      );
-    }
-    
-    // Validar user_id si se proporciona
-    if (user_id && !isValidUUID(user_id)) {
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: { 
-            code: 'INVALID_REQUEST', 
-            message: 'user_id must be a valid UUID' 
-          } 
-        },
-        { status: 400 }
-      );
-    }
-    
-    console.log(`🏗️ Iniciando setup del sitio: ${site_id}`);
-    console.log(`👤 Usuario: ${user_id || 'N/A'}`);
-    console.log(`🔧 Tipo de setup: ${setup_type || 'basic'}`);
+    await withinSetupDeadline(authorizeSetupManager(site_id, userId), 3_000);
 
-    const defaultLocaleRaw = options?.default_language || options?.default_locale || 'en';
-    const defaultLocale = ['en', 'es', 'fr', 'de', 'ja'].includes(defaultLocaleRaw)
-      ? defaultLocaleRaw
-      : 'en';
-
-    // Persist site default locale on settings (create or update)
+    const locale = options?.default_language || options?.default_locale || 'en';
+    const defaultLocale = ['en', 'es', 'fr', 'de', 'ja'].includes(locale) ? locale : 'en';
     try {
-      const { data: existingSettings } = await supabaseAdmin
-        .from('settings')
-        .select('id')
-        .eq('site_id', site_id)
-        .maybeSingle();
+      await withinSetupDeadline(initializeSetupBilling(site_id), 3_000);
+    } catch (error) {
+      if (error instanceof SiteSetupError && error.code === 'SETUP_UNCONFIRMED') {
+        throw new SiteSetupError(503, 'BILLING_INITIALIZATION_FAILED',
+          'Site billing could not be initialized. Please retry setup later');
+      }
+      throw error;
+    }
+    // Locale remains best-effort and cannot indefinitely prevent dispatch.
+    if (options?.default_language || options?.default_locale) {
+      await withinSetupDeadline(persistSetupLocale(site_id, defaultLocale), 1_000).catch(() => {});
+    }
 
-      if (!existingSettings) {
-        const { error: settingsInsertError } = await supabaseAdmin
-          .from('settings')
-          .insert({ site_id, default_locale: defaultLocale });
-        if (settingsInsertError) {
-          console.error(`❌ Error creating settings.default_locale for site ${site_id}:`, settingsInsertError);
-        } else {
-          console.log(`✅ Settings created with default_locale=${defaultLocale}`);
-        }
-      } else {
-        const { error: settingsUpdateError } = await supabaseAdmin
-          .from('settings')
-          .update({ default_locale: defaultLocale })
-          .eq('site_id', site_id);
-        if (settingsUpdateError) {
-          console.error(`❌ Error updating settings.default_locale for site ${site_id}:`, settingsUpdateError);
-        } else {
-          console.log(`✅ Settings default_locale set to ${defaultLocale}`);
-        }
-      }
-    } catch (settingsErr) {
-      console.error(`❌ Exception persisting default_locale:`, settingsErr);
-    }
-    
-    // All signup issuers share one atomic database operation.
-    try {
-      const { data: billingResult, error: billingError } = await supabaseAdmin.rpc(
-        'initialize_site_billing',
-        { p_site_id: site_id },
-      );
-      if (billingError || !billingResult?.success) {
-        throw new Error(billingError?.message || billingResult?.error || 'Billing initialization failed');
-      }
-      console.log(`✅ Billing initialization: ${billingResult.outcome}`);
-    } catch (billingErr) {
-      console.error(`❌ Excepción al intentar crear billing:`, billingErr);
-      // Continuamos con el setup aunque falle la creación de billing
-    }
-    
-    // Preparar argumentos para el workflow
-    const workflowArgs: SiteSetupWorkflowArgs = {
+    const workflowArgs = {
       site_id,
-      user_id,
-      setup_type: setup_type || 'basic',
+      user_id: userId,
+      setup_type,
       options: {
-        enable_analytics: options?.enable_analytics !== false, // default true
-        enable_chat: options?.enable_chat !== false, // default true
-        enable_leads: options?.enable_leads !== false, // default true
-        enable_email_tracking: options?.enable_email_tracking !== false, // default true
+        ...options,
+        enable_analytics: options?.enable_analytics !== false,
+        enable_chat: options?.enable_chat !== false,
+        enable_leads: options?.enable_leads !== false,
+        enable_email_tracking: options?.enable_email_tracking !== false,
         default_timezone: options?.default_timezone || 'UTC',
         default_language: defaultLocale,
-        ...options
-      }
+      },
     };
-    
-    // Opciones del workflow
-    const workflowOptions = {
-      taskQueue: process.env.WORKFLOW_TASK_QUEUE || 'site-setup-queue',
-      workflowId: `site-setup-${site_id}-${Date.now()}`,
-      priority: 'medium' as const,
-      retryAttempts: 3
-    };
-    
-    console.log(`🔄 Ejecutando workflow siteSetupWorkflow con ID: ${workflowOptions.workflowId}`);
-    console.log(`📋 Argumentos del workflow:`, JSON.stringify(workflowArgs, null, 2));
-    
-    // Obtener la instancia del WorkflowService
-    const workflowService = WorkflowService.getInstance();
-    
-    // Ejecutar el workflow usando el servicio existente
-    const result = await workflowService.executeWorkflow(
+    launchWorkflowId = `site-setup-${site_id}-${Date.now()}`;
+    const result = await withinSetupDeadline(WorkflowService.getInstance().executeWorkflow(
       'siteSetupWorkflow',
       workflowArgs,
-      workflowOptions
-    );
-    
-    if (result.success) {
-      console.log(`✅ Workflow de setup del sitio iniciado exitosamente`);
-      console.log(`🆔 Workflow ID: ${result.workflowId}`);
-      console.log(`🏃 Run ID: ${result.runId}`);
-      
-      return NextResponse.json(
-        { 
-          success: true, 
-          data: {
-            workflow_id: result.workflowId,
-            execution_id: result.executionId,
-            run_id: result.runId,
-            status: result.status,
-            site_id: site_id,
-            setup_type: workflowArgs.setup_type,
-            message: 'Site setup workflow iniciado exitosamente'
-          }
-        },
-        { status: 200 }
-      );
-    } else {
-      console.error(`❌ Error al iniciar workflow de setup del sitio:`, result.error);
-      
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: {
-            code: result.error?.code || 'WORKFLOW_EXECUTION_ERROR',
-            message: result.error?.message || 'Error al ejecutar workflow de setup del sitio'
-          }
-        },
-        { status: 500 }
+      {
+        // Match the queue subscribed by the existing Workflows worker.
+        taskQueue: process.env.WORKFLOW_TASK_QUEUE || 'default',
+        workflowId: launchWorkflowId,
+        async: true,
+      },
+    ));
+    if (!result.success || result.workflowId !== launchWorkflowId) {
+      throw new SiteSetupError(
+        500,
+        'WORKFLOW_EXECUTION_ERROR',
+        'Unable to start the site setup workflow',
       );
     }
-    
-  } catch (error) {
-    console.error('❌ Error al procesar la solicitud de setup del sitio:', error);
-    
-    return NextResponse.json(
-      { 
-        success: false, 
-        error: { 
-          code: 'INTERNAL_SERVER_ERROR', 
-          message: 'Error interno del servidor al procesar la solicitud' 
-        } 
+    return NextResponse.json({
+      success: true,
+      data: {
+        workflow_id: result.workflowId,
+        execution_id: result.executionId,
+        run_id: result.runId,
+        status: 'accepted',
+        setup_status: 'pending',
+        cause: 'WORKFLOW_ACCEPTED',
+        site_id,
+        setup_type,
+        message: 'Site setup was accepted. Completion is not yet confirmed.',
       },
-      { status: 500 }
-    );
+    }, { headers: { 'Cache-Control': 'private, no-store' } });
+  } catch (error) {
+    if (launchWorkflowId) {
+      return NextResponse.json({ success: false,
+        error: { code: 'SETUP_UNCONFIRMED', message: 'Site setup could not be confirmed. Check its status before retrying.' },
+        data: { workflow_id: launchWorkflowId, setup_status: 'unconfirmed', cause: 'WORKFLOW_START_UNCONFIRMED' },
+      }, { status: 503, headers: { 'Cache-Control': 'private, no-store' } });
+    }
+    return errorResponse(error);
   }
 }
 
-// Método GET para obtener el estado del workflow de setup
 export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
-    const workflowId = searchParams.get('workflow_id');
-    
-    if (!workflowId) {
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: { 
-            code: 'INVALID_REQUEST', 
-            message: 'workflow_id is required' 
-          } 
-        },
-        { status: 400 }
-      );
-    }
-    
-    console.log(`🔍 Consultando estado del workflow: ${workflowId}`);
-    
-    // Obtener la instancia del WorkflowService
-    const workflowService = WorkflowService.getInstance();
-    
-    // Obtener el estado del workflow
-    const status = await workflowService.getWorkflowStatus(workflowId);
-    
-    if (status.success) {
-      console.log(`📊 Estado del workflow ${workflowId}: ${status.status}`);
-      
-      return NextResponse.json(
-        { 
-          success: true, 
-          data: {
-            workflow_id: status.workflowId,
-            run_id: status.runId,
-            status: status.status,
-            message: `Workflow status: ${status.status}`
-          }
-        },
-        { status: 200 }
-      );
-    } else {
-      console.error(`❌ Error al obtener estado del workflow ${workflowId}:`, status.error);
-      
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: {
-            code: status.error?.code || 'WORKFLOW_STATUS_ERROR',
-            message: status.error?.message || 'Error al obtener estado del workflow'
-          }
-        },
-        { status: 500 }
-      );
-    }
-    
-  } catch (error) {
-    console.error('❌ Error al consultar estado del workflow:', error);
-    
-    return NextResponse.json(
-      { 
-        success: false, 
-        error: { 
-          code: 'INTERNAL_SERVER_ERROR', 
-          message: 'Error interno del servidor al consultar estado del workflow' 
-        } 
+    const userId = await withinSetupDeadline(authenticateSetupUser(request), 3_000);
+    const { workflowId, siteId } = parseSetupWorkflowId(request);
+    await withinSetupDeadline(authorizeSetupManager(siteId, userId), 3_000);
+    const feedback = await readSetupFeedback(workflowId);
+    return NextResponse.json({
+      success: true,
+      data: {
+        ...feedback,
+        site_id: siteId,
       },
-      { status: 500 }
-    );
+    }, { headers: { 'Cache-Control': 'private, no-store' } });
+  } catch (error) {
+    return errorResponse(error);
   }
-} 
+}

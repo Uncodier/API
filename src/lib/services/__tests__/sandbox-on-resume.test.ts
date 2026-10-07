@@ -1,4 +1,5 @@
 import { describe, expect, it, jest } from '@jest/globals';
+import { randomBytes } from 'node:crypto';
 
 const order: string[] = [];
 const commands: string[][] = [];
@@ -28,6 +29,9 @@ jest.mock('@/lib/services/sandbox-service', () => ({
 
 const REQ = 'f4a0ca37-c25b-4309-9f00-88f93de805f7';
 const FEATURE = `feature/req-${REQ}`;
+const authenticatedUrl = new URL('https://repository.example.test/org/repo.git');
+authenticatedUrl.username = 'x-access-token';
+authenticatedUrl.password = randomBytes(24).toString('hex');
 
 function fakeSandbox(head: string, lsRemote = '') {
   return {
@@ -66,7 +70,7 @@ describe('resumeRequirementWorkspace', () => {
     commands.length = 0;
     const { resumeRequirementWorkspace } = await import('@/lib/services/sandbox-on-resume');
     await resumeRequirementWorkspace(fakeSandbox('feature/req-abc') as never, '/vercel/sandbox', {
-      authRepoUrl: 'https://x-access-token:t@github.com/org/repo.git',
+      authRepoUrl: authenticatedUrl.href,
       syncToOrigin: false,
     });
     expect(order.indexOf('identity')).toBeGreaterThanOrEqual(0);
@@ -82,12 +86,24 @@ describe('resumeRequirementWorkspace', () => {
       fakeSandbox('main', `abc\trefs/heads/${FEATURE}`) as never,
       '/vercel/sandbox',
       {
-        authRepoUrl: 'https://x-access-token:t@github.com/org/repo.git',
+        authRepoUrl: authenticatedUrl.href,
         syncToOrigin: true,
         requirementId: REQ,
       },
     );
     expect(order.some((s) => s.includes(`checkout:`) && s.includes(FEATURE))).toBe(true);
     expect(order).not.toContain('reset:origin/main');
+  });
+
+  it('preserves local branch and commits when syncToOrigin is false', async () => {
+    order.length = 0;
+    commands.length = 0;
+    const { resumeRequirementWorkspace } = await import('@/lib/services/sandbox-on-resume');
+    await resumeRequirementWorkspace(
+      fakeSandbox('main', `abc\trefs/heads/${FEATURE}`) as never,
+      '/vercel/sandbox',
+      { authRepoUrl: authenticatedUrl.href, syncToOrigin: false, requirementId: REQ },
+    );
+    expect(commands.some(args => args[0] === 'checkout' || args[0] === 'reset')).toBe(false);
   });
 });

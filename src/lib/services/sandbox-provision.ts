@@ -24,6 +24,7 @@ import { buildSandboxCreateParams, requirementSandboxTags } from '@/lib/services
 import { getOrCreateRequirementSandbox } from '@/lib/services/sandbox-get-or-create';
 import { cloneRepoIntoWorkDir } from '@/lib/services/sandbox-git-clone';
 import { SandboxService, type SandboxResult } from '@/lib/services/sandbox-service';
+import { assertCronExecutionOwnership } from '@/app/api/cron/shared/cron-execution-ownership';
 
 export async function createRequirementSandbox(
   requirementId: string,
@@ -68,10 +69,26 @@ export async function createRequirementSandbox(
     tags,
     authRepoUrl,
     requirementId,
+    audit: auditCtx,
+    assertRecoveryOwnership: auditCtx?.executionOwnership
+      ? async () => {
+        await assertCronExecutionOwnership(auditCtx.executionOwnership!);
+      }
+      : undefined,
   });
   if (named) {
     sandbox = named.sandbox;
     console.log(`[Sandbox] getOrCreate ${named.created ? 'created' : 'resumed'} ${sandboxName}`);
+    if (!named.created) {
+      // A reused workspace can contain local commits and uncommitted files.
+      // Never run the cold-bootstrap checkout/reset path against it.
+      await assertPlatformGitLayout(sandbox);
+      const branchName = await SandboxService.getCurrentBranch(sandbox);
+      if (auditCtx?.instanceId) {
+        await persistActiveSandboxId(requirementId, auditCtx.instanceId, sandboxIdentity(sandbox), auditCtx.siteId);
+      }
+      return { sandbox, branchName, workDir, isNewBranch: false, instanceType };
+    }
   }
 
   if (!sandbox && !opts?.skipSnapshotReuse && sandboxSdkMajor() < 3) {

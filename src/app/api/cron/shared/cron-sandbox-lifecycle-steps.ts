@@ -1,12 +1,14 @@
 'use step';
 
 import { FatalError } from 'workflow';
+import { APIError } from '@vercel/sandbox';
 import { getSandboxHandle, sandboxIdentity } from '@/lib/services/sandbox-sdk';
 import { requirementSandboxName } from '@/lib/services/sandbox-constants';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import { inspectSandboxWorkspace } from '@/lib/services/sandbox-recovery';
 import { warmStartNamedSandbox } from '@/lib/services/sandbox-on-resume';
+import { isMissingSandboxSnapshotError } from '@/lib/services/sandbox-missing-snapshot';
 import {
   CronInfraEvent,
   logCronInfrastructureEvent,
@@ -211,31 +213,29 @@ async function tryReuseExistingSandbox(
     sandbox = await getSandboxHandle(idOrName);
     if (ownership) await assertCronExecutionOwnership(ownership);
     
-    // Explicitly resume the sandbox bypassing runCommand's "use step" wrapper.
-    // This avoids a 3-retry loop in the Vercel Workflows engine when the sandbox is dead (410).
+    // Resume explicitly so only definitive absence enters named provisioning.
     if (typeof (sandbox as any).resume === 'function') {
-      try {
-        await (sandbox as any).resume();
-      } catch (resumeErr: any) {
-        if (resumeErr?.response?.status === 410 || String(resumeErr?.message).includes('410')) {
-          console.warn(`[CronStep] Not reusing ${idOrName}: sandbox dead (410)`);
-          return null;
-        }
-        throw resumeErr;
-      }
+      await (sandbox as any).resume();
     }
   } catch (err) {
     if (err instanceof CronExecutionOwnershipError) throw err;
+    const data = err instanceof APIError
+      ? err.json as { error?: { code?: string } } | undefined
+      : undefined;
+    const absent = err instanceof APIError && (
+      (err.response.status === 404 && data?.error?.code === 'not_found') ||
+      (err.response.status === 410 && data?.error?.code === 'snapshot_not_found')
+    );
+    if (!absent && !isMissingSandboxSnapshotError(err)) throw err;
     console.warn(`[CronStep] getSandboxHandle failed for ${idOrName}:`, err instanceof Error ? err.message : err);
     return null;
   }
   const ping = await inspectSandboxWorkspace(sandbox);
   if (ping.fatal) {
-    console.warn(`[CronStep] Not reusing ${idOrName}: fatal layout ${ping.reason}`);
-    return null;
+    throw new Error(`Existing sandbox workspace requires repair: ${ping.reason}`);
   }
   if (ownership) await assertCronExecutionOwnership(ownership);
-  await warmStartNamedSandbox(sandbox, reqId, instanceType).catch((e: unknown) => {
+  await warmStartNamedSandbox(sandbox, reqId, instanceType, { syncToOrigin: false }).catch((e: unknown) => {
     console.warn(
       `[CronStep] warmStart on ${idOrName} failed — keeping existing VM:`,
       e instanceof Error ? e.message : e,
@@ -247,10 +247,10 @@ async function tryReuseExistingSandbox(
     branchName = await SandboxService.getCurrentBranch(sandbox);
   } catch (e: unknown) {
     console.warn(
-      `[CronStep] Failed to get branch on ${idOrName} (sandbox dead?), forcing reprovision:`,
+      `[CronStep] Failed to get branch on ${idOrName}; preserving existing sandbox:`,
       e instanceof Error ? e.message : e,
     );
-    return null;
+    throw e;
   }
 
   console.log(`[CronStep] Reusing sandbox ${idOrName} (ping=${ping.ok ? 'ok' : ping.reason || 'fail'})`);

@@ -193,19 +193,22 @@ try {
     }
   });
 
-  await check('signup versus fallback serializes a single grant and payment', async () => {
+  await sql(readFileSync(resolve(root, 'supabase/migrations',
+    '20261007003000_remove_signup_credit_bonus.sql'), 'utf8'));
+
+  await check('initial monthly credit versus fallback serializes a single grant and payment', async () => {
     const site = uuid();
     await sql(`INSERT INTO sites(id,name) VALUES(${site},'Synthetic signup');`);
     const [a, b] = await race(rpc('initialize_site_billing', [site]), rpc('initialize_site_billing', [site]));
-    assert.match(a, /"credits_granted": 30/); assert.match(b, /"credits_granted": 0/);
+    assert.match(a, /"credits_granted": 1/); assert.match(b, /"credits_granted": 0/);
     await Promise.all(Array.from({ length: 8 }, () => sql(rpc('initialize_site_billing', [site]))));
     assert.equal(await count(`billing WHERE site_id=${site}`), 1);
     assert.equal(await count(`payments WHERE site_id=${site} AND payment_method='initial_credit'`), 1);
-    assert.equal(Number((await row(site)).credits_available), 30);
+    assert.equal(Number((await row(site)).credits_available), 1);
     // Existing saldo without a payment marker is not permission to grant again.
     await sql(`DELETE FROM payments WHERE site_id=${site};`);
     await race(rpc('initialize_site_billing', [site]), rpc('initialize_site_billing', [site]));
-    assert.equal(Number((await row(site)).credits_available), 30);
+    assert.equal(Number((await row(site)).credits_available), 1);
     assert.equal(Number(await sql(`SELECT credits FROM payments WHERE site_id=${site};`)), 0);
   });
 

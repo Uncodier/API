@@ -30,6 +30,8 @@ Read these first when changing the code-agent harness:
 ## Active integration guides
 
 - [Monthly credit reset and protected balances](./BILLING_CREDIT_RESET.md) — atomic signup, non-accumulating plan allowances, bought/withdrawable funds and coordinated rollout.
+- [Site setup launch and safe status feedback](./SITE_SETUP_LAUNCH.md) — minimum input, authenticated manager boundary, existing worker queue, and no replay of ambiguous starts.
+- [Durable setup email receipts](./SETUP_EMAIL_DELIVERY_RECEIPTS.md) — service-only atomic delivery claims, exact payload conflicts, fail-closed retries, and operator reconciliation.
 - [Zavu Voice business context](./ZAVU_VOICE_BUSINESS_CONTEXT.md) — shared AgentBase sources, section-aware prompt limits and resynchronization.
 - [Zavu inbound voice lead linkage](./ZAVU_INBOUND_VOICE_LEAD_LINKAGE.md) — webhook-owned CRM contacts, transcript links, consent separation and retry behavior.
 - [Server-issued visitor identity tokens](./VISITOR_IDENTITY_TOKENS.md) — scoped issuers, first-party support identity, atomic exchange, logout, and offline tests.
