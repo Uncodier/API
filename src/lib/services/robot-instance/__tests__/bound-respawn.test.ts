@@ -1,4 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { assertNodeContextHasNode } from '@/app/api/robots/instance/assistant/node-context-boundary';
 
 type AsyncMock = (...args: unknown[]) => Promise<unknown>;
 const claim = jest.fn<AsyncMock>();
@@ -42,6 +43,22 @@ describe('durable bound respawn', () => {
       instance_node_id: 'original-publish-node', user_message_log_id: 'original-user-log', generation: 1,
     }) }));
     expect(JSON.stringify(insert.mock.calls)).not.toContain('private-resume-token');
+  });
+  it('preserves conversational output preferences across respawn without inventing a node identity', async () => {
+    const contextString = JSON.stringify({ mediaType: 'text', output_type: 'text', parameters: {},
+      selected_context: { records: ['selected-record'] } });
+    const conversationalExecution = { ...execution, instanceNodeId: undefined, contextString };
+    claim.mockResolvedValue({ resumeToken: 'private-resume-token',
+      snapshot: { execution: conversationalExecution, respawnCount: 1 } });
+    expect(await spawnSilentContinueWorkflow(scope)).toBe(true);
+    const args = start.mock.calls[0][1] as unknown[];
+    expect(args[0]).toBe(scope.instanceId);
+    expect(args[9]).toBeUndefined();
+    expect(args[11]).toBe(contextString);
+    expect(() => assertNodeContextHasNode(args[11] as string, args[9] as string | undefined)).not.toThrow();
+    expect(args[12]).toEqual(conversationalExecution.toolOverrides);
+    expect(args[13]).toMatchObject({ silentContinue: true, userMessageLogId: scope.userMessageLogId });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
   it('does not start or log a restart for a cancelled, stale or missing checkpoint', async () => {
     claim.mockRejectedValue(new Error('inactive'));

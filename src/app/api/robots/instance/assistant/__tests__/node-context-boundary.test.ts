@@ -18,13 +18,33 @@ describe('confirmed node context boundary', () => {
     expect(() => assertNodeContextHasNode(serialized, 'explicit-node')).not.toThrow();
   });
 
-  it.each(['nodeType', 'mediaType', 'media_type', 'output_type'])('recognizes supported %s selectors', key => {
+  it('recognizes explicit nodeType declarations', () => {
     for (const value of ['image', 'video', 'audio', 'text', 'prompt', 'response', 'audience', 'publish',
       'generate-image', 'generate-video', 'generate-audio', 'generate-audience', ' GENERATE_IMAGE ']) {
-      const serialized = JSON.stringify({ [key]: value });
+      const serialized = JSON.stringify({ nodeType: value });
       expect(isNodeSpecificContext(serialized)).toBe(true);
       expect(() => assertNodeContextHasNode(serialized)).toThrow('NODE_CONTEXT_REQUIRES_NODE');
     }
+  });
+
+  it.each(['mediaType', 'media_type', 'output_type'])('does not infer node execution from the shared %s preference', key => {
+    for (const value of ['image', 'video', 'audio', 'text', 'prompt', 'response', 'audience', 'publish',
+      'generate-image', 'generate-video', 'generate-audio', 'generate-audience', ' GENERATE_IMAGE ']) {
+      const serialized = JSON.stringify({ [key]: value });
+      expect(isNodeSpecificContext(serialized)).toBe(false);
+      expect(() => assertNodeContextHasNode(serialized)).not.toThrow();
+    }
+  });
+
+  it.each([
+    { nodeType: 'text' },
+    { instance_node_id: 'embedded-node' },
+    { instanceNodeId: 'embedded-node' },
+    { publish_destinations: [] },
+    { ui_contract: { version: 1, output_type: 'text' } },
+  ])('still requires scoped identity when preferences accompany explicit node context: %j', marker => {
+    const serialized = JSON.stringify({ mediaType: 'text', output_type: 'text', parameters: {}, ...marker });
+    expect(() => assertNodeContextHasNode(serialized)).toThrow('NODE_CONTEXT_REQUIRES_NODE');
   });
 
   it.each([

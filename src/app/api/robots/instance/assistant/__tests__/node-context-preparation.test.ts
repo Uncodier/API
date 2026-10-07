@@ -67,9 +67,9 @@ afterEach(() => jest.restoreAllMocks());
 
 it.each([
   { nodeType: 'publish', publish_destinations: ['tiktok'] },
-  { mediaType: 'audience' },
-  { output_type: 'text' },
-  { media_type: 'image', parameters: {} },
+  { nodeType: 'audience', mediaType: 'audience' },
+  { nodeType: 'text', output_type: 'text' },
+  { nodeType: 'generate-image', media_type: 'image', parameters: {} },
   { ui_contract: { version: 1, output_type: 'video' } },
   { instanceNodeId: 'embedded-node' },
 ])('rejects direct/replayed unscoped preparation before conversation data/tools: %j', async context => {
@@ -96,6 +96,25 @@ it.each([
   expect(buildHistory).toHaveBeenCalledTimes(1);
 });
 
+it.each(['text', 'image', 'video', 'audio', 'audience'])('prepares conversational %s preferences without switching to node mode', async mediaType => {
+  const serialized = JSON.stringify({ mediaType, output_type: mediaType, parameters: { tone: 'friendly' } });
+  const toolOverrides = { search: { limit: 3 } };
+  const context = await prepareAssistantContext(INSTANCE, 'User request', SITE, USER, [], false,
+    undefined, undefined, undefined, undefined, 3, serialized, toolOverrides);
+  expect(context.instanceNodeId).toBeUndefined();
+  expect(context.uiMediaOutputType).toBeUndefined();
+  expect(context.expectedResultsAmount).toBe(3);
+  expect(context.toolOverrides).toEqual(toolOverrides);
+  expect(context.executionOptions).toMatchObject({ instance_id: INSTANCE, site_id: SITE, user_id: USER });
+  expect(context.systemPrompt).toContain('friendly');
+  expect(context.systemPrompt).toContain('Ordinary conversation history');
+  expect(context.systemPrompt).toContain('Conversation asset context');
+  expect(context.systemPrompt).not.toContain('VISUAL NODE MODE');
+  expect(buildHistory).toHaveBeenCalledTimes(1);
+  expect(getInstanceAssistantTools).toHaveBeenCalled();
+  expect((supabaseAdmin.from as jest.Mock).mock.calls.map(([table]) => table)).not.toContain('instance_nodes');
+});
+
 it('requires supplied node identity to resolve in the requested site and instance', async () => {
   nodeAvailable = false;
   await expect(prepare(JSON.stringify({ nodeType: 'generate-image' }), 'foreign-node'))
@@ -103,6 +122,14 @@ it('requires supplied node identity to resolve in the requested site and instanc
   expect(buildHistory).not.toHaveBeenCalled();
   expect(getInstanceAssistantTools).not.toHaveBeenCalled();
   expect(InstanceAssetsService.getAssetsContext).not.toHaveBeenCalled();
+});
+
+it('validates a supplied node against the site and instance even with generic preferences', async () => {
+  nodeAvailable = false;
+  await expect(prepare(JSON.stringify({ mediaType: 'text', output_type: 'text' }), 'foreign-node'))
+    .rejects.toThrow('UI node does not belong to the requested site and instance');
+  expect(buildHistory).not.toHaveBeenCalled();
+  expect(getInstanceAssistantTools).not.toHaveBeenCalled();
 });
 
 it('preserves explicit node identity and skips conversation history after scoped resolution', async () => {

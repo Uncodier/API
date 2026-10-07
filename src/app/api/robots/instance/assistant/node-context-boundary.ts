@@ -20,10 +20,12 @@ function nodeOutputType(value: unknown): boolean {
 }
 
 /**
- * Only inspect top-level selectors from the visual-node context contract, not
- * prose, generic parameters, attachments, or nested records describing nodes.
- * Legacy callers omit nodeType and use media/output selectors or destinations;
- * the UI proxy also supplies ui_contract. None of these can establish identity.
+ * Only explicit visual-node markers require a separate scoped node identity.
+ * mediaType, media_type and output_type are also used by ordinary instance
+ * conversations and queued work; output preferences cannot establish node mode.
+ * Legacy nodes supply instance_node_id separately, while publish destinations
+ * and ui_contract explicitly describe the visual-node contract. Context IDs
+ * must never be promoted into execution scope.
  */
 export function isNodeSpecificContext(contextString?: string): boolean {
   if (!contextString) return false;
@@ -34,7 +36,6 @@ export function isNodeSpecificContext(contextString?: string): boolean {
   return nonemptyString(context.nodeType)
     || nonemptyString(context.instance_node_id)
     || nonemptyString(context.instanceNodeId)
-    || [context.mediaType, context.media_type, context.output_type].some(nodeOutputType)
     || Array.isArray(context.publish_destinations)
     || (record(context.ui_contract) && nodeOutputType(context.ui_contract.output_type));
 }

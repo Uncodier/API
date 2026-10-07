@@ -103,7 +103,11 @@ the latest-owner check and requirement reset remain separate database operations
 Pending-media warnings are conservative snapshots, not tool-level dependency
 locks or an automatic replay mechanism; interrupted preparation may need retry.
 Requests exceeding the five-image vision budget and ambiguous lead qualification
-still require clarification. Node-shaped context
-without a node ID now fails closed rather than silently becoming conversation.
+still require clarification. Explicit visual-node context without a node ID
+fails closed rather than silently becoming conversation. Shared `mediaType`,
+`media_type` and `output_type` preferences alone are not node context: normal
+instance conversations and queued work also use these fields. The API accepts
+them without `instance_node_id`, while a supplied node ID remains scoped to its
+instance and site and is preserved across continuations.
 The patch improves deterministic context preservation; offline tests do not
 guarantee the natural-language interpretation of a live model.

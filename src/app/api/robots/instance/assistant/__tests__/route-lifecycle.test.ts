@@ -157,9 +157,9 @@ it('does not write a session log for invalid input or insufficient credits', asy
 it.each([
   { nodeType: 'publish', publish_destinations: ['tiktok'] },
   { publish_destinations: [] },
-  { mediaType: 'audience', audience_channels: ['email'] },
-  { output_type: 'text' },
-  { media_type: 'video', parameters: { duration: 8 } },
+  { nodeType: 'audience', mediaType: 'audience', audience_channels: ['email'] },
+  { nodeType: 'text', output_type: 'text' },
+  { nodeType: 'video', media_type: 'video', parameters: { duration: 8 } },
   { ui_contract: { version: 1, output_type: 'image' } },
   { instance_node_id: 'embedded-node', nodeType: 'generate-image' },
 ])('rejects unscoped node context before credits, admission or overrides: %j', async context => {
@@ -205,4 +205,41 @@ it('passes a node-specific request to durable scoped resolution without adopting
   expect(await response.text()).toContain('event: completed');
   expect(normalizePublishToolOverrides).toHaveBeenCalledWith(context, undefined);
   expect((start as jest.Mock).mock.calls[0][1][9]).toBe(nodeId);
+});
+
+it.each(['text', 'image', 'video', 'audio', 'audience'])('admits new and existing instance conversations with %s output preferences', async mediaType => {
+  const context = JSON.stringify({
+    mediaType, output_type: mediaType, parameters: { tone: 'friendly' },
+    selected_context: { records: ['selected-record'] }, records: [{ id: 'selected-record' }],
+  });
+  const tool_overrides = { search: { limit: 3 } };
+  for (const instance_id of [INSTANCE, undefined]) {
+    jest.clearAllMocks();
+    const response = await POST(request({ ...payload, instance_id, context, tool_overrides, expected_results_amount: 3 }));
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain('event: completed');
+    const args = (start as jest.Mock).mock.calls[0][1];
+    expect(args[0]).toBe(INSTANCE);
+    expect(args[9]).toBeUndefined();
+    expect(args[10]).toBe(3);
+    expect(args[11]).toBe(context);
+    expect(args[12]).toEqual(tool_overrides);
+    expect(insertUserActionLog).toHaveBeenCalledTimes(1);
+    expect(normalizePublishToolOverrides).not.toHaveBeenCalled();
+    expect(markRemoteInstanceError).not.toHaveBeenCalled();
+  }
+});
+
+it('preserves legacy scoped-node overrides even when context only contains output preferences', async () => {
+  const nodeId = '00000000-0000-4000-8000-000000000005';
+  const context = JSON.stringify({ mediaType: 'publish', output_type: 'publish' });
+  const tool_overrides = { sendBulkMessages: { channel: 'email', is_test: true } };
+  const normalized = { publish: { channel: 'email', is_test: true } };
+  (normalizePublishToolOverrides as jest.Mock).mockReturnValueOnce(normalized);
+  const response = await POST(request({ ...payload, instance_node_id: nodeId, context, tool_overrides }));
+  expect(response.status).toBe(200);
+  expect(await response.text()).toContain('event: completed');
+  expect(normalizePublishToolOverrides).toHaveBeenCalledWith(context, tool_overrides);
+  expect((start as jest.Mock).mock.calls[0][1][9]).toBe(nodeId);
+  expect((start as jest.Mock).mock.calls[0][1][12]).toEqual(normalized);
 });

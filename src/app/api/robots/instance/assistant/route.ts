@@ -84,7 +84,9 @@ export async function POST(request: NextRequest) {
       use_sdk_tools,
       system_prompt,
     } = parsedBody;
-    const normalizedToolOverrides = hasNodeContext ? normalizePublishToolOverrides(
+    // Legacy node callers may send only shared output preferences in context.
+    // Node execution is selected by the request-level node ID, not those fields.
+    const normalizedToolOverrides = providedNodeId ? normalizePublishToolOverrides(
       parsedBody.context,
       parsedBody.tool_overrides,
     ) : parsedBody.tool_overrides;

@@ -18,6 +18,7 @@ export default {
     '<rootDir>/src/app/api/robots/instance/assistant/__tests__/plan-exhaustion.test.ts',
     '<rootDir>/src/app/api/robots/instance/assistant/__tests__/route-lifecycle.test.ts',
     '<rootDir>/src/app/api/robots/instance/assistant/__tests__/node-context-*.test.ts',
+    '<rootDir>/src/lib/services/robot-instance/__tests__/pending-work.test.ts',
     '<rootDir>/src/app/api/robots/instance/assistant/__tests__/response-stream.test.ts',
     '<rootDir>/src/app/api/robots/instance/assistant/__tests__/user-message-log.test.ts',
     '<rootDir>/src/app/api/robots/instance/delete/__tests__/**/*.test.ts',

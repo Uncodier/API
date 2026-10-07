@@ -1,10 +1,12 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { start } from 'workflow/api';
+import { assertNodeContextHasNode } from '@/app/api/robots/instance/assistant/node-context-boundary';
 import {
   groupOldestPendingByInstance,
   isInstanceIdleFromLogs,
   processPendingWorkTick,
   sendPendingWorkNow,
+  startPendingAssistant,
   type PendingWorkRow,
 } from '../pending-work';
 
@@ -161,5 +163,31 @@ describe('sendPendingWorkNow', () => {
 
     expect(result).toEqual({ cancelledLogId: 'run-log', pendingId: 'pending-1' });
     expect(start).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('queued conversational output preferences', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it.each(['text', 'image', 'video', 'audio', 'audience'])('forwards %s preferences through the workflow node boundary without a node ID', async mediaType => {
+    const context = { mediaType, output_type: mediaType, parameters: { tone: 'friendly' },
+      selected_context: { records: ['selected-record'] }, expected_results_amount: 3 };
+    (supabaseAdmin.from as jest.Mock).mockReturnValueOnce(createChain({
+      data: { site_id: pendingRow.site_id, user_id: pendingRow.user_id, status: 'paused' }, error: null,
+    }));
+    (start as jest.Mock).mockImplementation(async (_workflow, args) => {
+      // Exercise the real boundary used by durable preparation on queued args.
+      assertNodeContextHasNode(args[11], args[9]);
+      return { runId: 'queued-run' };
+    });
+
+    await startPendingAssistant({ ...pendingRow, context });
+
+    expect(start).toHaveBeenCalledTimes(1);
+    const args = (start as jest.Mock).mock.calls[0][1];
+    expect(args[0]).toBe(pendingRow.instance_id);
+    expect(args[9]).toBeUndefined();
+    expect(args[10]).toBe(3);
+    expect(JSON.parse(args[11])).toEqual(context);
   });
 });
