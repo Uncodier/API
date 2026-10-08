@@ -58,6 +58,11 @@ and the forward migration `20261007180000_annual_subscription_credit_periods.sql
 After that migration, verified annual paid coverage is independent of monthly
 credit periods; the invoice-only renewal description below remains the monthly
 Stripe contract, not a requirement for a new payment each covered annual month.
+The forward correction `20261008210000_preserve_canceled_subscription_credit_usage.sql`
+keeps consumed annual usage through terminal cancellation and Toolbox renewal
+until the old paid credit window ends; a replacement subscription cannot refill
+that window early. Apply it only after confirming the annual prerequisites and
+approving the target, never by replaying the already-installed bucket bootstrap.
 
 | Stored plan | Included monthly credits |
 | --- | ---: |

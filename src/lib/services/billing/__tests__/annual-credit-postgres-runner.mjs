@@ -51,7 +51,8 @@ try {
   for (const name of ['20261003230000_credit_buckets_and_monthly_reset.sql',
     '20261003230001_stripe_plan_credit_reset.sql','20261003230002_classified_credit_operations.sql',
     '20261005230000_exact_credit_accounting_precision.sql','20261007003000_remove_signup_credit_bonus.sql',
-    '20261007180000_annual_subscription_credit_periods.sql','20261007180001_subscription_checkout_leases.sql'])
+    '20261007180000_annual_subscription_credit_periods.sql','20261007180001_subscription_checkout_leases.sql',
+    '20261008210000_preserve_canceled_subscription_credit_usage.sql'])
     await db.exec(readFileSync(resolve(root,'supabase/migrations',name),'utf8'));
   dates = await one(`SELECT now()::text now,(now()-interval '5 days')::text start,
     (now()-interval '5 days'+interval '1 year')::text end,(now()+interval '25 days')::text month_end`);
@@ -407,6 +408,59 @@ try {
       assert.equal(new Date(b.plan_credit_period_end).getTime(),new Date(before.plan_credit_period_end).getTime());
       assert.equal((await renew(replacement)).credits_granted,0);
     }
+  });
+  await check('terminal renewal and lazy deduction cannot erase an unfinished paid month before replacement', async () => {
+    const priorMonth = await one(`SELECT (now()-interval '1 month'+interval '1 day')::text start,
+      (now()-interval '1 month'+interval '1 day'+interval '1 year')::text finish`);
+    for (const status of ['canceled','cancelled','incomplete_expired']) for (const lazy of [false,true]) {
+      const identity = await site();
+      const paid = invoice(identity,{addons_count:0,period_start:priorMonth.start,period_end:priorMonth.finish});
+      await settle(paid);
+      await rpc('deduct_credits',[identity.site_id,100,'usage','Synthetic spent annual window',{}]);
+      const before = await row(identity.site_id);
+      assert.equal(Number(before.plan_credits_used),100);
+      assert.ok(before.plan_credit_period_end > new Date());
+      await sync(identity,status);
+      const terminal = await row(identity.site_id);
+      assert.equal(terminal.paid_subscription_invoice_id,null);
+      assert.equal(Number(terminal.plan_credits_used),100);
+      assert.equal(Number(terminal.plan_credits_available),1);
+      if (lazy) {
+        const deduction = await rpc('deduct_credits',[identity.site_id,1,'usage','Synthetic Toolbox spend',{}]);
+        assert.equal(deduction.success,true);
+      } else assert.equal((await renew(identity)).outcome,'not_due');
+      const interim = await row(identity.site_id);
+      assert.equal(Number(interim.plan_credits_used),100+(lazy ? 1 : 0));
+      assert.equal(new Date(interim.plan_credit_period_end).getTime(),new Date(before.plan_credit_period_end).getTime());
+      const replacement = {...identity,subscription_id:id('sub')};
+      assert.equal((await sync(replacement,'active',identity.subscription_id)).outcome,'synced');
+      const result = await settle(invoice(replacement,{addons_count:0,period_start:priorMonth.start,period_end:priorMonth.finish}));
+      assert.equal(result.credits_granted,0);
+      const after = await row(identity.site_id);
+      assert.equal(Number(after.plan_credits_available),0);
+      assert.equal(Number(after.plan_credits_used),100+(lazy ? 1 : 0));
+      assert.equal(new Date(after.plan_credit_period_end).getTime(),new Date(before.plan_credit_period_end).getTime());
+      protectedBalances(after);
+    }
+  });
+  await check('terminal Toolbox renewal begins at the expired paid boundary and ends with the UTC month', async () => {
+    const identity = await site();
+    await settle(invoice(identity,{addons_count:0}));
+    // Advance a verified credit window in this disposable DB without waiting
+    // for the wall clock. Coverage remains independently paid and immutable.
+    await db.query(`UPDATE billing SET plan_credit_period_start=now()-interval '1 month'-interval '1 day',
+      plan_credit_period_end=now()-interval '1 day' WHERE site_id=$1`,[identity.site_id]);
+    const before = await row(identity.site_id);
+    await sync(identity,'canceled');
+    const result = await renew(identity);
+    assert.equal(result.outcome,'reset');
+    const after = await row(identity.site_id);
+    const calendarEnd = await one("SELECT ((date_trunc('month',now() AT TIME ZONE 'UTC') + interval '1 month') AT TIME ZONE 'UTC')::text finish");
+    assert.equal(new Date(after.plan_credit_period_start).getTime(),new Date(before.plan_credit_period_end).getTime());
+    assert.equal(new Date(after.plan_credit_period_end).getTime(),new Date(calendarEnd.finish).getTime());
+    assert.equal(Number(after.plan_credits_available),1);
+    assert.equal((await renew(identity)).outcome,'not_due');
+    protectedBalances(after);
   });
   await check('UTC anniversary windows clamp from original anchor and handle leap years', async () => {
     for (const [start,at,expectedStart,expectedEnd] of [

@@ -33,6 +33,8 @@ validation call the same renewal RPC as the daily worker.
 Paid interval updates preserve the existing credit anchor and consumed window;
 moving Stripe's payment anniversary cannot shorten that window to refill early.
 Cancellation and subscription-ID replacement also preserve that usage boundary.
+After terminal cancellation, the Toolbox allowance is available, but neither its
+daily nor lazy renewal may erase the consumed paid month until that month ends.
 The paid invoice timestamp rejects older paid updates, and the producer verifies
 current configured service before applying a subscription-update invoice.
 
@@ -90,11 +92,16 @@ Temporal. Do not enable annual checkout before completing this coordinated rollo
 
 1. Verify the existing classified-credit prerequisites in
    [BILLING_CREDIT_RESET.md](BILLING_CREDIT_RESET.md), including precision and signup
-   corrections. The following migrations are pending/unapplied; apply the reviewed
-   `20261007180000_annual_subscription_credit_periods.sql`, followed by
-   `20261007180001_subscription_checkout_leases.sql`, once through the approved
-   database-owner workflow. It adds protected coverage and replaces settlement and
-   renewal functions; it does not bootstrap or guess historical paid years.
+   corrections. In the shared Makinari database, the installed definitions of
+   `20261007180000_annual_subscription_credit_periods.sql` and
+   `20261007180001_subscription_checkout_leases.sql` were verified on 2026-10-08,
+   but their versions were absent from `supabase_migrations.schema_migrations`.
+   Reconcile the history with the database owner; **do not replay** their full
+   non-idempotent files. Apply only the separately reviewed forward migration
+   `20261008210000_preserve_canceled_subscription_credit_usage.sql` once its
+   prerequisites and exact target have been confirmed. It closes the terminal
+   renewal/refill gap without rewriting historical balances. No SQL is applied by
+   creating or testing the file.
 2. Create annual recurring Stripe Prices (`interval=year`, `interval_count=1`) on
    the existing products, using the amounts above in cents. Keep monthly Prices.
 3. Configure server-only annual Price IDs in market-fit:

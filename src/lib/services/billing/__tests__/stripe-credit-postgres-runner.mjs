@@ -73,7 +73,8 @@ try {
     '20261003230001_stripe_plan_credit_reset.sql', '20261003230002_classified_credit_operations.sql',
     '20261005230000_exact_credit_accounting_precision.sql',
     ...(process.argv.includes('--annual') ? ['20261007180000_annual_subscription_credit_periods.sql',
-      '20261007180001_subscription_checkout_leases.sql'] : [])])
+      '20261007180001_subscription_checkout_leases.sql',
+      '20261008210000_preserve_canceled_subscription_credit_usage.sql'] : [])])
     await db.exec(readFileSync(resolve(root, 'supabase/migrations', migration), 'utf8'));
   dates = await one(`SELECT now()::text now,(now()-interval '40 days')::text old_start,
     (now()-interval '10 days')::text old_end,(now()-interval '5 days')::text start,

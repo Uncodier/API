@@ -149,7 +149,8 @@ try {
   for (const file of ['20261003230000_credit_buckets_and_monthly_reset.sql',
     '20261003230001_stripe_plan_credit_reset.sql', '20261003230002_classified_credit_operations.sql',
     '20261005230000_exact_credit_accounting_precision.sql', '20261007003000_remove_signup_credit_bonus.sql',
-    '20261007180000_annual_subscription_credit_periods.sql', '20261007180001_subscription_checkout_leases.sql'])
+    '20261007180000_annual_subscription_credit_periods.sql', '20261007180001_subscription_checkout_leases.sql',
+    '20261008210000_preserve_canceled_subscription_credit_usage.sql'])
     await sql(readFileSync(resolve(root, 'supabase/migrations', file), 'utf8'));
   dates = await json(`SELECT row_to_json(d) FROM (SELECT now()::text now,(now()-interval '5 days')::text start,
     (now()-interval '5 days'+interval '1 year')::text end,(now()+interval '25 days')::text month_end,
