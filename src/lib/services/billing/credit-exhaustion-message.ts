@@ -20,6 +20,8 @@ export interface CreditExhaustionBilling {
   plan_credit_allowance?: unknown;
   stripe_subscription_id?: unknown;
   subscription_status?: unknown;
+  billing_interval?: unknown;
+  paid_subscription_period_end?: unknown;
 }
 
 /** Only explicit error identity counts; never infer a shortage from message text. */
@@ -75,6 +77,10 @@ export function formatCreditExhaustionNotice(
     typeof billing.subscription_status === 'string' && billing.subscription_status.toLowerCase() === 'active';
   const renewalEnd = billing?.status === 'active' && allowance !== null && allowance > 0 &&
     (nonStripe || activeStripe) ? storedRenewalEnd(billing?.plan_credit_period_end, now) : null;
+  const paidThrough = billing?.billing_interval === 'year'
+    ? storedRenewalEnd(billing.paid_subscription_period_end, now) : null;
+  const coveredMonthlyReset = activeStripe && renewalEnd !== null && paidThrough !== null &&
+    paidThrough.getTime() > renewalEnd.getTime();
 
   let message = 'Tus créditos se han agotado para continuar este ciclo.';
   if (available !== null) message += ` Créditos disponibles: ${available}.`;
@@ -83,7 +89,7 @@ export function formatCreditExhaustionNotice(
       day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC',
     }).format(renewalEnd);
     const exactDate = `${date} a las ${renewalEnd.toISOString().slice(11, 19)} UTC`;
-    message += activeStripe
+    message += activeStripe && !coveredMonthlyReset
       ? ` Tu asignación de créditos podrá renovarse el ${exactDate}, siempre que se confirme el pago de renovación de tu suscripción en Stripe.`
       : ` Tu asignación de créditos se renovará el ${exactDate}.`;
   } else {

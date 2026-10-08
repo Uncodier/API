@@ -195,13 +195,13 @@ describe('CreditService read-only exhaustion notices', () => {
   });
   afterEach(() => { jest.useRealTimers(); jest.restoreAllMocks(); });
 
-  it('reads exactly the six minimal fields without renewing, notifying or writing', async () => {
+  it('reads only notice fields including annual coverage without renewing, notifying or writing', async () => {
     const notice = await CreditService.getCreditExhaustionNotice('synthetic-site');
     expect(notice).toEqual(formatCreditExhaustionNotice(billing, now));
     expect(notice.available).toBe(0.25);
     expect(notice.nextResetAt).toBe('2030-11-01T00:00:00.000Z');
     expect(mockFrom.mock.calls).toEqual([['billing']]);
-    expect(mockSelect).toHaveBeenCalledWith('credits_available,status,plan_credit_period_end,plan_credit_allowance,stripe_subscription_id,subscription_status');
+    expect(mockSelect).toHaveBeenCalledWith('credits_available,status,plan_credit_period_end,plan_credit_allowance,stripe_subscription_id,subscription_status,billing_interval,paid_subscription_period_end');
     expect(mockEq).toHaveBeenCalledWith('site_id', 'synthetic-site');
     expect(mockRpc).not.toHaveBeenCalled();
     expect(mockSendEmail).not.toHaveBeenCalled();

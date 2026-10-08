@@ -304,7 +304,7 @@ export class CreditService {
     try {
       const { data: billing, error } = await supabaseAdmin
         .from('billing')
-        .select('credits_available,status,plan_credit_period_end,plan_credit_allowance,stripe_subscription_id,subscription_status')
+        .select('credits_available,status,plan_credit_period_end,plan_credit_allowance,stripe_subscription_id,subscription_status,billing_interval,paid_subscription_period_end')
         .eq('site_id', siteId)
         .single();
       return formatCreditExhaustionNotice(error ? null : billing);

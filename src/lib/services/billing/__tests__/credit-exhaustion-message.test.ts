@@ -170,6 +170,23 @@ describe('formatCreditExhaustionNotice (pure Spanish billing notice)', () => {
     expect(result.message).not.toContain('se renovará el');
   });
 
+  it('promises a monthly reset within an already paid annual coverage, not another payment', () => {
+    const result = formatCreditExhaustionNotice({
+      ...billing, stripe_subscription_id: 'synthetic-subscription', subscription_status: 'active',
+      billing_interval: 'year', paid_subscription_period_end: '2031-10-01T00:00:00Z',
+    }, now);
+    expect(result.message).toContain('se renovará el 1 de noviembre de 2030');
+    expect(result.message).not.toContain('siempre que se confirme el pago');
+  });
+
+  it('requires another payment at the final annual boundary', () => {
+    const result = formatCreditExhaustionNotice({
+      ...billing, stripe_subscription_id: 'synthetic-subscription', subscription_status: 'active',
+      billing_interval: 'year', paid_subscription_period_end: billing.plan_credit_period_end,
+    }, now);
+    expect(result.message).toContain('siempre que se confirme el pago');
+  });
+
   it.each([undefined, null, '', 'past_due', 'unpaid', 'canceled', 'cancelled', 'incomplete_expired', 'trialing', false])(
     'does not promise Stripe renewal for an unknown/inactive subscription %s', subscription_status => {
       const result = formatCreditExhaustionNotice({ ...billing, stripe_subscription_id: 'synthetic-subscription', subscription_status }, now);

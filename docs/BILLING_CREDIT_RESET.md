@@ -53,6 +53,12 @@ ability to use `account_balance` only after regular credits are exhausted.
 
 ## Allowances and periods
 
+Annual variants are covered by [ANNUAL_SUBSCRIPTIONS.md](ANNUAL_SUBSCRIPTIONS.md)
+and the forward migration `20261007180000_annual_subscription_credit_periods.sql`.
+After that migration, verified annual paid coverage is independent of monthly
+credit periods; the invoice-only renewal description below remains the monthly
+Stripe contract, not a requirement for a new payment each covered annual month.
+
 | Stored plan | Included monthly credits |
 | --- | ---: |
 | commission / free / toolbox (Toolbox) | 1 |

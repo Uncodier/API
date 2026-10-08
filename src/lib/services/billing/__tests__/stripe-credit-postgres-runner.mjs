@@ -71,7 +71,9 @@ try {
   [bootstrap.site_id, oldInvoice, bootstrap.customer_id, bootstrap.subscription_id, `stripe_invoice_${oldInvoice}`]);
   for (const migration of ['20261003230000_credit_buckets_and_monthly_reset.sql',
     '20261003230001_stripe_plan_credit_reset.sql', '20261003230002_classified_credit_operations.sql',
-    '20261005230000_exact_credit_accounting_precision.sql'])
+    '20261005230000_exact_credit_accounting_precision.sql',
+    ...(process.argv.includes('--annual') ? ['20261007180000_annual_subscription_credit_periods.sql',
+      '20261007180001_subscription_checkout_leases.sql'] : [])])
     await db.exec(readFileSync(resolve(root, 'supabase/migrations', migration), 'utf8'));
   dates = await one(`SELECT now()::text now,(now()-interval '40 days')::text old_start,
     (now()-interval '10 days')::text old_end,(now()-interval '5 days')::text start,
@@ -192,6 +194,8 @@ try {
   await check('verified live terminal status synchronizes stale active DB exactly once', async () => {
     for (const terminal of ['canceled', 'cancelled', 'incomplete_expired']) {
       const site = await createSite(), paid = invoice(site, { current_subscription_status: terminal });
+      if (process.argv.includes('--annual')) await rpc('sync_stripe_subscription_state',
+        [site.site_id,site.customer_id,site.subscription_id,site.subscription_id,terminal]);
       assert.equal((await settle(paid)).credits_granted, 0);
       let b = await row(site.site_id); protectedBalances(b);
       assert.equal(b.plan, 'commission'); assert.equal(b.subscription_status, terminal);
