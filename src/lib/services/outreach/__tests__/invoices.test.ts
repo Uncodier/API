@@ -5,7 +5,7 @@ jest.mock('../invoice-generation', () => ({ generateInvoiceReminder: jest.fn() }
 jest.mock('@/lib/services/lead-followup/helpers/LeadFollowUpAgentHelper', () => ({ findActiveSalesAgent: jest.fn() }));
 import { createInvoiceReminders, invoiceRepository } from '../invoices';
 import { createOutreachDelivery, type Snapshot, type OutreachRepository } from '../delivery';
-import { invoiceDueReason } from '../invoice-state';
+import { invoiceCooldownDays, invoiceDueReason, invoiceMessageReason } from '../invoice-state';
 import { getOutreachPolicy } from '../policy';
 import { summarizeOutreachHistory } from '../history';
 import { assertOutreachGeneration } from '../generation-guard';
@@ -28,11 +28,33 @@ function snapshot(): Snapshot {
 test('invoice opt-in and interval are strict, default interval three days', () => {
   expect(getOutreachPolicy({}, 'invoices_due')).toBeNull();
   const s = snapshot().settings;
-  expect(getOutreachPolicy(s, 'invoices_due')).toMatchObject({ repeat_interval_days: 3, weekdays: [1, 2, 3, 4, 5], daily_message_limit: 30 });
+  expect(getOutreachPolicy(s, 'invoices_due')).toMatchObject({ repeat_interval_days: 3, cooldown_mode: 'progressive', weekdays: [1, 2, 3, 4, 5], daily_message_limit: 30 });
   for (const interval of [null, 0, 366, '3', 1.5]) {
     s.activities.invoices_due.repeat_interval_days = interval;
     expect(getOutreachPolicy(s, 'invoices_due')).toBeNull();
   }
+});
+test('invoice cadence starts with consecutive days and widens, without changing legacy fixed settings', () => {
+  expect([1, 2, 3, 4, 5, 6].map(count => invoiceCooldownDays(count, 'progressive', 3))).toEqual([1, 1, 3, 7, 14, 14]);
+  const state = snapshot();
+  state.settings.activities.invoices_due.repeat_interval_days = 5;
+  expect(getOutreachPolicy(state.settings, 'invoices_due')).toMatchObject({ cooldown_mode: 'fixed', repeat_interval_days: 5 });
+  state.settings.activities.invoices_due.cooldown_mode = 'progressive';
+  expect(getOutreachPolicy(state.settings, 'invoices_due')).toMatchObject({ cooldown_mode: 'progressive' });
+  for (const value of ['unknown', null]) {
+    state.settings.activities.invoices_due.cooldown_mode = value;
+    expect(getOutreachPolicy(state.settings, 'invoices_due')).toBeNull();
+  }
+});
+test('delivery waits for the per-invoice progressive stage, not the lead history', () => {
+  const state = snapshot();
+  state.site = { id: 'site' };
+  state.lastSentAt = '2026-10-03T16:00:00Z';
+  state.sentCount = 3;
+  expect(invoiceMessageReason('site', state, new Date('2026-10-06T15:59:59Z'))).toBe('repeat_interval');
+  expect(invoiceMessageReason('site', state, now)).toBeUndefined();
+  state.sentCount = 4;
+  expect(invoiceMessageReason('site', state, now)).toBe('repeat_interval');
 });
 test.each([
   ['paid', (s: any) => { s.sale.amount_due = 0; }, 'invoice_not_due'],

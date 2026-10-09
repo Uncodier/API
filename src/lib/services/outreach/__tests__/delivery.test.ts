@@ -85,6 +85,27 @@ function fixture(total = 1, sameLead = false) {
 }
 
 describe('central outreach delivery', () => {
+  test.each([cold, follow])('defers %s until fixed cooldown expires before preparing delivery', async activity => {
+    const f = fixture();
+    f.rows.get('m0')!.message.custom_data.outreach_activity = activity;
+    Object.assign(f.config.activities[activity as typeof cold | typeof follow], { cooldown_mode: 'fixed', cooldown_period_days: 5 });
+    if (activity === follow) f.extras.push({ id: 'inbound', role: 'user', created_at: '2026-09-20T12:00:00Z' });
+    f.extras.push({ id: 'previous', role: 'assistant', created_at: '2026-09-28T12:00:00Z', custom_data: { status: 'sent' } });
+    expect(await f.deliver('site', 'm0')).toMatchObject({ deferred: true, reason: 'cooldown' });
+    expect(f.prepare).not.toHaveBeenCalled();
+    expect(f.repo.claim).not.toHaveBeenCalled();
+  });
+  test('progressive default permits a second contact at the exact 24-hour boundary', async () => {
+    const f = fixture();
+    f.extras.push({ id: 'previous', role: 'assistant', created_at: '2026-09-28T12:00:00Z', custom_data: { status: 'sent' } });
+    expect(await f.deliver('site', 'm0')).toMatchObject({ success: true });
+    expect(f.send).toHaveBeenCalledTimes(1);
+  });
+  test.each([0, 1.5, 366, '5', null])('rejects invalid fixed cooldown interval %s', days => {
+    const f = fixture();
+    Object.assign(f.config.activities[cold], { cooldown_mode: 'fixed', cooldown_period_days: days });
+    expect(getOutreachPolicy(f.config, cold)).toBeNull();
+  });
   test.each([cold, follow])('blocks %s before custom start without reserving or sending', async activity => {
     const f = fixture();
     f.rows.get('m0')!.message.custom_data.outreach_activity = activity;

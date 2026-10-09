@@ -22,9 +22,9 @@ export const invoiceRepository = {
   agent: findActiveSalesAgent,
   cancel: cancelStaleInvoiceReminder,
   reservedCount: outreachRepository.reservedCount,
-  async claim(siteId: string, saleId: string, key: string, day: string, interval: number): Promise<any> {
-    const { data, error } = await supabaseAdmin.rpc('claim_invoice_reminder', { p_site_id: siteId, p_sale_id: saleId,
-      p_reminder_key: key, p_local_day: day, p_interval_days: interval });
+  async claim(siteId: string, saleId: string, key: string, day: string, interval: number, mode: 'progressive' | 'fixed'): Promise<any> {
+    const { data, error } = await supabaseAdmin.rpc('claim_invoice_reminder_with_cooldown', { p_site_id: siteId, p_sale_id: saleId,
+      p_reminder_key: key, p_local_day: day, p_interval_days: interval, p_mode: mode });
     if (error || !data) throw error || new Error('Invoice claim unavailable');
     return data;
   },
@@ -78,7 +78,7 @@ export function createInvoiceReminders(deps: { repository?: typeof invoiceReposi
       // Avoid generating thousands of drafts once today's durable budget is
       // exhausted. Delivery still owns the authoritative atomic reservation.
       if (await repo.reservedCount(siteId, 'invoices_due', day) >= policy.daily_message_limit) return skip('daily_limit');
-      const claim = await repo.claim(siteId, saleId, reminderKey, day, policy.repeat_interval_days);
+      const claim = await repo.claim(siteId, saleId, reminderKey, day, policy.repeat_interval_days, policy.cooldown_mode);
       if (!claim.claimed && claim.reason !== 'ready') return skip(claim.reason || 'reminder_uncertain');
       const reminder = claim.reminder;
       let messageId = reminder.message_id;

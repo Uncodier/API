@@ -20,6 +20,8 @@ export interface OutreachPolicy {
   all_segments: boolean;
   daily_message_limit: number;
   max_unanswered_messages: number;
+  cooldown_mode: 'progressive' | 'fixed';
+  cooldown_period_days?: number;
   weekdays: number[];
   repeat_interval_days: number;
 }
@@ -63,6 +65,10 @@ export function getOutreachPolicy(settings: any, activity: OutreachActivityKey):
   if (!Number.isInteger(limit) || limit < 1 || limit > 10000) return null;
   const maxUnanswered = activity === 'invoices_due' || raw.max_unanswered_messages === undefined ? 3 : raw.max_unanswered_messages;
   if (!Number.isInteger(maxUnanswered) || maxUnanswered < 1 || maxUnanswered > 100) return null;
+  const cooldownMode = raw.cooldown_mode === undefined
+    ? (activity === 'invoices_due' && raw.repeat_interval_days !== undefined ? 'fixed' : 'progressive') : raw.cooldown_mode;
+  if (cooldownMode !== 'progressive' && cooldownMode !== 'fixed') return null;
+  if (activity !== 'invoices_due' && cooldownMode === 'fixed' && (!Number.isInteger(raw.cooldown_period_days) || raw.cooldown_period_days < 1 || raw.cooldown_period_days > 365)) return null;
   const repeatInterval = raw.repeat_interval_days === undefined ? 3 : raw.repeat_interval_days;
   if (activity === 'invoices_due' && (!Number.isInteger(repeatInterval) || repeatInterval < 1 || repeatInterval > 365)) return null;
   const weekdays = raw.weekdays === undefined ? (activity === 'invoices_due' ? [1, 2, 3, 4, 5] : [2, 3, 4]) : raw.weekdays;
@@ -75,6 +81,8 @@ export function getOutreachPolicy(settings: any, activity: OutreachActivityKey):
     all_segments: raw.all_segments === true,
     daily_message_limit: limit,
     max_unanswered_messages: maxUnanswered,
+    cooldown_mode: cooldownMode,
+    ...(activity !== 'invoices_due' && cooldownMode === 'fixed' ? { cooldown_period_days: raw.cooldown_period_days } : {}),
     weekdays,
     repeat_interval_days: activity === 'invoices_due' ? repeatInterval : 3,
   };

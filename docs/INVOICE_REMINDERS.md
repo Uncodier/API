@@ -34,8 +34,11 @@ Opt-in is `settings.activities.invoices_due.status === "active"`; absence is
 disabled. `channel_accounts` uses exactly the existing explicit account map,
 including email, WhatsApp and connected `voice` accounts (the UI phone label is
 not a new transport/account type). Empty selections never authorize fallback.
-`repeat_interval_days` defaults to 3 and must be an integer 1–365; explicit null
-is invalid. `daily_message_limit` defaults to 30; weekdays default to Monday–
+`cooldown_mode` defaults to `progressive` (1, 1, 3, 7, then 14 days after
+consecutive confirmed reminders for the same invoice), or `fixed` with
+`repeat_interval_days` (integer 1–365, default 3). Existing records with an
+interval but no mode remain fixed; explicit null interval is invalid. The first
+reminder is eligible on the due date. `daily_message_limit` defaults to 30; weekdays default to Monday–
 Friday. Missing invoice timing defaults to business opening (09:00 fallback),
 with the existing site timezone/business-hours rules. Lead activity defaults
 are unchanged.
@@ -58,6 +61,11 @@ do not increment the sales-prospecting unanswered counter. Lead-generation and
 lead-follow-up logging guards reject `invoices_due`; no generic exemption exists.
 
 ## Durable state and final delivery
+
+Apply forward-only `20261008230000_invoice_reminder_cooldown.sql` once before
+deploying this API. It adds a separate atomic claim; it does not edit the
+existing ledger function or rewrite existing invoice receipts. Both repository
+copies of this migration must match.
 
 Forward migration `20261006230000_invoice_reminder_ledger.sql` follows the
 financial due-date migration `20261006210000_financial_due_dates.sql`. The API

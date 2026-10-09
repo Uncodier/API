@@ -2,6 +2,11 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { getOutreachPolicy, localDay, outreachTimezone } from './policy';
 import { outreachTimingReason } from './timing';
 
+/** Sent receipts for this invoice only; the first reminder has no cooldown. */
+export function invoiceCooldownDays(sentCount: number, mode: 'progressive' | 'fixed', fixedDays: number): number {
+  return sentCount < 1 ? 0 : mode === 'fixed' ? fixedDays : [1, 1, 3, 7, 14][Math.min(sentCount - 1, 4)];
+}
+
 export function invoiceContactReason(lead: any): string | undefined {
   if (!lead || lead.metadata?.quarantined_cross_tenant || lead.unsubscribed
     || lead.metadata?.unsubscribed === true || lead.metadata?.do_not_contact === true) return 'recipient_ineligible';
@@ -42,13 +47,16 @@ export async function loadInvoiceState(siteId: string, saleId: string, reminderI
   const siteResult = await supabaseAdmin.from('sites').select('id,archived_at').eq('id', siteId).maybeSingle();
   if (siteResult.error) throw siteResult.error;
   let lastSentAt: string | null = null;
+  let sentCount = 0;
   if (reminderId) {
-    const previous = await supabaseAdmin.from('invoice_reminders').select('sent_at').eq('site_id', siteId).eq('sale_id', saleId)
+    const previous = await supabaseAdmin.from('invoice_reminders').select('sent_at', { count: 'exact' }).eq('site_id', siteId).eq('sale_id', saleId)
       .eq('state', 'sent').order('sent_at', { ascending: false }).limit(1).maybeSingle();
     if (previous.error) throw previous.error;
     lastSentAt = previous.data?.sent_at || null;
+    if (previous.count === null || previous.count === undefined) throw new Error('Invoice reminder count unavailable');
+    sentCount = previous.count;
   }
-  return { sale, reminder, site: siteResult.data, lastSentAt };
+  return { sale, reminder, site: siteResult.data, lastSentAt, sentCount };
 }
 
 /** Explicit provenance alone is not authority to use collection exemptions. */
@@ -65,7 +73,10 @@ export function invoiceMessageReason(siteId: string, snapshot: any, now: Date): 
     || ['sent_at', 'provider_message_id', 'provider_call_id', 'external_message_id'].some(key => Object.prototype.hasOwnProperty.call(d, key))
     || d.delivery?.success === true) return 'delivery_uncertain';
   const policy = getOutreachPolicy(settings, 'invoices_due')!;
-  if (snapshot.lastSentAt && (!Number.isFinite(Date.parse(snapshot.lastSentAt))
+  if (snapshot.sentCount > 0 && (!snapshot.lastSentAt || !Number.isFinite(Date.parse(snapshot.lastSentAt))
+    || now.getTime() - Date.parse(snapshot.lastSentAt) < invoiceCooldownDays(snapshot.sentCount, policy.cooldown_mode, policy.repeat_interval_days) * 86400000)) return 'repeat_interval';
+  // Historical snapshots without a count still enforce the last confirmed send conservatively.
+  if (snapshot.sentCount === undefined && snapshot.lastSentAt && (!Number.isFinite(Date.parse(snapshot.lastSentAt))
     || now.getTime() - Date.parse(snapshot.lastSentAt) < policy.repeat_interval_days * 86400000)) return 'repeat_interval';
   // Content generated for a previous financial balance/date must not be sent.
   if (d.invoice_due_date !== sale.due_date || Number(d.invoice_amount_due) !== Number(sale.amount_due)

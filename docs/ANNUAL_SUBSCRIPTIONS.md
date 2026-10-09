@@ -14,8 +14,8 @@ Annual pricing is 90% of twelve monthly payments, in USD before tax/promotions:
 | Pro | $99 | $1,069.20 | $89.10 | 100 |
 | Enterprise | $500 | $5,400 | $450 | 500 |
 
-Addons use matching annual prices with the same 10% discount and include five
-additional monthly credits each. Purchased credits, historical protected credits
+Add-ons use matching annual prices with the same 10% discount and include one
+additional monthly credit each. Purchased credits, historical protected credits
 and withdrawable balance are not reduced by monthly replacement.
 
 Only a verified paid Stripe invoice establishes coverage. The immutable paid
@@ -100,8 +100,14 @@ Temporal. Do not enable annual checkout before completing this coordinated rollo
    non-idempotent files. Apply only the separately reviewed forward migration
    `20261008210000_preserve_canceled_subscription_credit_usage.sql` once its
    prerequisites and exact target have been confirmed. It closes the terminal
-   renewal/refill gap without rewriting historical balances. No SQL is applied by
-   creating or testing the file.
+   renewal/refill gap without rewriting historical balances. Then apply
+   `20261009040000_one_monthly_credit_per_addon.sql` followed by
+   `20261009070000_preserve_paid_addon_credit_windows.sql`, with subscription
+   writers paused until both complete. Together they grant one monthly credit per
+   additional add-on without repricing previously granted add-ons during an active
+   credit window. Verify a mid-period paid increase preserves usage and the old
+   window's excess, then verify the next renewal uses only the new quota. No SQL
+   is applied by creating or testing these files.
 2. Create annual recurring Stripe Prices (`interval=year`, `interval_count=1`) on
    the existing products, using the amounts above in cents. Keep monthly Prices.
 3. Configure server-only annual Price IDs in market-fit:

@@ -4,13 +4,13 @@ import { createOutreachLedger, type OutreachLedger } from './redis-ledger';
 import { getOutreachPolicy, isOutreachChannel, localDay, nextLocalDay, outreachTimezone, resolveOutreachActivity, selectedOutreachAccounts, type OutreachActivityKey } from './policy';
 import { outreachTimingReason } from './timing';
 import { prepareOutreachDelivery, type DeliveryContext, type PreparedDelivery } from './transport';
-import { summarizeOutreachHistory } from './history';
+import { nextOutreachContactAt, summarizeOutreachHistory } from './history';
 import { resolveOutreachRecipient } from './recipients';
 import { loadOutreachConversations } from './recipient-repository';
 import { invoiceMessageReason, loadInvoiceState, markInvoiceSent } from './invoice-state';
 
 export interface OutreachResult { success: boolean; deferred?: boolean; reason?: string; messageId?: string; alreadySent?: boolean; retryAt?: string; channel?: string; recipient?: string }
-export interface Snapshot { message: any; conversation: any; lead: any; settings: any; conversations?: any[]; sale?: any; reminder?: any; site?: any; lastSentAt?: string | null }
+export interface Snapshot { message: any; conversation: any; lead: any; settings: any; conversations?: any[]; sale?: any; reminder?: any; site?: any; lastSentAt?: string | null; sentCount?: number }
 export interface OutreachRepository {
   load(siteId: string, messageId: string): Promise<Snapshot | null>;
   history(siteId: string, leadId: string): Promise<any[]>;
@@ -161,16 +161,19 @@ export function createOutreachDelivery(deps: {
       if (!account) return defer('no_selected_account');
       const recipient = resolveOutreachRecipient({ siteId, lead, channel, conversations: snapshot.conversations || [conversation] });
       if (!recipient) return defer(channel === 'voice' ? 'voice_recipient_ineligible' : 'invalid_recipient');
-      const historyReason = (history: any[]) => {
+      const historyReason = (history: any[], at: Date) => {
         const h = summarizeOutreachHistory(history.filter(m => m.id !== message.id));
         if (h.uncertain) return 'delivery_uncertain';
         if (invoice) return undefined;
         if ((activity === 'leads_initial_cold_outreach') === h.hasInbound) return 'audience_mismatch';
         if (h.unanswered >= policy.max_unanswered_messages) return 'unanswered_limit';
+        if (at.getTime() < nextOutreachContactAt(h, policy.cooldown_mode, policy.cooldown_period_days)) return 'cooldown';
         return undefined;
       };
-      const eligibility = historyReason(history);
-      if (eligibility) return defer(eligibility);
+      const eligibility = historyReason(history, now);
+      if (eligibility) return defer(eligibility, eligibility === 'cooldown'
+        ? new Date(nextOutreachContactAt(summarizeOutreachHistory(history.filter(m => m.id !== message.id)), policy.cooldown_mode, policy.cooldown_period_days)).toISOString()
+        : undefined);
       const prepared = await prepare({ siteId, message, conversation, lead, account, conversations: snapshot.conversations });
       if ('reason' in prepared) return defer(prepared.reason);
       // Preparation may cross midnight; never dispatch against yesterday's cap.
@@ -215,7 +218,7 @@ export function createOutreachDelivery(deps: {
       // Monotonic durable reservation count is a second guard against Redis
       // restart/eviction. Blocked reservations deliberately consume capacity.
       const durableCount = await repo.reservedCount(siteId, activity, day.day);
-      const postClaimReason = historyReason(await repo.history(siteId, lead.id));
+      const postClaimReason = historyReason(await repo.history(siteId, lead.id), deps.now?.() || new Date());
       if (durableCount > policy.daily_message_limit || postClaimReason) {
         const reason = postClaimReason || 'daily_limit';
         await repo.mark(message, { ...marker, state: 'blocked', reason });

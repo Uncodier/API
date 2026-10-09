@@ -4,7 +4,7 @@ import { getOutreachPolicy, localDay, outreachTimezone, selectedOutreachChannels
 import { availableOutreachRecipients } from './recipients';
 import { loadOutreachConversations } from './recipient-repository';
 import { outreachRepository } from './delivery';
-import { summarizeOutreachHistory } from './history';
+import { nextOutreachContactAt, summarizeOutreachHistory } from './history';
 import { outreachTimingReason } from './timing';
 
 /** Managed-only boundary: caller leadData never authorizes generation/logging. */
@@ -43,5 +43,6 @@ export async function assertOutreachGeneration(request: Request, siteId: string,
   if (history.uncertain) denied('A previous delivery requires reconciliation');
   if ((activity === 'leads_initial_cold_outreach') === history.hasInbound) denied('Outreach audience mismatch');
   if (history.unanswered >= policy.max_unanswered_messages) denied('Unanswered message limit reached');
+  if (Date.now() < nextOutreachContactAt(history, policy.cooldown_mode, policy.cooldown_period_days)) denied('Outreach cooldown has not elapsed');
   return { lead, channels, recipients };
 }

@@ -71,8 +71,18 @@ approving the target, never by replaying the already-installed bucket bootstrap.
 | foundry / startup | 100 |
 | enterprise | 500 |
 
-Paid plans include five additional credits per addon. Unknown plans have no new
-monthly grant and require entitlement reconciliation; no paid amount is guessed.
+Paid plans include one additional credit per add-on. The forward migration
+`20261009040000_one_monthly_credit_per_addon.sql` changes future eligible
+allowances. Apply `20261009070000_preserve_paid_addon_credit_windows.sql` immediately
+after it, before resuming subscription writers or deploying the new allowance UI.
+The correction retains the excess already granted at the old add-on rate within
+the active paid credit window; additional add-ons grant one each. Repeated paid
+changes preserve consumption without accumulating that excess. The next credit
+window resets to the new canonical quota. Neither migration rewrites current
+balances, past invoice markers, purchases or consumption when applied. Unknown
+plans have no new monthly grant and require entitlement reconciliation; no paid
+amount is guessed. Periods already adjusted before installing the correction need
+operator review; the correction does not restore historical balances automatically.
 
 Non-Stripe renewals use UTC calendar-month periods. A missed worker run grants
 only the current period, not every historical month. The daily worker processes
