@@ -143,6 +143,33 @@ it('returns conflict without marking the original runner as failed when cron own
   expect(markRemoteInstanceError).not.toHaveBeenCalled();
 });
 
+it('rejects an archived instance before persisting or starting a new turn', async () => {
+  (supabaseAdmin.from as jest.Mock).mockImplementation((table: string) => {
+    const query: any = {};
+    for (const name of ['select', 'eq']) query[name] = jest.fn(() => query);
+    query.maybeSingle = query.single = jest.fn(async () => ({ data: table === 'sites'
+      ? { user_id: USER } : { id: INSTANCE, site_id: SITE, user_id: USER, status: 'running', is_archived: true }, error: null }));
+    return query;
+  });
+  const response = await POST(request(payload));
+  expect(response.status).toBe(409);
+  expect((await response.json()).error.code).toBe('INSTANCE_ARCHIVED');
+  expect(insertUserActionLog).not.toHaveBeenCalled();
+  expect(start).not.toHaveBeenCalled();
+  expect(resetRequirementOnUserAction).not.toHaveBeenCalled();
+  expect(markRemoteInstanceError).not.toHaveBeenCalled();
+});
+
+it('does not revive an archived instance when archival races user-action admission', async () => {
+  (insertUserActionLog as jest.Mock).mockRejectedValue(new Error('Failed to persist user message: instance_archived'));
+  const response = await POST(request(payload));
+  expect(response.status).toBe(409);
+  expect((await response.json()).error.code).toBe('INSTANCE_ARCHIVED');
+  expect(start).not.toHaveBeenCalled();
+  expect(resetRequirementOnUserAction).not.toHaveBeenCalled();
+  expect(markRemoteInstanceError).not.toHaveBeenCalled();
+});
+
 it('does not write a session log for invalid input or insufficient credits', async () => {
   const invalid = await POST(request({}));
   expect(invalid.status).toBe(400);

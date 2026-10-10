@@ -204,12 +204,17 @@ export async function POST(request: NextRequest) {
     // Get instance to verify existence and ownership
     const { data: instance, error: instanceError } = await supabaseAdmin
       .from('remote_instances')
-      .select('site_id, user_id, status')
+      .select('site_id, user_id, status, is_archived')
       .eq('id', providedInstanceId)
       .single();
 
     if (instanceError || !instance) {
       return NextResponse.json({ error: 'Instance not found' }, { status: 404 });
+    }
+    if (instance.is_archived === true) {
+      return NextResponse.json({ success: false,
+        error: { code: 'INSTANCE_ARCHIVED', message: 'This instance is archived. Continue in the requirement’s active instance.' },
+      }, { status: 409 });
     }
 
     const site_id = providedSiteId || instance.site_id;
@@ -253,6 +258,13 @@ export async function POST(request: NextRequest) {
     return assistantResponseStream(workflowRun, providedInstanceId, userAction.id, { signal: request.signal });
 
   } catch (err: any) {
+    if (err instanceof Error && err.message.includes('instance_archived')) {
+      // The database admission guard covers archival racing the preflight read.
+      // Do not revive or mark the archived owner as failed after reassignment.
+      return NextResponse.json({ success: false,
+        error: { code: 'INSTANCE_ARCHIVED', message: 'This instance is archived. Continue in the requirement’s active instance.' },
+      }, { status: 409 });
+    }
     if (err instanceof Error && err.message.includes('requirement_execution_busy')) {
       // Admission was rejected before inserting the user action. Do not mark
       // the healthy owner as failed or retry by creating another instance.

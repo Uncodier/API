@@ -394,13 +394,87 @@ describe("identifyVoiceLead", () => {
     expect(db.updates).toEqual([]);
   });
 
-  it("does not upgrade a placeholder without explicit consent or with conflicting email identity", async () => {
+  it("does not upgrade a placeholder without explicit consent, even with a possible duplicate", async () => {
     const provisional = provisionalLead();
     const db = database([provisional, { id: OTHER_LEAD, site_id: SITE, phone: "+14155550199", email: EMAIL }]);
     await expect(identify({ ...validArgs, consent: false })).rejects.toThrow("Explicit caller consent");
-    await expect(identify()).rejects.toThrow("identity conflicts");
     expect(db.updates).toEqual([]);
     expect(db.leads[0]).toEqual(provisional);
+  });
+
+  it.each([null, "+14155550199"])("completes only the provisional caller when another profile owns the email (phone=%s)", async phone => {
+    const provisional = provisionalLead({ do_not_call: true });
+    const other = { id: OTHER_LEAD, site_id: SITE, phone, email: EMAIL, name: "Established profile", metadata: { private: "keep" } };
+    const db = database([provisional, other]);
+    const result = await identify();
+    expect(result).toMatchObject({ success: true, lead_id: provisional.id, contact_details_saved: true, contact_review_required: true });
+    expect(db.leads[0]).toMatchObject({
+      name: validArgs.name, email: null, phone: PHONE, do_not_call: true,
+      voice_call_consent_status: "unknown",
+      metadata: { voice_identification: {
+        identity_status: "caller_confirmed", completed_from_provisional: true, declared_email: EMAIL,
+        duplicate_review: { status: "pending", reason: "email_matches_another_lead", detected_at: expect.any(String) },
+      } },
+    });
+    expect(db.leads[1]).toEqual(other);
+    expect(db.inserts).toEqual([]);
+    expect(db.updates).toHaveLength(1);
+    expect(JSON.stringify(result)).not.toContain(OTHER_LEAD);
+    expect(JSON.stringify(result)).not.toContain(other.name);
+    expect(JSON.stringify(result)).not.toContain(other.metadata.private);
+    const saved = structuredClone(db.leads);
+    await expect(identify({ ...validArgs, email: EMAIL.toUpperCase(), phone: null })).resolves.toEqual(result);
+    expect(db.leads).toEqual(saved);
+    expect(db.updates).toHaveLength(1);
+  });
+
+  it("can flag multiple email matches without choosing one, but still rejects ambiguous caller phones", async () => {
+    const db = database([provisionalLead(), ...Array.from({ length: 3 }, (_, i) => ({
+      id: uuidv5(`other-email-profile:${i}`, uuidv5.URL), site_id: SITE, email: EMAIL, phone: null, name: `Other ${i}`,
+    }))]);
+    await expect(identify()).resolves.toMatchObject({ contact_details_saved: true, contact_review_required: true });
+    await expect(identify()).resolves.toMatchObject({ contact_details_saved: true, contact_review_required: true });
+    expect(db.leads).toHaveLength(4);
+    expect(db.updates).toHaveLength(1);
+    const saved = structuredClone(db.leads);
+    db.leads.push({ id: LEAD, site_id: SITE, email: null, phone: PHONE });
+    await expect(identify()).rejects.toThrow("identity conflicts");
+    expect(db.leads.slice(0, 4)).toEqual(saved);
+    expect(db.updates).toHaveLength(1);
+  });
+
+  it.each([
+    { id: LEAD }, { name: "Established caller" }, { company: { name: "Existing" } },
+    { origin: "chat" }, { metadata: {} },
+    { metadata: { voice_inbound: { source: "zavu_webhook", identity_status: "unverified", phone_source: "provider_call" },
+      voice_identification: { duplicate_review: { status: "pending" } } } },
+  ])("does not use the exception for established or malformed provisional profiles %#", async patch => {
+    const rows = [provisionalLead(patch), { id: OTHER_LEAD, site_id: SITE, phone: null, email: EMAIL }];
+    const db = database(rows);
+    await expect(identify()).rejects.toThrow("identity conflicts");
+    expect(db.leads).toEqual(rows);
+    expect(db.updates).toEqual([]);
+    expect(db.inserts).toEqual([]);
+  });
+
+  it("never accepts a model-supplied duplicate-review marker to bypass an established-profile conflict", async () => {
+    const rows = [{ id: LEAD, site_id: SITE, phone: PHONE, email: null }, { id: OTHER_LEAD, site_id: SITE, phone: null, email: EMAIL }];
+    const db = database(rows);
+    await expect(identify({ ...validArgs, metadata: { voice_identification: { completed_from_provisional: true,
+      duplicate_review: { status: "pending", reason: "email_matches_another_lead" } } } })).rejects.toThrow("identity conflicts");
+    expect(db.leads).toEqual(rows);
+    expect(db.updates).toEqual([]);
+  });
+
+  it("converges concurrent provisional confirmations with a possible duplicate and keeps the old profile intact", async () => {
+    const other = { id: OTHER_LEAD, site_id: SITE, phone: null, email: EMAIL, name: "Old profile" };
+    const db = database([provisionalLead({ company: {} }), other]);
+    const results = await Promise.all([identify(), identify()]);
+    expect(results[0]).toEqual(results[1]);
+    expect(results[0]).toMatchObject({ contact_details_saved: true, contact_review_required: true });
+    expect(db.leads).toHaveLength(2);
+    expect(db.leads[1]).toEqual(other);
+    expect(db.inserts).toEqual([]);
   });
 
   it("converges duplicate concurrent placeholder confirmations without losing restrictions", async () => {
@@ -428,12 +502,77 @@ describe("identifyVoiceLead", () => {
     expect(db.leads[0].email).toBeNull();
   });
 
-  it("does not report success when a conflicting email profile appears during the update", async () => {
+  it("marks a duplicate that appears during completion without changing the other profile", async () => {
     const db = database([provisionalLead()]);
-    db.beforeUpdate = () => db.leads.push({ id: OTHER_LEAD, site_id: SITE, email: EMAIL, phone: "+14155550199" });
-    await expect(identify()).rejects.toThrow("identity conflicts");
+    db.beforeUpdate = () => {
+      db.beforeUpdate = undefined;
+      db.leads.push({ id: OTHER_LEAD, site_id: SITE, email: EMAIL, phone: "+14155550199" });
+    };
+    await expect(identify()).resolves.toMatchObject({ contact_details_saved: true, contact_review_required: true });
     // No cross-profile reassignment or rollback of another writer's data.
     expect(db.leads[1]).toMatchObject({ id: OTHER_LEAD, email: EMAIL, phone: "+14155550199" });
+    expect(db.leads[0].metadata.voice_identification.duplicate_review.status).toBe("pending");
+    expect(db.leads[0].email).toBeNull();
+    expect(db.leads[0].metadata.voice_identification.declared_email).toBe(EMAIL);
+    await expect(identify()).resolves.toMatchObject({ contact_details_saved: true, contact_review_required: true });
+    expect(db.updates).toHaveLength(2);
+  });
+
+  it("quarantines the declared email so an older provisional profile cannot win email identity lookup", async () => {
+    const owner = { id: OTHER_LEAD, site_id: SITE, phone: "+14155550199", email: EMAIL, name: "Email owner", created_at: "2026-02-01" };
+    const db = database([provisionalLead({ created_at: "2026-01-01" }), owner]);
+    await expect(identify()).resolves.toMatchObject({ contact_details_saved: true, contact_review_required: true });
+    expect(db.leads.filter(row => row.email?.toLowerCase() === EMAIL)).toEqual([owner]);
+    await expect(identify({ ...validArgs, name: owner.name, phone: owner.phone }, SITE, owner.phone))
+      .resolves.toMatchObject({ lead_id: owner.id, contact_details_saved: true });
+    expect(db.leads[1]).toEqual(owner);
+    expect(db.leads[0].metadata.voice_identification.declared_email).toBe(EMAIL);
+  });
+
+  it("keeps the existing name/email unique constraint intact when the duplicate owner has the same name", async () => {
+    const owner = { id: OTHER_LEAD, site_id: SITE, phone: null, email: EMAIL, name: validArgs.name };
+    const db = database([provisionalLead(), owner]);
+    await expect(identify()).resolves.toMatchObject({ contact_details_saved: true, contact_review_required: true });
+    expect(db.leads[0]).toMatchObject({ name: validArgs.name, email: null });
+    expect(db.leads[1]).toEqual(owner);
+    expect(db.inserts).toEqual([]);
+  });
+
+  it("does not silently replace a quarantined email on a later call", async () => {
+    const db = database([provisionalLead(), { id: OTHER_LEAD, site_id: SITE, phone: null, email: EMAIL }]);
+    await identify();
+    const saved = structuredClone(db.leads);
+    await expect(identify({ ...validArgs, email: "different@example.test" })).rejects.toThrow("identity conflicts");
+    expect(db.leads).toEqual(saved);
+  });
+
+  it("does not let a stale review flag bypass quarantine after an operator changes the canonical email", async () => {
+    const db = database([provisionalLead(), { id: OTHER_LEAD, site_id: SITE, phone: null, email: EMAIL }]);
+    await identify();
+    const editedEmail = "edited@example.test";
+    db.leads[0].email = editedEmail;
+    db.leads.push({ id: LEAD, site_id: SITE, phone: null, email: editedEmail });
+    await expect(identify({ ...validArgs, email: editedEmail })).resolves.toMatchObject({ contact_details_saved: true, contact_review_required: true });
+    expect(db.leads[0].email).toBeNull();
+    expect(db.leads[0].metadata.voice_identification.declared_email).toBe(editedEmail);
+    const saved = structuredClone(db.leads);
+    await identify({ ...validArgs, email: editedEmail });
+    expect(db.leads).toEqual(saved);
+    expect(db.updates).toHaveLength(2);
+  });
+
+  it("does not claim a late duplicate was quarantined when review persistence fails", async () => {
+    const db = database([provisionalLead()]);
+    db.beforeUpdate = () => {
+      db.beforeUpdate = undefined;
+      db.leads.push({ id: OTHER_LEAD, site_id: SITE, phone: null, email: EMAIL });
+      // First completion succeeds; the subsequent quarantine write fails.
+      queueMicrotask(() => { db.updateError = { code: "42501", message: "Private database data" }; });
+    };
+    await expect(identify()).rejects.toThrow(/^Unable to save Voice contact review status$/);
+    db.updateError = null;
+    await expect(identify()).resolves.toMatchObject({ contact_details_saved: true, contact_review_required: true });
+    expect(db.leads[0].email).toBeNull();
   });
 
   it("does not overwrite a concurrently edited name, email, or private metadata", async () => {

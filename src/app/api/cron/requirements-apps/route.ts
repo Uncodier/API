@@ -31,7 +31,7 @@ import { buildPreviousWorkContext } from './previous-work-context';
 import { assertCronExecutionOwnership } from '../shared/cron-execution-ownership';
 import { classifyRequirementType } from '@/lib/services/requirement-flows';
 import { getRequirementCycleBudget } from '@/lib/services/requirement-cost-envelope';
-import { inspectRequirementRunnerHandoff } from '@/lib/services/requirement-runner-handoff';
+import { inspectRequirementRunnerHandoff, replaceArchivedRequirementRunner } from '@/lib/services/requirement-runner-handoff';
 
 export const maxDuration = 800; // Approximately 13 minutes (Pro plan maximum).
 export const dynamic = 'force-dynamic';
@@ -141,9 +141,14 @@ export async function GET(req: Request) {
         const { data: instances, error: instanceLookupError } =
           await supabaseAdmin
           .from('remote_instances')
-          .select('id, instance_type')
+          .select('id, instance_type, is_archived')
           .eq('site_id', site_id)
           .eq('name', `req-runner-${reqId}`)
+          // Prefer a live canonical runner, but inspect archived history when
+          // no owner metadata/plan exists instead of bypassing replacement.
+          .order('is_archived', { ascending: true, nullsFirst: true })
+          .order('created_at', { ascending: true })
+          .order('id', { ascending: true })
           .limit(1);
         if (instanceLookupError) {
           await releaseRunLock(reqId, runLock.runId);
@@ -157,7 +162,7 @@ export async function GET(req: Request) {
 
         if (instances && instances.length > 0) {
           instanceId = instances[0].id;
-          if (!instances[0].instance_type) {
+          if (!instances[0].instance_type && instances[0].is_archived !== true) {
             await supabaseAdmin.from('remote_instances').update({ instance_type: REMOTE_INSTANCE_TYPE_CRON_APPS }).eq('id', instanceId);
           }
         } else {
@@ -190,7 +195,9 @@ export async function GET(req: Request) {
               await supabaseAdmin
               .from('remote_instances')
               .select('id, name')
+              .eq('site_id', site_id)
               .in('id', instanceIds)
+              .or('is_archived.is.null,is_archived.eq.false')
               .not('name', 'like', 'req-maint-%');
             if (legacyInstanceError) {
               await releaseRunLock(reqId, runLock.runId);
@@ -235,10 +242,31 @@ export async function GET(req: Request) {
       // Legacy name/status resolution also needs admission before dispatch.
       // Never overlap an assistant
       // just because it runs on the same instance (the foreign check excludes it).
+      let archivedInstanceId = handoff.archivedInstanceId;
       if (instanceId && instanceId !== handoff.instanceId) {
         const resolvedHandoff = await inspectRequirementRunnerHandoff(requirement, instanceId);
         if (resolvedHandoff.skipReason) {
           results.push({ reqId, skipped: true, reason: resolvedHandoff.skipReason });
+          continue;
+        }
+        archivedInstanceId = resolvedHandoff.archivedInstanceId;
+      }
+      if (archivedInstanceId) {
+        // All discovery paths use the same transaction: owner, fencing and
+        // pending plans commit together, with no fallback insert on denial.
+        const replacement = await replaceArchivedRequirementRunner({
+          requirementId: reqId, runId: runLock.runId, archivedInstanceId, executionGeneration,
+        });
+        if (replacement.skipReason || !replacement.instanceId || !replacement.metadata) {
+          results.push({ reqId, skipped: true, reason: replacement.skipReason || 'archived_runner_replacement_unconfirmed' });
+          continue;
+        }
+        instanceId = replacement.instanceId;
+        requirement.metadata = replacement.metadata;
+        executionGeneration = readExecutionGeneration(replacement.metadata.requirement_execution_generation);
+        const replacementHandoff = await inspectRequirementRunnerHandoff(requirement, instanceId);
+        if (replacementHandoff.skipReason || replacementHandoff.archivedInstanceId) {
+          results.push({ reqId, skipped: true, reason: replacementHandoff.skipReason || 'original_instance_archived' });
           continue;
         }
       }
@@ -350,7 +378,7 @@ export async function GET(req: Request) {
       const { data: instanceData, error: instanceStateError } =
         await supabaseAdmin
         .from('remote_instances')
-        .select('status')
+        .select('status, is_archived')
         .eq('id', instanceId)
         .single();
 
@@ -374,6 +402,13 @@ export async function GET(req: Request) {
         continue;
       }
 
+      // Archival may race the earlier inspection. Never start or revive that
+      // instance; the next claimed tick can perform the atomic replacement.
+      if (instanceData?.is_archived === true) {
+        results.push({ reqId, skipped: true, reason: 'original_instance_archived' });
+        continue;
+      }
+
       if (instanceData?.status === 'paused' || activePlan?.status === 'paused') {
         console.log(`[Cron Apps] Skipping ${reqId} — instance or plan is paused.`);
         await releaseRunLock(reqId, runLock.runId);
@@ -391,17 +426,39 @@ export async function GET(req: Request) {
         .neq('instance_id', instanceId)
         .gte('created_at', concurrencyCutoff)
         .order('created_at', { ascending: false })
-        .limit(1);
+        .limit(10);
 
       if (foreignActivityError) {
         results.push({ reqId, skipped: true, reason: 'foreign_activity_unavailable' });
         continue;
       }
       if (foreignActivity && foreignActivity.length > 0) {
-        console.log(`[Cron Apps] Skipping ${reqId} — another instance (${foreignActivity[0].instance_id?.substring(0, 8)}) is actively working this requirement (last activity ${foreignActivity[0].created_at}). Deferring to avoid git branch collision.`);
-        await releaseRunLock(reqId, runLock.runId);
-        results.push({ reqId, skipped: true, reason: 'foreign_agent_active' });
-        continue;
+        // Status history survives archival. It cannot establish live competing
+        // execution by itself, especially just after transferring the owner.
+        const foreignIds = [...new Set(foreignActivity.map(row => row.instance_id).filter(Boolean))];
+        const { data: foreignInstances, error: foreignInstanceError } = await supabaseAdmin
+          .from('remote_instances').select('id, is_archived')
+          .eq('site_id', site_id).in('id', foreignIds);
+        if (foreignInstanceError) {
+          results.push({ reqId, skipped: true, reason: 'foreign_activity_unavailable' });
+          continue;
+        }
+        const archivedIds = new Set((foreignInstances || []).filter(row => row.is_archived === true).map(row => row.id));
+        // Unknown/missing instances remain conservative; only explicit archival
+        // removes the old collision guard, not a timeout or absent observation.
+        const competing = foreignActivity.find(row => !archivedIds.has(row.instance_id));
+        if (competing) {
+          console.log(`[Cron Apps] Skipping ${reqId} — another non-archived instance recently worked this requirement. Deferring to avoid git branch collision.`);
+          results.push({ reqId, skipped: true, reason: 'foreign_agent_active' });
+          continue;
+        }
+        if (foreignActivity.length >= 10) {
+          // A bounded page containing only archived history cannot prove there
+          // is no newer-window competing row beyond it. Defer, never silently
+          // discard that collision protection when history is truncated.
+          results.push({ reqId, skipped: true, reason: 'foreign_activity_unavailable' });
+          continue;
+        }
       }
 
       const activation = await activateRequirementCronRun({

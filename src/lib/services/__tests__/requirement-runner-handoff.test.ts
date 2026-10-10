@@ -7,7 +7,7 @@ const mockFrom = jest.fn(() => query);
 jest.mock('@/lib/database/supabase-client', () => ({
   supabaseAdmin: { from: mockFrom, rpc: mockRpc },
 }));
-import { inspectRequirementRunnerHandoff } from '../requirement-runner-handoff';
+import { inspectRequirementRunnerHandoff, replaceArchivedRequirementRunner } from '../requirement-runner-handoff';
 
 describe('original requirement runner handoff', () => {
   const requirement = { id: 'req', site_id: 'site', metadata: {
@@ -29,6 +29,20 @@ describe('original requirement runner handoff', () => {
     expect(mockRpc).toHaveBeenCalledWith('inspect_requirement_assistant_handoff', {
       p_requirement_id: 'req', p_instance_id: 'original',
     });
+  });
+
+  it('identifies explicit archival for atomic replacement, not ordinary fallback', async () => {
+    mockRpc.mockResolvedValue({ data: { allowed: false, reason: 'original_instance_archived' } });
+    expect(await inspectRequirementRunnerHandoff(requirement)).toEqual({
+      instanceId: 'original', archivedInstanceId: 'original',
+    });
+    expect(mockFrom).not.toHaveBeenCalled();
+  });
+
+  it.each(['original_instance_paused', 'original_instance_unavailable', 'assistant_action_not_finished', 'original_assistant_action_not_finished'])
+  ('does not authorize replacement for %s', async reason => {
+    mockRpc.mockResolvedValue({ data: { allowed: false, reason } });
+    expect(await inspectRequirementRunnerHandoff(requirement)).toEqual({ instanceId: 'original', skipReason: reason });
   });
 
   it.each([{ error: { message: 'db unavailable' } }, { data: null }])('fails closed on an unavailable admission check', async result => {
@@ -63,5 +77,43 @@ describe('original requirement runner handoff', () => {
   it('keeps the existing unassigned cron creation path', async () => {
     expect(await inspectRequirementRunnerHandoff({ id: 'req', site_id: 'site' })).toEqual({});
     expect(mockRpc).not.toHaveBeenCalled();
+  });
+});
+
+describe('atomic archived runner replacement receipts', () => {
+  const replacementId = '00000000-0000-4000-8000-000000000002';
+  const input = { requirementId: 'req', runId: 'lease', archivedInstanceId: 'original', executionGeneration: 6 };
+  const metadata = { runner_instance_id: replacementId, requirement_execution_generation: 7, cron_attempts: 4 };
+  beforeEach(() => jest.clearAllMocks());
+
+  it.each(['replaced', 'duplicate'])('accepts a confirmed %s receipt without a second insert', async state => {
+    mockRpc.mockResolvedValue({ data: { state, instance_id: replacementId, execution_generation: 7, metadata } });
+    expect(await replaceArchivedRequirementRunner(input)).toEqual({ instanceId: replacementId, metadata });
+    expect(mockRpc).toHaveBeenCalledWith('replace_archived_requirement_runner', {
+      p_requirement_id: 'req', p_run_id: 'lease', p_expected_instance_id: 'original', p_expected_execution_generation: 6,
+    });
+    expect(mockFrom).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    null,
+    { state: 'replaced', instance_id: replacementId, execution_generation: 6, metadata },
+    { state: 'replaced', instance_id: replacementId, execution_generation: 7, metadata: { ...metadata, runner_instance_id: 'other' } },
+    { state: 'replaced', instance_id: replacementId, execution_generation: 7, metadata: { ...metadata, requirement_execution_generation: 6 } },
+  ])('fails closed on an inconsistent receipt', async data => {
+    mockRpc.mockResolvedValue({ data });
+    expect(await replaceArchivedRequirementRunner(input)).toEqual({ skipReason: 'archived_runner_replacement_unconfirmed' });
+  });
+
+  it('does not retry insertion when a database guard denies replacement', async () => {
+    mockRpc.mockResolvedValue({ data: { state: 'guarded', reason: 'original_instance_active' } });
+    expect(await replaceArchivedRequirementRunner(input)).toEqual({ skipReason: 'archived_runner_replacement_guarded' });
+  });
+
+  it.each([{ error: { code: 'PGRST202' } }, new Error('offline')])('does not bypass an unavailable RPC', async result => {
+    if (result instanceof Error) mockRpc.mockRejectedValue(result);
+    else mockRpc.mockResolvedValue(result);
+    expect(await replaceArchivedRequirementRunner(input)).toEqual({ skipReason: 'archived_runner_replacement_unavailable' });
+    expect(mockFrom).not.toHaveBeenCalled();
   });
 });

@@ -56,6 +56,7 @@ describe("executeCustomerSupportVoiceTool", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockTenantFrom.mockReset();
     mockFindInboundVoiceLead.mockReset().mockResolvedValue(undefined);
     mockGetVoiceCall.mockReset().mockResolvedValue({ id: "call-1", senderId: "sender-1", direction: "inbound",
       from: "+14155550100", status: "answered" });
@@ -313,29 +314,64 @@ describe("executeCustomerSupportVoiceTool", () => {
     expect(execute).toHaveBeenCalledWith(expect.objectContaining({ lead_id: "new-lead", context_id: "new-lead" }));
   });
 
-  it("validates a scheduling context_id fallback against the authenticated site", async () => {
+  it.each(["appointment_id", "id"])("scopes appointment updates to this caller, including the %s alias", async field => {
+    const execute = jest.fn().mockResolvedValue({ success: true });
+    mockGetCustomerSupportVoiceToolDefinitions.mockReturnValue([schedulingDefinition(execute)]);
+    mockFindInboundVoiceLead.mockResolvedValue(LEAD);
+    const query = singleResult({ id: CONVERSATION });
+    mockTenantFrom.mockReturnValue(query);
+    await executeCustomerSupportVoiceTool({
+      toolName: "scheduling", siteId: "site-1", rawPayload: "{}",
+      context: { contactPhone: "+13015550100" },
+      arguments: { action: "update", [field]: CONVERSATION, status: "cancelled", context_id: OTHER_LEAD },
+    });
+    expect(mockTenantFrom).toHaveBeenCalledWith("appointments");
+    expect(query.eq).toHaveBeenCalledWith("id", CONVERSATION);
+    expect(query.eq).toHaveBeenCalledWith("site_id", "site-1");
+    expect(query.eq).toHaveBeenCalledWith("context_id", LEAD);
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({ context_id: LEAD, lead_id: LEAD }));
+  });
+
+  it.each([null, { message: "private database detail" }])("never updates another caller's appointment or proceeds on lookup failure (%p)", async error => {
     const execute = jest.fn();
     mockGetCustomerSupportVoiceToolDefinitions.mockReturnValue([schedulingDefinition(execute)]);
-    const leadQuery = singleResult(null);
+    mockFindInboundVoiceLead.mockResolvedValue(LEAD);
+    const query = singleResult(null);
+    query.maybeSingle.mockResolvedValue({ data: null, error });
+    mockTenantFrom.mockReturnValue(query);
+    await expect(executeCustomerSupportVoiceTool({
+      toolName: "scheduling", siteId: "site-1", rawPayload: "{}",
+      context: { contactPhone: "+13015550100" },
+      arguments: { action: "update", appointment_id: CONVERSATION, status: "cancelled" },
+    })).rejects.toThrow(error ? "Unable to validate Voice appointment scope" : "does not belong to this caller");
+    expect(execute).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects a scheduling context_id without caller binding, even when the lead belongs to the site", async () => {
+    const execute = jest.fn();
+    mockGetCustomerSupportVoiceToolDefinitions.mockReturnValue([schedulingDefinition(execute)]);
+    const leadQuery = singleResult({ id: OTHER_LEAD });
     mockTenantFrom.mockReturnValue(leadQuery);
     await expect(executeCustomerSupportVoiceTool({
       toolName: "scheduling", siteId: "site-1",
       arguments: { action: "list", context_id: OTHER_LEAD }, rawPayload: "{}",
-    })).rejects.toThrow("does not belong to this site");
-    expect(leadQuery.eq).toHaveBeenCalledWith("id", OTHER_LEAD);
-    expect(leadQuery.eq).toHaveBeenCalledWith("site_id", "site-1");
+    })).rejects.toMatchObject({ code: "VOICE_TOOL_INVALID_ARGUMENTS", fields: ["context_id"] });
+    expect(mockTenantFrom).not.toHaveBeenCalled();
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it("accepts the identified lead_id for subsequent scheduling even without caller context", async () => {
+  it.each(["list", "schedule", "update"])("does not authorize scheduling %s from model-selected IDs without a caller lead", async action => {
     const execute = jest.fn().mockResolvedValue({ success: true });
     mockGetCustomerSupportVoiceToolDefinitions.mockReturnValue([schedulingDefinition(execute)]);
     mockTenantFrom.mockReturnValue(singleResult({ id: LEAD }));
-    await executeCustomerSupportVoiceTool({
+    await expect(executeCustomerSupportVoiceTool({
       toolName: "scheduling", siteId: "site-1",
-      arguments: { action: "schedule", lead_id: LEAD }, rawPayload: "{}",
-    });
-    expect(execute).toHaveBeenCalledWith(expect.objectContaining({ lead_id: LEAD, context_id: LEAD }));
+      context: { contactPhone: "+13015550100" },
+      arguments: { action, lead_id: LEAD, context_id: LEAD, appointment_id: CONVERSATION }, rawPayload: "{}",
+    })).rejects.toMatchObject({ code: "VOICE_TOOL_INVALID_ARGUMENTS", fields: ["context_id"] });
+    expect(execute).not.toHaveBeenCalled();
+    expect(mockTenantFrom).not.toHaveBeenCalled();
   });
 
   it("rejects disagreeing scheduling lead aliases instead of prioritizing an arbitrary context_id", async () => {
@@ -346,7 +382,7 @@ describe("executeCustomerSupportVoiceTool", () => {
     await expect(executeCustomerSupportVoiceTool({
       toolName: "scheduling", siteId: "site-1",
       arguments: { action: "schedule", lead_id: LEAD, context_id: OTHER_LEAD }, rawPayload: "{}",
-    })).rejects.toThrow("must identify the same lead");
+    })).rejects.toMatchObject({ code: "VOICE_TOOL_INVALID_ARGUMENTS", fields: ["context_id"] });
     expect(execute).not.toHaveBeenCalled();
   });
 

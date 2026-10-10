@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { z } from 'zod';
 
 type RequirementRunnerScope = {
   id: string;
@@ -8,6 +9,7 @@ type RequirementRunnerScope = {
 
 export type RequirementRunnerHandoff = {
   instanceId?: string;
+  archivedInstanceId?: string;
   skipReason?: string;
 };
 
@@ -15,6 +17,8 @@ export type RequirementRunnerHandoff = {
  * The SQL ownership assertion repeats the action check at tool dispatch.
  * A finished assistant turn may hand its plan to cron on the SAME instance.
  * Silence, a provider timeout, or a paused action never authorizes replacement.
+ * Explicit archival is different: cron may replace it through the leased,
+ * atomic replacement RPC, never by clearing ownership or inserting a fallback.
  */
 export async function inspectRequirementRunnerHandoff(
   requirement: RequirementRunnerScope,
@@ -62,10 +66,55 @@ export async function inspectRequirementRunnerHandoff(
     if (error || typeof data?.allowed !== 'boolean') {
       return { instanceId, skipReason: 'assistant_handoff_unavailable' };
     }
+    if (!data.allowed && data.reason === 'original_instance_archived') {
+      return { instanceId, archivedInstanceId: instanceId };
+    }
     return data.allowed
       ? { instanceId }
       : { instanceId, skipReason: data.reason || 'assistant_handoff_not_confirmed' };
   } catch {
     return { instanceId, skipReason: 'assistant_handoff_unavailable' };
+  }
+}
+
+const replacementReceiptSchema = z.object({
+  state: z.enum(['replaced', 'duplicate']),
+  instance_id: z.string().uuid(),
+  execution_generation: z.number().int().nonnegative(),
+  metadata: z.record(z.any()),
+});
+
+/** Creation, ownership, fencing and plan transfer must commit together in SQL. */
+export async function replaceArchivedRequirementRunner(input: {
+  requirementId: string;
+  runId: string;
+  archivedInstanceId: string;
+  executionGeneration: number;
+}): Promise<{
+  instanceId?: string;
+  metadata?: Record<string, any>;
+  skipReason?: string;
+}> {
+  try {
+    const { data, error } = await supabaseAdmin.rpc('replace_archived_requirement_runner', {
+      p_requirement_id: input.requirementId,
+      p_run_id: input.runId,
+      p_expected_instance_id: input.archivedInstanceId,
+      p_expected_execution_generation: input.executionGeneration,
+    });
+    if (error) return { skipReason: 'archived_runner_replacement_unavailable' };
+    if (data?.state === 'guarded') {
+      return { skipReason: 'archived_runner_replacement_guarded' };
+    }
+    const receipt = replacementReceiptSchema.safeParse(data);
+    if (!receipt.success || receipt.data.instance_id === input.archivedInstanceId ||
+        receipt.data.execution_generation !== input.executionGeneration + 1 ||
+        receipt.data.metadata.runner_instance_id !== receipt.data.instance_id ||
+        receipt.data.metadata.requirement_execution_generation !== receipt.data.execution_generation) {
+      return { skipReason: 'archived_runner_replacement_unconfirmed' };
+    }
+    return { instanceId: receipt.data.instance_id, metadata: receipt.data.metadata };
+  } catch {
+    return { skipReason: 'archived_runner_replacement_unavailable' };
   }
 }

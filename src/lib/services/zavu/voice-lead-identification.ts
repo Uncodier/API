@@ -42,8 +42,11 @@ export type VoiceLeadIdentificationResult = {
   lead_id: string;
   is_new_lead: boolean;
   contact_details_saved: boolean;
+  contact_review_required?: true;
   message?: string;
 };
+
+type ExistingVoiceLead = { lead: LeadIdentity; emailConflict: boolean };
 
 function tenantDatabase() {
   return supabaseAdmin.schema(
@@ -62,7 +65,7 @@ async function findExistingLead(
   siteId: string,
   phone: string,
   email: string
-): Promise<LeadIdentity | undefined> {
+): Promise<ExistingVoiceLead | undefined> {
   const db = tenantDatabase();
   // Separate filters avoid an email OR phone / limit(1) arbitrary identity merge.
   // Escape LIKE metacharacters: a literal '_' or '%' in an email is not a wildcard.
@@ -86,21 +89,26 @@ async function findExistingLead(
   if (phoneCandidates.length > MAX_VOICE_PHONE_CANDIDATES) conflict();
   const phoneMatches = phoneCandidates.filter(lead => matchesVoiceLeadPhone(lead.phone, phone));
   const emailMatches = (emailResult.data || []) as LeadIdentity[];
-  if (phoneMatches.length > 1 || emailMatches.length > 1) conflict();
+  if (phoneMatches.length > 1) conflict();
   const phoneLead = phoneMatches[0];
-  const emailLead = emailMatches[0];
 
   // Email is caller-supplied, not proof of ownership. It cannot bind a different
   // phone's (or an email-only) profile to this caller, even with consent.
-  if (emailLead && (!phoneLead || emailLead.id !== phoneLead.id)) conflict();
-  if (!phoneLead) return undefined;
+  if (!phoneLead) {
+    if (emailMatches.length) conflict();
+    return undefined;
+  }
   if (
     phoneLead.site_id !== siteId
     || !matchesVoiceLeadPhone(phoneLead.phone, phone)
     || !z.string().uuid().safeParse(phoneLead.id).success
-    || (phoneLead.email?.trim() && phoneLead.email.trim().toLowerCase() !== email)
+    || (contactEmail(phoneLead) && contactEmail(phoneLead) !== email)
   ) conflict();
-  return phoneLead;
+  const emailConflict = emailMatches.some(lead => lead.id !== phoneLead.id);
+  // A provisional call contact can record declared attributes without claiming
+  // the email owner's identity. Keep this exception stable on subsequent calls.
+  if (emailConflict && !isProvisionalLead(phoneLead) && !isCompletedProvisionalLead(phoneLead)) conflict();
+  return { lead: phoneLead, emailConflict };
 }
 
 function identificationMetadata(callbackPhone?: string) {
@@ -129,32 +137,101 @@ function isProvisionalLead(lead: LeadIdentity): boolean {
     && lead.metadata?.voice_identification == null;
 }
 
+function isCompletedProvisionalLead(lead: LeadIdentity): boolean {
+  const inbound = lead.metadata?.voice_inbound;
+  const identification = lead.metadata?.voice_identification;
+  return lead.id === uuidv5(`zavu-voice-lead:${lead.site_id}:${lead.phone}`, uuidv5.URL)
+    && lead.origin === "voice"
+    && inbound?.source === "zavu_webhook"
+    && inbound.identity_status === "unverified"
+    && inbound.phone_source === "provider_call"
+    && identification?.completed_from_provisional === true
+    && identification.identity_status === "caller_confirmed"
+    && identification.consent === true;
+}
+
+function duplicateReviewMetadata() {
+  // Internal review flag only; never expose the matching profile's ID or data.
+  return { status: "pending", reason: "email_matches_another_lead", detected_at: new Date().toISOString() };
+}
+
+function hasPendingDuplicateReview(lead: LeadIdentity): boolean {
+  const identification = lead.metadata?.voice_identification;
+  const review = identification?.duplicate_review;
+  return isCompletedProvisionalLead(lead)
+    && lead.email === null
+    && normalizeVoiceIdentityEmail(identification?.declared_email) !== undefined
+    && review?.status === "pending" && review.reason === "email_matches_another_lead";
+}
+
+function contactEmail(lead: LeadIdentity): string | undefined {
+  const email = lead.email?.trim().toLowerCase();
+  if (email) return email;
+  // Quarantine conflicting declared addresses from email-based authentication,
+  // inbound message routing and canonical CRM matching. Only our completion
+  // provenance and pending review may supply this contact-only attribute.
+  const declared = lead.metadata?.voice_identification?.declared_email;
+  return hasPendingDuplicateReview(lead) && typeof declared === "string"
+    ? normalizeVoiceIdentityEmail(declared) : undefined;
+}
+
 function existingResult(lead: LeadIdentity, identity: ConfirmedIdentity): VoiceLeadIdentificationResult {
-  const saved = lead.email?.trim().toLowerCase() === identity.email
+  const saved = contactEmail(lead) === identity.email
     && lead.name === identity.name
     && (!identity.company || lead.company?.name === identity.company)
     && (!identity.callback_phone || lead.metadata?.voice_identification?.callback_phone === identity.callback_phone);
   return {
     success: true, lead_id: lead.id, is_new_lead: false, contact_details_saved: saved,
-    ...(!saved ? {
+    ...(hasPendingDuplicateReview(lead) ? { contact_review_required: true as const } : {}),
+    ...(saved && hasPendingDuplicateReview(lead) ? {
+      message: "Contact details saved for this caller. Internal review is pending; continue booking a new appointment using only this lead_id. No profiles were merged and no other profile's history or appointments are authorized.",
+    } : !saved ? {
       message: "Caller matched, but existing contact details were not changed. Do not claim the new details were saved; request human assistance to update this profile.",
     } : {}),
   };
 }
 
+async function finishExistingMatch(match: ExistingVoiceLead, identity: ConfirmedIdentity): Promise<VoiceLeadIdentificationResult> {
+  const { lead, emailConflict } = match;
+  if (!emailConflict || hasPendingDuplicateReview(lead)) return existingResult(lead, identity);
+  if (!isCompletedProvisionalLead(lead)) conflict();
+
+  // A duplicate may appear between lookup and completion (or on a later call).
+  // Mark only this contact, comparing its snapshot; never repair another row.
+  let update = tenantDatabase().from("leads").update({
+    email: null,
+    metadata: { ...lead.metadata, voice_identification: {
+      ...lead.metadata!.voice_identification, declared_email: identity.email, duplicate_review: duplicateReviewMetadata(),
+    } },
+  }).eq("id", lead.id).eq("site_id", lead.site_id).eq("phone", lead.phone)
+    .eq("origin", "voice").eq("name", lead.name)
+    .eq("metadata", JSON.stringify(lead.metadata));
+  update = lead.email === null ? update.is("email", null) : update.eq("email", lead.email);
+  const { error } = await update.select("id").maybeSingle();
+  if (error) throw new Error("Unable to save Voice contact review status");
+  const winner = await findExistingLead(lead.site_id, lead.phone!, identity.email);
+  if (winner?.lead.id === lead.id && hasPendingDuplicateReview(winner.lead)
+    && contactEmail(winner.lead) === identity.email) return existingResult(winner.lead, identity);
+  throw new Error("Voice contact changed during confirmation; retry with the same confirmed details");
+}
+
 async function completeProvisionalLead(
-  lead: LeadIdentity,
+  match: ExistingVoiceLead,
   identity: ConfirmedIdentity
 ): Promise<VoiceLeadIdentificationResult> {
-  if (!isProvisionalLead(lead)) return existingResult(lead, identity);
+  const { lead, emailConflict } = match;
+  if (!isProvisionalLead(lead)) return finishExistingMatch(match, identity);
 
   // Only upgrade our own empty webhook placeholder. Compare the complete
   // metadata snapshot so concurrent changes and opt-outs are never overwritten.
   let update = tenantDatabase().from("leads").update({
     name: identity.name,
-    email: identity.email,
+    email: emailConflict ? null : identity.email,
     ...(identity.company ? { company: { name: identity.company } } : {}),
-    metadata: { ...lead.metadata, voice_identification: identificationMetadata(identity.callback_phone) },
+    metadata: { ...lead.metadata, voice_identification: {
+      ...identificationMetadata(identity.callback_phone), completed_from_provisional: true,
+      ...(emailConflict ? { declared_email: identity.email, duplicate_review: duplicateReviewMetadata() } : {}),
+    } },
   }).eq("id", lead.id).eq("site_id", lead.site_id).eq("phone", lead.phone)
     .eq("origin", "voice").eq("name", lead.name).is("email", null)
     .eq("metadata", JSON.stringify(lead.metadata));
@@ -165,7 +242,7 @@ async function completeProvisionalLead(
   // Check both the saved details and identity conflicts again before success,
   // including a simultaneous winner. This is not a cross-row uniqueness lock.
   const winner = await findExistingLead(lead.site_id, lead.phone!, identity.email);
-  if (winner?.id === lead.id && !isProvisionalLead(winner)) return existingResult(winner, identity);
+  if (winner?.lead.id === lead.id && !isProvisionalLead(winner.lead)) return finishExistingMatch(winner, identity);
   throw new Error("Voice contact changed during confirmation; retry with the same confirmed details");
 }
 

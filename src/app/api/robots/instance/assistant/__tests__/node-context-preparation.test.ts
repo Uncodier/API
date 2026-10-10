@@ -65,6 +65,19 @@ beforeEach(() => {
 });
 afterEach(() => jest.restoreAllMocks());
 
+it('rejects direct workflow preparation on an archived instance before exposing tools or history', async () => {
+  (supabaseAdmin.from as jest.Mock).mockImplementation(() => {
+    const query: any = {};
+    for (const method of ['select', 'eq']) query[method] = jest.fn(() => query);
+    query.single = jest.fn(async () => ({ data: { id: INSTANCE, site_id: SITE, is_archived: true }, error: null }));
+    return query;
+  });
+  await expect(prepare()).rejects.toThrow('instance_archived');
+  expect(buildHistory).not.toHaveBeenCalled();
+  expect(getInstanceAssistantTools).not.toHaveBeenCalled();
+  expect(InstanceAssetsService.getAssetsContext).not.toHaveBeenCalled();
+});
+
 it.each([
   { nodeType: 'publish', publish_destinations: ['tiktok'] },
   { nodeType: 'audience', mediaType: 'audience' },

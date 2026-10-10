@@ -40,15 +40,57 @@ email, empty company (null or the live schema's default `{}`), and original
 unverified webhook metadata must all match. Updates
 are scoped to the site and calling number and compare the existing name, null
 fields, and complete metadata snapshot before writing. Concurrent changes are
-re-read or reported, never overwritten. Existing email/phone conflicts still
-fail closed. Status, do-not-call settings, and outbound-call permissions remain
+re-read or reported, never overwritten. Established-profile conflicts and
+ambiguous caller-phone matches still fail closed. Status, do-not-call settings, and outbound-call permissions remain
 unchanged. Caller-confirmed details are not verified identity.
 
 The update compares one row atomically and rechecks identity conflicts before
 reporting success. As with the existing creation path, these application-level
 checks are not a database-wide email uniqueness guarantee across independent
-writers. Ambiguous profiles require human review; no automatic merge or global
+writers. Ambiguous caller-phone profiles require human review; no automatic merge or global
 uniqueness migration is introduced here.
+
+### Nonblocking email-duplicate review
+
+An email already present on a different same-site profile must not prevent an
+otherwise valid empty provisional call contact from requesting a new demo.
+After explicit consent and read-back confirmation, only the provisional contact
+is completed. The existing email owner's profile is never selected, overwritten,
+merged or linked to the call. No third contact is inserted.
+
+- `metadata.voice_identification.completed_from_provisional=true` records the
+  server-controlled provenance of the completion; it is never accepted from
+  tool arguments.
+- A collision sets `metadata.voice_identification.duplicate_review` to
+  `{ status: "pending", reason: "email_matches_another_lead", detected_at: <ISO timestamp> }`.
+  This internal flag contains no matching profile IDs or personal details. It
+  records pending review, not an automatic merge or a human notification.
+- The confirmed conflicting email is stored as
+  `metadata.voice_identification.declared_email`, leaving `leads.email=null`.
+  This keeps email-based authentication, inbound message routing, and other CRM
+  matching from selecting the provisional caller as the existing email owner.
+  Matching on subsequent Voice calls uses the trusted calling number and the
+  quarantined declared email; the email alone never authorizes a profile.
+- The result returns `contact_details_saved=true`, `contact_review_required=true`
+  and only this caller's `lead_id`. The Voice agent continues booking rather
+  than escalating solely because of this internal review flag.
+- Identical retries and concurrent confirmations reuse this contact and preserve
+  its stored consent/review timestamps. A later collision can flag a contact
+  completed by this path without changing its declared attributes. New email
+  conflicts on established profiles still fail closed.
+- Appointment lists remain scoped to this caller's lead, not all profiles sharing
+  the email. Voice updates/cancellations validate the appointment's site and
+  `context_id` against this caller before invoking the scheduling endpoint.
+  Missing caller-to-lead binding cannot fall back to model-supplied same-site IDs.
+- The canonical email remains blank until operator resolution. Existing automatic
+  email delivery paths that read only `leads.email` will not send confirmations to
+  this declared address. The new appointment can still be saved and confirmed by
+  voice. This change does not impose or remove database uniqueness constraints.
+
+These rules address the October 8 failure at contact identification, before the
+appointment tool was called. They do not backfill that call or create a historic
+appointment. The pending flag currently requires operator review; no review UI
+or background reconciliation process is added here.
 
 ## Activation
 

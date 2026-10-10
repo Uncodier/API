@@ -66,6 +66,9 @@ export async function prepareAssistantContext(
   if (instanceError || !instance) {
     throw new Error(`Instance not found: ${instanceId}`);
   }
+  if (instance.is_archived === true) {
+    throw new Error('instance_archived');
+  }
 
   // Log execution start
   console.log(`[Workflow] Starting assistant execution for instance: ${instanceId}`);

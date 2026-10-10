@@ -156,6 +156,14 @@ async function scopeToolArguments(params: {
   let leadId = usesLead || usesConversation
     ? await resolveLeadId(params.siteId, phone)
     : undefined;
+  if (usesLeadContext && !leadId) {
+    // A supplied same-site UUID is not evidence of caller ownership. Missing
+    // trusted caller context must never fall back to a model-selected profile.
+    throw new VoiceToolArgumentValidationError([{
+      field: "context_id",
+      requirement: "a trusted calling number linked to this caller is required; identify the caller first or retry when call context is available.",
+    }]);
+  }
   if (!leadId && usesLead) {
     leadId = await requireSiteRecord(
       "leads",
@@ -176,6 +184,22 @@ async function scopeToolArguments(params: {
       field: "context_id",
       requirement: "identify the caller with IDENTIFY_LEAD first, then use its returned lead_id. Availability can be checked without identity.",
     }]);
+  }
+  if (params.tool.name === "scheduling" && next.action === "update") {
+    // Knowing an appointment ID (or another lead's email) is not authorization.
+    // Scope edits/cancellations to the caller, independently of model guidance.
+    const appointmentId = next.appointment_id || next.id;
+    if (!leadId || !z.string().uuid().safeParse(appointmentId).success) {
+      throw new VoiceToolArgumentValidationError([{
+        field: "appointment_id",
+        requirement: "use an appointment UUID returned by this caller's appointment list; identify the caller first.",
+      }]);
+    }
+    const { data: appointment, error } = await tenantDatabase().from("appointments")
+      .select("id").eq("id", appointmentId).eq("site_id", params.siteId)
+      .eq("context_id", leadId).maybeSingle();
+    if (error) throw new Error("Unable to validate Voice appointment scope");
+    if (!appointment) throw new Error("Voice appointment does not belong to this caller");
   }
   // All conversation-aware tools use the verified live call, never whichever
   // chat/email conversation happened to be updated most recently for this lead.

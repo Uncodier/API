@@ -36,7 +36,7 @@ export function getCustomerSupportVoiceToolDefinitions(
     return {
       ...tool,
       description:
-        "Identify the caller after explicit contact-storage consent. Confirm name and email first. Returns lead_id for scheduling and contact_details_saved; never claim details were saved when false. No visitor ID required.",
+        "Identify the caller after explicit contact-storage consent. Confirm name and email first. Returns lead_id for scheduling and contact_details_saved; never claim details were saved when false. If contact_review_required=true with saved details, continue booking for this lead; review is internal, not a booking failure or permission to use another profile. No visitor ID required.",
       parameters: {
         type: "object",
         properties: {

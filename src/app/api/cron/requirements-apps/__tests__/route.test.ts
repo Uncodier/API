@@ -7,9 +7,11 @@ const mockBlockRequirementForProductAttemptBudget =
 const mockResumeRequirementExecution = jest.fn(async () => undefined);
 const mockRpc: any = jest.fn();
 const mockInspectHandoff: any = jest.fn();
+const mockReplaceArchivedRunner: any = jest.fn();
 
 jest.mock('@/lib/services/requirement-runner-handoff', () => ({
   inspectRequirementRunnerHandoff: mockInspectHandoff,
+  replaceArchivedRequirementRunner: mockReplaceArchivedRunner,
 }));
 
 // Mocks
@@ -106,6 +108,7 @@ describe('Cron Requirements Apps Route', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockReplaceArchivedRunner.mockReset();
     mockInspectHandoff.mockImplementation(async (requirement: any, resolvedInstanceId?: string) => ({
       instanceId: resolvedInstanceId || requirement.metadata?.runner_instance_id,
     }));
@@ -287,7 +290,8 @@ describe('Cron Requirements Apps Route', () => {
     expect(mockResumeRequirementExecution).not.toHaveBeenCalled();
   });
 
-  it('does not create or start a runner while the originating assistant is working', async () => {
+  it.each(['assistant_action_not_finished', 'original_assistant_action_not_finished'])
+  ('does not prepare or start a runner while the originating assistant is working: %s', async skipReason => {
     const requirement = {
       id: 'req-original', site_id: 'site-1', status: 'backlog',
       metadata: { runner_instance_id: 'original', assistant_origin_instance_id: 'original' },
@@ -295,13 +299,148 @@ describe('Cron Requirements Apps Route', () => {
     mockClaimBatches([[{ state: 'claimed', requirement, run_id: 'lock-original', expires_at: '2099-01-01' }]]);
     const values = [[], requirement];
     mockSupabase.then = jest.fn((resolve: any) => resolve({ data: values.shift(), error: null }));
-    mockInspectHandoff.mockResolvedValue({ instanceId: 'original', skipReason: 'assistant_action_not_finished' });
+    mockInspectHandoff.mockResolvedValue({ instanceId: 'original', skipReason });
     const response = await GET(new Request('http://localhost', { headers: { authorization: 'Bearer test-secret' } }));
-    expect((await response.json()).results).toContainEqual({ reqId: 'req-original', skipped: true, reason: 'assistant_action_not_finished' });
+    expect((await response.json()).results).toContainEqual({ reqId: 'req-original', skipped: true, reason: skipReason });
     expect(mockSupabase.insert).not.toHaveBeenCalled();
     expect(mockSupabase.update).not.toHaveBeenCalled();
     expect(start).not.toHaveBeenCalled();
+    expect(mockReplaceArchivedRunner).not.toHaveBeenCalled();
     expect(releaseRunLock).toHaveBeenCalledWith('req-original', 'lock-original');
+  });
+
+  function archivedRequirement() {
+    const requirement = {
+      id: 'req-archived', site_id: 'site-1', user_id: 'user-1', status: 'in-progress',
+      title: 'Continue existing app', instructions: 'Preserve accepted work', type: 'app',
+      backlog: { items: [{ id: 'base', status: 'in_progress' }] }, cron: null,
+      metadata: { runner_instance_id: 'archived', assistant_origin_instance_id: 'archived', requirement_execution_generation: 6 },
+    };
+    mockClaimBatches([[{ state: 'claimed', requirement, run_id: 'lease-archived', expires_at: '2099-01-01' }]]);
+    mockInspectHandoff.mockImplementation(async (_req: any, resolved?: string) => resolved
+      ? { instanceId: resolved } : { instanceId: 'archived', archivedInstanceId: 'archived' });
+    (backlogService.isBacklogComplete as jest.Mock).mockReturnValue(false);
+    (backlogService.hasOutstandingWork as jest.Mock).mockReturnValue(true);
+    return requirement;
+  }
+
+  it('reassigns an archived owner atomically before dispatch and uses the new generation', async () => {
+    const requirement = archivedRequirement();
+    const metadata = { ...requirement.metadata, runner_instance_id: 'replacement', requirement_execution_generation: 7 };
+    mockReplaceArchivedRunner.mockResolvedValue({ instanceId: 'replacement', metadata });
+    (patchRequirementMetadataKeys as any).mockResolvedValueOnce(metadata);
+    const values = [[], requirement, { status: 'pending', is_archived: false },
+      { id: 'existing-plan', status: 'in_progress' }, [], null, null, null];
+    mockSupabase.then = jest.fn((resolve: any) => resolve({ data: values.shift(), error: null }));
+    const response = await GET(new Request('http://localhost', { headers: { authorization: 'Bearer test-secret' } }));
+    expect((await response.json()).results).toContainEqual(expect.objectContaining({ reqId: requirement.id, started: true }));
+    expect(mockReplaceArchivedRunner).toHaveBeenCalledWith({
+      requirementId: requirement.id, runId: 'lease-archived', archivedInstanceId: 'archived', executionGeneration: 6,
+    });
+    expect(mockSupabase.insert).not.toHaveBeenCalled();
+    expect(start).toHaveBeenCalledWith(expect.anything(), [expect.objectContaining({ instanceId: 'replacement', executionGeneration: 7 })]);
+    expect(assertCronExecutionOwnership).toHaveBeenCalledWith(expect.objectContaining({ executionGeneration: 7 }));
+  });
+
+  it('reuses a non-archived owner without replacing it or changing its generation', async () => {
+    const requirement = archivedRequirement();
+    requirement.metadata.runner_instance_id = 'active-owner';
+    requirement.metadata.assistant_origin_instance_id = 'active-owner';
+    mockInspectHandoff.mockResolvedValue({ instanceId: 'active-owner' });
+    const values = [[], requirement, { status: 'running', is_archived: false }, null, [], null, null, null];
+    mockSupabase.then = jest.fn((resolve: any) => resolve({ data: values.shift(), error: null }));
+    const response = await GET(new Request('http://localhost', { headers: { authorization: 'Bearer test-secret' } }));
+    expect((await response.json()).results).toContainEqual(expect.objectContaining({ reqId: requirement.id, started: true }));
+    expect(mockReplaceArchivedRunner).not.toHaveBeenCalled();
+    expect(mockSupabase.insert).not.toHaveBeenCalled();
+    expect(start).toHaveBeenCalledWith(expect.anything(), [expect.objectContaining({ instanceId: 'active-owner', executionGeneration: 6 })]);
+  });
+
+  it('uses the atomic replacement path for an archived canonical runner discovered without owner metadata', async () => {
+    const requirement = archivedRequirement();
+    requirement.metadata = { requirement_execution_generation: 6 } as any;
+    const metadata = { runner_instance_id: 'replacement', requirement_execution_generation: 7 };
+    mockInspectHandoff.mockImplementation(async (_req: any, resolved?: string) => !resolved ? {}
+      : resolved === 'archived' ? { instanceId: resolved, archivedInstanceId: resolved } : { instanceId: resolved });
+    mockReplaceArchivedRunner.mockResolvedValue({ instanceId: 'replacement', metadata });
+    const values = [[], requirement, [{ id: 'archived', instance_type: 'browser', is_archived: true }],
+      { status: 'running', is_archived: false }, null, [], null, null, null];
+    mockSupabase.then = jest.fn((resolve: any) => resolve({ data: values.shift(), error: null }));
+    const response = await GET(new Request('http://localhost', { headers: { authorization: 'Bearer test-secret' } }));
+    expect((await response.json()).results).toContainEqual(expect.objectContaining({ reqId: requirement.id, started: true }));
+    expect(mockReplaceArchivedRunner).toHaveBeenCalledWith({ requirementId: requirement.id, runId: 'lease-archived',
+      archivedInstanceId: 'archived', executionGeneration: 6 });
+    expect(mockSupabase.insert).not.toHaveBeenCalled();
+    expect(start).toHaveBeenCalledWith(expect.anything(), [expect.objectContaining({ instanceId: 'replacement', executionGeneration: 7 })]);
+  });
+
+  it('does not unpause a plan transferred from an archived owner', async () => {
+    const requirement = archivedRequirement();
+    mockReplaceArchivedRunner.mockResolvedValue({ instanceId: 'replacement', metadata: { ...requirement.metadata,
+      runner_instance_id: 'replacement', requirement_execution_generation: 7 } });
+    const values = [[], requirement, { status: 'pending', is_archived: false }, { id: 'paused-plan', status: 'paused' }];
+    mockSupabase.then = jest.fn((resolve: any) => resolve({ data: values.shift(), error: null }));
+    const response = await GET(new Request('http://localhost', { headers: { authorization: 'Bearer test-secret' } }));
+    expect((await response.json()).results).toContainEqual({ reqId: requirement.id, skipped: true, reason: 'paused' });
+    expect(start).not.toHaveBeenCalled();
+    expect(mockSupabase.update).not.toHaveBeenCalled();
+  });
+
+  it.each(['archived_runner_replacement_guarded', 'archived_runner_replacement_unavailable'])
+  ('does not fall back to insertion or dispatch on %s', async skipReason => {
+    const requirement = archivedRequirement();
+    mockReplaceArchivedRunner.mockResolvedValue({ skipReason });
+    const values = [[], requirement];
+    mockSupabase.then = jest.fn((resolve: any) => resolve({ data: values.shift(), error: null }));
+    const response = await GET(new Request('http://localhost', { headers: { authorization: 'Bearer test-secret' } }));
+    expect((await response.json()).results).toContainEqual({ reqId: requirement.id, skipped: true, reason: skipReason });
+    expect(mockSupabase.insert).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
+    expect(releaseRunLock).toHaveBeenCalledWith(requirement.id, 'lease-archived');
+  });
+
+  it('does not dispatch a replacement that was archived again after reassignment', async () => {
+    const requirement = archivedRequirement();
+    mockReplaceArchivedRunner.mockResolvedValue({ instanceId: 'replacement', metadata: { ...requirement.metadata,
+      runner_instance_id: 'replacement', requirement_execution_generation: 7 } });
+    const values = [[], requirement, { status: 'pending', is_archived: true }, null];
+    mockSupabase.then = jest.fn((resolve: any) => resolve({ data: values.shift(), error: null }));
+    const response = await GET(new Request('http://localhost', { headers: { authorization: 'Bearer test-secret' } }));
+    expect((await response.json()).results).toContainEqual({ reqId: requirement.id, skipped: true, reason: 'original_instance_archived' });
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])('only ignores recent foreign activity when its instance is explicitly archived=%s', async archived => {
+    const requirement = archivedRequirement();
+    const metadata = { ...requirement.metadata, runner_instance_id: 'replacement', requirement_execution_generation: 7 };
+    mockReplaceArchivedRunner.mockResolvedValue({ instanceId: 'replacement', metadata });
+    (patchRequirementMetadataKeys as any).mockResolvedValueOnce(metadata);
+    const values = [[], requirement, { status: 'running', is_archived: false }, null,
+      [{ instance_id: 'archived', created_at: new Date().toISOString() }],
+      [{ id: 'archived', is_archived: archived }], null, null, null];
+    mockSupabase.then = jest.fn((resolve: any) => resolve({ data: values.shift(), error: null }));
+    const response = await GET(new Request('http://localhost', { headers: { authorization: 'Bearer test-secret' } }));
+    const result = await response.json();
+    if (archived) {
+      expect(result.results).toContainEqual(expect.objectContaining({ reqId: requirement.id, started: true }));
+      expect(start).toHaveBeenCalledTimes(1);
+    } else {
+      expect(result.results).toContainEqual({ reqId: requirement.id, skipped: true, reason: 'foreign_agent_active' });
+      expect(start).not.toHaveBeenCalled();
+    }
+  });
+
+  it('defers when a full page of archived activity could hide a competing live instance', async () => {
+    const requirement = archivedRequirement();
+    mockReplaceArchivedRunner.mockResolvedValue({ instanceId: 'replacement', metadata: { ...requirement.metadata,
+      runner_instance_id: 'replacement', requirement_execution_generation: 7 } });
+    const values = [[], requirement, { status: 'running', is_archived: false }, null,
+      Array.from({ length: 10 }, () => ({ instance_id: 'archived', created_at: new Date().toISOString() })),
+      [{ id: 'archived', is_archived: true }]];
+    mockSupabase.then = jest.fn((resolve: any) => resolve({ data: values.shift(), error: null }));
+    const response = await GET(new Request('http://localhost', { headers: { authorization: 'Bearer test-secret' } }));
+    expect((await response.json()).results).toContainEqual({ reqId: requirement.id, skipped: true, reason: 'foreign_activity_unavailable' });
+    expect(start).not.toHaveBeenCalled();
   });
   
   it('reverts on-review requirement to in-progress if there is outstanding work', async () => {

@@ -110,6 +110,7 @@ export function buildVoiceRuntimePrompt(
           "- Email: arroba/at -> @; punto/dot -> .; spelled m e -> me. Read back the full address and get confirmation; never guess. Send canonical text.",
           "- Omit unknown/null/blank phone/company; use callback_phone with a confirmed country code for alternate numbers, never identity. Don't request optional details just to fix validation.",
           "- On invalid_fields, fix only those fields; never retry unchanged input or blame email for other errors. Offer human help if unclear. If contact_details_saved=false, never claim details were saved.",
+          "- If contact_details_saved=true and contact_review_required=true, continue booking for returned lead_id; review is internal, not failure. Never access another profile's history or appointments.",
         ]
       : []),
     ...(enabledTools.some((tool) => tool.name === "CONTACT_HUMAN")

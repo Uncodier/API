@@ -247,6 +247,73 @@ describe("live inbound call through signed POST, real identity/executor/catalog 
     expect(transport).toHaveBeenCalledTimes(1);
   });
 
+  it("continues booking the provisional caller after an email collision without exposing or editing the old profile", async () => {
+    await initiate();
+    const caller = state.tables.leads[0];
+    caller.do_not_call = true;
+    const oldLead = { id: randomUUID(), site_id: SITE, phone: null, email: identity.email,
+      name: "Old established profile", metadata: { private_history: "Do not disclose" } };
+    state.tables.leads.push(structuredClone(oldLead));
+    state.tables.appointments = [{ id: randomUUID(), site_id: SITE, context_id: oldLead.id,
+      title: "Private historical appointment", status: "confirmed", start_datetime: "2026-01-01T14:00:00Z" }];
+    const oldAppointment = structuredClone(state.tables.appointments[0]);
+    const identified = await POST(request("IDENTIFY_LEAD", identity));
+    expect(identified.status).toBe(200);
+    const body = await identified.json();
+    expect(body).toMatchObject({ lead_id: caller.id, contact_details_saved: true, contact_review_required: true });
+    for (const privateValue of [oldLead.id, oldLead.name, oldLead.metadata.private_history]) {
+      expect(JSON.stringify(body)).not.toContain(privateValue);
+    }
+    expect(caller).toMatchObject({ phone: PHONE, email: null, name: identity.name, do_not_call: true,
+      voice_call_consent_status: "unknown", metadata: { voice_identification: {
+        completed_from_provisional: true, identity_status: "caller_confirmed", declared_email: identity.email, duplicate_review: { status: "pending" },
+      } } });
+    const saved = structuredClone(state.tables.leads);
+    const retry = await POST(request("IDENTIFY_LEAD", identity));
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toEqual(body);
+    expect(state.operations.filter(op => op.table === "leads" && op.kind === "update")).toHaveLength(1);
+
+    const actions: string[] = [];
+    transport.mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
+      expect(String(input)).toBe("https://backend.example.test/api/agents/tools/scheduling/schedule");
+      const args = JSON.parse(String(init?.body));
+      expect(args.context_id).toBe(caller.id);
+      actions.push(args.action);
+      if (args.action === "list") {
+        return json({ success: true, appointments: state.tables.appointments.filter(row =>
+          row.site_id === args.site_id && row.context_id === args.context_id) });
+      }
+      expect(args).toMatchObject({ action: "schedule", site_id: SITE, lead_id: caller.id });
+      const appointment = { id: randomUUID(), context_id: args.context_id, site_id: args.site_id,
+        title: args.title, start_datetime: args.start_datetime, status: "confirmed" };
+      state.tables.appointments.push(appointment);
+      return json({ success: true, appointment_id: appointment.id });
+    });
+    const listed = await POST(request("scheduling", { action: "list", lead_id: oldLead.id, context_id: oldLead.id }));
+    expect(listed.status).toBe(200);
+    expect(await listed.json()).toMatchObject({ appointments: [] });
+    const scheduled = await POST(request("scheduling", { ...booking, lead_id: oldLead.id, context_id: oldLead.id }));
+    expect(scheduled.status).toBe(200);
+    expect(await scheduled.json()).toMatchObject({ success: true, appointment_id: state.tables.appointments[1].id });
+    expect(actions).toEqual(["list", "schedule"]);
+
+    const callCount = transport.mock.calls.length;
+    for (const alias of ["appointment_id", "id"]) {
+      const rejected = await POST(request("scheduling", { action: "update", [alias]: oldAppointment.id,
+        status: "cancelled", lead_id: oldLead.id }));
+      expect(rejected.status).toBe(422);
+      expect(await rejected.json()).toMatchObject({ code: "TOOL_EXECUTION_FAILED" });
+    }
+    expect(transport).toHaveBeenCalledTimes(callCount);
+    expect(state.tables.appointments[0]).toEqual(oldAppointment);
+    expect(state.tables.leads).toEqual(saved);
+    expect(state.tables.leads).toHaveLength(2);
+    expect(state.tables.conversations[0].lead_id).toBe(caller.id);
+    expect(state.tables.voice_call_deliveries[0].lead_id).toBe(caller.id);
+    expect(state.tables.messages.every(row => row.lead_id === caller.id)).toBe(true);
+  });
+
   it("fails closed for multiple active calls and rejects extra model-controlled delivery scope", async () => {
     const delivery = await initiate();
     const badScope = await POST(request("CONTACT_HUMAN", { ...assistance, voice_call_delivery_id: randomUUID() }));

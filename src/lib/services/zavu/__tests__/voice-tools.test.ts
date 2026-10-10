@@ -210,6 +210,8 @@ describe("syncVoiceTools", () => {
     expect(prompt).toContain("On invalid_fields, fix only those fields; never retry unchanged input");
     expect(prompt).toContain("callback_phone with a confirmed country code");
     expect(prompt).toContain("contact_details_saved=false");
+    expect(prompt).toContain("contact_review_required=true");
+    expect(prompt).toContain("review is internal, not failure");
     expect(prompt.length).toBeLessThan(5_600);
     expect(buildVoiceRuntimePrompt({ language: "auto" }).length).toBeLessThan(5_600);
   });
