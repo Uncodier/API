@@ -91,6 +91,7 @@ import { shouldHoldNoProgressBlock } from '../shared/no-progress-adjudication';
 import { cycleFailureReason, recoveryAfterUnhandledError, type CycleRecoveryDisposition } from '../shared/cycle-recovery-policy';
 import { boundedFailureDetail, cronOwnershipRejectionReason } from '../shared/cron-ownership-rejection';
 import type { DatabaseMigrationOutcome } from '../shared/database-migration-outcome';
+import { isReportOnlyRequirement } from './report-delivery-policy';
 
 export interface CronAppsWorkflowInput {
   reqId: string;
@@ -155,6 +156,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   let terminalProductHalt = false;
   let workflowErrorInFlight = false;
   let creditExhausted = false;
+  let reportOnlyRequirement = false;
   const requirementKind = classifyRequirementType(type);
   const requirementFlow = getFlow(requirementKind);
   const gitRepoKind: GitRepoKind =
@@ -637,6 +639,12 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     reqId,
   );
   latestPlanSteps = activePlan?.steps;
+  // Re-read after orchestration: the initial backlog may predate newly planned work.
+  const deliveryContext = requirementKind === 'task' || requirementKind === 'makinari'
+    ? await getRequirementFullContextStep(reqId, instanceId, site_id, user_id)
+    : reqContext;
+  reportOnlyRequirement = isReportOnlyRequirement({ flow: requirementKind, instructions,
+    items: deliveryContext.backlog?.items, steps: activePlan?.steps });
 
 
   let smokeError: string | null = null;
@@ -1248,7 +1256,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
         }
       }
 
-      if (planCompleted && finalPlan) {
+      if (!reportOnlyRequirement && planCompleted && finalPlan) {
         const syncResult = await syncCompletedPlanBacklogStep({
           requirementId: reqId,
           plan: finalPlan,
@@ -1284,7 +1292,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       const reqContextAfter = await getRequirementFullContextStep(reqId, instanceId, site_id, user_id);
       const trulyDone = isBacklogComplete(reqContextAfter.backlog?.items || []) && !hasOutstandingWork(reqContextAfter.backlog?.items || []);
       // App/site completion must wait for the authoritative receipt backstop.
-      if (trulyDone && !requirementFlow.delivery.apply_database_migrations) {
+      if (!reportOnlyRequirement && trulyDone && !requirementFlow.delivery.apply_database_migrations) {
          console.log(`[CronAppsWorkflow] Plan completed and all backlog is done. Fast-tracking requirement to on-review.`);
            try {
              const { supabaseAdmin } = await import('@/lib/database/supabase-client');
@@ -1335,7 +1343,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
         // Delivery stays denied until the normal implementation/verification passes.
       }
     }
-    if (executionPhaseCompleted && !terminalProductHalt && databaseMigrations?.status !== 'failed' && shouldPersistCycleWorkspace({
+    if (!reportOnlyRequirement && executionPhaseCompleted && !terminalProductHalt && databaseMigrations?.status !== 'failed' && shouldPersistCycleWorkspace({
       infrastructureHalt,
       persistWorkspaceOnInfrastructureHalt,
     })) {
@@ -1383,6 +1391,16 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       previewUrl: null,
       status: cycleOutcome,
     };
+  }
+
+  if (reportOnlyRequirement) {
+    await assertCronExecutionOwnershipStep({ requirementId: reqId, runId: cronLockRunId, executionGeneration });
+    // Reports have canonical evidence, not a source archive. No fabricated push,
+    // delivery URL or completion: semantic verification remains a platform gap.
+    planCompleted = false;
+    recoveryDisposition ||= 'retry';
+    wrapUpReason ||= 'Report work remains in progress. No repository delivery was requested; captured report/source evidence still requires independent verification.';
+    return { reqId, branch: null, previewUrl: null, status: 'in-progress' as const };
   }
 
   if (
@@ -1724,7 +1742,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
           title,
           instructions,
           digest,
-          planCompleted,
+          planCompleted: reportOnlyRequirement ? false : planCompleted,
           pendingPlanSteps: countPendingPlanSteps(latestPlanSteps),
           hasRunnableBacklogWork: hasRunnableBacklog,
           previewUrl,

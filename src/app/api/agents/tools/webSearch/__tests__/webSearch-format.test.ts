@@ -1,7 +1,7 @@
 import { formatWebSearchPayload } from '../webSearch-format';
 
 describe('formatWebSearchPayload', () => {
-  it('keeps the Tavily answer but always lists title + url', () => {
+  it('keeps the search answer but always lists title + url', () => {
     const payload = formatWebSearchPayload({
       answer: 'AMPI is the main real-estate association in Mexico.',
       results: [

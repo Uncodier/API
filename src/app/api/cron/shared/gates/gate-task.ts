@@ -1,6 +1,8 @@
 import type { FlowGateInput, FlowGateResult, FlowGateSignal } from './types';
 import { verifyOriginAndRecover } from '../step-git-gate';
 import { runConstraintSignals, runResearchCitationSignals } from './gate-constraints';
+import { isReportOnlyTask, reportEvidenceGap } from '../research-report-evidence';
+import { extractRequirementConstraints, findConstraintViolations } from '@/lib/services/requirement-constraints';
 
 /**
  * Gate for `task` and `makinari` flows. Tasks ship artefacts: a script that
@@ -10,6 +12,18 @@ import { runConstraintSignals, runResearchCitationSignals } from './gate-constra
  *     (syntactic check; the real run is the Consumer's responsibility).
  */
 export async function runTaskGate(input: FlowGateInput): Promise<FlowGateResult> {
+  if (isReportOnlyTask(input.flow, input.item)) {
+    const { loadConstraintSourceBlocks } = await import('@/lib/services/requirement-constraints-persist');
+    const constraints = extractRequirementConstraints(...(input.item?.constraints || []),
+      ...(input.item?.acceptance || []), ...await loadConstraintSourceBlocks(input.requirementId));
+    const research = input.item?.evidence?.research;
+    const violation = findConstraintViolations(research?.reports.map(r => r.text).join('\n') || '', constraints)[0];
+    const gap = reportEvidenceGap(research);
+    const reason = violation ? `Report violates constraint: ${violation.constraint}` : gap || undefined;
+    return { ok: !reason, flow: input.flow, reason, error: reason,
+      ...(reason ? { failureKind: violation ? 'product_defect' as const : 'evidence_gap' as const } : {}),
+      signals: [{ name: 'report-source-evidence', ok: !reason, detail: reason || 'Report and cited source receipts captured; Judge review still required.' }] };
+  }
   const signals: FlowGateSignal[] = [];
 
   const list = await runShell(

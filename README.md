@@ -68,6 +68,7 @@ Before you begin, ensure you have the following installed:
    - `ENCRYPTION_KEY` - 32-byte encryption key for API keys
    - `OPENROUTER_API_KEY` for chat, embeddings and video through OpenRouter; transcription uses direct Azure credentials and `AZURE_OPENAI_TRANSCRIPTION_DEPLOYMENT`
    - `AZURE_TTS_ENDPOINT` / `AZURE_TTS_API_KEY` for direct Azure text-to-speech, using the existing dedicated resource credentials
+    - Azure endpoint/key credentials and an existing reasoning-enabled deployment for Bing web search; see [Azure Bing web search](#azure-bing-web-search) for pair and deployment precedence
 
    See `src/config/env.example` for all available configuration options.
 
@@ -168,7 +169,7 @@ Key environment variables (see `src/config/env.example` for complete list):
 - `ENCRYPTION_KEY` - 32-byte encryption key
 
 ### AI Providers
-- `OPENROUTER_API_KEY` - Gateway key for chat, tools, embeddings and video (not images, TTS or transcription)
+- `OPENROUTER_API_KEY` - Gateway key for chat, model tools, embeddings and video (not web search, images, TTS or transcription)
 - `OPENROUTER_CHAT_MODEL` - Defaults to `openai/gpt-6.1-sol`
 - `AZURE_OPENAI_IMAGE_DEPLOYMENT` - Direct Azure image deployment, default `gpt-image-2.5-sunburst`
 - `MICROSOFT_AZURE_OPENAI_ENDPOINT` / `MICROSOFT_AZURE_OPENAI_API_KEY` - Existing Azure resource credentials for images; optional dedicated `AZURE_OPENAI_IMAGE_ENDPOINT` / `AZURE_OPENAI_IMAGE_API_KEY`
@@ -184,7 +185,7 @@ Key environment variables (see `src/config/env.example` for complete list):
 
 See [OpenRouter migration and deployment checks](docs/OPENROUTER_MIGRATION.md).
 Portkey credentials are no longer used by the migrated runtime paths. Images,
-TTS and transcription use Azure directly, without OpenRouter fallback. The other
+TTS, transcription and Bing web search use Azure directly, without OpenRouter fallback. The other
 listed gateway capabilities remain on OpenRouter. TTS does not inherit chat
 deployment/API-version settings or generic Azure credentials; stale
 `OPENROUTER_TTS_MODEL` / `OPENROUTER_TTS_VOICE` settings are ignored. Supported TTS
@@ -197,6 +198,49 @@ must explicitly configure the matched speech resource endpoint/key and this
 speech API version. This was Azure inference, not a production deployment or
 subjective pronunciation validation; no storage upload or database charge was
 performed. See the migration guide for chronology and remaining acceptance checks.
+
+### Azure Bing web search
+
+Web search uses Azure OpenAI's HTTP `POST /openai/v1/responses` with the
+`web_search` tool and `store: false`. Configure an existing reasoning-enabled
+deployment that supports `web_search_call.results`; `gpt-5.2` was tested. No new
+Azure resource or deployment is created, and no chat API version is needed.
+
+Server credential pairs are selected in this order:
+
+1. Optional dedicated `AZURE_OPENAI_SEARCH_ENDPOINT` + `AZURE_OPENAI_SEARCH_API_KEY`.
+2. Otherwise, `MICROSOFT_AZURE_OPENAI_ENDPOINT` + `MICROSOFT_AZURE_OPENAI_API_KEY`
+   if either is set.
+3. Otherwise, `AZURE_OPENAI_ENDPOINT` + `AZURE_OPENAI_API_KEY`.
+
+If either member of a selected pair is set, both are required. An incomplete
+pair is a configuration error, not permission to mix pairs or fall back.
+Deployment selection is independent: `AZURE_OPENAI_SEARCH_DEPLOYMENT`, otherwise
+`MICROSOFT_AZURE_OPENAI_DEPLOYMENT`, otherwise `AZURE_OPENAI_DEPLOYMENT`. The
+selected deployment must exist on the selected resource and support web search.
+See `src/config/env.example` for empty credential templates.
+
+`search_depth` controls a tool-call budget and reasoning effort: `basic` (default)
+uses up to 1 call with low reasoning, `advanced` up to 2 with medium reasoning,
+and `comprehensive` up to 3 with medium reasoning. These settings do not guarantee
+equivalence to Tavily search depth. `max_results` is a local result cap of 1–20,
+not a provider result-count guarantee. `include_images: true`, raw-content
+requests and hard date filters are unsupported and rejected. Results have no
+invented relevance score; dates are not guaranteed.
+
+Commercial credits remain **0.1 per query**. Azure provider cost is separate:
+model input/output tokens plus Bing `num_requests`, not a fixed per-query cost.
+Search uses indexed/cached web data, not a live scraper. Bing grounding is a
+separate compliance boundary: review Bing terms and data-handling requirements;
+`store: false` does not establish Bing retention, residency or compliance parity
+with Azure model processing.
+
+For production, the **API server needs the selected Azure secrets in Vercel's
+server-side environment** (never `NEXT_PUBLIC_*`). Local configuration is not
+production configuration. This documentation/config migration does not edit
+private `.env` files or deploy the server.
+
+See [Azure web search integration and validation](docs/AZURE_WEB_SEARCH.md).
 
 ### Temporal Configuration
 - `TEMPORAL_ENV=development` - Environment mode

@@ -148,6 +148,7 @@ function directoryHint() {
     'Use update_service_schedule for catalog reservable items (reservation_schedules).',
     'Times are 24h HH:mm. Example: 8pm = 20:00. Lunch is availability.monday.breaks: [{ start: "15:00", end: "16:00" }].',
     'scheduling only books a specific appointment; it does not change weekly hours.',
+    'For scheduling.check_availability use calendar_id from team_calendars or user_id from team_members, never an agent ID. Appointments are stored in appointments, not tasks.',
   ].join(' ');
 }
 
@@ -284,7 +285,7 @@ async function updateMemberCalendar(siteId: string, body: CalendarsToolBody) {
   return {
     success: true,
     team_member: mapTeamMember(data, member.role),
-    hint: 'Personal calendar saved on profiles.settings.calendar. Appointments still use tasks type=meeting.',
+    hint: 'Personal calendar saved on profiles.settings.calendar. Appointments use the appointments table.',
   };
 }
 

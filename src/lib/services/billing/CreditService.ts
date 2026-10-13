@@ -361,7 +361,7 @@ export class CreditService {
     ENRICHMENT_PHONE: 0.25,
     PERSON_ROLE_SEARCH: 0.1,
     PLACES_SEARCH: 0.1,
-    TAVILY_SEARCH: 0.1,
+    WEB_SEARCH: 0.1, // Existing commercial rate; Azure provider usage is reported separately.
     ASSISTANT_INPUT_TOKEN_MILLION: 1.0, // 1 credit per million input tokens
     ASSISTANT_OUTPUT_TOKEN_MILLION: 20.0, // 20 credits per million output tokens
     SANDBOX_HOUR: 0.5, // 0.5 credits per hour of sandbox usage

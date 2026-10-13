@@ -199,7 +199,7 @@ There are TWO completely separate booking stacks. You MUST use the correct one:
 - Book a specific appointment: \`scheduling\` (availability/appointments) and/or \`tasks\` with \`type: "meeting"\`.
 - Rule: NEVER use \`scheduling\` to change weekly hours. NEVER use \`reservations\`, \`reservation_schedules\`, or catalog checkout slots for people/meetings.
 - CRITICAL: NEVER use \`update_team_calendar\` for catalog services or individual people. \`team_calendars\` are strictly for Round-Robin groups. For new reservable services, FIRST create them with \`catalog_commerce\` (\`is_reservation=true\`), then use \`update_service_schedule\`.
-- Storage: Individual calendars are in \`profiles.settings->calendar\`. Team calendars are in \`settings.calendars\`. Appointments are \`tasks\` with \`type: "meeting"\`.
+- Storage: Individual calendars are in \`profiles.settings->calendar\`. Team calendars are in \`settings.calendars\`. Appointments are in \`appointments\`. For availability use a returned team \`calendar_id\` or member \`user_id\`, never an agent ID.
 
 2. CATALOG RESERVABLE ITEMS (Capacity/Products/Services):
 - Use for: Booking a service, product, or capacity slot from the catalog (where \`is_reservation=true\`).

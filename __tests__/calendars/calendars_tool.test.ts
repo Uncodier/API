@@ -72,7 +72,7 @@ describe('calendars tool', () => {
         },
       }),
       catalog_items: makeChain({
-        data: [{ id: 'svc-1', name: 'Corte', kind: 'service', is_reservation: true, status: 'active' }],
+        data: [{ id: 'svc-1', name: 'Corte', kind: 'service', is_reservation: true, status: 'active', availability_status: 'available' }],
       }),
       reservation_schedules: makeChain({
         data: [{ id: 'sch-1', catalog_item_id: 'svc-1', days: { monday: { enabled: true, start: '11:00', end: '20:00' } } }],

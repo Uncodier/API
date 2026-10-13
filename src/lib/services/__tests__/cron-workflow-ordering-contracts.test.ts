@@ -205,7 +205,7 @@ describe('requirements workflow ordering contracts', () => {
   it('does not fast-track app or site completion ahead of required receipt verification', () => {
     const fastTrack = workflowSource.indexOf("update({ status: 'on-review'");
     const receiptRequirementGuard = workflowSource.lastIndexOf(
-      'if (trulyDone && !requirementFlow.delivery.apply_database_migrations)', fastTrack,
+      'if (!reportOnlyRequirement && trulyDone && !requirementFlow.delivery.apply_database_migrations)', fastTrack,
     );
     expect(fastTrack).toBeGreaterThan(-1);
     expect(receiptRequirementGuard).toBeGreaterThan(-1);

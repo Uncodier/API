@@ -27,6 +27,7 @@ import {
 } from '@/lib/services/requirement-plan-backlog-gate';
 import type { BacklogItem } from '@/lib/services/requirement-backlog-types';
 import { listMigrationLifecycle } from '@/lib/services/apps-platform/migration-lifecycle';
+import { admitPendingPlanBacklogItem } from '@/lib/services/requirement-plan-backlog-admission';
 
 export type PlanGate =
   | { runnable: true; dbStatus: string; migrationValidationOnly?: boolean }
@@ -96,6 +97,9 @@ export async function getPlanExecutionGateStep(
   }
   const statusGate = getPlanExecutionGateFromStatus(data.status);
   if (!statusGate.runnable) return statusGate;
+  if (requirementId && data.metadata?.requirement_id && data.metadata.requirement_id !== requirementId) {
+    throw new Error('Plan does not belong to this requirement.');
+  }
   if (purpose === 'migration_validation' && (!requirementId || data.metadata?.requirement_id !== requirementId)) {
     throw new Error('Migration validation plan does not belong to this requirement.');
   }
@@ -128,7 +132,32 @@ export async function getPlanExecutionGateStep(
     const items = Array.isArray(requirement?.backlog?.items)
       ? requirement.backlog.items as BacklogItem[]
       : [];
-    const backlogGate = evaluatePlanBacklogGate(activeStep, items);
+    let backlogGate = evaluatePlanBacklogGate(activeStep, items);
+    const pendingItem = items.find(item => item.id === backlogGate.itemId && item.status === 'pending');
+    if (pendingItem && !backlogGate.runnable) {
+      const infrastructureGate = getPlanStepInfrastructureGate(activeStep);
+      if (infrastructureGate) return infrastructureGate;
+      backlogGate = await admitPendingPlanBacklogItem(ownedRequirementId, activeStep);
+      // Pending work is not stale. Wait intact for dependencies, competing WIP
+      // or a protected hold instead of cancelling a valid freshly created plan.
+      if (!backlogGate.runnable) {
+        return { runnable: false, reason: backlogGate.reason, backlogItemId: backlogGate.itemId };
+      }
+      const { data: freshPlan, error: refreshError } = await supabaseAdmin
+        .from('instance_plans').select('status, steps, metadata').eq('id', planId).maybeSingle();
+      if (refreshError) throw new InfrastructureStateDatabaseError(`Failed to refresh admitted plan ${planId}`, refreshError);
+      const freshStatusGate = getPlanExecutionGateFromStatus(freshPlan?.status);
+      if (!freshStatusGate.runnable) return freshStatusGate;
+      const freshStep = selectPlanStepsForExecution(Array.isArray(freshPlan?.steps) ? freshPlan.steps : [])[0];
+      if (!freshStep || freshStep.id !== activeStep.id ||
+          Number(freshStep.infrastructure_generation || 0) !== Number(activeStep.infrastructure_generation || 0) ||
+          (freshStep.metadata?.backlog_item_id || freshStep.backlog_item_id) !== pendingItem.id ||
+          (freshPlan?.metadata?.requirement_id && freshPlan.metadata.requirement_id !== ownedRequirementId)) {
+        return { runnable: false, reason: 'step_changed' };
+      }
+      const freshInfrastructureGate = getPlanStepInfrastructureGate(freshStep);
+      if (freshInfrastructureGate) return freshInfrastructureGate;
+    }
     // A done product item may still owe fresh migration validation. This
     // host-selected path admits verification only, never implementation.
     const completedValidation = !backlogGate.runnable && purpose === 'migration_validation' &&
@@ -171,6 +200,10 @@ export async function getPlanExecutionGateStep(
       };
     }
   }
+  return getPlanStepInfrastructureGate(activeStep) || statusGate;
+}
+
+function getPlanStepInfrastructureGate(activeStep: any): PlanGate | undefined {
   if (
     activeStep?.infrastructure_circuit_open === true ||
     activeStep?.infrastructure_state === 'intervention_required' ||
@@ -195,7 +228,7 @@ export async function getPlanExecutionGateStep(
         activeStep.infrastructure_failure_provenance,
     };
   }
-  return statusGate;
+  return undefined;
 }
 
 export async function updatePlanStepStatusStep(

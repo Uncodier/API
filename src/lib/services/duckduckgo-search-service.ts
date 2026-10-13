@@ -1,6 +1,6 @@
 import { fetchHtml } from '@/lib/utils/html-utils';
 import { cleanHtmlContent } from '@/lib/utils/html-content-cleaner';
-import { searchWithTavily } from '@/lib/services/search/data-analyst-search';
+import { searchWeb, type WebSearchOptions } from '@/lib/services/search/web-search';
 import { DuckDuckGoInstantApiService } from './duckduckgo-instant-api';
 
 export interface DuckDuckGoSearchOptions {
@@ -235,21 +235,6 @@ export class DuckDuckGoSearchService {
   }
 
   /**
-   * Calcula cuántos días han pasado desde una fecha
-   */
-  private calculateDaysAgo(dateString: string): number {
-    try {
-      const date = new Date(dateString);
-      const now = new Date();
-      const diffTime = now.getTime() - date.getTime();
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-      return Math.max(0, diffDays);
-    } catch {
-      return 30; // Default a 30 días si la fecha es inválida
-    }
-  }
-
-  /**
    * Usa la API oficial de DuckDuckGo Instant Answer para búsquedas
    */
   private async searchWithInstantApi(options: DuckDuckGoSearchOptions): Promise<DuckDuckGoSearchResponse> {
@@ -366,48 +351,47 @@ export class DuckDuckGoSearchService {
   }
 
   /**
-   * Realiza una búsqueda usando Tavily como fallback
+   * Realiza una búsqueda usando el servicio de búsqueda web como fallback
    */
-  private async searchWithTavilyFallback(options: DuckDuckGoSearchOptions): Promise<DuckDuckGoSearchResponse> {
-    console.log(`🔄 [Tavily] Usando Tavily como fallback`);
+  private async searchWithWebSearchFallback(options: DuckDuckGoSearchOptions): Promise<DuckDuckGoSearchResponse> {
+    console.log(`🔄 [WebSearch] Usando búsqueda web como fallback`);
     
     try {
+      // No degradar requisitos de fecha a términos de query ni realizar una búsqueda sin filtro.
+      if (options.dateFrom !== undefined || options.dateTo !== undefined) {
+        throw new Error('Web search fallback does not support dateFrom/dateTo filters');
+      }
+      if (options.region !== undefined) {
+        throw new Error('Web search fallback does not support region filters');
+      }
+
       const searchQuery = this.buildSearchQuery(options);
       
-      // Configurar opciones para Tavily con filtros de fecha
-      const tavilyOptions: any = {
+      const searchOptions: WebSearchOptions = {
         search_depth: 'basic',
-        max_results: options.maxResults || 20,
+        max_results: Math.min(options.maxResults ?? 20, 20),
         include_answer: false,
         include_domains: options.site ? [options.site] : [],
       };
 
-      // Agregar filtros temporales si están disponibles
-      if (options.dateFrom || options.dateTo) {
-        // Tavily usa un sistema de días hacia atrás
-        if (options.dateFrom) {
-          const daysAgo = this.calculateDaysAgo(options.dateFrom);
-          if (daysAgo > 0) {
-            tavilyOptions.days = Math.min(daysAgo, 365); // Máximo 1 año
-          }
-        }
-      }
-
-      const tavilyResult = await searchWithTavily(searchQuery, tavilyOptions);
+      const searchResult = await searchWeb(searchQuery, searchOptions);
       
-      if (!tavilyResult.success || !tavilyResult.data?.results) {
-        throw new Error('Tavily fallback también falló');
+      if (!searchResult.success) {
+        throw new Error(searchResult.error || 'Web search fallback también falló');
+      }
+      if (!searchResult.data?.results) {
+        throw new Error('Web search fallback también falló');
       }
 
-      // Convertir resultados de Tavily al formato esperado (solo URLs básicas)
-      const results: SearchResult[] = tavilyResult.data.results.map((item: any) => ({
+      // Convertir resultados al formato esperado (solo URLs básicas)
+      const results: SearchResult[] = searchResult.data.results.map((item: any) => ({
         title: item.title || '',
         url: item.url || '',
         domain: item.url ? this.extractDomain(item.url) : '',
         publishedDate: undefined
       }));
 
-      console.log(`✅ [Tavily] Fallback exitoso: ${results.length} resultados`);
+      console.log(`✅ [WebSearch] Fallback exitoso: ${results.length} resultados`);
 
       return {
         success: true,
@@ -417,7 +401,7 @@ export class DuckDuckGoSearchService {
       };
 
     } catch (error) {
-      console.error('❌ [Tavily] Error en fallback:', error);
+      console.error('❌ [WebSearch] Error en fallback:', error);
       
       return {
         success: false,
@@ -430,15 +414,23 @@ export class DuckDuckGoSearchService {
   }
 
   /**
-   * Realiza una búsqueda inteligente (DuckDuckGo Instant API principal, HTML scraping como backup, Tavily como fallback)
+   * Realiza una búsqueda inteligente (DuckDuckGo Instant API principal, HTML scraping como backup, búsqueda web como fallback)
    */
   async search(options: DuckDuckGoSearchOptions): Promise<DuckDuckGoSearchResponse> {
+    return this.searchWithDefaults(options);
+  }
+
+  /** Apply inherited regional preferences only to primary providers, not the fallback. */
+  private async searchWithDefaults(
+    options: DuckDuckGoSearchOptions,
+    primaryDefaults: Pick<DuckDuckGoSearchOptions, 'region'> = {},
+  ): Promise<DuckDuckGoSearchResponse> {
     console.log(`🔍 [SmartSearch] Iniciando búsqueda inteligente: "${options.query}"`);
     
     // Usar DuckDuckGo Instant API como método principal
     try {
       console.log(`🦆 [SmartSearch] Usando DuckDuckGo Instant API como método principal`);
-      const instantApiResult = await this.searchWithInstantApi(options);
+      const instantApiResult = await this.searchWithInstantApi({ ...primaryDefaults, ...options });
       
       if (instantApiResult.success && instantApiResult.results.length > 0) {
         console.log(`✅ [SmartSearch] DuckDuckGo Instant API exitoso: ${instantApiResult.results.length} resultados`);
@@ -447,24 +439,22 @@ export class DuckDuckGoSearchService {
       
       // Si Instant API falla, intentar HTML scraping como backup
       console.log(`⚠️ [SmartSearch] Instant API sin resultados, intentando HTML scraping`);
-      const htmlResult = await this.searchDuckDuckGoDirectly(options);
+      const htmlResult = await this.searchDuckDuckGoDirectly({ ...primaryDefaults, ...options });
       
       if (htmlResult.success && htmlResult.results.length > 0) {
         console.log(`✅ [SmartSearch] HTML scraping exitoso: ${htmlResult.results.length} resultados`);
         return htmlResult;
       }
       
-      // Si ambos fallan, intentar Tavily como último fallback
-      console.log(`⚠️ [SmartSearch] HTML scraping sin resultados, intentando Tavily como fallback`);
-      return await this.searchWithTavilyFallback(options);
+      console.log(`⚠️ [SmartSearch] HTML scraping sin resultados, intentando búsqueda web como fallback`);
       
     } catch (error) {
       console.error('❌ [SmartSearch] Error en búsqueda principal:', error);
-      
-      // Último intento con Tavily
-      console.log(`🔄 [SmartSearch] Último intento con Tavily`);
-      return await this.searchWithTavilyFallback(options);
     }
+
+    // Un solo intento, fuera del catch de los proveedores principales.
+    console.log(`🔄 [SmartSearch] Último intento con búsqueda web`);
+    return await this.searchWithWebSearchFallback(options);
   }
 
   /**
@@ -522,6 +512,7 @@ export class DuckDuckGoSearchService {
     dateTo?: string;
     maxResults?: number;
     keywords?: string[];
+    region?: string;
   }): Promise<DuckDuckGoSearchResponse> {
     // Construir query específica para LLMs
     let query = 'LLM OR "large language model" OR GPT OR Claude OR "artificial intelligence" OR AI';
@@ -530,14 +521,14 @@ export class DuckDuckGoSearchService {
       query += ` AND (${options.keywords.join(' OR ')})`;
     }
 
-    return this.search({
+    return this.searchWithDefaults({
       query,
       site: 'news.ycombinator.com',
       dateFrom: options.dateFrom,
       dateTo: options.dateTo,
-      maxResults: options.maxResults || 50,
-      region: 'us-en'
-    });
+      maxResults: options.maxResults ?? 20,
+      ...(options.region !== undefined ? { region: options.region } : {}),
+    }, { region: 'us-en' });
   }
 
   /**
@@ -549,6 +540,7 @@ export class DuckDuckGoSearchService {
     dateTo?: string;
     sources?: string[];
     maxResults?: number;
+    region?: string;
   }): Promise<DuckDuckGoSearchResponse> {
     let query = options.topic;
     
@@ -558,12 +550,12 @@ export class DuckDuckGoSearchService {
       query += ` (${siteFilters})`;
     }
 
-    return this.search({
+    return this.searchWithDefaults({
       query,
       dateFrom: options.dateFrom,
       dateTo: options.dateTo,
-      maxResults: options.maxResults || 30,
-      region: 'us-en'
-    });
+      maxResults: options.maxResults ?? 20,
+      ...(options.region !== undefined ? { region: options.region } : {}),
+    }, { region: 'us-en' });
   }
 }

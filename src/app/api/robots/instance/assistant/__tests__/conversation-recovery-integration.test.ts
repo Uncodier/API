@@ -18,6 +18,7 @@ jest.unstable_mockModule('../steps', () => ({ prepareAssistantContext: async () 
   executionOptions: { instance_id: scope.instanceId, site_id: scope.siteId, user_id: scope.userId, use_sdk_tools: false, provider: 'openrouter' },
 }) }));
 jest.unstable_mockModule('../plan-steps', () => ({ getActiveInstancePlan: getPlan,
+  getAssistantPlanOwnershipStep: jest.fn(),
   executePlanStep: planExecute, acquirePlanExecutionLockStep: jest.fn(), releasePlanExecutionLockStep: jest.fn() }));
 jest.unstable_mockModule('../persist-and-fail-steps', () => ({
   persistUserMessageStep: jest.fn(), completeUserMessageStep: complete,

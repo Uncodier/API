@@ -27,29 +27,54 @@ const cursorSchema = z.object({
   id: uuid,
 }).strict();
 
-const argsSchema = z.discriminatedUnion('action', [
-  z.object({
-    action: z.literal('list'),
-    thought_process: thoughtProcess,
-    query: z.string().min(1).max(INSTANCE_HISTORY_LIMITS.queryChars)
-      .refine(value => value.trim().length > 0 && !value.includes('\0'), 'Use a non-empty query without NUL characters')
-      .optional(),
-    log_type: z.string().min(1).max(INSTANCE_HISTORY_LIMITS.logTypeChars)
-      .refine(value => value.trim().length > 0 && !value.includes('\0'), 'Use a non-empty log_type without NUL characters')
-      .optional(),
-    before: cursorSchema.optional(),
-    limit: safeInteger.min(1).max(INSTANCE_HISTORY_LIMITS.list).default(INSTANCE_HISTORY_DEFAULTS.list),
-  }).strict(),
-  z.object({
-    action: z.literal('read'),
-    thought_process: thoughtProcess,
-    log_id: uuid,
-    offset: safeInteger.default(0),
-    limit: safeInteger.min(1).max(INSTANCE_HISTORY_LIMITS.readChars).default(INSTANCE_HISTORY_DEFAULTS.readChars),
-  }).strict(),
-]);
+const listArgsSchema = z.object({
+  action: z.enum(['list']),
+  thought_process: thoughtProcess,
+  query: z.string().min(1).max(INSTANCE_HISTORY_LIMITS.queryChars)
+    .regex(/^(?=[\s\S]*\S)[^\0]*$/, 'Use a non-empty query without NUL characters')
+    .optional(),
+  log_type: z.string().min(1).max(INSTANCE_HISTORY_LIMITS.logTypeChars)
+    .regex(/^(?=[\s\S]*\S)[^\0]*$/, 'Use a non-empty log_type without NUL characters')
+    .optional(),
+  before: cursorSchema.optional(),
+  limit: safeInteger.min(1).max(INSTANCE_HISTORY_LIMITS.list).default(INSTANCE_HISTORY_DEFAULTS.list),
+}).strict();
+const readArgsSchema = z.object({
+  action: z.enum(['read']),
+  thought_process: thoughtProcess,
+  log_id: uuid,
+  offset: safeInteger.default(0),
+  limit: safeInteger.min(1).max(INSTANCE_HISTORY_LIMITS.readChars).default(INSTANCE_HISTORY_DEFAULTS.readChars),
+}).strict();
+const argsSchema = z.discriminatedUnion('action', [listArgsSchema, readArgsSchema]);
 
-export type InstanceHistoryArgs = z.input<typeof argsSchema>;
+// A root union is not portable to strict tool providers. Nest the discriminated
+// request instead: all model properties are required, with explicit null only
+// for active-action defaults. Legacy flat arguments retain their strict contract.
+export const instanceHistoryModelArgsSchema = z.object({
+  request: z.discriminatedUnion('action', [
+    listArgsSchema.omit({ thought_process: true }).extend({
+      query: listArgsSchema.shape.query.unwrap().nullable()
+        .describe('Literal case-insensitive substring of message, not tool payloads. Null means no query filter.'),
+      log_type: listArgsSchema.shape.log_type.unwrap().nullable()
+        .describe('Exact log type. Null means all log types.'),
+      before: cursorSchema.nullable()
+        .describe('Prior next_cursor unchanged, preserving timestamp precision. Null starts the first page.'),
+      limit: listArgsSchema.shape.limit.removeDefault().nullable()
+        .describe(`Number of logs, max ${INSTANCE_HISTORY_LIMITS.list}. Null uses ${INSTANCE_HISTORY_DEFAULTS.list}.`),
+    }),
+    readArgsSchema.omit({ thought_process: true }).extend({
+      log_id: uuid.describe('Required log UUID returned by list.'),
+      offset: readArgsSchema.shape.offset.removeDefault().nullable()
+        .describe('Nonnegative UTF-16 offset. Null starts at 0; can jump directly to the tail.'),
+      limit: readArgsSchema.shape.limit.removeDefault().nullable()
+        .describe(`UTF-16 characters, max ${INSTANCE_HISTORY_LIMITS.readChars}. Null uses ${INSTANCE_HISTORY_DEFAULTS.readChars}.`),
+    }),
+  ]).describe('Choose exactly one action. Never include list fields in read, or read fields in list.'),
+  thought_process: thoughtProcess.unwrap().describe('Brief reason for the call; use an empty string if unnecessary. Never persisted or used as authorization.'),
+}).strict();
+
+export type InstanceHistoryArgs = z.input<typeof argsSchema> | z.input<typeof instanceHistoryModelArgsSchema>;
 export type InstanceHistoryCursor = z.infer<typeof cursorSchema>;
 
 export interface InstanceHistoryLogContent {
@@ -209,19 +234,72 @@ async function readHistory(siteId: string, instanceId: string, args: ReadArgs): 
   };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function invalidArguments(error: z.ZodError, rawArgs: unknown): Error {
+  const nested = isRecord(rawArgs) && Object.prototype.hasOwnProperty.call(rawArgs, 'request');
+  const request = nested && isRecord(rawArgs) ? rawArgs.request : rawArgs;
+  const action = isRecord(request) ? request.action : undefined;
+  const wrongFields = action === 'read' ? ['query', 'log_type', 'before'] : action === 'list' ? ['log_id', 'offset'] : [];
+  const wrong = wrongFields.filter(field => isRecord(request) && Object.prototype.hasOwnProperty.call(request, field));
+  const problems: string[] = [];
+  if (wrong.length) {
+    // Names and examples come exclusively from this fixed allowlist, never
+    // arbitrary unknown keys, values, identifiers, or Zod enum-value messages.
+    const example = action === 'read'
+      ? '"action":"read","log_id":"<log UUID from list>","offset":0,"limit":4000'
+      : '"action":"list","query":null,"log_type":null,"before":null,"limit":10';
+    problems.push(`action="${action}" does not allow ${action === 'read' ? 'list' : 'read'}-only fields: ${wrong.join(', ')}. Remove these fields; ${nested ? 'use' : 'model form'}: {"request":{${example}},"thought_process":""}`);
+  }
+  if (error.issues.some(issue => issue.code === 'unrecognized_keys' && (
+    issue.path.join('.') !== (nested ? 'request' : '') ||
+    issue.keys.some(key => !wrongFields.includes(key))
+  ))) {
+    problems.push('Unknown arguments are not allowed, including site/instance overrides');
+  }
+  const safePaths = new Set(['action', 'thought_process', 'query', 'log_type', 'before', 'before.created_at', 'before.id', 'log_id', 'offset', 'limit', 'request']);
+  for (const issue of error.issues) {
+    if (problems.length >= 3) break;
+    if (issue.code === 'unrecognized_keys') continue;
+    const path = issue.path.join('.').replace(/^request\./, '');
+    const label = safePaths.has(path) ? path : 'arguments';
+    const detail = issue.code === 'invalid_type' ? `Expected ${issue.expected}`
+      : issue.code === 'invalid_enum_value' || issue.code === 'invalid_union_discriminator' ? 'Expected action "list" or "read"'
+      : issue.code === 'too_small' ? `Must be at least ${issue.minimum}`
+      : issue.code === 'too_big' ? `Must be at most ${issue.maximum}`
+      : 'Invalid value or format';
+    problems.push(`${label}: ${detail}`);
+  }
+  return new Error(`Invalid instance_history arguments: ${problems.join('; ') || 'Invalid value or format'}`);
+}
+
 /** Server-side only. The caller must supply an already-authorized scope. */
 export function createInstanceHistoryReader(siteId: string, instanceId: string) {
   if (!uuid.safeParse(siteId).success || !uuid.safeParse(instanceId).success) {
     throw new Error('instance_history requires trusted siteId and instanceId UUIDs.');
   }
   return async (rawArgs: unknown): Promise<InstanceHistoryResult> => {
-    const parsed = argsSchema.safeParse(rawArgs);
+    let args = rawArgs;
+    if (isRecord(rawArgs) && Object.prototype.hasOwnProperty.call(rawArgs, 'request')) {
+      // Validate the entire envelope before normalizing documented null defaults.
+      // Mixed flat/enveloped calls, extra fields and scope overrides fail closed.
+      const model = instanceHistoryModelArgsSchema.safeParse(rawArgs);
+      if (!model.success) throw invalidArguments(model.error, rawArgs);
+      const request = model.data.request;
+      args = request.action === 'list' ? {
+        action: request.action, thought_process: model.data.thought_process,
+        query: request.query ?? undefined, log_type: request.log_type ?? undefined,
+        before: request.before ?? undefined, limit: request.limit ?? undefined,
+      } : {
+        action: request.action, thought_process: model.data.thought_process,
+        log_id: request.log_id, offset: request.offset ?? undefined, limit: request.limit ?? undefined,
+      };
+    }
+    const parsed = argsSchema.safeParse(args);
     if (!parsed.success) {
-      const problems = parsed.error.issues.slice(0, 3).map(issue =>
-        issue.code === 'unrecognized_keys'
-          ? 'Unknown arguments are not allowed, including site/instance overrides'
-          : `${issue.path.join('.') || 'arguments'}: ${issue.message}`);
-      throw new Error(`Invalid instance_history arguments: ${problems.join('; ')}`);
+      throw invalidArguments(parsed.error, rawArgs);
     }
     return parsed.data.action === 'list'
       ? listHistory(siteId, instanceId, parsed.data)

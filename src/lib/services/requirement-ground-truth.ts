@@ -111,7 +111,14 @@ export async function writeEvidence(params: {
 
   // Persist in DB backlog item's evidence field (canonical).
   try {
-    full = await mutateBacklogAtomically(params.requirementId, ({ backlog }) => {
+    full = await mutateBacklogAtomically(params.requirementId, ({ backlog, requirement }) => {
+      if (incoming.research && (
+        incoming.research.requirement_id !== params.requirementId ||
+        incoming.research.item_id !== params.itemId ||
+        Number(requirement.metadata?.requirement_execution_generation) !== incoming.research.execution_generation
+      )) {
+        throw new Error('Research evidence execution scope is stale or mismatched');
+      }
       const idx = backlog.items.findIndex((item) => item.id === params.itemId);
       if (idx < 0) {
         if (params.requireCanonicalPersistence) {

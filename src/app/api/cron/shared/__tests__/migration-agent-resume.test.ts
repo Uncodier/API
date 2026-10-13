@@ -116,6 +116,8 @@ function harness(options: {
       '@/lib/services/cron-infrastructure-state': {},
       '@/lib/services/instance-plan-infrastructure-state': { patchPlanStepAtomically },
       './single-turn-gate': { runSingleTurnGate },
+      './research-report-evidence': { isReportOnlyTask: () => false },
+      './research-evidence-persistence': {},
       './no-progress-adjudication': noProgressPolicy,
       './no-progress-gate-adjudicator': { runGateOnlyNoProgressAdjudication },
       './gate-validation-cache': gateCache,

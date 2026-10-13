@@ -2,7 +2,7 @@
 
 import { processAssistantTurn } from './assistant-turn';
 import { prepareAssistantContext } from './steps';
-import { getActiveInstancePlan, executePlanStep, acquirePlanExecutionLockStep, releasePlanExecutionLockStep } from './plan-steps';
+import { getActiveInstancePlan, getAssistantPlanOwnershipStep, executePlanStep, acquirePlanExecutionLockStep, releasePlanExecutionLockStep } from './plan-steps';
 import { persistUserMessageStep, markAssistantFailedStep, completeUserMessageStep, pauseUserMessageStep, pauseAssistantForCreditsStep } from './persist-and-fail-steps';
 import { isInsufficientCreditsError } from '@/lib/services/billing/credit-exhaustion-message';
 import {
@@ -191,8 +191,21 @@ export async function runAssistantWorkflow(
   // A resumed status conversation must never fall through to plan execution,
   // even if requirement linkage disappears while preparing its context.
   const activePlan = context.conversationRecoveryOnly ? null : await getActiveInstancePlan(instanceId, siteId);
+  // The initial context predates tool-created requirements. Only inspect here
+  // for ordinary conversation plans; node/recovery-only execution stays isolated.
+  const ownership = activePlan && !context.conversationRecoveryOnly && !instanceNodeId
+    ? await getAssistantPlanOwnershipStep(context, activePlan) : null;
+  if (ownership?.state === 'unavailable') {
+    if (!await guardRecoveryStep(recoveryScope)) return blockedResult;
+    await pauseUserMessageStep(userMessageLogId, recoveryScope.generation ?? 0);
+    return { instance_id: instanceId, success: false, execution_status: 'paused',
+      code: 'PLAN_OWNERSHIP_UNAVAILABLE', managed_work_resumed: false,
+      message: 'Plan ownership could not be confirmed; the plan was preserved without execution or cancellation',
+      assistant_response: 'No pude confirmar quién debe ejecutar el plan. Se conservó pendiente, sin iniciarlo ni cancelarlo.',
+      instance_node_id: instanceNodeId };
+  }
   
-  if (activePlan && !context.hasLinkedRequirement && !instanceNodeId) {
+  if (activePlan && ownership?.state === 'standalone' && !instanceNodeId) {
     console.log(`[Workflow] Found active plan: ${activePlan.title} (${activePlan.id})`);
     
     // Filter steps that need execution
@@ -229,6 +242,22 @@ export async function runAssistantWorkflow(
           
           // Execute the step
           const stepResult = await executePlanStep(context, activePlan, step);
+          if (stepResult.executionStatus === 'deferred') {
+            if (!await guardRecoveryStep(recoveryScope)) return blockedResult;
+            if (stepResult.ownership.state === 'unavailable') {
+              await pauseUserMessageStep(userMessageLogId, recoveryScope.generation ?? 0);
+              return { instance_id: instanceId, success: false, execution_status: 'paused',
+                code: 'PLAN_OWNERSHIP_UNAVAILABLE', managed_work_resumed: false,
+                message: 'Plan ownership changed or is unavailable; no plan effects were performed',
+                assistant_response: 'La asignación del plan cambió o no pudo verificarse. Se conservó sin ejecutarlo ni cancelarlo.' };
+            }
+            await completeUserMessageStep(userMessageLogId, recoveryScope.generation ?? 0);
+            return { instance_id: instanceId, execution_status: stepResult.ownership.runnable
+                ? 'awaiting_requirement_runner' : 'conversation_completed',
+              managed_work_resumed: false, requirement_id: stepResult.ownership.requirementId,
+              message: 'Conversation completed; the requirement runner retains plan ownership',
+              assistant_response: finalResult.text, output: finalResult.output, usage: finalResult.usage };
+          }
           if (stepResult.executionStatus === 'exhausted' && stepResult.creditExhausted) {
             if (!await guardRecoveryStep(recoveryScope)) return blockedResult;
             const notice = await pauseAssistantForCreditsStep(instanceId, siteId, userId, userMessageLogId, recoveryScope.generation ?? 0);
@@ -281,8 +310,8 @@ export async function runAssistantWorkflow(
     } else {
         console.log(`[Workflow] Active plan found but no pending steps.`);
     }
-  } else if (activePlan && context.hasLinkedRequirement) {
-    console.log(`[Workflow] Active plan found but skipping auto-execution because there is a requirement_status linked.`);
+  } else if (activePlan && ownership?.state === 'managed') {
+    console.log(`[Workflow] Managed plan retained for the requirement runner; no interactive execution.`);
   }
 
     if (userMessageLogId) {
@@ -294,6 +323,11 @@ export async function runAssistantWorkflow(
     status: context.instance.status,
     message: context.conversationRecoveryOnly ? 'Conversation completed; managed work was not resumed' : 'Execution completed successfully',
     ...(context.conversationRecoveryOnly ? { execution_status: 'conversation_completed', managed_work_resumed: false } : {}),
+    ...(ownership?.state === 'managed' ? {
+      execution_status: ownership.runnable ? 'awaiting_requirement_runner' : 'conversation_completed',
+      managed_work_resumed: false, requirement_id: ownership.requirementId,
+      message: 'Conversation completed; the requirement runner retains plan ownership',
+    } : {}),
     assistant_response: finalResult.text,
     output: finalResult.output,
     usage: finalResult.usage,

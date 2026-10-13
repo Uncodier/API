@@ -10,6 +10,7 @@ import type { Sandbox } from '@vercel/sandbox';
 import { randomUUID } from 'node:crypto';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import { runCritic, runJudge } from './archetype-runner';
+import { isReportOnlyTask } from './research-report-evidence';
 import { isTestRepairRun } from './judge-test-repair';
 import {
   bumpItemAttempts,
@@ -58,6 +59,7 @@ import {
 } from './judge-repair-controller';
 
 export interface PostGateGateSignals {
+  research?: EvidenceRecord['research'];
   workspace_fingerprint?: string;
   build?: { ok: boolean; duration_ms?: number };
   runtime?: {
@@ -92,6 +94,7 @@ export interface RunArchetypePostGateInput {
   evidenceRunId?: string;
   audit: CronAuditContext;
   contractAcceptance?: string[];
+  reportDeliveryInstructions?: string[];
   repairRun?: JudgeRepairRun;
 }
 
@@ -127,20 +130,24 @@ export async function runArchetypePostGate(
         error: `Backlog item ${input.backlogItemId} was not found`,
       };
     }
+    const reportOnly = isReportOnlyTask(kind, item, input.reportDeliveryInstructions);
+    const deliveryItem = reportOnly ? { ...item,
+      constraints: [...(item.constraints || []), ...(input.reportDeliveryInstructions || [])],
+    } : item;
     const adjudicatedItem = input.contractAcceptance?.length
       ? {
-          ...item,
+          ...deliveryItem,
           // A no-progress adjudication evaluates the current step contract,
           // not work intentionally assigned to later steps in the same item.
           acceptance: Array.from(new Set(input.contractAcceptance)),
         }
-      : item;
+      : deliveryItem;
 
     // Reuse diff inference for both structural coverage and archetype evidence.
     // Underspecified page/API contracts may use concrete changed route files;
     // otherwise coverage records an evidence gap instead of inventing a target.
     let changedFiles: string[] = input.signals.changed_files ?? [];
-    if (changedFiles.length === 0) {
+    if (!reportOnly && changedFiles.length === 0) {
       try {
         const inferred = await inferTargetRoutesFromDiff(input.sandbox);
         changedFiles = inferred.changedFiles ?? [];
@@ -152,14 +159,16 @@ export async function runArchetypePostGate(
     // Phase 10: structural coverage check before the archetype pass.
     let coverage: Awaited<ReturnType<typeof computeFeatureCoverage>> | null = null;
     try {
-      coverage = await computeFeatureCoverage({
-        sandbox: input.sandbox,
-        item: adjudicatedItem,
-        // Intermediate adjudications must not enforce touches or kind-wide
-        // deliverables assigned to later steps in the same backlog item.
-        contractScoped: !!input.contractAcceptance?.length,
-        changedFiles,
-      });
+      if (!reportOnly) {
+        coverage = await computeFeatureCoverage({
+          sandbox: input.sandbox,
+          item: adjudicatedItem,
+          // Intermediate adjudications must not enforce touches or kind-wide
+          // deliverables assigned to later steps in the same backlog item.
+          contractScoped: !!input.contractAcceptance?.length,
+          changedFiles,
+        });
+      }
     } catch (e: unknown) {
       throw new Error(
         `Feature coverage unavailable: ${e instanceof Error ? e.message : String(e)}`,
@@ -217,8 +226,7 @@ export async function runArchetypePostGate(
         : {}),
     };
     const persisted = await writeEvidence({
-      sandbox: input.sandbox,
-      cwd: SandboxService.WORK_DIR,
+      ...(reportOnly ? {} : { sandbox: input.sandbox, cwd: SandboxService.WORK_DIR }),
       requirementId: input.requirementId,
       itemId: item.id,
       requireCanonicalPersistence: true,
@@ -277,8 +285,7 @@ export async function runArchetypePostGate(
     }
 
     await writeEvidence({
-      sandbox: input.sandbox,
-      cwd: SandboxService.WORK_DIR,
+      ...(reportOnly ? {} : { sandbox: input.sandbox, cwd: SandboxService.WORK_DIR }),
       requirementId: input.requirementId,
       itemId: item.id,
       requireCanonicalPersistence: true,
@@ -318,7 +325,7 @@ export async function runArchetypePostGate(
           ? 1
           : judgeVerificationAttemptLimit();
         const canExhaustVerification =
-          isTestRepairRun(newlyPlanned)
+          reportOnly && judge.failure_kind === 'capability_gap' ? true : isTestRepairRun(newlyPlanned)
             ? hasAttemptedJudgeRepair(input.repairRun, newlyPlanned?.diagnostic_id) &&
               (input.repairRun?.attempt_count ?? 0) >= input.repairRun!.max_attempts
             : judge.failure_kind !== 'capability_gap' ||
@@ -417,6 +424,7 @@ export async function runArchetypePostGate(
       repair_feedback:
         judge.verdict === 'approved'
           ? undefined
+          : reportOnly ? `[judge:${judge.failure_kind}] ${judge.reason} This is a platform verification limitation, not a request for code, deployment, or customer permission.`
           : [
               formatJudgeRepairFeedback(judge),
               repairPlanned ? formatRepairRunFeedback(repairPlanned) : '',
@@ -477,6 +485,7 @@ function buildEvidenceRecord(
     evidence_run_id: evidenceRunId,
     workspace_fingerprint: signals.workspace_fingerprint,
     captured_at: capturedAt,
+    research: signals.research,
     build: signals.build
       ? {
           command: 'npm run build',

@@ -50,6 +50,8 @@ import {
   patchPlanStepAtomically,
 } from '@/lib/services/instance-plan-infrastructure-state';
 import { runSingleTurnGate } from './single-turn-gate';
+import { isReportOnlyTask } from './research-report-evidence';
+import { persistResearchTurn } from './research-evidence-persistence';
 import { isNoProgressAdjudicationRequested } from './no-progress-adjudication';
 import { runGateOnlyNoProgressAdjudication } from './no-progress-gate-adjudicator';
 import { shouldResumeGateFromEvidence } from './gate-validation-cache';
@@ -609,13 +611,21 @@ export async function executeSingleTurnStep(params: {
     });
     await assertCronExecutionOwnership(ownership);
     sandbox = activeSandboxRef.current;
+    let researchProgress = false;
+    if (effectiveBacklogItemId && isReportOnlyTask(flow, strategyItem, [
+      ...constraintSources, persistedStep.instructions || '', ...(persistedStep.validation_rules || []),
+    ])) {
+      researchProgress = await persistResearchTurn({ requirementId, itemId: effectiveBacklogItemId,
+        planId: plan.id, stepId: persistedStep.id, executionGeneration, result,
+        assertOwnership: () => assertCronExecutionOwnership(ownership) });
+    }
     effectiveSandboxId = sandboxIdentity(sandbox);
     const workspaceFingerprintAfter =
       await captureWorkspaceProgressFingerprint(sandbox);
     const durableProductProgress =
-      !!workspaceFingerprintBefore &&
+      researchProgress || (!!workspaceFingerprintBefore &&
       !!workspaceFingerprintAfter &&
-      workspaceFingerprintBefore !== workspaceFingerprintAfter;
+      workspaceFingerprintBefore !== workspaceFingerprintAfter);
     if (activeRepairRun && activeRepairAction) {
       let contractRevision = activeRepairRun.contract_revision;
       if (

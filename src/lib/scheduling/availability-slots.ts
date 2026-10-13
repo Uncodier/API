@@ -17,6 +17,14 @@ export type SchedulingSlot = {
   all_participants_available: boolean;
 };
 
+export type SchedulingWindow = { start: number; end: number };
+export type SchedulingSlotOptions = {
+  now?: Date;
+  memberWindows?: Map<string, SchedulingWindow[]>;
+  bufferMinutes?: number;
+  blocks?: Array<{ entity_type: string; entity_id: string | null; start_time: string; end_time: string }>;
+};
+
 export function generateAvailableSlots(
   date: string,
   startTimeStr: string,
@@ -26,16 +34,27 @@ export function generateAvailableSlots(
   requestedParticipants: string[],
   requestedResources: string[],
   teamMembers: any[],
-  timezone: string
+  timezone: string,
+  options: SchedulingSlotOptions = {}
 ): SchedulingSlot[] {
+  if (!Number.isInteger(duration) || duration < 1 || duration > 1440) return [];
   const tz = normalizeTimezone(timezone);
   const startTime = localWallTimeToUtc(date, tz, toClockTime(startTimeStr));
   const endTime = localWallTimeToUtc(date, tz, toClockTime(endTimeStr));
 
   const slots: SchedulingSlot[] = [];
-  let currentSlotStart = startTime;
-
-  while (addMinutes(currentSlotStart, duration) <= endTime) {
+  const candidateStarts = new Set<number>();
+  const windows = options.memberWindows
+    ? [...options.memberWindows.values()].flat()
+    : [{ start: startTime.getTime(), end: endTime.getTime() }];
+  for (const window of windows) {
+    const lastEnd = Math.min(window.end, endTime.getTime());
+    for (let start = Math.max(window.start, startTime.getTime()); start + duration * 60_000 <= lastEnd; start += 30 * 60_000) {
+      candidateStarts.add(start);
+    }
+  }
+  for (const candidate of [...candidateStarts].sort((a, b) => a - b)) {
+    const currentSlotStart = new Date(candidate);
     const slotEnd = addMinutes(currentSlotStart, duration);
     const { isAvailable, availableParticipants, availableResources } = checkSlotAvailability(
       currentSlotStart,
@@ -43,10 +62,11 @@ export function generateAvailableSlots(
       existingMeetings,
       requestedParticipants,
       requestedResources,
-      teamMembers
+      teamMembers,
+      options
     );
 
-    if (isAvailable || availableParticipants.length > 0) {
+    if (isAvailable && (!options.now || currentSlotStart > options.now)) {
       slots.push({
         start: formatInTimezone(currentSlotStart, tz, 'HH:mm'),
         end: formatInTimezone(slotEnd, tz, 'HH:mm'),
@@ -58,8 +78,6 @@ export function generateAvailableSlots(
         all_participants_available: isAvailable,
       });
     }
-
-    currentSlotStart = addMinutes(currentSlotStart, 30);
   }
 
   return slots;
@@ -71,32 +89,34 @@ function checkSlotAvailability(
   existingMeetings: any[],
   requestedParticipants: string[],
   requestedResources: string[],
-  teamMembers: any[]
+  teamMembers: any[],
+  options: SchedulingSlotOptions
 ) {
-  const availableParticipants = [...teamMembers];
-  const availableResources = [...requestedResources];
-
-  for (const meeting of existingMeetings) {
-    const meetingStart = new Date(meeting.start_datetime);
-    const meetingEnd = new Date(meeting.end_datetime);
-    const overlaps = slotStart < meetingEnd && slotEnd > meetingStart;
-    if (!overlaps) continue;
-
-    const meetingParticipants = meeting.assignees || [];
-    availableParticipants.forEach((participant, index) => {
-      if (meetingParticipants.includes(participant.id)) {
-        availableParticipants.splice(index, 1);
-      }
+  const buffer = Math.max(0, options.bufferMinutes || 0) * 60_000;
+  const start = slotStart.getTime();
+  const end = slotEnd.getTime();
+  const overlappingMeetings = existingMeetings.filter(meeting =>
+    start < Date.parse(meeting.end_datetime) + buffer && end > Date.parse(meeting.start_datetime) - buffer
+  );
+  const availableParticipants = teamMembers.filter(member => {
+    if (options.memberWindows && !(options.memberWindows.get(member.id) || []).some(window =>
+      start >= window.start && end <= window.end
+    )) return false;
+    if ((options.blocks || []).some(block =>
+      (block.entity_type === 'global' || (block.entity_type === 'user' && block.entity_id === member.id))
+      && start < Date.parse(block.end_time) && end > Date.parse(block.start_time)
+    )) return false;
+    return !overlappingMeetings.some(meeting => {
+      const participants = meeting.participants ?? meeting.assignees ?? [];
+      // Legacy appointments without an assignee reserve site capacity conservatively.
+      return !participants.length || participants.some((participant: unknown) => typeof participant === 'string' && (
+        participant === member.id || (member.email && participant.trim().toLowerCase() === member.email.trim().toLowerCase())
+      ));
     });
-
-    const meetingResources = meeting.resources || [];
-    meetingResources.forEach((resource: string) => {
-      const index = availableResources.indexOf(resource);
-      if (index !== -1) {
-        availableResources.splice(index, 1);
-      }
-    });
-  }
+  });
+  const availableResources = requestedResources.filter(resource =>
+    !overlappingMeetings.some(meeting => (meeting.resources || []).includes(resource))
+  );
 
   const allParticipantsAvailable = requestedParticipants.every((p) =>
     availableParticipants.some((ap) => ap.id === p)
@@ -104,7 +124,7 @@ function checkSlotAvailability(
   const allResourcesAvailable = requestedResources.every((r) => availableResources.includes(r));
 
   return {
-    isAvailable: allParticipantsAvailable && allResourcesAvailable,
+    isAvailable: availableParticipants.length > 0 && allParticipantsAvailable && allResourcesAvailable,
     availableParticipants,
     availableResources,
   };

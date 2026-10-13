@@ -14,6 +14,7 @@ jest.unstable_mockModule('@/lib/database/supabase-client', () => ({ supabaseAdmi
 jest.unstable_mockModule('../assistant-turn', () => ({ processAssistantTurn: model }));
 jest.unstable_mockModule('../steps', () => ({ prepareAssistantContext: prepare }));
 jest.unstable_mockModule('../plan-steps', () => ({
+  getAssistantPlanOwnershipStep: jest.fn(),
   getActiveInstancePlan: async () => null, executePlanStep: jest.fn(), acquirePlanExecutionLockStep: jest.fn(), releasePlanExecutionLockStep: jest.fn(),
 }));
 jest.unstable_mockModule('../persist-and-fail-steps', () => ({

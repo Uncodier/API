@@ -1,4 +1,4 @@
-import { searchWithTavily } from '@/lib/services/search/data-analyst-search';
+import { searchWeb, type WebSearchOptions } from '@/lib/services/search/web-search';
 
 export interface GoogleSearchOptions {
   query: string;
@@ -24,7 +24,7 @@ export interface GoogleSearchResponse {
   query: string;
   totalResults: number;
   error?: string;
-  method: 'google' | 'tavily' | 'serpapi';
+  method: 'google' | 'azure_bing' | 'serpapi';
 }
 
 export class GoogleSearchService {
@@ -263,36 +263,40 @@ export class GoogleSearchService {
   }
 
   /**
-   * Busca usando Tavily como fallback
+   * Busca usando el servicio de búsqueda web como fallback
    */
-  private async searchWithTavilyFallback(options: GoogleSearchOptions): Promise<GoogleSearchResponse> {
-    console.log(`🔄 [Tavily] Usando Tavily como fallback`);
+  private async searchWithWebSearchFallback(options: GoogleSearchOptions): Promise<GoogleSearchResponse> {
+    console.log(`🔄 [WebSearch] Usando búsqueda web como fallback`);
     
     try {
+      // No degradar requisitos de fecha a términos de query ni realizar una búsqueda sin filtro.
+      if (options.dateFrom !== undefined || options.dateTo !== undefined) {
+        throw new Error('Web search fallback does not support dateFrom/dateTo filters');
+      }
+      if (options.country !== undefined || options.language !== undefined) {
+        throw new Error('Web search fallback does not support country/language filters');
+      }
+
       const searchQuery = this.buildSearchQuery(options);
       
-      // Configurar opciones para Tavily
-      const tavilyOptions: any = {
+      const searchOptions: WebSearchOptions = {
         search_depth: 'basic',
-        max_results: options.maxResults || 10,
+        max_results: Math.min(options.maxResults ?? 10, 20),
         include_answer: false,
         include_domains: options.site ? [options.site] : [],
       };
 
-      // Agregar filtro temporal
-      if (options.dateFrom) {
-        const daysAgo = this.calculateDaysAgo(options.dateFrom);
-        tavilyOptions.days = Math.min(daysAgo, 365);
-      }
-
-      const tavilyResult = await searchWithTavily(searchQuery, tavilyOptions);
+      const searchResult = await searchWeb(searchQuery, searchOptions);
       
-      if (!tavilyResult.success || !tavilyResult.data?.results) {
-        throw new Error('Tavily fallback falló');
+      if (!searchResult.success) {
+        throw new Error(searchResult.error || 'Web search fallback falló');
+      }
+      if (!searchResult.data?.results) {
+        throw new Error('Web search fallback falló');
       }
 
       // Convertir resultados
-      const results: SearchResult[] = tavilyResult.data.results.map((item: any) => ({
+      const results: SearchResult[] = searchResult.data.results.map((item: any) => ({
         title: item.title || '',
         url: item.url || '',
         domain: this.extractDomain(item.url || ''),
@@ -300,18 +304,18 @@ export class GoogleSearchService {
         publishedDate: undefined
       }));
 
-      console.log(`✅ [Tavily] Fallback exitoso: ${results.length} resultados`);
+      console.log(`✅ [WebSearch] Fallback exitoso: ${results.length} resultados`);
 
       return {
         success: true,
         results,
         query: searchQuery,
         totalResults: results.length,
-        method: 'tavily'
+        method: 'azure_bing'
       };
 
     } catch (error) {
-      console.error('❌ [Tavily] Error en fallback:', error);
+      console.error('❌ [WebSearch] Error en fallback:', error);
       throw error;
     }
   }
@@ -348,45 +352,49 @@ export class GoogleSearchService {
    * Método principal de búsqueda con estrategia inteligente
    */
   async search(options: GoogleSearchOptions): Promise<GoogleSearchResponse> {
+    return this.searchWithDefaults(options);
+  }
+
+  /** Provider locale defaults are preferences, not caller-required Azure filters. */
+  private async searchWithDefaults(
+    options: GoogleSearchOptions,
+    primaryDefaults: Pick<GoogleSearchOptions, 'country' | 'language'> = {},
+  ): Promise<GoogleSearchResponse> {
     console.log(`🚀 [GoogleSearch] Iniciando búsqueda inteligente: "${options.query}"`);
-    
-    try {
-      // Primero intentar con Google Custom Search API
-      if (this.googleApiKey && this.googleCseId) {
-        console.log(`🔍 [GoogleSearch] Usando Google Custom Search API`);
-        return await this.searchWithGoogle(options);
-      }
-      
-      // Si no hay Google API, intentar SerpAPI
-      if (this.serpApiKey) {
-        console.log(`🐍 [GoogleSearch] Usando SerpAPI como alternativa`);
-        return await this.searchWithSerpAPI(options);
-      }
-      
-      // Fallback a Tavily
-      console.log(`🔄 [GoogleSearch] Usando Tavily como fallback`);
-      return await this.searchWithTavilyFallback(options);
-      
-    } catch (error) {
-      console.error('❌ [GoogleSearch] Error en método principal, usando fallback:', error);
-      
-      // Intentar el siguiente método disponible
+
+    // Primero intentar con Google Custom Search API
+    if (this.googleApiKey && this.googleCseId) {
       try {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        if (this.serpApiKey && !errorMessage.includes('SerpAPI')) {
-          return await this.searchWithSerpAPI(options);
-        }
-        return await this.searchWithTavilyFallback(options);
-      } catch (fallbackError) {
-        return {
-          success: false,
-          results: [],
-          query: options.query,
-          totalResults: 0,
-          method: 'tavily',
-          error: `Todos los métodos fallaron: ${error instanceof Error ? error.message : 'Error desconocido'}`
-        };
+        console.log(`🔍 [GoogleSearch] Usando Google Custom Search API`);
+        return await this.searchWithGoogle({ ...primaryDefaults, ...options });
+      } catch (error) {
+        console.error('❌ [GoogleSearch] Error en método principal, usando fallback:', error);
       }
+    }
+
+    // Si Google no está disponible o falla, intentar SerpAPI
+    if (this.serpApiKey) {
+      try {
+        console.log(`🐍 [GoogleSearch] Usando SerpAPI como alternativa`);
+        return await this.searchWithSerpAPI({ ...primaryDefaults, ...options });
+      } catch (error) {
+        console.error('❌ [GoogleSearch] Error en alternativa, usando fallback:', error);
+      }
+    }
+
+    // Un solo intento de búsqueda web, fuera de los catch de los proveedores principales.
+    try {
+      console.log(`🔄 [GoogleSearch] Usando búsqueda web como fallback`);
+      return await this.searchWithWebSearchFallback(options);
+    } catch (error) {
+      return {
+        success: false,
+        results: [],
+        query: options.query,
+        totalResults: 0,
+        method: 'azure_bing',
+        error: `Todos los métodos fallaron: ${error instanceof Error ? error.message : 'Error desconocido'}`
+      };
     }
   }
 
@@ -398,6 +406,8 @@ export class GoogleSearchService {
     dateTo?: string;
     maxResults?: number;
     keywords?: string[];
+    country?: string;
+    language?: string;
   }): Promise<GoogleSearchResponse> {
     let query = 'LLM OR "large language model" OR GPT OR Claude OR "artificial intelligence"';
     
@@ -405,15 +415,15 @@ export class GoogleSearchService {
       query += ` AND (${options.keywords.join(' OR ')})`;
     }
 
-    return this.search({
+    return this.searchWithDefaults({
       query,
       site: 'news.ycombinator.com',
       dateFrom: options.dateFrom,
       dateTo: options.dateTo,
-      maxResults: options.maxResults || 50,
-      country: 'us',
-      language: 'en'
-    });
+      maxResults: options.maxResults ?? 20,
+      ...(options.country !== undefined ? { country: options.country } : {}),
+      ...(options.language !== undefined ? { language: options.language } : {}),
+    }, { country: 'us', language: 'en' });
   }
 
   /**
@@ -425,6 +435,8 @@ export class GoogleSearchService {
     dateTo?: string;
     sources?: string[];
     maxResults?: number;
+    country?: string;
+    language?: string;
   }): Promise<GoogleSearchResponse> {
     let query = options.topic;
     
@@ -435,14 +447,15 @@ export class GoogleSearchService {
       
       for (const source of options.sources.slice(0, 3)) { // Limitar a 3 fuentes
         try {
-          const sourceResult = await this.search({
+          const sourceResult = await this.searchWithDefaults({
             query,
             site: source,
             dateFrom: options.dateFrom,
             dateTo: options.dateTo,
-            maxResults: Math.floor((options.maxResults || 30) / options.sources.length),
-            country: 'us'
-          });
+            maxResults: Math.max(1, Math.floor((options.maxResults ?? 20) / Math.min(options.sources.length, 3))),
+            ...(options.country !== undefined ? { country: options.country } : {}),
+            ...(options.language !== undefined ? { language: options.language } : {}),
+          }, { country: 'us' });
           
           if (sourceResult.success) {
             results.push(...sourceResult.results);
@@ -455,20 +468,21 @@ export class GoogleSearchService {
       
       return {
         success: results.length > 0,
-        results: results.slice(0, options.maxResults || 30),
+        results: results.slice(0, options.maxResults ?? 20),
         query,
         totalResults,
         method: 'google'
       };
     }
 
-    return this.search({
+    return this.searchWithDefaults({
       query,
       site: options.sources?.[0],
       dateFrom: options.dateFrom,
       dateTo: options.dateTo,
-      maxResults: options.maxResults || 30,
-      country: 'us'
-    });
+      maxResults: options.maxResults ?? 20,
+      ...(options.country !== undefined ? { country: options.country } : {}),
+      ...(options.language !== undefined ? { language: options.language } : {}),
+    }, { country: 'us' });
   }
 }

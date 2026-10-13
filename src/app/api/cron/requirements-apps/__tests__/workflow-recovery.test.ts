@@ -5,14 +5,16 @@ import * as recoveryPolicy from '../../shared/cycle-recovery-policy';
 import * as ownershipRejection from '../../shared/cron-ownership-rejection';
 import { isInsufficientCreditsError } from '@/lib/services/billing/credit-exhaustion-message';
 import * as adjudication from '../../shared/no-progress-adjudication';
+import * as reportDeliveryPolicy from '../report-delivery-policy';
 import { getFlow, classifyRequirementType, productAttemptLimits } from '@/lib/services/requirement-flows';
 import { activeBacklogItemIdsFromPlanSteps, countPendingPlanSteps, hasRunnableBacklogWork } from '@/lib/services/cycle-wrapup-prompt';
 
 /** Real workflow control flow; every I/O dependency is an explicit local fake. */
-function harness(options: { maxTurns?: number; type?: string } = {}) {
+function harness(options: { maxTurns?: number; type?: string; reportOnly?: boolean; mixed?: boolean } = {}) {
   const plan: any = { id: 'plan', title: 'Implement', steps: [{
     id: 'step', order: 1, title: 'Work', instructions: 'Build', status: 'in_progress', infrastructure_generation: 0, backlog_item_id: 'item',
   }] };
+  if (options.reportOnly) plan.steps[0].instructions = 'Entregar el informe en step_output. No crear archivos.';
   const lifecycle = {
     assertCronExecutionOwnershipStep: jest.fn(async (_ownership?: unknown) => {}),
     createSandboxStep: jest.fn(async () => ({ sandboxId: 'sandbox', branchName: 'feature', workDir: '/sandbox', instanceType: 'applications', isNewBranch: false })),
@@ -23,7 +25,10 @@ function harness(options: { maxTurns?: number; type?: string } = {}) {
   const db = {
     recordRequirementBlockedStep: jest.fn(async (_params?: unknown) => ({ ok: true, error: undefined as string | undefined })),
     checkInstanceAndPlanStatusStep: jest.fn(async () => ({ isPaused: false })),
-    getRequirementFullContextStep: jest.fn(async (): Promise<any> => ({ backlog: { items: [{ id: 'item', status: 'in_progress' }] } })),
+    getRequirementFullContextStep: jest.fn(async (): Promise<any> => ({ backlog: { items: [
+      { id: 'item', status: 'in_progress', ...(options.reportOnly ? { kind: 'doc', constraints: ['Sin código/repositorio/carpetas.'] } : {}) },
+      ...(options.mixed ? [{ id: 'api-item', status: 'pending', kind: 'api', touches: ['src/app/api/route.ts'] }] : []),
+    ] } })),
     isRequirementExecutionCurrentStep: jest.fn(async () => true),
     updateInstanceStatusStep: jest.fn(async () => {}),
     syncCompletedPlanBacklogStep: jest.fn(async () => ({})),
@@ -76,6 +81,7 @@ function harness(options: { maxTurns?: number; type?: string } = {}) {
     blockRequirementForCronInfrastructureCyclesStep: jest.fn(async (_params?: unknown) => false),
   };
   const provisionTrackingScriptStep = jest.fn(async (_params?: unknown): Promise<{ injected: boolean; error?: string }> => ({ injected: true }));
+  const sourceArchive = jest.fn(async () => 'https://archive.example.invalid/source.zip');
   const orchestrator = { runOrchestratorStep: jest.fn(async (_params?: unknown) => ({ createdPlan: true, timedOut: false, effectiveSandboxId: 'sandbox' })) };
   const workflow = loadRuntimeModule<typeof import('../workflow')>(
     'src/app/api/cron/requirements-apps/workflow.ts', {
@@ -90,7 +96,7 @@ function harness(options: { maxTurns?: number; type?: string } = {}) {
       '../shared/migration-lifecycle-steps': migrationLifecycle,
       '../shared/bootstrap-spec-step': { bootstrapRequirementSpecStep: async () => {} },
       '../shared/tracking-script-step': { provisionTrackingScriptStep },
-      '../shared/ensure-source-archive-step': { ensureSourceArchiveStep: async () => 'https://archive.example.invalid/source.zip' },
+      '../shared/ensure-source-archive-step': { ensureSourceArchiveStep: sourceArchive },
       '@/lib/services/requirement-git-binding': { getRequirementGitBinding: async () => ({ org: 'fixture', repo: 'app' }) },
       '../shared/docs-digest-step': { emitDocsDigestStep: async () => ({}) },
       '../shared/sync-docs-to-backlog-step': { emitSyncDocsToBacklogStep: async () => {} },
@@ -118,6 +124,7 @@ function harness(options: { maxTurns?: number; type?: string } = {}) {
       '../shared/admin-loop-step': { detectAdminLoopStep: async () => ({ triggered: false }) },
       '@/lib/services/sandbox-gone-error': { isSandboxGoneError: () => false },
       './prompt': { buildCoordinatorPromptForFlow: () => '' },
+      './report-delivery-policy': reportDeliveryPolicy,
       workflow: { sleep: async () => {} },
       '@/lib/services/cron-infrastructure-state': {},
       '../shared/plan-cycle-outcome': cyclePolicy,
@@ -131,7 +138,7 @@ function harness(options: { maxTurns?: number; type?: string } = {}) {
   const run = () => workflow.runCronAppsWorkflow({ reqId: 'req', title: 'Test', instructions: '', type: options.type || 'app',
     site_id: 'site', user_id: 'user', instanceId: 'instance', previousWorkContext: '', instance_type: 'applications',
     cronLockRunId: 'run', cycleStartedAt: '2026-09-26T00:00:00Z', executionGeneration: 3 });
-  return { run, plan, lifecycle, db, steps, executeSingleTurnStep, execution, verification, migration, repair, gate, finalizer, wrapup, provisionTrackingScriptStep, migrationLifecycle, technicalReviewBacklogItems, orchestrator, circuits, credits };
+  return { run, plan, lifecycle, db, steps, executeSingleTurnStep, execution, verification, migration, repair, gate, finalizer, wrapup, provisionTrackingScriptStep, migrationLifecycle, technicalReviewBacklogItems, orchestrator, circuits, credits, sourceArchive };
 }
 
 function expectNoMigrationOrchestration(h: ReturnType<typeof harness>) {
@@ -144,6 +151,82 @@ function expectNoMigrationOrchestration(h: ReturnType<typeof harness>) {
   expect(h.migrationLifecycle.holdMigrationLifecycleStep).not.toHaveBeenCalled();
   expect(h.db.recordRequirementBlockedStep).not.toHaveBeenCalled();
 }
+
+describe('explicit whole-requirement report-only delivery', () => {
+  it('preserves provider infrastructure failure without mislabeling a semantic review', async () => {
+    const h = harness({ type: 'research', reportOnly: true, maxTurns: 1 });
+    h.executeSingleTurnStep.mockResolvedValue({ ok: false, isDone: false, transient: true,
+      error: 'Source provider unavailable', infrastructureGeneration: 12 });
+    await expect(h.run()).resolves.toMatchObject({ status: 'infrastructure_retry' });
+    expect(h.steps.commitAndPushStep).not.toHaveBeenCalled();
+    expect(h.finalizer.createFinalStatusStep).not.toHaveBeenCalled();
+    expect(h.wrapup.emitCycleWrapUpStep).not.toHaveBeenCalled();
+    expect(h.db.recordCronCycleOutcomeStep).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'infrastructure_retry' }));
+  });
+
+  it('preserves credit exhaustion and user pause without report or repository delivery', async () => {
+    const h = harness({ type: 'research', reportOnly: true, maxTurns: 1 });
+    h.executeSingleTurnStep.mockResolvedValue({ ok: false, isDone: false, creditExhausted: true, effectiveSandboxId: 'sandbox' });
+    await h.run();
+    expect(h.wrapup.emitCycleWrapUpStep).not.toHaveBeenCalled();
+    expect(h.steps.commitAndPushStep).not.toHaveBeenCalled();
+    expect(h.credits.emitCreditExhaustionStep).toHaveBeenCalledTimes(1);
+    const paused = harness({ type: 'research', reportOnly: true });
+    paused.db.checkInstanceAndPlanStatusStep.mockResolvedValue({ isPaused: true });
+    await expect(paused.run()).resolves.toMatchObject({ status: 'paused' });
+    expect(paused.executeSingleTurnStep).not.toHaveBeenCalled();
+    expect(paused.steps.commitAndPushStep).not.toHaveBeenCalled();
+    expect(paused.wrapup.emitCycleWrapUpStep).not.toHaveBeenCalled();
+  });
+
+  it('does not finalize repository delivery even if plan status claims completed', async () => {
+    const h = harness({ type: 'research', reportOnly: true, maxTurns: 1 });
+    h.steps.reconcilePlanStep.mockResolvedValue('completed');
+    await expect(h.run()).resolves.toMatchObject({ status: 'in-progress', branch: null });
+    expect(h.steps.commitAndPushStep).not.toHaveBeenCalled();
+    expect(h.sourceArchive).not.toHaveBeenCalled();
+    expect(h.finalizer.createFinalStatusStep).not.toHaveBeenCalled();
+    expect(h.db.syncCompletedPlanBacklogStep).not.toHaveBeenCalled();
+    expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({ planCompleted: false }));
+  });
+
+  it('does not turn report no-progress into completion or push', async () => {
+    const h = harness({ type: 'research', reportOnly: true, maxTurns: 1 });
+    h.executeSingleTurnStep.mockResolvedValue({ ok: true, isDone: false, durableProductProgress: false });
+    const result = await h.run();
+    expect(result.status).not.toBe('done');
+    expect(h.steps.commitAndPushStep).not.toHaveBeenCalled();
+    expect(h.finalizer.createFinalStatusStep).not.toHaveBeenCalled();
+    expect(h.lifecycle.stopSandboxStep).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps incomplete reports in progress without commit, deployment, archive or repository finalization and still cleans up', async () => {
+    const h = harness({ type: 'research', reportOnly: true, maxTurns: 1 });
+    await expect(h.run()).resolves.toMatchObject({ status: 'in-progress', branch: null, previewUrl: null });
+    expect(h.steps.commitAndPushStep).not.toHaveBeenCalled();
+    expect(h.steps.postFinallyBuildStep).not.toHaveBeenCalled();
+    expect(h.steps.getPreviewUrlStep).not.toHaveBeenCalled();
+    expect(h.sourceArchive).not.toHaveBeenCalled();
+    expect(h.finalizer.validateDeliverablesStep).not.toHaveBeenCalled();
+    expect(h.finalizer.createFinalStatusStep).not.toHaveBeenCalled();
+    expect(h.db.syncCompletedPlanBacklogStep).not.toHaveBeenCalled();
+    expect(h.lifecycle.stopSandboxStep).toHaveBeenCalledTimes(1);
+    expect(h.lifecycle.releaseRunLockStep).toHaveBeenCalledTimes(1);
+    expect(h.wrapup.emitCycleWrapUpStep).toHaveBeenCalledWith(expect.objectContaining({ planCompleted: false, requiresUserFeedback: false }));
+  });
+
+  it.each(['app', 'doc'])('preserves repository guards for %s despite report-like instructions', async type => {
+    const h = harness({ type, reportOnly: true, maxTurns: 1 });
+    await h.run();
+    expect(h.steps.commitAndPushStep).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not suppress persistence for a mixed report + code requirement', async () => {
+    const h = harness({ type: 'research', reportOnly: true, mixed: true, maxTurns: 1 });
+    await h.run();
+    expect(h.steps.commitAndPushStep).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('workflow recovery and truthful completion', () => {
   beforeEach(() => {

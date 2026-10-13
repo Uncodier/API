@@ -36,20 +36,45 @@ Content-Type: application/json
 
 ## `webSearch`
 
-Tavily. Returns an AI answer plus snippets.
+Azure OpenAI Responses with Bing web search. Returns search results and, when
+requested, an AI answer. Results reflect indexed/cached web data, not live page
+scraping; source dates are not guaranteed and no relevance score is invented.
 
 | Parameter | Type | Notes |
 | :--- | :--- | :--- |
 | query | string | Required |
-| search_depth | string | `basic` (default), `advanced` |
-| max_results | number | 1–20, default 5 |
+| search_depth | string | `basic` (default): up to 1 tool call, low reasoning; `advanced`: up to 2, medium; `comprehensive`: up to 3, medium |
+| max_results | number | Local cap 1–20, default 5; does not guarantee this many results from Bing |
+| limit | number | Legacy alias for `max_results`; if both are supplied they must agree |
 | include_answer | boolean | Default true |
-| include_images | boolean | Default false |
+| include_images | boolean | Default false; `true` is unsupported and rejected |
+| include_raw_content | boolean | Raw content is unsupported; requests to enable it are rejected |
+| date_from, date_to, time_range | string | Hard date filters are unsupported and rejected; query wording is not an enforced date range |
 | include_domains, exclude_domains | array | Host filters |
 
 ```
 POST /api/agents/tools/webSearch
 ```
+
+The depth names are compatibility controls for tool-call budgets, not a guarantee
+of equivalent Tavily search depth. Commercial credits remain **0.1 per query**;
+Azure provider cost is model input/output tokens plus Bing `num_requests`.
+
+The API server calls HTTP `POST /openai/v1/responses` with `store: false` and must
+use an existing reasoning-enabled Azure deployment supporting
+`web_search_call.results` (`gpt-5.2` tested). Credentials use the optional dedicated
+`AZURE_OPENAI_SEARCH_ENDPOINT` + `AZURE_OPENAI_SEARCH_API_KEY` pair first; otherwise
+`MICROSOFT_AZURE_OPENAI_ENDPOINT` + `MICROSOFT_AZURE_OPENAI_API_KEY` if either is
+set; otherwise `AZURE_OPENAI_ENDPOINT` + `AZURE_OPENAI_API_KEY`. Both values of the
+selected pair are required; incomplete pairs fail rather than mixing or falling
+back. Deployment precedence is `AZURE_OPENAI_SEARCH_DEPLOYMENT`, then
+`MICROSOFT_AZURE_OPENAI_DEPLOYMENT`, then `AZURE_OPENAI_DEPLOYMENT`.
+
+Configure Azure secrets in the **Vercel API server's environment**, never in
+client-side `NEXT_PUBLIC_*` variables. This migration does not edit private `.env`
+files or deploy. Bing grounding is a separate compliance boundary: review Bing
+terms and data-handling requirements; `store: false` is not a guarantee of Bing
+retention, residency or Azure model-processing compliance parity.
 
 ## `urlToMarkdown` / `urlToSitemap`
 

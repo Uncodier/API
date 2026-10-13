@@ -7,6 +7,7 @@ import { getSupabaseAdmin } from "@/lib/database/supabase-server";
 import { executeCustomerSupportVoiceTool } from "@/lib/services/zavu/voice-tool-executor";
 import { VoiceLeadValidationError } from "@/lib/services/zavu/voice-lead-errors";
 import { VoiceToolArgumentValidationError } from "@/lib/services/zavu/voice-tool-parameters";
+import { SchedulingRequestRejected } from '@/app/api/agents/tools/scheduling/assistantProtocol';
 
 const requestSchema = z.object({
   tool: z.string().min(1).optional(),
@@ -124,9 +125,19 @@ export async function POST(request: NextRequest) {
         siteId,
         rawPayload: rawBody,
       });
-      log("execution_completed", { tool: toolLabel, status: 200 });
+      const failed = Boolean(result && typeof result === 'object' && 'success' in result && result.success === false);
+      log(failed ? 'execution_recovery' : 'execution_completed', { tool: toolLabel, status: 200 }, failed);
       return respond(result ?? { success: true });
     } catch (error) {
+      if (error instanceof SchedulingRequestRejected) {
+        log('execution_rejected', { tool: toolLabel, status: error.status }, true);
+        return respond({
+          ...error.result,
+          success: false,
+          error: error.message,
+          request_id: requestId,
+        }, error.status);
+      }
       const message = error instanceof Error ? error.message : "Tool execution failed";
       const unknownTool = message.startsWith("Unknown Customer Support tool");
       const validation = error instanceof VoiceLeadValidationError || error instanceof VoiceToolArgumentValidationError
@@ -140,6 +151,7 @@ export async function POST(request: NextRequest) {
       }, true);
       return respond(
         {
+          success: false,
           error: message,
           code,
           ...(validation ? { invalid_fields: validation.fields } : {}),

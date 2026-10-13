@@ -41,12 +41,13 @@
       "unit": "per search"
     },
     {
-      "name": "Web Search (Tavily)",
+      "name": "Web Search (Azure Bing)",
       "type": "Tool / API",
       "route": "/api/agents/dataAnalyst/search",
-      "provider": "Tavily",
+      "provider": "Azure OpenAI / Bing",
       "cost_per_call": 0.1,
-      "unit": "per query"
+      "unit": "per query",
+      "provider_cost_model": "Separate from commercial credits: model input/output tokens + Bing num_requests"
     },
     {
       "name": "Assistant Engine",

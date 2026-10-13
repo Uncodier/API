@@ -17,12 +17,14 @@ jest.unstable_mockModule('@/lib/database/supabase-client', () => ({
 jest.unstable_mockModule('@/app/api/robots/instance/assistant/assistant-turn', () => ({ processAssistantTurn: model }));
 jest.unstable_mockModule('@/app/api/robots/instance/assistant/steps', () => ({ prepareAssistantContext: prepare }));
 jest.unstable_mockModule('@/app/api/robots/instance/assistant/plan-steps', () => ({
+  getAssistantPlanOwnershipStep: jest.fn(),
   getActiveInstancePlan: async () => null,
   executePlanStep: jest.fn(), acquirePlanExecutionLockStep: jest.fn(), releasePlanExecutionLockStep: jest.fn(),
 }));
 jest.unstable_mockModule('@/app/api/robots/instance/assistant/persist-and-fail-steps', () => ({
   persistUserMessageStep: persist, completeUserMessageStep: complete,
   pauseUserMessageStep: jest.fn(), markAssistantFailedStep: jest.fn(),
+  pauseAssistantForCreditsStep: jest.fn(),
 }));
 jest.unstable_mockModule('@/app/api/robots/instance/assistant/assistant-respawn-steps', () => ({ spawnSilentContinueStep: jest.fn() }));
 jest.unstable_mockModule('../steps', () => ({

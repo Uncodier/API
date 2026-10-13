@@ -3,6 +3,7 @@
 import type { BacklogItem, BacklogItemKind } from '@/lib/services/requirement-backlog-types';
 import type { RequirementKind } from '@/lib/services/requirement-flows';
 import type { EvidenceRecord } from '@/lib/services/requirement-ground-truth';
+import { isReportOnlyTask, reportEvidenceGap } from './research-report-evidence';
 import {
   acceptanceValidation,
   requiresSuccessfulTestEvidence,
@@ -202,6 +203,14 @@ function criticByFlow(ctx: ArchetypeContext): CriticSuggestion[] {
 
 export function runCritic(ctx: ArchetypeContext, opts?: { maxIterations?: number }): CriticResult {
   const maxIterations = Math.max(1, Math.min(2, opts?.maxIterations ?? 2));
+  if (isReportOnlyTask(ctx.flow, ctx.item)) {
+    const gap = reportEvidenceGap(ctx.evidence.research);
+    return {
+      ok: false, iterations: maxIterations,
+      suggestions: [{ rule: gap ? 'research-evidence-gap' : 'research-verification-capability', severity: 'blocker',
+        fix_hint: gap || 'Report and source receipts captured. Source-grounded semantic research review is not available; do not claim acceptance or create application artifacts.' }],
+    };
+  }
   const flowSuggestions =
     ctx.item.kind === 'doc'
       ? criticDocRules(ctx)
@@ -466,6 +475,14 @@ function judgeOverrideForKind(kind: BacklogItemKind | undefined): ((item: Backlo
 export function runJudge(ctx: ArchetypeContext): JudgeResult {
   const constraintHit = rejectUnmatchedConstraints(ctx.item, ctx.evidence);
   if (constraintHit) return constraintHit;
+  if (isReportOnlyTask(ctx.flow, ctx.item)) {
+    const gap = reportEvidenceGap(ctx.evidence.research);
+    if (gap) return rejected(ctx.item, gap, 'evidence_gap');
+    // Neither report text nor source keyword overlap proves the research conclusions.
+    return { ...rejected(ctx.item,
+      'Report and cited source receipts captured; source-grounded semantic research verification is not implemented. Review capability is required before approval.',
+      'capability_gap'), verdict: 'escalate' };
+  }
   const override = judgeOverrideForKind(ctx.item.kind);
   const fn = override ?? JUDGE_BY_FLOW[ctx.flow] ?? judgeTask;
   return fn(ctx.item, ctx.evidence);

@@ -188,6 +188,8 @@ export interface EvidenceRecord {
   producer_step_id?: string;
   workspace_fingerprint?: string;
   captured_at: string;
+  /** Runner-captured research material, not an acceptance/approval receipt. */
+  research?: ResearchEvidence;
   evidence_provenance?: {
     mode: 'captured' | 'reused' | 'mixed';
     reused_from_evidence_run_ids: string[];
@@ -248,4 +250,27 @@ export interface EvidenceRecord {
     workspace_fingerprint: string;
     captured_at: string;
   } | null;
+}
+
+export interface ResearchEvidence {
+  requirement_id: string;
+  item_id: string;
+  plan_id: string;
+  execution_generation: number;
+  sources: Array<{
+    tool_call_id: string;
+    tool_name: 'webSearch';
+    step_id: string;
+    captured_at: string;
+    url: string;
+    title: string;
+    excerpt: string;
+  }>;
+  reports: Array<{
+    tool_call_id: string;
+    step_id: string;
+    captured_at: string;
+    text: string;
+    truncated: boolean;
+  }>;
 }

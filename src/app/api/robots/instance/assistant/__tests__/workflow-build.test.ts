@@ -52,6 +52,7 @@ describe('assistant workflow build boundary', () => {
       'src/lib/services/robot-instance/assistant-recovery.ts',
       'src/lib/services/robot-instance/assistant-recovery-fingerprint.ts',
       'src/lib/database/supabase-client.ts',
+      'src/app/api/robots/instance/assistant/plan-ownership.ts',
     ]) {
       expect(inputs).not.toContain(serverModule);
     }
@@ -60,6 +61,7 @@ describe('assistant workflow build boundary', () => {
     for (const step of [
       'prepareRecoveryStep', 'guardRecoveryStep', 'checkpointRecoveryStep',
       'processAssistantTurn', 'spawnSilentContinueStep',
+      'getAssistantPlanOwnershipStep',
     ]) {
       expect(code).toContain('//' + step + '");');
     }

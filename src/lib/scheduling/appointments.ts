@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { v4 as uuidv4 } from 'uuid';
 import { isValid, addMinutes, isPast } from 'date-fns';
+import { loadSchedulingDirectory } from './calendar-directory';
 import {
   DEFAULT_TIMEZONE,
   formatInTimezone,
@@ -84,7 +85,8 @@ export async function checkAppointmentAvailability(
     .from('appointments')
     .select('id, start_datetime, end_datetime, participants')
     .eq('site_id', site_id)
-    .or(`start_datetime.gte.${start},end_datetime.lte.${end}`)
+    .lt('start_datetime', end)
+    .gt('end_datetime', start)
     .eq('status', 'confirmed');
 
   if (excludeId) {
@@ -103,10 +105,26 @@ export async function checkAppointmentAvailability(
     return rows.length === 0;
   }
 
+  // Old appointments can contain email participants. Resolve only against active
+  // site membership, matching the availability query's legacy identity handling.
+  const aliases = new Map<string, string>();
+  if (rows.some(row => (row.participants || []).some((id: string) => id.includes('@')))) {
+    try {
+      const { members } = await loadSchedulingDirectory(site_id);
+      for (const member of members) {
+        if (member.email) aliases.set(member.email.trim().toLowerCase(), member.id);
+      }
+    } catch {
+      return false;
+    }
+  }
+  const canonical = (id: string) => aliases.get(id.trim().toLowerCase()) || id.trim().toLowerCase();
+  const requested = new Set(participants.map(canonical));
+
   for (const appointment of rows) {
     const appointmentParticipants = appointment.participants || [];
-    const hasConflict = participants.some((participant) =>
-      appointmentParticipants.includes(participant)
+    const hasConflict = appointmentParticipants.length === 0 || appointmentParticipants.some((participant: string) =>
+      requested.has(canonical(participant))
     );
     if (hasConflict) {
       return false;

@@ -508,18 +508,26 @@ export function withToolsRouter(allTools: RoutedTool[], alwaysOnNames: ReadonlyS
  *
  * Shared by orchestrator and executors so behaviour is consistent.
  */
-/** Hoist webSearch-style `{ results, answer }` so `tools` does not return only the Tavily answer. */
-export function hoistRoutedToolResult(result: unknown): { results?: unknown; answer?: unknown } {
+/** Hoist webSearch-style `{ results, answer }` so `tools` does not return only the search answer. */
+export function hoistRoutedToolResult(result: unknown): { results?: unknown; answer?: unknown; citations?: unknown; sources?: unknown } {
   if (!result || typeof result !== 'object') return {};
-  const outer = result as { results?: unknown; answer?: unknown; result?: unknown };
+  const outer = result as { results?: unknown; answer?: unknown; result?: unknown; citations?: unknown; sources?: unknown };
   if (Array.isArray(outer.results)) {
-    return { results: outer.results, answer: outer.answer };
+    return {
+      results: outer.results, answer: outer.answer,
+      ...(Array.isArray(outer.citations) ? { citations: outer.citations } : {}),
+      ...(Array.isArray(outer.sources) ? { sources: outer.sources } : {}),
+    };
   }
   const inner = outer.result;
   if (inner && typeof inner === 'object') {
-    const nested = inner as { results?: unknown; answer?: unknown };
+    const nested = inner as { results?: unknown; answer?: unknown; citations?: unknown; sources?: unknown };
     if (Array.isArray(nested.results)) {
-      return { results: nested.results, answer: nested.answer };
+      return {
+        results: nested.results, answer: nested.answer,
+        ...(Array.isArray(nested.citations) ? { citations: nested.citations } : {}),
+        ...(Array.isArray(nested.sources) ? { sources: nested.sources } : {}),
+      };
     }
   }
   return {};

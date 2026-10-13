@@ -33,6 +33,7 @@ export async function prepareSingleTurnGateEvidence(params: {
   gateBuild?: { ok: boolean; duration_ms?: number };
   gateObservations?: NonNullable<EvidenceRecord['observations']>;
   transientGateFailure: boolean;
+  canonicalOnly?: boolean;
   repairRun?: JudgeRepairRun;
 }): Promise<{
   tests: GateTest[];
@@ -172,8 +173,7 @@ export async function prepareSingleTurnGateEvidence(params: {
     )
   ) {
     await writeEvidence({
-      sandbox: params.sandbox,
-      cwd: params.cwd,
+      ...(params.canonicalOnly ? {} : { sandbox: params.sandbox, cwd: params.cwd }),
       requirementId: params.requirementId,
       itemId: params.backlogItemId,
       record: {

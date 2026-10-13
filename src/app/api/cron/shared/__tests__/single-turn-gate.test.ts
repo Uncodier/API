@@ -131,6 +131,28 @@ describe('runSingleTurnGate', () => {
     });
   });
 
+  it('carries generation-scoped canonical research into task gate and independent Judge without completing on capability gap', async () => {
+    const params = input();
+    const research = { requirement_id: params.requirementId, item_id: params.backlogItemId!, plan_id: params.plan.id,
+      execution_generation: 2, sources: [], reports: [] };
+    mockGetBacklogItem.mockResolvedValue({ kind: 'makinari', item: { id: params.backlogItemId, kind: 'doc',
+      acceptance: ['Compare public sources'], constraints: ['No crear archivos. Entregar el informe en step_output.'], evidence: { research } } });
+    mockUpdatePlanStepStatus.mockResolvedValueOnce({ persisted: true, state: 'applied', generation: 4 });
+    mockRunArchetypePostGate.mockResolvedValueOnce({ ran: false, error: 'canonical storage unavailable' });
+    // Nonempty canonical source evidence is needed for the collector to retain it.
+    (research.sources as any[]).push({ tool_call_id: 'source', tool_name: 'webSearch', step_id: params.step.id,
+      captured_at: '2026-10-01T00:00:00Z', url: 'https://example.invalid/source', title: 'Source', excerpt: 'Observed facts' });
+    await runSingleTurnGate({ ...params, audit: { ...params.audit, executionOwnership: {
+      requirementId: params.requirementId, runId: 'run', executionGeneration: 2,
+    } } });
+    expect(mockRunGateForFlow).toHaveBeenCalledWith(expect.objectContaining({ item: expect.objectContaining({
+      kind: 'doc', evidence: expect.objectContaining({ research }),
+    }) }));
+    expect(mockRunArchetypePostGate).toHaveBeenCalledWith(expect.objectContaining({ signals: expect.objectContaining({ research }) }));
+    expect(mockCompletePlanStepAfterGate).not.toHaveBeenCalled();
+    expect(mockSetItemStatus).not.toHaveBeenCalled();
+  });
+
   it('does not complete the backlog when the final step CAS is stale', async () => {
     mockUpdatePlanStepStatus.mockResolvedValueOnce({
       persisted: true,

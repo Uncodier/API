@@ -1,3 +1,4 @@
+import { consolidateSearchMemories, formatSearchMemoryAttribution } from '@/lib/services/analysis/search-memory-data';
 import { NextResponse } from 'next/server';
 import { CommandFactory, ProcessorInitializer } from '@/lib/agentbase';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
@@ -123,80 +124,6 @@ async function getAgentSearchMemories(agentId: string, timeRange?: {from?: strin
       error: error instanceof Error ? error.message : 'Unknown error occurred'
     };
   }
-}
-
-// Función para consolidar y estructurar datos de memorias
-function consolidateSearchMemories(memories: any[]): {
-  total_searches: number;
-  search_queries: string[];
-  all_results: any[];
-  consolidated_findings: any[];
-  sources: string[];
-  answers: string[];
-  search_timeframe: {from: string, to: string};
-} {
-  const searchQueries: string[] = [];
-  const allResults: any[] = [];
-  const consolidatedFindings: any[] = [];
-  const sources: string[] = [];
-  const answers: string[] = [];
-  let earliestSearch = new Date().toISOString();
-  let latestSearch = new Date(0).toISOString();
-  
-  memories.forEach((memory) => {
-    const memoryData = memory.data || {};
-    
-    // Recopilar queries
-    if (memoryData.search_query) {
-      searchQueries.push(memoryData.search_query);
-    }
-    
-    // Recopilar todos los resultados
-    if (memoryData.results && Array.isArray(memoryData.results)) {
-      allResults.push(...memoryData.results);
-      
-      // Procesar cada resultado
-      memoryData.results.forEach((result: any) => {
-        if (result.url && !sources.includes(result.url)) {
-          sources.push(result.url);
-        }
-        
-        // Consolidar hallazgos
-        consolidatedFindings.push({
-          query: memoryData.search_query,
-          title: result.title || '',
-          content: result.content || '',
-          url: result.url || '',
-          score: result.score || 0,
-          published_date: result.published_date || null,
-          search_timestamp: memoryData.search_timestamp
-        });
-      });
-    }
-    
-    // Recopilar respuestas
-    if (memoryData.answer) {
-      answers.push(memoryData.answer);
-    }
-    
-    // Actualizar rango de tiempo
-    const searchTime = memoryData.search_timestamp || memory.created_at;
-    if (searchTime < earliestSearch) earliestSearch = searchTime;
-    if (searchTime > latestSearch) latestSearch = searchTime;
-  });
-  
-  return {
-    total_searches: memories.length,
-    search_queries: Array.from(new Set(searchQueries)), // Eliminar duplicados
-    all_results: allResults,
-    consolidated_findings: consolidatedFindings,
-    sources: Array.from(new Set(sources)), // Eliminar duplicados
-    answers: answers,
-    search_timeframe: {
-      from: earliestSearch,
-      to: latestSearch
-    }
-  };
 }
 
 // Inicializar el sistema de comandos
@@ -337,9 +264,7 @@ export async function POST(request: Request) {
           if (memoryData.search_query) {
             analysisContext += `\n- Query: ${memoryData.search_query}`;
           }
-          if (memoryData.answer) {
-            analysisContext += `\n- Answer: ${memoryData.answer}`;
-          }
+          analysisContext += formatSearchMemoryAttribution(memoryData);
           if (memoryData.results && Array.isArray(memoryData.results)) {
             analysisContext += `\n- Results: ${memoryData.results.length} items`;
             memoryData.results.slice(0, 3).forEach((result: any, idx: number) => {
@@ -523,6 +448,7 @@ export async function POST(request: Request) {
         search_queries: consolidatedData.search_queries,
         sources: consolidatedData.sources,
         answers: consolidatedData.answers,
+        answer_attributions: consolidatedData.answer_attributions,
         total_findings: consolidatedData.consolidated_findings.length
       };
     }

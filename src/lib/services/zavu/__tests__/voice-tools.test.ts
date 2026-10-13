@@ -199,6 +199,12 @@ describe("syncVoiceTools", () => {
     expect(prompt).toContain("private call-specific guidance");
     expect(prompt).toContain('First silently call get_call_context');
     expect(prompt).toContain('never guess or deny calling');
+    expect(prompt).toContain('live local_date/tomorrow/timezone');
+    expect(prompt).toContain('calendars action="list" for calendar_id/user_id');
+    expect(prompt).toContain('never agent ID as team_id');
+    expect(prompt).toContain('actual returned participants');
+    expect(prompt).toContain('Recovery dates are NOT availability');
+    expect(prompt).toContain('list before retry, never auto-retry writes');
     expect(prompt).toContain("Never provide, spell out, read aloud, or offer to send links or URLs");
     expect(prompt).toContain("content that requires a screen");
     expect(prompt).toContain("silently check the listed tools");

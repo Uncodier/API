@@ -9,7 +9,7 @@ export function getCustomerSupportVoiceToolDefinitions(
 ): CustomerSupportToolDefinition[] {
   const contextTool: CustomerSupportToolDefinition = {
     name: 'get_call_context',
-    description: 'Load the purpose, direction and private context of THIS call before responding. No IDs needed; server binds the caller.',
+    description: 'Live server clock (current_time_utc, local_date, tomorrow, site timezone), purpose and private context of THIS call. Call first; refresh for relative dates, never use historical dates as today. No IDs needed; server binds the caller.',
     parameters: { type: 'object', properties: {}, required: [], additionalProperties: false },
   };
   return [contextTool, ...getCustomerSupportToolDefinitions(siteId).map((tool) => {

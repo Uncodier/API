@@ -183,6 +183,20 @@ describe('runArchetypePostGate verification budget', () => {
     }));
   });
 
+  it('quarantines a report-only missing verifier immediately without code repair or repository evidence', async () => {
+    const researchItem = { ...item, kind: 'doc', constraints: ['Sin código/repositorio/carpetas. Entregar el informe en step_output.'] };
+    getBacklogItem.mockResolvedValue({ kind: 'makinari', item: researchItem });
+    runJudge.mockReturnValue({ verdict: 'escalate', failure_kind: 'capability_gap',
+      reason: 'Source-grounded research verifier is unavailable.', matched_acceptance: [], unmatched_acceptance: item.acceptance });
+    recordToolFailure.mockResolvedValue({ ...researchItem, tool_failures: { judge_capability_resolver: 1 } });
+    const result = await runArchetypePostGate({ ...input(), signals: {} });
+    expect(result).toMatchObject({ judge_verdict: 'escalate', judge_failure_kind: 'capability_gap',
+      verification_exhausted: true, terminal_step_status: 'cancelled' });
+    expect(markNeedsReview).toHaveBeenCalledTimes(1);
+    expect(computeFeatureCoverage).not.toHaveBeenCalled();
+    for (const [params] of writeEvidence.mock.calls) expect(params).not.toHaveProperty('sandbox');
+  });
+
   it('passes scoped validator command evidence through canonical persistence to the independent Judge', async () => {
     runJudge.mockReturnValue({ verdict: 'approved', reason: 'All required evidence present',
       matched_acceptance: ['npm run lint exits 0'], unmatched_acceptance: [] });

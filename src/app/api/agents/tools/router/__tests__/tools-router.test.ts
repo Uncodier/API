@@ -47,6 +47,13 @@ describe('tools router webSearch forwarding', () => {
     expect(out.success).toBe(true);
     expect(out).toHaveProperty('results.0.url', 'https://ampi.org.mx');
   });
+
+  it('preserves search citation metadata and sources through routing', () => {
+    const citations = [{ type: 'url_citation', url: 'https://example.invalid/source', title: 'Source' }];
+    const sources = [{ type: 'url', url: 'https://example.invalid/source' }];
+    expect(hoistRoutedToolResult({ result: { results: [], answer: 'Grounded answer', citations, sources } }))
+      .toMatchObject({ citations, sources });
+  });
 });
 
 describe('tools router error classification', () => {

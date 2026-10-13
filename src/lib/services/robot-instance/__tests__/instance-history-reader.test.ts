@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import {
   createInstanceHistoryReader,
@@ -299,6 +300,71 @@ describe('canonical content and bounded reads', () => {
 });
 
 describe('strict validation and safe errors', () => {
+  it('identifies only known wrong-action fields and gives a bounded correction for the incident', async () => {
+    const privateValue = randomBytes(32).toString('hex');
+    const args = { action: 'read', log_id: id(1), query: privateValue, log_type: privateValue, before: { created_at: STAMP, id: id(2) } };
+    const error = await read(args).catch(error => error as Error);
+    expect(error).toBeInstanceOf(Error);
+    const message = (error as Error).message;
+    expect(message).toContain('action="read" does not allow list-only fields: query, log_type, before');
+    expect(message).toContain('Remove these fields');
+    expect(message).toContain('"action":"read","log_id":"<log UUID from list>"');
+    expect(message).not.toContain(privateValue);
+    expect(message.length).toBeLessThan(900);
+    expect(supabaseAdmin.from).not.toHaveBeenCalled();
+  });
+
+  it('gives the inverse correction without silently discarding read-only fields', async () => {
+    await expect(read({ action: 'list', log_id: id(1), offset: 0 })).rejects.toThrow(
+      'action="list" does not allow read-only fields: log_id, offset',
+    );
+    expect(supabaseAdmin.from).not.toHaveBeenCalled();
+  });
+
+  it.each(['flat', 'request'])('never echoes arbitrary unknown keys/values, even alongside wrong-action fields (%s)', async format => {
+    const secretKey = randomBytes(32).toString('hex');
+    const secretValue = randomBytes(32).toString('hex');
+    const request = { action: 'read', log_id: id(1), offset: 0, limit: 4000, query: secretValue, [secretKey.repeat(100)]: secretValue, site_id: SITE };
+    const args = format === 'flat' ? request : { request, thought_process: '' };
+    const error = await read(args).catch(error => error as Error);
+    const message = (error as Error).message;
+    expect(message).toContain('list-only fields: query');
+    expect(message).toContain('Unknown arguments are not allowed, including site/instance overrides');
+    expect(message).not.toContain(secretKey);
+    expect(message).not.toContain(secretValue);
+    expect(message).not.toContain(SITE);
+    expect(message.length).toBeLessThan(900);
+    expect(supabaseAdmin.from).not.toHaveBeenCalled();
+  });
+
+  it('never echoes arbitrary discriminator values or nested unknown keys', async () => {
+    const secret = randomBytes(32).toString('hex');
+    for (const args of [
+      { action: secret },
+      { request: { action: secret }, thought_process: '' },
+      { action: 'list', before: { created_at: STAMP, id: id(1), [secret]: secret } },
+    ]) {
+      const error = await read(args).catch(error => error as Error);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).not.toContain(secret);
+      expect((error as Error).message.length).toBeLessThan(900);
+    }
+    expect(supabaseAdmin.from).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { request: { action: 'read', log_id: id(1), offset: null, limit: null, instance_id: INSTANCE }, thought_process: '' },
+    { request: { action: 'list', query: null, log_type: null, before: null, limit: null }, thought_process: '', siteId: SITE },
+    { request: { action: 'list', query: null, log_type: null, before: { created_at: STAMP, id: id(1), site_id: SITE }, limit: null }, thought_process: '' },
+    { request: { action: 'read', log_id: id(1), offset: null, limit: null }, thought_process: '', action: 'list' },
+    { request: { action: 'read', log_id: null, offset: null, limit: null }, thought_process: '' },
+    { request: { action: 'list', query: ' ', log_type: null, before: null, limit: null }, thought_process: '' },
+    { request: { action: 'list', query: null, log_type: null, before: null, limit: 21 }, thought_process: '' },
+  ])('rejects invalid or ambiguous model envelopes before querying: %#', async args => {
+    await expect(read(args)).rejects.toThrow(/Invalid instance_history arguments/);
+    expect(supabaseAdmin.from).not.toHaveBeenCalled();
+  });
+
   it.each([
     null, undefined, [], 'list', {}, { action: 'create' },
     { action: 'list', instance_id: INSTANCE }, { action: 'list', site_id: SITE },

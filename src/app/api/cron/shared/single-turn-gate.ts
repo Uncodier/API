@@ -42,6 +42,7 @@ import type { RunSingleTurnGateInput } from './single-turn-gate-types';
 import { loadBacklogGateContext } from './single-turn-gate-context';
 import type { JudgeRepairRun } from './judge-repair-controller';
 import { IMPLEMENTATION_FEEDBACK_PREFIX } from './repair-execution-policy';
+import { collectResearchEvidence, isReportOnlyTask } from './research-report-evidence';
 
 /**
  * Runs and persists the gate phase after the one-tool assistant turn.
@@ -89,6 +90,18 @@ export async function runSingleTurnGate(
   const backlogAcceptance = backlogContext.acceptance;
   const backlogAcceptanceContract = backlogContext.acceptanceContract;
   const backlogEvidence = backlogContext.evidence;
+  const reportOnly = isReportOnlyTask(flow, backlogContext.item, [
+    step.instructions || '', ...(step.validation_rules || []),
+  ]);
+  const reportItem = reportOnly && backlogContext.item ? {
+    ...backlogContext.item,
+    constraints: [...(backlogContext.item.constraints || []), step.instructions || '', ...(step.validation_rules || [])],
+  } : undefined;
+  const research = reportOnly && backlogItemId && audit.executionOwnership
+    ? collectResearchEvidence({ requirementId, itemId: backlogItemId, planId: plan.id,
+        stepId: step.id, executionGeneration: audit.executionOwnership.executionGeneration,
+        result, previous: backlogEvidence?.research })
+    : undefined;
 
   const testCommand = getDeclaredTestCommand(step);
   const workspaceFingerprint =
@@ -161,6 +174,7 @@ export async function runSingleTurnGate(
     workDir: SandboxService.WORK_DIR,
     requirementId,
     item: {
+      ...(reportItem || {}),
       id: backlogItemId || step.id,
       title: step.title,
       order: step.order,
@@ -168,6 +182,7 @@ export async function runSingleTurnGate(
         backlogAcceptance ||
         (step.instructions ? [String(step.instructions)] : []),
       acceptance_contract: backlogAcceptanceContract,
+      ...(reportOnly ? { evidence: { ...backlogEvidence, research } } : {}),
     } as any,
     appContext,
     audit,
@@ -211,6 +226,7 @@ export async function runSingleTurnGate(
     gateBuild: gateRes.richSignals?.build,
     gateObservations: gateRes.richSignals?.observations,
     transientGateFailure,
+    canonicalOnly: reportOnly,
     repairRun: persistedStep.metadata?.repair_run as
       | JudgeRepairRun
       | undefined,
@@ -325,6 +341,7 @@ export async function runSingleTurnGate(
         signals: {
           ...(gateRes.richSignals as any),
           commands,
+          ...(reportOnly ? { research } : {}),
           ...(tests.length > 0
             ? {
                 tests: {
@@ -345,6 +362,7 @@ export async function runSingleTurnGate(
         capturedAt: new Date().toISOString(),
         evidenceRunId,
         audit,
+        reportDeliveryInstructions: reportOnly ? [step.instructions || '', ...(step.validation_rules || [])] : undefined,
         repairRun: persistedStep.metadata?.repair_run as
           | JudgeRepairRun
           | undefined,

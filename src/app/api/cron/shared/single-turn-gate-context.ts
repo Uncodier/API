@@ -1,4 +1,5 @@
 import { getBacklogItem } from '@/lib/services/requirement-backlog';
+import type { BacklogItem } from '@/lib/services/requirement-backlog-types';
 import type {
   AcceptanceContract,
 } from '@/lib/services/requirement-acceptance-contract';
@@ -7,6 +8,7 @@ import type {
 } from '@/lib/services/requirement-evidence-types';
 
 export interface BacklogGateContext {
+  item?: BacklogItem;
   acceptance?: string[];
   acceptanceContract?: AcceptanceContract;
   evidence?: EvidenceRecord;
@@ -23,6 +25,7 @@ export async function loadBacklogGateContext(
       backlogItemId,
     );
     return {
+      item: item || undefined,
       acceptance: item?.acceptance,
       acceptanceContract: item?.acceptance_contract,
       evidence: item?.evidence,

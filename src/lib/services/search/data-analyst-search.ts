@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { v4 as uuidv4 } from 'uuid';
+import { searchWeb } from './web-search';
 
 // Función para validar UUIDs
 function isValidUUID(uuid: string): boolean {
@@ -7,91 +8,7 @@ function isValidUUID(uuid: string): boolean {
   return uuidRegex.test(uuid);
 }
 
-// Función para buscar con Tavily API
-export async function searchWithTavily(query: string, options: {
-  search_depth?: 'basic' | 'advanced' | 'comprehensive';
-  max_results?: number;
-  include_images?: boolean;
-  include_answer?: boolean;
-  include_domains?: string[];
-  exclude_domains?: string[];
-} = {}): Promise<{success: boolean, data?: any, error?: string}> {
-  try {
-    const tavilyApiKey = process.env.TAVILY_API_KEY;
-    if (!tavilyApiKey) {
-      console.error('❌ TAVILY_API_KEY not found in environment variables');
-      return {
-        success: false,
-        error: 'Tavily API key not configured'
-      };
-    }
-
-    // Mapear search_depth a valores válidos para Tavily
-    let validSearchDepth = 'basic';
-    if (options.search_depth === 'advanced') {
-      validSearchDepth = 'advanced';
-    } else if (options.search_depth === 'comprehensive') {
-      validSearchDepth = 'advanced'; // Mapear comprehensive a advanced
-    }
-
-    // Seguir exactamente el formato de la documentación oficial de Tavily
-    const searchPayload = {
-      query: query,
-      topic: "general",
-      search_depth: validSearchDepth,
-      max_results: options.max_results || 10,
-      include_answer: options.include_answer !== false,
-      include_raw_content: false,
-      include_images: options.include_images || false,
-      include_image_descriptions: false,
-      include_domains: options.include_domains || [],
-      exclude_domains: options.exclude_domains || [],
-      time_range: null,
-      country: null
-    };
-
-    console.log(`🎯 [FINAL SEARCH PATH] Tavily Search: https://api.tavily.com/search`);
-
-    const response = await fetch('https://api.tavily.com/search', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${tavilyApiKey}`
-      },
-      body: JSON.stringify(searchPayload),
-    });
-
-    console.log(`🔍 DEBUG - Response status: ${response.status} ${response.statusText}`);
-
-    if (!response.ok) {
-      let errorDetails = '';
-      try {
-        const errorBody = await response.text();
-        errorDetails = errorBody;
-        console.log(`🔍 DEBUG - Error body:`, errorBody);
-      } catch (e) {
-        console.log(`🔍 DEBUG - Could not read error body`);
-      }
-      throw new Error(`Tavily API error: ${response.status} ${response.statusText}. Details: ${errorDetails}`);
-    }
-
-    const searchData = await response.json();
-    
-    console.log(`✅ Búsqueda completada. Resultados: ${searchData.results?.length || 0}`);
-    
-    return {
-      success: true,
-      data: searchData
-    };
-
-  } catch (error) {
-    console.error('❌ Error en búsqueda con Tavily:', error);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error occurred'
-    };
-  }
-}
+export { searchWeb } from './web-search';
 
 // Función para guardar en agent_memories
 export async function saveToAgentMemory(agentId: string, userId: string, searchQuery: string, searchResults: any, commandId?: string): Promise<{success: boolean, memoryId?: string, error?: string}> {
@@ -126,13 +43,18 @@ export async function saveToAgentMemory(agentId: string, userId: string, searchQ
         search_metadata: {
           search_depth: searchResults.search_depth,
           follow_up_questions: searchResults.follow_up_questions || [],
-          images: searchResults.images || []
+          images: searchResults.images || [],
+          provider: searchResults.provider,
+          citations: searchResults.citations || [],
+          sources: searchResults.sources || [],
+          usage: searchResults.usage,
+          tool_usage: searchResults.tool_usage
         }
       },
       raw_data: JSON.stringify(searchResults),
       metadata: {
-        source: 'tavily_search',
-        search_engine: 'tavily',
+        source: 'web_search',
+        search_engine: searchResults.provider || 'azure_bing',
         relevance: 'high',
         search_type: 'web_search',
         original_command_id: commandId || null // También mantener el ID original en metadata
@@ -280,10 +202,10 @@ export async function executeMultipleSearches(
       
       console.log(`🔍 Procesando consulta: "${query}"`);
       
-      // Realizar búsqueda con Tavily
-      const searchResult = await searchWithTavily(query.trim(), searchOptions);
+      // Realizar búsqueda con Azure Bing
+      const searchResult = await searchWeb(query.trim(), searchOptions);
       
-      if (searchResult.success && searchResult.data) {
+      if (searchResult.success) {
         // Guardar en agent_memories
         const memoryResult = await saveToAgentMemory(
           dataAnalystAgent.agentId,
@@ -300,6 +222,10 @@ export async function executeMultipleSearches(
             success: true,
             results_count: searchResult.data.results?.length || 0,
             answer: searchResult.data.answer || null,
+            citations: searchResult.data.citations,
+            sources: searchResult.data.sources,
+            usage: searchResult.data.usage,
+            tool_usage: searchResult.data.tool_usage,
             memory_id: memoryResult.memoryId
           });
         } else {

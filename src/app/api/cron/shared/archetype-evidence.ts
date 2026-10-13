@@ -8,6 +8,9 @@ export interface ToolCallSummary {
 
 export function toolCalls(evidence: EvidenceRecord): ToolCallSummary[] {
   const out: ToolCallSummary[] = [];
+  for (const source of evidence.research?.sources || []) {
+    out.push({ name: source.tool_name, ok: true, text: `${source.url}\n${source.excerpt}` });
+  }
   if (evidence.build) {
     out.push({
       name: evidence.build.command || 'npm run build',

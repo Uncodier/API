@@ -2,8 +2,10 @@ import { randomBytes } from 'node:crypto';
 
 const mockFrom = jest.fn();
 const mockFollowUp = jest.fn();
+const mockResolveTimezone = jest.fn();
 jest.mock('@/lib/database/supabase-server', () => ({ supabaseAdmin: { schema: () => ({ from: mockFrom }) } }));
 jest.mock('../voice-follow-up-context', () => ({ buildVoiceFollowUpContext: mockFollowUp }));
+jest.mock('@/lib/timezone/resolveUserTimezone', () => ({ resolveClientTimezone: mockResolveTimezone }));
 import { loadVoiceExecutionContext } from '../voice-execution-context';
 
 const SITE = '11111111-1111-4111-8111-111111111111';
@@ -20,6 +22,28 @@ describe('private voice execution context', () => {
     query.eq.mockReturnValue(query);
     mockFrom.mockReturnValue(query);
     mockFollowUp.mockResolvedValue({ context: 'Prior customer request for Monday at five.' });
+    mockResolveTimezone.mockResolvedValue('America/Mexico_City');
+  });
+
+  it('resolves the bound site timezone and live clock on each call, ignoring old metadata dates', async () => {
+    jest.useFakeTimers();
+    try {
+      query.maybeSingle.mockResolvedValue({ data: { custom_data: {
+        current_time_utc: '2020-01-01T00:00:00Z', local_date: '2020-01-01', timezone: 'UTC',
+        voice_follow_up_context: 'Old appointment on January 1.',
+      } }, error: null });
+      jest.setSystemTime(new Date('2026-10-13T05:59:59Z'));
+      expect(await loadVoiceExecutionContext(input)).toMatchObject({
+        current_time_utc: '2026-10-13T05:59:59.000Z', local_date: '2026-10-12',
+        tomorrow: '2026-10-13', timezone: 'America/Mexico_City',
+      });
+      jest.setSystemTime(new Date('2026-10-13T06:00:01Z'));
+      expect(await loadVoiceExecutionContext(input)).toMatchObject({
+        current_time_utc: '2026-10-13T06:00:01.000Z', local_date: '2026-10-13', tomorrow: '2026-10-14',
+      });
+      expect(mockResolveTimezone).toHaveBeenCalledTimes(2);
+      expect(mockResolveTimezone).toHaveBeenCalledWith({ siteId: SITE });
+    } finally { jest.useRealTimers(); }
   });
 
   it('returns call-specific purpose and history without dumping arbitrary metadata', async () => {

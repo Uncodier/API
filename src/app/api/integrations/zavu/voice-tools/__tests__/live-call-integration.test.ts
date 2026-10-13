@@ -21,6 +21,7 @@ jest.mock("@/lib/services/zavu/voice-agent-context", () => ({
 import { POST } from "../route";
 import { handleUntrackedInboundVoiceEvent } from "@/lib/services/zavu/inbound-voice-context";
 import { inboundDatabase, SITE, OTHER_SITE, PHONE, CALL } from "@/lib/services/zavu/__tests__/inbound-lead-test-database";
+import { buildSchedulingRecovery } from '@/lib/scheduling/recovery';
 
 const assistance = {
   summary: "Caller needs a person", message: "Please assist the current caller", priority: "normal",
@@ -115,6 +116,93 @@ describe("live inbound call through signed POST, real identity/executor/catalog 
     expect(transport).not.toHaveBeenCalled();
     return result.delivery!;
   }
+
+  it.each([['CALENDAR_NOT_FOUND', 404], ['DATE_IN_PAST', 422]] as const)(
+    'delivers %s recovery to the voice model on HTTP 200 while keeping success false', async (code, status) => {
+    const recovery = buildSchedulingRecovery({ timezone: 'America/Mexico_City',
+      now: new Date('2026-10-13T01:30:00Z'), code });
+    const failure = { success: false, error: 'Choose a calendar from calendars action="list"',
+      code, recovery };
+    transport.mockResolvedValue(json(failure, status));
+    const response = await POST(request('scheduling', { action: 'check_availability',
+      date: '2026-10-13', duration: 30, timezone: 'America/Mexico_City', calendar_id: randomUUID() }));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(failure);
+    expect(transport).toHaveBeenCalledTimes(1);
+    expect(state.operations.filter(operation => operation.kind !== 'read')).toEqual([]);
+    expect(console.warn).toHaveBeenCalledWith('[Zavu Voice Tool]', expect.objectContaining({
+      event: 'execution_recovery', tool: 'scheduling', status: 200,
+    }));
+  });
+
+  it('returns generated recovery after an availability network failure without exposing diagnostics', async () => {
+    const sensitive = randomBytes(24).toString('hex');
+    transport.mockRejectedValue(new Error(`password=${sensitive}`));
+    const response = await POST(request('scheduling', { action: 'check_availability',
+      date: '2026-10-13', duration: 30, timezone: 'America/Mexico_City' }));
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toMatchObject({ success: false, code: 'SCHEDULING_NETWORK_ERROR', recovery: {
+      availability_confirmed: false, auto_retry: false, timezone: 'America/Mexico_City',
+    } });
+    expect(body.recovery.suggested_dates).toHaveLength(3);
+    expect(JSON.stringify(body)).not.toContain(sensitive);
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([401, 403])('does not mask scheduling HTTP %s auth failures as successful transport', async status => {
+    transport.mockResolvedValue(json({ success: false, error: 'Not authorized' }, status));
+    const response = await POST(request('scheduling', { action: 'check_availability',
+      date: '2026-10-13', duration: 30, timezone: 'UTC' }));
+    expect(response.status).toBe(status);
+    expect(await response.json()).toMatchObject({ success: false, error: 'Scheduling authorization failed' });
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves validation recovery without HTTP 200 for invalid participant scope', async () => {
+    const failure = { success: false, error: 'Invalid participants', code: 'INVALID_PARTICIPANTS',
+      recovery: buildSchedulingRecovery({ timezone: 'UTC', code: 'INVALID_PARTICIPANTS' }) };
+    transport.mockResolvedValue(json(failure, 422));
+    const response = await POST(request('scheduling', { action: 'check_availability',
+      date: '2026-10-13', duration: 30, timezone: 'UTC', participants: randomUUID() }));
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject(failure);
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry a potentially committed booking and requires listing current appointments', async () => {
+    await initiate();
+    const identified = await POST(request('IDENTIFY_LEAD', identity));
+    const { lead_id } = await identified.json();
+    transport.mockRejectedValue(new Error('Connection dropped after write'));
+    const response = await POST(request('scheduling', { ...booking, context_id: lead_id }));
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toMatchObject({ success: false, recovery: {
+      write_state: 'unknown', auto_retry: false, availability_confirmed: false,
+    } });
+    expect(body.recovery.guidance).toContain('scheduling action="list"');
+    expect(body.recovery.guidance).toContain('may already have completed');
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+
+  it('retains safe date recovery and rejected status for unstructured booking validation failures', async () => {
+    await initiate();
+    const identified = await POST(request('IDENTIFY_LEAD', identity));
+    const { lead_id } = await identified.json();
+    const sensitive = randomBytes(24).toString('hex');
+    transport.mockResolvedValue(json({ success: false, error: `Upstream details ${sensitive}` }, 422));
+    const response = await POST(request('scheduling', { ...booking, context_id: lead_id }));
+    expect(response.status).toBe(422);
+    const body = await response.json();
+    expect(body).toMatchObject({ success: false, recovery: {
+      availability_confirmed: false, write_state: 'unknown',
+    } });
+    expect(Array.isArray(body.recovery.suggested_dates)).toBe(true);
+    expect(body.recovery.suggested_dates).toHaveLength(3);
+    expect(JSON.stringify(body)).not.toContain(sensitive);
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
 
   it("requests pending human assistance with unknown IDs after identification fails during an initiated call", async () => {
     const delivery = await initiate();

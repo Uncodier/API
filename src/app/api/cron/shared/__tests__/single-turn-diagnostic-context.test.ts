@@ -80,6 +80,8 @@ function harness() {
       patchPlanStepAtomically: async () => ({ persisted: true, generation: 0 }),
     },
     './single-turn-gate': {}, './no-progress-adjudication': { isNoProgressAdjudicationRequested: () => false },
+    './research-report-evidence': { isReportOnlyTask: () => false },
+    './research-evidence-persistence': {},
     './no-progress-gate-adjudicator': {}, './gate-validation-cache': {},
     '@/lib/services/requirement-backlog': {},
     '@/lib/services/requirement-flows': { classifyRequirementType: () => 'app' },

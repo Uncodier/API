@@ -36,6 +36,10 @@ function harness() {
     set: jest.fn<AsyncMock>().mockResolvedValue('OK'),
     eval: jest.fn<AsyncMock>().mockResolvedValue(1),
   };
+  const resolveAssistantPlanOwnership = jest.fn<AsyncMock>().mockImplementation(async (input: any) => {
+    const requirementId = input.planRequirementId || input.contextRequirementId;
+    return requirementId ? { state: 'managed', requirementId, runnable: true } : { state: 'standalone' };
+  });
   const planSteps = loadRuntimeModule<typeof import('../plan-steps')>(
     'src/app/api/robots/instance/assistant/plan-steps.ts', {
       '@/lib/database/supabase-client': { supabaseAdmin: { from: () => query } },
@@ -49,8 +53,7 @@ function harness() {
       },
       '@/lib/services/sandbox-service': { SandboxService: { WORK_DIR: '/test/workspace' } },
       '@/lib/utils/redis-client': { getRedisClient: () => redis },
-      '@/lib/helpers/plan-lifecycle': { cancelPlanStepsForBacklogItem: () => { throw new Error('unexpected cancellation'); } },
-      '@/lib/services/requirement-plan-backlog-gate': { evaluatePlanBacklogGate: () => ({ runnable: true }) },
+      './plan-ownership': { resolveAssistantPlanOwnership },
     },
   );
   const completeUserMessageStep = jest.fn<AsyncMock>();
@@ -97,6 +100,7 @@ function harness() {
   const run = (options?: { userMessageLogId?: string }, message = 'Implement plan') => workflow.runAssistantWorkflow('instance', message, 'site', 'user', [], false,
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, options);
   return { context, persisted, result, doTurn, effects: () => effects, run,
+    resolveAssistantPlanOwnership,
     processAssistantTurn, updateInstancePlanCore, planSteps, redis, maybeSingle, query,
     completeUserMessageStep, pauseUserMessageStep, markAssistantFailedStep, pauseAssistantForCreditsStep, persistUserMessageStep, prepareAssistantContext, countRecentRespawnsStep, spawnSilentContinueStep };
 }
@@ -408,5 +412,89 @@ describe('interactive plan exhaustion and safe resumption', () => {
     expect(h.updateInstancePlanCore).not.toHaveBeenCalled();
     expect(h.persisted).toEqual(before);
     expect(h.spawnSilentContinueStep).not.toHaveBeenCalled();
+  });
+
+  it('hands off a requirement created during the first turn without executing or cancelling its pending plan', async () => {
+    const h = harness();
+    h.processAssistantTurn.mockImplementation(async (_context, messages) => {
+      h.persisted.metadata = { requirement_id: 'created-during-turn' };
+      h.persisted.steps[0].metadata = { backlog_item_id: 'pending-item' };
+      return h.result(messages, true, 'Research queued');
+    });
+
+    const response = await h.run({ userMessageLogId: 'first-user-log' });
+
+    expect(response).toMatchObject({ execution_status: 'awaiting_requirement_runner', managed_work_resumed: false });
+    expect(h.context.hasLinkedRequirement).toBe(false);
+    expect(h.processAssistantTurn).toHaveBeenCalledTimes(1);
+    expect(h.persisted.steps.map((step: any) => step.status)).toEqual(['pending', 'pending']);
+    expect(h.redis.set).not.toHaveBeenCalled();
+    expect(h.updateInstancePlanCore).not.toHaveBeenCalled();
+    expect(h.markAssistantFailedStep).not.toHaveBeenCalled();
+    expect(h.completeUserMessageStep).toHaveBeenCalledWith('first-user-log', 0);
+  });
+
+  it('uses the persisted instance assignment even before a requirement status or plan binding exists', async () => {
+    const h = harness();
+    h.resolveAssistantPlanOwnership.mockResolvedValue({ state: 'managed', requirementId: 'assigned', runnable: true });
+    h.processAssistantTurn.mockImplementation(async (_context, messages) => h.result(messages, true, 'Queued'));
+    await expect(h.run()).resolves.toMatchObject({ execution_status: 'awaiting_requirement_runner' });
+    expect(h.redis.set).not.toHaveBeenCalled();
+    expect(h.updateInstancePlanCore).not.toHaveBeenCalled();
+    expect(h.completeUserMessageStep).toHaveBeenCalled();
+  });
+
+  it('pauses without cancellation or success when ownership cannot be established', async () => {
+    const h = harness();
+    h.resolveAssistantPlanOwnership.mockResolvedValue({ state: 'unavailable', reason: 'ownership_lookup_failed' });
+    h.processAssistantTurn.mockImplementation(async (_context, messages) => h.result(messages, true, 'Queued'));
+    await expect(h.run()).resolves.toMatchObject({ success: false, execution_status: 'paused' });
+    expect(h.redis.set).not.toHaveBeenCalled();
+    expect(h.updateInstancePlanCore).not.toHaveBeenCalled();
+    expect(h.markAssistantFailedStep).not.toHaveBeenCalled();
+    expect(h.completeUserMessageStep).not.toHaveBeenCalled();
+    expect(h.pauseUserMessageStep).toHaveBeenCalled();
+  });
+
+  it('rechecks ownership inside the step if a requirement claims the plan after admission', async () => {
+    const h = harness();
+    h.resolveAssistantPlanOwnership
+      .mockResolvedValueOnce({ state: 'standalone' })
+      .mockResolvedValue({ state: 'managed', requirementId: 'concurrent-assignment', runnable: true });
+    h.processAssistantTurn.mockImplementation(async (_context, messages) => h.result(messages, true, 'Queued'));
+    await expect(h.run()).resolves.toMatchObject({ execution_status: 'awaiting_requirement_runner' });
+    expect(h.redis.set).toHaveBeenCalledTimes(1);
+    expect(h.redis.eval).toHaveBeenCalledTimes(1);
+    expect(h.updateInstancePlanCore).not.toHaveBeenCalled();
+    expect(h.processAssistantTurn).toHaveBeenCalledTimes(1);
+    expect(h.completeUserMessageStep).toHaveBeenCalled();
+  });
+
+  it.each(['running', 'exhausted'])('does not hand an interrupted %s interactive checkpoint to cron', async state => {
+    const h = harness();
+    h.persisted.metadata = { requirement_id: 'managed' };
+    h.persisted.steps[0].result.assistant_execution = { version: 1, state, messages: [{ role: 'tool', content: 'effect already ran' }] };
+    h.processAssistantTurn.mockImplementation(async (_context, messages) => h.result(messages, true, 'Continue'));
+    await expect(h.run()).resolves.toMatchObject({ success: false, execution_status: 'paused' });
+    expect(h.completeUserMessageStep).not.toHaveBeenCalled();
+    expect(h.updateInstancePlanCore).not.toHaveBeenCalled();
+    expect(h.redis.set).not.toHaveBeenCalled();
+    expect(h.pauseUserMessageStep).toHaveBeenCalled();
+  });
+
+  it.each(['running', 'exhausted'])('preserves a sibling %s checkpoint when ownership changes after admission', async state => {
+    const h = harness();
+    h.persisted.steps[1].status = 'in_progress';
+    h.persisted.steps[1].result = { assistant_execution: { version: 1, state, messages: [{ role: 'tool', content: 'prior effect' }] } };
+    h.redis.set.mockImplementation(async () => {
+      h.persisted.metadata = { requirement_id: 'new-owner' };
+      return 'OK';
+    });
+    h.processAssistantTurn.mockImplementation(async (_context, messages) => h.result(messages, true, 'Continue'));
+    await expect(h.run()).resolves.toMatchObject({ success: false, execution_status: 'paused' });
+    expect(h.completeUserMessageStep).not.toHaveBeenCalled();
+    expect(h.updateInstancePlanCore).not.toHaveBeenCalled();
+    expect(h.redis.eval).toHaveBeenCalledTimes(1);
+    expect(h.pauseUserMessageStep).toHaveBeenCalled();
   });
 });

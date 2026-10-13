@@ -10,6 +10,7 @@ jest.mock('@/lib/database/supabase-server', () => ({
 }));
 jest.mock('@/lib/utils/token-decryption', () => ({ decryptToken: () => mockSecret }));
 jest.mock('@/lib/services/zavu/voice-call-client', () => ({ getVoiceCall: mockGetCall }));
+jest.mock('@/lib/timezone/resolveUserTimezone', () => ({ resolveClientTimezone: jest.fn(async () => 'America/Mexico_City') }));
 import { POST } from '../route';
 
 const SITE = '11111111-1111-4111-8111-111111111111';

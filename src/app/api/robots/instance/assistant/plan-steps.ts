@@ -8,10 +8,7 @@ import { requiredSkillsPrompt } from './skill-selection';
 import { getStepCheckpointPromptFragment, getFileFreshnessPromptFragment } from '@/app/api/cron/shared/step-git-prompts';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import { getRedisClient } from '@/lib/utils/redis-client';
-import { cancelPlanStepsForBacklogItem } from '@/lib/helpers/plan-lifecycle';
-import {
-  evaluatePlanBacklogGate,
-} from '@/lib/services/requirement-plan-backlog-gate';
+import { resolveAssistantPlanOwnership, type AssistantPlanOwnership } from './plan-ownership';
 
 const RELEASE_PLAN_LOCK_SCRIPT = `
 if redis.call('GET', KEYS[1]) == ARGV[1] then
@@ -35,6 +32,7 @@ export type PlanStepExecutionResult = {
 } & (
   | { executionStatus: 'completed'; isDone: true }
   | { executionStatus: 'exhausted'; isDone: false; resumeFromStepId: string; creditExhausted?: boolean }
+  | { executionStatus: 'deferred'; isDone: false; ownership: Exclude<AssistantPlanOwnership, { state: 'standalone' }> }
 );
 
 const ROLE_TO_SKILL: Record<string, string> = {
@@ -101,6 +99,28 @@ export async function getActiveInstancePlan(
   return null;
 }
 
+/** A durable, read-only boundary: unlike the initial context this sees work
+ * created by tools during the current conversation. It does not claim cron work.
+ */
+export async function getAssistantPlanOwnershipStep(
+  context: AssistantContext,
+  plan: any,
+): Promise<AssistantPlanOwnership> {
+  'use step';
+  const ownership = await resolveAssistantPlanOwnership({
+    instanceId: context.executionOptions.instance_id,
+    siteId: context.executionOptions.site_id,
+    planRequirementId: plan?.metadata?.requirement_id,
+    contextRequirementId: context.executionOptions.requirement_id || context.instance?.requirement_id,
+    contextHasLinkedRequirement: context.hasLinkedRequirement,
+  });
+  if (ownership.state === 'managed' && plan?.steps?.some((step: any) =>
+    ['running', 'exhausted'].includes(step.result?.assistant_execution?.state))) {
+    return { state: 'unavailable', reason: 'interactive_checkpoint_requires_reconciliation' };
+  }
+  return ownership;
+}
+
 // Require persistence acknowledgement before tools, resumption or success.
 async function persistPlanStepUpdate(params: any, phase: string): Promise<void> {
   const result: { success?: boolean; error?: unknown } | null | undefined =
@@ -139,6 +159,22 @@ export async function executePlanStep(
   }
   plan = currentPlan;
   step = currentStep;
+  // A plan can become managed after workflow admission. Never cancel its
+  // pending backlog or run it without the requirement runner's ownership lease.
+  const ownership = await resolveAssistantPlanOwnership({
+    instanceId: context.executionOptions.instance_id,
+    siteId: context.executionOptions.site_id,
+    planRequirementId: plan.metadata?.requirement_id,
+    contextRequirementId: context.executionOptions.requirement_id || context.instance?.requirement_id,
+    contextHasLinkedRequirement: context.hasLinkedRequirement,
+  });
+  if (ownership.state !== 'standalone') {
+    const unsafeCheckpoint = plan.steps.some((candidate: any) =>
+      ['running', 'exhausted'].includes(candidate.result?.assistant_execution?.state));
+    return { executionStatus: 'deferred', isDone: false,
+      ownership: unsafeCheckpoint ? { state: 'unavailable', reason: 'interactive_checkpoint_requires_reconciliation' } : ownership,
+      text: '', messages: [], usage: {}, steps: [], turns: 0 };
+  }
   // A resumed batch must use the last completed turn's history, not replay its
   // original prompt. Store runtime state in result (not definition metadata).
   const checkpoint = step.result?.assistant_execution;
@@ -149,54 +185,6 @@ export async function executePlanStep(
   if (resuming && (checkpoint.version !== 1 || !Array.isArray(checkpoint.messages) || checkpoint.messages.length === 0)) {
     throw new Error(`Plan step ${step.id} has no valid continuation history; refusing to replay it.`);
   }
-  const requirementId =
-    context.executionOptions.requirement_id ||
-    plan?.metadata?.requirement_id ||
-    context.instance?.requirement_id ||
-    '';
-  if (requirementId) {
-    const { loadRequirement, toBacklog } = await import(
-      '@/lib/services/requirement-backlog-store'
-    );
-    const requirement = await loadRequirement(requirementId);
-    const backlog = requirement
-      ? toBacklog(requirement.backlog, 'default')
-      : { items: [] };
-    const backlogGate = evaluatePlanBacklogGate(step, backlog.items);
-    if (!backlogGate.runnable) {
-      const reason = `Runtime gate: ${backlogGate.reason}`;
-      if (backlogGate.itemId) {
-        const cancellation = await cancelPlanStepsForBacklogItem({
-          requirementId,
-          itemId: backlogGate.itemId,
-          reason,
-        });
-        if (cancellation.errors.length > 0) {
-          throw new Error(
-            `${reason}; plan cancellation failed: ` +
-            cancellation.errors.join('; '),
-          );
-        }
-      } else {
-        await persistPlanStepUpdate({
-          plan_id: plan.id,
-          instance_id: context.executionOptions.instance_id,
-          site_id: context.executionOptions.site_id,
-          requirement_id: requirementId,
-          steps: [{
-            id: step.id,
-            status: 'cancelled',
-            error_message: reason,
-            completed_at: new Date().toISOString(),
-          }],
-        }, 'cancellation');
-      }
-      throw new Error(
-        `Refusing to execute plan step ${step.id}: ${backlogGate.reason}`,
-      );
-    }
-  }
-
     // 1. Update step status to in_progress
     // Baseline = first time THIS step started (not plan.created_at).
     const now = new Date().toISOString();
@@ -247,21 +235,6 @@ BEFORE starting to code or execute any commands, you MUST:
   // 3. Build a dedicated system prompt for this sub-agent step
   const { instance_id, site_id } = context.executionOptions;
 
-  let progressContext = '';
-  if (requirementId) {
-    const { data: reqData } = await supabaseAdmin
-      .from('requirements')
-      .select('progress')
-      .eq('id', requirementId)
-      .single();
-      
-    if (reqData && reqData.progress && Array.isArray(reqData.progress) && reqData.progress.length > 0) {
-      const recentProgress = reqData.progress.slice(-5);
-      progressContext = '\n\n📋 RECENT REQUIREMENT PROGRESS:\n';
-      progressContext += JSON.stringify(recentProgress, null, 2);
-    }
-  }
-
   const stepSystemPrompt = `You are an EXECUTOR agent running inside a Vercel Sandbox.
 Your job is to complete ONE specific step by writing code, running commands, and making real changes.
 Working directory: ${SandboxService.WORK_DIR}
@@ -270,8 +243,6 @@ CONTEXT:
 - instance_id: ${instance_id}
 - site_id: ${site_id}
 ${plan.id ? `- instance_plan_id: ${plan.id}` : ''}
-${requirementId ? `- requirement_id: ${requirementId}` : ''}
-${progressContext}
 
 PLAN: "${plan.title}"
 
@@ -287,7 +258,7 @@ File freshness: sandbox_list_files / sandbox_read_file report updated_this_cycle
 ${skillPromptText}
 ${requiredSkillsPrompt(context.selectedSkills)}
 ${getFileFreshnessPromptFragment(cycleBaselineAt)}
-${getStepCheckpointPromptFragment(requirementId, instance_id)}
+${getStepCheckpointPromptFragment('', instance_id)}
 
 RULES:
 - Focus ONLY on completing this specific step. Do not plan — EXECUTE.
@@ -306,7 +277,7 @@ RULES:
 - Use skill_lookup (search → get) for playbooks matching this step's objective before large edits; follow loaded SKILL.md together with any injected skill block above.
 - Use sandbox_write_file to create new files, sandbox_edit_file to replace specific strings in existing files (prefer this over overwriting large files), sandbox_run_command, and sandbox_read_file to write and test code. You MUST call sandbox_push_checkpoint before stopping when you changed files (title_hint = step title; see CHECKPOINTS in prompt). Use sandbox_restore_checkpoint only if you need to rewind locally. Use sandbox_read_logs to read server and console logs.
 - After implementing, validate your work (run build, run tests if applicable). If writing tests, ALL test files MUST be placed inside the top-level \`tests/\` directory (e.g., \`tests/api\`, \`tests/components\`) to keep the repo clean.
-- When reporting status, use requirement_id="${requirementId}" and instance_id="${instance_id}".
+- When reporting status, use instance_id="${instance_id}". This is a standalone plan, not requirement-owned work.
 - The preview URL comes from the GitHub Deployments API post-push. Do NOT construct or guess it.
 - Be efficient — the sandbox has a limited lifetime.
   6. USE MAKINARI SKILLS TOOLS FOR HEAVY LIFTING: Use skill_lookup (search → get) for playbooks matching this step's objective before large edits; follow loaded SKILL.md together with any injected skill block above.

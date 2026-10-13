@@ -43,6 +43,8 @@ const dependencies = {
   '@/lib/services/cron-infrastructure-state': { CRON_INFRASTRUCTURE_PROVENANCE: 'infra' },
   '@/lib/services/instance-plan-infrastructure-state': {},
   './single-turn-gate': {},
+  './research-report-evidence': {},
+  './research-evidence-persistence': {},
   './no-progress-adjudication': {},
   './no-progress-gate-adjudicator': {},
   './gate-validation-cache': {},
