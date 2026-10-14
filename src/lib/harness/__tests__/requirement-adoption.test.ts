@@ -1,3 +1,4 @@
+import { WORKSPACE_ISOLATION_VERSION } from '../workspace-process-guard';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { Sandbox } from '@vercel/sandbox';
 import { adoptRequirementWorkspace } from '../workspace';
@@ -9,7 +10,7 @@ beforeEach(() => jest.resetAllMocks());
 it('adopts an existing dirty repository without cloning, installing dependencies, resetting or switching branches', async () => {
   const url = new URL('https://git.example.invalid/team/project.git');
   const password = randomBytes(32).toString('hex'); url.username = 'git'; url.password = password;
-  const vm = { name: 'legacy-workspace', status: 'running', tags: {}, update: jest.fn().mockResolvedValue(undefined),
+  const vm = { name: 'legacy-workspace', status: 'running', tags: { harnessIsolation: WORKSPACE_ISOLATION_VERSION }, update: jest.fn().mockResolvedValue(undefined),
     runCommand: jest.fn().mockResolvedValueOnce(output(url.href)).mockResolvedValueOnce(output('')) };
   (Sandbox.get as jest.Mock).mockResolvedValue(vm);
   const input = { sessionId: randomUUID(), workspaceId: vm.name, repository: { url: 'https://git.example.invalid/team/project.git' }, assertActive: jest.fn(async () => {}) };
@@ -23,7 +24,7 @@ it('adopts an existing dirty repository without cloning, installing dependencies
 });
 it.each(['foreign_session', 'missing_snapshot', 'wrong_repo'])('fails closed on %s without replacing the saved workspace', async kind => {
   const vm = { name: 'saved', status: kind === 'missing_snapshot' ? 'stopped' : 'running',
-    tags: kind === 'foreign_session' ? { harnessSession: randomUUID() } : {},
+    tags: kind === 'foreign_session' ? { harnessSession: randomUUID() } : { harnessIsolation: WORKSPACE_ISOLATION_VERSION },
     update: jest.fn(), runCommand: jest.fn().mockResolvedValue(output('https://git.example.invalid/other/repo.git')) };
   (Sandbox.get as jest.Mock).mockResolvedValue(vm);
   await expect(adoptRequirementWorkspace({ sessionId: randomUUID(), workspaceId: vm.name,
@@ -33,7 +34,7 @@ it.each(['foreign_session', 'missing_snapshot', 'wrong_repo'])('fails closed on 
 
 it('allows only the host-confirmed previous occurrence to transfer the same workspace to a recurring session', async () => {
   const previousSessionId = randomUUID(); const sessionId = randomUUID();
-  const vm = { name: 'recurring', status: 'running', tags: { harnessSession: previousSessionId }, update: jest.fn().mockResolvedValue(undefined),
+  const vm = { name: 'recurring', status: 'running', tags: { harnessIsolation: WORKSPACE_ISOLATION_VERSION, harnessSession: previousSessionId }, update: jest.fn().mockResolvedValue(undefined),
     runCommand: jest.fn().mockResolvedValueOnce(output('https://git.example.invalid/team/project.git')).mockResolvedValueOnce(output('')) };
   (Sandbox.get as jest.Mock).mockResolvedValue(vm);
   const workspace = await adoptRequirementWorkspace({ sessionId, previousSessionId, workspaceId: vm.name,

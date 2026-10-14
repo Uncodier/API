@@ -1,3 +1,4 @@
+import { WORKSPACE_ISOLATION_VERSION, WORKSPACE_ROOT_INIT } from '../workspace-process-guard';
 import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -51,9 +52,10 @@ describe('bootstrap recovery with real offline Git checkout and preserved user d
   test('first clone exits 128, second open reuses owned VM and quarantines partial data without running hooks', async () => {
     writeFileSync(join(base, 'fail-once'), '');
     const sandbox = { name: `h-${sessionId}`, persistent: true, status: 'running',
-      tags: { harnessSession: sessionId, harnessRepository: hash } as Record<string, string>,
+      tags: { harnessIsolation: WORKSPACE_ISOLATION_VERSION, harnessSession: sessionId, harnessRepository: hash } as Record<string, string>,
       update: jest.fn(async (input: { tags?: Record<string, string> }) => { if (input.tags) sandbox.tags = input.tags; }),
-      runCommand: jest.fn(async () => {
+      runCommand: jest.fn(async (input: { args: string[] }) => {
+        if (input.args.includes(WORKSPACE_ROOT_INIT)) return { exitCode: 0 };
         const result = helper();
         return { cmdId: 'cmd_bootstrap', exitCode: result.status, wait: async () => ({ exitCode: result.status }), kill: jest.fn(),
           logs: () => Object.assign((async function* () { if (result.stderr) yield { stream: 'stderr', data: result.stderr }; })(), { close() {} }) };
@@ -65,7 +67,7 @@ describe('bootstrap recovery with real offline Git checkout and preserved user d
     expect(readFileSync(join(stage(), 'checkout', 'user-draft.txt'), 'utf8')).toBe('preserve this draft');
     await openWorkspace({ sessionId, repository });
     expect(Sandbox.create).toHaveBeenCalledTimes(1);
-    expect(sandbox.runCommand).toHaveBeenCalledTimes(2);
+    expect(sandbox.runCommand).toHaveBeenCalledTimes(3);
     expect(sandbox.tags.harnessReady).toBe('true');
     const quarantine = readdirSync(stage()).find(name => name.startsWith('quarantine-'))!;
     expect(readFileSync(join(stage(), quarantine, 'user-draft.txt'), 'utf8')).toBe('preserve this draft');

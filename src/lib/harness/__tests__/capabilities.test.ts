@@ -1,3 +1,4 @@
+import { WORKSPACE_ISOLATION_VERSION, WORKSPACE_PROCESS_GUARD } from '../workspace-process-guard';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { CAPABILITY_MANIFEST, createCapabilityTools, type CapabilityDependencies, type CapabilityOptions } from '../capabilities';
 import type { HarnessTool, ToolContext, Workspace } from '../types';
@@ -244,7 +245,7 @@ it('does no work after cancellation and returns an inactive discovery error as d
 
 it('legacy adapter exposes the preview only with its separate tool, preserves ports, and isolates command env', async () => {
   const s = setup(); delete s.options.requirementId;
-  const raw = { routes: [{ port: 4100 }], update: jest.fn().mockResolvedValue(undefined),
+  const raw = { tags: { harnessIsolation: WORKSPACE_ISOLATION_VERSION }, routes: [{ port: 4100 }], update: jest.fn().mockResolvedValue(undefined),
     runCommand: jest.fn().mockResolvedValue({ exitCode: 0, stdout: async () => 'ok', stderr: async () => '' }) };
   sdkGet.mockResolvedValue(raw);
   qaExecute.mockImplementation(async (_name, _args, sandbox, requirementId, toolsCtx) => {
@@ -265,8 +266,8 @@ it('legacy adapter exposes the preview only with its separate tool, preserves po
   expect((await s.invoke('sandbox_run_scenario', {}, tools)).ok).toBe(true);
   expect(raw.update).toHaveBeenCalledTimes(1);
   expect(sdkGet).toHaveBeenCalledWith({ name: s.options.workspace.ref.id, resume: false, signal: s.context.signal });
-  expect(raw.runCommand).toHaveBeenCalledWith(expect.objectContaining({ cmd: '/usr/bin/env', timeoutMs: 120000,
-    args: expect.arrayContaining(['-i', 'HOME=/tmp', 'sh', '-c', 'printf ok']) }));
+  expect(raw.runCommand).toHaveBeenCalledWith(expect.objectContaining({ cmd: '/usr/bin/env', sudo: true, timeoutMs: 120000,
+    args: expect.arrayContaining([WORKSPACE_PROCESS_GUARD, '-i', 'HOME=/tmp', 'sh', '-c', 'printf ok']) }));
   expect(JSON.stringify(raw.runCommand.mock.calls)).not.toContain(s.password);
 });
 
@@ -277,7 +278,7 @@ it('optional tools reconnect with the selected host sandbox authentication witho
     process.env.HARNESS_SANDBOX_AUTH = 'access-token'; process.env.HARNESS_SANDBOX_TOKEN = token;
     process.env.HARNESS_SANDBOX_TEAM_ID = 'team'; process.env.HARNESS_SANDBOX_PROJECT_ID = 'project';
     const s = setup(); delete s.options.requirementId;
-    const raw = { runCommand: jest.fn().mockResolvedValue({ exitCode: 0 }) };
+    const raw = { tags: { harnessIsolation: WORKSPACE_ISOLATION_VERSION }, runCommand: jest.fn().mockResolvedValue({ exitCode: 0 }) };
     sdkGet.mockResolvedValue(raw);
     qaExecute.mockImplementation(async (_name, _args, sandbox) => {
       await sandbox.runCommand({ cmd: 'printf', args: ['ok'] }); return { ok: true };
@@ -301,4 +302,22 @@ it('optional reconnection returns static authentication findings rather than SDK
   const result = await s.invoke('sandbox_probe_routes', { routes: ['/'] }, tools);
   expect(result).toMatchObject({ ok: false, error: { code: 'WORKSPACE_AUTH_CONFIGURATION_REQUIRED' } });
   expect(JSON.stringify(result)).not.toContain(secret);
+});
+
+it('rejects legacy attempts to change network policy or access privileged SDK methods', async () => {
+  const s = setup(); delete s.options.requirementId;
+  const raw = { tags: { harnessIsolation: WORKSPACE_ISOLATION_VERSION }, update: jest.fn(), createUser: jest.fn(),
+    runCommand: jest.fn(), routes: [] };
+  sdkGet.mockResolvedValue(raw);
+  const { legacy: _legacy, ...overrides } = s.deps;
+  const tools = await createCapabilityTools(s.options, overrides);
+  for (const attempt of [
+    (sandbox: any) => sandbox.update({ networkPolicy: 'allow-all' }),
+    (sandbox: any) => sandbox.createUser('root-equivalent'),
+    (sandbox: any) => sandbox.runCommand({ cmd: 'sh', sudo: true }),
+  ]) {
+    qaExecute.mockImplementation(async (_name, _args, sandbox) => attempt(sandbox));
+    expect((await s.invoke('sandbox_probe_routes', { routes: ['/'] }, tools)).ok).toBe(false);
+  }
+  expect(raw.update).not.toHaveBeenCalled(); expect(raw.createUser).not.toHaveBeenCalled(); expect(raw.runCommand).not.toHaveBeenCalled();
 });

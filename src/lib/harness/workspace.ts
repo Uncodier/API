@@ -7,6 +7,7 @@ import { createRedactor, runtimeSecretValues } from './security';
 import { workspaceOpenFailure } from './workspace-open-failure';
 import type { WorkspaceProviderOperation } from './workspace-provider-diagnostic';
 import { resolveSandboxAuth } from './sandbox-auth';
+import { guardedWorkspaceCommand, WORKSPACE_ISOLATION_VERSION, WORKSPACE_ROOT_INIT } from './workspace-process-guard';
 
 export const WORKSPACE_ROOT = '/vercel/sandbox';
 export const MAX_COMMAND_OUTPUT = 64 * 1024;
@@ -64,12 +65,12 @@ export function validateWorkspaceRepository(repository: { url: string; ref?: str
 
 // The SDK documents deny CIDRs as taking precedence over allowed domains. No
 // allow-all mode or subnet bypass is used, including for credentialed requests.
+// The live API rejects IPv6 CIDRs. guardedWorkspaceCommand separately denies
+// IPv6 sockets (including mapped addresses) in every workload and descendant.
 const deniedSubnets = [
   '0.0.0.0/8', '10.0.0.0/8', '100.64.0.0/10', '127.0.0.0/8', '169.254.0.0/16',
   '172.16.0.0/12', '192.0.0.0/24', '192.0.2.0/24', '192.168.0.0/16',
   '198.18.0.0/15', '198.51.100.0/24', '203.0.113.0/24', '224.0.0.0/4', '240.0.0.0/4',
-  '::/128', '::1/128', '::ffff:0:0/96', '64:ff9b::/96', '64:ff9b:1::/48',
-  '100::/64', '2001::/32', '2001:db8::/32', '2002::/16', 'fc00::/7', 'fe80::/10', 'ff00::/8',
 ];
 
 export interface WorkspaceHostOptions {
@@ -85,12 +86,16 @@ export interface WorkspaceHostOptions {
 export function workspaceNetworkPolicy(url: URL, git?: WorkspaceHostOptions['git']): NetworkPolicy {
   const allow: Record<string, NetworkPolicyRule[]> = { '*': [] };
   if (git) {
+    // L7 credentials are injected outside the guest's socket filter. Restrict
+    // that upstream to the platform's supported public GitHub origin, never an
+    // arbitrary user-controlled DNS name or proxy. Uncredentialed HTTPS remains generic.
+    if (url.hostname !== 'github.com') return fail('UNSUPPORTED_GIT_BROKER_HOST', 'Credential brokering requires the public GitHub origin.');
     if (!git.username || !git.password || git.username.includes(':') ||
         /[\r\n\x00]/.test(git.username + git.password) || git.username.length + git.password.length > 8192) {
       return fail('INVALID_GIT_AUTH', 'Host git credentials are invalid.');
     }
     const path = url.pathname.replace(/\/$/, '');
-    const transform = [{ headers: { authorization: `Basic ${Buffer.from(`${git.username}:${git.password}`).toString('base64')}` } }];
+    const transform = [{ headers: { Host: 'github.com', authorization: `Basic ${Buffer.from(`${git.username}:${git.password}`).toString('base64')}` } }];
     // No domain-wide token, wildcard transform, git credential helper or URL userinfo.
     // Redirects are disabled during clone. Other repos on this host receive no auth.
     allow[url.hostname] = (git.allowPush === true ? ['git-upload-pack', 'git-receive-pack'] : ['git-upload-pack']).flatMap(service => [
@@ -98,6 +103,7 @@ export function workspaceNetworkPolicy(url: URL, git?: WorkspaceHostOptions['git
         queryString: [{ key: { exact: 'service' }, value: { exact: service } }] }, transform },
       { match: { path: { exact: `${path}/${service}` }, method: ['POST'] }, transform },
     ]);
+    allow[url.hostname].push({ transform: [{ headers: { Host: 'github.com' } }] });
   }
   return { allow, subnets: { deny: [...deniedSubnets] } };
 }
@@ -489,8 +495,8 @@ class VercelWorkspace implements Workspace {
       await this.active(signal);
       // Always detached: SDK non-detached runCommand accumulates unbounded logs internally.
       dispatched = true;
-      command = await this.sandbox.runCommand({ cmd: '/usr/bin/env', args: [...this.envArgs(useRuntimeEnvironment), program, ...args],
-        cwd: '/', env: {}, sudo: false, detached: true, timeoutMs, signal });
+      command = await this.sandbox.runCommand({ ...guardedWorkspaceCommand(this.envArgs(useRuntimeEnvironment), program, args),
+        cwd: '/', env: {}, detached: true, timeoutMs, signal });
       await this.active(signal);
       const processId = `${this.ref.id}:${command.cmdId}`;
       if (background) return { stdout: '', stderr: '', exitCode: command.exitCode, processId };
@@ -613,6 +619,8 @@ export async function adoptRequirementWorkspace(input: {
   await active();
   if (sandbox.tags?.harnessSession && sandbox.tags.harnessSession !== input.sessionId &&
     sandbox.tags.harnessSession !== input.previousSessionId) throw new WorkspaceError('WORKSPACE_SCOPE_MISMATCH', 'Workspace belongs to another agent session');
+  if (sandbox.tags?.harnessIsolation !== WORKSPACE_ISOLATION_VERSION) return fail('WORKSPACE_ISOLATION_REQUIRED',
+    'Existing workspace predates process isolation. Host migration is required; files and running processes were not replaced.');
   if (['stopped', 'failed', 'aborted'].includes(sandbox.status) && !sandbox.currentSnapshotId) throw new WorkspaceError('WORKSPACE_SNAPSHOT_MISSING', 'Existing work cannot be restored; no clean replacement was created');
   const sensitive = [...(input.host?.redactionValues || []), ...runtimeSecretValues(input.host?.environment || {})];
   if (input.host?.git) sensitive.push(input.host.git.password, input.host.git.username,
@@ -632,7 +640,7 @@ export async function adoptRequirementWorkspace(input: {
   await active();
   try {
     await sandbox.update({ networkPolicy: workspaceNetworkPolicy(url, input.host?.git), tags: {
-      harnessSession: input.sessionId, harnessRepository: createHash('sha256').update(JSON.stringify([url.href, input.repository.ref ?? null])).digest('hex'), harnessReady: 'true',
+      harnessSession: input.sessionId, harnessRepository: createHash('sha256').update(JSON.stringify([url.href, input.repository.ref ?? null])).digest('hex'), harnessReady: 'true', harnessIsolation: WORKSPACE_ISOLATION_VERSION,
     } }, { signal: input.signal });
   } catch (error) {
     await active();
@@ -661,7 +669,7 @@ export async function openWorkspace(input: {
   if (input.existing && (input.existing.provider !== 'vercel' || input.existing.id !== name || input.existing.root !== WORKSPACE_ROOT)) {
     return fail('WORKSPACE_SCOPE_MISMATCH', 'Workspace reference does not belong to this session.');
   }
-  const tags = { harnessSession: input.sessionId.toLowerCase(),
+  const tags = { harnessSession: input.sessionId.toLowerCase(), harnessIsolation: WORKSPACE_ISOLATION_VERSION,
     harnessRepository: createHash('sha256').update(JSON.stringify([url.href, input.repository.ref ?? null])).digest('hex') };
   const git = input.host?.git;
   const sensitive = git ? [git.username, git.password, Buffer.from(`${git.username}:${git.password}`).toString('base64'),
@@ -684,7 +692,8 @@ export async function openWorkspace(input: {
       await active();
       operation = 'create';
       sandbox = await Sandbox.create({ ...sandboxAuth, name, persistent: true, image: 'vercel/sandbox/universal',
-        timeout: 30 * 60_000, env: {}, ports: [], networkPolicy, tags,
+        timeout: 30 * 60_000, env: {}, ports: [], networkPolicy,
+        tags: { harnessSession: tags.harnessSession, harnessRepository: tags.harnessRepository },
         keepLastSnapshots: { count: 2 }, signal: input.signal });
       await active();
       created = true;
@@ -692,6 +701,17 @@ export async function openWorkspace(input: {
     if (!created && (sandbox.name !== name || !sandbox.persistent || sandbox.tags?.harnessSession !== tags.harnessSession ||
         sandbox.tags?.harnessRepository !== tags.harnessRepository)) {
       return fail('WORKSPACE_NOT_READY', 'Existing workspace does not match this session and repository; no files were reset.');
+    }
+    if (!created && sandbox.tags?.harnessIsolation !== WORKSPACE_ISOLATION_VERSION) return fail('WORKSPACE_ISOLATION_REQUIRED',
+      'Existing workspace predates process isolation. Host migration is required; files and running processes were not replaced.');
+    if (created) {
+      await active();
+      const initialized = await sandbox.runCommand({ cmd: '/usr/bin/python3', args: ['-I', '-S', '-c', WORKSPACE_ROOT_INIT],
+        cwd: '/', env: {}, sudo: true, timeoutMs: 10000, signal: input.signal });
+      await active();
+      if (initialized.exitCode !== 0) return fail('WORKSPACE_NOT_READY', 'New workspace directory could not be initialized without replacing content.');
+      await sandbox.update({ tags }, { signal: input.signal });
+      await active();
     }
     if (!created && ['stopped', 'failed', 'aborted'].includes(sandbox.status) && !sandbox.currentSnapshotId) {
       return fail('WORKSPACE_SNAPSHOT_MISSING', 'Existing workspace has no restorable snapshot; it was not restarted from a clean image.');

@@ -12,6 +12,8 @@ import type { MigrationBatchResult } from '@/lib/services/apps-platform/migratio
 import { createRedactor } from './security';
 import { resolveSandboxAuth } from './sandbox-auth';
 import { workspaceOpenFailure } from './workspace-open-failure';
+import { guardedWorkspaceCommand, WORKSPACE_ISOLATION_VERSION } from './workspace-process-guard';
+import { createLegacyFiles } from './workspace-legacy-files';
 import type { HarnessTool, Json, SessionScope, ToolContext, Workspace } from './types';
 
 export interface CapabilityOptions {
@@ -72,9 +74,22 @@ async function rawSandbox(context: IntegrationContext): Promise<Sandbox> {
     return unavailable(failure.code, failure.message);
   }
   // Helpers do not receive process.env or runtime credentials. Recheck before each SDK operation.
-  return new Proxy(raw, { get(target, key) {
+  if (raw.tags?.harnessIsolation !== WORKSPACE_ISOLATION_VERSION) return unavailable('WORKSPACE_ISOLATION_REQUIRED', 'Workspace process isolation has not been verified.');
+  let proxy: Sandbox;
+  const files = createLegacyFiles(input => proxy.runCommand(input));
+  proxy = new Proxy(raw, { get(target, key) {
+    if (key === 'then') return undefined; // Returning the proxy from async code is not a thenable SDK call.
+    if (key === 'fs') return files.fs;
+    if (key === 'readFile' || key === 'readFileToBuffer' || key === 'writeFiles') return files[key];
     const value = Reflect.get(target, key, target);
-    if (typeof value !== 'function') return value;
+    if (key === 'domain') return (port: number) => {
+      if (!Number.isInteger(port) || !target.routes.some(route => route.port === port)) return unavailable('PREVIEW_PORT_REQUIRED', 'Preview port is not exposed.');
+      return target.domain(port);
+    };
+    if (typeof value !== 'function') {
+      if (['name', 'status', 'routes', 'tags'].includes(String(key))) return value;
+      return unavailable('UNSAFE_LEGACY_ACCESS', 'Legacy integration requested unsupported workspace access.');
+    }
     if (key === 'runCommand') {
       return async (input: string | Record<string, unknown>, argv?: string[]) => {
         context.signal.throwIfAborted();
@@ -85,24 +100,32 @@ async function rawSandbox(context: IntegrationContext): Promise<Sandbox> {
           return unavailable('UNSAFE_LEGACY_COMMAND', 'Legacy integration requested unsupported command privileges.');
         }
         // Never inherit image/host secrets; retain SDK Command semantics required by legacy helpers.
-        return target.runCommand({ cmd: '/usr/bin/env', args: ['-i', 'PATH=/usr/local/bin:/usr/bin:/bin',
+        return target.runCommand({ ...guardedWorkspaceCommand(['-i', 'PATH=/usr/local/bin:/usr/bin:/bin',
           'HOME=/tmp', 'LANG=C.UTF-8', 'GIT_CONFIG_GLOBAL=/dev/null', 'GIT_CONFIG_SYSTEM=/dev/null',
-          'GIT_TERMINAL_PROMPT=0', command.cmd, ...(command.args as string[] || [])],
+          'GIT_TERMINAL_PROMPT=0'], command.cmd, command.args as string[] || []),
           cwd: typeof command.cwd === 'string' ? command.cwd : ref.root,
           timeoutMs: Math.min(120000, typeof command.timeoutMs === 'number' ? command.timeoutMs : 60000),
           ...(command.detached === true ? { detached: true } : {}),
           signal: command.signal instanceof AbortSignal ? AbortSignal.any([context.signal, command.signal]) : context.signal });
       };
     }
-    if (['writeFiles', 'readFile', 'readFileToBuffer', 'update'].includes(String(key))) {
+    if (key === 'update') {
       return async (...args: unknown[]) => {
         context.signal.throwIfAborted();
         await context.assertCurrent();
+        if (key === 'update') {
+          const update = args[0] as { ports?: unknown } | null;
+          if (!update || Object.keys(update).some(name => name !== 'ports') || !Array.isArray(update.ports) ||
+            update.ports.some(port => !Number.isInteger(port) || port < 1024 || port > 65535 || port === 23456)) {
+            return unavailable('UNSAFE_LEGACY_UPDATE', 'Legacy integration may update preview ports only.');
+          }
+        }
         return value.apply(target, args);
       };
     }
-    return value.bind(target);
+    return unavailable('UNSAFE_LEGACY_METHOD', 'Legacy integration requested an unsupported workspace method.');
   } });
+  return proxy;
 }
 
 const defaults: CapabilityDependencies = {

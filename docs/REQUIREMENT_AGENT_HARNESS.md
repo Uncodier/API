@@ -97,6 +97,39 @@ require build/push/preview success. Explicit user pause/cancel/holds take preced
   references are saved. Pending operations are stored before dispatch. Ambiguous
   writes require trusted adapter receipts/idempotency, not a model's assertion.
 
+### IPv4 workload isolation and current image bootstrap
+
+The live Sandbox API rejects IPv6 deny CIDRs (including `::/128`), despite generic
+CIDR types in SDK 3.2.1. The harness retains all fourteen IPv4 private, metadata,
+reserved and multicast deny ranges. Every workload command additionally runs
+through an inline trusted Linux launcher: seccomp is installed before switching
+from root to dedicated UID/GID 1001, all capability sets are cleared, and
+`no_new_privs` is enforced. IPv6 (including mapped IPv4), raw packet/netlink sockets,
+named Unix sockets, cross-process tracing and io_uring are unavailable. Anonymous
+Unix socketpairs and IPv4 remain usable. Filters survive exec/fork and cannot be
+removed by the workload; failure to install them never runs an unguarded command.
+
+Credential-broker TLS termination is outside the guest. It is therefore restricted
+to the public `github.com` origin, with `Host` pinned on every broker request and
+credentials restricted to the exact repository's Git endpoints. There is no
+arbitrary `forwardURL` or credentialed custom-host fallback. Ordinary HTTPS still
+uses IPv4 connections and the provider's deny ranges. This does not assert the
+provider itself is IPv4-only.
+
+New trusted images initialize the previously absent `/vercel/sandbox` directory
+without replacing files or following symlinks. Only after initialization does the
+host save `harnessIsolation=ipv4-process-v1`. Old untagged workspaces are preserved
+and paused for an explicit host migration, not reset or silently relabelled.
+Image/runtime changes that cannot satisfy the launcher fail closed. System package
+installation via sudo, privileged containers, IPv6-only services and named Unix
+sockets are deliberately unsupported in workload commands. Browser system
+dependencies must be present in the trusted image; installation is not exempted.
+Legacy helper file IO also runs under UID 1001, restricted to the workspace and
+fixed probe/screenshot scratch paths with no-follow descriptors and a 256 KiB cap.
+Recursive scratch cleanup is refused; oversized screenshots fail explicitly.
+These operational limitations are not a claim that all optional browser/QA tools
+have passed production canaries.
+
 ## Deployment is a separate operation
 
 This code change does **not** apply migrations, deploy API code, activate production

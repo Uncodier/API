@@ -1,3 +1,4 @@
+import { WORKSPACE_ISOLATION_VERSION, WORKSPACE_PROCESS_GUARD, WORKSPACE_ROOT_INIT } from '../workspace-process-guard';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { Sandbox } from '@vercel/sandbox';
 import { MAX_COMMAND_OUTPUT, WORKSPACE_BOOTSTRAP_PROGRAM, WORKSPACE_ROOT, WorkspaceError, configureWorkspaceEnvironment,
@@ -36,7 +37,7 @@ describe('workspace paths, repository validation and result helpers', () => {
   test('rejects auth URLs without echoing either credential', () => {
     const username = randomBytes(12).toString('hex');
     const password = randomBytes(24).toString('hex');
-    const url = new URL('https://git.example.invalid/team/repo.git');
+    const url = new URL('https://github.com/team/repo.git');
     url.username = username; url.password = password;
     let message = '';
     try { validateWorkspaceRepository({ url: url.href }); } catch (error) { message = String(error); }
@@ -44,19 +45,20 @@ describe('workspace paths, repository validation and result helpers', () => {
   });
   test('brokers only exact git endpoints and denies private/metadata networks', () => {
     const git = { username: randomBytes(12).toString('hex'), password: randomBytes(24).toString('hex') };
-    const policy = workspaceNetworkPolicy(new URL('https://git.example.invalid/team/repo.git'), git);
+    const policy = workspaceNetworkPolicy(new URL('https://github.com/team/repo.git'), git);
     expect(typeof policy).toBe('object');
     if (typeof policy === 'string') throw new Error('Expected custom policy');
-    expect(policy.subnets?.deny).toEqual(expect.arrayContaining(['169.254.0.0/16', '10.0.0.0/8', 'fc00::/7', '::ffff:0:0/96']));
+    expect(policy.subnets?.deny).toEqual(expect.arrayContaining(['169.254.0.0/16', '10.0.0.0/8', '192.168.0.0/16']));
+    expect(policy.subnets?.deny?.every(cidr => !cidr.includes(':'))).toBe(true);
     expect(policy.subnets?.allow).toBeUndefined();
     const allow = policy.allow as Record<string, Array<{ match: { path: { exact: string } }; transform: unknown }>>;
     expect(allow['*']).toEqual([]);
-    expect(allow['git.example.invalid']).toHaveLength(2);
+    expect(allow['github.com']).toHaveLength(3);
     expect(JSON.stringify(allow)).not.toContain('git-receive-pack');
-    const writable = workspaceNetworkPolicy(new URL('https://git.example.invalid/team/repo.git'), { ...git, allowPush: true });
+    const writable = workspaceNetworkPolicy(new URL('https://github.com/team/repo.git'), { ...git, allowPush: true });
     if (typeof writable === 'string') throw new Error('Expected custom policy');
-    expect((writable.allow as Record<string, unknown[]>)['git.example.invalid']).toHaveLength(4);
-    for (const rule of allow['git.example.invalid']) {
+    expect((writable.allow as Record<string, unknown[]>)['github.com']).toHaveLength(5);
+    for (const rule of allow['github.com'].slice(0, -1)) {
       expect(rule.match.path.exact).toMatch(/^\/team\/repo\.git\/(?:info\/refs|git-upload-pack|git-receive-pack)$/);
     }
   });
@@ -77,8 +79,8 @@ describe('workspace paths, repository validation and result helpers', () => {
 describe('Vercel SDK 3.2.1 workspace adapter, offline', () => {
   const sessionId = randomUUID();
   const name = `h-${sessionId}`;
-  const repository = { url: 'https://git.example.invalid/team/repo.git', ref: 'feature/scaffold' };
-  const tags = { harnessSession: sessionId, harnessRepository: createHash('sha256').update(JSON.stringify([repository.url, repository.ref])).digest('hex'), harnessReady: 'true' };
+  const repository = { url: 'https://github.com/team/repo.git', ref: 'feature/scaffold' };
+  const tags = { harnessIsolation: WORKSPACE_ISOLATION_VERSION, harnessSession: sessionId, harnessRepository: createHash('sha256').update(JSON.stringify([repository.url, repository.ref])).digest('hex'), harnessReady: 'true' };
   let sandbox: { name: string; persistent: boolean; tags: typeof tags; status: string; currentSnapshotId?: string;
     runCommand: jest.Mock; update: jest.Mock; stop: jest.Mock; getCommand: jest.Mock };
   beforeEach(() => {
@@ -96,11 +98,11 @@ describe('Vercel SDK 3.2.1 workspace adapter, offline', () => {
     const workspace = await openWorkspace({ sessionId, repository });
     expect(workspace.ref).toEqual({ provider: 'vercel', id: name, root: WORKSPACE_ROOT });
     expect(Sandbox.create).toHaveBeenCalledWith(expect.objectContaining({ name, persistent: true, env: {}, ports: [], image: 'vercel/sandbox/universal' }));
-    const calls = sandbox.runCommand.mock.calls.map(([value]) => value);
+    const calls = sandbox.runCommand.mock.calls.map(([value]) => value).filter(value => !value.args.includes(WORKSPACE_ROOT_INIT));
     expect(calls).toHaveLength(1);
     const call = calls[0];
-    expect(call).toMatchObject({ cmd: '/usr/bin/env', cwd: '/', env: {}, sudo: false, detached: true, timeoutMs: 120000 });
-    expect(call.args[0]).toBe('-i');
+    expect(call).toMatchObject({ cmd: '/usr/bin/env', cwd: '/', env: {}, sudo: true, detached: true, timeoutMs: 120000 });
+    expect(call.args).toEqual(expect.arrayContaining([WORKSPACE_PROCESS_GUARD, '-i']));
     const payload = JSON.parse(call.args.at(-1));
     expect(payload).toMatchObject({ root: WORKSPACE_ROOT, sessionId, url: repository.url, ref: repository.ref });
     expect(call.args).toContain(WORKSPACE_BOOTSTRAP_PROGRAM);
@@ -111,7 +113,7 @@ describe('Vercel SDK 3.2.1 workspace adapter, offline', () => {
     expect(WORKSPACE_BOOTSTRAP_PROGRAM).toContain('owner.json');
     await workspace.suspend();
     expect(sandbox.stop).toHaveBeenCalledTimes(1);
-    expect(sandbox.runCommand).toHaveBeenCalledTimes(1);
+    expect(sandbox.runCommand).toHaveBeenCalledTimes(2);
   });
   test('explicit existing failure and transient lookup failure never create a fresh VM', async () => {
     await expect(openWorkspace({ sessionId, repository, existing: { provider: 'vercel', id: name, root: WORKSPACE_ROOT } })).rejects.toMatchObject({ code: 'WORKSPACE_OPEN_FAILED' });
@@ -218,29 +220,30 @@ describe('Vercel SDK 3.2.1 workspace adapter, offline', () => {
     if (boundary === 'lookup') (Sandbox.get as jest.Mock).mockImplementation(async () => { cancel(); throw { response: { status: 404 } }; });
     if (boundary === 'create') (Sandbox.create as jest.Mock).mockImplementation(async () => { cancel(); return sandbox; });
     if (boundary === 'policy' || boundary === 'tag') sandbox.update.mockImplementation(async (input: { tags?: unknown }) => {
-      if ((boundary === 'tag') === Boolean(input.tags)) cancel();
+      if (boundary === 'tag' ? (input.tags as { harnessReady?: string })?.harnessReady === 'true' : !input.tags) cancel();
     });
-    if (boundary === 'clone') sandbox.runCommand.mockImplementation(async () => { cancel(); return command(); });
+    if (boundary === 'clone') sandbox.runCommand.mockImplementation(async input => { if (input.args.includes(WORKSPACE_BOOTSTRAP_PROGRAM)) cancel(); return command(); });
     await expect(openWorkspace({ sessionId, repository, signal: controller.signal, assertActive: async () => {} })).rejects.toMatchObject({ code: 'ABORTED' });
     expect(Sandbox.create).toHaveBeenCalledTimes(boundary === 'lookup' ? 0 : 1);
-    expect(sandbox.update).toHaveBeenCalledTimes(['lookup', 'create'].includes(boundary) ? 0 : boundary === 'tag' ? 2 : 1);
-    expect(sandbox.runCommand).toHaveBeenCalledTimes(['lookup', 'create', 'policy'].includes(boundary) ? 0 : 1);
+    expect(sandbox.update).toHaveBeenCalledTimes(['lookup', 'create'].includes(boundary) ? 0 : boundary === 'tag' ? 3 : 2);
+    expect(sandbox.runCommand).toHaveBeenCalledTimes(['lookup', 'create'].includes(boundary) ? 0 : boundary === 'policy' ? 1 : 2);
   });
   test('owner loss after policy refresh blocks clone even when signal remains live', async () => {
     let owned = true;
     sandbox.update.mockImplementation(async () => { owned = false; });
     await expect(openWorkspace({ sessionId, repository, assertActive: async () => { if (!owned) throw new Error('lost'); } })).rejects.toMatchObject({ code: 'ABORTED' });
-    expect(sandbox.runCommand).not.toHaveBeenCalled();
+    expect(sandbox.runCommand).toHaveBeenCalledTimes(1);
+    expect(sandbox.runCommand.mock.calls[0][0].args).toContain(WORKSPACE_ROOT_INIT);
     expect(sandbox.update).toHaveBeenCalledTimes(1);
   });
   test('transient clone exit 128 can retry same owned incomplete VM, without fresh VM/reset', async () => {
     sandbox.tags.harnessReady = 'false';
-    sandbox.runCommand.mockResolvedValueOnce(command('', '', 128)).mockResolvedValue(command());
+    sandbox.runCommand.mockResolvedValueOnce(command()).mockResolvedValueOnce(command('', '', 128)).mockResolvedValue(command());
     await expect(openWorkspace({ sessionId, repository })).rejects.toMatchObject({ code: 'REPOSITORY_CLONE_FAILED' });
     (Sandbox.get as jest.Mock).mockResolvedValue(sandbox);
     await openWorkspace({ sessionId, repository });
     expect(Sandbox.create).toHaveBeenCalledTimes(1);
-    expect(sandbox.runCommand).toHaveBeenCalledTimes(2);
+    expect(sandbox.runCommand).toHaveBeenCalledTimes(3);
     expect(sandbox.update.mock.calls.at(-1)[0].tags.harnessReady).toBe('true');
   });
   test('different owner/repository incomplete VM cannot bootstrap or refresh its policy', async () => {

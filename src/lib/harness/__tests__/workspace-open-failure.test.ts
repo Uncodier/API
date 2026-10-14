@@ -1,3 +1,4 @@
+import { WORKSPACE_ISOLATION_VERSION } from '../workspace-process-guard';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { Sandbox } from '@vercel/sandbox';
 import { openWorkspace, adoptRequirementWorkspace } from '../workspace';
@@ -36,7 +37,7 @@ it.each(['get', 'create', 'update-network-policy', 'update-tags', 'adopt-update'
   const command = { cmdId: 'offline-cmd', exitCode: 0, wait: jest.fn().mockResolvedValue({ exitCode: 0 }),
     logs: jest.fn(() => Object.assign((async function* () { yield { stream: 'stdout', data: repository.url }; })(), { close: jest.fn() })) };
   const sandbox = { name: `h-${sessionId}`, persistent: true, status: 'running',
-    tags: { harnessSession: sessionId, harnessRepository: createHash('sha256').update(JSON.stringify([repository.url, null])).digest('hex'), harnessReady: 'true' },
+    tags: { harnessIsolation: WORKSPACE_ISOLATION_VERSION, harnessSession: sessionId, harnessRepository: createHash('sha256').update(JSON.stringify([repository.url, null])).digest('hex'), harnessReady: 'true' },
     runCommand: jest.fn().mockResolvedValue(command), update: jest.fn().mockResolvedValue(undefined) };
   (Sandbox.get as jest.Mock).mockResolvedValue(sandbox);
   if (operation === 'get') (Sandbox.get as jest.Mock).mockRejectedValue(failure);

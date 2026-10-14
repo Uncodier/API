@@ -25,5 +25,5 @@ function classifyFailure(error: unknown): { code: string; message: string; opera
 
 export function workspaceOpenRequiresOperator(error: unknown): boolean {
   const candidate = error as { name?: string; code?: string } | null;
-  return candidate?.name === 'WorkspaceError' && ['WORKSPACE_AUTHORIZATION_REQUIRED', 'WORKSPACE_PROVIDER_BILLING_REQUIRED', 'WORKSPACE_AUTH_CONFIGURATION_REQUIRED'].includes(candidate.code || '');
+  return candidate?.name === 'WorkspaceError' && ['WORKSPACE_AUTHORIZATION_REQUIRED', 'WORKSPACE_PROVIDER_BILLING_REQUIRED', 'WORKSPACE_AUTH_CONFIGURATION_REQUIRED', 'WORKSPACE_ISOLATION_REQUIRED', 'UNSUPPORTED_GIT_BROKER_HOST'].includes(candidate.code || '');
 }

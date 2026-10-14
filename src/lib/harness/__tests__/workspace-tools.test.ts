@@ -1,3 +1,4 @@
+import { WORKSPACE_ISOLATION_VERSION } from '../workspace-process-guard';
 import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -89,7 +90,7 @@ describe('workspace tool contracts and SDK adapter end-to-end offline', () => {
         logs: () => Object.assign((async function* () { yield { stream: 'stdout', data: JSON.stringify(result) }; })(), { close() {} }) };
     });
     (Sandbox.get as jest.Mock).mockResolvedValue({ name: `h-${sessionId}`, persistent: true, status: 'running',
-      tags: { harnessSession: sessionId, harnessRepository: createHash('sha256').update(JSON.stringify([repository.url, null])).digest('hex'), harnessReady: 'true' },
+      tags: { harnessIsolation: WORKSPACE_ISOLATION_VERSION, harnessSession: sessionId, harnessRepository: createHash('sha256').update(JSON.stringify([repository.url, null])).digest('hex'), harnessReady: 'true' },
       update: jest.fn().mockResolvedValue(undefined), runCommand, stop: jest.fn().mockResolvedValue({}) });
     workspace = await openWorkspace({ sessionId, repository });
     tools = createWorkspaceTools(workspace);
