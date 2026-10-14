@@ -79,6 +79,10 @@ require build/push/preview success. Explicit user pause/cancel/holds take preced
   provider-billing classification and pause before model dispatch. Transient
   setup failures remain retryable. This repair requires deployment; it does not
   retroactively identify the HTTP cause of old generic workspace-open failures.
+- SDK OIDC-context failures have no HTTP response. These now receive the separate
+  `WORKSPACE_AUTH_CONFIGURATION_REQUIRED` classification and pause without printing
+  SDK exception text or its nested cause. Other HTTP setup errors retain a numeric
+  status in static diagnostic messages, without exposing response bodies.
 - Tool result storage is bounded; full redacted artifacts are durable before their
   references are saved. Pending operations are stored before dispatch. Ambiguous
   writes require trusted adapter receipts/idempotency, not a model's assertion.
@@ -106,6 +110,29 @@ cron or demonstrate a live staging run. Before rollout:
    progress → next cron tick on the same session. Inspect status, session, credits,
    workspace and full redacted receipts. Exercise user pause and expired ownership.
 5. Enable the existing cron only after the live staging checks pass.
+
+### Sandbox authentication is distinct from deployment credentials
+
+The installed `@vercel/sandbox` SDK does **not** automatically use `VERCEL_TOKEN`.
+Its default is OIDC from the Vercel request context or `VERCEL_OIDC_TOKEN`.
+The harness preserves that default (`HARNESS_SANDBOX_AUTH=oidc` or unset).
+
+For an explicitly chosen access-token host, set `HARNESS_SANDBOX_AUTH=access-token`
+and all three `HARNESS_SANDBOX_TOKEN`, `HARNESS_SANDBOX_TEAM_ID`,
+`HARNESS_SANDBOX_PROJECT_ID`. In this mode only, corresponding `VERCEL_TOKEN`,
+`VERCEL_TEAM_ID`, `VERCEL_PROJECT_ID` values are supported as fallback configuration
+names. Missing/invalid values fail closed; no login, automatic auth fallback or
+default-project creation is attempted by the harness resolver. The app deployment
+project (`APPS_VERCEL_PROJECT_ID`) is deliberately not a sandbox-project fallback.
+
+The resolved credentials are passed consistently to lookup, creation, workspace
+adoption and optional-tool reconnection. They are not written into the session,
+model tool arguments or the VM environment. An unauthorized token still returns
+403; selecting access-token mode does not grant access to another team/project.
+
+Offline SDK contract tests reproduce a non-HTTP `VercelOidcContextError` and prove
+explicit credentials reach a fake provider request. This establishes the SDK
+contract, not which authentication error occurred in a past deployed execution.
 
 Old shared gate modules remain where still imported by independent tools/tests and
 other workflows. The old requirement orchestration workflow and parallel session

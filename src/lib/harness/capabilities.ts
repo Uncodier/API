@@ -10,6 +10,8 @@ import type { TenantStorageBinding } from '@/lib/services/apps-platform/tenant-s
 import type { MigrationExecutionContext } from '@/lib/services/apps-platform/migration-execution';
 import type { MigrationBatchResult } from '@/lib/services/apps-platform/migration-applier';
 import { createRedactor } from './security';
+import { resolveSandboxAuth } from './sandbox-auth';
+import { workspaceOpenFailure } from './workspace-open-failure';
 import type { HarnessTool, Json, SessionScope, ToolContext, Workspace } from './types';
 
 export interface CapabilityOptions {
@@ -63,7 +65,12 @@ async function rawSandbox(context: IntegrationContext): Promise<Sandbox> {
     return unavailable('WORKSPACE_UNSUPPORTED', 'Legacy integration requires the canonical Vercel workspace.');
   }
   const { Sandbox: SDK } = await import('@vercel/sandbox');
-  const raw = await SDK.get({ name: ref.id, resume: false, signal: context.signal });
+  let raw: Sandbox;
+  try { raw = await SDK.get({ ...resolveSandboxAuth(), name: ref.id, resume: false, signal: context.signal }); }
+  catch (error) {
+    const failure = workspaceOpenFailure(error);
+    return unavailable(failure.code, failure.message);
+  }
   // Helpers do not receive process.env or runtime credentials. Recheck before each SDK operation.
   return new Proxy(raw, { get(target, key) {
     const value = Reflect.get(target, key, target);

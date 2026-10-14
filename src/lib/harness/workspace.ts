@@ -5,6 +5,7 @@ import { Sandbox, type Command, type NetworkPolicy, type NetworkPolicyRule } fro
 import type { CommandInput, CommandOutput, Workspace, WorkspaceRef } from './types';
 import { createRedactor, runtimeSecretValues } from './security';
 import { workspaceOpenFailure } from './workspace-open-failure';
+import { resolveSandboxAuth } from './sandbox-auth';
 
 export const WORKSPACE_ROOT = '/vercel/sandbox';
 export const MAX_COMMAND_OUTPUT = 64 * 1024;
@@ -602,7 +603,7 @@ export async function adoptRequirementWorkspace(input: {
   const url = validateWorkspaceRepository(input.repository);
   await active();
   let sandbox: Sandbox;
-  try { sandbox = await Sandbox.get({ name: input.workspaceId, resume: false, signal: input.signal }); }
+  try { sandbox = await Sandbox.get({ ...resolveSandboxAuth(), name: input.workspaceId, resume: false, signal: input.signal }); }
   catch (error) {
     await active();
     const failure = workspaceOpenFailure(error);
@@ -664,7 +665,8 @@ export async function openWorkspace(input: {
   let sandbox: Sandbox;
   let created = false;
   try {
-    try { await active(); sandbox = await Sandbox.get({ name, resume: false, signal: input.signal }); await active(); }
+    const sandboxAuth = resolveSandboxAuth();
+    try { await active(); sandbox = await Sandbox.get({ ...sandboxAuth, name, resume: false, signal: input.signal }); await active(); }
     catch (error) {
       await active();
       const missing = error && typeof error === 'object' && 'response' in error &&
@@ -672,7 +674,7 @@ export async function openWorkspace(input: {
       if (input.existing || !missing) throw error;
       // No getOrCreate with setup callbacks: an existing/incomplete VM is NEVER reset.
       await active();
-      sandbox = await Sandbox.create({ name, persistent: true, image: 'vercel/sandbox/universal',
+      sandbox = await Sandbox.create({ ...sandboxAuth, name, persistent: true, image: 'vercel/sandbox/universal',
         timeout: 30 * 60_000, env: {}, ports: [], networkPolicy, tags,
         keepLastSnapshots: { count: 2 }, signal: input.signal });
       await active();

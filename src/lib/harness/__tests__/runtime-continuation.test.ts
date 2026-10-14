@@ -24,7 +24,7 @@ jest.mock('../archive-tool', () => ({ createArchiveTool: () => [] }));
 jest.mock('../profile', () => ({ resolveHostProfile: (...args: unknown[]) => profile(...args) }));
 import { executeSessionSlice } from '../runtime';
 
-it.each(['WORKSPACE_AUTHORIZATION_REQUIRED', 'WORKSPACE_PROVIDER_BILLING_REQUIRED'])('pauses %s before model dispatch and does not auto-retry the same session', async code => {
+it.each(['WORKSPACE_AUTHORIZATION_REQUIRED', 'WORKSPACE_PROVIDER_BILLING_REQUIRED', 'WORKSPACE_AUTH_CONFIGURATION_REQUIRED'])('pauses %s before model dispatch and does not auto-retry the same session', async code => {
   open.mockRejectedValue(Object.assign(new Error('Sandbox access requires operator attention.'), { name: 'WorkspaceError', code }));
   const result = await executeSessionSlice(session.id, scope);
   expect(result).toEqual({ status: 'paused', continue: false });

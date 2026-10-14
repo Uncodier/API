@@ -269,3 +269,36 @@ it('legacy adapter exposes the preview only with its separate tool, preserves po
     args: expect.arrayContaining(['-i', 'HOME=/tmp', 'sh', '-c', 'printf ok']) }));
   expect(JSON.stringify(raw.runCommand.mock.calls)).not.toContain(s.password);
 });
+
+it('optional tools reconnect with the selected host sandbox authentication without sending it to commands', async () => {
+  const previous = { ...process.env };
+  const token = randomBytes(24).toString('hex');
+  try {
+    process.env.HARNESS_SANDBOX_AUTH = 'access-token'; process.env.HARNESS_SANDBOX_TOKEN = token;
+    process.env.HARNESS_SANDBOX_TEAM_ID = 'team'; process.env.HARNESS_SANDBOX_PROJECT_ID = 'project';
+    const s = setup(); delete s.options.requirementId;
+    const raw = { runCommand: jest.fn().mockResolvedValue({ exitCode: 0 }) };
+    sdkGet.mockResolvedValue(raw);
+    qaExecute.mockImplementation(async (_name, _args, sandbox) => {
+      await sandbox.runCommand({ cmd: 'printf', args: ['ok'] }); return { ok: true };
+    });
+    const { legacy: _legacy, ...overrides } = s.deps;
+    const tools = await createCapabilityTools(s.options, overrides);
+    const result = await s.invoke('sandbox_probe_routes', { routes: ['/'] }, tools);
+    expect(result.ok).toBe(true);
+    expect(sdkGet).toHaveBeenLastCalledWith(expect.objectContaining({ token, teamId: 'team', projectId: 'project' }));
+    expect(JSON.stringify(raw.runCommand.mock.calls)).not.toContain(token);
+    expect(JSON.stringify(result)).not.toContain(token);
+  } finally { process.env = previous; }
+});
+
+it('optional reconnection returns static authentication findings rather than SDK credentials', async () => {
+  const s = setup(); delete s.options.requirementId;
+  const secret = randomBytes(24).toString('hex');
+  sdkGet.mockRejectedValue(Object.assign(new Error(secret), { name: 'VercelOidcContextError', cause: new Error(secret) }));
+  const { legacy: _legacy, ...overrides } = s.deps;
+  const tools = await createCapabilityTools(s.options, overrides);
+  const result = await s.invoke('sandbox_probe_routes', { routes: ['/'] }, tools);
+  expect(result).toMatchObject({ ok: false, error: { code: 'WORKSPACE_AUTH_CONFIGURATION_REQUIRED' } });
+  expect(JSON.stringify(result)).not.toContain(secret);
+});
