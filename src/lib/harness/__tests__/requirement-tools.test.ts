@@ -115,10 +115,7 @@ it('closes an explicitly selected plan without accidentally updating a step or i
 });
 
 it.each([
-  ['plan', { stepId: 'step-1' }, 'omit stepId'],
-  ['item', { itemId: 'item-1' }, 'omit planId'],
   ['step', {}, 'provide planId and stepId'],
-  ['message', { message: 'Keep working' }, 'provide message only'],
 ])('explains ambiguous explicit %s targets without dispatch', async (target, extra, hint) => {
   const f = fixture();
   const result = await f.execute('requirement_progress', { target, planId: f.plan.id, status: 'completed', ...extra });
@@ -143,11 +140,37 @@ it('reports unchanged as successful state, not an error, retry instruction or ex
   expect(f.client.rpc).toHaveBeenCalledTimes(8);
 });
 
-it('explains the context selector mistake that preceded the production loop', async () => {
+it('uses the explicit context view despite a leftover selector', async () => {
   const f = fixture();
   const result = await f.execute('requirement_context', { view: 'plans', planId: f.plan.id, itemId: 'item-1' });
-  expect(result.error?.message).toBe('itemId applies to backlog details only.');
-  expect(f.client.rpc).not.toHaveBeenCalled();
+  expect(result).toMatchObject({ ok: true, output: { ignoredFields: ['itemId'] } });
+});
+
+it('honors an explicit plan target with stale or invalid step/item selectors without touching them', async () => {
+  const f = fixture();
+  const result = await f.execute('requirement_progress', { target: 'plan', planId: f.plan.id, stepId: 'second-step', itemId: 'foreign', status: 'completed' });
+  expect(result).toMatchObject({ ok: true, output: { ignoredFields: ['stepId', 'itemId'] } });
+  expect(f.client.rpc).toHaveBeenLastCalledWith('patch_agent_requirement_progress', expect.objectContaining({ p_plan_id: f.plan.id, p_step_id: null, p_item_id: null }));
+  const secret = randomBytes(24).toString('hex');
+  f.client.rpc.mockClear();
+  const ignored = await f.execute('requirement_progress', { target: 'plan', planId: f.plan.id, stepId: `secret:${secret}`, itemId: secret, status: 'completed' });
+  expect(ignored.ok).toBe(true);
+  expect(JSON.stringify(ignored)).not.toContain(secret);
+  expect(JSON.stringify(f.client.rpc.mock.calls)).not.toContain(secret);
+});
+it('still validates ownership of the explicit target and preserves legacy semantics', async () => {
+  const f = fixture();
+  expect((await f.execute('requirement_progress', { target: 'plan', planId: randomUUID(), stepId: 'step-1', status: 'done' })).ok).toBe(false);
+  f.client.rpc.mockClear();
+  await f.execute('requirement_progress', { planId: f.plan.id, stepId: 'step-1', itemId: 'item-1', status: 'done' });
+  expect(f.client.rpc).toHaveBeenLastCalledWith('patch_agent_requirement_progress', expect.objectContaining({ p_step_id: 'step-1', p_item_id: 'item-1' }));
+});
+it('message/item explicit targets ignore only irrelevant selectors', async () => {
+  const f = fixture();
+  expect((await f.execute('requirement_progress', { target: 'message', message: 'Note', planId: f.plan.id, stepId: 'step-1', status: 'done' })).ok).toBe(true);
+  expect(f.client.rpc).toHaveBeenLastCalledWith('patch_agent_requirement_progress', expect.objectContaining({ p_plan_id: null, p_step_id: null, p_status: null, p_message: 'Note' }));
+  expect((await f.execute('requirement_progress', { target: 'item', itemId: 'item-1', planId: f.plan.id, stepId: 'step-1', status: 'done' })).ok).toBe(true);
+  expect(f.client.rpc).toHaveBeenLastCalledWith('patch_agent_requirement_progress', expect.objectContaining({ p_plan_id: null, p_step_id: null, p_item_id: 'item-1' }));
 });
 
 it('does not echo submitted invalid enum values or unknown fields in validation errors', async () => {

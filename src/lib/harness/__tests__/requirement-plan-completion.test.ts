@@ -36,15 +36,15 @@ it('real engine and tools recover invalid input, report a no-op, explicitly clos
     expect(input.tools.map(tool => tool.name)).toEqual(expect.arrayContaining(['requirement_progress', 'requirement_context', 'finish_task']));
     const receipt = [...input.messages].reverse().find(message => message.role === 'tool');
     let name = 'requirement_progress', args: Record<string, unknown>;
-    if (modelCalls === 1) args = { target: 'plan', planId, stepId: 'second-step', status: 'completed' };
+    if (modelCalls === 1) args = { target: 'step', planId, status: 'completed' };
     else if (modelCalls === 2) {
-      expect(JSON.parse(receipt!.content).error.message).toContain('omit stepId');
+      expect(JSON.parse(receipt!.content).error.message).toContain('provide planId and stepId');
       args = { target: 'step', planId, stepId: 'second-step', itemId: 'second', status: 'completed' };
     } else if (modelCalls === 3) {
       const result = JSON.parse(receipt!.content);
       expect(result.ok).toBe(true); expect(result.output.state).toBe('unchanged');
       expect(result.output.plan.status).toBe('pending');
-      args = result.output.availableAction.arguments;
+      args = { ...result.output.availableAction.arguments, stepId: 'second-step', itemId: 'second' };
     } else {
       expect(JSON.parse(receipt!.content).output.plan.status).toBe('completed');
       name = 'finish_task'; args = { outcome: 'implemented', summary: 'Original steps and plan recorded completed; files were verified previously.' };

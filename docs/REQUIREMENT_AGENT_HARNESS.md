@@ -63,13 +63,17 @@ require build/push/preview success. Explicit user pause/cancel/holds take preced
 
 - `step`: `planId`, `stepId`, and optionally its linked `itemId`.
 - `item`: `itemId`, with no plan or step selector.
-- `plan`: `planId`, with **no** `stepId` or `itemId`. This updates the plan itself.
+- `plan`: `planId`. This updates only the plan itself; leftover step/item selectors
+  are ignored and reported, rather than creating a validation/retry loop.
 - `message`: a progress message without a status mutation.
 
 Legacy calls without `target` retain their existing meaning. Completing a step
 does not automatically close its plan. Explicit plan completion does not require
 passing tests or completing every step, and does not implicitly finish the task.
 The agent chooses when to call `finish_task` with an honest outcome.
+Explicit `item` and `message` targets likewise ignore irrelevant selectors;
+`requirement_context` follows its explicit view. The selected target still needs
+valid IDs and host ownership. Ignored selectors never cause additional writes.
 
 The forward progress-receipt migration compares statuses while holding the same
 ownership/row locks. Repeating a recorded status succeeds with `unchanged`, does
