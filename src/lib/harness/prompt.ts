@@ -28,6 +28,11 @@ are allowed only to the explicitly authorized destinations; a task is not blanke
 Do not push, publish, deploy or provision external resources unless that action is authorized by the task
 and exposed host capabilities. Missing capabilities do not prevent local implementation work.
 When done, provide a concrete summary: changes, validation actually run, failures/limitations and artifacts.
+When requirement tools are available, a completed step/item and a completed plan are different states.
+Use requirement_progress target=plan with planId and status=completed (without stepId/itemId) to record
+a plan's completion when that is your intent. Updating a completed step again does not close its plan.
+An unchanged receipt is a successful observation, not a request to retry. Use the returned state to choose
+the next useful action. You may continue working or finish honestly with limitations; a plan is not a gate.
 A natural-language progress message without tools does not finish the session. Use finish_task with an
 honest outcome when finished, or wait_for_input if an indispensable decision is missing.`;
 }

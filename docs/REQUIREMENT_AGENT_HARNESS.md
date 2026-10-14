@@ -57,6 +57,40 @@ without trusted reconciliation. Migration ownership/privilege safety still appli
 completion to `on-review`, not automatic product acceptance or `done`. It does not
 require build/push/preview success. Explicit user pause/cancel/holds take precedence.
 
+### Progress without repetition gates
+
+`requirement_progress` accepts an explicit optional `target`:
+
+- `step`: `planId`, `stepId`, and optionally its linked `itemId`.
+- `item`: `itemId`, with no plan or step selector.
+- `plan`: `planId`, with **no** `stepId` or `itemId`. This updates the plan itself.
+- `message`: a progress message without a status mutation.
+
+Legacy calls without `target` retain their existing meaning. Completing a step
+does not automatically close its plan. Explicit plan completion does not require
+passing tests or completing every step, and does not implicitly finish the task.
+The agent chooses when to call `finish_task` with an honest outcome.
+
+The forward progress-receipt migration compares statuses while holding the same
+ownership/row locks. Repeating a recorded status succeeds with `unchanged`, does
+not rewrite that progress or bump its revision, and still records a supplied
+message. It returns actual plan/step/item statuses and full-array counts. Tool
+responses distinguish that no-op from a change and explain how to select another
+target. They do not block repeated calls, remove tools, or force completion.
+
+The initial cycle snapshot is historical context, not a repeatedly appended claim
+of current state. A compact scoped status refresh is advisory; its failure is
+reported as unavailable rather than treating stale information as fresh or
+blocking ordinary tools. Context copies are not accumulated in the transcript.
+
+Rollout order for this repair: deploy the API that understands `unchanged` first,
+then apply `20261014195500_agent_progress_receipts.sql`. The new API tolerates an
+old basic receipt but explicitly reports current state unavailable. Do not apply
+the new RPC response contract while old workers are still handling progress.
+Keep the previous exhausted canary transcript and counters intact; use a new
+explicitly scoped canary after both changes are verified, rather than resetting
+its budget/history. Local tests alone do not demonstrate a production repair.
+
 ### Operational safeguards
 
 - Same-site/user/runner/generation checks and cron leases gate every model/effect;

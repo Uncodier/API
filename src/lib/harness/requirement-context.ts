@@ -198,6 +198,64 @@ export async function loadRequirementContext(run: RequirementRun, client?: Requi
   return { requirement: source(req), plans: plans.map(plan => safePlan(plan)), history, revision: revision(req, plans, history) };
 }
 
+// Refreshes deliberately do not select full backlog/steps JSON, task prose, logs
+// or metadata. JSON path projections bound backlog data without a new RPC/view.
+const SNAPSHOT_REQUIREMENT_SELECT = ['id,site_id,user_id,status,updated_at,backlog_revision',
+  ...Array.from({ length: REQUIREMENT_PAGE_LIMIT }, (_, index) =>
+    `item_${index}_id:backlog->items->${index}->>id,item_${index}_status:backlog->items->${index}->>status`),
+  `next_item_id:backlog->items->${REQUIREMENT_PAGE_LIMIT}->>id`,
+].join(',');
+const SNAPSHOT_PLAN_SELECT = 'id,site_id,status,updated_at,requirement_id:metadata->>requirement_id,workflow_template:metadata->>workflow_template';
+const snapshotStatus = (value: unknown): string => typeof value === 'string' &&
+  ['pending', 'in_progress', 'in-progress', 'completed', 'done', 'failed', 'blocked', 'paused', 'cancelled', 'active', 'draft'].includes(value) ? value : 'unknown';
+const snapshotTime = (value: unknown): string | null => typeof value === 'string' &&
+  /^\d{4}-\d{2}-\d{2}T[\d:.+-]+Z?$/.test(value) && Number.isFinite(Date.parse(value)) ? value : null;
+const snapshotCount = (value: unknown): number | null => Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : null;
+
+/** Two bounded, tenant-scoped reads; preview counts never claim global completion.
+ * Ownership is checked by the runtime separately, not by this advisory loader. */
+export async function loadRequirementSnapshot(run: RequirementRun, client?: RequirementClient) {
+  validateRequirementRun(run);
+  const db = await requirementClient(client);
+  const { data: req, error } = await db.from('requirements').select(SNAPSHOT_REQUIREMENT_SELECT)
+    .eq('id', run.requirementId).eq('site_id', run.siteId).eq('user_id', run.userId).maybeSingle();
+  if (error || !req || req.id !== run.requirementId || req.site_id !== run.siteId || req.user_id !== run.userId ||
+      snapshotCount(req.backlog_revision) === null) throw new Error('Requirement snapshot unavailable.');
+  const { data, error: planError } = await db.from('instance_plans').select(SNAPSHOT_PLAN_SELECT)
+    .eq('site_id', run.siteId).eq('metadata->>requirement_id', run.requirementId)
+    .order('updated_at', { ascending: false }).order('id', { ascending: false }).range(0, REQUIREMENT_PAGE_LIMIT - 1);
+  if (planError || !Array.isArray(data)) throw new Error('Requirement snapshot unavailable.');
+  const items = Array.from({ length: REQUIREMENT_PAGE_LIMIT }, (_, index) => ({
+    id: req[`item_${index}_id`], status: snapshotStatus(req[`item_${index}_status`]),
+  })).filter(item => requirementItemId(item.id) && safeRequirementText(item.id, 200) === item.id);
+  const counts: Record<string, number> = {};
+  for (const item of items) counts[item.status] = (counts[item.status] || 0) + 1;
+  const plans = data.filter(row => requirementRecordId(row.id) && row.site_id === run.siteId &&
+    row.requirement_id === run.requirementId && row.workflow_template !== true && row.workflow_template !== 'true')
+    .map(row => ({ id: row.id as string, status: snapshotStatus(row.status), updated_at: snapshotTime(row.updated_at) }));
+  const planCounts: Record<string, number> = {};
+  for (const plan of plans) planCounts[plan.status] = (planCounts[plan.status] || 0) + 1;
+  const snapshot = {
+    requirement: { id: run.requirementId, status: snapshotStatus(req.status), updated_at: snapshotTime(req.updated_at), backlog_revision: req.backlog_revision as number },
+    backlog: { items, observed_items: items.length, observed_status_counts: counts, total: null,
+      next_offset: req.next_item_id == null ? null : REQUIREMENT_PAGE_LIMIT,
+      coverage: `Only the first ${REQUIREMENT_PAGE_LIMIT} positions are sampled; counts describe observed valid items, not global totals.` },
+    plans: { items: plans, observed_plans: plans.length, observed_status_counts: planCounts, total: null,
+      next_offset: data.length === REQUIREMENT_PAGE_LIMIT ? REQUIREMENT_PAGE_LIMIT : null,
+      coverage: 'Explicit requirement plans only; legacy associations and steps are not sampled. Step totals are unknown here; use fresh tool receipts or requirement_context, not stored step counters.' },
+  };
+  return { ...snapshot, observed_at: new Date().toISOString(),
+    revision: createHash('sha256').update(JSON.stringify(snapshot)).digest('hex') };
+}
+
+export function formatRequirementSnapshot(snapshot: Awaited<ReturnType<typeof loadRequirementSnapshot>>): string {
+  return [
+    `Requirement progress observation at ${snapshot.observed_at}; revision: ${snapshot.revision}; backlog revision: ${snapshot.requirement.backlog_revision}.`,
+    'Compact, non-atomic advisory reads; omitted or unknown state is not completed or unchanged. Fresh tool receipts take precedence. Use requirement_context for full instructions, scoped legacy plans and further pages.',
+    JSON.stringify(snapshot),
+  ].join('\n\n');
+}
+
 /** Each call rereads the requirement. No cached context can authorize a write. */
 export async function loadRequirementPage(run: RequirementRun, page: { view: RequirementView; offset: number; limit: number; planId?: string; itemId?: string }, client?: RequirementClient): Promise<Record<string, any>> {
   validateRequirementRun(run);
@@ -261,7 +319,7 @@ export async function loadRequirementProgressTarget(run: RequirementRun, target:
 
 export function formatRequirementContext(ctx: RequirementContext): string {
   return [
-    'Requirement task and progress (current snapshot).',
+    'Requirement task and progress (slice-start reference; later observations and tool receipts may supersede this state).',
     `Revision: ${ctx.revision}; backlog revision: ${ctx.requirement.backlog_revision}.`,
     `Task: ${ctx.requirement.title}\nOriginal instructions:\n${ctx.requirement.instructions || ''}\nDescription:\n${ctx.requirement.description || ''}`,
     `Backlog (preserve acceptance and constraints): ${JSON.stringify(ctx.requirement.backlog)}`,

@@ -82,8 +82,10 @@ export interface RunSliceInput {
   now?: () => number;
   signal?: AbortSignal;
   artifacts?: ArtifactStore;
-  /** Fresh product context is advisory input, not a gate or a replacement for the transcript. */
+  /** Stable slice-start instructions/reference data, never appended after later tool receipts. */
   context?: string;
+  /** Trusted host read before each model request. Advisory only; never persisted or used as a gate. */
+  getContext?: () => Promise<string>;
   assertExecution?: () => Promise<void>;
 }
 
@@ -92,6 +94,13 @@ export async function runSessionSlice(input: RunSliceInput): Promise<HarnessSess
   let session = structuredClone(input.session);
   const now = input.now || Date.now;
   const started = now();
+  // A resumed slice can begin inside an unfinished batch. Put reference context
+  // before that entire exchange, never between its assistant and tool messages.
+  const pendingIds = new Set(outstanding(session).map(call => call.id));
+  const pendingIndex = session.messages.findIndex(message => message.toolCalls?.some(call => pendingIds.has(call.id)));
+  const contextBoundary = pendingIndex < 0 ? session.messages.length : pendingIndex;
+  const initialContext = input.context ? { role: 'user' as const, content:
+    `Slice-start reference captured at ${new Date(started).toISOString()}. Preserve its instructions, but its state may be stale; later tool receipts take precedence.\n\n${input.context}` } : undefined;
   let measuredAt = started;
   const sliceMs = input.sliceMs ?? 100000;
   const redact = input.redact || createRedactor();
@@ -241,8 +250,28 @@ export async function runSessionSlice(input: RunSliceInput): Promise<HarnessSess
     if (Buffer.byteLength(JSON.stringify(session)) > 2400000) {
       session.status = 'paused'; session.reason = 'transcript_storage_budget_exhausted'; await save(); return session;
     }
+    let refreshedContext: Message | undefined;
+    if (input.getContext) {
+      let content: string;
+      try {
+        // Bound optional reads independently. Failure does not remove tools, reuse
+        // a previous snapshot as fresh, or bypass the separate ownership checks.
+        content = await withinDeadline(AbortSignal.any([signal(), AbortSignal.timeout(3000)]), input.getContext);
+        if (typeof content !== 'string' || !content.trim()) throw new Error('Empty context');
+        content = redact(content).slice(0, 16000);
+      } catch {
+        content = 'Context refresh unavailable. No fresh state was read; do not infer unchanged state or completion from this failure. Continue using tool receipts and available tools.';
+      }
+      refreshedContext = { role: 'user', content:
+        `Advisory context read at ${new Date(now()).toISOString()}; not execution permission or proof of completion. Fresh tool receipts take precedence over conflicting snapshot data.\n\n${content}` };
+      await assertActive();
+    }
     const messages = [...modelContext(session.messages)];
-    if (input.context) messages.push({ role: 'user', content: input.context });
+    const laterExchange = messages.findIndex(message => session.messages.indexOf(message) >= contextBoundary);
+    // Insert after trimming so slice instructions survive a long transcript.
+    // Only these ephemeral copies go to the model; the stored transcript is unchanged.
+    messages.splice(laterExchange < 0 ? messages.length : laterExchange, 0,
+      ...(initialContext ? [initialContext] : []), ...(refreshedContext ? [refreshedContext] : []));
     // UTF-8 byte count is a conservative upper bound, not optimistic character/4 accounting.
     const reserved = Buffer.byteLength(JSON.stringify({ system, messages, tools: tools.map(({ name, description, parameters }) => ({ name, description, parameters })) }))
       + session.request.limits.maxOutputTokens;

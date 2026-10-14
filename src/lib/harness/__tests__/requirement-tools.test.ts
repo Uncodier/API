@@ -105,3 +105,53 @@ it('optionally seeds a plan or adds steps using only validated backlog IDs and h
   expect((await f.execute('requirement_plan', { title: 'Wrong item', steps: [{ title: 'Other', itemId: 'foreign' }] })).ok).toBe(false);
   expect(f.client.rpc.mock.calls.map(call => call[0])).toEqual(['assert_agent_requirement_run']);
 });
+
+it('closes an explicitly selected plan without accidentally updating a step or item', async () => {
+  const f = fixture();
+  expect((await f.execute('requirement_progress', { target: 'plan', planId: f.plan.id, status: 'completed' })).ok).toBe(true);
+  expect(f.client.rpc).toHaveBeenLastCalledWith('patch_agent_requirement_progress', expect.objectContaining({
+    p_plan_id: f.plan.id, p_step_id: null, p_item_id: null, p_status: 'completed' }));
+  expect(f.client.rpc.mock.calls.at(-1)?.[1]).not.toHaveProperty('target');
+});
+
+it.each([
+  ['plan', { stepId: 'step-1' }, 'omit stepId'],
+  ['item', { itemId: 'item-1' }, 'omit planId'],
+  ['step', {}, 'provide planId and stepId'],
+  ['message', { message: 'Keep working' }, 'provide message only'],
+])('explains ambiguous explicit %s targets without dispatch', async (target, extra, hint) => {
+  const f = fixture();
+  const result = await f.execute('requirement_progress', { target, planId: f.plan.id, status: 'completed', ...extra });
+  expect(result.ok).toBe(false); expect(result.error?.message).toContain(hint);
+  expect(f.client.rpc).not.toHaveBeenCalled();
+});
+
+it('reports unchanged as successful state, not an error, retry instruction or execution gate', async () => {
+  const f = fixture();
+  f.client.rpc.mockImplementation(async name => ({ error: null, data: name === 'assert_agent_requirement_run' ? true : {
+    state: 'unchanged', status_changed: false, message_recorded: true, backlog_revision: 12,
+    plan_id: f.plan.id, plan_status: 'pending', step_id: 'step-1', step_status: 'completed',
+    item_id: 'item-1', item_status: 'done', plan_steps_total: 1, plan_steps_completed: 1,
+    backlog_items_total: 1, backlog_items_completed: 1,
+  } }));
+  for (let n = 0; n < 4; n++) {
+    const result = await f.execute('requirement_progress', { target: 'step', planId: f.plan.id, stepId: 'step-1', itemId: 'item-1', status: 'done', message: 'Verified actual state.' });
+    expect(result).toMatchObject({ ok: true, output: { state: 'unchanged', statusChanged: false, messageRecorded: true,
+      plan: { id: f.plan.id, status: 'pending', stepsCompleted: 1 }, step: { status: 'completed' }, item: { status: 'done' },
+      availableAction: { tool: 'requirement_progress', arguments: { target: 'plan', planId: f.plan.id, status: 'completed' } } } });
+  }
+  expect(f.client.rpc).toHaveBeenCalledTimes(8);
+});
+
+it('explains the context selector mistake that preceded the production loop', async () => {
+  const f = fixture();
+  const result = await f.execute('requirement_context', { view: 'plans', planId: f.plan.id, itemId: 'item-1' });
+  expect(result.error?.message).toBe('itemId applies to backlog details only.');
+  expect(f.client.rpc).not.toHaveBeenCalled();
+});
+
+it('does not echo submitted invalid enum values or unknown fields in validation errors', async () => {
+  const f = fixture(), secret = randomBytes(24).toString('hex');
+  const result = await f.execute('requirement_progress', { target: secret, status: secret, [secret]: secret });
+  expect(result.ok).toBe(false); expect(JSON.stringify(result)).not.toContain(secret);
+});

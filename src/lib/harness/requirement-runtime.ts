@@ -4,7 +4,7 @@ import { createSessionStore } from './store';
 import { executeSessionSlice } from './runtime';
 import { openWorkspace, adoptRequirementWorkspace, shellQuote } from './workspace';
 import { assertRequirementRun, finishRequirementCycle } from './requirement-scheduler';
-import { loadRequirementContext, formatRequirementContext } from './requirement-context';
+import { loadRequirementContext, formatRequirementContext, loadRequirementSnapshot, formatRequirementSnapshot } from './requirement-context';
 import { createRequirementTools } from './requirement-tools';
 import { buildRequirementProfile } from './requirement-profile';
 import { createRequirementModel } from './requirement-model';
@@ -78,6 +78,7 @@ export async function runRequirementCycle(run: RequirementRun) {
     const outcomeResult = await executeSessionSlice(run.sessionId, { siteId: run.siteId, userId: run.userId }, {
       profile: configured.profile, cronRun: run, assertExecution: assertActive,
       context: `${formatRequirementContext(context)}\nIntended work branch: ${configured.branch}. Preserve existing uncommitted changes. Use requirement_progress to record work and continue through the backlog; legacy retry/circuit fields are historical, not execution permissions.`,
+      getContext: async () => formatRequirementSnapshot(await loadRequirementSnapshot(run)),
       model: createRequirementModel(run, assertActive),
       tools: async (workspace, host) => [...await createRequirementTools({ run }),
         ...createRequirementProvisioningTools({ run, profile: configured.profile, branch: configured.branch, host, workspace, assertActive }),

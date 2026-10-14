@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { runSessionSlice } from './engine';
+import { runSessionSlice, type RunSliceInput } from './engine';
 import { createHarnessModel } from './model';
 import { createSessionStore } from './store';
 import { openWorkspace, replaceWorkspaceEnvironment } from './workspace';
@@ -22,6 +22,8 @@ export interface SessionRuntimeOptions {
   profile?: HostProfile;
   assertExecution?: () => Promise<void>;
   context?: string;
+  /** Trusted host callback, not public/model input. Same advisory contract as the engine. */
+  getContext?: RunSliceInput['getContext'];
   tools?: (workspace: Workspace, host: Awaited<ReturnType<typeof loadSessionConfiguration>>) => Promise<HarnessTool[]>;
   openWorkspace?: (input: Parameters<typeof openWorkspace>[0]) => Promise<Workspace>;
   model?: HarnessModel;
@@ -117,7 +119,7 @@ export async function executeSessionSlice(id: string, scope: SessionScope, optio
     await accountSetup();
     const result = await runSessionSlice({ session, store, owner, siteId: scope.siteId,
       workspace, model: options.model || createHarnessModel(), tools, redact, artifacts: createArtifactStore(), sliceMs: 60000, signal: deadline,
-      context: options.context, assertExecution: options.assertExecution });
+      context: options.context, getContext: options.getContext, assertExecution: options.assertExecution });
     return { status: result.status, continue: result.status === 'running' };
   } catch (error) {
     await accountSetup().catch(() => undefined);
