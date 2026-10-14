@@ -83,6 +83,16 @@ require build/push/preview success. Explicit user pause/cancel/holds take preced
   `WORKSPACE_AUTH_CONFIGURATION_REQUIRED` classification and pause without printing
   SDK exception text or its nested cause. Other HTTP setup errors retain a numeric
   status in static diagnostic messages, without exposing response bodies.
+- Workspace failures include a `workspace-v1` diagnostic identifying `get`,
+  `create`, network-policy/tag updates, adoption updates or bootstrap. The installed
+  SDK's `json.error` is inspected only for allowlisted codes, field names and
+  validation rules (for example `networkPolicy`, `ipv4`, `pattern`, `maxLength`).
+  Unrecognized details remain `unclassified`; no raw message, field value, request
+  body, URL, header, credential or nested SDK cause is persisted. HTTP 400 alone
+  does not establish an authentication failure or authorize recreating a workspace.
+  Field/rule labels are lexical hints, not proof of a rejected constraint. SDK
+  network-policy updates can issue multiple HTTP requests; the operation label
+  identifies the SDK call, not an independently verified failing endpoint.
 - Tool result storage is bounded; full redacted artifacts are durable before their
   references are saved. Pending operations are stored before dispatch. Ambiguous
   writes require trusted adapter receipts/idempotency, not a model's assertion.

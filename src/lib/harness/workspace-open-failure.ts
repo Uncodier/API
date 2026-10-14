@@ -1,5 +1,12 @@
+import { workspaceProviderDiagnostic, type WorkspaceProviderOperation } from './workspace-provider-diagnostic';
+
 /** Preserve useful provider classifications without serializing SDK errors/URLs/tokens. */
-export function workspaceOpenFailure(error: unknown): { code: string; message: string; operatorRequired: boolean } {
+export function workspaceOpenFailure(error: unknown, operation?: WorkspaceProviderOperation): { code: string; message: string; operatorRequired: boolean } {
+  const failure = classifyFailure(error);
+  return { ...failure, message: failure.message + workspaceProviderDiagnostic(error, operation) };
+}
+
+function classifyFailure(error: unknown): { code: string; message: string; operatorRequired: boolean } {
   const candidate = error as { name?: string; response?: { status?: number; statusCode?: number }; status?: number } | null;
   if (['LocalOidcContextError', 'VercelOidcContextError', 'SandboxAuthConfigurationError'].includes(candidate?.name || '')) {
     return { code: 'WORKSPACE_AUTH_CONFIGURATION_REQUIRED', operatorRequired: true,

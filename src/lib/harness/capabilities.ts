@@ -68,7 +68,7 @@ async function rawSandbox(context: IntegrationContext): Promise<Sandbox> {
   let raw: Sandbox;
   try { raw = await SDK.get({ ...resolveSandboxAuth(), name: ref.id, resume: false, signal: context.signal }); }
   catch (error) {
-    const failure = workspaceOpenFailure(error);
+    const failure = workspaceOpenFailure(error, 'get');
     return unavailable(failure.code, failure.message);
   }
   // Helpers do not receive process.env or runtime credentials. Recheck before each SDK operation.

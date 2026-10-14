@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { Sandbox } from '@vercel/sandbox';
 import { openWorkspace, adoptRequirementWorkspace } from '../workspace';
 import { workspaceOpenFailure, workspaceOpenRequiresOperator } from '../workspace-open-failure';
@@ -29,6 +29,31 @@ it('classifies provider billing rejection during creation after a confirmed miss
   await expect(openWorkspace({ sessionId: randomUUID(), repository: { url: 'https://repo.example.invalid/project.git' } }))
     .rejects.toMatchObject({ code: 'WORKSPACE_PROVIDER_BILLING_REQUIRED' });
   expect(Sandbox.create).toHaveBeenCalledTimes(1);
+});
+it.each(['get', 'create', 'update-network-policy', 'update-tags', 'adopt-update'])('attributes HTTP 400 to %s without recreating existing work', async operation => {
+  const sessionId = randomUUID(); const repository = { url: 'https://repo.example.invalid/project.git' };
+  const failure = { response: { status: 400 }, json: { error: { code: 'bad_request', message: 'Invalid request: tags value too long' } } };
+  const command = { cmdId: 'offline-cmd', exitCode: 0, wait: jest.fn().mockResolvedValue({ exitCode: 0 }),
+    logs: jest.fn(() => Object.assign((async function* () { yield { stream: 'stdout', data: repository.url }; })(), { close: jest.fn() })) };
+  const sandbox = { name: `h-${sessionId}`, persistent: true, status: 'running',
+    tags: { harnessSession: sessionId, harnessRepository: createHash('sha256').update(JSON.stringify([repository.url, null])).digest('hex'), harnessReady: 'true' },
+    runCommand: jest.fn().mockResolvedValue(command), update: jest.fn().mockResolvedValue(undefined) };
+  (Sandbox.get as jest.Mock).mockResolvedValue(sandbox);
+  if (operation === 'get') (Sandbox.get as jest.Mock).mockRejectedValue(failure);
+  if (operation === 'create') {
+    (Sandbox.get as jest.Mock).mockRejectedValue({ response: { status: 404 } });
+    (Sandbox.create as jest.Mock).mockRejectedValue(failure);
+  }
+  if (operation === 'update-network-policy' || operation === 'adopt-update') sandbox.update.mockRejectedValue(failure);
+  if (operation === 'update-tags') {
+    sandbox.tags.harnessReady = 'false';
+    sandbox.update.mockResolvedValueOnce(undefined).mockRejectedValueOnce(failure);
+  }
+  const input = { sessionId, repository, assertActive: async () => {} };
+  const result = await (operation === 'adopt-update' ? adoptRequirementWorkspace({ ...input, workspaceId: sandbox.name }) : openWorkspace(input)).catch(error => error);
+  expect(result.name).toBe('WorkspaceError'); expect(result.message).toContain(`operation=${operation};`);
+  expect(result.message).toContain('provider_code=bad_request'); expect(result.message).toContain('fields=tags; rules=maxLength');
+  expect(Sandbox.create).toHaveBeenCalledTimes(operation === 'create' ? 1 : 0);
 });
 it.each(['LocalOidcContextError', 'VercelOidcContextError'])('preserves non-HTTP SDK %s as a safe operator-required failure', async name => {
   const secret = randomBytes(24).toString('hex');

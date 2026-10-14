@@ -5,6 +5,7 @@ import { Sandbox, type Command, type NetworkPolicy, type NetworkPolicyRule } fro
 import type { CommandInput, CommandOutput, Workspace, WorkspaceRef } from './types';
 import { createRedactor, runtimeSecretValues } from './security';
 import { workspaceOpenFailure } from './workspace-open-failure';
+import type { WorkspaceProviderOperation } from './workspace-provider-diagnostic';
 import { resolveSandboxAuth } from './sandbox-auth';
 
 export const WORKSPACE_ROOT = '/vercel/sandbox';
@@ -606,7 +607,7 @@ export async function adoptRequirementWorkspace(input: {
   try { sandbox = await Sandbox.get({ ...resolveSandboxAuth(), name: input.workspaceId, resume: false, signal: input.signal }); }
   catch (error) {
     await active();
-    const failure = workspaceOpenFailure(error);
+    const failure = workspaceOpenFailure(error, 'get');
     return fail(failure.code, failure.message);
   }
   await active();
@@ -629,9 +630,15 @@ export async function adoptRequirementWorkspace(input: {
   const normalize = await workspace.exec({ command: `git config --local remote.origin.url ${shellQuote(url.href)}`, timeoutMs: 10000 }, input.signal);
   if (normalize.exitCode !== 0) throw new WorkspaceError('WORKSPACE_SCOPE_MISMATCH', 'Could not normalize existing origin');
   await active();
-  await sandbox.update({ networkPolicy: workspaceNetworkPolicy(url, input.host?.git), tags: {
-    harnessSession: input.sessionId, harnessRepository: createHash('sha256').update(JSON.stringify([url.href, input.repository.ref ?? null])).digest('hex'), harnessReady: 'true',
-  } }, { signal: input.signal });
+  try {
+    await sandbox.update({ networkPolicy: workspaceNetworkPolicy(url, input.host?.git), tags: {
+      harnessSession: input.sessionId, harnessRepository: createHash('sha256').update(JSON.stringify([url.href, input.repository.ref ?? null])).digest('hex'), harnessReady: 'true',
+    } }, { signal: input.signal });
+  } catch (error) {
+    await active();
+    const failure = workspaceOpenFailure(error, 'adopt-update');
+    return fail(failure.code, failure.message);
+  }
   await active();
   adapters.set(workspace, workspace);
   return workspace;
@@ -664,6 +671,7 @@ export async function openWorkspace(input: {
   const active = () => checkActive(assertActive, input.signal);
   let sandbox: Sandbox;
   let created = false;
+  let operation: WorkspaceProviderOperation = 'get';
   try {
     const sandboxAuth = resolveSandboxAuth();
     try { await active(); sandbox = await Sandbox.get({ ...sandboxAuth, name, resume: false, signal: input.signal }); await active(); }
@@ -674,6 +682,7 @@ export async function openWorkspace(input: {
       if (input.existing || !missing) throw error;
       // No getOrCreate with setup callbacks: an existing/incomplete VM is NEVER reset.
       await active();
+      operation = 'create';
       sandbox = await Sandbox.create({ ...sandboxAuth, name, persistent: true, image: 'vercel/sandbox/universal',
         timeout: 30 * 60_000, env: {}, ports: [], networkPolicy, tags,
         keepLastSnapshots: { count: 2 }, signal: input.signal });
@@ -688,17 +697,20 @@ export async function openWorkspace(input: {
       return fail('WORKSPACE_SNAPSHOT_MISSING', 'Existing workspace has no restorable snapshot; it was not restarted from a clean image.');
     }
     await active();
+    operation = 'update-network-policy';
     await sandbox.update({ networkPolicy }, { signal: input.signal });
     await active();
     const workspace = new VercelWorkspace(sandbox, sensitive, environment, assertActive, input.signal);
     adapters.set(workspace, workspace);
     if (created || sandbox.tags?.harnessReady !== 'true') {
+      operation = 'bootstrap';
       const result = await workspace.bootstrap({ sessionId: tags.harnessSession, repository: tags.harnessRepository,
         url: url.href, ref: input.repository.ref }, input.signal);
       await active();
       if (result.exitCode !== 0) return fail(result.exitCode === 128 ? 'REPOSITORY_CLONE_FAILED' : 'WORKSPACE_NOT_READY',
         'Repository bootstrap could not complete safely. Existing work and incomplete staging were preserved.');
       await active();
+      operation = 'update-tags';
       await sandbox.update({ tags: { ...tags, harnessReady: 'true' } }, { signal: input.signal });
       await active();
     }
@@ -706,7 +718,7 @@ export async function openWorkspace(input: {
     return workspace;
   } catch (error) {
     if (error instanceof WorkspaceError) throw error;
-    const failure = workspaceOpenFailure(error);
+    const failure = workspaceOpenFailure(error, operation);
     return fail(input.signal?.aborted ? 'ABORTED' : failure.code, input.signal?.aborted
       ? 'Workspace opening was cancelled.' : failure.message);
   }
