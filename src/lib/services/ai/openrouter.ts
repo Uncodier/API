@@ -53,7 +53,8 @@ export function createOpenRouterClient(options: OpenRouterClientOptions = {}): O
     baseURL: OPENROUTER_BASE_URL,
     defaultHeaders: headers,
     timeout: options.timeout ?? 240_000,
-    // Avoid duplicate billable generations. Callers can opt into same-account retries.
+    // Chat admission retries live in openrouter-chat-request, outside stream/tool
+    // execution. Disable SDK retries to avoid multiplying attempts or replaying timeouts.
     maxRetries: options.maxRetries ?? 0,
   });
 }

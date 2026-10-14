@@ -1,5 +1,6 @@
 import { jest } from '@jest/globals';
 import * as openrouter from '@/lib/services/ai/openrouter';
+import * as chatRequest from '@/lib/services/ai/openrouter-chat-request';
 import * as zod from 'zod';
 import * as jsonSchema from 'zod-to-json-schema';
 import * as azureVision from '../azure-vision-message-sanitize';
@@ -18,6 +19,7 @@ const { AIAgentExecutor } = loadRuntimeModule<typeof import('../ai-agent-executo
   'src/lib/custom-automation/ai-agent-executor.ts', {
     openai: OfflineOpenAI,
     '@/lib/services/ai/openrouter': { ...openrouter, createOpenRouterClient: () => new OfflineOpenAI() },
+    '@/lib/services/ai/openrouter-chat-request': chatRequest,
     'google-auth-library': { GoogleAuth: class {} },
     zod,
     'zod-to-json-schema': jsonSchema,

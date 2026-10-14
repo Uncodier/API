@@ -155,3 +155,67 @@ it.each([false, true])('does not log provider error bodies or echoed credentials
   expect(logs).not.toContain(echoed);
   expect(logs).not.toContain(process.env.OPENROUTER_API_KEY!);
 });
+
+it.each([false, true])('retries request admission then executes one tool exactly once (stream=%s)', async streaming => {
+  const executor = new AIAgentExecutor();
+  const tool = { name: 'lookup', execute: jest.fn().mockResolvedValue({ success: true }) };
+  const toolCall = { id: 'retry-call', type: 'function', function: { name: 'lookup', arguments: '{}' } };
+  const accepted = streaming ? (async function* () {
+    yield { choices: [{ delta: { tool_calls: [{ ...toolCall, index: 0 }] }, finish_reason: 'tool_calls' }] };
+  })() : { choices: [{ message: { role: 'assistant', content: null, tool_calls: [toolCall] }, finish_reason: 'tool_calls' }] };
+  const create = jest.fn().mockRejectedValueOnce(Object.assign(new Error('Temporary rejection'), { status: 503 }))
+    .mockResolvedValue(accepted);
+  (executor as any).client.chat.completions.create = create;
+  const onStep = jest.fn();
+  const result = await executor.act({ prompt: 'Run', tools: [tool], enforceSingleTurn: true,
+    stream: streaming, onStreamStart: async () => 'log', onStreamChunk: async () => {}, onStep });
+  expect(create).toHaveBeenCalledTimes(2);
+  expect(create.mock.calls[0][0].max_tokens).toBe(4096);
+  expect(tool.execute).toHaveBeenCalledTimes(1);
+  expect(onStep).toHaveBeenCalledTimes(1);
+  expect(result.messages.filter(message => message.role === 'tool')).toHaveLength(1);
+});
+
+it.each([false, true])('retries affordability with less output without changing the model (stream=%s)', async streaming => {
+  const executor = new AIAgentExecutor();
+  const accepted = streaming ? (async function* () {
+    yield { choices: [{ delta: { content: 'Done' }, finish_reason: 'stop' }] };
+  })() : { choices: [{ message: { role: 'assistant', content: 'Done' }, finish_reason: 'stop' }] };
+  const create = jest.fn().mockRejectedValueOnce(Object.assign(new Error('can only afford 3936'), { status: 402 }))
+    .mockResolvedValue(accepted);
+  (executor as any).client.chat.completions.create = create;
+  await executor.act({ prompt: 'Run', tools: [], enforceSingleTurn: true,
+    stream: streaming, onStreamStart: async () => 'log', onStreamChunk: async () => {} });
+  expect(create.mock.calls.map(([payload]) => payload.max_tokens)).toEqual([4096, 3542]);
+  expect(create.mock.calls[1][0].model).toBe('openai/gpt-6.1-sol');
+});
+
+it.each([false, true])('never executes truncated tool arguments after hitting the output cap (stream=%s)', async streaming => {
+  const executor = new AIAgentExecutor();
+  const tool = { name: 'write', execute: jest.fn() };
+  const toolCall = { id: 'truncated-call', type: 'function', function: { name: 'write', arguments: '{"value":' } };
+  const accepted = streaming ? (async function* () {
+    yield { choices: [{ delta: { content: 'Partial', tool_calls: [{ ...toolCall, index: 0 }] }, finish_reason: 'length' }] };
+  })() : { choices: [{ message: { role: 'assistant', content: 'Partial', tool_calls: [toolCall] }, finish_reason: 'length' }] };
+  const create = jest.fn().mockResolvedValue(accepted);
+  (executor as any).client.chat.completions.create = create;
+  const result = await executor.act({ prompt: 'Run', tools: [tool],
+    stream: streaming, onStreamStart: async () => 'log', onStreamChunk: async () => {} });
+  expect(tool.execute).not.toHaveBeenCalled();
+  expect(create).toHaveBeenCalledTimes(1);
+  expect(result.steps[0].finishReason).toBe('length');
+  expect(result.messages.at(-1)).not.toHaveProperty('tool_calls');
+});
+
+it('rejects a mid-stream error envelope without executing tools or creating another generation', async () => {
+  const executor = new AIAgentExecutor();
+  const tool = { name: 'write', execute: jest.fn() };
+  const create = jest.fn().mockResolvedValue((async function* () {
+    yield { error: { code: 503, message: 'Synthetic SSE error' }, choices: [{ finish_reason: 'error' }] };
+  })());
+  (executor as any).client.chat.completions.create = create;
+  await expect(executor.act({ prompt: 'Run', tools: [tool], stream: true,
+    onStreamStart: async () => 'log', onStreamChunk: async () => {} })).rejects.toThrow('after acceptance');
+  expect(create).toHaveBeenCalledTimes(1);
+  expect(tool.execute).not.toHaveBeenCalled();
+});

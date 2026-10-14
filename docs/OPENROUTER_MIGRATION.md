@@ -113,6 +113,48 @@ model/endpoint. Check BYOK fees, regional routing, data retention and fallback
 settings in OpenRouter. In particular, disallow shared-capacity fallback there
 if requests must stay on your own Azure credentials.
 
+## Bounded agent chat retries and output reservation
+
+`AIAgentExecutor` now sends an explicit `max_tokens` on streaming and non-streaming
+requests: **4,096** for enforced single-tool turns and **8,192** otherwise.
+`OPENROUTER_CHAT_MAX_OUTPUT_TOKENS` can set a positive integer default; a
+server-side `act({ maxOutputTokens })` overrides it. Both are capped at **32,768**.
+This includes reasoning tokens; it is a reservation limit, not actual token usage
+or proof that the account can afford the request.
+
+The agent retries **chat request admission**, not the whole model/tool execution:
+
+- At most **three attempts** for HTTP 408, 429, 500, 502, 503 and 504, and confirmed
+  DNS/refused-connection failures. Backoff starts at 500 ms with bounded jitter.
+- `Retry-After` seconds or HTTP dates are respected. The local retry deadline is
+  20 seconds; a longer/invalid hint is not shortened to fit that deadline.
+- A 402 with a positive, lower `can only afford N` hint gets at most **one**
+  reduced-output retry (90% of that hint, minimum 256 tokens). There is no account
+  or model fallback, and successful funding is not inferred from the hint.
+- A temporary 402 explicitly identified as `openrouter_in_flight_budget` retries
+  with a valid `Retry-After`, without reducing output. Other funding/auth/request
+  rejections are not blindly retried inside the request helper.
+- Once a stream is accepted, stream consumption, SSE errors and callbacks are
+  outside the retry boundary. Ambiguous transport timeouts/resets are not retried
+  internally. Existing durable recovery policies still apply; no exactly-once
+  generation or production success guarantee is made by this change.
+
+SDK-level retries remain disabled to avoid multiplying these attempts. Tool
+execution ownership, authorization and the one-tool-per-turn boundary are unchanged.
+An output-limit finish preserves partial text/usage, does not execute truncated
+tool calls and does not mark an assistant step or response node complete.
+
+After retries end, cron records `cron_infra_model_request_failed` with status,
+category and execution identity, without copying provider bodies/headers or secrets.
+It also returns typed `providerFailure` data; upstream funding is not a Makinari
+customer credit shortage. The existing durable infrastructure circuit remains in
+place. This patch does not reset circuits, resume paused work or release quarantine.
+
+Deploy a fresh API build to activate the changes. No database migration is required.
+Offline tests cover transient recovery, retry exhaustion, affordability reduction,
+Retry-After, secret-safe logs, single-tool execution and partial-stream safety.
+They do not make live model calls or verify the production OpenRouter balance.
+
 ## Direct Azure text-to-speech
 
 - `AZURE_TTS_ENDPOINT` must be an HTTPS Azure resource origin or an

@@ -1,5 +1,6 @@
 import { loadRuntimeModule } from '@/lib/custom-automation/test-helpers/load-runtime-module';
 import { isInsufficientCreditsError } from '@/lib/services/billing/credit-exhaustion-message';
+import { describeOpenRouterFailure } from '@/lib/services/ai/openrouter-chat-request';
 import { withActionLoopGuard, type ActionGuardContext } from '../step-action-guard';
 import { makeActionObservation, actionStateFingerprint, formatActionObservationFeedback } from '../step-action-observation';
 import { restrictToolsForEvidenceCollection } from '../single-turn-helpers';
@@ -32,7 +33,10 @@ function harness() {
     return { isDone: false, messages: [], steps: [], result };
   });
   const record = jest.fn().mockResolvedValue(undefined);
+  const modelFailureLog = jest.fn().mockResolvedValue(undefined);
   const deps = {
+    '@/lib/services/ai/openrouter-chat-request': { describeOpenRouterFailure },
+    '@/lib/services/cron-audit-log': { logCronInfrastructureEvent: modelFailureLog },
     '@/lib/services/billing/credit-exhaustion-message': { isInsufficientCreditsError },
     '@/lib/services/harness-diagnostics/tools': { refreshHarnessToolManifest: (tools: any[]) => tools },
     '@/lib/database/supabase-client': { supabaseAdmin: { from } },
@@ -108,7 +112,7 @@ function harness() {
   return { run: () => run({ sandboxId: 'sandbox', plan: { id: 'plan' }, step,
     requirementId: 'req', instanceId: 'inst', siteId: 'site', title: 'task', gitRepoKind: 'applications',
     requirementType: 'app', cycleId: 'cycle', executionEventId: 'turn-4', executionGeneration: 1, cronLockRunId: 'owner' }),
-    execute, testExecute, readHistory, fingerprint, record };
+    execute, testExecute, readHistory, fingerprint, record, modelFailureLog };
 }
 
 it('real executor exposes scoped retrieval during repair and gives diagnostic feedback without blocking a service retest', async () => {
@@ -139,4 +143,17 @@ it('real executor permits the same test after a workspace change and persists th
   expect(await h.run()).toMatchObject({ ok: true });
   expect(h.testExecute).toHaveBeenCalledTimes(1);
   expect(h.record).toHaveBeenCalledTimes(1);
+});
+
+it('preserves upstream funding failure as provider evidence without blaming customer credits', async () => {
+  const h = harness();
+  h.execute.mockRejectedValue(Object.assign(new Error('Provider credit rejection'), { status: 402 }));
+  const result = await h.run();
+  expect(result).toMatchObject({ ok: false, isDone: false,
+    providerFailure: { status: 402, category: 'funding' } });
+  expect(result.creditExhausted).toBeUndefined();
+  expect(h.modelFailureLog).toHaveBeenCalledWith(expect.objectContaining({ planId: 'plan', stepId: 'step' }),
+    expect.objectContaining({ event: 'cron_infra_model_request_failed',
+      details: expect.objectContaining({ provider: 'openrouter', status: 402, category: 'funding' }) }));
+  expect(h.testExecute).not.toHaveBeenCalled();
 });

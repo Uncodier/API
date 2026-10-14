@@ -2,6 +2,7 @@
 import { AIAgentExecutor } from '@/lib/custom-automation/ai-agent-executor';
 import { CreditService } from '@/lib/services/billing/CreditService';
 import { isInsufficientCreditsError } from '@/lib/services/billing/credit-exhaustion-message';
+import { describeOpenRouterFailure } from '@/lib/services/ai/openrouter-chat-request';
 import { createAssistantOnStepHandler, batchCreateResponseNodes } from './assistant-logging';
 import { createNodeStreamingCallbacks, createStreamingLogCallbacks, createThinkingStreamLogCallbacks } from './assistant-streaming-logs';
 import { hydrateMessageImages } from './vision-message-images';
@@ -226,7 +227,7 @@ export async function executeAssistantStep(
           const lastRole = lastMessage?.role;
           const isDone = instance_node_id
             ? nodeDone
-            : (lastRole === 'assistant' && !hasToolCalls);
+            : (lastRole === 'assistant' && !hasToolCalls && executionResult.steps?.at(-1)?.finishReason !== 'length');
           
           const result: AssistantStepExecutionResult = {
               text: instance_node_id && nodeDone ? finalNodeAssistantText(executionResult) : executionResult.text,
@@ -275,7 +276,8 @@ export async function executeAssistantStep(
           
           return result;
   } catch (error: any) {
-      console.error(`₍ᐢ•(ܫ)•ᐢ₎ ❌ Error executing assistant step:`, error);
+      const providerFailure = describeOpenRouterFailure(error);
+      console.error('Error executing assistant step:', providerFailure ?? { name: error?.name });
       throw error;
   }
 }

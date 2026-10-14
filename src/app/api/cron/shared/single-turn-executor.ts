@@ -2,6 +2,8 @@ import { Sandbox } from '@vercel/sandbox';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { executeAssistantStep } from '@/lib/services/robot-instance/assistant-executor';
 import { isInsufficientCreditsError } from '@/lib/services/billing/credit-exhaustion-message';
+import { describeOpenRouterFailure } from '@/lib/services/ai/openrouter-chat-request';
+import { logCronInfrastructureEvent } from '@/lib/services/cron-audit-log';
 import { getAssistantTools, fetchMemoriesContext, generateAgentBackground } from '@/app/api/robots/instance/assistant/utils';
 import { fetchStepLogHistoryText } from './step-history-builder';
 import { SkillsService } from '@/lib/services/skills-service';
@@ -814,12 +816,23 @@ export async function executeSingleTurnStep(params: {
       return { ok: false, isDone: false, creditExhausted: true,
         effectiveSandboxId, infrastructureGeneration, error: e.message };
     }
-    console.error('[SingleTurn] Executor wrapper failed:', e);
+    const providerFailure = describeOpenRouterFailure(e);
+    if (providerFailure) {
+      // Persist before the generic infrastructure circuit loses the original
+      // exception. Funding here belongs to OpenRouter, not the site's ledger.
+      await logCronInfrastructureEvent(audit, {
+        event: 'cron_infra_model_request_failed', level: 'error',
+        message: `OpenRouter request failed (HTTP ${providerFailure.status}, ${providerFailure.category}); chat admission retries ended.`,
+        details: { provider: 'openrouter', ...providerFailure, execution_event_id: executionEventId },
+      });
+    }
+    console.error('[SingleTurn] Executor wrapper failed:', providerFailure ?? { name: e?.name });
     return {
       ok: false,
       isDone: false,
       transient: true,
-      error: e.message,
+      error: providerFailure ? `OpenRouter ${providerFailure.category} failure (HTTP ${providerFailure.status}); admission retry policy exhausted or not applicable.` : e.message,
+      ...(providerFailure ? { providerFailure } : {}),
       effectiveSandboxId,
       infrastructureGeneration,
       infrastructureWait: {

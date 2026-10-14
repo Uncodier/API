@@ -17,6 +17,7 @@
     "lint": "next lint",
     "test": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js",
     "test:harness": "node ./node_modules/jest/bin/jest.js --config jest.harness.config.js --runInBand",
+    "test:harness:agent": "node ./node_modules/jest/bin/jest.js --config jest.agent-harness.config.js --runInBand",
     "test:commands": "node ./node_modules/jest/bin/jest.js --config jest.commands.config.js --runInBand",
     "test:voice": "node ./node_modules/jest/bin/jest.js --config jest.voice.config.js --runInBand",
     "test:scheduling": "node ./node_modules/jest/bin/jest.js --config jest.scheduling.config.js --runInBand",

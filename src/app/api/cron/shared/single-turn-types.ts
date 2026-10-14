@@ -8,6 +8,8 @@ export interface SingleTurnResult {
   transient?: boolean;
   /** Billing halt, never an infrastructure retry or product failure. */
   creditExhausted?: boolean;
+  /** Upstream account funding/auth/availability, never customer credit exhaustion. */
+  providerFailure?: { status: number; category: 'funding' | 'authentication' | 'request' | 'availability' };
   error?: string;
   effectiveSandboxId: string;
   sleepRequested?: number;

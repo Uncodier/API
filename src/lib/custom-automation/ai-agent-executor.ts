@@ -25,6 +25,7 @@
 
 import type OpenAI from 'openai';
 import { createOpenRouterClient, isOpenRouterReasoningModel, resolveOpenRouterModel } from '@/lib/services/ai/openrouter';
+import { requestOpenRouterChat, resolveChatOutputTokens } from '@/lib/services/ai/openrouter-chat-request';
 import { fitInstanceRequest, resolveModelContextCapacity } from '@/lib/services/robot-instance/instance-context-budget';
 import { getVisionImageSourceUrl } from '@/lib/services/robot-instance/vision-message-images';
 import { normalizeToolOperationResult } from '@/lib/services/tool-operation-result';
@@ -174,6 +175,7 @@ export interface ToolResult {
 
 export interface Step {
   text: string;
+  finishReason?: string;
   provider?: string;
   model?: string;
   generationId?: string;
@@ -224,6 +226,8 @@ export interface ActOptions {
   schema?: z.ZodType<any>;
   onStep?: (step: Step, meta?: { streamingLogId?: string }) => Promise<void> | void;
   maxIterations?: number;
+  /** Explicit output reservation, including reasoning; bounded by the host. */
+  maxOutputTokens?: number;
   temperature?: number;
   reasoningEffort?: 'low' | 'medium' | 'high';
   verbosity?: 'low' | 'medium' | 'high';
@@ -534,7 +538,7 @@ export class AIAgentExecutor {
       stream: true,
       stream_options: { include_usage: true },
     };
-    const stream = await this.client.chat.completions.create(opts as any).catch(err => {
+    const stream = await requestOpenRouterChat(opts, request => this.client.chat.completions.create(request as any)).catch(err => {
       console.error(`[AI STREAM INIT ERROR][${this.provider}] Provider stream unavailable`);
       if (err.status) console.error(`   Status: ${err.status}`);
       throw err;
@@ -562,6 +566,10 @@ export class AIAgentExecutor {
     let lastThinkingEmitTime = 0;
 
     for await (const chunk of stream as unknown as AsyncIterable<any>) {
+      if (chunk.error || chunk.choices?.[0]?.finish_reason === 'error') {
+        // An SSE error belongs to an accepted generation, not request admission.
+        throw new Error('OpenRouter stream failed after acceptance; reconcile before retrying.');
+      }
       if (chunk.id) generationId = chunk.id;
       if (chunk.model) responseModel = chunk.model;
       if (chunk.usage) {
@@ -908,6 +916,7 @@ export class AIAgentExecutor {
         const completionOptions: any = {
           model: modelName,
           messages,
+          max_tokens: resolveChatOutputTokens(options.maxOutputTokens, enforceSingleTurn),
           ...((options.siteId || this.siteId) ? { user: options.siteId || this.siteId } : {}),
         };
 
@@ -1007,7 +1016,7 @@ export class AIAgentExecutor {
           const apiStartTime = Date.now();
           let completion;
           try {
-            completion = await this.client.chat.completions.create(completionOptions);
+            completion = await requestOpenRouterChat(completionOptions, request => this.client.chat.completions.create(request as any));
           } catch (apiErr: any) {
             if (provider === 'azure' && isAzureInvalidImageError(apiErr)) {
               sanitizeMessagesForAzureVisionImages(messages);
@@ -1068,6 +1077,7 @@ export class AIAgentExecutor {
 
         const step: Step = {
           text: message.content || '',
+          ...(response.finish_reason ? { finishReason: response.finish_reason } : {}),
           provider,
           model: response.model || modelName,
           ...(response.generationId ? { generationId: response.generationId } : {}),
@@ -1082,6 +1092,17 @@ export class AIAgentExecutor {
         };
 
         finalText = message.content || '';
+
+        if (response.finish_reason === 'length') {
+          // Never parse/execute a truncated tool call, or treat partial prose as
+          // completion. Keep text/usage for a bounded continuation or review.
+          // A partial call is not an executed call and must not become a dangling
+          // tool_call_id in the continuation transcript.
+          delete message.tool_calls;
+          steps.push(step);
+          if (onStep) await onStep(step);
+          break;
+        }
 
         if (schema && message.content) {
           try {

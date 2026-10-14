@@ -2,7 +2,8 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { buildInitialNodeResult, buildNodeResult, type NodeResult, type NodeToolOutput } from './node-result-collector';
 
 /** Only an actual terminal assistant message can finish a bounded node chunk. */
-export function finalNodeAssistantText(result: { messages?: any[] }): string {
+export function finalNodeAssistantText(result: { messages?: any[]; steps?: any[] }): string {
+  if (result.steps?.at(-1)?.finishReason === 'length') return '';
   const last = result.messages?.[result.messages.length - 1];
   if (last?.role !== 'assistant' || last.tool_calls?.length) return '';
   if (typeof last.content === 'string') return last.content.trim();

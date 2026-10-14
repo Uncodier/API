@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import * as openrouter from '@/lib/services/ai/openrouter';
+import * as chatRequest from '@/lib/services/ai/openrouter-chat-request';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import * as zod from 'zod';
 import * as jsonSchema from 'zod-to-json-schema';
@@ -18,6 +19,7 @@ const { AIAgentExecutor } = loadRuntimeModule<typeof import('../ai-agent-executo
   'src/lib/custom-automation/ai-agent-executor.ts', {
     openai: OfflineOpenAI, 'google-auth-library': { GoogleAuth: class {} }, zod,
     '@/lib/services/ai/openrouter': { ...openrouter, createOpenRouterClient: () => new OfflineOpenAI() },
+    '@/lib/services/ai/openrouter-chat-request': chatRequest,
     'zod-to-json-schema': jsonSchema, './azure-vision-message-sanitize': azureVision,
     './gemini-message-sanitize': geminiMessages, './coerce-tool-args': toolArguments,
     '@/lib/services/tool-operation-result': toolResults,

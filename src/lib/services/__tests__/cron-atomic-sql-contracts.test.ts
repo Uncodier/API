@@ -357,7 +357,7 @@ describe('atomic cron SQL contracts', () => {
     expect(legacyCycleIdentitySql).not.toContain(
       "(entry.value->>'started_at')::timestamptz",
     );
-    expect(appWorkflowSource).toContain('cycleId: cronLockRunId');
+    expect(appWorkflowSource).toContain('executeRequirementCycle(run)');
   });
 
   it('cancels backlog-bound plan steps atomically under row locks', () => {
@@ -379,22 +379,12 @@ describe('atomic cron SQL contracts', () => {
       .toBeLessThanOrEqual(500);
   });
 
-  it('routes preflight infrastructure circuits through item scoping', () => {
-    expect(appWorkflowSource).toContain(
-      'await scopeInfrastructureCircuitStep({',
-    );
-    expect(appWorkflowSource).not.toContain(
-      'await blockRequirementForInfrastructureCircuitStep({',
-    );
-  });
-
-  it('pushes safe workspace changes while missing preconditions block delivery', () => {
-    expect(appWorkflowSource).toMatch(
-      /gateFailureKind === 'missing_precondition'[\s\S]*?persistWorkspaceOnInfrastructureHalt = true/,
-    );
-    expect(appWorkflowSource).toMatch(
-      /if \((?:[^\n]*&& )?shouldPersistCycleWorkspace\(\{/,
-    );
+  it('keeps old SQL protections available without reintroducing product circuits into the active cron', () => {
+    expect(appWorkflowSource).not.toContain('scopeInfrastructureCircuitStep');
+    expect(appWorkflowSource).not.toContain('blockRequirementForInfrastructureCircuitStep');
+    expect(appWorkflowSource).not.toContain('gateFailureKind');
+    expect(appWorkflowSource).not.toContain('shouldPersistCycleWorkspace');
+    expect(appWorkflowSource).toContain('executeRequirementCycle(run)');
   });
 
   it('deduplicates infrastructure failures with null-safe generation guards', () => {

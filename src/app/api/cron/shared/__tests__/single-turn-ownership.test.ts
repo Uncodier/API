@@ -1,5 +1,6 @@
 import { loadRuntimeModule } from '@/lib/custom-automation/test-helpers/load-runtime-module';
 import { isInsufficientCreditsError } from '@/lib/services/billing/credit-exhaustion-message';
+import { describeOpenRouterFailure } from '@/lib/services/ai/openrouter-chat-request';
 
 const assertOwner = jest.fn();
 const connect = jest.fn();
@@ -12,6 +13,8 @@ class OwnershipError extends Error {
   }
 }
 const dependencies = {
+  '@/lib/services/ai/openrouter-chat-request': { describeOpenRouterFailure },
+  '@/lib/services/cron-audit-log': { logCronInfrastructureEvent: jest.fn() },
   '@/lib/services/billing/credit-exhaustion-message': { isInsufficientCreditsError },
   '@/lib/services/harness-diagnostics/tools': { refreshHarnessToolManifest: (tools: any[]) => tools },
   '@/lib/database/supabase-client': { supabaseAdmin: { from: jest.fn(() => ({

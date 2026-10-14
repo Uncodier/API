@@ -8,6 +8,8 @@ Documents are ordered below by relevance and freshness. A dated checkpoint recor
 
 Read these first when changing the code-agent harness:
 
+- [Requirement agent harness](./REQUIREMENT_AGENT_HARNESS.md) — replacement executor for the existing requirement cron, continuous sessions, optional tools, migration and rollout requirements. Not deployed by this change.
+
 - [Technical verification escalation — 2026-10-01](./HARNESS_TECHNICAL_ESCALATION_2026-10-01.md) — technical holds, canonical customer decisions and host-owned support tickets.
 
 - [Evidence-based migration diagnosis and bounded handoff](./MIGRATION_DIAGNOSTIC_HANDOFF.md) — exhaustion is not irreparability; one independent diagnosis and a verified follow-up.

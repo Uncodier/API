@@ -19,6 +19,7 @@ const sqlPaths = [
   'supabase/migrations/20260930010000_requirement_migration_lifecycle.sql',
   'supabase/migrations/20261001220000_harness_diagnostic_decisions.sql',
   'supabase/migrations/20261002100000_apps_migration_feedback.sql',
+  'supabase/migrations/20261014030000_agent_driven_requirement_cron.sql',
 ];
 const causalPaths = [
   'src/app/api/cron/shared/step-probe-validation-targets.ts',
@@ -100,7 +101,7 @@ describe('getHarnessReference', () => {
       expect(HARNESS_SOURCE_ALLOWLIST).toContain(path);
       expect(JSON.stringify(result.reference)).toContain(path);
     }
-    expect(JSON.stringify(getHarnessReference('recover'))).toContain('migration_review_pending');
+    expect(JSON.stringify(getHarnessReference('recover'))).toContain('does not require historical validation');
     expect(JSON.stringify(getHarnessReference('report_blocker'))).toContain('cancellation receipts');
     expect(JSON.stringify(getHarnessReference('migrations'))).toContain('Reading it must not apply it');
   });
