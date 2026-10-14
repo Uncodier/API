@@ -4,6 +4,7 @@ import { isIP } from 'node:net';
 import { Sandbox, type Command, type NetworkPolicy, type NetworkPolicyRule } from '@vercel/sandbox';
 import type { CommandInput, CommandOutput, Workspace, WorkspaceRef } from './types';
 import { createRedactor, runtimeSecretValues } from './security';
+import { workspaceOpenFailure } from './workspace-open-failure';
 
 export const WORKSPACE_ROOT = '/vercel/sandbox';
 export const MAX_COMMAND_OUTPUT = 64 * 1024;
@@ -600,7 +601,13 @@ export async function adoptRequirementWorkspace(input: {
   const active = () => checkActive(input.assertActive, input.signal);
   const url = validateWorkspaceRepository(input.repository);
   await active();
-  const sandbox = await Sandbox.get({ name: input.workspaceId, resume: false, signal: input.signal });
+  let sandbox: Sandbox;
+  try { sandbox = await Sandbox.get({ name: input.workspaceId, resume: false, signal: input.signal }); }
+  catch (error) {
+    await active();
+    const failure = workspaceOpenFailure(error);
+    return fail(failure.code, failure.message);
+  }
   await active();
   if (sandbox.tags?.harnessSession && sandbox.tags.harnessSession !== input.sessionId &&
     sandbox.tags.harnessSession !== input.previousSessionId) throw new WorkspaceError('WORKSPACE_SCOPE_MISMATCH', 'Workspace belongs to another agent session');
@@ -697,7 +704,8 @@ export async function openWorkspace(input: {
     return workspace;
   } catch (error) {
     if (error instanceof WorkspaceError) throw error;
-    return fail(input.signal?.aborted ? 'ABORTED' : 'WORKSPACE_OPEN_FAILED', input.signal?.aborted
-      ? 'Workspace opening was cancelled.' : 'Workspace could not be opened. Existing state was not recreated or reset.');
+    const failure = workspaceOpenFailure(error);
+    return fail(input.signal?.aborted ? 'ABORTED' : failure.code, input.signal?.aborted
+      ? 'Workspace opening was cancelled.' : failure.message);
   }
 }

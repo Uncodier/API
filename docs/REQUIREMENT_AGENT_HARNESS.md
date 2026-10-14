@@ -75,6 +75,10 @@ require build/push/preview success. Explicit user pause/cancel/holds take preced
   Known transient model/runtime/dispatch failures retry the same session after a delay.
 - Provider 401/402/403 admission failures pause for operator intervention rather
   than spending every cron tick on the same rejected request.
+- Workspace-open 401/403 and 402 responses now retain a static authorization or
+  provider-billing classification and pause before model dispatch. Transient
+  setup failures remain retryable. This repair requires deployment; it does not
+  retroactively identify the HTTP cause of old generic workspace-open failures.
 - Tool result storage is bounded; full redacted artifacts are durable before their
   references are saved. Pending operations are stored before dispatch. Ambiguous
   writes require trusted adapter receipts/idempotency, not a model's assertion.

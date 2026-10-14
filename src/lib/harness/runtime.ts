@@ -13,6 +13,7 @@ import { createHostStateStore } from './host-state-store';
 import { createArtifactStore } from './artifact-store';
 import { loadSessionConfiguration } from './host-configuration';
 import { withinDeadline } from './deadline';
+import { workspaceOpenRequiresOperator } from './workspace-open-failure';
 import type { HarnessModel, HarnessTool, SessionScope, Workspace } from './types';
 import type { HostProfile } from './profile';
 
@@ -125,8 +126,11 @@ export async function executeSessionSlice(id: string, scope: SessionScope, optio
     if (current?.status === 'running') {
       try {
         await store.assertOwner(id, scope.siteId, owner, 180);
-        current.status = current.activeMs >= current.request.limits.maxActiveMs ? 'paused' : 'waiting';
-        current.reason = current.status === 'paused' ? 'active_time_budget_exhausted' : `runtime_unavailable: ${safeError(error, redact)}`;
+        const budgetExhausted = current.activeMs >= current.request.limits.maxActiveMs;
+        const operatorRequired = workspaceOpenRequiresOperator(error);
+        current.status = budgetExhausted || operatorRequired ? 'paused' : 'waiting';
+        current.reason = budgetExhausted ? 'active_time_budget_exhausted' : operatorRequired
+          ? `workspace_access_requires_operator: ${safeError(error, redact)}` : `runtime_unavailable: ${safeError(error, redact)}`;
         await store.save(current, scope.siteId, owner);
       } catch {
         // Lease loss or persistence outage: no effects are retried. Explicit resume reconciles pending.
