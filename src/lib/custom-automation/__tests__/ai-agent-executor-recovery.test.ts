@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import * as openrouter from '@/lib/services/ai/openrouter';
 import * as chatRequest from '@/lib/services/ai/openrouter-chat-request';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
@@ -17,6 +17,7 @@ class OfflineOpenAI {
 }
 const { AIAgentExecutor } = loadRuntimeModule<typeof import('../ai-agent-executor')>(
   'src/lib/custom-automation/ai-agent-executor.ts', {
+    'node:crypto': { randomUUID },
     openai: OfflineOpenAI, 'google-auth-library': { GoogleAuth: class {} }, zod,
     '@/lib/services/ai/openrouter': { ...openrouter, createOpenRouterClient: () => new OfflineOpenAI() },
     '@/lib/services/ai/openrouter-chat-request': chatRequest,

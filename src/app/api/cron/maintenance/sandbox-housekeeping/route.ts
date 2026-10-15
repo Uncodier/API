@@ -1,16 +1,20 @@
 import { NextResponse } from 'next/server';
-import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { Sandbox } from '@vercel/sandbox';
 import { deleteSnapshotQuiet } from '@/lib/services/sandbox-persisted-snapshot';
-import { getSandboxHandle } from '@/lib/services/sandbox-sdk';
 import { stopSandboxQuiet } from '@/lib/services/sandbox-stop';
+import { reconcileSandboxBilling, retireSandboxBilling } from '@/lib/services/billing/sandbox-billing';
+import { isSandboxNotFoundError } from '@/lib/services/sandbox-missing-snapshot';
+import { listHousekeepingSandboxes } from '@/lib/services/billing/sandbox-housekeeping-list';
+import { housekeepingRows } from '@/lib/services/billing/sandbox-housekeeping-db';
+import { sandboxSdkMajor } from '@/lib/services/sandbox-sdk';
+import { deleteSandboxAndOrphans } from '@/lib/services/sandbox-lifecycle';
 
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: Request) {
   const authHeader = request.headers.get('authorization');
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!process.env.CRON_SECRET || authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
     return new NextResponse('Unauthorized', { status: 401 });
   }
 
@@ -38,6 +42,8 @@ export async function GET(request: Request) {
       sandboxErrors: 0,
       snapshotsDeleted: 0,
       snapshotErrors: 0,
+      sandboxesBilled: 0,
+      billingErrors: 0,
     };
 
     console.log('[SandboxHousekeeping] Starting orphan cleanup...');
@@ -47,15 +53,7 @@ export async function GET(request: Request) {
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
     
     // We only need the actual IDs in use
-    const { data: statusRows, error: dbError } = await supabaseAdmin
-      .from('requirement_status')
-      .select('active_sandbox_id, snapshot_id')
-      .gte('created_at', thirtyDaysAgo);
-
-    if (dbError) {
-      console.error('[SandboxHousekeeping] Failed to fetch requirement_status:', dbError);
-      return new NextResponse('Database Error', { status: 500 });
-    }
+    const statusRows = await housekeepingRows('requirement_status','active_sandbox_id, snapshot_id','id',thirtyDaysAgo);
 
     const activeSandboxIds = new Set<string>();
     const activeSnapshotIds = new Set<string>();
@@ -64,6 +62,16 @@ export async function GET(request: Request) {
       if (row.active_sandbox_id) activeSandboxIds.add(row.active_sandbox_id);
       if (row.snapshot_id) activeSnapshotIds.add(row.snapshot_id);
     }
+    // Portable harness workspaces are absent from legacy requirement_status.
+    const harnessRows = await housekeepingRows('harness_sessions','snapshot');
+    for (const row of harnessRows || []) {
+      const snapshot = row.snapshot as { status?: string; workspace?: { id?: string } };
+      if (!['completed', 'cancelled', 'failed'].includes(snapshot.status || '') && snapshot.workspace?.id) activeSandboxIds.add(snapshot.workspace.id);
+    }
+    const workflowRows = await housekeepingRows('instance_plans','metadata,status');
+    for (const row of workflowRows) {
+      if (!['completed','cancelled','failed'].includes(row.status) && row.metadata?.active_sandbox_id) activeSandboxIds.add(row.metadata.active_sandbox_id);
+    }
 
     // 2. Fetch all running sandboxes
     console.log(`[SandboxHousekeeping] Fetched ${activeSandboxIds.size} active sandbox IDs and ${activeSnapshotIds.size} active snapshot IDs from DB.`);
@@ -71,6 +79,33 @@ export async function GET(request: Request) {
     const thirtyMinutesAgo = Date.now() - 30 * 60 * 1000;
 
     const listed = await listHousekeepingSandboxes(credentials);
+    // Reconcile ALL registered resources, including stopped sessions after auto
+    // timeout and resources omitted from a provider list page. No implicit resume.
+    const tracked = await housekeepingRows('sandbox_billing_resources','sandbox_name,deletion_requested_at','sandbox_name',undefined,true);
+    for (const row of tracked || []) {
+      let sandbox: Sandbox | undefined;
+      try {
+        sandbox = await Sandbox.get({ ...credentials, name: row.sandbox_name, resume: false });
+        if (sandbox.currentSnapshotId) activeSnapshotIds.add(sandbox.currentSnapshotId);
+        await reconcileSandboxBilling(sandbox);
+        if (row.deletion_requested_at) await deleteSandboxAndOrphans(row.sandbox_name);
+        results.sandboxesBilled++;
+      } catch (error) {
+        if (!sandbox && isSandboxNotFoundError(error)) {
+          try { await retireSandboxBilling(row.sandbox_name,'finish'); continue; } catch { /* Unproven disappearance remains pending. */ }
+        }
+        results.billingErrors++;
+        // A known unpaid/outage interval must not authorize more running time.
+        if (sandbox && ['running', 'pending', 'snapshotting', 'stopping'].includes(sandbox.status)) await stopSandboxQuiet(sandbox);
+      }
+    }
+    // Preserve restore points even for not-yet-registered persistent workspaces.
+    // Any failed lookup aborts destructive snapshot cleanup rather than guessing.
+    for (const name of activeSandboxIds) {
+      if (tracked.some(row => row.sandbox_name === name)) continue;
+      const active = await Sandbox.get({ ...credentials, name, resume:false });
+      if (active.currentSnapshotId) activeSnapshotIds.add(active.currentSnapshotId);
+    }
     for (const sb of listed) {
       const id = sb.id || sb.name;
       if (!id) continue;
@@ -80,17 +115,21 @@ export async function GET(request: Request) {
       if (createdAt && createdAt >= thirtyMinutesAgo) continue;
       console.log(`[SandboxHousekeeping] Stopping orphaned sandbox ${id} (created ${createdAt ? new Date(createdAt).toISOString() : 'unknown'})`);
       try {
-        const sandboxInstance = await getSandboxHandle(id);
+        const sandboxInstance = await Sandbox.get({ ...credentials, name: id, resume: false });
         const stopped = await stopSandboxQuiet(sandboxInstance);
         if (stopped) results.sandboxesStopped++;
         else results.sandboxErrors++;
       } catch (stopErr: unknown) {
-        console.warn(`[SandboxHousekeeping] Failed to stop sandbox ${id}:`, stopErr instanceof Error ? stopErr.message : stopErr);
+        console.warn('[SandboxHousekeeping] Sandbox stop failed; cleanup remains pending.');
         results.sandboxErrors++;
       }
     }
 
-    // 3. Clean up orphaned snapshots (SDK Snapshot.list when present, else REST)
+    // v3 owns persistent restore snapshots via keepLastSnapshots. A global list
+    // cannot reliably prove ownership, so do not delete paused/new stop snapshots.
+    if (sandboxSdkMajor() >= 3) return NextResponse.json({ success:results.billingErrors === 0, results });
+
+    // 3. Clean up legacy orphaned snapshots (SDK Snapshot.list when present, else REST)
     const twentyFourHoursAgo = Date.now() - 24 * 60 * 60 * 1000;
     const sdkSnaps = await listSnapshotsViaSdk(credentials);
     if (sdkSnaps.length) {
@@ -144,7 +183,7 @@ export async function GET(request: Request) {
                   await deleteSnapshotQuiet(snap.id);
                   results.snapshotsDeleted++;
                 } catch (delErr: unknown) {
-                  console.warn(`[SandboxHousekeeping] Failed to delete snapshot ${snap.id}:`, delErr instanceof Error ? delErr.message : delErr);
+                  console.warn('[SandboxHousekeeping] Snapshot deletion failed.');
                   results.snapshotErrors++;
                 }
               }
@@ -157,78 +196,21 @@ export async function GET(request: Request) {
             next = String(snapshotsResult.pagination.next);
           }
         } else {
-          console.warn(`[SandboxHousekeeping] Failed to list snapshots from Vercel API: ${snapRes.status} ${await snapRes.text()}`);
+          console.warn(`[SandboxHousekeeping] Failed to list snapshots (HTTP ${snapRes.status}).`);
           break;
         }
       }
     } catch (e: unknown) {
-      console.error('[SandboxHousekeeping] Error processing snapshots:', e);
+      console.error('[SandboxHousekeeping] Snapshot processing failed.');
     }
     }
 
     console.log('[SandboxHousekeeping] Cleanup complete.', results);
     return NextResponse.json({ success: true, results });
-  } catch (error: any) {
-    console.error('[SandboxHousekeeping] Unhandled error:', error);
-    return new NextResponse(`Internal Error: ${error.message}`, { status: 500 });
-  }
-}
-
-type ListedSandbox = { id: string; name?: string; createdAt?: string | number };
-
-async function listHousekeepingSandboxes(
-  credentials: { token: string; projectId: string; teamId: string },
-): Promise<ListedSandbox[]> {
-  const out: ListedSandbox[] = [];
-  const listFn = Sandbox.list.bind(Sandbox) as (opts: Record<string, unknown>) => Promise<unknown>;
-
-  let tagged: ListedSandbox[] = [];
-  try {
-    const taggedList = await listFn({ ...credentials, tags: { kind: 'requirement' } });
-    tagged = collectListedSandboxes(taggedList);
   } catch {
-    /* v1 list does not accept tags */
+    console.error('[SandboxHousekeeping] Reconciliation failed; cleanup will retry.');
+    return new NextResponse('Sandbox housekeeping unavailable', { status: 500 });
   }
-
-  let until: number | undefined;
-  for (let page = 0; page < 100; page++) {
-    let list: unknown;
-    try {
-      list = await listFn({ ...credentials, ...(until ? { until } : {}) });
-    } catch (e: unknown) {
-      console.error('[SandboxHousekeeping] Failed to list sandboxes:', e);
-      break;
-    }
-    const pageItems = collectListedSandboxes(list);
-    out.push(...pageItems);
-    const next = paginationNext(list);
-    if (!next || pageItems.length === 0) break;
-    until = next;
-  }
-
-  const seen = new Map<string, ListedSandbox>();
-  for (const row of out) seen.set(row.id, row);
-  for (const row of tagged) {
-    if (!seen.has(row.id)) seen.set(row.id, row);
-  }
-  return Array.from(seen.values());
-}
-
-function collectListedSandboxes(list: unknown): ListedSandbox[] {
-  if (!list) return [];
-  const rec = list as {
-    json?: { sandboxes?: Array<{ id?: string; name?: string; createdAt?: string | number }> };
-    sandboxes?: Array<{ id?: string; name?: string; createdAt?: string | number }>;
-  };
-  const rows = rec.json?.sandboxes ?? rec.sandboxes ?? [];
-  return rows
-    .filter((sb): sb is { id: string; name?: string; createdAt?: string | number } => !!sb.id)
-    .map((sb) => ({ id: sb.id, name: sb.name, createdAt: sb.createdAt }));
-}
-
-function paginationNext(list: unknown): number | undefined {
-  const rec = list as { json?: { pagination?: { next?: number } }; pagination?: { next?: number } };
-  return rec.json?.pagination?.next ?? rec.pagination?.next;
 }
 
 async function listSnapshotsViaSdk(

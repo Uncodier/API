@@ -1,4 +1,5 @@
 import type OpenAI from 'openai';
+import { randomUUID } from 'node:crypto';
 import { CreditService } from '@/lib/services/billing/CreditService';
 import { createOpenRouterClient, getOpenRouterChatModel } from '@/lib/services/ai/openrouter';
 import type { WorkflowPlanResult, WorkflowPlanResultCapture } from './plan-result';
@@ -33,28 +34,17 @@ function configuredProvider(): { client: OpenAI; model: string } {
 }
 
 async function chargeUsage(
-  usage: OpenAI.CompletionUsage | undefined, billing: ChannelTurnBilling, provider: string, model: string,
-  generationId?: string,
+  usage: unknown, billing: ChannelTurnBilling, model: string,
+  eventId: string, generationId?: string,
 ): Promise<void> {
-  if (!usage || !Number.isFinite(usage.prompt_tokens) || usage.prompt_tokens < 0 ||
-    !Number.isFinite(usage.completion_tokens) || usage.completion_tokens < 0) {
-    throw new ChannelModelTurnError('Provider token usage is unavailable; billing requires reconciliation', false, true);
-  }
-  const inputTokens = usage.prompt_tokens;
-  const outputTokens = usage.completion_tokens;
-  const amount = inputTokens / 1_000_000 * CreditService.PRICING.ASSISTANT_INPUT_TOKEN_MILLION +
-    outputTokens / 1_000_000 * CreditService.PRICING.ASSISTANT_OUTPUT_TOKEN_MILLION;
-  if (amount === 0) return;
+  if (!billing.siteId) return;
   try {
-    const charged = await CreditService.deductCredits(billing.siteId, amount, 'assistant_tokens',
-      `Channel workflow execution (${inputTokens + outputTokens} tokens)`, {
+    const { chargeOpenRouterUsage } = await import('@/lib/services/billing/openrouter-usage-billing');
+    await chargeOpenRouterUsage({ siteId: billing.siteId, usage, generationId, eventId, metadata: {
         site_id: billing.siteId, instance_id: billing.instanceId, plan_id: billing.runPlanId,
         run_plan_id: billing.runPlanId, step_id: billing.stepId, message_id: billing.messageId,
-        attempt: billing.attempt, retry_count: billing.attempt - 1, provider, model,
-        tokens: inputTokens + outputTokens, input_tokens: inputTokens, output_tokens: outputTokens,
-        usage, ...(generationId ? { generation_id: generationId } : {}),
-      });
-    if (charged.success !== true) throw new Error('Credit deduction was not confirmed');
+        attempt: billing.attempt, retry_count: billing.attempt - 1, model, context: 'channel-workflow',
+      } });
   } catch {
     // The RPC might have committed before its response was lost. Never charge or execute it again.
     throw new ChannelModelTurnError('Channel workflow credit deduction failed; billing requires reconciliation', false, true);
@@ -67,18 +57,18 @@ export async function boundedChannelModelTurn(input: {
   billing: ChannelTurnBilling; provider?: string; beforeProvider?: () => Promise<void>;
 }): Promise<WorkflowPlanResult> {
   try {
-    if (!await CreditService.validateCredits(input.billing.siteId, 0.001)) {
+    if (input.billing.siteId && !await CreditService.validateCredits(input.billing.siteId, 0.001)) {
       throw new Error('Insufficient credits');
     }
   } catch {
     throw new ChannelModelTurnError('Insufficient credits or credit validation unavailable for channel workflow', false, true);
   }
-  const provider = 'openrouter';
   const { client, model } = configuredProvider();
   // Credit validation is asynchronous; recheck ownership immediately before invoking the provider.
   await input.beforeProvider?.();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), MODEL_TIMEOUT_MS);
+  const eventId = randomUUID();
   let completion: OpenAI.Chat.Completions.ChatCompletion;
   try {
     completion = await client.chat.completions.create({
@@ -92,8 +82,12 @@ export async function boundedChannelModelTurn(input: {
     }, { signal: controller.signal, timeout: MODEL_TIMEOUT_MS, maxRetries: 0 });
   } catch (error) {
     const status = (error as { status?: number } | null)?.status;
+    const failure = error as any;
+    const generationId = failure?.generationId || failure?.error?.generation_id || failure?.error?.metadata?.generation_id;
+    const usage = failure?.usage || failure?.error?.usage;
     // Transport failures/timeouts have an unknown provider outcome and are never replayed.
-    const knownFailure = typeof status === 'number' && status >= 400 && status <= 599 && status !== 408;
+    const knownFailure = !generationId && !usage && typeof status === 'number' && status >= 400 && status <= 599 && status !== 408;
+    if (!knownFailure) await chargeUsage(usage, input.billing, model, eventId, generationId);
     const retryable = knownFailure && (status === 409 || status === 429 || status >= 500);
     throw new ChannelModelTurnError(knownFailure ? `Channel model provider returned HTTP ${status}`
       : 'Channel model provider outcome is unknown; the turn will not be replayed', retryable, !knownFailure);
@@ -103,8 +97,11 @@ export async function boundedChannelModelTurn(input: {
 
   // Usage is billable even for missing tools, malformed JSON, rejected output, and explicit failures.
   // A crash after charging leaves the durable step in_progress: reconciliation must not recharge it.
-  await chargeUsage(completion.usage, input.billing, provider, completion.model || model, completion.id);
-  const calls = completion.choices[0]?.message?.tool_calls || [];
+  await chargeUsage(completion?.usage, input.billing, completion?.model || model, eventId, completion?.id);
+  if ((completion as any)?.error || (completion as any)?.choices?.[0]?.finish_reason === 'error') {
+    throw new ChannelModelTurnError('Channel model completion failed after acceptance', true);
+  }
+  const calls = completion?.choices?.[0]?.message?.tool_calls || [];
   if (calls.length !== 1 || calls[0].type !== 'function' || calls[0].function.name !== 'plan_result') {
     throw new ChannelModelTurnError('A single plan_result call is required', true);
   }

@@ -1,6 +1,8 @@
 import { randomBytes } from 'node:crypto';
 import { boundedChannelModelTurn } from '../bounded-channel-model';
 import { CreditService } from '@/lib/services/billing/CreditService';
+import { chargeOpenRouterUsage } from '@/lib/services/billing/openrouter-usage-billing';
+jest.mock('@/lib/services/billing/openrouter-usage-billing', () => ({ chargeOpenRouterUsage: jest.fn() }));
 
 const mockCreate = jest.fn();
 const mockClientOptions = jest.fn();
@@ -24,12 +26,12 @@ beforeEach(() => {
   jest.clearAllMocks();
   process.env = { NODE_ENV: 'test', OPENROUTER_API_KEY: randomBytes(24).toString('hex') };
   jest.mocked(CreditService.validateCredits).mockResolvedValue(true);
-  jest.mocked(CreditService.deductCredits).mockResolvedValue({ success: true } as any);
+  jest.mocked(chargeOpenRouterUsage).mockReset().mockResolvedValue(undefined);
   jest.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Offline only'));
 });
 afterEach(() => { process.env = originalEnv; jest.restoreAllMocks(); });
 
-it.each([0, 0.023, undefined])('uses OpenRouter and preserves reported cost=%s without repricing credits', async cost => {
+it.each([0, 0.023])('uses OpenRouter and settles reported cost=%s without token repricing', async cost => {
   process.env.ROBOT_SDK_PROVIDER = 'gemini';
   process.env.AI_MODEL = 'stale-model';
   const usage = { prompt_tokens: 1000, completion_tokens: 50, total_tokens: 1050,
@@ -41,10 +43,11 @@ it.each([0, 0.023, undefined])('uses OpenRouter and preserves reported cost=%s w
   }));
   expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({ model: 'openai/gpt-6.1-sol', user: billing.siteId, stream: false }),
     expect.objectContaining({ signal: expect.any(AbortSignal), timeout: 90_000, maxRetries: 0 }));
-  expect(CreditService.deductCredits).toHaveBeenCalledWith(billing.siteId, 0.002, 'assistant_tokens', expect.any(String),
-    expect.objectContaining({ provider: 'openrouter', model: 'openai/actual-model', usage, generation_id: 'generation-offline',
-      run_plan_id: billing.runPlanId, retry_count: 0, tokens: 1050 }));
-  if (cost === undefined) expect(jest.mocked(CreditService.deductCredits).mock.calls[0][4]?.usage).not.toHaveProperty('cost');
+  expect(chargeOpenRouterUsage).toHaveBeenCalledWith(expect.objectContaining({ siteId: billing.siteId, usage,
+    generationId: 'generation-offline', eventId: expect.stringMatching(/^[a-f0-9-]{36}$/),
+    metadata: expect.objectContaining({ model: 'openai/actual-model', run_plan_id: billing.runPlanId, retry_count: 0 }) }));
+  expect(CreditService.deductCredits).not.toHaveBeenCalled();
+  expect(jest.mocked(chargeOpenRouterUsage).mock.invocationCallOrder[0]).toBeLessThan(capture.tool.execute.mock.invocationCallOrder[0]);
   expect(globalThis.fetch).not.toHaveBeenCalled();
 });
 
@@ -68,13 +71,36 @@ it('fails closed with legacy credentials only', async () => {
   expect(CreditService.deductCredits).not.toHaveBeenCalled();
 });
 
-it('requires reconciliation for missing usage or unconfirmed billing without another generation', async () => {
-  mockCreate.mockResolvedValueOnce(completion(undefined));
+it.each([undefined, { prompt_tokens: 1, completion_tokens: 1 }, { cost: -1 }, { cost: NaN }])('requires reconciliation for unpriced usage %j without another generation', async usage => {
+  mockCreate.mockResolvedValueOnce(completion(usage));
+  jest.mocked(chargeOpenRouterUsage).mockRejectedValueOnce(new Error('billing requires reconciliation'));
   await expect(turn()).rejects.toMatchObject({ terminalRun: true, retryable: false });
+  expect(mockCreate).toHaveBeenCalledTimes(1);
+  expect(chargeOpenRouterUsage).toHaveBeenCalledTimes(1);
+  expect(capture.tool.execute).not.toHaveBeenCalled();
   expect(CreditService.deductCredits).not.toHaveBeenCalled();
-  mockCreate.mockResolvedValueOnce(completion({ prompt_tokens: 1, completion_tokens: 1 }));
-  jest.mocked(CreditService.deductCredits).mockResolvedValueOnce({ success: false } as any);
+});
+
+it.each([undefined, []])('settles malformed response choices %j before rejection', async choices => {
+  mockCreate.mockResolvedValueOnce({ usage: { cost: 0.01 }, choices });
+  await expect(turn()).rejects.toThrow('plan_result');
+  expect(chargeOpenRouterUsage).toHaveBeenCalledTimes(1);
+  expect(capture.tool.execute).not.toHaveBeenCalled();
+});
+
+it('does not bill when site ownership is absent', async () => {
+  mockCreate.mockResolvedValueOnce(completion({ cost: 0.01 }));
+  await boundedChannelModelTurn({ prompt: 'Analyze', userContent: 'Hi', billing: { ...billing, siteId: '' }, capture: capture as any });
+  expect(chargeOpenRouterUsage).not.toHaveBeenCalled();
+  expect(CreditService.validateCredits).not.toHaveBeenCalled();
+});
+
+it('persists uncertain transport outcomes, not confirmed admission failures', async () => {
+  mockCreate.mockRejectedValueOnce(Object.assign(new Error('Rejected'), { status: 400 }));
+  await expect(turn()).rejects.toMatchObject({ retryable: false });
+  expect(chargeOpenRouterUsage).not.toHaveBeenCalled();
+  mockCreate.mockRejectedValueOnce(new Error('Connection reset'));
+  jest.mocked(chargeOpenRouterUsage).mockRejectedValueOnce(new Error('billing requires reconciliation'));
   await expect(turn()).rejects.toMatchObject({ terminalRun: true, retryable: false });
-  expect(mockCreate).toHaveBeenCalledTimes(2);
-  expect(CreditService.deductCredits).toHaveBeenCalledTimes(1);
+  expect(chargeOpenRouterUsage).toHaveBeenCalledWith(expect.objectContaining({ usage: undefined, eventId: expect.any(String) }));
 });

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { runSessionSlice, type RunSliceInput } from './engine';
-import { createHarnessModel } from './model';
+import { createBilledHarnessModel } from './requirement-model';
 import { createSessionStore } from './store';
 import { openWorkspace, replaceWorkspaceEnvironment } from './workspace';
 import { createWorkspaceTools } from './workspace-tools';
@@ -95,7 +95,7 @@ export async function executeSessionSlice(id: string, scope: SessionScope, optio
       }
     }
     host.configuration.redactionValues.forEach(value => knownSecrets.add(value));
-    workspace = await withinDeadline(deadline, () => (options.openWorkspace || openWorkspace)({ sessionId: id, repository: session!.request.repository,
+    workspace = await withinDeadline(deadline, () => (options.openWorkspace || openWorkspace)({ sessionId: id, siteId: scope.siteId, repository: session!.request.repository,
       existing: session!.workspace, signal: deadline, assertActive,
       host: { git: profile?.git, environment: host.values(), redactionValues: [...knownSecrets] } }));
     const configureEnvironment = async (values: Record<string, string>) => {
@@ -118,7 +118,9 @@ export async function executeSessionSlice(id: string, scope: SessionScope, optio
     }), ...await options.tools?.(workspace, host) || []];
     await accountSetup();
     const result = await runSessionSlice({ session, store, owner, siteId: scope.siteId,
-      workspace, model: options.model || createHarnessModel(), tools, redact, artifacts: createArtifactStore(), sliceMs: 60000, signal: deadline,
+      workspace, model: options.cronRun && options.model ? options.model
+        : createBilledHarnessModel({ sessionId: id, siteId: scope.siteId, owner }, assertActive, options.model),
+      tools, redact, artifacts: createArtifactStore(), sliceMs: 60000, signal: deadline,
       context: options.context, getContext: options.getContext, assertExecution: options.assertExecution });
     return { status: result.status, continue: result.status === 'running' };
   } catch (error) {

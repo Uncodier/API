@@ -25,6 +25,7 @@ import { getOrCreateRequirementSandbox } from '@/lib/services/sandbox-get-or-cre
 import { cloneRepoIntoWorkDir } from '@/lib/services/sandbox-git-clone';
 import { SandboxService, type SandboxResult } from '@/lib/services/sandbox-service';
 import { assertCronExecutionOwnership } from '@/app/api/cron/shared/cron-execution-ownership';
+import { registerSandboxBilling, reconcileSandboxBilling, SandboxBillingError } from '@/lib/services/billing/sandbox-billing';
 
 export async function createRequirementSandbox(
   requirementId: string,
@@ -62,6 +63,7 @@ export async function createRequirementSandbox(
   const workDir = SANDBOX_WORK_DIR;
   const sandboxName = requirementSandboxName(requirementId, auditCtx?.instanceId);
   const tags = requirementSandboxTags(requirementId, auditCtx?.instanceId);
+  await registerSandboxBilling(sandboxName, { kind: 'requirement', id: requirementId, siteId: auditCtx?.siteId });
 
   let sandbox: Sandbox | undefined;
   const named = await getOrCreateRequirementSandbox({
@@ -119,7 +121,8 @@ export async function createRequirementSandbox(
       }) ?? undefined;
       if (sandbox) console.log('[Sandbox] Created from base fork');
     }
-  } catch {
+  } catch (error) {
+    if (error instanceof SandboxBillingError) throw error;
     /* fork is optional */
   }
 
@@ -139,6 +142,7 @@ export async function createRequirementSandbox(
               depth: 1,
             },
       }) as Record<string, unknown>);
+      try { await reconcileSandboxBilling(sandbox); } catch (error) { await stopSandboxQuiet(sandbox); throw error; }
       if (useV3Clone && sandbox) {
         await cloneRepoIntoWorkDir(sandbox, authRepoUrl, workDir);
       }

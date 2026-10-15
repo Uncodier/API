@@ -6,15 +6,16 @@ const from = jest.fn();
 const rpc = jest.fn();
 const loadBoundChannelMessageRun = jest.fn();
 const validateCredits = jest.fn();
-const deductCredits = jest.fn();
+const chargeOpenRouterUsage = jest.fn();
 const chatCreate = jest.fn();
 const clientOptions = jest.fn();
 jest.unstable_mockModule('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from, rpc } }));
 jest.unstable_mockModule('../channel-message', () => ({ loadBoundChannelMessageRun }));
 jest.unstable_mockModule('@/lib/services/skills-service', () => ({ SkillsService: { getSkillBySlugOrName: () => null } }));
 jest.unstable_mockModule('@/lib/services/billing/CreditService', () => ({ CreditService: {
-  validateCredits, deductCredits, PRICING: { ASSISTANT_INPUT_TOKEN_MILLION: 1, ASSISTANT_OUTPUT_TOKEN_MILLION: 20 },
+  validateCredits,
 } }));
+jest.unstable_mockModule('@/lib/services/billing/openrouter-usage-billing', () => ({ chargeOpenRouterUsage }));
 jest.unstable_mockModule('openai', () => ({ default: class OpenAI {
   constructor(options) { clientOptions(options); }
   chat = { completions: { create: chatCreate } };
@@ -24,7 +25,7 @@ const { advanceBoundedChannelMessageRun: advance } = await import('../bounded-ch
 const input = { siteId: '11111111-1111-4111-8111-111111111111',
   runPlanId: '22222222-2222-4222-8222-222222222222', messageId: 'message-1' };
 const instanceId = '33333333-3333-4333-8333-333333333333';
-const usage = { prompt_tokens: 1000, completion_tokens: 50, total_tokens: 1050 };
+const usage = { prompt_tokens: 1000, completion_tokens: 50, total_tokens: 1050, cost: 0.023 };
 const accepted = { status: 'completed', summary: 'Use a concise reply', data: {}, evidence: [], criteria: [], validation: [] };
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const completion = (result = accepted) => ({ usage, choices: [{ message: { tool_calls: [{
@@ -86,7 +87,7 @@ beforeEach(() => {
     return { data: true };
   });
   validateCredits.mockResolvedValue(true);
-  deductCredits.mockResolvedValue({ success: true });
+  chargeOpenRouterUsage.mockResolvedValue(undefined);
   chatCreate.mockImplementation(async () => {
     expect(activeToken).not.toBeNull();
     expect(plan.steps.some((step) => step.status === 'in_progress')).toBe(true);
@@ -108,7 +109,7 @@ it('fails without any provider invocation when credits are insufficient', async 
   expect(validateCredits).toHaveBeenCalledWith(input.siteId, 0.001);
   expect(clientOptions).not.toHaveBeenCalled();
   expect(chatCreate).not.toHaveBeenCalled();
-  expect(deductCredits).not.toHaveBeenCalled();
+  expect(chargeOpenRouterUsage).not.toHaveBeenCalled();
   expect(plan.steps[0]).toMatchObject({ status: 'failed', retry_count: 1 });
   expect(await advance(input)).toBe('failed');
   expect(validateCredits).toHaveBeenCalledTimes(1);
@@ -126,14 +127,14 @@ it.each(['missing tool', 'malformed JSON', 'rejected capture'])(
     chatCreate.mockResolvedValueOnce(response);
     expect(await advance(input)).toBe('in_progress');
     expect(plan.steps[0]).toMatchObject({ status: 'pending', retry_count: 1, completed_at: null });
-    expect(deductCredits).toHaveBeenCalledTimes(1);
-    const [siteId, amount, type, , metadata] = deductCredits.mock.calls[0];
+    expect(chargeOpenRouterUsage).toHaveBeenCalledTimes(1);
+    const [{ siteId, usage: billedUsage, eventId, metadata }] = chargeOpenRouterUsage.mock.calls[0];
     expect(siteId).toBe(input.siteId);
-    expect(amount).toBeCloseTo(0.002, 10);
-    expect(type).toBe('assistant_tokens');
+    expect(billedUsage).toEqual(usage);
+    expect(eventId).toMatch(/^[a-f0-9-]{36}$/);
     expect(metadata).toMatchObject({ site_id: input.siteId, instance_id: instanceId, plan_id: input.runPlanId,
       run_plan_id: input.runPlanId, step_id: 'step-1', message_id: input.messageId,
-      attempt: 1, retry_count: 0, provider: 'openrouter', model: 'openai/gpt-6.1-sol', tokens: 1050, input_tokens: 1000, output_tokens: 50 });
+      attempt: 1, retry_count: 0, model: 'openai/gpt-6.1-sol' });
     expect(validateCredits.mock.invocationCallOrder[0]).toBeLessThan(chatCreate.mock.invocationCallOrder[0]);
     expect(chatCreate).toHaveBeenCalledTimes(1);
   },
@@ -146,12 +147,12 @@ it('does not charge a completed cached run or step again on later advances', asy
   expect(await advance(input)).toBe('completed');
   expect(await advance(input)).toBe('completed');
   expect(chatCreate).toHaveBeenCalledTimes(2);
-  expect(deductCredits).toHaveBeenCalledTimes(2);
-  expect(deductCredits.mock.calls.map((call) => call[4].step_id)).toEqual(['step-1', 'step-2']);
+  expect(chargeOpenRouterUsage).toHaveBeenCalledTimes(2);
+  expect(chargeOpenRouterUsage.mock.calls.map((call) => call[0].metadata.step_id)).toEqual(['step-1', 'step-2']);
   // Reconcile a crash between completed-plan persistence and releasing the claim.
   run.status = 'in_progress';
   expect(await advance(input)).toBe('completed');
-  expect(deductCredits).toHaveBeenCalledTimes(2);
+  expect(chargeOpenRouterUsage).toHaveBeenCalledTimes(2);
   expect(chatCreate).toHaveBeenCalledTimes(2);
 });
 
@@ -163,7 +164,7 @@ it('persists a 503 retry and recovery instructions for the next separately claim
   expect(run.status).toBe('pending');
   expect(activeToken).toBeNull();
   expect(chatCreate).toHaveBeenCalledTimes(1);
-  expect(deductCredits).not.toHaveBeenCalled();
+  expect(chargeOpenRouterUsage).not.toHaveBeenCalled();
   expect(await advance(input)).toBe('completed');
   expect(chatCreate).toHaveBeenCalledTimes(2);
   const [request, options] = chatCreate.mock.calls[1];
@@ -176,7 +177,7 @@ it('persists a 503 retry and recovery instructions for the next separately claim
   expect(request.tools.map((tool) => tool.function.name)).toEqual(['plan_result']);
   expect(options).toMatchObject({ timeout: 90_000, maxRetries: 0, signal: expect.any(AbortSignal) });
   expect(clientOptions).toHaveBeenCalledWith(expect.objectContaining({ timeout: 90_000, maxRetries: 0 }));
-  expect(deductCredits.mock.calls[0][4]).toMatchObject({ attempt: 2, retry_count: 1 });
+  expect(chargeOpenRouterUsage.mock.calls[0][0].metadata).toMatchObject({ attempt: 2, retry_count: 1 });
   const tokens = rpc.mock.calls.filter(([name]) => name === 'claim_workflow_run_execution').map(([, args]) => args.p_claim_token);
   expect(new Set(tokens).size).toBe(2);
 });
@@ -194,7 +195,7 @@ it.each([0, 1, 2])('honors max_retries=%s with the existing failure-count semant
   expect(chatCreate).toHaveBeenCalledTimes(attempts);
 });
 
-it('makes explicit result.error.retryable=false terminal, but still bills its tokens', async () => {
+it('makes explicit result.error.retryable=false terminal, but still bills its actual cost', async () => {
   chatCreate.mockResolvedValue(completion({ ...accepted, status: 'failed',
     error: { message: 'Cannot satisfy the policy', retryable: false } }));
   expect(await advance(input)).toBe('failed');
@@ -202,7 +203,7 @@ it('makes explicit result.error.retryable=false terminal, but still bills its to
     result: { error: { retryable: false } } });
   expect(await advance(input)).toBe('failed');
   expect(chatCreate).toHaveBeenCalledTimes(1);
-  expect(deductCredits).toHaveBeenCalledTimes(1);
+  expect(chargeOpenRouterUsage).toHaveBeenCalledTimes(1);
 });
 
 it('delays failure-branch routing until retries exhaust and preserves parent output', async () => {
@@ -225,7 +226,7 @@ it('delays failure-branch routing until retries exhaust and preserves parent out
   expect(plan.steps.map((step) => step.status)).toEqual(['failed', 'cancelled', 'completed']);
   expect(chatCreate.mock.calls[2][0].messages[0].content).toContain('Incoming relation: on fail');
   expect(chatCreate.mock.calls[2][0].messages[0].content).toContain('Need more context');
-  expect(deductCredits).toHaveBeenCalledTimes(3);
+  expect(chargeOpenRouterUsage).toHaveBeenCalledTimes(3);
 });
 
 it('does not misidentify unrelated legacy steps as a failure handler', async () => {
@@ -237,13 +238,12 @@ it('does not misidentify unrelated legacy steps as a failure handler', async () 
   expect(chatCreate).toHaveBeenCalledTimes(1);
 });
 
-it.each(['false', 'throw'])('does not retry a %s billing failure after provider usage', async (kind) => {
-  if (kind === 'false') deductCredits.mockResolvedValue({ success: false, error: 'database error' });
-  else deductCredits.mockRejectedValue(Object.assign(new Error('billing unavailable'), { status: 503 }));
+it.each(['reconciliation', '503'])('does not retry a %s billing failure after provider usage', async (kind) => {
+  chargeOpenRouterUsage.mockRejectedValue(Object.assign(new Error(kind), { status: 503 }));
   expect(await advance(input)).toBe('failed');
   expect(await advance(input)).toBe('failed');
   expect(chatCreate).toHaveBeenCalledTimes(1);
-  expect(deductCredits).toHaveBeenCalledTimes(1);
+  expect(chargeOpenRouterUsage).toHaveBeenCalledTimes(1);
   expect(plan.steps[0].error_message).toContain('billing requires reconciliation');
 });
 
@@ -261,7 +261,7 @@ it('does not replay or recharge an interrupted in_progress turn even when retrie
   expect(await advance(input)).toBe('failed');
   expect(plan.steps[0].error_message).toContain('without a durable result');
   expect(chatCreate).not.toHaveBeenCalled();
-  expect(deductCredits).not.toHaveBeenCalled();
+  expect(chargeOpenRouterUsage).not.toHaveBeenCalled();
   expect(validateCredits).not.toHaveBeenCalled();
 });
 
@@ -274,9 +274,10 @@ it('aborts a 90s request and never schedules an unknown-outcome retry', async ()
   await jest.advanceTimersByTimeAsync(90_000);
   expect(await result).toBe('failed');
   expect(chatCreate.mock.calls[0][1].signal.aborted).toBe(true);
+  expect(chargeOpenRouterUsage).toHaveBeenCalledWith(expect.objectContaining({ usage: undefined }));
   expect(await advance(input)).toBe('failed');
   expect(chatCreate).toHaveBeenCalledTimes(1);
-  expect(deductCredits).not.toHaveBeenCalled();
+  expect(chargeOpenRouterUsage).toHaveBeenCalledTimes(1);
 });
 
 it('refuses another advance while the existing turn owns its lease', async () => {
@@ -288,5 +289,5 @@ it('refuses another advance while the existing turn owns its lease', async () =>
   expect(chatCreate).toHaveBeenCalledTimes(1);
   complete(completion());
   expect(await first).toBe('completed');
-  expect(deductCredits).toHaveBeenCalledTimes(1);
+  expect(chargeOpenRouterUsage).toHaveBeenCalledTimes(1);
 });

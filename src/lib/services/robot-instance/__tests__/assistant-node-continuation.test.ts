@@ -127,14 +127,12 @@ beforeEach(() => {
 });
 
 describe('node executor chunk continuation', () => {
-  it('propagates a confirmed token deduction rejection instead of permitting another turn', async () => {
-    const error = Object.assign(new Error('Not enough credits'), { name: 'InsufficientCreditsError' });
-    deductCredits.mockRejectedValueOnce(error);
-    act.mockResolvedValue({ ...execution([{ role: 'assistant', content: 'Finished' }], 'Finished'),
-      usage: { promptTokens: 100, completionTokens: 10 } });
+  it('propagates a per-generation billing rejection instead of permitting another turn', async () => {
+    const error = Object.assign(new Error('billing requires reconciliation'), { name: 'OpenRouterBillingError' });
+    act.mockRejectedValueOnce(error);
     await expect(executeAssistantStep([prompt], null, options)).rejects.toBe(error);
     expect(act).toHaveBeenCalledTimes(1);
-    expect(deductCredits).toHaveBeenCalledTimes(1);
+    expect(deductCredits).not.toHaveBeenCalled();
   });
 
   it('does not call a model if credit verification is unavailable', async () => {
@@ -370,6 +368,22 @@ describe('parallel nodes and legacy compatibility', () => {
     expect(result).toMatchObject({ isDone: true, executionStatus: 'completed', resumable: false });
   });
 
+  it('does not hide terminal billing failure behind a successful parallel result', async () => {
+    const billingFailure = Object.assign(new Error('billing requires reconciliation'), { name: 'OpenRouterBillingError' });
+    act.mockRejectedValueOnce(billingFailure);
+    await expect(executeAssistantStep([prompt], null, { ...options, expected_results_amount: 2 })).rejects.toBe(billingFailure);
+    expect(act).toHaveBeenCalledTimes(2);
+    expect(deductCredits).not.toHaveBeenCalled();
+  });
+
+  it('does not deduct tokens again from aggregate assistant step usage', async () => {
+    const usage = { promptTokens: 1000000, completionTokens: 2000000, cost: 0.03 };
+    act.mockResolvedValue({ ...execution([{ role: 'assistant', content: 'Finished' }], 'Finished'), usage });
+    const result = await executeAssistantStep([prompt], null, options);
+    expect(result.usage).toEqual(usage);
+    expect(deductCredits).not.toHaveBeenCalled();
+  });
+
   it('pauses instead of replaying fan-out when one branch fails', async () => {
     act.mockRejectedValueOnce(new Error('One branch failed'));
     const result = await executeAssistantStep([prompt], null, { ...options, expected_results_amount: 2 });
@@ -404,5 +418,14 @@ describe('parallel nodes and legacy compatibility', () => {
       prompt: 'Legacy prompt', tools: ['legacy-tool'], toolOverrides: options.tool_overrides,
     });
     expect(from).not.toHaveBeenCalled();
+  });
+
+  it('does not deduct tokens again from aggregate legacy assistant usage', async () => {
+    const usage = { promptTokens: 1000000, completionTokens: 2000000, cost: 0.03 };
+    act.mockResolvedValue({ ...execution([{ role: 'assistant', content: 'Finished' }], 'Finished'), usage });
+    const result = await executeAssistant('Legacy prompt', null, { site_id: 'site-1' });
+    expect(result.usage).toEqual(usage);
+    expect(deductCredits).not.toHaveBeenCalled();
+    expect(requireCredits).toHaveBeenCalledWith('site-1', 0.001);
   });
 });

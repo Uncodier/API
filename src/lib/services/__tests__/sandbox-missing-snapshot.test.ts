@@ -1,4 +1,5 @@
 import { APIError, Sandbox } from '@vercel/sandbox';
+jest.mock('../billing/sandbox-billing',()=>({reconcileSandboxBilling:jest.fn(),retireSandboxBilling:jest.fn()}));
 import { isMissingSandboxSnapshotError, retireSandboxWithoutSnapshots } from '../sandbox-missing-snapshot';
 
 jest.mock('@vercel/sandbox', () => {

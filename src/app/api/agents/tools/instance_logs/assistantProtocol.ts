@@ -29,7 +29,7 @@ export function instanceLogsTool(site_id: string, user_id?: string, instance_id?
         log_type: { type: 'string', description: 'Type of log (e.g. system, agent_action, tool_call). user_action is reserved for authenticated external input. (required for create)' },
         level: { type: 'string', enum: ['info', 'warn', 'error'], description: 'Severity level (e.g. info, warn, error) (required for create)' },
         message: { type: 'string', description: 'Message or detail of the log (required for create)' },
-        details: { type: 'string', description: 'Additional context or metadata in JSON format (optional, as string). Pass a `usage` object (e.g. {"usage": {"prompt_tokens": 10, "completion_tokens": 5}}) to deduct credits.' },
+        details: { type: 'string', description: 'Additional context or metadata in JSON format (optional, as string). Usage metadata is telemetry only; creating logs never deducts credits.' },
         tool_name: { type: 'string', description: 'For tool_call logs: registered tool name (e.g. generate_image). Stored in instance_logs.tool_name.' },
         tool_call_id: { type: 'string', description: 'Optional provider tool call id.' },
         tool_args: { type: 'string', description: 'Tool arguments as JSON string (optional).' },

@@ -201,6 +201,7 @@ export class ToolEvaluator extends Base {
           portkeyResponse = await this.connector.callAgent(messages, modelOptions);
           console.log("[ToolEvaluator] Response received");
         } catch (error: any) {
+          if (error?.name === 'OpenRouterBillingError') throw error;
           // Check if it's a rate limit error
           if (error.message?.includes('Rate limit exceeded') || 
               error.message?.includes('exceeded token rate limit') ||
@@ -494,6 +495,7 @@ export class ToolEvaluator extends Base {
           outputTokens: portkeyUsage.outputTokens
         };
       } catch (error: any) {
+        if (error?.name === 'OpenRouterBillingError') throw error;
         console.error(`[ToolEvaluator] Error evaluating tools: ${error.message}`);
         return {
           status: 'failed',
@@ -501,6 +503,7 @@ export class ToolEvaluator extends Base {
         };
       }
     } catch (error: any) {
+      if (error?.name === 'OpenRouterBillingError') throw error;
       console.error(`[ToolEvaluator] Error in executeCommand: ${error.message}`);
       return {
         status: 'failed',

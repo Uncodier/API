@@ -165,10 +165,24 @@ export interface SessionStore {
   control(id: string, siteId: string, action: 'pause' | 'cancel' | 'resume', message?: string): Promise<HarnessSession | null>;
 }
 
-export interface ModelReply {
+export interface ModelUsage {
+  inputTokens: number;
+  outputTokens: number;
+  /** Provider-reported USD cost, including zero; never inferred from tokens. */
+  cost?: number;
+}
+
+export interface ModelBillingEvidence {
+  usage?: ModelUsage;
+  generationId?: string;
+  model?: string;
+  /** Trusted adapter proof of rejection before any generation was accepted. */
+  admissionRejected?: boolean;
+}
+
+export interface ModelReply extends ModelBillingEvidence {
   message: Message;
   finishReason: 'stop' | 'tool_calls' | 'length';
-  usage?: { inputTokens: number; outputTokens: number };
 }
 
 export interface HarnessModel {

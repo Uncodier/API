@@ -34,6 +34,8 @@ export function loadRuntimeModule<T>(relativePath: string, dependencies: Record<
     crypto: { randomUUID: () => 'local-test-lock-token' },
     setTimeout,
     clearTimeout,
+    setInterval,
+    clearInterval,
   }, { filename });
   return module.exports as T;
 }

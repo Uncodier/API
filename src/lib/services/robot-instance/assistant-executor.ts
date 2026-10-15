@@ -1,7 +1,6 @@
 /** Bounded assistant execution, including resumable canvas node chunks. */
 import { AIAgentExecutor } from '@/lib/custom-automation/ai-agent-executor';
 import { CreditService } from '@/lib/services/billing/CreditService';
-import { isInsufficientCreditsError } from '@/lib/services/billing/credit-exhaustion-message';
 import { describeOpenRouterFailure } from '@/lib/services/ai/openrouter-chat-request';
 import { createAssistantOnStepHandler, batchCreateResponseNodes } from './assistant-logging';
 import { createNodeStreamingCallbacks, createStreamingLogCallbacks, createThinkingStreamLogCallbacks } from './assistant-streaming-logs';
@@ -120,6 +119,11 @@ export async function executeAssistantStep(
             await writer.finish(result);
             return result;
           } catch (err: any) {
+            if (err?.name === 'OpenRouterBillingError') {
+              // Failure telemetry must not replace the terminal billing identity.
+              await writer.fail(err.message).catch(() => {});
+              throw err;
+            }
             await writer.fail(err.message || 'Unknown error');
             console.error(`[Node Executor] Response node ${index + 1}/${expectedResults} failed: ${nodeId}`, err);
             throw err; // Re-throw so Promise.allSettled can catch it
@@ -128,6 +132,10 @@ export async function executeAssistantStep(
 
         // Use Promise.allSettled so we don't abort all if one fails
         const resultsSettled = await Promise.allSettled(parallelPromises);
+        const billingFailure = resultsSettled.find((r): r is PromiseRejectedResult =>
+          r.status === 'rejected' && r.reason?.name === 'OpenRouterBillingError');
+        // Partial fan-out success must not hide uncertain billing or permit a continuation turn.
+        if (billingFailure) throw billingFailure.reason;
         const successfulResults = resultsSettled
           .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled')
           .map(r => r.value);
@@ -244,35 +252,7 @@ export async function executeAssistantStep(
               } : {}),
           };
           
-          // Deduct credits for token usage
-          if (site_id && result.usage && ((result.usage as any).promptTokens || (result.usage as any).input_tokens)) {
-            const inputTokens = ((result.usage as any).promptTokens || (result.usage as any).input_tokens || 0);
-            const outputTokens = ((result.usage as any).completionTokens || (result.usage as any).output_tokens || 0);
-            const totalTokens = inputTokens + outputTokens;
-            
-            const tokensCost = (inputTokens / 1_000_000) * CreditService.PRICING.ASSISTANT_INPUT_TOKEN_MILLION + 
-                               (outputTokens / 1_000_000) * CreditService.PRICING.ASSISTANT_OUTPUT_TOKEN_MILLION;
-            
-            if (tokensCost > 0) {
-              try {
-                await CreditService.deductCredits(
-                  site_id,
-                  tokensCost,
-                  'assistant_tokens',
-                  `Assistant step execution (${totalTokens} tokens)`,
-                  {
-                    tokens: totalTokens,
-                    input_tokens: ((result.usage as any).promptTokens || (result.usage as any).input_tokens || 0),
-                    output_tokens: ((result.usage as any).completionTokens || (result.usage as any).output_tokens || 0)
-                  }
-                );
-              } catch (e) {
-                console.error('Failed to deduct credits for assistant tokens:', e);
-                // Do not run another turn after a confirmed billing rejection.
-                if (isInsufficientCreditsError(e)) throw e;
-              }
-            }
-          }
+          // Per-generation billing is settled by AIAgentExecutor before tools; aggregates are telemetry only.
           
           return result;
   } catch (error: any) {

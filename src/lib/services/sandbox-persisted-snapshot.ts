@@ -15,6 +15,7 @@ import { persistActiveSandboxId } from '@/lib/tools/requirement-status-core';
 import { SANDBOX_EXTEND_AFTER_CREATE_MS, requirementSandboxName } from '@/lib/services/sandbox-constants';
 import { sandboxIdentity } from '@/lib/services/sandbox-sdk';
 import { stopSandboxQuiet } from '@/lib/services/sandbox-stop';
+import { registerSandboxBilling, reconcileSandboxBilling, SandboxBillingError } from '@/lib/services/billing/sandbox-billing';
 import { ensureNpmDeps } from '@/lib/services/sandbox-npm';
 import { fetchOriginBranch, installGitIdentity } from '@/lib/services/sandbox-git-identity';
 import { buildSandboxCreateParams, requirementSandboxTags } from '@/lib/services/sandbox-create-params';
@@ -169,6 +170,7 @@ export async function tryStartFromPersistedSnapshot(params: {
   }
 
   let sandbox: Sandbox;
+  await registerSandboxBilling(requirementSandboxName(requirementId, auditCtx?.instanceId), { kind: 'requirement', id: requirementId, siteId: auditCtx?.siteId });
   try {
     sandbox = await Sandbox.create(buildSandboxCreateParams({
       name: requirementSandboxName(requirementId, auditCtx?.instanceId),
@@ -176,12 +178,14 @@ export async function tryStartFromPersistedSnapshot(params: {
       tags: requirementSandboxTags(requirementId, auditCtx?.instanceId),
       coldCreate: false,
     }) as any);
+    try { await reconcileSandboxBilling(sandbox); } catch (error) { await stopSandboxQuiet(sandbox); throw error; }
     
     if (auditCtx?.instanceId) {
       await persistActiveSandboxId(requirementId, auditCtx.instanceId, sandboxIdentity(sandbox), auditCtx.siteId)
         .catch(e => console.error('[Sandbox] Failed to persist active_sandbox_id from snapshot:', e));
     }
   } catch (e: unknown) {
+    if (e instanceof SandboxBillingError) throw e;
     console.warn(
       '[Sandbox] Sandbox.create(snapshot) failed, falling back to git:',
       e instanceof Error ? e.message : e,
@@ -343,6 +347,7 @@ export async function snapshotAfterSuccessfulPushAndRecreate(params: {
       ),
     );
 
+    await registerSandboxBilling(requirementSandboxName(requirementId, auditCtx?.instanceId), { kind: 'requirement', id: requirementId, siteId: auditCtx?.siteId });
     const replacement = await Sandbox.create(buildSandboxCreateParams({
       name: requirementSandboxName(requirementId, auditCtx?.instanceId),
       snapshotId,
@@ -350,6 +355,7 @@ export async function snapshotAfterSuccessfulPushAndRecreate(params: {
       coldCreate: false,
     }) as any);
     next = replacement;
+    await reconcileSandboxBilling(replacement);
     
     // Inmediatamente después de crear el nuevo, intentamos detener el viejo
     // sin importar si el resto del setup del nuevo falla o tiene éxito.

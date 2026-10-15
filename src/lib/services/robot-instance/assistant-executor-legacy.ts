@@ -1,13 +1,12 @@
 import { AIAgentExecutor } from '@/lib/custom-automation/ai-agent-executor';
 import { CreditService } from '@/lib/services/billing/CreditService';
-import { isInsufficientCreditsError } from '@/lib/services/billing/credit-exhaustion-message';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { createAssistantOnStepHandler } from './assistant-logging';
 import { createStreamingLogCallbacks, createThinkingStreamLogCallbacks } from './assistant-streaming-logs';
 import { prepareAssistantTools, type AssistantExecutionOptions, type AssistantExecutionResult } from './assistant-execution-options';
 
 /**
- * Execute assistant with OpenAI/Azure (no Scrapybara tools)
+ * Execute a legacy assistant through OpenRouter (no Scrapybara tools).
  */
 export async function executeAssistant(
   prompt: string,
@@ -94,35 +93,7 @@ export async function executeAssistant(
 
     if (instance_id) {
 
-      // Deduct credits for token usage
-      let tokensCost = 0;
-      if (result.usage && ((result.usage as any).promptTokens || (result.usage as any).input_tokens)) {
-        const inputTokens = ((result.usage as any).promptTokens || (result.usage as any).input_tokens || 0);
-        const outputTokens = ((result.usage as any).completionTokens || (result.usage as any).output_tokens || 0);
-        const totalTokens = inputTokens + outputTokens;
-        
-        tokensCost = (inputTokens / 1_000_000) * CreditService.PRICING.ASSISTANT_INPUT_TOKEN_MILLION + 
-                     (outputTokens / 1_000_000) * CreditService.PRICING.ASSISTANT_OUTPUT_TOKEN_MILLION;
-        
-        if (tokensCost > 0 && site_id) {
-          try {
-            await CreditService.deductCredits(
-              site_id,
-              tokensCost,
-              'assistant_tokens',
-              `Assistant execution (${totalTokens} tokens)`,
-              {
-                tokens: totalTokens,
-                input_tokens: ((result.usage as any).promptTokens || (result.usage as any).input_tokens || 0),
-                output_tokens: ((result.usage as any).completionTokens || (result.usage as any).output_tokens || 0)
-              }
-            );
-          } catch (e) {
-            console.error('Failed to deduct credits for assistant tokens:', e);
-            if (isInsufficientCreditsError(e)) throw e;
-          }
-        }
-      }
+      // Execution summary logs must not charge already-settled provider generations again.
 
       await supabaseAdmin.from('instance_logs').insert({
         log_type: 'execution_summary',

@@ -1,4 +1,6 @@
-import type { Sandbox } from '@vercel/sandbox';
+import { Sandbox } from '@vercel/sandbox';
+import { registerSandboxBilling, reconcileSandboxBilling, SandboxBillingError } from '@/lib/services/billing/sandbox-billing';
+import { stopSandboxQuiet } from '@/lib/services/sandbox-stop';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import { persistActiveSandboxId } from '@/lib/tools/requirement-status-core';
 import { getSandboxHandle, sandboxIdentity } from '@/lib/services/sandbox-sdk';
@@ -22,15 +24,19 @@ async function tryGetSandbox(sandboxId: string, fastAttach = false): Promise<{
   let delayMs = 1000;
   for (let attempt = 0; attempt < GET_SANDBOX_ATTEMPTS; attempt++) {
     try {
-      const sandbox = await getSandboxHandle(sandboxId);
+      let sandbox = await getSandboxHandle(sandboxId);
+      await reconcileSandboxBilling(sandbox);
       const fastSessionId = fastAttach ? runningSessionId(sandbox) : null;
       
       // Explicitly resume the sandbox bypassing runCommand's "use step" wrapper.
       // This avoids a 3-retry loop in the Vercel Workflows engine when the sandbox is dead (410).
-      if (!fastSessionId && typeof (sandbox as any).resume === 'function') {
+      if (!fastSessionId) {
         try {
-          await (sandbox as any).resume();
+          sandbox = await Sandbox.get({ name: sandbox.name, resume: true,
+            onResume: async resumed => { await reconcileSandboxBilling(resumed); } });
+          await reconcileSandboxBilling(sandbox);
         } catch (resumeErr: any) {
+          await stopSandboxQuiet(sandbox);
           if (resumeErr?.response?.status === 410 || String(resumeErr?.message).includes('410')) {
             console.warn(`[Sandbox] Not reusing ${sandboxId}: sandbox dead (410)`);
             return null; // Don't retry getting a dead sandbox
@@ -41,6 +47,7 @@ async function tryGetSandbox(sandboxId: string, fastAttach = false): Promise<{
       
       return { sandbox, fastSessionId };
     } catch (e: unknown) {
+      if (e instanceof SandboxBillingError) throw e; // Billing outages never authorize replacement VMs.
       if (attempt < GET_SANDBOX_ATTEMPTS - 1) {
         console.warn(`[Sandbox] tryGetSandbox attempt ${attempt + 1} failed for ${sandboxId}. Retrying in ${delayMs}ms...`);
         await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
@@ -103,6 +110,7 @@ export async function connectOrRecreateRequirementSandbox(params: {
   branchName: string;
 }> {
   const { sandboxId, requirementId, instanceType, title, audit } = params;
+  await registerSandboxBilling(sandboxId, { kind: 'requirement', id: requirementId, siteId: audit?.siteId });
 
   const connected = await tryGetSandbox(sandboxId, params.fastAttach);
   const sandbox = connected?.sandbox;

@@ -24,6 +24,7 @@
  */
 
 import type OpenAI from 'openai';
+import { randomUUID } from 'node:crypto';
 import { createOpenRouterClient, isOpenRouterReasoningModel, resolveOpenRouterModel } from '@/lib/services/ai/openrouter';
 import { requestOpenRouterChat, resolveChatOutputTokens } from '@/lib/services/ai/openrouter-chat-request';
 import { fitInstanceRequest, resolveModelContextCapacity } from '@/lib/services/robot-instance/instance-context-budget';
@@ -38,6 +39,36 @@ import {
 } from './azure-vision-message-sanitize';
 import { sanitizeMessagesForGemini } from './gemini-message-sanitize';
 import { coerceToolArgs } from './coerce-tool-args';
+
+/** Never allow billing failures to be converted into a success or another model turn. */
+class OpenRouterBillingError extends Error {
+  constructor() {
+    super('OpenRouter credit deduction unconfirmed; billing requires reconciliation');
+    this.name = 'OpenRouterBillingError';
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+async function settleCompletion(siteId: string | undefined, eventId: string, usage: unknown, generationId?: string, model?: string) {
+  if (!siteId) return;
+  try {
+    const { chargeOpenRouterUsage } = await import('@/lib/services/billing/openrouter-usage-billing');
+    await chargeOpenRouterUsage({ siteId, eventId, usage, generationId,
+      metadata: { model, context: 'custom-automation' } });
+  } catch {
+    throw new OpenRouterBillingError();
+  }
+}
+
+async function settleUncertainRequest(siteId: string | undefined, eventId: string, error: any, model: string) {
+  const body = error?.error;
+  const generationId = error?.generationId || body?.generation_id || body?.metadata?.generation_id;
+  const usage = error?.usage || body?.usage;
+  const rejectedBeforeConnection = ['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED'].includes(error?.cause?.code);
+  if (generationId || usage || (!rejectedBeforeConnection && (typeof error?.status !== 'number' || error.status === 408))) {
+    await settleCompletion(siteId, eventId, usage, generationId, model);
+  }
+}
 
 /**
  * Detects whether a string looks like a raw base64 encoded raster image (PNG, JPEG, GIF, WEBP)
@@ -525,6 +556,7 @@ export class AIAgentExecutor {
       ) => Promise<void>;
       onReasoningTokensUsed?: (count: number) => Promise<void>;
     },
+    billing: { siteId?: string; eventId: string },
   ): Promise<{
     message: any;
     generationId?: string;
@@ -538,9 +570,10 @@ export class AIAgentExecutor {
       stream: true,
       stream_options: { include_usage: true },
     };
-    const stream = await requestOpenRouterChat(opts, request => this.client.chat.completions.create(request as any)).catch(err => {
+    const stream = await requestOpenRouterChat(opts, request => this.client.chat.completions.create(request as any)).catch(async err => {
       console.error(`[AI STREAM INIT ERROR][${this.provider}] Provider stream unavailable`);
       if (err.status) console.error(`   Status: ${err.status}`);
+      await settleUncertainRequest(billing.siteId, billing.eventId, err, completionOptions.model);
       throw err;
     });
 
@@ -565,104 +598,110 @@ export class AIAgentExecutor {
     let lastEmitTime = 0;
     let lastThinkingEmitTime = 0;
 
-    for await (const chunk of stream as unknown as AsyncIterable<any>) {
-      if (chunk.error || chunk.choices?.[0]?.finish_reason === 'error') {
-        // An SSE error belongs to an accepted generation, not request admission.
-        throw new Error('OpenRouter stream failed after acceptance; reconcile before retrying.');
-      }
-      if (chunk.id) generationId = chunk.id;
-      if (chunk.model) responseModel = chunk.model;
-      if (chunk.usage) {
-        usage = chunk.usage;
-      }
-
-      const choice = chunk.choices?.[0];
-      if (!choice) continue;
-
-      if (choice.finish_reason) {
-        finishReason = choice.finish_reason;
-      }
-
-      const delta = choice.delta || {};
-
-      // OpenRouter reasoning blocks carry encrypted state required for tool replay.
-      // Merge streamed fragments by their index; never expose these as tool arguments.
-      for (const detail of delta.reasoning_details || []) {
-        const previous = detail.index !== undefined
-          ? reasoningDetails.find(value => value.index === detail.index && value.type === detail.type)
-          : undefined;
-        if (!previous) reasoningDetails.push({ ...detail });
-        else {
-          const fragments = Object.fromEntries(['text', 'data', 'summary', 'signature']
-            .filter(key => typeof detail[key] === 'string')
-            .map(key => [key, (previous[key] || '') + detail[key]]));
-          Object.assign(previous, detail, fragments);
+    try {
+      for await (const chunk of stream as unknown as AsyncIterable<any>) {
+        if (chunk.id) generationId = chunk.id;
+        if (chunk.model) responseModel = chunk.model;
+        if (chunk.usage) {
+          usage = chunk.usage;
         }
-      }
+        if (chunk.error || chunk.choices?.[0]?.finish_reason === 'error') {
+          // An SSE error belongs to an accepted generation, not request admission.
+          throw new Error('OpenRouter stream failed after acceptance; reconcile before retrying.');
+        }
 
-      const reasoningDelta = typeof delta.reasoning_content === 'string' ? delta.reasoning_content : (typeof delta.reasoning === 'string' ? delta.reasoning : '');
-      if (reasoningDelta && callbacks.onThinkingStreamStart && callbacks.onThinkingStreamChunk) {
-        reasoningContent += reasoningDelta;
-        if (!thinkingLogId) {
-          thinkingLogId = await callbacks.onThinkingStreamStart();
-        }
-        const now = Date.now();
-        if (now - lastThinkingEmitTime >= STREAM_THROTTLE_MS && thinkingLogId) {
-          lastThinkingEmitTime = now;
-          await callbacks.onThinkingStreamChunk(thinkingLogId, reasoningContent);
-        }
-      }
+        const choice = chunk.choices?.[0];
+        if (!choice) continue;
 
-      if (typeof delta.content === 'string' && delta.content) {
-        content += delta.content;
-        if (!streamingLogId) {
-          streamingLogId = await callbacks.onStreamStart();
+        if (choice.finish_reason) {
+          finishReason = choice.finish_reason;
         }
-        const now = Date.now();
-        if (now - lastEmitTime >= STREAM_THROTTLE_MS && streamingLogId) {
-          lastEmitTime = now;
-          await callbacks.onStreamChunk(streamingLogId, content);
-        }
-      }
 
-      if (Array.isArray(delta.tool_calls)) {
-        for (const tc of delta.tool_calls) {
-          // Gemini's OpenAI-compat layer often omits `index` on tool_call deltas.
-          // Falling back to `?? 0` collapses unrelated tool calls into the same
-          // slot and concatenates their `arguments` strings (e.g. `{...}{...}`),
-          // which then explodes in JSON.parse downstream.
-          // Use `tc.id` to disambiguate when available; only fall back to 0
-          // when there is truly nothing else.
-          let idx: number | string;
-          if (typeof tc.index === 'number') {
-            idx = tc.index;
-          } else if (tc.id) {
-            idx = `id:${tc.id}`;
-          } else {
-            // Reuse last seen slot if we have one with a name but no closing
-            // (continuation chunk); otherwise start a new one.
-            const keys = Object.keys(toolCallsAccum);
-            idx = keys.length > 0 ? keys[keys.length - 1] : 0;
-          }
-          if (!toolCallsAccum[idx]) {
-            toolCallsAccum[idx] = { type: 'function', function: {}, insertedAt: insertionCounter++ };
-          }
-          if (tc.id) toolCallsAccum[idx].id = tc.id;
-          if (tc.function?.name) toolCallsAccum[idx].function!.name = tc.function.name;
-          if (tc.function?.arguments) {
-            toolCallsAccum[idx].function!.arguments = (toolCallsAccum[idx].function!.arguments || '') + (tc.function.arguments || '');
-          }
-          // Gemini 3: preserve vendor extras (thought_signature). Later
-          // deltas may replace/extend the object — keep the most recent
-          // complete value.
-          if (tc.extra_content && typeof tc.extra_content === 'object') {
-            toolCallsAccum[idx].extra_content = {
-              ...(toolCallsAccum[idx].extra_content || {}),
-              ...tc.extra_content,
-            };
+        const delta = choice.delta || {};
+
+        // OpenRouter reasoning blocks carry encrypted state required for tool replay.
+        // Merge streamed fragments by their index; never expose these as tool arguments.
+        for (const detail of delta.reasoning_details || []) {
+          const previous = detail.index !== undefined
+            ? reasoningDetails.find(value => value.index === detail.index && value.type === detail.type)
+            : undefined;
+          if (!previous) reasoningDetails.push({ ...detail });
+          else {
+            const fragments = Object.fromEntries(['text', 'data', 'summary', 'signature']
+              .filter(key => typeof detail[key] === 'string')
+              .map(key => [key, (previous[key] || '') + detail[key]]));
+            Object.assign(previous, detail, fragments);
           }
         }
+
+        const reasoningDelta = typeof delta.reasoning_content === 'string' ? delta.reasoning_content : (typeof delta.reasoning === 'string' ? delta.reasoning : '');
+        if (reasoningDelta && callbacks.onThinkingStreamStart && callbacks.onThinkingStreamChunk) {
+          reasoningContent += reasoningDelta;
+          if (!thinkingLogId) {
+            thinkingLogId = await callbacks.onThinkingStreamStart();
+          }
+          const now = Date.now();
+          if (now - lastThinkingEmitTime >= STREAM_THROTTLE_MS && thinkingLogId) {
+            lastThinkingEmitTime = now;
+            await callbacks.onThinkingStreamChunk(thinkingLogId, reasoningContent);
+          }
+        }
+
+        if (typeof delta.content === 'string' && delta.content) {
+          content += delta.content;
+          if (!streamingLogId) {
+            streamingLogId = await callbacks.onStreamStart();
+          }
+          const now = Date.now();
+          if (now - lastEmitTime >= STREAM_THROTTLE_MS && streamingLogId) {
+            lastEmitTime = now;
+            await callbacks.onStreamChunk(streamingLogId, content);
+          }
+        }
+
+        if (Array.isArray(delta.tool_calls)) {
+          for (const tc of delta.tool_calls) {
+            // Gemini's OpenAI-compat layer often omits `index` on tool_call deltas.
+            // Falling back to `?? 0` collapses unrelated tool calls into the same
+            // slot and concatenates their `arguments` strings (e.g. `{...}{...}`),
+            // which then explodes in JSON.parse downstream.
+            // Use `tc.id` to disambiguate when available; only fall back to 0
+            // when there is truly nothing else.
+            let idx: number | string;
+            if (typeof tc.index === 'number') {
+              idx = tc.index;
+            } else if (tc.id) {
+              idx = `id:${tc.id}`;
+            } else {
+              // Reuse last seen slot if we have one with a name but no closing
+              // (continuation chunk); otherwise start a new one.
+              const keys = Object.keys(toolCallsAccum);
+              idx = keys.length > 0 ? keys[keys.length - 1] : 0;
+            }
+            if (!toolCallsAccum[idx]) {
+              toolCallsAccum[idx] = { type: 'function', function: {}, insertedAt: insertionCounter++ };
+            }
+            if (tc.id) toolCallsAccum[idx].id = tc.id;
+            if (tc.function?.name) toolCallsAccum[idx].function!.name = tc.function.name;
+            if (tc.function?.arguments) {
+              toolCallsAccum[idx].function!.arguments = (toolCallsAccum[idx].function!.arguments || '') + (tc.function.arguments || '');
+            }
+            // Gemini 3: preserve vendor extras (thought_signature). Later
+            // deltas may replace/extend the object — keep the most recent
+            // complete value.
+            if (tc.extra_content && typeof tc.extra_content === 'object') {
+              toolCallsAccum[idx].extra_content = {
+                ...(toolCallsAccum[idx].extra_content || {}),
+                ...tc.extra_content,
+              };
+            }
+          }
+        }
       }
+
+    } finally {
+      // Settle before parsing tool arguments or any final callback, even on stream/callback failure.
+      await settleCompletion(billing.siteId, billing.eventId, usage, generationId, responseModel || completionOptions.model);
     }
 
     if (streamingLogId && content) {
@@ -712,6 +751,9 @@ export class AIAgentExecutor {
    * Main execution method that mimics Scrapybara's act() functionality
    */
   async act(options: ActOptions): Promise<ActResponse> {
+    if (this.siteId && options.siteId && this.siteId !== options.siteId) {
+      throw new Error('OpenRouter billing site does not match executor ownership');
+    }
     const {
       model,
       tools,
@@ -980,6 +1022,8 @@ export class AIAgentExecutor {
         console.log(`🔍 [DEBUG][${provider}] API Payload Options:`, JSON.stringify(optsForLog, null, 2));
 
         let response: { message: any; usage?: any; finish_reason?: string; generationId?: string; model?: string };
+        const eventId = randomUUID();
+        const billingSiteId = options.siteId || this.siteId;
 
         if (useStreamingPath) {
           try {
@@ -994,7 +1038,8 @@ export class AIAgentExecutor {
             }
             response = await this.runStreamingCompletion(
               completionOptions,
-              streamCallbacks
+              streamCallbacks,
+              { siteId: billingSiteId, eventId },
             );
           } catch (streamError: any) {
             logChatCompletionFailure(streamError, {
@@ -1018,6 +1063,7 @@ export class AIAgentExecutor {
           try {
             completion = await requestOpenRouterChat(completionOptions, request => this.client.chat.completions.create(request as any));
           } catch (apiErr: any) {
+            await settleUncertainRequest(billingSiteId, eventId, apiErr, modelName);
             if (provider === 'azure' && isAzureInvalidImageError(apiErr)) {
               sanitizeMessagesForAzureVisionImages(messages);
               completion = await this.client.chat.completions.create(completionOptions);
@@ -1038,7 +1084,12 @@ export class AIAgentExecutor {
           const apiDuration = apiEndTime - apiStartTime;
           console.log(`⏱️ [TIMING][${provider}] Response received in ${apiDuration}ms (${(apiDuration/1000).toFixed(1)}s)`);
 
-          const choice = completion.choices[0];
+          await settleCompletion(billingSiteId, eventId, completion?.usage, completion?.id, completion?.model || modelName);
+          const choice = completion?.choices?.[0];
+          if ((completion as any)?.error || (choice as any)?.finish_reason === 'error') {
+            throw new Error('OpenRouter completion failed after acceptance');
+          }
+          if (!choice?.message) throw new Error('OpenRouter completion message is missing');
           response = {
             message: choice.message,
             usage: completion.usage,
@@ -1323,6 +1374,7 @@ export class AIAgentExecutor {
                     result = await tool.execute(toolCall.args);
                     break;
                   } catch (e: any) {
+                    if (e?.name === 'OpenRouterBillingError') throw e;
                     if (e?.name === 'RecoveryError') throw e;
                     executeAttempts++;
                     const msg = e.message || '';
@@ -1451,6 +1503,7 @@ export class AIAgentExecutor {
               console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOL_MSG] ✅ Added tool message for ${toolCall.toolCallId}`);
 
             } catch (error: any) {
+              if (error?.name === 'OpenRouterBillingError') throw error;
               // A lost owner or unpersisted observation is not proof the tool failed.
               // Stop the turn without retrying or inventing a failed tool reply.
               if (error?.name === 'RecoveryError') throw error;
@@ -1601,6 +1654,7 @@ export class AIAgentExecutor {
         console.log(`₍ᐢ•(ܫ)•ᐢ₎ [EXECUTOR] Continuing to next iteration...`);
 
       } catch (error: any) {
+        if (error?.name === 'OpenRouterBillingError') throw error;
         if (error?.name === 'RecoveryError') throw error;
         console.error('[AI EXECUTOR] Execution stopped after an error');
 

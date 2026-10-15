@@ -14,6 +14,9 @@ import {
   workflowSandboxName,
 } from './workspace-identity';
 import { normalizeBrowserAllowedDomains } from './browser-domains';
+import { registerSandboxBilling, reconcileSandboxBilling } from '@/lib/services/billing/sandbox-billing';
+import { stopSandboxQuiet } from '@/lib/services/sandbox-stop';
+import { isSandboxNotFoundError } from '@/lib/services/sandbox-missing-snapshot';
 
 export async function persistWorkflowRunSandboxId(runPlanId: string, sandboxId: string): Promise<void> {
   const { data, error: readError } = await supabaseAdmin
@@ -57,6 +60,8 @@ export async function ensureWorkflowSandbox(params: {
   if (runPlanError || !runPlan) {
     throw new Error('Workflow run plan could not be loaded.');
   }
+  if ((params.siteId && params.siteId !== runPlan.site_id) ||
+    (params.instanceId && params.instanceId !== runPlan.instance_id)) throw new Error('Workflow owner scope mismatch');
 
   const instanceId = params.instanceId || runPlan?.instance_id;
   if (!instanceId) {
@@ -110,7 +115,7 @@ export async function ensureWorkflowSandbox(params: {
     );
   }
   const toolsContext = {
-    site_id: params.siteId || runPlan?.site_id,
+    site_id: runPlan.site_id,
     instance_id: instanceId,
     browser_enabled: params.requiresBrowser === true,
     browser_session: workflowBrowserSession(params.runPlanId),
@@ -130,14 +135,22 @@ export async function ensureWorkflowSandbox(params: {
   });
 
   const storedId = (runPlan?.metadata as { active_sandbox_id?: string } | null)?.active_sandbox_id;
+  const name = storedId || workflowSandboxName(params.runPlanId);
+  await registerSandboxBilling(name, { kind:'workflow', id:params.runPlanId, siteId:runPlan.site_id });
   if (storedId) {
     let sandbox: Sandbox | null = null;
     try {
       sandbox = await getSandboxHandle(storedId);
-    } catch {
+    } catch (error) {
+      if (!isSandboxNotFoundError(error)) throw error; // Never replace on transport/auth/billing outage.
       console.warn(`[WorkflowSandbox] Stored sandbox ${storedId} is gone; creating a new one`);
     }
     if (sandbox) {
+      try {
+        await reconcileSandboxBilling(sandbox);
+        sandbox = await Sandbox.get({ name:sandbox.name, resume:true, onResume:async resumed => { await reconcileSandboxBilling(resumed); } });
+        await reconcileSandboxBilling(sandbox);
+      } catch (error) { await stopSandboxQuiet(sandbox); throw error; }
       if (params.requiresBrowser) {
         await ensureWorkflowBrowserReady(
           sandbox,
@@ -151,6 +164,8 @@ export async function ensureWorkflowSandbox(params: {
   const browserSnapshotId = params.requiresBrowser
     ? process.env.AGENT_BROWSER_SNAPSHOT_ID?.trim()
     : undefined;
+  // A historical provider id can differ from the canonical replacement name.
+  await registerSandboxBilling(workflowSandboxName(params.runPlanId), { kind:'workflow', id:params.runPlanId, siteId:runPlan.site_id });
   const sandbox = await Sandbox.create(buildSandboxCreateParams({
     name: workflowSandboxName(params.runPlanId),
     snapshotId: browserSnapshotId || undefined,
@@ -162,8 +177,9 @@ export async function ensureWorkflowSandbox(params: {
   }) as Record<string, unknown>);
 
   const sandboxId = sandboxIdentity(sandbox);
-  await persistWorkflowRunSandboxId(params.runPlanId, sandboxId);
   try {
+    await reconcileSandboxBilling(sandbox);
+    await persistWorkflowRunSandboxId(params.runPlanId, sandboxId);
     if (params.requiresBrowser) {
       await ensureWorkflowBrowserReady(
         sandbox,
@@ -171,7 +187,7 @@ export async function ensureWorkflowSandbox(params: {
       );
     }
   } catch (error) {
-    await sandbox.stop().catch(() => undefined);
+    await stopSandboxQuiet(sandbox);
     throw error;
   }
   return buildResult(sandbox, sandboxId);
@@ -181,8 +197,8 @@ export async function stopWorkflowSandbox(sandboxId: string | null | undefined):
   if (!sandboxId) return;
   try {
     const sandbox = await getSandboxHandle(sandboxId);
-    await sandbox.stop();
+    await stopSandboxQuiet(sandbox);
   } catch (e) {
-    console.warn('[WorkflowSandbox] stop skipped:', e instanceof Error ? e.message : e);
+    console.warn('[WorkflowSandbox] Stop could not complete; cleanup remains pending.');
   }
 }

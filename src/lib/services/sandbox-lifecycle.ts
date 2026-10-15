@@ -3,6 +3,8 @@ import { getSandboxHandle, sandboxSdkMajor } from '@/lib/services/sandbox-sdk';
 import { stopSandboxQuiet } from '@/lib/services/sandbox-stop';
 import { requirementSandboxName } from '@/lib/services/sandbox-constants';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { reconcileSandboxBillingQuiet, retireSandboxBilling } from '@/lib/services/billing/sandbox-billing';
+import { isSandboxNotFoundError } from '@/lib/services/sandbox-missing-snapshot';
 
 /**
  * Terminal cleanup: delete the named sandbox and its leftover snapshots.
@@ -13,21 +15,27 @@ export async function deleteSandboxAndOrphans(idOrName: string): Promise<void> {
   if (!id) return;
   try {
     const sandbox = await getSandboxHandle(id);
+    // Retain the provider history until its final VM interval is settled. Stop
+    // first; deleting a live resource would destroy the only stop timestamps.
+    if (!await stopSandboxQuiet(sandbox)) return;
+    if (!await reconcileSandboxBillingQuiet(sandbox)) return;
     const del = (sandbox as Sandbox & { delete?: (opts?: { deleteOrphanSnapshots?: boolean }) => Promise<void> }).delete;
     if (typeof del === 'function') {
+      await retireSandboxBilling(sandbox.name,'begin');
       await del.call(sandbox, { deleteOrphanSnapshots: true });
+      await retireSandboxBilling(sandbox.name,'finish');
       return;
     }
     await stopSandboxQuiet(sandbox);
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    if (msg.includes('not found') || msg.includes('404')) {
-      // It's already gone or never existed, which is fine for cleanup
+    if (isSandboxNotFoundError(e)) {
+      // Only durable, fully-settled pre-delete intent can retire a missing VM.
+      await retireSandboxBilling(id,'finish').catch(() => undefined);
       return;
     }
     console.warn(
       `[Sandbox] deleteSandboxAndOrphans skipped for ${id}:`,
-      msg,
+      'Provider cleanup details intentionally omitted.',
     );
   }
 }

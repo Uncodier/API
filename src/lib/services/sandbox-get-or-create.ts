@@ -6,6 +6,8 @@ import { resumeRequirementWorkspace } from '@/lib/services/sandbox-on-resume';
 import { assertPlatformGitLayout } from '@/lib/services/sandbox-git-layout';
 import { isMissingSandboxSnapshotError, isSandboxNotFoundError, retireSandboxWithoutSnapshots } from '@/lib/services/sandbox-missing-snapshot';
 import { logCronInfrastructureEvent, type CronAuditContext } from '@/lib/services/cron-audit-log';
+import { registerSandboxBilling, reconcileSandboxBilling } from '@/lib/services/billing/sandbox-billing';
+import { stopSandboxQuiet } from '@/lib/services/sandbox-stop';
 
 export type GetOrCreateResult = {
   sandbox: Sandbox;
@@ -26,6 +28,8 @@ export async function getOrCreateRequirementSandbox(params: {
   audit?: CronAuditContext;
 }): Promise<GetOrCreateResult | null> {
   if (sandboxSdkMajor() < 3) return null;
+  if (!params.requirementId) throw new Error('Trusted requirement owner is required for sandbox billing');
+  await registerSandboxBilling(params.name, { kind: 'requirement', id: params.requirementId, siteId: params.audit?.siteId });
   let created = false;
   let workspaceCallbackStarted = false;
   const options = {
@@ -38,11 +42,13 @@ export async function getOrCreateRequirementSandbox(params: {
       onCreate: async (sbx: Sandbox) => {
         workspaceCallbackStarted = true;
         created = true;
+        try { await reconcileSandboxBilling(sbx); } catch (error) { await stopSandboxQuiet(sbx); throw error; }
         await cloneRepoIntoWorkDir(sbx, params.authRepoUrl);
         await assertPlatformGitLayout(sbx);
       },
       onResume: async (sbx: Sandbox) => {
         workspaceCallbackStarted = true;
+        await reconcileSandboxBilling(sbx); // Also covers later implicit SDK resumes.
         try {
           await resumeRequirementWorkspace(sbx, undefined, {
             authRepoUrl: params.authRepoUrl,
@@ -61,13 +67,20 @@ export async function getOrCreateRequirementSandbox(params: {
     // Do not use SDK getOrCreate: it silently deletes on 410 before our guards.
     let existing: Sandbox;
     try {
-      existing = await Sandbox.get({ name: params.name, resume: true });
+      existing = await Sandbox.get({ name: params.name, resume: false,
+        onResume: async resumed => { await reconcileSandboxBilling(resumed); } });
     } catch (error) {
       if (!isSandboxNotFoundError(error)) throw error;
       const sandbox = await Sandbox.create(options);
       await options.onCreate(sandbox);
       return sandbox;
     }
+    try {
+      await reconcileSandboxBilling(existing);
+      existing = await Sandbox.get({ name: params.name, resume: true,
+        onResume: async resumed => { await reconcileSandboxBilling(resumed); } });
+      await reconcileSandboxBilling(existing);
+    } catch (error) { await stopSandboxQuiet(existing); throw error; }
     await options.onResume(existing);
     return existing;
   };
@@ -86,6 +99,7 @@ export async function getOrCreateRequirementSandbox(params: {
       details: { sandboxId: params.name, workspaceRecovered: false },
     });
     await params.assertRecoveryOwnership();
+    await registerSandboxBilling(params.name, { kind:'requirement',id:params.requirementId!,siteId:params.audit?.siteId });
     const sandbox = await getOrCreate();
     return { sandbox, created };
   }

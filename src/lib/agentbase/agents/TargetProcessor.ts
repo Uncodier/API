@@ -183,6 +183,7 @@ export class TargetProcessor extends Base {
         try {
           llmResponse = await this.connector.callAgent(workingMessages, modelOptions);
         } catch (error: any) {
+          if (error?.name === 'OpenRouterBillingError') throw error;
           if (error.message?.includes('Rate limit exceeded') ||
             error.message?.includes('exceeded token rate limit') ||
             error.message?.includes('AIServices S0 pricing tier')) {
@@ -329,6 +330,7 @@ export class TargetProcessor extends Base {
       // Return result
       return finalResult;
     } catch (error: any) {
+      if (error?.name === 'OpenRouterBillingError') throw error;
       console.error(`[TargetProcessor] Error processing target: ${error.message}`);
       return {
         status: 'failed',

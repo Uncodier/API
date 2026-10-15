@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
-import type { Sandbox } from '@vercel/sandbox';
+import { Sandbox } from '@vercel/sandbox';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -14,6 +14,9 @@ import { verifyPlatformGitLayout } from '../sandbox-git-layout';
 import { deleteRequirementSandboxes } from '../sandbox-lifecycle';
 
 jest.mock('../sandbox-sdk', () => ({ getSandboxHandle: jest.fn(), sandboxIdentity: (s: { name: string }) => s.name }));
+jest.mock('@vercel/sandbox', () => ({ Sandbox: { get: jest.fn() } }));
+jest.mock('../billing/sandbox-billing', () => ({ registerSandboxBilling: jest.fn(), reconcileSandboxBilling: jest.fn(), SandboxBillingError: class extends Error {} }));
+jest.mock('../sandbox-stop', () => ({ stopSandboxQuiet: jest.fn() }));
 jest.mock('../sandbox-on-resume', () => ({ warmStartNamedSandbox: jest.fn() }));
 jest.mock('../sandbox-service', () => ({ SandboxService: { getCurrentBranch: jest.fn(), createRequirementSandbox: jest.fn() } }));
 jest.mock('../sandbox-git-layout', () => ({ verifyPlatformGitLayout: jest.fn(), isFatalGitLayoutReason: (reason: string) => /nested/.test(reason) }));
@@ -37,6 +40,7 @@ function fixture(status = 'running') {
   const resume = jest.fn(async () => { session.status = 'running'; session.sessionId = 'session-new'; });
   const sandbox = { name: 'sandbox-1', currentSession: () => session, runCommand, resume } as unknown as Sandbox;
   get.mockResolvedValue(sandbox);
+  jest.mocked(Sandbox.get).mockImplementation(async () => { await resume(); return sandbox; });
   return { sandbox, session, runCommand, resume, stdout };
 }
 

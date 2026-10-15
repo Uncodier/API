@@ -362,8 +362,10 @@ export class CreditService {
     PERSON_ROLE_SEARCH: 0.1,
     PLACES_SEARCH: 0.1,
     WEB_SEARCH: 0.1, // Existing commercial rate; Azure provider usage is reported separately.
-    ASSISTANT_INPUT_TOKEN_MILLION: 1.0, // 1 credit per million input tokens
-    ASSISTANT_OUTPUT_TOKEN_MILLION: 20.0, // 20 credits per million output tokens
+    // Compatibility estimates only. Final agent billing uses usage.cost × 1.25,
+    // never token counts; see agent-pricing.ts and openrouter-usage-billing.ts.
+    ASSISTANT_INPUT_TOKEN_MILLION: 1.0,
+    ASSISTANT_OUTPUT_TOKEN_MILLION: 20.0,
     SANDBOX_HOUR: 0.5, // 0.5 credits per hour of sandbox usage
     IMAGE_GENERATION: 0.1,
     VIDEO_GENERATION_MINUTE: 24.0, // Veo 3.1 Standard: $0.40/sec = $24/min. (1 credit = $1)

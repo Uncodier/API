@@ -75,6 +75,13 @@ jest.mock('@/lib/services/sandbox-sdk', () => ({
   sandboxIdentity: jest.fn(() => 'replacement-sandbox'),
 }));
 
+// This suite exercises gate decisions, not provider lifecycle/retirement I/O.
+jest.mock('@/lib/services/sandbox-missing-snapshot', () => ({
+  isSandboxNotFoundError: jest.fn(() => false),
+  isMissingSandboxSnapshotError: jest.fn(() => false),
+  retireSandboxWithoutSnapshots: jest.fn(),
+}));
+
 jest.mock('../gate-failure-healing', () => ({
   applyGateFailureHealing: jest.fn(),
 }));

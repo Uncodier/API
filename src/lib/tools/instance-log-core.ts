@@ -1,5 +1,4 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { CreditService } from '@/lib/services/billing/CreditService';
 
 function parseJsonIfString<T>(value: T | string | undefined): T | undefined {
   if (value === undefined) return undefined;
@@ -119,31 +118,7 @@ export async function createInstanceLogCore(params: CreateInstanceLogParams) {
 
   const totalTokens = inputTokens + outputTokens;
 
-  if (totalTokens > 0) {
-    const tokensCost =
-      (inputTokens / 1_000_000) * CreditService.PRICING.ASSISTANT_INPUT_TOKEN_MILLION +
-      (outputTokens / 1_000_000) * CreditService.PRICING.ASSISTANT_OUTPUT_TOKEN_MILLION;
-
-    if (tokensCost > 0) {
-      try {
-        await CreditService.deductCredits(
-          site_id,
-          tokensCost,
-          'assistant_tokens',
-          `Assistant execution (${totalTokens} tokens)`,
-          {
-            tokens: totalTokens,
-            input_tokens: inputTokens,
-            output_tokens: outputTokens,
-            instance_id: instance_id || 'unknown',
-            log_type,
-          },
-        );
-      } catch (e) {
-        console.error('Failed to deduct credits for instance_log tokens:', e);
-      }
-    }
-  }
+  // Caller/model-provided logs are telemetry, never a trusted billing source.
 
   const insertRow: Record<string, unknown> = {
     site_id,
@@ -157,6 +132,7 @@ export async function createInstanceLogCore(params: CreateInstanceLogParams) {
       tokens_used ||
       (details && typeof details === 'object' && details.usage
         ? {
+            ...details.usage,
             promptTokens: inputTokens,
             completionTokens: outputTokens,
             totalTokens: totalTokens,

@@ -49,6 +49,7 @@ const { createRequirementSandbox } = loadRuntimeModule<typeof import('../sandbox
     '@/lib/services/sandbox-git-clone': { cloneRepoIntoWorkDir: clone },
     '@/lib/services/sandbox-service': { SandboxService: { getCurrentBranch: branch, syncTrackedBranchToRemoteTip: sync } },
     '@/app/api/cron/shared/cron-execution-ownership': { assertCronExecutionOwnership: assertOwner },
+    '@/lib/services/billing/sandbox-billing': { registerSandboxBilling: jest.fn(), reconcileSandboxBilling: jest.fn() },
   },
 );
 

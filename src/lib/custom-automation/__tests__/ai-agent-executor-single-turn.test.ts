@@ -1,4 +1,5 @@
 import { jest } from '@jest/globals';
+import { randomUUID } from 'node:crypto';
 import * as openrouter from '@/lib/services/ai/openrouter';
 import * as chatRequest from '@/lib/services/ai/openrouter-chat-request';
 import * as zod from 'zod';
@@ -17,6 +18,7 @@ class OfflineOpenAI {
 
 const { AIAgentExecutor } = loadRuntimeModule<typeof import('../ai-agent-executor')>(
   'src/lib/custom-automation/ai-agent-executor.ts', {
+    'node:crypto': { randomUUID },
     openai: OfflineOpenAI,
     '@/lib/services/ai/openrouter': { ...openrouter, createOpenRouterClient: () => new OfflineOpenAI() },
     '@/lib/services/ai/openrouter-chat-request': chatRequest,

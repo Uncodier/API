@@ -148,6 +148,7 @@ export class AgentConnector extends Base {
       try {
         portkeyResponse = await this.connector.callAgent(messages, modelOptions);
       } catch (error: any) {
+        if (error?.name === 'OpenRouterBillingError') throw error;
         // Check if it's a rate limit error
         if (error.message?.includes('Rate limit exceeded') || 
             error.message?.includes('exceeded token rate limit') ||
@@ -194,6 +195,7 @@ export class AgentConnector extends Base {
         ...portkeyUsage,
       };
     } catch (error: any) {
+      if (error?.name === 'OpenRouterBillingError') throw error;
       console.error(`[AgentConnector:${this.id}] Error executing command:`, error);
       
       return {
@@ -252,6 +254,7 @@ export class AgentConnector extends Base {
       callback('', true);
       
     } catch (error: any) {
+      if (error?.name === 'OpenRouterBillingError') throw error;
       console.error(`[AgentConnector:${this.id}] Error procesando stream:`, error);
       callback(`Error: ${error.message}`, true);
     }

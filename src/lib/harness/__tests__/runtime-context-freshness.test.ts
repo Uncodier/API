@@ -29,7 +29,7 @@ jest.mock('../requirement-profile', () => ({ buildRequirementProfile: async (run
 }) }));
 jest.mock('../requirement-tools', () => ({ createRequirementTools: () => tools() }));
 jest.mock('../requirement-provisioning', () => ({ createRequirementProvisioningTools: () => [] }));
-jest.mock('../requirement-model', () => ({ createRequirementModel: () => model }));
+jest.mock('../requirement-model', () => ({ createRequirementModel: () => model, createBilledHarnessModel: () => model }));
 jest.mock('../review-tools', () => ({ createReviewTools: () => [] }));
 jest.mock('../model', () => ({ createHarnessModel: () => model }));
 jest.mock('../workspace', () => ({ shellQuote: (v: string) => `'${v}'`, openWorkspace: async () => workspace,

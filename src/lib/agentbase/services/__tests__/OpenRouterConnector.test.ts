@@ -3,9 +3,11 @@ import OpenAI from 'openai';
 import { OpenRouterConnector, PortkeyConnector } from '../PortkeyConnector';
 import { parseAgentModel } from '../../models/model-selection';
 import { CommandFactory } from '../command/CommandFactory';
+import { chargeOpenRouterUsage } from '@/lib/services/billing/openrouter-usage-billing';
 
 jest.mock('openai', () => ({ __esModule: true, default: jest.fn() }));
 jest.mock('@/lib/status/telemetry', () => ({ recordTelemetry: jest.fn().mockResolvedValue(undefined) }));
+jest.mock('@/lib/services/billing/openrouter-usage-billing', () => ({ chargeOpenRouterUsage: jest.fn() }));
 
 const create = jest.fn();
 const originalEnv = process.env;
@@ -16,6 +18,7 @@ const completion = { choices: [{ message: { content: 'Answer' } }], usage: {
 } };
 
 beforeEach(() => {
+  jest.mocked(chargeOpenRouterUsage).mockReset().mockResolvedValue(undefined);
   process.env = { NODE_ENV: 'test', OPENROUTER_API_KEY: randomBytes(24).toString('hex') };
   create.mockReset().mockResolvedValue(completion);
   (OpenAI as unknown as jest.Mock).mockClear().mockImplementation(() => ({ chat: { completions: { create } } }));
@@ -41,13 +44,88 @@ it.each([['anthropic', 'claude-sonnet-4', 'anthropic/claude-sonnet-4'], ['gemini
   },
 );
 
-it('returns raw streaming chunks and requests usage without another transport', async () => {
+it('returns unchanged streaming chunks and settles usage before stream completion', async () => {
   const stream = (async function* () { yield { choices: [], usage: completion.usage }; })();
   create.mockResolvedValue(stream);
   const result = await new OpenRouterConnector().callAgent(messages, { stream: true, siteId: 'site-a' });
-  expect(result.stream).toBe(stream);
+  expect(chargeOpenRouterUsage).not.toHaveBeenCalled();
+  const chunks = [];
+  for await (const chunk of result.stream) chunks.push(chunk);
+  expect(chunks).toEqual([{ choices: [], usage: completion.usage }]);
+  expect(chargeOpenRouterUsage).toHaveBeenCalledWith(expect.objectContaining({ siteId: 'site-a', usage: completion.usage,
+    eventId: expect.stringMatching(/^[a-f0-9-]{36}$/) }));
   expect(result.isStream).toBe(true);
   expect(create.mock.calls[0][0]).toMatchObject({ stream: true, stream_options: { include_usage: true }, user: 'site-a' });
+});
+
+it('does not charge no-site completions or wrap no-site streams', async () => {
+  await new OpenRouterConnector().callAgent(messages);
+  const stream = (async function* () { yield { choices: [], usage: completion.usage }; })();
+  create.mockResolvedValue(stream);
+  expect((await new OpenRouterConnector().callAgent(messages, { stream: true })).stream).toBe(stream);
+  expect(chargeOpenRouterUsage).not.toHaveBeenCalled();
+});
+
+it.each([[], undefined])('charges accepted empty/malformed choices %j before normalization', async choices => {
+  create.mockResolvedValue({ id: 'generation-empty', usage: completion.usage, choices });
+  await new OpenRouterConnector().callAgent(messages, { siteId: 'site-a' });
+  expect(chargeOpenRouterUsage).toHaveBeenCalledTimes(1);
+  expect(chargeOpenRouterUsage).toHaveBeenCalledWith(expect.objectContaining({ generationId: 'generation-empty', usage: completion.usage }));
+});
+
+it('charges accepted error envelopes even though parsing fails', async () => {
+  create.mockResolvedValue({ id: 'generation-error', usage: completion.usage, error: { message: 'Malformed result', code: 503 } });
+  await expect(new OpenRouterConnector().callAgent(messages, { siteId: 'site-a' })).rejects.toThrow('Malformed result');
+  expect(chargeOpenRouterUsage).toHaveBeenCalledTimes(1);
+});
+
+it.each([undefined, { prompt_tokens: 1000000 }])('stops on unpriced accepted usage %j without token fallback', async usage => {
+  create.mockResolvedValue({ choices: [], usage });
+  jest.mocked(chargeOpenRouterUsage).mockRejectedValue(new Error('billing requires reconciliation'));
+  await expect(new OpenRouterConnector().callAgent(messages, { siteId: 'site-a' })).rejects.toThrow('reconciliation');
+  expect(create).toHaveBeenCalledTimes(1);
+  expect(chargeOpenRouterUsage).toHaveBeenCalledWith(expect.objectContaining({ usage }));
+});
+
+it('uses distinct host event IDs per request when generation IDs are absent', async () => {
+  await new OpenRouterConnector().callAgent(messages, { siteId: 'site-a' });
+  await new OpenRouterConnector().callAgent(messages, { siteId: 'site-a' });
+  const ids = jest.mocked(chargeOpenRouterUsage).mock.calls.map(([input]) => input.eventId);
+  expect(ids[0]).toMatch(/^[a-f0-9-]{36}$/);
+  expect(ids[1]).not.toBe(ids[0]);
+});
+
+it('persists unknown transport outcomes but not confirmed admission rejections', async () => {
+  const connector = new OpenRouterConnector();
+  create.mockRejectedValueOnce(Object.assign(new Error('Rejected'), { status: 400 }));
+  await expect(connector.callAgent(messages, { siteId: 'site-a' })).rejects.toThrow('Rejected');
+  expect(chargeOpenRouterUsage).not.toHaveBeenCalled();
+  create.mockRejectedValueOnce(new Error('Connection reset'));
+  jest.mocked(chargeOpenRouterUsage).mockRejectedValueOnce(new Error('billing requires reconciliation'));
+  await expect(connector.callAgent(messages, { siteId: 'site-a' })).rejects.toThrow('reconciliation');
+  expect(chargeOpenRouterUsage).toHaveBeenCalledWith(expect.objectContaining({ usage: undefined }));
+  expect(create).toHaveBeenCalledTimes(2);
+});
+
+it('settles usage carried by a failing SSE chunk before surfacing its error', async () => {
+  create.mockResolvedValue((async function* () {
+    yield { id: 'generation-sse', usage: completion.usage, error: { code: 503, message: 'Stream failed' } };
+  })());
+  const result = await new OpenRouterConnector().callAgent(messages, { siteId: 'site-a', stream: true });
+  await expect((async () => { for await (const _chunk of result.stream) { /* consume */ } })()).rejects.toThrow('Stream failed');
+  expect(chargeOpenRouterUsage).toHaveBeenCalledTimes(1);
+  expect(chargeOpenRouterUsage).toHaveBeenCalledWith(expect.objectContaining({ generationId: 'generation-sse', usage: completion.usage }));
+});
+
+it('rejects stream completion on uncertain billing without dispatching again', async () => {
+  create.mockResolvedValue((async function* () {
+    yield { id: 'generation-stream', choices: [{ delta: { content: 'Answer' } }] };
+  })());
+  jest.mocked(chargeOpenRouterUsage).mockRejectedValueOnce(new Error('billing requires reconciliation'));
+  const result = await new OpenRouterConnector().callAgent(messages, { siteId: 'site-a', stream: true });
+  await expect((async () => { for await (const _chunk of result.stream) { /* consume */ } })()).rejects.toThrow('reconciliation');
+  expect(create).toHaveBeenCalledTimes(1);
+  expect(chargeOpenRouterUsage).toHaveBeenCalledWith(expect.objectContaining({ generationId: 'generation-stream', usage: undefined }));
 });
 
 it.each(['openai:gpt-5.6', 'openrouter:openai/gpt-5.6-sol'])(

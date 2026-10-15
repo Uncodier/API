@@ -336,6 +336,8 @@ export class StreamingResponseProcessor {
         clearInterval(heartbeatInterval);
         heartbeatInterval = null;
       }
+      // Billing uncertainty must never be recovered from partial text or converted to success.
+      if ((error as any)?.name === 'OpenRouterBillingError') throw error;
       
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       console.error(`[StreamingResponseProcessor] Error processing streaming response:`, error);
@@ -607,6 +609,12 @@ export class StreamingResponseProcessor {
           }
           
         } catch (error) {
+          if ((error as any)?.name === 'OpenRouterBillingError') {
+            isCompleted = true;
+            if (timeoutId) clearTimeout(timeoutId);
+            reject(error);
+            return;
+          }
           console.error(`[StreamingResponseProcessor] Error processing SSE chunk:`, error);
         }
       });
@@ -679,6 +687,7 @@ export class StreamingResponseProcessor {
         try {
           return await this.processSSEStream(stream, initialContent, initialTokenUsage, chunkTimeout, commandId, onChunkReceived);
         } catch (sseError) {
+          if ((sseError as any)?.name === 'OpenRouterBillingError') throw sseError;
           console.warn(`[StreamingResponseProcessor] SSE processing failed, falling back to AsyncIterator:`, sseError);
           // Continue to AsyncIterator processing below
         }
@@ -830,6 +839,7 @@ export class StreamingResponseProcessor {
         clearTimeout(currentTimeoutId);
         currentTimeoutId = null;
       }
+      if ((error as any)?.name === 'OpenRouterBillingError') throw error;
       
       console.error(`[StreamingResponseProcessor] Error en procesamiento de chunks:`, error);
       

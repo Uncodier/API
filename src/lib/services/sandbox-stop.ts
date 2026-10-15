@@ -1,4 +1,5 @@
 import type { Sandbox } from '@vercel/sandbox';
+import { reconcileSandboxBillingQuiet } from '@/lib/services/billing/sandbox-billing';
 
 function sandboxLabel(sandbox: Sandbox): string {
   const anyS = sandbox as Sandbox & { name?: string; sandboxId?: string };
@@ -10,13 +11,19 @@ function sandboxLabel(sandbox: Sandbox): string {
  * so zombie-billing cleanup is one implementation.
  */
 export async function stopSandboxQuiet(sandbox: Sandbox): Promise<boolean> {
+  if (['stopped', 'failed', 'aborted'].includes(sandbox.status)) {
+    await reconcileSandboxBillingQuiet(sandbox);
+    return true;
+  }
   let delayMs = 1000;
   for (let attempt = 0; attempt < 3; attempt++) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
         sandbox.stop(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000)),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Timeout')), 3000); }),
       ]);
+      await reconcileSandboxBillingQuiet(sandbox);
       return true;
     } catch (e: unknown) {
       if (attempt < 2) {
@@ -28,10 +35,11 @@ export async function stopSandboxQuiet(sandbox: Sandbox): Promise<boolean> {
       } else {
         console.error(
           `[Sandbox] ZOMBIE ALERT: Failed to stop sandbox ${sandboxLabel(sandbox)} after 3 attempts. It may be orphaned.`,
-          e instanceof Error ? e.message : e,
+          'Provider cleanup unavailable; details intentionally omitted.',
         );
       }
-    }
+    } finally { if (timer) clearTimeout(timer); }
   }
+  await reconcileSandboxBillingQuiet(sandbox);
   return false;
 }

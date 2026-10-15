@@ -1,4 +1,5 @@
 import { APIError, Sandbox } from '@vercel/sandbox';
+import { reconcileSandboxBilling, retireSandboxBilling } from '@/lib/services/billing/sandbox-billing';
 
 /** Older Sandbox endpoints return 400/bad_request rather than 410/snapshot_not_found. */
 export function isMissingSandboxSnapshotError(error: unknown): boolean {
@@ -51,5 +52,8 @@ export async function retireSandboxWithoutSnapshots(
   }
   // Do not request orphan deletion. No accessible snapshot/workspace is discarded.
   await assertOwnership();
+  await reconcileSandboxBilling(current);
+  await retireSandboxBilling(name,'begin');
   await current.delete({ deleteOrphanSnapshots: false });
+  await retireSandboxBilling(name,'finish');
 }

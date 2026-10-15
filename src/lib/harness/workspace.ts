@@ -8,6 +8,7 @@ import { workspaceOpenFailure } from './workspace-open-failure';
 import type { WorkspaceProviderOperation } from './workspace-provider-diagnostic';
 import { resolveSandboxAuth } from './sandbox-auth';
 import { guardedWorkspaceCommand, WORKSPACE_ISOLATION_VERSION, WORKSPACE_ROOT_INIT } from './workspace-process-guard';
+import { registerSandboxBilling, reconcileSandboxBilling, reconcileSandboxBillingQuiet, SandboxBillingError } from '@/lib/services/billing/sandbox-billing';
 
 export const WORKSPACE_ROOT = '/vercel/sandbox';
 export const MAX_COMMAND_OUTPUT = 64 * 1024;
@@ -424,7 +425,7 @@ class VercelWorkspace implements Workspace {
   readonly ref: WorkspaceRef;
   private environment: Record<string, string>;
   constructor(private sandbox: Sandbox, private sensitive: string[], environment: Record<string, string>,
-    private assertActive: AssertActive, private openingSignal?: AbortSignal) {
+    private assertActive: AssertActive, private openingSignal?: AbortSignal, private billed = false) {
     this.ref = { provider: 'vercel', id: sandbox.name, root: WORKSPACE_ROOT };
     this.environment = environment;
   }
@@ -493,6 +494,7 @@ class VercelWorkspace implements Workspace {
     let dispatched = false;
     try {
       await this.active(signal);
+      if (this.billed) await reconcileSandboxBilling(this.sandbox);
       // Always detached: SDK non-detached runCommand accumulates unbounded logs internally.
       dispatched = true;
       command = await this.sandbox.runCommand({ ...guardedWorkspaceCommand(this.envArgs(useRuntimeEnvironment), program, args),
@@ -507,6 +509,11 @@ class VercelWorkspace implements Workspace {
       return { ...result, exitCode: finished.exitCode, processId };
     } catch (error) {
       // No cleanup effect from a cancelled/stale owner. The original remote timeout remains enforced.
+      if (error instanceof SandboxBillingError) {
+        await this.sandbox.stop({ signal: AbortSignal.timeout(60_000) }).catch(() => undefined);
+        await reconcileSandboxBillingQuiet(this.sandbox);
+        return fail('WORKSPACE_BILLING_UNAVAILABLE', 'Sandbox billing must reconcile before further commands.');
+      }
       if (command) { try { await this.active(signal); await command.kill('SIGKILL', { abortSignal: signal }); } catch { /* Do not dispatch after cancellation. */ } }
       if (error instanceof WorkspaceError) { error.effectStarted = dispatched; throw error; }
       return fail(signal?.aborted ? 'ABORTED' : 'COMMAND_FAILED', signal?.aborted ? 'Workspace operation was cancelled.' : 'Workspace command could not be completed.');
@@ -594,6 +601,7 @@ class VercelWorkspace implements Workspace {
       if (error instanceof WorkspaceError) throw error;
       return fail('WORKSPACE_SUSPEND_FAILED', 'Workspace snapshot could not be saved.');
     }
+    finally { if (this.billed) await reconcileSandboxBillingQuiet(this.sandbox); }
   }
 }
 
@@ -602,6 +610,8 @@ class VercelWorkspace implements Workspace {
  * and existing session tags are checked again here. No model-selected sandbox ID. */
 export async function adoptRequirementWorkspace(input: {
   sessionId: string; workspaceId: string; repository: { url: string; ref?: string };
+  /** Trusted runtime scope only, never a provider tag or model argument. */
+  siteId?: string;
   /** Host-confirmed prior terminal occurrence of this same requirement only. */
   previousSessionId?: string;
   assertActive: AssertActive; signal?: AbortSignal; host?: WorkspaceHostOptions;
@@ -609,6 +619,7 @@ export async function adoptRequirementWorkspace(input: {
   const active = () => checkActive(input.assertActive, input.signal);
   const url = validateWorkspaceRepository(input.repository);
   await active();
+  if (input.siteId) await registerSandboxBilling(input.workspaceId, { kind: 'harness', id: input.sessionId, siteId: input.siteId });
   let sandbox: Sandbox;
   try { sandbox = await Sandbox.get({ ...resolveSandboxAuth(), name: input.workspaceId, resume: false, signal: input.signal }); }
   catch (error) {
@@ -625,7 +636,8 @@ export async function adoptRequirementWorkspace(input: {
   const sensitive = [...(input.host?.redactionValues || []), ...runtimeSecretValues(input.host?.environment || {})];
   if (input.host?.git) sensitive.push(input.host.git.password, input.host.git.username,
     Buffer.from(`${input.host.git.username}:${input.host.git.password}`).toString('base64'));
-  const workspace = new VercelWorkspace(sandbox, sensitive, runtimeEnvironment(input.host?.environment), input.assertActive, input.signal);
+  if (input.siteId) sandbox = await prepareBilledWorkspace(sandbox, active, input.signal);
+  const workspace = new VercelWorkspace(sandbox, sensitive, runtimeEnvironment(input.host?.environment), input.assertActive, input.signal, !!input.siteId);
   const remote = await workspace.exec({ command: 'git -c core.fsmonitor=false config --local --get remote.origin.url', timeoutMs: 10000 }, input.signal);
   if (remote.exitCode !== 0) throw new WorkspaceError('WORKSPACE_SCOPE_MISMATCH', 'Existing workspace has no repository binding');
   let origin: URL;
@@ -654,6 +666,8 @@ export async function adoptRequirementWorkspace(input: {
 
 export async function openWorkspace(input: {
   sessionId: string;
+  /** Required by the production runtime; omitted only by offline library callers. */
+  siteId?: string;
   repository: { url: string; ref?: string };
   existing?: WorkspaceRef;
   signal?: AbortSignal;
@@ -682,6 +696,7 @@ export async function openWorkspace(input: {
   let operation: WorkspaceProviderOperation = 'get';
   try {
     const sandboxAuth = resolveSandboxAuth();
+    if (input.siteId) { await active(); await registerSandboxBilling(name, { kind: 'harness', id: input.sessionId, siteId: input.siteId }); }
     try { await active(); sandbox = await Sandbox.get({ ...sandboxAuth, name, resume: false, signal: input.signal }); await active(); }
     catch (error) {
       await active();
@@ -704,6 +719,10 @@ export async function openWorkspace(input: {
     }
     if (!created && sandbox.tags?.harnessIsolation !== WORKSPACE_ISOLATION_VERSION) return fail('WORKSPACE_ISOLATION_REQUIRED',
       'Existing workspace predates process isolation. Host migration is required; files and running processes were not replaced.');
+    if (!created && ['stopped', 'failed', 'aborted'].includes(sandbox.status) && !sandbox.currentSnapshotId) {
+      return fail('WORKSPACE_SNAPSHOT_MISSING', 'Existing workspace has no restorable snapshot; it was not restarted from a clean image.');
+    }
+    if (input.siteId) sandbox = await prepareBilledWorkspace(sandbox, active, input.signal);
     if (created) {
       await active();
       const initialized = await sandbox.runCommand({ cmd: '/usr/bin/python3', args: ['-I', '-S', '-c', WORKSPACE_ROOT_INIT],
@@ -720,7 +739,7 @@ export async function openWorkspace(input: {
     operation = 'update-network-policy';
     await sandbox.update({ networkPolicy }, { signal: input.signal });
     await active();
-    const workspace = new VercelWorkspace(sandbox, sensitive, environment, assertActive, input.signal);
+    const workspace = new VercelWorkspace(sandbox, sensitive, environment, assertActive, input.signal, !!input.siteId);
     adapters.set(workspace, workspace);
     if (created || sandbox.tags?.harnessReady !== 'true') {
       operation = 'bootstrap';
@@ -741,5 +760,25 @@ export async function openWorkspace(input: {
     const failure = workspaceOpenFailure(error, operation);
     return fail(input.signal?.aborted ? 'ABORTED' : failure.code, input.signal?.aborted
       ? 'Workspace opening was cancelled.' : failure.message);
+  }
+}
+
+async function prepareBilledWorkspace(sandbox: Sandbox, active: () => Promise<void>, signal?: AbortSignal): Promise<Sandbox> {
+  // Settle historical sessions before any implicit resume; then account for the
+  // new actual VM. An admission/billing outage never authorizes continued use.
+  try {
+    await reconcileSandboxBilling(sandbox);
+    await active();
+    // SDK v3 resume is PRIVATE and takes a signal, not an options object. Use
+    // public get; it retains onResume for later implicit convenience resumes.
+    sandbox = await Sandbox.get({ ...resolveSandboxAuth(), name: sandbox.name, resume: true, signal,
+      onResume: async resumed => { await reconcileSandboxBilling(resumed); } });
+    await reconcileSandboxBilling(sandbox);
+    await active();
+    return sandbox;
+  } catch {
+    await sandbox.stop({ signal: AbortSignal.timeout(60_000) }).catch(() => undefined);
+    await reconcileSandboxBillingQuiet(sandbox);
+    return fail('WORKSPACE_BILLING_UNAVAILABLE', 'Sandbox active-time billing requires reconciliation before workspace use.');
   }
 }

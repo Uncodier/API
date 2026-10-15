@@ -11,6 +11,7 @@ jest.mock('../sandbox-git-layout', () => ({ assertPlatformGitLayout: jest.fn() }
 jest.mock('../sandbox-on-resume', () => ({ resumeRequirementWorkspace: jest.fn() }));
 jest.mock('../sandbox-create-params', () => ({ buildSandboxCreateParams: (params: unknown) => params }));
 jest.mock('../cron-audit-log', () => ({ logCronInfrastructureEvent: jest.fn() }));
+jest.mock('../billing/sandbox-billing', () => ({ registerSandboxBilling: jest.fn(), reconcileSandboxBilling: jest.fn() }));
 jest.mock('../sandbox-missing-snapshot', () => ({
   isMissingSandboxSnapshotError: jest.fn(), isSandboxNotFoundError: jest.fn(), retireSandboxWithoutSnapshots: jest.fn(),
 }));

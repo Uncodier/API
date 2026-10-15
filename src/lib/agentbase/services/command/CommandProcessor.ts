@@ -16,7 +16,6 @@ import { DatabaseAdapter } from '../../adapters/DatabaseAdapter';
 import { CommandCache } from './CommandCache';
 import { CommandStore } from './CommandStore';
 import { AgentBackgroundService } from '../agent/AgentBackgroundService';
-import { CreditService } from '../../../services/billing/CreditService';
 import { runToolCompletionLoop } from './tool-completion-loop';
 import { initializeAgentCommand } from './initialize-agent';
 
@@ -27,37 +26,6 @@ export class CommandProcessor {
   private commandService: CommandService;
   private processors: Record<string, any>;
   private agentBackgroundService: AgentBackgroundService;
-
-  /**
-   * Helper to deduct credits for token usage
-   */
-  private async deductTokensFromCredits(siteId: string | undefined, inputTokens: number, outputTokens: number, commandId: string, agentId: string | undefined, context: string): Promise<void> {
-    const totalTokens = (inputTokens || 0) + (outputTokens || 0);
-    if (!siteId || totalTokens <= 0) return;
-    
-    try {
-      const tokensCost = (inputTokens / 1_000_000) * CreditService.PRICING.ASSISTANT_INPUT_TOKEN_MILLION + 
-                         (outputTokens / 1_000_000) * CreditService.PRICING.ASSISTANT_OUTPUT_TOKEN_MILLION;
-      if (tokensCost > 0) {
-        await CreditService.deductCredits(
-          siteId,
-          tokensCost,
-          'assistant_tokens',
-          `Agentbase execution - ${context} (${totalTokens} tokens)`,
-          {
-            tokens: totalTokens,
-            input_tokens: inputTokens,
-            output_tokens: outputTokens,
-            command_id: commandId,
-            agent_id: agentId || 'unknown'
-          }
-        );
-        console.log(`💰 [CommandProcessor] Deducted ${tokensCost} credits for ${totalTokens} tokens (Site: ${siteId}, Context: ${context})`);
-      }
-    } catch (e: any) {
-      console.error(`❌ [CommandProcessor] Failed to deduct credits for tokens:`, e.message);
-    }
-  }
 
   
   constructor(commandService: CommandService, processors: Record<string, any>) {
@@ -104,6 +72,7 @@ export class CommandProcessor {
           command = await this.processTools(command);
           console.log(`✅ [CommandProcessor] Herramientas procesadas para el comando: ${command.id}`);
         } catch (toolError: any) {
+          if (toolError?.name === 'OpenRouterBillingError') throw toolError;
           console.error(`❌ [CommandProcessor] Error procesando herramientas:`, toolError);
           
           // No actualizamos el estado a 'failed' inmediatamente, lo marcamos para evaluar después
@@ -320,8 +289,7 @@ export class CommandProcessor {
             updatedCommand.input_tokens = (command.input_tokens || 0) + (toolResult.inputTokens || 0);
       updatedCommand.output_tokens = (command.output_tokens || 0) + (toolResult.outputTokens || 0);
       
-      // Deducir créditos por el uso de tokens en herramientas
-      await this.deductTokensFromCredits(command.site_id, toolResult.inputTokens || 0, toolResult.outputTokens || 0, command.id, command.agent_id, 'Tools');
+      // El conector liquida cada generación por coste real; aquí sólo se registra uso.
       
       // Guardar tokens y funciones en la base de datos
       try {
@@ -389,6 +357,7 @@ export class CommandProcessor {
       
       return updatedCommand;
     } catch (error: any) {
+      if (error?.name === 'OpenRouterBillingError') throw error;
       console.error(`❌ [CommandProcessor] Error procesando herramientas (no fatal):`, {
         message: error.message,
         name: error.name,
@@ -519,8 +488,7 @@ export class CommandProcessor {
             updatedCommand.input_tokens = (command.input_tokens || 0) + (targetProcessorResults.inputTokens || 0);
       updatedCommand.output_tokens = (command.output_tokens || 0) + (targetProcessorResults.outputTokens || 0);
       
-      // Deducir créditos por el uso de tokens en targets
-      await this.deductTokensFromCredits(command.site_id, targetProcessorResults.inputTokens || 0, targetProcessorResults.outputTokens || 0, command.id, command.agent_id, 'Targets');
+      // El conector liquida cada generación por coste real; aquí sólo se registra uso.
       
       // SINGLE POINT OF DATABASE UPDATE - Evita condiciones de carrera
       // Actualizar los resultados y estado en base de datos en una sola operación atómica

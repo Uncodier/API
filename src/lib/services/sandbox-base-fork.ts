@@ -5,6 +5,8 @@ import { buildSandboxCreateParams, requirementSandboxTags } from '@/lib/services
 import { resolveDefaultGitBinding } from '@/lib/services/requirement-git-binding';
 import { cloneRepoIntoWorkDir } from '@/lib/services/sandbox-git-clone';
 import { ensureNpmDeps } from '@/lib/services/sandbox-npm';
+import { registerSandboxBilling, reconcileSandboxBilling, SandboxBillingError } from '@/lib/services/billing/sandbox-billing';
+import { stopSandboxQuiet } from '@/lib/services/sandbox-stop';
 
 /**
  * Ensure the shared base image exists (template + node_modules + sg), then
@@ -23,9 +25,10 @@ export async function tryForkFromBase(params: {
 
   const kind = params.instanceType === 'automation' ? 'automation' : 'applications';
   await ensureBaseSandbox(kind);
+  await registerSandboxBilling(requirementSandboxName(params.requirementId, params.instanceId), { kind: 'requirement', id: params.requirementId });
 
   try {
-    return await forkFn({
+    const sandbox = await forkFn({
       sourceSandbox: sandboxBaseName(kind),
       name: requirementSandboxName(params.requirementId, params.instanceId),
       ...buildSandboxCreateParams({
@@ -33,7 +36,10 @@ export async function tryForkFromBase(params: {
         tags: requirementSandboxTags(params.requirementId, params.instanceId),
       }),
     });
+    try { await reconcileSandboxBilling(sandbox); } catch (error) { await stopSandboxQuiet(sandbox); throw error; }
+    return sandbox;
   } catch (e: unknown) {
+    if (e instanceof SandboxBillingError) throw e;
     console.warn(
       '[Sandbox] fork from base failed (will clone):',
       e instanceof Error ? e.message : e,
