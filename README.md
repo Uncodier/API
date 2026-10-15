@@ -23,6 +23,10 @@ contract, offline tests and recovery runbook](docs/README-IcyPeas-Durable-Email-
 
 ## Features
 
+Commerce recovery and credit top-up scheduling is centralized in this API.
+See [commerce cron dispatch](docs/COMMERCE_CRON_DISPATCH.md) for reuse of the existing
+service API key, deployment order, and webhook/recovery boundaries.
+
 - **AI Agent Management**: Coordinate and communicate with AI team members (Sales, Copywriter, Analyst)
 - **Workflow Orchestration**: Multi-agent workflows powered by Temporal
 - **Email Automation**: IMAP/SMTP integration for email processing and delivery status tracking

@@ -24,6 +24,14 @@
   "regions": ["iad1"],
   "crons": [
     {
+      "path": "/api/cron/marketplace",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/credit-auto-top-up",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/cron/requirements-apps",
       "schedule": "* * * * *"
     },
