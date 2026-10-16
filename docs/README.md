@@ -46,6 +46,7 @@ Read these first when changing the code-agent harness:
 - [Outstand deletion contract](./OUTSTAND_DELETION.md) — tenant authorization, remote deletion orchestration, and fail-closed retries.
 - [Instance and requirement deletion](./INSTANCE_REQUIREMENT_DELETION.md) — explicit owner/admin authorization, exclusive requirement scope, and atomic database cleanup.
 - [Social publishing contract](./SOCIAL_PUBLISHING.md) — scoped account IDs, media attachments, delivery state, and safe retries.
+- [Exact publish destination connections](./PUBLISH_DESTINATION_CONNECTIONS.md) — persisted destination IDs, multi-route tools, queue/provider fidelity, legacy selection, and offline tests.
 
 These integrations still exist, but verify configuration details against the referenced implementation before operational changes:
 

@@ -1,9 +1,7 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { buildToolExecutionContext, readToolExecutionContext, sanitizeToolContextText, type ToolExecutionContext } from '@/lib/services/tool-execution-context';
+import { sanitizeToolContextText, type ToolExecutionContext } from '@/lib/services/tool-execution-context';
 import {
   getAudienceById,
-  getAudiencePageForSending,
-  updateAudienceLeadStatus,
 } from '@/lib/database/audience-db';
 import type { DbLead } from '@/lib/database/lead-db';
 import {
@@ -13,9 +11,6 @@ import {
   personalizeMergeSubjectAndMessage,
   placeholderPolicyToMergePolicy,
 } from '@/lib/messaging/lead-merge-fields';
-import { sendEmailCore } from '../sendEmail/core';
-import { WhatsAppSendService } from '@/lib/services/whatsapp/WhatsAppSendService';
-import { WhatsAppTemplateService } from '@/lib/services/whatsapp/WhatsAppTemplateService';
 import {
   SEND_BULK_MESSAGES_DESCRIPTION,
   SEND_BULK_MESSAGES_PARAMETERS,
@@ -28,14 +23,19 @@ import {
 } from './support';
 import {
   prepareVoiceRecipient,
-  validateVoiceGuidance,
 } from './voice-context';
 
+import { executeBulkRoutes, recipientContextForBulk, type BulkExecutionIO } from './routing';
+import { getExactWhatsAppConfig, sendExactDelivery } from '@/lib/messaging/exact-delivery';
+import { canonicalExactTemplateBody } from '@/lib/messaging/exact-template-body';
+import { prepareExactWhatsAppTemplate } from './exact-whatsapp-template';
+
 export function sendBulkMessagesTool(siteId: string) {
-  const execute = async (args: SendBulkMessagesToolParams, executionContext?: ToolExecutionContext) => {
+  const executeSingle = async (args: SendBulkMessagesToolParams, executionContext: ToolExecutionContext | undefined, io: BulkExecutionIO) => {
     const {
       audience_id,
       channel,
+      connection_id,
       message,
       subject,
       from,
@@ -46,25 +46,7 @@ export function sendBulkMessagesTool(siteId: string) {
       additional_context,
     } = args;
     const audience_email_mode = args.audience_email_mode ?? 'mail';
-    const inherited = readToolExecutionContext(executionContext, siteId);
-    // Only campaign guidance and this recipient's explicit personalized guidance.
-    // Provenance IDs never trigger lookups or copy another lead's conversation.
-    const recipientContext = (voiceData: Record<string, string> = {}) => {
-      const envelope = buildToolExecutionContext({
-        site_id: siteId,
-        intent: voiceData.voice_objective || inherited?.intent,
-        background: voiceData.voice_additional_context || (inherited?.source.conversation_id || inherited?.source.message_id
-          ? undefined : inherited?.background),
-        source: {
-          tool: inherited?.source.tool === 'publish' ? 'publish' : 'sendBulkMessages',
-          instance_id: inherited?.source.instance_id,
-          node_id: inherited?.source.node_id,
-          audience_id,
-          content_id: contentIdArg ?? inherited?.source.content_id,
-        },
-      });
-      return envelope ? { tool_execution_context: envelope } : {};
-    };
+    const recipientContext = recipientContextForBulk(siteId, args, executionContext);
 
     if (!audience_id) return { success: false, error: 'Missing required field: audience_id' };
     if (!channel) return { success: false, error: 'Missing required field: channel' };
@@ -72,27 +54,6 @@ export function sendBulkMessagesTool(siteId: string) {
     if (channel === 'email' && !subject) {
       return { success: false, error: 'Missing required field for email: subject' };
     }
-    if (audience_email_mode === 'newsletter' && channel !== 'email') {
-      return {
-        success: false,
-        error: 'audience_email_mode "newsletter" is only valid when channel is "email".',
-      };
-    }
-    if (voice_mode === 'agent_call' && channel !== 'voice') {
-      return {
-        success: false,
-        error: 'voice_mode "agent_call" is only valid when channel is "voice".',
-      };
-    }
-    const voiceGuidanceError = validateVoiceGuidance({
-      channel,
-      voiceMode: voice_mode,
-      greeting: message,
-      objective,
-      additionalContext: additional_context,
-    });
-    if (voiceGuidanceError) return { success: false, error: voiceGuidanceError };
-
     const audience = await getAudienceById(audience_id);
     if (!audience) return { success: false, error: 'Audience not found' };
     if (audience.site_id !== siteId) return { success: false, error: 'Audience does not belong to this site' };
@@ -112,7 +73,7 @@ export function sendBulkMessagesTool(siteId: string) {
       let totalSkipped = 0;
 
       for (let page = 1; page <= totalPages; page++) {
-        const { leads } = await getAudiencePageForSending(audience_id, page);
+        const { leads } = await io.page(audience_id, page);
         if (leads.length === 0) continue;
 
         for (const lead of leads) {
@@ -121,12 +82,13 @@ export function sendBulkMessagesTool(siteId: string) {
 
           try {
             if (!leadRow.email) {
-              await updateAudienceLeadStatus(audience_id, leadId, 'skipped', 'No email address');
+              await io.status(audience_id, leadId, 'skipped', 'No email address');
               totalSkipped++;
               continue;
             }
 
-            const result = await sendEmailCore({
+            const result = await sendExactDelivery({
+              channel: 'email', connection_id: connection_id!, to: leadRow.email,
               site_id: siteId,
               email: leadRow.email,
               subject: subject || '',
@@ -141,13 +103,13 @@ export function sendBulkMessagesTool(siteId: string) {
             const ok = result.success && result.status !== 'skipped';
 
             if (ok) {
-              await updateAudienceLeadStatus(audience_id, leadId, 'sent');
+              await io.status(audience_id, leadId, 'sent');
               totalSent++;
             } else {
               const errMsg = result.error?.message
                 ?? (result.status === 'skipped' ? 'Email send skipped' : 'Email send failed');
               const isUnresolved = result.error?.code === 'PLACEHOLDERS_UNRESOLVED';
-              await updateAudienceLeadStatus(
+              await io.status(
                 audience_id,
                 leadId,
                 isUnresolved ? 'skipped' : 'failed',
@@ -157,7 +119,7 @@ export function sendBulkMessagesTool(siteId: string) {
               else totalFailed++;
             }
           } catch (err: any) {
-            await updateAudienceLeadStatus(
+            await io.status(
               audience_id,
               leadId,
               'failed',
@@ -200,7 +162,8 @@ export function sendBulkMessagesTool(siteId: string) {
     // (e.g. "Hi {{1}}, ..."); personalization happens via Twilio variables at
     // delivery time (for whatsapp), so a single approved template serves the whole campaign.
     if (channel === 'whatsapp' || channel === 'telegram' || channel === 'sms' || channel === 'voice') {
-      const { templated: abstractBody, tokens: campaignTokens } = extractMergeTokens(message);
+      const { templated, tokens: campaignTokens } = extractMergeTokens(message);
+      let abstractBody = channel === 'whatsapp' && connection_id?.startsWith('legacy:') ? canonicalExactTemplateBody(templated) : templated;
 
       let templateSid: string | undefined;
       let placeholderMap: string[] = campaignTokens;
@@ -208,36 +171,17 @@ export function sendBulkMessagesTool(siteId: string) {
 
       // Template logic is only required for WhatsApp, but we keep the structure
       // for other channels that might use standard template engines if needed.
-      if (channel === 'whatsapp') {
+      if (channel === 'whatsapp' && connection_id?.startsWith('legacy:')) {
         try {
-          const config = await WhatsAppSendService.getWhatsAppConfig(siteId);
-          const existing = await WhatsAppTemplateService.findExistingTemplate(
-            message,
-            siteId,
-            config.phoneNumberId,
-          );
-          if (existing?.templateSid) {
-            templateSid = existing.templateSid;
-            placeholderMap = existing.placeholderMap ?? campaignTokens;
-          } else {
-            const created = await WhatsAppTemplateService.createTemplate(
-              message,
-              config.phoneNumberId,
-              config.accessToken,
-              siteId,
-            );
-            if (!created.success || !created.templateSid) {
-              return {
-                success: false,
-                error: `Failed to create WhatsApp template: ${created.error ?? 'unknown error'}`,
-              };
-            }
-            templateSid = created.templateSid;
-            placeholderMap = created.placeholderMap ?? campaignTokens;
-            // A freshly created template may still be pending WhatsApp approval;
-            // delivery worker should re-check before sending.
-            templateStatus = 'pending';
-          }
+          const config = await getExactWhatsAppConfig(siteId, connection_id);
+          if (!config) throw new Error('Selected WhatsApp account does not use Twilio templates.');
+          const prepared = await prepareExactWhatsAppTemplate({
+            message, siteId, accountSid: config.phoneNumberId, accessToken: config.accessToken,
+          });
+          templateSid = prepared.templateSid;
+          abstractBody = prepared.templatedBody;
+          placeholderMap = prepared.placeholderMap;
+          templateStatus = prepared.templateStatus;
         } catch (err: any) {
           return {
             success: false,
@@ -247,7 +191,7 @@ export function sendBulkMessagesTool(siteId: string) {
       }
 
       for (let page = 1; page <= totalPages; page++) {
-        const { leads } = await getAudiencePageForSending(audience_id, page);
+        const { leads } = await io.page(audience_id, page);
         if (leads.length === 0) continue;
 
         for (const lead of leads) {
@@ -255,7 +199,7 @@ export function sendBulkMessagesTool(siteId: string) {
 
           try {
             if (['whatsapp', 'sms', 'voice'].includes(channel) && !lead.phone) {
-              await updateAudienceLeadStatus(audience_id, leadId, 'skipped', 'No phone number');
+              await io.status(audience_id, leadId, 'skipped', 'No phone number');
               totalSkipped++;
               continue;
             }
@@ -263,7 +207,7 @@ export function sendBulkMessagesTool(siteId: string) {
             const leadRow = lead as unknown as DbLead;
             const built = buildContentVariablesForLead(placeholderMap, leadRow, siteName, mergePolicy);
             if (built.aborted) {
-              await updateAudienceLeadStatus(
+              await io.status(
                 audience_id,
                 leadId,
                 'skipped',
@@ -282,7 +226,7 @@ export function sendBulkMessagesTool(siteId: string) {
               additionalContext: additional_context,
             });
             if (voiceRecipient.skipReason) {
-              await updateAudienceLeadStatus(
+              await io.status(
                 audience_id,
                 leadId,
                 'skipped',
@@ -305,7 +249,8 @@ export function sendBulkMessagesTool(siteId: string) {
               title: subject || `Bulk Message: ${channel}`,
               channel: channel,
               custom_data: {
-                source: 'sendBulkMessages',
+                connection_id,
+              source: 'sendBulkMessages',
                 audience_id,
                 ...(channel === 'voice' ? { voice_mode } : {}),
                 ...voiceContextData,
@@ -321,7 +266,7 @@ export function sendBulkMessagesTool(siteId: string) {
               .single();
 
             if (convError || !conversation) {
-              await updateAudienceLeadStatus(
+              await io.status(
                 audience_id,
                 leadId,
                 'failed',
@@ -333,7 +278,7 @@ export function sendBulkMessagesTool(siteId: string) {
 
             const messageData: any = {
               conversation_id: conversation.id,
-              content: channel === 'whatsapp'
+              content: channel === 'whatsapp' && connection_id?.startsWith('legacy:')
                 ? abstractBody
                 : resolveNumberedTemplate(abstractBody, built.variables),
               role: 'assistant',
@@ -341,6 +286,7 @@ export function sendBulkMessagesTool(siteId: string) {
               custom_data: {
                 status: 'accepted',
                 channel: channel,
+                connection_id,
                 audience_id,
                 ...(channel === 'voice' ? { voice_mode } : {}),
                 ...voiceContextData,
@@ -359,14 +305,14 @@ export function sendBulkMessagesTool(siteId: string) {
               .insert([messageData]);
 
             if (msgError) {
-              await updateAudienceLeadStatus(audience_id, leadId, 'failed', msgError.message);
+              await io.status(audience_id, leadId, 'failed', msgError.message);
               totalFailed++;
             } else {
-              await updateAudienceLeadStatus(audience_id, leadId, 'sent');
+              await io.status(audience_id, leadId, 'sent');
               totalSent++;
             }
           } catch (err: any) {
-            await updateAudienceLeadStatus(
+            await io.status(
               audience_id,
               leadId,
               'failed',
@@ -396,7 +342,7 @@ export function sendBulkMessagesTool(siteId: string) {
     // Email `mail` mode (default): pre-merge body/subject per lead and queue
     // an accepted message row for the background email delivery worker.
     for (let page = 1; page <= totalPages; page++) {
-      const { leads } = await getAudiencePageForSending(audience_id, page);
+      const { leads } = await io.page(audience_id, page);
       if (leads.length === 0) continue;
 
       for (const lead of leads) {
@@ -404,7 +350,7 @@ export function sendBulkMessagesTool(siteId: string) {
 
         try {
           if (!lead.email) {
-            await updateAudienceLeadStatus(audience_id, leadId, 'skipped', 'No email address');
+            await io.status(audience_id, leadId, 'skipped', 'No email address');
             totalSkipped++;
             continue;
           }
@@ -418,7 +364,7 @@ export function sendBulkMessagesTool(siteId: string) {
             mergePolicy,
           );
           if (merged.aborted) {
-            await updateAudienceLeadStatus(
+            await io.status(
               audience_id,
               leadId,
               'skipped',
@@ -437,8 +383,9 @@ export function sendBulkMessagesTool(siteId: string) {
             title: perLeadSubject || subject || `Bulk Message: email`,
             channel: 'email',
             custom_data: {
+              connection_id,
               source: 'sendBulkMessages',
-              audience_id: audience_id
+              audience_id: audience_id,
             }
           };
 
@@ -452,7 +399,7 @@ export function sendBulkMessagesTool(siteId: string) {
             .single();
 
           if (convError || !conversation) {
-            await updateAudienceLeadStatus(audience_id, leadId, 'failed', convError?.message || 'Failed to create conversation');
+            await io.status(audience_id, leadId, 'failed', convError?.message || 'Failed to create conversation');
             totalFailed++;
             continue;
           }
@@ -466,6 +413,7 @@ export function sendBulkMessagesTool(siteId: string) {
             custom_data: {
               status: 'accepted',
               channel: 'email',
+              connection_id,
               audience_id: audience_id,
               subject: perLeadSubject,
               ...recipientContext(),
@@ -481,16 +429,16 @@ export function sendBulkMessagesTool(siteId: string) {
             .insert([messageData]);
 
           if (msgError) {
-            await updateAudienceLeadStatus(audience_id, leadId, 'failed', msgError.message);
+            await io.status(audience_id, leadId, 'failed', msgError.message);
             totalFailed++;
           } else {
             // El mensaje se guardó correctamente para ser procesado luego
-            await updateAudienceLeadStatus(audience_id, leadId, 'sent');
+            await io.status(audience_id, leadId, 'sent');
             totalSent++;
           }
 
         } catch (err: any) {
-          await updateAudienceLeadStatus(audience_id, leadId, 'failed', err?.message ?? 'Unexpected error');
+          await io.status(audience_id, leadId, 'failed', err?.message ?? 'Unexpected error');
           totalFailed++;
         }
       }
@@ -514,6 +462,6 @@ export function sendBulkMessagesTool(siteId: string) {
     name: 'sendBulkMessages',
     description: SEND_BULK_MESSAGES_DESCRIPTION,
     parameters: SEND_BULK_MESSAGES_PARAMETERS,
-    execute,
+    execute: (args: SendBulkMessagesToolParams, context?: ToolExecutionContext) => executeBulkRoutes(siteId, args, context, executeSingle),
   };
 }

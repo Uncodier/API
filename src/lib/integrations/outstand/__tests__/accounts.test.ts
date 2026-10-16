@@ -16,6 +16,19 @@ const clientWith = (response: unknown) => ({
 });
 const rowsClient = (rows: unknown[]) => clientWith({ success: true, data: rows });
 
+describe('strict exact social targets', () => {
+  it('never replaces a missing exact ID with another account username or platform', async () => {
+    await expect(resolveSocialAccounts(rowsClient([account({ id: 'other', username: 'instagram' })]), siteId,
+      ['instagram'], [{ id: 'instagram', network: 'instagram' }])).rejects.toMatchObject({ code: 'ACCOUNT_NOT_FOUND' });
+  });
+  it('rejects a saved network mismatch and accepts canonical network aliases', async () => {
+    await expect(resolveSocialAccounts(rowsClient([account()]), siteId,
+      ['opaque-account'], [{ id: 'opaque-account', network: 'linkedin' }])).rejects.toMatchObject({ code: 'ACCOUNT_SCOPE_MISMATCH' });
+    await expect(resolveSocialAccounts(rowsClient([account({ network: 'twitter' })]), siteId,
+      ['opaque-account'], [{ id: 'opaque-account', network: 'x' }])).resolves.toMatchObject([{ id: 'opaque-account' }]);
+  });
+});
+
 describe('listConnectedAccounts', () => {
   it('normalizes the observed provider payload and returns only safe account fields', async () => {
     const client = clientWith({

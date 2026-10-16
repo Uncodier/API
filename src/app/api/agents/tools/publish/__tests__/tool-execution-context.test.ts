@@ -15,13 +15,20 @@ function harness() {
     'src/app/api/agents/tools/publish/assistantProtocol.ts', {
       './publish-schema': { publishToolDefinition },
       '../content/create/core': { createContentCore: createContent },
-      '../content/update/route': { updateContentCore: async () => ({ id: contentId }) },
+      '../content/update/core': { updateContentCore: async () => ({ id: contentId }) },
       './social-publishing': {},
       '../sendBulkMessages/assistantProtocol': { sendBulkMessagesTool: () => ({ execute: bulkExecute }) },
       '../sendEmail/route': {}, '@/lib/services/whatsapp/WhatsAppSendService': {},
       '@/lib/database/lead-db': {}, '@/lib/messaging/lead-merge-fields': {},
       './instagram-dm': { validateInstagramDirectMessage: () => undefined },
       '@/lib/services/tool-execution-context': contextModule,
+      '@/lib/messaging/delivery-routing': {
+        parseDeliveryRoutes: (args: any) => [{ channel: args.channel, voice_mode: args.voice_mode }],
+        resolveDeliveryRoutes: async (site: string, args: any) => [{ channel: args.channel, connection_id: 'selected-voice', voice_mode: args.voice_mode }],
+      },
+      '../sendBulkMessages/validation': { validateBulkRoutes: () => {} },
+      '@/lib/database/audience-db': { getAudienceById: async () => ({ site_id: siteId, status: 'ready' }) },
+      './test-delivery': {},
     });
   return { tool: publishTool(siteId, undefined, instanceId), bulkExecute, createContent };
 }

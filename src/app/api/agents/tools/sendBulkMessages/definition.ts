@@ -1,8 +1,8 @@
 import type { ContentPlaceholderPolicy } from '@/lib/messaging/lead-merge-fields';
+import { DELIVERY_ROUTING_PROPERTIES, type DeliveryRoutingInput } from '@/lib/messaging/delivery-routing';
 
-export interface SendBulkMessagesToolParams {
+export interface SendBulkMessagesToolParams extends DeliveryRoutingInput {
   audience_id: string;
-  channel: 'whatsapp' | 'email' | 'telegram' | 'sms' | 'voice';
   message: string;
   subject?: string;
   from?: string;
@@ -17,6 +17,7 @@ export interface SendBulkMessagesToolParams {
 export const SEND_BULK_MESSAGES_DESCRIPTION = `Send a message to all leads in an audience via WhatsApp, email, telegram, sms or voice.
 
 Required: audience_id, channel ("whatsapp", "email", "telegram", "sms", or "voice"), message.
+Use connection_id for the exact selected site connection, or delivery_routes for multiple destinations instead of top-level channel/modes. All routes must validate before dispatch. Generic channels work only with an unambiguous active account.
 For email: subject is also required.
 Optional: from, content_id (content UUID whose metadata.placeholders.when_unresolved controls unknown merge tokens), placeholder_policy (override), audience_email_mode.
 For Voice: voice_mode is "tts" (default, one-way message) or "agent_call" (two-way Zavu voice agent call).
@@ -52,6 +53,7 @@ IMPORTANT:
 export const SEND_BULK_MESSAGES_PARAMETERS = {
   type: 'object',
   properties: {
+    ...DELIVERY_ROUTING_PROPERTIES,
     audience_id: { type: 'string', description: 'Audience UUID to send messages to.' },
     channel: {
       type: 'string',
@@ -96,5 +98,6 @@ export const SEND_BULK_MESSAGES_PARAMETERS = {
         'Voice agent calls only. Private supporting context for the agent. Supports lead and site merge fields.',
     },
   },
-  required: ['audience_id', 'channel', 'message'],
+  required: ['audience_id', 'message'],
+  anyOf: [{ required: ['channel'] }, { required: ['delivery_routes'] }],
 };

@@ -95,7 +95,7 @@ export async function publishSocialContent(
     }
     const client = getOutstandClient();
     // All validation and read-only discovery happen before any content write/send.
-    const accounts = await resolveSocialAccounts(client, siteId, input.social_accounts || []);
+    const accounts = await resolveSocialAccounts(client, siteId, input.social_accounts || [], input.social_account_targets);
     safeValidationError = true;
     const hasTikTok = accounts.some((account) => account.network === 'tiktok');
     const tiktok = validateTikTokOptions(input.tiktok, hasTikTok);

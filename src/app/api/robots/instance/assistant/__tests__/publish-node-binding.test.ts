@@ -197,7 +197,9 @@ describe('persisted publish selection', () => {
     };
     const other = { provider: 'test', reference_images: [imageUrl] };
     const binding = await resolveBinding({ ...scope, toolOverrides: { publish, generate_video: other } });
-    expect(binding?.toolOverrides.publish).toMatchObject(publish);
+    const { channel: _channel, audience_email_mode: _mode, ...nonRouting } = publish;
+    expect(binding?.toolOverrides.publish).toMatchObject(nonRouting);
+    expect(binding?.toolOverrides.publish).not.toHaveProperty('channel');
     expect(binding?.toolOverrides.generate_video).toBe(other);
     expect(publish).not.toHaveProperty('media_urls');
   });
@@ -215,7 +217,12 @@ describe('persisted publish selection', () => {
     target().settings.publish_destinations = ['twitter', 'blog', 'mail', 'newsletter', 'whatsapp', 'telegram', 'sms', 'voice', 'voice-agent-call'];
     const binding = await resolveBinding({ ...scope, toolOverrides: { publish: { social_accounts: ['foreign-id'], channel: 'email' } } });
     expect(binding?.toolOverrides.publish.social_accounts).toEqual(['twitter']);
-    expect(binding?.toolOverrides.publish.channel).toBe('email');
+    expect(binding?.toolOverrides.publish).not.toHaveProperty('channel');
+    expect(binding?.toolOverrides.publish.delivery_routes).toEqual([
+      { channel: 'email', audience_email_mode: 'mail' }, { channel: 'email', audience_email_mode: 'newsletter' },
+      { channel: 'whatsapp' }, { channel: 'telegram' }, { channel: 'sms' },
+      { channel: 'voice', voice_mode: 'tts' }, { channel: 'voice', voice_mode: 'agent_call' },
+    ]);
   });
 
   it('supports plain text social content and clears stale media rather than requiring an image', async () => {
@@ -232,7 +239,7 @@ describe('persisted publish selection', () => {
     const publish = { social_accounts: ['tiktok'], tiktok: { privacyLevel: 'SELF_ONLY' },
       channel: 'email', audience_id: 'audience-1', is_test: true, metadata: { campaign: 'test' } };
     const binding = await resolveBinding({ ...scope, toolOverrides: { publish } });
-    expect(binding?.toolOverrides.publish).toEqual({ channel: 'email', audience_id: 'audience-1', is_test: true, metadata: { campaign: 'test' } });
+    expect(binding?.toolOverrides.publish).toEqual({ channel: 'email', audience_email_mode: 'newsletter', audience_id: 'audience-1', is_test: true, metadata: { campaign: 'test' } });
     expect(binding?.instruction).toMatch(/No social destinations are selected/);
     expect(publish.social_accounts).toEqual(['tiktok']);
   });

@@ -18,6 +18,8 @@ export async function sendTwilioWhatsAppMessage(params: {
   fromNumber: string;
   mediaUrls?: string[];
   messagingServiceSid?: string;
+  /** Exact delivery pins this sender even when a Messaging Service is supplied. */
+  pinFromNumber?: boolean;
   /** Automatic outreach reserves one message and must not change sender/chunk. */
   strictSingleMessage?: boolean;
   contentSid?: string;
@@ -26,12 +28,16 @@ export async function sendTwilioWhatsAppMessage(params: {
   try {
     console.log('📤 [WhatsAppSendService] Enviando via API de Twilio WhatsApp...');
 
+    if (params.pinFromNumber && !params.fromNumber?.trim()) {
+      return { success: false, error: 'Exact WhatsApp delivery requires a selected From number' };
+    }
     if (params.strictSingleMessage && params.message.length > 1500) {
       return { success: false, error: 'Outreach WhatsApp message exceeds single-message limit' };
     }
     const chunks = params.strictSingleMessage ? [params.message] : chunkWhatsAppMessage(params.message, 1500);
     let lastSid: string | undefined;
-    const fromCandidates = params.strictSingleMessage ? [params.fromNumber] : twilioWhatsAppFromCandidates(params.fromNumber);
+    const fromCandidates = params.strictSingleMessage || params.pinFromNumber
+      ? [params.fromNumber] : twilioWhatsAppFromCandidates(params.fromNumber);
 
     for (let i = 0; i < chunks.length; i++) {
       const mediaForChunk = i === 0 ? params.mediaUrls : undefined;
@@ -45,6 +51,7 @@ export async function sendTwilioWhatsAppMessage(params: {
           body: chunks[i],
           mediaUrls: mediaForChunk,
           messagingServiceSid: params.messagingServiceSid,
+          fromNumber: params.pinFromNumber ? params.fromNumber : undefined,
           chunkIndex: i,
           chunkCount: chunks.length,
           contentSid: params.contentSid,
@@ -114,7 +121,10 @@ async function postTwilioWhatsAppMessage(params: {
 
   if (params.messagingServiceSid) {
     formData.append('MessagingServiceSid', params.messagingServiceSid);
-  } else if (params.fromNumber) {
+  }
+  // Twilio permits explicit From + MessagingServiceSid to select a Sender Pool member.
+  // https://www.twilio.com/docs/messaging/api/message-resource#create-a-message-resource
+  if (params.fromNumber) {
     formData.append('From', `whatsapp:${params.fromNumber}`);
   }
 
@@ -134,9 +144,7 @@ async function postTwilioWhatsAppMessage(params: {
 
   console.log(`🔐 [WhatsAppSendService] Datos de envío chunk ${params.chunkIndex + 1}/${params.chunkCount}:`, {
     url: apiUrl,
-    from: params.messagingServiceSid
-      ? `MessagingService:${params.messagingServiceSid}`
-      : `whatsapp:${params.fromNumber}`,
+    from: params.fromNumber ? `whatsapp:${params.fromNumber}` : `MessagingService:${params.messagingServiceSid}`,
     to: `whatsapp:${params.phoneNumber}`,
     messageLength: params.body.length,
     hasMedia: !!params.mediaUrls?.length,
@@ -155,7 +163,7 @@ async function postTwilioWhatsAppMessage(params: {
     const errorData = await response.json();
     const twilioErrorCode = errorData.code;
     const errorMessage = errorData.message || response.statusText;
-    const fromLabel = params.messagingServiceSid || params.fromNumber;
+    const fromLabel = params.fromNumber || params.messagingServiceSid;
 
     console.error(`❌ [WhatsAppSendService] Error de API de Twilio en chunk ${params.chunkIndex + 1}:`, {
       status: response.status,

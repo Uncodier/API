@@ -28,6 +28,7 @@ export class SocialAccountResolutionError extends Error {
 }
 
 type AccountClient = Pick<OutstandClient, 'listAccounts'>;
+export interface ExactSocialAccountTarget { id: string; network: string }
 const PAGE_SIZE = 100;
 const MAX_PAGES = 20;
 
@@ -141,6 +142,7 @@ export async function resolveSocialAccounts(
   client: AccountClient,
   siteId: string,
   selectors: string[],
+  exactTargets?: ExactSocialAccountTarget[],
 ): Promise<ConnectedSocialAccount[]> {
   if (!Array.isArray(selectors) || selectors.length === 0 || selectors.length > 100
     || !Array.from(selectors).every(nonemptyString)) {
@@ -148,12 +150,22 @@ export async function resolveSocialAccounts(
       'INVALID_ACCOUNT_SELECTORS', 'Provide between 1 and 100 nonempty social account IDs, usernames, or platform names.',
     );
   }
+  if (exactTargets !== undefined && (!Array.isArray(exactTargets) || exactTargets.length > 100
+    || exactTargets.some(target => !isRecord(target) || !nonemptyString(target.id) || !nonemptyString(target.network)
+      || !selectors.includes(target.id) || Object.keys(target).some(key => !['id', 'network'].includes(key)))
+    || new Set(exactTargets.map(target => target.id)).size !== exactTargets.length)) {
+    throw new SocialAccountResolutionError('INVALID_ACCOUNT_SELECTORS', 'Invalid exact social account targets.');
+  }
   const accounts = await listConnectedAccounts(client, siteId);
   const resolved = selectors.map((selector) => {
     // Match each namespace before filtering active accounts: inactive exact matches must not fall through.
     let matches = accounts.filter((account) => account.id === selector);
-    if (matches.length === 0) matches = accounts.filter((account) => account.username === selector);
-    if (matches.length === 0) {
+    const exact = exactTargets?.find(target => target.id === selector);
+    if (exact && matches.some(account => account.network !== canonicalNetwork(exact.network))) {
+      throw new SocialAccountResolutionError('ACCOUNT_SCOPE_MISMATCH', 'Selected social account does not match its saved network.');
+    }
+    if (!exact && matches.length === 0) matches = accounts.filter((account) => account.username === selector);
+    if (!exact && matches.length === 0) {
       const network = canonicalNetwork(selector);
       matches = network ? accounts.filter((account) => account.network === network) : [];
     }

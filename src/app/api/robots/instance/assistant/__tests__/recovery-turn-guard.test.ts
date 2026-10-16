@@ -52,10 +52,10 @@ describe('per-turn and per-tool recovery guards', () => {
     expect(options.instance_node_id).toBe('node');
     expect(options.node_continuation).toEqual({ responseNodeIds: ['response'] });
     expect(options.tool_overrides.publish).toMatchObject({ social_accounts: ['tiktok'], media_urls: ['https://example.com/original.mp4'] });
-    await options.custom_tools[0].execute({ action: 'call' });
+    await options.custom_tools[0].execute({ action: 'call', name: 'social_media_accounts' });
     expect(assertActive).toHaveBeenCalledTimes(2);
     expect(toolExecute).toHaveBeenCalledTimes(1);
-    expect(observeTool).toHaveBeenCalledWith(scope, 'tools', { action: 'call' }, expect.any(Function));
+    expect(observeTool).toHaveBeenCalledWith(scope, 'tools', { action: 'call', name: 'social_media_accounts' }, expect.any(Function));
   });
   it('blocks before the model when the original action or context changed', async () => {
     assertActive.mockRejectedValue(new Error('cancelled'));
@@ -93,6 +93,19 @@ describe('per-turn and per-tool recovery guards', () => {
     expect(args).not.toHaveProperty('social_accounts');
     expect(args).not.toHaveProperty('tiktok');
     expect(args.type).toBe('blog_post');
+  });
+  it.each(['sendEmail', 'sendWhatsApp', 'placeVoiceCall', 'whatsappTemplate', 'integration_api_request'])('blocks alternative outbound tool %s before router effects', async name => {
+    await processAssistantTurn(context, []);
+    await expect(execute.mock.calls[0][2].custom_tools[0].execute({ action: 'call', name, args: '{}' })).rejects.toThrow(/alternative mutation/);
+    expect(toolExecute).not.toHaveBeenCalled();
+  });
+  it('blocks Instagram DM and bulk delivery when no audience route is saved', async () => {
+    resolveBinding.mockResolvedValue({ instruction: 'Blog', toolOverrides: { publish: {}, sendBulkMessages: {} } });
+    await processAssistantTurn(context, []);
+    const routed = execute.mock.calls[0][2].custom_tools[0];
+    await expect(routed.execute({ action: 'call', name: 'publish', args: JSON.stringify({ instagram_dm: { conversation_id: 'foreign' } }) })).rejects.toThrow(/not a saved/);
+    await expect(routed.execute({ action: 'call', name: 'sendBulkMessages', args: JSON.stringify({ channel: 'email' }) })).rejects.toThrow(/No saved audience/);
+    expect(toolExecute).not.toHaveBeenCalled();
   });
   it('disables replay of an effectful durable step', () => {
     expect(processAssistantTurn.maxRetries).toBe(0);

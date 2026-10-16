@@ -6,9 +6,8 @@ jest.unstable_mockModule('../../content/create/core', () => ({
 jest.unstable_mockModule('../../content/update/core', () => ({
   updateContentCore: jest.fn(),
 }));
-jest.unstable_mockModule('@/lib/integrations/outstand/client', () => ({
-  getOutstandClient: jest.fn(),
-}));
+const stableGetClient = jest.fn<any>();
+jest.unstable_mockModule('@/lib/integrations/outstand/client', () => ({ getOutstandClient: stableGetClient }));
 jest.unstable_mockModule('@/lib/integrations/outstand/conversation-access', () => ({
   authorizeOutstandConversation: jest.fn(),
 }));
@@ -29,7 +28,28 @@ jest.unstable_mockModule('@/lib/database/lead-db', () => ({
 }));
 
 jest.unstable_mockModule('@/lib/database/content-db', () => ({ getContentById: jest.fn() }));
-jest.unstable_mockModule('@/lib/database/supabase-client', () => ({ supabaseAdmin: {} }));
+jest.unstable_mockModule('@/lib/database/supabase-client', () => ({ supabaseAdmin: {
+  from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { name: 'Acme' } }) }) }) }),
+} }));
+jest.unstable_mockModule('@/lib/database/audience-db', () => ({ getAudienceById: async () => ({ site_id: siteId, status: 'ready' }) }));
+const exactSend = jest.fn<any>();
+jest.unstable_mockModule('@/lib/messaging/exact-delivery', () => ({
+  sendExactDelivery: exactSend,
+  loadExactAccount: async (_site: string, channel: string, connectionId: string) => ({
+    id: connectionId, provider: 'zavu', config: { type: channel, status: 'connected', zavu_sender_id: `${connectionId}-sender` },
+  }),
+}));
+jest.unstable_mockModule('@/lib/services/zavu/voice-call-service', () => ({ assertVoiceCallAllowed: jest.fn() }));
+jest.unstable_mockModule('@/lib/database/supabase-server', () => ({ supabaseAdmin: {
+  from: () => { throw new Error('Voice tracking is exercised by the real-adapter test-voice-delivery suite.'); },
+} }));
+jest.unstable_mockModule('@/lib/messaging/delivery-routing', async () => {
+  const actual = await import('@/lib/custom-automation/test-helpers/load-runtime-module');
+  const routing = actual.loadRuntimeModule<typeof import('@/lib/messaging/delivery-routing')>('src/lib/messaging/delivery-routing.ts', {
+    '@/lib/database/supabase-client': {}, '@/lib/services/outreach/policy': {},
+  });
+  return { ...routing, resolveDeliveryRoutes: async (_site: string, args: any) => routing.parseDeliveryRoutes(args).map(route => ({ ...route, connection_id: 'selected-2' })) };
+});
 
 let publishTool: typeof import('../assistantProtocol').publishTool;
 type GetLead = typeof import('@/lib/database/lead-db').getLeadById;
@@ -48,7 +68,7 @@ let mockedRecordOutstandMessage: jest.MockedFunction<RecordMessage>;
 beforeAll(async () => {
   ({ publishTool } = await import('../assistantProtocol'));
   mockedGetLeadById = jest.mocked((await import('@/lib/database/lead-db')).getLeadById);
-  mockedSendEmailCore = jest.mocked((await import('../../sendEmail/core')).sendEmailCore);
+  mockedSendEmailCore = exactSend;
   mockedSendBulkMessagesTool = jest.mocked((await import('../../sendBulkMessages/assistantProtocol')).sendBulkMessagesTool);
   mockedGetOutstandClient = jest.mocked((await import('@/lib/integrations/outstand/client')).getOutstandClient);
   mockedAuthorizeOutstandConversation = jest.mocked((await import('@/lib/integrations/outstand/conversation-access')).authorizeOutstandConversation);
@@ -62,6 +82,11 @@ const sendConversationMessageMock = jest.fn();
 const getMediaMock = jest.fn();
 
 describe('publish test delivery', () => {
+  it('exposes exact destination fields and channel-specific test recipients to the tool model', () => {
+    const properties = publishTool(siteId).parameters.properties;
+    expect(properties).toHaveProperty('connection_id'); expect(properties).toHaveProperty('delivery_routes');
+    expect(properties).toHaveProperty('test_recipients');
+  });
   afterEach(() => { jest.restoreAllMocks(); });
   beforeEach(() => {
     jest.clearAllMocks();
@@ -108,10 +133,10 @@ describe('publish test delivery', () => {
     expect(mockedGetLeadById).toHaveBeenCalledWith(leadId);
     expect(mockedSendEmailCore).toHaveBeenCalledWith(
       expect.objectContaining({
-        email: 'preview@example.com',
+        to: 'preview@example.com',
         lead_id: leadId,
-        subject: '[TEST] Hello {{lead.first_name}}',
-        message: 'Welcome {{lead.name}}',
+        subject: '[TEST] Hello Sergio',
+        message: '[TEST] Welcome Sergio Prado',
         placeholder_policy: 'strip_tokens',
       }),
     );
@@ -128,10 +153,30 @@ describe('publish test delivery', () => {
 
     expect(mockedSendEmailCore).toHaveBeenCalledWith(
       expect.objectContaining({
-        email: 'lead@example.com',
+        to: 'lead@example.com',
         lead_id: leadId,
       }),
     );
+  });
+
+  it('sends mixed-channel tests to typed recipients through each exact destination', async () => {
+    const result = await publishTool(siteId).execute({ is_test: true, text: 'Hello', subject: 'Test',
+      test_recipients: { email: 'preview@example.invalid', phone: '+14155550101' }, delivery_routes: [
+        { channel: 'email', connection_id: 'email-2' }, { channel: 'whatsapp', connection_id: 'wa-2' },
+      ] });
+    expect(result.success).toBe(true);
+    expect(exactSend.mock.calls.map(([input]: any[]) => [input.channel, input.to, input.connection_id])).toEqual([
+      ['email', 'preview@example.invalid', 'selected-2'], ['whatsapp', '+14155550101', 'selected-2'],
+    ]);
+  });
+
+  it('rejects invalid later test recipients before the first real send or content write', async () => {
+    const result = await publishTool(siteId).execute({ is_test: true, title: 'Test', type: 'text', text: 'Hello', subject: 'Test',
+      test_recipients: { email: 'preview@example.invalid', phone: 'not-a-phone' }, delivery_routes: [
+        { channel: 'email', connection_id: 'email-2' }, { channel: 'whatsapp', connection_id: 'wa-2' },
+      ] });
+    expect(result.success).toBe(false);
+    expect(exactSend).not.toHaveBeenCalled();
   });
 
   it('refuses to send merge tokens without a lead identity', async () => {
@@ -145,10 +190,7 @@ describe('publish test delivery', () => {
 
     expect(result).toMatchObject({
       success: false,
-      audience: {
-        success: false,
-        error: 'A valid test_lead_id is required when a test message contains merge fields',
-      },
+      error: 'A valid test_lead_id is required when a test message contains merge fields.',
     });
     expect(mockedSendEmailCore).not.toHaveBeenCalled();
   });
@@ -176,8 +218,7 @@ describe('publish test delivery', () => {
   it('passes the conversational Voice mode to the bulk sender', async () => {
     const result = await publishTool(siteId).execute({
       audience_id: '00000000-0000-4000-8000-000000000003',
-      channel: 'voice',
-      voice_mode: 'agent_call',
+      delivery_routes: [{ channel: 'voice', connection_id: 'selected-2', voice_mode: 'agent_call' }],
       text: 'Hello, this is Acme calling about your appointment.',
       objective: 'Confirm the appointment',
       additional_context: 'Offer a morning or afternoon slot.',
@@ -185,8 +226,7 @@ describe('publish test delivery', () => {
 
     expect(result.success).toBe(true);
     expect(bulkExecuteMock).toHaveBeenCalledWith(expect.objectContaining({
-      channel: 'voice',
-      voice_mode: 'agent_call',
+      delivery_routes: [{ channel: 'voice', connection_id: 'selected-2', voice_mode: 'agent_call' }],
       objective: 'Confirm the appointment',
       additional_context: 'Offer a morning or afternoon slot.',
     }), expect.objectContaining({

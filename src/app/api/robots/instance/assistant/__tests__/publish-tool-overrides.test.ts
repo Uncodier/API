@@ -1,6 +1,16 @@
 import { describe, expect, it } from '@jest/globals';
 import { normalizePublishToolOverrides } from '../publish-tool-overrides';
 
+it('retains multi-route overrides without injecting the first channel and uses typed test recipients', () => {
+  const routes = [{ channel: 'email', connection_id: 'mail-2' }, { channel: 'whatsapp', connection_id: 'wa-2' }];
+  const result = normalizePublishToolOverrides(JSON.stringify({ nodeType: 'publish', publish_channels: ['email', 'whatsapp'], is_test: true,
+    test_destination: { email: 'test@example.invalid', phone: '+14155550101' } }), { sendBulkMessages: { delivery_routes: routes } });
+  expect(result?.publish.delivery_routes).toBe(routes);
+  expect(result?.publish).not.toHaveProperty('channel');
+  expect(result?.publish).not.toHaveProperty('test_recipient');
+  expect(result?.publish.test_recipients).toEqual({ email: 'test@example.invalid', phone: '+14155550101' });
+});
+
 describe('normalizePublishToolOverrides', () => {
   const leadId = '8085b285-a1d3-47e8-a801-752061841ef6';
 

@@ -44,18 +44,23 @@ export function normalizePublishToolOverrides(
   const configuredChannels = Array.isArray(context.publish_channels)
     ? context.publish_channels
     : [];
+  const deliveryRoutes = existingPublish.delivery_routes ?? legacyBulk.delivery_routes;
   const channel =
+    deliveryRoutes !== undefined ? undefined :
     stringValue(existingPublish.channel)
     ?? stringValue(legacyBulk.channel)
     ?? stringValue(configuredChannels[0]);
   const destinationRecipient =
+    deliveryRoutes !== undefined ? undefined :
     channel === 'email'
       ? stringValue(destination?.email)
       : stringValue(destination?.phone);
   const audienceEmailMode =
+    deliveryRoutes !== undefined ? undefined :
     stringValue(existingPublish.audience_email_mode)
     ?? stringValue(legacyBulk.audience_email_mode);
   const voiceMode =
+    deliveryRoutes !== undefined ? undefined :
     stringValue(existingPublish.voice_mode)
     ?? stringValue(legacyBulk.voice_mode)
     ?? stringValue(context.publish_voice_mode);
@@ -76,6 +81,13 @@ export function normalizePublishToolOverrides(
     ?? destinationRecipient;
 
   const publishOverride: Record<string, unknown> = {
+    ...(deliveryRoutes !== undefined && destination ? { test_recipients: {
+      ...(stringValue(destination.email) ? { email: destination.email } : {}),
+      ...(stringValue(destination.phone) ? { phone: destination.phone } : {}),
+    } } : {}),
+    ...(deliveryRoutes !== undefined ? { delivery_routes: deliveryRoutes } : {}),
+    ...(deliveryRoutes === undefined && stringValue(existingPublish.connection_id ?? legacyBulk.connection_id)
+      ? { connection_id: existingPublish.connection_id ?? legacyBulk.connection_id } : {}),
     ...(channel ? { channel } : {}),
     ...(audienceEmailMode ? { audience_email_mode: audienceEmailMode } : {}),
     ...(voiceMode ? { voice_mode: voiceMode } : {}),

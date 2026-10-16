@@ -5,7 +5,7 @@ import { AgentMailSendService } from '@/lib/services/email/AgentMailSendService'
 import { EmailSignatureService } from '@/lib/services/email/EmailSignatureService';
 import { WhatsAppTemplateService } from '@/lib/services/whatsapp/WhatsAppTemplateService';
 import { sendTwilioWhatsAppMessage } from '@/lib/services/whatsapp/twilio-whatsapp-transport';
-import { decryptToken } from '@/lib/utils/token-decryption';
+import { selectedToken } from '@/lib/messaging/exact-credentials';
 import { agentEmailAddress, type OutreachAccount } from './policy';
 import { personalizeMergeSubjectAndMessage, fetchSiteNameForMerge, buildContentVariablesForLead } from '@/lib/messaging/lead-merge-fields';
 import { resolveOutreachRecipient } from './recipients';
@@ -15,22 +15,6 @@ import { assertSafeRemoteUrl } from '@/lib/security/safe-remote-url';
 
 export interface DeliveryContext { siteId: string; message: any; conversation: any; lead: any; account: OutreachAccount; conversations?: any[] }
 export type PreparedDelivery = { reason: string } | { send: () => Promise<{ success: boolean; messageId?: string }> };
-
-async function selectedToken(siteId: string, tokenType: string, identifier: string): Promise<any> {
-  const { data, error } = await supabaseAdmin.from('secure_tokens').select('*')
-    .eq('site_id', siteId).eq('token_type', tokenType);
-  if (error) throw error;
-  // Never take another configured account's token. Old singleton unlabelled
-  // credentials are usable only when there is exactly one unambiguous token.
-  const matches = (data || []).filter(t => t.identifier === identifier);
-  const token = matches.length === 1 ? matches[0]
-    : !matches.length && data?.length === 1 && !data[0].identifier ? data[0] : null;
-  if (!token) return null;
-  const encrypted = token.encrypted_value || token.token_value || token.value;
-  const plaintext = typeof encrypted === 'string' ? decryptToken(encrypted) : null;
-  if (!plaintext) return null;
-  try { return JSON.parse(plaintext); } catch { return plaintext; }
-}
 
 /** Preparation is read-only. The returned closure is the sole dispatch point. */
 export async function prepareOutreachDelivery(ctx: DeliveryContext): Promise<PreparedDelivery> {

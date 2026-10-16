@@ -1,4 +1,5 @@
 import { DEFAULT_TIKTOK_OPTIONS } from './tiktok-options';
+import { DELIVERY_ROUTING_PROPERTIES } from '@/lib/messaging/delivery-routing';
 
 export const publishToolDefinition = {
     name: 'publish',
@@ -7,6 +8,7 @@ export const publishToolDefinition = {
 2. Publish to Social Media: First call social_media_accounts and use its exact account IDs in 'social_accounts'. Never invent IDs or pass platform names as account IDs. Legacy platform selectors are resolved server-side only when unambiguous. A lookup failure or rejected identifier does not mean accounts are disconnected.
 3. Reply to an Instagram DM: Requires 'instagram_dm.conversation_id'. Supports text, public HTTPS media URLs, uploaded asset IDs, and native scheduling with 'instagram_dm.scheduled_at'.
 4. Send to Audience: Requires 'audience_id' and 'channel' ('whatsapp', 'telegram', 'sms', 'voice', or 'email'). (Newsletters MUST use channel: "email" and audience_email_mode: "newsletter".)
+Use connection_id for an exact selected site connection, or delivery_routes for multiple destinations instead of top-level channel/modes. Generic channels are accepted only with one unambiguous active account. Every selected route is validated before content writes or sends.
 For Voice, voice_mode "tts" sends a one-way spoken message and "agent_call" starts a two-way Zavu voice-agent call. agent_call also accepts a private objective and additional_context; these guide the conversation and are not spoken as the greeting.
 
 You MUST provide at least valid 'text', 'assets' (uploaded Outstand media IDs), 'urls', 'media_urls', or 'instagram_dm.media_urls'. For social posts attach images/videos using media_urls from trusted public storage, or uploaded assets. Ordinary urls are text links; recognized image/video urls are attached for compatibility. Instagram/TikTok cannot publish a link-only caption.
@@ -35,6 +37,9 @@ The tool will return an object detailing the success/failure of each attempted a
     parameters: {
       type: 'object',
       properties: {
+        test_recipients: { type: 'object', additionalProperties: false,
+          description: 'For mixed-channel test sends, separate email and phone recipients; never use an email address as a phone.',
+          properties: { email: { type: 'string' }, phone: { type: 'string' } } },
         // Test Mode
         is_test: { type: 'boolean', description: 'Run the tool in test mode. Bypasses actual DB saves, social posting, and bulk sending.' },
         test_recipient: { type: 'string', description: 'Optional email or phone override for a single real test send.' },
@@ -53,6 +58,9 @@ The tool will return an object detailing the success/failure of each attempted a
 
         // Social
         social_accounts: { type: 'array', items: { type: 'string' }, description: 'Exact connected account IDs from social_media_accounts. All targets must belong to the current site and be active. Never invent IDs.' },
+        social_account_targets: { type: 'array', maxItems: 100,
+          description: 'Strict exact account identities with expected network. Missing IDs never fall back to another username or platform.',
+          items: { type: 'object', additionalProperties: false, required: ['id', 'network'], properties: { id: { type: 'string' }, network: { type: 'string' } } } },
         scheduledAt: { type: 'string', description: 'ISO 8601 date to schedule social post (optional).' },
         tiktok: {
           type: 'object',
@@ -76,6 +84,7 @@ The tool will return an object detailing the success/failure of each attempted a
         },
 
         // Audience
+        ...DELIVERY_ROUTING_PROPERTIES,
         audience_id: { type: 'string', description: 'Audience UUID to send to.' },
         channel: { type: 'string', enum: ['whatsapp', 'email', 'telegram', 'sms', 'voice'], description: 'Channel for audience send.' },
         voice_mode: {

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { materializeRunFromGraph } from './materialize';
+import { resolveExactMessageConnection } from '@/lib/messaging/exact-message-connection';
 
 export const CHANNEL_MESSAGE_UUID = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i;
 
@@ -95,6 +96,11 @@ export async function resolveMessageConnection(siteId: string, channel: string, 
   const { data, error } = await supabaseAdmin.from('settings')
     .select('channels').eq('site_id', siteId).maybeSingle();
   if (error) throw error;
+  if (identity?.messageId && CHANNEL_MESSAGE_UUID.test(identity.messageId)) {
+    const exact = await resolveExactMessageConnection(siteId, normalizedChannel, data?.channels,
+      identity.messageId, identity.conversationId);
+    if (exact.present) return exact.connectionId;
+  }
   const channels = data?.channels as { connections?: ChannelConnection[] } | null;
   const connections = Array.isArray(channels?.connections) ? channels.connections : [];
   const matches = connections.filter((connection) => connection &&

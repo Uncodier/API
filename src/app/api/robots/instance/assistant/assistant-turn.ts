@@ -11,6 +11,7 @@ import type { AssistantContext } from './types';
 import { instrumentWorkflowTools } from '@/lib/services/workflow-robot/execution-tracker';
 import { assertAssistantRecoveryActive, runAssistantRecoveryTool } from '@/lib/services/robot-instance/assistant-recovery';
 import { resolvePublishNodeBinding } from './publish-node-binding';
+import { assertPublishNodeToolAllowed, enforcePublishDestinationArgs } from '@/lib/messaging/publish-destinations';
 import { buildToolExecutionContext } from '@/lib/services/tool-execution-context';
 import { SILENT_CONTINUE_PROMPT } from '@/lib/services/robot-instance/assistant-respawn-policy';
 import { CONVERSATION_RECOVERY_INSTRUCTION, getConversationRecoveryTools } from './conversation-recovery-tools';
@@ -82,16 +83,14 @@ export async function processAssistantTurn(
     ...tool,
     execute: async (...args: any[]) => {
       if (context.recoveryScope) await assertAssistantRecoveryActive(context.recoveryScope);
+      if (binding && tool.name === 'tools' && args[0]?.action === 'call') assertPublishNodeToolAllowed(args[0]?.name);
+      if (binding && tool.name !== 'tools') assertPublishNodeToolAllowed(tool.name);
       // Reapply the server-owned binding at the execution boundary, not only in
       // the model prompt. Defaults and model arguments cannot widen destinations.
-      if (binding && tool.name === 'tools' && args[0]?.action === 'call' && args[0]?.name === 'publish') {
+      if (binding && tool.name === 'tools' && args[0]?.action === 'call' && ['publish', 'sendBulkMessages'].includes(args[0]?.name)) {
         const parsed = typeof args[0].args === 'string' ? JSON.parse(args[0].args) : args[0].args;
         if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Invalid publish arguments');
-        const publishArgs = { ...parsed, ...binding.toolOverrides.publish };
-        if (!Object.hasOwn(binding.toolOverrides.publish, 'social_accounts')) {
-          delete publishArgs.social_accounts;
-          delete publishArgs.tiktok;
-        }
+        const publishArgs = enforcePublishDestinationArgs(parsed, binding.toolOverrides[args[0].name] ?? {}, args[0].name);
         args[0] = { ...args[0], args: JSON.stringify(publishArgs) };
       }
       // Multi-output fan-outs have their own non-resumable boundary and parallel writers.

@@ -13,6 +13,9 @@ const confirmUpload = jest.fn<(...args: unknown[]) => Promise<unknown>>();
 const downloadMedia = jest.fn<(...args: unknown[]) => Promise<unknown>>();
 const putMedia = jest.fn<(...args: unknown[]) => Promise<void>>();
 const bulkSend = jest.fn();
+const settingsFrom = jest.fn<any>(() => ({ select: () => ({ eq: () => ({ single: async () => ({
+  data: { channels: { connections: [{ id: 'email-selected', type: 'email', status: 'connected', zavu_sender_id: 'sender' }] } }, error: null,
+}) }) }) }));
 const client = { listAccounts, createPost, getMedia, getUploadUrl, confirmUpload };
 
 jest.unstable_mockModule('../../content/create/core', () => ({ createContentCore: createContent }));
@@ -22,6 +25,9 @@ jest.unstable_mockModule('../content-attempt', () => ({ claimSocialContent: clai
 jest.unstable_mockModule('../media-transfer-http', () => ({ downloadMedia, putMedia }));
 jest.unstable_mockModule('@/lib/integrations/outstand/client', () => ({ getOutstandClient: () => client }));
 jest.unstable_mockModule('../../sendBulkMessages/assistantProtocol', () => ({ sendBulkMessagesTool: bulkSend }));
+jest.unstable_mockModule('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: (...args: unknown[]) => settingsFrom(...args) } }));
+jest.unstable_mockModule('@/lib/database/audience-db', () => ({ getAudienceById: async () => ({ site_id: site, status: 'ready' }) }));
+jest.unstable_mockModule('@/lib/messaging/exact-delivery', () => ({ sendExactDelivery: jest.fn() }));
 jest.unstable_mockModule('../../sendEmail/core', () => ({ sendEmailCore: jest.fn() }));
 jest.unstable_mockModule('@/lib/services/whatsapp/WhatsAppSendService', () => ({ WhatsAppSendService: {} }));
 jest.unstable_mockModule('@/lib/database/lead-db', () => ({ getLeadById: jest.fn() }));
@@ -57,6 +63,9 @@ const acceptedPost = () => ({ success: true, post: {
 
 beforeEach(() => {
   jest.resetAllMocks();
+  settingsFrom.mockImplementation(() => ({ select: () => ({ eq: () => ({ single: async () => ({
+    data: { channels: { connections: [{ id: 'email-selected', type: 'email', status: 'connected', zavu_sender_id: 'sender' }] } }, error: null,
+  }) }) }) }));
   jest.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Unexpected live request'));
   listAccounts.mockResolvedValue({ success: true, data: accountRows, total: 2 });
   createPost.mockResolvedValue(acceptedPost());
@@ -74,6 +83,29 @@ beforeEach(() => {
 afterEach(() => { jest.restoreAllMocks(); });
 
 describe('social publish end-to-end contract without external side effects', () => {
+  it('strict saved IDs cannot resolve to a similarly named different social account', async () => {
+    listAccounts.mockResolvedValue({ success: true, data: [{ id: 'other-id', username: 'removed-id', network: 'instagram', isActive: 1, tenant_id: site }], total: 1 });
+    const result = await publishTool(site).execute({ title: 'Post', type: 'social_post', text: 'Caption', social_accounts: ['removed-id'],
+      social_account_targets: [{ id: 'removed-id', network: 'instagram' }] });
+    expect(result.success).toBe(false);
+    expect(createPost).not.toHaveBeenCalled(); expect(createContent).not.toHaveBeenCalled();
+  });
+  it('strict selected account must match its stored platform before any content write', async () => {
+    const result = await publishTool(site).execute({ title: 'Post', type: 'social_post', text: 'Caption', social_accounts: ['ig-one'],
+      social_account_targets: [{ id: 'ig-one', network: 'linkedin' }] });
+    expect(result.success).toBe(false);
+    expect(createPost).not.toHaveBeenCalled(); expect(createContent).not.toHaveBeenCalled();
+  });
+  it('rejects a wrong-channel or foreign distribution connection before any social lookup, content write or send', async () => {
+    const result = await publishTool(site).execute({ ...input, audience_id: 'audience', subject: 'News', delivery_routes: [
+      { channel: 'email', connection_id: 'email-selected' }, { channel: 'whatsapp', connection_id: 'email-selected' },
+    ] });
+    expect(result.success).toBe(false);
+    expect(listAccounts).not.toHaveBeenCalled();
+    expect(createContent).not.toHaveBeenCalled(); expect(updateContent).not.toHaveBeenCalled();
+    expect(createPost).not.toHaveBeenCalled(); expect(bulkSend).not.toHaveBeenCalled();
+  });
+
   it('resolves legacy network overrides, attaches the video, and keeps accepted content unpublished', async () => {
     const result = await publishTool(site).execute(input);
     expect(result.social.error).toBeUndefined();

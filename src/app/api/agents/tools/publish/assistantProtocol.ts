@@ -4,28 +4,23 @@ import { updateContentCore } from '../content/update/core';
 import { publishSocialContent } from './social-publishing';
 import type { TikTokPublishInput } from './tiktok-options';
 import { sendBulkMessagesTool } from '../sendBulkMessages/assistantProtocol';
-import { sendEmailCore } from '../sendEmail/core';
-import { WhatsAppSendService } from '@/lib/services/whatsapp/WhatsAppSendService';
-import { getLeadById } from '@/lib/database/lead-db';
 import { buildToolExecutionContext, readToolExecutionContext, type ToolExecutionContext } from '@/lib/services/tool-execution-context';
-import {
-  fetchSiteNameForMerge,
-  personalizeMergeTemplate,
-  placeholderPolicyToMergePolicy,
-} from '@/lib/messaging/lead-merge-fields';
 import {
   type InstagramDirectMessageParams,
   publishInstagramDirectMessage,
   validateInstagramDirectMessage,
 } from './instagram-dm';
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const MERGE_TOKEN_RE = /\{\{[^{}]+\}\}/;
+import { parseDeliveryRoutes, resolveDeliveryRoutes, type DeliveryRoute, type DeliveryRoutingInput } from '@/lib/messaging/delivery-routing';
+import { validateBulkRoutes } from '../sendBulkMessages/validation';
+import { getAudienceById } from '@/lib/database/audience-db';
+import { preparePublishTest } from './test-delivery';
 
-export interface PublishToolParams {
+export interface PublishToolParams extends DeliveryRoutingInput {
   // Test Mode
   is_test?: boolean;
   test_recipient?: string; // optional email or phone override for testing
+  test_recipients?: { email?: string; phone?: string };
   test_lead_id?: string; // lead identity used for merge fields and default destination
 
   // Content DB Params
@@ -41,6 +36,7 @@ export interface PublishToolParams {
 
   // Social Media Params
   social_accounts?: string[];
+  social_account_targets?: { id: string; network: string }[];
   scheduledAt?: string;
   tiktok?: TikTokPublishInput;
   instagram_dm?: InstagramDirectMessageParams;
@@ -75,18 +71,23 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
       assets,
       urls,
       media_urls,
-      social_accounts,
+      social_accounts: suppliedSocialAccounts,
       instagram_dm,
       audience_id,
       channel,
-      voice_mode,
       objective,
       additional_context,
-      audience_email_mode,
       subject,
       from,
       placeholders_when_unresolved,
     } = args;
+    if (args.social_account_targets !== undefined && (!Array.isArray(args.social_account_targets)
+      || args.social_account_targets.length > 100 || args.social_account_targets.some(target => !target || typeof target !== 'object'
+        || typeof target.id !== 'string' || !target.id.trim() || typeof target.network !== 'string' || !target.network.trim()))) {
+      return { success: false, error: 'Invalid social_account_targets.' };
+    }
+    const social_accounts = suppliedSocialAccounts ?? args.social_account_targets?.map(target => target.id);
+    args = { ...args, ...(social_accounts ? { social_accounts } : {}) };
 
     for (const [name, value] of Object.entries({ social_accounts, assets, urls, media_urls })) {
       if (value !== undefined && (!Array.isArray(value) || value.length > 100
@@ -114,9 +115,14 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
     const willUpdateContent = !!content_id;
     const willPublishSocial = !!social_accounts && social_accounts.length > 0;
     const willSendInstagramDm = !!instagram_dm;
-    const willSendAudience =
-      (!!audience_id && !!channel)
-      || (Boolean(is_test) && Boolean(test_recipient || test_lead_id) && !!channel);
+    const hasRouting = channel !== undefined || args.delivery_routes !== undefined || args.connection_id !== undefined;
+    const willSendAudience = hasRouting && (!!audience_id || Boolean(is_test));
+    let routes: DeliveryRoute[] = [];
+    if (hasRouting) {
+      try { routes = parseDeliveryRoutes(args); } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : String(error) };
+      }
+    }
 
     if (!willSaveContent && !willUpdateContent && !willPublishSocial && !willSendInstagramDm && !willSendAudience) {
       return { 
@@ -136,32 +142,12 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
     // Validation 3: Channel specific
     let finalSubject = subject;
     if (willSendAudience) {
-      if (channel === 'email' && !finalSubject) {
-        if (title) {
-          finalSubject = title;
-        } else if (is_test) {
-          finalSubject = 'Test Email';
-        } else {
-          return { success: false, error: 'Subject is required for email audience sending.' };
-        }
+      if (routes.some(route => route.channel === 'email') && !finalSubject) {
+        finalSubject = title || (is_test ? 'Test Email' : undefined);
+        if (!finalSubject) return { success: false, error: 'Subject is required for email audience sending.' };
       }
-      if (audience_email_mode === 'newsletter' && channel !== 'email') {
-        return {
-          success: false,
-          error: 'audience_email_mode "newsletter" is only valid when channel is "email".',
-        };
-      }
-      if (voice_mode === 'agent_call' && channel !== 'voice') {
-        return {
-          success: false,
-          error: 'voice_mode "agent_call" is only valid when channel is "voice".',
-        };
-      }
-      if ((objective || additional_context) && (channel !== 'voice' || voice_mode !== 'agent_call')) {
-        return {
-          success: false,
-          error: 'objective and additional_context are only valid for Voice agent calls.',
-        };
+      if ((objective || additional_context) && !routes.some(route => route.voice_mode === 'agent_call')) {
+        return { success: false, error: 'objective and additional_context are only valid for Voice agent calls.' };
       }
     }
 
@@ -172,13 +158,29 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
       return { success: false, error: 'tiktok settings require social_accounts.' };
     }
 
+    let testDelivery: (() => Promise<any>) | undefined;
+    try {
+      // Pure previews do not verify connectivity; every real send validates all routes first.
+      if (hasRouting && (!is_test || test_recipient || test_lead_id || args.test_recipients)) routes = await resolveDeliveryRoutes(siteId, args);
+      if (willSendAudience && !is_test) {
+        validateBulkRoutes({ ...args, audience_id: audience_id!, message: text || urls?.join('\n') || '', subject: finalSubject }, routes);
+        const audience = await getAudienceById(audience_id!);
+        if (!audience || audience.site_id !== siteId || audience.status !== 'ready') throw new Error('Audience must be ready and belong to this site.');
+      }
+      if (is_test && (test_recipient || test_lead_id || args.test_recipients) && hasRouting) {
+        testDelivery = await preparePublishTest(siteId, args, [text, urls?.join('\n')].filter(Boolean).join('\n\n'), finalSubject, routes);
+      }
+    } catch (error) { return { success: false, error: error instanceof Error ? error.message : String(error) }; }
+
     // All-or-Nothing strict validation
     // If the tool call fails ANY of the conditional validations above, we have ALREADY returned { success: false, error: ... }
     // Thus, by reaching this point, we are guaranteed that if a specific action was requested, all of its required parameters are valid.
     const results: any = { success: true, actions_attempted: [] };
     if (is_test) {
       results.test_mode = true;
-      results.note = "Running in TEST MODE. No real DB changes, social posts, direct messages, or bulk sends were made.";
+      results.note = testDelivery
+        ? "Running in TEST MODE. Selected recipients receive real test deliveries. Voice agent calls create tracked test records; no social posts or bulk audience sends are made."
+        : "Running in TEST MODE. Preview only: no real deliveries or publication changes are made.";
     }
     
     let finalContentId = content_id;
@@ -285,81 +287,8 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
       results.actions_attempted.push('audience');
       try {
         if (is_test) {
-          if (test_recipient || test_lead_id) {
-            const legacyLeadId =
-              test_recipient && UUID_RE.test(test_recipient) ? test_recipient : undefined;
-            const resolvedLeadId = test_lead_id || legacyLeadId;
-            const lead = resolvedLeadId ? await getLeadById(resolvedLeadId) : null;
-
-            if (resolvedLeadId && (!lead || lead.site_id !== siteId)) {
-              throw new Error(`Test lead ${resolvedLeadId} was not found for this site`);
-            }
-
-            const explicitRecipient = legacyLeadId ? undefined : test_recipient;
-            const testEmail = explicitRecipient || lead?.email || '';
-            const testPhone = explicitRecipient || lead?.phone || '';
-            const hasMergeTokens =
-              MERGE_TOKEN_RE.test(publishText)
-              || MERGE_TOKEN_RE.test(finalSubject || '');
-
-            if (hasMergeTokens && !lead) {
-              throw new Error(
-                'A valid test_lead_id is required when a test message contains merge fields',
-              );
-            }
-
-            // Dispatch a single test message
-          if (channel === 'email') {
-            if (!testEmail) {
-              throw new Error(`Test lead ${resolvedLeadId} has no email address`);
-            }
-            const testEmailResult = await sendEmailCore({
-              site_id: siteId,
-              email: testEmail,
-              lead_id: resolvedLeadId,
-              subject: `[TEST] ${finalSubject || 'Test Subject'}`,
-              message: publishText,
-              from,
-              instance_id: instanceId,
-              omit_signature: audience_email_mode === 'newsletter',
-              placeholder_policy: placeholders_when_unresolved,
-            });
-            results.audience = { success: testEmailResult.success, type: 'single_test_send', result: testEmailResult };
-            if (!testEmailResult.success) results.success = false;
-          } else if (channel === 'whatsapp' || channel === 'sms') {
-            if (!testPhone) {
-              throw new Error(`Test lead ${resolvedLeadId} has no phone number`);
-            }
-            let personalizedText = publishText;
-            if (lead) {
-              const siteName = await fetchSiteNameForMerge(siteId);
-              const merged = personalizeMergeTemplate(
-                publishText,
-                lead,
-                siteName,
-                placeholderPolicyToMergePolicy(placeholders_when_unresolved),
-              );
-              if (merged.aborted) {
-                throw new Error(`Unresolved merge fields: ${merged.unresolved.join(', ')}`);
-              }
-              personalizedText = merged.text;
-            }
-            const testWaResult = await WhatsAppSendService.sendMessage({
-              site_id: siteId,
-              phone_number: testPhone,
-              message: `[TEST] ${personalizedText}`,
-              from,
-              lead_id: resolvedLeadId,
-              media_urls: urls, // Fallback media for WA
-            });
-            results.audience = { success: testWaResult.success, simulated: true, type: 'single_test_send', result: testWaResult };
-            if (!testWaResult.success) results.success = false;
-          } else {
-            results.audience = { success: true, simulated: true, message: `Would have sent a single test to ${test_recipient} via ${channel}` };
-          }
-          } else {
-            results.audience = { success: true, simulated: true, message: `Would have executed bulk send to audience ${audience_id} via ${channel}` };
-          }
+          results.audience = testDelivery ? await testDelivery() : { success: true, simulated: true, connectivity_verified: false, message: 'Audience preview only; no message sent.' };
+          if (!results.audience.success) results.success = false;
         } else {
           const bulkSender = sendBulkMessagesTool(siteId);
           const inherited = readToolExecutionContext(executionContext, siteId);
@@ -386,12 +315,10 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
           
           const audienceResult = await bulkSender.execute({
             audience_id: audience_id as string, // willSendAudience and !is_test ensures audience_id exists
-            channel: channel as 'whatsapp' | 'email' | 'telegram' | 'sms' | 'voice',
+            delivery_routes: routes,
             message: publishText, // We send the combined text + urls
             ...(finalSubject ? { subject: finalSubject } : {}),
             ...(from ? { from } : {}),
-            ...(audience_email_mode ? { audience_email_mode } : {}),
-            ...(voice_mode ? { voice_mode } : {}),
             ...(objective ? { objective } : {}),
             ...(additional_context ? { additional_context } : {}),
             ...(finalContentId ? { content_id: finalContentId } : {}),

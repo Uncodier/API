@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { OUTSTAND_NETWORKS } from '@/lib/integrations/outstand/social-networks';
+import { bindPublishDestinations } from '@/lib/messaging/publish-destinations';
 import { validateSocialMediaAttachment } from '@/app/api/agents/tools/publish/social-media';
 
 type ToolOverrides = Record<string, Record<string, unknown>>;
@@ -18,10 +18,6 @@ const MAX_RESULT_LENGTH = 1_000_000;
 const MAX_TEXT_LENGTH = 100_000;
 const MAX_URL_LENGTH = 8192;
 const NODE_COLUMNS = 'id,instance_id,site_id,type,settings,result,status';
-const NON_SOCIAL = new Set([
-  'blog', 'mail', 'email', 'newsletter', 'whatsapp', 'telegram', 'sms',
-  'voice', 'voice-agent-call', 'audio', 'message', 'mensaje',
-]);
 const IMAGE_EXTENSION = /\.(?:jpe?g|png|gif|webp|avif|heic|heif|bmp|tiff?)$/i;
 const VIDEO_EXTENSION = /\.(?:mp4|mov|m4v|webm|avi|mkv|mpeg|mpg)$/i;
 const AUDIO_EXTENSION = /\.(?:mp3|wav|ogg|aac|m4a|flac)$/i;
@@ -163,27 +159,6 @@ function sourceContent(node: RecordValue): { media: MediaOutput[]; hasText: bool
   return { media, hasText };
 }
 
-function savedSocialDestinations(node: RecordValue): string[] {
-  const settings = checkedRecord(node.settings);
-  const destinations = settings.publish_destinations;
-  if (!Array.isArray(destinations) || destinations.length > MAX_ENTRIES) {
-    fail('Invalid saved publish destinations.');
-  }
-  const socials: string[] = [];
-  for (const value of destinations) {
-    if (typeof value !== 'string' || !value.trim() || value.length > 100
-      || /[\u0000-\u001f\u007f]/.test(value)) fail('Invalid saved publish destination.');
-    const destination = value.trim().toLowerCase();
-    if (NON_SOCIAL.has(destination)) continue;
-    if (!Object.prototype.hasOwnProperty.call(OUTSTAND_NETWORKS, destination)) {
-      fail('Unknown saved social destination.');
-    }
-    // Keep network selectors; live, site-scoped account resolution owns identities.
-    socials.push(destination);
-  }
-  return Array.from(new Set(socials));
-}
-
 /** Internal server boundary: the caller must already have authorized the site and instance. */
 export async function resolvePublishNodeBinding(params: {
   instanceNodeId?: string;
@@ -204,7 +179,15 @@ export async function resolvePublishNodeBinding(params: {
     fail('The node does not belong to the requested site and instance.');
   }
   if (node.type !== 'publish') return null;
-  const socialAccounts = savedSocialDestinations(node);
+  let savedDestinations = checkedRecord(node.settings ?? {}).publish_destinations;
+  if (savedDestinations === undefined) {
+    const site = await supabaseAdmin.from('sites').select('url').eq('id', siteId).maybeSingle();
+    if (site.error || typeof site.data?.url !== 'string' || !site.data.url.trim()) fail('Select at least one publish destination.');
+    savedDestinations = ['blog'];
+  }
+  if (Array.isArray(savedDestinations) && !savedDestinations.length) fail('Select at least one publish destination.');
+  const destinations = bindPublishDestinations(params.toolOverrides, savedDestinations);
+  const socialAccounts = destinations.social_accounts;
   const refs = await supabaseAdmin.from('instance_node_contexts')
     .select('target_node_id,context_node_id,type,site_id')
     .eq('target_node_id', instanceNodeId).eq('site_id', siteId).eq('type', 'content')
@@ -241,7 +224,7 @@ export async function resolvePublishNodeBinding(params: {
   }
   const mediaUrls = Array.from(new Set(selected.map(item => item.url)));
   if (socialAccounts.includes('tiktok') && !mediaUrls.length) fail('TikTok Content requires an image or video output.');
-  const publish = { ...params.toolOverrides?.publish };
+  const publish = { ...destinations.toolOverrides.publish };
   if (!socialAccounts.length) {
     // An empty array is rejected by publish. The router must disallow adding social targets.
     delete publish.social_accounts;
@@ -249,14 +232,14 @@ export async function resolvePublishNodeBinding(params: {
   }
   return {
     toolOverrides: {
-      ...params.toolOverrides,
+      ...destinations.toolOverrides,
       publish: {
         ...publish,
         ...(socialAccounts.length ? { social_accounts: socialAccounts, media_urls: mediaUrls, assets: [], urls: [] } : {}),
       },
     },
     instruction: 'PUBLISH CONTENT CONTRACT: Only persisted Content links are publishable. '
-      + 'Content output URLs and saved social destinations are authoritative and enforced by the server. '
+      + 'Content output URLs and all saved publish destinations are authoritative and enforced by the server. '
       + 'Reference images, prompt attachments, generation inputs, generic Context and global assets are not publishable Content. '
       + (!socialAccounts.length ? 'No social destinations are selected; do not publish to social accounts. ' : '')
       + (selected.some(item => item.type === 'video') ? 'Publish only the selected video outputs, never their reference images. ' : '')

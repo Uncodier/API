@@ -233,7 +233,7 @@ export class EmailSendService {
   /**
    * Construye el contenido HTML del email
    */
-  private static buildHtmlContent(message: string, siteInfo: SiteInfo, signatureHtml?: string): string {
+  public static buildHtmlContent(message: string, siteInfo: SiteInfo, signatureHtml?: string): string {
     // Siempre aplicamos el preprocesamiento de markdown (para convertir ![alt](url) y [text](url))
     // independientemente de si el mensaje parece HTML o no, ya que el LLM puede mezclar ambos.
     const messageWithMarkdown = this.applyInlineMarkdown(message, true);

@@ -11,6 +11,11 @@ jest.mock('@/lib/database/audience-db', () => ({
 jest.mock('../../sendEmail/core', () => ({ sendEmailCore: jest.fn() }));
 jest.mock('@/lib/services/whatsapp/WhatsAppSendService', () => ({ WhatsAppSendService: {} }));
 jest.mock('@/lib/services/whatsapp/WhatsAppTemplateService', () => ({ WhatsAppTemplateService: {} }));
+jest.mock('@/lib/messaging/exact-delivery', () => ({ getExactWhatsAppConfig: jest.fn(), sendExactDelivery: jest.fn() }));
+jest.mock('@/lib/messaging/delivery-routing', () => ({
+  resolveDeliveryRoutes: async (_site: string, args: any) => [{ channel: args.channel, connection_id: `selected-${args.channel}`,
+    ...(args.voice_mode ? { voice_mode: args.voice_mode } : {}) }],
+}));
 jest.mock('../support', () => ({
   ...jest.requireActual('../support'),
   resolvePlaceholderPolicy: async () => 'strip_tokens', findActiveSalesAgent: async () => null,
@@ -125,9 +130,9 @@ describe('recipient-private execution context', () => {
     const context = buildToolExecutionContext({ site_id: siteId, source: { audience_id: audienceId } });
     mockAudience.mockResolvedValueOnce({ site_id: randomUUID(), status: 'ready' });
     expect(await sendBulkMessagesTool(siteId).execute({ audience_id: audienceId, channel: 'sms', message: 'Hello.' }, context))
-      .toMatchObject({ success: false, error: 'Audience does not belong to this site' });
+      .toMatchObject({ success: false, error: 'Audience must be ready and belong to this site.' });
     expect(await sendBulkMessagesTool(siteId).execute({ audience_id: '', channel: 'sms', message: 'Hello.' }, context))
-      .toMatchObject({ success: false, error: 'Missing required field: audience_id' });
+      .toMatchObject({ success: false, error: 'audience_id and message are required.' });
     expect(mockPage).not.toHaveBeenCalled();
     expect(messages).toHaveLength(0);
     expect(conversations).toHaveLength(0);
