@@ -7,6 +7,7 @@ import { resolveAuthEmailChannel } from '@/lib/i18n/auth-email-channel';
 import { resolveTeamInvitationContext } from '@/lib/i18n/team-invitation-context';
 import { createHash } from 'node:crypto';
 import { withAbortSignal } from '@/lib/utils/with-abort-signal';
+import { getTransactionalEmailProvider } from '@/lib/services/email/transactional-email-config';
 
 export const runtime = 'nodejs';
 
@@ -174,6 +175,11 @@ async function handleAuthEmail(request: NextRequest, signal: AbortSignal) {
         })] : []),
       ]);
       if (results.some(result => !result.success)) {
+        for (const result of results) {
+          if (!result.success && 'diagnostic' in result) console.error('[auth/send-email-hook] Transactional email send failed', {
+            provider: getTransactionalEmailProvider(), action: 'email_change', ...result.diagnostic,
+          });
+        }
         return NextResponse.json({ error: { http_code: 500, message: 'Failed to send authentication email' } }, { status: 500 });
       }
 
@@ -192,7 +198,14 @@ async function handleAuthEmail(request: NextRequest, signal: AbortSignal) {
     });
 
     if (!result.success) {
-      console.error('[auth/send-email-hook] Transactional email send failed');
+      // Safe diagnostics identify configuration/validation failures before any
+      // provider call. Never print recipient, tokens, body or raw error strings.
+      let provider: string = 'invalid';
+      try { provider = getTransactionalEmailProvider(); } catch { /* bounded label */ }
+      console.error('[auth/send-email-hook] Transactional email send failed', {
+        provider, action: actionType === 'recovery' ? 'recovery' : 'other',
+        ...(result.diagnostic || { stage: 'dispatch', code: 'unclassified_failure' }),
+      });
       return NextResponse.json({ error: { http_code: 500, message: 'Failed to send authentication email' } }, { status: 500 });
     }
 

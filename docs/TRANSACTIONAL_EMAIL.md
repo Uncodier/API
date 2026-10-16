@@ -75,6 +75,17 @@ accepted the message, so sending via another provider could duplicate it.
 
 ## Operational limitations
 
+On Vercel, configure all required variables for **Production** and redeploy:
+`TRANSACTIONAL_EMAIL_PROVIDER`, `TRANSACTIONAL_EMAIL_FROM_EMAIL`,
+`TRANSACTIONAL_EMAIL_ZAVU_SITE_ID`, `TRANSACTIONAL_EMAIL_ZAVU_CONNECTION_ID`,
+`ZAVUDEV_API_KEY`, plus the existing Supabase server configuration and
+`SEND_EMAIL_HOOK_SECRET`. `.env.local` is ignored by Git and is not uploaded.
+
+Auth failure logs include safe `provider`, `action`, `stage`, `code` and optional
+`httpStatus` / missing variable names. An immediate 500 without outgoing requests
+can be `missing_configuration` / `invalid_request`; use the diagnostic rather
+than assuming a timeout. Never log or paste recovery payloads, OTPs or URLs.
+
 This transport migration introduces no SQL migrations or new outbound queue.
 The existing Zavu webhook admission records are durable, but email lifecycle
 events are still logged, not materialized as per-email delivery receipts.

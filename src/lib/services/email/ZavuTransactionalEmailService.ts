@@ -3,11 +3,15 @@ import { load } from 'cheerio';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { sendChannelMessage, zavuFetch, type ZavuEmailAttachment } from '@/lib/services/zavu/client';
 import type { SendEmailParams, SendEmailResult } from '@/lib/services/sendgrid-service';
-import { getTransactionalEmailFrom } from './transactional-email-config';
+import { getTransactionalEmailFrom, getTransactionalEmailConfigurationDiagnostic, getTransactionalEmailFailureDiagnostic,
+  type TransactionalEmailDiagnostic } from './transactional-email-config';
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const acceptedStates = new Set(['queued', 'sending', 'sent', 'delivered', 'read']);
 class TransactionalEmailConfigurationError extends Error {}
+class TransactionalEmailSenderError extends Error {
+  constructor(readonly diagnostic: TransactionalEmailDiagnostic) { super('Transactional email sender is unavailable'); }
+}
 
 function plainText(html: string): string {
   const $ = load(html);
@@ -59,7 +63,7 @@ export async function resolveZavuTransactionalSender(signal: AbortSignal): Promi
   signal.throwIfAborted();
   const { data, error } = await supabaseAdmin.from('settings').select('channels')
     .eq('site_id', siteId).abortSignal(signal).maybeSingle();
-  if (error) throw new Error('Unable to resolve transactional email connection');
+  if (error) throw new TransactionalEmailSenderError({ stage: 'sender_resolution', code: 'connection_lookup_failed' });
   const connections = Array.isArray(data?.channels?.connections) ? data.channels.connections : [];
   const matches = connections.filter((connection: any) => connection.id === connectionId);
   const connection = matches[0];
@@ -67,24 +71,33 @@ export async function resolveZavuTransactionalSender(signal: AbortSignal): Promi
     || connection.metadata?.from_address?.trim().toLowerCase() !== from
     || !connection.zavu_sender_id || !connection.metadata?.email_domain_id
     || (pinnedSenderId && connection.zavu_sender_id !== pinnedSenderId)) {
-    throw new Error('Configured transactional email connection is unavailable or does not match the sender');
+    throw new TransactionalEmailSenderError({ stage: 'sender_resolution', code: 'connection_mismatch' });
   }
-  const [senderResponse, domainResponse] = await Promise.all([
-    zavuFetch<any>(`/senders/${encodeURIComponent(connection.zavu_sender_id)}`, { signal }),
-    zavuFetch<any>(`/email-domains/${encodeURIComponent(connection.metadata.email_domain_id)}`, { signal }),
-  ]);
+  let senderResponse: any, domainResponse: any;
+  try {
+    [senderResponse, domainResponse] = await Promise.all([
+      zavuFetch<any>(`/senders/${encodeURIComponent(connection.zavu_sender_id)}`, { signal }),
+      zavuFetch<any>(`/email-domains/${encodeURIComponent(connection.metadata.email_domain_id)}`, { signal }),
+    ]);
+  } catch (error) {
+    throw new TransactionalEmailSenderError(getTransactionalEmailFailureDiagnostic(error, 'sender_verification'));
+  }
   const sender = senderResponse.sender || senderResponse;
   const domain = domainResponse.domain || domainResponse;
   if (sender.id !== connection.zavu_sender_id || sender.emailAddress?.trim().toLowerCase() !== from
     || !Array.isArray(sender.channels) || !sender.channels.includes('email')
     || domain.id !== connection.metadata.email_domain_id || domain.status !== 'verified') {
-    throw new Error('Zavu has not confirmed the configured sender and verified email domain');
+    throw new TransactionalEmailSenderError({ stage: 'sender_verification', code: 'sender_not_verified' });
   }
   return sender.id;
 }
 
 export async function sendZavuTransactionalEmail(params: SendEmailParams): Promise<SendEmailResult> {
+  let stage: TransactionalEmailDiagnostic['stage'] = 'validation';
   try {
+    const configurationDiagnostic = getTransactionalEmailConfigurationDiagnostic();
+    if (configurationDiagnostic) return { success: false, provider: 'zavu', statusCode: 502,
+      diagnostic: configurationDiagnostic, error: 'Transactional email configuration is incomplete or invalid' };
     // Fail before any sends instead of dropping SendGrid-only features.
     if (params.cc || params.bcc || params.templateId || params.dynamicTemplateData || params.sendAt !== undefined) {
       throw new TransactionalEmailConfigurationError('CC, BCC, dynamic templates and scheduled sends require TRANSACTIONAL_EMAIL_PROVIDER=sendgrid');
@@ -98,6 +111,7 @@ export async function sendZavuTransactionalEmail(params: SendEmailParams): Promi
     }
     const attachments = attachmentsForZavu(params);
     const signal = params.signal || AbortSignal.timeout(10_000);
+    stage = 'sender_resolution';
     const senderId = await resolveZavuTransactionalSender(signal);
     const operationKey = params.idempotencyKey || randomUUID();
     const recipientResults: NonNullable<SendEmailResult['recipientResults']> = [];
@@ -119,11 +133,13 @@ export async function sendZavuTransactionalEmail(params: SendEmailParams): Promi
         const success = typeof message?.id === 'string' && message.id.length > 0 && acceptedStates.has(message.status);
         recipientResults.push({
           to, success, messageId: message?.id, status: message?.status,
-          ...(!success ? { error: 'Zavu did not confirm message acceptance' } : {}),
+          ...(!success ? { error: 'Zavu did not confirm message acceptance',
+            diagnostic: { stage: 'acceptance' as const, code: 'message_not_accepted' as const } } : {}),
         });
-      } catch {
+      } catch (error) {
         // Delivery may be uncertain. Never retry or switch providers implicitly.
-        recipientResults.push({ to, success: false, status: 'unconfirmed', error: 'Zavu email send failed or is unconfirmed' });
+        recipientResults.push({ to, success: false, status: 'unconfirmed', error: 'Zavu email send failed or is unconfirmed',
+          diagnostic: getTransactionalEmailFailureDiagnostic(error, 'dispatch') });
       }
     }
     const success = recipientResults.every(result => result.success);
@@ -132,12 +148,17 @@ export async function sendZavuTransactionalEmail(params: SendEmailParams): Promi
       messageId: recipients.length === 1 ? recipientResults[0].messageId : undefined,
       status: success ? (recipients.length === 1 ? recipientResults[0].status : 'accepted') : 'unconfirmed',
       recipientResults,
+      ...(!success ? { diagnostic: recipientResults.find(result => !result.success)?.diagnostic } : {}),
       ...(!success ? { error: 'One or more Zavu emails failed or are unconfirmed; inspect recipientResults before retrying' } : {}),
     };
   } catch (error) {
     // Configuration/validation errors are local; never log provider responses,
     // credentials, bodies, OTPs or confirmation links.
     return { success: false, provider: 'zavu', statusCode: 502,
+      diagnostic: error instanceof TransactionalEmailSenderError ? error.diagnostic
+        : error instanceof TransactionalEmailConfigurationError ? { stage: 'validation',
+          code: params.cc || params.bcc || params.templateId || params.dynamicTemplateData || params.sendAt !== undefined ? 'unsupported_feature' : 'invalid_request' }
+        : getTransactionalEmailFailureDiagnostic(error, stage),
       error: error instanceof TransactionalEmailConfigurationError ? error.message : 'Zavu transactional email is unavailable' };
   }
 }

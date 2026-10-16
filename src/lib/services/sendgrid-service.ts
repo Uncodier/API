@@ -6,6 +6,7 @@ import { platformT } from '@/lib/i18n/email-messages/platform';
 import { generateHumanInterventionEmailHtml } from '@/lib/emails/human-intervention';
 import { EMAIL_BRAND, emailBrandHeadTags, emailCtaButton } from '@/lib/emails/brand';
 import { getTransactionalEmailFrom, getTransactionalEmailProvider, type TransactionalEmailProvider } from './email/transactional-email-config';
+import { getTransactionalEmailConfigurationDiagnostic, getTransactionalEmailFailureDiagnostic, type TransactionalEmailDiagnostic } from './email/transactional-email-config';
 
 /**
  * Configuración de SendGrid
@@ -60,12 +61,14 @@ export interface SendEmailResult {
   statusCode?: number;
   provider?: TransactionalEmailProvider;
   status?: string;
+  diagnostic?: TransactionalEmailDiagnostic;
   recipientResults?: Array<{
     to: string;
     success: boolean;
     messageId?: string;
     status?: string;
     error?: string;
+    diagnostic?: TransactionalEmailDiagnostic;
   }>;
 }
 
@@ -258,6 +261,7 @@ export class SendGridService {
 
       return {
         success: false,
+        diagnostic: getTransactionalEmailConfigurationDiagnostic() || getTransactionalEmailFailureDiagnostic(error, 'dispatch'),
         error: errorMessage,
         statusCode
       };
