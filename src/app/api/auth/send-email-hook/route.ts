@@ -5,6 +5,7 @@ import { buildSupabaseConfirmUrl, generateAuthEmailContent } from '@/lib/i18n/au
 import { verifyStandardWebhook } from '@/lib/i18n/standard-webhook';
 import { resolveAuthEmailChannel } from '@/lib/i18n/auth-email-channel';
 import { resolveTeamInvitationContext } from '@/lib/i18n/team-invitation-context';
+import { createHash } from 'node:crypto';
 
 export const runtime = 'nodejs';
 
@@ -33,6 +34,9 @@ interface AuthHookEmailData {
  * Shop OTP emails include only the 6-digit code. App emails include only a confirm link.
  */
 export async function POST(request: NextRequest) {
+  // Supabase's HTTPS hook has a five-second budget. Share a shorter deadline
+  // across Zavu configuration checks and both secure-email-change sends.
+  const signal = AbortSignal.timeout(4_000);
   const secret = process.env.SEND_EMAIL_HOOK_SECRET;
   if (!secret) {
     console.error('[auth/send-email-hook] SEND_EMAIL_HOOK_SECRET is not configured');
@@ -123,6 +127,11 @@ export async function POST(request: NextRequest) {
       subject,
       html,
       text,
+      signal,
+      idempotencyKey: `auth-${createHash('sha256').update(JSON.stringify({
+        webhookId: request.headers.get('webhook-id'), actionType,
+        recipient: opts.to, token: opts.token, tokenHash: opts.tokenHash,
+      })).digest('hex')}`,
       categories: ['auth', 'supabase-auth-hook', actionType],
       customArgs: {
         authAction: actionType,
@@ -135,24 +144,14 @@ export async function POST(request: NextRequest) {
   try {
     // Secure email change can require two emails
     if (actionType === 'email_change' && emailData.token_hash_new && user.email) {
-      const currentResult = await sendOne({
-        to: user.email,
-        token: emailData.token,
-        tokenHash: emailData.token_hash_new,
-      });
-      if (!currentResult.success) {
-        return NextResponse.json({ error: currentResult.error || 'Failed to send email' }, { status: 500 });
-      }
-
-      if (user.new_email) {
-        const newResult = await sendOne({
-          to: user.new_email,
-          token: emailData.token_new || emailData.token,
-          tokenHash: emailData.token_hash,
-        });
-        if (!newResult.success) {
-          return NextResponse.json({ error: newResult.error || 'Failed to send email' }, { status: 500 });
-        }
+      const results = await Promise.all([
+        sendOne({ to: user.email, token: emailData.token, tokenHash: emailData.token_hash_new }),
+        ...(user.new_email ? [sendOne({
+          to: user.new_email, token: emailData.token_new || emailData.token, tokenHash: emailData.token_hash,
+        })] : []),
+      ]);
+      if (results.some(result => !result.success)) {
+        return NextResponse.json({ error: { http_code: 500, message: 'Failed to send authentication email' } }, { status: 500 });
       }
 
       return NextResponse.json({});
@@ -170,13 +169,13 @@ export async function POST(request: NextRequest) {
     });
 
     if (!result.success) {
-      console.error('[auth/send-email-hook] SendGrid error:', result.error);
-      return NextResponse.json({ error: result.error || 'Failed to send email' }, { status: 500 });
+      console.error('[auth/send-email-hook] Transactional email send failed');
+      return NextResponse.json({ error: { http_code: 500, message: 'Failed to send authentication email' } }, { status: 500 });
     }
 
     return NextResponse.json({});
   } catch (err: any) {
-    console.error('[auth/send-email-hook] Unexpected error:', err);
-    return NextResponse.json({ error: err?.message || 'Internal error' }, { status: 500 });
+    console.error('[auth/send-email-hook] Unexpected email processing error');
+    return NextResponse.json({ error: { http_code: 500, message: 'Internal email processing error' } }, { status: 500 });
   }
 }

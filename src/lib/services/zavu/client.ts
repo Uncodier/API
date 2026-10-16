@@ -57,7 +57,7 @@ function getApiKey(): string {
 export async function zavuFetch<T>(
   path: string,
   init: RequestInit = {},
-  options?: { silentStatuses?: readonly number[] }
+  options?: { silentStatuses?: readonly number[]; acceptMessageReplay?: boolean }
 ): Promise<T> {
   const response = await fetch(`${ZAVU_API_BASE}${path}`, {
     ...init,
@@ -76,13 +76,22 @@ export async function zavuFetch<T>(
     payload = { message: text };
   }
 
-  if (!response.ok) {
+  // Zavu replays an existing message with HTTP 409 for an idempotent send.
+  // Opt in only for message POSTs; other conflicts must still fail.
+  const messageReplay = options?.acceptMessageReplay === true
+    && path === "/messages" && init.method === "POST"
+    && response.status === 409 && typeof payload?.message?.id === "string"
+    && payload.message.id.length > 0;
+  if (!response.ok && !messageReplay) {
     const errorMsg = payload.message || payload.error || `Zavu API ${response.status}`;
     if (!options?.silentStatuses?.includes(response.status)) {
-      console.error(`[Zavu API Error] ${init.method || "GET"} ${path} failed with status ${response.status}: ${errorMsg}`);
+      // Provider responses may echo credentials or email content. Log only the
+      // operation and status, never the raw response/error body.
+      console.error(`[Zavu API Error] ${init.method || "GET"} ${path} failed with status ${response.status}`);
     }
     const error = new Error(errorMsg);
     (error as any).status = response.status;
+    (error as any).code = payload.code || payload.error?.code;
     throw error;
   }
 
@@ -474,6 +483,13 @@ export async function verifyEmailDomain(domainId: string): Promise<any> {
   }
 }
 
+export interface ZavuEmailAttachment {
+  filename: string;
+  content: string;
+  content_type?: string;
+  content_id?: string;
+}
+
 // MESSAGING
 export async function sendChannelMessage(params: {
   to: string;
@@ -482,13 +498,20 @@ export async function sendChannelMessage(params: {
   senderId?: string;
   subject?: string;
   htmlBody?: string;
+  replyTo?: string;
+  metadata?: Record<string, string>;
+  idempotencyKey?: string;
+  attachments?: ZavuEmailAttachment[];
+  signal?: AbortSignal;
   messageType?: "text" | "image" | "video" | "audio" | "document";
   content?: { mediaUrl: string; mimeType?: string };
 }): Promise<any> {
-  const { senderId, to, text, channel, subject, htmlBody, messageType, content } = params;
+  const { senderId, to, text, channel, subject, htmlBody, messageType, content,
+    replyTo, metadata, idempotencyKey, attachments, signal } = params;
 
   return zavuFetch("/messages", {
     method: "POST",
+    ...(signal ? { signal } : {}),
     headers: {
       ...(senderId ? { "Zavu-Sender": senderId } : {}),
     },
@@ -498,8 +521,12 @@ export async function sendChannelMessage(params: {
       ...(channel ? { channel } : {}),
       ...(subject ? { subject } : {}),
       ...(htmlBody ? { htmlBody } : {}),
+      ...(replyTo ? { replyTo } : {}),
+      ...(metadata ? { metadata } : {}),
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+      ...(attachments ? { attachments } : {}),
       ...(messageType ? { messageType } : {}),
       ...(content ? { content } : {}),
     }),
-  });
+  }, { acceptMessageReplay: Boolean(idempotencyKey) });
 }

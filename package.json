@@ -20,6 +20,7 @@
     "test:harness:agent": "node ./node_modules/jest/bin/jest.js --config jest.agent-harness.config.js --runInBand",
     "test:commands": "node ./node_modules/jest/bin/jest.js --config jest.commands.config.js --runInBand",
     "test:voice": "node ./node_modules/jest/bin/jest.js --config jest.voice.config.js --runInBand",
+    "test:transactional-email": "node ./node_modules/jest/bin/jest.js --config jest.transactional-email.config.js --runInBand",
     "test:scheduling": "node ./node_modules/jest/bin/jest.js --config jest.scheduling.config.js --runInBand",
     "test:ai": "node ./node_modules/jest/bin/jest.js --config jest.ai.config.js --runInBand",
     "test:target-processor": "jest --verbose src/lib/agentbase/agents/tests/TargetProcessorAgent.test.ts",

@@ -255,6 +255,7 @@ See [Azure web search integration and validation](docs/AZURE_WEB_SEARCH.md).
 ### Optional Integrations
 - `STRIPE_SECRET_KEY` - Stripe API key
 - `SENDGRID_API_KEY` - SendGrid API key
+- `TRANSACTIONAL_EMAIL_PROVIDER` - `sendgrid` (default) or `zavu`; see [transactional email configuration](docs/TRANSACTIONAL_EMAIL.md)
 - `GOOGLE_CLOUD_API_KEY` - Google Cloud API key
 - `NEVER_BOUNCE_API_KEY` - NeverBounce email validation
 - `SCREENSHOTMACHINE_API_KEY` - Screenshot Machine API

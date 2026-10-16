@@ -5,6 +5,7 @@ import { formatEmailDate, normalizeEmailLocale, type EmailLocale } from '@/lib/i
 import { platformT } from '@/lib/i18n/email-messages/platform';
 import { generateHumanInterventionEmailHtml } from '@/lib/emails/human-intervention';
 import { EMAIL_BRAND, emailBrandHeadTags, emailCtaButton } from '@/lib/emails/brand';
+import { getTransactionalEmailFrom, getTransactionalEmailProvider, type TransactionalEmailProvider } from './email/transactional-email-config';
 
 /**
  * Configuración de SendGrid
@@ -43,6 +44,10 @@ export interface SendEmailParams {
   categories?: string[];
   customArgs?: Record<string, string>;
   sendAt?: number; // Unix timestamp for scheduled sending
+  /** Stable server-side operation identity for Zavu retries. */
+  idempotencyKey?: string;
+  /** Shared deadline for trusted callers such as the Supabase Auth hook. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -53,10 +58,20 @@ export interface SendEmailResult {
   messageId?: string;
   error?: string;
   statusCode?: number;
+  provider?: TransactionalEmailProvider;
+  status?: string;
+  recipientResults?: Array<{
+    to: string;
+    success: boolean;
+    messageId?: string;
+    status?: string;
+    error?: string;
+  }>;
 }
 
 /**
- * Servicio de SendGrid para notificaciones transaccionales
+ * Transactional email facade. The historical class/export names stay compatible;
+ * TRANSACTIONAL_EMAIL_PROVIDER selects the transport for every existing caller.
  */
 export class SendGridService {
   private static instance: SendGridService;
@@ -86,6 +101,7 @@ export class SendGridService {
    * Inicializa el servicio con la configuración de SendGrid
    */
   public initialize(config?: Partial<SendGridConfig>): void {
+    if (getTransactionalEmailProvider() === 'zavu') return;
     if (this.initialized) {
       console.log('🔄 SendGrid service already initialized');
       return;
@@ -111,8 +127,7 @@ export class SendGridService {
     console.log('✅ SendGrid service initialized successfully', {
       fromEmail: this.config.defaultFromEmail,
       fromName: this.config.defaultFromName,
-      sandboxMode: this.config.sandboxMode,
-      apiKeyPreview: this.config.apiKey.substring(0, 10) + '...'
+      sandboxMode: this.config.sandboxMode
     });
   }
 
@@ -130,6 +145,10 @@ export class SendGridService {
    */
   public async sendEmail(params: SendEmailParams): Promise<SendEmailResult> {
     try {
+      if (getTransactionalEmailProvider() === 'zavu') {
+        const { sendZavuTransactionalEmail } = await import('./email/ZavuTransactionalEmailService');
+        return sendZavuTransactionalEmail(params);
+      }
       this.ensureInitialized();
 
       console.log('📧 Iniciando envío de email...', {
@@ -143,6 +162,8 @@ export class SendGridService {
       const msg: any = {
         to: params.to,
         subject: params.subject,
+        // SendGrid retains its historical overrides/defaults for a one-variable
+        // rollback; the Zavu address need not be verified with SendGrid.
         from: params.from || {
           email: this.config.defaultFromEmail!,
           name: this.config.defaultFromName
@@ -213,17 +234,14 @@ export class SendGridService {
 
       return {
         success: true,
+        provider: 'sendgrid',
         messageId: response.headers['x-message-id'] || uuidv4(),
         statusCode: response.statusCode
       };
 
     } catch (error: any) {
-      console.error('❌ Error sending email with SendGrid:', {
-        error: error.message,
-        response: error.response ? {
-          statusCode: error.response.statusCode,
-          body: error.response.body
-        } : 'No response data'
+      console.error('❌ Transactional email send failed', {
+        statusCode: error.response?.statusCode || 500
       });
       
       let errorMessage = 'Unknown error occurred';
@@ -456,6 +474,13 @@ export class SendGridService {
    * Obtiene la configuración actual del servicio
    */
   public getConfig(): Partial<SendGridConfig> {
+    if (getTransactionalEmailProvider() === 'zavu') {
+      return {
+        defaultFromEmail: getTransactionalEmailFrom(),
+        defaultFromName: process.env.TRANSACTIONAL_EMAIL_FROM_NAME?.trim() || 'Makinari',
+        sandboxMode: false,
+      };
+    }
     return {
       defaultFromEmail: this.config.defaultFromEmail,
       defaultFromName: this.config.defaultFromName,
@@ -468,12 +493,17 @@ export class SendGridService {
    */
   public async healthCheck(): Promise<boolean> {
     try {
+      if (getTransactionalEmailProvider() === 'zavu') {
+        const { resolveZavuTransactionalSender } = await import('./email/ZavuTransactionalEmailService');
+        await resolveZavuTransactionalSender(AbortSignal.timeout(4_000));
+        return true;
+      }
       this.ensureInitialized();
       // SendGrid no tiene un endpoint específico de health check,
       // pero podemos verificar que la API key esté configurada
       return !!this.config.apiKey;
     } catch (error) {
-      console.error('SendGrid health check failed:', error);
+      console.error('Transactional email health check failed');
       return false;
     }
   }
