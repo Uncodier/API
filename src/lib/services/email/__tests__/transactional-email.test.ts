@@ -257,3 +257,12 @@ it('rejects an invalid provider instead of silently choosing another transport',
   expect((await service.sendEmail({ to, subject: 'Notice', text: 'Body' })).success).toBe(false);
   expect(global.fetch).not.toHaveBeenCalled(); expect(sgMail.send).not.toHaveBeenCalled();
 });
+
+it('never dispatches SendGrid after an auth deadline has expired', async () => {
+  process.env.TRANSACTIONAL_EMAIL_PROVIDER = 'sendgrid';
+  process.env.SENDGRID_API_KEY = randomBytes(32).toString('hex');
+  const controller = new AbortController(); controller.abort();
+  const result = await service.sendEmail({ to, subject: 'Auth', text: 'Body', signal: controller.signal });
+  expect(result.success).toBe(false);
+  expect(sgMail.send).not.toHaveBeenCalled(); expect(global.fetch).not.toHaveBeenCalled();
+});

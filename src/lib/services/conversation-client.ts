@@ -1,5 +1,5 @@
 import { ConversationOptions } from '@/lib/types/conversation-types';
-import { processConversation } from '@/app/api/conversation/route';
+import { processConversation } from '@/app/api/conversation/core';
 
 /**
  * Construye una URL absoluta de manera segura para uso en el servidor

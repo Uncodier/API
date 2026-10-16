@@ -2,7 +2,8 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import OpenAI from 'openai';
 import { NextRequest } from 'next/server';
 import { POST } from '../route';
-import { processConversation } from '../../conversation/route';
+import { processConversation } from '../../conversation/core';
+import * as conversationRoute from '../../conversation/route';
 import { callApiWithMessage, handleIncompleteJsonResponse, prepareApiMessage } from '@/lib/utils/api-utils';
 import { continueJsonGeneration, extractResponseContent, updateResponseContent } from '@/lib/services/continuation-service';
 import { analyzeWithConversationApi } from '@/lib/services/conversation-client';
@@ -32,6 +33,17 @@ describe('legacy AI OpenRouter contracts', () => {
     jest.spyOn(console, 'error').mockImplementation(() => {});
   });
   afterEach(() => { process.env = { ...env }; jest.restoreAllMocks(); });
+
+  it('exports only HTTP handlers from the conversation route', () => {
+    expect(Object.keys(conversationRoute).sort()).toEqual(['GET', 'POST']);
+  });
+
+  it('preserves the HTTP conversation adapter after extracting its core', async () => {
+    mockCreate.mockResolvedValueOnce(envelope('hello'));
+    const response = await conversationRoute.POST(request({ messages: [{ role: 'user', content: 'hi' }] }));
+    expect(response.status).toBe(200);
+    expect((await response.json()).choices[0].message.content).toBe('hello');
+  });
 
   it.each(['anthropic', 'openai', 'gemini'] as const)('repairs canonical choices for %s without losing accounting', async (modelType) => {
     const result = envelope('{"ok":true');

@@ -4,6 +4,9 @@ The existing `SendGridService` / `sendGridService` names are retained as a
 compatibility facade. Every current consumer of that facade (including Supabase
 Auth, visitor verification, invitations, billing and notifications) selects its
 transport through the server-only `TRANSACTIONAL_EMAIL_PROVIDER` variable.
+System notifications also dispatch directly through this facade, not through
+AgentMail first. Harness support preflight validates the selected provider's
+configuration; a Zavu-only deployment does not require `SENDGRID_API_KEY`.
 SMTP/AgentMail lead and conversation transports are not changed.
 
 ## Configuration
@@ -63,7 +66,11 @@ accepted the message, so sending via another provider could duplicate it.
   The outgoing key binds that operation to sender, recipient and content.
   Without one, each call is a new operation. There are no automatic retries.
 - The Auth hook derives a hashed identity from its verified webhook event and
-  auth payload. Both secure-email-change sends share a four-second Zavu deadline.
+  auth payload. Both secure-email-change sends share a four-second overall hook
+  deadline. Locale lookups have a 500ms budget and default to English if stalled;
+  their queries receive cancellation. A stalled provider/body read is also
+  bounded. SendGrid requests already accepted/in flight cannot be canceled by
+  its SDK; a timeout is uncertain and never triggers a fallback or retry.
   Keys/logs/metadata do not expose OTPs or confirmation tokens.
 
 ## Operational limitations

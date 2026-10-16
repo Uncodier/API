@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { withAbortSignal } from '@/lib/utils/with-abort-signal';
 
 export const SUPPORTED_EMAIL_LOCALES = ['en', 'es', 'fr', 'de', 'ja'] as const;
 
@@ -53,6 +54,8 @@ export interface ResolveEmailLocaleParams {
   leadId?: string | null;
   /** Explicit override (e.g. user_metadata.locale from auth hook) */
   explicitLocale?: string | null;
+  /** Optional caller budget; expiry falls back to the default locale. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -60,20 +63,31 @@ export interface ResolveEmailLocaleParams {
  * explicit → user profile language → lead language → site default_locale → en
  */
 export async function resolveEmailLocale(params: ResolveEmailLocaleParams): Promise<EmailLocale> {
-  const { siteId, userId, leadId, explicitLocale } = params;
+  if (!params.signal) return resolveEmailLocaleCore(params);
+  if (params.signal.aborted) return tryNormalizeEmailLocale(params.explicitLocale) || DEFAULT_EMAIL_LOCALE;
+  try {
+    return await withAbortSignal(resolveEmailLocaleCore(params), params.signal);
+  } catch (error) {
+    if (params.signal.aborted) return DEFAULT_EMAIL_LOCALE;
+    throw error;
+  }
+}
+
+async function resolveEmailLocaleCore(params: ResolveEmailLocaleParams): Promise<EmailLocale> {
+  const { siteId, userId, leadId, explicitLocale, signal } = params;
 
   if (explicitLocale) {
     const fromExplicit = tryNormalizeEmailLocale(explicitLocale);
     if (fromExplicit) return fromExplicit;
   }
 
-  if (userId) {
+  if (userId && !signal?.aborted) {
     try {
-      const { data: profile } = await supabaseAdmin
+      const query = supabaseAdmin
         .from('profiles')
         .select('language')
-        .eq('id', userId)
-        .maybeSingle();
+        .eq('id', userId);
+      const { data: profile } = await (signal ? query.abortSignal(signal) : query).maybeSingle();
       const fromProfile = tryNormalizeEmailLocale(profile?.language);
       if (fromProfile) return fromProfile;
     } catch (err) {
@@ -81,13 +95,13 @@ export async function resolveEmailLocale(params: ResolveEmailLocaleParams): Prom
     }
   }
 
-  if (leadId) {
+  if (leadId && !signal?.aborted) {
     try {
-      const { data: lead } = await supabaseAdmin
+      const query = supabaseAdmin
         .from('leads')
         .select('language')
-        .eq('id', leadId)
-        .maybeSingle();
+        .eq('id', leadId);
+      const { data: lead } = await (signal ? query.abortSignal(signal) : query).maybeSingle();
       const fromLead = tryNormalizeEmailLocale(lead?.language);
       if (fromLead) return fromLead;
     } catch (err) {
@@ -95,21 +109,22 @@ export async function resolveEmailLocale(params: ResolveEmailLocaleParams): Prom
     }
   }
 
-  if (siteId) {
-    const siteLocale = await getSiteDefaultLocale(siteId);
+  if (siteId && !signal?.aborted) {
+    const siteLocale = await getSiteDefaultLocale(siteId, signal);
     if (siteLocale) return siteLocale;
   }
 
   return DEFAULT_EMAIL_LOCALE;
 }
 
-export async function getSiteDefaultLocale(siteId: string): Promise<EmailLocale | null> {
+export async function getSiteDefaultLocale(siteId: string, signal?: AbortSignal): Promise<EmailLocale | null> {
   try {
-    const { data, error } = await supabaseAdmin
+    if (signal?.aborted) return null;
+    const query = supabaseAdmin
       .from('settings')
       .select('default_locale')
-      .eq('site_id', siteId)
-      .maybeSingle();
+      .eq('site_id', siteId);
+    const { data, error } = await (signal ? query.abortSignal(signal) : query).maybeSingle();
 
     if (error) {
       console.warn('[email-locale] Failed to load settings.default_locale:', error.message);

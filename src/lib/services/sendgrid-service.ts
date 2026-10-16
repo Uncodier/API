@@ -145,6 +145,7 @@ export class SendGridService {
    */
   public async sendEmail(params: SendEmailParams): Promise<SendEmailResult> {
     try {
+      params.signal?.throwIfAborted();
       if (getTransactionalEmailProvider() === 'zavu') {
         const { sendZavuTransactionalEmail } = await import('./email/ZavuTransactionalEmailService');
         return sendZavuTransactionalEmail(params);
@@ -224,6 +225,7 @@ export class SendGridService {
       });
 
       // Enviar el email
+      params.signal?.throwIfAborted();
       const [response] = await sgMail.send(msg);
 
       console.log('✅ Email enviado exitosamente', {

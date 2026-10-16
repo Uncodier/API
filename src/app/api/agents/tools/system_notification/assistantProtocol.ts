@@ -1,4 +1,4 @@
-import { listSystemNotificationCore, notifySystemNotificationCore } from './route';
+import { listSystemNotificationCore, notifySystemNotificationCore } from './core';
 
 export function systemNotificationTool(site_id: string) {
   return {

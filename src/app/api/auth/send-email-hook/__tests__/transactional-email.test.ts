@@ -2,9 +2,11 @@ import { createHmac, randomBytes } from 'node:crypto';
 import { NextRequest } from 'next/server';
 import { sendGridService } from '@/lib/services/sendgrid-service';
 import { POST } from '../route';
+import { resolveEmailLocale } from '@/lib/i18n/email-locale';
 
 jest.mock('@/lib/services/sendgrid-service', () => ({ sendGridService: { sendEmail: jest.fn() } }));
 jest.mock('@/lib/i18n/email-locale', () => ({
+  DEFAULT_EMAIL_LOCALE: 'en',
   resolveEmailLocale: jest.fn().mockResolvedValue('en'), tryNormalizeEmailLocale: (locale: string) => locale,
 }));
 jest.mock('@/lib/i18n/team-invitation-context', () => ({ resolveTeamInvitationContext: () => null }));
@@ -20,13 +22,14 @@ let tokenHash: string;
 
 beforeEach(() => {
   jest.clearAllMocks();
+  (resolveEmailLocale as jest.Mock).mockResolvedValue('en');
   signingKey = randomBytes(32); token = randomBytes(6).toString('hex'); tokenHash = randomBytes(32).toString('hex');
   process.env = { NODE_ENV: 'test', SEND_EMAIL_HOOK_SECRET: `v1,whsec_${signingKey.toString('base64')}`, NEXT_PUBLIC_SUPABASE_URL: 'https://auth.example.invalid' };
   (sendGridService.sendEmail as jest.Mock).mockResolvedValue({ success: true, messageId: 'provider-message' });
   jest.spyOn(console, 'error').mockImplementation(() => {});
   jest.spyOn(console, 'warn').mockImplementation(() => {});
 });
-afterEach(() => { process.env = originalEnv; jest.restoreAllMocks(); });
+afterEach(() => { process.env = originalEnv; jest.restoreAllMocks(); jest.useRealTimers(); });
 
 function request(overrides: any = {}, valid = true): NextRequest {
   const payload = {
@@ -86,4 +89,54 @@ it('returns the Supabase error contract without exposing provider errors or auth
   expect(body).toEqual({ error: { http_code: 500, message: 'Failed to send authentication email' } });
   const output = JSON.stringify({ body, logs: (console.error as jest.Mock).mock.calls });
   expect(output).not.toContain(token); expect(output).not.toContain(tokenHash);
+});
+
+it('falls back to English after 500ms when locale I/O ignores cancellation, leaving time to send', async () => {
+  (resolveEmailLocale as jest.Mock).mockReturnValue(new Promise(() => {}));
+  const req = request();
+  jest.useFakeTimers();
+  const pending = POST(req);
+  await jest.advanceTimersByTimeAsync(501);
+  const response = await pending;
+  expect(response.status).toBe(200);
+  const send = (sendGridService.sendEmail as jest.Mock).mock.calls[0][0];
+  expect(send.customArgs.locale).toBe('en');
+  expect(send.signal.aborted).toBe(true); // canceled/cleaned up after the hook completed
+  const localeSignal = (resolveEmailLocale as jest.Mock).mock.calls[0][0].signal;
+  expect(localeSignal.aborted).toBe(true);
+});
+
+it('keeps an explicit locale on enrichment failure without leaking errors', async () => {
+  (resolveEmailLocale as jest.Mock).mockRejectedValue(new Error(token));
+  expect((await POST(request({ user: { email: 'user@example.invalid', user_metadata: { locale: 'es' } } }))).status).toBe(200);
+  expect(sendGridService.sendEmail).toHaveBeenCalledWith(expect.objectContaining({ customArgs: expect.objectContaining({ locale: 'es' }) }));
+  expect(JSON.stringify((console.error as jest.Mock).mock.calls)).not.toContain(token);
+});
+
+it('returns within four seconds when either provider ignores cancellation, without a retry', async () => {
+  (sendGridService.sendEmail as jest.Mock).mockReturnValue(new Promise(() => {}));
+  const req = request();
+  jest.useFakeTimers();
+  const pending = POST(req);
+  await jest.advanceTimersByTimeAsync(4_001);
+  const response = await pending;
+  expect(response.status).toBe(500);
+  expect(await response.json()).toEqual({ error: { http_code: 500, message: 'Internal email processing error' } });
+  expect(sendGridService.sendEmail).toHaveBeenCalledTimes(1);
+  expect((sendGridService.sendEmail as jest.Mock).mock.calls[0][0].signal.aborted).toBe(true);
+});
+
+it('bounds reading the request body and prevents any late send after timeout', async () => {
+  let resolveBody!: (body: string) => void;
+  const req = request();
+  const body = await req.text();
+  const read = jest.spyOn(req, 'text').mockReturnValue(new Promise(resolve => { resolveBody = resolve; }));
+  jest.useFakeTimers();
+  const pending = POST(req);
+  await jest.advanceTimersByTimeAsync(4_001);
+  expect((await pending).status).toBe(500);
+  resolveBody(body);
+  await jest.advanceTimersByTimeAsync(1);
+  expect(sendGridService.sendEmail).not.toHaveBeenCalled();
+  read.mockRestore();
 });

@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sendGridService } from '@/lib/services/sendgrid-service';
-import { resolveEmailLocale, tryNormalizeEmailLocale } from '@/lib/i18n/email-locale';
+import { DEFAULT_EMAIL_LOCALE, resolveEmailLocale, tryNormalizeEmailLocale } from '@/lib/i18n/email-locale';
 import { buildSupabaseConfirmUrl, generateAuthEmailContent } from '@/lib/i18n/auth-email-template';
 import { verifyStandardWebhook } from '@/lib/i18n/standard-webhook';
 import { resolveAuthEmailChannel } from '@/lib/i18n/auth-email-channel';
 import { resolveTeamInvitationContext } from '@/lib/i18n/team-invitation-context';
 import { createHash } from 'node:crypto';
+import { withAbortSignal } from '@/lib/utils/with-abort-signal';
 
 export const runtime = 'nodejs';
 
@@ -34,9 +35,21 @@ interface AuthHookEmailData {
  * Shop OTP emails include only the 6-digit code. App emails include only a confirm link.
  */
 export async function POST(request: NextRequest) {
-  // Supabase's HTTPS hook has a five-second budget. Share a shorter deadline
-  // across Zavu configuration checks and both secure-email-change sends.
-  const signal = AbortSignal.timeout(4_000);
+  // Bound the entire hook, including body/locale resolution and either provider.
+  const deadline = new AbortController();
+  const timer = setTimeout(() => deadline.abort(new Error('Auth email deadline exceeded')), 4_000);
+  try {
+    return await withAbortSignal(handleAuthEmail(request, deadline.signal), deadline.signal);
+  } catch {
+    console.error('[auth/send-email-hook] Email processing failed or exceeded its deadline');
+    return NextResponse.json({ error: { http_code: 500, message: 'Internal email processing error' } }, { status: 500 });
+  } finally {
+    clearTimeout(timer);
+    deadline.abort();
+  }
+}
+
+async function handleAuthEmail(request: NextRequest, signal: AbortSignal) {
   const secret = process.env.SEND_EMAIL_HOOK_SECRET;
   if (!secret) {
     console.error('[auth/send-email-hook] SEND_EMAIL_HOOK_SECRET is not configured');
@@ -44,6 +57,7 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.text();
+  signal.throwIfAborted();
   const verified = verifyStandardWebhook({
     body,
     headers: request.headers,
@@ -82,11 +96,19 @@ export async function POST(request: NextRequest) {
     (typeof metadata.language === 'string' && metadata.language) ||
     null;
 
-  const locale = await resolveEmailLocale({
-    siteId,
-    userId: user.id,
-    explicitLocale,
-  });
+  // Locale is enrichment, not a reason to delay an OTP. Leave most of the
+  // four-second budget for sender validation and provider acceptance.
+  const localeDeadline = new AbortController();
+  const localeSignal = AbortSignal.any([signal, localeDeadline.signal]);
+  const localeTimer = setTimeout(() => localeDeadline.abort(), 500);
+  let locale = tryNormalizeEmailLocale(explicitLocale) || DEFAULT_EMAIL_LOCALE;
+  try {
+    locale = await withAbortSignal(resolveEmailLocale({
+      siteId, userId: user.id, explicitLocale, signal: localeSignal,
+    }), localeSignal);
+  } catch { /* Keep the default locale when enrichment is unavailable. */ }
+  finally { clearTimeout(localeTimer); localeDeadline.abort(); }
+  signal.throwIfAborted();
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || emailData.site_url || '';
 
@@ -96,6 +118,7 @@ export async function POST(request: NextRequest) {
     tokenHash?: string;
   }) => {
     if (!opts.to) return { success: false, error: 'Missing recipient' };
+    signal.throwIfAborted();
 
     const confirmUrl =
       opts.tokenHash && supabaseUrl && channel === 'link'

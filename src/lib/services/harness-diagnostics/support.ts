@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { sanitizeHarnessData, type HarnessDiagnosticContext } from './context';
+import { getTransactionalEmailConfigurationError } from '@/lib/services/email/transactional-email-config';
 
 /** Recipient is server-owned platform support configuration, never supplied by a model or a customer log. */
 export async function deliverHarnessSupportTicket(ticket: Record<string, any>, context: HarnessDiagnosticContext) {
@@ -9,9 +10,10 @@ export async function deliverHarnessSupportTicket(ticket: Record<string, any>, c
     return { state: 'unconfigured', email_sent: false, ticket_id: ticket.id,
       message: 'Ticket stored, but no valid platform support recipient is configured. Set HARNESS_SUPPORT_EMAIL on the server.' };
   }
-  if (!process.env.SENDGRID_API_KEY?.trim()) {
+  const configurationError = getTransactionalEmailConfigurationError();
+  if (configurationError) {
     return { state: 'unconfigured', email_sent: false, ticket_id: ticket.id,
-      message: 'Ticket stored; configure SENDGRID_API_KEY before retrying this same ticket. No delivery was attempted.' };
+      message: `Ticket stored; ${configurationError} before retrying this same ticket. No delivery was attempted.` };
   }
   // Claim once before sending. A crash after provider acceptance is unknown, not permission to send another email.
   const { data: claimed, error } = await supabaseAdmin.from('requirement_harness_decisions')
@@ -35,6 +37,7 @@ export async function deliverHarnessSupportTicket(ticket: Record<string, any>, c
       subject: `[Harness] Soporte técnico — ${ticket.id}`,
       html: `<h1>Incidencia técnica del harness</h1><p>No es una solicitud de aprobación de producto al cliente.</p><pre>${escaped}</pre>`,
       categories: ['harness-technical-support'],
+      idempotencyKey: `harness-support-${context.siteId}-${ticket.id}`,
     });
     sent = result.success === true;
   } catch { /* Persist a bounded outcome, never raw provider errors or recipient secrets. */ }
