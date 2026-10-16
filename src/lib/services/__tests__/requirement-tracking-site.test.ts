@@ -87,7 +87,7 @@ describe('tracking uses the requirement site without provisioning another site',
     await allowRequirementPreviewDomain({ requirementId, originSiteId, previewUrl: 'https://app.example.com' });
     expect(siteLookups).not.toContain(legacyAppSiteId);
     expect(upsert).toHaveBeenCalledWith(
-      { site_id: originSiteId, domain: 'app.example.com' },
+      { site_id: originSiteId, domain: 'app.example.com', source: 'harness', requirement_id: requirementId },
       { onConflict: 'site_id,domain', ignoreDuplicates: true },
     );
   });
@@ -131,7 +131,7 @@ describe('tracking uses the requirement site without provisioning another site',
       requirementId, originSiteId, previewUrl: ' https://App.Example.Com/some/path ',
     });
     expect(upsert).toHaveBeenCalledWith(
-      { site_id: originSiteId, domain: 'app.example.com' },
+      { site_id: originSiteId, domain: 'app.example.com', source: 'harness', requirement_id: requirementId },
       { onConflict: 'site_id,domain', ignoreDuplicates: true },
     );
     expect(siteLookups).toEqual([originSiteId]);
@@ -150,8 +150,27 @@ describe('tracking uses the requirement site without provisioning another site',
     await allowRequirementPreviewDomain({ requirementId, originSiteId, previewUrl: 'https://app.example.com' });
     expect(existingDomains).toEqual([
       { site_id: legacyAppSiteId, domain: 'app.example.com' },
-      { site_id: originSiteId, domain: 'app.example.com' },
+      { site_id: originSiteId, domain: 'app.example.com', source: 'harness', requirement_id: requirementId },
     ]);
+  });
+
+  it.each(['user', 'unknown', 'harness'])('does not relabel an existing %s domain or change its requirement', async (source) => {
+    const existing = {
+      site_id: originSiteId, domain: 'app.example.com', source,
+      requirement_id: source === 'harness' ? 'bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee' : null,
+    };
+    const domains = [existing];
+    upsert.mockImplementation(async (row, options) => {
+      expect(row).toEqual({
+        site_id: originSiteId, domain: 'app.example.com', source: 'harness', requirement_id: requirementId,
+      });
+      expect(options).toEqual({ onConflict: 'site_id,domain', ignoreDuplicates: true });
+      if (!domains.some(item => item.site_id === row.site_id && item.domain === row.domain)) domains.push(row);
+      return { error: null };
+    });
+    await allowRequirementPreviewDomain({ requirementId, originSiteId, previewUrl: 'https://app.example.com' });
+    await allowRequirementPreviewDomain({ requirementId, originSiteId, previewUrl: 'https://app.example.com' });
+    expect(domains).toEqual([existing]);
   });
 
   it.each(['http://app.example.com', 'not a URL'])('rejects an invalid preview URL: %s', async (previewUrl) => {

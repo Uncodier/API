@@ -19,7 +19,7 @@ import { supabaseAdmin as voiceDb } from '@/lib/database/supabase-server';
 import { zavuFetch, sendChannelMessage } from '@/lib/services/zavu/client';
 import type { PublishToolParams } from '../assistantProtocol';
 import type { DeliveryRoute } from '@/lib/messaging/delivery-routing';
-import { voiceTestDatabase } from './test-voice-db';
+import { voiceTestDatabase } from '../test-support/voice-db';
 
 const siteId = randomUUID(); const leadId = randomUUID();
 const routes: DeliveryRoute[] = [{ channel: 'voice', connection_id: 'selected', voice_mode: 'agent_call' }];

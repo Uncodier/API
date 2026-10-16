@@ -42,7 +42,7 @@ export async function allowRequirementPreviewDomain(params: {
   if (preview.protocol !== 'https:') throw new Error('Preview domain must use HTTPS.');
   const domain = preview.hostname.toLowerCase();
   const { error } = await supabaseAdmin.from('allowed_domains').upsert(
-    { site_id: trackingId, domain },
+    { site_id: trackingId, domain, source: 'harness', requirement_id: params.requirementId },
     { onConflict: 'site_id,domain', ignoreDuplicates: true },
   );
   if (error) throw error;

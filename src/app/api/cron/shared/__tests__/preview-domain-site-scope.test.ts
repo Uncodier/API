@@ -76,7 +76,7 @@ describe('preview domain registration uses the requirement site for tracking', (
 
   afterEach(() => {
     expect(domainUpsert).toHaveBeenCalledWith(
-      { site_id: originSiteId, domain: 'generated.example.com' },
+      { site_id: originSiteId, domain: 'generated.example.com', source: 'harness', requirement_id: requirementId },
       { onConflict: 'site_id,domain', ignoreDuplicates: true },
     );
     expect(from).not.toHaveBeenCalledWith('site_members');

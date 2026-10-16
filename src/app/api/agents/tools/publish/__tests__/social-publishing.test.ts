@@ -27,7 +27,16 @@ jest.unstable_mockModule('@/lib/integrations/outstand/client', () => ({ getOutst
 jest.unstable_mockModule('../../sendBulkMessages/assistantProtocol', () => ({ sendBulkMessagesTool: bulkSend }));
 jest.unstable_mockModule('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: (...args: unknown[]) => settingsFrom(...args) } }));
 jest.unstable_mockModule('@/lib/database/audience-db', () => ({ getAudienceById: async () => ({ site_id: site, status: 'ready' }) }));
-jest.unstable_mockModule('@/lib/messaging/exact-delivery', () => ({ sendExactDelivery: jest.fn() }));
+jest.unstable_mockModule('@/lib/messaging/exact-delivery', () => ({
+  sendExactDelivery: jest.fn(),
+  loadExactAccount: async (_site: string, channel: string, connectionId: string) => ({
+    id: connectionId, provider: 'zavu', config: { type: channel, status: 'connected', zavu_sender_id: `${connectionId}-sender` },
+  }),
+}));
+jest.unstable_mockModule('@/lib/services/zavu/voice-call-service', () => ({ assertVoiceCallAllowed: jest.fn() }));
+jest.unstable_mockModule('@/lib/database/supabase-server', () => ({ supabaseAdmin: {
+  from: () => { throw new Error('Social publishing must not create Voice test records.'); },
+} }));
 jest.unstable_mockModule('../../sendEmail/core', () => ({ sendEmailCore: jest.fn() }));
 jest.unstable_mockModule('@/lib/services/whatsapp/WhatsAppSendService', () => ({ WhatsAppSendService: {} }));
 jest.unstable_mockModule('@/lib/database/lead-db', () => ({ getLeadById: jest.fn() }));
