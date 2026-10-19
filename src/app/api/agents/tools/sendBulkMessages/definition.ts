@@ -22,6 +22,7 @@ For email: subject is also required.
 Optional: from, content_id (content UUID whose metadata.placeholders.when_unresolved controls unknown merge tokens), placeholder_policy (override), audience_email_mode.
 For Voice: voice_mode is "tts" (default, one-way message) or "agent_call" (two-way Zavu voice agent call).
 For Voice agent calls, objective and additional_context are private call instructions. They support the same merge fields as message and are not spoken as part of the greeting.
+For agent_call, message is the brief spoken outbound opening (at most 1000 characters): introduce the configured Customer Support voice agent and business, not the Content Creator, explain the public-safe purpose and ask if now is a good time. Never use "How can I help you?" or "Thanks for calling". Never invent identity or booking confirmation; keep private instructions in objective/additional_context, not message.
 
 Merge fields — use only double braces: {{lead.name}}, {{lead.first_name}}, {{lead.email}}, {{lead.phone}}, {{lead.position}}, {{lead.company}}, {{lead.notes}}, {{lead.metadata.<key>}}, {{site.name}}. Common aliases (e.g. {{lead.correo}}, {{lead.full_name}}) are normalized. Other syntaxes ([Name], {name}) are not supported.
 
@@ -60,7 +61,7 @@ export const SEND_BULK_MESSAGES_PARAMETERS = {
       enum: ['whatsapp', 'email', 'telegram', 'sms', 'voice'],
       description: 'Delivery channel.',
     },
-    message: { type: 'string', description: 'Message text (plain text or HTML for email).' },
+    message: { type: 'string', description: 'Message text (plain text or HTML for email). Voice agent_call: brief spoken outbound introduction, business, purpose and good-time question, not private instructions.' },
     subject: { type: 'string', description: 'Email subject (required when channel is "email").' },
     from: { type: 'string', description: 'Sender display name (optional).' },
     audience_email_mode: {

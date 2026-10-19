@@ -7,13 +7,14 @@ import { authorizeOutstandConversation } from '@/lib/integrations/outstand/conve
 
 const mockedSupabase = supabaseAdmin as any;
 
-// Mock dependencias
+// Mock database and provider boundaries.
 jest.mock('@/lib/database/supabase-client', () => ({
   supabaseAdmin: {
     from: jest.fn().mockReturnThis(),
     select: jest.fn().mockReturnThis(),
     eq: jest.fn().mockReturnThis(),
-    single: jest.fn()
+    single: jest.fn(),
+    rpc: jest.fn(),
   }
 }));
 
@@ -39,6 +40,13 @@ describe('ChannelSendService', () => {
   
   beforeEach(() => {
     jest.clearAllMocks();
+    mockedSupabase.rpc.mockImplementation(() => ({ abortSignal: async () => {
+      const result = await mockedSupabase.single();
+      if (!result?.data) return result;
+      return { ...result, data: { ...result.data, social_media: [], effective_plan: 'engine',
+        channels: { ...result.data.channels, connections: (result.data.channels.connections || []).map((c: any, index: number) =>
+          ({ id: `connection-${index}`, status: 'connected', license_suspended: false, ...c })) } } };
+    } }));
     (authorizeOutstandConversation as jest.Mock).mockResolvedValue({
       success: true,
       conversation: {
@@ -77,9 +85,8 @@ describe('ChannelSendService', () => {
     expect(result.messageId).toBe('msg_123');
     
     // Verify DB query
-    expect(mockedSupabase.from).toHaveBeenCalledWith('settings');
-    expect(mockedSupabase.select).toHaveBeenCalledWith('channels');
-    expect(mockedSupabase.eq).toHaveBeenCalledWith('site_id', mockSiteId);
+    expect(mockedSupabase.rpc).toHaveBeenCalledWith('get_site_licensed_resources', { p_site_id: mockSiteId });
+    expect(mockedSupabase.from).not.toHaveBeenCalled();
     
     // Verify Zavu call with correct senderId
     expect(zavuClient.sendChannelMessage).toHaveBeenCalledWith({
@@ -89,6 +96,84 @@ describe('ChannelSendService', () => {
       senderId: mockSenderId,
       subject: undefined
     });
+  });
+
+  it.each(['license_suspended', 'disconnected'])('does not execute an unavailable %s sender', async status => {
+    mockedSupabase.single.mockResolvedValue({ error: null, data: { channels: { connections: [
+      { id: 'chosen', type: 'telegram', zavu_sender_id: mockSenderId, status, license_suspended: status === 'license_suspended' },
+    ] } } });
+    const result = await ChannelSendService.sendMessage({ site_id: mockSiteId, channel: 'telegram', to: mockTo, message: mockMessage });
+    expect(result.success).toBe(false);
+    expect(zavuClient.sendChannelMessage).not.toHaveBeenCalled();
+  });
+
+  it('rechecks license after audio preparation, preventing an expired sender from sending', async () => {
+    mockedSupabase.single.mockResolvedValueOnce({ error: null, data: { channels: { connections: [
+      { id: 'chosen', type: 'telegram', status: 'connected', zavu_sender_id: mockSenderId },
+    ] } } }).mockResolvedValueOnce({ error: null, data: { channels: { connections: [
+      { id: 'chosen', type: 'telegram', status: 'license_suspended', license_suspended: true, zavu_sender_id: mockSenderId },
+    ] } } });
+    const result = await ChannelSendService.sendMessage({ site_id: mockSiteId, channel: 'telegram', to: mockTo, message: mockMessage });
+    expect(result.success).toBe(false);
+    expect(zavuClient.sendChannelMessage).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('uses the first licensed Telegram sender in stored order (first suspended: %s)', async suspended => {
+    const connections = [
+      { id: 'first', type: 'telegram', status: 'connected', zavu_sender_id: 'first-sender', license_suspended: suspended },
+      { id: 'second', type: 'telegram', status: 'connected', zavu_sender_id: 'second-sender', license_suspended: false },
+    ];
+    mockedSupabase.rpc.mockImplementation(() => ({ abortSignal: async () => ({ error: null, data: {
+      effective_plan: 'foundry', social_media: [], channels: { connections },
+    } }) }));
+    (zavuClient.sendChannelMessage as jest.Mock).mockResolvedValue({ message: { id: 'accepted' } });
+    const result = await ChannelSendService.sendMessage({ site_id: mockSiteId, channel: 'telegram', to: mockTo, message: mockMessage });
+    expect(result).toMatchObject({ success: true, messageId: 'accepted' });
+    expect(zavuClient.sendChannelMessage).toHaveBeenCalledTimes(1);
+    expect(zavuClient.sendChannelMessage).toHaveBeenCalledWith(expect.objectContaining({
+      senderId: suspended ? 'second-sender' : 'first-sender',
+    }));
+    expect(mockedSupabase.rpc).toHaveBeenCalledTimes(2);
+    expect(mockedSupabase.from).not.toHaveBeenCalled();
+  });
+
+  it('denies Telegram when all connected senders are license suspended', async () => {
+    const connections = ['first', 'second'].map(id => ({
+      id, type: 'telegram', status: 'connected', zavu_sender_id: `${id}-sender`, license_suspended: true,
+    }));
+    mockedSupabase.rpc.mockReturnValue({ abortSignal: async () => ({ error: null, data: {
+      effective_plan: 'commission', social_media: [], channels: { connections },
+    } }) });
+    expect(await ChannelSendService.sendMessage({ site_id: mockSiteId, channel: 'telegram', to: mockTo, message: mockMessage }))
+      .toMatchObject({ success: false });
+    expect(zavuClient.sendChannelMessage).not.toHaveBeenCalled();
+  });
+
+  it('does not switch to a second licensed sender when the first expires during audio preparation', async () => {
+    const connections = ['first', 'second'].map(id => ({
+      id, type: 'telegram', status: 'connected', zavu_sender_id: `${id}-sender`, license_suspended: false,
+    }));
+    mockedSupabase.rpc.mockImplementation(() => ({ abortSignal: async () => ({ error: null, data: {
+      effective_plan: 'foundry', social_media: [], channels: { connections },
+    } }) }));
+    jest.spyOn(longReplyAudio, 'tryPrepareLongReplyAudio').mockImplementationOnce(async () => {
+      connections[0].license_suspended = true;
+      return { audioUrl: 'https://example.test/audio.mp3', mimeType: 'audio/mpeg' };
+    });
+    expect(await ChannelSendService.sendMessage({ site_id: mockSiteId, channel: 'telegram', to: mockTo, message: mockMessage }))
+      .toMatchObject({ success: false, status: 403 });
+    expect(longReplyAudio.tryPrepareLongReplyAudio).toHaveBeenCalled();
+    expect(mockedSupabase.rpc).toHaveBeenCalledTimes(2);
+    expect(zavuClient.sendChannelMessage).not.toHaveBeenCalled();
+  });
+
+  it.each(['active', 'synced'])('does not accept non-voice provider status %s', async status => {
+    mockedSupabase.single.mockResolvedValue({ error: null, data: { channels: { connections: [
+      { id: 'first', type: 'telegram', status, zavu_sender_id: mockSenderId, license_suspended: false },
+    ] } } });
+    expect(await ChannelSendService.sendMessage({ site_id: mockSiteId, channel: 'telegram', to: mockTo, message: mockMessage }))
+      .toMatchObject({ success: false });
+    expect(zavuClient.sendChannelMessage).not.toHaveBeenCalled();
   });
 
   it('should successfully send a long message as audio if tryPrepareLongReplyAudio returns an audio URL', async () => {
@@ -169,7 +254,7 @@ describe('ChannelSendService', () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toContain('Settings not found');
+    expect(result.error).toContain('current license');
     expect(zavuClient.sendChannelMessage).not.toHaveBeenCalled();
   });
 
@@ -331,6 +416,7 @@ describe('ChannelSendService', () => {
     expect(sendConversationMessage).toHaveBeenCalledWith(
       'outstand-conversation-1',
       { content: 'Reply by DM' },
+      mockSiteId,
     );
     expect(authorizeOutstandConversation).toHaveBeenCalledWith(
       expect.anything(),

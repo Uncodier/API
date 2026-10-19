@@ -168,7 +168,7 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
         if (!audience || audience.site_id !== siteId || audience.status !== 'ready') throw new Error('Audience must be ready and belong to this site.');
       }
       if (is_test && (test_recipient || test_lead_id || args.test_recipients) && hasRouting) {
-        testDelivery = await preparePublishTest(siteId, args, [text, urls?.join('\n')].filter(Boolean).join('\n\n'), finalSubject, routes);
+        testDelivery = await preparePublishTest(siteId, args, [text, urls?.join('\n')].filter(Boolean).join('\n\n'), finalSubject, routes, executionContext);
       }
     } catch (error) { return { success: false, error: error instanceof Error ? error.message : String(error) }; }
 

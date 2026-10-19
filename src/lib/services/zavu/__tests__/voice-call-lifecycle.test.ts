@@ -1,4 +1,9 @@
 const mockFrom = jest.fn();
+jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { rpc: jest.fn(() => ({ abortSignal: async () => ({
+  data: { effective_plan: 'engine', social_media: [], channels: { connections: [
+    { id: 'voice', type: 'voice', status: 'connected', zavu_sender_id: 'sender', license_suspended: false },
+  ] } }, error: null,
+}) })) } }));
 const mockPlace = jest.fn();
 jest.mock('@/lib/database/supabase-server', () => ({ supabaseAdmin: { from: mockFrom } }));
 jest.mock('../voice-call-client', () => ({ placeVoiceCall: mockPlace }));

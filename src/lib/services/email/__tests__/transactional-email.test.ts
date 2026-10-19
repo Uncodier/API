@@ -5,7 +5,7 @@ import { SendGridService } from '@/lib/services/sendgrid-service';
 import { getTransactionalEmailProvider } from '../transactional-email-config';
 
 jest.mock('@sendgrid/mail', () => ({ __esModule: true, default: { setApiKey: jest.fn(), send: jest.fn() } }));
-jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn() } }));
+jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn(), rpc: jest.fn() } }));
 jest.mock('../EmailSendService', () => ({ EmailSendService: { escapeHtml: (text: string) => text } }));
 
 const originalEnv = process.env;
@@ -34,7 +34,7 @@ beforeEach(() => {
     TRANSACTIONAL_EMAIL_ZAVU_SENDER_ID: 'sender-internal', ZAVUDEV_API_KEY: randomBytes(32).toString('hex'),
   };
   connection = {
-    id: 'connection-internal', type: 'email', status: 'connected', zavu_sender_id: 'sender-internal',
+    id: 'connection-internal', type: 'email', status: 'connected', zavu_sender_id: 'sender-internal', license_suspended: false,
     metadata: { from_address: from, email_domain_id: 'domain-internal' },
   };
   abortSignal = jest.fn();
@@ -42,6 +42,11 @@ beforeEach(() => {
   query.select.mockReturnValue(query); query.eq.mockReturnValue(query); abortSignal.mockReturnValue(query);
   query.maybeSingle.mockImplementation(async () => ({ data: { channels: { connections: [connection] } }, error: null }));
   (supabaseAdmin.from as jest.Mock).mockReturnValue(query);
+  (supabaseAdmin.rpc as jest.Mock).mockImplementation(() => ({ abortSignal: async (signal: AbortSignal) => {
+    abortSignal(signal);
+    const result = await query.maybeSingle();
+    return result.data ? { ...result, data: { ...result.data, social_media: [], effective_plan: 'engine' } } : result;
+  } }));
   global.fetch = jest.fn().mockImplementation(async (url: string) => {
     if (url.includes('/senders/')) return json(200, { sender: { id: 'sender-internal', emailAddress: from, channels: ['email'] } });
     if (url.includes('/email-domains/')) return json(200, { domain: { id: 'domain-internal', status: 'verified' } });
@@ -63,7 +68,7 @@ it('sends existing facade calls with the pinned Zavu account without requiring S
     from: { email: 'legacy@example.invalid', name: 'Old override' }, categories: ['notice'], customArgs: { siteId: 'tenant-other' } });
   expect(result).toMatchObject({ success: true, provider: 'zavu', messageId: 'message-confirmed', status: 'queued', statusCode: 202 });
   expect(sgMail.send).not.toHaveBeenCalled(); expect(sgMail.setApiKey).not.toHaveBeenCalled();
-  expect(query.eq).toHaveBeenCalledWith('site_id', 'site-internal');
+  expect(supabaseAdmin.rpc).toHaveBeenCalledWith('get_site_licensed_resources', { p_site_id: 'site-internal' });
   const [, init] = messagePosts()[0]; const body = JSON.parse(init.body);
   expect(init.headers['Zavu-Sender']).toBe('sender-internal');
   expect(body).toMatchObject({ to, channel: 'email', subject: 'Notice', htmlBody: '<h1>Welcome</h1><p>Your account.</p>',
@@ -126,9 +131,10 @@ it('returns per-recipient partial results with distinct keys and does not resend
   expect(sgMail.send).not.toHaveBeenCalled();
 });
 
-it.each(['from', 'status', 'sender', 'type', 'duplicates', 'missing'])('rejects unavailable/mismatched connection: %s', async kind => {
+it.each(['from', 'status', 'sender', 'type', 'duplicates', 'missing', 'expired'])('rejects unavailable/mismatched connection: %s', async kind => {
   if (kind === 'from') connection.metadata.from_address = 'other@example.invalid';
   if (kind === 'status') connection.status = 'pending';
+  if (kind === 'expired') connection.license_suspended = true;
   if (kind === 'sender') connection.zavu_sender_id = 'other-sender';
   if (kind === 'type') connection.type = 'telegram';
   if (kind === 'duplicates' || kind === 'missing') query.maybeSingle.mockResolvedValue({ data: { channels: { connections: kind === 'duplicates' ? [connection, connection] : [] } }, error: null });
@@ -218,7 +224,7 @@ it.each([
 it('propagates a shared deadline and refuses an expired deadline', async () => {
   const controller = new AbortController();
   await service.sendEmail({ to, subject: 'Notice', text: 'Body', signal: controller.signal });
-  expect(abortSignal).toHaveBeenCalledWith(controller.signal);
+  expect(abortSignal).toHaveBeenCalledWith(expect.any(AbortSignal));
   expect(messagePosts()[0][1].signal).toBe(controller.signal);
   controller.abort();
   expect((await service.sendEmail({ to, subject: 'Notice', text: 'Body', signal: controller.signal })).success).toBe(false);

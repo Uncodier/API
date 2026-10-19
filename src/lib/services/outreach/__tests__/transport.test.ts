@@ -1,4 +1,4 @@
-jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn() } }));
+jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn(), rpc: jest.fn() } }));
 jest.mock('@/lib/services/zavu/client', () => ({ sendChannelMessage: jest.fn() }));
 jest.mock('@/lib/services/zavu/voice-call-service', () => ({ placeTrackedVoiceCall: jest.fn() }));
 jest.mock('@/lib/security/safe-remote-url', () => ({ assertSafeRemoteUrl: jest.fn(async (s: string) => new URL(s)) }));
@@ -14,7 +14,7 @@ jest.mock('@/lib/messaging/lead-merge-fields', () => ({
   personalizeMergeSubjectAndMessage: (subject: string, message: string) => ({ subject, message }),
   fetchSiteNameForMerge: async () => 'Site', buildContentVariablesForLead: () => ({ variables: { '1': 'Ada' } }),
 }));
-import { prepareOutreachDelivery, type DeliveryContext } from '../transport';
+import { prepareOutreachDelivery as prepareActualDelivery, type DeliveryContext } from '../transport';
 import { sendChannelMessage } from '@/lib/services/zavu/client';
 import { sendTwilioWhatsAppMessage } from '@/lib/services/whatsapp/twilio-whatsapp-transport';
 import { EmailSendService } from '@/lib/services/email/EmailSendService';
@@ -29,7 +29,26 @@ const context = (): DeliveryContext => ({
   conversation: { id: 'conversation' }, message: { id: 'message', content: 'Hello Ada', custom_data: { title: 'Hi!' } },
   account: { id: 'raw-hi-uuid', provider: 'zavu', channel: 'email', config: { zavu_sender_id: 'exact-hi-sender' } },
 });
-beforeEach(() => { jest.clearAllMocks(); });
+let suspended = false;
+async function prepareOutreachDelivery(ctx: DeliveryContext) {
+  if (ctx.account.provider === 'zavu') {
+    ctx.account.config = { ...ctx.account.config, id: ctx.account.id, type: ctx.account.channel, status: 'connected' };
+    (supabaseAdmin.rpc as jest.Mock).mockImplementation(() => ({ abortSignal: async () => ({
+      error: null, data: { effective_plan: 'engine', social_media: [], channels: { connections: [{ ...ctx.account.config,
+        license_suspended: suspended, status: suspended ? 'license_suspended' : 'connected' }] } },
+    }) }));
+  }
+  return prepareActualDelivery(ctx);
+}
+beforeEach(() => { jest.clearAllMocks(); suspended = false; });
+
+test('prepared outreach cannot send after trial expires while raw sender remains connected', async () => {
+  const prepared = await prepareOutreachDelivery(context());
+  if (!('send' in prepared)) throw new Error(prepared.reason);
+  suspended = true;
+  await expect(prepared.send()).rejects.toThrow(/current license/);
+  expect(sendChannelMessage).not.toHaveBeenCalled();
+});
 
 test.each(['sms', 'telegram', 'messenger', 'instagram', 'custom_chat'])('exact selected %s sender and server recipient, no email fallback', async channel => {
   const ctx = context(); ctx.account.channel = channel;

@@ -6,7 +6,7 @@ import { POST } from '../route';
 
 // Keep the real recovery template, locale rules, facade and Zavu transport.
 // Only database/provider I/O is mocked; never load developer .env or send mail.
-jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn() } }));
+jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn(), rpc: jest.fn() } }));
 jest.mock('@sendgrid/mail', () => ({ __esModule: true, default: { setApiKey: jest.fn(), send: jest.fn() } }));
 jest.mock('@/lib/services/email/EmailSendService', () => ({ EmailSendService: {} }));
 
@@ -25,11 +25,14 @@ beforeEach(() => {
     NEXT_PUBLIC_SUPABASE_URL: 'https://auth.example.invalid', TRANSACTIONAL_EMAIL_PROVIDER: 'zavu',
     ZAVUDEV_API_KEY: randomBytes(32).toString('hex'), TRANSACTIONAL_EMAIL_FROM_EMAIL: 'hi@example.invalid',
     TRANSACTIONAL_EMAIL_ZAVU_SITE_ID: 'internal-site', TRANSACTIONAL_EMAIL_ZAVU_CONNECTION_ID: 'internal-connection' };
-  connection = { id: 'internal-connection', type: 'email', status: 'connected', zavu_sender_id: 'internal-sender',
+  connection = { id: 'internal-connection', type: 'email', status: 'connected', zavu_sender_id: 'internal-sender', license_suspended: false,
     metadata: { from_address: 'hi@example.invalid', email_domain_id: 'internal-domain' } };
   const q: any = { select: () => q, eq: () => q, abortSignal: () => q,
     maybeSingle: async () => ({ data: { channels: { connections: [connection] } }, error: null }) };
   (supabaseAdmin.from as jest.Mock).mockReturnValue(q);
+  (supabaseAdmin.rpc as jest.Mock).mockImplementation(() => ({ abortSignal: async () => ({
+    data: { effective_plan: 'engine', social_media: [], channels: { connections: [connection] } }, error: null,
+  }) }));
   global.fetch = jest.fn().mockImplementation(async (url: string) => {
     const body = url.includes('/senders/') ? { sender: { id: 'internal-sender', emailAddress: 'hi@example.invalid', channels: ['email'] } }
       : url.includes('/email-domains/') ? { domain: { id: 'internal-domain', status: 'verified' } }

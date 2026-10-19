@@ -12,7 +12,7 @@ import {
 } from "../agent-client";
 import { getCustomerSupportToolDefinitions } from "../../customer-support-tool-catalog";
 import { getCustomerSupportVoiceToolDefinitions } from "../voice-tool-catalog";
-import { buildVoiceRuntimePrompt, syncVoiceTools } from "../voice-tools";
+import { buildVoiceRuntimePrompt, syncVoiceTools, VOICE_RUNTIME_REMINDER } from "../voice-tools";
 
 const mockListAgentTools = listAgentTools as jest.Mock;
 const mockUpsertAgentTool = upsertAgentTool as jest.Mock;
@@ -246,6 +246,19 @@ describe("syncVoiceTools", () => {
     expect(prompt).not.toContain("For `IDENTIFY_LEAD`");
   });
 
+  it("requires an outbound introduction instead of an inbound reception opening", () => {
+    const prompt = buildVoiceRuntimePrompt({ language: "auto" });
+
+    expect(prompt).toContain("before the opening");
+    expect(prompt).toContain("Use this call's direction, not history/title");
+    expect(prompt).toContain("Outbound: you initiated this call");
+    expect(prompt).toContain("introduce yourself by your configured name and business");
+    expect(prompt).toContain("explain the purpose, then ask if now is a good time");
+    expect(prompt).toContain("Never open with 'How can I help you?' or thank them for calling");
+    expect(prompt).toContain("Inbound: briefly welcome the caller, identify yourself/business and ask what they need");
+    expect(VOICE_RUNTIME_REMINDER).toContain("when you called, introduce yourself and business");
+  });
+
   it("does not encourage unavailable tool calls", () => {
     const prompt = buildVoiceRuntimePrompt(
       { language: "auto" },
@@ -261,6 +274,7 @@ describe("syncVoiceTools", () => {
     expect(prompt).toContain("No external tool is available.");
     expect(prompt).not.toContain("silently check the listed tools");
     expect(prompt).not.toContain("For `IDENTIFY_LEAD`");
+    expect(prompt).not.toContain("First silently call get_call_context");
   });
 
   it("does not remove unmanaged tools when managed tool registration fails", async () => {

@@ -8,6 +8,7 @@ import {
 jest.mock('@/lib/database/supabase-client', () => ({
   supabaseAdmin: {
     from: jest.fn(),
+    rpc: jest.fn(),
   },
 }));
 
@@ -27,13 +28,9 @@ function requestForUser(userId: string): Request {
   } as Request;
 }
 
-function queryReturning(data: unknown) {
-  const query: any = {};
-  query.select = jest.fn(() => query);
-  query.eq = jest.fn(() => query);
-  query.maybeSingle = jest.fn().mockResolvedValue({ data, error: null });
-  return query;
-}
+const rpcResult = (data: unknown, error: unknown = null) => ({
+  abortSignal: jest.fn().mockResolvedValue({ data, error }),
+});
 
 describe('canAccessSite', () => {
   beforeEach(() => {
@@ -43,36 +40,50 @@ describe('canAccessSite', () => {
   });
 
   it('allows an active site member when direct ownership is absent', async () => {
-    const directSite = queryReturning(null);
-    const ownership = queryReturning(null);
-    const membership = queryReturning({ site_id: 'site-1' });
-    (supabaseAdmin.from as jest.Mock)
-      .mockReturnValueOnce(directSite)
-      .mockReturnValueOnce(ownership)
-      .mockReturnValueOnce(membership);
+    (supabaseAdmin.rpc as jest.Mock).mockReturnValue(rpcResult(true));
 
     await expect(canAccessSite(requestForUser('user-1'), 'site-1'))
       .resolves.toBe(true);
-    expect(membership.eq).toHaveBeenCalledWith('status', 'active');
-    expect(setCachedJson).toHaveBeenCalledWith(
-      'auth:site:user-1:site-1',
-      { allowed: true },
-      60,
-    );
+    expect(supabaseAdmin.rpc).toHaveBeenCalledWith('site_user_has_effective_access', {
+      p_site_id: 'site-1', p_user_id: 'user-1',
+    });
+    expect(supabaseAdmin.from).not.toHaveBeenCalled();
+    expect(setCachedJson).not.toHaveBeenCalled();
   });
 
   it('rejects users without ownership or an active membership', async () => {
-    (supabaseAdmin.from as jest.Mock)
-      .mockReturnValueOnce(queryReturning(null))
-      .mockReturnValueOnce(queryReturning(null))
-      .mockReturnValueOnce(queryReturning(null));
+    (supabaseAdmin.rpc as jest.Mock).mockReturnValue(rpcResult(false));
 
     await expect(canAccessSite(requestForUser('user-2'), 'site-1'))
       .resolves.toBe(false);
-    expect(setCachedJson).toHaveBeenCalledWith(
-      'auth:site:user-2:site-1',
-      { allowed: false },
-      10,
-    );
+    expect(setCachedJson).not.toHaveBeenCalled();
+  });
+
+  it('ignores an old positive cache when the trial member has expired', async () => {
+    (getCachedJson as jest.Mock).mockResolvedValue({ allowed: true });
+    (supabaseAdmin.rpc as jest.Mock).mockReturnValue(rpcResult(false));
+    await expect(canAccessSite(requestForUser('expired'), 'site-1')).resolves.toBe(false);
+    expect(getCachedJson).not.toHaveBeenCalled();
+    expect(supabaseAdmin.from).not.toHaveBeenCalled();
+  });
+
+  it.each([null, {}, 'true', 1])('denies an unconfirmed effective access response %j', async data => {
+    (supabaseAdmin.rpc as jest.Mock).mockReturnValue(rpcResult(data));
+    await expect(canAccessSite(requestForUser('user'), 'site-1')).resolves.toBe(false);
+  });
+
+  it('fails closed for missing RPC or transport failure without reading raw flags', async () => {
+    (supabaseAdmin.rpc as jest.Mock).mockReturnValue(rpcResult(true, { code: 'PGRST202' }));
+    await expect(canAccessSite(requestForUser('user'), 'site-1')).resolves.toBe(false);
+    (supabaseAdmin.rpc as jest.Mock).mockImplementation(() => { throw new Error('Unavailable'); });
+    await expect(canAccessSite(requestForUser('user'), 'site-1')).resolves.toBe(false);
+    expect(supabaseAdmin.from).not.toHaveBeenCalled();
+  });
+
+  it('preserves tenant-scoped machine credentials without allowing another tenant', async () => {
+    const request = { headers: new Headers({ 'x-api-key-data': JSON.stringify({ site_id: 'site-1' }) }) } as Request;
+    await expect(canAccessSite(request, 'site-1')).resolves.toBe(true);
+    await expect(canAccessSite(request, 'site-2')).resolves.toBe(false);
+    expect(supabaseAdmin.rpc).not.toHaveBeenCalled();
   });
 });

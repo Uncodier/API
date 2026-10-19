@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
-import { OutstandClient } from '../client';
+const rpc = jest.fn<any>();
+jest.unstable_mockModule('@/lib/database/supabase-client', () => ({ supabaseAdmin: { rpc } }));
+const { OutstandClient } = await import('../client');
 
 describe('OutstandClient Conversations API', () => {
   afterEach(() => {
@@ -37,7 +39,11 @@ describe('OutstandClient Conversations API', () => {
   });
 
   it('sends text, media, and a native scheduled_at value', async () => {
-    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue(
+    rpc.mockReturnValue({ abortSignal: async () => ({ data: { effective_plan: 'engine', channels: { connections: [] },
+      social_media: [{ id: 'account-1', isActive: true, license_suspended: false }] }, error: null }) });
+    const fetchMock = jest.spyOn(global, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ conversation: { socialAccountId: 'account-1' } })))
+      .mockResolvedValueOnce(
       new Response(JSON.stringify({
         success: true,
         message: { id: 'message-1', status: 'pending' },
@@ -51,6 +57,7 @@ describe('OutstandClient Conversations API', () => {
         media_urls: ['https://cdn.example.com/image.jpg'],
         scheduled_at: '2026-09-24T12:00:00.000Z',
       },
+      'site',
     );
 
     expect(fetchMock).toHaveBeenCalledWith(

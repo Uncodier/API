@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { supabaseAdmin } from "@/lib/database/supabase-server";
 import { placeVoiceCall, type ZavuVoiceCall } from "./voice-call-client";
+import { getSiteLicensedResources, isChannelActiveStatus, requireLicensedChannel } from '@/lib/billing/licensed-resources';
 import { getVoiceCallEligibility } from "./voice-call-consent";
 import {
   clearVoiceCallContactContext,
@@ -18,7 +19,6 @@ import {
 } from './voice-call-message-state';
 
 const E164_PHONE = /^\+[1-9]\d{6,14}$/;
-const CONNECTED_STATUSES = new Set(["connected", "active", "synced"]);
 const TERMINAL_CLIENT_ERROR_MIN = 400;
 const TERMINAL_CLIENT_ERROR_MAX = 499;
 
@@ -47,52 +47,27 @@ export interface PlaceTrackedVoiceCallResult {
   duplicate: boolean;
 }
 
-type VoiceConnection = {
-  id?: unknown;
-  enabled?: unknown;
-  zavu_sender_id?: unknown;
-  status?: unknown;
-  type?: unknown;
-};
+async function resolveVoiceSender(siteId: string, selectedConnectionId?: string, selectedSenderId?: string): Promise<{ connectionId: string; senderId: string }> {
+  const data = await getSiteLicensedResources(siteId);
 
-function parseConnections(channels: unknown): VoiceConnection[] {
-  let value = channels;
-  if (typeof value === "string") {
-    try {
-      value = JSON.parse(value);
-    } catch {
-      return [];
-    }
-  }
-  if (!value || typeof value !== "object") return [];
-  const connections = (value as { connections?: unknown }).connections;
-  return Array.isArray(connections) ? connections : [];
-}
-
-async function resolveVoiceSenderId(siteId: string, selectedConnectionId?: string, selectedSenderId?: string): Promise<string> {
-  const { data, error } = await supabaseAdmin
-    .from("settings")
-    .select("channels")
-    .eq("site_id", siteId)
-    .maybeSingle();
-  if (error) throw new Error("Failed to load Voice configuration");
-
-  const connections = parseConnections(data?.channels);
+  const connections = data.channels.connections;
   if (selectedConnectionId !== undefined || selectedSenderId !== undefined) {
     const matches = connections.filter(c => c?.id === selectedConnectionId);
     const selected = matches.length === 1 ? matches[0] : undefined;
     if (!selectedConnectionId || !selectedSenderId || !selected || selected.type !== 'voice'
-      || selected.status !== 'connected' || selected.enabled === false || selected.zavu_sender_id !== selectedSenderId) {
+      || !isChannelActiveStatus('voice', selected.status) || selected.license_suspended !== false
+      || selected.enabled === false || selected.zavu_sender_id !== selectedSenderId) {
       throw Object.assign(new Error('Selected Voice sender is not connected for this site'), { status: 409 });
     }
-    return selectedSenderId;
+    return { connectionId: selectedConnectionId, senderId: selectedSenderId };
   }
   const connection = connections.find(
     (candidate) =>
       candidate.type === "voice"
-      && typeof candidate.status === "string"
-      && CONNECTED_STATUSES.has(candidate.status)
-      && typeof candidate.zavu_sender_id === "string"
+      && isChannelActiveStatus('voice', candidate.status)
+      && candidate.license_suspended === false && candidate.enabled !== false
+      && typeof candidate.id === 'string' && candidate.id
+      && typeof candidate.zavu_sender_id === 'string' && candidate.zavu_sender_id
   );
   if (!connection || typeof connection.zavu_sender_id !== "string") {
     throw Object.assign(
@@ -100,7 +75,7 @@ async function resolveVoiceSenderId(siteId: string, selectedConnectionId?: strin
       { status: 409 }
     );
   }
-  return connection.zavu_sender_id;
+  return { connectionId: connection.id, senderId: connection.zavu_sender_id };
 }
 
 async function loadMessageContext(messageId: string, siteId: string): Promise<{
@@ -333,7 +308,7 @@ async function placeTrackedVoiceCallAttempt(
     followUp.context,
     followUp.sources
   );
-  const senderId = await resolveVoiceSenderId(input.siteId, input.selectedConnectionId, input.selectedSenderId);
+  const { connectionId, senderId } = await resolveVoiceSender(input.siteId, input.selectedConnectionId, input.selectedSenderId);
   if (!input.greeting) await requireVoiceExecutionContextSupport(senderId);
   await ensureVoiceContactMetadataEnabled(senderId);
   const deliveryId = randomUUID();
@@ -400,6 +375,7 @@ async function placeTrackedVoiceCallAttempt(
       additionalContext,
       followUpContext: followUp.context,
     });
+    await requireLicensedChannel(input.siteId, 'voice', connectionId, senderId);
     callPlacementAttempted = true;
     attempt.status = 'placement_unknown';
     call = await placeVoiceCall({

@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { loadRuntimeModule } from '@/lib/custom-automation/test-helpers/load-runtime-module';
 import * as contextModule from '@/lib/services/tool-execution-context';
 import { publishToolDefinition } from '../publish-schema';
+import { SEND_BULK_MESSAGES_DESCRIPTION } from '../../sendBulkMessages/definition';
 
 const siteId = randomUUID();
 const instanceId = randomUUID();
@@ -11,6 +12,7 @@ const audienceId = randomUUID();
 function harness() {
   const bulkExecute = jest.fn(async (..._args: any[]) => ({ success: true, total_sent: 2 }));
   const createContent = jest.fn(async () => ({ id: contentId }));
+  const prepareTest = jest.fn(async (..._args: any[]) => async () => ({ success: true, type: 'single_test_send' }));
   const { publishTool } = loadRuntimeModule<typeof import('../assistantProtocol')>(
     'src/app/api/agents/tools/publish/assistantProtocol.ts', {
       './publish-schema': { publishToolDefinition },
@@ -28,14 +30,23 @@ function harness() {
       },
       '../sendBulkMessages/validation': { validateBulkRoutes: () => {} },
       '@/lib/database/audience-db': { getAudienceById: async () => ({ site_id: siteId, status: 'ready' }) },
-      './test-delivery': {},
+       './test-delivery': { preparePublishTest: prepareTest },
     });
-  return { tool: publishTool(siteId, undefined, instanceId), bulkExecute, createContent };
+  return { tool: publishTool(siteId, undefined, instanceId), bulkExecute, createContent, prepareTest };
 }
 
 describe('publish private execution context handoff', () => {
   const args = { audience_id: audienceId, channel: 'voice' as const, voice_mode: 'agent_call' as const,
     title: 'Appointment campaign', type: 'text', text: 'Hello from Acme.' };
+
+  it('aligns Content Creator tool instructions with the configured outbound voice identity and private guidance', () => {
+    for (const description of [publishToolDefinition.description, SEND_BULK_MESSAGES_DESCRIPTION]) {
+      expect(description).toContain('configured Customer Support voice agent and business, not the Content Creator');
+      expect(description).toContain('ask if now is a good time');
+      expect(description).toContain('"How can I help you?"');
+      expect(description).toContain('objective/additional_context');
+    }
+  });
 
   it('passes selected context only as the nested second argument, with final content and audience refs', async () => {
     const { tool, bulkExecute, createContent } = harness();
@@ -71,6 +82,18 @@ describe('publish private execution context handoff', () => {
     await tool.execute({ ...args, objective: 'Confirm Monday', additional_context: 'Verify calendar first' }, input);
     expect(bulkExecute).toHaveBeenCalledWith(expect.objectContaining({ message: args.text, objective: 'Confirm Monday' }),
       expect.objectContaining({ intent: 'Confirm Monday', background: 'Verify calendar first' }));
+  });
+
+  it('hands private execution context to Send Test without copying it to the spoken text or public result', async () => {
+    const { tool, prepareTest, bulkExecute } = harness();
+    const context = contextModule.buildToolExecutionContext({ site_id: siteId, intent: 'Private availability follow-up',
+      background: 'Private campaign facts', source: { instance_id: instanceId, node_id: randomUUID() } });
+    const result = await tool.execute({ ...args, is_test: true, test_recipient: '+14155550101' }, context);
+    expect(result.success).toBe(true);
+    expect(prepareTest).toHaveBeenCalledWith(siteId, expect.objectContaining({ is_test: true }), args.text,
+      undefined, expect.any(Array), context);
+    expect(JSON.stringify(result)).not.toContain(context!.intent);
+    expect(bulkExecute).not.toHaveBeenCalled();
   });
 
   it('redacts selected published facts before bounding them and never copies raw metadata', async () => {

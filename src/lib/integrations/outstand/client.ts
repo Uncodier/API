@@ -18,6 +18,8 @@ import {
 import { mergeCommentResults, networksFromPost, normalizeCommentResult, usernameFromPost } from './comments';
 import type { CommentsResult } from './comments';
 import { readResponseWithLimit } from '@/lib/security/limited-response';
+import { authorizePostLicense, authorizeCommentLicense, authorizeConversationLicense } from './license-guard';
+import { OutstandPreDispatchError } from './pre-dispatch-error';
 
 const BASE_URL = 'https://api.outstand.so/v1';
 
@@ -79,6 +81,14 @@ export class OutstandClient {
   // --- Posts ---
 
   async createPost(params: CreatePostParams, tenantId?: string): Promise<{ success: boolean; post: OutstandPost }> {
+    let body: string;
+    try {
+      await authorizePostLicense(this, tenantId, params.accounts);
+      body = JSON.stringify(params);
+      this.signal?.throwIfAborted();
+    } catch (error) {
+      throw new OutstandPreDispatchError(error);
+    }
     const headers: Record<string, string> = {};
     if (tenantId) {
       headers['X-Tenant-ID'] = tenantId;
@@ -87,7 +97,7 @@ export class OutstandClient {
     return this.request('/posts/', {
       method: 'POST',
       headers,
-      body: JSON.stringify(params),
+      body,
     });
   }
 
@@ -258,6 +268,7 @@ export class OutstandClient {
   // --- Comments ---
 
   async publishComment(postId: string, params: CreateCommentParams, tenantId?: string): Promise<CommentResponse> {
+    await authorizeCommentLicense(this, tenantId, postId, params);
     const headers: Record<string, string> = {};
     if (tenantId) {
       headers['X-Tenant-ID'] = tenantId;
@@ -374,8 +385,10 @@ export class OutstandClient {
 
   async sendConversationMessage(
     id: string,
-    params: SendConversationMessageParams
+    params: SendConversationMessageParams,
+    siteId?: string,
   ): Promise<SendConversationMessageResponse> {
+    await authorizeConversationLicense(this, siteId, id);
     return this.request(`/conversations/${encodeURIComponent(id)}/messages`, {
       method: 'POST',
       body: JSON.stringify(params),

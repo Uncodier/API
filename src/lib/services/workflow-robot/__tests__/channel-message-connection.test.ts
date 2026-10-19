@@ -2,6 +2,7 @@
 import { jest } from '@jest/globals';
 
 const from = jest.fn();
+const rpc = jest.fn();
 const materializeRunFromGraph = jest.fn();
 const siteId = '11111111-1111-4111-8111-111111111111';
 const otherSite = '22222222-2222-4222-8222-222222222222';
@@ -12,7 +13,7 @@ let deliveries: any[];
 let conversation: any;
 
 jest.unstable_mockModule('@/lib/database/supabase-client', () => ({
-  supabaseAdmin: { from, schema: jest.fn(() => ({ from })) },
+  supabaseAdmin: { from, rpc, schema: jest.fn(() => ({ from })) },
 }));
 jest.unstable_mockModule('../materialize', () => ({ materializeRunFromGraph }));
 const { resolveMessageConnection, prepareChannelMessageRuns } = await import('../channel-message');
@@ -25,6 +26,9 @@ const voiceIdentity = { messageId, conversationId };
 beforeEach(() => {
   jest.clearAllMocks();
   connections = [];
+  rpc.mockImplementation(() => ({ abortSignal: async () => ({ error: null, data: {
+    social_media: [], effective_plan: 'engine', channels: { connections: connections.map(c => ({ license_suspended: false, ...c })) },
+  } }) }));
   deliveries = [{ site_id: siteId, conversation_id: conversationId,
     zavu_call_id: messageId, zavu_sender_id: 'sender-2' }];
   conversation = { site_id: siteId, channel: 'voice', custom_data: {

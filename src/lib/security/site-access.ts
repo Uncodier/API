@@ -63,42 +63,27 @@ export async function canAccessSite(
   const userId = principal.userId;
   if (!userId) return false;
 
-  const cacheKey = `auth:site:${userId}:${siteId}`;
-  const cached = await getCachedJson<{ allowed: boolean }>(cacheKey);
-  if (cached) return cached.allowed;
-
-  const { data: directSite } = await supabaseAdmin
-    .from('sites')
-    .select('id')
-    .eq('id', siteId)
-    .eq('user_id', userId)
-    .maybeSingle();
-  if (directSite) {
-    await setCachedJson(cacheKey, { allowed: true }, 60);
-    return true;
+  // A cached positive membership or ownership flag may outlive a trial seat.
+  // SQL evaluates the authenticated actor's current license, including expiry.
+  const signal = AbortSignal.timeout(10_000);
+  let removeAbortListener = () => {};
+  try {
+    const aborted = new Promise<never>((_, reject) => {
+      const abort = () => reject(new Error('Site authorization unavailable'));
+      signal.addEventListener('abort', abort, { once: true });
+      removeAbortListener = () => signal.removeEventListener('abort', abort);
+      if (signal.aborted) abort();
+    });
+    const { data, error } = await Promise.race([
+      supabaseAdmin.rpc('site_user_has_effective_access', { p_site_id: siteId, p_user_id: userId }).abortSignal(signal),
+      aborted,
+    ]);
+    return !signal.aborted && !error && data === true;
+  } catch {
+    return false;
+  } finally {
+    removeAbortListener();
   }
-
-  const { data: ownership } = await supabaseAdmin
-    .from('site_ownership')
-    .select('site_id')
-    .eq('site_id', siteId)
-    .eq('user_id', userId)
-    .maybeSingle();
-  if (ownership) {
-    await setCachedJson(cacheKey, { allowed: true }, 60);
-    return true;
-  }
-
-  const { data: membership } = await supabaseAdmin
-    .from('site_members')
-    .select('site_id')
-    .eq('site_id', siteId)
-    .eq('user_id', userId)
-    .eq('status', 'active')
-    .maybeSingle();
-  const allowed = Boolean(membership);
-  await setCachedJson(cacheKey, { allowed }, allowed ? 60 : 10);
-  return allowed;
 }
 
 export async function originBelongsToSite(

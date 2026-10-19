@@ -12,12 +12,31 @@ import { resolveOutreachRecipient } from './recipients';
 import { getVoiceCallEligibility } from '@/lib/services/zavu/voice-call-consent';
 import { placeTrackedVoiceCall } from '@/lib/services/zavu/voice-call-service';
 import { assertSafeRemoteUrl } from '@/lib/security/safe-remote-url';
+import { requireLicensedChannel } from '@/lib/billing/licensed-resources';
 
 export interface DeliveryContext { siteId: string; message: any; conversation: any; lead: any; account: OutreachAccount; conversations?: any[] }
 export type PreparedDelivery = { reason: string } | { send: () => Promise<{ success: boolean; messageId?: string }> };
 
 /** Preparation is read-only. The returned closure is the sole dispatch point. */
 export async function prepareOutreachDelivery(ctx: DeliveryContext): Promise<PreparedDelivery> {
+  const prepared = await prepareDelivery(ctx);
+  if ('reason' in prepared) return prepared;
+  return { send: async () => {
+    if (ctx.account.provider === 'zavu') {
+      const live = await requireLicensedChannel(ctx.siteId, ctx.account.channel,
+        ctx.account.id, ctx.account.config.zavu_sender_id);
+      if (JSON.stringify(live) !== JSON.stringify(ctx.account.config)) {
+        // The projection adds a license flag; compare the stored configuration without that mirror.
+        const { license_suspended: _live, ...liveConfig } = live;
+        const { license_suspended: _saved, ...savedConfig } = ctx.account.config;
+        if (JSON.stringify(liveConfig) !== JSON.stringify(savedConfig)) throw new Error('Selected outreach connection changed');
+      }
+    }
+    return prepared.send();
+  } };
+}
+
+async function prepareDelivery(ctx: DeliveryContext): Promise<PreparedDelivery> {
   const { siteId, message, conversation, lead, account } = ctx;
   const c = account.config;
   if (account.provider === 'zavu' && (typeof c.zavu_sender_id !== 'string' || !c.zavu_sender_id.trim())) return { reason: 'selected_account_unavailable' };

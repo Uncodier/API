@@ -1,4 +1,4 @@
-import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { getSiteLicensedResources } from '@/lib/billing/licensed-resources';
 import { selectedOutreachAccounts, type OutreachAccount, type OutreachPolicy } from '@/lib/services/outreach/policy';
 
 export const DELIVERY_CHANNELS = ['whatsapp', 'email', 'telegram', 'sms', 'voice'] as const;
@@ -116,7 +116,6 @@ export function resolveDeliveryRoutesFromSettings(channels: unknown, input: Deli
 export async function resolveDeliveryRoutes(siteId: string, input: DeliveryRoutingInput): Promise<DeliveryRoute[]> {
   parseDeliveryRoutes(input);
   if (!siteId) throw new Error('An authorized site is required.');
-  const { data, error } = await supabaseAdmin.from('settings').select('channels').eq('site_id', siteId).single();
-  if (error || !data) throw new Error('Could not load site delivery connections.');
+  const data = await getSiteLicensedResources(siteId);
   return resolveDeliveryRoutesFromSettings(data.channels, input);
 }

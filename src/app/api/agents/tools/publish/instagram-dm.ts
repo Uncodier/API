@@ -78,6 +78,7 @@ export async function publishInstagramDirectMessage(input: {
         ? { scheduled_at: input.params.scheduled_at }
         : {}),
     },
+    input.siteId,
   );
 
   try {

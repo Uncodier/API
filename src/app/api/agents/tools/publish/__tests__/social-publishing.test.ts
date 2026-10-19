@@ -13,6 +13,7 @@ const confirmUpload = jest.fn<(...args: unknown[]) => Promise<unknown>>();
 const downloadMedia = jest.fn<(...args: unknown[]) => Promise<unknown>>();
 const putMedia = jest.fn<(...args: unknown[]) => Promise<void>>();
 const bulkSend = jest.fn();
+const licensedRpc = jest.fn<any>();
 const settingsFrom = jest.fn<any>(() => ({ select: () => ({ eq: () => ({ single: async () => ({
   data: { channels: { connections: [{ id: 'email-selected', type: 'email', status: 'connected', zavu_sender_id: 'sender' }] } }, error: null,
 }) }) }) }));
@@ -25,7 +26,7 @@ jest.unstable_mockModule('../content-attempt', () => ({ claimSocialContent: clai
 jest.unstable_mockModule('../media-transfer-http', () => ({ downloadMedia, putMedia }));
 jest.unstable_mockModule('@/lib/integrations/outstand/client', () => ({ getOutstandClient: () => client }));
 jest.unstable_mockModule('../../sendBulkMessages/assistantProtocol', () => ({ sendBulkMessagesTool: bulkSend }));
-jest.unstable_mockModule('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: (...args: unknown[]) => settingsFrom(...args) } }));
+jest.unstable_mockModule('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: (...args: unknown[]) => settingsFrom(...args), rpc: licensedRpc } }));
 jest.unstable_mockModule('@/lib/database/audience-db', () => ({ getAudienceById: async () => ({ site_id: site, status: 'ready' }) }));
 jest.unstable_mockModule('@/lib/messaging/exact-delivery', () => ({
   sendExactDelivery: jest.fn(),
@@ -77,6 +78,12 @@ beforeEach(() => {
   }) }) }) }));
   jest.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Unexpected live request'));
   listAccounts.mockResolvedValue({ success: true, data: accountRows, total: 2 });
+  licensedRpc.mockImplementation(() => ({ abortSignal: async () => {
+    const result = await settingsFrom().select().eq().single();
+    return { data: { ...result.data, effective_plan: 'engine',
+      channels: { connections: result.data.channels.connections.map((c: any) => ({ ...c, license_suspended: false })) },
+      social_media: accountRows.map(c => ({ ...c, license_suspended: false })) }, error: result.error };
+  } }));
   createPost.mockResolvedValue(acceptedPost());
   createContent.mockResolvedValue({ id: 'content-one', status: 'draft' });
   updateContent.mockResolvedValue({ id: 'content-one', status: 'draft' });

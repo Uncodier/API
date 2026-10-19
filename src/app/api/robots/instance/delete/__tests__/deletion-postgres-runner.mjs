@@ -3,12 +3,14 @@ import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
+import { checkIndexedPreflight, installIndexedPreflight } from './deletion-index-regression.mjs';
 
 const db = new PGlite(); // In-memory only. No .env, external processes or network.
 const here = dirname(fileURLToPath(import.meta.url));
 const id = n => `10000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const site = id(1), otherSite = id(2), instance = id(3), otherInstance = id(4);
-const req = id(5), otherReq = id(6), user = id(7), plan = id(8), log = id(9);
+const req = id(5).replace(/^1/, 'a'), otherReq = id(6).replace(/^1/, 'b');
+const user = id(7), plan = id(8), log = id(9);
 const file = 'migrations/0001.sql', checksum = 'a'.repeat(64);
 const tables = ['requirements', 'remote_instances', 'instance_plans', 'instance_logs', 'requirement_status',
   'requirement_migration_lifecycle', 'requirement_migration_diagnostics', 'requirement_migration_reconciliations',
@@ -97,6 +99,7 @@ try {
     '-- synthetic deployed customization must survive\nDECLARE i public.remote_instances'));
   await load('20261005220000_bound_empty_instance_deletion_preflight.sql');
   await load('20261005220000_bound_empty_instance_deletion_preflight.sql');
+  await installIndexedPreflight(db);
   assert.equal((await one("SELECT pg_get_functiondef('check_delete_permission()'::regprocedure) v")).v, legacy);
 
   await check('authenticated-only RPCs despite hostile default ACLs', async () => {
@@ -372,7 +375,7 @@ try {
   await check('empty requirement scope avoids lateral expansion of unrelated log history', async () => {
     const definition = (await one("SELECT pg_get_functiondef('get_robot_instance_deletion_scope(uuid)'::regprocedure) v")).v;
     assert.ok(definition.includes('-- synthetic deployed customization must survive'));
-    assert.ok(definition.includes('WHERE cardinality(ids) > 0 AND l.instance_id <> i.id'));
+    assert.ok(definition.includes('WHERE cardinality(ids) > 0 AND tagged_logs.instance_id <> i.id'));
     assert.ok(!definition.includes('tags(value) WHERE l.instance_id <> i.id'));
     const queryPlan = await db.query(`EXPLAIN (FORMAT JSON) SELECT EXISTS (
       SELECT 1 FROM instance_logs l WHERE cardinality('{}'::uuid[]) > 0
@@ -392,6 +395,9 @@ try {
     assert.deepEqual(await remove([]), { instance_id: instance, deleted_requirement_ids: [] });
     assert.equal((await one('SELECT count(*)::int n FROM instance_logs WHERE instance_id=$1', [otherInstance])).n, 20000);
   });
+
+  await checkIndexedPreflight({ db, one, check, scope, remove, rejected, id,
+    site, otherSite, instance, otherInstance, req, otherReq });
 
   console.log('PASS PostgreSQL atomic robot instance deletion');
 } finally { await db.close(); }

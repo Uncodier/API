@@ -1,4 +1,4 @@
-import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { getSiteLicensedResources } from '@/lib/billing/licensed-resources';
 import { resolveDeliveryAccount, parseDeliveryRoutes, type DeliveryChannel } from './delivery-routing';
 import { loadExactDeliveryContext, deliveryError } from './exact-delivery-context';
 import { selectedToken } from './exact-credentials';
@@ -62,8 +62,7 @@ export interface ExactDeliveryResult {
 export async function loadExactAccount(siteId: string, channel: DeliveryChannel, connectionId: string) {
   parseDeliveryRoutes({ channel, connection_id: connectionId });
   if (!siteId || !connectionId) throw deliveryError('Exact site and connection are required.');
-  const { data, error } = await supabaseAdmin.from('settings').select('channels').eq('site_id', siteId).single();
-  if (error || !data) throw deliveryError('Site delivery settings are unavailable.');
+  const data = await getSiteLicensedResources(siteId);
   return resolveDeliveryAccount(data.channels, { channel, connection_id: connectionId });
 }
 

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { supabaseAdmin } from '@/lib/database/supabase-server';
 import { assertVoiceCallAllowed } from '@/lib/services/zavu/voice-call-service';
-import { sanitizeToolContextText } from '@/lib/services/tool-execution-context';
+import { readToolExecutionContext, sanitizeToolContextText } from '@/lib/services/tool-execution-context';
 import { loadExactAccount, type ExactDeliveryInput, type ExactDeliveryResult } from '@/lib/messaging/exact-delivery';
 import { validateVoiceGuidance } from '../sendBulkMessages/voice-context';
 
@@ -32,12 +32,14 @@ export async function createTrackedVoiceTest(input: ExactDeliveryInput): Promise
   const messageId = randomUUID();
   const objective = sanitizeToolContextText(input.objective, 500);
   const additionalContext = sanitizeToolContextText(input.additional_context, 4_000);
+  const executionContext = readToolExecutionContext(input.tool_execution_context, input.site_id);
   const customData = {
     source: 'publish_test', is_test: true, channel: 'voice', connection_id: input.connection_id, voice_mode: 'agent_call',
     // Never enter the approved-message queue, including a crash before dispatch.
     status: 'test_pending',
     ...(objective ? { voice_objective: objective } : {}),
     ...(additionalContext ? { voice_additional_context: additionalContext } : {}),
+    ...(executionContext ? { tool_execution_context: executionContext } : {}),
   };
   const { error: conversationError } = await supabaseAdmin.from('conversations').insert({
     id: conversationId, site_id: input.site_id, lead_id: input.lead_id, channel: 'voice',

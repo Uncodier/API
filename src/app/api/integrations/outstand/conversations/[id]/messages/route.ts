@@ -104,6 +104,7 @@ export async function POST(
     const result = await client.sendConversationMessage(
       id,
       params,
+      siteId,
     );
     try {
       await recordOutstandMessage(

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { materializeRunFromGraph } from './materialize';
 import { resolveExactMessageConnection } from '@/lib/messaging/exact-message-connection';
+import { getSiteLicensedResources } from '@/lib/billing/licensed-resources';
 
 export const CHANNEL_MESSAGE_UUID = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i;
 
@@ -93,9 +94,7 @@ export async function resolveMessageConnection(siteId: string, channel: string, 
 }): Promise<string | undefined> {
   const normalizedChannel = normalizeMessageChannel(channel);
   if (!normalizedChannel) return undefined;
-  const { data, error } = await supabaseAdmin.from('settings')
-    .select('channels').eq('site_id', siteId).maybeSingle();
-  if (error) throw error;
+  const data = await getSiteLicensedResources(siteId);
   if (identity?.messageId && CHANNEL_MESSAGE_UUID.test(identity.messageId)) {
     const exact = await resolveExactMessageConnection(siteId, normalizedChannel, data?.channels,
       identity.messageId, identity.conversationId);
@@ -106,7 +105,8 @@ export async function resolveMessageConnection(siteId: string, channel: string, 
   const matches = connections.filter((connection) => connection &&
     typeof connection.id === 'string' && connection.id.trim() &&
     normalizeMessageChannel(connection.type) === normalizedChannel &&
-    typeof connection.status === 'string' && CONNECTED_CHANNEL_STATUSES.has(connection.status));
+    typeof connection.status === 'string' && CONNECTED_CHANNEL_STATUSES.has(connection.status)
+    && (connection as any).license_suspended === false && (connection as any).enabled !== false);
   if (!matches.length) return undefined;
 
   if (normalizedChannel === 'voice' && identity?.messageId) {

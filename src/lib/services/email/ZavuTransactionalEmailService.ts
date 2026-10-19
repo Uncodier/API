@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { load } from 'cheerio';
-import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { getSiteLicensedResources, requireLicensedChannel } from '@/lib/billing/licensed-resources';
 import { sendChannelMessage, zavuFetch, type ZavuEmailAttachment } from '@/lib/services/zavu/client';
 import type { SendEmailParams, SendEmailResult } from '@/lib/services/sendgrid-service';
 import { getTransactionalEmailFrom, getTransactionalEmailConfigurationDiagnostic, getTransactionalEmailFailureDiagnostic,
@@ -61,13 +61,15 @@ export async function resolveZavuTransactionalSender(signal: AbortSignal): Promi
   }
   if (!process.env.ZAVUDEV_API_KEY?.trim()) throw new TransactionalEmailConfigurationError('Missing ZAVUDEV_API_KEY');
   signal.throwIfAborted();
-  const { data, error } = await supabaseAdmin.from('settings').select('channels')
-    .eq('site_id', siteId).abortSignal(signal).maybeSingle();
-  if (error) throw new TransactionalEmailSenderError({ stage: 'sender_resolution', code: 'connection_lookup_failed' });
+  let data;
+  try { data = await getSiteLicensedResources(siteId, signal); } catch {
+    throw new TransactionalEmailSenderError({ stage: 'sender_resolution', code: 'connection_lookup_failed' });
+  }
   const connections = Array.isArray(data?.channels?.connections) ? data.channels.connections : [];
   const matches = connections.filter((connection: any) => connection.id === connectionId);
   const connection = matches[0];
   if (matches.length !== 1 || connection.type !== 'email' || connection.status !== 'connected'
+    || connection.license_suspended !== false || connection.enabled === false
     || connection.metadata?.from_address?.trim().toLowerCase() !== from
     || !connection.zavu_sender_id || !connection.metadata?.email_domain_id
     || (pinnedSenderId && connection.zavu_sender_id !== pinnedSenderId)) {
@@ -124,6 +126,8 @@ export async function sendZavuTransactionalEmail(params: SendEmailParams): Promi
           operationKey, senderId, to, subject: params.subject, text, html: params.html,
           replyTo: params.replyTo, attachments,
         })).digest('hex')}`;
+        await requireLicensedChannel(process.env.TRANSACTIONAL_EMAIL_ZAVU_SITE_ID!.trim(), 'email',
+          process.env.TRANSACTIONAL_EMAIL_ZAVU_CONNECTION_ID!.trim(), senderId, signal);
         const response = await sendChannelMessage({
           to, channel: 'email', senderId, subject: params.subject, text,
           htmlBody: params.html, replyTo: params.replyTo, attachments, signal, idempotencyKey,

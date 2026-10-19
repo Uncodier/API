@@ -1,4 +1,6 @@
 import { getOutstandClient } from '@/lib/integrations/outstand/client';
+import { OutstandPreDispatchError } from '@/lib/integrations/outstand/pre-dispatch-error';
+import { requireLicensedSocialAccounts } from '@/lib/billing/licensed-resources';
 import { resolveSocialAccounts, SocialAccountResolutionError } from '@/lib/integrations/outstand/accounts';
 import { randomUUID } from 'node:crypto';
 import { getContentById } from '@/lib/database/content-db';
@@ -96,6 +98,7 @@ export async function publishSocialContent(
     const client = getOutstandClient();
     // All validation and read-only discovery happen before any content write/send.
     const accounts = await resolveSocialAccounts(client, siteId, input.social_accounts || [], input.social_account_targets);
+    await requireLicensedSocialAccounts(siteId, accounts.map(account => account.id));
     safeValidationError = true;
     const hasTikTok = accounts.some((account) => account.network === 'tiktok');
     const tiktok = validateTikTokOptions(input.tiktok, hasTikTok);
@@ -161,11 +164,13 @@ export async function publishSocialContent(
       }
     } catch (error) {
       const status = (error as { upstreamStatus?: number })?.upstreamStatus;
+      const preDispatch = error instanceof OutstandPreDispatchError;
       const rejected = typeof status === 'number' && [400, 401, 403, 404, 422, 429].includes(status);
-      delivery = { success: false, status: !postAttempted || rejected ? 'failed' : 'unknown',
-        account_ids: accountIds, retry_safe: !postAttempted || rejected,
+      delivery = { success: false, status: !postAttempted || preDispatch || rejected ? 'failed' : 'unknown',
+        account_ids: accountIds, retry_safe: !postAttempted || preDispatch || rejected,
         ...(tiktok ? { tiktok_post_mode: tiktok.postMode } : {}),
         error: !postAttempted ? 'Media upload to Outstand did not complete. Check media readiness, MIME type, and the 64 MiB limit. No post was sent; reuse this content_id when retrying.'
+          : preDispatch ? error.message
           : rejected ? 'The provider rejected the social post. Verify account permissions and media; this is not proof of disconnected accounts.'
           : 'Social delivery is unconfirmed. Inspect provider status before retrying to avoid duplicates.' };
     }

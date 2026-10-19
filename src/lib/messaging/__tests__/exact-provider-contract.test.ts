@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 
 // Only infrastructure is replaced. The adapter, HTTP clients, email rendering,
 // tracking, receipt writer and AgentMail callback lookup are the real modules.
-jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn() } }));
+jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn(), rpc: jest.fn() } }));
 jest.mock('@/lib/database/supabase-server', () => ({
   supabaseAdmin: require('@/lib/database/supabase-client').supabaseAdmin,
 }));
@@ -22,6 +22,7 @@ import { sendExactDelivery } from '../exact-delivery';
 import { claimExactDelivery, finishExactDelivery } from '../exact-delivery-receipt';
 import { findMessageWithFallback, updateMessageWithAgentMailEvent } from '@/lib/integrations/agentmail/message-updater';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { licensedRpcResult } from './licensed-rpc-fixture';
 
 const siteId = '11111111-1111-4111-8111-111111111111';
 const messageId = '22222222-2222-4222-8222-222222222222';
@@ -51,6 +52,7 @@ beforeEach(() => {
     { id: 'first', type: 'email', status: 'connected', zavu_sender_id: 'sender-first' },
     { id: 'selected', type: 'email', status: 'connected', zavu_sender_id: 'sender-selected' },
   ] };
+  (supabaseAdmin.rpc as jest.Mock).mockImplementation(() => licensedRpcResult(channels));
   message = { id: messageId, conversation_id: conversationId, lead_id: leadId, role: 'assistant',
     created_at: '2026-10-01T00:00:00Z', content: '<p>Hello <strong>Ada</strong></p><a href="https://example.invalid/news">Read news</a>',
     custom_data: { connection_id: 'selected', channel: 'email', status: 'sending', subject: 'Stored subject' } };

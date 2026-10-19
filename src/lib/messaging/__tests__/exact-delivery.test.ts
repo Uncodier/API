@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn() } }));
+jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn(), rpc: jest.fn() } }));
 jest.mock('@/lib/services/zavu/client', () => ({ sendChannelMessage: jest.fn() }));
 jest.mock('@/lib/services/zavu/voice-call-service', () => ({ assertVoiceCallAllowed: jest.fn(), placeTrackedVoiceCall: jest.fn() }));
 jest.mock('@/lib/services/email/EmailSendService', () => ({ EmailSendService: {
@@ -28,6 +28,7 @@ import { AgentMailSendService } from '@/lib/services/email/AgentMailSendService'
 import { EmailSignatureService } from '@/lib/services/email/EmailSignatureService';
 import { sendTwilioWhatsAppMessage } from '@/lib/services/whatsapp/twilio-whatsapp-transport';
 import { WhatsAppTemplateService } from '@/lib/services/whatsapp/WhatsAppTemplateService';
+import { licensedRpcResult } from './licensed-rpc-fixture';
 
 const siteId = '11111111-1111-4111-8111-111111111111';
 let channels: any;
@@ -43,6 +44,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   channels = { connections: [connected('first', 'email'), connected('selected', 'email')] };
   tokens = []; templates = []; storedMessage = null; conversation = null; lead = null;
+  (supabaseAdmin.rpc as jest.Mock).mockImplementation(() => licensedRpcResult(channels));
   (sendChannelMessage as jest.Mock).mockResolvedValue({ success: true, message: { id: 'provider-id', status: 'queued' } });
   (EmailSendService.sendEmail as jest.Mock).mockResolvedValue({ success: true, status: 'sent', envelope_id: 'smtp-id' });
   (AgentMailSendService.sendViaAgentMail as jest.Mock).mockResolvedValue({ success: true, status: 'sent', external_message_id: 'agent-id' });
@@ -95,10 +97,9 @@ test('live retry revalidates inventory and does not use stale sender', async () 
 test('connection changing during preparation refuses before invoking dispatch receipt or transport', async () => {
   const before = jest.fn();
   let settingsReads = 0;
-  const originalFrom = (supabaseAdmin.from as jest.Mock).getMockImplementation()!;
-  (supabaseAdmin.from as jest.Mock).mockImplementation((table: string) => {
-    if (table === 'settings' && ++settingsReads === 2) channels.connections[1].enabled = false;
-    return originalFrom(table);
+  (supabaseAdmin.rpc as jest.Mock).mockImplementation(() => {
+    if (++settingsReads === 2) channels.connections[1].enabled = false;
+    return licensedRpcResult(channels);
   });
   expect((await sendExactDelivery({ ...base(), before_dispatch: before })).success).toBe(false);
   expect(before).not.toHaveBeenCalled(); expect(sendChannelMessage).not.toHaveBeenCalled();

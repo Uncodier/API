@@ -30,6 +30,7 @@ Read these first when changing the code-agent harness:
 - [CORS preflight admission](./CORS_PREFLIGHT_RATE_LIMITS.md) — independent preflight budgets and Finder `429` diagnosis.
 
 ## Active integration guides
+- [Trial execution resource freshness](./STARTUP_TRIAL_EXECUTION.md) — fail-closed live license projection at outgoing channel, social, outreach and voice boundaries; coordinated database rollout.
 
 - [Pending plan startup](./PLAN_PENDING_STARTUP.md) — executor-owned admission of a pending backlog item without bypassing dependencies, WIP, review holds or retry budgets.
 - [Monthly credit reset and protected balances](./BILLING_CREDIT_RESET.md) — atomic signup, non-accumulating plan allowances, bought/withdrawable funds and coordinated rollout.

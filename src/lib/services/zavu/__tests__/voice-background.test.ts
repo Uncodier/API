@@ -151,6 +151,8 @@ it("keeps late business sections, campaigns and reference files despite oversize
   ]) expect(prompt).toContain(fact);
   expect(prompt).toContain("Additional business context omitted");
   expect(prompt.startsWith(buildVoiceRuntimePrompt({ language: "auto" }))).toBe(true);
+  expect(prompt).toContain("Outbound: you initiated this call");
+  expect(prompt).toContain("introduce yourself by your configured name and business");
   expect(prompt.endsWith(VOICE_RUNTIME_REMINDER)).toBe(true);
   expect(prompt.length).toBeLessThanOrEqual(10_000);
 });
@@ -229,5 +231,7 @@ it("sends business context and the actual tool catalog in the post-registration 
   }
   expect(result.systemPrompt).toContain("clear consent to be contacted");
   expect(result.systemPrompt).toContain("never claim success before the tool confirms it");
+  expect(result.systemPrompt).toContain("Outbound: you initiated this call");
+  expect(result.systemPrompt).toContain("introduce yourself by your configured name and business");
   expect(result.systemPrompt?.endsWith(VOICE_RUNTIME_REMINDER)).toBe(true);
 });

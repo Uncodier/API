@@ -1,4 +1,6 @@
 const mockFrom = jest.fn();
+const mockRpc = jest.fn();
+jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { rpc: mockRpc } }));
 const mockPlaceVoiceCall = jest.fn();
 const mockSetContactContext = jest.fn();
 const mockClearContactContext = jest.fn();
@@ -29,6 +31,12 @@ import { placeTrackedVoiceCall } from "../voice-call-service";
 describe("placeTrackedVoiceCall idempotency", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockRpc.mockImplementation(() => ({ abortSignal: async () => {
+      const result = await mockFrom('settings').select('channels').eq('site_id', 'site-1').maybeSingle();
+      return { ...result, data: { ...result.data, effective_plan: 'engine', social_media: [], channels: {
+        connections: (result.data?.channels?.connections || []).map((c: any, i: number) => ({ id: `voice-${i}`, ...c, license_suspended: false })),
+      } } };
+    } }));
     mockSetContactContext.mockResolvedValue(undefined);
     mockClearContactContext.mockResolvedValue(undefined);
     mockGetSenderAgent.mockResolvedValue({
