@@ -45,4 +45,12 @@ describe('bounded search snapshots', () => {
     mockRead.mockResolvedValue({ ...snapshot('invalid-overflow'), candidate_window_truncated: 'true' });
     expect(await readCatalogSnapshot('invalid-overflow', 'invalid-overflow')).toBeNull();
   });
+  it('preserves the related label across instances and rejects oversized alternatives', async () => {
+    mockRead.mockResolvedValue({ ...snapshot('related'), mode: 'hybrid', degraded: false, result_kind: 'related' });
+    expect(await readCatalogSnapshot('related', 'related')).toHaveProperty('result_kind', 'related');
+    mockRead.mockResolvedValue({ ...snapshot('too-many-related'), result_kind: 'related', candidates:
+      Array.from({ length: 6 }, (_, n) => ({ id: `00000000-0000-4000-8000-${String(n + 1).padStart(12, '0')}`,
+        site_id: '00000000-0000-4000-8000-000000000001', score: .3, exact_match: false })) });
+    expect(await readCatalogSnapshot('too-many-related', 'too-many-related')).toBeNull();
+  });
 });

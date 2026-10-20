@@ -7,6 +7,7 @@ import { getRequirementsCore } from './get/core';
 import { createRequirementCore } from './create/core';
 import { updateRequirementCore } from './update/core';
 import { assertToolScopeArgs, ToolScreenAccessDenied } from '../router/screen-access';
+import type { RequirementCommandSource } from '@/lib/services/requirement-command';
 
 export interface RequirementsToolParams {
   action: 'create' | 'list' | 'update';
@@ -46,11 +47,11 @@ export interface RequirementsToolParams {
   offset?: number;
 }
 
-export function requirementsTool(site_id: string, user_id?: string, instanceId?: string) {
+export function requirementsTool(site_id: string, user_id?: string, instanceId?: string, commandSource?: RequirementCommandSource) {
   return {
     name: 'requirements',
     description:
-      'Manage requirements. Use action="create" to create a new requirement (requires title). Use action="update" to update an existing requirement (requires requirement_id). Use action="list" to get requirements with filters. For relative dates ("hoy", "esta semana", "el mes pasado") pass period or date_from/date_to as YYYY-MM-DD in the client timezone — do not invent UTC ISO bounds. Cron expressions fire in Server UTC: convert the client local hour to UTC before writing cron (e.g. 09:00 America/Mexico_City = 15:00 UTC). CRITICAL: requirement.instructions is the LIVING README of the project — it persists across ephemeral sandbox sessions. You MUST update instructions (action="update") at the end of every cycle with: what you found, what you built, architecture decisions, current status, and next steps. This is how future cycles know where you left off. When creating a requirement, instructions MUST specify if it will be done as an "external deliverable" or "using Makinari tools".',
+      'Manage requirements. Use action="create" to create a new requirement (requires title). Use action="update" to submit requested changes to an existing requirement (requires requirement_id). Interactive updates are authorized by the current real user message and queued for the existing runner, even from a different session. Submit one consolidated update per requirement per user message; retries do not overwrite it. Preserve existing scope and include the new request in instructions. Do not create an execution plan in this session for another runner. A queued receipt is not execution or delivery. Use action="list" for status questions; a question alone must not reopen work. Interactive updates do not accept ownership metadata, completion or cancellation; they preserve explicit pauses. For relative dates ("hoy", "esta semana", "el mes pasado") pass period or date_from/date_to as YYYY-MM-DD in the client timezone — do not invent UTC ISO bounds. Cron expressions fire in Server UTC: convert the client local hour to UTC before writing cron (e.g. 09:00 America/Mexico_City = 15:00 UTC). CRITICAL: requirement.instructions is the LIVING README of the project — it persists across ephemeral sandbox sessions. When creating a requirement, instructions MUST specify if it will be done as an "external deliverable" or "using Makinari tools".',
     parameters: {
       type: 'object',
       properties: {
@@ -144,13 +145,18 @@ export function requirementsTool(site_id: string, user_id?: string, instanceId?:
       }
 
       if (action === 'update') {
+        assertToolScopeArgs('requirements', args, { siteId: site_id, userId: user_id });
+        if (commandSource && (commandSource.siteId !== site_id || commandSource.userId !== user_id ||
+            commandSource.instanceId !== instanceId || (args.user_id != null && args.user_id !== user_id))) {
+          throw new ToolScreenAccessDenied();
+        }
         if (!params.requirement_id) {
             throw new Error('Missing required field for update requirement: requirement_id');
         }
         if (!params.site_id) {
           throw new Error('Missing required fields for update requirement: site_id');
         }
-        return updateRequirementCore(params);
+        return updateRequirementCore(params, commandSource);
       }
 
       if (action === 'list') {

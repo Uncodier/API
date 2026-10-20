@@ -32,6 +32,7 @@ function catalog(loadScreenAccess = async (_scope: unknown) => ({ isAdmin: true,
     dependencies[specifier] = exports;
   }
   dependencies['@/lib/services/tool-execution-context'] = contextModule;
+  dependencies['./command-plan-guard'] = { assertStandaloneCommandPlan: async () => undefined };
   dependencies['@/lib/services/composio-service'] = { getComposioApiKeyForSite: async () => undefined };
   dependencies['@/lib/services/harness-diagnostics/tools'] = { refreshHarnessToolManifest: (tools: unknown) => tools };
   dependencies['@/app/api/agents/tools/router/assistantProtocol'] = loadRuntimeModule(
@@ -54,6 +55,30 @@ describe('assistant private execution context wiring', () => {
     const tools = catalog(loadAccess).getAssistantTools(siteId, userId, instanceId);
     await tools.find(tool => tool.name === 'tools')!.execute({ action: 'list', user_id: randomUUID() });
     expect(loadAccess).toHaveBeenCalledWith({ siteId, userId });
+  });
+
+  it('blocks competing interactive requirement execution while preserving reads and standalone plans', async () => {
+    const utils = catalog(), userId = randomUUID(), actionId = randomUUID();
+    const execute = jest.fn(async () => ({ success: true }));
+    const names = ['update_repo', 'requirement_backlog', 'requirement_status', 'instance_plan'];
+    const custom = names.map(name => ({ name, description: name, parameters: {}, execute }));
+    const tools = utils.getAssistantToolDefinitions(siteId, userId, instanceId, custom,
+      undefined, undefined, undefined, undefined, undefined, undefined, { siteId, userId, instanceId, actionId });
+    const tool = (name: string) => tools.find(tool => tool.name === name)!;
+    for (const [name, args] of [
+      ['update_repo', { action: 'execute' }], ['requirement_backlog', { action: 'upsert' }],
+      ['requirement_status', { action: 'create' }], ['instance_plan', { action: 'create', requirement_id: randomUUID() }],
+    ] as const) {
+      await expect(tool(name).execute(args)).rejects.toThrow('sole owner');
+    }
+    expect(execute).not.toHaveBeenCalled();
+    await tool('requirement_backlog').execute({ action: 'list' });
+    await tool('requirement_status').execute({ action: 'list' });
+    await tool('instance_plan').execute({ action: 'create', title: 'Unrelated standalone plan' });
+    expect(execute).toHaveBeenCalledTimes(3);
+    const nonInteractive = utils.getAssistantToolDefinitions(siteId, userId, instanceId, custom);
+    await nonInteractive.find(tool => tool.name === 'update_repo')!.execute({ action: 'execute' });
+    expect(execute).toHaveBeenCalledTimes(4);
   });
   it('decorates before routing and never exposes context in schemas, args, or results', async () => {
     const utils = catalog();
@@ -141,6 +166,20 @@ describe('assistant private execution context wiring', () => {
     const { run, context } = turn(true);
     const messages = [{ role: 'user', content: 'Continue' }];
     await expect(run(context, messages)).resolves.toMatchObject({ creditExhausted: true, isDone: false, messages });
+  });
+
+  it('passes the persisted user-action identity separately from model provenance and request text', async () => {
+    const { getTools, run, context } = turn();
+    const actionId = randomUUID(), userId = randomUUID();
+    context.instanceNodeId = undefined;
+    context.executionOptions.user_id = userId;
+    context.recoveryScope = { siteId, instanceId, userId, userMessageLogId: actionId };
+    await run(context, []);
+    expect(getTools.mock.calls[0][10]).toEqual({ siteId, instanceId, userId, actionId });
+    expect(getTools.mock.calls[0][9]).not.toHaveProperty('actionId');
+    delete context.recoveryScope;
+    await run(context, []);
+    expect(getTools.mock.calls[1][10]).toBeUndefined();
   });
 
   it('recovery skips sentinels and uses the most recent real user text, including multipart', async () => {

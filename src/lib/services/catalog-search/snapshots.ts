@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { candidateSchema, CATALOG_CANDIDATE_LIMIT } from './contract';
+import { candidateSchema, CATALOG_CANDIDATE_LIMIT, CATALOG_RELATED_LIMIT } from './contract';
 import { catalogCacheKey, readCatalogCache, writeCatalogCache } from './cache';
 import { catalogDegradationReasonSchema } from './semantic-errors';
 
@@ -8,8 +8,10 @@ export const snapshotSchema = z.object({
   candidates: z.array(candidateSchema).max(CATALOG_CANDIDATE_LIMIT),
   mode: z.enum(['text', 'hybrid']), degraded: z.boolean(),
   candidate_window_truncated: z.boolean().optional(),
+  result_kind: z.enum(['matched', 'related']).default('matched'),
   degradationReason: catalogDegradationReasonSchema.optional(),
-});
+}).refine(snapshot => snapshot.result_kind !== 'related' || (snapshot.candidates.length <= CATALOG_RELATED_LIMIT
+  && snapshot.mode === 'hybrid' && !snapshot.degraded && !snapshot.candidate_window_truncated));
 export type CatalogSnapshot = z.infer<typeof snapshotSchema>;
 export const SNAPSHOT_LIFETIME_MS = 120_000;
 const localSnapshots = new Map<string, CatalogSnapshot>();
@@ -27,7 +29,8 @@ export async function readCatalogSnapshot(id: string, binding: string): Promise<
   return parsed.data;
 }
 
-export async function saveCatalogSnapshot(id: string, snapshot: CatalogSnapshot): Promise<void> {
+export async function saveCatalogSnapshot(id: string, rawSnapshot: z.input<typeof snapshotSchema>): Promise<void> {
+  const snapshot = snapshotSchema.parse(rawSnapshot);
   const key = snapshotKey(id, snapshot.binding);
   for (const [storedKey, value] of localSnapshots) {
     if (value.expiresAt <= Date.now()) localSnapshots.delete(storedKey);

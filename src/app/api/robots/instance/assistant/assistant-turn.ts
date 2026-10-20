@@ -75,6 +75,12 @@ export async function processAssistantTurn(
             node_id: context.instanceNodeId,
           },
         }),
+        context.recoveryScope && context.executionOptions.user_id ? {
+          siteId: context.executionOptions.site_id,
+          userId: context.executionOptions.user_id,
+          instanceId: context.executionOptions.instance_id,
+          actionId: context.recoveryScope.userMessageLogId,
+        } : undefined,
       );
   const trackedTools = context.toolExecutionTracker && !context.conversationRecoveryOnly
     ? instrumentWorkflowTools(availableTools, context.toolExecutionTracker)

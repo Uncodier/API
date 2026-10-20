@@ -25,6 +25,8 @@ import { externalSkillLookupTool } from '@/app/api/agents/tools/sandbox/external
 import { memoriesTool } from '@/app/api/agents/tools/memories/assistantProtocol';
 import { tasksTool } from '@/app/api/agents/tools/tasks/assistantProtocol';
 import { requirementsTool } from '@/app/api/agents/tools/requirements/assistantProtocol';
+import type { RequirementCommandSource } from '@/lib/services/requirement-command';
+import { assertStandaloneCommandPlan } from './command-plan-guard';
 import { leadsTool } from '@/app/api/agents/tools/leads/assistantProtocol';
 import { catalogCommerceTool } from '@/app/api/agents/tools/catalog_commerce/assistantProtocol';
 import { reservationSchedulesTool } from '@/app/api/agents/tools/reservation_schedules/assistantProtocol';
@@ -224,8 +226,8 @@ To differentiate:
  */
 export function getRequirementWorkflowInstruction(hasLinkedRequirement: boolean): string {
   const linkage = hasLinkedRequirement
-    ? 'This instance already has requirement_status rows — treat them as authoritative context. Keep the requirement "instructions" field updated after every meaningful change, and use requirement_status to record progress or blockers. If the user asks for a SIMPLE code change directly on an existing repository (e.g. "add Events to the nav menu"), DO NOT create a backlog item and DO NOT generate a full instance_plan. Instead, use the `update_repo` tool immediately to execute the instruction.'
-    : 'If the user wants a new build (no requirement in context yet), create a requirement early with action "create": title, clear instructions (scope, deliverables, tech constraints, acceptance criteria), and set status to "in-progress" when you start execution. If the user asks for a simple fix on an existing requirement, use the `update_repo` tool instead of generating a full plan.';
+    ? 'This session has requirement context, not permission to become its runner. For requested changes, submit one consolidated requirements action="update" with the existing and new scope in instructions. Its trusted user-message authorization is attached by the host; the existing runner processes it when idle. Use action="list" for status questions.'
+    : 'If the user wants a new build, first list requirements to avoid duplicates. Create a requirement only for a genuinely new objective. For any change to existing work, submit requirements action="update" to that requirement; do not create a second executor.';
 
   return `
 🎯 SPEC-DRIVEN VS DIRECT EXECUTION (MANDATORY WORKFLOW):
@@ -240,17 +242,17 @@ Before you execute any command, you MUST determine if the user's request is simp
 2. SPEC-DRIVEN MODE (For complex/strategic tasks):
 - When the user asks for broader, multi-step, or strategic initiatives (e.g., "genera una serie de videos para mejorar la reputación de mi marca", "build a new web app", "create a marketing campaign").
 - FIRST, use the \`requirements\` tool to define the strategy, scope, deliverables, and acceptance criteria.
-- THEN, create an \`instance_plan\` to break down the execution into actionable steps.
-- FINALLY, execute the plan steps.
+- Existing requirement changes are queued for its sole runner. Do not create or execute a competing plan in this conversation.
+- Report the queued receipt honestly; it is not completed work or proof that execution has started.
 
 🏗️ SANDBOX DELIVERABLES & REQUIREMENTS:
 Whenever the user asks for a web app, site, landing page, presentation or deck (e.g. pitch), repo work, automation implemented as code, or any artifact that is produced or edited in the Vercel sandbox (sandbox_* tools, builds, git pushes from this instance):
 - ${linkage}
 - Use the "requirements" tool as the durable backbone: instructions must stay a living README (what exists, architecture, file layout, what is left to do). Update it at the end of each substantive cycle.
-- Use the "requirement_status" tool to log milestones, reviews, or when work returns to in-progress after feedback.
+- Do not use "requirement_status" to claim queued feedback has started execution.
 - If system/plan mode expects an "instance_plan", follow the existing PLAN MODE rules in addition — the requirement describes *what* we are building; the plan breaks down *steps* when that mode is active.
 - Prefer listing requirements (action "list") before creating duplicates for the same site or initiative.
-- For QUICK, SIMPLE code modifications on an already-existing repository, bypass complex planning and use the \`update_repo\` tool to execute the instruction directly in the background.
+- For QUICK, SIMPLE changes to a requirement-owned repository, use the same queued requirements update, not a competing \`update_repo\` execution.
 
 📋 BACKLOG MANAGEMENT (CRITICAL FOR PLANS):
 - Before creating or executing an \`instance_plan\`, you MUST use the \`requirement_backlog\` tool to check the status of items.
@@ -326,6 +328,7 @@ export const getAssistantToolDefinitions = (
   uiMediaOutputType?: UiMediaOutputType,
   approvedImport?: { url: string; sha256: string; userId: string },
   executionContext?: ToolExecutionContext,
+  commandSource?: RequirementCommandSource,
 ) => {
   const allowedMediaTool = uiMediaOutputType === 'image'
     ? 'generate_image'
@@ -361,7 +364,7 @@ export const getAssistantToolDefinitions = (
     webSearchTool(siteId),
     memoriesTool(siteId, userId ?? '', instanceId),
     tasksTool(siteId, userId),
-    requirementsTool(siteId, userId, instanceId),
+    requirementsTool(siteId, userId, instanceId, commandSource),
     leadsTool(siteId, userId),
     contentTool(siteId, userId),
     sendEmailTool(siteId, instanceId),
@@ -463,12 +466,27 @@ export const getAssistantToolDefinitions = (
   }
 
   const privateContext = readToolExecutionContext(executionContext, siteId);
+  const commandTools = commandSource ? tools.map(tool => ({
+    ...tool,
+    execute: async (args: any, ...context: any[]) => {
+      // Interactive sessions submit intent; cron remains the only requirement
+      // executor. Keep standalone plans and all read-only inspection available.
+      if (tool.name === 'update_repo' ||
+          (tool.name === 'requirement_backlog' && !['list', 'get'].includes(args?.action)) ||
+          (tool.name === 'requirement_status' && (args?.action ?? 'create') !== 'list') ||
+          (tool.name === 'instance_plan' && (requirementId || args?.requirement_id) && args?.action !== 'list')) {
+        throw new Error('Submit requirement changes with requirements action="update". This conversation cannot start or mutate the requirement runner; queued changes execute on its sole owner.');
+      }
+      if (tool.name === 'instance_plan') await assertStandaloneCommandPlan(args, siteId, instanceId, requirementId);
+      return (tool.execute as (...values: any[]) => any)(args, ...context);
+    },
+  })) : tools;
   // Decorate BEFORE routeTools closes over the definitions. Keep private context
   // out of schemas, enumerable metadata, model arguments, and tool-call logs.
-  return (privateContext ? tools.map((tool) => ({
+  return (privateContext ? commandTools.map((tool) => ({
     ...tool,
     execute: (args: any) => tool.execute(args, readToolExecutionContext(privateContext, siteId)),
-  })) : tools) as RoutedTool[];
+  })) : commandTools) as RoutedTool[];
 };
 
 export const getAssistantTools = (
@@ -482,6 +500,7 @@ export const getAssistantTools = (
   uiMediaOutputType?: UiMediaOutputType,
   approvedImport?: { url: string; sha256: string; userId: string },
   executionContext?: ToolExecutionContext,
+  commandSource?: RequirementCommandSource,
 ) => {
   return refreshHarnessToolManifest(routeTools(
     getAssistantToolDefinitions(
@@ -495,6 +514,7 @@ export const getAssistantTools = (
       uiMediaOutputType,
       approvedImport,
       executionContext,
+      commandSource,
     ),
     { siteId, userId },
   ));
@@ -515,6 +535,7 @@ export async function getInstanceAssistantTools(
   uiMediaOutputType?: UiMediaOutputType,
   approvedImport?: { url: string; sha256: string; userId: string },
   executionContext?: ToolExecutionContext,
+  commandSource?: RequirementCommandSource,
 ) {
   const composioKey = await getComposioApiKeyForSite(siteId);
   const instanceTools = composioKey
@@ -532,5 +553,6 @@ export async function getInstanceAssistantTools(
     uiMediaOutputType,
     approvedImport,
     executionContext,
+    commandSource,
   );
 }

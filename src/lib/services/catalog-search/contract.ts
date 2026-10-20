@@ -4,8 +4,10 @@ export const CATALOG_MODEL = 'openai/text-embedding-3-small';
 export const CATALOG_DIMENSIONS = 1536;
 export const CATALOG_CANDIDATE_LIMIT = 200;
 export const CATALOG_RETRIEVER_PROBE_LIMIT = CATALOG_CANDIDATE_LIMIT + 1;
-export const CATALOG_SEARCH_VERSION = 'v2';
+export const CATALOG_SEARCH_VERSION = 'v3-related';
 export const CATALOG_MIN_SIMILARITY = 0.35;
+export const CATALOG_RELATED_MIN_SIMILARITY = 0.25;
+export const CATALOG_RELATED_LIMIT = 5;
 
 export const catalogFiltersSchema = z.object({
   kind: z.enum(['product', 'service', 'digital_asset', 'variant']).optional(),
@@ -49,6 +51,7 @@ export type CatalogSearchResult = {
   count: number;
   count_kind: 'candidate_window';
   candidate_window_truncated?: boolean;
+  result_kind?: 'matched' | 'related';
   has_more: boolean;
   mode: 'hybrid' | 'text';
   degraded: boolean;

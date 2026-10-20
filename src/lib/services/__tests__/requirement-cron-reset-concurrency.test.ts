@@ -1,4 +1,8 @@
 const mockRequirementStatusSingle = jest.fn();
+const mockRequirementSingle = jest.fn();
+const mockRequirementFallbackSingle = jest.fn();
+const mockRequirementSelect = jest.fn();
+const mockRequirementEq = jest.fn();
 const mockUserActionLimit = jest.fn();
 const mockUserActionSingle = jest.fn();
 const mockUserActionUpdate = jest.fn();
@@ -27,6 +31,21 @@ jest.mock('@/lib/database/supabase-client', () => ({
             })),
           })),
         };
+      }
+      if (table === 'requirements') {
+        const query = {
+          select: mockRequirementSelect,
+          eq: mockRequirementEq,
+          contains: jest.fn(),
+          limit: jest.fn(),
+          single: mockRequirementFallbackSingle,
+          maybeSingle: mockRequirementSingle,
+        };
+        query.select.mockReturnValue(query);
+        query.eq.mockReturnValue(query);
+        query.contains.mockReturnValue(query);
+        query.limit.mockReturnValue(query);
+        return query;
       }
       if (table === 'instance_logs') {
         const query = {
@@ -62,6 +81,20 @@ describe('resetRequirementOnUserAction concurrency', () => {
     jest.clearAllMocks();
     mockRequirementStatusSingle.mockResolvedValue({
       data: { requirement_id: 'requirement-1' },
+      error: null,
+    });
+    mockRequirementSingle.mockResolvedValue({
+      data: {
+        id: 'requirement-1',
+        site_id: 'site-1',
+        metadata: { runner_instance_id: 'instance-1' },
+        cron_lock_active: false,
+        cron_lock_expires_at: null,
+      },
+      error: null,
+    });
+    mockRequirementFallbackSingle.mockResolvedValue({
+      data: { id: 'requirement-1' },
       error: null,
     });
     mockResumeRequirementExecution.mockResolvedValue({
@@ -105,6 +138,99 @@ describe('resetRequirementOnUserAction concurrency', () => {
         requirement_id: 'requirement-1',
       },
     });
+    expect(mockRequirementSelect).toHaveBeenCalledWith(
+      'id, site_id, metadata, cron_lock_active, cron_lock_expires_at',
+    );
+    expect(mockRequirementEq).toHaveBeenCalledWith('id', 'requirement-1');
+  });
+
+  it.each(['inserted-user-action', undefined])(
+    'does not recover or tag an action for a foreign owner (action=%s)',
+    async (actionId) => {
+      mockRequirementSingle.mockResolvedValueOnce({
+        data: {
+          id: 'requirement-1',
+          site_id: 'site-1',
+          metadata: { runner_instance_id: 'owner-instance' },
+          cron_lock_active: false,
+          cron_lock_expires_at: null,
+        },
+        error: null,
+      });
+
+      await resetRequirementOnUserAction('instance-1', actionId);
+
+      expect(mockResumeRequirementExecution).not.toHaveBeenCalled();
+      expect(mockUserActionUpdate).not.toHaveBeenCalled();
+      expect(mockUserActionSingle).not.toHaveBeenCalled();
+      expect(mockUserActionLimit).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['inserted-user-action', undefined])(
+    'does not recover or tag an action during a live owner claim (action=%s)',
+    async (actionId) => {
+      mockRequirementSingle.mockResolvedValueOnce({
+        data: {
+          id: 'requirement-1',
+          site_id: 'site-1',
+          metadata: { runner_instance_id: 'instance-1' },
+          cron_lock_active: true,
+          cron_lock_expires_at: new Date(Date.now() + 60_000).toISOString(),
+        },
+        error: null,
+      });
+
+      await resetRequirementOnUserAction('instance-1', actionId);
+
+      expect(mockResumeRequirementExecution).not.toHaveBeenCalled();
+      expect(mockUserActionUpdate).not.toHaveBeenCalled();
+      expect(mockUserActionSingle).not.toHaveBeenCalled();
+      expect(mockUserActionLimit).not.toHaveBeenCalled();
+    },
+  );
+
+  it('preserves recovery for the same owner after a cron claim expires', async () => {
+    mockRequirementSingle.mockResolvedValueOnce({
+      data: {
+        id: 'requirement-1',
+        site_id: 'site-1',
+        metadata: { runner_instance_id: 'instance-1' },
+        cron_lock_active: true,
+        cron_lock_expires_at: new Date(Date.now() - 60_000).toISOString(),
+      },
+      error: null,
+    });
+
+    await resetRequirementOnUserAction('instance-1', 'inserted-user-action');
+
+    expect(mockResumeRequirementExecution).toHaveBeenCalledWith(
+      'requirement-1', 'instance-1', true, 'inserted-user-action',
+    );
+    expect(mockUserActionUpdate).toHaveBeenCalled();
+  });
+
+  it('preserves same-owner recovery through the metadata fallback', async () => {
+    mockRequirementStatusSingle.mockResolvedValueOnce({ data: null, error: null });
+
+    await resetRequirementOnUserAction('instance-1', 'inserted-user-action');
+
+    expect(mockRequirementFallbackSingle).toHaveBeenCalled();
+    expect(mockRequirementSingle).toHaveBeenCalled();
+    expect(mockResumeRequirementExecution).toHaveBeenCalledWith(
+      'requirement-1', 'instance-1', true, 'inserted-user-action',
+    );
+    expect(mockUserActionUpdate).toHaveBeenCalled();
+  });
+
+  it('does not recover or tag an action when the target requirement is missing', async () => {
+    mockRequirementSingle.mockResolvedValueOnce({ data: null, error: null });
+
+    await resetRequirementOnUserAction('instance-1', 'inserted-user-action');
+
+    expect(mockResumeRequirementExecution).not.toHaveBeenCalled();
+    expect(mockUserActionUpdate).not.toHaveBeenCalled();
+    expect(mockUserActionSingle).not.toHaveBeenCalled();
   });
 
   it('reports when recent user feedback was applied', async () => {

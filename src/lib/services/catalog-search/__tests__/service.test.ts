@@ -126,7 +126,7 @@ describe('catalog shared retrieval', () => {
     mockRead.mockResolvedValue({ candidates: [hit], mode: 'hybrid', degraded: false });
     mockRpc.mockImplementation((name: string) => queryResult(name === 'catalog_search_revision' ? '1:1' : []));
     expect((await searchCatalog(input, { scope: 'site' })).items).toEqual([]);
-    expect(mockEmbedding).not.toHaveBeenCalled();
+    expect(mockEmbedding).toHaveBeenCalledTimes(1);
     expect(mockRpc).toHaveBeenCalledWith('catalog_search_visible_ids', expect.objectContaining({ p_site_id: site, p_ids: [id] }));
   });
   it('fails closed on visibility lookup failure', async () => {

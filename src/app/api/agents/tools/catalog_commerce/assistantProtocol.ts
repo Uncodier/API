@@ -149,7 +149,7 @@ export function catalogCommerceTool(current_site_id?: string) {
         search: {
           type: 'string',
           description:
-            'For item list: search by name, description, exact SKU/code, or natural-language need (max 200 characters). Preserve meaningful intent and exact codes; do not force the query down to 1–2 words. Search supports text matching and optional semantic matching. If empty, try a relevant alternative without inventing catalog items. Results contain current prices/availability and bounded candidate-window metadata, not an exhaustive catalog count.',
+            'For item list: search by name, description, exact SKU/code, or natural-language need (max 200 characters). Preserve meaningful intent and exact codes; do not force the query down to 1–2 words. Search supports text matching and optional semantic matching. result_kind="related" means up to five semantic alternatives, not exact matches: clearly say they are related products and ask before substituting or selling them. If empty, try a relevant alternative without inventing catalog items. Results contain current prices/availability and bounded candidate-window metadata, not an exhaustive catalog count.',
         },
         search_id: {
           type: 'string',

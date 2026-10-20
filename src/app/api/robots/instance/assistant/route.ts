@@ -4,7 +4,6 @@ import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { start } from 'workflow/api';
 import { runAssistantWorkflow } from './workflow';
-import { resetRequirementOnUserAction } from '@/lib/services/requirement-cron-reset';
 import { insertUserActionLog, markRemoteInstanceError, withRetries } from './user-message-log';
 import { assistantResponseStream } from './response-stream';
 import { normalizePublishToolOverrides } from './publish-tool-overrides';
@@ -236,13 +235,10 @@ export async function POST(request: NextRequest) {
     }));
     failureContext.userMessageLogId = userAction.id;
     
-    // Finish recovery before the workflow reads requirement/backlog state.
-    await resetRequirementOnUserAction(
-      providedInstanceId,
-      userAction.id,
-    );
-
-    // Start the workflow
+    // Persisting a conversational turn must not implicitly resume plans or advance
+    // requirement execution, even for its owner. Changes and explicit retries go
+    // through the requirements command queue, which arbitrates execution claims.
+    // Start the interactive workflow with the trusted action identity only.
     const workflowRun = await start(runAssistantWorkflow, [
       providedInstanceId,
       message,

@@ -67,6 +67,7 @@ it('persists a fresh turn before workflow start and sends its ID through the SSE
     details: expect.objectContaining({ request_id: 'request-2', status: 'running' }),
   }));
   expect((insertUserActionLog as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan((start as jest.Mock).mock.invocationCallOrder[0]);
+  expect(resetRequirementOnUserAction).not.toHaveBeenCalled();
   expect((start as jest.Mock).mock.calls[0][1][13]).toMatchObject({ userMessageLogId: LOG });
   expect(body).toContain(`"user_log_id":"${LOG}"`);
   expect(body).toContain('event: completed');
@@ -78,6 +79,7 @@ it('uses the same lifecycle for a newly created session', async () => {
   expect(response.status).toBe(200);
   expect(body).toContain('event: accepted');
   expect(body).toContain('event: completed');
+  expect(resetRequirementOnUserAction).not.toHaveBeenCalled();
   expect((start as jest.Mock).mock.calls[0][1][13]).toMatchObject({ userMessageLogId: LOG });
 });
 
@@ -112,24 +114,33 @@ it('persists the initiating node identity with the trusted user action', async (
   expect((start as jest.Mock).mock.calls[0][1][9]).toBe(nodeId);
 });
 
-it('waits for trusted user-action recovery before starting an interactive retry, not a cron workflow', async () => {
-  let finishRecovery!: () => void;
-  let recoveryStarted!: () => void;
-  const started = new Promise<void>(resolve => { recoveryStarted = resolve; });
-  (resetRequirementOnUserAction as jest.Mock).mockImplementation(() => {
-    recoveryStarted();
-    return new Promise<void>(resolve => { finishRecovery = resolve; });
+it.each([
+  'What is the requirement status?',
+  'Change the requirement title to Updated title',
+  'reintenta',
+])('persists the trusted action then starts the interactive workflow without implicit recovery: %s', async message => {
+  let finishPersistence!: (action: { id: string }) => void;
+  let persistenceStarted!: () => void;
+  const started = new Promise<void>(resolve => { persistenceStarted = resolve; });
+  (insertUserActionLog as jest.Mock).mockImplementationOnce(() => {
+    persistenceStarted();
+    return new Promise<{ id: string }>(resolve => { finishPersistence = resolve; });
   });
-  const pendingResponse = POST(request({ ...payload, message: 'reintenta' }));
+  const pendingResponse = POST(request({ ...payload, message }));
   await started;
-  expect(resetRequirementOnUserAction).toHaveBeenCalledWith(INSTANCE, LOG);
+  expect(insertUserActionLog).toHaveBeenCalledWith(expect.objectContaining({
+    instanceId: INSTANCE, siteId: SITE, message, skipDuplicateCheck: true,
+  }));
   expect(start).not.toHaveBeenCalled();
-  finishRecovery();
+  expect(resetRequirementOnUserAction).not.toHaveBeenCalled();
+  finishPersistence({ id: LOG });
   const response = await pendingResponse;
   expect(start).toHaveBeenCalledTimes(1);
   expect((start as jest.Mock).mock.calls[0][0]).toBe(runAssistantWorkflow);
-  expect((start as jest.Mock).mock.calls[0][1][1]).toBe('reintenta');
+  expect((start as jest.Mock).mock.calls[0][1][1]).toBe(message);
   expect((start as jest.Mock).mock.calls[0][1][13]).toMatchObject({ userMessageLogId: LOG });
+  expect(resetRequirementOnUserAction).not.toHaveBeenCalled();
+  expect(supabaseAdmin.from).not.toHaveBeenCalledWith('requirement_status');
   expect(await response.text()).toContain('event: completed');
 });
 

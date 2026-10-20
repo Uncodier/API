@@ -10,7 +10,7 @@ function fixture() {
     backlog_revision: 4, runner_instance_id: run.instanceId,
     backlog: { items: [{ id: 'item-1', title: 'Export', status: 'done', acceptance: ['CSV round-trips correctly'],
       constraints: ['MUST NOT expose other tenants'], attempts: 99, blocked_by: [{ reason: 'Legacy test failure', category: 'product_defect' }] }] } };
-  const tables: Record<string, any[]> = { requirements: [req], instance_plans: [], requirement_status: [], instance_logs: [] };
+  const tables: Record<string, any[]> = { requirements: [req], instance_plans: [], requirement_status: [], instance_logs: [], requirement_user_action_receipts: [] };
   const queries: any[] = [];
   const client = { rpc: jest.fn(), from: jest.fn((table: string) => {
     const q: any = { table, filters: [], rangeValues: null };
@@ -26,7 +26,8 @@ function fixture() {
     const rows = () => {
       let data = tables[table].filter(row => q.filters.every(([key, value]: any) => {
         const field = key.includes('->>') ? key.split('->>')[1] : key;
-        return value == null ? row[field] == null : row[field] === value;
+        const actual = field.split('.').reduce((current: any, part: string) => current?.[part], row);
+        return value == null ? actual == null : actual === value;
       }));
       if (q.rangeValues) data = data.slice(q.rangeValues[0], q.rangeValues[1] + 1);
       return data;
@@ -58,7 +59,7 @@ it('loads tenant-scoped explicit and exact-runner legacy plans, filtering foreig
   expect(JSON.stringify(f.tables)).toBe(before);
   expect(f.client.rpc).not.toHaveBeenCalled();
   for (const query of f.queries) {
-    expect(query.filters).toContainEqual(['site_id', f.run.siteId]);
+    expect(query.filters).toContainEqual([query.table === 'requirement_user_action_receipts' ? 'action.site_id' : 'site_id', f.run.siteId]);
     expect(query.columns.split(',')).not.toContain('*');
     expect(query.columns.split(',')).not.toContain('metadata');
     if (query.table !== 'requirements') expect(query.rangeValues).not.toBeNull();
@@ -128,6 +129,24 @@ it('bounds initial large lists and exposes fresh pages, including full original 
   const allAcceptance = await loadRequirementPage(f.run, { view: 'backlog', itemId: 'item-30', offset: 0, limit: 20 }, f.client);
   expect(allAcceptance.items.filter((chunk: any) => chunk.field === 'acceptance').map((chunk: any) => chunk.text).join('')).toContain('END-ACCEPTANCE');
   expect((await loadRequirementPage(f.run, { view: 'plans', planId: f.tables.instance_plans[10].id, offset: 700, limit: 2 }, f.client)).plan.steps[0].id).toBe('step-700');
+});
+
+it('loads original authorized messages from another session without exposing unrelated or untrusted messages', async () => {
+  const f = fixture(), messageId = randomUUID();
+  const action = { id: messageId, site_id: f.run.siteId, instance_id: randomUUID(), log_type: 'user_action',
+    trusted_user_action: true, status: 'completed', created_at: '2026-10-20T19:00:00Z', message: 'Add the marketplace ranking; preserve the historical research.' };
+  f.tables.requirement_user_action_receipts = [
+    { requirement_id: f.run.requirementId, action },
+    { requirement_id: randomUUID(), action: { ...action, id: randomUUID(), message: 'Other requirement' } },
+    { requirement_id: f.run.requirementId, action: { ...action, id: randomUUID(), site_id: randomUUID(), message: 'Other tenant' } },
+    { requirement_id: f.run.requirementId, action: { ...action, id: randomUUID(), trusted_user_action: false, message: 'Model fabrication' } },
+  ];
+  const ctx = await loadRequirementContext(f.run, f.client);
+  expect(ctx.history).toEqual([expect.objectContaining({ id: messageId, message: action.message })]);
+  expect(formatRequirementContext(ctx)).not.toMatch(/Other requirement|Other tenant|Model fabrication/);
+  const query = f.queries.find(query => query.table === 'requirement_user_action_receipts');
+  expect(query.filters).toContainEqual(['requirement_id', f.run.requirementId]);
+  expect(query.columns).not.toContain('tool_args');
 });
 
 it('target lookups reject foreign plans and malformed links independently of initial preview size', async () => {

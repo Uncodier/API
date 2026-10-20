@@ -94,6 +94,9 @@ test('disposable real PostgreSQL: independent writes, reverse commits and fanout
     assert.equal((await psql('SELECT count(*) FROM catalog_search_refresh_events')).stdout.trim(), '0');
     assert.equal((await psql(`SELECT count(*) FROM catalog_search_documents WHERE document_text LIKE '%Changedcategory%'`)).stdout.trim(), '2');
     assert.equal((await psql(`SELECT count(*) FROM pg_locks WHERE relation='catalog_search_revisions'::regclass AND mode IN ('RowExclusiveLock','ShareRowExclusiveLock','ExclusiveLock')`)).stdout.trim(), '0');
+    // Execute identical recall assertions on real local PG, not just PGlite.
+    // Native pgvector is unavailable here; SQL cosine/array substitutes remain explicit.
+    await psql(await readFile(new URL('./catalog-search-semantic-recall-fixture.sql', import.meta.url), 'utf8'));
   } finally {
     for (const child of children) child.kill('SIGTERM');
     if (started) await execFile(join(bin, 'pg_ctl'), ['-D', data, '-m', 'immediate', '-w', 'stop'], { env });

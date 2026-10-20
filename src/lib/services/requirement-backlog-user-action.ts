@@ -6,36 +6,22 @@ function gatingItems(items: BacklogItem[]): BacklogItem[] {
 }
 
 /**
- * True when a real user message was recorded after the gating backlog was
- * completed. That message is explicit permission to expand a closed backlog.
+ * Requirement-scoped permission to expand a completed backlog. Command-backed
+ * user messages count only after safe-boundary application; legacy recovery
+ * receipts retain their completion watermark check.
  */
 export async function hasUserRequestedMoreWork(
   requirementId: string,
 ): Promise<boolean> {
   const { supabaseAdmin } = await import('@/lib/database/supabase-server');
-  const { data: requirement } = await supabaseAdmin
+  const { data: requirement, error: requirementError } = await supabaseAdmin
     .from('requirements')
-    .select('metadata, backlog')
+    .select('backlog')
     .eq('id', requirementId)
     .single();
 
-  const instanceId = (
-    requirement?.metadata as Record<string, unknown> | undefined
-  )?.runner_instance_id;
-  if (typeof instanceId !== 'string' || !instanceId) return false;
+  if (requirementError || !requirement) return false;
 
-  const { data: actions } = await supabaseAdmin
-    .from('instance_logs')
-    .select('created_at')
-    .eq('instance_id', instanceId)
-    .eq('log_type', 'user_action')
-    .eq('trusted_user_action', true)
-    .eq('details->>requirement_id', requirementId)
-    .order('created_at', { ascending: false })
-    .limit(1);
-  if (!actions?.length) return false;
-
-  const lastUserActionTime = new Date(actions[0].created_at).getTime();
   const backlogData = requirement?.backlog as
     | Record<string, unknown>
     | undefined;
@@ -51,5 +37,12 @@ export async function hasUserRequestedMoreWork(
       )
     : 0;
 
-  return lastUserActionTime >= completedTime;
+  if (!Number.isFinite(completedTime)) return false;
+  // One database read distinguishes legacy recovery from command receipts.
+  // Even a newer receipt cannot authorize work until its queued patch is applied.
+  const { data, error } = await supabaseAdmin.rpc('has_requirement_scope_authorization', {
+    p_requirement_id: requirementId,
+    p_completed_at: new Date(completedTime).toISOString(),
+  });
+  return !error && data === true;
 }

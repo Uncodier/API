@@ -66,6 +66,13 @@ beforeEach(() => {
 });
 
 describe('catalog_commerce shared list search', () => {
+  it('preserves the shared related-results classification through tool hydration', async () => {
+    const related = item();
+    jest.mocked(searchCatalog).mockResolvedValue(searchResult([related], { result_kind: 'related' }));
+    jest.mocked(supabaseAdmin.from).mockReturnValue(chain([related]) as never);
+    expect(await (await POST(request())).json()).toMatchObject({ result_kind: 'related',
+      items: [expect.objectContaining({ id: related.id })], mode: 'hybrid', degraded: false });
+  });
   it('passes authenticated scope, intent, filters and cursor then hydrates live fields in rank order', async () => {
     const first = item({ description: 'x'.repeat(900), sku: 'HAIR-123', cost: 75,
       metadata: { private_note: 'private' }, embedding: [1], lowest_sale_price: 190 });

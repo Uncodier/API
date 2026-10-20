@@ -30,6 +30,7 @@ const REQUIREMENT_SELECT = 'id,site_id,user_id,title,instructions,description,ty
 const PLAN_SELECT = 'id,site_id,instance_id,title,description,instructions,status,steps,success_criteria,expected_output,updated_at,retry_count,requirement_id:metadata->>requirement_id,workflow_template:metadata->>workflow_template';
 const STATUS_SELECT = 'id,requirement_id,site_id,stage,message,created_at';
 const ACTION_SELECT = 'id,instance_id,site_id,log_type,message,created_at,requirement_id:details->>requirement_id,requirementId:details->>requirementId,status:details->>status';
+const RECEIPT_SELECT = `requirement_id,action:instance_logs!inner(${ACTION_SELECT},trusted_user_action)`;
 
 export function safeRequirementText(value: unknown, limit = TEXT_LIMIT): string {
   if (typeof value !== 'string') return '';
@@ -169,21 +170,29 @@ async function readPlans(req: Record<string, any>, run: RequirementRun, db: Requ
 }
 
 async function readHistory(run: RequirementRun, db: RequirementClient, offset: number, limit: number) {
-  const [statuses, actions] = await Promise.all([
+  const [statuses, actions, receipts] = await Promise.all([
     db.from('requirement_status').select(STATUS_SELECT).eq('requirement_id', run.requirementId).eq('site_id', run.siteId)
       .order('created_at', { ascending: false }).order('id', { ascending: false }).range(offset, offset + limit - 1),
     db.from('instance_logs').select(ACTION_SELECT).eq('site_id', run.siteId).eq('instance_id', run.instanceId).eq('log_type', 'user_action')
       .order('created_at', { ascending: false }).order('id', { ascending: false }).range(offset, offset + limit - 1),
+    db.from('requirement_user_action_receipts').select(RECEIPT_SELECT).eq('requirement_id', run.requirementId)
+      .eq('action.site_id', run.siteId).eq('action.log_type', 'user_action').eq('action.trusted_user_action', true)
+      .order('revision', { ascending: false }).range(offset, offset + limit - 1),
   ]);
-  if (statuses.error || actions.error) throw new Error('Requirement history unavailable.');
+  if (statuses.error || actions.error || receipts.error) throw new Error('Requirement history unavailable.');
+  const authorized = (receipts.data || []).filter((row: any) => row.requirement_id === run.requirementId &&
+    row.action?.site_id === run.siteId && row.action?.log_type === 'user_action' && row.action?.trusted_user_action === true)
+    .map((row: any) => row.action);
   const events = [
     ...(statuses.data || []).filter((row: any) => row.site_id === run.siteId && row.requirement_id === run.requirementId)
       .map((row: any) => ({ kind: 'status', ...pick(row, ['id', 'stage', 'created_at']), message: safeRequirementText(row.message, 1000) })),
     ...(actions.data || []).filter((row: any) => row.site_id === run.siteId && row.instance_id === run.instanceId && row.log_type === 'user_action' &&
       [row.requirement_id, row.requirementId].every(id => id == null || id === run.requirementId))
       .map((row: any) => ({ kind: 'user_action_reference', ...pick(row, ['id', 'status', 'created_at']), message: safeRequirementText(row.message, 1000) })),
+    ...authorized.map((row: any) => ({ kind: 'user_action_reference', ...pick(row, ['id', 'status', 'created_at']), message: safeRequirementText(row.message, 1000) })),
   ].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
-  return { events, nextOffset: [statuses, actions].some(result => (result.data || []).length === limit) ? offset + limit : null };
+  return { events: events.filter((event, index) => events.findIndex(other => other.id === event.id) === index),
+    nextOffset: [statuses, actions, receipts].some(result => (result.data || []).length === limit) ? offset + limit : null };
 }
 
 function revision(req: Record<string, any>, plans: Array<Record<string, any>> = [], history: Array<Record<string, any>> = []): string {
@@ -295,7 +304,7 @@ export async function loadRequirementPage(run: RequirementRun, page: { view: Req
   if (page.view !== 'history') throw new Error('Invalid requirement view.');
   const { events, nextOffset } = await readHistory(run, db, page.offset, page.limit);
   return { ...base, items: events, next_offset: nextOffset,
-    pagination: 'Offset applies independently to statuses and user actions. Follow next_offset even when a page has no matching entries.',
+    pagination: 'Offset applies independently to statuses, runner user actions and requirement-authorized messages from other sessions. Follow next_offset even when a page has no matching entries.',
     reference_only: true };
 }
 

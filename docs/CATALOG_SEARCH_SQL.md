@@ -1,18 +1,25 @@
 # Shared catalog search: SQL contract
 
-Migrations `20261020010000`–`20261020010600` add an index and durable
+Migrations `20261020010000`–`20261020010700` add an index and durable
 embedding outbox without modifying original catalog rows. Apply in order through
 the normal reviewed deployment process. **Nothing has been applied remotely.**
 Failed installations of 10300/10400 should retry their corrected files. Already
 installed projects apply 10500 forward: it removes extension GUCs from the existing
 function while preserving its owner, grants, security mode and fixed search path.
 Word similarity is compared explicitly against 0.5, not through a session-dependent
-operator. HNSW uses the deployment's configured/default search breadth. No parameter
-SET grants or elevated SQL role are requested.
+operator. Through 10600 semantic retrieval used HNSW with deployment search breadth;
+10700 replaces that branch with exact filtered cosine retrieval. No extension
+parameter SET grants or elevated SQL role are requested.
 Migration 10600 raises only the installed candidate RPC guard from 200 to 201;
 it checks the expected guard and preserves signature, owner, ACLs, security mode,
 search path and retrieval body. Apply it before deploying the overflow-aware API.
 No applied migration is edited and no remote migration is run by local validation.
+Migration `20261020010700_catalog_search_semantic_recall.sql` must follow 10600.
+It guards an exactly-once match of the installed semantic SQL before replacing only
+that branch via `pg_get_functiondef`. Unexpected bodies or a missing 201-limit guard
+fail closed for manual review; reapplying the exact repaired body is a safe no-op.
+Signature, eight arguments, default similarity 0.35, lexical SQL, owner, ACLs,
+security mode and search path remain unchanged.
 
 ## Prerequisites and ownership
 
@@ -142,14 +149,22 @@ p_min_similarity double precision DEFAULT 0.35)` returns
 - Semantic requires nonzero, 1,536-dimensional query vectors generated with
   **`openai/text-embedding-3-small`**. Only that exact model and a current source hash
   are eligible. Similarity threshold is finite 0–1; include it in cache keys if changed.
-  Inner distance-only ordering permits HNSW and oversamples at most 800 eligible
-  candidates; outer ordering is deterministic and returns at most the requested
-  limit (now up to 201). The API fuses unique eligible rows before returning at most
+  After 10700, an **`eligible AS MATERIALIZED`** CTE selects matching site documents,
+  joins the current same-site item, and checks model/source hash plus live shared
+  channel/item/parent/site/filter eligibility **before distance ordering or LIMIT**.
+  Exact cosine over that relation sorts by distance then item UUID, caps at the
+  requested limit (up to 201), and applies the caller's similarity floor. Because
+  similarity is monotonic with distance, this returns the complete eligible top K
+  above the floor, without HNSW post-filter misses. Global marketplace uses the same
+  exact strategy, not a capped ANN approximation or a separate repeated fallback.
+  A passed floor of 0.25 admits similarities 0.332/0.317 but excludes 0.1; the SQL
+  default remains 0.35. Related/matched labeling and weak nearest-five policy belong
+  to the API, not SQL. The API fuses unique eligible rows before returning at most
   200 IDs, emitting `candidate_window_truncated=true` only with more than 200 real
   live-eligible retrieval IDs. Exactly 200 and overlapping retriever rows are not proof.
-  This metadata describes the retrieved window, not an exact semantic catalog total.
-  In particular HNSW filtered recall remains subject to the deployment checks below;
-  no bounded ANN probe can prove exhaustive completeness of all cosine matches.
+  This metadata describes the retrieved window, not an exact semantic catalog total:
+  exact top K is not a full count beyond the returned limit. Pending, missing or stale
+  embeddings remain absent; exact recall cannot repair embedding coverage/quality.
 - Allowlisted filter keys: `kind`, `digital_subtype`, `category_id`, `parent_id`,
   `status`, `availability_status`, `currency`, `is_reservation`, `is_purchasable`,
   `is_recurring`, `is_pos_available`, `is_marketplace_listed`. Unknown keys/types
@@ -207,18 +222,58 @@ revalidate returned IDs live and fail closed if revalidation fails.
 
 ## Offline validation and limits
 
+### Exact semantic performance boundary
+
+The materialization fence removes ANN underfill deliberately. Neither a small-site
+shortcut, `hnsw.iterative_scan`, custom extension SET, threshold lowering nor an
+oversampling heuristic is used. HNSW's existing index is retained, but this semantic
+branch does not order against its base relation and cannot use it for candidate
+selection. The pgvector documentation notes that approximate-index filters run
+**after** the index scan (e.g. a 10% filter with default `ef_search=40` averages four
+matches). Iterative scans can scan more but remain approximate and version-dependent.
+
+Exact distance work grows **O(eligible rows × 1,536 dimensions)**, with materialized
+vector memory/temp I/O plus sorting and live eligibility costs. A global marketplace
+scope includes all eligible sites; returning only 201 rows does **not** bound rows
+scanned. This is a correctness-first choice for current small catalogs, not a claim
+of indefinite throughput or low latency at arbitrary marketplace sizes.
+The API currently aborts each candidate RPC after three seconds; an HTTP abort is
+**not proof of a database statement_timeout/cancellation guarantee**. This migration
+does not configure a DB statement timeout. Deployment must verify a suitable server
+statement timeout and actual cancellation behavior, not rely on frontend aborts to
+bound backend work.
+
+Before increasing volume/concurrency, benchmark **native pgvector** 1,536-dimensional
+vectors at representative 104, 390, 4,000 and larger eligible counts, cross-site
+selectivity and channel filters. Capture EXPLAIN ANALYZE BUFFERS, p50/p95/p99,
+temp I/O and concurrent resource use against the API's three-second RPC budget.
+Future partitioning or reviewed bounded ANN strategies must preserve recall and
+report approximation explicitly; none is silently introduced here.
+
 Run from the API repo (no credentials/network or remote mutations):
 
 ```sh
-node --test __tests__/catalog/catalog-search-sql.test.mjs __tests__/catalog/catalog-search-scale.test.mjs
+node --test --test-concurrency=1 __tests__/catalog/catalog-search-sql.test.mjs __tests__/catalog/catalog-search-scale.test.mjs __tests__/catalog/catalog-search-semantic-recall.test.mjs
 node --test __tests__/catalog/catalog-search-postgres.test.mjs
+node --test __tests__/catalog/catalog-search-visibility.test.mjs
 ```
 
-The suite executes all seven migrations in ephemeral PGlite with real SQL, FTS and
+The suite executes all eight migrations in ephemeral PGlite with real SQL, FTS and
 **real pg_trgm**. PGlite here lacks pgvector: the harness substitutes vector types
 with `double precision[]`, supplies SQL cosine distance/negative-dot/array dimension
 functions, and omits vector extension creation and HNSW creation. No eligibility,
 trigger, lease, retry, grant, or search control-flow SQL is replaced.
+The visibility integration test executes the actual TypeScript search service
+against those SQL RPCs, making its only normal item unavailable between retrieval
+and the final live check. It verifies one related recovery at similarity 0.30,
+vector reuse, unchanged candidate-cache classification and pinned continuation.
+Transport, embedding provider and cache storage remain offline boundaries.
+Run these heavy array-math fixtures serially (`npm run test:catalog-search` does so),
+not alongside multiple PGlite workers/typechecks. The six 4,000-vector assertions
+exercise SQL substitute cosine repeatedly inside one statement; CPU contention can
+hit the local PG harness's eight-second statement deadline. This is a fixture
+resource limit, not a native pgvector latency measurement. Assertions and all
+4,000 eligible rows remain unchanged; database/lock timeout guards are not relaxed.
 
 This validates permission revocations against permissive default grants, tenant and
 channel isolation, filter validation, lexical rollout/refresh, safe projection,
@@ -233,6 +288,16 @@ The 1,500-row fixture proves a real 201st text candidate exists while the unchan
 200-row request remains the prefix. API Jest tests cover unique fusion overlap,
 visibility filtering, bounded 402-ID rechecks, pinned cache/snapshot metadata,
 overflow-only identity changes and optional legacy snapshot/result types.
+The 10700 tests apply the migration to the actual through-10600 function, assert
+byte-identical lexical SQL and validation, unchanged signature/default/DTO/ACLs/
+ownership/security, no extension SET clauses, safe retry and rejection of unknown
+or duplicate branches. A shared SQL fixture runs on PGlite **and real local PG**:
+104 above-floor scoped products with 80 closer cross-site vectors, deterministic
+top-five ties, 0.332/0.317 at 0.25 versus the unchanged 0.35 default, unrelated 0.1
+excluded, model/hash/null-vector/channel/filter/archived-site/live-parent isolation
+before a one-row cap, and exact scoped/global 5/200/201 prefixes among 4,000 eligible
+vectors. These are correctness assertions using substituted vector math, **not
+native pgvector latency/recall benchmarks**.
 
 The real PostgreSQL test creates and tears down its own disposable local Unix-socket
 cluster, ignoring connection environment variables and never connecting to an
@@ -246,9 +311,9 @@ pgvector type/input handling or HNSW plans/recall/performance.**
 
 Before production rollout, in a disposable PostgreSQL with the deployed pgvector
 version: apply unmodified migrations, EXPLAIN both modes with realistic tenant
-selectivity, compare ANN results with exact cosine, and exercise concurrent source,
-spec and completion transactions. HNSW filtered searches can return fewer rows;
-iterative-scan tuning is version-dependent and deliberately not assumed here.
+selectivity, verify the semantic eligible materialization fence/exact sort, benchmark
+as above, and exercise concurrent source, spec and completion transactions. The
+10700 branch avoids HNSW filtered recall entirely; iterative-scan tuning is not assumed.
 Monitor append-only revision growth/aggregate latency, relationship refresh queue
 lag and fanout insertion latency. No revision hot row or synchronous child-row
 fanout remains. `FOR NO KEY UPDATE SKIP LOCKED` on background source refresh avoids
@@ -259,4 +324,6 @@ semantic source.
 
 References read during implementation:
 [Supabase database functions](https://supabase.com/docs/guides/database/functions),
-[Supabase hybrid search](https://supabase.com/docs/guides/ai/hybrid-search).
+[Supabase hybrid search](https://supabase.com/docs/guides/ai/hybrid-search),
+[pgvector filtering](https://github.com/pgvector/pgvector#filtering),
+[pgvector iterative scans](https://github.com/pgvector/pgvector#iterative-index-scans).

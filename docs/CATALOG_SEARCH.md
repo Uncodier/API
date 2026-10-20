@@ -14,7 +14,7 @@ POS local snapshots remain available without the API or an embedding provider.
 
 ## Database rollout
 
-Apply the seven migrations in order, after inspecting the destination:
+Apply the eight migrations in order, after inspecting the destination:
 
 1. `20261020010000_catalog_search_documents.sql`
 2. `20261020010100_catalog_search_refresh.sql`
@@ -23,6 +23,7 @@ Apply the seven migrations in order, after inspecting the destination:
 5. `20261020010400_catalog_search_repairs.sql`
 6. `20261020010500_catalog_search_parameter_permissions.sql`
 7. `20261020010600_catalog_search_overflow_probe.sql`
+8. `20261020010700_catalog_search_semantic_recall.sql`
 
 The fourth and fifth files also omit extension parameter SET clauses so failed
 installations can retry them using the normal Supabase migration role. The sixth
@@ -38,8 +39,10 @@ The explicit word-similarity cutoff remains 0.5 regardless of session settings.
 The seventh permits a bounded 201-row retriever probe; it preserves the installed
 function's predicates, owner, grants and security settings. Apply it before deploying
 the overflow-aware API: older SQL rejects the API's new `p_limit=201` request.
-HNSW uses deployment defaults; tune only after verifying the installed extension
-and permitted settings. No GRANT SET ON PARAMETER or superuser is required here.
+The eighth computes exact distance over materialized eligible rows before capping,
+avoiding HNSW post-filter underfill. It preserves lexical SQL and RPC grants. No
+extension parameter privileges are requested. Exact semantic work is linear in
+eligible vector count; benchmark staging before very large global catalog traffic.
 
 These require the existing commerce tables and `vector` plus `pg_trgm` installed in
 `public` or `extensions`. Tables use RLS and service-role-only grants. The public
@@ -64,6 +67,32 @@ schema changes require a forward migration, cache version change and reindex pla
 do not mix vector spaces.
 
 ## Deployment order and configuration
+
+### Related-results update on an existing installation
+
+Do not deploy the related-producing API before compatible consumers while
+`CATALOG_SEMANTIC_SEARCH_ENABLED=true`. Older web response parsers accept the IDs
+but discard `result_kind`, displaying alternatives without their related label.
+
+1. Inspect installed RPC definitions and apply only approved missing forward
+   migrations through 10700. Do not replay earlier installed migrations.
+2. Deploy all market-fit consumers that preserve and label `result_kind` against
+   the existing search API. They accept older responses without this field as
+   `matched`, so the existing API can remain available during this step.
+3. Deploy the related-producing API only after consumer compatibility is verified,
+   then validate related labels across Shop, Marketplace, Catalog, POS and tools.
+4. If API-first deployment is unavoidable, keep semantic search disabled until
+   all consumers are compatible. Disabling it on this release uses its existing
+   text-only path. For rollback, stop related production before rolling consumers
+   back; do not leave a related-producing API behind older web parsers. Allow
+   in-flight requests and existing two-minute snapshots to drain before reverting
+   consumers, since immutable continuations retain their original classification.
+
+The existing flags may already be enabled; do not assume that the initial-install
+enablement sequence below prevents a mixed-version upgrade. A retrieval-only
+update requires no new indexing backfill or Temporal worker change.
+
+### Initial installation
 
 1. Validate migrations in staging, including actual pgvector queries and HNSW plans.
 2. Apply approved migrations; deploy API and the registered Temporal worker.
@@ -137,13 +166,23 @@ Each retriever requests at most 201 rows. Fusion deduplicates before capping; th
 API live-checks all fused IDs in batches of at most 400 (at most 402 IDs total),
 then keeps the first 200 eligible IDs. Overlapping lexical/semantic rows do not
 inflate overflow. The extra row is evidence, not a returned 201st candidate.
-No full-table count or second retrieval scan is needed. An offset/existence probe
-cannot be expressed through the old capped RPC; a separate count RPC would duplicate
-eligibility/retrieval logic and extra database work. The narrow forward limit repair
-reuses both existing retrieval plans and leaves the semantic scan ceiling at 800.
+No full-table count or extra retrieval scan is needed to establish overflow.
+The seventh migration only expands the evidence-row limit; the eighth replaces
+the old 800-row ANN scan with exact ordering over all eligible fresh embeddings.
+An empty normal hybrid window may trigger the separate bounded related pass below.
 Semantic cosine similarity has an initial 0.35 floor; this is a calibration starting
 point, not a probability or a measured quality guarantee. Search prompt policies
 preserve constraints and negations rather than deleting intent into 1–2 keywords.
+When both normal candidate sets are empty, successful semantic retrieval reuses
+the query vector for at most five alternatives at a 0.25 floor. `result_kind` is
+`related` for those alternatives and `matched` otherwise. All online channels
+share this policy; existing filters and visibility are never relaxed. Consumers
+label alternatives as related, not confirmed matches. Exact codes and provider
+failures do not manufacture alternatives. See `CATALOG_RELATED_RESULTS.md`.
+If live visibility removes every normal candidate before the first page is
+returned, the service makes the same bounded related attempt and live-checks it
+again. It never loops, replaces a continuation, or overwrites the original
+revision-bound candidate cache with this request-local recovery.
 
 ## Cache and freshness
 
@@ -153,7 +192,8 @@ preserve constraints and negations rather than deleting intent into 1–2 keywor
   invalidate a query's embedding.
 - Candidate windows: 45-second TTL with jitter; empty windows 8 seconds. Keys include
   authorized scope, site, channel, filters, query, catalog/index revision, model,
-  similarity threshold and search version. Prices and complete records are not cached.
+  normal/related similarity thresholds, related limit and search version. Prices
+  and complete records are not cached.
   Overflow-aware keys additionally include the 201-row probe limit, avoiding reuse
   of older incomplete windows without changing existing snapshot bindings. The
   cache retains the bounded pre-cap fusion and evidence; fresh requests still

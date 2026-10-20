@@ -13,6 +13,7 @@ import {
 } from '../git-binding-schema';
 import { checkAndResetCronAttempts } from '@/lib/services/requirement-cron-reset';
 import { assertRequirementReopenAuthorized } from '@/lib/services/requirement-status-recovery';
+import { submitRequirementCommand, type RequirementCommandSource } from '@/lib/services/requirement-command';
 
 const UpdateRequirementSchema = z.object({
   requirement_id: z.string().uuid('Requirement ID must be a valid UUID'),
@@ -33,8 +34,9 @@ const UpdateRequirementSchema = z.object({
 /**
  * Core function to update a requirement
  */
-export async function updateRequirementCore(params: any) {
+export async function updateRequirementCore(params: any, commandSource?: RequirementCommandSource) {
   if (shouldUseRemoteApi()) {
+    if (commandSource) throw new Error('Message-authorized requirement updates require local execution context');
     console.log('[Requirements Update] Using Remote API mode');
     return invokeRemoteTool('/api/agents/tools/requirements/update', params);
   }
@@ -52,6 +54,13 @@ export async function updateRequirementCore(params: any) {
 
   if (existing.site_id !== site_id) {
     throw new Error('No tienes permiso para actualizar este requerimiento');
+  }
+
+  if (commandSource) {
+    if (commandSource.siteId !== site_id) throw new Error('Requirement command tenant mismatch');
+    // The RPC stores the patch and original action atomically. It never changes
+    // the active cycle, runner or generation here; cron applies it when idle.
+    return submitRequirementCommand(requirement_id, updateFields, commandSource);
   }
 
   const reopensBlockedRequirement =

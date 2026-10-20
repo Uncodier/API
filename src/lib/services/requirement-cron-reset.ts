@@ -153,6 +153,34 @@ export async function resetRequirementOnUserAction(
     }
     
     if (requirementId) {
+      const { data: requirement, error: requirementError } = await supabaseAdmin
+        .from('requirements')
+        .select('id, site_id, metadata, cron_lock_active, cron_lock_expires_at')
+        .eq('id', requirementId)
+        .maybeSingle();
+      if (requirementError) {
+        throw new Error(`Failed to load requirement ${requirementId}: ${requirementError.message}`);
+      }
+      if (!requirement) return;
+
+      // Status history is not ownership; foreign sessions must queue changes through the tool.
+      const ownerInstanceId = requirement.metadata?.runner_instance_id;
+      if (
+        typeof ownerInstanceId === 'string' &&
+        ownerInstanceId.length > 0 &&
+        ownerInstanceId !== instanceId
+      ) {
+        return;
+      }
+      // Do not tag late actions or advance the generation underneath a live cron claim.
+      if (
+        requirement.cron_lock_active === true &&
+        typeof requirement.cron_lock_expires_at === 'string' &&
+        Date.parse(requirement.cron_lock_expires_at) > Date.now()
+      ) {
+        return;
+      }
+
       const actionId =
         insertedActionId ||
         await findLatestUserActionId(instanceId, requirementId);

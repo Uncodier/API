@@ -33,4 +33,9 @@ describe('catalog search HTTP boundary', () => {
     expect(mockLimit).toHaveBeenCalled();
     expect(mockSearch).toHaveBeenCalledWith(expect.objectContaining({ limit: 20, offset: 0 }), { scope: 'site' });
   });
+  it('forwards explicit related classification from the shared service unchanged', async () => {
+    mockSearch.mockResolvedValue({ success: true, items: [], result_kind: 'related', mode: 'hybrid', degraded: false });
+    expect(await (await POST(request({ query: 'sandwich', channel: 'shop', site_id: site }))).json())
+      .toMatchObject({ result_kind: 'related', mode: 'hybrid', degraded: false });
+  });
 });

@@ -7,7 +7,7 @@ export const id = (n) => `10000000-0000-4000-8000-${String(n).padStart(12, '0')}
 export const model = 'openai/text-embedding-3-small';
 export const embedding = Array.from({ length: 1536 }, (_, i) => i === 0 ? 1 : 0);
 const root = new URL('../../', import.meta.url);
-export const names = ['catalog_search_documents', 'catalog_search_refresh', 'catalog_embedding_outbox', 'catalog_search_candidates', 'catalog_search_repairs', 'catalog_search_parameter_permissions', 'catalog_search_overflow_probe'];
+export const names = ['catalog_search_documents', 'catalog_search_refresh', 'catalog_embedding_outbox', 'catalog_search_candidates', 'catalog_search_repairs', 'catalog_search_parameter_permissions', 'catalog_search_overflow_probe', 'catalog_search_semantic_recall'];
 
 export const vectorSubstitutes = `
   CREATE FUNCTION public.vector_dims(double precision[]) RETURNS integer
@@ -28,7 +28,7 @@ export function migrationSql(i) {
     .replace(/\bvector(?=,|\))/g, 'double precision[]');
 }
 
-export async function setup() {
+export async function setup({ through = names.length - 1 } = {}) {
   const db = new PGlite({ extensions: { pg_trgm } });
   await db.exec(readFileSync(new URL('./catalog-search-fixture.sql', import.meta.url), 'utf8'));
   // PGlite has real pg_trgm and FTS, but this installation has no pgvector.
@@ -39,7 +39,7 @@ export async function setup() {
   await db.query('INSERT INTO sites VALUES ($1, $2, NULL), ($3, $4, NULL)', [id(1), 'North', id(2), 'South']);
   await db.query('INSERT INTO catalog_items(id,site_id,name,sku) VALUES ($1,$2,$3,$4)',
     [id(10), id(1), 'Legacy guitar', 'LEGACY']);
-  for (const i of names.keys()) await db.exec(migrationSql(i));
+  for (const i of names.keys()) if (i <= through) await db.exec(migrationSql(i));
   return db;
 }
 

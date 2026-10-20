@@ -37,6 +37,8 @@ describe('getCustomerSupportPolicies', () => {
     expect(policies).toContain('sin azúcar');
     expect(policies).toContain('candidate_window');
     expect(policies).toContain('degraded=true');
+    expect(policies).toContain('result_kind="related"');
+    expect(policies).toContain('not confirmed matches');
   });
 
   it('books catalog capacity via reservations.create then payment link, not a second create_order', () => {
