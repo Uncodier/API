@@ -44,4 +44,15 @@ describe('expendable catalog caches', () => {
     await writeCatalogCache('miss', { ids: [] }, 45);
     expect(set).toHaveBeenCalledWith('miss', '{"ids":[]}', 'EX', expect.any(Number));
   });
+  it('round-trips explicit overflow evidence without stripping false or true', async () => {
+    process.env.REDIS_CACHE_URL = 'redis://cache.example.test';
+    let stored = '';
+    mockClient.mockReturnValue({ status: 'ready', get: async () => stored,
+      set: async (_: string, value: string) => { stored = value; return 'OK'; } });
+    for (const truncated of [false, true]) {
+      const value = { candidates: [], candidate_window_truncated: truncated };
+      await writeCatalogCache('evidence', value, 45);
+      expect(await readCatalogCache('evidence')).toEqual(value);
+    }
+  });
 });

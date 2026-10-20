@@ -14,7 +14,7 @@ const utilsPath = 'src/app/api/robots/instance/assistant/utils.ts';
 
 // Execute the actual catalog and router with fail-closed I/O. All unrelated
 // catalog factories are inert, so this never imports provider clients or .env.
-function catalog() {
+function catalog(loadScreenAccess = async (_scope: unknown) => ({ isAdmin: true, blockedScreens: [] })) {
   const dependencies: Record<string, unknown> = {};
   const source = ts.createSourceFile(utilsPath, readFileSync(path.resolve(utilsPath), 'utf8'), ts.ScriptTarget.Latest, true);
   for (const statement of source.statements) {
@@ -35,11 +35,26 @@ function catalog() {
   dependencies['@/lib/services/composio-service'] = { getComposioApiKeyForSite: async () => undefined };
   dependencies['@/lib/services/harness-diagnostics/tools'] = { refreshHarnessToolManifest: (tools: unknown) => tools };
   dependencies['@/app/api/agents/tools/router/assistantProtocol'] = loadRuntimeModule(
-    'src/app/api/agents/tools/router/assistantProtocol.ts', { '@/lib/services/embeddings-service': {} });
+    'src/app/api/agents/tools/router/assistantProtocol.ts', {
+      '@/lib/services/embeddings-service': {},
+      // Provenance is not authority. This suite isolates private context wiring;
+      // the real screen policy is tested separately with denied/allowed actors.
+      './screen-access': {
+        loadToolScreenAccess: loadScreenAccess,
+        canUseToolScreen: () => true, assertToolScopeArgs: () => {}, guardToolScreen: (tool: unknown) => tool,
+      },
+    });
   return loadRuntimeModule<typeof import('../utils')>(utilsPath, dependencies);
 }
 
 describe('assistant private execution context wiring', () => {
+  it('passes the host-owned site and user into router authorization, separately from model arguments', async () => {
+    const userId = randomUUID();
+    const loadAccess = jest.fn(async (_scope: unknown) => ({ isAdmin: true, blockedScreens: [] }));
+    const tools = catalog(loadAccess).getAssistantTools(siteId, userId, instanceId);
+    await tools.find(tool => tool.name === 'tools')!.execute({ action: 'list', user_id: randomUUID() });
+    expect(loadAccess).toHaveBeenCalledWith({ siteId, userId });
+  });
   it('decorates before routing and never exposes context in schemas, args, or results', async () => {
     const utils = catalog();
     const privateContext = contextModule.buildToolExecutionContext({ site_id: siteId, intent: 'Private campaign purpose',
@@ -89,6 +104,7 @@ describe('assistant private execution context wiring', () => {
         '@/lib/services/billing/credit-exhaustion-message': { isInsufficientCreditsError },
         './utils': { getInstanceAssistantTools: getTools },
         './publish-node-binding': { resolvePublishNodeBinding: async () => null },
+        '@/lib/messaging/publish-destinations': {},
         './conversation-recovery-tools': { CONVERSATION_RECOVERY_INSTRUCTION: '', getConversationRecoveryTools: () => [] },
         '@/lib/services/tool-execution-context': contextModule,
         '@/lib/services/robot-instance/assistant-respawn-policy': { SILENT_CONTINUE_PROMPT },

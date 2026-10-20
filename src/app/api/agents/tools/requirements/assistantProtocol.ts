@@ -6,6 +6,7 @@
 import { getRequirementsCore } from './get/core';
 import { createRequirementCore } from './create/core';
 import { updateRequirementCore } from './update/core';
+import { assertToolScopeArgs, ToolScreenAccessDenied } from '../router/screen-access';
 
 export interface RequirementsToolParams {
   action: 'create' | 'list' | 'update';
@@ -100,6 +101,15 @@ export function requirementsTool(site_id: string, user_id?: string, instanceId?:
     },
     execute: async (args: RequirementsToolParams) => {
       const { action, ...params } = args;
+
+      if (action === 'create') {
+        // The creator is also the scheduler's execution actor. Never fall back
+        // to the site owner or accept a model-supplied actor for delegated work.
+        if (!user_id) throw new ToolScreenAccessDenied();
+        assertToolScopeArgs('requirements', args, { siteId: site_id, userId: user_id });
+        params.site_id = site_id;
+        params.user_id = user_id;
+      }
 
       // Default site_id if not provided but available in closure
       if (!params.site_id && site_id) {

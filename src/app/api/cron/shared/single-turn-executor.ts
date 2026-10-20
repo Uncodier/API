@@ -82,6 +82,7 @@ import { createJudgeCommandTool } from './judge-command-tool';
 import { getTenantCapabilities } from '@/lib/services/apps-platform/tenant-capabilities-service';
 import { captureLocalReadState, loadStepActionObservations, persistStepActionObservation } from './step-action-guard';
 import { actionStateFingerprint, formatActionObservationFeedback } from './step-action-observation';
+import { guardFinalToolCatalog } from '@/app/api/agents/tools/router/screen-access';
 export { inferRoleFromStep } from './single-turn-prompt';
 export type { SingleTurnResult };
 export async function executeSingleTurnStep(params: {
@@ -471,7 +472,7 @@ export async function executeSingleTurnStep(params: {
           requirementId, backlogItemId: effectiveBacklogItemId, stepId: persistedStep.id,
           action: activeRepairAction!, assertCurrent: () => assertCronExecutionOwnership(ownership) })]
       : guardedTools;
-    const fullTools = withCronExecutionOwnership(withActionLoopGuard(restrictToolsForEvidenceCollection(
+    const fullTools = guardFinalToolCatalog(withCronExecutionOwnership(withActionLoopGuard(restrictToolsForEvidenceCollection(
       isTestRepairRun(activeRepairRun) && effectiveBacklogItemId
         ? [...repairTools, createJudgeTestTool({ sandbox: () => activeSandboxRef.current,
           requirementId, backlogItemId: effectiveBacklogItemId, stepId: persistedStep.id,
@@ -489,7 +490,7 @@ export async function executeSingleTurnStep(params: {
       readLocalState: paths => captureLocalReadState(activeSandboxRef.current, paths),
       assertCurrent: () => assertCronExecutionOwnership(ownership),
       record: observation => persistStepActionObservation(audit, observation),
-    }), ownership);
+    }), ownership), { siteId, userId });
     refreshHarnessToolManifest(fullTools, evidenceCollectionOnly ? 'evidence_collection' : 'cron_executor');
 
     await assertCronExecutionOwnership(ownership);

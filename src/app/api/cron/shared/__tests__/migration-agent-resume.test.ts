@@ -83,6 +83,8 @@ function harness(options: {
   });
   const { executeSingleTurnStep } = loadRuntimeModule<typeof import('../single-turn-executor')>(
     'src/app/api/cron/shared/single-turn-executor.ts', {
+      // This suite isolates migration resume/gate state, not screen admission.
+      '@/app/api/agents/tools/router/screen-access': { guardFinalToolCatalog: identityTools },
       '@/lib/services/ai/openrouter-chat-request': { describeOpenRouterFailure },
       '@/lib/services/cron-audit-log': { logCronInfrastructureEvent: jest.fn() },
       '@/lib/services/billing/credit-exhaustion-message': { isInsufficientCreditsError },

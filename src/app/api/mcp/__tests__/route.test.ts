@@ -17,8 +17,9 @@ const reader = loadRuntimeModule<typeof import('@/lib/services/robot-instance/in
     zod: { z }, '@/lib/database/supabase-client': { supabaseAdmin: { from } },
   });
 
-// Run the actual catalog, history tool and router. Unrelated tool factories are
-// inert and all external I/O is fail-closed: no .env, providers or database.
+// Run the actual catalog, history tool and router. Screen policy is isolated in
+// router/screen-access.test.ts; these tests exercise context/transport only.
+// Unrelated tool factories are inert; no .env, providers or live database.
 function catalog() {
   const utilsPath = 'src/app/api/robots/instance/assistant/utils.ts';
   const dependencies: Record<string, unknown> = {};
@@ -47,12 +48,29 @@ function catalog() {
   dependencies['@/lib/services/tool-execution-context'] = { readToolExecutionContext: () => undefined };
   dependencies['@/lib/services/harness-diagnostics/tools'] = { refreshHarnessToolManifest: (tools: unknown) => tools };
   dependencies['@/app/api/agents/tools/router/assistantProtocol'] = loadRuntimeModule(
-    'src/app/api/agents/tools/router/assistantProtocol.ts', { '@/lib/services/embeddings-service': {} });
+    'src/app/api/agents/tools/router/assistantProtocol.ts', {
+      '@/lib/services/embeddings-service': {},
+      './screen-access': {
+        loadToolScreenAccess: async () => ({ isAdmin: true, blockedScreens: [] }),
+        canUseToolScreen: () => true, assertToolScopeArgs: () => {}, guardToolScreen: (tool: unknown) => tool,
+      },
+    });
   return loadRuntimeModule<typeof import('@/app/api/robots/instance/assistant/utils')>(utilsPath, dependencies);
 }
 const utils = catalog();
 jest.unstable_mockModule('@/app/api/robots/instance/assistant/utils', () => utils);
 jest.unstable_mockModule('@/lib/services/api-keys/ApiKeyService', () => ({ ApiKeyService: { validateApiKey } }));
+jest.unstable_mockModule('@/lib/security/tool-request-principal', () => ({
+  resolveToolRequestPrincipal: async (request: Request) => {
+    const credential = request.headers.get('x-api-key') || (request.headers.get('authorization')?.startsWith('Bearer ')
+      ? request.headers.get('authorization')!.slice(7) : null);
+    if (!credential) return null;
+    if (credential === process.env.SERVICE_API_KEY) return { internal: true, userId: null, siteId: null };
+    const result = await validateApiKey(credential);
+    return result.isValid ? { internal: false, userId: randomUUID(), siteId } : null;
+  },
+  canToolPrincipalAccessSite: async () => true,
+}));
 
 let POST: typeof import('../route').POST;
 let createMcpServer: typeof import('@/lib/mcp/server').createMcpServer;

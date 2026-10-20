@@ -12,6 +12,12 @@ jest.mock('@/lib/database/supabase-client', () => ({
 jest.mock('@/lib/services/embeddings-service', () => ({
   EmbeddingsService: { generateEmbeddings: jest.fn() },
 }));
+// This suite tests history schemas and row scope. Screen authorization has its
+// own offline integration suite; do not consume history DB mocks for permissions.
+jest.mock('../../router/screen-access', () => ({
+  ...jest.requireActual('../../router/screen-access'),
+  loadToolScreenAccess: async () => ({ isAdmin: true, blockedScreens: [] }),
+}));
 
 const SITE = '00000000-0000-4000-8000-000000000001';
 const INSTANCE = '00000000-0000-4000-8000-000000000002';

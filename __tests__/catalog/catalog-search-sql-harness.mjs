@@ -7,7 +7,7 @@ export const id = (n) => `10000000-0000-4000-8000-${String(n).padStart(12, '0')}
 export const model = 'openai/text-embedding-3-small';
 export const embedding = Array.from({ length: 1536 }, (_, i) => i === 0 ? 1 : 0);
 const root = new URL('../../', import.meta.url);
-export const names = ['catalog_search_documents', 'catalog_search_refresh', 'catalog_embedding_outbox', 'catalog_search_candidates', 'catalog_search_repairs', 'catalog_search_parameter_permissions'];
+export const names = ['catalog_search_documents', 'catalog_search_refresh', 'catalog_embedding_outbox', 'catalog_search_candidates', 'catalog_search_repairs', 'catalog_search_parameter_permissions', 'catalog_search_overflow_probe'];
 
 export const vectorSubstitutes = `
   CREATE FUNCTION public.vector_dims(double precision[]) RETURNS integer

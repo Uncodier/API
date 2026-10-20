@@ -19,6 +19,7 @@
  */
 
 import { EmbeddingsService } from '@/lib/services/embeddings-service';
+import { assertToolScopeArgs, canUseToolScreen, guardToolScreen, loadToolScreenAccess, type ToolScreenScope } from './screen-access';
 
 export type RoutedTool = {
   name: string;
@@ -163,9 +164,6 @@ function isValidationErrorMessage(msg: string | undefined): boolean {
   );
 }
 
-let cachedToolEmbeddings: Map<string, number[]> | null = null;
-let toolsEmbeddingsInitPromise: Promise<void> | null = null;
-
 /**
  * Builds the single `tools` tool that proxies to a set of routed tools.
  *
@@ -173,16 +171,19 @@ let toolsEmbeddingsInitPromise: Promise<void> | null = null;
  *                    execute}` shape as every other assistant tool) that
  *                    should be hidden behind the router.
  */
-export function toolsRouterTool(routedTools: RoutedTool[]) {
+export function toolsRouterTool(routedTools: RoutedTool[], scope?: ToolScreenScope) {
+  scope = scope ? { siteId: scope.siteId, userId: scope.userId } : undefined;
+  // Catalog-local cache: one user's filtered catalog must not poison another's
+  // semantic search. Only permitted toolIndex entries are returned below.
+  let cachedToolEmbeddings: Map<string, number[]> | null = null;
+  let toolsEmbeddingsInitPromise: Promise<void> | null = null;
   const byName = new Map<string, RoutedTool>(routedTools.map((t) => [t.name, t]));
 
-  const toolIndex = routedTools.map((t) => ({
+  const unfilteredToolIndex = routedTools.map((t) => ({
     name: t.name,
     description: shortDescription(t.description),
     category: categoryOf(t.name),
   }));
-
-  const categoriesAvailable = Array.from(new Set(toolIndex.map((t) => t.category))).sort();
 
   const description = [
     'Discover and invoke specialized tools (media, messaging, CRM, commerce, social, content, infra, research, ui) without every schema being loaded upfront.',
@@ -193,7 +194,7 @@ export function toolsRouterTool(routedTools: RoutedTool[]) {
     '  3. action="describe" with name=<tool_name> → returns the full description, parameters JSON schema, and expected_use hint. Use this if you only used action="list".',
     '  4. action="call" with name=<tool_name> and args=<string> → executes the underlying tool and returns its result. If args are invalid the error payload includes the parameters schema so you can correct and retry.',
     '',
-    `Categories available: ${categoriesAvailable.join(', ')}.`,
+    'Use action="list" to see the categories and tools permitted for this user.',
     'Core planning/sandbox/requirement tools (instance_plan, requirement_status, requirements, sandbox_*, skill_lookup) are NOT routed here — they are always directly available.',
   ].join('\n');
 
@@ -237,6 +238,13 @@ export function toolsRouterTool(routedTools: RoutedTool[]) {
     },
     execute: async (args: { action: 'list' | 'search' | 'describe' | 'call'; name?: string; args?: any; category?: string; query?: string }) => {
       const { action } = args;
+      const access = await loadToolScreenAccess(scope);
+      const toolIndex = unfilteredToolIndex.filter(tool => canUseToolScreen(tool.name, access));
+      const categoriesAvailable = Array.from(new Set(toolIndex.map(tool => tool.category))).sort();
+      const denied = () => ({
+        success: false, code: 'TOOL_SCREEN_ACCESS_DENIED', status: 403,
+        error: 'Tool access denied by screen permissions.',
+      });
 
       // `args.args` is declared as a JSON-encoded string (see schema note).
       // Accept both string (Gemini-friendly) and object (OpenAI/Azure direct
@@ -284,11 +292,11 @@ export function toolsRouterTool(routedTools: RoutedTool[]) {
             if (!toolsEmbeddingsInitPromise) {
               toolsEmbeddingsInitPromise = (async () => {
                 try {
-                  if (toolIndex.length === 0) {
+                  if (unfilteredToolIndex.length === 0) {
                     cachedToolEmbeddings = new Map();
                     return;
                   }
-                  const inputs = toolIndex.map(
+                  const inputs = unfilteredToolIndex.map(
                     (t) => {
                       const fullTool = byName.get(t.name);
                       return `${t.name}\n${fullTool?.description || t.description}\n${t.category}`;
@@ -296,9 +304,9 @@ export function toolsRouterTool(routedTools: RoutedTool[]) {
                   );
                   const { embeddings } = await EmbeddingsService.generateEmbeddings(inputs);
                   const map = new Map<string, number[]>();
-                  for (let i = 0; i < toolIndex.length; i++) {
+                  for (let i = 0; i < unfilteredToolIndex.length; i++) {
                     if (embeddings[i]) {
-                      map.set(toolIndex[i].name, embeddings[i]);
+                      map.set(unfilteredToolIndex[i].name, embeddings[i]);
                     }
                   }
                   cachedToolEmbeddings = map;
@@ -384,6 +392,7 @@ export function toolsRouterTool(routedTools: RoutedTool[]) {
           return { success: false, error: 'Missing "name" — provide the tool name to describe.' };
         }
         const tool = byName.get(args.name);
+        if (tool && !canUseToolScreen(tool.name, access)) return denied();
         if (!tool) {
           return {
             success: false,
@@ -408,6 +417,7 @@ export function toolsRouterTool(routedTools: RoutedTool[]) {
           return { success: false, error: 'Missing "name" — provide the tool name to call.' };
         }
         const tool = byName.get(args.name);
+        if (tool && !canUseToolScreen(tool.name, access)) return denied();
         if (!tool) {
           return {
             success: false,
@@ -426,6 +436,7 @@ export function toolsRouterTool(routedTools: RoutedTool[]) {
         }
         const callArgs = parsed.value;
         try {
+          assertToolScopeArgs(tool.name, callArgs, scope);
           const result = await tool.execute(callArgs);
           return {
             success: true,
@@ -434,6 +445,7 @@ export function toolsRouterTool(routedTools: RoutedTool[]) {
             ...hoistRoutedToolResult(result),
           };
         } catch (err: any) {
+          if (err?.code === 'TOOL_SCREEN_ACCESS_DENIED') return denied();
           const message: string = err?.message || String(err);
           const includeSchema = isValidationErrorMessage(message);
           return {
@@ -486,7 +498,8 @@ function injectThoughtProcess(tool: RoutedTool): RoutedTool {
  * Use this from the orchestrator and from `inline-step-executor.ts` so both
  * code paths share the same routing policy.
  */
-export function withToolsRouter(allTools: RoutedTool[], alwaysOnNames: ReadonlySet<string>): RoutedTool[] {
+export function withToolsRouter(allTools: RoutedTool[], alwaysOnNames: ReadonlySet<string>, scope?: ToolScreenScope): RoutedTool[] {
+  scope = scope ? { siteId: scope.siteId, userId: scope.userId } : undefined;
   const alwaysOn: RoutedTool[] = [];
   const routed: RoutedTool[] = [];
   
@@ -494,12 +507,12 @@ export function withToolsRouter(allTools: RoutedTool[], alwaysOnNames: ReadonlyS
   
   for (const t of toolsWithThoughtProcess) {
     if (!t || typeof t.name !== 'string') continue;
-    if (alwaysOnNames.has(t.name)) alwaysOn.push(t);
+    if (alwaysOnNames.has(t.name)) alwaysOn.push(guardToolScreen(t, scope));
     else routed.push(t);
   }
   if (routed.length === 0) return alwaysOn;
   
-  const routerTool = injectThoughtProcess(toolsRouterTool(routed) as RoutedTool);
+  const routerTool = injectThoughtProcess(toolsRouterTool(routed, scope) as RoutedTool);
   return [...alwaysOn, routerTool];
 }
 
@@ -582,7 +595,8 @@ export function isAlwaysOnToolName(name: string): boolean {
  * Convenience: same as `withToolsRouter` but uses the default always-on policy
  * (explicit set + the "sandbox_" and "qa_" name prefixes).
  */
-export function routeTools(allTools: RoutedTool[]): RoutedTool[] {
+export function routeTools(allTools: RoutedTool[], scope?: ToolScreenScope): RoutedTool[] {
+  scope = scope ? { siteId: scope.siteId, userId: scope.userId } : undefined;
   const alwaysOn: RoutedTool[] = [];
   const routed: RoutedTool[] = [];
   
@@ -591,12 +605,12 @@ export function routeTools(allTools: RoutedTool[]): RoutedTool[] {
 
   for (const t of toolsWithThoughtProcess) {
     if (!t || typeof t.name !== 'string') continue;
-    if (isAlwaysOnToolName(t.name)) alwaysOn.push(t);
+    if (isAlwaysOnToolName(t.name)) alwaysOn.push(guardToolScreen(t, scope));
     else routed.push(t);
   }
   
   if (routed.length === 0) return alwaysOn;
   
-  const routerTool = injectThoughtProcess(toolsRouterTool(routed) as RoutedTool);
+  const routerTool = injectThoughtProcess(toolsRouterTool(routed, scope) as RoutedTool);
   return [...alwaysOn, routerTool];
 }

@@ -496,6 +496,7 @@ export const getAssistantTools = (
       approvedImport,
       executionContext,
     ),
+    { siteId, userId },
   ));
 };
 

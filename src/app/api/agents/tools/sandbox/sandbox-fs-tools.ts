@@ -3,6 +3,7 @@
  * Split from assistantProtocol.ts to keep files under the 500-line rule.
  */
 import { Sandbox } from '@vercel/sandbox';
+import { posix } from 'node:path';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import {
   liveSandbox,
@@ -294,6 +295,40 @@ export function sandboxDeleteFileTool(sandbox: Sandbox, toolsCtx?: SandboxToolsC
   };
 }
 
+async function resolveLintPaths(sandbox: Sandbox, paths: unknown): Promise<string[]> {
+  if (paths === undefined) return [];
+  if (!Array.isArray(paths)) throw new Error('paths must be an array of file paths');
+
+  const root = posix.resolve(WORK_DIR);
+  const resolved = Array.from(paths, (path: unknown) => {
+    if (typeof path !== 'string' || !path.trim() || /[\x00-\x1f\x7f\\]/.test(path)) {
+      throw new Error('Lint paths must be non-empty strings without control characters or backslashes');
+    }
+    if (path.trimStart().startsWith('-') || path.split('/').includes('..')) {
+      throw new Error('Lint paths cannot contain options or parent traversal');
+    }
+    const absolute = posix.resolve(root, path);
+    if (absolute !== root && !absolute.startsWith(`${root}/`)) {
+      throw new Error('Lint paths must stay inside the workspace');
+    }
+    return absolute;
+  });
+
+  if (resolved.length) {
+    const realRoot = await sandbox.fs.realpath(root);
+    for (const path of resolved) {
+      const relative = posix.relative(realRoot, await sandbox.fs.realpath(path));
+      if (relative === '..' || relative.startsWith('../') || posix.isAbsolute(relative)) {
+        throw new Error('Lint paths must stay inside the workspace');
+      }
+      // Require literal paths (including Next.js [param] names), not ESLint globs.
+      // realpath alone may accept a nonexistent final component on Linux.
+      await sandbox.fs.stat(path);
+    }
+  }
+  return resolved;
+}
+
 export function sandboxReadLintsTool(sandbox: Sandbox, toolsCtx?: SandboxToolsContext) {
   return {
     name: 'sandbox_read_lints',
@@ -304,7 +339,7 @@ export function sandboxReadLintsTool(sandbox: Sandbox, toolsCtx?: SandboxToolsCo
         paths: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Optional array of file paths to check. If empty, checks the entire workspace.',
+          description: 'Optional array of existing file paths inside the workspace, relative or absolute (no options or parent traversal). If empty, checks the entire workspace.',
         }
       }
     },
@@ -316,16 +351,24 @@ export function sandboxReadLintsTool(sandbox: Sandbox, toolsCtx?: SandboxToolsCo
 
       try {
         const s0 = liveSandbox(sandbox, toolsCtx);
-        const pathsArg = (args.paths && args.paths.length > 0) ? args.paths.join(' ') : '';
+        const paths = await resolveLintPaths(s0, args.paths);
         
-        // Run tsc for TypeScript errors (no file emission)
-        const tscCmd = `npx tsc --noEmit ${pathsArg}`;
-        const tscResult = await s0.runCommand('sh', ['-c', `cd ${WORK_DIR} && ${tscCmd}`]);
+        // Use installed binaries only: no shell interpolation or npx auto-downloads.
+        // tsc has no "--" separator; absolute paths also prevent @response-file parsing.
+        const tscResult = await s0.runCommand({
+          cmd: `${WORK_DIR}/node_modules/.bin/tsc`,
+          args: ['--noEmit', ...paths],
+          cwd: WORK_DIR,
+        });
         const tscOutput = await tscResult.stdout();
         const tscError = await tscResult.stderr();
         
-        const eslintCmd = `npx eslint ${pathsArg || '.'} --format stylish`;
-        const eslintResult = await s0.runCommand('sh', ['-c', `cd ${WORK_DIR} && ${eslintCmd}`]);
+        // ESLint still executes project configuration; caller authorization remains required.
+        const eslintResult = await s0.runCommand({
+          cmd: `${WORK_DIR}/node_modules/.bin/eslint`,
+          args: ['--format', 'stylish', '--', ...(paths.length ? paths : ['.'])],
+          cwd: WORK_DIR,
+        });
         const eslintOutput = await eslintResult.stdout();
         const eslintError = await eslintResult.stderr();
 

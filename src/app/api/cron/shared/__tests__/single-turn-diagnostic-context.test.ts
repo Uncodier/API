@@ -4,8 +4,26 @@ import { describeOpenRouterFailure } from '@/lib/services/ai/openrouter-chat-req
 import { withActionLoopGuard, type ActionGuardContext } from '../step-action-guard';
 import { makeActionObservation, actionStateFingerprint, formatActionObservationFeedback } from '../step-action-observation';
 import { restrictToolsForEvidenceCollection } from '../single-turn-helpers';
+import { randomUUID } from 'node:crypto';
+import { guardFinalToolCatalog } from '@/app/api/agents/tools/router/screen-access';
+import { supabaseAdmin } from '@/lib/database/supabase-client';
 
-jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: {} }));
+jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn(), rpc: jest.fn() } }));
+
+const scope = { siteId: randomUUID(), userId: randomUUID() };
+let screenRole: string;
+let blockedScreens: string[];
+beforeEach(() => {
+  screenRole = 'admin'; blockedScreens = [];
+  (supabaseAdmin.rpc as jest.Mock).mockImplementation(() => ({ abortSignal: async () => ({ data: true, error: null }) }));
+  (supabaseAdmin.from as jest.Mock).mockImplementation((table: string) => {
+    const query: any = {};
+    for (const method of ['select', 'eq', 'abortSignal']) query[method] = () => query;
+    query.maybeSingle = async () => ({ error: null, data: table === 'sites' ? { user_id: 'another-owner' }
+      : table === 'site_ownership' ? null : { role: screenRole, blocked_screens: blockedScreens } });
+    return query;
+  });
+});
 
 const state = 'a'.repeat(64);
 const args = { command: 'npm test' };
@@ -35,6 +53,7 @@ function harness() {
   const record = jest.fn().mockResolvedValue(undefined);
   const modelFailureLog = jest.fn().mockResolvedValue(undefined);
   const deps = {
+    '@/app/api/agents/tools/router/screen-access': { guardFinalToolCatalog },
     '@/lib/services/ai/openrouter-chat-request': { describeOpenRouterFailure },
     '@/lib/services/cron-audit-log': { logCronInfrastructureEvent: modelFailureLog },
     '@/lib/services/billing/credit-exhaustion-message': { isInsufficientCreditsError },
@@ -110,7 +129,7 @@ function harness() {
   const run = loadRuntimeModule<typeof import('../single-turn-executor')>(
     'src/app/api/cron/shared/single-turn-executor.ts', deps).executeSingleTurnStep;
   return { run: () => run({ sandboxId: 'sandbox', plan: { id: 'plan' }, step,
-    requirementId: 'req', instanceId: 'inst', siteId: 'site', title: 'task', gitRepoKind: 'applications',
+    requirementId: 'req', instanceId: 'inst', siteId: scope.siteId, userId: scope.userId, title: 'task', gitRepoKind: 'applications',
     requirementType: 'app', cycleId: 'cycle', executionEventId: 'turn-4', executionGeneration: 1, cronLockRunId: 'owner' }),
     execute, testExecute, readHistory, fingerprint, record, modelFailureLog };
 }
@@ -155,5 +174,27 @@ it('preserves upstream funding failure as provider evidence without blaming cust
   expect(h.modelFailureLog).toHaveBeenCalledWith(expect.objectContaining({ planId: 'plan', stepId: 'step' }),
     expect.objectContaining({ event: 'cron_infra_model_request_failed',
       details: expect.objectContaining({ provider: 'openrouter', status: 402, category: 'funding' }) }));
+  expect(h.testExecute).not.toHaveBeenCalled();
+});
+
+it('real executor guards history added after routing before invoking its implementation', async () => {
+  const h = harness();
+  screenRole = 'collaborator'; blockedScreens = ['requirements'];
+  await h.run();
+  const tools = h.execute.mock.calls[0][2].custom_tools;
+  await expect(tools.find((tool: any) => tool.name === 'instance_history').execute({ action: 'read', log_id: 'log' }))
+    .rejects.toMatchObject({ status: 403, code: 'TOOL_SCREEN_ACCESS_DENIED' });
+  expect(h.readHistory).not.toHaveBeenCalled();
+  expect(h.testExecute).not.toHaveBeenCalled();
+});
+
+it('real executor cannot bypass admin-only test execution with late tool definitions', async () => {
+  const h = harness();
+  await h.run();
+  h.readHistory.mockClear(); h.testExecute.mockClear();
+  screenRole = 'collaborator'; blockedScreens = [];
+  const tools = h.execute.mock.calls[0][2].custom_tools;
+  await expect(tools.find((tool: any) => tool.name === 'sandbox_run_tests').execute(args))
+    .rejects.toMatchObject({ status: 403 });
   expect(h.testExecute).not.toHaveBeenCalled();
 });

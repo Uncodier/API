@@ -30,4 +30,19 @@ describe('bounded search snapshots', () => {
     mockRead.mockResolvedValue({ ...snapshot('untrusted'), degradationReason: 'upstream raw message' });
     expect(await readCatalogSnapshot('untrusted', 'untrusted')).toBeNull();
   });
+  it.each([false, true])('retains overflow=%s locally and across instances', async truncated => {
+    const binding = `overflow-${truncated}`;
+    const value = { ...snapshot(binding), candidate_window_truncated: truncated };
+    await saveCatalogSnapshot(binding, value);
+    expect(await readCatalogSnapshot(binding, binding)).toHaveProperty('candidate_window_truncated', truncated);
+    expect(mockWrite).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ candidate_window_truncated: truncated }), 120);
+    mockRead.mockResolvedValue(value);
+    expect(await readCatalogSnapshot(`${binding}-remote`, binding)).toHaveProperty('candidate_window_truncated', truncated);
+  });
+  it('allows legacy omission but rejects nonboolean overflow metadata', async () => {
+    mockRead.mockResolvedValue(snapshot('legacy-overflow'));
+    expect(await readCatalogSnapshot('legacy-overflow', 'legacy-overflow')).not.toBeNull();
+    mockRead.mockResolvedValue({ ...snapshot('invalid-overflow'), candidate_window_truncated: 'true' });
+    expect(await readCatalogSnapshot('invalid-overflow', 'invalid-overflow')).toBeNull();
+  });
 });

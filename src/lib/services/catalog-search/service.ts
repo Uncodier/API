@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { catalogCacheKey, catalogSingleFlight, readCatalogCache, writeCatalogCache } from './cache';
-import { candidateSchema, CATALOG_CANDIDATE_LIMIT, CATALOG_MODEL, CATALOG_SEARCH_VERSION, CATALOG_MIN_SIMILARITY,
+import { candidateSchema, CATALOG_CANDIDATE_LIMIT, CATALOG_RETRIEVER_PROBE_LIMIT,
+  CATALOG_MODEL, CATALOG_SEARCH_VERSION, CATALOG_MIN_SIMILARITY,
   catalogSearchSchema, fuseCatalogCandidates, normalizeCatalogQuery,
   type CatalogCandidate, type CatalogPrincipal, type CatalogSearchInput, type CatalogSearchResult } from './contract';
 import { getCatalogQueryEmbedding } from './query-embedding';
@@ -10,19 +11,23 @@ import { readCatalogSnapshot, saveCatalogSnapshot, SNAPSHOT_LIFETIME_MS } from '
 import { catalogDegradationReasonSchema, CatalogSemanticUnavailableError } from './semantic-errors';
 
 const windowSchema = z.object({
-  candidates: z.array(candidateSchema).max(CATALOG_CANDIDATE_LIMIT),
+  candidates: z.array(candidateSchema).max(CATALOG_RETRIEVER_PROBE_LIMIT * 2),
   mode: z.enum(['text', 'hybrid']), degraded: z.boolean(),
+  candidate_window_truncated: z.boolean().optional(),
   degradationReason: catalogDegradationReasonSchema.optional(),
 });
 type CandidateWindow = z.infer<typeof windowSchema>;
-const visibleSchema = z.array(candidateSchema.pick({ id: true, site_id: true })).max(CATALOG_CANDIDATE_LIMIT);
+const VISIBLE_BATCH_LIMIT = 400;
+const visibleSchema = z.array(candidateSchema.pick({ id: true, site_id: true })).max(VISIBLE_BATCH_LIMIT);
 
 export class CatalogSearchChangedError extends Error {
   constructor() { super('Catalog search changed; restart pagination'); }
 }
 
 function windowIdentity(key: string, window: CandidateWindow, ids: string[]): string {
-  const hash = createHash('sha256').update(JSON.stringify([key, window.mode, window.degraded, ids])).digest('hex');
+  const hash = createHash('sha256').update(JSON.stringify([
+    key, window.mode, window.degraded, window.candidate_window_truncated ?? false, ids,
+  ])).digest('hex');
   return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-5${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
 }
 
@@ -44,11 +49,11 @@ async function retrieve(input: CatalogSearchInput, mode: 'text' | 'semantic', em
   try {
     const { data, error } = await supabaseAdmin.rpc('catalog_search_candidates', {
       ...rpcScope(input), p_query: input.query, p_mode: mode,
-      p_embedding: embedding ? `[${embedding.join(',')}]` : null, p_limit: CATALOG_CANDIDATE_LIMIT,
+      p_embedding: embedding ? `[${embedding.join(',')}]` : null, p_limit: CATALOG_RETRIEVER_PROBE_LIMIT,
       p_min_similarity: CATALOG_MIN_SIMILARITY,
     }).abortSignal(signal);
     if (error) throw new Error('Catalog retrieval unavailable');
-    return z.array(candidateSchema).max(CATALOG_CANDIDATE_LIMIT).parse(data || []);
+    return z.array(candidateSchema).max(CATALOG_RETRIEVER_PROBE_LIMIT).parse(data || []);
   } catch (error) {
     if (mode !== 'semantic') throw error;
     throw new CatalogSemanticUnavailableError(signal.aborted ? 'semantic_retrieval_timeout'
@@ -67,8 +72,9 @@ async function buildWindow(input: CatalogSearchInput, principal: CatalogPrincipa
         degradationReason: error instanceof CatalogSemanticUnavailableError ? error.reason : 'embedding_failed' as const }))
     : Promise.resolve({ candidates: [] as CatalogCandidate[], degraded: false });
   const [text, vector] = await Promise.all([textPromise, semanticPromise]);
+  const candidates = fuseCatalogCandidates(text, vector.candidates);
   return {
-    candidates: fuseCatalogCandidates(text, vector.candidates),
+    candidates, candidate_window_truncated: candidates.length > CATALOG_CANDIDATE_LIMIT,
     mode: semantic && !exactCode && !vector.degraded ? 'hybrid' : 'text', degraded: vector.degraded,
     ...('degradationReason' in vector ? { degradationReason: vector.degradationReason } : {}),
   };
@@ -97,7 +103,7 @@ export async function searchCatalog(rawInput: unknown, principal: CatalogPrincip
     const key = catalogCacheKey('candidates', {
       scope: principal.scope, site: input.site_id, channel: input.channel, filters: input.filters,
       query: input.query, revision, version: CATALOG_SEARCH_VERSION, model: CATALOG_MODEL,
-      minSimilarity: CATALOG_MIN_SIMILARITY, semantic,
+      minSimilarity: CATALOG_MIN_SIMILARITY, semantic, probeLimit: CATALOG_RETRIEVER_PROBE_LIMIT,
     });
     window = await catalogSingleFlight(key, async () => {
       const cached = windowSchema.safeParse(await readCatalogCache(key));
@@ -115,16 +121,22 @@ export async function searchCatalog(rawInput: unknown, principal: CatalogPrincip
   }
   const ids = window.candidates.map(item => item.id);
   let visible: Array<{ id: string; site_id: string }> = [];
-  if (ids.length) {
+  // Fusion can contain 402 unique IDs. Keep the existing SQL visibility bound of 400.
+  for (let offset = 0; offset < ids.length; offset += VISIBLE_BATCH_LIMIT) {
     const { data, error } = await supabaseAdmin.rpc('catalog_search_visible_ids', {
-      ...rpcScope(input), p_ids: ids,
+      ...rpcScope(input), p_ids: ids.slice(offset, offset + VISIBLE_BATCH_LIMIT),
     }).abortSignal(AbortSignal.timeout(2_000));
     if (error) throw new Error('Catalog visibility unavailable');
-    visible = visibleSchema.parse(data || []);
+    visible.push(...visibleSchema.parse(data || []));
   }
   const byId = new Map(visible.map(item => [item.id, item]));
-  const current = ids.flatMap(id => byId.has(id) ? [byId.get(id)!] : []);
-  if (input.search_id && current.length !== ids.length) throw new CatalogSearchChangedError();
+  const eligible = ids.flatMap(id => byId.has(id) ? [byId.get(id)!] : []);
+  if (input.search_id && eligible.length !== ids.length) throw new CatalogSearchChangedError();
+  // Continuations retain the original evidence, even after the probe falls outside the snapshot.
+  const truncated = input.search_id ? window.candidate_window_truncated ?? false
+    : eligible.length > CATALOG_CANDIDATE_LIMIT;
+  window = { ...window, candidate_window_truncated: truncated };
+  const current = eligible.slice(0, CATALOG_CANDIDATE_LIMIT);
   const searchId = input.search_id || windowIdentity(stableKey, window, current.map(item => item.id));
   if (!input.search_id) {
     const allowed = new Set(current.map(item => item.id));
@@ -138,6 +150,7 @@ export async function searchCatalog(rawInput: unknown, principal: CatalogPrincip
   return {
     success: true, items: current.slice(input.offset, input.offset + input.limit),
     count: current.length, count_kind: 'candidate_window',
+    candidate_window_truncated: truncated,
     has_more: input.offset + input.limit < current.length,
     mode: window.mode, degraded: window.degraded, search_id: searchId,
   };

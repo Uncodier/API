@@ -3,6 +3,7 @@ import { z } from 'zod';
 export const CATALOG_MODEL = 'openai/text-embedding-3-small';
 export const CATALOG_DIMENSIONS = 1536;
 export const CATALOG_CANDIDATE_LIMIT = 200;
+export const CATALOG_RETRIEVER_PROBE_LIMIT = CATALOG_CANDIDATE_LIMIT + 1;
 export const CATALOG_SEARCH_VERSION = 'v2';
 export const CATALOG_MIN_SIMILARITY = 0.35;
 
@@ -47,6 +48,7 @@ export type CatalogSearchResult = {
   items: Array<{ id: string; site_id: string }>;
   count: number;
   count_kind: 'candidate_window';
+  candidate_window_truncated?: boolean;
   has_more: boolean;
   mode: 'hybrid' | 'text';
   degraded: boolean;
@@ -69,6 +71,7 @@ export function canonicalJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
+/** Deduplicate before any window cap so overlap cannot manufacture overflow. */
 export function fuseCatalogCandidates(text: CatalogCandidate[], semantic: CatalogCandidate[]): CatalogCandidate[] {
   const merged = new Map<string, CatalogCandidate>();
   for (const list of [text, semantic]) {
@@ -81,5 +84,5 @@ export function fuseCatalogCandidates(text: CatalogCandidate[], semantic: Catalo
     });
   }
   return [...merged.values()].sort((a, b) => Number(b.exact_match) - Number(a.exact_match)
-    || b.score - a.score || a.id.localeCompare(b.id)).slice(0, CATALOG_CANDIDATE_LIMIT);
+    || b.score - a.score || a.id.localeCompare(b.id));
 }

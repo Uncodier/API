@@ -1,5 +1,9 @@
 import { describe, expect, it, jest } from '@jest/globals';
 jest.mock('@/lib/services/embeddings-service', () => ({ EmbeddingsService: {} }));
+jest.mock('../screen-access', () => ({
+  ...jest.requireActual<typeof import('../screen-access')>('../screen-access'),
+  loadToolScreenAccess: async () => ({ isAdmin: false, blockedScreens: [] }),
+}));
 import {
   hoistRoutedToolResult,
   isAlwaysOnToolName,

@@ -7,6 +7,7 @@ export const snapshotSchema = z.object({
   binding: z.string(), expiresAt: z.number().int(),
   candidates: z.array(candidateSchema).max(CATALOG_CANDIDATE_LIMIT),
   mode: z.enum(['text', 'hybrid']), degraded: z.boolean(),
+  candidate_window_truncated: z.boolean().optional(),
   degradationReason: catalogDegradationReasonSchema.optional(),
 });
 export type CatalogSnapshot = z.infer<typeof snapshotSchema>;

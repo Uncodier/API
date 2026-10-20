@@ -6,14 +6,15 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createMcpServer } from '@/lib/mcp/server';
-import { validateMcpApiKey } from '@/lib/mcp/auth';
 import { mcpContextSchema } from '@/lib/mcp/context';
+import { canToolPrincipalAccessSite, resolveToolRequestPrincipal } from '@/lib/security/tool-request-principal';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 
 export const maxDuration = 60;
 
 export async function POST(request: NextRequest) {
-  if (!(await validateMcpApiKey(request))) {
+  const principal = await resolveToolRequestPrincipal(request);
+  if (!principal) {
     return NextResponse.json(
       { error: 'Missing or invalid API key. Use Authorization: Bearer <key> or X-API-Key: <key>.' },
       { status: 401, headers: { 'WWW-Authenticate': 'Bearer' } }
@@ -38,7 +39,12 @@ export async function POST(request: NextRequest) {
   }
 
   const { siteId, instanceId } = context.data;
-  const userId = request.headers.get('x-mcp-user-id') || process.env.MCP_USER_ID;
+  if (!await canToolPrincipalAccessSite(principal, siteId)) {
+    return NextResponse.json({ error: 'Site access denied' }, { status: 403 });
+  }
+  const userId = principal.internal
+    ? request.headers.get('x-mcp-user-id') || process.env.MCP_USER_ID
+    : principal.userId || undefined;
 
   let parsedBody: unknown;
   try {

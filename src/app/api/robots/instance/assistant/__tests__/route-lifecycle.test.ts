@@ -7,6 +7,7 @@ import { runAssistantWorkflow } from '../workflow';
 import { insertUserActionLog, markRemoteInstanceError } from '../user-message-log';
 import { POST } from '../route';
 import { normalizePublishToolOverrides } from '../publish-tool-overrides';
+import { canToolPrincipalAccessSite, resolveToolRequestPrincipal } from '@/lib/security/tool-request-principal';
 
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn() } }));
 jest.mock('@/lib/services/billing/CreditService', () => ({ CreditService: { validateCredits: jest.fn() } }));
@@ -24,6 +25,7 @@ jest.mock('../skill-selection', () => {
 });
 jest.mock('@/lib/security/site-access', () => ({ canAccessSite: jest.fn() }));
 jest.mock('@/lib/services/site-skill-access', () => ({ isSiteSkillManager: jest.fn() }));
+jest.mock('@/lib/security/tool-request-principal', () => ({ canToolPrincipalAccessSite: jest.fn(), resolveToolRequestPrincipal: jest.fn() }));
 
 const INSTANCE = '00000000-0000-4000-8000-000000000001';
 const SITE = '00000000-0000-4000-8000-000000000002';
@@ -36,6 +38,8 @@ const payload = { instance_id: INSTANCE, site_id: SITE, user_id: USER, message: 
 
 beforeEach(() => {
   jest.clearAllMocks();
+  (resolveToolRequestPrincipal as jest.Mock).mockResolvedValue({ internal: true, userId: null, siteId: null });
+  (canToolPrincipalAccessSite as jest.Mock).mockResolvedValue(true);
   jest.spyOn(console, 'log').mockImplementation(() => {});
   jest.spyOn(console, 'error').mockImplementation(() => {});
   (CreditService.validateCredits as jest.Mock).mockResolvedValue(true);
@@ -75,6 +79,27 @@ it('uses the same lifecycle for a newly created session', async () => {
   expect(body).toContain('event: accepted');
   expect(body).toContain('event: completed');
   expect((start as jest.Mock).mock.calls[0][1][13]).toMatchObject({ userMessageLogId: LOG });
+});
+
+it.each([INSTANCE, undefined])('uses the authenticated actor instead of body/instance owner on %s', async instance_id => {
+  const actor = '00000000-0000-4000-8000-000000000006';
+  (resolveToolRequestPrincipal as jest.Mock).mockResolvedValue({ internal: false, userId: actor, siteId: SITE });
+  const response = await POST(request({ ...payload, instance_id }));
+  expect(response.status).toBe(200);
+  await response.text();
+  expect((start as jest.Mock).mock.calls[0][1][3]).toBe(actor);
+  expect(insertUserActionLog).toHaveBeenCalledWith(expect.objectContaining({ userId: actor }));
+});
+
+it('rejects missing principal and cross-site access before workflow or credit side effects', async () => {
+  (resolveToolRequestPrincipal as jest.Mock).mockResolvedValue(null);
+  expect((await POST(request(payload))).status).toBe(401);
+  (resolveToolRequestPrincipal as jest.Mock).mockResolvedValue({ internal: false, userId: USER, siteId: SITE });
+  (canToolPrincipalAccessSite as jest.Mock).mockResolvedValue(false);
+  expect((await POST(request(payload))).status).toBe(403);
+  expect(start).not.toHaveBeenCalled();
+  expect(insertUserActionLog).not.toHaveBeenCalled();
+  expect(CreditService.validateCredits).not.toHaveBeenCalled();
 });
 
 it('persists the initiating node identity with the trusted user action', async () => {

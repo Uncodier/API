@@ -16,6 +16,14 @@ import { HARNESS_SOURCE_ALLOWLIST } from '@/lib/services/harness-diagnostics/ref
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn(), rpc: jest.fn() } }));
 jest.mock('@/lib/services/harness-diagnostics/support', () => ({ deliverHarnessSupportTicket: jest.fn() }));
 jest.mock('@/lib/services/embeddings-service', () => ({ EmbeddingsService: {} }));
+// Diagnostic execution/repair contracts are independent from screen admission.
+// The real router policy is exercised in router/__tests__/screen-access.test.ts.
+jest.mock('@/app/api/agents/tools/router/screen-access', () => ({
+  ...jest.requireActual('@/app/api/agents/tools/router/screen-access'),
+  assertToolScreenAccess: async () => {},
+  guardToolScreen: (tool: unknown) => tool,
+  loadToolScreenAccess: async () => ({ isAdmin: true, blockedScreens: [] }),
+}));
 
 const site = '00000000-0000-4000-8000-000000000001';
 const instance = '00000000-0000-4000-8000-000000000002';

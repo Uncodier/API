@@ -13,6 +13,9 @@ class OwnershipError extends Error {
   }
 }
 const dependencies = {
+  // Screen admission is exercised in single-turn-diagnostic-context; this suite
+  // halts at lease ownership before tool construction.
+  '@/app/api/agents/tools/router/screen-access': {},
   '@/lib/services/ai/openrouter-chat-request': { describeOpenRouterFailure },
   '@/lib/services/cron-audit-log': { logCronInfrastructureEvent: jest.fn() },
   '@/lib/services/billing/credit-exhaustion-message': { isInsufficientCreditsError },

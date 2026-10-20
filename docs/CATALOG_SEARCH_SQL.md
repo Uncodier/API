@@ -1,6 +1,6 @@
 # Shared catalog search: SQL contract
 
-Migrations `20261020010000`–`20261020010500` add an index and durable
+Migrations `20261020010000`–`20261020010600` add an index and durable
 embedding outbox without modifying original catalog rows. Apply in order through
 the normal reviewed deployment process. **Nothing has been applied remotely.**
 Failed installations of 10300/10400 should retry their corrected files. Already
@@ -9,6 +9,10 @@ function while preserving its owner, grants, security mode and fixed search path
 Word similarity is compared explicitly against 0.5, not through a session-dependent
 operator. HNSW uses the deployment's configured/default search breadth. No parameter
 SET grants or elevated SQL role are requested.
+Migration 10600 raises only the installed candidate RPC guard from 200 to 201;
+it checks the expected guard and preserves signature, owner, ACLs, security mode,
+search path and retrieval body. Apply it before deploying the overflow-aware API.
+No applied migration is edited and no remote migration is run by local validation.
 
 ## Prerequisites and ownership
 
@@ -130,7 +134,8 @@ p_min_similarity double precision DEFAULT 0.35)` returns
 `(id uuid, site_id uuid, score double precision, exact_match boolean)`.
 
 - Only marketplace permits a NULL site. Query is at most 1,000 characters; blank
-  query returns no candidates. Candidate limit is 1–200. Mode is `text` or `semantic`.
+  query returns no candidates. Candidate limit is 1–201 after 10600; existing callers
+  requesting 200 retain the same SQL results. Mode is `text` or `semantic`.
 - Text combines exact SKU/name, weighted `simple` FTS, **literal escaped** substring
   and pg_trgm word similarity. Exact matches sort first. Text score and semantic
   similarity are distinct scales: callers should fuse by rank, not sum raw scores.
@@ -138,7 +143,13 @@ p_min_similarity double precision DEFAULT 0.35)` returns
   **`openai/text-embedding-3-small`**. Only that exact model and a current source hash
   are eligible. Similarity threshold is finite 0–1; include it in cache keys if changed.
   Inner distance-only ordering permits HNSW and oversamples at most 800 eligible
-  candidates; outer ordering is deterministic and returns at most 200.
+  candidates; outer ordering is deterministic and returns at most the requested
+  limit (now up to 201). The API fuses unique eligible rows before returning at most
+  200 IDs, emitting `candidate_window_truncated=true` only with more than 200 real
+  live-eligible retrieval IDs. Exactly 200 and overlapping retriever rows are not proof.
+  This metadata describes the retrieved window, not an exact semantic catalog total.
+  In particular HNSW filtered recall remains subject to the deployment checks below;
+  no bounded ANN probe can prove exhaustive completeness of all cosine matches.
 - Allowlisted filter keys: `kind`, `digital_subtype`, `category_id`, `parent_id`,
   `status`, `availability_status`, `currency`, `is_reservation`, `is_purchasable`,
   `is_recurring`, `is_pos_available`, `is_marketplace_listed`. Unknown keys/types
@@ -203,7 +214,7 @@ node --test __tests__/catalog/catalog-search-sql.test.mjs __tests__/catalog/cata
 node --test __tests__/catalog/catalog-search-postgres.test.mjs
 ```
 
-The suite executes all six migrations in ephemeral PGlite with real SQL, FTS and
+The suite executes all seven migrations in ephemeral PGlite with real SQL, FTS and
 **real pg_trgm**. PGlite here lacks pgvector: the harness substitutes vector types
 with `double precision[]`, supplies SQL cosine distance/negative-dot/array dimension
 functions, and omits vector extension creation and HNSW creation. No eligibility,
@@ -215,6 +226,13 @@ lease fencing/ABA/stale hashes/models, retry exhaustion, cursor repair, cascade
 cleanup and transactional rollback, 3,000-byte Unicode names, 5,000-character lexical
 fields, ambiguous semantic-vs-lexical changes, variant SKU policy and revision late
 visibility. **PGlite does not validate multi-connection races.**
+The scale suite also reconstructs a previously installed 200-limit RPC, validates
+the forward 10600 repair with identical ACLs/ownership/security, rejects limits over
+201, and retrieves 199/200/201 distinct eligible text and semantic candidates.
+The 1,500-row fixture proves a real 201st text candidate exists while the unchanged
+200-row request remains the prefix. API Jest tests cover unique fusion overlap,
+visibility filtering, bounded 402-ID rechecks, pinned cache/snapshot metadata,
+overflow-only identity changes and optional legacy snapshot/result types.
 
 The real PostgreSQL test creates and tears down its own disposable local Unix-socket
 cluster, ignoring connection environment variables and never connecting to an

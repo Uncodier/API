@@ -25,10 +25,11 @@ describe('catalog search HTTP boundary', () => {
     expect(mockSearch).not.toHaveBeenCalled();
   });
   it('applies admission and returns non-HTTP-cacheable results', async () => {
-    mockSearch.mockResolvedValue({ success: true, items: [] });
+    mockSearch.mockResolvedValue({ success: true, items: [], candidate_window_truncated: false });
     const response = await POST(request({ query: 'shoe', channel: 'catalog', site_id: site }));
     expect(response.status).toBe(200);
     expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(await response.json()).toHaveProperty('candidate_window_truncated', false);
     expect(mockLimit).toHaveBeenCalled();
     expect(mockSearch).toHaveBeenCalledWith(expect.objectContaining({ limit: 20, offset: 0 }), { scope: 'site' });
   });

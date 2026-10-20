@@ -140,7 +140,7 @@ test('channel/site eligibility, parent fencing, archival overrides and null/vari
 });
 
 test('invalid scope, bounds, mode, filter keys/types and malformed vectors fail closed', async () => {
-  for (const options of [{ site: null }, { channel: 'bad' }, { limit: 201 }, { limit: 0 }, { mode: 'bad' },
+  for (const options of [{ site: null }, { channel: 'bad' }, { limit: 202 }, { limit: 0 }, { mode: 'bad' },
     { filters: { metadata: 'private' } }, { filters: { status: ['active'] } }, { filters: { is_purchasable: 'true' } },
     { filters: { category_id: 'invalid' } }, { filters: { currency: 'usd' } },
     { minSimilarity: -1 }, { minSimilarity: 2 }, { minSimilarity: null },

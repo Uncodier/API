@@ -41,4 +41,25 @@ describe('OpenRouter embeddings', () => {
     await expect(EmbeddingsService.generateEmbeddings('one')).rejects.toThrow('Quota exceeded');
     expect(create).toHaveBeenCalledTimes(1);
   });
+
+  it.each(['text-embedding-3-small', 'openai/text-embedding-3-small', ' text-embedding-3-small '])(
+    'canonicalizes the provider model alias %s without changing vectors or usage', async model => {
+      const vector = Array(1536).fill(.1);
+      const usage = { prompt_tokens: 2, total_tokens: 2 };
+      create.mockResolvedValue({ model, data: [{ index: 0, embedding: vector }], usage });
+      expect(await EmbeddingsService.generateEmbeddings('catalog diagnostic')).toEqual({
+        model: 'openai/text-embedding-3-small', embeddings: [vector], usage,
+      });
+      expect(create).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(['text-embedding-3-large', 'another-provider/text-embedding-3-small'])(
+    'keeps a genuinely different returned model %s distinguishable for callers', async model => {
+      create.mockResolvedValue({ model, data: [{ index: 0, embedding: Array(1536).fill(.1) }] });
+      const result = await EmbeddingsService.generateEmbeddings('catalog diagnostic');
+      expect(result.model).not.toBe('openai/text-embedding-3-small');
+      expect(result.model).toBe(model.includes('/') ? model : `openai/${model}`);
+    },
+  );
 });

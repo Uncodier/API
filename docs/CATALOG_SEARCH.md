@@ -14,7 +14,7 @@ POS local snapshots remain available without the API or an embedding provider.
 
 ## Database rollout
 
-Apply the six migrations in order, after inspecting the destination:
+Apply the seven migrations in order, after inspecting the destination:
 
 1. `20261020010000_catalog_search_documents.sql`
 2. `20261020010100_catalog_search_refresh.sql`
@@ -22,6 +22,7 @@ Apply the six migrations in order, after inspecting the destination:
 4. `20261020010300_catalog_search_candidates.sql`
 5. `20261020010400_catalog_search_repairs.sql`
 6. `20261020010500_catalog_search_parameter_permissions.sql`
+7. `20261020010600_catalog_search_overflow_probe.sql`
 
 The fourth and fifth files also omit extension parameter SET clauses so failed
 installations can retry them using the normal Supabase migration role. The sixth
@@ -34,6 +35,9 @@ starting a backfill with this deployment.
 If the fourth failed inside its transaction, roll back any still-aborted SQL
 session and rerun the corrected fourth, then fifth and sixth; do not replay 1–3.
 The explicit word-similarity cutoff remains 0.5 regardless of session settings.
+The seventh permits a bounded 201-row retriever probe; it preserves the installed
+function's predicates, owner, grants and security settings. Apply it before deploying
+the overflow-aware API: older SQL rejects the API's new `p_limit=201` request.
 HNSW uses deployment defaults; tune only after verifying the installed extension
 and permitted settings. No GRANT SET ON PARAMETER or superuser is required here.
 
@@ -116,13 +120,27 @@ alone are not accepted. Request fields:
   returns 409 so consumers restart instead of silently mixing candidate orders.
 
 Results contain IDs/site IDs, `count`, `count_kind: "candidate_window"`, `has_more`,
-`mode`, `degraded` and `search_id`. The bounded fused window has at most 200 candidates:
+`candidate_window_truncated`, `mode`, `degraded` and `search_id`.
+`candidate_window_truncated` is an optional boolean in the compatibility contract;
+new responses always emit it. It is true only when the bounded, deduplicated,
+live-eligible retrieval union contains more than 200 IDs. Exactly 200 is **not**
+overflow evidence. `has_more` still means another page within this window, not a
+larger catalog. Legacy responses/snapshots without the field are interpreted as false.
+The bounded fused window has at most 200 candidates:
 **count is not an exact total of semantic matches**. Blank-query browsing stays in
 existing database-paginated listing paths and does not generate query embeddings.
 
 Exact alphanumeric codes containing digits use textual search without a provider
 call. Other queries retrieve lexical and semantic candidates concurrently when
 enabled. Reciprocal Rank Fusion combines positions and prioritizes exact matches.
+Each retriever requests at most 201 rows. Fusion deduplicates before capping; the
+API live-checks all fused IDs in batches of at most 400 (at most 402 IDs total),
+then keeps the first 200 eligible IDs. Overlapping lexical/semantic rows do not
+inflate overflow. The extra row is evidence, not a returned 201st candidate.
+No full-table count or second retrieval scan is needed. An offset/existence probe
+cannot be expressed through the old capped RPC; a separate count RPC would duplicate
+eligibility/retrieval logic and extra database work. The narrow forward limit repair
+reuses both existing retrieval plans and leaves the semantic scan ceiling at 800.
 Semantic cosine similarity has an initial 0.35 floor; this is a calibration starting
 point, not a probability or a measured quality guarantee. Search prompt policies
 preserve constraints and negations rather than deleting intent into 1–2 keywords.
@@ -136,6 +154,10 @@ preserve constraints and negations rather than deleting intent into 1–2 keywor
 - Candidate windows: 45-second TTL with jitter; empty windows 8 seconds. Keys include
   authorized scope, site, channel, filters, query, catalog/index revision, model,
   similarity threshold and search version. Prices and complete records are not cached.
+  Overflow-aware keys additionally include the 201-row probe limit, avoiding reuse
+  of older incomplete windows without changing existing snapshot bindings. The
+  cache retains the bounded pre-cap fusion and evidence; fresh requests still
+  live-check eligibility before computing their final signal.
 - Live revisions are read through `catalog_search_revision`, an opaque count+max
   fingerprint over committed append-only events. A sequence alone is not commit
   ordered. A change during retrieval prevents candidate-cache writes but does not
@@ -143,6 +165,10 @@ preserve constraints and negations rather than deleting intent into 1–2 keywor
   Cache hits and continuations still recheck current eligible IDs. Snapshots bind
   tenant/principal, query, filters and channel; Redis supports cross-instance
   continuity, with a bounded local fallback. Missing storage never causes re-ranking.
+  Snapshots retain only the returned window (at most 200) and pin its original
+  overflow boolean. Continuations do not re-probe or infer overflow from their count.
+  Snapshot identity includes the effective boolean, so otherwise identical windows
+  with different overflow evidence cannot overwrite one another's metadata.
   This is not a transactionally frozen checkout snapshot.
 - Process-local single-flight bounds concurrent identical work. Short owner-token
   Redis locks suppress duplicate query-embedding calls across servers. Lock

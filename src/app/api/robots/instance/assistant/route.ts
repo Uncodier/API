@@ -12,6 +12,7 @@ import { approvedCommunityImport, assistantSkillSelectionSchema, resolveAssistan
 import { canAccessSite } from '@/lib/security/site-access';
 import { isSiteSkillManager } from '@/lib/services/site-skill-access';
 import { isNodeSpecificContext, NODE_CONTEXT_REQUIRES_NODE, NODE_CONTEXT_REQUIRES_NODE_MESSAGE } from './node-context-boundary';
+import { canToolPrincipalAccessSite, resolveToolRequestPrincipal } from '@/lib/security/tool-request-principal';
 
 // ------------------------------------------------------------------------------------
 // POST /api/robots/instance/assistant
@@ -39,6 +40,8 @@ const AssistantSchema = z.object({
 export async function POST(request: NextRequest) {
   let failureContext: { instanceId: string; siteId: string; userId?: string | null; userMessageLogId?: string } | undefined;
   try {
+    const principal = await resolveToolRequestPrincipal(request);
+    if (!principal) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     const rawBody = await request.json();
     // Do not log request payload: it can contain private context and prompts.
     
@@ -62,6 +65,9 @@ export async function POST(request: NextRequest) {
 
     // Validate credits PRE-FLIGHT before starting any workflow
     const site_id_for_validation = parsedBody.site_id || (parsedBody.instance_id ? (await supabaseAdmin.from('remote_instances').select('site_id').eq('id', parsedBody.instance_id).single()).data?.site_id : null);
+    if (site_id_for_validation && !await canToolPrincipalAccessSite(principal, site_id_for_validation)) {
+      return NextResponse.json({ error: 'Site access denied' }, { status: 403 });
+    }
     
     if (site_id_for_validation) {
       const hasCredits = await CreditService.validateCredits(site_id_for_validation, 0.001);
@@ -100,8 +106,7 @@ export async function POST(request: NextRequest) {
     }
     const selectionSiteId = providedSiteId || site_id_for_validation;
     if (!selectionSiteId) return NextResponse.json({ error: 'site_id is required' }, { status: 400 });
-    const verifiedUserId = request.headers.get('x-auth-validated') === 'true'
-      ? request.headers.get('x-auth-user-id') : null;
+    const verifiedUserId = principal.userId;
     const requestedImport = approvedCommunityImport(message);
     const trustedImportUserId = verifiedUserId && z.string().uuid().safeParse(verifiedUserId).success
       ? verifiedUserId : null;
@@ -142,7 +147,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Site not found' }, { status: 404 });
       }
 
-      const userId = providedUserId || site.user_id;
+      const userId = principal.internal ? providedUserId || site.user_id : principal.userId!;
 
       // Create uninstantiated instance
       const { data: newInstance, error: instanceError } = await supabaseAdmin
@@ -218,7 +223,7 @@ export async function POST(request: NextRequest) {
     }
 
     const site_id = providedSiteId || instance.site_id;
-    const user_id = providedUserId || instance.user_id;
+    const user_id = principal.internal ? providedUserId || instance.user_id : principal.userId!;
     failureContext = { instanceId: providedInstanceId, siteId: site_id, userId: user_id };
 
     const userAction = await withRetries(() => insertUserActionLog({

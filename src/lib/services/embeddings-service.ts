@@ -42,7 +42,10 @@ export class EmbeddingsService {
     return {
       embeddings: ordered.map((item) => item.embedding),
       usage: response.usage,
-      model: response.model || model,
+      // OpenRouter may return the vendor model without its routing prefix.
+      // Canonicalize the actual response, not the requested model: callers still
+      // reject genuinely different embedding spaces before storage or caching.
+      model: resolveOpenRouterModel(response.model?.trim() || model),
     };
   }
 
