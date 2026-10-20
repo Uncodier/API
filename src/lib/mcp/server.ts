@@ -12,6 +12,7 @@ import {
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { shouldUseRemoteApi } from '@/lib/mcp/remote-client';
+import { DEFAULT_MCP_INSTANCE_ID, mcpContextSchema } from '@/lib/mcp/context';
 
 /**
  * Levenshtein distance between two strings (case-insensitive).
@@ -293,9 +294,14 @@ export function getInputSchema(tool: {
 export function createMcpServer(
   siteId: string,
   userId: string | undefined,
-  instanceId: string,
+  instanceId: string = DEFAULT_MCP_INSTANCE_ID,
   customTools: any[] = []
 ) {
+  const context = mcpContextSchema.safeParse({ siteId, instanceId });
+  if (!context.success) {
+    throw new Error('Invalid MCP context: siteId must be a UUID; instanceId must be a UUID or "default" (no instance history).');
+  }
+  ({ siteId, instanceId } = context.data);
   const tools = getAssistantTools(siteId, userId, instanceId, customTools);
 
   const server = new Server(

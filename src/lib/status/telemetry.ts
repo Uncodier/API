@@ -53,8 +53,9 @@ export async function getLatestTelemetry(
  * This should be called from the actual application pathways 
  * (e.g. webhooks, api auth checks, AI calls).
  * 
- * It's recommended to call this without `await` to avoid blocking the main request path:
- * `recordTelemetry('api_auth', 'up', 'Valid API key', 15).catch(console.error);`
+ * In middleware, register the returned promise with NextFetchEvent.waitUntil().
+ * In Route Handlers, use next/server after() or await it before returning.
+ * An unregistered background promise may be interrupted after the response.
  */
 export async function recordTelemetry(
   systemKey: string,
@@ -68,6 +69,7 @@ export async function recordTelemetry(
     const claim = await claimKey(
       `telemetry:sample:${fingerprint}`,
       60,
+      'telemetry-sample',
     );
     if (claim.state !== 'acquired') return;
 

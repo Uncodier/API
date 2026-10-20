@@ -1,4 +1,15 @@
 import OpenAI from 'openai';
+import type { Fetch } from 'openai/core';
+
+export class OpenRouterConfigurationError extends Error {
+  constructor() { super('OpenRouter is not configured: set OPENROUTER_API_KEY'); }
+}
+
+// SDK v4 defaults to node-fetch v2 in Node, which still calls legacy url.parse().
+// Use the platform fetch; never persist authenticated requests or follow redirects.
+const openRouterFetch: typeof fetch = (input, init) => globalThis.fetch(input, {
+  ...init, cache: 'no-store', redirect: 'error',
+});
 
 export const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 export const DEFAULT_OPENROUTER_CHAT_MODEL = 'openai/gpt-6.1-sol';
@@ -44,7 +55,7 @@ export function createOpenRouterClient(options: OpenRouterClientOptions = {}): O
   }
   const env = options.env ?? process.env;
   const apiKey = (options.apiKey !== undefined ? options.apiKey : env.OPENROUTER_API_KEY)?.trim();
-  if (!apiKey) throw new Error('OpenRouter is not configured: set OPENROUTER_API_KEY');
+  if (!apiKey) throw new OpenRouterConfigurationError();
   const headers: Record<string, string> = {};
   if (env.OPENROUTER_APP_URL?.trim()) headers['HTTP-Referer'] = env.OPENROUTER_APP_URL.trim();
   if (env.OPENROUTER_APP_NAME?.trim()) headers['X-OpenRouter-Title'] = env.OPENROUTER_APP_NAME.trim();
@@ -52,6 +63,8 @@ export function createOpenRouterClient(options: OpenRouterClientOptions = {}): O
     apiKey,
     baseURL: OPENROUTER_BASE_URL,
     defaultHeaders: headers,
+    // SDK v4 declares node-fetch-specific types; JSON/SSE use the Web fetch contract.
+    fetch: openRouterFetch as unknown as Fetch,
     timeout: options.timeout ?? 240_000,
     // Chat admission retries live in openrouter-chat-request, outside stream/tool
     // execution. Disable SDK retries to avoid multiplying attempts or replaying timeouts.

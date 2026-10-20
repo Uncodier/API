@@ -22,6 +22,7 @@ describe('OpenRouter configuration', () => {
     } });
     expect(OpenAI).toHaveBeenCalledWith({
       apiKey: key, baseURL: OPENROUTER_BASE_URL, timeout: 240_000, maxRetries: 0,
+      fetch: expect.any(Function),
       defaultHeaders: { 'HTTP-Referer': 'https://example.invalid', 'X-OpenRouter-Title': 'Offline test' },
     });
   });

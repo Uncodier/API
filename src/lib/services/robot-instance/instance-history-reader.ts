@@ -275,9 +275,14 @@ function invalidArguments(error: z.ZodError, rawArgs: unknown): Error {
   return new Error(`Invalid instance_history arguments: ${problems.join('; ') || 'Invalid value or format'}`);
 }
 
+/** Syntax only, not authorization. Catalog-only contexts have no history scope. */
+export function hasInstanceHistoryScope(siteId: unknown, instanceId: unknown): boolean {
+  return uuid.safeParse(siteId).success && uuid.safeParse(instanceId).success;
+}
+
 /** Server-side only. The caller must supply an already-authorized scope. */
 export function createInstanceHistoryReader(siteId: string, instanceId: string) {
-  if (!uuid.safeParse(siteId).success || !uuid.safeParse(instanceId).success) {
+  if (!hasInstanceHistoryScope(siteId, instanceId)) {
     throw new Error('instance_history requires trusted siteId and instanceId UUIDs.');
   }
   return async (rawArgs: unknown): Promise<InstanceHistoryResult> => {

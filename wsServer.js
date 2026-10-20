@@ -3,11 +3,11 @@
 // Local WebSocket proxy; protected chat is unavailable without the real database.
 import { config } from 'dotenv';
 import { createServer } from 'node:http';
-import { parse } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { createClient } from '@supabase/supabase-js';
 import { authorizeWebSocketUpgrade, selectVisitorSessionProtocol } from './wsServerAuth.cjs';
 import { handleConnection } from './wsServerConnection.cjs';
+import { parseWebSocketRequestUrl } from './wsServerUrl.cjs';
 
 config({ path: '.env.local' });
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -22,7 +22,12 @@ wss.on('connection', (ws, _request, params) => {
 });
 
 server.on('upgrade', (request, socket, head) => {
-  const { pathname, query } = parse(request.url, true);
+  const parsed = parseWebSocketRequestUrl(request.url);
+  if (!parsed) {
+    socket.destroy();
+    return;
+  }
+  const { pathname, query } = parsed;
   if (pathname !== '/ws' && pathname !== '/api/agents/chat/websocket') {
     socket.destroy();
     return;

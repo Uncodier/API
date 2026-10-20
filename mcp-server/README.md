@@ -9,9 +9,9 @@ MCP (Model Context Protocol) server that exposes the same agent tools used by th
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `MCP_SITE_ID` | Yes (for both) | — | Site ID used to build the tool list (same context as the assistant). |
+| `MCP_SITE_ID` | Yes (for both) | — | Valid site UUID used to build the tool list (same context as the assistant). |
 | `MCP_USER_ID` | No | — | User ID for tools that require it. |
-| `MCP_INSTANCE_ID` | No | `default` | Instance ID for tools that require it. |
+| `MCP_INSTANCE_ID` | No | `default` | Valid instance UUID for tools that require it. Without one, `instance_history` is omitted; `default` is a compatibility sentinel, not a real instance. |
 | `API_URL` | No | `http://localhost:3000` | Base URL for the API. Sets `NEXT_PUBLIC_API_SERVER_URL`, `NEXT_PUBLIC_API_URL`, and `NEXT_PUBLIC_APP_URL` for tools that make API calls. |
 
 HTTP auth uses the **same API keys as the rest of the API** (middleware): `SERVICE_API_KEY` (env) or keys stored in the DB (`api_keys` table, validated via `ApiKeyService`). No separate MCP-specific keys.
@@ -32,6 +32,17 @@ If you deploy your API (e.g. on Vercel) and want others to use your tools over t
 4. Body: JSON-RPC 2.0 (e.g. `tools/list` or `tools/call`). Response is JSON-RPC.
 
 Missing or invalid key returns 401.
+
+Context headers `x-mcp-site-id` and `x-mcp-instance-id` override their environment
+defaults. Malformed header IDs return 400; missing/invalid server configuration
+returns 503, without constructing the tool catalog. Set a real instance UUID to
+enable `instance_history`; no UUID is generated and no instance is auto-selected.
+UUID validation is not authorization and does not change API-key admission.
+
+Redis REST timeouts are separate from context errors. The adapter returns an
+unavailable result; production rate-limit admission remains fail-closed (503).
+See [Redis timeout diagnostics](../docs/REDIS_REST_TIMEOUT_DIAGNOSTICS.md) for
+operation/stage attribution and authentication telemetry lifecycle handling.
 
 **Example (curl):**
 

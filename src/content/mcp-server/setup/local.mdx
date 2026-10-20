@@ -21,9 +21,9 @@ npm install
 
 The MCP server requires the following environment variables:
 
-- `MCP_SITE_ID` (required): The ID of your site.
+- `MCP_SITE_ID` (required): A valid UUID for your site.
 - `MCP_USER_ID` (optional): The ID of the user.
-- `MCP_INSTANCE_ID` (optional): The ID of the instance (default: 'default').
+- `MCP_INSTANCE_ID` (optional): A valid instance UUID. The legacy default `'default'` allows connection without a selected instance, but omits `instance_history`. Set a real instance UUID to enable history; no instance is created or selected automatically.
 - `API_URL` (optional): API base URL. Local default is `http://localhost:3001` (`npm run dev` in this repo). Hosted: `https://backend.makinari.com`.
 - `REST_API_KEY` (optional): Required if using a remote API (e.g., Makinari API).
 - `SERVICE_API_KEY` (optional): Required if running the API locally. This should be set in the `.env` file of the API project.

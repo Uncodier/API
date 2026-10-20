@@ -5,10 +5,11 @@
  */
 
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { DEFAULT_MCP_INSTANCE_ID } from '@/lib/mcp/context';
 
 const siteId = process.env.MCP_SITE_ID;
 const userId = process.env.MCP_USER_ID;
-const instanceId = process.env.MCP_INSTANCE_ID ?? 'default';
+const instanceId = process.env.MCP_INSTANCE_ID ?? DEFAULT_MCP_INSTANCE_ID;
 const apiUrl = process.env.API_URL || 'http://localhost:3000';
 
 // Set the API URL for tools that use it (e.g. ImageGenerationService)

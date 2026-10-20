@@ -7,6 +7,7 @@ import { DataFetcher } from '@/lib/agentbase/services/agent/BackgroundServices/D
 import { resolveClientTimezone } from '@/lib/timezone';
 import { getComposioApiKeyForSite } from '@/lib/services/composio-service';
 import { readToolExecutionContext, type ToolExecutionContext } from '@/lib/services/tool-execution-context';
+import { hasInstanceHistoryScope } from '@/lib/services/robot-instance/instance-history-reader';
 
 // Tool imports
 import { generateImageTool } from '@/app/api/agents/tools/generateImage/assistantProtocol';
@@ -410,7 +411,9 @@ export const getAssistantToolDefinitions = (
     requirementBacklogTool(siteId),
     companiesTool(),
     instanceLogsTool(siteId, userId ?? '', instanceId),
-    instanceHistoryTool(siteId, instanceId),
+    // MCP's legacy "default" and schema-only catalogs have no real instance.
+    // Do not construct a reader (or broaden its scope) in those contexts.
+    ...(hasInstanceHistoryScope(siteId, instanceId) ? [instanceHistoryTool(siteId, instanceId)] : []),
     transactionsTool(siteId, userId ?? ''),
     createProjectTool(userId ?? ''),
     audioToTextTool(siteId),

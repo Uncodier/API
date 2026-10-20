@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import type { NextFetchEvent } from 'next/server';
 import { getAllowedHeaders, getAllowedOrigins } from '../../cors.config.js';
 import { apiKeyAuth } from './apiKeyAuth';
 import { enforceRequestRateLimit } from '@/lib/security/request-rate-limit';
@@ -236,7 +237,10 @@ async function limitBearerValidation(
   });
 }
 
-export default async function requestMiddleware(request: NextRequest) {
+export default async function requestMiddleware(
+  request: NextRequest,
+  event?: Pick<NextFetchEvent, 'waitUntil'>,
+) {
   const pathname = request.nextUrl.pathname;
   const method = request.method.toUpperCase();
   const origin = request.headers.get('origin');
@@ -301,7 +305,7 @@ export default async function requestMiddleware(request: NextRequest) {
       });
     }
     if (await isServiceApiKeyCredential(extractApiKeyCredential(request))) {
-      const authenticated = await apiKeyAuth(request);
+      const authenticated = await apiKeyAuth(request, event);
       if (!authenticated.ok) return withCors(authenticated, origin);
       const limited = await limitServiceExpensive(request);
       if (limited) return withCors(limited, origin);
@@ -451,7 +455,7 @@ export default async function requestMiddleware(request: NextRequest) {
     if (request.headers.get('x-api-key') || bearer) {
       const authLimited = await limitApiKeyValidation(request);
       if (authLimited) return withCors(authLimited, origin);
-      return withCors(await apiKeyAuth(request), origin);
+      return withCors(await apiKeyAuth(request, event), origin);
     }
     return withCors(next(), origin);
   }
@@ -488,6 +492,6 @@ export default async function requestMiddleware(request: NextRequest) {
 
   const authLimited = await limitApiKeyValidation(request);
   if (authLimited) return withCors(authLimited, origin);
-  const apiKeyResponse = await apiKeyAuth(request);
+  const apiKeyResponse = await apiKeyAuth(request, event);
   return withCors(apiKeyResponse, origin);
 }

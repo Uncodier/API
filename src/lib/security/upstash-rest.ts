@@ -24,7 +24,22 @@ interface UpstashResponse<T> {
   error?: string;
 }
 
-let lastErrorLogAt = 0;
+const COMMAND_TIMEOUT_MS = 2_000;
+const ERROR_LOG_INTERVAL_MS = 60_000;
+
+type RedisOperation =
+  | 'rate-limit'
+  | 'cache-get'
+  | 'cache-set'
+  | 'key-claim'
+  | 'telemetry-sample'
+  | 'lock-acquire'
+  | 'lock-release'
+  | 'key-delete';
+type RedisFailure = 'timeout' | 'aborted' | 'http' | 'redis' | 'invalid-response' | 'network';
+
+// Only fixed operation/failure labels enter this bounded map; never Redis keys.
+const errorLogWindows = new Map<string, { loggedAt: number; suppressed: number }>();
 
 export interface RateLimitDecision {
   configured: boolean;
@@ -92,7 +107,7 @@ function getConfig(): UpstashConfig | null {
   }
 }
 
-async function command<T>(args: Array<string | number>): Promise<{
+async function command<T>(args: Array<string | number>, operation: RedisOperation): Promise<{
   configured: boolean;
   available: boolean;
   result: T | null;
@@ -102,7 +117,13 @@ async function command<T>(args: Array<string | number>): Promise<{
     return { configured: false, available: false, result: null };
   }
 
+  const startedAt = Date.now();
+  let signal: AbortSignal | undefined;
+  let failure: RedisFailure = 'network';
+  let stage: 'fetch' | 'response' = 'fetch';
+  let httpStatus: number | null = null;
   try {
+    signal = AbortSignal.timeout(COMMAND_TIMEOUT_MS);
     const response = await fetch(config.url, {
       method: 'POST',
       headers: {
@@ -111,24 +132,57 @@ async function command<T>(args: Array<string | number>): Promise<{
       },
       body: JSON.stringify(args),
       cache: 'no-store',
-      signal: AbortSignal.timeout(2_000),
+      signal,
     });
+    stage = 'response';
+    httpStatus = response.status;
     if (!response.ok) {
-      throw new Error(`Upstash returned ${response.status}`);
+      failure = 'http';
+      throw new Error('Redis REST HTTP failure');
     }
+    failure = 'invalid-response';
     const payload = await response.json() as UpstashResponse<T>;
-    if (payload.error) throw new Error(payload.error);
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      throw new Error('Redis REST invalid response');
+    }
+    if (payload.error) {
+      failure = 'redis';
+      throw new Error('Redis REST command rejected');
+    }
     if (!Object.prototype.hasOwnProperty.call(payload, 'result')) {
-      throw new Error('Upstash returned an invalid response');
+      throw new Error('Redis REST invalid response');
     }
     return { configured: true, available: true, result: payload.result ?? null };
   } catch (error) {
-    if (Date.now() - lastErrorLogAt >= 60_000) {
-      lastErrorLogAt = Date.now();
-      console.error(
-        '[Upstash REST] Command failed:',
-        error instanceof Error ? error.message : error,
-      );
+    // Runtime exceptions and upstream bodies can contain credentials or payloads.
+    // Classify known error names, but never log raw errors, URLs or command args.
+    // DOMException can cross runtime/VM boundaries without instanceof Error.
+    const errorName = error && typeof error === 'object' && 'name' in error ? error.name : undefined;
+    if (errorName === 'TimeoutError' || (signal?.aborted && signal.reason?.name === 'TimeoutError')) {
+      failure = 'timeout';
+    } else if (errorName === 'AbortError' || signal?.aborted) {
+      failure = 'aborted';
+    } else if (errorName === 'TypeError' && stage === 'response') {
+      // fetch body transport errors (for example a reset connection) are not
+      // JSON syntax errors, even when the endpoint returned HTTP 200 headers.
+      failure = 'network';
+    }
+    const now = Date.now();
+    const logKey = `${operation}:${failure}`;
+    const window = errorLogWindows.get(logKey);
+    if (!window || now - window.loggedAt >= ERROR_LOG_INTERVAL_MS) {
+      errorLogWindows.set(logKey, { loggedAt: now, suppressed: 0 });
+      console.error('[Upstash REST] Command failed:', {
+        operation,
+        failure,
+        stage,
+        elapsed_ms: Math.max(0, now - startedAt),
+        timeout_ms: COMMAND_TIMEOUT_MS,
+        http_status: httpStatus ?? null,
+        suppressed_since_last_log: window?.suppressed ?? 0,
+      });
+    } else {
+      window.suppressed += 1;
     }
     return { configured: true, available: false, result: null };
   }
@@ -153,7 +207,7 @@ export async function checkRateLimit(
     1,
     key,
     windowSeconds,
-  ]);
+  ], 'rate-limit');
   if (!available || !result) {
     return {
       configured,
@@ -178,7 +232,7 @@ export async function checkRateLimit(
 }
 
 export async function getCachedJson<T>(key: string): Promise<T | null> {
-  const { result } = await command<string>(['GET', key]);
+  const { result } = await command<string>(['GET', key], 'cache-get');
   if (!result) return null;
   try {
     return JSON.parse(result) as T;
@@ -198,13 +252,14 @@ export async function setCachedJson(
     JSON.stringify(value),
     'EX',
     ttlSeconds,
-  ]);
+  ], 'cache-set');
   return !configured || result === 'OK';
 }
 
 export async function claimKey(
   key: string,
   ttlSeconds: number,
+  operation: 'key-claim' | 'telemetry-sample' = 'key-claim',
 ): Promise<KeyClaimResult> {
   const { available, configured, result } = await command<string>([
     'SET',
@@ -213,7 +268,7 @@ export async function claimKey(
     'EX',
     ttlSeconds,
     'NX',
-  ]);
+  ], operation);
   if (!configured) return { state: 'unconfigured' };
   if (!available) return { state: 'unavailable' };
   return result === 'OK'
@@ -233,7 +288,7 @@ export async function acquireLock(
     'EX',
     ttlSeconds,
     'NX',
-  ]);
+  ], 'lock-acquire');
   if (!configured) return { state: 'unconfigured' };
   if (!available) return { state: 'unavailable' };
   return result === 'OK'
@@ -251,7 +306,7 @@ export async function releaseLock(
     1,
     key,
     token,
-  ]);
+  ], 'lock-release');
   if (!configured) return { state: 'unconfigured' };
   if (!available) return { state: 'unavailable' };
   return Number(result) === 1
@@ -260,5 +315,5 @@ export async function releaseLock(
 }
 
 export async function deleteKey(key: string): Promise<void> {
-  await command<number>(['DEL', key]);
+  await command<number>(['DEL', key], 'key-delete');
 }

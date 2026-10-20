@@ -1,11 +1,13 @@
 import { z } from 'zod';
 import { candidateSchema, CATALOG_CANDIDATE_LIMIT } from './contract';
 import { catalogCacheKey, readCatalogCache, writeCatalogCache } from './cache';
+import { catalogDegradationReasonSchema } from './semantic-errors';
 
 export const snapshotSchema = z.object({
   binding: z.string(), expiresAt: z.number().int(),
   candidates: z.array(candidateSchema).max(CATALOG_CANDIDATE_LIMIT),
   mode: z.enum(['text', 'hybrid']), degraded: z.boolean(),
+  degradationReason: catalogDegradationReasonSchema.optional(),
 });
 export type CatalogSnapshot = z.infer<typeof snapshotSchema>;
 export const SNAPSHOT_LIFETIME_MS = 120_000;

@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createMcpServer } from '@/lib/mcp/server';
 import { validateMcpApiKey } from '@/lib/mcp/auth';
+import { mcpContextSchema } from '@/lib/mcp/context';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 
 export const maxDuration = 60;
@@ -19,16 +20,25 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const siteId = request.headers.get('x-mcp-site-id') || process.env.MCP_SITE_ID;
-  if (!siteId) {
+  const siteHeader = request.headers.get('x-mcp-site-id');
+  const instanceHeader = request.headers.get('x-mcp-instance-id');
+  const context = mcpContextSchema.safeParse({
+    siteId: siteHeader ?? process.env.MCP_SITE_ID,
+    instanceId: instanceHeader ?? process.env.MCP_INSTANCE_ID,
+  });
+  if (!context.success) {
+    const field = context.error.issues[0].path[0];
+    const fromHeader = field === 'siteId' ? siteHeader !== null : instanceHeader !== null;
     return NextResponse.json(
-      { error: 'MCP_SITE_ID is not configured on the server and was not provided in headers.' },
-      { status: 503 }
+      { error: field === 'siteId'
+        ? 'MCP_SITE_ID / x-mcp-site-id must be a valid site UUID.'
+        : 'MCP_INSTANCE_ID / x-mcp-instance-id must be a valid instance UUID or "default" (no instance history).' },
+      { status: fromHeader ? 400 : 503 }
     );
   }
 
+  const { siteId, instanceId } = context.data;
   const userId = request.headers.get('x-mcp-user-id') || process.env.MCP_USER_ID;
-  const instanceId = request.headers.get('x-mcp-instance-id') || (process.env.MCP_INSTANCE_ID ?? 'default');
 
   let parsedBody: unknown;
   try {

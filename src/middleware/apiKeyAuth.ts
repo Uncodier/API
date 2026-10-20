@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import type { NextFetchEvent } from 'next/server';
 import { ApiKeyService } from '@/lib/services/api-keys/ApiKeyService';
 import { recordTelemetry } from '@/lib/status/telemetry';
 import { enforceRequestRateLimit } from '@/lib/security/request-rate-limit';
@@ -43,7 +44,26 @@ export function requiredApiKeyScope(
   return null;
 }
 
-export async function apiKeyAuth(req: NextRequest) {
+async function recordAuthTelemetry(
+  event: Pick<NextFetchEvent, 'waitUntil'> | undefined,
+  ...args: Parameters<typeof recordTelemetry>
+): Promise<void> {
+  const telemetry = Promise.resolve().then(() => recordTelemetry(...args)).catch(() => {
+    console.warn('[API Key Auth] Telemetry failed');
+  });
+  if (event) {
+    try {
+      event.waitUntil(telemetry);
+      return;
+    } catch {
+      console.warn('[API Key Auth] Telemetry lifecycle registration failed');
+    }
+  }
+  // Direct callers without a Next.js lifecycle must not leave work orphaned.
+  await telemetry;
+}
+
+export async function apiKeyAuth(req: NextRequest, event?: Pick<NextFetchEvent, 'waitUntil'>) {
   try {
     // CORS validation and authentication are independent. A browser Origin
     // never grants access to a private API route.
@@ -75,7 +95,7 @@ export async function apiKeyAuth(req: NextRequest) {
         failClosed: true,
       });
       if (limited) return limited;
-      recordTelemetry('api_auth', 'up', 'Service API Key used', 5).catch(console.error);
+      await recordAuthTelemetry(event, 'api_auth', 'up', 'Service API Key used', 5);
       // API key de servicio válida, dar acceso completo
       const serviceKeyData = {
         id: 'service-key',
@@ -100,7 +120,7 @@ export async function apiKeyAuth(req: NextRequest) {
     const latency = Date.now() - startTime;
 
     if (!isValid || !keyData) {
-      recordTelemetry('api_auth', 'up', 'Invalid API key rejected', latency).catch(console.error);
+      await recordAuthTelemetry(event, 'api_auth', 'up', 'Invalid API key rejected', latency);
       return NextResponse.json(
         {
           success: false,
@@ -124,7 +144,7 @@ export async function apiKeyAuth(req: NextRequest) {
     });
     if (principalLimited) return principalLimited;
 
-    recordTelemetry('api_auth', 'up', 'Valid DB API key', latency).catch(console.error);
+    await recordAuthTelemetry(event, 'api_auth', 'up', 'Valid DB API key', latency);
     const requiredScope = requiredApiKeyScope(
       req.nextUrl.pathname,
       req.method.toUpperCase(),
@@ -155,9 +175,9 @@ export async function apiKeyAuth(req: NextRequest) {
         headers: requestHeaders,
       },
     });
-  } catch (error) {
-    console.error('[API Key Auth] Error in API key authentication:', error);
-    recordTelemetry('api_auth', 'down', error instanceof Error ? error.message : 'Unknown error', 0).catch(console.error);
+  } catch {
+    console.error('[API Key Auth] Error in API key authentication');
+    await recordAuthTelemetry(event, 'api_auth', 'down', 'API key authentication failed', 0);
     return NextResponse.json(
       {
         success: false,

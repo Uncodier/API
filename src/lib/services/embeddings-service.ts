@@ -3,6 +3,10 @@ import { createOpenRouterClient, resolveOpenRouterModel } from './ai/openrouter'
 const DEFAULT_MODEL = 'text-embedding-3-small';
 const DEFAULT_DIMENSIONS = 1536;
 
+export class InvalidEmbeddingsResponseError extends Error {
+  constructor() { super('OpenRouter returned invalid or incomplete embeddings'); }
+}
+
 export class EmbeddingsService {
   /**
    * Generates embeddings for a single string or an array of strings.
@@ -32,7 +36,7 @@ export class EmbeddingsService {
       item.index !== index || !Array.isArray(item.embedding)
       || item.embedding.length !== dimensions || !item.embedding.every(Number.isFinite)
     ))) {
-      throw new Error('OpenRouter returned invalid or incomplete embeddings');
+      throw new InvalidEmbeddingsResponseError();
     }
 
     return {

@@ -7,10 +7,12 @@ import { candidateSchema, CATALOG_CANDIDATE_LIMIT, CATALOG_MODEL, CATALOG_SEARCH
   type CatalogCandidate, type CatalogPrincipal, type CatalogSearchInput, type CatalogSearchResult } from './contract';
 import { getCatalogQueryEmbedding } from './query-embedding';
 import { readCatalogSnapshot, saveCatalogSnapshot, SNAPSHOT_LIFETIME_MS } from './snapshots';
+import { catalogDegradationReasonSchema, CatalogSemanticUnavailableError } from './semantic-errors';
 
 const windowSchema = z.object({
   candidates: z.array(candidateSchema).max(CATALOG_CANDIDATE_LIMIT),
   mode: z.enum(['text', 'hybrid']), degraded: z.boolean(),
+  degradationReason: catalogDegradationReasonSchema.optional(),
 });
 type CandidateWindow = z.infer<typeof windowSchema>;
 const visibleSchema = z.array(candidateSchema.pick({ id: true, site_id: true })).max(CATALOG_CANDIDATE_LIMIT);
@@ -38,13 +40,20 @@ function rpcScope(input: CatalogSearchInput) {
 }
 
 async function retrieve(input: CatalogSearchInput, mode: 'text' | 'semantic', embedding?: number[]): Promise<CatalogCandidate[]> {
-  const { data, error } = await supabaseAdmin.rpc('catalog_search_candidates', {
-    ...rpcScope(input), p_query: input.query, p_mode: mode,
-    p_embedding: embedding ? `[${embedding.join(',')}]` : null, p_limit: CATALOG_CANDIDATE_LIMIT,
-    p_min_similarity: CATALOG_MIN_SIMILARITY,
-  }).abortSignal(AbortSignal.timeout(3_000));
-  if (error) throw new Error('Catalog retrieval unavailable');
-  return z.array(candidateSchema).max(CATALOG_CANDIDATE_LIMIT).parse(data || []);
+  const signal = AbortSignal.timeout(3_000);
+  try {
+    const { data, error } = await supabaseAdmin.rpc('catalog_search_candidates', {
+      ...rpcScope(input), p_query: input.query, p_mode: mode,
+      p_embedding: embedding ? `[${embedding.join(',')}]` : null, p_limit: CATALOG_CANDIDATE_LIMIT,
+      p_min_similarity: CATALOG_MIN_SIMILARITY,
+    }).abortSignal(signal);
+    if (error) throw new Error('Catalog retrieval unavailable');
+    return z.array(candidateSchema).max(CATALOG_CANDIDATE_LIMIT).parse(data || []);
+  } catch (error) {
+    if (mode !== 'semantic') throw error;
+    throw new CatalogSemanticUnavailableError(signal.aborted ? 'semantic_retrieval_timeout'
+      : error instanceof z.ZodError ? 'semantic_retrieval_invalid_response' : 'semantic_retrieval_failed');
+  }
 }
 
 async function buildWindow(input: CatalogSearchInput, principal: CatalogPrincipal, semantic: boolean): Promise<CandidateWindow> {
@@ -54,12 +63,14 @@ async function buildWindow(input: CatalogSearchInput, principal: CatalogPrincipa
   const semanticPromise = semantic && !exactCode
     ? getCatalogQueryEmbedding(input.query, principal.scope).then(vector => retrieve(input, 'semantic', vector))
       .then(candidates => ({ candidates, degraded: false }))
-      .catch(() => ({ candidates: [] as CatalogCandidate[], degraded: true }))
+      .catch(error => ({ candidates: [] as CatalogCandidate[], degraded: true,
+        degradationReason: error instanceof CatalogSemanticUnavailableError ? error.reason : 'embedding_failed' as const }))
     : Promise.resolve({ candidates: [] as CatalogCandidate[], degraded: false });
   const [text, vector] = await Promise.all([textPromise, semanticPromise]);
   return {
     candidates: fuseCatalogCandidates(text, vector.candidates),
     mode: semantic && !exactCode && !vector.degraded ? 'hybrid' : 'text', degraded: vector.degraded,
+    ...('degradationReason' in vector ? { degradationReason: vector.degradationReason } : {}),
   };
 }
 
@@ -122,7 +133,8 @@ export async function searchCatalog(rawInput: unknown, principal: CatalogPrincip
   }
   // No query text, vectors, actor IDs, tokens or product contents in logs.
   console.info('[CatalogSearch]', { searchId, channel: input.channel, mode: window.mode,
-    degraded: window.degraded, cacheHit, candidates: current.length });
+    degraded: window.degraded, cacheHit, candidates: current.length,
+    ...(window.degradationReason ? { degradationReason: window.degradationReason } : {}) });
   return {
     success: true, items: current.slice(input.offset, input.offset + input.limit),
     count: current.length, count_kind: 'candidate_window',

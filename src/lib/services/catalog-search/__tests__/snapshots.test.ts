@@ -22,4 +22,12 @@ describe('bounded search snapshots', () => {
     mockRead.mockResolvedValue({ ...snapshot('expired'), expiresAt: Date.now() - 1 });
     expect(await readCatalogSnapshot('three', 'expired')).toBeNull();
   });
+  it('preserves allowlisted fallback reasons when reading a cross-instance snapshot', async () => {
+    mockRead.mockResolvedValue({ ...snapshot('remote'), degradationReason: 'embedding_timeout' });
+    expect(await readCatalogSnapshot('remote', 'remote')).toHaveProperty('degradationReason', 'embedding_timeout');
+  });
+  it('rejects arbitrary fallback reasons from snapshot storage', async () => {
+    mockRead.mockResolvedValue({ ...snapshot('untrusted'), degradationReason: 'upstream raw message' });
+    expect(await readCatalogSnapshot('untrusted', 'untrusted')).toBeNull();
+  });
 });

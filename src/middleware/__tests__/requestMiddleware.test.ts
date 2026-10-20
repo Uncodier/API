@@ -1,9 +1,10 @@
-import { beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import crypto from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 
 const mockApiKeyAuth: any = jest.fn();
 const mockEnforceRequestRateLimit: any = jest.fn();
+const originalServiceCredential = process.env.SERVICE_API_KEY;
 
 jest.unstable_mockModule('../../../cors.config.js', () => ({
   getAllowedHeaders: () => 'Content-Type, Authorization',
@@ -30,6 +31,11 @@ describe('request middleware route classification', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockEnforceRequestRateLimit.mockResolvedValue(null);
+  });
+
+  afterEach(() => {
+    if (originalServiceCredential === undefined) delete process.env.SERVICE_API_KEY;
+    else process.env.SERVICE_API_KEY = originalServiceCredential;
   });
 
   it('keeps only read-only status routes public', () => {
@@ -164,5 +170,21 @@ describe('request middleware route classification', () => {
 
     expect(response.status).toBe(401);
     expect(mockApiKeyAuth).toHaveBeenCalledTimes(1);
+  });
+
+  it.each<[string, boolean]>([
+    ['/api/catalog/index/process', false],
+    ['/api/public/posts', false],
+    ['/api/finder/person_role_search', true],
+  ])('forwards the request lifecycle to API key auth for %s', async (path, service) => {
+    const credential = crypto.randomBytes(32).toString('hex');
+    if (service) process.env.SERVICE_API_KEY = credential;
+    mockApiKeyAuth.mockResolvedValue(NextResponse.next());
+    const request = new NextRequest(`https://api.example.test${path}`, {
+      method: 'POST', headers: { 'x-api-key': credential },
+    });
+    const event = { waitUntil: jest.fn() };
+    expect((await requestMiddleware(request, event)).status).toBe(200);
+    expect(mockApiKeyAuth).toHaveBeenCalledWith(request, event);
   });
 });

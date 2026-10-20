@@ -151,6 +151,33 @@ preserve constraints and negations rather than deleting intent into 1–2 keywor
   back to textual search with `degraded=true` and are not cached as complete results.
   Never silently retry embeddings using a different model/account.
 
+### Safe fallback diagnostics
+
+`[CatalogSearch]` includes an application-owned `degradationReason` when a fresh
+search falls back to text. It is retained in the pagination snapshot, but is not
+added to the public response contract. Old snapshots without a reason remain valid.
+
+- `embedding_timeout`: the existing 1,500 ms provider deadline expired (or an
+  upstream timeout was returned). Measure frequency/latency before changing it.
+- `embedding_not_configured`, `embedding_auth_failed`,
+  `embedding_funding_exhausted`, `embedding_rate_limited`: inspect server-side
+  OpenRouter configuration, permissions, balance or admission limits respectively.
+- `embedding_provider_unavailable`, `embedding_provider_rejected`,
+  `embedding_invalid_response`, `embedding_model_mismatch`, `embedding_failed`:
+  provider/network, request, response validation, model-space or unknown failure.
+- `embedding_lock_contended`: another server is generating this vector; no extra
+  paid call is made. `embedding_circuit_open` means the existing 10-second local
+  cooldown is active after a failure; valid cached vectors can still be served.
+- `semantic_retrieval_timeout`, `semantic_retrieval_failed`,
+  `semantic_retrieval_invalid_response`: the database retrieval deadline, RPC or
+  candidate validation failed after the query vector was obtained.
+
+Logs never include raw upstream errors/messages/bodies/headers, query text,
+credentials, actor identifiers or vectors. `DEP0169` is separate: the central
+OpenRouter client uses platform `fetch` instead of SDK v4's legacy `node-fetch`
+transport, with `cache: 'no-store'` and `redirect: 'error'`. No SDK upgrade or retry
+policy change is required. Other dependencies may still have their own warnings.
+
 ## Temporal/worker API
 
 These POST endpoints verify the raw service credential independently:
