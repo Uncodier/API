@@ -176,6 +176,30 @@ describe('ChannelSendService', () => {
     expect(zavuClient.sendChannelMessage).not.toHaveBeenCalled();
   });
 
+  it('skips a protected manually disabled sender before audio preparation', async () => {
+    mockedSupabase.single.mockResolvedValue({ error: null, data: { channels: { connections: [
+      { id: 'first', type: 'telegram', zavu_sender_id: 'disabled', _license: { manually_disabled: true } },
+      { id: 'second', type: 'telegram', zavu_sender_id: mockSenderId },
+    ] } } });
+    expect((await ChannelSendService.sendMessage({ site_id: mockSiteId, channel: 'telegram', to: mockTo, message: mockMessage })).success).toBe(true);
+    expect(zavuClient.sendChannelMessage).toHaveBeenCalledWith(expect.objectContaining({ senderId: mockSenderId }));
+  });
+
+  it('manual disable after audio preparation stops the pinned provider dispatch', async () => {
+    const connections = [{ id: 'chosen', type: 'telegram', status: 'connected',
+      zavu_sender_id: mockSenderId, license_suspended: false, _license: { manually_disabled: false } }];
+    mockedSupabase.rpc.mockImplementation(() => ({ abortSignal: async () => ({ error: null, data: {
+      effective_plan: 'engine', social_media: [], channels: { connections },
+    } }) }));
+    jest.spyOn(longReplyAudio, 'tryPrepareLongReplyAudio').mockImplementationOnce(async () => {
+      connections[0]._license.manually_disabled = true;
+      return null;
+    });
+    expect(await ChannelSendService.sendMessage({ site_id: mockSiteId, channel: 'telegram', to: mockTo, message: mockMessage }))
+      .toMatchObject({ success: false, status: 403 });
+    expect(zavuClient.sendChannelMessage).not.toHaveBeenCalled();
+  });
+
   it('should successfully send a long message as audio if tryPrepareLongReplyAudio returns an audio URL', async () => {
     (mockedSupabase.single as jest.Mock).mockResolvedValue({
       data: {

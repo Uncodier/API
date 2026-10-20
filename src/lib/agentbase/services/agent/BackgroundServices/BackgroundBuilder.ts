@@ -5,6 +5,7 @@
 
 import { z } from 'zod';
 import { buildDateContextSection } from '@/lib/timezone';
+import { compactConfiguredOfferings } from './compact-offerings';
 
 // Esquema base para direcciones/locaciones (estructura común)
 const BaseLocationSchema = z.object({
@@ -428,17 +429,8 @@ export class BackgroundBuilder {
         }
       }
       
-      // Productos (en una sección separada)
-      if (siteInfo.settings.products) {
-        // Reduced verbosity
-        siteSection += `\n## Products\n${JSON.stringify(siteInfo.settings.products)}\n`;
-      }
-      
-      // Servicios (en una sección separada)
-      if (siteInfo.settings.services) {
-        // Reduced verbosity
-        siteSection += `\n## Services\n${JSON.stringify(siteInfo.settings.services)}\n`;
-      }
+      // Configured names are background, never a full/live catalog or private price data.
+      siteSection += compactConfiguredOfferings(siteInfo.settings.products, siteInfo.settings.services);
       
       // Branding (información de identidad de marca)
       if (siteInfo.settings.branding) {

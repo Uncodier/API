@@ -131,6 +131,24 @@ it('returns per-recipient partial results with distinct keys and does not resend
   expect(sgMail.send).not.toHaveBeenCalled();
 });
 
+it('stops new recipient dispatch after manual disable without replaying accepted recipients', async () => {
+  const fetchMock = global.fetch as jest.Mock;
+  const implementation = fetchMock.getMockImplementation()!;
+  fetchMock.mockImplementation(async (url, init) => {
+    const result = await implementation(url, init);
+    if (url.endsWith('/messages') && init.method === 'POST') connection._license = { manually_disabled: true };
+    return result;
+  });
+  const result = await service.sendEmail({ to: [to, 'second@example.invalid'], subject: 'Notice', text: 'Body' });
+  expect(result.success).toBe(false);
+  expect(result.recipientResults).toEqual([
+    expect.objectContaining({ to, success: true }),
+    expect.objectContaining({ to: 'second@example.invalid', success: false }),
+  ]);
+  expect(messagePosts()).toHaveLength(1);
+  expect(sgMail.send).not.toHaveBeenCalled();
+});
+
 it.each(['from', 'status', 'sender', 'type', 'duplicates', 'missing', 'expired'])('rejects unavailable/mismatched connection: %s', async kind => {
   if (kind === 'from') connection.metadata.from_address = 'other@example.invalid';
   if (kind === 'status') connection.status = 'pending';

@@ -42,6 +42,7 @@ export interface CatalogCommerceToolParams {
   pass_uses?: number;
   pass_validity_days?: number;
   search?: string;
+  search_id?: string;
   sort_order?: number;
   metadata?: Record<string, unknown>;
 
@@ -118,8 +119,8 @@ export function catalogCommerceTool(current_site_id?: string) {
         target_sale_price: { type: 'number', description: 'Default sale price used by checkout/quotes' },
         kind: {
           type: 'string',
-          enum: ['product', 'service', 'digital_asset'],
-          description: 'Kind: product, service, digital_asset',
+          enum: ['product', 'service', 'digital_asset', 'variant'],
+          description: 'Kind: product, service, digital_asset; use variant to search child items',
         },
         digital_subtype: { type: 'string', description: 'Subtype: ticket, course, file, pass, license' },
         is_marketplace_listed: { type: 'boolean', description: 'True if visible in the marketplace' },
@@ -148,7 +149,11 @@ export function catalogCommerceTool(current_site_id?: string) {
         search: {
           type: 'string',
           description:
-            'Inferred catalog name for name/description match. Correct typos and drop filler words before searching; do not paste the raw user phrase. Prefer 1–2 words from the likely item name (e.g. user "korte de cabalero" → "corte", not "korte de cabalero" or "corte caballero"). Extra words reduce exact matches; if results are empty, retry with a shorter inferred term.',
+            'For item list: search by name, description, exact SKU/code, or natural-language need (max 200 characters). Preserve meaningful intent and exact codes; do not force the query down to 1–2 words. Search supports text matching and optional semantic matching. If empty, try a relevant alternative without inventing catalog items. Results contain current prices/availability and bounded candidate-window metadata, not an exhaustive catalog count.',
+        },
+        search_id: {
+          type: 'string',
+          description: 'For paginated item search, pass the previous response search_id with the same search and filters. Advance offset by limit while has_more is true; if the search changed, restart at offset 0 without search_id.',
         },
         sort_order: { type: 'number', description: 'Sort order for display' },
         metadata: { type: 'object', description: 'JSON metadata for custom attributes like to-go / dine-in' },
@@ -181,8 +186,8 @@ export function catalogCommerceTool(current_site_id?: string) {
           type: 'boolean',
           description: 'When resource=item and action=get, include attached taxes',
         },
-        limit: { type: 'number', description: 'Limit results for list' },
-        offset: { type: 'number', description: 'Offset results for list' },
+        limit: { type: 'integer', minimum: 1, maximum: 100, description: 'Limit results for list (1–100)' },
+        offset: { type: 'integer', minimum: 0, description: 'Offset results for list; item search is bounded to offset 200' },
         rate: { type: 'number', description: 'Tax rate (0 to 100) (for tax)' },
         is_active: { type: 'boolean', description: 'Whether tax is active (for tax)' },
         tax_id: { type: 'string', description: 'Tax UUID (for catalog_item_tax)' },
@@ -200,9 +205,15 @@ export function catalogCommerceTool(current_site_id?: string) {
     },
     execute: async (args: CatalogCommerceToolParams) => {
       const { action, resource = 'item', ...params } = args;
-      const site_id = params.site_id || current_site_id;
+      if (current_site_id && params.site_id !== undefined && params.site_id !== current_site_id) {
+        throw new Error('Catalog site_id does not match the current site context');
+      }
+      const site_id = current_site_id || params.site_id;
 
       if (resource === 'item') {
+        if (action === 'list' && !site_id) {
+          throw new Error('Missing required site context for item list: site_id');
+        }
         if (action === 'create' && !params.name) {
           throw new Error('Missing required field for create: name');
         }

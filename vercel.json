@@ -24,6 +24,10 @@
   "regions": ["iad1"],
   "crons": [
     {
+      "path": "/api/cron/catalog-index",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/cron/marketplace",
       "schedule": "* * * * *"
     },

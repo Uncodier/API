@@ -290,7 +290,7 @@ export default async function requestMiddleware(request: NextRequest) {
   // A verified service credential gets a separate private expensive budget,
   // not an authentication bypass. Public/identity/webhook handlers must retain
   // their existing admission and independent authorization contracts.
-  if (isExpensivePath(pathname)
+  if ((isExpensivePath(pathname) || pathname === '/api/catalog/search')
     && !publicRequest
     && !webhookRequest
     && !isIdentityTokenRequest(pathname)) {

@@ -25,6 +25,16 @@ export function isChannelActiveStatus(channel: string, status: unknown): boolean
   return typeof status === 'string' && accepted.includes(status);
 }
 
+/** The protected projection marker is independent of provider status and quota. */
+export function isChannelManuallyDisabled(row: Resource): boolean {
+  return row._license?.manually_disabled === true;
+}
+
+export function isLicensedChannelConnection(channel: string, row: Resource): boolean {
+  return row.type === channel && isChannelActiveStatus(channel, row.status)
+    && row.enabled !== false && !isChannelManuallyDisabled(row) && row.license_suspended === false;
+}
+
 /** Server-only. Caller authorizes the site first. Never cache or fall back to raw settings. */
 export async function getSiteLicensedResources(siteId: string, signal?: AbortSignal): Promise<LicensedResources> {
   if (!siteId) throw new ResourceLicenseError();
@@ -73,7 +83,7 @@ export async function requireLicensedChannel(siteId: string, channel: string, co
   const { channels } = await getSiteLicensedResources(siteId, signal);
   const matches = channels.connections.filter(row => row.id === connectionId && row.type === channel);
   const row = matches[0];
-  if (matches.length !== 1 || !isChannelActiveStatus(channel, row.status) || row.enabled === false || row.license_suspended !== false
+  if (matches.length !== 1 || !isLicensedChannelConnection(channel, row)
     || (senderId && row.zavu_sender_id !== senderId)) throw new ResourceLicenseError();
   return row;
 }

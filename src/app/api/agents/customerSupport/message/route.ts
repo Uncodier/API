@@ -13,12 +13,15 @@ import { saveMessages } from './save-messages';
 import { corsHeaders } from './cors';
 import { ensureCommentConversation, bindCommentAgent } from '@/lib/services/social-comments/conversations';
 import { SocialCommentError } from '@/lib/services/social-comments/metadata';
+import { checkZavuSupportAdmission } from './zavu-admission';
 
 export async function POST(request: Request) {
   try {
     const parsed = await readSupportRequest(request);
     if (parsed instanceof Response) return parsed;
     const { body, browserIdentity } = parsed;
+    const initialZavuAdmission = await checkZavuSupportAdmission(request, body);
+    if (initialZavuAdmission) return initialZavuAdmission;
     // Obtener información de ubicación y tiempo del request
     const requestTimestamp = new Date().toISOString();
     const clientIP = request.headers.get('x-forwarded-for') || 
@@ -54,7 +57,7 @@ export async function POST(request: Request) {
     } = body;
     
     // Validar el parámetro origin si está presente
-    const validOrigins = ['website', 'email', 'whatsapp', 'voice', 'chat', 'website_chat', 'none', 'api', 'telegram', 'messenger', 'instagram', 'facebook', 'threads', 'linkedin', 'x', 'youtube'];
+    const validOrigins = ['website', 'email', 'sms', 'whatsapp', 'voice', 'chat', 'website_chat', 'none', 'api', 'telegram', 'messenger', 'instagram', 'facebook', 'threads', 'linkedin', 'x', 'youtube'];
     
     // Si no se proporciona origin pero hay header origin, usar 'website' automáticamente
     let effectiveOrigin = origin;
@@ -274,6 +277,8 @@ export async function POST(request: Request) {
     console.log(`Creando comando para agente: ${effectiveAgentId}, usuario: ${effectiveUserId}, site: ${effectiveSiteId || 'N/A'}`);
     
     const contextMessage = await buildSupportContext({ request, message, name, email, phone, requestTimestamp, clientIP, userAgent, acceptLanguage, effectiveOrigin, effectiveLeadId, effectiveConversationId, effectiveSiteId, origin_message_id, channel_guidance_run_plan_ids, website_chat_origin });
+    const deniedZavu = await checkZavuSupportAdmission(request, body);
+    if (deniedZavu) return deniedZavu;
     const generated = await generateSupportReply({ effectiveUserId, effectiveAgentId, effectiveSiteId, effectiveLeadId, contextMessage, agentUserId, request });
     if (generated instanceof Response) return generated;
     const { executedCommand, effectiveDbUuid } = generated;

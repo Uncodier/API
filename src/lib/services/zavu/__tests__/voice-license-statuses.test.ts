@@ -129,11 +129,21 @@ describe('licensed Voice status contract at real placement boundaries', () => {
     { status: 'pending' }, { status: 'disconnected' }, { status: 'license_suspended' },
     { status: 'active', enabled: false }, { status: 'synced', license_suspended: true },
     { type: 'telegram', status: 'active' }, { zavu_sender_id: 'wrong-sender' },
+    { _license: { manually_disabled: true } },
   ])('rejects invalid exact Voice selection %j', async extra => {
     connections = [{ ...voice('connected'), ...extra }];
     await expect(placeTrackedVoiceCall({ ...input, ...exact })).rejects.toMatchObject({ deliveryStatus: 'failed' });
     expect(mockPlace).not.toHaveBeenCalled();
     expect(mockSetContactContext).not.toHaveBeenCalled();
+  });
+
+  it('final Voice dispatch denies manual disable during contact preparation', async () => {
+    mockSetContactContext.mockImplementationOnce(async () => {
+      connections = [{ ...voice('active'), _license: { manually_disabled: true } }];
+    });
+    await expect(placeTrackedVoiceCall(input)).rejects.toMatchObject({ status: 403, deliveryStatus: 'failed' });
+    expect(mockPlace).not.toHaveBeenCalled();
+    expect(mockClearContactContext).toHaveBeenCalled();
   });
 
   it('rejects duplicate exact IDs even when the duplicate is inactive', async () => {

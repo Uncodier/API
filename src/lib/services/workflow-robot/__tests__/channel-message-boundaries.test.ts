@@ -9,7 +9,12 @@ const runPlanId = '33333333-3333-4333-8333-333333333333';
 const triggerId = '44444444-4444-4444-8444-444444444444';
 let rows: any;
 
-jest.unstable_mockModule('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from } }));
+jest.unstable_mockModule('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from,
+  rpc: () => ({ abortSignal: async () => ({ error: null, data: {
+    effective_plan: 'engine', social_media: [], channels: { connections:
+      rows.settings.channels.connections.map((c: any) => ({ license_suspended: false, ...c })) },
+  } }) }),
+} }));
 jest.unstable_mockModule('../materialize', () => ({ materializeRunFromGraph }));
 const { channelMessageIdempotencyKey, getCompletedChannelMessageGuidance, prepareChannelMessageRuns } =
   await import('../channel-message');
@@ -68,7 +73,7 @@ it('serves completed results only when every tenant/message/channel/trigger bind
   rows.workflow_runs.payload.conversation_id = 'forged-conversation';
   expect(await guidance()).toBe('');
   delete rows.workflow_runs.payload.conversation_id;
-  rows.settings.channels.connections = [{ id: 'conn-1', type: 'email', status: 'active' }];
+  rows.settings.channels.connections = [{ id: 'conn-1', type: 'email', status: 'connected' }];
   rows.instance_plans.metadata.trigger_payload.connection_id = 'conn-1';
   rows.workflow_runs.payload.connection_id = 'conn-1';
   rows.instance_plans.metadata.trigger_payload.channel = 'email';
@@ -76,7 +81,7 @@ it('serves completed results only when every tenant/message/channel/trigger bind
   rows.workflow_triggers[0].config.channel = 'email';
   expect(await getCompletedChannelMessageGuidance({ siteId, messageId: 'message-1', channel: 'email', runPlanIds: [runPlanId] }))
     .toContain('Helpful workflow');
-  rows.settings.channels.connections.push({ id: 'conn-2', type: 'email', status: 'synced' });
+  rows.settings.channels.connections.push({ id: 'conn-2', type: 'email', status: 'connected' });
   expect(await getCompletedChannelMessageGuidance({ siteId, messageId: 'message-1', channel: 'email', runPlanIds: [runPlanId] }))
     .toBe('');
   rows.instance_plans.status = 'in_progress';

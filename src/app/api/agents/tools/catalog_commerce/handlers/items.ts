@@ -2,10 +2,8 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { resolveSiteCurrency } from '@/app/api/agents/tools/checkout/resolve-currency';
 import { isItemBookable, loadParentForBookableCheck, loadUnbookableParentIds } from '@/lib/helpers/catalog-bookable';
-import {
-  buildCatalogSearchClauses,
-  catalogSearchFallbackHint,
-} from './catalog-search';
+import { CATALOG_LIST_FIELDS, compactCatalogListItems, itemListSchema, searchToolItems } from './catalog-search';
+import type { CatalogPrincipal } from '@/lib/services/catalog-search/contract';
 import {
   scopeCatalogItemPromptImage,
   scopeCatalogPromptImageUrl,
@@ -150,7 +148,8 @@ async function loadItemTaxes(siteId: string, catalogItemId: string) {
   return data || [];
 }
 
-export async function handleItemAction(body: Record<string, unknown>) {
+/** HTTP search callers must authorize first; a missing principal is for trusted internal callers only. */
+export async function handleItemAction(body: Record<string, unknown>, principal?: CatalogPrincipal) {
   const { action, id, site_id, limit = 50, offset = 0, include_modifiers, include_specs, include_taxes, ...updates } =
     body as {
       action: string;
@@ -265,47 +264,36 @@ export async function handleItemAction(body: Record<string, unknown>) {
   }
 
   if (action === 'list') {
-    const clauses =
-      typeof updates.search === 'string' ? buildCatalogSearchClauses(updates.search) : null;
-    const rangeFrom = Number(offset);
-    const rangeTo = rangeFrom + Number(limit) - 1;
+    const list = itemListSchema.parse(body);
+    if (list.search?.trim()) {
+      return NextResponse.json(await searchToolItems(body, principal));
+    }
+    const rangeFrom = list.offset;
+    const rangeTo = rangeFrom + list.limit - 1;
 
     const enforceBookable = !updates.status && !updates.availability_status;
 
-    const runList = async (searchFilter?: string | null) => {
-      let query = supabaseAdmin.from('catalog_items').select('*', { count: 'exact' });
-      query = applyItemListFilters(query, site_id, updates);
+    const runList = async () => {
+      let query = supabaseAdmin.from('catalog_items').select(CATALOG_LIST_FIELDS, { count: 'exact' });
+      query = applyItemListFilters(query, list.site_id, updates);
       if (enforceBookable) {
         query = query.eq('status', 'active').eq('availability_status', 'available');
-        const blockedParentIds = await loadUnbookableParentIds(typeof site_id === 'string' ? site_id : undefined);
+        const blockedParentIds = await loadUnbookableParentIds(list.site_id);
         if (blockedParentIds.length) {
           query = query.or(`parent_id.is.null,parent_id.not.in.(${blockedParentIds.join(',')})`);
         }
       }
-      if (searchFilter) query = query.or(searchFilter);
       return query.range(rangeFrom, rangeTo).order('created_at', { ascending: false });
     };
 
-    let { data, error, count } = await runList(clauses?.phraseFilter);
+    const { data, error, count } = await runList();
 
     if (error) throw new Error(error.message);
 
-    let search_hint: string | undefined;
-    if (clauses?.tokenFilter && (count === 0 || !data?.length)) {
-      const fallback = await runList(clauses.tokenFilter);
-      if (fallback.error) throw new Error(fallback.error.message);
-      if (fallback.data?.length) {
-        data = fallback.data;
-        count = fallback.count;
-        search_hint = catalogSearchFallbackHint(clauses.phrase, clauses.tokens);
-      }
-    }
-
     return NextResponse.json({
       success: true,
-      items: data?.map(scopeCatalogItemPromptImage),
+      items: compactCatalogListItems(data),
       count,
-      ...(search_hint ? { search_hint } : {}),
     });
   }
 

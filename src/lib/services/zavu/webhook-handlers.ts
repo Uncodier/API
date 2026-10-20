@@ -4,6 +4,7 @@ import { WorkflowService } from "@/lib/services/workflow-service";
 import { ensureProjectWebhook, ensureSenderWebhook, mapInvitationStatus } from "./client";
 import { getCachedJson, setCachedJson, sha256 } from "@/lib/security/upstash-rest";
 import { refreshSiteConfigurationCaches } from "@/lib/services/site-configuration-cache";
+import { admitZavuInboundAutomation } from './inbound-message-license';
 export {
   handleVoiceCallEvent,
   resolveVoiceCallWebhookStatus,
@@ -102,8 +103,8 @@ export async function handleInboundMessage(event: any) {
     return;
   }
 
-  const sites = await findSettingsForSender(senderId);
-  if (sites.length === 0) {
+  const sites = await findSettingsForSender(senderId, { skipCache: true });
+  if (sites.length !== 1) {
     console.warn(`[Zavu Webhook] No site found for sender ${senderId}`);
     return;
   }
@@ -122,6 +123,16 @@ export async function handleInboundMessage(event: any) {
   const identity = rawFrom.includes(":") ? rawFrom.split(":").slice(1).join(":") : rawFrom;
   const isEmail = channel === "email" || identity.includes("@");
   const userId = await getUserIdFromSite(siteId);
+  const connections = sites[0].channels?.connections;
+  const matches = Array.isArray(connections) ? connections.filter((row: any) =>
+    row.zavu_sender_id === senderId && row.type === channel) : [];
+  if (matches.length !== 1 || typeof matches[0].id !== 'string' || !matches[0].id) return;
+  const connectionId = matches[0].id;
+  const originMessageId = data.messageId || event.id;
+  if (!await admitZavuInboundAutomation({
+    siteId, userId, channel, connectionId, senderId, from: rawFrom, message: messageText,
+    originMessageId: typeof originMessageId === 'string' ? originMessageId : undefined,
+  })) return;
 
   console.log(`[Zavu Webhook] Starting customerSupport workflow for ${channel} on site ${siteId}`);
 
@@ -135,7 +146,11 @@ export async function handleInboundMessage(event: any) {
       email: isEmail ? identity : undefined,
       phone: isEmail ? undefined : identity,
       origin: channel,
-      origin_message_id: data.messageId || event.id,
+      origin_message_id: originMessageId,
+      custom_data: {
+        source: 'zavu_inbound_message', connection_id: connectionId,
+        zavu_sender_id: senderId, zavu_from: rawFrom, channel,
+      },
       channel_delivery: true,
       website_chat_origin: false,
     },

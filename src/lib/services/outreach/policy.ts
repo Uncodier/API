@@ -117,7 +117,7 @@ export function selectedOutreachAccounts(settings: any, policy: OutreachPolicy, 
     }
     const matches = connections.filter(c => c?.id === id);
     const c = matches.length === 1 ? matches[0] : undefined;
-    if (!c || c.type !== channel || c.status !== 'connected' || c.enabled === false
+    if (!c || c.type !== channel || c.status !== 'connected' || c.enabled === false || c._license?.manually_disabled === true
       || typeof c.zavu_sender_id !== 'string' || !c.zavu_sender_id.trim()) return [];
     if (channel === 'email' && c.metadata?.emailChannelActive === false) return [];
     return [{ id, channel, provider: 'zavu', config: c }];

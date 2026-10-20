@@ -4,6 +4,9 @@ import { NextRequest } from 'next/server';
 const mockFrom = jest.fn();
 const mockGetCall = jest.fn();
 let mockSecret: string;
+jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: {
+  rpc: () => jest.requireActual('@/lib/services/zavu/__tests__/licensed-voice-test-rpc').licensedVoiceTestRpc('sender'),
+} }));
 jest.mock('@/lib/database/supabase-server', () => ({
   getSupabaseAdmin: () => ({ from: mockFrom }),
   supabaseAdmin: { schema: () => ({ from: mockFrom }) },

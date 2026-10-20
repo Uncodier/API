@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { supabaseAdmin } from "@/lib/database/supabase-server";
 import { placeVoiceCall, type ZavuVoiceCall } from "./voice-call-client";
-import { getSiteLicensedResources, isChannelActiveStatus, requireLicensedChannel } from '@/lib/billing/licensed-resources';
+import { getSiteLicensedResources, isLicensedChannelConnection, requireLicensedChannel } from '@/lib/billing/licensed-resources';
 import { getVoiceCallEligibility } from "./voice-call-consent";
 import {
   clearVoiceCallContactContext,
@@ -55,8 +55,7 @@ async function resolveVoiceSender(siteId: string, selectedConnectionId?: string,
     const matches = connections.filter(c => c?.id === selectedConnectionId);
     const selected = matches.length === 1 ? matches[0] : undefined;
     if (!selectedConnectionId || !selectedSenderId || !selected || selected.type !== 'voice'
-      || !isChannelActiveStatus('voice', selected.status) || selected.license_suspended !== false
-      || selected.enabled === false || selected.zavu_sender_id !== selectedSenderId) {
+      || !isLicensedChannelConnection('voice', selected) || selected.zavu_sender_id !== selectedSenderId) {
       throw Object.assign(new Error('Selected Voice sender is not connected for this site'), { status: 409 });
     }
     return { connectionId: selectedConnectionId, senderId: selectedSenderId };
@@ -64,8 +63,7 @@ async function resolveVoiceSender(siteId: string, selectedConnectionId?: string,
   const connection = connections.find(
     (candidate) =>
       candidate.type === "voice"
-      && isChannelActiveStatus('voice', candidate.status)
-      && candidate.license_suspended === false && candidate.enabled !== false
+      && isLicensedChannelConnection('voice', candidate)
       && typeof candidate.id === 'string' && candidate.id
       && typeof candidate.zavu_sender_id === 'string' && candidate.zavu_sender_id
   );

@@ -4,6 +4,9 @@ import { NextRequest } from "next/server";
 import { v5 as uuidv5 } from "uuid";
 
 let mockClient: SupabaseClient;
+jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: {
+  rpc: () => jest.requireActual('@/lib/services/zavu/__tests__/licensed-voice-test-rpc').licensedVoiceTestRpc(),
+} }));
 jest.mock("@/lib/database/supabase-server", () => ({
   getSupabaseAdmin: () => mockClient,
   supabaseAdmin: { schema: (schema: string) => mockClient.schema(schema) },

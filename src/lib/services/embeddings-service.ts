@@ -10,16 +10,20 @@ export class EmbeddingsService {
   static async generateEmbeddings(
     input: string | string[],
     modelId: string = DEFAULT_MODEL,
-    dimensions: number = DEFAULT_DIMENSIONS
+    dimensions: number = DEFAULT_DIMENSIONS,
+    options?: { timeout?: number; signal?: AbortSignal }
   ): Promise<{ embeddings: number[][]; usage?: any; model: string }> {
     const model = resolveOpenRouterModel(modelId);
-    const client = createOpenRouterClient();
-    const response = await client.embeddings.create({
+    const client = createOpenRouterClient(options?.timeout ? { timeout: options.timeout, maxRetries: 0 } : undefined);
+    const request = {
       input,
       model,
       dimensions,
-      encoding_format: 'float',
-    });
+      encoding_format: 'float' as const,
+    };
+    const response = options?.signal
+      ? await client.embeddings.create(request, { signal: options.signal })
+      : await client.embeddings.create(request);
 
     // Preserve batch input order and reject partial/malformed vectors before storage.
     const expectedCount = Array.isArray(input) ? input.length : 1;

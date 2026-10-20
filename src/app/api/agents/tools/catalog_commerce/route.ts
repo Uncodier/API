@@ -1,4 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { ZodError } from 'zod';
+import { authorizeCatalogRequest, CatalogAuthorizationError } from '@/lib/services/catalog-search/auth';
+import { CatalogSearchChangedError } from '@/lib/services/catalog-search/service';
+import { createCatalogToolSearchInput } from './handlers/catalog-search';
+import { enforceRequestRateLimit } from '@/lib/security/request-rate-limit';
 import { handleItemAction } from './handlers/items';
 import { handleModifierAction } from './handlers/modifiers';
 import { handleSpecsAction, SpecResource } from './handlers/specs';
@@ -36,6 +41,16 @@ export async function POST(request: NextRequest) {
     }
 
     if (resource === 'item') {
+      if (action === 'list' && typeof body.search === 'string' && body.search.trim()) {
+        const input = createCatalogToolSearchInput(body);
+        const principal = await authorizeCatalogRequest(request, input);
+        const denied = await enforceRequestRateLimit(request, {
+          namespace: 'catalog-search', identity: principal.rateIdentity || principal.scope,
+          limit: principal.aggregateOnly ? 600 : 180, windowSeconds: 60, failClosed: true,
+        });
+        if (denied) return denied;
+        return await handleItemAction(body, principal);
+      }
       return await handleItemAction(body);
     }
 
@@ -60,6 +75,15 @@ export async function POST(request: NextRequest) {
       { status: 400 }
     );
   } catch (error: any) {
+    if (error instanceof ZodError) {
+      return NextResponse.json({ success: false, error: 'Invalid catalog parameters (site_id, filters, search or pagination)' }, { status: 400 });
+    }
+    if (error instanceof CatalogAuthorizationError) {
+      return NextResponse.json({ success: false, error: error.message }, { status: error.status });
+    }
+    if (error instanceof CatalogSearchChangedError) {
+      return NextResponse.json({ success: false, error: error.message }, { status: 409 });
+    }
     console.error('Catalog Commerce tool error:', error);
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }

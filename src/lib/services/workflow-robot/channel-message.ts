@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { materializeRunFromGraph } from './materialize';
 import { resolveExactMessageConnection } from '@/lib/messaging/exact-message-connection';
-import { getSiteLicensedResources } from '@/lib/billing/licensed-resources';
+import { getSiteLicensedResources, isLicensedChannelConnection } from '@/lib/billing/licensed-resources';
 
 export const CHANNEL_MESSAGE_UUID = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i;
 
@@ -57,8 +57,6 @@ type ChannelConnection = {
   id?: unknown; type?: unknown; status?: unknown; zavu_sender_id?: unknown;
 };
 
-const CONNECTED_CHANNEL_STATUSES = new Set(['connected', 'active', 'synced']);
-
 // Zavu's signed inbound call is persisted before Customer Support starts. A
 // service request may name a call, but cannot supply the sender identity: read
 // it back from the delivery and the matching inbound conversation for this site.
@@ -93,7 +91,7 @@ export async function resolveMessageConnection(siteId: string, channel: string, 
   messageId: string; conversationId?: string;
 }): Promise<string | undefined> {
   const normalizedChannel = normalizeMessageChannel(channel);
-  if (!normalizedChannel) return undefined;
+  if (!normalizedChannel || normalizedChannel === 'web') return undefined;
   const data = await getSiteLicensedResources(siteId);
   if (identity?.messageId && CHANNEL_MESSAGE_UUID.test(identity.messageId)) {
     const exact = await resolveExactMessageConnection(siteId, normalizedChannel, data?.channels,
@@ -105,8 +103,7 @@ export async function resolveMessageConnection(siteId: string, channel: string, 
   const matches = connections.filter((connection) => connection &&
     typeof connection.id === 'string' && connection.id.trim() &&
     normalizeMessageChannel(connection.type) === normalizedChannel &&
-    typeof connection.status === 'string' && CONNECTED_CHANNEL_STATUSES.has(connection.status)
-    && (connection as any).license_suspended === false && (connection as any).enabled !== false);
+    isLicensedChannelConnection(normalizedChannel, connection));
   if (!matches.length) return undefined;
 
   if (normalizedChannel === 'voice' && identity?.messageId) {
@@ -118,7 +115,8 @@ export async function resolveMessageConnection(siteId: string, channel: string, 
   // Zavu text/SMS/Telegram and AgentMail inbox identity is not currently carried
   // through Temporal prepare. A same-type ambiguity is never resolved by an
   // unverified request body, conversation ID, or arbitrary first connection.
-  return matches.length === 1 ? matches[0].id as string : undefined;
+  const inventory = connections.filter(connection => normalizeMessageChannel(connection.type) === normalizedChannel);
+  return inventory.length === 1 && matches.length === 1 ? matches[0].id as string : undefined;
 }
 
 export function channelMessageIdempotencyKey(siteId: string, messageId: string, workflowInstanceId: string): string {
@@ -166,6 +164,9 @@ export async function prepareChannelMessageRuns(input: {
   const connectionId = await resolveMessageConnection(input.siteId, channel, {
     messageId: input.messageId, conversationId: input.conversationId,
   });
+  // An unresolved external destination is a denial, not a wildcard identity.
+  // First-party web chat has no connection row and retains wildcard workflows.
+  if (channel !== 'web' && !connectionId) return [];
   const matched = matchChannelTriggers(data as Trigger[], channel, connectionId);
   if (matched.length > 10) throw new Error('Too many matching channel message workflows');
   const runs: Array<{ runPlanId: string; status: ChannelMessageRunStatus }> = [];
@@ -240,6 +241,7 @@ export async function loadBoundChannelMessageRun(input: {
     run.payload?.connection_id !== payload.connection_id) return null;
   // Check the current canonical connection and, where available, the persisted
   // provider identity again before advancing or surfacing completed guidance.
+  if (expectedChannel !== 'web' && !payload.connection_id) return null;
   if (payload.connection_id !== null && payload.connection_id !== undefined &&
     (typeof payload.connection_id !== 'string' ||
       await resolveMessageConnection(input.siteId, expectedChannel, {

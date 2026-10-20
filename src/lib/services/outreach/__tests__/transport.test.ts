@@ -50,6 +50,15 @@ test('prepared outreach cannot send after trial expires while raw sender remains
   expect(sendChannelMessage).not.toHaveBeenCalled();
 });
 
+test('prepared outreach cannot dispatch a manually disabled connection', async () => {
+  const ctx = context();
+  const prepared = await prepareOutreachDelivery(ctx);
+  if (!('send' in prepared)) throw new Error(prepared.reason);
+  ctx.account.config._license = { manually_disabled: true };
+  await expect(prepared.send()).rejects.toThrow(/current license/);
+  expect(sendChannelMessage).not.toHaveBeenCalled();
+});
+
 test.each(['sms', 'telegram', 'messenger', 'instagram', 'custom_chat'])('exact selected %s sender and server recipient, no email fallback', async channel => {
   const ctx = context(); ctx.account.channel = channel;
   ctx.lead.social_networks = { [channel]: { chat_id: 'known-chat' } };

@@ -8,6 +8,7 @@ import { executeCustomerSupportVoiceTool } from "@/lib/services/zavu/voice-tool-
 import { VoiceLeadValidationError } from "@/lib/services/zavu/voice-lead-errors";
 import { VoiceToolArgumentValidationError } from "@/lib/services/zavu/voice-tool-parameters";
 import { SchedulingRequestRejected } from '@/app/api/agents/tools/scheduling/assistantProtocol';
+import { ResourceLicenseError } from '@/lib/billing/licensed-resources';
 
 const requestSchema = z.object({
   tool: z.string().min(1).optional(),
@@ -129,6 +130,10 @@ export async function POST(request: NextRequest) {
       log(failed ? 'execution_recovery' : 'execution_completed', { tool: toolLabel, status: 200 }, failed);
       return respond(result ?? { success: true });
     } catch (error) {
+      if (error instanceof ResourceLicenseError) {
+        log('execution_rejected', { tool: toolLabel, status: error.status, code: error.code }, true);
+        return respond({ success: false, error: error.message, code: error.code, request_id: requestId }, error.status);
+      }
       if (error instanceof SchedulingRequestRejected) {
         log('execution_rejected', { tool: toolLabel, status: error.status }, true);
         return respond({

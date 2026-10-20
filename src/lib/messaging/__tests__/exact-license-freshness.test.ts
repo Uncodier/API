@@ -48,6 +48,21 @@ test('trial expiring between preparation and send denies provider and durable di
   expect(sendChannelMessage).not.toHaveBeenCalled();
 });
 
+test.each([{ enabled: false }, { _license: { manually_disabled: true } }])(
+  'manual disable at exact dispatch prevents provider delivery: %j', async extra => {
+    const denied = projection();
+    Object.assign(denied.channels.connections[0], extra);
+    (supabaseAdmin.rpc as jest.Mock).mockReturnValueOnce(rpcResult(projection()))
+      .mockReturnValueOnce(rpcResult(denied));
+    const before = jest.fn();
+    expect(await sendExactDelivery({ ...input, before_dispatch: before })).toMatchObject({
+      success: false, delivery_attempted: false,
+    });
+    expect(before).not.toHaveBeenCalled();
+    expect(sendChannelMessage).not.toHaveBeenCalled();
+  },
+);
+
 test('expired raw connected resource cannot resolve destinations or social publication', async () => {
   (supabaseAdmin.rpc as jest.Mock).mockReturnValue(rpcResult(projection(true)));
   await expect(resolveDeliveryRoutes(input.site_id, { channel: input.channel, connection_id: input.connection_id })).rejects.toThrow();

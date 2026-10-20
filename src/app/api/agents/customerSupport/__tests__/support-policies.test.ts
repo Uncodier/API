@@ -31,11 +31,12 @@ describe('getCustomerSupportPolicies', () => {
     expect(policies).toContain('never invent a price');
   });
 
-  it('requires inferring a catalog search term instead of the raw user phrase', () => {
-    expect(policies).toContain('Infer the search term');
-    expect(policies).toContain('never the raw user phrase');
-    expect(policies).toContain('korte de cabalero');
-    expect(policies).toContain('search="corte"');
+  it('preserves product intent, constraints and exact identifiers for hybrid search', () => {
+    expect(policies).toContain('meaningful attributes and negations');
+    expect(policies).toContain('exact SKU/code');
+    expect(policies).toContain('sin azúcar');
+    expect(policies).toContain('candidate_window');
+    expect(policies).toContain('degraded=true');
   });
 
   it('books catalog capacity via reservations.create then payment link, not a second create_order', () => {

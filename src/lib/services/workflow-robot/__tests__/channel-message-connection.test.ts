@@ -81,7 +81,11 @@ it('never guesses among active same-type connections or trusts a supplied connec
 
 it('recognizes connected, active, synced, but excludes disconnected and duplicate IDs', async () => {
   connections = [voice('voice-1', 'sender-1', 'active'), voice('voice-2', 'sender-2', 'disabled')];
+  expect(await resolveMessageConnection(siteId, 'voice')).toBeUndefined();
+  expect(await resolveMessageConnection(siteId, 'voice', voiceIdentity)).toBeUndefined();
+  connections = [voice('voice-1', 'sender-1', 'active')];
   expect(await resolveMessageConnection(siteId, 'voice')).toBe('voice-1');
+  connections.push(voice('voice-2', 'sender-2', 'disabled'));
   connections[1].status = 'synced';
   expect(await resolveMessageConnection(siteId, 'voice')).toBeUndefined();
   connections = [voice('voice-1', 'sender-1'), voice('voice-1', 'sender-1')];

@@ -10,6 +10,13 @@ import { getVoiceCall } from "../voice-call-client";
 
 const mockHandleUntrackedInboundVoiceEvent = jest.fn();
 const mockPersistVoiceTranscript = jest.fn();
+jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: {
+  rpc: () => ({ abortSignal: async () => ({ error: null, data: {
+    effective_plan: 'engine', social_media: [], channels: { connections: [{
+      id: 'telegram-1', type: 'telegram', zavu_sender_id: 'snd_1', status: 'connected', license_suspended: false,
+    }] },
+  } }) }),
+} }));
 
 jest.mock("@/lib/database/supabase-server", () => ({
   supabaseAdmin: {
@@ -57,7 +64,9 @@ function mockSettingsForSender(siteId = "site-1") {
     return {
       select: jest.fn().mockReturnValue({
         contains: jest.fn().mockResolvedValue({
-          data: [{ id: "settings-1", site_id: siteId, channels: { connections: [] } }],
+          data: [{ id: "settings-1", site_id: siteId, channels: { connections: [{
+            id: 'telegram-1', type: 'telegram', zavu_sender_id: 'snd_1',
+          }] } }],
           error: null,
         }),
       }),

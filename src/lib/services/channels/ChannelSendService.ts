@@ -4,7 +4,7 @@ import { getOutstandClient } from '@/lib/integrations/outstand/client';
 import { authorizeOutstandConversation } from '@/lib/integrations/outstand/conversation-access';
 import { tryPrepareLongReplyAudio } from './long-reply-audio';
 import { sendCommentReply } from '@/lib/services/social-comments/delivery';
-import { getSiteLicensedResources, isChannelActiveStatus, requireLicensedChannel } from '@/lib/billing/licensed-resources';
+import { getSiteLicensedResources, isLicensedChannelConnection, requireLicensedChannel } from '@/lib/billing/licensed-resources';
 
 export interface SendChannelMessageParams {
   site_id: string;
@@ -100,7 +100,7 @@ export class ChannelSendService {
       const connections = siteSettings.channels.connections;
       // Preserve stored connection order for callers without an exact destination.
       const connection = connections.find(c => c.type === params.channel && c.zavu_sender_id
-        && isChannelActiveStatus(params.channel, c.status) && c.enabled !== false && c.license_suspended === false);
+        && isLicensedChannelConnection(params.channel, c));
 
       if (!connection?.zavu_sender_id) {
         throw new Error(`No sender configured for channel ${params.channel} on site ${params.site_id}`);

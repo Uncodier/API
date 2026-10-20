@@ -10,6 +10,7 @@ import { getVoiceCall } from "./voice-call-client";
 import { supabaseAdmin } from "@/lib/database/supabase-server";
 import { getCustomToolDefinition } from "@/lib/agentbase/agents/toolEvaluator/executor/customToolsMap";
 import { loadVoiceExecutionContext } from './voice-execution-context';
+import { requireVoiceToolLicense } from './voice-tool-license';
 
 const VOICE_TOOL_TIMEOUT_MS = 8_500;
 
@@ -298,11 +299,13 @@ export async function executeCustomerSupportVoiceTool(params: {
   const tool = getCustomerSupportVoiceToolDefinitions(params.siteId)
     .find((candidate) => candidate.name === params.toolName);
   if (!tool) throw new Error(`Unknown Customer Support tool "${params.toolName}"`);
+  const recheckLicense = await requireVoiceToolLicense(params.siteId);
 
   if (tool.name === 'get_call_context') {
     validateVoiceToolArguments(tool, params.arguments);
     const live = await resolveLiveConversation(params.siteId, params.context?.contactPhone);
     if (!live.messageId) throw new Error('Voice execution context is not ready; retry shortly');
+    await recheckLicense();
     return loadVoiceExecutionContext({
       siteId: params.siteId, conversationId: live.conversationId,
       messageId: live.messageId, direction: live.direction,
@@ -313,6 +316,7 @@ export async function executeCustomerSupportVoiceTool(params: {
     // Live voice has no browser visitor/conversation. Preserve the original
     // supplied phone for confirmation rather than silently replacing it during
     // generic argument scoping, and never call the browser identify endpoint.
+    await recheckLicense();
     return identifyVoiceLead({
       siteId: params.siteId,
       contactPhone: params.context?.contactPhone,
@@ -327,6 +331,7 @@ export async function executeCustomerSupportVoiceTool(params: {
     delete args.conversation_id;
     validateVoiceToolArguments(tool, args);
     const { conversationId, deliveryId } = await resolveLiveConversation(params.siteId, params.context?.contactPhone);
+    await recheckLicense();
     const result: any = await executeCustomTool(tool.name, {
       ...args, conversation_id: conversationId, voice_call_delivery_id: deliveryId,
     });
@@ -355,6 +360,7 @@ export async function executeCustomerSupportVoiceTool(params: {
       uuidv5.URL
     ),
   };
+  await recheckLicense();
   if (tool.execute) {
     return tool.execute(executionArguments);
   }
