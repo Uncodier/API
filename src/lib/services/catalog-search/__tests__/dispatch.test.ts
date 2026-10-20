@@ -28,5 +28,9 @@ describe('Temporal catalog dispatch', () => {
     process.env.CATALOG_INDEXING_ENABLED = 'true';
     expect((await GET(request)).status).toBe(200);
     expect(mockStart).toHaveBeenCalledTimes(1);
+    expect(mockStart).toHaveBeenCalledWith('catalogIndexWorkflow', expect.objectContaining({
+      workflowId: 'catalog-index-backfill:all', args: [{ backfill: true }],
+      workflowIdConflictPolicy: 'USE_EXISTING', workflowIdReusePolicy: 'ALLOW_DUPLICATE',
+    }));
   });
 });

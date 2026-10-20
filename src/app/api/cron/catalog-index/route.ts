@@ -15,7 +15,7 @@ export async function GET(request: Request) {
     return Response.json({ success: true, disabled: true }, { headers: { 'Cache-Control': 'no-store' } });
   }
   try {
-    return Response.json(await startCatalogIndex({ backfill: false }), { headers: { 'Cache-Control': 'no-store' } });
+    return Response.json(await startCatalogIndex({ backfill: true }), { headers: { 'Cache-Control': 'no-store' } });
   } catch {
     return Response.json({ success: false, error: 'Catalog workflow dispatch unavailable' }, { status: 503 });
   }

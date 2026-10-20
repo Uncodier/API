@@ -66,10 +66,14 @@ do not mix vector spaces.
 3. Deploy market-fit consumers against the same API/Supabase environment. There is
    no silent return to divergent local `ILIKE` when the shared endpoint fails.
 4. Set `CATALOG_INDEXING_ENABLED=true` in API to enable the checked-in minute cron.
-   The cron only starts/reuses a Temporal workflow; it never generates embeddings.
-5. Invoke the service-authenticated `POST /api/catalog/index/start` with
-   `{ "backfill": true }` or additionally `site_id` for an authorized scoped backfill.
-   This incurs embedding-provider usage. It was not executed by local tests.
+   Each tick starts/reuses `catalog-index-backfill:all` with `backfill: true`.
+   Temporal scans existing products before draining jobs; the cron itself never
+   generates embeddings. Unchanged indexed documents are reused, but each scan
+   can revive exhausted jobs, so monitor persistent failures and provider cost.
+5. The initial backfill now starts automatically on the first enabled tick after
+   deployment. Service-authenticated `POST /api/catalog/index/start` remains
+   available for manual/site-scoped runs. Indexing incurs embedding-provider usage;
+   local tests do not execute paid backfills.
 6. Inspect indexing coverage, retries/exhausted jobs, cost and real relevance.
 7. Set `CATALOG_SEMANTIC_SEARCH_ENABLED=true` in API when ready. Until then shared
    retrieval remains lexical (exact SKU/name, FTS, escaped substring, trigram).
