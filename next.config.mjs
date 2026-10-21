@@ -32,6 +32,10 @@ const nextraConfig = withNextra({
   reactStrictMode: true,
   transpilePackages: ['@breezystack/lamejs'],
   experimental: {
+    // Custom Webpack hooks disable the build worker by default. Release the
+    // compiler's memory before TypeScript runs instead of retaining both heaps.
+    webpackBuildWorker: true,
+    webpackMemoryOptimizations: true,
     serverActions: {
       allowedOrigins: ['localhost:3000', 'localhost:3001', '192.168.87.25:3001', '192.168.87.34:3001', '192.168.87.64:3001', '192.168.87.79:3001', '192.168.0.62:3000', '192.168.0.62:3001', '192.168.0.62:3456', '192.168.0.62:7233', 'localhost:3456']
     }

@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const routeFiles = [
@@ -30,10 +30,14 @@ describe('browser route authorization contract', () => {
     expect(apiKeyMiddleware).toContain("headers.delete('x-auth-user-id')");
     expect(apiKeyMiddleware).toContain("headers.delete('x-auth-validated')");
     expect(apiKeyMiddleware).not.toContain("if (origin) {\n");
-    for (const middlewareFile of ['src/middleware.js', 'middleware.js']) {
-      const entrypoint = readFileSync(resolve(process.cwd(), middlewareFile), 'utf8');
-      expect(entrypoint).toContain('middleware/requestMiddleware');
-      expect(entrypoint).toContain('export default requestMiddleware');
+    const entrypoint = readFileSync(resolve(process.cwd(), 'src/proxy.js'), 'utf8');
+    expect(entrypoint).toContain('middleware/requestMiddleware');
+    expect(entrypoint).toContain('export default requestMiddleware');
+    expect(entrypoint).toMatch(/matcher:\s*\['\/api\/:path\*', '\/record'\]/);
+    // Proxy supplies the Node.js runtime; explicit runtime config is invalid.
+    expect(entrypoint).not.toMatch(/runtime\s*:/);
+    for (const obsoleteEntrypoint of ['src/middleware.js', 'middleware.js', 'proxy.js']) {
+      expect(existsSync(resolve(process.cwd(), obsoleteEntrypoint))).toBe(false);
     }
   });
 

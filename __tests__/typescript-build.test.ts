@@ -10,6 +10,14 @@ describe('TypeScript build validation', () => {
     expect(config).not.toMatch(/ignoreBuildErrors:\s*true/);
   });
 
+  it('isolates Webpack compilation and enables memory optimizations before type checking', () => {
+    const config = readFileSync(resolve(root, 'next.config.mjs'), 'utf8');
+    expect(config).toMatch(/webpackBuildWorker:\s*true/);
+    expect(config).toMatch(/webpackMemoryOptimizations:\s*true/);
+    const pkg = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
+    expect(pkg.scripts.build).toBe('next build --webpack');
+  });
+
   it('provides a standalone check with fresh Next.js route types', () => {
     const pkg = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
     expect(pkg.scripts.typecheck).toBe('next typegen && tsc --noEmit');

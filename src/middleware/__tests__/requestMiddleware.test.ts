@@ -18,12 +18,14 @@ jest.unstable_mockModule('@/lib/security/request-rate-limit', () => ({
 }));
 
 let requestMiddleware: typeof import('../requestMiddleware').default;
+let requestProxy: typeof import('../../proxy.js');
 let isPublicRequest: typeof import('../requestMiddleware').isPublicRequest;
 let isWebhookPath: typeof import('../requestMiddleware').isWebhookPath;
 let usesRouteLevelGenerationRateLimit: typeof import('../requestRateLimits').usesRouteLevelGenerationRateLimit;
 
 beforeAll(async () => {
   ({ default: requestMiddleware, isPublicRequest, isWebhookPath } = await import('../requestMiddleware'));
+  requestProxy = await import('../../proxy.js');
   ({ usesRouteLevelGenerationRateLimit } = await import('../requestRateLimits'));
 });
 
@@ -36,6 +38,11 @@ describe('request middleware route classification', () => {
   afterEach(() => {
     if (originalServiceCredential === undefined) delete process.env.SERVICE_API_KEY;
     else process.env.SERVICE_API_KEY = originalServiceCredential;
+  });
+
+  it('exports the same request policy and matchers from the Proxy entrypoint', () => {
+    expect(requestProxy.default).toBe(requestMiddleware);
+    expect(requestProxy.config.matcher).toEqual(['/api/:path*', '/record']);
   });
 
   it('keeps only read-only status routes public', () => {
