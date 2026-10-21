@@ -7,13 +7,14 @@ import {
   spawnSilentContinueWorkflow,
 } from '@/lib/services/robot-instance/assistant-respawn';
 import { isRespawnManagedPlan, isWorkflowManagedPlan } from '@/lib/services/workflow-robot/plan-ownership';
+import { withCronObservation } from '@/lib/status/cron-observation';
 
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
 
 const STALL_LOG_TYPES = ['user_action', 'agent_action', 'thinking', 'tool_call', 'infrastructure'];
 
-export async function GET(req: Request) {
+async function runCron(req: Request) {
   const authHeader = req.headers.get('authorization');
   const secret = process.env.CRON_SECRET?.trim();
   if (!secret || authHeader !== `Bearer ${secret}`) {
@@ -124,3 +125,5 @@ export async function GET(req: Request) {
 
   return NextResponse.json({ message: `Processed ${results.length} active instances`, results });
 }
+
+export const GET = withCronObservation('assistant-respawn', runCron);

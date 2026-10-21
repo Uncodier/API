@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createOpenRouterClient, resolveOpenRouterModel, isOpenRouterReasoningModel } from '@/lib/services/ai/openrouter';
+import { observeCompletedTextRequest } from '@/lib/status/text-execution-observation';
 import {
   enforceRequestRateLimit,
   getAuthenticatedRateIdentity,
@@ -70,10 +71,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'model must be a string' }, { status: 400 });
     }
     const modelId = resolveOpenRouterModel(model);
-    const data = await createOpenRouterClient().chat.completions.create({
+    const client = createOpenRouterClient();
+    const data = await observeCompletedTextRequest(modelId, () => client.chat.completions.create({
       model: modelId, messages, max_tokens: safeMaxTokens, stream: false,
       ...(isOpenRouterReasoningModel(modelId) ? {} : { temperature: safeTemperature, top_p: safeTopP }),
-    });
+    }));
     // Keep content/raw aliases; provider from OpenRouter is the upstream provider.
     return NextResponse.json({ ...data, gateway: 'openrouter',
       provider: (data as any).provider || 'openrouter',

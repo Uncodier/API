@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+jest.mock('@/lib/status/telemetry', () => ({ recordTelemetry: jest.fn().mockResolvedValue(undefined) }));
 import { AIAgentExecutor } from '../ai-agent-executor';
 import { chargeOpenRouterUsage } from '@/lib/services/billing/openrouter-usage-billing';
 

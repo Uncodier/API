@@ -148,12 +148,12 @@ export async function handleMetaWebhookPost(
       }
     }
 
-    recordTelemetry('integrations', 'up', 'Processed WhatsApp Webhook')
+    await recordTelemetry('integrations_whatsapp', 'up', 'Processed WhatsApp Webhook')
       .catch(console.error);
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[WhatsApp webhook] Processing failed:', error);
-    recordTelemetry('integrations', 'down', 'WhatsApp Webhook error')
+    await recordTelemetry('integrations_whatsapp', 'down', 'WhatsApp Webhook error')
       .catch(console.error);
     return NextResponse.json(
       { success: false, error: 'Internal server error' },

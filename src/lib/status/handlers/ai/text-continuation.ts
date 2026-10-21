@@ -12,25 +12,27 @@ export const aiTextContinuationHandler: SystemHealthHandler = {
   async runCheck() {
     const start = Date.now();
     const parent = await aiTextHandler.runCheck();
-    const route = await probeHttpRoute('/api/ai/text/continuation', { method: 'GET' });
+    const route = await probeHttpRoute('/api/ai/text/continuation', { method: 'GET', expectedStatuses: [400, 405] });
     const latencyMs = Date.now() - start;
     const parentOk = parent.status === 'up';
-    const routeOk = route.status < 500;
-    let status: 'up' | 'degraded' | 'down' = parentOk && routeOk ? 'up' : 'degraded';
-    if (!parentOk && parent.status === 'down') status = 'down';
+    const routeOk = route.ok;
+    const status = !routeOk || parent.status === 'down' ? 'down'
+      : parent.status === 'skipped' ? 'skipped' : parentOk ? 'up' : 'degraded';
     return buildHealthResponse({
       systemKey: 'ai_text_continuation',
       label: 'AI Text Continuation',
       status,
       latencyMs,
-      summary: parentOk
-        ? 'Continuation inherits healthy text providers'
+      summary: !routeOk ? 'Continuation route contract failed'
+        : parent.status === 'skipped' ? 'Continuation contract reachable; text generation unverified'
+        : parentOk ? 'Continuation contract reachable; parent text inference verified'
         : 'Parent text providers unhealthy',
       checks: {
         parentHealthy: parentOk,
         parentStatus: parent.status,
         continuationRouteRegistered: routeOk,
         continuationHttpStatus: route.status,
+        verification: parent.status === 'skipped' && routeOk ? 'unverified' : 'contract',
         inheritedProviders: parent.checks.providers,
       },
       degradedReasons: !parentOk ? ['parent_ai_text_unhealthy'] : undefined,

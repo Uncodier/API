@@ -1,4 +1,5 @@
 import { createOpenRouterClient, isOpenRouterReasoningModel, resolveOpenRouterModel } from '@/lib/services/ai/openrouter';
+import { observeCompletedTextRequest } from '@/lib/status/text-execution-observation';
 
 export type VisualCriticResponseFormat = 'json_schema' | 'json_object';
 
@@ -98,7 +99,7 @@ export async function requestVisualCriticCompletion(
     responseFormat:
       | typeof VISUAL_CRITIC_RESPONSE_FORMAT
       | { type: 'json_object' },
-  ) => client.chat.completions.create(
+  ) => observeCompletedTextRequest(model, () => client.chat.completions.create(
     {
       model,
       ...(input.siteId ? { user: input.siteId } : {}),
@@ -111,7 +112,7 @@ export async function requestVisualCriticCompletion(
       ...tokenLimit,
     },
     { signal: input.signal },
-  );
+  ), { signal: input.signal });
   let responseFormat: VisualCriticCompletion['responseFormat'] = 'json_schema';
   let response;
   try {

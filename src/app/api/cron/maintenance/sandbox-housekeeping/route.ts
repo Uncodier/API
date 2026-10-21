@@ -4,37 +4,42 @@ import { deleteSnapshotQuiet } from '@/lib/services/sandbox-persisted-snapshot';
 import { stopSandboxQuiet } from '@/lib/services/sandbox-stop';
 import { reconcileSandboxBilling, retireSandboxBilling } from '@/lib/services/billing/sandbox-billing';
 import { isSandboxNotFoundError } from '@/lib/services/sandbox-missing-snapshot';
-import { listHousekeepingSandboxes } from '@/lib/services/billing/sandbox-housekeeping-list';
+import { listHousekeepingSandboxes, type HousekeepingCredentials } from '@/lib/services/billing/sandbox-housekeeping-list';
 import { housekeepingRows } from '@/lib/services/billing/sandbox-housekeeping-db';
 import { sandboxSdkMajor } from '@/lib/services/sandbox-sdk';
 import { deleteSandboxAndOrphans } from '@/lib/services/sandbox-lifecycle';
+import { withCronObservation } from '@/lib/status/cron-observation';
 
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
 
-export async function GET(request: Request) {
+async function runCron(request: Request) {
   const authHeader = request.headers.get('authorization');
   if (!process.env.CRON_SECRET || authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
     return new NextResponse('Unauthorized', { status: 401 });
   }
 
   const vercelToken = process.env.VERCEL_TOKEN || process.env.VERCEL_API_TOKEN;
-  if (!vercelToken) {
+  // On Vercel, let the SDK resolve and refresh its project-scoped OIDC token.
+  // Passing a stale personal token overrides that context and can return 403.
+  const useOidc = process.env.VERCEL === '1' && sandboxSdkMajor() >= 3;
+  if (!useOidc && !vercelToken) {
     return new NextResponse('VERCEL_TOKEN not set', { status: 500 });
   }
   
   const projectId = process.env.VERCEL_PROJECT_ID;
   const teamId = process.env.VERCEL_TEAM_ID;
-  if (!projectId) {
+  if (!useOidc && !projectId) {
     return new NextResponse('VERCEL_PROJECT_ID not set', { status: 500 });
   }
-  if (!teamId) {
+  if (!useOidc && !teamId) {
     return new NextResponse('VERCEL_TEAM_ID not set', { status: 500 });
   }
 
   // @vercel/sandbox getCredentials is all-or-nothing: passing projectId/teamId
   // without token throws "Missing credentials parameters ... token".
-  const credentials = { token: vercelToken, projectId, teamId };
+  const credentials: HousekeepingCredentials = useOidc ? {} : { token: vercelToken!, projectId: projectId!, teamId: teamId! };
+  let stage = 'references';
 
   try {
     const results = {
@@ -65,7 +70,8 @@ export async function GET(request: Request) {
     // Portable harness workspaces are absent from legacy requirement_status.
     const harnessRows = await housekeepingRows('harness_sessions','snapshot');
     for (const row of harnessRows || []) {
-      const snapshot = row.snapshot as { status?: string; workspace?: { id?: string } };
+      const snapshot = row.snapshot as { status?: string; workspace?: { id?: string } } | null;
+      if (!snapshot || typeof snapshot !== 'object') continue;
       if (!['completed', 'cancelled', 'failed'].includes(snapshot.status || '') && snapshot.workspace?.id) activeSandboxIds.add(snapshot.workspace.id);
     }
     const workflowRows = await housekeepingRows('instance_plans','metadata,status');
@@ -78,9 +84,11 @@ export async function GET(request: Request) {
     
     const thirtyMinutesAgo = Date.now() - 30 * 60 * 1000;
 
+    stage = 'sandbox_inventory';
     const listed = await listHousekeepingSandboxes(credentials);
     // Reconcile ALL registered resources, including stopped sessions after auto
     // timeout and resources omitted from a provider list page. No implicit resume.
+    stage = 'billing_inventory';
     const tracked = await housekeepingRows('sandbox_billing_resources','sandbox_name,deletion_requested_at','sandbox_name',undefined,true);
     for (const row of tracked || []) {
       let sandbox: Sandbox | undefined;
@@ -103,8 +111,16 @@ export async function GET(request: Request) {
     // Any failed lookup aborts destructive snapshot cleanup rather than guessing.
     for (const name of activeSandboxIds) {
       if (tracked.some(row => row.sandbox_name === name)) continue;
-      const active = await Sandbox.get({ ...credentials, name, resume:false });
-      if (active.currentSnapshotId) activeSnapshotIds.add(active.currentSnapshotId);
+      stage = 'active_snapshot_lookup';
+      try {
+        const active = await Sandbox.get({ ...credentials, name, resume:false });
+        if (active.currentSnapshotId) activeSnapshotIds.add(active.currentSnapshotId);
+      } catch (error) {
+        // Old requirement_status references can outlive provider resources.
+        // Only a confirmed 404 is absence; auth/timeouts still abort cleanup.
+        // Do not retire billing or mutate historical references here.
+        if (!isSandboxNotFoundError(error)) throw error;
+      }
     }
     for (const sb of listed) {
       const id = sb.id || sb.name;
@@ -127,13 +143,13 @@ export async function GET(request: Request) {
 
     // v3 owns persistent restore snapshots via keepLastSnapshots. A global list
     // cannot reliably prove ownership, so do not delete paused/new stop snapshots.
-    if (sandboxSdkMajor() >= 3) return NextResponse.json({ success:results.billingErrors === 0, results });
+    if (sandboxSdkMajor() >= 3) return NextResponse.json({ success: true, results });
 
     // 3. Clean up legacy orphaned snapshots (SDK Snapshot.list when present, else REST)
     const twentyFourHoursAgo = Date.now() - 24 * 60 * 60 * 1000;
-    const sdkSnaps = await listSnapshotsViaSdk(credentials);
-    if (sdkSnaps.length) {
-      for (const snap of sdkSnaps) {
+    const sdkSnapshots = await listSnapshotsViaSdk(credentials as { token: string; projectId: string; teamId: string });
+    if (sdkSnapshots.length > 0) {
+      for (const snap of sdkSnapshots) {
         if (!snap.id || activeSnapshotIds.has(snap.id)) continue;
         const createdAt = snap.createdAt ? new Date(snap.createdAt).getTime() : 0;
         if (createdAt && createdAt >= twentyFourHoursAgo) continue;
@@ -155,7 +171,7 @@ export async function GET(request: Request) {
         pages++;
         const url = new URL(`https://api.vercel.com/v1/sandboxes/snapshots`);
         // The API parameter is 'project', not 'projectId'
-        url.searchParams.append('project', projectId);
+        url.searchParams.append('project', projectId!);
         if (teamId) url.searchParams.append('teamId', teamId);
         if (next) url.searchParams.append('until', next);
         
@@ -207,11 +223,17 @@ export async function GET(request: Request) {
 
     console.log('[SandboxHousekeeping] Cleanup complete.', results);
     return NextResponse.json({ success: true, results });
-  } catch {
-    console.error('[SandboxHousekeeping] Reconciliation failed; cleanup will retry.');
+  } catch (error) {
+    const status = error && typeof error === 'object' && 'response' in error
+      ? (error.response as { status?: unknown } | null)?.status : undefined;
+    console.error('[SandboxHousekeeping] Reconciliation failed; cleanup will retry.', {
+      stage, ...(typeof status === 'number' ? { httpStatus: status } : {}),
+    });
     return new NextResponse('Sandbox housekeeping unavailable', { status: 500 });
   }
 }
+
+export const GET = withCronObservation('sandbox-housekeeping', runCron);
 
 async function listSnapshotsViaSdk(
   credentials: { token: string; projectId: string; teamId: string },

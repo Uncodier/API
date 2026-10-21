@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { createOpenRouterClient, resolveOpenRouterModel, isOpenRouterReasoningModel } from '@/lib/services/ai/openrouter';
+import { observeCompletedTextRequest } from '@/lib/status/text-execution-observation';
 import {
   batchCreateResponseNodes,
   updateNodeResult,
@@ -154,11 +155,11 @@ async function streamLLMIntoNode(
   const model = resolveOpenRouterModel(promptNode.settings?.model, promptNode.settings?.provider);
   const temperature = promptNode.settings?.temperature ?? 0.7;
 
-  const stream = await openrouter.chat.completions.create({
+  const stream = await observeCompletedTextRequest(model, () => openrouter.chat.completions.create({
     model, messages, stream: true,
     ...(isOpenRouterReasoningModel(model) ? {} : { temperature }),
     stream_options: { include_usage: true },
-  });
+  }));
 
   let accumulatedText = '';
   const generation: { gateway: string; model: string; id?: string; generation_id?: string;

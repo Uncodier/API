@@ -16,7 +16,7 @@ export async function GET() {
           status: 'unknown',
           summary: 'No probe run yet',
           latencyMs: 0,
-          checkedAt: new Date().toISOString(),
+          checkedAt: null,
           checks: {},
         }));
 
@@ -24,14 +24,18 @@ export async function GET() {
       systems: systems.map((s) => ({
         systemKey: s.systemKey,
         label: s.label,
-        status: s.status,
+        status: summary.stale ? 'unknown' : s.status,
+        ...(summary.stale ? { lastObservedStatus: s.status } : {}),
         summary: s.summary,
         latencyMs: s.latencyMs,
         checkedAt: s.checkedAt,
       })),
       lastRunAt: summary.lastRunAt,
       lastTrigger: summary.lastTrigger,
-    });
+      stale: summary.stale,
+      sourceUnavailable: summary.sourceUnavailable,
+      observation: summary.observation,
+    }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (err) {
     console.error('[status/systems]', err);
     return NextResponse.json(

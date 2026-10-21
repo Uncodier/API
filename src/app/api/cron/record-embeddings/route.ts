@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { processRecordEmbeddingsById } from '@/lib/services/record-embedding-worker';
+import { withCronObservation } from '@/lib/status/cron-observation';
 
 const MAX_RECORDS_PER_RUN = 3;
 const STALE_PROCESSING_MS = 10 * 60 * 1000;
@@ -14,7 +15,7 @@ type QueueJobRow = {
 export const maxDuration = 60;
 export const dynamic = 'force-dynamic';
 
-export async function GET(request: Request) {
+async function runCron(request: Request) {
   const cronSecret = process.env.CRON_SECRET?.trim();
   if (
     !cronSecret
@@ -84,3 +85,5 @@ export async function GET(request: Request) {
     );
   }
 }
+
+export const GET = withCronObservation('record-embeddings', runCron);

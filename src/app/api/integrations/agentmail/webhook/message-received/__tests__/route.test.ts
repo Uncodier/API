@@ -1,7 +1,11 @@
 import { NextRequest } from "next/server"
+import { randomBytes } from "node:crypto"
 
 const mockResolveVerificationContext = jest.fn()
 const mockVerifySvixWebhook = jest.fn()
+const mockTelemetry = jest.fn()
+const mockFindMessage = jest.fn()
+jest.mock("@/lib/status/telemetry", () => ({ recordTelemetry: mockTelemetry }))
 
 jest.mock("@/lib/integrations/agentmail/site-webhook-secret", () => ({
   resolveAgentMailWebhookVerificationContext: mockResolveVerificationContext,
@@ -20,7 +24,7 @@ jest.mock("@/lib/services/workflow-service", () => ({
 }))
 
 jest.mock("@/lib/integrations/agentmail/message-updater", () => ({
-  findMessageByAgentMailId: jest.fn(),
+  findMessageByAgentMailId: mockFindMessage,
 }))
 
 jest.mock("@/lib/services/conversation-service", () => ({
@@ -42,11 +46,13 @@ function requestWith(body: unknown) {
 describe("AgentMail message.received webhook verification", () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    mockTelemetry.mockResolvedValue(undefined)
   })
 
   it("verifies the request with the site-specific secret", async () => {
+    const secret = randomBytes(32).toString('hex')
     mockResolveVerificationContext.mockResolvedValue({
-      secret: "whsec_site",
+      secret,
       siteId: "site-1",
     })
     mockVerifySvixWebhook.mockResolvedValue(null)
@@ -61,8 +67,9 @@ describe("AgentMail message.received webhook verification", () => {
     expect(response.status).toBe(401)
     expect(mockVerifySvixWebhook).toHaveBeenCalledWith(
       expect.stringContaining("support@example.com"),
-      "whsec_site",
+      secret,
     )
+    expect(mockTelemetry).not.toHaveBeenCalled()
   })
 
   it("fails closed when a stored secret cannot be loaded", async () => {
@@ -79,5 +86,23 @@ describe("AgentMail message.received webhook verification", () => {
 
     expect(response.status).toBe(503)
     expect(mockVerifySvixWebhook).not.toHaveBeenCalled()
+    expect(mockTelemetry).not.toHaveBeenCalled()
+  })
+
+  it("records only authenticated acknowledgements, not invalid signatures", async () => {
+    mockResolveVerificationContext.mockResolvedValue({ secret: randomBytes(32).toString('hex'), siteId: 'site-1' })
+    mockVerifySvixWebhook.mockResolvedValue({ type: 'event', event_type: 'message.received', message: { message_id: 'message-1' } })
+    mockFindMessage.mockResolvedValue({ id: 'existing-message' })
+    const response = await POST(requestWith({}))
+    expect(response.status).toBe(200)
+    expect(mockTelemetry).toHaveBeenCalledWith('integrations_agentmail', 'up', 'Authenticated AgentMail duplicate acknowledged', expect.any(Number))
+  })
+
+  it("records a processing failure only after signature and payload validation", async () => {
+    mockResolveVerificationContext.mockResolvedValue({ secret: randomBytes(32).toString('hex'), siteId: 'site-1' })
+    mockVerifySvixWebhook.mockResolvedValue({ type: 'event', event_type: 'message.received', message: { message_id: 'message-1' } })
+    mockFindMessage.mockRejectedValue(new Error('Synthetic storage failure'))
+    expect((await POST(requestWith({}))).status).toBe(500)
+    expect(mockTelemetry).toHaveBeenCalledWith('integrations_agentmail', 'down', 'Authenticated AgentMail webhook processing failed', expect.any(Number))
   })
 })

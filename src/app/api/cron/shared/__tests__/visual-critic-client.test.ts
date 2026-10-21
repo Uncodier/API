@@ -1,3 +1,4 @@
+jest.mock('@/lib/status/telemetry', () => ({ recordTelemetry: jest.fn().mockResolvedValue(undefined) }));
 import OpenAI from 'openai';
 import { randomBytes } from 'node:crypto';
 import { requestVisualCriticCompletion } from '../visual-critic-client';

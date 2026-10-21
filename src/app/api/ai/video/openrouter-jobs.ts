@@ -5,6 +5,9 @@ import { MediaRequestError } from '@/lib/services/image/openrouter-media';
 import { downloadOpenRouterVideo, pollOpenRouterVideo, submitOpenRouterVideo, type PreparedVideo } from './provider-openrouter';
 import { persistGeneratedVideo } from './video-storage';
 import type { VideoGenerationResult, VideoRequestBody } from './video-types';
+import { recordTelemetry } from '@/lib/status/telemetry';
+import { getVideoObservationKey } from '@/lib/status/handlers/ai/passive-probes';
+import { resolveOpenRouterModel } from '@/lib/services/ai/openrouter';
 
 // Records survive request timeouts/restarts. All functions run under the site's
 // fail-closed distributed lock in route.ts. Never use process-local job ownership.
@@ -27,6 +30,19 @@ interface Job {
 }
 const jobKey = (id: string) => `ai-video:job:${id}`;
 const activeKey = (site: string) => `ai-video:active:${site}`;
+
+async function observeVideo(model: string, status: 'up' | 'down' | 'degraded', label: string, start: number) {
+  await recordTelemetry(getVideoObservationKey(model), status, label, Date.now() - start).catch(() => {});
+}
+
+function customerSubmissionError(error: unknown, model: string): boolean {
+  if (!(error instanceof MediaRequestError)) return false;
+  // The media wrapper retains HTTP status only in this fixed message; never inspect raw provider bodies.
+  const httpStatus = /^OpenRouter media request failed \((\d{3})\)$/.exec(error.message)?.[1];
+  return error.status === 400 || error.status === 422 || httpStatus === '400' || httpStatus === '422'
+    || (httpStatus === '404' && model !== resolveOpenRouterModel(process.env.OPENROUTER_VIDEO_MODEL?.trim()))
+    || error.message === 'OpenRouter is not configured: set OPENROUTER_API_KEY';
+}
 
 async function save(job: Job) {
   if (!await setCachedJson(jobKey(job.id), job, RETENTION_SECONDS)) {
@@ -75,22 +91,31 @@ export async function startVideoJob(body: VideoRequestBody, prepared: PreparedVi
     || await getCachedJson<string>(activeKey(body.site_id)) !== job.id) {
     throw new MediaRequestError('Video job admission persistence unavailable', 503);
   }
+  const start = Date.now();
+  let upstreamFailed = false;
   try {
     const submitted = await submitOpenRouterVideo(prepared);
     job.upstreamId = submitted.id;
     delete job.error;
     job.status = submitted.status === 'completed' ? 'in_progress' : submitted.status;
-    if (submitted.status === 'failed') job.error = 'OpenRouter video generation failed';
+    upstreamFailed = submitted.status === 'failed';
+    if (upstreamFailed) job.error = 'OpenRouter video generation failed';
     await save(job);
-  } catch {
+    if (upstreamFailed) await observeVideo(prepared.model, 'down', 'Video upstream generation failed', start);
+  } catch (error) {
     // Keep pending ownership: never retry an ambiguous POST or create another paid job.
     job.error = 'Video submission outcome uncertain; retain job_id and contact support before resubmitting';
     await save(job).catch(() => undefined);
+    if (!customerSubmissionError(error, prepared.model)) {
+      await observeVideo(prepared.model, upstreamFailed ? 'down' : 'degraded',
+        upstreamFailed ? 'Video upstream generation failed' : 'Video submission completion is uncertain', start);
+    }
   }
   return result(job);
 }
 
 export async function resumeVideoJob(siteId: string, id: string): Promise<VideoGenerationResult> {
+  const start = Date.now();
   const job = await getCachedJson<Job>(jobKey(id));
   if (!job || job.siteId !== siteId) throw new MediaRequestError('Video job not found', 404);
   if (job.status === 'completed' || job.status === 'failed' || !job.upstreamId) return result(job);
@@ -102,6 +127,7 @@ export async function resumeVideoJob(siteId: string, id: string): Promise<VideoG
   job.cost = upstream.usage?.cost;
   if (upstream.status === 'failed') {
     job.status = 'failed'; job.error = 'OpenRouter video generation failed';
+    await observeVideo(job.request.model, 'down', 'Video upstream generation failed', start);
     await save(job);
     return result(job);
   }
@@ -111,16 +137,21 @@ export async function resumeVideoJob(siteId: string, id: string): Promise<VideoG
     return result(job);
   }
   if (!job.videos?.length) {
-    const downloaded = await downloadOpenRouterVideo(job.upstreamId);
-    job.videos = [await persistGeneratedVideo({
-      ...downloaded, siteId, instanceId: job.instanceId, prompt: job.request.prompt,
-      model: job.request.model, provider: 'openrouter',
-      metadata: {
-        job_id: job.id, generation_id: job.generationId, cost: job.cost,
-        duration_seconds: job.request.duration, aspect_ratio: job.request.aspect_ratio, resolution: job.request.resolution,
-      },
-    })];
-    await save(job);
+    try {
+      const downloaded = await downloadOpenRouterVideo(job.upstreamId);
+      job.videos = [await persistGeneratedVideo({
+        ...downloaded, siteId, instanceId: job.instanceId, prompt: job.request.prompt,
+        model: job.request.model, provider: 'openrouter',
+        metadata: {
+          job_id: job.id, generation_id: job.generationId, cost: job.cost,
+          duration_seconds: job.request.duration, aspect_ratio: job.request.aspect_ratio, resolution: job.request.resolution,
+        },
+      })];
+      await save(job);
+    } catch (error) {
+      await observeVideo(job.request.model, 'down', 'Video completion failed during download or persistence', start);
+      throw error;
+    }
   }
   // Existing billing RPC has no idempotency key. Persist intent first, and refuse
   // automatic re-deduction after a crash/uncertain RPC outcome. Reconcile manually.
@@ -140,5 +171,6 @@ export async function resumeVideoJob(siteId: string, id: string): Promise<VideoG
   }
   job.billed = true; job.status = 'completed'; delete job.error;
   await save(job);
+  await observeVideo(job.request.model, 'up', 'Video generation completed with persistence and billing', start);
   return result(job);
 }

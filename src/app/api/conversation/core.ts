@@ -8,6 +8,7 @@
  */
 
 import { createOpenRouterClient, getOpenRouterChatModel, isOpenRouterReasoningModel } from '@/lib/services/ai/openrouter';
+import { observeCompletedTextRequest } from '@/lib/status/text-execution-observation';
 import { getRequestOptions } from '@/lib/config/analyzer-config';
 import { prepareImageForAPI } from '@/lib/utils/image-utils';
 import { prepareAnalysisData } from '@/lib/utils/api-utils';
@@ -208,12 +209,12 @@ export async function processConversation(options: {
     
     // Realizar la solicitud a la API del modelo
     console.log('[Conversation Service] Sending request to model API');
-    const modelResponse = await openrouter.chat.completions.create({
+    const modelResponse = await observeCompletedTextRequest(modelOptions.model, () => openrouter.chat.completions.create({
       ...modelOptions,
       messages: enhancedMessages,
       ...(isOpenRouterReasoningModel(modelOptions.model) ? {} : { temperature: 0.7 }),
       stream: false
-    }, { signal: controller.signal });
+    }, { signal: controller.signal }), { signal: controller.signal });
     
     // Registrar fin del análisis y calcular duración
     const endTime = Date.now();

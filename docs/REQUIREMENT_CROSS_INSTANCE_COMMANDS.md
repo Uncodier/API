@@ -37,6 +37,10 @@ Interactive requirement mutations through `requirement_backlog`,
 `requirement_status`, requirement-bound `instance_plan` and `update_repo` are
 redirected to the consolidated command path. Read-only inspection and standalone
 plans remain available. Non-interactive runner tools retain their existing path.
+The conversation `requirement_status` schema and help expose only `list`; omitted
+action defaults to reading all requirement history, not filtering by the requesting
+session. A successful command receipt needs no additional status write. Blocking
+an unnecessary status write does not cancel or replay the saved command.
 
 Backlog expansion checks requirement-scoped user-action receipts, not the source
 instance's equality with the runner. For feedback received during an active cycle,

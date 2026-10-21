@@ -5,6 +5,11 @@ import { MethodChip } from '../../components/MethodChip';
 
 Public health of Makinari: last probe run, overall state, and per-system cards. This is the same payload the status page consumes.
 
+Percentages are successful observed checks, **not a time-based SLA**. Unverified
+checks are excluded; `observation` reports coverage separately. `stale` means the
+hourly monitor's evidence is older than 90 minutes. `sourceUnavailable` identifies
+a failed refresh that returned the last available snapshot.
+
 Public GETs are allowed (CORS or no key). `verbose=1` and `run=1` need extra secrets.
 
 ## Summary
@@ -42,7 +47,7 @@ HTTP: `200` if `overall` is `operational` or `degraded`, `503` if `down`. `Cache
 }
 ```
 
-`overall`: `operational` | `degraded` | `down`. Per-system `status`: `up` | `degraded` | `down` | `skipped`.
+`overall`: `operational` | `degraded` | `down`. Per-system `status`: `up` | `degraded` | `down` | `skipped` (`skipped` means unverified, not successful).
 
 <ApiTester method="GET" endpoint="/api/status" />
 
@@ -98,7 +103,7 @@ curl -X GET "https://backend.makinari.com/api/status/systems/agents?live=1"
 | `cron` | Cron Jobs |
 | `platform` | Platform API |
 | `notifications` | Notifications |
-| `ai_portkey` | AI Portkey |
+| `ai_portkey` | AI OpenRouter (historical key) |
 | `ai_text` | AI Text |
 | `ai_text_continuation` | AI Text Continuation |
 | `ai_image` | AI Image |

@@ -10,7 +10,10 @@ export interface ProviderProbeResult {
   latencyMs: number;
   model: string;
   /** Configuration readiness must not be mistaken for successful generation. */
-  verification?: 'configuration' | 'inference';
+  verification?: 'configuration' | 'inference' | 'passive';
+  observedHealthy?: boolean;
+  observedStatus?: 'up' | 'degraded' | 'down';
+  observedAt?: string;
   skipped?: boolean;
   errorCode?: string;
   errorMessage?: string;
@@ -67,21 +70,25 @@ export function evaluateAiProviders(
   const entries = Object.entries(providers);
 
   const configured = entries.filter(([, p]) => p.configured && !p.skipped);
+  const healthy = (p: ProviderProbeResult) => p.liveProbe || (p.verification === 'passive' && p.observedHealthy === true);
   if (configured.length === 0 && primaryKeys.length > 0) {
     return { status: 'down', degradedReasons: ['no_providers_configured'] };
   }
 
   for (const [key, probe] of configured) {
-    if (!probe.liveProbe) {
+    if (!healthy(probe)) {
       degradedReasons.push(`${key}_${probe.verification === 'configuration' ? 'generation_unverified' : 'live_probe_failed'}`);
     }
   }
 
   const primaryConfigured = primaryKeys.filter((k) => providers[k]?.configured && !providers[k]?.skipped);
-  const primaryFailed = primaryConfigured.filter((k) => !providers[k]?.liveProbe && providers[k]?.verification !== 'configuration');
+  const primaryFailed = primaryConfigured.filter((k) => !healthy(providers[k]) && providers[k]?.verification !== 'configuration');
 
   if (primaryConfigured.length > 0 && primaryFailed.length === primaryConfigured.length) {
     return { status: 'down', degradedReasons };
+  }
+  if (configured.length > 0 && configured.every(([, p]) => !p.liveProbe && p.verification === 'configuration')) {
+    return { status: 'skipped', degradedReasons };
   }
   if (degradedReasons.length > 0) {
     return { status: 'degraded', degradedReasons };
@@ -171,5 +178,6 @@ export function isCriticalFailure(
   if (!keys.includes(system.systemKey)) {
     return false;
   }
-  return system.status === 'down' || system.status === 'degraded';
+  // A required capability with no evidence cannot pass a strict deployment gate.
+  return system.status !== 'up';
 }

@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
 import { processPendingWorkTick } from '@/lib/services/robot-instance/pending-work';
+import { withCronObservation } from '@/lib/status/cron-observation';
 
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
 
-export async function GET(req: Request) {
+async function runCron(req: Request) {
   const authHeader = req.headers.get('authorization');
   if (authHeader !== `Bearer ${process.env.CRON_SECRET?.trim()}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -21,3 +22,5 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: err.message || 'Failed to process pending work' }, { status: 500 });
   }
 }
+
+export const GET = withCronObservation('pending-work', runCron);

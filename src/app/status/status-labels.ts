@@ -4,10 +4,11 @@ const STATUS_LABELS: Record<string, string> = {
   up: 'Operational',
   degraded: 'Degraded',
   down: 'Down',
-  skipped: 'Not configured',
+  skipped: 'Unverified',
   none: 'No data',
   operational: 'Operational',
   unknown: 'Unknown',
+  stale: 'Stale',
 };
 
 export function formatStatusLabel(status: string): string {
@@ -18,7 +19,7 @@ export function statusCssClass(status: string): string {
   if (status === 'up' || status === 'operational') return 'up';
   if (status === 'degraded') return 'degraded';
   if (status === 'skipped') return 'skipped';
-  if (status === 'none' || status === 'unknown') return 'none';
+  if (status === 'none' || status === 'unknown' || status === 'stale') return 'none';
   return 'down';
 }
 

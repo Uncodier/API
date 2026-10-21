@@ -43,12 +43,14 @@ jobs:
           CI: 'true'
           STATUS_PROBE_CI_LENIENT: 'true'
           STATUS_PROBE_TRIGGER: github_push
-          STATUS_AI_PROBE_ENABLED: 'true'
+          # Explicit opt-in only; push/deploy probes must not create billable work by default.
+          STATUS_AI_PROBE_ENABLED: ${{ vars.STATUS_AI_PROBE_ENABLED || 'false' }}
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SERVICE_API_KEY: ${{ secrets.SERVICE_API_KEY }}
           ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
           STATUS_PROBE_BASE_URL: ${{ secrets.STATUS_PROBE_BASE_URL }}
+          STATUS_PROBE_SITE_ID: ${{ vars.STATUS_PROBE_SITE_ID }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           OPENROUTER_CHAT_MODEL: ${{ vars.OPENROUTER_CHAT_MODEL }}

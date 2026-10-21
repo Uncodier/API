@@ -1,6 +1,8 @@
 import nodemailer from 'nodemailer';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { v4 as uuidv4 } from 'uuid';
+import { recordTelemetry } from '@/lib/status/telemetry';
+import type { SystemHealthStatus } from '@/lib/status/types';
 
 /**
  * Tipos de notificaciones soportados por el sistema
@@ -122,6 +124,9 @@ export class NotificationService {
    * @returns La notificación creada o null si hubo un error
    */
   static async createNotification(params: CreateNotificationParams): Promise<any | null> {
+    const start = Date.now();
+    let persisted = false;
+    let attempted = false;
     try {
       const notificationId = uuidv4();
       
@@ -138,6 +143,7 @@ export class NotificationService {
         created_at: new Date().toISOString(),
       };
 
+      attempted = true;
       const { data, error } = await supabaseAdmin
         .from('notifications')
         .insert([notification])
@@ -149,10 +155,19 @@ export class NotificationService {
         return null;
       }
 
+      persisted = !!data;
       return data;
     } catch (error) {
       console.error('Error en createNotification:', error);
       return null;
+    } finally {
+      // Only the insert result attests persistence, never a notification read.
+      if (attempted) {
+        try {
+          await recordTelemetry('notifications_in_app', persisted ? 'up' : 'down',
+            persisted ? 'In-app notification persisted' : 'In-app notification persistence failed', Date.now() - start);
+        } catch { /* Best effort; never forward notification data or raw errors. */ }
+      }
     }
   }
 
@@ -163,7 +178,13 @@ export class NotificationService {
    * @returns true si se envió correctamente, false en caso contrario
    */
   static async sendEmail(params: SendEmailParams): Promise<boolean> {
+    const start = Date.now();
+    let acceptance: SystemHealthStatus = 'skipped';
     try {
+      const recipientCount = (Array.isArray(params.to) ? params.to : [params.to])
+        .flatMap(to => to.split(',')).filter(to => !!to.trim()).length;
+      const hasRecipients = recipientCount > 0;
+      if (hasRecipients) acceptance = 'down';
       const transporter = this.initEmailTransporter();
       
       const from = params.from || process.env.EMAIL_FROM || 'no-reply@makinari.com';
@@ -181,12 +202,28 @@ export class NotificationService {
 
       // Enviar el correo
       const info = await transporter.sendMail(mailOptions);
+      if (hasRecipients) {
+        // SMTP resolution alone is not evidence: inspect the accepted envelope.
+        const accepted = Array.isArray(info.accepted) ? info.accepted.length : 0;
+        const rejected = Array.isArray(info.rejected) ? info.rejected.length : 0;
+        acceptance = accepted > 0 ? (rejected > 0 || accepted < recipientCount ? 'degraded' : 'up')
+          : Array.isArray(info.accepted) ? 'down' : 'skipped';
+      }
       
       console.log('Correo enviado:', info.messageId);
       return true;
     } catch (error) {
       console.error('Error al enviar correo:', error);
       return false;
+    } finally {
+      if (acceptance !== 'skipped') {
+        try {
+          await recordTelemetry('notifications_email', acceptance,
+            acceptance === 'up' ? 'Notification email accepted by provider; mailbox delivery unconfirmed'
+              : acceptance === 'degraded' ? 'Notification email partially accepted by provider; mailbox delivery unconfirmed'
+                : 'Notification email acceptance failed or unconfirmed', Date.now() - start);
+        } catch { /* Best effort; no recipient, payload or provider error in telemetry. */ }
+      }
     }
   }
 

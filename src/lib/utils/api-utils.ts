@@ -7,6 +7,7 @@ import { createVisionMessage } from './message-utils';
 import * as cheerio from 'cheerio';
 import { continueJsonGeneration, isIncompleteJson as isJsonIncomplete, attemptJsonRepair, extractResponseContent, updateResponseContent } from '@/lib/services/continuation-service';
 import { createOpenRouterClient } from '@/lib/services/ai/openrouter';
+import { observeCompletedTextRequest } from '@/lib/status/text-execution-observation';
 
 /**
  * Prepara los datos para un análisis (screenshot y HTML)
@@ -274,11 +275,12 @@ export async function callApiWithMessage(
       
       response = await apiResponse.json();
     } else {
-      response = await createOpenRouterClient().chat.completions.create({
-        ...getRequestOptions(modelType, modelId).openrouter,
+      const modelOptions = getRequestOptions(modelType, modelId).openrouter;
+      response = await observeCompletedTextRequest(modelOptions.model, () => createOpenRouterClient().chat.completions.create({
+        ...modelOptions,
         messages,
         stream: false,
-      });
+      }));
     }
     
     // Verificar si la respuesta contiene un JSON incompleto y manejarlo

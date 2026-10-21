@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import type OpenAI from 'openai';
 import { createOpenRouterClient, getOpenRouterChatModel, isOpenRouterReasoningModel } from '@/lib/services/ai/openrouter';
+import { observeCompletedTextRequest } from '@/lib/status/text-execution-observation';
 
 /**
  * OpenAI-compatible client, using the primary OpenRouter account only.
@@ -156,7 +157,7 @@ Name:`;
 
   try {
     const client = getOpenAIClient();
-    const response = await client.chat.completions.create({
+    const response = await observeCompletedTextRequest(model, () => client.chat.completions.create({
       model,
       messages: [
         {
@@ -170,7 +171,7 @@ Name:`;
       ],
       ...(!isOpenRouterReasoningModel(model) ? { temperature: 0.8 } : {}),
       max_tokens: 2048,
-    });
+    }));
 
     let generatedName = response.choices[0]?.message?.content?.trim() || '';
     
@@ -241,7 +242,7 @@ Only respond with valid JSON, nothing else.`;
 
   try {
     const client = getOpenAIClient();
-    const response = await client.chat.completions.create({
+    const response = await observeCompletedTextRequest(model, () => client.chat.completions.create({
       model,
       messages: [
         {
@@ -256,7 +257,7 @@ Only respond with valid JSON, nothing else.`;
       ...(!isOpenRouterReasoningModel(model) ? { temperature: 0.3 } : {}),
       max_tokens: 2048,
       response_format: { type: 'json_object' },
-    });
+    }));
 
     const result = JSON.parse(response.choices[0]?.message?.content || '{"similar": false, "similarity": 0}');
     return {

@@ -29,6 +29,7 @@ it('paginates SDK v3 histories with one observation timestamp and never resumes/
   const sandbox={name:'synthetic',listSessions,resume:jest.fn(),stop:jest.fn()};
   await reconcileSandboxBilling(sandbox as unknown as Sandbox,db);
   expect(listSessions.mock.calls[1][0].cursor).toBe('next');
+  expect(listSessions.mock.calls[0][0].limit).toBe(50);
   expect(db.rpc.mock.calls[0][1].p_observed_at).toBe(db.rpc.mock.calls[1][1].p_observed_at);
   expect(sandbox.resume).not.toHaveBeenCalled(); expect(sandbox.stop).not.toHaveBeenCalled();
 });

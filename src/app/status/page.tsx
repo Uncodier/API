@@ -1,6 +1,8 @@
 import { getPublicSummary } from '@/lib/status/get-public-summary';
+import { getCachedSystemTimelines } from '@/lib/status/cached-timelines';
 import {
   aggregateDayStatus,
+  computeTimelineUptime,
   getSystemTimelines,
   type TimelineDay,
 } from '@/lib/status/get-system-timelines';
@@ -20,7 +22,12 @@ function formatTrigger(trigger: string | null): string {
 }
 
 export default async function StatusPage() {
-  const [summary, timelines] = await Promise.all([getPublicSummary(), getSystemTimelines()]);
+  const [summary, history] = await Promise.all([
+    getPublicSummary(),
+    getCachedSystemTimelines().then(timelines => ({ timelines, unavailable: false }))
+      .catch(() => ({ timelines: [], unavailable: true })),
+  ]);
+  const timelines = history.timelines;
 
   const systemByKey = new Map(summary.systems.map((s) => [s.systemKey, s]));
   const aiTimelines = timelines.filter((t) => t.systemKey.startsWith('ai_'));
@@ -34,7 +41,7 @@ export default async function StatusPage() {
     >
       <header className={styles.header}>
         <h1>API Status</h1>
-        <p className={styles.subtitle}>Makinari API — system health and SLA</p>
+        <p className={styles.subtitle}>Makinari API — health evidence and check history</p>
         <div className={`${styles.badge} ${styles[statusCssClass(summary.overall)]}`}>
           {formatStatusLabel(summary.overall)}
         </div>
@@ -42,10 +49,17 @@ export default async function StatusPage() {
 
       <section className={styles.slaRow}>
         <div className={styles.slaCard}>
-          <span className={styles.slaLabel}>Overall SLA (24h)</span>
+          <span className={styles.slaLabel}>Observed check success (24h)</span>
           <strong className={styles.slaValue}>
             {formatUptimeDisplay(summary.lastRunAt ? summary.overallSla24h : null, !!summary.lastRunAt)}
           </strong>
+        </div>
+        <div className={styles.slaCard}>
+          <span className={styles.slaLabel}>Observation coverage (latest run)</span>
+          <strong className={styles.slaValue}>
+            {formatUptimeDisplay(summary.observation?.coveragePercent, !!summary.observation?.total)}
+          </strong>
+          <span>{summary.observation?.observed ?? 0}/{summary.observation?.total ?? 0} systems observed</span>
         </div>
         <div className={styles.slaCard}>
           <span className={styles.slaLabel}>Last check</span>
@@ -58,11 +72,26 @@ export default async function StatusPage() {
           <strong className={styles.slaValue}>{formatTrigger(summary.lastTrigger)}</strong>
         </div>
       </section>
+      <p className={styles.emptyHint}>
+        Percentages count successful observed checks, not time-based availability or an SLA.
+        Unverified checks are excluded; missing observations never imply healthy service.
+        Contract probes verify route behavior, not end-to-end job completion.
+      </p>
+      {(summary.stale || summary.sourceUnavailable) && <p role="alert" className={styles.emptyHint}>
+        {summary.stale ? 'Monitoring evidence is stale (hourly checks expire after 90 minutes). ' : ''}
+        {summary.sourceUnavailable ? 'Status refresh failed; showing the last available snapshot.' : ''}
+      </p>}
+      {history.unavailable && <p role="alert" className={styles.emptyHint}>
+        Check history is temporarily unavailable. This is a data-loading failure, not an empty history.
+      </p>}
 
       <section className={styles.section}>
         <div className={styles.sectionHead}>
-          <h2>90-day uptime</h2>
+          <h2>90-day check history</h2>
           <div className={styles.legend}>
+            <span className={styles.legendItem}>
+              <span className={`${styles.legendSwatch} ${styles.timelineBarSkipped}`} /> Unverified
+            </span>
             <span className={styles.legendItem}>
               <span className={`${styles.legendSwatch} ${styles.timelineBarUp}`} /> Operational
             </span>
@@ -84,7 +113,7 @@ export default async function StatusPage() {
               systemKey: 'overall',
               label: 'All systems',
               days: overallTimelineDays,
-              uptimePercent: summary.lastRunAt ? summary.overallSla24h : null,
+              uptimePercent: computeTimelineUptime(overallTimelineDays),
             }}
           />
         </div>
@@ -149,6 +178,8 @@ function buildOverallTimeline(
       date,
       status: aggregateDayStatus(dayStatuses.filter((s) => s !== 'none')),
       checkCount,
+      observedCheckCount: timelines.reduce((sum, t) => sum + (t.days[i]?.observedCheckCount ?? 0), 0),
+      upCheckCount: timelines.reduce((sum, t) => sum + (t.days[i]?.upCheckCount ?? 0), 0),
     };
   });
 }

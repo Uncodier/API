@@ -32,9 +32,19 @@ function catalog(loadScreenAccess = async (_scope: unknown) => ({ isAdmin: true,
     dependencies[specifier] = exports;
   }
   dependencies['@/lib/services/tool-execution-context'] = contextModule;
+  dependencies['@/app/api/agents/tools/requirement_status/assistantProtocol'] = loadRuntimeModule(
+    'src/app/api/agents/tools/requirement_status/assistantProtocol.ts', {
+      '@/lib/tools/requirement-status-core': {
+        createRequirementStatusCore: async () => { throw new Error('Unexpected status persistence'); },
+        listRequirementStatusCore: async (args: unknown) => ({ success: true, query: args }),
+      },
+    });
   dependencies['./command-plan-guard'] = { assertStandaloneCommandPlan: async () => undefined };
   dependencies['@/lib/services/composio-service'] = { getComposioApiKeyForSite: async () => undefined };
-  dependencies['@/lib/services/harness-diagnostics/tools'] = { refreshHarnessToolManifest: (tools: unknown) => tools };
+  dependencies['@/lib/services/harness-diagnostics/tools'] = {
+    refreshHarnessToolManifest: (tools: unknown) => tools,
+    createHarnessDiagnosticTools: () => [],
+  };
   dependencies['@/app/api/agents/tools/router/assistantProtocol'] = loadRuntimeModule(
     'src/app/api/agents/tools/router/assistantProtocol.ts', {
       '@/lib/services/embeddings-service': {},
@@ -79,6 +89,20 @@ describe('assistant private execution context wiring', () => {
     const nonInteractive = utils.getAssistantToolDefinitions(siteId, userId, instanceId, custom);
     await nonInteractive.find(tool => tool.name === 'update_repo')!.execute({ action: 'execute' });
     expect(execute).toHaveBeenCalledTimes(4);
+  });
+
+  it('assembles read-only requirement status help and defaults for the actual conversation catalog', async () => {
+    const utils = catalog(), userId = randomUUID(), actionId = randomUUID(), requirementId = randomUUID();
+    const tools = utils.getAssistantToolDefinitions(siteId, userId, instanceId, [], undefined,
+      undefined, requirementId, undefined, undefined, undefined, { siteId, userId, instanceId, actionId });
+    const status = tools.find(tool => tool.name === 'requirement_status')!;
+    expect(status.description).not.toContain('MUST add a status');
+    expect(status.parameters.properties.action.enum).toEqual(['list']);
+    expect(status.parameters.properties).not.toHaveProperty('stage');
+    await expect(status.execute({ requirement_id: requirementId })).resolves.toMatchObject({
+      success: true, query: { requirement_id: requirementId, instance_id: undefined },
+    });
+    await expect(status.execute({ action: 'create', requirement_id: requirementId, stage: 'queued' })).rejects.toThrow('sole owner');
   });
   it('decorates before routing and never exposes context in schemas, args, or results', async () => {
     const utils = catalog();

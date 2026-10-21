@@ -7,6 +7,7 @@ import {
 import type { PublicStatusSummary } from '@/lib/status/get-public-summary';
 import { publishSystemStatus } from '@/lib/status/publish-status';
 import { SYSTEM_LABELS } from '@/lib/status/system-labels';
+import { overallHealth, summarizeObservations } from './observation';
 import {
   sanitizePublicPayload,
   type ProbeRunResult,
@@ -41,15 +42,17 @@ function toPublicSummary(
       sla: slaSnapshot[s.systemKey],
     })),
     slaBySystem: slaSnapshot,
+    stale: false,
+    sourceUnavailable: false,
+    metric: 'observed_check_success_rate',
+    observation: summarizeObservations(systems),
   };
 }
 
 function overallFromSystems(
   systems: SystemHealthResponse[],
 ): 'healthy' | 'degraded' | 'down' {
-  if (systems.some((s) => s.status === 'down')) return 'down';
-  if (systems.some((s) => s.status === 'degraded')) return 'degraded';
-  return 'healthy';
+  return overallHealth(systems);
 }
 
 export async function persistProbeRun(

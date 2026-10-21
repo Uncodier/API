@@ -55,7 +55,7 @@ export async function submitRequirementCommand(
       authorization_action_id: identity.actionId,
       runner_instance_id: data.runner_instance_id ?? null,
       execution_started: false,
-      message: 'Changes are queued for the existing requirement runner after this user action finishes and its current cycle releases ownership. No second executor was started.',
+      message: 'This command and its authorization receipt are already persisted. Changes are queued for the existing requirement runner after this user action finishes and its current cycle releases ownership. No second executor was started. Do not call requirement_status create to register this receipt or resubmit the command.',
     },
   };
 }

@@ -27,6 +27,7 @@ import type OpenAI from 'openai';
 import { randomUUID } from 'node:crypto';
 import { createOpenRouterClient, isOpenRouterReasoningModel, resolveOpenRouterModel } from '@/lib/services/ai/openrouter';
 import { requestOpenRouterChat, resolveChatOutputTokens } from '@/lib/services/ai/openrouter-chat-request';
+import { observeCompletedTextRequest } from '@/lib/status/text-execution-observation';
 import { fitInstanceRequest, resolveModelContextCapacity } from '@/lib/services/robot-instance/instance-context-budget';
 import { getVisionImageSourceUrl } from '@/lib/services/robot-instance/vision-message-images';
 import { normalizeToolOperationResult } from '@/lib/services/tool-operation-result';
@@ -437,6 +438,7 @@ export class AIAgentExecutor {
   private model: string;
   private provider: AIProvider;
   private readonly siteId?: string;
+  private readonly observationApiKey?: string;
   private contextModelId: string | null = null;
 
   constructor(config?: AIAgentExecutorConfig | string) {
@@ -455,6 +457,7 @@ export class AIAgentExecutor {
 
     this.provider = 'openrouter';
     this.siteId = config?.siteId;
+    this.observationApiKey = config?.apiKey;
     this.client = createOpenRouterClient({ apiKey: config?.apiKey });
     this.model = resolveOpenRouterModel(config?.model, config?.provider);
 
@@ -570,7 +573,9 @@ export class AIAgentExecutor {
       stream: true,
       stream_options: { include_usage: true },
     };
-    const stream = await requestOpenRouterChat(opts, request => this.client.chat.completions.create(request as any)).catch(async err => {
+    const stream = await observeCompletedTextRequest(completionOptions.model,
+      () => requestOpenRouterChat(opts, request => this.client.chat.completions.create(request as any)),
+      { apiKey: this.observationApiKey }).catch(async err => {
       console.error(`[AI STREAM INIT ERROR][${this.provider}] Provider stream unavailable`);
       if (err.status) console.error(`   Status: ${err.status}`);
       await settleUncertainRequest(billing.siteId, billing.eventId, err, completionOptions.model);
@@ -1061,12 +1066,15 @@ export class AIAgentExecutor {
           const apiStartTime = Date.now();
           let completion;
           try {
-            completion = await requestOpenRouterChat(completionOptions, request => this.client.chat.completions.create(request as any));
+            completion = await observeCompletedTextRequest(modelName,
+              () => requestOpenRouterChat(completionOptions, request => this.client.chat.completions.create(request as any)),
+              { apiKey: this.observationApiKey });
           } catch (apiErr: any) {
             await settleUncertainRequest(billingSiteId, eventId, apiErr, modelName);
             if (provider === 'azure' && isAzureInvalidImageError(apiErr)) {
               sanitizeMessagesForAzureVisionImages(messages);
-              completion = await this.client.chat.completions.create(completionOptions);
+              completion = await observeCompletedTextRequest(modelName,
+                () => this.client.chat.completions.create(completionOptions), { apiKey: this.observationApiKey });
             } else {
               logChatCompletionFailure(apiErr, {
                 provider,

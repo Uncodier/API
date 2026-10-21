@@ -11,6 +11,7 @@ import { aiAudioHandler } from '@/lib/status/handlers/ai/audio';
 import { SYSTEM_LABELS } from '@/lib/status/system-labels';
 
 const mockCompletion = jest.fn();
+jest.mock('@/lib/status/telemetry', () => ({ getLatestTelemetry: jest.fn().mockResolvedValue(null), recordTelemetry: jest.fn().mockResolvedValue(undefined) }));
 jest.mock('@/lib/services/ai/openrouter', () => ({
   ...jest.requireActual('@/lib/services/ai/openrouter'),
   createOpenRouterClient: jest.fn(() => ({ chat: { completions: { create: mockCompletion } } })),
@@ -77,7 +78,7 @@ describe('evaluateAiProviders', () => {
 
   it('reports configuration-only readiness as unverified rather than failed inference', () => {
     const result = evaluateAiProviders({ openrouter: up({ liveProbe: false, verification: 'configuration' }) }, ['openrouter']);
-    expect(result).toEqual({ status: 'degraded', degradedReasons: ['openrouter_generation_unverified'] });
+    expect(result).toEqual({ status: 'skipped', degradedReasons: ['openrouter_generation_unverified'] });
   });
 });
 
@@ -86,7 +87,7 @@ describe('capability-specific status probes (offline)', () => {
     jest.clearAllMocks();
     jest.replaceProperty(process, 'env', { NODE_ENV: 'test' });
     jest.spyOn(global, 'fetch').mockRejectedValue(new Error('Network forbidden in offline tests'));
-    mockCompletion.mockReset().mockResolvedValue({ choices: [] });
+    mockCompletion.mockReset().mockResolvedValue({ choices: [{ message: { content: 'pong' } }] });
   });
 
   afterEach(() => jest.restoreAllMocks());
@@ -118,6 +119,14 @@ describe('capability-specific status probes (offline)', () => {
       model: 'openai/gpt-6.1-sol', messages: [{ role: 'user', content: 'ping' }], stream: false, max_completion_tokens: 100,
     });
     expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it.each([{}, { choices: [] }, { choices: [{ message: { content: '' } }] }])('does not accept empty inference responses (%j)', async response => {
+    process.env.OPENROUTER_API_KEY = randomBytes(32).toString('hex');
+    process.env.STATUS_AI_PROBE_ENABLED = 'true';
+    mockCompletion.mockResolvedValue(response);
+    expect(await probeOpenRouterText()).toMatchObject({ liveProbe: false, verification: 'inference', errorCode: 'INVALID_RESPONSE' });
+    expect(await aiTextHandler.runCheck()).toMatchObject({ status: 'down' });
   });
 
   it('preserves configured qualified model IDs', async () => {
@@ -158,8 +167,8 @@ describe('capability-specific status probes (offline)', () => {
     }
     const image = await aiImageHandler.runCheck();
     const video = await aiVideoHandler.runCheck();
-    expect(image).toMatchObject({ status: 'degraded', checks: { providers: { azure: { configured: true } } } });
-    expect(video.status).toBe('degraded');
+    expect(image).toMatchObject({ status: 'skipped', checks: { providers: { azure: { configured: true } } } });
+    expect(video).toMatchObject({ status: 'skipped', checks: { verification: 'configuration' } });
     expect(mockCompletion).not.toHaveBeenCalled();
     expect(global.fetch).not.toHaveBeenCalled();
   });
@@ -192,7 +201,7 @@ describe('capability-specific status probes (offline)', () => {
     process.env.AZURE_TTS_DEPLOYMENT = 'custom-speech';
     expect(checkTtsProvider()).toMatchObject({ provider: 'azure', result: { configured: true, model: 'custom-speech' } });
     expect(await aiAudioHandler.runCheck()).toMatchObject({
-      status: 'degraded', checks: { ttsProvider: 'azure', transcriptionProvider: 'azure-direct', verification: 'configuration' },
+      status: 'skipped', checks: { ttsProvider: 'azure', transcriptionProvider: 'azure-direct', verification: 'configuration' },
     });
     expect(createOpenRouterClient).not.toHaveBeenCalled();
     expect(mockCompletion).not.toHaveBeenCalled();

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { drainTrackingEventQueue } from '@/lib/services/tracking-event-queue';
+import { withCronObservation } from '@/lib/status/cron-observation';
 import {
   recordTelemetry,
   REDIS_TELEMETRY_KEYS,
@@ -8,7 +9,7 @@ import {
 export const maxDuration = 60;
 export const dynamic = 'force-dynamic';
 
-export async function GET(request: Request) {
+async function runCron(request: Request) {
   const cronSecret = process.env.CRON_SECRET?.trim();
   if (
     !cronSecret
@@ -44,3 +45,5 @@ export async function GET(request: Request) {
     );
   }
 }
+
+export const GET = withCronObservation('tracking-events', runCron);

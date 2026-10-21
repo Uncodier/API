@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { drainRecordingMetadataQueue } from '@/lib/services/session-recording-queue';
+import { withCronObservation } from '@/lib/status/cron-observation';
 import {
   recordTelemetry,
   REDIS_TELEMETRY_KEYS,
@@ -8,7 +9,7 @@ import {
 export const maxDuration = 60;
 export const dynamic = 'force-dynamic';
 
-export async function GET(request: Request) {
+async function runCron(request: Request) {
   const cronSecret = process.env.CRON_SECRET?.trim();
   const authHeader = request.headers.get('authorization');
   if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
@@ -42,3 +43,5 @@ export async function GET(request: Request) {
     );
   }
 }
+
+export const GET = withCronObservation('session-recordings', runCron);

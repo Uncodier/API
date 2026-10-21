@@ -11,6 +11,8 @@ import {
 } from '@/lib/i18n/email-locale';
 import { platformT } from '@/lib/i18n/email-messages/platform';
 import { EMAIL_BRAND, emailBrandHeadTags, emailCtaButton } from '@/lib/emails/brand';
+import { recordTelemetry } from '@/lib/status/telemetry';
+import type { SystemHealthStatus } from '@/lib/status/types';
 
 /**
  * Interfaz para los datos del miembro del equipo
@@ -252,6 +254,10 @@ export class TeamNotificationService {
    * Notifica a todo el equipo del sitio
    */
   static async notifyTeam(params: NotifyTeamParams): Promise<NotifyTeamResult> {
+    const start = Date.now();
+    let inAppStatus: SystemHealthStatus = 'skipped';
+    let emailRecipientCount = 0;
+    let emailAcceptedCount = 0;
     const {
       siteId,
       title,
@@ -281,6 +287,8 @@ export class TeamNotificationService {
       const teamMembers = await this.getEligibleTeamMembers(siteId, categories);
       const emailRecipients = teamMembers.filter(member => member.emailEnabled !== false);
       const pushRecipients = teamMembers.filter(member => member.pushEnabled !== false);
+      emailRecipientCount = emailRecipients.length;
+      if (pushRecipients.length > 0) inAppStatus = 'down';
       
       result.totalMembers = teamMembers.length;
       result.membersWithEmailEnabled = emailRecipients.length;
@@ -324,6 +332,11 @@ export class TeamNotificationService {
       result.notificationsSent = notificationResults.filter(
         r => r.status === 'fulfilled' && r.value !== null
       ).length;
+      if (pushRecipients.length > 0) {
+        const persistedCount = notificationResults.filter(r => r.status === 'fulfilled' && !!r.value).length;
+        inAppStatus = persistedCount === pushRecipients.length ? 'up'
+          : persistedCount > 0 ? 'degraded' : 'down';
+      }
       
       notificationResults.forEach((notifResult, index) => {
         if (notifResult.status === 'rejected') {
@@ -372,6 +385,13 @@ export class TeamNotificationService {
             }
           });
 
+          // Preserve legacy emailsSent/return semantics, but observe actual
+          // recipient acceptance even when Zavu reports partial aggregate failure.
+          emailAcceptedCount += emailResult.recipientResults
+            ? emails.filter(email => emailResult.recipientResults!.some(r =>
+              r.success && r.to.trim().toLowerCase() === email.trim().toLowerCase())).length
+            : emailResult.success ? emails.length : 0;
+
           if (emailResult.success) {
             result.emailsSent += emails.length;
           } else {
@@ -392,6 +412,29 @@ export class TeamNotificationService {
       console.error('Error al notificar al equipo:', error);
       result.errors?.push(`Error general: ${error instanceof Error ? error.message : 'Error desconocido'}`);
       return result;
+    } finally {
+      // Aggregate in-app results so a later individual success cannot mask a
+      // partial team persistence failure. No eligible recipients emits no success.
+      if (inAppStatus !== 'skipped') {
+        try {
+          await recordTelemetry('notifications_in_app', inAppStatus,
+            inAppStatus === 'up' ? 'In-app team notifications persisted'
+              : inAppStatus === 'degraded' ? 'In-app team notifications partially persisted'
+                : 'In-app team notification persistence failed', Date.now() - start);
+        } catch { /* Best effort; only bounded messages, no user data or errors. */ }
+      }
+      if (emailRecipientCount > 0) {
+        try {
+          if (emailAcceptedCount === 0 || !sendGridService.getConfig().sandboxMode) {
+            const status = emailAcceptedCount === emailRecipientCount ? 'up'
+              : emailAcceptedCount > 0 ? 'degraded' : 'down';
+            await recordTelemetry('notifications_email', status,
+              status === 'up' ? 'Notification email accepted by provider; mailbox delivery unconfirmed'
+                : status === 'degraded' ? 'Notification email partially accepted by provider; mailbox delivery unconfirmed'
+                  : 'Notification email acceptance failed or unconfirmed', Date.now() - start);
+          }
+        } catch { /* Best effort; never forward recipient data or raw errors. */ }
+      }
     }
   }
   

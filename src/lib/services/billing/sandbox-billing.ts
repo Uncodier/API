@@ -58,7 +58,7 @@ async function reconcile(sandbox: Sandbox, db?: BillingClient): Promise<void> {
   let cursor: string | undefined;
   const seen = new Set<string>();
   for (let page = 0; page < 1000; page++) {
-    const result = await sandbox.listSessions({ limit: 100, cursor, sortOrder: 'asc' });
+    const result = await sandbox.listSessions({ limit: 50, cursor, sortOrder: 'asc' });
     const intervals = result.sessions.map(billableSession).filter(v => v !== null);
     const billed = await (db ?? await client()).rpc('bill_sandbox_sessions', {
       p_sandbox_name: sandbox.name, p_sessions: intervals, p_observed_at: observedAt,

@@ -1,5 +1,6 @@
 import { sendGridService } from '../sendgrid-service';
 import { supabaseAdmin } from '../../database/supabase-client';
+import { recordTelemetry } from '@/lib/status/telemetry';
 
 export interface NotificationData {
   id: string;
@@ -34,11 +35,14 @@ export abstract class BaseNotification {
   abstract generateEmailSubject(): string;
   
   async send(): Promise<NotificationResult> {
+    const start = Date.now();
+    let accepted = 0;
+    let emailPromises: Promise<{ recipient: string; success: boolean; error?: string }>[] = [];
     try {
       const subject = this.generateEmailSubject();
       const html = this.generateEmailHtml();
       
-      const emailPromises = this.data.recipients.map(async (recipient) => {
+      emailPromises = this.data.recipients.map(async (recipient) => {
         const result = await sendGridService.sendEmail({
           to: recipient,
           subject,
@@ -51,6 +55,10 @@ export abstract class BaseNotification {
             priority: this.data.priority
           }
         });
+        // Zavu supplies per-recipient acceptance; its aggregate may be false.
+        if (result.recipientResults
+          ? result.recipientResults.some(r => r.success && r.to.trim().toLowerCase() === recipient.trim().toLowerCase())
+          : result.success) accepted += 1;
         
         return { recipient, success: result.success, error: result.error };
       });
@@ -78,6 +86,22 @@ export abstract class BaseNotification {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error'
       };
+    } finally {
+      // Promise.all can reject before other recipient sends settle. Await them
+      // before recording partial acceptance, while preserving the public result.
+      await Promise.allSettled(emailPromises);
+      if (this.data.recipients.some(recipient => !!recipient.trim())) {
+        try {
+          // Sandbox validation is not recipient acceptance or delivery evidence.
+          if (accepted === 0 || !sendGridService.getConfig().sandboxMode) {
+            const status = accepted === this.data.recipients.length ? 'up' : accepted > 0 ? 'degraded' : 'down';
+            await recordTelemetry('notifications_email', status,
+              status === 'up' ? 'Notification email accepted by provider; mailbox delivery unconfirmed'
+                : status === 'degraded' ? 'Notification email partially accepted by provider; mailbox delivery unconfirmed'
+                  : 'Notification email acceptance failed or unconfirmed', Date.now() - start);
+          }
+        } catch { /* Best effort; never copy recipient data or errors into telemetry. */ }
+      }
     }
   }
 }

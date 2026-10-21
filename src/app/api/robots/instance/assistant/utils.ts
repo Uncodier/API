@@ -410,7 +410,7 @@ export const getAssistantToolDefinitions = (
     messagesTool(siteId),
     reportTool(siteId, userId ?? ''),
     systemNotificationTool(siteId),
-    requirementStatusTool(siteId, instanceId),
+    requirementStatusTool(siteId, instanceId, { readOnly: Boolean(commandSource) }),
     requirementBacklogTool(siteId),
     companiesTool(),
     instanceLogsTool(siteId, userId ?? '', instanceId),
@@ -473,7 +473,7 @@ export const getAssistantToolDefinitions = (
       // executor. Keep standalone plans and all read-only inspection available.
       if (tool.name === 'update_repo' ||
           (tool.name === 'requirement_backlog' && !['list', 'get'].includes(args?.action)) ||
-          (tool.name === 'requirement_status' && (args?.action ?? 'create') !== 'list') ||
+          (tool.name === 'requirement_status' && (args?.action ?? 'list') !== 'list') ||
           (tool.name === 'instance_plan' && (requirementId || args?.requirement_id) && args?.action !== 'list')) {
         throw new Error('Submit requirement changes with requirements action="update". This conversation cannot start or mutate the requirement runner; queued changes execute on its sole owner.');
       }

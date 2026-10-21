@@ -1,5 +1,6 @@
 import { fetchTwilioMedia, isTwilioMediaUrl } from '@/lib/services/twilio/fetchTwilioMedia';
 import { recordTelemetry } from '@/lib/status/telemetry';
+import { getTranscriptionObservationKey } from '@/lib/status/handlers/ai/passive-probes';
 import { getAzureTranscriptionConfig } from './azure-transcription-config';
 
 const LOG_PREFIX = '[TranscribeAudio]';
@@ -101,12 +102,27 @@ export async function transcribeAudioBuffer(
   }
 
   const start = Date.now();
+  let platformConfiguration = env === process.env;
+  if (!platformConfiguration) {
+    try {
+      const selected = getAzureTranscriptionConfig(env);
+      const platform = getAzureTranscriptionConfig();
+      platformConfiguration = selected.origin === platform.origin && selected.apiKey === platform.apiKey &&
+        selected.deployment === platform.deployment && selected.apiVersion === platform.apiVersion;
+    } catch { /* Custom credentials cannot verify platform readiness. */ }
+  }
+  const observe = async (model: string, status: 'up' | 'down') => {
+    if (!platformConfiguration) return;
+    await recordTelemetry(getTranscriptionObservationKey(model), status,
+      status === 'up' ? 'Transcription completed successfully' : 'Transcription request failed',
+      Date.now() - start).catch(() => {});
+  };
   for (const attempt of plan) {
     try {
       console.log(`${LOG_PREFIX} Attempting transcription via ${attempt.provider} (${attempt.model})...`);
       const result = await runAttempt(attempt, input.buffer, mimeType, env);
       console.log(`${LOG_PREFIX} ${attempt.provider} transcription successful.`);
-      recordTelemetry('ai_audio', 'up', `Transcription successful via ${attempt.provider}`, Date.now() - start).catch(console.error);
+      await observe(attempt.model, 'up');
       return {
         success: true,
         ...result,
@@ -119,7 +135,7 @@ export async function transcribeAudioBuffer(
     }
   }
 
-  recordTelemetry('ai_audio', 'down', 'Configured transcription provider failed', Date.now() - start).catch(console.error);
+  await observe(plan[0].model, 'down');
   return {
     success: false,
     provider: plan[0].provider,

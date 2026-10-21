@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
       signaturePresent: !!stripeSignature,
       webhookSecretConfigured: !!process.env.STRIPE_WEBHOOK_SECRET
     })
-    recordTelemetry('integrations', 'down', 'Stripe signature verification failed').catch(console.error)
+    // Rejected caller input is not evidence of a provider execution outage.
     return NextResponse.json(
       { error: 'Webhook signature verification failed.' },
       { status: 400 }
@@ -106,7 +106,7 @@ export async function POST(request: NextRequest) {
     if (!completed) {
       throw new Error('Stripe webhook claim ownership was lost before completion')
     }
-    recordTelemetry('integrations', 'up', `Processed Stripe Webhook: ${event.type}`).catch(console.error)
+    await recordTelemetry('integrations_stripe', 'up', `Processed Stripe Webhook: ${event.type}`).catch(console.error)
     return NextResponse.json({ received: true })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
@@ -120,7 +120,7 @@ export async function POST(request: NextRequest) {
       console.error('❌ Failed to record Stripe webhook failure:', finishError)
     })
     console.error('❌ Error processing webhook:', error)
-    recordTelemetry('integrations', 'down', 'Error processing Stripe webhook').catch(console.error)
+    await recordTelemetry('integrations_stripe', 'down', 'Error processing Stripe webhook').catch(console.error)
     return NextResponse.json(
       { error: 'Webhook processing failed' },
       { status: 500 }

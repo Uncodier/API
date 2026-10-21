@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+jest.mock('@/lib/status/telemetry', () => ({ recordTelemetry: jest.fn().mockResolvedValue(undefined) }));
 import sgMail from '@sendgrid/mail';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { SendGridService } from '@/lib/services/sendgrid-service';

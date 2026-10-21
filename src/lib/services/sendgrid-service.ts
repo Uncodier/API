@@ -7,6 +7,8 @@ import { generateHumanInterventionEmailHtml } from '@/lib/emails/human-intervent
 import { EMAIL_BRAND, emailBrandHeadTags, emailCtaButton } from '@/lib/emails/brand';
 import { getTransactionalEmailFrom, getTransactionalEmailProvider, type TransactionalEmailProvider } from './email/transactional-email-config';
 import { getTransactionalEmailConfigurationDiagnostic, getTransactionalEmailFailureDiagnostic, type TransactionalEmailDiagnostic } from './email/transactional-email-config';
+import { recordTelemetry } from '@/lib/status/telemetry';
+import type { SystemHealthStatus } from '@/lib/status/types';
 
 /**
  * Configuración de SendGrid
@@ -72,6 +74,52 @@ export interface SendEmailResult {
   }>;
 }
 
+const acceptedEmailStates = new Set(['queued', 'sending', 'sent', 'delivered', 'read']);
+
+// Observation only: never change recipient validation or the dispatch contract.
+function observationRecipients(to: SendEmailParams['to']): string[] {
+  const recipients = Array.isArray(to) ? to : [to];
+  if (!recipients.length || recipients.some(recipient => typeof recipient !== 'string'
+    || !/^[^\s@,<>]+@[^\s@,<>]+\.[^\s@,<>]+$/.test(recipient.trim()))) return [];
+  return [...new Set(recipients.map(recipient => recipient.trim().toLowerCase()))];
+}
+
+function providerFailureObservation(httpStatus: unknown): SystemHealthStatus {
+  // Do not infer an upstream 500 from a local exception or a facade's fallback.
+  return typeof httpStatus === 'number' && Number.isInteger(httpStatus)
+    && (httpStatus === 401 || httpStatus === 403 || httpStatus === 429 || (httpStatus >= 500 && httpStatus <= 599))
+    ? 'down' : 'degraded';
+}
+
+function isCallerCancellation(signal?: AbortSignal, error?: unknown): boolean {
+  return (signal?.aborted === true && signal.reason?.name !== 'TimeoutError')
+    || (error as { name?: unknown } | undefined)?.name === 'AbortError';
+}
+
+function zavuAcceptanceObservation(result: SendEmailResult, recipients: string[], signal?: AbortSignal): SystemHealthStatus {
+  if (!recipients.length) return 'skipped';
+  const results = Array.isArray(result.recipientResults) ? result.recipientResults : [];
+  const accepted = recipients.filter(to => results.some(recipient => recipient?.success === true
+    && typeof recipient.to === 'string' && recipient.to.trim().toLowerCase() === to
+    && typeof recipient.messageId === 'string' && recipient.messageId.length > 0
+    && acceptedEmailStates.has(recipient.status || ''))).length;
+  const acceptedStatus = typeof result.statusCode === 'number' && Number.isInteger(result.statusCode)
+    && result.statusCode >= 200 && result.statusCode < 300;
+  if (result.success === true && acceptedStatus && accepted === recipients.length) return 'up';
+  if (accepted > 0) return 'degraded';
+  if (isCallerCancellation(signal)) return 'skipped';
+
+  const diagnostics = [result.diagnostic, ...results.map(recipient => recipient?.diagnostic)].filter(
+    (diagnostic): diagnostic is TransactionalEmailDiagnostic => !!diagnostic);
+  // Zavu's failure statusCode is a synthetic 502, including local preflight
+  // failures. Only a diagnostic HTTP status from a provider attempt is evidence.
+  if (diagnostics.some(diagnostic => ['dispatch', 'sender_verification'].includes(diagnostic.stage)
+    && providerFailureObservation(diagnostic.httpStatus) === 'down')) return 'down';
+  if (diagnostics.some(diagnostic => ['configuration', 'validation'].includes(diagnostic.stage)
+    || ['connection_mismatch', 'sender_not_verified'].includes(diagnostic.code))) return 'skipped';
+  return 'degraded';
+}
+
 /**
  * Transactional email facade. The historical class/export names stay compatible;
  * TRANSACTIONAL_EMAIL_PROVIDER selects the transport for every existing caller.
@@ -128,8 +176,6 @@ export class SendGridService {
     this.initialized = true;
 
     console.log('✅ SendGrid service initialized successfully', {
-      fromEmail: this.config.defaultFromEmail,
-      fromName: this.config.defaultFromName,
       sandboxMode: this.config.sandboxMode
     });
   }
@@ -147,18 +193,24 @@ export class SendGridService {
    * Envía un email transaccional
    */
   public async sendEmail(params: SendEmailParams): Promise<SendEmailResult> {
+    const start = Date.now();
+    let observation: SystemHealthStatus = 'skipped';
+    let providerInvoked = false;
+    let sandbox = false;
+    const recipients = observationRecipients(params.to);
     try {
       params.signal?.throwIfAborted();
       if (getTransactionalEmailProvider() === 'zavu') {
         const { sendZavuTransactionalEmail } = await import('./email/ZavuTransactionalEmailService');
-        return sendZavuTransactionalEmail(params);
+        providerInvoked = true;
+        const result = await sendZavuTransactionalEmail(params);
+        observation = zavuAcceptanceObservation(result, recipients, params.signal);
+        return result;
       }
       this.ensureInitialized();
+      sandbox = this.config.sandboxMode === true;
 
       console.log('📧 Iniciando envío de email...', {
-        to: params.to,
-        subject: params.subject,
-        categories: params.categories,
         sandboxMode: this.config.sandboxMode
       });
 
@@ -219,32 +271,38 @@ export class SendGridService {
       }
 
       console.log('📤 Enviando mensaje a SendGrid...', {
-        messagePreview: {
-          to: msg.to,
-          from: msg.from,
-          subject: msg.subject,
-          sandboxMode: msg.mailSettings.sandboxMode.enable
-        }
+        sandboxMode: msg.mailSettings.sandboxMode.enable
       });
 
       // Enviar el email
       params.signal?.throwIfAborted();
+      providerInvoked = true;
       const [response] = await sgMail.send(msg);
 
       console.log('✅ Email enviado exitosamente', {
-        messageId: response.headers['x-message-id'],
         statusCode: response.statusCode,
         sandboxMode: this.config.sandboxMode
       });
 
-      return {
+      const result: SendEmailResult = {
         success: true,
         provider: 'sendgrid',
         messageId: response.headers['x-message-id'] || uuidv4(),
         statusCode: response.statusCode
       };
+      // Keep the historical return, even for a malformed/non-2xx SDK response;
+      // only confirmed real acceptance is allowed to report healthy evidence.
+      if (!sandbox && recipients.length) {
+        observation = typeof response.statusCode === 'number' && Number.isInteger(response.statusCode)
+          && response.statusCode >= 200 && response.statusCode < 300
+          ? 'up' : providerFailureObservation(response.statusCode);
+      }
+      return result;
 
     } catch (error: any) {
+      if (providerInvoked && !sandbox && recipients.length && !isCallerCancellation(params.signal, error)) {
+        observation = providerFailureObservation(error?.status ?? error?.response?.statusCode);
+      }
       console.error('❌ Transactional email send failed', {
         statusCode: error.response?.statusCode || 500
       });
@@ -265,6 +323,19 @@ export class SendGridService {
         error: errorMessage,
         statusCode
       };
+    } finally {
+      // This facade covers ALL platform transactional email, not just messages
+      // with a notification category. Observe the existing send, never probe or
+      // resend. Match central wrappers' generic receipts for sampling/dedup;
+      // provider acceptance does not establish mailbox delivery.
+      if (observation !== 'skipped') {
+        try {
+          await recordTelemetry('notifications_email', observation,
+            observation === 'up' ? 'Notification email accepted by provider; mailbox delivery unconfirmed'
+              : observation === 'degraded' ? 'Notification email partially accepted by provider; mailbox delivery unconfirmed'
+                : 'Notification email acceptance failed or unconfirmed', Date.now() - start);
+        } catch { /* Best effort; never log recipients, payloads, credentials or provider errors. */ }
+      }
     }
   }
 

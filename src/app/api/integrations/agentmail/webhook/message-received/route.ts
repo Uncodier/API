@@ -5,12 +5,15 @@ import { WorkflowService } from '@/lib/services/workflow-service';
 import { findMessageByAgentMailId } from '@/lib/integrations/agentmail/message-updater';
 import { ConversationService } from '@/lib/services/conversation-service';
 import { resolveAgentMailWebhookVerificationContext } from '@/lib/integrations/agentmail/site-webhook-secret';
+import { recordTelemetry } from '@/lib/status/telemetry';
 
 /**
  * POST handler for AgentMail message.received webhook event
  * Triggers customerSupport workflow for incoming messages
  */
 export async function POST(request: NextRequest) {
+  const startedAt = Date.now();
+  let processingAuthenticatedEvent = false;
   try {
     console.log('📩 [AgentMail] message.received webhook received');
 
@@ -58,6 +61,7 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+    processingAuthenticatedEvent = true;
 
     console.log(`📨 [AgentMail] Processing incoming message: ${message.message_id}`);
 
@@ -65,6 +69,7 @@ export async function POST(request: NextRequest) {
     const existingMessage = await findMessageByAgentMailId(message.message_id);
     if (existingMessage) {
       console.log(`⚠️ [AgentMail] Message ${message.message_id} already processed, skipping duplicate`);
+      await recordTelemetry('integrations_agentmail', 'up', 'Authenticated AgentMail duplicate acknowledged', Date.now() - startedAt);
       return NextResponse.json(
         { 
           success: true, 
@@ -334,11 +339,15 @@ export async function POST(request: NextRequest) {
       }
     })();
 
+    await recordTelemetry('integrations_agentmail', 'up', 'Authenticated AgentMail webhook accepted for processing', Date.now() - startedAt);
     return NextResponse.json(
       { success: true, message_id: message.message_id, event_type: 'message.received' },
       { status: 200 }
     );
   } catch (error: any) {
+    if (processingAuthenticatedEvent) {
+      await recordTelemetry('integrations_agentmail', 'down', 'Authenticated AgentMail webhook processing failed', Date.now() - startedAt);
+    }
     console.error('❌ [AgentMail] Error processing message.received webhook:', error);
     return NextResponse.json(
       { success: false, error: 'Internal server error', details: error.message },

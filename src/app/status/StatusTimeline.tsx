@@ -5,7 +5,7 @@ const STATUS_LABELS: Record<TimelineDayStatus, string> = {
   up: 'Operational',
   degraded: 'Degraded',
   down: 'Down',
-  skipped: 'Skipped',
+  skipped: 'Unverified',
   none: 'No data',
 };
 
@@ -49,7 +49,7 @@ export function StatusTimeline({ timeline }: { timeline: SystemTimeline }) {
 
   return (
     <div className={styles.timelineWrap}>
-      <div className={styles.timelineBars} role="list" aria-label={`${timeline.label} uptime history`}>
+      <div className={styles.timelineBars} role="list" aria-label={`${timeline.label} check history`}>
         {timeline.days.map((day) => (
           <DayBar key={day.date} day={day} />
         ))}

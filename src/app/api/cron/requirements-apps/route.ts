@@ -3,12 +3,13 @@ import { start } from 'workflow/api';
 import { runCronAppsWorkflow } from './workflow';
 import { getMaxConcurrentRequirementRuns, getRequirementEvaluationLimit } from './scheduler-config';
 import { claimRequirementRun, dueScheduledRequirements, finishRequirementCycle } from '@/lib/harness/requirement-scheduler';
+import { withCronObservation } from '@/lib/status/cron-observation';
 
 export const maxDuration = 60;
 export const dynamic = 'force-dynamic';
 
 /** The existing minute cron admits work. Quality checks are tools, not admission gates. */
-export async function GET(request: Request) {
+async function runCron(request: Request) {
   const secret = process.env.CRON_SECRET?.trim();
   if (!secret || request.headers.get('authorization') !== `Bearer ${secret}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -39,3 +40,5 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Requirement scheduler unavailable; no legacy executor fallback was started' }, { status: 503 });
   }
 }
+
+export const GET = withCronObservation('requirements-apps', runCron);

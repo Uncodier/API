@@ -3,7 +3,18 @@ import type { OpenRouterConfig, OpenRouterModelOptions } from '../models/types';
 import { randomUUID } from 'node:crypto';
 import { createOpenRouterClient, isOpenRouterReasoningModel, resolveOpenRouterModel } from '@/lib/services/ai/openrouter';
 import { recordTelemetry } from '@/lib/status/telemetry';
+import { getTextObservationKey } from '@/lib/status/handlers/ai/passive-probes';
 import { formatOpenAiNonStreamResponse, throwIfCompletionError } from './llm-fallback';
+
+function hasGeneratedOutput(choices: any, streaming = false): boolean {
+  return Array.isArray(choices) && choices.some(choice => {
+    const message = streaming ? choice?.delta : choice?.message;
+    return (typeof message?.content === 'string' && !!message.content.trim()) ||
+      (Array.isArray(message?.tool_calls) && message.tool_calls.some((call: any) =>
+        (typeof call?.function?.name === 'string' && !!call.function.name.trim()) ||
+        (typeof call?.function?.arguments === 'string' && !!call.function.arguments.trim())));
+  });
+}
 
 export class OpenRouterConnector {
   constructor(
@@ -46,6 +57,14 @@ export class OpenRouterConnector {
 
     const eventId = randomUUID();
     const startedAt = Date.now();
+    const platformCredential = this.config.apiKey === undefined ||
+      (!!process.env.OPENROUTER_API_KEY?.trim() && this.config.apiKey.trim() === process.env.OPENROUTER_API_KEY.trim());
+    const observe = async (status: 'up' | 'down') => {
+      if (!platformCredential) return;
+      await recordTelemetry(getTextObservationKey(model), status,
+        status === 'up' ? 'Text request completed with generated output' : 'Text request failed or returned no generated output',
+        Date.now() - startedAt).catch(() => {});
+    };
     let accepted = false;
     const charge = async (usage: unknown, generationId?: string, responseModel?: string) => {
       if (!merged.siteId) return;
@@ -56,8 +75,6 @@ export class OpenRouterConnector {
     try {
       const response = await client.chat.completions.create(request);
       accepted = true;
-      // Keep the historical telemetry system key for database compatibility.
-      void recordTelemetry('ai_portkey', 'up', `OpenRouter: ${model}`, Date.now() - startedAt).catch(() => {});
       if (merged.stream) {
         // Preserve chunk metadata, but settle before the caller can finish the turn and run tools.
         const stream = merged.siteId ? (async function* () {
@@ -77,12 +94,32 @@ export class OpenRouterConnector {
             await charge(usage, generationId, responseModel);
           }
         })() : response;
-        return { stream, isStream: true, modelInfo: { model, provider: 'openrouter' } };
+        // Observe outside the existing billing iterator: connection acceptance and
+        // caller cancellation are not evidence of completed generation.
+        const observedStream = (async function* () {
+          let generated = false;
+          let failed = false;
+          try {
+            for await (const chunk of stream as AsyncIterable<any>) {
+              generated ||= hasGeneratedOutput(chunk?.choices, true);
+              failed ||= !!(chunk?.error || chunk?.body?.error);
+              yield chunk;
+            }
+          } catch (error) {
+            await observe('down');
+            throw error;
+          }
+          // A generator return() skips this path; never mark an abandoned stream up.
+          await observe(generated && !failed ? 'up' : 'down');
+        })();
+        return { stream: observedStream, isStream: true, modelInfo: { model, provider: 'openrouter' } };
       }
       // Accepted work is billable even when choices are absent or the provider returns an error envelope.
       await charge((response as any)?.usage, (response as any)?.id, (response as any)?.model);
       throwIfCompletionError(response);
-      return formatOpenAiNonStreamResponse(response, 'openrouter', model);
+      const result = formatOpenAiNonStreamResponse(response, 'openrouter', model);
+      await observe(hasGeneratedOutput((response as any)?.choices) ? 'up' : 'down');
+      return result;
     } catch (error) {
       if (!accepted) {
         const failure = error as any;
@@ -95,7 +132,7 @@ export class OpenRouterConnector {
           await charge(usage, generationId);
         }
       }
-      void recordTelemetry('ai_portkey', 'down', `OpenRouter request failed: ${model}`, Date.now() - startedAt).catch(() => {});
+      await observe('down');
       // Preserve SDK status/code and never turn failures into success-shaped responses.
       throw error;
     }

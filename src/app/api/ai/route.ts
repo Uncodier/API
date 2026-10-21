@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getRequestOptions } from '@/lib/config/analyzer-config';
 import { handleIncompleteJsonResponse } from '@/lib/utils/api-utils';
 import { createOpenRouterClient, getOpenRouterChatModel } from '@/lib/services/ai/openrouter';
+import { observeCompletedTextRequest } from '@/lib/status/text-execution-observation';
 
 export async function POST(request: NextRequest) {
   try {
@@ -15,11 +16,12 @@ export async function POST(request: NextRequest) {
 
     // modelType is a model-vendor hint, never a credential or gateway selector.
     const modelOptions = getRequestOptions(modelType, modelId).openrouter;
-    const response = await createOpenRouterClient().chat.completions.create({
+    const client = createOpenRouterClient();
+    const response = await observeCompletedTextRequest(modelOptions.model, () => client.chat.completions.create({
       ...modelOptions,
       messages,
       stream: false,
-    });
+    }));
     // Preserve the canonical choices envelope and provider/id/usage (including cost).
     const processed = await handleIncompleteJsonResponse(response, messages, modelType, modelOptions.model);
     return NextResponse.json(processed);

@@ -6,7 +6,14 @@ export const robotsHandler: SystemHealthHandler = {
   label: 'Robots API',
   async runCheck() {
     const start = Date.now();
-    const instances = await probeHttpRoute('/api/instances', { method: 'GET' });
+    const instances = await probeHttpRoute('/api/instances', {
+      method: 'GET',
+      expectedStatuses: [200],
+      validateResponse: (body, headers) => {
+        if (!headers.get('content-type')?.includes('application/json')) return false;
+        return Array.isArray(JSON.parse(body)?.instances);
+      },
+    });
     const scrapybaraConfigured = !!(
       process.env.SCRAPYBARA_API_KEY?.trim() || process.env.SCRAPYBARA_API_KEY_ID?.trim()
     );
@@ -14,11 +21,13 @@ export const robotsHandler: SystemHealthHandler = {
     return buildHealthResponse({
       systemKey: 'robots',
       label: 'Robots API',
-      status: instances.status < 500 ? 'up' : 'degraded',
+      status: instances.ok ? 'up' : 'down',
       latencyMs,
-      summary: instances.status < 500 ? 'Instances API reachable' : 'Robots/instances degraded',
+      summary: instances.ok ? 'Instances list response verified; robot execution unverified' : 'Instances list probe failed',
       checks: {
-        instanceListReachable: instances.status < 500,
+        verification: 'response',
+        robotExecutionVerified: false,
+        instanceListResponseVerified: instances.ok,
         scrapybaraConfigured,
         httpStatus: instances.status,
       },

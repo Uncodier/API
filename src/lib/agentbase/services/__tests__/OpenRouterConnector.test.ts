@@ -58,11 +58,14 @@ it('returns unchanged streaming chunks and settles usage before stream completio
   expect(create.mock.calls[0][0]).toMatchObject({ stream: true, stream_options: { include_usage: true }, user: 'site-a' });
 });
 
-it('does not charge no-site completions or wrap no-site streams', async () => {
+it('does not charge no-site completions or alter no-site streaming chunks', async () => {
   await new OpenRouterConnector().callAgent(messages);
   const stream = (async function* () { yield { choices: [], usage: completion.usage }; })();
   create.mockResolvedValue(stream);
-  expect((await new OpenRouterConnector().callAgent(messages, { stream: true })).stream).toBe(stream);
+  const result = await new OpenRouterConnector().callAgent(messages, { stream: true });
+  const chunks = [];
+  for await (const chunk of result.stream) chunks.push(chunk);
+  expect(chunks).toEqual([{ choices: [], usage: completion.usage }]);
   expect(chargeOpenRouterUsage).not.toHaveBeenCalled();
 });
 

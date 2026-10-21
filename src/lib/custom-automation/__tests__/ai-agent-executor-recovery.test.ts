@@ -21,6 +21,7 @@ const { AIAgentExecutor } = loadRuntimeModule<typeof import('../ai-agent-executo
     openai: OfflineOpenAI, 'google-auth-library': { GoogleAuth: class {} }, zod,
     '@/lib/services/ai/openrouter': { ...openrouter, createOpenRouterClient: () => new OfflineOpenAI() },
     '@/lib/services/ai/openrouter-chat-request': chatRequest,
+    '@/lib/status/text-execution-observation': { observeCompletedTextRequest: async (_model: string, request: () => PromiseLike<unknown>) => request() },
     'zod-to-json-schema': jsonSchema, './azure-vision-message-sanitize': azureVision,
     './gemini-message-sanitize': geminiMessages, './coerce-tool-args': toolArguments,
     '@/lib/services/tool-operation-result': toolResults,

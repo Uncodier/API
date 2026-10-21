@@ -1,3 +1,4 @@
+jest.mock('@/lib/status/telemetry', () => ({ recordTelemetry: jest.fn().mockResolvedValue(undefined) }));
 import { createHash, randomBytes } from 'node:crypto';
 import { startVideoJob, resumeVideoJob } from '../openrouter-jobs';
 import { submitOpenRouterVideo, pollOpenRouterVideo, downloadOpenRouterVideo } from '../provider-openrouter';

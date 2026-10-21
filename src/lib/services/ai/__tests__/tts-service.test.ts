@@ -1,3 +1,4 @@
+jest.mock('@/lib/status/telemetry', () => ({ recordTelemetry: jest.fn().mockResolvedValue(undefined) }));
 import { randomBytes } from 'node:crypto';
 import { synthesizeWithAzure, synthesizeSpeech } from '../tts-service';
 import { getAzureTtsConfig } from '../azure-tts-config';

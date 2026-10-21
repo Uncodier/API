@@ -6,6 +6,8 @@ import {
 } from '@/lib/status/compute-sla';
 import { sanitizePublicPayload } from '@/lib/status/types';
 import { SYSTEM_LABELS } from '@/lib/status/system-labels';
+import { isStatusStale, normalizeHealthStatus, overallHealth, summarizeObservations } from './observation';
+import { refreshPassiveSummary } from './refresh-passive-summary';
 import {
   acquireLock,
   getCachedJson,
@@ -13,12 +15,12 @@ import {
   setCachedJson,
 } from '@/lib/security/upstash-rest';
 
-const STATUS_SUMMARY_CACHE_KEY = 'cache:status:public-summary:v1';
-const STATUS_SUMMARY_STALE_CACHE_KEY = 'cache:status:public-summary:stale:v1';
+const STATUS_SUMMARY_CACHE_KEY = 'cache:status:public-summary:v2';
+const STATUS_SUMMARY_STALE_CACHE_KEY = 'cache:status:public-summary:stale:v2';
 const STATUS_SUMMARY_CACHE_SECONDS = 30;
 const STATUS_SUMMARY_STALE_CACHE_SECONDS = 60 * 60;
 const STATUS_SUMMARY_LOCK_KEY = 'lock:status:public-summary';
-const STATUS_SUMMARY_RETRY_ATTEMPTS = 6;
+const STATUS_SUMMARY_RETRY_ATTEMPTS = 40;
 const STATUS_SUMMARY_RETRY_DELAY_MS = 250;
 
 export interface PublicSystemCard {
@@ -39,6 +41,49 @@ export interface PublicStatusSummary {
   lastTrigger: string | null;
   systems: PublicSystemCard[];
   slaBySystem: Record<string, SlaWindow>;
+  stale?: boolean;
+  sourceUnavailable?: boolean;
+  observation?: ReturnType<typeof summarizeObservations>;
+  metric?: 'observed_check_success_rate';
+}
+
+export function withSummaryFreshness(summary: PublicStatusSummary, sourceUnavailable = false): PublicStatusSummary {
+  const stale = isStatusStale(summary.lastRunAt);
+  return {
+    ...summary,
+    stale,
+    sourceUnavailable,
+    metric: 'observed_check_success_rate',
+    observation: summarizeObservations(summary.systems),
+    // A cached success is not fresh evidence during an outage of the monitor.
+    overall: stale || sourceUnavailable ? (summary.overall === 'down' ? 'down' : 'degraded') : summary.overall,
+  };
+}
+
+/** A cold cache contender must not fail the page while another request loads
+ * historical metrics. Read only the latest small snapshot, without recomputing
+ * history or claiming the owner's cache is current. */
+async function getLatestSnapshotWithoutMetrics(): Promise<PublicStatusSummary> {
+  const { data: run, error: runError } = await supabaseAdmin.from('system_status_runs')
+    .select('id, trigger, created_at').order('created_at', { ascending: false }).limit(1).maybeSingle();
+  if (runError) throw new Error('Latest status snapshot is unavailable');
+  let systems: PublicSystemCard[] = [];
+  if (run) {
+    const { data: rows, error } = await supabaseAdmin.from('system_status')
+      .select('system_key, status, summary, latency_ms, health_payload, created_at')
+      .eq('run_id', run.id).order('system_key');
+    if (error) throw new Error('Latest status snapshot is unavailable');
+    systems = (rows ?? []).map(row => {
+      const payload = row.health_payload as { checks?: Record<string, unknown> } | null;
+      const checks = sanitizePublicPayload(payload?.checks ?? {});
+      return { systemKey: row.system_key, label: SYSTEM_LABELS[row.system_key] ?? row.system_key,
+        status: normalizeHealthStatus(row.status, checks), summary: row.summary ?? '',
+        latencyMs: row.latency_ms ?? 0, checkedAt: row.created_at, checks };
+    });
+  }
+  return withSummaryFreshness({ overall: overallHealth(systems) === 'down' ? 'down' : 'degraded',
+    overallSla24h: null, lastRunAt: run?.created_at ?? null, lastTrigger: run?.trigger ?? null,
+    systems, slaBySystem: {} }, true);
 }
 
 async function waitForRefreshedSummary(): Promise<PublicStatusSummary | null> {
@@ -51,29 +96,33 @@ async function waitForRefreshedSummary(): Promise<PublicStatusSummary | null> {
     const refreshed = await getCachedJson<PublicStatusSummary>(
       STATUS_SUMMARY_CACHE_KEY,
     );
-    if (refreshed) return refreshed;
+    if (refreshed) return withSummaryFreshness(refreshed);
     const stale = await getCachedJson<PublicStatusSummary>(
       STATUS_SUMMARY_STALE_CACHE_KEY,
     );
-    if (stale) return stale;
+    if (stale) return withSummaryFreshness(stale);
   }
   return null;
 }
 
 export async function getPublicSummary(): Promise<PublicStatusSummary> {
+  return refreshPassiveSummary(await getStoredPublicSummary());
+}
+
+async function getStoredPublicSummary(): Promise<PublicStatusSummary> {
   const cached = await getCachedJson<PublicStatusSummary>(
     STATUS_SUMMARY_CACHE_KEY,
   );
-  if (cached) return cached;
+  if (cached) return withSummaryFreshness(cached);
   const stale = await getCachedJson<PublicStatusSummary>(
     STATUS_SUMMARY_STALE_CACHE_KEY,
   );
   const lock = await acquireLock(STATUS_SUMMARY_LOCK_KEY, 15);
   if (lock.state === 'contended') {
-    if (stale) return stale;
+    if (stale) return withSummaryFreshness(stale);
     const refreshed = await waitForRefreshedSummary();
     if (refreshed) return refreshed;
-    throw new Error('Status summary refresh is already in progress');
+    return getLatestSnapshotWithoutMetrics();
   }
   const lockToken = lock.state === 'acquired' ? lock.token : null;
 
@@ -111,7 +160,7 @@ export async function getPublicSummary(): Promise<PublicStatusSummary> {
         emptySummary,
         STATUS_SUMMARY_STALE_CACHE_SECONDS,
       );
-      return emptySummary;
+      return withSummaryFreshness(emptySummary);
     }
 
     const { data: checks, error: checksError } = await supabaseAdmin
@@ -125,14 +174,15 @@ export async function getPublicSummary(): Promise<PublicStatusSummary> {
 
     const systems: PublicSystemCard[] = (checks ?? []).map((row) => {
       const payload = (row.health_payload as Record<string, unknown>) ?? {};
+      const evidence = (payload.checks as Record<string, unknown>) ?? {};
       return {
         systemKey: row.system_key,
         label: SYSTEM_LABELS[row.system_key] ?? row.system_key,
-        status: row.status,
+        status: normalizeHealthStatus(row.status, evidence),
         summary: row.summary ?? '',
         latencyMs: row.latency_ms ?? 0,
         checkedAt: row.created_at,
-        checks: sanitizePublicPayload((payload.checks as Record<string, unknown>) ?? payload),
+        checks: sanitizePublicPayload(evidence),
         sla: slaBySystem[row.system_key],
       };
     });
@@ -144,7 +194,7 @@ export async function getPublicSummary(): Promise<PublicStatusSummary> {
     };
 
     const summary: PublicStatusSummary = {
-      overall: overallMap[latestRun.overall_status as keyof typeof overallMap] ?? 'degraded',
+      overall: overallMap[overallHealth(systems)],
       overallSla24h,
       lastRunAt: latestRun.created_at,
       lastTrigger: latestRun.trigger,
@@ -161,12 +211,12 @@ export async function getPublicSummary(): Promise<PublicStatusSummary> {
       summary,
       STATUS_SUMMARY_STALE_CACHE_SECONDS,
     );
-    return summary;
+    return withSummaryFreshness(summary);
   } catch (error) {
     const fallback = stale ?? await getCachedJson<PublicStatusSummary>(
       STATUS_SUMMARY_STALE_CACHE_KEY,
     );
-    if (fallback) return fallback;
+    if (fallback) return withSummaryFreshness(fallback, true);
     throw error;
   } finally {
     if (lockToken) {

@@ -7,15 +7,31 @@ export const visitorsHandler: SystemHealthHandler = {
   probePath: '/api/visitors/identify',
   async runCheck() {
     const start = Date.now();
-    const r = await probeHttpRoute('/api/visitors/identify', { method: 'OPTIONS' });
+    // Middleware owns CORS OPTIONS, so it cannot prove route registration.
+    // Also verify the POST-only route's safe GET rejection; never identify a visitor.
+    const [r, preflight] = await Promise.all([
+      probeHttpRoute('/api/visitors/identify', { method: 'GET', expectedStatuses: [405] }),
+      probeHttpRoute('/api/visitors/identify', {
+        method: 'OPTIONS', expectedStatuses: [204],
+        validateResponse: (body, headers) => body === '' &&
+          (headers.get('access-control-allow-methods') ?? headers.get('allow') ?? '')
+            .split(',').map(method => method.trim()).includes('POST'),
+      }),
+    ]);
+    const ok = r.ok && preflight.ok;
     const latencyMs = Date.now() - start;
     return buildHealthResponse({
       systemKey: 'visitors',
       label: 'Visitors API',
-      status: r.status < 500 ? 'up' : 'down',
+      status: ok ? 'up' : 'down',
       latencyMs,
-      summary: r.status < 500 ? 'Visitors API reachable' : 'Visitors API failing',
-      checks: { identifyRouteReachable: r.status < 500, httpStatus: r.status },
+      summary: ok ? 'Visitors route and CORS contracts verified; identification unverified' : 'Visitors route or CORS contract check failed',
+      checks: {
+        verification: 'contract',
+        functionalVerified: false,
+        identifyRouteContract: { ok: r.ok, status: r.status, expectedStatuses: [405] },
+        identifyOptionsContract: { ok: preflight.ok, status: preflight.status, expectedStatuses: [204] },
+      },
     });
   },
 };

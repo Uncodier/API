@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
 import { runSessionEventRetention } from '@/lib/services/session-event-retention';
+import { withCronObservation } from '@/lib/status/cron-observation';
 
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
 
-export async function GET(request: Request) {
+async function runCron(request: Request) {
   const cronSecret = process.env.CRON_SECRET?.trim();
   const authHeader = request.headers.get('authorization');
 
@@ -26,3 +27,5 @@ export async function GET(request: Request) {
     );
   }
 }
+
+export const GET = withCronObservation('session-events', runCron);

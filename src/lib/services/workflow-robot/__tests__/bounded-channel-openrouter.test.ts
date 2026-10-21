@@ -1,3 +1,4 @@
+jest.mock('@/lib/status/telemetry', () => ({ recordTelemetry: jest.fn().mockResolvedValue(undefined) }));
 import { randomBytes } from 'node:crypto';
 import { boundedChannelModelTurn } from '../bounded-channel-model';
 import { CreditService } from '@/lib/services/billing/CreditService';

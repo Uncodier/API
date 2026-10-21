@@ -4,11 +4,12 @@ import { materializeRunFromGraph } from '@/lib/services/workflow-robot/materiali
 import { runWorkflowPlan } from '@/lib/services/workflow-robot/run-plan';
 import { isCronDueInWindow, WORKFLOW_CRON_WINDOW_MS } from '@/lib/services/workflow-robot/cron-window';
 import { DEFAULT_TIMEZONE, normalizeTimezone, resolveClientTimezone } from '@/lib/timezone';
+import { withCronObservation } from '@/lib/status/cron-observation';
 
 export const maxDuration = 800;
 export const dynamic = 'force-dynamic';
 
-export async function GET(req: Request) {
+async function runCron(req: Request) {
   const authHeader = req.headers.get('authorization');
   if (authHeader !== `Bearer ${process.env.CRON_SECRET?.trim()}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -76,3 +77,5 @@ export async function GET(req: Request) {
 
   return NextResponse.json({ message: `Processed ${results.length} cron triggers`, results });
 }
+
+export const GET = withCronObservation('workflows', runCron);

@@ -6,15 +6,24 @@ export const finderHandler: SystemHealthHandler = {
   label: 'Finder API',
   async runCheck() {
     const start = Date.now();
-    const r = await probeHttpRoute('/api/finder/person_role_search/totals', { method: 'GET' });
+    // POST is billable; only verify GET is rejected by this POST-only route.
+    const r = await probeHttpRoute('/api/finder/person_role_search/totals', {
+      method: 'GET', expectedStatuses: [405],
+    });
     const latencyMs = Date.now() - start;
     return buildHealthResponse({
       systemKey: 'finder',
       label: 'Finder API',
-      status: r.status < 500 ? 'up' : 'down',
+      status: r.ok ? 'up' : 'down',
       latencyMs,
-      summary: r.status < 500 ? 'Finder route contract OK' : 'Finder API failing',
-      checks: { searchRouteContract: { path: '/api/finder/person_role_search/totals', status: r.status } },
+      summary: r.ok ? 'Finder method contract verified; search unverified' : 'Finder route contract check failed',
+      checks: {
+        verification: 'contract',
+        functionalVerified: false,
+        searchRouteContract: {
+          path: '/api/finder/person_role_search/totals', status: r.status, expectedStatuses: [405], ok: r.ok,
+        },
+      },
     });
   },
 };

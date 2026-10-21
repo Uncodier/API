@@ -1,6 +1,8 @@
 import { getAzureTtsConfig, AZURE_TTS_MAX_CHARS, TTSServiceError } from './azure-tts-config';
 import { readResponseWithLimit } from '@/lib/security/limited-response';
 import { normalizeSpeechVoice, normalizeSpeechLanguage } from './speech-options';
+import { recordTelemetry } from '@/lib/status/telemetry';
+import { getTtsObservationKey } from '@/lib/status/handlers/ai/passive-probes';
 
 export { TTSServiceError } from './azure-tts-config';
 export type TTSProvider = 'azure';
@@ -58,6 +60,8 @@ export async function synthesizeWithAzure(
   const selected = validateSpeechOptions({ text, voice, format, model, speed, language });
   const url = new URL(`/openai/deployments/${encodeURIComponent(selected.deployment)}/audio/speech`, selected.config.origin);
   url.searchParams.set('api-version', selected.config.apiVersion);
+  const start = Date.now();
+  let observeFailure = true;
   try {
     const response = await fetch(url, {
       method: 'POST', headers: { 'api-key': selected.config.apiKey, 'Content-Type': 'application/json' },
@@ -67,15 +71,26 @@ export async function synthesizeWithAzure(
         ...(speed !== undefined ? { speed } : {}) }),
       redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(120_000),
     });
-    if (!response.ok) throw new TTSServiceError(`Azure TTS request failed (${response.status})`);
+    if (!response.ok) {
+      // Unsupported customer options/deployments are not evidence of an outage.
+      observeFailure = ![400, 422].includes(response.status)
+        && !(response.status === 404 && selected.deployment !== selected.config.deployment);
+      throw new TTSServiceError(`Azure TTS request failed (${response.status})`);
+    }
     const contentType = response.headers.get('content-type')?.split(';')[0].trim().toLowerCase();
     if (contentType && !contentType.startsWith('audio/') && contentType !== 'application/octet-stream') {
       throw new TTSServiceError('Azure TTS returned a non-audio response');
     }
     const audio = await readResponseWithLimit(response, 32 * 1024 * 1024);
     if (!audio.length) throw new TTSServiceError('Azure TTS returned empty audio');
+    await recordTelemetry(getTtsObservationKey(selected.deployment), 'up',
+      'TTS returned validated nonempty audio', Date.now() - start).catch(() => {});
     return audio;
   } catch (error) {
+    if (observeFailure) {
+      await recordTelemetry(getTtsObservationKey(selected.deployment), 'down',
+        'TTS provider request did not return valid audio', Date.now() - start).catch(() => {});
+    }
     if (error instanceof TTSServiceError) throw error;
     // Upstream errors may echo input or keys. Never expose them or retry a billable request.
     throw new TTSServiceError('Azure TTS request failed or timed out; generation outcome may be uncertain');

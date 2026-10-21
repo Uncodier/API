@@ -13,6 +13,7 @@ export const aiOpenRouterHandler: SystemHealthHandler = {
   async runCheck() {
     const start = Date.now();
     const providers = { openrouter: await probeOpenRouterText() };
+    const probe = providers.openrouter;
     const { status, degradedReasons } = evaluateAiProviders(providers, ['openrouter']);
     const latencyMs = Date.now() - start;
 
@@ -21,8 +22,13 @@ export const aiOpenRouterHandler: SystemHealthHandler = {
       label: 'AI OpenRouter (/api/ai)',
       status,
       latencyMs,
-      summary: status === 'up' ? 'OpenRouter text inference healthy' : `OpenRouter: ${degradedReasons.join(', ')}`,
-      checks: { providers },
+      summary: probe.verification === 'passive'
+        ? `OpenRouter text: recent request ${probe.observedHealthy ? 'completed successfully' : 'failed'}`
+        : status === 'up' ? 'OpenRouter text inference healthy'
+          : status === 'skipped' ? 'OpenRouter text configured; generation unverified'
+            : `OpenRouter: ${degradedReasons.join(', ')}`,
+      checks: { providers, verification: probe.verification ?? 'configuration',
+        observedAt: probe.observedAt, observedFailure: probe.verification === 'passive' && !probe.observedHealthy },
       degradedReasons: degradedReasons.length ? degradedReasons : undefined,
       probePath: '/api/ai',
     });

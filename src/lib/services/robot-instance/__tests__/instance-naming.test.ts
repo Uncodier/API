@@ -1,3 +1,4 @@
+jest.mock('@/lib/status/telemetry', () => ({ recordTelemetry: jest.fn().mockResolvedValue(undefined) }));
 import { generateInstanceName, compareObjectives } from '../instance-naming';
 import { createOpenRouterClient } from '@/lib/services/ai/openrouter';
 

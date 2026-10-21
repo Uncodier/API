@@ -9,6 +9,7 @@ import { isAiProbeEnabled } from '@/lib/status/types';
 import { getAzureImageConfig } from '@/lib/services/image/azure-image-config';
 import { getAzureTranscriptionConfig } from '@/lib/services/ai/azure-transcription-config';
 import { getAzureTtsConfig } from '@/lib/services/ai/azure-tts-config';
+import { getTextObservationKey, readPassiveProviderObservation } from './passive-probes';
 
 const PROBE_TIMEOUT_MS = 15_000;
 
@@ -51,26 +52,30 @@ function configurationResult(model: string, configured: boolean): ProviderProbeR
   };
 }
 
-export async function probeOpenRouterText(): Promise<ProviderProbeResult> {
+export async function probeOpenRouterText(options: { passiveOnly?: boolean } = {}): Promise<ProviderProbeResult> {
   const model = getOpenRouterChatModel();
   if (!getEnv('OPENROUTER_API_KEY')) return skippedResult(model);
-  if (!isAiProbeEnabled()) {
-    return {
+  if (options.passiveOnly || !isAiProbeEnabled()) {
+    return readPassiveProviderObservation({
       ...configurationResult(model, true),
       errorCode: 'PROBE_DISABLED',
       errorMessage: 'Live probes require STATUS_AI_PROBE_ENABLED=true',
-    };
+    }, getTextObservationKey(model));
   }
 
   const start = Date.now();
   try {
     const client = createOpenRouterClient({ timeout: PROBE_TIMEOUT_MS, maxRetries: 0 });
-    await client.chat.completions.create({
+    const response = await client.chat.completions.create({
       model,
       messages: [{ role: 'user', content: 'ping' }],
       stream: false,
       ...(isOpenRouterReasoningModel(model) ? { max_completion_tokens: 100 } : { max_tokens: 10 }),
     });
+    if (!response.choices?.some(choice => typeof choice.message?.content === 'string' && choice.message.content.trim())) {
+      return { configured: true, liveProbe: false, verification: 'inference', latencyMs: Date.now() - start,
+        model, errorCode: 'INVALID_RESPONSE', errorMessage: 'Probe returned no generated text' };
+    }
     return { configured: true, liveProbe: true, verification: 'inference', latencyMs: Date.now() - start, model };
   } catch (err) {
     return {

@@ -4,6 +4,8 @@ import { assertSafeRemoteUrl } from '@/lib/security/safe-remote-url';
 import { readResponseWithLimit } from '@/lib/security/limited-response';
 import { persistGeneratedImage } from './image-storage';
 import type { GenerateImageOptions, ImageGenerationResult, ImageRatio } from './image-types';
+import { recordTelemetry } from '@/lib/status/telemetry';
+import { getImageObservationKey } from '@/lib/status/handlers/ai/passive-probes';
 
 const RATIO_SIZES: Record<ImageRatio, string> = {
   '1:1': '1024x1024', '4:3': '1536x1152', '3:4': '1152x1536',
@@ -93,6 +95,11 @@ export async function generateWithAzure(options: GenerateImageOptions): Promise<
     body = form;
   }
   let response: { data?: Array<{ b64_json?: string }>; id?: string };
+  const start = Date.now();
+  const observe = async (status: 'up' | 'down', label: string) => {
+    await recordTelemetry(getImageObservationKey(deployment), status, label, Date.now() - start).catch(() => {});
+  };
+  let observeFailure = true;
   try {
     const result = await fetch(url, {
       method: 'POST', headers: {
@@ -101,13 +108,19 @@ export async function generateWithAzure(options: GenerateImageOptions): Promise<
       },
       body, redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(180_000),
     });
-    if (!result.ok) throw new MediaRequestError(`Azure image request failed (${result.status})`);
+    if (!result.ok) {
+      observeFailure = ![400, 422].includes(result.status)
+        && !(result.status === 404 && deployment !== config.deployment);
+      throw new MediaRequestError(`Azure image request failed (${result.status})`);
+    }
     response = JSON.parse((await readResponseWithLimit(result, 90 * 1024 * 1024)).toString('utf8'));
   } catch (error) {
+    if (observeFailure) await observe('down', 'Image provider generation request failed');
     if (error instanceof MediaRequestError) throw error;
     throw new MediaRequestError('Azure image request failed or timed out; generation outcome may be uncertain');
   }
   if (!response || !Array.isArray(response.data) || !response.data.length || response.data.length > options.count) {
+    await observe('down', 'Image provider returned invalid output');
     throw new MediaRequestError('Azure returned an invalid image count');
   }
   for (const image of response.data) {
@@ -115,19 +128,27 @@ export async function generateWithAzure(options: GenerateImageOptions): Promise<
       || image.b64_json.length > 22 * 1024 * 1024 || !/^[A-Za-z0-9+/]+={0,2}$/.test(image.b64_json)
       || image.b64_json.length % 4 !== 0
       || !Buffer.from(image.b64_json, 'base64').subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) {
+      await observe('down', 'Image provider returned invalid output');
       throw new MediaRequestError('Azure returned an invalid base64 image');
     }
   }
   const generationId = typeof response.id === 'string' && /^[a-zA-Z0-9_-]{1,200}$/.test(response.id)
     ? response.id : undefined;
   const images = [];
-  for (const image of response.data) {
-    images.push(await persistGeneratedImage({
-      base64Data: image.b64_json!, mimeType: 'image/png', siteId: options.siteId,
-      instanceId: options.instanceId, provider: 'azure', prompt: options.prompt,
-      model: deployment, generationId,
-    }));
+  try {
+    for (const image of response.data) {
+      images.push(await persistGeneratedImage({
+        base64Data: image.b64_json!, mimeType: 'image/png', siteId: options.siteId,
+        instanceId: options.instanceId, provider: 'azure', prompt: options.prompt,
+        model: deployment, generationId,
+      }));
+    }
+  } catch (error) {
+    // This key measures functional completion, not generation alone. Preserve the storage error.
+    await observe('down', 'Image completion failed during persistence');
+    throw error;
   }
+  await observe('up', 'Image generation completed with validated PNG and persistence');
   // Azure usage tokens are not invoice dollars. Never report an invented cost.
   return { provider: 'azure', images, metadata: { model: deployment, generation_id: generationId } };
 }

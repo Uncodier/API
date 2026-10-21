@@ -1,6 +1,7 @@
 import { createOpenRouterClient, getOpenRouterChatModel } from '@/lib/services/ai/openrouter';
 import type { HarnessModel, Json, Message, ModelBillingEvidence, ModelReply } from './types';
 import { retryModelAdmission } from './model-admission';
+import { observeCompletedTextRequest } from '@/lib/status/text-execution-observation';
 
 export function createHarnessModel(): HarnessModel {
   const client = createOpenRouterClient({ timeout: 90000, maxRetries: 0 });
@@ -20,10 +21,11 @@ export function createHarnessModel(): HarnessModel {
       // No retries around tools or accepted generations. Transport errors stay operational data.
       let rejectedAdmission = false;
       let response;
-      try { response = await retryModelAdmission(async () => {
+      const model = getOpenRouterChatModel();
+      try { response = await observeCompletedTextRequest(model, () => retryModelAdmission(async () => {
         rejectedAdmission = false;
         try { return await client.chat.completions.create({
-          model: getOpenRouterChatModel(), messages: messages as any,
+          model, messages: messages as any,
           max_tokens: input.maxOutputTokens,
           tools: input.tools.map(tool => ({ type: 'function' as const, function: {
             name: tool.name, description: tool.description, parameters: tool.parameters,
@@ -36,7 +38,7 @@ export function createHarnessModel(): HarnessModel {
             && !e.usage && !e.generationId && !e.error?.usage && !e.error?.generation_id && !e.error?.metadata?.generation_id;
           throw error;
         }
-      }, input.signal); }
+      }, input.signal), { signal: input.signal }); }
       catch (error) {
         const e = error as { usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number };
           generationId?: string; model?: string; error?: { usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number };

@@ -1,5 +1,9 @@
 import { Sandbox } from '@vercel/sandbox';
 
+// The Sandbox control plane caps inventory/session pages at 50, not 100.
+export const SANDBOX_INVENTORY_PAGE_SIZE = 50;
+export type HousekeepingCredentials = { token: string; projectId: string; teamId: string } | Record<string, never>;
+
 export type ListedSandbox = { id: string; name?: string; createdAt?: string | number };
 /** SDK v3 returns a name, not a legacy id. Never key all such rows by undefined. */
 export function collectListedSandboxes(list: unknown): ListedSandbox[] {
@@ -10,13 +14,13 @@ export function collectListedSandboxes(list: unknown): ListedSandbox[] {
     .map(sb => ({ id: sb.name || sb.id!, name: sb.name, createdAt: sb.createdAt }));
 }
 
-export async function listHousekeepingSandboxes(credentials: { token: string; projectId: string; teamId: string }): Promise<ListedSandbox[]> {
+export async function listHousekeepingSandboxes(credentials: HousekeepingCredentials): Promise<ListedSandbox[]> {
   const out = new Map<string, ListedSandbox>();
   const listFn = Sandbox.list.bind(Sandbox) as (opts: Record<string, unknown>) => Promise<unknown>;
   let cursor: string | undefined, until: number | undefined;
   const seen = new Set<string | number>();
   for (let page = 0; page < 1000; page++) {
-    const list = await listFn({ ...credentials, limit: 100, ...(cursor ? { cursor } : {}), ...(until ? { until } : {}) });
+    const list = await listFn({ ...credentials, limit: SANDBOX_INVENTORY_PAGE_SIZE, ...(cursor ? { cursor } : {}), ...(until ? { until } : {}) });
     const items = collectListedSandboxes(list);
     items.forEach(row => out.set(row.id, row));
     const rec = list as { json?: { pagination?: { next?: number | string | null } }; pagination?: { next?: number | string | null } };

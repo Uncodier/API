@@ -2,6 +2,8 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import type { SystemHealthStatus } from './types';
 import { claimKey, sha256 } from '@/lib/security/upstash-rest';
 
+const TELEMETRY_TIMEOUT_MS = 3_000;
+
 export const REDIS_TELEMETRY_KEYS = {
   tracking: 'redis_tracking_queue',
   recordings: 'redis_recording_queue',
@@ -32,10 +34,11 @@ export async function getLatestTelemetry(
       .gte('created_at', since)
       .order('created_at', { ascending: false })
       .limit(1)
+      .abortSignal(AbortSignal.timeout(TELEMETRY_TIMEOUT_MS))
       .maybeSingle();
 
     if (error) {
-      console.error(`[Telemetry] getLatestTelemetry error for ${systemKey}:`, error);
+      console.error('[Telemetry] Evidence read failed');
       return null;
     }
     if (!data) {
@@ -43,7 +46,7 @@ export async function getLatestTelemetry(
     }
     return data as TelemetryRecord;
   } catch (err) {
-    console.error(`[Telemetry] Exception in getLatestTelemetry for ${systemKey}:`, err);
+    console.error('[Telemetry] Evidence read unavailable');
     return null;
   }
 }
@@ -64,26 +67,28 @@ export async function recordTelemetry(
   latencyMs: number = 0
 ): Promise<void> {
   // Telemetry is intended to be fast and not fail the main request.
+  if (status === 'skipped') return; // Absence of evidence is never success.
   try {
-    const fingerprint = await sha256(`${systemKey}:${status}:${message}`);
-    const claim = await claimKey(
-      `telemetry:sample:${fingerprint}`,
-      60,
-      'telemetry-sample',
-    );
-    if (claim.state !== 'acquired') return;
+    if (status === 'up' && systemKey === 'api_auth') {
+      const fingerprint = await sha256(`${systemKey}:${status}:${message}`);
+      const claim = await claimKey(`telemetry:sample:${fingerprint}`, 60, 'telemetry-sample');
+      // Sample repetitive authentication only. Every real business operation
+      // and every failure is retained, including rapid failure/recovery cycles.
+      // Missing Redis must not silently disable every health receipt.
+      if (claim.state === 'contended') return;
+    }
 
     const { error } = await supabaseAdmin.from('system_telemetry').insert({
       system_key: systemKey,
-      status: status === 'skipped' ? 'up' : status, // 'skipped' mapped to 'up' for telemetry
+      status,
       message,
       latency_ms: latencyMs,
-    });
+    }).abortSignal(AbortSignal.timeout(TELEMETRY_TIMEOUT_MS));
 
     if (error) {
-      console.warn(`[Telemetry] Failed to record telemetry for ${systemKey}:`, error.message);
+      console.warn('[Telemetry] Evidence write failed');
     }
   } catch (err) {
-    console.warn(`[Telemetry] Exception recording telemetry for ${systemKey}:`, err);
+    console.warn('[Telemetry] Evidence write unavailable');
   }
 }

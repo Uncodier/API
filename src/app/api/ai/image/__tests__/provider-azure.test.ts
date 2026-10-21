@@ -1,3 +1,4 @@
+jest.mock('@/lib/status/telemetry', () => ({ recordTelemetry: jest.fn().mockResolvedValue(undefined) }));
 import { randomBytes } from 'node:crypto';
 import { generateWithAzure } from '../provider-azure';
 import { persistGeneratedImage } from '../image-storage';

@@ -1,11 +1,12 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { startCatalogIndex } from '@/lib/services/catalog-search/dispatch';
+import { withCronObservation } from '@/lib/status/cron-observation';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 export const dynamic = 'force-dynamic';
 
-export async function GET(request: Request) {
+async function runCron(request: Request) {
   const secret = process.env.CRON_SECRET?.trim();
   const digest = (value: string) => createHash('sha256').update(value).digest();
   if (!secret || !timingSafeEqual(digest(request.headers.get('authorization') || ''), digest(`Bearer ${secret}`))) {
@@ -20,3 +21,5 @@ export async function GET(request: Request) {
     return Response.json({ success: false, error: 'Catalog workflow dispatch unavailable' }, { status: 503 });
   }
 }
+
+export const GET = withCronObservation('catalog-index', runCron);

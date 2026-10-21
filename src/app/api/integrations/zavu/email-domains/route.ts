@@ -1,46 +1,69 @@
 import { NextRequest, NextResponse } from "next/server";
-import { addEmailDomain, upsertChannelConnection } from "@/lib/services/zavu";
+import { z } from "zod";
+import { addEmailDomain, getEmailDomain } from "@/lib/services/zavu/client";
+import { requireZavuSiteManager, ZavuAccessError } from "@/lib/services/zavu/site-access";
+import {
+  DomainConnectionConflict,
+  domainIdSchema,
+  emailDomainProviderSchema,
+  loadDomainConnections,
+  normalizeEmailDomain,
+  saveDomainFields,
+  selectDomainId,
+} from "./domain-connections";
+
+const requestSchema = z.object({
+  domain: z.string().transform(normalizeEmailDomain).refine((value) => value !== null),
+  siteId: domainIdSchema,
+  channelId: domainIdSchema,
+  name: z.string().trim().max(200).optional().transform((value) => value || undefined),
+}).strict();
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { domain, siteId, channelId: existingChannelId, name } = body;
-
-    if (!domain) {
-      return NextResponse.json({ error: "domain is required" }, { status: 400 });
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
     }
+    const parsed = requestSchema.safeParse(body);
+    if (!parsed.success || !parsed.data.domain) {
+      return NextResponse.json({ error: "Invalid email domain configuration" }, { status: 400 });
+    }
+    const { domain, siteId, channelId, name } = parsed.data;
+    await requireZavuSiteManager(request, siteId);
 
+    const snapshot = await loadDomainConnections(siteId);
+    const storedId = selectDomainId(snapshot.connections, channelId, domain);
     let emailDomain;
     try {
-      emailDomain = await addEmailDomain(domain);
-    } catch (zavuError: any) {
-      console.error("[Zavu] Error adding email domain:", zavuError);
+      const reply = storedId
+        ? await getEmailDomain(storedId)
+        : await addEmailDomain(domain);
+      const validated = emailDomainProviderSchema.safeParse(reply);
+      if (!validated.success || validated.data.domain !== domain ||
+          (storedId && validated.data.id !== storedId)) {
+        throw new Error("Invalid provider response");
+      }
+      // Only return validated domain fields, not unrelated provider data.
+      emailDomain = { ...validated.data, domain };
+    } catch {
+      return NextResponse.json({ error: "Zavu could not confirm the email domain" }, { status: 502 });
+    }
+
+    await saveDomainFields(siteId, channelId, name, snapshot, emailDomain);
+    return NextResponse.json({ success: true, domain: emailDomain, reused: Boolean(storedId) });
+  } catch (error: unknown) {
+    if (error instanceof ZavuAccessError) {
       return NextResponse.json(
-        { error: `Zavu API Error: ${zavuError.message || "Unknown error"}` },
-        { status: 502 }
+        { error: error.status === 401 ? "Unauthorized" : "Forbidden" },
+        { status: error.status }
       );
     }
-
-    if (siteId) {
-      await upsertChannelConnection(siteId, existingChannelId, {
-        type: "email",
-        name: name || "Email Channel",
-        status: "pending",
-        metadata: {
-          email_domain_id: emailDomain.id,
-          domain: emailDomain.domain,
-          domain_status: emailDomain.status || "pending",
-          dns_records: emailDomain.dnsRecords || [],
-        },
-      });
+    if (error instanceof DomainConnectionConflict) {
+      return NextResponse.json({ error: "Email domain connection conflict" }, { status: 409 });
     }
-
-    return NextResponse.json({ success: true, domain: emailDomain });
-  } catch (error: any) {
-    console.error("[Zavu] Unhandled error adding email domain:", error);
-    return NextResponse.json(
-      { error: error.message || "Internal server error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Could not save the email domain configuration" }, { status: 500 });
   }
 }

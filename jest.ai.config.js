@@ -36,6 +36,7 @@ export default {
     '<rootDir>/src/app/api/ai/**/__tests__/**/*.test.ts',
     '<rootDir>/src/app/api/workflow/execute-node/__tests__/route.test.ts',
     '<rootDir>/src/lib/status/__tests__/ai-provider-probes.test.ts',
+    '<rootDir>/src/lib/status/__tests__/ai-passive-probes.test.ts',
     '<rootDir>/src/lib/custom-automation/__tests__/ai-agent-executor*.test.ts',
     '<rootDir>/src/app/api/cron/shared/__tests__/visual-critic-client.test.ts',
     '<rootDir>/src/app/api/cron/shared/__tests__/step-visual-feedback.test.ts',

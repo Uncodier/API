@@ -1,4 +1,5 @@
 const create = jest.fn();
+jest.mock('@/lib/status/telemetry', () => ({ recordTelemetry: jest.fn().mockResolvedValue(undefined) }));
 jest.mock('@/lib/services/ai/openrouter', () => ({
   createOpenRouterClient: () => ({ chat: { completions: { create } } }),
   getOpenRouterChatModel: () => 'test/model',

@@ -2,6 +2,7 @@ import type OpenAI from 'openai';
 import { randomUUID } from 'node:crypto';
 import { CreditService } from '@/lib/services/billing/CreditService';
 import { createOpenRouterClient, getOpenRouterChatModel } from '@/lib/services/ai/openrouter';
+import { observeCompletedTextRequest } from '@/lib/status/text-execution-observation';
 import type { WorkflowPlanResult, WorkflowPlanResultCapture } from './plan-result';
 
 const MODEL_TIMEOUT_MS = 90_000;
@@ -71,7 +72,7 @@ export async function boundedChannelModelTurn(input: {
   const eventId = randomUUID();
   let completion: OpenAI.Chat.Completions.ChatCompletion;
   try {
-    completion = await client.chat.completions.create({
+    completion = await observeCompletedTextRequest(model, () => client.chat.completions.create({
       model, stream: false, user: input.billing.siteId,
       messages: [{ role: 'system', content: input.prompt }, { role: 'user', content: input.userContent }],
       tools: [{ type: 'function', function: {
@@ -79,7 +80,7 @@ export async function boundedChannelModelTurn(input: {
         parameters: input.capture.tool.parameters,
       } }],
       tool_choice: { type: 'function', function: { name: 'plan_result' } }, max_tokens: 2048,
-    }, { signal: controller.signal, timeout: MODEL_TIMEOUT_MS, maxRetries: 0 });
+    }, { signal: controller.signal, timeout: MODEL_TIMEOUT_MS, maxRetries: 0 }), { signal: controller.signal });
   } catch (error) {
     const status = (error as { status?: number } | null)?.status;
     const failure = error as any;

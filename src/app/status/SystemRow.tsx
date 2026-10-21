@@ -9,6 +9,7 @@ import {
   statusCssClass,
 } from '@/app/status/status-labels';
 import styles from './status.module.css';
+import { isStatusStale } from '@/lib/status/observation';
 
 export function SystemRow({
   system,
@@ -19,10 +20,11 @@ export function SystemRow({
 }) {
   const hasData = timelineHasProbeData(timeline.days) || !!system?.checkedAt;
   const lastDay = timeline.days[timeline.days.length - 1];
-  const currentStatus = resolveCurrentStatus(system?.status, lastDay?.status, hasData);
+  const stale = !!system?.checkedAt && isStatusStale(system.checkedAt);
+  const currentStatus = stale ? 'stale' : resolveCurrentStatus(system?.status, lastDay?.status, hasData);
   const label = system?.label ?? timeline.label;
   const uptimeDisplay = formatUptimeDisplay(
-    system?.sla?.uptime30d ?? timeline.uptimePercent,
+    timeline.uptimePercent,
     hasData,
   );
 
@@ -30,7 +32,7 @@ export function SystemRow({
     system?.checks?.providers && typeof system.checks.providers === 'object'
       ? (system.checks.providers as Record<
           string,
-          { liveProbe?: boolean; configured?: boolean; latencyMs?: number }
+           { liveProbe?: boolean; configured?: boolean; latencyMs?: number; verification?: string; observedHealthy?: boolean; observedStatus?: string }
         >)
       : null;
 
@@ -45,13 +47,21 @@ export function SystemRow({
         </div>
         <div className={styles.systemRowUptime}>
           <span className={styles.uptimeValue}>{uptimeDisplay}</span>
-          <span className={styles.uptimeLabel}>{hasData ? '90-day uptime' : 'awaiting probes'}</span>
+          <span className={styles.uptimeLabel}>{hasData ? '90-day check success' : 'awaiting probes'}</span>
         </div>
       </div>
 
       <StatusTimeline timeline={timeline} />
 
       {system?.summary && <p className={styles.summary}>{system.summary}</p>}
+      {system && <details className={styles.details}>
+        <summary>Evidence and probe scope</summary>
+        <pre>{JSON.stringify(system.checks, null, 2)}</pre>
+      </details>}
+      {system && <p className={styles.noDataHint}>
+        {stale ? 'Stale evidence · ' : ''}Last check: {new Date(system.checkedAt).toISOString()}
+        {' · '}{system.latencyMs} ms
+      </p>}
 
       {!hasData && (
         <p className={styles.noDataHint}>Timeline fills in after the first health check run.</p>
@@ -63,11 +73,14 @@ export function SystemRow({
             <span
               key={name}
               className={`${styles.providerPill} ${
-                p.liveProbe ? styles.providerPillUp : p.configured ? styles.providerPillDown : styles.providerPillSkipped
+                p.liveProbe || p.observedHealthy ? styles.providerPillUp
+                  : p.observedStatus === 'down' || p.observedStatus === 'degraded' ? styles.providerPillDown : styles.providerPillSkipped
               }`}
             >
               {name}
-              {p.liveProbe ? ' ✓' : p.configured ? ' ✗' : ''}
+              {p.liveProbe ? ' ✓ live verified' : p.observedHealthy ? ' ✓ observed'
+                : p.observedStatus === 'down' || p.observedStatus === 'degraded' ? ' ✗ observed failure'
+                : p.configured ? ' · unverified' : ' · not configured'}
             </span>
           ))}
         </div>
