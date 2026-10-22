@@ -1,21 +1,31 @@
+import { createHash, randomUUID } from 'node:crypto';
+
 const mockRpc = jest.fn();
 const mockSingle = jest.fn();
 const mockFrom = jest.fn();
 const mockSelect = jest.fn();
 const mockEq = jest.fn();
 const mockSendEmail = jest.fn();
+const mockGetUserById = jest.fn();
 jest.mock('@/lib/database/supabase-client', () => ({
-  supabaseAdmin: { rpc: (...args: unknown[]) => mockRpc(...args), from: (...args: unknown[]) => mockFrom(...args) },
+  supabaseAdmin: {
+    rpc: (...args: unknown[]) => mockRpc(...args), from: (...args: unknown[]) => mockFrom(...args),
+    auth: { admin: { getUserById: (...args: unknown[]) => mockGetUserById(...args) } },
+  },
 }));
 jest.mock('@/lib/services/sendgrid-service', () => ({
   sendGridService: { sendEmail: (...args: unknown[]) => mockSendEmail(...args) },
 }));
 jest.mock('@/lib/i18n/email-locale', () => ({ resolveEmailLocale: jest.fn() }));
 jest.mock('@/lib/i18n/email-messages/platform', () => ({ platformT: jest.fn() }));
-jest.mock('@/lib/services/email/EmailSendService', () => ({ EmailSendService: {} }));
+jest.mock('@/lib/services/email/EmailSendService', () => ({
+  EmailSendService: { escapeHtml: (value: string) => value, escapeAttr: (value: string) => value },
+}));
 
 import { CreditService, InsufficientCreditsError } from '../CreditService';
 import { formatCreditExhaustionNotice, isInsufficientCreditsError } from '../credit-exhaustion-message';
+import { resolveEmailLocale } from '@/lib/i18n/email-locale';
+import { platformT } from '@/lib/i18n/email-messages/platform';
 
 const notifier = CreditService as unknown as {
   notifyInsufficientCredits(siteId: string, required: number, available: number): Promise<void>;
@@ -278,5 +288,158 @@ describe('CreditService shortage notification debounce (offline)', () => {
     expect(gte).toHaveBeenCalledWith('created_at', '2030-10-14T12:00:00.000Z');
     expect(mockSendEmail).not.toHaveBeenCalled();
     expect(mockFrom.mock.calls.every(([table]) => table === 'billing' || table === 'notifications')).toBe(true);
+  });
+});
+
+describe('CreditService insufficient-credit email admission (offline)', () => {
+  let siteQuery: { select: jest.Mock; eq: jest.Mock; single: jest.Mock };
+  let notificationQuery: { select: jest.Mock; eq: jest.Mock; gte: jest.Mock; limit: jest.Mock; insert: jest.Mock };
+  let reservations: Map<string, string>;
+  const siteId = 'synthetic-site';
+  const ownerEmail = 'owner@example.invalid';
+
+  beforeEach(() => {
+    jest.resetAllMocks();
+    jest.spyOn(console, 'log').mockImplementation(() => undefined);
+    jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    reservations = new Map();
+    siteQuery = {
+      select: jest.fn().mockReturnThis(), eq: jest.fn().mockReturnThis(),
+      single: jest.fn().mockResolvedValue({ data: { name: 'Synthetic site', user_id: 'synthetic-owner' }, error: null }),
+    };
+    notificationQuery = {
+      select: jest.fn().mockReturnThis(), eq: jest.fn().mockReturnThis(), gte: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockResolvedValue({ data: [], error: null }),
+      insert: jest.fn().mockResolvedValue({ error: null }),
+    };
+    mockFrom.mockImplementation(table => {
+      if (table === 'sites') return siteQuery;
+      if (table === 'notifications') return notificationQuery;
+      throw new Error('Unexpected offline table');
+    });
+    mockGetUserById.mockResolvedValue({ data: { user: { email: ownerEmail, user_metadata: { name: 'Synthetic owner' } } }, error: null });
+    (resolveEmailLocale as jest.Mock).mockResolvedValue('es');
+    (platformT as jest.Mock).mockImplementation((_locale, key) => key);
+    // Emulate the atomic RPC contract, not PostgreSQL locking. The SQL runner
+    // independently executes the migration and verifies its rolling gates.
+    mockRpc.mockImplementation(async (name, params) => {
+      if (name !== 'claim_insufficient_credit_email') throw new Error('Unexpected offline RPC');
+      if (reservations.has(params.p_site_id)) return { data: { acquired: false, reason: 'site_rate_limited' }, error: null };
+      const idempotencyKey = randomUUID();
+      reservations.set(params.p_site_id, idempotencyKey);
+      return { data: { acquired: true, idempotency_key: idempotencyKey }, error: null };
+    });
+    mockSendEmail.mockResolvedValue({ success: true });
+  });
+
+  afterEach(() => jest.restoreAllMocks());
+
+  it('reserves before dispatch, hashes the normalized recipient and passes the operation key', async () => {
+    mockGetUserById.mockResolvedValue({ data: { user: { email: '  Owner@Example.Invalid  ' } }, error: null });
+    await notifier.notifyInsufficientCredits(siteId, 0.1, 0);
+    expect(mockRpc).toHaveBeenCalledWith('claim_insufficient_credit_email', {
+      p_site_id: siteId, p_recipient_hash: createHash('sha256').update(ownerEmail).digest('hex'),
+      p_owner_id: 'synthetic-owner',
+    });
+    expect(JSON.stringify(mockRpc.mock.calls)).not.toContain(ownerEmail);
+    expect(mockRpc.mock.invocationCallOrder[0]).toBeLessThan(mockSendEmail.mock.invocationCallOrder[0]);
+    expect(mockSendEmail).toHaveBeenCalledWith(expect.objectContaining({
+      to: ownerEmail, idempotencyKey: reservations.get(siteId),
+      categories: ['billing', 'system-notification', 'insufficient-credits'],
+      customArgs: { siteId, notificationType: 'insufficient_credits', locale: 'es' },
+    }));
+    expect(notificationQuery.insert).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify((console.log as jest.Mock).mock.calls)).not.toContain(ownerEmail);
+  });
+
+  it('dispatches once for 30 simultaneous attempts even with different required amounts', async () => {
+    await Promise.all(Array.from({ length: 30 }, (_, i) => notifier.notifyInsufficientCredits(siteId, 0.1 + i, 0)));
+    expect(mockRpc).toHaveBeenCalledTimes(30);
+    expect(reservations.size).toBe(1);
+    expect(mockSendEmail).toHaveBeenCalledTimes(1);
+    expect(notificationQuery.insert).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['site_rate_limited', 'recipient_rate_limited', 'site_unavailable'])('does not dispatch or insert when denied by %s', async reason => {
+    mockRpc.mockResolvedValue({ data: { acquired: false, reason }, error: null });
+    await notifier.notifyInsufficientCredits(siteId, 1, 0);
+    expect(mockSendEmail).not.toHaveBeenCalled();
+    expect(notificationQuery.insert).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { data: null, error: { message: 'Unavailable' } },
+    { data: { acquired: true, idempotency_key: randomUUID() }, error: { message: 'Unavailable' } },
+    { data: null, error: null },
+    { data: {}, error: null },
+    { data: { acquired: 'true', idempotency_key: randomUUID() }, error: null },
+    { data: { acquired: true }, error: null },
+    { data: { acquired: true, idempotency_key: '' }, error: null },
+    { data: { acquired: true, idempotency_key: '  ' }, error: null },
+    { data: { acquired: true, idempotency_key: 123 }, error: null },
+  ])('fails closed for an unavailable or malformed admission response: %j', async response => {
+    mockRpc.mockResolvedValue(response);
+    await notifier.notifyInsufficientCredits(siteId, 1, 0);
+    expect(mockSendEmail).not.toHaveBeenCalled();
+    expect(notificationQuery.insert).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when the admission RPC rejects', async () => {
+    mockRpc.mockRejectedValue(new Error('Synthetic database outage'));
+    await expect(notifier.notifyInsufficientCredits(siteId, 1, 0)).resolves.toBeUndefined();
+    expect(mockSendEmail).not.toHaveBeenCalled();
+  });
+
+  it.each(['failure', 'unconfirmed', 'exception'])('keeps the reservation after provider %s', async outcome => {
+    if (outcome === 'exception') mockSendEmail.mockRejectedValue(new Error('Synthetic timeout'));
+    else mockSendEmail.mockResolvedValue({ success: false, status: outcome, error: 'Synthetic failure' });
+    await notifier.notifyInsufficientCredits(siteId, 1, 0);
+    await notifier.notifyInsufficientCredits(siteId, 2, 0);
+    expect(mockSendEmail).toHaveBeenCalledTimes(1);
+    expect(reservations.size).toBe(1);
+    expect(notificationQuery.insert).not.toHaveBeenCalled();
+    expect(mockRpc.mock.calls.every(([name]) => name === 'claim_insufficient_credit_email')).toBe(true);
+  });
+
+  it.each(['error', 'exception'])('does not resend when notification insertion reports %s', async outcome => {
+    if (outcome === 'exception') notificationQuery.insert.mockRejectedValue(new Error('Synthetic write outage'));
+    else notificationQuery.insert.mockResolvedValue({ error: { message: 'Synthetic write outage' } });
+    await notifier.notifyInsufficientCredits(siteId, 1, 0);
+    await notifier.notifyInsufficientCredits(siteId, 2, 0);
+    expect(mockSendEmail).toHaveBeenCalledTimes(1);
+    expect(notificationQuery.insert).toHaveBeenCalledTimes(1);
+    expect(reservations.size).toBe(1);
+  });
+
+  it('honors notifications sent before the admission migration without reserving a new attempt', async () => {
+    notificationQuery.limit.mockResolvedValue({ data: [{ id: 'synthetic-notification' }], error: null });
+    await notifier.notifyInsufficientCredits(siteId, 1, 0);
+    expect(mockRpc).not.toHaveBeenCalled();
+    expect(mockGetUserById).not.toHaveBeenCalled();
+    expect(mockSendEmail).not.toHaveBeenCalled();
+  });
+
+  it('fails closed if the legacy notification read fails', async () => {
+    notificationQuery.limit.mockResolvedValue({ data: null, error: { message: 'Synthetic read outage' } });
+    await notifier.notifyInsufficientCredits(siteId, 1, 0);
+    expect(mockRpc).not.toHaveBeenCalled();
+    expect(mockSendEmail).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { data: null, error: { message: 'Unavailable' } },
+    { data: { user: {} }, error: null },
+  ])('does not reserve when the owner email is unavailable: %j', async response => {
+    mockGetUserById.mockResolvedValue(response);
+    await notifier.notifyInsufficientCredits(siteId, 1, 0);
+    expect(mockRpc).not.toHaveBeenCalled();
+    expect(mockSendEmail).not.toHaveBeenCalled();
+  });
+
+  it('does not reserve when rendering fails before dispatch', async () => {
+    (resolveEmailLocale as jest.Mock).mockRejectedValue(new Error('Synthetic locale outage'));
+    await notifier.notifyInsufficientCredits(siteId, 1, 0);
+    expect(mockRpc).not.toHaveBeenCalled();
+    expect(mockSendEmail).not.toHaveBeenCalled();
   });
 });

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { sendGridService } from '@/lib/services/sendgrid-service';
 import { resolveEmailLocale } from '@/lib/i18n/email-locale';
@@ -12,15 +13,15 @@ export { InsufficientCreditsError } from './credit-exhaustion-message';
 export class CreditService {
   /**
    * Automatically notifies the site owner via email when insufficient credits prevent an operation.
-   * Enforces a 24-hour debounce per site to avoid spamming.
+   * Reserves at most one attempt per site per 24h and three per recipient per 10m.
+   * Durable admission happens before dispatch, including failed/unconfirmed sends.
    */
   private static async notifyInsufficientCredits(siteId: string, required: number, available: number): Promise<void> {
     try {
       if (!siteId) return;
 
-      // 1. Check for recent insufficient_credits notification for this site (last 24 hours)
-      const twentyFourHoursAgo = new Date();
-      twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
+      // 1. Preserve the cooldown for notifications sent before durable admission existed.
+      const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
       const { data: recentNotification, error: notifError } = await supabaseAdmin
         .from('notifications')
@@ -61,7 +62,7 @@ export class CreditService {
         return;
       }
 
-      const ownerEmail = userData.user.email;
+      const ownerEmail = userData.user.email.trim().toLowerCase();
       const ownerName = userData.user.user_metadata?.name || userData.user.user_metadata?.full_name || 'Site Owner';
       const siteName = site.name || 'Your Site';
       const locale = await resolveEmailLocale({ siteId, userId: site.user_id });
@@ -214,22 +215,46 @@ export class CreditService {
       </html>
       `;
 
-      // 4. Send the email
-      console.log(`[CreditService] Sending insufficient credits email to ${ownerEmail} for site ${siteId}`);
+      // 4. Atomically reserve both rolling limits before contacting the provider.
+      // Never derive the identity from credit amounts: repeated blocked operations
+      // with different costs must still share the site's 24-hour cooldown.
+      const { data: admission, error: admissionError } = await supabaseAdmin.rpc(
+        'claim_insufficient_credit_email', {
+          p_site_id: siteId,
+          p_recipient_hash: createHash('sha256').update(ownerEmail).digest('hex'),
+          p_owner_id: site.user_id,
+        },
+      );
+      if (admissionError || !admission || typeof admission.acquired !== 'boolean'
+        || (admission.acquired && (typeof admission.idempotency_key !== 'string'
+          || !admission.idempotency_key.trim()))) {
+        // Fail closed: database outages must not turn blocked operations into spam.
+        console.error(`[CreditService] Insufficient credits email admission unavailable for site ${siteId}`);
+        return;
+      }
+      if (!admission.acquired) {
+        console.log(`[CreditService] Suppressing insufficient credits email for site ${siteId} (send limit active)`);
+        return;
+      }
+
+      console.log(`[CreditService] Sending insufficient credits email for site ${siteId}`);
       const emailResult = await sendGridService.sendEmail({
         to: ownerEmail,
         subject,
         html: emailHtml,
+        idempotencyKey: admission.idempotency_key,
         categories: ['billing', 'system-notification', 'insufficient-credits'],
         customArgs: { siteId, notificationType: 'insufficient_credits', locale }
       });
 
       if (!emailResult.success) {
         console.error(`[CreditService] Failed to send insufficient credits email:`, emailResult.error);
+        // The provider may already have accepted the email. Keep both reservations;
+        // no automatic retry or release can safely infer that nothing was sent.
         return;
       }
 
-      // 5. Log the notification to enforce the 24h cooldown
+      // 5. Log the user-visible notification; admission does not depend on this write.
       const { error: insertError } = await supabaseAdmin.from('notifications').insert({
         site_id: siteId,
         user_id: site.user_id,
@@ -242,7 +267,7 @@ export class CreditService {
       });
 
       if (insertError) {
-        console.error(`[CreditService] Failed to insert debounce notification for site ${siteId}:`, insertError);
+        console.error(`[CreditService] Failed to insert insufficient credits notification for site ${siteId}:`, insertError);
       }
 
     } catch (error) {
