@@ -4,6 +4,7 @@ import { generateWithAzure } from '../provider-azure';
 import { persistGeneratedImage } from '../image-storage';
 import { assertSafeRemoteUrl } from '@/lib/security/safe-remote-url';
 import { getAzureImageConfig } from '@/lib/services/image/azure-image-config';
+import { ImageAdmissionRejectedError } from '../image-types';
 
 jest.mock('../image-storage', () => ({
   persistGeneratedImage: jest.fn(async () => ({ url: 'https://storage.example.test/image.png', b64_json: null })),
@@ -200,6 +201,24 @@ it('retains successful partial output counts for route billing', async () => {
   const result = await generateWithAzure({ ...options, count: 2 });
   expect(result.images).toHaveLength(1);
   expect(persistGeneratedImage).toHaveBeenCalledTimes(1);
+});
+
+it('prepares references before claiming dispatch, and failed claim never reaches paid POST', async () => {
+  const claim=jest.fn(async()=>{throw new Error('dispatch acknowledgement missing');});
+  fetchMock.mockResolvedValueOnce(new Response(png,{headers:{'content-type':'image/png'}}));
+  await expect(generateWithAzure({...options,referenceImages:['https://example.invalid/reference.png'],beforeDispatch:claim})).rejects.toThrow('dispatch acknowledgement missing');
+  expect(claim).toHaveBeenCalledTimes(1);expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(fetchMock.mock.calls[0][1].method).toBeUndefined();expect(persistGeneratedImage).not.toHaveBeenCalled();
+});
+
+it.each([400,401,403,404,405,413,415,422,429])('classifies received HTTP%s as confirmed admission rejection without response body',async status=>{
+  const marker=randomBytes(32).toString('hex');fetchMock.mockResolvedValueOnce(json({error:marker},status));
+  const error=await generateWithAzure(options).catch(e=>e);
+  expect(error).toBeInstanceOf(ImageAdmissionRejectedError);expect(error.message).not.toContain(marker);
+});
+it.each([408,500,502,503,504])('retains HTTP%s as uncertain, never a release proof',async status=>{
+  fetchMock.mockResolvedValueOnce(json({},status));const error=await generateWithAzure(options).catch(e=>e);
+  expect(error).not.toBeInstanceOf(ImageAdmissionRejectedError);
 });
 
 it.each(['gpt-image-2.5', 'gpt-image-1-custom-alias', 'my-image-deployment'])(

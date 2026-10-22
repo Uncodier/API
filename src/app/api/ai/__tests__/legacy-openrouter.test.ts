@@ -102,6 +102,15 @@ describe('legacy AI OpenRouter contracts', () => {
     expect(jest.mocked(analyzeWithConversationApi).mock.calls[0][7]).toBe(false);
   });
 
+  it('does not launch a fallback generation after an uncertain continuation outcome', async () => {
+    const initial = envelope('{"key":');
+    jest.mocked(analyzeWithConversationApi).mockRejectedValueOnce(new Error('Unknown paid outcome'));
+    mockCreate.mockClear();
+    expect(await handleIncompleteJsonResponse(initial, [], 'openai')).toBe(initial);
+    expect(analyzeWithConversationApi).toHaveBeenCalledTimes(1);
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
   it('keeps conversation choices and assistant history for non-OpenAI vendors', async () => {
     const conversationId = randomUUID();
     const response = envelope('{"ok":true');

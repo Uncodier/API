@@ -5,6 +5,9 @@ import { generateAndCacheImageStep } from '../../../image/prompt/steps';
 import { ImageGenerationService } from '@/lib/services/image/ImageGenerationService';
 
 const mockStore = new Map<string, unknown>();
+jest.mock('workflow', () => ({ sleep: jest.fn(async () => {}),
+  getStepMetadata: jest.fn(() => ({ stepId: 'step_offline_video_image' })),
+}));
 jest.mock('@/lib/security/upstash-rest', () => ({
   getCachedJson: jest.fn(async (key: string) => mockStore.get(key) || null),
   setCachedJson: jest.fn(async (key: string, value: unknown) => { mockStore.set(key, value); return true; }),
@@ -33,5 +36,8 @@ it('public video retains and polls one async job rather than generating again', 
 it('public image uses Azure without the legacy square-size/ratio conflict', async () => {
   jest.mocked(ImageGenerationService.generateImage).mockResolvedValueOnce({ success: false, provider: 'azure', images: [], error: 'not generated' });
   await expect(generateAndCacheImageStep('cat', 'site', '1024x1024', '16:9', 'hash')).rejects.toThrow('not generated');
-  expect(ImageGenerationService.generateImage).toHaveBeenCalledWith({ prompt: 'cat', site_id: 'site', size: undefined, ratio: '16:9', provider: 'azure' });
+  expect(ImageGenerationService.generateImage).toHaveBeenCalledWith(
+    { prompt: 'cat', site_id: 'site', size: undefined, ratio: '16:9', provider: 'azure' },
+    { operationId: 'workflow-image:step_offline_video_image' },
+  );
 });

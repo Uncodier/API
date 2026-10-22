@@ -1,4 +1,5 @@
 import { analyzeWithConversationApi } from './conversation-client';
+import { validContinuationBudget } from './continuation-budget';
 
 /** OpenRouter uses the same chat envelope for every model vendor. */
 export function extractResponseContent(response: any): string {
@@ -42,6 +43,7 @@ interface ContinuationResult {
   error?: string;
   retries?: number;
   generations?: Array<{ id?: string; provider?: string; model?: string; usage?: any }>;
+  outcomeUncertain?: boolean;
 }
 
 /**
@@ -62,6 +64,12 @@ export async function continueJsonGeneration(options: ContinuationOptions): Prom
     maxRetries = 3,
     debugMode = false
   } = options;
+
+  if (!validContinuationBudget(timeout, maxRetries)) {
+    return { success: false, completeJson: null, retries: 0,
+      error: 'Invalid continuation budget: timeout must be 1–120000 ms and maxRetries 0–3 integer attempts' };
+  }
+  const deadline = Date.now() + timeout;
 
   // Verificar si el input es válido
   if (!incompleteJson || typeof incompleteJson !== 'string') {
@@ -343,6 +351,7 @@ IMPORTANTE: Tu respuesta debe ser SOLO la parte faltante, no el JSON completo.`;
   let success = false;
   let completeJson: any = null;
   let lastError: string = '';
+  let outcomeUncertain = false;
   const generations: NonNullable<ContinuationResult['generations']> = [];
   
   // Variable para almacenar el ID de conversación para continuación
@@ -390,32 +399,36 @@ IMPORTANTE: Tu respuesta debe ser SOLO la parte faltante, no el JSON completo.`;
       
       const prompt = preparePrompt(jsonForPrompt);
       
-      // Usar un timeout más largo para la continuación
-      const continuationTimeout = timeout * (1.5 + (retries * 0.1)); // Aumentar 10% por cada intento
-      console.log(`[ContinuationService] Usando timeout extendido para continuación: ${continuationTimeout}ms`);
-      
-      // Añadir espera creciente entre intentos
+      // Backoff and all attempts share one total deadline; never multiply timeout.
       if (retries > 0) {
-        const waitTime = 1000 * retries; // Espera creciente: 1s, 2s, 3s...
-        console.log(`[ContinuationService] Esperando ${waitTime}ms antes del intento ${retries + 1}...`);
+        const waitTime = 1000 * retries;
+        if (Date.now() + waitTime >= deadline) break;
         await new Promise(resolve => setTimeout(resolve, waitTime));
       }
+      const continuationTimeout = deadline - Date.now();
+      if (continuationTimeout <= 0) break;
       
       // Añadir un mensaje de log para indicar que estamos esperando la respuesta
       console.log(`[ContinuationService] Esperando respuesta del modelo (timeout: ${continuationTimeout}ms)...`);
       
       // Si tenemos un ID de conversación, utilizarlo para la continuación
-      const rawResponse = await analyzeWithConversationApi(
+      const signal = AbortSignal.timeout(continuationTimeout);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let rawResponse: any;
+      try { rawResponse = await Promise.race([analyzeWithConversationApi(
         prompt,
         modelType,
         modelId,
         siteUrl,
         includeScreenshot,
-        continuationTimeout, // Usar un timeout más largo para la continuación
+        continuationTimeout, // Remaining total budget, never an extended per-attempt timeout.
         debugMode,
         false, // Preserve the chat envelope, generation ID and usage/cost.
-        conversationId // Usar el conversationId si está disponible
-      );
+        conversationId,
+        signal,
+      ), new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('Continuation deadline exceeded; generation outcome uncertain')), continuationTimeout);
+      })]); } finally { if (timer) clearTimeout(timer); }
       
       console.log(`[ContinuationService] Respuesta recibida del modelo, procesando...`);
       
@@ -423,11 +436,11 @@ IMPORTANTE: Tu respuesta debe ser SOLO la parte faltante, no el JSON completo.`;
       if (rawResponse && typeof rawResponse === 'object') {
         const respConversationId = getConversationId(rawResponse);
         const isClosed = isConversationClosed(rawResponse);
-        if (rawResponse.error) throw new Error('OpenRouter continuation failed');
         if (rawResponse.id || rawResponse.usage) {
           generations.push({ id: rawResponse.id, provider: rawResponse.provider,
             model: rawResponse.model, usage: rawResponse.usage });
         }
+        if (rawResponse.error) throw new Error('OpenRouter continuation failed');
         
         if (respConversationId) {
           console.log('[ContinuationService] Respuesta contiene ID de conversación:', respConversationId);
@@ -544,13 +557,13 @@ IMPORTANTE: Tu respuesta debe ser SOLO la parte faltante, no el JSON completo.`;
       retries++;
     } catch (error: any) {
       retries++;
+      outcomeUncertain = true;
       lastError = 'OpenRouter continuation request failed';
       console.error(`[ContinuationService] Error en intento ${retries}`);
       
-      // Añadir espera creciente después de un error
-      const waitTime = 2000 * retries; // Espera más larga después de un error: 2s, 4s, 6s...
-      console.log(`[ContinuationService] Esperando ${waitTime}ms después del error...`);
-      await new Promise(resolve => setTimeout(resolve, waitTime));
+      // A transport/provider error can follow paid acceptance. Stop instead of
+      // speculatively replaying inference; malformed successful content is bounded above.
+      break;
     }
   }
 
@@ -564,6 +577,8 @@ IMPORTANTE: Tu respuesta debe ser SOLO la parte faltante, no el JSON completo.`;
     };
   } else {
     console.error('[ContinuationService] No se pudo completar el JSON después de', retries, 'intentos');
+    if (outcomeUncertain) return { success: false, completeJson: null, error: lastError,
+      retries, generations, outcomeUncertain: true };
     
     // Último intento: devolver el JSON reparado si existe
     if (partialStructure && Object.keys(partialStructure).length > 0) {

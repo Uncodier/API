@@ -65,6 +65,7 @@ export async function processConversation(options: {
   siteUrl?: string;
   responseFormat?: 'json' | 'text';
   timeout?: number;
+  signal?: AbortSignal;
   conversationId?: string; // Nuevo parámetro para ID de conversación
   isContinuation?: boolean; // Indica si es continuación de una respuesta incompleta
   userId?: string;
@@ -196,7 +197,9 @@ export async function processConversation(options: {
   }
   
   // Configurar el controlador de tiempo de espera
+  options.signal?.throwIfAborted();
   const controller = new AbortController();
+  const signal = options.signal ? AbortSignal.any([controller.signal, options.signal]) : controller.signal;
   const timeoutId = setTimeout(() => {
     console.warn(`[Conversation Service] Timeout excedido (${timeout}ms)`);
     controller.abort();
@@ -214,7 +217,7 @@ export async function processConversation(options: {
       messages: enhancedMessages,
       ...(isOpenRouterReasoningModel(modelOptions.model) ? {} : { temperature: 0.7 }),
       stream: false
-    }, { signal: controller.signal }), { signal: controller.signal });
+    }, { signal }), { signal });
     
     // Registrar fin del análisis y calcular duración
     const endTime = Date.now();

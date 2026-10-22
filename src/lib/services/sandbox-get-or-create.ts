@@ -42,9 +42,15 @@ export async function getOrCreateRequirementSandbox(params: {
       onCreate: async (sbx: Sandbox) => {
         workspaceCallbackStarted = true;
         created = true;
-        try { await reconcileSandboxBilling(sbx); } catch (error) { await stopSandboxQuiet(sbx); throw error; }
-        await cloneRepoIntoWorkDir(sbx, params.authRepoUrl);
-        await assertPlatformGitLayout(sbx);
+        try {
+          await reconcileSandboxBilling(sbx);
+          await cloneRepoIntoWorkDir(sbx, params.authRepoUrl);
+          await assertPlatformGitLayout(sbx);
+        } catch (error) {
+          // Preserve populated work/staging in the persistent stop snapshot.
+          await stopSandboxQuiet(sbx);
+          throw error;
+        }
       },
       onResume: async (sbx: Sandbox) => {
         workspaceCallbackStarted = true;

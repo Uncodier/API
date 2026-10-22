@@ -1,4 +1,9 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { randomBytes } from 'node:crypto';
+
+jest.mock('@/lib/status/telemetry', () => ({ recordTelemetry: jest.fn(async () => {}) }));
+jest.mock('workflow/api', () => ({ start: jest.fn() }));
+jest.mock('../workflow', () => ({ executeScheduledWorkflow: jest.fn() }));
 
 jest.mock('@/lib/database/supabase-client', () => ({
   supabaseAdmin: {
@@ -32,8 +37,14 @@ import { GET } from '../route';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { materializeRunFromGraph } from '@/lib/services/workflow-robot/materialize';
 import { runWorkflowPlan } from '@/lib/services/workflow-robot/run-plan';
+import { start } from 'workflow/api';
+import { executeScheduledWorkflow } from '../workflow';
 
 describe('cron workflows route', () => {
+  const secret = randomBytes(32).toString('hex');
+  const request = () => new Request('https://api.example.test/cron/workflows', {
+    headers: { authorization: `Bearer ${secret}` },
+  });
   const trigger = {
     id: 'trigger-1',
     instance_id: 'instance-1',
@@ -44,7 +55,8 @@ describe('cron workflows route', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    process.env.CRON_SECRET = 'test-secret';
+    process.env.CRON_SECRET = secret;
+    jest.mocked(start).mockResolvedValue({ runId: 'offline-workflow-run' } as any);
 
     const query = {
       select: jest.fn().mockReturnThis(),
@@ -63,12 +75,11 @@ describe('cron workflows route', () => {
       steps: [],
     } as never);
 
-    const response = await GET(new Request('http://localhost', {
-      headers: { authorization: 'Bearer test-secret' },
-    }));
+    const response = await GET(request());
 
     expect(response.status).toBe(200);
     expect(runWorkflowPlan).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
     await expect(response.json()).resolves.toMatchObject({
       results: [{ trigger_id: 'trigger-1', skipped: 'duplicate' }],
     });
@@ -88,13 +99,12 @@ describe('cron workflows route', () => {
       steps_completed: 1,
     } as never);
 
-    const response = await GET(new Request('http://localhost', {
-      headers: { authorization: 'Bearer test-secret' },
-    }));
+    const response = await GET(request());
 
     expect(response.status).toBe(200);
-    expect(runWorkflowPlan).toHaveBeenCalledTimes(1);
-    expect(runWorkflowPlan).toHaveBeenCalledWith('new-plan');
+    expect(runWorkflowPlan).not.toHaveBeenCalled();
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(start).toHaveBeenCalledWith(executeScheduledWorkflow, ['new-plan']);
   });
 
   it('retries an existing run whose claim is recoverable', async () => {
@@ -112,11 +122,34 @@ describe('cron workflows route', () => {
       steps_completed: 1,
     } as never);
 
-    const response = await GET(new Request('http://localhost', {
-      headers: { authorization: 'Bearer test-secret' },
-    }));
+    const response = await GET(request());
 
     expect(response.status).toBe(200);
-    expect(runWorkflowPlan).toHaveBeenCalledWith('expired-plan');
+    expect(runWorkflowPlan).not.toHaveBeenCalled();
+    expect(start).toHaveBeenCalledWith(executeScheduledWorkflow, ['expired-plan']);
+  });
+
+  it('does not report accepted dispatch before durable queue acceptance', async () => {
+    jest.mocked(materializeRunFromGraph).mockResolvedValue({ run_plan_id: 'pending-plan', steps: [{}] } as any);
+    let release!: () => void;
+    jest.mocked(start).mockImplementation(() => new Promise<any>(resolve => { release = () => resolve({} as any); }));
+    let returned = false;
+    const pending = GET(request()).then(response => { returned = true; return response; });
+    for (let attempt = 0; attempt < 30 && !release; attempt++) await new Promise(resolve => setTimeout(resolve, 1));
+    expect(release).toBeDefined();
+    expect(returned).toBe(false);
+    release();
+    expect(await (await pending).json()).toMatchObject({ results: [{ started: true }] });
+  });
+
+  it('retains failed dispatch as degraded without logging raw provider/queue errors', async () => {
+    const credential = randomBytes(24).toString('hex');
+    const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+    jest.mocked(materializeRunFromGraph).mockResolvedValue({ run_plan_id: 'pending-plan', steps: [{}] } as any);
+    jest.mocked(start).mockRejectedValue(new Error(credential));
+    const response = await GET(request());
+    expect(await response.json()).toMatchObject({ results: [{ skipped: 'dispatch_failed' }] });
+    expect(JSON.stringify(log.mock.calls)).not.toContain(credential);
+    log.mockRestore();
   });
 });

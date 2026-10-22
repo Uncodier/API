@@ -354,6 +354,8 @@ export async function handleIncompleteJsonResponse(
           ...(response.continuation_generations || []), ...continuationResult.generations,
         ];
       }
+      // An unknown paid outcome must not fall through to another inference.
+      if (continuationResult.outcomeUncertain) return response;
       
       if (continuationResult.success && continuationResult.completeJson) {
         console.log('[handleIncompleteJsonResponse] JSON completado exitosamente con el servicio de continuación');

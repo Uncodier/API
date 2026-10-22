@@ -13,7 +13,8 @@ it('submits only reported cost and a stable generation identity to the idempoten
   expect(rpc).toHaveBeenCalledTimes(2);
   expect(rpc.mock.calls[0]).toEqual(rpc.mock.calls[1]);
   expect(rpc).toHaveBeenCalledWith('bill_openrouter_generation', {
-    p_site_id: siteId, p_event_id: input.generationId, p_provider_cost: 0.04, p_metadata: input.metadata,
+    p_site_id: siteId, p_event_id: input.generationId, p_provider_cost: 0.04,
+    p_metadata: { ...input.metadata, gateway_account_cost: 0.04 },
   });
 });
 
@@ -34,7 +35,19 @@ it('does not persist raw usage, URLs, credentials or arbitrary provider metadata
   expect(serialized).not.toContain(credential);
   expect(serialized).not.toContain(username);
   expect(serialized).not.toContain(url.href);
-  expect(rpc.mock.calls[0][1].p_metadata).toEqual({ model: 'openai/gpt-6.1-sol' });
+  expect(rpc.mock.calls[0][1].p_metadata).toEqual({ model: 'openai/gpt-6.1-sol', gateway_account_cost: 0.01 });
+});
+
+it('retains separate BYOK evidence without changing the customer tariff or trusting caller metadata', async () => {
+  await chargeOpenRouterUsage({ siteId: randomUUID(), eventId: randomUUID(),
+    usage: { cost: 0, is_byok: true, cost_details: { upstream_inference_cost: 0.07 } },
+    metadata: { gateway_account_cost: 500, upstream_inference_cost: 900, is_byok: false },
+  });
+  expect(rpc).toHaveBeenCalledWith('bill_openrouter_generation', expect.objectContaining({
+    p_provider_cost: 0,
+    p_metadata: { gateway_account_cost: 0, is_byok: true, upstream_inference_cost: 0.07,
+      external_cost_reconciliation_required: true },
+  }));
 });
 
 it.each([undefined, {}, { cost: NaN }, { cost: -1 }])('persists unknown cost %j as pending, never substituting token prices', async usage => {

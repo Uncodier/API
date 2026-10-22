@@ -1,14 +1,17 @@
-import { generateAndCacheImageStep } from '../steps';
+import { generateAndCacheImageStep, generateImageStep, cacheGeneratedImageStep } from '../steps';
 import { ImageGenerationService } from '@/lib/services/image/ImageGenerationService';
 import { uploadToCache } from '@/lib/services/image/promptImageCache';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { assertSafeRemoteUrl } from '@/lib/security/safe-remote-url';
+import { getStepMetadata } from 'workflow';
+import { randomUUID } from 'node:crypto';
 
 jest.mock('@/lib/services/image/ImageGenerationService', () => ({ ImageGenerationService: { generateImage: jest.fn() } }));
 jest.mock('@/lib/services/image/promptImageCache', () => ({ uploadToCache: jest.fn() }));
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn() } }));
 jest.mock('@/lib/security/safe-remote-url', () => ({ assertSafeRemoteUrl: jest.fn() }));
 jest.mock('@/lib/services/billing/CreditService', () => { throw new Error('Public image step must not own billing'); });
+jest.mock('workflow', () => ({ getStepMetadata: jest.fn() }));
 
 const originalFetch = global.fetch;
 const fetchMock = jest.fn();
@@ -18,6 +21,7 @@ const cacheUrl = 'https://storage.example.test/cache/hash.png';
 
 beforeEach(() => {
   jest.clearAllMocks();
+  jest.mocked(getStepMetadata).mockImplementation(() => { throw new Error('`getStepMetadata()` can only be called inside a step function'); });
   global.fetch = fetchMock;
   fetchMock.mockResolvedValue(new Response(Buffer.from('generated-image'), { headers: { 'content-type': 'image/png' } }));
   jest.mocked(ImageGenerationService.generateImage).mockResolvedValue({ success: true, provider: 'azure', images: [{ url: imageUrl }], metadata: { model: 'image-deployment', n: 1, generated_at: new Date().toISOString() } });
@@ -61,4 +65,33 @@ it('does not retry, download or cache when Azure image generation fails', async 
   expect(fetchMock).not.toHaveBeenCalled();
   expect(uploadToCache).not.toHaveBeenCalled();
   expect(supabaseAdmin.from).not.toHaveBeenCalled();
+});
+
+it('disables scheduler retries for every paid entrypoint, and retries only cache I/O', () => {
+  expect(generateImageStep.maxRetries).toBe(0);
+  expect(generateAndCacheImageStep.maxRetries).toBe(0);
+  expect(cacheGeneratedImageStep.maxRetries).toBe(3);
+});
+
+it('forwards the server-issued step ID for internal operation deduplication', async () => {
+  const stepId = `step_${randomUUID()}`;
+  jest.mocked(getStepMetadata).mockReturnValue({ stepId, stepName: 'generateImageStep', stepStartedAt: new Date(), attempt: 1 });
+  await generateImageStep('cat', 'site-id', '1024x1024', '1:1');
+  expect(ImageGenerationService.generateImage).toHaveBeenCalledWith(expect.objectContaining({ site_id: 'site-id' }), { operationId: `workflow-image:${stepId}` });
+});
+
+it('does not hide unexpected SDK metadata failure or dispatch without its identity', async () => {
+  jest.mocked(getStepMetadata).mockImplementation(() => { throw new Error('SDK metadata unavailable'); });
+  await expect(generateImageStep('cat', 'site-id', '1024x1024', '1:1')).rejects.toThrow('SDK metadata unavailable');
+  expect(ImageGenerationService.generateImage).not.toHaveBeenCalled();
+});
+
+it('retries upload from the persisted generated URL without submitting generation again', async () => {
+  const generated = await generateImageStep('cat', 'site-id', '1024x1024', '1:1');
+  jest.mocked(uploadToCache).mockRejectedValueOnce(new Error('temporary storage failure'));
+  await expect(cacheGeneratedImageStep(generated, 'cat', 'site-id', 'hash')).rejects.toThrow('temporary storage failure');
+  fetchMock.mockResolvedValueOnce(new Response(Buffer.from('generated-image'), { headers: { 'content-type': 'image/png' } }));
+  await expect(cacheGeneratedImageStep(generated, 'cat', 'site-id', 'hash')).resolves.toEqual({ success: true });
+  expect(ImageGenerationService.generateImage).toHaveBeenCalledTimes(1);
+  expect(uploadToCache).toHaveBeenCalledTimes(2);
 });

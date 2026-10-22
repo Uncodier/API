@@ -4,6 +4,7 @@ import { assertSafeRemoteUrl } from '@/lib/security/safe-remote-url';
 import { readResponseWithLimit } from '@/lib/security/limited-response';
 import { persistGeneratedImage } from './image-storage';
 import type { GenerateImageOptions, ImageGenerationResult, ImageRatio } from './image-types';
+import { ImageAdmissionRejectedError } from './image-types';
 import { recordTelemetry } from '@/lib/status/telemetry';
 import { getImageObservationKey } from '@/lib/status/handlers/ai/passive-probes';
 
@@ -23,7 +24,7 @@ function imageParameters(options: GenerateImageOptions, deployment: string) {
   if (size === 'auto') {
     if (options.ratio) throw new MediaRequestError('Omit size to use aspect_ratio', 400);
   } else {
-    const match = /^(\d{3,4})x(\d{3,4})$/.exec(size);
+    const match = typeof size === 'string' ? /^(\d{3,4})x(\d{3,4})$/.exec(size) : null;
     const width = Number(match?.[1]); const height = Number(match?.[2]);
     if (!match || width % 16 || height % 16 || width > 3840 || height > 3840
       || width * height < 655_360 || width * height > 8_294_400
@@ -62,8 +63,8 @@ async function referenceImage(value: string): Promise<Blob> {
   }
 }
 
-/** Direct Azure API; no OpenRouter calls, credential forwarding, retries or fallback. */
-export async function generateWithAzure(options: GenerateImageOptions): Promise<ImageGenerationResult> {
+/** Configuration/parameter preflight; run before reserving credits. No network. */
+export function validateAzureImageOptions(options: GenerateImageOptions) {
   const config = getAzureImageConfig();
   const deployment = options.model ?? config.deployment;
   if (typeof deployment !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(deployment)) {
@@ -74,6 +75,12 @@ export async function generateWithAzure(options: GenerateImageOptions): Promise<
     && (!Array.isArray(options.referenceImages) || options.referenceImages.length > 4)) {
     throw new MediaRequestError('reference_images must contain at most 4 URLs', 400);
   }
+  return { config, deployment, parameters };
+}
+
+/** Direct Azure API; no OpenRouter calls, credential forwarding, retries or fallback. */
+export async function generateWithAzure(options: GenerateImageOptions): Promise<ImageGenerationResult> {
+  const { config, deployment, parameters } = validateAzureImageOptions(options);
   const editing = !!options.referenceImages?.length;
   const operation = editing ? 'edits' : 'generations';
   const datedApi = /^\d{4}-/.test(config.apiVersion);
@@ -94,6 +101,9 @@ export async function generateWithAzure(options: GenerateImageOptions): Promise<
     }
     body = form;
   }
+  // Reference preparation never submits an image generation. A failed dispatch
+  // RPC is not retried and never authorizes this POST.
+  await options.beforeDispatch?.();
   let response: { data?: Array<{ b64_json?: string }>; id?: string };
   const start = Date.now();
   const observe = async (status: 'up' | 'down', label: string) => {
@@ -111,7 +121,9 @@ export async function generateWithAzure(options: GenerateImageOptions): Promise<
     if (!result.ok) {
       observeFailure = ![400, 422].includes(result.status)
         && !(result.status === 404 && deployment !== config.deployment);
-      throw new MediaRequestError(`Azure image request failed (${result.status})`);
+      const ErrorType = [400, 401, 403, 404, 405, 413, 415, 422, 429].includes(result.status)
+        ? ImageAdmissionRejectedError : MediaRequestError;
+      throw new ErrorType(`Azure image request failed (${result.status})`);
     }
     response = JSON.parse((await readResponseWithLimit(result, 90 * 1024 * 1024)).toString('utf8'));
   } catch (error) {

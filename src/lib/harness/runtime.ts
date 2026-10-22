@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import type { Sandbox } from '@vercel/sandbox';
 import { runSessionSlice, type RunSliceInput } from './engine';
 import { createBilledHarnessModel } from './requirement-model';
 import { createSessionStore } from './store';
-import { openWorkspace, replaceWorkspaceEnvironment } from './workspace';
+import { openWorkspace, replaceWorkspaceEnvironment, suspendWorkspaceForCleanup } from './workspace';
+import { claimSandboxCleanup } from '@/lib/services/billing/sandbox-cleanup-fence';
 import { createWorkspaceTools } from './workspace-tools';
 import { createCapabilityTools, refreshTenantEnvironment } from './capabilities';
 import { createDeliveryTools } from './delivery-tools';
@@ -48,6 +50,7 @@ export async function executeSessionSlice(id: string, scope: SessionScope, optio
   }
   const deadline = AbortSignal.timeout(Math.min(210000, remaining));
   let workspace;
+  let ownedHandle: Sandbox | undefined;
   const setupStarted = Date.now();
   let setupAccounted = false;
   const assertActive = async () => {
@@ -97,6 +100,16 @@ export async function executeSessionSlice(id: string, scope: SessionScope, optio
     host.configuration.redactionValues.forEach(value => knownSecrets.add(value));
     workspace = await withinDeadline(deadline, () => (options.openWorkspace || openWorkspace)({ sessionId: id, siteId: scope.siteId, repository: session!.request.repository,
       existing: session!.workspace, signal: deadline, assertActive,
+      onOwnedHandle: sandbox => { ownedHandle = sandbox; },
+      cleanupCreated: async (sandbox) => {
+        await options.assertExecution?.();
+        const fence = await claimSandboxCleanup({ sessionId: id, siteId: scope.siteId, owner, resource: sandbox.name, bootstrap: true });
+        if (!fence) return;
+        await fence.assert();
+        await sandbox.stop({ signal: AbortSignal.timeout(60_000) });
+        await fence.finish();
+        ownedHandle = undefined;
+      },
       host: { git: profile?.git, environment: host.values(), redactionValues: [...knownSecrets] } }));
     const configureEnvironment = async (values: Record<string, string>) => {
       runtimeSecretValues(values).forEach(value => knownSecrets.add(value));
@@ -142,8 +155,24 @@ export async function executeSessionSlice(id: string, scope: SessionScope, optio
     }
     return { status: (await store.load(id, scope.siteId))?.status || 'waiting', continue: false };
   } finally {
-    // Do not stop by stale local identity after a user pause/resume. Persistent
-    // workspace auto-timeout snapshots it; owner-fenced explicit cleanup is separate.
-    await store.release(id, scope.siteId, owner);
+    try {
+      if (workspace || ownedHandle) {
+        await options.assertExecution?.();
+        // Atomic claim checks CURRENT nonrunning snapshot + owner + resource,
+        // and prevents a user/coordinator resume during the remote stop.
+        const resource = workspace?.ref.id ?? ownedHandle!.name;
+        const fence = await claimSandboxCleanup({ sessionId: id, siteId: scope.siteId, owner, resource,
+          bootstrap: !session.workspace && !workspace });
+        if (fence) {
+          if (workspace) await suspendWorkspaceForCleanup(workspace, fence.assert);
+          else {
+            await fence.assert();
+            await ownedHandle!.stop({ signal: AbortSignal.timeout(60_000) });
+          }
+          await fence.finish();
+        }
+      }
+    } catch { /* Unknown stop outcome retains durable fence, never authorizes resume. */ }
+    finally { await store.release(id, scope.siteId, owner).catch(() => undefined); }
   }
 }

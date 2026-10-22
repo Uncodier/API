@@ -9,6 +9,7 @@ import type { WorkspaceProviderOperation } from './workspace-provider-diagnostic
 import { resolveSandboxAuth } from './sandbox-auth';
 import { guardedWorkspaceCommand, WORKSPACE_ISOLATION_VERSION, WORKSPACE_ROOT_INIT } from './workspace-process-guard';
 import { registerSandboxBilling, reconcileSandboxBilling, reconcileSandboxBillingQuiet, SandboxBillingError } from '@/lib/services/billing/sandbox-billing';
+import { SANDBOX_SNAPSHOT_TTL_MS } from '@/lib/services/sandbox-constants';
 
 export const WORKSPACE_ROOT = '/vercel/sandbox';
 export const MAX_COMMAND_OUTPUT = 64 * 1024;
@@ -325,6 +326,15 @@ export async function replaceWorkspaceEnvironment(workspace: Workspace, values: 
   await adapter.configure(values, true, redactionValues);
 }
 
+/** Only the trusted runtime passes a durable DB cleanup claim, never a tool.
+ * Cleanup intentionally has its own deadline: a slice abort must not leave an
+ * owned idle VM running. The original active-operation guard is not reused. */
+export async function suspendWorkspaceForCleanup(workspace: Workspace, assertFence: () => Promise<void>): Promise<void> {
+  const adapter = adapters.get(workspace);
+  if (adapter) await adapter.suspendForCleanup(assertFence);
+  else { await assertFence(); await workspace.suspend?.(); }
+}
+
 type AssertActive = () => Promise<void>;
 const noopActive: AssertActive = async () => {};
 async function checkActive(assertActive: AssertActive, signal?: AbortSignal): Promise<void> {
@@ -603,6 +613,13 @@ class VercelWorkspace implements Workspace {
     }
     finally { if (this.billed) await reconcileSandboxBillingQuiet(this.sandbox); }
   }
+  async suspendForCleanup(assertFence: () => Promise<void>): Promise<void> {
+    try {
+      await assertFence();
+      await this.sandbox.stop({ signal: AbortSignal.timeout(60_000) });
+      await assertFence();
+    } finally { if (this.billed) await reconcileSandboxBillingQuiet(this.sandbox); }
+  }
 }
 
 /** Host-fenced adoption of an existing requirement workspace. Never clone/reset it.
@@ -674,6 +691,10 @@ export async function openWorkspace(input: {
   host?: WorkspaceHostOptions;
   /** Runtime must fence the lease owner; optional only for offline library callers. */
   assertActive?: AssertActive;
+  /** Durable runtime claim prevents pause/resume racing an opening-failure stop. */
+  cleanupCreated?: (sandbox: Sandbox) => Promise<void>;
+  /** Host-only identity capture for fenced cleanup when opening never returns. */
+  onOwnedHandle?: (sandbox: Sandbox) => void;
 }): Promise<Workspace> {
   if (!uuid.test(input.sessionId)) return fail('INVALID_SESSION_ID', 'Workspace session ID must be a UUID.');
   const name = `h-${input.sessionId.toLowerCase()}`;
@@ -691,7 +712,7 @@ export async function openWorkspace(input: {
   sensitive.push(...runtimeSecretValues(environment), ...(input.host?.redactionValues ?? []));
   const assertActive = input.assertActive ?? noopActive;
   const active = () => checkActive(assertActive, input.signal);
-  let sandbox: Sandbox;
+  let sandbox: Sandbox | undefined;
   let created = false;
   let operation: WorkspaceProviderOperation = 'get';
   try {
@@ -709,9 +730,10 @@ export async function openWorkspace(input: {
       sandbox = await Sandbox.create({ ...sandboxAuth, name, persistent: true, image: 'vercel/sandbox/universal',
         timeout: 30 * 60_000, env: {}, ports: [], networkPolicy,
         tags: { harnessSession: tags.harnessSession, harnessRepository: tags.harnessRepository },
-        keepLastSnapshots: { count: 2 }, signal: input.signal });
-      await active();
+        snapshotExpiration: SANDBOX_SNAPSHOT_TTL_MS,
+        keepLastSnapshots: { count: 1, deleteEvicted: true }, signal: input.signal });
       created = true;
+      await active();
     }
     if (!created && (sandbox.name !== name || !sandbox.persistent || sandbox.tags?.harnessSession !== tags.harnessSession ||
         sandbox.tags?.harnessRepository !== tags.harnessRepository)) {
@@ -722,6 +744,7 @@ export async function openWorkspace(input: {
     if (!created && ['stopped', 'failed', 'aborted'].includes(sandbox.status) && !sandbox.currentSnapshotId) {
       return fail('WORKSPACE_SNAPSHOT_MISSING', 'Existing workspace has no restorable snapshot; it was not restarted from a clean image.');
     }
+    input.onOwnedHandle?.(sandbox);
     if (input.siteId) sandbox = await prepareBilledWorkspace(sandbox, active, input.signal);
     if (created) {
       await active();
@@ -756,6 +779,15 @@ export async function openWorkspace(input: {
     await active();
     return workspace;
   } catch (error) {
+    // Stop only the handle this invocation actually created. Do not delete any
+    // work/staging/snapshots, and never stop a reused or successor-owned VM.
+    if (created && sandbox) {
+      try {
+        if (input.cleanupCreated) await input.cleanupCreated(sandbox);
+        else if (!input.siteId) { await checkActive(assertActive); await sandbox.stop({ signal: AbortSignal.timeout(60_000) }); }
+      } catch { /* Ownership loss/unknown stop: preserve and reconcile, no retry. */ }
+      if (input.siteId) await reconcileSandboxBillingQuiet(sandbox);
+    }
     if (error instanceof WorkspaceError) throw error;
     const failure = workspaceOpenFailure(error, operation);
     return fail(input.signal?.aborted ? 'ABORTED' : failure.code, input.signal?.aborted
@@ -777,8 +809,8 @@ async function prepareBilledWorkspace(sandbox: Sandbox, active: () => Promise<vo
     await active();
     return sandbox;
   } catch {
-    await sandbox.stop({ signal: AbortSignal.timeout(60_000) }).catch(() => undefined);
-    await reconcileSandboxBillingQuiet(sandbox);
+    // Caller owns failure cleanup. A status/assert read does not fence a remote
+    // stop against a concurrent pause/resume, especially for an adopted VM.
     return fail('WORKSPACE_BILLING_UNAVAILABLE', 'Sandbox active-time billing requires reconciliation before workspace use.');
   }
 }

@@ -11,10 +11,13 @@ let store = createMemorySessionStore();
 let encryptionKey = randomBytes(32).toString('hex');
 const open = jest.fn(); const replace = jest.fn(); const engine = jest.fn();
 const capability = jest.fn(); const profile = jest.fn(); const refresh = jest.fn();
+const cleanupClaim = jest.fn(); const suspendCleanup = jest.fn();
+jest.mock('@/lib/services/billing/sandbox-cleanup-fence', () => ({ claimSandboxCleanup: (...args: unknown[]) => cleanupClaim(...args) }));
 jest.mock('../store', () => ({ ...jest.requireActual('../store'), createSessionStore: () => store }));
 jest.mock('../host-state-store', () => ({ ...jest.requireActual('../host-state-store'), createHostStateStore: () => createMemoryHostStateStore(store, encryptionKey) }));
 jest.mock('../artifact-store', () => ({ ...jest.requireActual('../artifact-store'), createArtifactStore: () => createMemoryArtifactStore(store) }));
-jest.mock('../workspace', () => ({ openWorkspace: (...args: unknown[]) => open(...args), replaceWorkspaceEnvironment: (...args: unknown[]) => replace(...args) }));
+jest.mock('../workspace', () => ({ openWorkspace: (...args: unknown[]) => open(...args), replaceWorkspaceEnvironment: (...args: unknown[]) => replace(...args),
+  suspendWorkspaceForCleanup: (...args: unknown[]) => suspendCleanup(...args) }));
 jest.mock('../workspace-tools', () => ({ createWorkspaceTools: () => [] }));
 jest.mock('../engine', () => ({ runSessionSlice: (...args: unknown[]) => engine(...args) }));
 jest.mock('../model', () => ({ createHarnessModel: () => ({}) }));
@@ -44,6 +47,7 @@ beforeEach(async () => {
   await store.create(session, scope);
   profile.mockReturnValue({ ...scope, allowed: [], environment: { APP_SETTING: 'retained' } });
   capability.mockResolvedValue([]);
+  cleanupClaim.mockReset().mockResolvedValue(null); suspendCleanup.mockReset().mockResolvedValue(undefined);
   replace.mockImplementation(async (_workspace, values) => { currentEnvironment = values; });
   open.mockImplementation(async input => {
     await input.assertActive(); currentEnvironment = input.host.environment;
@@ -100,6 +104,42 @@ it('checks session ownership after async preparation before allowing the next SD
   });
   await executeSessionSlice(session.id, scope);
   expect(writes).toBe(0); expect((await store.load(session.id, scope.siteId))!.status).toBe('cancelled');
+});
+
+it('suspends only after an atomic current-owner idle claim and finishes confirmed stop', async () => {
+  const fence = { assert: jest.fn(), finish: jest.fn() };
+  cleanupClaim.mockResolvedValue(fence);
+  await executeSessionSlice(session.id, scope);
+  expect(cleanupClaim).toHaveBeenCalledWith(expect.objectContaining({ sessionId: session.id, siteId: scope.siteId, resource: `h-${session.id}` }));
+  expect(suspendCleanup).toHaveBeenCalledWith(expect.objectContaining({ ref: expect.any(Object) }), fence.assert);
+  expect(fence.finish).toHaveBeenCalledTimes(1);
+});
+it('never stops a resumed successor when the atomic owner claim refuses', async () => {
+  engine.mockImplementation(async input => {
+    await store.control(session.id, scope.siteId, 'pause');
+    await store.control(session.id, scope.siteId, 'resume');
+    await store.claim(session.id, scope.siteId, 'successor', 180);
+    return input.session;
+  });
+  cleanupClaim.mockResolvedValue(null);
+  await executeSessionSlice(session.id, scope);
+  expect(suspendCleanup).not.toHaveBeenCalled();
+  await expect(store.assertOwner(session.id, scope.siteId, 'successor', 180)).resolves.toBeUndefined();
+});
+it('retains cleanup claim on unknown stop, rather than admitting a resumed resource', async () => {
+  const fence = { assert: jest.fn(), finish: jest.fn() };
+  cleanupClaim.mockResolvedValue(fence); suspendCleanup.mockRejectedValue(new Error('unknown stop'));
+  await executeSessionSlice(session.id, scope);
+  expect(fence.finish).not.toHaveBeenCalled();
+});
+it('cleans an owned reused VM after opening billing failure even when no workspace adapter returned', async () => {
+  const handle={name:`h-${session.id}`,stop:jest.fn().mockResolvedValue(undefined)};
+  const fence={assert:jest.fn().mockResolvedValue(undefined),finish:jest.fn().mockResolvedValue(undefined)};
+  cleanupClaim.mockResolvedValue(fence);
+  open.mockImplementation(async input=>{input.onOwnedHandle(handle);throw new Error('billing unavailable');});
+  await executeSessionSlice(session.id,scope);
+  expect(handle.stop).toHaveBeenCalledTimes(1);expect(fence.finish).toHaveBeenCalledTimes(1);
+  expect(engine).not.toHaveBeenCalled();expect((await store.load(session.id,scope.siteId))?.status).toBe('waiting');
 });
 
 it('restores encrypted configuration through independent host-store instances with no session plaintext', async () => {

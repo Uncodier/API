@@ -39,6 +39,7 @@ const mocks: Record<string, Record<string, unknown>> = {
   '@/lib/database/supabase-client': { supabaseAdmin: { from: businessCall } },
   '@/lib/services/workflow-robot/materialize': { materializeRunFromGraph: businessCall },
   '@/lib/services/workflow-robot/run-plan': { runWorkflowPlan: businessCall },
+  '@/app/api/cron/workflows/workflow': { executeScheduledWorkflow: businessCall },
   '@/lib/services/workflow-robot/cron-window': { isCronDueInWindow: businessCall, WORKFLOW_CRON_WINDOW_MS: 60_000 },
   '@/lib/timezone': { DEFAULT_TIMEZONE: 'UTC', normalizeTimezone: businessCall, resolveClientTimezone: businessCall },
   '@/lib/services/robot-instance/assistant-respawn': { countRecentRespawns: businessCall, evaluateInstanceStall: businessCall, LOOKBACK_MS: 60_000, spawnSilentContinueWorkflow: businessCall },

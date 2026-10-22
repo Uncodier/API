@@ -43,7 +43,7 @@ describe('capability-specific runtime boundary', () => {
     const route = readFileSync(resolve(root, 'src/app/api/ai/image/route.ts'), 'utf8');
     const adapter = readFileSync(resolve(root, 'src/app/api/ai/image/provider-azure.ts'), 'utf8');
     const config = readFileSync(resolve(root, 'src/lib/services/image/azure-image-config.ts'), 'utf8');
-    expect(route).toContain("import { generateWithAzure } from './provider-azure'");
+    expect(route).toMatch(/import\s*\{[^}]*\bgenerateWithAzure\b[^}]*\}\s*from\s*['"]\.\/provider-azure['"]/);
     expect(route).toContain("const provider = body.provider ?? 'azure'");
     expect(route).toContain("if (provider !== 'azure')");
     expect(route + adapter + config).not.toMatch(/generateWithOpenRouter|openRouterMedia|OPENROUTER_API_KEY|OPENROUTER_IMAGE_/);

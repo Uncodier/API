@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { materializeRunFromGraph } from '@/lib/services/workflow-robot/materialize';
-import { runWorkflowPlan } from '@/lib/services/workflow-robot/run-plan';
+import { start } from 'workflow/api';
+import { executeScheduledWorkflow } from './workflow';
 import { isCronDueInWindow, WORKFLOW_CRON_WINDOW_MS } from '@/lib/services/workflow-robot/cron-window';
 import { DEFAULT_TIMEZONE, normalizeTimezone, resolveClientTimezone } from '@/lib/timezone';
 import { withCronObservation } from '@/lib/status/cron-observation';
@@ -65,13 +66,12 @@ async function runCron(req: Request) {
           continue;
         }
       }
-      void runWorkflowPlan(materialized.run_plan_id).catch((err) => {
-        console.error(`[CronWorkflows] run failed ${materialized.run_plan_id}:`, err);
-      });
+      // Await queue acceptance, not paid execution. The run survives this response.
+      await start(executeScheduledWorkflow, [materialized.run_plan_id]);
       results.push({ trigger_id: trigger.id, started: true });
-    } catch (err: any) {
-      console.error(`[CronWorkflows] trigger ${trigger.id}:`, err);
-      results.push({ trigger_id: trigger.id, skipped: err.message });
+    } catch {
+      console.error('[CronWorkflows] Scheduled dispatch failed');
+      results.push({ trigger_id: trigger.id, skipped: 'dispatch_failed' });
     }
   }
 

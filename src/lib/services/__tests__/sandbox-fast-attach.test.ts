@@ -34,11 +34,11 @@ const branchLookup = jest.mocked(SandboxService.getCurrentBranch);
 const create = jest.mocked(SandboxService.createRequirementSandbox);
 
 function fixture(status = 'running') {
-  const session = { sessionId: 'session-1', status };
   const stdout = jest.fn(async () => branch);
   const runCommand = jest.fn(async (_options: unknown) => ({ exitCode: 0, stdout }));
+  const session = { sessionId: 'session-1', status, runCommand };
   const resume = jest.fn(async () => { session.status = 'running'; session.sessionId = 'session-new'; });
-  const sandbox = { name: 'sandbox-1', currentSession: () => session, runCommand, resume } as unknown as Sandbox;
+  const sandbox = { name: 'sandbox-1', get status() { return session.status; }, currentSession: () => session, runCommand, resume } as unknown as Sandbox;
   get.mockResolvedValue(sandbox);
   jest.mocked(Sandbox.get).mockImplementation(async () => { await resume(); return sandbox; });
   return { sandbox, session, runCommand, resume, stdout };
@@ -52,6 +52,21 @@ beforeEach(() => {
 });
 
 describe('opt-in mid-cycle sandbox attach', () => {
+  it('stopped inspection does not wake the VM by dispatching a convenience command', async () => {
+    const f=fixture('stopped');
+    expect(await inspectFastAttachWorkspace(f.sandbox,req,'session-1')).toBeNull();
+    expect(f.runCommand).not.toHaveBeenCalled(); expect(f.resume).not.toHaveBeenCalled();
+  });
+  it('uses the fixed session command, never sandbox auto-resuming convenience commands', async () => {
+    const f=fixture();
+    const convenience=jest.fn(async () => { throw new Error('Auto resume forbidden'); });
+    (f.sandbox as any).runCommand=convenience;
+    expect(await inspectFastAttachWorkspace(f.sandbox,req,'session-1')).toBe(branch);
+    expect(f.runCommand).toHaveBeenCalledTimes(1);expect(convenience).not.toHaveBeenCalled();
+    f.runCommand.mockRejectedValueOnce(new Error('session stopped'));
+    expect(await inspectFastAttachWorkspace(f.sandbox,req,'session-1')).toBeNull();
+    expect(convenience).not.toHaveBeenCalled();expect(f.resume).not.toHaveBeenCalled();
+  });
   it('fresh-checks every healthy attach without warm preparation, resume or DB lookup', async () => {
     const f = fixture();
     for (let turn = 0; turn < 3; turn++) {

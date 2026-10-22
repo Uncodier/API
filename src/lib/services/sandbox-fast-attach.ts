@@ -18,9 +18,15 @@ export async function inspectFastAttachWorkspace(
   requirementId: string,
   sessionId: string,
 ): Promise<string | null> {
+  // Inspection must not use SDK convenience commands to wake a stopped VM.
+  if (sandbox.status !== 'running' || runningSessionId(sandbox) !== sessionId) return null;
   const signal = AbortSignal.timeout(5_000);
   try {
-    const result = await sandbox.runCommand({
+    // Session commands are bound to this VM session and cannot implicitly
+    // resume the persistent sandbox when it expires during inspection.
+    const session = sandbox.currentSession();
+    if (session.sessionId !== sessionId || session.status !== 'running') return null;
+    const result = await session.runCommand({
       cmd: 'sh',
       cwd: SANDBOX_WORK_DIR,
       timeoutMs: 4_000,
@@ -50,8 +56,7 @@ printf '%s\\n' "$BRANCH"
     });
     if (result.exitCode !== 0) return null;
     const branch = (await result.stdout({ signal })).trim();
-    // runCommand can auto-resume on a stopped-session response. That is recovery,
-    // not fast attach, even if the restored filesystem happens to look healthy.
+    // Never return identity evidence from a successor VM session.
     if (runningSessionId(sandbox) !== sessionId) return null;
     return branchBelongsToRequirement(branch, requirementId) ? branch : null;
   } catch {

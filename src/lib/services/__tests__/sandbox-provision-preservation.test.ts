@@ -30,6 +30,7 @@ const persist = jest.fn();
 const branch = jest.fn();
 const assertLayout = jest.fn();
 const assertOwner = jest.fn();
+const stop = jest.fn();
 const syntheticToken = randomBytes(24).toString('hex');
 const binding = { kind: 'applications', org: 'example', repo: 'app', default_branch: 'main' };
 const { createRequirementSandbox } = loadRuntimeModule<typeof import('../sandbox-provision')>(
@@ -41,7 +42,7 @@ const { createRequirementSandbox } = loadRuntimeModule<typeof import('../sandbox
     '@/lib/tools/requirement-status-core': { persistActiveSandboxId: persist },
     '@/lib/services/sandbox-sdk': { sandboxIdentity: () => 'req-existing', sandboxSdkMajor: () => 3 },
     '@/lib/services/sandbox-constants': { SANDBOX_WORK_DIR: '/vercel/sandbox', requirementSandboxName: () => 'req-existing' },
-    '@/lib/services/sandbox-stop': { stopSandboxQuiet: jest.fn() },
+    '@/lib/services/sandbox-stop': { stopSandboxQuiet: stop },
     '@/lib/services/sandbox-npm': { ensureNpmDeps: jest.fn() },
     '@/lib/services/sandbox-git-identity': { fetchOriginBranch: jest.fn(), installGitIdentity: jest.fn() },
     '@/lib/services/sandbox-create-params': { buildSandboxCreateParams: jest.fn(), requirementSandboxTags: () => ({ kind: 'requirement' }) },
@@ -88,5 +89,15 @@ describe('named provision preservation', () => {
     expect(create).not.toHaveBeenCalled();
     expect(clone).not.toHaveBeenCalled();
     expect(sync).not.toHaveBeenCalled();
+  });
+
+  it('stops reused layout failure and preserves the original error/workspace', async () => {
+    const sandbox = { runCommand: jest.fn() };
+    const error = new Error('layout failed');
+    named.mockResolvedValue({ sandbox, created: false });
+    assertLayout.mockRejectedValue(error);
+    await expect(createRequirementSandbox('req', 'applications', '', audit)).rejects.toBe(error);
+    expect(stop).toHaveBeenCalledWith(sandbox);
+    expect(sync).not.toHaveBeenCalled(); expect(create).not.toHaveBeenCalled();
   });
 });

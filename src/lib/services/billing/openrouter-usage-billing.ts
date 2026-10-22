@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { calculateOpenRouterCreditCharge } from './agent-pricing';
+import { openRouterCostEvidence } from './openrouter-cost-evidence';
 
 export interface OpenRouterUsageCharge {
   siteId: string;
@@ -30,12 +31,12 @@ export async function chargeOpenRouterUsage(input: OpenRouterUsageCharge): Promi
     p_event_id: input.generationId || input.eventId,
     p_provider_cost: cost,
     // Deliberately do not persist arbitrary provider/model content or raw usage here.
-    p_metadata: Object.fromEntries(Object.entries(input.metadata || {}).filter(([key, value]) =>
+    p_metadata: { ...Object.fromEntries(Object.entries(input.metadata || {}).filter(([key, value]) =>
       ['command_id', 'agent_id', 'instance_id', 'session_id', 'plan_id', 'run_plan_id', 'step_id',
         'message_id', 'attempt', 'retry_count', 'model', 'context'].includes(key) &&
       ((typeof value === 'string' && value.length <= 256) ||
         (typeof value === 'number' && Number.isFinite(value)))),
-    ),
+    ), ...openRouterCostEvidence(input.usage) },
   }); } catch { throw new OpenRouterBillingError(); }
   if (result.error || result.data?.success !== true || cost === null) {
     // An uncertain response may already have committed. Stop; never re-run inference.

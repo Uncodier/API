@@ -28,12 +28,13 @@ it('never creates or resumes on failed billing admission',async()=>{
   await expect(openWorkspace(input)).rejects.toThrow();
   expect(Sandbox.get).not.toHaveBeenCalled(); expect(Sandbox.create).not.toHaveBeenCalled();
 });
-it('stops existing VM and preserves pending history when reconciliation fails before resume',async()=>{
+it('does not stop an unfenced reused VM on billing failure; captures the owned handle for runtime cleanup',async()=>{
   const sandbox=fixture(); jest.mocked(Sandbox.get).mockResolvedValue(sandbox as never);
   jest.mocked(reconcileSandboxBilling).mockRejectedValue(new SandboxBillingError());
-  await expect(openWorkspace(input)).rejects.toMatchObject({code:'WORKSPACE_BILLING_UNAVAILABLE'});
+  const onOwnedHandle=jest.fn();
+  await expect(openWorkspace({...input,onOwnedHandle})).rejects.toMatchObject({code:'WORKSPACE_BILLING_UNAVAILABLE'});
   expect(Sandbox.get).toHaveBeenCalledTimes(1); expect(Sandbox.create).not.toHaveBeenCalled();
-  expect(sandbox.stop).toHaveBeenCalled(); expect(reconcileSandboxBillingQuiet).toHaveBeenCalledWith(sandbox);
+  expect(sandbox.stop).not.toHaveBeenCalled(); expect(onOwnedHandle).toHaveBeenCalledWith(sandbox);
 });
 it('suspend stops then reconciles final provider timestamps',async()=>{
   const sandbox=fixture();sandbox.status='running';jest.mocked(Sandbox.get).mockResolvedValue(sandbox as never);

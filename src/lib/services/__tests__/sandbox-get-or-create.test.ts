@@ -3,12 +3,15 @@ import { Sandbox } from '@vercel/sandbox';
 import { getOrCreateRequirementSandbox } from '../sandbox-get-or-create';
 import { cloneRepoIntoWorkDir } from '../sandbox-git-clone';
 import { resumeRequirementWorkspace } from '../sandbox-on-resume';
+import { stopSandboxQuiet } from '../sandbox-stop';
+import { assertPlatformGitLayout } from '../sandbox-git-layout';
 import { isMissingSandboxSnapshotError, isSandboxNotFoundError, retireSandboxWithoutSnapshots } from '../sandbox-missing-snapshot';
 
 jest.mock('@vercel/sandbox', () => ({ Sandbox: { getOrCreate: jest.fn(), get: jest.fn(), create: jest.fn() } }));
 jest.mock('../sandbox-git-clone', () => ({ cloneRepoIntoWorkDir: jest.fn() }));
 jest.mock('../sandbox-git-layout', () => ({ assertPlatformGitLayout: jest.fn() }));
 jest.mock('../sandbox-on-resume', () => ({ resumeRequirementWorkspace: jest.fn() }));
+jest.mock('../sandbox-stop', () => ({ stopSandboxQuiet: jest.fn().mockResolvedValue(true) }));
 jest.mock('../sandbox-create-params', () => ({ buildSandboxCreateParams: (params: unknown) => params }));
 jest.mock('../cron-audit-log', () => ({ logCronInfrastructureEvent: jest.fn() }));
 jest.mock('../billing/sandbox-billing', () => ({ registerSandboxBilling: jest.fn(), reconcileSandboxBilling: jest.fn() }));
@@ -89,6 +92,16 @@ describe('getOrCreateRequirementSandbox', () => {
     await expect(getOrCreateRequirementSandbox(params)).rejects.toBe(error);
     expect(retireSandboxWithoutSnapshots).not.toHaveBeenCalled();
     expect(Sandbox.get).toHaveBeenCalledTimes(1);
+    expect(stopSandboxQuiet).toHaveBeenCalledWith(sandbox);
+  });
+
+  it('stops a created VM on layout failure without deleting work or recreating', async () => {
+    const error = new Error('layout failed');
+    jest.mocked(assertPlatformGitLayout).mockRejectedValue(error);
+    await expect(getOrCreateRequirementSandbox(params)).rejects.toBe(error);
+    expect(stopSandboxQuiet).toHaveBeenCalledWith(sandbox);
+    expect(Sandbox.create).toHaveBeenCalledTimes(1);
+    expect(retireSandboxWithoutSnapshots).not.toHaveBeenCalled();
   });
 
   it('propagates refusal without retrying creation', async () => {

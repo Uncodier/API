@@ -118,6 +118,21 @@ it('fails without a second request when Azure returns no images', async () => {
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });
 
+it('fails closed before dispatch without internal image service authentication', async () => {
+  delete process.env.SERVICE_API_KEY;
+  expect(await ImageGenerationService.generateImage({ prompt: 'cat', site_id: 'site' })).toMatchObject({ success: false, error: 'Image service authentication is unavailable' });
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
+it('sends optional internal operation ID as a header without changing image payload', async () => {
+  const operationId = `workflow-image:step_${randomUUID()}`;
+  fetchMock.mockResolvedValueOnce(Response.json({ provider: 'azure', images: [{ url: 'https://storage.example.test/image.png' }] }));
+  await ImageGenerationService.generateImage({ prompt: 'cat', site_id: 'site' }, { operationId });
+  expect(fetchMock.mock.calls[0][1].headers['Idempotency-Key']).toBe(operationId);
+  expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ prompt: 'cat', site_id: 'site', provider: 'azure' });
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
 it('does not retry or use Gemini when either media API fails and does not expose response bodies', async () => {
   const secret = randomBytes(32).toString('hex');
   fetchMock.mockResolvedValueOnce(new Response(secret, { status: 502 }))

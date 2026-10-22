@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { continueJsonGeneration, isIncompleteJson, attemptJsonRepair } from '@/lib/services/continuation-service';
+import { validContinuationBudget } from '@/lib/services/continuation-budget';
 
 /**
  * Endpoint para continuar la generación de un JSON incompleto
@@ -13,9 +14,14 @@ export async function POST(req: NextRequest) {
   try {
     // Obtener el cuerpo de la solicitud
     const body = await req.json();
+    const timeout = body?.timeout ?? 45000;
+    const maxRetries = body?.maxRetries ?? 3;
+    if (!validContinuationBudget(timeout, maxRetries)) {
+      return NextResponse.json({ error: 'timeout must be 1–120000 ms and maxRetries 0–3 integer attempts' }, { status: 400 });
+    }
     
     // Validar los campos requeridos
-    if (!body.incompleteJson) {
+    if (typeof body.incompleteJson !== 'string' || !body.incompleteJson || body.incompleteJson.length > 100000) {
       console.error('[API Continuation] Missing required field: incompleteJson');
       return NextResponse.json(
         { error: 'Missing required field: incompleteJson' },
@@ -23,7 +29,7 @@ export async function POST(req: NextRequest) {
       );
     }
     
-    if (!body.modelType) {
+    if (!['anthropic', 'openai', 'gemini'].includes(body.modelType)) {
       console.error('[API Continuation] Missing required field: modelType');
       return NextResponse.json(
         { error: 'Missing required field: modelType' },
@@ -31,7 +37,7 @@ export async function POST(req: NextRequest) {
       );
     }
     
-    if (!body.modelId) {
+    if (typeof body.modelId !== 'string' || !body.modelId.trim() || body.modelId.length > 256) {
       console.error('[API Continuation] Missing required field: modelId');
       return NextResponse.json(
         { error: 'Missing required field: modelId' },
@@ -39,7 +45,7 @@ export async function POST(req: NextRequest) {
       );
     }
     
-    if (!body.siteUrl) {
+    if (body.siteUrl !== undefined && typeof body.siteUrl !== 'string') {
       console.error('[API Continuation] Missing required field: siteUrl');
       return NextResponse.json(
         { error: 'Missing required field: siteUrl' },
@@ -82,10 +88,10 @@ export async function POST(req: NextRequest) {
       incompleteJson: body.incompleteJson,
       modelType: body.modelType,
       modelId: body.modelId,
-      siteUrl: body.siteUrl,
+      siteUrl: body.siteUrl ?? '',
       includeScreenshot: body.includeScreenshot || false,
-      timeout: body.timeout || 45000,
-      maxRetries: body.maxRetries || 3,
+      timeout,
+      maxRetries,
       debugMode: body.debugMode || false
     });
     
@@ -109,10 +115,10 @@ export async function POST(req: NextRequest) {
         { status: 500 }
       );
     }
-  } catch (error: any) {
-    console.error('[API Continuation] Unexpected error:', error);
+  } catch {
+    console.error('[API Continuation] Unexpected error');
     return NextResponse.json(
-      { error: `Unexpected error: ${error.message || 'Unknown error'}` },
+      { error: 'Continuation failed; generation outcome may require reconciliation' },
       { status: 500 }
     );
   }

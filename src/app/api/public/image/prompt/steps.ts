@@ -5,36 +5,64 @@ import { uploadToCache } from '@/lib/services/image/promptImageCache';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { assertSafeRemoteUrl } from '@/lib/security/safe-remote-url';
 import { readResponseWithLimit } from '@/lib/security/limited-response';
+import { getStepMetadata } from 'workflow';
 
-export async function generateAndCacheImageStep(
+export async function generateImageStep(
   prompt: string, 
   siteId: string, 
   size: '256x256' | '512x512' | '1024x1024',
-  ratio: '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '3:2' | '2:3' | undefined,
-  hash: string
+  ratio: '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '3:2' | '2:3' | undefined
 ) {
   'use step';
   
-  // Platform requests use the system site; signed site requests charge that site.
+  // Authorization is performed at ingress. Only real internal principals may
+  // select SYSTEM; signed requests and authenticated users select their tenant.
   const generationSize = size === '256x256' || size === '512x512' ? '1024x1024' : size;
-  const result = await ImageGenerationService.generateImage({
+  let operationId: string | undefined;
+  try {
+    // Server-issued invocation ID; never derive this from client input/cache hash.
+    operationId = `workflow-image:${getStepMetadata().stepId}`;
+  } catch (error) {
+    // Compatibility: direct (non-workflow) callers have no SDK context. The API
+    // assigns a fresh operation ID; neither this service nor the step retries.
+    if (!(error instanceof Error) || error.message !== '`getStepMetadata()` can only be called inside a step function') {
+      throw error;
+    }
+  }
+  const params = {
     prompt,
     site_id: siteId,
     // Cache dimensions stay unchanged. Azure does not generate legacy tiny sizes;
     // let its adapter map non-square ratios to supported landscape/portrait sizes.
     size: ratio && ratio !== '1:1' ? undefined : generationSize,
     ratio,
-    provider: 'azure'
-  });
+    provider: 'azure' as const
+  };
+  const result = operationId
+    ? await ImageGenerationService.generateImage(params, { operationId })
+    : await ImageGenerationService.generateImage(params);
 
   if (!result.success || !result.images?.[0]?.url) {
     throw new Error(`Generation failed: ${result.error || 'Unknown error'}`);
   }
 
-  const generatedUrl = result.images[0].url;
+  // Persist this paid result in the workflow log BEFORE attempting cache I/O.
+  return { url: result.images[0].url, provider: result.provider, model: result.metadata?.model };
+}
+
+// A timeout/unknown outcome must never trigger a second paid POST.
+generateImageStep.maxRetries = 0;
+
+export async function cacheGeneratedImageStep(
+  generated: { url: string; provider: string; model?: string },
+  prompt: string,
+  siteId: string,
+  hash: string,
+) {
+  'use step';
 
   // 2. Fetch the generated image to get the buffer
-  const imageRes = await fetch(await assertSafeRemoteUrl(generatedUrl), {
+  const imageRes = await fetch(await assertSafeRemoteUrl(generated.url), {
     redirect: 'error', signal: AbortSignal.timeout(30_000),
   });
   if (!imageRes.ok) {
@@ -57,8 +85,8 @@ export async function generateAndCacheImageStep(
         file_type: mimeType,
         file_size: buffer.length,
         metadata: {
-          provider: result.provider,
-          model: result.metadata?.model,
+          provider: generated.provider,
+          model: generated.model,
           prompt,
           prompt_hash: hash,
           source: 'public_prompt',
@@ -69,9 +97,27 @@ export async function generateAndCacheImageStep(
         is_public: true
       });
     }
-  } catch (dbError) {
-    console.warn('[PublicPromptImage] Asset insert failed, but image was cached', dbError);
+  } catch {
+    console.warn('[PublicPromptImage] Asset insert failed, but image was cached');
   }
 
   return { success: true };
 }
+
+// Only download + deterministic storage writes are retryable. Never generate here.
+cacheGeneratedImageStep.maxRetries = 3;
+
+/** Backward-compatible entrypoint for older workflows/callers. No paid replay. */
+export async function generateAndCacheImageStep(
+  prompt: string,
+  siteId: string,
+  size: '256x256' | '512x512' | '1024x1024',
+  ratio: '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '3:2' | '2:3' | undefined,
+  hash: string,
+) {
+  'use step';
+
+  const generated = await generateImageStep(prompt, siteId, size, ratio);
+  return cacheGeneratedImageStep(generated, prompt, siteId, hash);
+}
+generateAndCacheImageStep.maxRetries = 0;

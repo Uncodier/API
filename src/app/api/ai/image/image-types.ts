@@ -1,3 +1,8 @@
+import { MediaRequestError } from '@/lib/services/image/media-request-error';
+
+/** Trusted adapter classification of a confirmed no-admission response. */
+export class ImageAdmissionRejectedError extends MediaRequestError {}
+
 export type ImageProvider = 'azure';
 export type ImageQuality = 'auto' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'standard' | 'hd';
 export type ImageRatio =
@@ -40,4 +45,6 @@ export interface GenerateImageOptions {
   model?: string;
   ratio?: ImageRatio;
   referenceImages?: string[];
+  /** Durable single-use credit dispatch claim, immediately before the paid POST. */
+  beforeDispatch?: () => Promise<void>;
 }

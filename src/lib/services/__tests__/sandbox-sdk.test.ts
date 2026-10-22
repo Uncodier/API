@@ -22,7 +22,7 @@ describe('sandboxIdentity', () => {
     (Sandbox.get as jest.Mock).mockResolvedValue(sandbox);
 
     await expect(getSandboxHandle('sandbox-v3')).resolves.toBe(sandbox);
-    expect(Sandbox.get).toHaveBeenCalledWith({ name: 'sandbox-v3' });
+    expect(Sandbox.get).toHaveBeenCalledWith({ name: 'sandbox-v3', resume: false });
   });
 
   it('stops SDK v3 sandboxes without legacy options', async () => {

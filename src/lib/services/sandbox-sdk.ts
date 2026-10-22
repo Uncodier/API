@@ -26,7 +26,7 @@ export async function getSandboxHandle(idOrName: string): Promise<Sandbox> {
   if (sandboxSdkMajor() >= 3) {
     // In SDK v3+, `sandboxId` is no longer a valid parameter (it results in a lookup for 'undefined').
     // The backend accepts both names and legacy IDs via the `name` parameter.
-    return await Sandbox.get({ name: id });
+    return await Sandbox.get({ name: id, resume: false });
   }
 
   const legacyGet = Sandbox.get.bind(Sandbox) as unknown as (

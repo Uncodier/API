@@ -6,6 +6,7 @@ import { resolveSiteFromRequirementUrl } from '@/lib/services/image/resolveSiteF
 import {
   enforceRequestRateLimit,
   hasAuthenticatedPrincipal,
+  isInternalServiceRequest,
 } from '@/lib/security/request-rate-limit';
 import { verifyPublicImageSignature } from '@/lib/security/public-image-signature';
 import { canAccessSite } from '@/lib/security/site-access';
@@ -28,11 +29,12 @@ function jsonError(error: string, status: number, details?: string) {
   );
 }
 
-function cachedImageResponse(cached: { buffer: Buffer; mimeType: string }) {
+function cachedImageResponse(cached: { buffer: Buffer; mimeType: string }, authorized = false) {
   return new NextResponse(cached.buffer as unknown as BodyInit, {
     headers: {
       'Content-Type': cached.mimeType,
-      'Cache-Control': 'public, max-age=31536000, s-maxage=31536000, immutable',
+      // Principal/signature authorization must not be bypassed by a shared HTTP cache.
+      'Cache-Control': authorized ? 'private, no-store' : 'public, max-age=31536000, s-maxage=31536000, immutable',
       'Access-Control-Allow-Origin': '*',
     },
   });
@@ -158,11 +160,10 @@ export async function GET(
     else ratio = '1:1';
 
     const authenticated = hasAuthenticatedPrincipal(request);
+    const internal = authenticated && isInternalServiceRequest(request);
     const platformRequest = isPlatformAppRequest(request);
-    const platformCacheOnly = platformRequest && Boolean(expectedSiteId);
     const signedGeneration = Boolean(
-      !platformRequest
-      && expectedSiteId
+      expectedSiteId
       && verifyPublicImageSignature(
         {
           siteId: expectedSiteId,
@@ -177,16 +178,16 @@ export async function GET(
     const origin = request.headers.get('origin');
     const referer = request.headers.get('referer');
     const originOrReferer = origin || referer;
-    const resolvedSiteId = !platformRequest && !signedGeneration && originOrReferer
+    // Origin/Referer are routing hints for already-public images, never credentials.
+    const resolvedSiteId = !platformRequest && !signedGeneration && !(authenticated && expectedSiteId) && originOrReferer
       ? await resolveSiteFromRequirementUrl(originOrReferer, expectedSiteId)
       : null;
-    const siteId = platformCacheOnly
+    const siteId = signedGeneration || (authenticated && expectedSiteId)
       ? expectedSiteId
       : platformRequest
-        ? PLATFORM_SITE_ID
-      : signedGeneration
-        ? expectedSiteId
-        : resolvedSiteId || (authenticated ? expectedSiteId : null);
+        ? expectedSiteId || PLATFORM_SITE_ID
+        : resolvedSiteId || (internal ? PLATFORM_SITE_ID : null);
+    const platformCacheOnly = platformRequest && Boolean(expectedSiteId) && !authenticated && !signedGeneration;
 
     if (!siteId) {
       if (!authenticated) {
@@ -195,9 +196,8 @@ export async function GET(
       return jsonError('A site_id is required for image generation', 400);
     }
     if (
-      !platformRequest
-      && !signedGeneration
-      && authenticated
+      authenticated
+      && siteId !== PLATFORM_SITE_ID
       && !await canAccessSite(request, siteId)
     ) {
       return jsonError('Site access denied', 403);
@@ -206,12 +206,12 @@ export async function GET(
     const hash = getPromptHash(`v2:${siteId}:${promptStr}`, width, height);
     const cached = await downloadFromCache(hash);
     if (cached) {
-      return cachedImageResponse(cached);
+      return cachedImageResponse(cached, authenticated || signedGeneration);
     }
     if (platformCacheOnly) {
       return jsonError('Cached image not found', 404);
     }
-    if (!platformRequest && !authenticated && !signedGeneration) {
+    if ((!authenticated && !signedGeneration) || (siteId === PLATFORM_SITE_ID && !internal)) {
       return jsonError('Authentication is required to generate images', 401);
     }
 
@@ -226,7 +226,7 @@ export async function GET(
     try {
       const rechecked = await downloadFromCache(hash);
       if (rechecked) {
-        return cachedImageResponse(rechecked);
+        return cachedImageResponse(rechecked, authenticated || signedGeneration);
       }
 
       const limited = await enforceImageGenerationRateLimit(request);
@@ -245,25 +245,21 @@ export async function GET(
       const run = await start(generatePromptImageWorkflow, [workflowInput]);
       try {
         await run.returnValue;
-      } catch (workflowError: any) {
-        console.error('[PublicPromptImage] Workflow failed:', workflowError);
-        return jsonError(
-          'Image generation failed',
-          502,
-          workflowError?.message || String(workflowError)
-        );
+      } catch {
+        console.error('[PublicPromptImage] Workflow failed');
+        return jsonError('Image generation failed', 502);
       }
 
       const finalCached = await downloadFromCache(hash);
       if (finalCached) {
-        return cachedImageResponse(finalCached);
+        return cachedImageResponse(finalCached, authenticated || signedGeneration);
       }
       return jsonError('Image generation completed but image was not found in cache', 502);
     } finally {
       await releaseLock(lockKey, lock.token);
     }
-  } catch (error: any) {
-    console.error('[PublicPromptImage] Unhandled error:', error);
-    return jsonError('Internal server error', 500, error?.message || String(error));
+  } catch {
+    console.error('[PublicPromptImage] Unhandled error');
+    return jsonError('Internal server error', 500);
   }
 }

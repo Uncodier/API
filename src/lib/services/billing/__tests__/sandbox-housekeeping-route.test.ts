@@ -7,6 +7,8 @@ import { reconcileSandboxBilling, retireSandboxBilling } from '../sandbox-billin
 import { stopSandboxQuiet } from '@/lib/services/sandbox-stop';
 import { deleteSnapshotQuiet } from '@/lib/services/sandbox-persisted-snapshot';
 import { isSandboxNotFoundError } from '@/lib/services/sandbox-missing-snapshot';
+import { claimSandboxCleanup } from '../sandbox-cleanup-fence';
+jest.mock('../sandbox-cleanup-fence',()=>({claimSandboxCleanup:jest.fn()}));
 jest.mock('@/lib/status/telemetry',()=>({recordTelemetry:jest.fn().mockResolvedValue(undefined)}));
 jest.mock('@vercel/sandbox',()=>({Sandbox:{get:jest.fn()}}));
 jest.mock('../sandbox-housekeeping-db',()=>({housekeepingRows:jest.fn()}));
@@ -26,6 +28,7 @@ beforeEach(()=>{
   jest.mocked(housekeepingRows).mockResolvedValue([]);jest.mocked(listHousekeepingSandboxes).mockResolvedValue([]);
   jest.mocked(isSandboxNotFoundError).mockReturnValue(false);
   jest.mocked(retireSandboxBilling).mockReset().mockResolvedValue(undefined);
+  jest.mocked(claimSandboxCleanup).mockReset().mockResolvedValue(null);
   jest.spyOn(globalThis,'fetch').mockRejectedValue(new Error('Live network forbidden'));
 });
 afterEach(()=>{
@@ -97,6 +100,40 @@ it('reports missing registered-resource billing as pending instead of forgiving 
   const response=await GET(request());
   expect(response.status).toBe(200);
   expect((await response.json()).results).toMatchObject({billingErrors:1,sandboxesBilled:0});
-  expect(retireSandboxBilling).toHaveBeenCalledWith(name,'finish');
+  expect(retireSandboxBilling).not.toHaveBeenCalled();
   expect(reconcileSandboxBilling).not.toHaveBeenCalled();expect(stopSandboxQuiet).not.toHaveBeenCalled();expect(deleteSnapshotQuiet).not.toHaveBeenCalled();
+});
+
+it.each(['completed','cancelled','failed'])('deletes canonical %s h-session only under trusted terminal/all-reference proof and final billing',async status=>{
+  const id=randomUUID(),site=randomUUID(),req=randomUUID(),name=`h-${id}`;
+  jest.mocked(housekeepingRows).mockImplementation(async table=>table==='harness_sessions'
+    ?[{id,site_id:site,snapshot:{status,request:{requirementId:req},workspace:{id:name}}}]
+    :table==='sandbox_billing_resources'?[{sandbox_name:name}]:[]);
+  const sandbox={name,status:'running',delete:jest.fn().mockResolvedValue(undefined)};
+  jest.mocked(Sandbox.get).mockResolvedValue(sandbox as never);jest.mocked(stopSandboxQuiet).mockResolvedValue(true);
+  const fence={assert:jest.fn().mockResolvedValue(undefined),finish:jest.fn().mockResolvedValue(undefined)};
+  jest.mocked(claimSandboxCleanup).mockResolvedValue(fence);
+  const response=await GET(request());
+  expect((await response.json()).results.terminalSandboxesDeleted).toBe(1);
+  expect(claimSandboxCleanup).toHaveBeenCalledWith({sessionId:id,siteId:site,owner:null,resource:name});
+  expect(sandbox.delete).toHaveBeenCalledWith({deleteOrphanSnapshots:true});
+  expect(retireSandboxBilling).toHaveBeenCalledWith(name,'begin');expect(retireSandboxBilling).toHaveBeenCalledWith(name,'finish');
+  expect(fence.finish).toHaveBeenCalled();
+});
+it('preserves a failed h-session when SQL ownership/reference proof refuses',async()=>{
+  const id=randomUUID(),name=`h-${id}`;
+  jest.mocked(housekeepingRows).mockImplementation(async table=>table==='harness_sessions'
+    ?[{id,site_id:randomUUID(),snapshot:{status:'failed',request:{requirementId:randomUUID()}}}]
+    :table==='sandbox_billing_resources'?[{sandbox_name:name}]:[]);
+  const sandbox={name,status:'stopped',delete:jest.fn()};jest.mocked(Sandbox.get).mockResolvedValue(sandbox as never);
+  expect((await GET(request())).status).toBe(200);
+  expect(claimSandboxCleanup).toHaveBeenCalled();expect(sandbox.delete).not.toHaveBeenCalled();
+});
+it('four historical tracked 404s stay actionable pending, never false recovery',async()=>{
+  const rows=Array.from({length:4},()=>({sandbox_name:`h-${randomUUID()}`,deletion_requested_at:null}));
+  jest.mocked(housekeepingRows).mockImplementation(async table=>table==='sandbox_billing_resources'?rows:[]);
+  const error={response:{status:404}};jest.mocked(Sandbox.get).mockRejectedValue(error);jest.mocked(isSandboxNotFoundError).mockReturnValue(true);
+  const response=await GET(request());
+  expect((await response.json()).results).toMatchObject({billingErrors:4,sandboxesBilled:0});
+  expect(retireSandboxBilling).not.toHaveBeenCalled();expect(claimSandboxCleanup).not.toHaveBeenCalled();
 });

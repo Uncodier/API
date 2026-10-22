@@ -8,6 +8,7 @@ import { listHousekeepingSandboxes, type HousekeepingCredentials } from '@/lib/s
 import { housekeepingRows } from '@/lib/services/billing/sandbox-housekeeping-db';
 import { sandboxSdkMajor } from '@/lib/services/sandbox-sdk';
 import { deleteSandboxAndOrphans } from '@/lib/services/sandbox-lifecycle';
+import { claimSandboxCleanup } from '@/lib/services/billing/sandbox-cleanup-fence';
 import { withCronObservation } from '@/lib/status/cron-observation';
 
 export const maxDuration = 300;
@@ -49,16 +50,14 @@ async function runCron(request: Request) {
       snapshotErrors: 0,
       sandboxesBilled: 0,
       billingErrors: 0,
+      terminalSandboxesDeleted: 0,
     };
 
     console.log('[SandboxHousekeeping] Starting orphan cleanup...');
 
     // 1. Fetch active references from requirement_status
-    // Limit to recent records as older ones should have been cleaned up already
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-    
-    // We only need the actual IDs in use
-    const statusRows = await housekeepingRows('requirement_status','active_sandbox_id, snapshot_id','id',thirtyDaysAgo);
+    // Age is not proof that a paused workspace/restore point is disposable.
+    const statusRows = await housekeepingRows('requirement_status','active_sandbox_id, snapshot_id');
 
     const activeSandboxIds = new Set<string>();
     const activeSnapshotIds = new Set<string>();
@@ -68,7 +67,7 @@ async function runCron(request: Request) {
       if (row.snapshot_id) activeSnapshotIds.add(row.snapshot_id);
     }
     // Portable harness workspaces are absent from legacy requirement_status.
-    const harnessRows = await housekeepingRows('harness_sessions','snapshot');
+    const harnessRows = await housekeepingRows('harness_sessions','id,site_id,snapshot');
     for (const row of harnessRows || []) {
       const snapshot = row.snapshot as { status?: string; workspace?: { id?: string } } | null;
       if (!snapshot || typeof snapshot !== 'object') continue;
@@ -96,11 +95,30 @@ async function runCron(request: Request) {
         sandbox = await Sandbox.get({ ...credentials, name: row.sandbox_name, resume: false });
         if (sandbox.currentSnapshotId) activeSnapshotIds.add(sandbox.currentSnapshotId);
         await reconcileSandboxBilling(sandbox);
-        if (row.deletion_requested_at) await deleteSandboxAndOrphans(row.sandbox_name);
+        const terminal = harnessRows.find(session => row.sandbox_name === `h-${session.id}` &&
+          ['completed','cancelled','failed'].includes(session.snapshot?.status) && session.site_id &&
+          session.snapshot?.request?.requirementId);
+        if (terminal && !activeSandboxIds.has(row.sandbox_name)) {
+          const fence = await claimSandboxCleanup({ sessionId: terminal.id, siteId: terminal.site_id,
+            owner: null, resource: row.sandbox_name });
+          if (fence) {
+            await fence.assert();
+            if (!await stopSandboxQuiet(sandbox)) throw new Error('Terminal sandbox stop pending');
+            await reconcileSandboxBilling(sandbox);
+            await retireSandboxBilling(row.sandbox_name,'begin');
+            await fence.assert();
+            await sandbox.delete({ deleteOrphanSnapshots: true });
+            await retireSandboxBilling(row.sandbox_name,'finish');
+            await fence.finish();
+            results.terminalSandboxesDeleted++;
+          }
+        } else if (row.deletion_requested_at) await deleteSandboxAndOrphans(row.sandbox_name);
         results.sandboxesBilled++;
       } catch (error) {
         if (!sandbox && isSandboxNotFoundError(error)) {
-          try { await retireSandboxBilling(row.sandbox_name,'finish'); continue; } catch { /* Unproven disappearance remains pending. */ }
+          if (row.deletion_requested_at) {
+            try { await retireSandboxBilling(row.sandbox_name,'finish'); continue; } catch { /* Pending intent remains actionable. */ }
+          }
         }
         results.billingErrors++;
         // A known unpaid/outage interval must not authorize more running time.
@@ -150,7 +168,7 @@ async function runCron(request: Request) {
     const sdkSnapshots = await listSnapshotsViaSdk(credentials as { token: string; projectId: string; teamId: string });
     if (sdkSnapshots.length > 0) {
       for (const snap of sdkSnapshots) {
-        if (!snap.id || activeSnapshotIds.has(snap.id)) continue;
+        if (!snap.id || snap.status !== 'ready' || activeSnapshotIds.has(snap.id)) continue;
         const createdAt = snap.createdAt ? new Date(snap.createdAt).getTime() : 0;
         if (createdAt && createdAt >= twentyFourHoursAgo) continue;
         try {
@@ -189,7 +207,7 @@ async function runCron(request: Request) {
           for (const snap of snapshots) {
             added++;
             // Skip already deleted snapshots
-            if (snap.status === 'deleted') continue;
+            if (snap.status !== 'ready') continue;
 
             if (!activeSnapshotIds.has(snap.id)) {
               const createdAt = new Date(snap.createdAt).getTime();
@@ -237,14 +255,14 @@ export const GET = withCronObservation('sandbox-housekeeping', runCron);
 
 async function listSnapshotsViaSdk(
   credentials: { token: string; projectId: string; teamId: string },
-): Promise<Array<{ id: string; createdAt?: string }>> {
+): Promise<Array<{ id: string; createdAt?: string; status?: string }>> {
   const snapApi = (Sandbox as unknown as {
-    listSnapshots?: (opts: Record<string, unknown>) => Promise<{ snapshots?: Array<{ id?: string; createdAt?: string }> }>;
+    listSnapshots?: (opts: Record<string, unknown>) => Promise<{ snapshots?: Array<{ id?: string; createdAt?: string; status?: string }> }>;
   }).listSnapshots;
   if (typeof snapApi !== 'function') return [];
   try {
     const res = await snapApi({ ...credentials });
-    return (res.snapshots || []).filter((s): s is { id: string; createdAt?: string } => !!s.id);
+    return (res.snapshots || []).filter((s): s is { id: string; createdAt?: string; status?: string } => !!s.id);
   } catch {
     return [];
   }

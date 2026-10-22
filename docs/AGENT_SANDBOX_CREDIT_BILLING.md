@@ -44,6 +44,22 @@ additional reasoning-token counts. Reasoning/cache/routing discounts or premiums
 are already reflected by the reported total. Explicit zero cost is valid; missing,
 negative or nonfinite cost is unknown and requires reconciliation.
 
+### BYOK is a separate expense boundary
+
+An OpenRouter account charge of zero is **not** evidence of zero Azure spend.
+With BYOK, the upstream provider can bill the platform directly while the
+gateway reports `usage.cost = 0`. Standalone generation receipts now preserve
+allowlisted `is_byok`, `gateway_account_cost`, `upstream_inference_cost` and
+`external_cost_reconciliation_required` evidence separately. Arbitrary provider
+payloads, credentials and caller-supplied cost metadata are not persisted.
+
+These fields do not introduce a tariff or amend historical credit balances.
+Reconcile BYOK generation IDs against the provider's usage/invoice before
+changing customer pricing. Do not blindly add gateway and upstream totals:
+their accounting boundaries can overlap on non-BYOK routes. Historical receipts
+without BYOK evidence remain unknown; do not label them free or retroactively
+charge customers from token estimates.
+
 The generation ledger has a global identity and an atomic service-only billing
 RPC. Repeating the same generation settlement cannot charge it twice. A different
 site or provider cost for an existing identity is rejected. Known unpaid or unknown

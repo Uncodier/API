@@ -3,7 +3,7 @@ import { start } from 'workflow/api';
 import { generatePromptImageWorkflow, GeneratePromptImageInput } from '../../../image/prompt/workflow';
 import { getPromptHash, downloadFromCache } from '@/lib/services/image/promptImageCache';
 import { resolveSiteFromRequirementUrl } from '@/lib/services/image/resolveSiteFromRequirementUrl';
-import { hasAuthenticatedPrincipal } from '@/lib/security/request-rate-limit';
+import { hasAuthenticatedPrincipal, isInternalServiceRequest } from '@/lib/security/request-rate-limit';
 import { canAccessSite } from '@/lib/security/site-access';
 import { acquireLock, releaseLock } from '@/lib/security/upstash-rest';
 
@@ -109,6 +109,9 @@ export async function GET(
     if (!siteId) {
       return jsonError('A site_id is required for icon generation', 400);
     }
+    if (siteId === '00000000-0000-0000-0000-000000000000' && !isInternalServiceRequest(request)) {
+      return jsonError('System-funded icon generation requires an internal service', 403);
+    }
     if (!await canAccessSite(request, siteId)) {
       return jsonError('Site access denied', 403);
     }
@@ -119,7 +122,7 @@ export async function GET(
       return new NextResponse(cached.buffer as unknown as BodyInit, {
         headers: {
           'Content-Type': cached.mimeType,
-          'Cache-Control': 'private, max-age=31536000, immutable',
+          'Cache-Control': 'private, no-store',
           'Access-Control-Allow-Origin': '*',
         },
       });
@@ -139,7 +142,7 @@ export async function GET(
         return new NextResponse(rechecked.buffer as unknown as BodyInit, {
           headers: {
             'Content-Type': rechecked.mimeType,
-            'Cache-Control': 'private, max-age=31536000, immutable',
+            'Cache-Control': 'private, no-store',
             'Access-Control-Allow-Origin': '*',
           },
         });
@@ -154,13 +157,9 @@ export async function GET(
       const run = await start(generatePromptImageWorkflow, [workflowInput]);
       try {
         await run.returnValue;
-      } catch (workflowError: any) {
-        console.error('[PublicPromptImage] Workflow failed:', workflowError);
-        return jsonError(
-          'Image generation failed',
-          502,
-          workflowError?.message || String(workflowError)
-        );
+      } catch {
+        console.error('[PublicPromptIcon] Workflow failed');
+        return jsonError('Image generation failed', 502);
       }
 
       const finalCached = await downloadFromCache(hash);
@@ -168,7 +167,7 @@ export async function GET(
         return new NextResponse(finalCached.buffer as unknown as BodyInit, {
           headers: {
             'Content-Type': finalCached.mimeType,
-            'Cache-Control': 'private, max-age=31536000, immutable',
+            'Cache-Control': 'private, no-store',
             'Access-Control-Allow-Origin': '*',
           },
         });
@@ -177,8 +176,8 @@ export async function GET(
     } finally {
       await releaseLock(lockKey, lock.token);
     }
-  } catch (error: any) {
-    console.error('[PublicPromptImage] Unhandled error:', error);
-    return jsonError('Internal server error', 500, error?.message || String(error));
+  } catch {
+    console.error('[PublicPromptIcon] Unhandled error');
+    return jsonError('Internal server error', 500);
   }
 }

@@ -12,5 +12,7 @@ export interface ConversationOptions {
   siteUrl?: string;
   responseFormat?: 'json' | 'text';
   timeout?: number;
+  /** Server-only parent deadline. Never accepted from JSON request bodies. */
+  signal?: AbortSignal;
   conversationId?: string; // ID para mantener el contexto de la conversación
 } 

@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { CreditService } from '@/lib/services/billing/CreditService';
+import {
+  ImageReservationError, imageOperationIdentity, holdImageCredits, dispatchImageCredits,
+  settleImageCredits, releaseImageCredits, markImageCreditsPending,
+} from '@/lib/services/billing/image-credit-reservations';
 import {
   enforceRequestRateLimit,
   getAuthenticatedRateIdentity,
@@ -7,8 +10,8 @@ import {
 } from '@/lib/security/request-rate-limit';
 import { assertSafeRemoteUrl } from '@/lib/security/safe-remote-url';
 import { canAccessSite } from '@/lib/security/site-access';
-import type { ImageRequestBody } from './image-types';
-import { generateWithAzure } from './provider-azure';
+import { ImageAdmissionRejectedError, type ImageRequestBody, type GenerateImageOptions } from './image-types';
+import { generateWithAzure, validateAzureImageOptions } from './provider-azure';
 import { MediaRequestError } from '@/lib/services/image/media-request-error';
 import { mediaInstanceBelongsToSite } from '@/lib/services/ai/media-instance-access';
 
@@ -93,48 +96,49 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'model must be a nonempty string' }, { status: 400 });
     }
 
-    const requiredCredits = CreditService.PRICING.IMAGE_GENERATION * count;
-    if (!systemRequest && !await CreditService.validateCredits(
-      body.site_id,
-      requiredCredits,
-    )) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: 'INSUFFICIENT_CREDITS',
-            message: 'Insufficient credits for image generation',
-          },
-        },
-        { status: 402 },
-      );
-    }
-
-    const result = await generateWithAzure({
+    const options: GenerateImageOptions = {
       prompt: body.prompt,
       siteId: body.site_id,
       instanceId: body.instance_id,
       size: body.size,
       count,
       quality: body.quality,
-      ratio: body.aspect_ratio || body.ratio,
+      ratio: body.aspect_ratio ?? body.ratio,
       referenceImages,
       model: body.model,
-    });
-    if (!systemRequest) {
-      const deduction = await CreditService.deductCredits(
-        body.site_id,
-        CreditService.PRICING.IMAGE_GENERATION * result.images.length,
-        'image_generation',
-        `Image generation (${result.images.length} images)`,
-        { prompt: body.prompt, provider, ...result.metadata },
-      );
-      if (!deduction.success) {
-        throw new Error(deduction.error || 'Unable to deduct image credits');
+    };
+    validateAzureImageOptions(options);
+    const reservation = imageOperationIdentity(body.site_id, request.headers.get('Idempotency-Key'), internal, options);
+    if (systemRequest) return NextResponse.json(await generateWithAzure(options));
+    await holdImageCredits(reservation, count);
+    let dispatchAttempted = false;
+    try {
+      const result = await generateWithAzure({ ...options, beforeDispatch: async () => {
+        // Set BEFORE the RPC: lost acknowledgement is an ambiguous durable dispatch.
+        dispatchAttempted = true;
+        await dispatchImageCredits(reservation);
+      } });
+      if (!dispatchAttempted || !Array.isArray(result.images) || !result.images.length || result.images.length > count) {
+        throw new Error('Unconfirmed image output');
       }
+      await settleImageCredits(reservation, result.images.length, result.metadata?.generation_id, result.metadata?.model);
+      // A lost settlement acknowledgement never returns output or retries generation.
+      return NextResponse.json(result);
+    } catch (error) {
+      if (!dispatchAttempted || error instanceof ImageAdmissionRejectedError) {
+        await releaseImageCredits(reservation, dispatchAttempted ? 'confirmed_admission_rejection' : 'not_dispatched');
+      } else {
+        // A failed audit write still leaves the durable 'dispatched' hold intact.
+        await markImageCreditsPending(reservation).catch(() => {});
+      }
+      throw error;
     }
-    return NextResponse.json(result);
   } catch (error) {
+    if (error instanceof ImageReservationError) {
+      return NextResponse.json({ success: false, error: { code: error.code,
+        message: error.code === 'INSUFFICIENT_CREDITS' ? 'Insufficient credits for image generation'
+          : 'Image operation unavailable; do not retry generation with a new operation identity' } }, { status: error.status });
+    }
     return NextResponse.json(
       { error: error instanceof MediaRequestError ? error.message : 'Image generation failed' },
       { status: error instanceof MediaRequestError ? error.status : 500 },

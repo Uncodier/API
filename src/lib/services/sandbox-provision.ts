@@ -84,12 +84,17 @@ export async function createRequirementSandbox(
     if (!named.created) {
       // A reused workspace can contain local commits and uncommitted files.
       // Never run the cold-bootstrap checkout/reset path against it.
-      await assertPlatformGitLayout(sandbox);
-      const branchName = await SandboxService.getCurrentBranch(sandbox);
-      if (auditCtx?.instanceId) {
-        await persistActiveSandboxId(requirementId, auditCtx.instanceId, sandboxIdentity(sandbox), auditCtx.siteId);
+      try {
+        await assertPlatformGitLayout(sandbox);
+        const branchName = await SandboxService.getCurrentBranch(sandbox);
+        if (auditCtx?.instanceId) {
+          await persistActiveSandboxId(requirementId, auditCtx.instanceId, sandboxIdentity(sandbox), auditCtx.siteId);
+        }
+        return { sandbox, branchName, workDir, isNewBranch: false, instanceType };
+      } catch (error) {
+        await stopSandboxQuiet(sandbox);
+        throw error;
       }
-      return { sandbox, branchName, workDir, isNewBranch: false, instanceType };
     }
   }
 
@@ -155,6 +160,7 @@ export async function createRequirementSandbox(
         .catch((e) => console.error('[Sandbox] Failed to persist active_sandbox_id:', e));
     }
   } catch (err: unknown) {
+    if (sandbox) await stopSandboxQuiet(sandbox);
     const anyErr = err as { message?: string; json?: unknown; text?: unknown };
     console.error('[Sandbox] Sandbox.create() failed:', anyErr?.message || err);
     if (anyErr.json) console.error('[Sandbox] Sandbox.create() JSON detail:', anyErr.json);

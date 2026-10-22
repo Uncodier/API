@@ -1,6 +1,6 @@
 'use workflow';
 
-import { generateAndCacheImageStep } from './steps';
+import { generateImageStep, cacheGeneratedImageStep } from './steps';
 
 export interface GeneratePromptImageInput {
   prompt: string;
@@ -13,13 +13,13 @@ export interface GeneratePromptImageInput {
 export async function generatePromptImageWorkflow(input: GeneratePromptImageInput) {
   'use workflow';
   
-  await generateAndCacheImageStep(
+  const generated = await generateImageStep(
     input.prompt,
     input.siteId,
     input.size,
-    input.ratio,
-    input.hash
+    input.ratio
   );
+  await cacheGeneratedImageStep(generated, input.prompt, input.siteId, input.hash);
   
   return { status: 'completed' };
 }

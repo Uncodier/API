@@ -3,7 +3,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { Sandbox } from '@vercel/sandbox';
 import { MAX_COMMAND_OUTPUT, WORKSPACE_BOOTSTRAP_PROGRAM, WORKSPACE_ROOT, WorkspaceError, configureWorkspaceEnvironment,
   openWorkspace, parseWorkspaceFileResult, redactWorkspaceOutput, replaceWorkspaceEnvironment, validateWorkspaceRepository,
-  workspaceNetworkPolicy, workspacePath } from '../workspace';
+  suspendWorkspaceForCleanup, workspaceNetworkPolicy, workspacePath } from '../workspace';
 
 jest.mock('@vercel/sandbox', () => ({ Sandbox: { get: jest.fn(), create: jest.fn() } }));
 
@@ -98,6 +98,8 @@ describe('Vercel SDK 3.2.1 workspace adapter, offline', () => {
     const workspace = await openWorkspace({ sessionId, repository });
     expect(workspace.ref).toEqual({ provider: 'vercel', id: name, root: WORKSPACE_ROOT });
     expect(Sandbox.create).toHaveBeenCalledWith(expect.objectContaining({ name, persistent: true, env: {}, ports: [], image: 'vercel/sandbox/universal' }));
+    expect(Sandbox.create).toHaveBeenCalledWith(expect.objectContaining({ snapshotExpiration: 7 * 24 * 60 * 60 * 1000,
+      keepLastSnapshots: { count: 1, deleteEvicted: true } }));
     const calls = sandbox.runCommand.mock.calls.map(([value]) => value).filter(value => !value.args.includes(WORKSPACE_ROOT_INIT));
     expect(calls).toHaveLength(1);
     const call = calls[0];
@@ -121,6 +123,30 @@ describe('Vercel SDK 3.2.1 workspace adapter, offline', () => {
     (Sandbox.get as jest.Mock).mockRejectedValue({ response: { status: 503 } });
     await expect(openWorkspace({ sessionId, repository })).rejects.toMatchObject({ code: 'WORKSPACE_OPEN_FAILED' });
     expect(Sandbox.create).not.toHaveBeenCalled();
+  });
+  test('bootstrap failure stops only the created owned handle without deleting work', async () => {
+    sandbox.runCommand.mockImplementation(async input => command('', '', input.args.includes(WORKSPACE_BOOTSTRAP_PROGRAM) ? 74 : 0));
+    const cleanupCreated = jest.fn(async sbx => { await sbx.stop(); });
+    await expect(openWorkspace({ sessionId, repository, cleanupCreated })).rejects.toMatchObject({ code: 'WORKSPACE_NOT_READY' });
+    expect(cleanupCreated).toHaveBeenCalledWith(sandbox); expect(sandbox.stop).toHaveBeenCalledTimes(1);
+    expect(Sandbox.create).toHaveBeenCalledTimes(1);
+  });
+  test('lease loss after create uses cleanup claim but never stale active stop', async () => {
+    const cleanupCreated = jest.fn().mockRejectedValue(new Error('lost owner'));
+    let lost = false;
+    (Sandbox.create as jest.Mock).mockImplementation(async () => { lost = true; return sandbox; });
+    await expect(openWorkspace({ sessionId, repository, cleanupCreated, assertActive: async () => { if (lost) throw new Error('lost'); } }))
+      .rejects.toMatchObject({ code: 'ABORTED' });
+    expect(cleanupCreated).toHaveBeenCalledWith(sandbox); expect(sandbox.stop).not.toHaveBeenCalled();
+  });
+  test('cleanup suspend ignores aborted slice signal only under durable fence', async () => {
+    const controller = new AbortController();
+    const workspace = await openWorkspace({ sessionId, repository, signal: controller.signal });
+    controller.abort();
+    const assertFence = jest.fn().mockResolvedValue(undefined);
+    await suspendWorkspaceForCleanup(workspace, assertFence);
+    expect(assertFence).toHaveBeenCalledTimes(2); expect(sandbox.stop).toHaveBeenCalledTimes(1);
+    expect(sandbox.stop.mock.calls[0][0].signal.aborted).toBe(false);
   });
   test('reconnect validates scope, readiness and snapshot; never reruns clone', async () => {
     await attach();

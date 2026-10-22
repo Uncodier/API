@@ -55,7 +55,10 @@ export async function sendConversationRequest(options: ConversationOptions): Pro
   }
 
   // Usar un timeout mínimo de 120 segundos (2 minutos) para respuestas grandes
-  const effectiveTimeout = Math.max(options.timeout || 45000, 120000);
+  const effectiveTimeout = options.timeout ?? 120000;
+  if (!Number.isSafeInteger(effectiveTimeout) || effectiveTimeout < 1 || effectiveTimeout > 300000) {
+    throw new Error('Invalid conversation timeout');
+  }
   console.log(`[Conversation Client] Usando timeout efectivo: ${effectiveTimeout}ms`);
 
   const controller = new AbortController();
@@ -176,7 +179,8 @@ export async function analyzeWithConversationApi(
   timeout: number = 120000, // Aumentado a 120 segundos (2 minutos)
   debugMode: boolean = false,
   toJSON: boolean = true,
-  conversationId?: string // Nuevo parámetro para mantener el contexto de la conversación
+  conversationId?: string,
+  signal?: AbortSignal,
 ): Promise<any> {
   console.log('[Conversation Client] analyzeWithConversationApi - Iniciando análisis con parámetros:', {
     provider,
@@ -223,7 +227,8 @@ export async function analyzeWithConversationApi(
       includeScreenshot,
       responseFormat: toJSON ? 'json' : 'text',
       timeout,
-      conversationId // Añadir el ID de conversación si está disponible
+      conversationId,
+      signal,
     };
 
     console.log('[Conversation Client] Opciones preparadas:', JSON.stringify({
