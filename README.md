@@ -121,6 +121,15 @@ npm run build
 Production builds also run TypeScript validation and fail on type errors; do not
 enable `typescript.ignoreBuildErrors` to bypass a failing check.
 
+The automatic Pagefind postbuild indexes prerendered documentation from either
+Next.js's traditional `server/app` output or the Next.js 16.4 adapter's
+`server/route-cache/APP_PAGE` output. It uses public route URLs from the prerender
+manifest, not internal cache paths. The search bundle is written to
+`public/_pagefind` and, when present, the adapter's `.next/output/static/_pagefind`.
+Missing documentation HTML is a build error; do not silence it with `|| true`.
+Run `npm run test:search-index` for offline regression tests, or `npm run postbuild`
+to rebuild search after a completed Next.js build.
+
 Start the production server:
 ```bash
 npm start
@@ -136,6 +145,7 @@ The server will start on port 3001 (configurable via environment variables).
 | `npm run ws` | Start WebSocket server only |
 | `npm run dev:all` | Start both API and WebSocket servers concurrently |
 | `npm run build` | Build production bundle |
+| `npm run test:search-index` | Test Pagefind indexing for local and adapter builds offline |
 | `npm run typecheck` | Generate Next.js route types and check TypeScript without emitting code |
 | `npm start` | Start production server |
 | `npm run lint` | Run ESLint |
