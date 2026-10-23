@@ -75,7 +75,7 @@
     "social_media_publish": { "screens": ["social", "content"] },
     "subscription_plan_items": { "screens": ["catalog"] },
     "subscriptions": { "screens": ["subscriptions"] },
-    "tasks": { "screens": ["activities"] },
+    "tasks": { "screens": ["controlCenter"] },
     "transactions": { "screens": ["transactions"] },
     "update_repo": { "screens": ["applicationsRepositories", "requirements"] },
     "use_composio_tools": { "screens": ["integrations"], "adminOnly": true },

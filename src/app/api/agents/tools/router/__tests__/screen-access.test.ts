@@ -8,11 +8,14 @@ import { canUseToolScreen, guardFinalToolCatalog, loadToolScreenAccess } from '.
 import mapping from '../tool-screen-map.json';
 import { purchasesTool } from '../../purchases/assistantProtocol';
 import { purchaseItemsTool } from '../../purchase_items/assistantProtocol';
+import { tasksTool } from '../../tasks/assistantProtocol';
+import { getTaskCore } from '../../tasks/get/core';
 import { fetchApiTool } from '../../utils/fetch-helper';
 
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn(), rpc: jest.fn() } }));
 jest.mock('@/lib/services/embeddings-service', () => ({ EmbeddingsService: { generateEmbeddings: jest.fn() } }));
 jest.mock('../../utils/fetch-helper', () => ({ fetchApiTool: jest.fn() }));
+jest.mock('../../tasks/get/core', () => ({ getTaskCore: jest.fn() }));
 
 const scope = { siteId: randomUUID(), userId: randomUUID() };
 const otherUser = randomUUID();
@@ -72,6 +75,50 @@ it('uses exact navigation keys and all required screens, not category or role st
   expect(canUseToolScreen('sales', { isAdmin: false, blockedScreens: ['transactions'] })).toBe(true);
   expect(canUseToolScreen('publish', { isAdmin: false, blockedScreens: ['social'] })).toBe(false);
   expect(canUseToolScreen('webSearch', null)).toBe(true);
+});
+
+it('allows an editor to discover and create CRM tasks when AI Activities is blocked', async () => {
+  blocked = ['activities', 'requirements', 'agentsConfiguration'];
+  expect(mapping.tools.tasks.screens).toEqual(['controlCenter']);
+  const router = toolsRouterTool([tasksTool(scope.siteId, scope.userId)], scope);
+  expect(await router.execute({ action: 'list' })).toMatchObject({ count: 1, tools: [{ name: 'tasks' }] });
+  expect(await router.execute({ action: 'search', query: 'tasks' })).toMatchObject({ count: 1, tools: [{ name: 'tasks' }] });
+  expect(await router.execute({ action: 'describe', name: 'tasks' })).toMatchObject({ success: true, name: 'tasks' });
+
+  const params = { title: 'Follow-up call', type: 'call', lead_id: randomUUID(), assignee: scope.userId };
+  const task = { id: randomUUID(), ...params };
+  (fetchApiTool as jest.Mock).mockResolvedValue({ success: true, task });
+  expect(await router.execute({ action: 'call', name: 'tasks', args: JSON.stringify({ action: 'create', ...params }) }))
+    .toMatchObject({ success: true, result: { success: true, task } });
+  expect(fetchApiTool).toHaveBeenCalledWith('/api/agents/tools/tasks/create', {
+    ...params, site_id: scope.siteId, user_id: scope.userId,
+  }, 'Create task failed');
+
+  blocked = ['controlCenter'];
+  expect(await router.execute({ action: 'call', name: 'tasks', args: { action: 'create', ...params } }))
+    .toMatchObject({ success: false, code: 'TOOL_SCREEN_ACCESS_DENIED', status: 403 });
+  expect(fetchApiTool).toHaveBeenCalledTimes(1);
+});
+
+it('blocks CRM task discovery and every action when Tasks is blocked, even with AI Activities allowed', async () => {
+  blocked = ['controlCenter'];
+  const definition = tasksTool(scope.siteId, scope.userId);
+  const router = toolsRouterTool([definition], scope);
+  expect(await router.execute({ action: 'list' })).toMatchObject({ count: 0 });
+  expect(await router.execute({ action: 'search', query: 'tasks' })).toMatchObject({ count: 0 });
+  const described = await router.execute({ action: 'describe', name: 'tasks' });
+  expect(described).toMatchObject({ success: false, code: 'TOOL_SCREEN_ACCESS_DENIED', status: 403 });
+  expect(described).not.toHaveProperty('parameters');
+
+  const guarded = guardFinalToolCatalog([definition], scope)[0];
+  for (const action of ['create', 'list', 'update'] as const) {
+    const args = { action, title: 'Follow-up call', type: 'call', lead_id: randomUUID(), task_id: randomUUID() };
+    expect(await router.execute({ action: 'call', name: 'tasks', args }))
+      .toMatchObject({ success: false, code: 'TOOL_SCREEN_ACCESS_DENIED', status: 403 });
+    await expect(guarded.execute(args)).rejects.toMatchObject({ code: 'TOOL_SCREEN_ACCESS_DENIED', status: 403 });
+  }
+  expect(fetchApiTool).not.toHaveBeenCalled();
+  expect(getTaskCore).not.toHaveBeenCalled();
 });
 
 it('hides denied tools in list, keyword search and describe without exposing schemas', async () => {

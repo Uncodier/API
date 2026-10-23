@@ -9,6 +9,7 @@ export default {
     '<rootDir>/src/lib/services/analysis/__tests__/search-memory-data.test.ts',
     '<rootDir>/src/app/api/agents/tools/webSearch/__tests__/*.test.ts',
     '<rootDir>/src/app/api/agents/tools/router/__tests__/tools-router.test.ts',
+    '<rootDir>/src/app/api/agents/tools/router/__tests__/screen-access.test.ts',
   ],
   extensionsToTreatAsEsm: [],
   transform: {
