@@ -19,10 +19,10 @@ it('claims and fences agent cron without product gates, preserves pauses, resume
     };
     const reset=() => db.exec('DELETE FROM requirement_migration_lifecycle;DELETE FROM requirement_status;DELETE FROM harness_requirement_runs;DELETE FROM harness_sessions;DELETE FROM requirements;DELETE FROM instance_plans;DELETE FROM instance_logs;DELETE FROM remote_instances;');
     const initial=id=>({id,version:0,status:'queued',request:{objective:'Offline task',repository:{url:'https://example.test/repository'},limits:{maxTurns:10,maxOutputTokens:1024,maxTotalTokens:10000,maxActiveMs:30000}},messages:[],turns:0,allocatedTokens:0,activeMs:0,uncertainOperations:[],createdAt:new Date(0).toISOString(),updatedAt:new Date(0).toISOString()});
-    const session=async(run,status,reason) => {
+    const session=async(run,status,reason,extra={}) => {
       await db.query('INSERT INTO harness_sessions(id,site_id,user_id,snapshot) VALUES($1,$2,$3,$4)',[run.sessionId,site,user,initial(run.sessionId)]);
       const s=(await one('SELECT claim_harness_session($1,$2,$3,300) value',[run.sessionId,site,'offline-owner'])).value;
-      await db.query('SELECT save_harness_session($1,$2,$3,$4)',[run.sessionId,site,'offline-owner',{...s,status,reason,turns:3,allocatedTokens:100,activeMs:20}]);
+      await db.query('SELECT save_harness_session($1,$2,$3,$4)',[run.sessionId,site,'offline-owner',{...s,status,reason,turns:3,allocatedTokens:100,activeMs:20,...extra}]);
       await db.query('SELECT release_harness_session($1,$2,$3)',[run.sessionId,site,'offline-owner']);
     };
     try {
@@ -37,8 +37,109 @@ it('claims and fences agent cron without product gates, preserves pauses, resume
       );
       // Install real historical lifecycle/handoff SQL, including its AFTER
       // status gate, rather than a permissive mock of that trigger.
-      for(const file of ['20260923230000_durable_review_quarantine.sql','20260923230100_stamp_review_quarantine.sql','20260930010000_requirement_migration_lifecycle.sql','20261003010000_migration_execution_handoff.sql','20261014010000_portable_harness_sessions.sql','20261014020000_portable_harness_host_state.sql','20261014030000_agent_driven_requirement_cron.sql']) await db.exec(readFileSync('supabase/migrations/'+file,'utf8'));
+      for(const file of ['20260923225900_review_quarantine_receipts.sql','20260923230000_durable_review_quarantine.sql','20260923230100_stamp_review_quarantine.sql','20260930010000_requirement_migration_lifecycle.sql','20261003010000_migration_execution_handoff.sql','20261014010000_portable_harness_sessions.sql','20261014020000_portable_harness_host_state.sql','20261014030000_agent_driven_requirement_cron.sql','20261020200000_requirement_cross_instance_commands.sql']) await db.exec(readFileSync('supabase/migrations/'+file,'utf8'));
       await db.query('INSERT INTO sites VALUES($1)',[site]);await db.query('INSERT INTO auth.users VALUES($1)',[user]);
+      // Produce incident rows using the real OLD finish, not a hand-built mock.
+      const incidents=[];
+      const recoveryCases=['intact','manual-edit','manual-status','different-cycle','later-status','missing-status',
+        'reason-mismatch','missing-session','paused-session','cancelled-session','wrong-user','wrong-requirement',
+        'live-session','live-cron','user_paused','customer_paused','cron_paused','execution_hold',
+        'paused-owner','archived-owner','paused-plan','trusted-action'];
+      for(const name of recoveryCases) {
+        await req();const c=await claim();assert.ok(c,name);
+        await session(c.run,'waiting','Need user decision');
+        assert.equal(await finish(c.run,'waiting','Need user decision'),true);
+        assert.equal((await one('SELECT status FROM requirements WHERE id=$1',[c.run.requirementId])).status,'blocked');
+        incidents.push({name,run:c.run});
+      }
+      const evidence=async()=> (await db.query('SELECT to_jsonb(r) requirement,to_jsonb(h) mapping,to_jsonb(s) session FROM requirements r JOIN harness_requirement_runs h ON h.requirement_id=r.id JOIN harness_sessions s ON s.id=h.session_id ORDER BY r.id')).rows;
+      const beforeMigration=await evidence();
+      const forward=readFileSync('supabase/migrations/20261023200000_agent_requirement_nonblocking_wait.sql','utf8');
+      await db.exec(forward);await db.exec(forward);
+      assert.deepEqual(await evidence(),beforeMigration,'install/reapply never rewrites incident rows or leases');
+      for(const {name,run} of incidents) {
+        const id=run.requirementId;
+        if(name==='manual-edit') await db.query("UPDATE requirements SET title='Manual hold' WHERE id=$1",[id]);
+        if(name==='manual-status') await db.query("UPDATE requirements SET status='blocked' WHERE id=$1",[id]);
+        if(name==='different-cycle') await db.query("UPDATE requirement_status SET cycle='manual' WHERE requirement_id=$1",[id]);
+        if(name==='later-status') await db.query("INSERT INTO requirement_status(requirement_id,site_id,stage,cycle,updated_at) VALUES($1,$2,'blocked','manual',clock_timestamp())",[id,site]);
+        if(name==='missing-status') await db.query('DELETE FROM requirement_status WHERE requirement_id=$1',[id]);
+        if(name==='reason-mismatch') await db.query("UPDATE harness_requirement_runs SET pause_reason='Different reason' WHERE requirement_id=$1",[id]);
+        if(name==='missing-session') await db.query('DELETE FROM harness_sessions WHERE id=$1',[run.sessionId]);
+        if(name==='paused-session'||name==='cancelled-session') await db.query('SELECT control_harness_session($1,$2,$3)',[run.sessionId,site,name==='paused-session'?'pause':'cancel']);
+        if(name==='wrong-user'||name==='wrong-requirement') {
+          await db.query('DELETE FROM harness_sessions WHERE id=$1',[run.sessionId]);
+          const otherUser=randomUUID();await db.query('INSERT INTO auth.users VALUES($1)',[otherUser]);
+          const snapshot=initial(run.sessionId);if(name==='wrong-requirement') snapshot.request.requirementId=randomUUID();
+          await db.query('INSERT INTO harness_sessions(id,site_id,user_id,snapshot) VALUES($1,$2,$3,$4)',[run.sessionId,site,name==='wrong-user'?otherUser:user,snapshot]);
+        }
+        if(name==='live-session') await db.query("UPDATE harness_sessions SET lease_owner='other-owner',lease_expires_at=now()+interval '1 hour' WHERE id=$1",[run.sessionId]);
+        if(name==='live-cron') await db.query("UPDATE requirements SET cron_lock_run_id='other-cron',cron_lock_active=true,cron_lock_expires_at=now()+interval '1 hour' WHERE id=$1",[id]);
+        if(['user_paused','customer_paused','cron_paused','execution_hold'].includes(name)) await db.query('UPDATE requirements SET metadata=metadata||$2 WHERE id=$1',[id,{[name]:name==='execution_hold'?{kind:'security'}:true}]);
+        if(name==='paused-owner') await db.query("UPDATE remote_instances SET status='paused' WHERE id=$1",[run.instanceId]);
+        if(name==='archived-owner') await db.query('UPDATE remote_instances SET is_archived=true WHERE id=$1',[run.instanceId]);
+        if(name==='paused-plan') await db.query("INSERT INTO instance_plans(site_id,instance_id,status) VALUES($1,$2,'paused')",[site,run.instanceId]);
+        if(name==='trusted-action') await db.query("INSERT INTO instance_logs(site_id,instance_id,log_type,trusted_user_action,details) VALUES($1,$2,'user_action',true,'{\"status\":\"running\"}')",[site,run.instanceId]);
+        const snapshotBefore=await one('SELECT snapshot FROM harness_sessions WHERE id=$1',[run.sessionId]);
+        const recovered=await claim(incidents.filter(x=>x.run.requirementId!==id).map(x=>x.run.requirementId));
+        if(name==='intact') {
+          assert.ok(recovered,'historical exact-agent wait is recoverable');
+          assert.equal(recovered.run.sessionId,run.sessionId);assert.equal(recovered.run.executionGeneration,run.executionGeneration);
+          assert.equal(recovered.run.instanceId,run.instanceId);assert.notEqual(recovered.run.runId,run.runId);
+          const after=(await one('SELECT snapshot FROM harness_sessions WHERE id=$1',[run.sessionId])).snapshot;
+          assert.deepEqual({...after,status:snapshotBefore.snapshot.status,version:snapshotBefore.snapshot.version,updatedAt:snapshotBefore.snapshot.updatedAt},snapshotBefore.snapshot,'historical recovery preserves every budget/request/message field');
+          assert.equal(after.status,'queued');assert.equal(await owner(run),false);
+          await finish(recovered.run,'running');
+        } else {
+          assert.equal(recovered,null,name+' must remain fenced');
+          assert.equal((await one('SELECT status FROM requirements WHERE id=$1',[id])).status,'blocked');
+        }
+      }
+      await reset();
+      // More than a full candidate window of old blocked mappings must not
+      // starve either a genuine historical recovery or ordinary ready work.
+      // Bulk fixtures reproduce the old finish's shared transaction evidence;
+      // the incident cases above separately exercise the real old finish.
+      for(const obstruction of ['missing-session','paused-session','manual-edit','paused-owner','no-mapping','malformed-generation']) {
+        const rows=Array.from({length:1001},(_,n)=>({
+          id:randomUUID(),sid:randomUUID(),iid:randomUUID(),recoverable:n===1000,
+        }));
+        const retained=rows[1000];
+        await db.exec('BEGIN');
+        await db.exec('CREATE TEMP TABLE starvation_fixture(id uuid,sid uuid,iid uuid,recoverable boolean)');
+        await db.query('INSERT INTO starvation_fixture SELECT * FROM jsonb_to_recordset($1) AS x(id uuid,sid uuid,iid uuid,recoverable boolean)',[JSON.stringify(rows)]);
+        await db.query("INSERT INTO remote_instances(id,site_id,user_id,created_by,name,instance_type,status) SELECT iid,$1,$2,$2,'req-runner-'||id,'browser','pending' FROM starvation_fixture",[site,user]);
+        await db.query("INSERT INTO requirements(id,site_id,user_id,status,metadata,created_at,updated_at) SELECT id,$1,$2,'blocked',jsonb_build_object('runner_instance_id',iid,'requirement_execution_generation',0),'2026-09-15',CASE WHEN recoverable THEN '2026-09-16'::timestamptz ELSE '2026-09-15'::timestamptz END FROM starvation_fixture",[site,user]);
+        await db.query("INSERT INTO harness_requirement_runs(requirement_id,site_id,session_id,generation,pause_reason,last_cycle_id) SELECT id,$1,sid,0,'Need user decision','offline-historical-'||id FROM starvation_fixture",[site]);
+        await db.query("INSERT INTO harness_sessions(id,site_id,user_id,snapshot) SELECT sid,$1,$2,$3::jsonb||jsonb_build_object('id',sid) FROM starvation_fixture",[site,user,initial(randomUUID())]);
+        await db.exec("UPDATE harness_sessions SET version=version+1,snapshot=snapshot||jsonb_build_object('version',version+1,'status','waiting','reason','Need user decision')");
+        await db.query("INSERT INTO requirement_status(requirement_id,site_id,instance_id,stage,cycle) SELECT id,$1,iid,'blocked','agent:offline-historical-'||id FROM starvation_fixture",[site]);
+        await db.exec('COMMIT');
+        // Mutate in a separate transaction so unchanged manual blocks lose xmin
+        // provenance, just as a later human edit of an old incident would.
+        if(obstruction==='missing-session') await db.exec('DELETE FROM harness_sessions WHERE id IN (SELECT sid FROM starvation_fixture WHERE NOT recoverable)');
+        if(obstruction==='no-mapping') await db.exec('DELETE FROM harness_requirement_runs WHERE requirement_id IN (SELECT id FROM starvation_fixture WHERE NOT recoverable)');
+        if(obstruction==='malformed-generation') await db.exec("UPDATE requirements SET metadata=metadata||'{\"requirement_execution_generation\":\"invalid\"}' WHERE id IN (SELECT id FROM starvation_fixture WHERE NOT recoverable)");
+        if(obstruction==='paused-session') await db.query("SELECT control_harness_session(sid,$1,'pause') FROM starvation_fixture WHERE NOT recoverable",[site]);
+        if(obstruction==='manual-edit') await db.exec("UPDATE requirements SET title='Manual hold' WHERE id IN (SELECT id FROM starvation_fixture WHERE NOT recoverable)");
+        if(obstruction==='paused-owner') await db.exec("UPDATE remote_instances SET status='paused' WHERE id IN (SELECT iid FROM starvation_fixture WHERE NOT recoverable)");
+        const ready=await req('backlog',{}, {created:'2026-09-17'});
+        assert.equal((await one('SELECT count(*)::integer count FROM requirements WHERE updated_at<$1',[ '2026-09-16' ])).count,1000);
+        const blockedEvidence=async()=> (await db.query('SELECT to_jsonb(r) requirement,to_jsonb(h) mapping,to_jsonb(s) session,to_jsonb(i) instance FROM starvation_fixture f JOIN requirements r ON r.id=f.id LEFT JOIN harness_requirement_runs h ON h.requirement_id=f.id LEFT JOIN harness_sessions s ON s.id=f.sid JOIN remote_instances i ON i.id=f.iid WHERE NOT f.recoverable ORDER BY f.id')).rows;
+        const before=await blockedEvidence();
+        await db.exec('SET ROLE service_role');
+        const recovered=await claim();
+        assert.equal(recovered?.run.requirementId,retained.id,obstruction+': true recovery survives pre-LIMIT filtering');
+        assert.equal(recovered.run.sessionId,retained.sid);
+        assert.equal(recovered.run.instanceId,retained.iid);
+        assert.equal(recovered.run.executionGeneration,0);
+        const claimedReady=await claim();
+        assert.equal(claimedReady?.run.requirementId,ready,obstruction+': 1000 old blocked mappings cannot starve ready work');
+        await db.exec('RESET ROLE');
+        assert.deepEqual(await blockedEvidence(),before,obstruction+': blocked rows, sessions and ownership remain untouched');
+        await db.exec('DROP TABLE starvation_fixture');
+        await reset();
+      }
       for(const role of ['anon','authenticated','service_role']) {
         assert.equal((await one('SELECT has_table_privilege($1,$2,$3) allowed',[role,'harness_requirement_runs','UPDATE'])).allowed,false);
         for(const fn of ['claim_agent_requirement_run(uuid[],integer,integer,uuid[])','assert_agent_requirement_run(uuid,text,integer,uuid,boolean,integer)','finish_agent_requirement_cycle(uuid,text,integer,uuid,text,text,text,text)','patch_agent_requirement_progress(uuid,text,integer,uuid,uuid,text,text,text,text,bigint)'])
@@ -46,6 +147,7 @@ it('claims and fences agent cron without product gates, preserves pauses, resume
       }
       assert.equal((await one("SELECT relrowsecurity value FROM pg_class WHERE oid='harness_requirement_runs'::regclass")).value,true);
       assert.equal((await one("SELECT has_function_privilege('service_role','agent_requirement_runner_allowed(uuid,uuid)','EXECUTE') allowed")).allowed,false);
+      for(const role of ['anon','authenticated','service_role']) assert.equal((await one('SELECT has_function_privilege($1,$2,$3) allowed',[role,'claim_agent_requirement_run_before_commands(uuid[],integer,integer,uuid[])','EXECUTE'])).allowed,false);
       for(const role of ['anon','authenticated']) {
         await db.exec('SET ROLE '+role);
         await assert.rejects(()=>claim(),/permission denied/);
@@ -97,8 +199,47 @@ it('claims and fences agent cron without product gates, preserves pauses, resume
       await db.exec("UPDATE harness_requirement_runs SET next_run_at=now()-interval '1 second'");const f=await claim();assert.equal(f.run.sessionId,e.run.sessionId);
       let stored=(await one('SELECT snapshot FROM harness_sessions')).snapshot;assert.equal(stored.status,'queued');assert.equal(stored.turns,3);assert.equal(stored.allocatedTokens,100);
       await finish(f.run,'waiting','Need user decision');assert.equal(await claim(),null);
-      await db.query("UPDATE requirements SET metadata=metadata||'{\"requirement_execution_generation\":1}' WHERE id=$1",[waiting]);const g=await claim();assert.equal(g.run.sessionId,f.run.sessionId);assert.equal(g.run.executionGeneration,1);
+      assert.equal((await one('SELECT status FROM requirements WHERE id=$1',[waiting])).status,'in-progress');
+      assert.equal((await one("SELECT pause_reason,next_run_at BETWEEN now()+interval '55 seconds' AND now()+interval '65 seconds' delayed FROM harness_requirement_runs")).delayed,true);
+      assert.equal((await one('SELECT pause_reason FROM harness_requirement_runs')).pause_reason,null);
+      await db.exec("UPDATE harness_requirement_runs SET next_run_at=now()-interval '1 second'");
+      const g=await claim();assert.equal(g.run.sessionId,f.run.sessionId);assert.equal(g.run.executionGeneration,f.run.executionGeneration);
       await finish(g.run,'paused','token_budget_exhausted');assert.equal(await claim(),null);await reset();
+      for(const reason of ['Need user decision','requirements_need_clarification','ordinary wait',null]) {
+        await req();const run=(await claim()).run;await session(run,'waiting',reason,{
+          workspace:{provider:'vercel',id:'offline-workspace',root:'/workspace'},
+          messages:[{role:'user',content:'Preserve the original request'}],uncertainOperations:['offline-uncertain-write'],
+          pending:{call:{id:'offline-pending',name:'read_file',arguments:'{}'},fingerprint:'offline-fingerprint',effect:'read'},
+        });
+        const before=(await one('SELECT snapshot FROM harness_sessions')).snapshot;
+        assert.equal(await finish(run,'waiting',reason),true);
+        assert.equal((await one('SELECT status FROM requirements')).status,'in-progress');
+        assert.equal((await one('SELECT stage FROM requirement_status')).stage,'in-progress');
+        assert.equal(await claim(),null,'all waits back off, not a hot retry loop');
+        await db.exec("UPDATE harness_requirement_runs SET next_run_at=now()-interval '1 second'");
+        await db.exec('SET ROLE service_role');const again=await claim();await db.exec('RESET ROLE');
+        assert.equal(again.run.sessionId,run.sessionId);assert.equal(again.run.executionGeneration,run.executionGeneration);
+        const after=(await one('SELECT snapshot FROM harness_sessions')).snapshot;
+        assert.equal(after.status,'queued');
+        assert.deepEqual({...after,status:before.status,version:before.version,updatedAt:before.updatedAt},before,'retry preserves complete session and budgets');
+        assert.equal(await finish(run,'completed'),false,'old run cannot project after reclaim');
+        await reset();
+      }
+      for(const metadata of [{user_paused:true},{customer_paused:true},{cron_paused:true},{execution_hold:{kind:'security'}}]) {
+        await req();const run=(await claim()).run;await session(run,'waiting','Need user decision');
+        await db.query('UPDATE requirements SET metadata=metadata||$1',[metadata]);
+        assert.equal(await finish(run,'waiting','Need user decision'),false,'user/security hold wins final projection');
+        assert.equal(await claim(),null,'holds fence ordinary in-progress waits too');
+        assert.equal((await one('SELECT cron_lock_active FROM requirements')).cron_lock_active,false);
+        assert.equal((await one('SELECT snapshot FROM harness_sessions')).snapshot.status,'waiting');await reset();
+      }
+      for(const reason of ['user_pause','token_budget_exhausted','turn_budget_exhausted','active_time_budget_exhausted','billing_required','WORKSPACE_AUTHORIZATION_REQUIRED','WORKSPACE_PROVIDER_BILLING_REQUIRED','WORKSPACE_AUTH_CONFIGURATION_REQUIRED']) {
+        await req();const run=(await claim()).run;await session(run,'paused',reason);
+        assert.equal(await finish(run,'waiting','stale agent wait'),true,'durable pause wins stale wait projection');
+        assert.equal((await one('SELECT status FROM requirements')).status,'blocked');
+        assert.deepEqual(await one('SELECT pause_reason,next_run_at FROM harness_requirement_runs'),{pause_reason:reason,next_run_at:null});
+        assert.equal(await claim(),null,reason+' cannot auto-retry');await reset();
+      }
       const live=await req();await db.query("UPDATE requirements SET cron_lock_run_id='legacy-live',cron_lock_active=true,cron_lock_expires_at=now()+interval '1 hour' WHERE id=$1",[live]);assert.equal(await claim(),null);assert.equal((await one('SELECT cron_lock_run_id FROM requirements')).cron_lock_run_id,'legacy-live');
       await db.exec("UPDATE requirements SET cron_lock_expires_at=now()-interval '1 second'");assert.ok(await claim());
       await reset();

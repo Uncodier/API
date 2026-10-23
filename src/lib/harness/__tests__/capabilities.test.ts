@@ -91,6 +91,20 @@ it('provisions only host-bound identities and emits credential names, never toke
   expect(s.options.workspace.exec).not.toHaveBeenCalled();
 });
 
+it('advertises paid webSearch only for requirement runtime, independently of legacy capability permissions', async () => {
+  const s = setup(); s.options.allowed = [];
+  const standalone = await s.invoke('capability_manifest');
+  expect(standalone.output).not.toHaveProperty('research');
+  expect(standalone.output).not.toHaveProperty('cron_tools');
+  s.options.cronRun = { requirementId: s.requirement.id, instanceId: s.runner.id, sessionId: s.context.sessionId, runId: randomUUID(), executionGeneration: 4 };
+  const manifest = await s.invoke('capability_manifest');
+  expect(manifest.output).toMatchObject({ cron_tools: expect.arrayContaining(['webSearch']), research: {
+    name: 'webSearch', enabled: true, effect: 'write', availability: 'dependency_checked_on_call',
+  } });
+  expect((await s.build()).map(tool => tool.name)).toEqual(['capability_manifest']);
+  for (const fn of Object.values(s.deps)) expect(fn).not.toHaveBeenCalled();
+});
+
 it('does not advertise optional storage when ensureTenant reports it unavailable', async () => {
   const s = setup();
   s.capabilities.storage.available = false;

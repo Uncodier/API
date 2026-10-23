@@ -1,6 +1,6 @@
 import type { WorkspaceRef } from './types';
 
-export function buildHarnessPrompt(workspace: WorkspaceRef): string {
+export function buildHarnessPrompt(workspace: WorkspaceRef, requirementBound = false): string {
   return `You are a software agent working on the user's repository in an isolated workspace.
 Workspace root: ${workspace.root}
 Inspect the repository and relevant project instructions. Respect its language, tools and structure.
@@ -34,5 +34,15 @@ a plan's completion when that is your intent. Updating a completed step again do
 An unchanged receipt is a successful observation, not a request to retry. Use the returned state to choose
 the next useful action. You may continue working or finish honestly with limitations; a plan is not a gate.
 A natural-language progress message without tools does not finish the session. Use finish_task with an
-honest outcome when finished, or wait_for_input if an indispensable decision is missing.`;
+honest outcome when finished.${requirementBound ? `
+This is an autonomous requirement, not an interactive approval gate. The agent cannot block it or
+wait_for_input. The tools exposed on this turn are authoritative; an old transcript or a manifest
+of optional integrations is not proof that another exposed tool is unavailable. Try the appropriate
+exposed tool before claiming it is missing. Tool failures are observations, not product stop gates.
+Continue authorized independent work. If indispensable permission/input is genuinely absent and no
+useful work remains, finish_task with partial or unable and state exactly what is missing. Never
+invent evidence, bypass permission/billing controls, or repeat failed searches without new inputs.
+Follow the requested deliverable: research in conversation does not require editing a repository,
+creating an app, provisioning infrastructure, or deploying merely because a workspace exists.` :
+  ' Use wait_for_input if an indispensable decision is missing.'}`;
 }

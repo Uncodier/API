@@ -38,6 +38,22 @@ it('reconciles a parameterless uncertain provision by trusted adapter evidence a
   expect(reconcile.mock.calls[0][1].operationId).toBe('provision-1');
 });
 
+it('uses the same normalized arguments for effect identity, execution and trusted reconciliation', async () => {
+  const execute = jest.fn().mockResolvedValueOnce({ ok: false, error: { code: 'TRANSPORT', message: 'Unknown', ambiguous: true } }).mockResolvedValue({ ok: true });
+  const reconcile = jest.fn().mockResolvedValue({ state: 'not_applied', proof: 'offline-provider-proof' });
+  const input = await setup([{ name: 'normalized_write', effect: 'write', description: '', parameters: {}, execute, reconcile,
+    normalizeArguments: args => ({ query: String(args.query).trim() }) }], [
+    call('first', 'normalized_write', { query: ' research ' }),
+    call('check', 'reconcile_operation', { operationId: 'first' }),
+    call('retry', 'normalized_write', { query: '\tresearch\n' }), finish(),
+  ]);
+  const result = await runSessionSlice(input);
+  expect(result.status).toBe('completed');
+  expect(execute).toHaveBeenCalledTimes(2);
+  expect(execute.mock.calls.map(args => args[0])).toEqual([{ query: 'research' }, { query: 'research' }]);
+  expect(reconcile.mock.calls[0][0]).toEqual({ query: 'research' });
+});
+
 it('never accepts a model assertion as reconciliation and never retries a write already applied', async () => {
   const execute = jest.fn().mockResolvedValue({ ok: false, error: { code: 'TRANSPORT', message: 'Unknown', ambiguous: true } });
   const reconcile = jest.fn().mockResolvedValue({ state: 'applied', proof: 'provider-receipt', result: { ok: true, output: 'already applied' } });

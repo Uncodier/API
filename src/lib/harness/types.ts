@@ -41,6 +41,9 @@ export interface HarnessTool {
   description: string;
   parameters: Record<string, unknown>;
   effect: 'read' | 'write';
+  /** Pure host adapter validation/canonicalization, before identity and dispatch.
+   * Must preserve the meaning of the effect; never perform I/O here. */
+  normalizeArguments?(args: Record<string, unknown>): Record<string, unknown>;
   execute(args: Record<string, unknown>, context: ToolContext): Promise<ToolResult>;
   /** Trusted adapter only: model prose/inspection claims never authorize a replay. */
   reconcile?(args: Record<string, unknown>, context: ToolContext): Promise<Reconciliation>;

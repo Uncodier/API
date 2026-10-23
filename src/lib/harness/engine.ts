@@ -18,9 +18,9 @@ const callSchema = z.object({ id: z.string().min(1).max(200), name: z.string().r
   arguments: z.string().max(100000) });
 
 /** Built-ins are explicit protocol actions, not completion inferred from prose or a gate. */
-function controls(): HarnessTool[] {
+function controls(requirementBound = false): HarnessTool[] {
   const execute = async (): Promise<ToolResult> => ({ ok: true });
-  return [
+  const tools: HarnessTool[] = [
     { name: 'finish_task', description: 'Finish with an honest summary, including checks run and limitations. This is not a claim that every validation passed.',
       parameters: { type: 'object', properties: { summary: { type: 'string' }, outcome: { type: 'string', enum: ['implemented', 'partial', 'unable'] } }, required: ['summary', 'outcome'], additionalProperties: false }, effect: 'read', execute },
     { name: 'wait_for_input', description: 'Wait only when an indispensable decision or permission is missing. Other tools remain available on resume.',
@@ -32,6 +32,9 @@ function controls(): HarnessTool[] {
     { name: 'reconcile_operation', description: 'Ask the trusted capability adapter to verify an uncertain operation by its original call ID. Only provider proof or documented idempotency permits retry; model claims do not.', effect: 'read', execute,
       parameters: { type: 'object', properties: { operationId: { type: 'string' } }, required: ['operationId'], additionalProperties: false } },
   ];
+  // Autonomous requirements have no agent-controlled stop gate. Interactive
+  // standalone sessions retain their explicit request-for-input protocol.
+  return requirementBound ? tools.filter(tool => tool.name !== 'wait_for_input') : tools;
 }
 
 /** Keep complete assistant/tool groups; the full transcript remains in the session store. */
@@ -105,9 +108,10 @@ export async function runSessionSlice(input: RunSliceInput): Promise<HarnessSess
   const sliceMs = input.sliceMs ?? 100000;
   const redact = input.redact || createRedactor();
   const artifacts = input.artifacts || createMemoryArtifactStore(input.store);
-  const tools = [...input.tools, ...controls()];
+  const requirementBound = !!session.request.requirementId;
+  const tools = [...input.tools.filter(tool => !requirementBound || tool.name !== 'wait_for_input'), ...controls(requirementBound)];
   if (new Set(tools.map(tool => tool.name)).size !== tools.length) throw new Error('Duplicate harness tool name');
-  const system = buildHarnessPrompt(input.workspace.ref);
+  const system = buildHarnessPrompt(input.workspace.ref, requirementBound);
   const assertActive = async () => {
     if (input.signal?.aborted) throw new Error('Execution cancelled');
     await input.assertExecution?.();
@@ -131,6 +135,21 @@ export async function runSessionSlice(input: RunSliceInput): Promise<HarnessSess
 
   await assertActive();
   session.workspace = input.workspace.ref;
+  // Upgrade old raw-argument identities conservatively. Keep the old fences and
+  // add their canonical equivalents; never clear an uncertain paid operation.
+  // This also covers a crash whose pending checkpoint predates normalization.
+  for (const call of [...session.messages.flatMap(message => message.toolCalls || []),
+    ...(session.pending?.effect === 'write' ? [session.pending.call] : [])]) {
+    const adapter = tools.find(tool => tool.name === call.name);
+    if (adapter?.effect !== 'write' || !adapter.normalizeArguments) continue;
+    try {
+      const raw = z.record(z.unknown()).parse(JSON.parse(call.arguments));
+      if (!session.uncertainOperations.includes(operationFingerprint(call.name, raw)) &&
+        !(session.pending?.effect === 'write' && session.pending.call.id === call.id)) continue;
+      const identity = operationFingerprint(call.name, adapter.normalizeArguments(raw));
+      if (!session.uncertainOperations.includes(identity)) session.uncertainOperations.push(identity);
+    } catch { /* Invalid historical input grants no permission and keeps its original fence. */ }
+  }
   await save();
   // Crash after a write dispatch is ambiguous, not authorization to replay it.
   if (session.pending?.effect === 'write') {
@@ -153,8 +172,16 @@ export async function runSessionSlice(input: RunSliceInput): Promise<HarnessSess
       let args: Record<string, unknown>;
       try {
         args = z.record(z.unknown()).parse(JSON.parse(call.arguments));
+        if (tool?.normalizeArguments) args = tool.normalizeArguments(args);
       } catch {
         await record(call, { ok: false, error: { code: 'INVALID_ARGUMENTS', message: 'Arguments must be a JSON object matching the tool schema.' } });
+        continue;
+      }
+      if (requirementBound && call.name === 'wait_for_input') {
+        // Also consume old persisted calls after an upgrade, without freezing
+        // the requirement or treating missing permission as permission granted.
+        await record(call, { ok: false, error: { code: 'AUTONOMOUS_WAIT_UNAVAILABLE', message:
+          'This requirement cannot be blocked by the agent. Check the currently exposed tools, continue authorized independent work, or use finish_task with an honest partial/unable outcome and the missing input. Do not bypass permissions, repeat uncertain effects, or invent results.' } });
         continue;
       }
       if (!tool) {
@@ -209,7 +236,8 @@ export async function runSessionSlice(input: RunSliceInput): Promise<HarnessSess
           const adapter = original && tools.find(candidate => candidate.name === original.name);
           if (!original || !adapter?.reconcile) result = { ok: false, error: { code: 'RECONCILIATION_UNAVAILABLE', message: 'This operation needs provider/operator reconciliation; no automatic replay authorized.' } };
           else {
-            const originalArgs = z.record(z.unknown()).parse(JSON.parse(original.arguments));
+            const rawArgs = z.record(z.unknown()).parse(JSON.parse(original.arguments));
+            const originalArgs = adapter.normalizeArguments ? adapter.normalizeArguments(rawArgs) : rawArgs;
             const identity = operationFingerprint(original.name, originalArgs);
             const scopedSignal = signal();
             const verified = await withinDeadline(scopedSignal, () => adapter.reconcile!(originalArgs, {

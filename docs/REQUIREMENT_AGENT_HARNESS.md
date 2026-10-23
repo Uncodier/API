@@ -34,7 +34,7 @@ workflow/node execution are not replaced by this change.
 ### Tools, not administrative gates
 
 Core: `read_files`, `list_files`, `search`, `apply_patch`, `exec`, background process
-status/stop, transcript/result pagination, explicit finish/wait and reconciliation.
+status/stop, transcript/result pagination, explicit finish and reconciliation.
 The agent discovers repo-specific commands; no language/framework/build command is
 required. `apply_patch` uses the schema's create/exact-replace operations.
 
@@ -56,6 +56,49 @@ without trusted reconciliation. Migration ownership/privilege safety still appli
 `finish_task` records an honest implemented/partial/unable summary. The host projects
 completion to `on-review`, not automatic product acceptance or `done`. It does not
 require build/push/preview success. Explicit user pause/cancel/holds take precedence.
+
+### Nonblocking requirement execution and public research
+
+Requirement-bound sessions do not expose `wait_for_input`. A stale/persisted call
+receives a nonblocking tool error and guidance to continue authorized work or
+finish with an honest `partial`/`unable` result. Standalone interactive sessions
+retain their wait/resume protocol. Missing input never grants permission to spend,
+publish, bypass authorization, or fabricate research evidence.
+
+The forward migration `20261023200000_agent_requirement_nonblocking_wait.sql`
+removes the `waiting` → `blocked` projection and permits the same session to resume
+after the scheduler backoff, without resetting history, budgets or ownership.
+Historical agent-created wait blocks are recovered only with matching durable
+cycle provenance, including the same originating database transaction for the
+requirement, run mapping and latest status. If any was subsequently edited or
+history was pruned, recovery fails closed. Unrelated/manual blocks and explicit
+pauses are not mass-cleared.
+The recovery predicate is applied before the 1,000-candidate limit, then checked
+again under ownership locks. Old unrecoverable wait rows cannot fill the candidate
+window and hide ready work. Offline SQL regressions cover 1,000 obstructions ahead
+of a genuine recovery and a new pending requirement.
+User pause/cancel, security/ownership checks and resource limits remain enforced.
+
+The requirement tool factory now exposes `webSearch`, using the existing public
+Azure Bing search adapter and site credit policy. It is independent of the
+localhost-only QA browser. Capability discovery lists the search tool; the current
+model tool list, not an older transcript, is authoritative. Research deliverables
+do not require app edits or deployment merely because a workspace is attached.
+Search checks the bound site/user/runner/generation and active leases before paid
+work. It uses durable write checkpoints because searches consume credits; uncertain
+billing/provider effects cannot be replayed as if they were free reads. Credentials
+stay host-side and public source text remains untrusted reference material.
+The host adapter validates and normalizes query arguments before the engine hashes
+or dispatches them. Leading/trailing whitespace cannot create a different replay
+identity for the same paid search. Resuming older sessions adds canonical fences
+for uncertain/pending raw-argument calls without removing their original fences.
+
+For this repair, drain the requirement workers, deploy the updated API and apply
+the forward migration before re-enabling the cron. It requires
+`20261020200000_requirement_cross_instance_commands.sql` and preserves that
+migration's public command-draining wrapper. Do not enable recovery while
+old workers still lack search and still issue agent waits. No live search,
+production migration or deployment is implied by the offline tests.
 
 ### Progress without repetition gates
 

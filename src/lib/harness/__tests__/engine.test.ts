@@ -77,10 +77,11 @@ describe('portable continuous engine with durable boundaries', () => {
   });
   afterEach(async () => { await rm(root, { recursive: true, force: true }); });
 
-  async function setup(model: HarnessModel, tools: HarnessTool[] = [], limits: Partial<SessionLimits> = {}, now?: () => number): Promise<RunSliceInput> {
+  async function setup(model: HarnessModel, tools: HarnessTool[] = [], limits: Partial<SessionLimits> = {}, now?: () => number, requirementId?: string): Promise<RunSliceInput> {
     const store = createMemorySessionStore({ now });
     const initial = createSession({ objective: 'Repair this arbitrary repository without product gates.',
       repository: { url: 'https://example.test/arithmetic-library.git' }, limits: { ...defaultLimits, ...limits } });
+    if (requirementId) initial.request.requirementId = requirementId;
     await store.create(initial, scope);
     const session = (await store.claim(initial.id, scope.siteId, owner, 180))!;
     return { store, session, owner, siteId: scope.siteId, model, tools, workspace, now };
@@ -122,6 +123,43 @@ describe('portable continuous engine with durable boundaries', () => {
     }
     expect(await input.store.load(result.id, scope.siteId)).toEqual(result);
     expect(workspace.suspend).not.toHaveBeenCalled();
+  });
+
+  it('does not expose an agent stop gate for requirements and continues after a stale wait call', async () => {
+    const search = tool('webSearch', 'write', jest.fn(async () => ({ ok: true, output: { results: [] } })));
+    const model = scripted(
+      input => {
+        expect(input.tools.map(item => item.name)).not.toContain('wait_for_input');
+        expect(input.tools.map(item => item.name)).toContain('webSearch');
+        expect(input.system).toContain('cannot block it');
+        return reply(call('old-wait', 'wait_for_input', { reason: 'Public search missing' }));
+      },
+      input => {
+        expect(JSON.stringify(input.messages)).toContain('AUTONOMOUS_WAIT_UNAVAILABLE');
+        return reply(call('research', 'webSearch', { query: 'published results' }));
+      },
+      reply(call('partial', 'finish_task', { summary: 'No verified figures found. Evidence is insufficient.', outcome: 'partial' })),
+    );
+    const input = await setup(model, [search], {}, undefined, 'offline-requirement');
+    const result = await runSessionSlice(input);
+    expect(result.status).toBe('completed');
+    expect(result.reason).toBe('partial');
+    expect(search.execute).toHaveBeenCalledTimes(1);
+    expect(receipt(result, 'old-wait')).toMatchObject({ ok: false, error: { code: 'AUTONOMOUS_WAIT_UNAVAILABLE' } });
+    expectToolPairs(result.messages);
+  });
+
+  it('consumes a pre-upgrade pending wait without executing an injected wait adapter', async () => {
+    const injected = tool('wait_for_input', 'read', jest.fn(async () => ({ ok: true })));
+    const input = await setup(scripted(finish()), [injected], {}, undefined, 'offline-requirement');
+    const pending = call('persisted-wait', 'wait_for_input', { reason: 'Tool was missing' });
+    input.session.messages.push({ role: 'assistant', content: '', toolCalls: [pending] });
+    input.session.pending = { call: pending, effect: 'read', fingerprint: operationFingerprint(pending.name, JSON.parse(pending.arguments)) };
+    const result = await runSessionSlice(input);
+    expect(result.status).toBe('completed');
+    expect(result.pending).toBeUndefined();
+    expect(injected.execute).not.toHaveBeenCalled();
+    expect(receipt(result, pending.id)).toMatchObject({ ok: false, error: { code: 'AUTONOMOUS_WAIT_UNAVAILABLE' } });
   });
 
   it('checkpoints a slice between tool calls and resumes outstanding calls without replaying saved results', async () => {

@@ -16,7 +16,7 @@ jest.mock('workflow/api', () => ({ start: async (fn: (...args: any[]) => Promise
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: db }));
 jest.mock('../store', () => ({ ...jest.requireActual('../store'), createSessionStore: () => store }));
 jest.mock('../requirement-scheduler', () => ({ assertRequirementRun: (...args: unknown[]) => assertRun(...args), finishRequirementCycle: (...args: unknown[]) => finishCycle(...args), claimRequirementRun: (...args: unknown[]) => claim(...args), dueScheduledRequirements: async () => [] }));
-jest.mock('../requirement-context', () => ({ loadRequirementContext: (...args: unknown[]) => loadContext(...args), formatRequirementContext: () => 'Existing backlog: add tests. Existing plan: implement addition. Failure history: previous test failed.' }));
+jest.mock('../requirement-context', () => ({ ...jest.requireActual('../requirement-context'), loadRequirementContext: (...args: unknown[]) => loadContext(...args), formatRequirementContext: () => 'Existing backlog: add tests. Existing plan: implement addition. Failure history: previous test failed.' }));
 jest.mock('../requirement-profile', () => ({ buildRequirementProfile: (...args: unknown[]) => buildProfile(...args) }));
 jest.mock('../requirement-tools', () => ({ createRequirementTools: (...args: unknown[]) => makeTools(...args) }));
 jest.mock('../requirement-model', () => ({ createRequirementModel: () => ({}) }));
@@ -89,4 +89,15 @@ it('does not call tools or fallback execution after losing requirement ownership
   assertRun.mockRejectedValue(new Error('user paused'));
   await runRequirementCycle(run);
   expect(executeSlice).not.toHaveBeenCalled(); expect(loadContext).not.toHaveBeenCalled();
+});
+
+it('always exposes webSearch in the requirement runtime even with no optional legacy capabilities', async () => {
+  executeSlice.mockImplementation(async (_id: string, _scope: unknown, options: any) => {
+    const tools = await options.tools({}, {});
+    expect(tools.filter((tool: any) => tool.name === 'webSearch')).toHaveLength(1);
+    expect(tools.find((tool: any) => tool.name === 'webSearch').effect).toBe('write');
+    return { status: 'waiting' };
+  });
+  await runRequirementCycle(run);
+  expect(executeSlice).toHaveBeenCalledTimes(1);
 });

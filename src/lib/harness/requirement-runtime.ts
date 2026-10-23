@@ -10,6 +10,7 @@ import { buildRequirementProfile } from './requirement-profile';
 import { createRequirementModel } from './requirement-model';
 import { createReviewTools } from './review-tools';
 import { createRequirementProvisioningTools } from './requirement-provisioning';
+import { createRequirementResearchTools } from './requirement-research';
 import { createRedactor } from './security';
 import type { RequirementRun } from './requirement-types';
 import type { HarnessSession } from './types';
@@ -81,6 +82,7 @@ export async function runRequirementCycle(run: RequirementRun) {
       getContext: async () => formatRequirementSnapshot(await loadRequirementSnapshot(run)),
       model: createRequirementModel(run, assertActive),
       tools: async (workspace, host) => [...await createRequirementTools({ run }),
+        ...createRequirementResearchTools({ run }),
         ...createRequirementProvisioningTools({ run, profile: configured.profile, branch: configured.branch, host, workspace, assertActive }),
         ...createReviewTools(workspace, createRequirementModel(run, assertActive))],
       openWorkspace: async input => {
