@@ -5,7 +5,8 @@ const createContent = jest.fn<(input: Record<string, unknown>) => Promise<Record
 const updateContent = jest.fn<(input: Record<string, unknown>) => Promise<Record<string, unknown>>>();
 const getContent = jest.fn<() => Promise<Record<string, unknown> | null>>();
 const claimContent = jest.fn<(...args: unknown[]) => Promise<{ id: string; status: string }>>();
-const listAccounts = jest.fn<() => Promise<unknown>>();
+type OutstandClient = ReturnType<typeof import('@/lib/integrations/outstand/client').getOutstandClient>;
+const listAccounts = jest.fn<(...args: Parameters<OutstandClient['listAccounts']>) => Promise<unknown>>();
 const createPost = jest.fn<(...args: unknown[]) => Promise<unknown>>();
 const getMedia = jest.fn<() => Promise<unknown>>();
 const getUploadUrl = jest.fn<(...args: unknown[]) => Promise<unknown>>();

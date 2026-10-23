@@ -1,14 +1,22 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 const from = jest.fn<any>();
-const audience = jest.fn<any>();
-const page = jest.fn<any>();
-const status = jest.fn<any>();
-const send = jest.fn<any>();
-const config = jest.fn<any>();
-const findTemplate = jest.fn<any>();
-const createTemplate = jest.fn<any>();
-jest.unstable_mockModule('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from } }));
+const rpc = jest.fn<(name: string, args: { p_site_id: string }) => {
+  abortSignal: (signal: AbortSignal) => Promise<{ data: unknown; error: unknown }>;
+}>();
+type GetAudience = typeof import('@/lib/database/audience-db').getAudienceById;
+type AudienceSnapshot = Pick<NonNullable<Awaited<ReturnType<GetAudience>>>, 'id' | 'site_id' | 'status' | 'total_count' | 'page_size'>;
+const audience = jest.fn<(...args: Parameters<GetAudience>) => Promise<AudienceSnapshot | null>>();
+const page = jest.fn<typeof import('@/lib/database/audience-db').getAudiencePageForSending>();
+const status = jest.fn<typeof import('@/lib/database/audience-db').updateAudienceLeadStatus>();
+const send = jest.fn<typeof import('@/lib/messaging/exact-delivery').sendExactDelivery>();
+type GetWhatsAppConfig = typeof import('@/lib/messaging/exact-delivery').getExactWhatsAppConfig;
+type WhatsAppConfigSnapshot = Pick<NonNullable<Awaited<ReturnType<GetWhatsAppConfig>>>, 'phoneNumberId' | 'accessToken' | 'fromNumber'>;
+const config = jest.fn<(...args: Parameters<GetWhatsAppConfig>) => Promise<WhatsAppConfigSnapshot | null>>();
+type TemplateService = typeof import('@/lib/services/whatsapp/WhatsAppTemplateService').WhatsAppTemplateService;
+const findTemplate = jest.fn<TemplateService['findExistingTemplate']>();
+const createTemplate = jest.fn<TemplateService['createTemplate']>();
+jest.unstable_mockModule('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from, rpc } }));
 jest.unstable_mockModule('@/lib/database/audience-db', () => ({ getAudienceById: audience, getAudiencePageForSending: page, updateAudienceLeadStatus: status }));
 jest.unstable_mockModule('@/lib/messaging/exact-delivery', () => ({ sendExactDelivery: send, getExactWhatsAppConfig: config }));
 jest.unstable_mockModule('@/lib/services/whatsapp/WhatsAppTemplateService', () => ({ WhatsAppTemplateService: { findExistingTemplate: findTemplate, createTemplate } }));
@@ -27,20 +35,26 @@ let channels: any;
 beforeEach(() => {
   jest.clearAllMocks(); messages = []; conversations = [];
   channels = { connections: [
-    { id: 'wa-1', type: 'whatsapp', status: 'connected', zavu_sender_id: 'wa-sender-1' },
-    { id: 'wa-2', type: 'whatsapp', status: 'connected', zavu_sender_id: 'wa-sender-2' },
-    { id: 'email-1', type: 'email', status: 'connected', zavu_sender_id: 'mail-1' },
-    { id: 'email-2', type: 'email', status: 'connected', zavu_sender_id: 'mail-2' },
+    { id: 'wa-1', type: 'whatsapp', status: 'connected', license_suspended: false, zavu_sender_id: 'wa-sender-1' },
+    { id: 'wa-2', type: 'whatsapp', status: 'connected', license_suspended: false, zavu_sender_id: 'wa-sender-2' },
+    { id: 'email-1', type: 'email', status: 'connected', license_suspended: false, zavu_sender_id: 'mail-1' },
+    { id: 'email-2', type: 'email', status: 'connected', license_suspended: false, zavu_sender_id: 'mail-2' },
   ] };
+  rpc.mockImplementation((name, args) => {
+    expect(name).toBe('get_site_licensed_resources');
+    expect(args).toEqual({ p_site_id: siteId });
+    return { abortSignal: async (signal) => {
+      expect(signal).toBeInstanceOf(AbortSignal);
+      return { data: { channels, social_media: [], effective_plan: 'engine' }, error: null };
+    } };
+  });
   audience.mockResolvedValue({ id: audienceId, site_id: siteId, status: 'ready', total_count: 1, page_size: 100 });
   page.mockResolvedValue({ leads: [{ id: leadId, site_id: siteId, name: 'Ada Lovelace', phone: '+14155550101', email: 'ada@example.invalid' }], total_in_page: 1 });
   status.mockResolvedValue(undefined); send.mockResolvedValue({ success: true, status: 'sent' });
-  config.mockResolvedValue({ phoneNumberId: 'account-2', accessToken: 'synthetic', fromNumber: '+14155550102' });
+  config.mockResolvedValue({ phoneNumberId: 'account-2', accessToken: randomBytes(24).toString('hex'), fromNumber: '+14155550102' });
   findTemplate.mockResolvedValue({ templateSid: 'template-2', templatedBody: 'Hello audience', placeholderMap: [] });
   from.mockImplementation((table: string) => {
-    if (table === 'settings') return { select: () => ({ eq: (_key: string, id: string) => {
-      expect(id).toBe(siteId); return { single: async () => ({ data: { channels }, error: null }) };
-    } }) };
+    if (table === 'settings') throw new Error('Raw settings must not authorize delivery.');
     if (table === 'sites') return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { name: 'Acme' } }) }) }) };
     if (table === 'conversations') return { insert: (rows: any[]) => {
       conversations.push(...rows); return { select: () => ({ single: async () => ({ data: { id: randomUUID() } }) }) };
@@ -63,7 +77,7 @@ describe('exact bulk tool orchestration', () => {
   });
   it('queues both selected WhatsApps using the same pending lead snapshot, no Twilio templates for Zavu', async () => {
     // A real status update consumes pending leads; deferred status must not hide the second route.
-    status.mockImplementation(async () => page.mockResolvedValue({ leads: [], total_in_page: 0 }));
+    status.mockImplementation(async () => { page.mockResolvedValue({ leads: [], total_in_page: 0 }); });
     const routes = [{ channel: 'whatsapp' as const, connection_id: 'wa-2' }, { channel: 'whatsapp' as const, connection_id: 'wa-1' }];
     const result = await tool(siteId).execute({ audience_id: audienceId, message: 'Hello {{lead.first_name}}', delivery_routes: routes });
     expect(result.success).toBe(true);
@@ -95,11 +109,22 @@ describe('exact bulk tool orchestration', () => {
     expect(send).not.toHaveBeenCalled(); expect(findTemplate).not.toHaveBeenCalled(); expect(status).not.toHaveBeenCalled();
   });
   it('selects the exact legacy WhatsApp account for campaign template creation and queue delivery', async () => {
-    channels.agent_whatsapp = { status: 'active', account_sid: 'account-2', access_token: 'synthetic', existingNumber: '+14155550102' };
+    channels.agent_whatsapp = { status: 'active', account_sid: 'account-2', access_token: randomBytes(24).toString('hex'), existingNumber: '+14155550102' };
     const result = await tool(siteId).execute({ audience_id: audienceId, message: 'Hello audience', channel: 'whatsapp', connection_id: 'legacy:agent_whatsapp' });
     expect(result.success).toBe(true);
     expect(config).toHaveBeenCalledWith(siteId, 'legacy:agent_whatsapp');
     expect(findTemplate).toHaveBeenCalledWith('Hello audience', siteId, 'account-2', { trackUsage: false });
     expect(messages[0].custom_data).toMatchObject({ connection_id: 'legacy:agent_whatsapp', template_sid: 'template-2' });
+  });
+  it.each(['suspended', 'unavailable'])('denies %s licensed projection before recipient reads or writes', async condition => {
+    if (condition === 'suspended') channels.connections[0].license_suspended = true;
+    else rpc.mockReturnValue({ abortSignal: async () => ({ data: null, error: { code: 'PGRST202' } }) });
+    const result = await tool(siteId).execute({ audience_id: audienceId, message: 'Hello', channel: 'whatsapp', connection_id: 'wa-1' });
+    expect(result.success).toBe(false);
+    expect(rpc).toHaveBeenCalledWith('get_site_licensed_resources', { p_site_id: siteId });
+    expect(from).not.toHaveBeenCalled();
+    expect(page).not.toHaveBeenCalled();
+    expect(messages).toHaveLength(0); expect(conversations).toHaveLength(0);
+    expect(send).not.toHaveBeenCalled(); expect(findTemplate).not.toHaveBeenCalled(); expect(status).not.toHaveBeenCalled();
   });
 });

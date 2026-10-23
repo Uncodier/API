@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const executeAssistantStep = jest.fn(async () => ({ messages: [], isDone: true }));
-const patchRequirementMetadataKeys = jest.fn(async () => ({
+const patchRequirementMetadataKeys = jest.fn<typeof import('@/lib/services/requirement-metadata-patch').patchRequirementMetadataKeys>(async () => ({
   last_docs_to_backlog_sync_at: '2026-09-17T12:00:00.000Z',
   concurrent_key: 'preserved',
 }));

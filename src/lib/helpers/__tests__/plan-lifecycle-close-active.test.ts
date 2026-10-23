@@ -16,7 +16,7 @@ fetchQuery.in.mockReturnValue(fetchQuery);
 fetchQuery.neq.mockReturnValue(fetchQuery);
 
 const updateEq = jest.fn(async () => ({ error: null }));
-const update = jest.fn(() => ({ eq: updateEq }));
+const update = jest.fn((_values: Record<string, unknown>) => ({ eq: updateEq }));
 const from = jest.fn()
   .mockReturnValueOnce(fetchQuery)
   .mockReturnValue({ update });

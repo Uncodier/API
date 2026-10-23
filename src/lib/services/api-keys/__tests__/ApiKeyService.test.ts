@@ -9,7 +9,7 @@ import {
 
 const mockFrom: any = jest.fn();
 const mockGetCachedJson: any = jest.fn();
-const mockSetCachedJson = jest.fn(async () => true);
+const mockSetCachedJson = jest.fn<typeof import('@/lib/security/upstash-rest').setCachedJson>(async () => true);
 
 jest.mock('@/lib/database/supabase-client', () => ({
   supabase: { from: mockFrom },

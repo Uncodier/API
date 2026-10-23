@@ -40,7 +40,7 @@ function receipt(status: TelemetryRecord['status'] = 'up', ageMs = 0): Telemetry
 function insertResult(data: unknown, error: unknown = null) {
   const single = jest.fn<() => Promise<any>>().mockResolvedValue({ data, error });
   const select = jest.fn(() => ({ single }));
-  const insert = jest.fn(() => ({ select }));
+  const insert = jest.fn((_values: Record<string, unknown>[]) => ({ select }));
   from.mockReturnValue({ insert } as any);
   return { insert, select, single };
 }

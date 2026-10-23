@@ -1,4 +1,4 @@
-import nodemailer from 'nodemailer';
+import nodemailer, { type SendMailOptions, type Transporter } from 'nodemailer';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { v4 as uuidv4 } from 'uuid';
 import { recordTelemetry } from '@/lib/status/telemetry';
@@ -79,12 +79,12 @@ export interface SendEmailParams {
  * Servicio de notificaciones para la aplicación
  */
 export class NotificationService {
-  private static transporter: nodemailer.Transporter | null = null;
+  private static transporter: Transporter | null = null;
 
   /**
    * Inicializa el transporter de nodemailer
    */
-  private static initEmailTransporter(): nodemailer.Transporter {
+  private static initEmailTransporter(): Transporter {
     if (this.transporter) {
       return this.transporter;
     }
@@ -190,7 +190,7 @@ export class NotificationService {
       const from = params.from || process.env.EMAIL_FROM || 'no-reply@makinari.com';
       
       // Opciones de envío
-      const mailOptions: nodemailer.SendMailOptions = {
+      const mailOptions: SendMailOptions = {
         from,
         to: params.to,
         subject: params.subject,

@@ -46,7 +46,10 @@ jest.unstable_mockModule('@/lib/database/supabase-server', () => ({ supabaseAdmi
 jest.unstable_mockModule('@/lib/messaging/delivery-routing', async () => {
   const actual = await import('@/lib/custom-automation/test-helpers/load-runtime-module');
   const routing = actual.loadRuntimeModule<typeof import('@/lib/messaging/delivery-routing')>('src/lib/messaging/delivery-routing.ts', {
-    '@/lib/database/supabase-client': {}, '@/lib/services/outreach/policy': {},
+    '@/lib/billing/licensed-resources': {
+      getSiteLicensedResources: () => { throw new Error('Unexpected license lookup in the isolated publish routing mock.'); },
+    },
+    '@/lib/services/outreach/policy': {},
   });
   return { ...routing, resolveDeliveryRoutes: async (_site: string, args: any) => routing.parseDeliveryRoutes(args).map(route => ({ ...route, connection_id: 'selected-2' })) };
 });
@@ -77,7 +80,7 @@ beforeAll(async () => {
 
 const siteId = '00000000-0000-4000-8000-000000000001';
 const leadId = '00000000-0000-4000-8000-000000000002';
-const bulkExecuteMock = jest.fn(async (_args: unknown) => ({ success: true }));
+const bulkExecuteMock = jest.fn(async (..._args: Parameters<ReturnType<SendBulk>['execute']>) => ({ success: true }));
 const sendConversationMessageMock = jest.fn();
 const getMediaMock = jest.fn();
 
@@ -259,6 +262,7 @@ describe('publish test delivery', () => {
         media_urls: ['https://cdn.example.com/order.jpg'],
         scheduled_at: scheduledAt,
       },
+      siteId,
     );
   });
 
@@ -276,6 +280,7 @@ describe('publish test delivery', () => {
     expect(sendConversationMessageMock).toHaveBeenCalledWith(
       'outstand-conversation-1',
       { media_urls: ['https://media.outstand.so/image.jpg'] },
+      siteId,
     );
   });
 
@@ -289,6 +294,7 @@ describe('publish test delivery', () => {
     expect(sendConversationMessageMock).toHaveBeenCalledWith(
       'outstand-conversation-1',
       { content: 'https://example.com/order' },
+      siteId,
     );
   });
 

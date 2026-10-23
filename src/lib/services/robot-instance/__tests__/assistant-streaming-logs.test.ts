@@ -8,7 +8,8 @@ const pipeline = {
   expire: mockExpire,
   exec: mockExec,
 };
-const mockHdel = jest.fn<() => Promise<number>>();
+type RedisClient = ReturnType<typeof import('@/lib/utils/redis-client').getRedisClient>;
+const mockHdel = jest.fn<RedisClient['hdel']>();
 const mockHvals = jest.fn<() => Promise<string[]>>();
 const mockUpdateEq: any = jest.fn();
 const mockUpdate: any = jest.fn(() => ({ eq: mockUpdateEq }));

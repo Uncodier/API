@@ -9,7 +9,7 @@ const query = {
   select: jest.fn<(...args: unknown[]) => unknown>(),
   maybeSingle,
 };
-const from = jest.fn(() => query);
+const from = jest.fn((_table: string) => query);
 jest.unstable_mockModule('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from } }));
 let claimSocialContent: typeof import('../content-attempt')['claimSocialContent'];
 beforeAll(async () => { ({ claimSocialContent } = await import('../content-attempt')); });

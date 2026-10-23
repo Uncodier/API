@@ -22,5 +22,9 @@ jobs:
       - run: npm ci
       # All providers, sandboxes, and DB calls are faked or use in-memory PGlite.
       # No production credentials, database migrations, or live probes in this job.
+      - run: npm run test:dependencies
+      - run: npm run test:upgrade-regressions
+      - run: npm run test:voice
+      - run: npm run test:transactional-email
       - run: npm run test:harness
       - run: npm run test:harness:agent

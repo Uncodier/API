@@ -1,8 +1,9 @@
-import { beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { randomBytes } from 'node:crypto';
 
 const getUser = jest.fn<(...args: unknown[]) => Promise<any>>();
 const rpc = jest.fn<(...args: unknown[]) => Promise<any>>();
-const createClient = jest.fn(() => ({ auth: { getUser }, rpc }));
+const createClient = jest.fn((..._args: Parameters<typeof import('@supabase/supabase-js').createClient>) => ({ auth: { getUser }, rpc }));
 jest.unstable_mockModule('@supabase/supabase-js', () => ({ createClient }));
 let parsePostRequest: typeof import('../post-request').parsePostRequest;
 let requirePostSiteAccess: typeof import('../post-request').requirePostSiteAccess;
@@ -11,7 +12,11 @@ beforeAll(async () => {
 });
 
 const site = '00000000-0000-4000-8000-000000000001';
-const token = 'a'.repeat(40);
+const token = randomBytes(32).toString('hex');
+const supabaseUrl = 'https://database.example.invalid';
+let anonKey: string;
+const envNames = ['NEXT_PUBLIC_SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_ANON_KEY'] as const;
+const previousEnv = new Map(envNames.map(name => [name, process.env[name]]));
 const signal = new AbortController().signal;
 const request = (method = 'DELETE', headers: Record<string, string> = {}) => new Request(
   `https://api.example.test/posts/post-1?tenant_id=${site}`, {
@@ -21,8 +26,19 @@ const request = (method = 'DELETE', headers: Record<string, string> = {}) => new
 
 beforeEach(() => {
   jest.clearAllMocks();
+  anonKey = randomBytes(32).toString('hex');
+  process.env.NEXT_PUBLIC_SUPABASE_URL = supabaseUrl;
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = anonKey;
+  jest.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Unexpected live authorization request'));
   getUser.mockResolvedValue({ data: { user: { id: 'user-1', role: 'authenticated' } }, error: null });
   rpc.mockImplementation(async (name) => ({ data: name === 'user_can' ? true : 'owner', error: null }));
+});
+afterEach(() => {
+  for (const [name, value] of previousEnv) {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
+  jest.restoreAllMocks();
 });
 
 describe('strict Outstand post query contract', () => {
@@ -62,7 +78,7 @@ describe('fresh bearer authentication and user-scoped DELETE capability', () => 
     expect(rpc.mock.calls).toEqual([
       ['current_user_site_role', { p_site_id: site }], ['user_can', { p_site_id: site, p_command: 'delete' }],
     ]);
-    expect(createClient).toHaveBeenCalledWith(expect.any(String), 'test-anon-key', expect.objectContaining({
+    expect(createClient).toHaveBeenCalledWith(supabaseUrl, anonKey, expect.objectContaining({
       auth: { autoRefreshToken: false, persistSession: false, detectSessionInUrl: false },
       global: { headers: { Authorization: `Bearer ${token}` }, fetch: expect.any(Function) },
     }));
@@ -103,6 +119,14 @@ describe('fresh bearer authentication and user-scoped DELETE capability', () => 
   it('fails closed on authorization storage errors', async () => {
     rpc.mockResolvedValueOnce({ data: 'owner', error: { message: 'database detail' } });
     await expect(requirePostSiteAccess(request(), site, signal)).rejects.toMatchObject({ status: 503 });
+  });
+  it.each(envNames)('fails closed without %s before creating the user client', async name => {
+    delete process.env[name];
+    await expect(requirePostSiteAccess(request(), site, signal)).rejects.toMatchObject({ status: 503 });
+    expect(createClient).not.toHaveBeenCalled();
+    expect(getUser).not.toHaveBeenCalled();
+    expect(rpc).not.toHaveBeenCalled();
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
   it('fails closed if DELETE capability lookup is unavailable', async () => {

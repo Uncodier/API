@@ -75,7 +75,7 @@ describe('site skills catalog', () => {
   it('inserts only the selected site and rejects duplicate slugs', async () => {
     const single = jest.fn<() => Promise<any>>().mockResolvedValue({ data: null, error: { code: '23505' } });
     const select = jest.fn(() => ({ single }));
-    const insert = jest.fn(() => ({ select }));
+    const insert = jest.fn((_values: Record<string, unknown>) => ({ select }));
     dbFrom.mockReturnValue({ insert });
     await expect(catalog.createSiteSkill(siteId, content)).rejects.toMatchObject({ status: 409 });
     expect(insert).toHaveBeenCalledWith(expect.objectContaining({ site_id: siteId, content, slug: 'test-skill' }));
@@ -89,8 +89,8 @@ describe('site skills catalog', () => {
   it('site-scopes both update and delete before reading a row', async () => {
     const maybeSingle = jest.fn<() => Promise<any>>().mockResolvedValue({ data: null, error: null });
     const select = jest.fn(() => ({ maybeSingle }));
-    const eqId = jest.fn(() => ({ select }));
-    const eqSite = jest.fn(() => ({ eq: eqId }));
+    const eqId = jest.fn((_column: string, _value: string) => ({ select }));
+    const eqSite = jest.fn((_column: string, _value: string) => ({ eq: eqId }));
     const update = jest.fn(() => ({ eq: eqSite }));
     const remove = jest.fn(() => ({ eq: eqSite }));
     dbFrom.mockReturnValue({ update, delete: remove });

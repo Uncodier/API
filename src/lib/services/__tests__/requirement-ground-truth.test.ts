@@ -18,8 +18,8 @@ const maybeSingle = jest.fn(async () => ({
 const eqAfterSelect = jest.fn(() => ({ maybeSingle }));
 const select = jest.fn(() => ({ eq: eqAfterSelect }));
 const updateEq = jest.fn(async () => ({ error: null }));
-const update = jest.fn(() => ({ eq: updateEq }));
-const patchRequirementMetadataKeys = jest.fn(async () => ({
+const update = jest.fn((_values: Record<string, unknown>) => ({ eq: updateEq }));
+const patchRequirementMetadataKeys = jest.fn<typeof import('../requirement-metadata-patch').patchRequirementMetadataKeys>(async () => ({
   decisions_log: [],
   concurrent_key: 'preserved',
 }));

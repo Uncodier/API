@@ -44,7 +44,7 @@ describe('resolvePublicSiteContext', () => {
       error: null,
     });
     const limit = jest.fn(() => ({ maybeSingle }));
-    const inFilter = jest.fn(() => ({ limit }));
+    const inFilter = jest.fn((_column: string, _values: readonly string[]) => ({ limit }));
     const select = jest.fn(() => ({ in: inFilter }));
     (from as any).mockReturnValue({ select });
 

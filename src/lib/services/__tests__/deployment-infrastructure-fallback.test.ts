@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 const limit = jest.fn() as jest.MockedFunction<
   (...args: number[]) => Promise<{ data: any[]; error: any }>
 >;
-const rpc = jest.fn(async (name: string) => ({
+const rpc = jest.fn(async (name: string, _params?: Record<string, unknown>) => ({
   data: name === 'acquire_deployment_recovery_scan_lease' ? true : null,
   error: null,
 }));

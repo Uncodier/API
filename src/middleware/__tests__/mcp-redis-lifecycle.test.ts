@@ -2,9 +2,11 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@j
 import { randomBytes } from 'node:crypto';
 import { NextRequest } from 'next/server';
 
-const insert = jest.fn(async () => ({ error: null }));
+const abortSignal = jest.fn<(_signal: AbortSignal) => Promise<{ error: unknown }>>();
+const insert = jest.fn((_values: Record<string, unknown>) => ({ abortSignal }));
+const from = jest.fn((_table: string) => ({ insert }));
 const validateApiKey = jest.fn();
-jest.unstable_mockModule('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: () => ({ insert }) } }));
+jest.unstable_mockModule('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from } }));
 jest.unstable_mockModule('@/lib/services/api-keys/ApiKeyService', () => ({ ApiKeyService: { validateApiKey } }));
 
 let middleware: typeof import('../requestMiddleware').default;
@@ -22,15 +24,20 @@ function request() {
 describe('MCP Redis timeouts with real middleware, auth and telemetry', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    abortSignal.mockReset().mockResolvedValue({ error: null });
     for (const name of envNames) delete process.env[name];
     Object.assign(process.env, { NODE_ENV: 'production',
       SERVICE_API_KEY: randomBytes(32).toString('hex'),
       CACHE_UPSTASH_REDIS_REST_URL: 'https://redis.example.test',
       CACHE_UPSTASH_REDIS_REST_TOKEN: randomBytes(32).toString('hex') });
     jest.spyOn(console, 'error').mockImplementation(() => {});
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    jest.spyOn(AbortSignal, 'timeout');
   });
   afterEach(() => {
-    const output = JSON.stringify([jest.mocked(console.error).mock.calls, insert.mock.calls]);
+    const output = JSON.stringify([
+      jest.mocked(console.error).mock.calls, jest.mocked(console.warn).mock.calls, insert.mock.calls,
+    ]);
     for (const name of ['SERVICE_API_KEY', 'CACHE_UPSTASH_REDIS_REST_TOKEN']) expect(output).not.toContain(process.env[name]);
     jest.restoreAllMocks();
     for (const [name, value] of previousEnv) {
@@ -55,19 +62,26 @@ describe('MCP Redis timeouts with real middleware, auth and telemetry', () => {
       expect(await response.json()).toMatchObject({ error: { code: 'RATE_LIMIT_UNAVAILABLE' } });
       expect(waitUntil).not.toHaveBeenCalled();
       expect(validateApiKey).not.toHaveBeenCalled();
+      expect(from).not.toHaveBeenCalled();
       expect(insert).not.toHaveBeenCalled();
+      expect(abortSignal).not.toHaveBeenCalled();
+      expect(console.warn).not.toHaveBeenCalled();
     });
 
-  it('retains pending telemetry without blocking MCP admission; its timeout does not change auth', async () => {
+  it.each(['timeout', 'contended'])('retains pending telemetry without blocking MCP admission: %s', async outcome => {
     let fail!: (error: Error) => void;
+    let complete!: (response: Response) => void;
     let markStarted!: () => void;
     const started = new Promise<void>(resolve => { markStarted = resolve; });
-    const pending = new Promise<Response>((_resolve, reject) => { fail = reject; });
-    jest.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
+    const pending = new Promise<Response>((resolve, reject) => { complete = resolve; fail = reject; });
+    const fetchMock = jest.spyOn(globalThis, 'fetch').mockImplementation(async (_input, init) => {
       const args = JSON.parse(String(init?.body));
       if (args[0] === 'EVAL') return new Response(JSON.stringify({ result: [1, 60] }));
       expect(args[0]).toBe('SET');
-      expect(args[1]).toMatch(/^telemetry:sample:/);
+      expect(args).toEqual([
+        'SET', expect.stringMatching(/^telemetry:sample:[a-f0-9]{64}$/), '1', 'EX', 60, 'NX',
+      ]);
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
       markStarted();
       return pending;
     });
@@ -77,15 +91,40 @@ describe('MCP Redis timeouts with real middleware, auth and telemetry', () => {
       expect(response.status).toBe(200);
       expect(response.headers.get('x-middleware-next')).toBe('1');
       expect(waitUntil).toHaveBeenCalledTimes(1);
+      expect(validateApiKey).not.toHaveBeenCalled();
       expect(insert).not.toHaveBeenCalled();
+      expect(abortSignal).not.toHaveBeenCalled();
     } finally {
       await started;
-      fail(new DOMException('Timed out', 'TimeoutError'));
+      if (outcome === 'timeout') fail(new DOMException('Timed out', 'TimeoutError'));
+      else complete(new Response(JSON.stringify({ result: null })));
     }
     await expect(waitUntil.mock.calls[0][0]).resolves.toBeUndefined();
-    expect(insert).not.toHaveBeenCalled();
-    expect(console.error).toHaveBeenCalledWith('[Upstash REST] Command failed:', expect.objectContaining({
-      operation: 'telemetry-sample', failure: 'timeout',
-    }));
+    if (outcome === 'timeout') {
+      // Sampling timeout must retain the real observation; admission timeouts
+      // above remain fail-closed and never reach authentication telemetry.
+      expect(from).toHaveBeenCalledTimes(1);
+      expect(from).toHaveBeenCalledWith('system_telemetry');
+      expect(insert).toHaveBeenCalledTimes(1);
+      expect(insert).toHaveBeenCalledWith({
+        system_key: 'api_auth', status: 'up', message: 'Service API Key used', latency_ms: 5,
+      });
+      expect(abortSignal).toHaveBeenCalledTimes(1);
+      expect(abortSignal).toHaveBeenCalledWith(expect.any(AbortSignal));
+      expect(abortSignal.mock.calls[0][0].aborted).toBe(false);
+      expect(AbortSignal.timeout).toHaveBeenCalledWith(3000);
+      expect(console.error).toHaveBeenCalledTimes(1);
+      expect(console.error).toHaveBeenCalledWith('[Upstash REST] Command failed:', expect.objectContaining({
+        operation: 'telemetry-sample', failure: 'timeout', stage: 'fetch',
+        timeout_ms: 2000, http_status: null,
+      }));
+    } else {
+      expect(from).not.toHaveBeenCalled();
+      expect(insert).not.toHaveBeenCalled();
+      expect(abortSignal).not.toHaveBeenCalled();
+      expect(console.error).not.toHaveBeenCalled();
+    }
+    expect(console.warn).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.filter(([, init]) => JSON.parse(String(init?.body))[0] === 'SET')).toHaveLength(1);
   });
 });

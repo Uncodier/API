@@ -1,6 +1,6 @@
 import { EmailConfigService, type EmailConfig } from './EmailConfigService';
 import { SentEmailDuplicationService } from './SentEmailDuplicationService';
-import nodemailer from 'nodemailer';
+import nodemailer, { type SendMailOptions } from 'nodemailer';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { EmailTrackingService } from '../tracking/EmailTrackingService';
 
@@ -126,7 +126,7 @@ export class EmailSendService {
       const fromAddress = senderEmail;
 
       // Configurar opciones del email
-      const mailOptions: nodemailer.SendMailOptions = {
+      const mailOptions: SendMailOptions = {
         from: `${fromName} <${fromAddress}>`,
         to: email,
         subject,

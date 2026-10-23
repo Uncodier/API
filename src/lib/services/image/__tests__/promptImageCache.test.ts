@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 
-const getPublicUrl = jest.fn(() => ({
+type StorageBucket = ReturnType<typeof import('@/lib/database/supabase-client').supabaseAdmin.storage.from>;
+const getPublicUrl = jest.fn<StorageBucket['getPublicUrl']>(() => ({
   data: {
     publicUrl: 'https://db.example/storage/v1/object/public/generative_images/prompt_cache/hash',
   },

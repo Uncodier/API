@@ -1,20 +1,22 @@
 const mockFrom = jest.fn();
+const mockRpc = jest.fn();
 const mockGetAudienceById = jest.fn();
 const mockGetAudiencePageForSending = jest.fn();
 const mockUpdateAudienceLeadStatus = jest.fn();
 const mockFindActiveSalesAgent = jest.fn();
 
 jest.mock("@/lib/database/supabase-client", () => ({
-  supabaseAdmin: { from: mockFrom },
+  supabaseAdmin: { from: mockFrom, rpc: mockRpc },
 }));
 jest.mock("@/lib/database/audience-db", () => ({
   getAudienceById: mockGetAudienceById,
   getAudiencePageForSending: mockGetAudiencePageForSending,
   updateAudienceLeadStatus: mockUpdateAudienceLeadStatus,
 }));
-jest.mock("../sendEmail/core", () => ({ sendEmailCore: jest.fn() }));
-jest.mock("@/lib/services/whatsapp/WhatsAppSendService", () => ({
-  WhatsAppSendService: {},
+// Voice queue preparation must not load or call actual email/WhatsApp dispatch adapters.
+jest.mock("@/lib/messaging/exact-delivery", () => ({
+  sendExactDelivery: jest.fn(() => { throw new Error('Unexpected direct delivery in a Voice queue test.'); }),
+  getExactWhatsAppConfig: jest.fn(() => { throw new Error('Unexpected WhatsApp preparation in a Voice queue test.'); }),
 }));
 jest.mock("@/lib/services/whatsapp/WhatsAppTemplateService", () => ({
   WhatsAppTemplateService: {},
@@ -30,6 +32,16 @@ import { sendBulkMessagesTool } from "./assistantProtocol";
 describe("sendBulkMessages Voice context", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockRpc.mockImplementation((name: string, args: { p_site_id: string }) => {
+      expect(name).toBe('get_site_licensed_resources');
+      expect(args).toEqual({ p_site_id: 'site-1' });
+      return { abortSignal: async (signal: AbortSignal) => {
+        expect(signal).toBeInstanceOf(AbortSignal);
+        return { data: { effective_plan: 'engine', social_media: [], channels: { connections: [{
+          id: 'voice-1', type: 'voice', status: 'connected', license_suspended: false, zavu_sender_id: 'voice-sender-1',
+        }] } }, error: null };
+      } };
+    });
     mockGetAudienceById.mockResolvedValue({
       id: "audience-1",
       site_id: "site-1",
@@ -41,7 +53,7 @@ describe("sendBulkMessages Voice context", () => {
       leads: [{
         id: "lead-1",
         name: "Ada Lovelace",
-        email: "ada@example.com",
+        email: "ada@example.invalid",
         phone: "+14155550100",
         do_not_call: false,
         voice_call_consent_status: "unknown",
@@ -90,11 +102,13 @@ describe("sendBulkMessages Voice context", () => {
     });
 
     expect(result).toMatchObject({ success: true, total_sent: 1 });
+    expect(mockRpc).toHaveBeenCalledWith('get_site_licensed_resources', { p_site_id: 'site-1' });
     expect(conversationInsert).toHaveBeenCalledWith([
       expect.objectContaining({
         custom_data: expect.objectContaining({
           voice_objective: "Confirm Ada Lovelace's appointment",
           voice_additional_context: "Preferred time: afternoon.",
+          connection_id: 'voice-1',
         }),
       }),
     ]);
@@ -104,6 +118,7 @@ describe("sendBulkMessages Voice context", () => {
           voice_mode: "agent_call",
           voice_objective: "Confirm Ada Lovelace's appointment",
           voice_additional_context: "Preferred time: afternoon.",
+          connection_id: 'voice-1',
         }),
       }),
     ]);
@@ -129,5 +144,15 @@ describe("sendBulkMessages Voice context", () => {
       preferences.do_not_call ? 'Lead is on the do-not-call list' : 'Lead has opted out of Voice calls');
     expect(mockFrom.mock.calls.map(([table]) => table)).not.toContain('conversations');
     expect(mockFrom.mock.calls.map(([table]) => table)).not.toContain('messages');
+  });
+  it('denies an unavailable license projection before reading recipients or queueing Voice', async () => {
+    mockRpc.mockReturnValue({ abortSignal: async () => ({ data: null, error: { code: 'PGRST202' } }) });
+    const result = await sendBulkMessagesTool('site-1').execute({
+      audience_id: 'audience-1', channel: 'voice', voice_mode: 'agent_call', message: 'Hello Ada.',
+    });
+    expect(result.success).toBe(false);
+    expect(mockGetAudiencePageForSending).not.toHaveBeenCalled();
+    expect(mockFrom).not.toHaveBeenCalled();
+    expect(mockUpdateAudienceLeadStatus).not.toHaveBeenCalled();
   });
 });

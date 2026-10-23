@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { randomBytes } from 'node:crypto';
 
 const start = jest.fn();
-const getPromptHash = jest.fn(() => 'image-hash');
+const getPromptHash = jest.fn<typeof import('@/lib/services/image/promptImageCache').getPromptHash>(() => 'image-hash');
 const downloadFromCache = jest.fn();
 const resolveSiteFromRequirementUrl = jest.fn();
 const hasAuthenticatedPrincipal = jest.fn();

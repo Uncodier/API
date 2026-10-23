@@ -1,15 +1,16 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { randomBytes } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 
-const serviceCredential = 'test-only-internal-service-credential';
-const databaseCredential = 'test-only-database-credential';
+const serviceCredential = randomBytes(32).toString('hex');
+const databaseCredential = randomBytes(32).toString('hex');
 const databaseKey = { id: 'database-key', name: 'Scoped key', scopes: ['read'] };
 const validateApiKey = jest.fn(async (key: string) => (
   key === databaseCredential
     ? { isValid: true, keyData: databaseKey }
     : { isValid: false, keyData: null }
 ));
-const recordTelemetry = jest.fn(async () => {});
+const recordTelemetry = jest.fn<typeof import('@/lib/status/telemetry').recordTelemetry>(async () => {});
 
 // Keep requestMiddleware, apiKeyAuth, credential verification, admission and
 // Upstash REST code real. Only external DB/telemetry/network are simulated.
@@ -87,7 +88,7 @@ beforeEach(() => {
     NODE_ENV: 'production',
     SERVICE_API_KEY: serviceCredential,
     CACHE_UPSTASH_REDIS_REST_URL: 'https://admission.example.test',
-    CACHE_UPSTASH_REDIS_REST_TOKEN: 'test-only-storage-token',
+    CACHE_UPSTASH_REDIS_REST_TOKEN: randomBytes(32).toString('hex'),
   });
   jest.spyOn(console, 'error').mockImplementation(() => {});
   jest.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
@@ -114,6 +115,8 @@ afterEach(() => {
 });
 
 describe('verified service expensive admission with real authentication', () => {
+  // Exercise all 601 admissions and redaction checks even on slower CI hosts.
+  // This is a test-runner budget, not a relaxation of Redis request deadlines.
   it('allows 600 requests (>300 from one IP), rejects 601, and leaves ordinary budgets untouched', async () => {
     for (let index = 0; index < 600; index++) {
       const headers: Record<string, string> = index % 3 === 0
@@ -143,7 +146,7 @@ describe('verified service expensive admission with real authentication', () => 
     expect((await middleware(request())).status).toBe(401);
     expect(await count('expensive', ip)).toBe(1);
     expect(await count('api-key-validation', ip)).toBe(1);
-  });
+  }, 30_000);
 
   it('does not compete with already exhausted expensive/IP or API-key-validation/IP budgets', async () => {
     await seed('expensive', ip, 20);
