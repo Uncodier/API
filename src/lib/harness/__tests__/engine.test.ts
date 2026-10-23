@@ -149,6 +149,50 @@ describe('portable continuous engine with durable boundaries', () => {
     expectToolPairs(result.messages);
   });
 
+  it.each([false, true])('refreshes actual tools after stale missing-search history (compacted=%s)', async compacted => {
+    const search = tool('webSearch', 'write', jest.fn(async () => ({ ok: true, output: { results: [] } })));
+    const checkInventory = (input: ModelInput) => {
+      expect(input.system).toContain('webSearch is exposed NOW');
+      expect(input.messages.at(-1)?.content).toContain('webSearch is exposed NOW');
+      expect(input.messages.at(-1)?.content).toContain('not provider health');
+      expect(input.messages.filter(message => message.content.startsWith('CURRENT HOST TOOL AVAILABILITY'))).toHaveLength(1);
+      expect(input.messages.at(-1)?.content).toContain('uncertain-operation replay protections');
+      expectToolPairs(input.messages);
+    };
+    const model = scripted(input => {
+      checkInventory(input);
+      return reply(call('new-search', 'webSearch', { query: 'published financial results' }));
+    }, input => { checkInventory(input); return finish(); });
+    const input = await setup(model, [search], {}, undefined, 'offline-requirement');
+    input.session.messages.push(
+      { role: 'assistant', content: '', toolCalls: [call('old-manifest', 'capability_manifest')] },
+      { role: 'tool', toolCallId: 'old-manifest', content: JSON.stringify({ ok: true, output: { cron_tools: ['requirement_context'] } }) },
+      { role: 'assistant', content: 'Public Makinari search is unavailable. Only localhost works. Need HTTP permission.' },
+    );
+    if (compacted) for (let index = 0; index < 25; index++) input.session.messages.push({ role: 'user', content: `Old reference ${index}: ${'x'.repeat(4000)}` });
+    const before = structuredClone(input.session.messages);
+    input.getContext = async () => 'Previous cycle: unable because search missing.';
+    const result = await runSessionSlice(input);
+    expect(result.status).toBe('completed');
+    expect(search.execute).toHaveBeenCalledTimes(1);
+    expect(result.messages.slice(0, before.length)).toEqual(before);
+    expect(result.messages.some(message => message.content.startsWith('CURRENT HOST TOOL AVAILABILITY'))).toBe(false);
+    expect(result.allocatedTokens).toBeGreaterThan(input.session.allocatedTokens);
+  });
+
+  it('does not advertise removed tools from a stale manifest on resume', async () => {
+    const model = scripted(input => {
+      expect(input.messages.at(-1)?.content).toContain('webSearch is NOT exposed');
+      expect(input.system).not.toContain('webSearch is exposed NOW');
+      expect(input.tools.some(tool => tool.name === 'webSearch')).toBe(false);
+      return reply(call('partial', 'finish_task', { summary: 'No public search tool is exposed; evidence missing.', outcome: 'partial' }));
+    });
+    const input = await setup(model, [], {}, undefined, 'offline-requirement');
+    input.session.messages.push({ role: 'user', content: 'Previous inventory: webSearch available.' });
+    const result = await runSessionSlice(input);
+    expect(result.reason).toBe('partial');
+  });
+
   it('consumes a pre-upgrade pending wait without executing an injected wait adapter', async () => {
     const injected = tool('wait_for_input', 'read', jest.fn(async () => ({ ok: true })));
     const input = await setup(scripted(finish()), [injected], {}, undefined, 'offline-requirement');

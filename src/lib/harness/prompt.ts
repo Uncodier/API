@@ -1,4 +1,22 @@
-import type { WorkspaceRef } from './types';
+import type { HarnessTool, WorkspaceRef } from './types';
+
+/** Derived from the exact dispatch list, not saved manifests or inferred capabilities. */
+export function currentToolContext(tools: HarnessTool[]): string {
+  const names = tools.map(tool => tool.name);
+  return `CURRENT HOST TOOL AVAILABILITY (this model turn)
+Exposed tool names: ${JSON.stringify(names)}
+This live host inventory supersedes older capability_manifest receipts and statements that a tool
+was missing. It describes availability, not provider health, task completion or new permission.
+${names.includes('webSearch') ? `webSearch is exposed NOW for public Makinari research. The localhost-only QA browser
+does not restrict webSearch. If the existing task requests public Makinari search, use webSearch
+under that existing authorization; do not request an HTTP substitute merely because older history
+said search was missing. No search has been performed by this inventory.` :
+    'webSearch is NOT exposed in this turn. Do not claim public search is available from old history.'}
+Actual tool results still determine success, configuration and credit availability. Preserve user
+pauses, scope, spending restrictions and uncertain-operation replay protections. Before concluding
+unable solely because a capability is missing, compare that claim with this current inventory.
+Continue authorized work with the exposed tools; do not repeat failed calls without new evidence.`;
+}
 
 export function buildHarnessPrompt(workspace: WorkspaceRef, requirementBound = false): string {
   return `You are a software agent working on the user's repository in an isolated workspace.

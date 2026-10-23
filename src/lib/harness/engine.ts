@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { buildHarnessPrompt } from './prompt';
+import { buildHarnessPrompt, currentToolContext } from './prompt';
 import { withinDeadline } from './deadline';
 import { createRedactor, operationFingerprint, redactData, safeError } from './security';
 import { createMemoryArtifactStore } from './artifact-store';
@@ -111,7 +111,8 @@ export async function runSessionSlice(input: RunSliceInput): Promise<HarnessSess
   const requirementBound = !!session.request.requirementId;
   const tools = [...input.tools.filter(tool => !requirementBound || tool.name !== 'wait_for_input'), ...controls(requirementBound)];
   if (new Set(tools.map(tool => tool.name)).size !== tools.length) throw new Error('Duplicate harness tool name');
-  const system = buildHarnessPrompt(input.workspace.ref, requirementBound);
+  const availability = requirementBound ? currentToolContext(tools) : undefined;
+  const system = buildHarnessPrompt(input.workspace.ref, requirementBound) + (availability ? `\n\n${availability}` : '');
   const assertActive = async () => {
     if (input.signal?.aborted) throw new Error('Execution cancelled');
     await input.assertExecution?.();
@@ -300,6 +301,10 @@ export async function runSessionSlice(input: RunSliceInput): Promise<HarnessSess
     // Only these ephemeral copies go to the model; the stored transcript is unchanged.
     messages.splice(laterExchange < 0 ? messages.length : laterExchange, 0,
       ...(initialContext ? [initialContext] : []), ...(refreshedContext ? [refreshedContext] : []));
+    // Latest-turn evidence must come AFTER stale history, including after context
+    // compaction. Keep it ephemeral: no transcript growth or fake tool receipts.
+    // There are no outstanding tool calls at this point, so pairing is preserved.
+    if (availability) messages.push({ role: 'user', content: availability });
     // UTF-8 byte count is a conservative upper bound, not optimistic character/4 accounting.
     const reserved = Buffer.byteLength(JSON.stringify({ system, messages, tools: tools.map(({ name, description, parameters }) => ({ name, description, parameters })) }))
       + session.request.limits.maxOutputTokens;

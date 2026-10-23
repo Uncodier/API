@@ -75,7 +75,11 @@ it('requirement runtime passes its scoped refresh callback through the real sess
     if (turn++) {
       expect(fresh.content).toContain('"status":"completed"');
       expect(fresh.content).toContain('backlog revision: 2');
-      expect(messages.at(-1).role).toBe('tool');
+      expect(messages.at(-2).role).toBe('tool');
+      expect(messages.at(-2).toolCallId).toBe('change');
+      expect(messages.at(-1).role).toBe('user');
+      expect(messages.at(-1).content).toContain('CURRENT HOST TOOL AVAILABILITY');
+      expect(messages.at(-1).content).toContain('"change"');
       return reply('finish', 'finish_task', { summary: 'Reported actual work.', outcome: 'partial' });
     }
     expect(fresh.content).toContain('"status":"pending"');
@@ -86,6 +90,7 @@ it('requirement runtime passes its scoped refresh callback through the real sess
   expect(loadSnapshot.mock.calls).toEqual([[run], [run]]);
   const saved = JSON.stringify(await store.load(run.sessionId, run.siteId));
   expect(saved).not.toContain('initial-reference'); expect(saved).not.toContain('Advisory context read');
+  expect(saved).not.toContain('CURRENT HOST TOOL AVAILABILITY');
 });
 
 it('the shared callback signature remains optional and read rejection reaches the model as unavailable, not a runtime gate', async () => {

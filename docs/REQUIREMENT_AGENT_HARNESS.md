@@ -84,6 +84,16 @@ Azure Bing search adapter and site credit policy. It is independent of the
 localhost-only QA browser. Capability discovery lists the search tool; the current
 model tool list, not an older transcript, is authoritative. Research deliverables
 do not require app edits or deployment merely because a workspace is attached.
+Each requirement model turn now receives a live inventory derived from the exact
+assembled dispatch list, both in the system instructions and after historical
+messages/context compaction. It explicitly distinguishes exposed public webSearch
+from the localhost-only QA browser. An old missing-tool receipt cannot be the only
+availability guidance on resume. The inventory is ephemeral (no appended durable
+messages or fake search receipts), included in token accounting, and grants no new
+permissions or proof that the provider is healthy. Actual call results, credit
+checks and uncertain-effect protections still apply. A completed `unable` session
+is not automatically reopened by this change: deploy first, then use the existing
+authorized requirement reopen command to retain its session/history/budgets.
 Search checks the bound site/user/runner/generation and active leases before paid
 work. It uses durable write checkpoints because searches consume credits; uncertain
 billing/provider effects cannot be replayed as if they were free reads. Credentials
