@@ -106,7 +106,6 @@ export class CalendarAttachmentService {
               description: description,
               type: 'meeting',
               status: 'pending',
-              stage: 'pending',
               priority: 5, // medium
               user_id: finalUserId,
               site_id: siteId,

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { updateTask, getTaskById } from '@/lib/database/task-db';
+import { TASK_STAGES, TaskStageSchema } from '@/lib/database/task-stage';
 
 /**
  * Función para transformar diferentes formatos de fecha a ISO 8601
@@ -117,7 +118,7 @@ const UpdateTaskSchema = z.object({
   description: z.string().optional(),
   type: z.string().min(1, 'Tipo de tarea es requerido').optional(),
   status: z.enum(['in_progress', 'failed', 'pending', 'completed']).optional(),
-  stage: z.string().optional(),
+  stage: TaskStageSchema.optional(),
   priority: z.number().int().min(0).optional(),
   scheduled_date: z.string()
     .refine((val: string) => {
@@ -268,7 +269,7 @@ export async function GET() {
       "completed_date"
     ],
     task_statuses: ["in_progress", "failed", "pending", "completed"],
-    task_stages: "String libre (etapas del customer_journey, ej: 'awareness', 'consideration', 'decision')",
+    task_stages: TASK_STAGES,
     task_types: "String libre (cualquier tipo personalizado permitido, ej: 'call', 'email', 'demo', 'custom_type')",
     priority_levels: "Número entero (0 = más baja, números más altos = mayor prioridad)",
     update_behavior: {
@@ -326,7 +327,6 @@ export async function GET() {
       completion: {
         task_id: "task-id",
         status: "completed",
-        stage: "completed",
         completed_date: "2023-12-20T16:30:00Z"
       },
       reassignment: {

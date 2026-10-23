@@ -5,6 +5,7 @@
 
 import { getTaskCore } from './get/core';
 import { fetchApiTool } from '@/app/api/agents/tools/utils/fetch-helper';
+import { TASK_STAGES } from '@/lib/database/task-stage';
 
 
 
@@ -62,7 +63,10 @@ export function tasksTool(site_id: string, user_id?: string) {
         lead_id: { type: 'string', description: 'Lead UUID (required for create)' },
         description: { type: 'string', description: 'Task description' },
         status: { type: 'string', description: 'pending, in_progress, completed, failed' },
-        stage: { type: 'string', description: 'Task stage in pipeline' },
+        stage: {
+          type: 'string', enum: [...TASK_STAGES],
+          description: 'Customer journey stage, not task status. Defaults to awareness on create if omitted. Use status="pending" or status="completed" for execution state.',
+        },
         priority: { type: 'number', description: 'Priority 0-10' },
         scheduled_date: { type: 'string', description: 'ISO 8601 datetime' },
         completed_date: { type: 'string', description: 'ISO 8601 when completed' },

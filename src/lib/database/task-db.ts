@@ -1,5 +1,6 @@
 import { supabaseAdmin } from './supabase-server';
 import { createClient } from '@supabase/supabase-js';
+import { DEFAULT_TASK_STAGE } from './task-stage';
 
 /**
  * Función utilitaria para remover valores null y arreglos vacíos de un objeto
@@ -162,7 +163,7 @@ export async function createTask(taskData: CreateTaskParams): Promise<DbTask> {
       ...taskData,
       // Default status should be 'pending' to match schema and other flows
       status: taskData.status || 'pending',
-      stage: taskData.stage || 'pending',
+      stage: taskData.stage || DEFAULT_TASK_STAGE,
       // Ensure priority defaults to low (0) and never passes null/undefined
       priority: ((): number => {
         const p = (taskData as any).priority;
@@ -560,7 +561,7 @@ export async function getTasksBySiteId(siteId: string, filters: Omit<TaskFilters
 export async function completeTask(taskId: string): Promise<DbTask> {
   try {
     const result = await updateTask(taskId, {
-      stage: 'completed',
+      status: 'completed',
       completed_date: new Date().toISOString()
     });
     return result;

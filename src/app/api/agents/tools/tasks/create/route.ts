@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createTask } from '@/lib/database/task-db';
+import { DEFAULT_TASK_STAGE, TASK_STAGES, TaskStageSchema } from '@/lib/database/task-stage';
 import { supabaseAdmin } from '@/lib/database/supabase-server';
 import { TeamNotificationService } from '@/lib/services/team-notification-service';
 import { NotificationService, NotificationType, NotificationPriority, NotificationCategory } from '@/lib/services/notification-service';
@@ -190,7 +191,7 @@ const CreateTaskSchema = z.object({
   description: z.string().optional(),
   type: z.string().min(1, 'Tipo de tarea es requerido'),
   status: z.enum(['in_progress', 'failed', 'pending', 'completed']).default('pending'),
-  stage: z.string().default('pending'),
+  stage: TaskStageSchema.default(DEFAULT_TASK_STAGE),
   priority: z.number().int().min(0).default(0),
   lead_id: z.string().uuid('Lead ID debe ser un UUID válido'),
   conversation_id: z.string().uuid('Conversation ID debe ser un UUID válido').optional(),
@@ -1008,7 +1009,8 @@ export async function GET() {
       "address"
     ],
     task_statuses: ["in_progress", "failed", "pending", "completed"],
-    task_stages: "String libre (etapas del customer_journey, ej: 'awareness', 'consideration', 'decision')",
+    task_stages: TASK_STAGES,
+    default_stage: DEFAULT_TASK_STAGE,
     task_types: "String libre (cualquier tipo personalizado permitido, ej: 'call', 'email', 'demo', 'custom_type')",
     priority_levels: "Número entero (0 = más baja, números más altos = mayor prioridad)",
     date_formats: {
@@ -1058,7 +1060,7 @@ export async function GET() {
         description: "Llamar al cliente para confirmar interés",
         type: "call",
         status: "pending",
-        stage: "pending",
+        stage: DEFAULT_TASK_STAGE,
         priority: 10,
         user_id: "12345678-1234-1234-1234-123456789012", // Obtenido del lead
         site_id: "87654321-4321-4321-4321-210987654321", // Obtenido del lead
