@@ -1,16 +1,85 @@
-# Requirement agent harness
+# Requirement execution through the canonical assistant
 
 ## Active code path
 
 `GET /api/cron/requirements-apps` → `runCronAppsWorkflow` → `executeRequirementCycle`
-→ `runRequirementCycle` → `executeSessionSlice` → `runSessionSlice`.
+→ `assistant/requirement-runtime.ts::runRequirementCycle`
+→ `assistant/requirement-workspace.ts::executeRequirementAssistantWorkspace`
+→ `assistant/requirement-session.ts::runRequirementAssistantSlice`.
 
 The minute cron in `vercel.json` is unchanged. There is no second scheduler,
 standalone session API, feature-flag alternative or coordinator/Judge workflow.
-The former portable core is now the executor used by the normal requirement cron.
+The requirement session uses the canonical assistant's `prepareAssistantContext`
+and `processAssistantTurn` implementations in `assistant-context.ts` and
+`assistant-turn-core.ts`. Interactive durable wrappers (`steps.ts` and
+`assistant-turn.ts`) retain their exports and delegate to those same modules.
+Requirement execution therefore shares the assistant prompt/context preparation
+and turn core rather than maintaining a separate model loop or harness prompt.
 Interactive assistant requirement plans still hand off to this cron instead of
 executing under a competing owner. Standalone assistant conversations and unrelated
 workflow/node execution are not replaced by this change.
+
+The former production harness engine, runtime, model and prompt are retired;
+archival test fixtures are not production dependencies. Harness helpers, storage,
+workspace safety and tools remain infrastructure, not an alternative executor.
+`attachRequirementAssistantHost` attaches trusted requirement tools/context through
+a host-only `WeakMap`. These capabilities are not serialized request fields and
+cannot be supplied by a user or model as an execution override.
+
+### Existing sessions and retirement safety
+
+The canonical adapter retains the existing session tables, requirement ownership,
+workspace identity, transcript and monotonic usage counters. Retirement is not a
+new session, a budget reset or a reason to fabricate user actions. Current assistant
+activity is written to `instance_logs`. Historical transcript entries imported for
+continuity are explicitly labeled **imported**: they are not newly executed tool
+receipts, newly billed model calls or new user messages.
+The bounded import includes the most recent 100 entries (up to 6,000 characters
+each), marks them `historical_import: true` and points to older full session
+history. Stable session/message/call identities prevent a new cron run from
+inventing a second historical event; missing original timestamps are not fabricated.
+A persisted audit cursor skips already imported and canonically logged messages
+on later slices rather than importing them again.
+
+Incomplete pending tool batches from the retired engine **pause for trusted
+reconciliation, not replay**. An absent result is not proof that a remote effect
+failed. Do not blindly redispatch old calls, clear uncertain-effect fences or reset
+history/counters to make a session runnable. The canonical session uses a durable
+per-effect boundary for current execution; it does not rely on replaying an entire
+cron slice to recover effects.
+Current canonical checkpoints have a separate execution-version marker: interrupted
+undispatched calls receive explicit not-executed receipts, while dispatched calls
+receive unknown-outcome receipts and write fingerprints remain fenced. Neither is
+replayed automatically. This closes the outstanding batch so trusted reconciliation
+is reachable on continuation. A saved successful `finish_task` receipt recovers its
+completion intent without another model call. An import cursor alone is not a
+permission to replay legacy work.
+Only an explicit `finish_task` with resolved calls completes the session; a prose
+answer alone does not. Ordinary tool results persist a full redacted artifact and
+the required result log before their pending effect is cleared. Bounded control
+and recovery receipts instead persist inline in the checkpoint and in instance
+logs. Their snapshot capacity is checked before execution; they do not reserve
+another 1 MiB of artifacts, so a full artifact store cannot prevent inspection,
+recovery or an honest partial finish.
+
+Routed results use the canonical assistant's nested-envelope outcome normalization:
+successful transport does not turn an inner tool failure into success. Uncertain
+write fingerprints bind the actual routed tool name and parsed argument object,
+not JSON whitespace, key order or either tool-level `thought_process` field.
+Existing transport fingerprints remain stored and acquire equivalent canonical
+fences during continuation; this does not reset or replay historical operations.
+Completion is deferred until the full `afterTurn` boundary has resolved the batch.
+The host checkpoint runs while ownership is still active, before the terminal
+session save; saving completion must not invalidate its own checkpoint lease.
+
+Requirement-mode output streaming is disabled so redaction and durable full
+per-turn receipts happen before output is published. Interactive assistant
+streaming is unchanged; this is not a second inference implementation.
+
+This document describes source changes and rollout requirements only. **No production
+migration, deployment, cron activation or historical transcript import has been
+applied as part of this retirement work.** The checkpoint instructions below remain
+deployment prerequisites, not evidence that a migration has run.
 
 ### Product context and continuity
 
@@ -40,13 +109,16 @@ required. `apply_patch` uses the schema's create/exact-replace operations.
 
 Optional tools include tenant/database/auth/storage provisioning and inspection,
 migration application, local HTTP/API/browser/scenario checks, screenshots and visual
-critique, tracking installation, source archive, independent `review_work` and
+critique, tracking installation, source archive and
 host-authorized `platform_key_provision`, `deployment_environment_sync` and
 `deployment_create` tools. Preview creation verifies the provider project's linked
 GitHub repository and uses the requirement branch; it never promotes production.
-Git commit/push are explicit shell commands
-with a host-brokered credential for the bound repository. Saving files does not run
-a build, push a checkpoint, deploy a preview or request a Judge verdict.
+The independent `review_work` model route is retired, not an optional second
+requirement executor.
+Agent-selected Git commit/push remain explicit shell commands with a host-brokered
+credential for the bound repository. Saving individual files does not run a build,
+deploy a preview or request a Judge verdict. The separate host source-checkpoint
+hook below runs at owned cycle boundaries, without changing the agent prompt.
 
 Tool failures never cancel a plan, create a product circuit, quarantine work or
 remove editing tools. Historical technical blockers and attempt counters remain
@@ -56,6 +128,55 @@ without trusted reconciliation. Migration ownership/privilege safety still appli
 `finish_task` records an honest implemented/partial/unable summary. The host projects
 completion to `on-review`, not automatic product acceptance or `done`. It does not
 require build/push/preview success. Explicit user pause/cancel/holds take precedence.
+
+### Automatic source checkpoints (host infrastructure)
+
+Deploy `20261024010000_requirement_source_checkpoints.sql` before enabling this API
+version. At a safe end-of-slice boundary and before a terminal save, the requirement
+runtime automatically attempts a bounded source checkpoint with the current session
+and requirement leases. It is not a model tool and the prompt is unchanged.
+Pending tool batches, cancellation and lost ownership do not authorize a checkpoint.
+The hook runs before sandbox cleanup; it does not require tests/build/review success.
+
+The host reads permitted source from the workspace, checks it with the existing
+export policy, and creates a GitHub tree/commit on the host-bound requirement branch.
+It does not push local sandbox commit history, execute local Git hooks, rewrite the
+index or reset files. First checkpoints can create the bound branch from a verified
+remote base. Later checkpoints compare the trusted private local baseline and
+current remote state, refusing conflicting edits. Reference updates never force
+push and must be confirmed by a read before a saved SHA is reported.
+Normal local HEAD advances are accepted only when GitHub verifies their ancestry;
+the per-file merge base advances only for files actually changed by that commit.
+Unknown/unpushed history and divergent edits still fail closed.
+
+`requirement_source_checkpoints` stores private baseline hashes and the last result;
+its fenced RPC checks both the cron generation and the session lease. Confirmed
+receipts are also shown in requirement status with an immutable GitHub source URL.
+Before updating a GitHub ref, a separate fenced RPC durably stores the expected
+commit, parent and candidate baseline. If publishing succeeds but the final receipt
+is lost, the next cycle verifies the pending commit against GitHub before capturing
+new edits. Failed/unknown receipts retain that intent; confirmed reconciliation
+clears it. Failure to prepare an intent prevents ref publication.
+Failure/unknown receipts preserve the previous baseline and never change task status,
+acceptance, budgets or instructions. A later owned cycle may retry safely; an already
+terminal task is not silently restarted merely to retry a failed source backup.
+
+This is bounded UTF-8 source backup, **not** a VM snapshot. Credentials, symlinks,
+binary files, dependencies, generated output and integration configuration are
+excluded; the receipt reports exclusions. Size/capture/conflict failures are explicit
+and leave the sandbox unchanged. There is a 25-second host-hook deadline.
+Enumeration is paged in 32-KiB chunks with a whole-stream digest to reject index
+changes between pages; more than 1,000 unchanged files no longer suppress a small
+checkpoint. Defensive bounds remain: 20,000 paths, 8 MiB per listing, 200 changed
+files, 4 MiB captured text and 256 KiB per file.
+The last confirmed GitHub SHA is recoverable after sandbox expiration, but automatic creation
+of a replacement sandbox from that SHA is not implemented: existing missing-snapshot
+checks still fail closed rather than silently discarding uncaptured work.
+
+No deployment API is called by checkpointing. Commit messages contain `[skip ci]`,
+which is advisory: configure connected GitHub/Vercel integrations separately if
+checkpoint branch pushes must not trigger deployment. Search results that exist only
+in `harness_artifacts` are not invented as repository files or final reports.
 
 ### Nonblocking requirement execution and public research
 
@@ -98,9 +219,9 @@ Search checks the bound site/user/runner/generation and active leases before pai
 work. It uses durable write checkpoints because searches consume credits; uncertain
 billing/provider effects cannot be replayed as if they were free reads. Credentials
 stay host-side and public source text remains untrusted reference material.
-The host adapter validates and normalizes query arguments before the engine hashes
-or dispatches them. Leading/trailing whitespace cannot create a different replay
-identity for the same paid search. Resuming older sessions adds canonical fences
+The host adapter validates and normalizes query arguments before the execution
+boundary hashes or dispatches them. Leading/trailing whitespace cannot create a
+different replay identity for the same paid search. Resuming older sessions adds canonical fences
 for uncertain/pending raw-argument calls without removing their original fences.
 
 For this repair, drain the requirement workers, deploy the updated API and apply
@@ -158,10 +279,18 @@ its budget/history. Local tests alone do not demonstrate a production repair.
 - Session limits are monotonic: 500 model turns, 10M allocated tokens, four active
   hours per occurrence. Model output allowance is 4096 tokens per request. Deployment
   operators should review these cost limits before enabling cron.
-- Model calls reserve site credits before dispatch through an idempotent ledger RPC.
-  Current reservation is conservative (UTF-8 input upper bound + maximum output);
-  unused reservation is not settled/refunded. This is intentionally disclosed, not
-  equivalent to exact-token billing. Billing failure pauses instead of free-running.
+- Canonical requirement model calls retain the existing idempotent
+  hold/dispatch/settle ledger. A conservative pre-dispatch credit hold is settled
+  against validated actual provider `usage.cost` using the existing pricing
+  conversion, releasing unused held credit rather than treating the estimate as
+  the final charge. Session/event identities prevent double charging on ledger
+  retries; inference is never replayed merely to recover a hold. Canonical boundary
+  billing replaces, rather than adds to, the executor's default model charge.
+  Missing or invalid cost leaves the hold unresolved and raises a billing error;
+  it is not reported as free usage. Settlement remains required for paid inference
+  even if ownership is subsequently paused. Pre-dispatch cancellation and verified
+  admission rejection use the existing cancellation path. These are source-level
+  contracts, not evidence of a production ledger migration or billing reconciliation.
 - Missing credentials/services are reported without invoking product repair controllers.
   Known transient model/runtime/dispatch failures retry the same session after a delay.
 - Provider 401/402/403 admission failures pause for operator intervention rather

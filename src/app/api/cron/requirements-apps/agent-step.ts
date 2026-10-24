@@ -1,4 +1,4 @@
-import { runRequirementCycle } from '@/lib/harness/requirement-runtime';
+import { runRequirementCycle } from '@/app/api/robots/instance/assistant/requirement-runtime';
 import type { RequirementRun } from '@/lib/harness/requirement-types';
 
 export async function executeRequirementCycle(run: RequirementRun) {

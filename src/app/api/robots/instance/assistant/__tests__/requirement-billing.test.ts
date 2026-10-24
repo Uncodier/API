@@ -1,0 +1,47 @@
+import { randomUUID } from 'node:crypto';
+const rpc = jest.fn();
+jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { rpc: (...args: any[]) => rpc(...args) } }));
+import { createRequirementAssistantBilling } from '../requirement-billing';
+
+function fixture() {
+  const run = { requirementId: randomUUID(), siteId: randomUUID(), userId: randomUUID(), instanceId: randomUUID(),
+    sessionId: randomUUID(), runId: randomUUID(), executionGeneration: 4 };
+  const assertActive = jest.fn(async () => {});
+  return { run, assertActive, billing: createRequirementAssistantBilling(run, assertActive), eventId: randomUUID() };
+}
+beforeEach(() => { jest.clearAllMocks(); rpc.mockResolvedValue({ data: { success: true, state: 'reserved' }, error: null }); });
+
+test('reserves owned requirement credits before dispatch and settles actual cost once without generic site charge', async () => {
+  const f = fixture();
+  await f.billing.beforeDispatch({ eventId: f.eventId, inputBytes: 1000, maxOutputTokens: 4096 });
+  expect(rpc.mock.calls.map(call => call[0])).toEqual(['reserve_agent_requirement_credits', 'dispatch_harness_model_reservation']);
+  expect(rpc.mock.calls[0][1]).toMatchObject({ p_requirement_id: f.run.requirementId,
+    p_run_id: f.run.runId, p_generation: 4, p_session_id: f.run.sessionId, p_event_id: f.eventId });
+  f.assertActive.mockRejectedValue(new Error('User paused after paid inference'));
+  await f.billing.settle({ eventId: f.eventId, usage: { cost: 0.025 }, generationId: 'synthetic-generation', model: 'test/model' });
+  expect(rpc).toHaveBeenLastCalledWith('settle_harness_model_reservation', expect.objectContaining({ p_cost: 0.025 }));
+  expect(rpc.mock.calls.some(call => call[0] === 'bill_openrouter_generation')).toBe(false);
+});
+
+test('ledger transport retries keep event identity; a provider is never invoked by accounting', async () => {
+  const f = fixture();
+  rpc.mockRejectedValueOnce(new Error('Synthetic transport unavailable'));
+  await f.billing.beforeDispatch({ eventId: f.eventId, inputBytes: 100, maxOutputTokens: 1024 });
+  expect(rpc.mock.calls[0]).toEqual(rpc.mock.calls[1]);
+});
+
+test('rejected admission refunds, uncertain accepted cost stops', async () => {
+  const f = fixture();
+  await f.billing.failed({ eventId: f.eventId, error: { status: 403 } });
+  expect(rpc).toHaveBeenLastCalledWith('cancel_harness_model_reservation', expect.objectContaining({ p_reason: 'admission_rejected' }));
+  await expect(f.billing.failed({ eventId: f.eventId, error: new Error('Unknown transport result') }))
+    .rejects.toMatchObject({ name: 'OpenRouterBillingError' });
+  expect(rpc).toHaveBeenLastCalledWith('settle_harness_model_reservation', expect.objectContaining({ p_cost: null }));
+});
+
+test('lost ownership after reservation cancels before inference', async () => {
+  const f = fixture();
+  f.assertActive.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('Owner changed'));
+  await expect(f.billing.beforeDispatch({ eventId: f.eventId, inputBytes: 100, maxOutputTokens: 1024 })).rejects.toThrow('Owner changed');
+  expect(rpc.mock.calls.map(call => call[0])).toEqual(['reserve_agent_requirement_credits', 'cancel_harness_model_reservation']);
+});

@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { runSessionSlice, type RunSliceInput } from '../engine';
+import { runSessionSlice, type RunSliceInput } from './retired/engine';
 import { createMemorySessionStore } from '../memory-store';
 import { createSession } from '../session';
 import type { HarnessModel, HarnessTool, Message, ModelReply, Workspace } from '../types';

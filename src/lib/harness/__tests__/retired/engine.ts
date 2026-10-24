@@ -1,10 +1,11 @@
+// Historical regression fixture only. Never import from production.
 import { z } from 'zod';
 import { buildHarnessPrompt, currentToolContext } from './prompt';
-import { withinDeadline } from './deadline';
-import { createRedactor, operationFingerprint, redactData, safeError } from './security';
-import { createMemoryArtifactStore } from './artifact-store';
-import { persistResult, RESULT_MAX_BYTES, RECEIPT_MAX_BYTES, serializedBytes, SNAPSHOT_MAX_BYTES } from './engine-results';
-import type { ArtifactStore, HarnessModel, HarnessSession, HarnessTool, Message, SessionStore, ToolCall, ToolResult, Workspace } from './types';
+import { withinDeadline } from '../../deadline';
+import { createRedactor, operationFingerprint, redactData, safeError } from '../../security';
+import { createMemoryArtifactStore } from '../../artifact-store';
+import { persistResult, RESULT_MAX_BYTES, RECEIPT_MAX_BYTES, serializedBytes, SNAPSHOT_MAX_BYTES } from '../../engine-results';
+import type { ArtifactStore, HarnessModel, HarnessSession, HarnessTool, Message, SessionStore, ToolCall, ToolResult, Workspace } from '../../types';
 
 const MAX_CONTEXT_CHARS = 80000;
 const finishSchema = z.object({ summary: z.string().min(1).max(24000),
@@ -90,6 +91,8 @@ export interface RunSliceInput {
   /** Trusted host read before each model request. Advisory only; never persisted or used as a gate. */
   getContext?: () => Promise<string>;
   assertExecution?: () => Promise<void>;
+  /** Infrastructure-only source backup. Not a model tool, completion gate or deployment. */
+  onCheckpoint?: (context: { owner: string; assertActive: () => Promise<void>; signal: AbortSignal }) => Promise<void>;
 }
 
 /** One continuous conversation, checkpointed at each effect boundary. No product gates. */
@@ -118,7 +121,22 @@ export async function runSessionSlice(input: RunSliceInput): Promise<HarnessSess
     await input.assertExecution?.();
     await input.store.assertOwner(session.id, input.siteId, input.owner, 180);
   };
+  let checkpointAttempted = false;
+  const checkpoint = async () => {
+    if (!input.onCheckpoint || checkpointAttempted || session.pending || outstanding(session).length || input.signal?.aborted) return;
+    checkpointAttempted = true;
+    const checkpointSignal = AbortSignal.any([...(input.signal ? [input.signal] : []), AbortSignal.timeout(25000)]);
+    try {
+      await assertActive();
+      await withinDeadline(checkpointSignal, () => input.onCheckpoint!({
+        owner: input.owner, signal: checkpointSignal, assertActive: async () => { checkpointSignal.throwIfAborted(); await assertActive(); },
+      }));
+    } catch { /* Backup failures are not product gates; host callback records safe receipts when possible. */ }
+  };
   const save = async () => {
+    // Terminal state is still only local here: the live execution leases remain
+    // valid until this save, so backing up cannot revive a stopped session.
+    if (session.status !== 'running') await checkpoint();
     const time = now();
     session.activeMs += Math.max(0, time - measuredAt);
     measuredAt = time;
@@ -162,7 +180,7 @@ export async function runSessionSlice(input: RunSliceInput): Promise<HarnessSess
 
   while (session.status === 'running') {
     await assertActive();
-    if (now() - started >= sliceMs) return session;
+    if (now() - started >= sliceMs) { await checkpoint(); return session; }
     if (session.activeMs + now() - measuredAt >= session.request.limits.maxActiveMs) {
       session.status = 'paused'; session.reason = 'active_time_budget_exhausted'; await save(); return session;
     }

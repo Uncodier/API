@@ -2,6 +2,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { type NodeResult, buildInitialNodeResult } from './node-result-collector';
 import { assistantRuntimeProvenance } from './assistant-context-version';
 import type { NodeContextRef } from './assistant-streaming-logs';
+import { AssistantExecutionBoundaryError } from './assistant-execution-boundary';
 import {
   normalizeToolOperationResult,
   toolOperationOutcomeToSuccess,
@@ -42,12 +43,16 @@ export function createAssistantOnStepHandler(
   plan_id?: string,
   step_id?: string,
   requirement_id?: string,
-  instance_node_id?: string
+  instance_node_id?: string,
+  options?: { strict?: boolean; redact?: (value: string) => string },
 ) {
   const provenance = { ...assistantRuntimeProvenance(),
     execution_mode: instance_node_id ? 'node' : 'conversation',
     ...(instance_node_id ? { instance_node_id } : {}) };
   return async (step: any, meta?: { streamingLogId?: string }) => {
+    try {
+    // Redact a detached serialized copy before deriving any console or database payload.
+    if (options?.redact) step = JSON.parse(options.redact(JSON.stringify(step)));
     // Log step information
     console.log(`₍ᐢ•(ܫ)•ᐢ₎ [ASSISTANT STEP] Text: ${step.text?.substring(0, 100) || 'No text'}...`);
     if (step.toolCalls?.length > 0) {
@@ -56,6 +61,7 @@ export function createAssistantOnStepHandler(
 
     // Only log if instance_id is provided
     if (!instance_id) {
+      if (options?.strict) throw new AssistantExecutionBoundaryError();
       return;
     }
 
@@ -87,6 +93,7 @@ export function createAssistantOnStepHandler(
         .eq('id', meta.streamingLogId);
 
       if (updateError) {
+        if (options?.strict) throw new AssistantExecutionBoundaryError();
         console.error('❌ Error updating streaming assistant step log:', updateError);
         return;
       }
@@ -107,10 +114,12 @@ export function createAssistantOnStepHandler(
         .single();
 
       if (parentLogError) {
+        if (options?.strict) throw new AssistantExecutionBoundaryError();
         console.error('❌ Error saving assistant step log:', parentLogError);
         return;
       }
       parentLogId = parentLogData?.id;
+      if (!parentLogId && options?.strict) throw new AssistantExecutionBoundaryError();
     }
 
     // Log individual tool calls if any
@@ -141,6 +150,7 @@ export function createAssistantOnStepHandler(
           });
 
           if (thinkingLogError) {
+            if (options?.strict) throw new AssistantExecutionBoundaryError();
             console.error(`❌ Error saving thought_process log for ${toolCall.toolName}:`, thinkingLogError);
           } else {
             console.log(`₍ᐢ•(ܫ)•ᐢ₎ [THINKING] Saved thought_process for ${toolCall.toolName}`);
@@ -225,6 +235,7 @@ export function createAssistantOnStepHandler(
         });
 
         if (toolLogError) {
+          if (options?.strict) throw new AssistantExecutionBoundaryError();
           console.error(`❌ Error saving tool log for ${toolCall.toolName}:`, toolLogError);
           failedToolCalls++;
         } else {
@@ -235,6 +246,10 @@ export function createAssistantOnStepHandler(
       if (savedToolCalls > 0 || failedToolCalls > 0) {
         console.log(`₍ᐢ•(ܫ)•ᐢ₎ Tool calls saved: ${savedToolCalls}/${step.toolCalls.length} (${failedToolCalls} failed)`);
       }
+    }
+    } catch (error) {
+      if (options?.strict) throw new AssistantExecutionBoundaryError();
+      throw error;
     }
   };
 }

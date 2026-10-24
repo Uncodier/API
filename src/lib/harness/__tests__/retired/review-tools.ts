@@ -1,5 +1,6 @@
+// Historical regression fixture only. Never import from production.
 import { z } from 'zod';
-import type { HarnessModel, HarnessTool, Workspace } from './types';
+import type { HarnessModel, HarnessTool, Workspace } from '../../types';
 
 /** Optional second opinion; never mutates a plan, blocks execution or changes tool permissions. */
 export function createReviewTools(workspace: Workspace, model: HarnessModel): HarnessTool[] {

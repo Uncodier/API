@@ -298,6 +298,46 @@ it('claims and fences agent cron without product gates, preserves pauses, resume
       await db.exec("UPDATE requirements SET metadata=metadata||'{\"execution_hold\":{\"kind\":\"user_pause\"}}'");assert.equal((await qp('done')).state,'stale');
       await reset();await req();assert.equal(await claim([(await one('SELECT id FROM requirements')).id]),null);
       await assert.rejects(()=>claim([],0),/Invalid agent cron claim/);
+      await reset();
+      await db.exec(readFileSync('supabase/migrations/20261024010000_requirement_source_checkpoints.sql','utf8'));
+      await req(); const backupRun=(await claim()).run;
+      await db.query('INSERT INTO harness_sessions(id,site_id,user_id,snapshot) VALUES($1,$2,$3,$4)',[backupRun.sessionId,site,user,initial(backupRun.sessionId)]);
+      await db.query('SELECT claim_harness_session($1,$2,$3,300)',[backupRun.sessionId,site,'backup-owner']);
+      const backupResult={state:'saved',sha:'a'.repeat(40),repoUrl:'https://github.com/example/test/tree/'+ 'a'.repeat(40)};
+      const backupBaseline={version:1,commitSha:'a'.repeat(40),files:{'README.md':'b'.repeat(40)}};
+      const publication={parentSha:'c'.repeat(40),expectedSha:backupResult.sha,createRef:false,baseline:backupBaseline};
+      const prepareBackup=async(owner='backup-owner',intent=publication)=>
+        (await one('SELECT prepare_requirement_source_checkpoint($1,$2,$3,$4,$5,$6) value',
+          [backupRun.requirementId,backupRun.runId,backupRun.executionGeneration,backupRun.sessionId,owner,intent])).value;
+      const recordBackup=async(owner='backup-owner',result=backupResult,baseline=backupBaseline)=>
+        (await one('SELECT record_requirement_source_checkpoint($1,$2,$3,$4,$5,$6,$7) value',
+          [backupRun.requirementId,backupRun.runId,backupRun.executionGeneration,backupRun.sessionId,owner,result,baseline])).value;
+      for(const role of ['anon','authenticated','service_role']) {
+        assert.equal((await one('SELECT has_table_privilege($1,$2,$3) allowed',[role,'requirement_source_checkpoints','UPDATE'])).allowed,false);
+        assert.equal((await one('SELECT has_table_privilege($1,$2,$3) allowed',[role,'requirement_source_checkpoints','SELECT'])).allowed,role==='service_role');
+        assert.equal((await one('SELECT has_function_privilege($1,$2,$3) allowed',[role,'prepare_requirement_source_checkpoint(uuid,text,integer,uuid,text,jsonb)','EXECUTE'])).allowed,role==='service_role');
+      }
+      assert.equal(await prepareBackup('wrong-owner'),false);
+      await db.exec('SET ROLE service_role'); assert.equal(await prepareBackup(),true); await db.exec('RESET ROLE');
+      assert.deepEqual((await one('SELECT pending_publication,baseline FROM requirement_source_checkpoints')),{pending_publication:publication,baseline:null});
+      assert.equal((await one('SELECT count(*)::int n FROM requirement_status')).n,0,'preparing is not a published receipt');
+      assert.equal(await recordBackup('backup-owner',{state:'unknown',reason:'lost_ack'},null),true);
+      assert.deepEqual((await one('SELECT pending_publication FROM requirement_source_checkpoints')).pending_publication,publication);
+      assert.equal(await recordBackup('wrong-owner'),false);
+      await db.exec('SET ROLE service_role');assert.equal(await recordBackup(),true);await db.exec('RESET ROLE');
+      assert.equal((await one('SELECT status FROM requirements')).status,'in-progress');
+      assert.equal((await one('SELECT snapshot FROM harness_sessions')).snapshot.status,'running');
+      assert.equal((await one('SELECT repo_url FROM requirement_status WHERE repo_url IS NOT NULL')).repo_url,backupResult.repoUrl);
+      assert.equal((await one('SELECT pending_publication FROM requirement_source_checkpoints')).pending_publication,null);
+      assert.equal(await prepareBackup(),true);
+      assert.deepEqual((await one('SELECT baseline FROM requirement_source_checkpoints')).baseline,backupBaseline,'new intent preserves confirmed baseline');
+      assert.equal(await recordBackup('backup-owner',{state:'unknown',reason:'provider_unavailable'},null),true);
+      assert.deepEqual((await one('SELECT baseline FROM requirement_source_checkpoints')).baseline,backupBaseline);
+      await assert.rejects(()=>recordBackup('backup-owner',{state:'saved',sha:'invalid'},backupBaseline),/Invalid source checkpoint/);
+      await assert.rejects(()=>prepareBackup('backup-owner',{...publication,expectedSha:'invalid'}),/Invalid checkpoint publication intent/);
+      await db.query("SELECT control_harness_session($1,$2,'pause',null)",[backupRun.sessionId,site]);
+      assert.equal(await recordBackup(),false,'user pause fences backup receipts');
+      assert.equal(await prepareBackup(),false,'user pause fences publication preparation');
       console.log('passed');
     } finally { await db.close(); }
   `;

@@ -445,6 +445,8 @@ export function toolsRouterTool(routedTools: RoutedTool[], scope?: ToolScreenSco
             ...hoistRoutedToolResult(result),
           };
         } catch (err: any) {
+          // Fatal host failures must escape the router, not become retryable tool prose.
+          if (err?.name === 'RecoveryError' || err?.name === 'OpenRouterBillingError') throw err;
           if (err?.code === 'TOOL_SCREEN_ACCESS_DENIED') return denied();
           const message: string = err?.message || String(err);
           const includeSchema = isValidationErrorMessage(message);
@@ -547,6 +549,12 @@ export function hoistRoutedToolResult(result: unknown): { results?: unknown; ans
 }
 
 export const DEFAULT_ALWAYS_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
+  // Host-bound requirement capabilities share the same routing/permission guards.
+  'read_files', 'list_files', 'search', 'apply_patch', 'exec', 'process_status', 'process_stop',
+  'tracking_install', 'source_archive', 'deployment_trigger', 'deployment_status',
+  'deployment_create', 'deployment_environment_sync', 'platform_key_provision',
+  'capability_manifest', 'requirement_context', 'requirement_progress', 'requirement_plan',
+  'finish_task', 'read_session_history', 'read_result_artifact', 'reconcile_operation',
   // sandbox surface — every agent uses these every turn
   'webSearch',
   'skill_lookup',

@@ -4,7 +4,7 @@ jest.mock('@/lib/services/ai/openrouter', () => ({
   createOpenRouterClient: () => ({ chat: { completions: { create } } }),
   getOpenRouterChatModel: () => 'test/model',
 }));
-import { createHarnessModel } from '../model';
+import { createHarnessModel } from './retired/model';
 
 beforeEach(() => create.mockReset());
 

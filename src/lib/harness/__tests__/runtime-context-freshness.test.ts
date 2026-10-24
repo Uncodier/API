@@ -29,9 +29,9 @@ jest.mock('../requirement-profile', () => ({ buildRequirementProfile: async (run
 }) }));
 jest.mock('../requirement-tools', () => ({ createRequirementTools: () => tools() }));
 jest.mock('../requirement-provisioning', () => ({ createRequirementProvisioningTools: () => [] }));
-jest.mock('../requirement-model', () => ({ createRequirementModel: () => model, createBilledHarnessModel: () => model }));
-jest.mock('../review-tools', () => ({ createReviewTools: () => [] }));
-jest.mock('../model', () => ({ createHarnessModel: () => model }));
+jest.mock('./retired/requirement-model', () => ({ createRequirementModel: () => model, createBilledHarnessModel: () => model }));
+jest.mock('./retired/review-tools', () => ({ createReviewTools: () => [] }));
+jest.mock('./retired/model', () => ({ createHarnessModel: () => model }));
 jest.mock('../workspace', () => ({ shellQuote: (v: string) => `'${v}'`, openWorkspace: async () => workspace,
   adoptRequirementWorkspace: async () => workspace, replaceWorkspaceEnvironment: async () => undefined }));
 jest.mock('../workspace-tools', () => ({ createWorkspaceTools: () => [] }));
@@ -39,10 +39,10 @@ jest.mock('../delivery-tools', () => ({ createDeliveryTools: () => [] }));
 jest.mock('../archive-tool', () => ({ createArchiveTool: () => [] }));
 jest.mock('../capabilities', () => ({ createCapabilityTools: async () => [], refreshTenantEnvironment: jest.fn() }));
 jest.mock('../profile', () => ({ resolveHostProfile: () => undefined }));
-import { runRequirementCycle } from '../requirement-runtime';
-import { executeSessionSlice, type SessionRuntimeOptions } from '../runtime';
+import { runRequirementCycle } from './retired/requirement-runtime';
+import { executeSessionSlice, type SessionRuntimeOptions } from './retired/runtime';
 import { createSession } from '../session';
-import type { RunSliceInput } from '../engine';
+import type { RunSliceInput } from './retired/engine';
 
 const run: RequirementRun = { requirementId: randomUUID(), siteId: randomUUID(), userId: randomUUID(), instanceId: randomUUID(),
   sessionId: randomUUID(), runId: 'offline', executionGeneration: 0 };
@@ -91,6 +91,23 @@ it('requirement runtime passes its scoped refresh callback through the real sess
   const saved = JSON.stringify(await store.load(run.sessionId, run.siteId));
   expect(saved).not.toContain('initial-reference'); expect(saved).not.toContain('Advisory context read');
   expect(saved).not.toContain('CURRENT HOST TOOL AVAILABILITY');
+});
+
+it('passes infrastructure checkpoint through the real runtime before terminal persistence', async () => {
+  const initial = createSession({ objective: 'Save source on cycle completion', repository: { url: 'https://repo.example.test/project.git' },
+    limits: { maxTurns: 10, maxOutputTokens: 256, maxTotalTokens: 1000000, maxActiveMs: 60000 } });
+  await store.create(initial, { siteId: run.siteId, userId: run.userId });
+  (model.respond as jest.Mock).mockResolvedValue(reply('finish', 'finish_task', { summary: 'Partial work saved.', outcome: 'partial' }));
+  const checkpoint = jest.fn(async input => {
+    expect(input.workspace).toBe(workspace);
+    expect(typeof input.owner).toBe('string');
+    expect(input.redact('safe content')).toBe('safe content');
+    await input.assertActive();
+    expect((await store.load(initial.id, run.siteId))?.status).toBe('running');
+  });
+  expect((await executeSessionSlice(initial.id, { siteId: run.siteId, userId: run.userId }, { model, checkpoint })).status).toBe('completed');
+  expect(checkpoint).toHaveBeenCalledTimes(1);
+  expect((await store.load(initial.id, run.siteId))?.reason).toBe('partial');
 });
 
 it('the shared callback signature remains optional and read rejection reaches the model as unavailable, not a runtime gate', async () => {

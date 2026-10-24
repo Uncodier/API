@@ -2,8 +2,8 @@ import { randomUUID } from 'node:crypto';
 import type { RequirementRun } from '../requirement-types';
 const rpc = jest.fn();
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { rpc } }));
-jest.mock('../model', () => ({ createHarnessModel: jest.fn() }));
-import { createBilledHarnessModel, createRequirementModel } from '../requirement-model';
+jest.mock('./retired/model', () => ({ createHarnessModel: jest.fn() }));
+import { createBilledHarnessModel, createRequirementModel } from './retired/requirement-model';
 const run: RequirementRun = { requirementId: randomUUID(), siteId: randomUUID(), userId: randomUUID(), instanceId: randomUUID(), sessionId: randomUUID(), runId: 'cycle', executionGeneration: 2 };
 const input = () => ({ system: 'Agent', messages: [], tools: [], maxOutputTokens: 1000, signal: new AbortController().signal });
 beforeEach(() => {

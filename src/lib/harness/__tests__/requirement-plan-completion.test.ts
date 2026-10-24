@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { createMemorySessionStore } from '../memory-store';
 import { createSession, sessionRequestSchema } from '../session';
-import { runSessionSlice } from '../engine';
+import { runSessionSlice } from './retired/engine';
 import { createRequirementTools } from '../requirement-tools';
 import type { HarnessModel, Workspace } from '../types';
 

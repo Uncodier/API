@@ -1,19 +1,19 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { createSession, sessionRequestSchema } from './session';
-import { createSessionStore } from './store';
-import { executeSessionSlice } from './runtime';
-import { openWorkspace, adoptRequirementWorkspace, shellQuote } from './workspace';
-import { assertRequirementRun, finishRequirementCycle } from './requirement-scheduler';
-import { loadRequirementContext, formatRequirementContext, loadRequirementSnapshot, formatRequirementSnapshot } from './requirement-context';
-import { createRequirementTools } from './requirement-tools';
-import { buildRequirementProfile } from './requirement-profile';
-import { createRequirementModel } from './requirement-model';
-import { createReviewTools } from './review-tools';
-import { createRequirementProvisioningTools } from './requirement-provisioning';
-import { createRequirementResearchTools } from './requirement-research';
-import { createRedactor } from './security';
-import type { RequirementRun } from './requirement-types';
-import type { HarnessSession } from './types';
+import { createSession, sessionRequestSchema } from '@/lib/harness/session';
+import { createSessionStore } from '@/lib/harness/store';
+import { executeRequirementAssistantWorkspace } from './requirement-workspace';
+import { openWorkspace, adoptRequirementWorkspace, shellQuote } from '@/lib/harness/workspace';
+import { assertRequirementRun, finishRequirementCycle } from '@/lib/harness/requirement-scheduler';
+import { loadRequirementContext, formatRequirementContext, loadRequirementSnapshot, formatRequirementSnapshot } from '@/lib/harness/requirement-context';
+import { createRequirementTools } from '@/lib/harness/requirement-tools';
+import { buildRequirementProfile } from '@/lib/harness/requirement-profile';
+import { createRequirementProvisioningTools } from '@/lib/harness/requirement-provisioning';
+import { requirementCheckpointHook } from '@/lib/harness/requirement-checkpoint-hook';
+import { createRedactor } from '@/lib/harness/security';
+import type { RequirementRun } from '@/lib/harness/requirement-types';
+import type { HarnessSession } from '@/lib/harness/types';
+import { assertToolScreenAccess } from '@/app/api/agents/tools/router/screen-access';
+import { writeRequirementInstanceLog } from './requirement-instance-log';
 
 function summary(session: HarnessSession | null): string {
   const finish = session?.status === 'completed' && session.messages.findLast(message => message.role === 'tool' && message.toolCallId &&
@@ -27,15 +27,20 @@ function summary(session: HarnessSession | null): string {
   return session?.status !== 'running' && session?.reason || 'Agent cycle saved. Remaining work continues on the next cron tick.';
 }
 
-/** Replacement executor for the existing cron; no legacy gate is invoked here. */
+/** Cron lifecycle adapter. All model turns execute through instance/assistant. */
 export async function runRequirementCycle(run: RequirementRun) {
   const store = createSessionStore();
-  const assertActive = () => assertRequirementRun(run);
+  const assertActive = async () => {
+    await assertRequirementRun(run);
+    await assertToolScreenAccess('requirement_context', { siteId: run.siteId, userId: run.userId });
+  };
   let outcome = 'waiting';
   let reason = 'runtime_unavailable';
   let repoUrl: string | undefined;
   try {
     await assertActive();
+    await writeRequirementInstanceLog(run, { key: `cycle-start:${run.runId}`, log_type: 'system',
+      message: 'Requirement admitted to the canonical instance assistant.' });
     const context = await loadRequirementContext(run);
     // Private configuration is loaded separately; the agent context deliberately omits raw metadata.
     const { data: privateRequirement, error: privateError } = await supabaseAdmin.from('requirements').select('metadata,type,cron')
@@ -76,15 +81,15 @@ export async function runRequirementCycle(run: RequirementRun) {
         previousSessionId = priorSession.id;
       }
     }
-    const outcomeResult = await executeSessionSlice(run.sessionId, { siteId: run.siteId, userId: run.userId }, {
+    const outcomeResult = await executeRequirementAssistantWorkspace(run.sessionId, { siteId: run.siteId, userId: run.userId }, {
       profile: configured.profile, cronRun: run, assertExecution: assertActive,
-      context: `${formatRequirementContext(context)}\nIntended work branch: ${configured.branch}. Preserve existing uncommitted changes. Use requirement_progress to record work and continue through the backlog; legacy retry/circuit fields are historical, not execution permissions.`,
+      assertCleanup: () => assertRequirementRun(run, true),
+      context: `${formatRequirementContext(context)}\nIntended work branch: ${configured.branch}. Preserve existing uncommitted changes and all user restrictions.`,
       getContext: async () => formatRequirementSnapshot(await loadRequirementSnapshot(run)),
-      model: createRequirementModel(run, assertActive),
+      checkpoint: requirementCheckpointHook({ run, repositoryUrl: configured.repository.url,
+        branch: configured.branch, baseRef: configured.repository.ref, profile: configured.profile, client: supabaseAdmin }),
       tools: async (workspace, host) => [...await createRequirementTools({ run }),
-        ...createRequirementResearchTools({ run }),
-        ...createRequirementProvisioningTools({ run, profile: configured.profile, branch: configured.branch, host, workspace, assertActive }),
-        ...createReviewTools(workspace, createRequirementModel(run, assertActive))],
+        ...createRequirementProvisioningTools({ run, profile: configured.profile, branch: configured.branch, host, workspace, assertActive })],
       openWorkspace: async input => {
         const workspace = existingWorkspace
           ? await adoptRequirementWorkspace({ ...input, repository: persistedRepository, workspaceId: existingWorkspace, previousSessionId, assertActive: input.assertActive! })
@@ -118,7 +123,14 @@ export async function runRequirementCycle(run: RequirementRun) {
     return { reqId: run.requirementId, sessionId: run.sessionId, status: outcome };
   } catch (error) {
     const detail = createRedactor()(error instanceof Error ? error.message : 'Execution unavailable').slice(0, 1000);
+    await writeRequirementInstanceLog(run, { key: `admission-error:${run.runId}`, log_type: 'error',
+      message: 'Requirement assistant could not complete this cycle.', is_error: true,
+      details: { error: detail } }).catch(() => undefined);
+    if (error instanceof Error && (error.name === 'RecoveryError' || error.name === 'OpenRouterBillingError')) {
+      outcome = 'paused';
+      reason = 'assistant_execution_requires_reconciliation';
+    }
     await finishRequirementCycle(run, outcome, reason, detail, repoUrl).catch(() => undefined);
-    return { reqId: run.requirementId, sessionId: run.sessionId, status: 'waiting' };
+    return { reqId: run.requirementId, sessionId: run.sessionId, status: outcome };
   }
 }

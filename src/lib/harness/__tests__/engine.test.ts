@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import { z } from 'zod';
-import { modelContext, runSessionSlice, type RunSliceInput } from '../engine';
+import { modelContext, runSessionSlice, type RunSliceInput } from './retired/engine';
 import { createMemorySessionStore } from '../memory-store';
 import { createSession } from '../session';
 import { createRedactor, operationFingerprint } from '../security';
@@ -204,6 +204,46 @@ describe('portable continuous engine with durable boundaries', () => {
     expect(result.pending).toBeUndefined();
     expect(injected.execute).not.toHaveBeenCalled();
     expect(receipt(result, pending.id)).toMatchObject({ ok: false, error: { code: 'AUTONOMOUS_WAIT_UNAVAILABLE' } });
+  });
+
+  it('runs infrastructure backup before terminal save while the session still owns execution', async () => {
+    const input = await setup(scripted(finish()));
+    const checkpoint = jest.fn(async ({ assertActive, signal }) => {
+      expect(signal.aborted).toBe(false);
+      await assertActive();
+      expect((await input.store.load(input.session.id, scope.siteId))?.status).toBe('running');
+    });
+    const result = await runSessionSlice({ ...input, onCheckpoint: checkpoint });
+    expect(result.status).toBe('completed');
+    expect(checkpoint).toHaveBeenCalledTimes(1);
+    expect(result.messages.some(message => message.toolCalls?.some(call => call.name.includes('checkpoint')))).toBe(false);
+  });
+
+  it('does not turn an infrastructure backup failure into a product block', async () => {
+    const input = await setup(scripted(finish()));
+    const result = await runSessionSlice({ ...input, onCheckpoint: async () => { throw new Error('Git provider unavailable'); } });
+    expect(result.status).toBe('completed');
+    expect(result.reason).toBe('implemented');
+    expect(JSON.stringify(result)).not.toContain('Git provider unavailable');
+  });
+
+  it('backs up running cycle boundaries without finishing or resetting the session', async () => {
+    const input = await setup(scripted());
+    const checkpoint = jest.fn(async ({ assertActive }) => { await assertActive(); });
+    const result = await runSessionSlice({ ...input, sliceMs: 0, onCheckpoint: checkpoint });
+    expect(checkpoint).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe('running');
+    expect(result.turns).toBe(input.session.turns);
+  });
+
+  it('does not back up an unfinished tool batch or after cancellation', async () => {
+    const input = await setup(scripted());
+    input.session.messages.push({ role: 'assistant', content: '', toolCalls: [call('outstanding', 'exec')] });
+    const checkpoint = jest.fn();
+    await runSessionSlice({ ...input, sliceMs: 0, onCheckpoint: checkpoint });
+    expect(checkpoint).not.toHaveBeenCalled();
+    await expect(runSessionSlice({ ...input, onCheckpoint: checkpoint, signal: AbortSignal.abort() })).rejects.toThrow();
+    expect(checkpoint).not.toHaveBeenCalled();
   });
 
   it('checkpoints a slice between tool calls and resumes outstanding calls without replaying saved results', async () => {

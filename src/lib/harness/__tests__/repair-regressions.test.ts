@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { runSessionSlice } from '../engine';
+import { runSessionSlice } from './retired/engine';
 import { createSession, sessionRequestSchema } from '../session';
 import { createMemorySessionStore } from '../memory-store';
 import { createMemoryArtifactStore } from '../artifact-store';

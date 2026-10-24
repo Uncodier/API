@@ -355,7 +355,7 @@ export async function createCapabilityTools(options: CapabilityOptions,
           ...(options.cronRun ? { restrictions: CAPABILITY_MANIFEST.restrictions.filter(text =>
             !text.includes('drained') && !text.includes('Operator must')).concat('The existing requirement cron owns this session. Host site/user/runner/generation and both leases are checked on every effect.'),
             cron_tools: ['requirement_context', 'requirement_plan', 'requirement_progress', 'review_work', 'webSearch', 'platform_key_provision', 'deployment_environment_sync', 'deployment_create'],
-            research: { name: 'webSearch', enabled: true, provider: 'requirement-runtime requirement-research',
+            research: { name: 'webSearch', enabled: true, provider: 'instance/assistant canonical tool catalog',
               availability: 'dependency_checked_on_call', effect: 'write', billing: 'CreditService.PRICING.WEB_SEARCH charged to the host-bound site before dispatch',
               restrictions: 'Query only; current host tenant/run/session ownership required. No automatic search or retry of uncertain paid work; provider configuration and credits required.' },
           } : {}),

@@ -26,7 +26,7 @@ describe('assistant history model matches execution', () => {
   });
 
   it('uses the same resolved model in preparation history and serialized execution options', () => {
-    const source = readFileSync(resolve(process.cwd(), 'src/app/api/robots/instance/assistant/steps.ts'), 'utf8');
+    const source = readFileSync(resolve(process.cwd(), 'src/app/api/robots/instance/assistant/assistant-context.ts'), 'utf8');
     expect(source).toContain('.buildHistory(message, finalProvider, finalModel)');
     expect(source).toContain('ai_model: finalModel');
     expect(source).not.toContain('process.env.AI_MODEL');

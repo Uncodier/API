@@ -1,4 +1,4 @@
-import { createReviewTools } from '../review-tools';
+import { createReviewTools } from './retired/review-tools';
 import type { Workspace } from '../types';
 it('an unfavorable advisory review returns findings without affecting progress or editing permissions', async () => {
   const readFile = jest.fn().mockResolvedValue('export const result = 1;');

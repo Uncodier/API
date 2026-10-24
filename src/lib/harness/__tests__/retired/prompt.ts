@@ -1,4 +1,5 @@
-import type { HarnessTool, WorkspaceRef } from './types';
+// Historical regression fixture only. Never import from production.
+import type { HarnessTool, WorkspaceRef } from '../../types';
 
 /** Derived from the exact dispatch list, not saved manifests or inferred capabilities. */
 export function currentToolContext(tools: HarnessTool[]): string {

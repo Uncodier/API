@@ -501,21 +501,12 @@ export const getAssistantTools = (
   approvedImport?: { url: string; sha256: string; userId: string },
   executionContext?: ToolExecutionContext,
   commandSource?: RequirementCommandSource,
+  decorateHostTools?: (tools: RoutedTool[]) => RoutedTool[],
 ) => {
+  const definitions = getAssistantToolDefinitions(siteId, userId, instanceId, customTools,
+    agentType, userPhone, requirementId, uiMediaOutputType, approvedImport, executionContext, commandSource);
   return refreshHarnessToolManifest(routeTools(
-    getAssistantToolDefinitions(
-      siteId,
-      userId,
-      instanceId,
-      customTools,
-      agentType,
-      userPhone,
-      requirementId,
-      uiMediaOutputType,
-      approvedImport,
-      executionContext,
-      commandSource,
-    ),
+    decorateHostTools ? decorateHostTools(definitions) : definitions,
     { siteId, userId },
   ));
 };
@@ -536,6 +527,7 @@ export async function getInstanceAssistantTools(
   approvedImport?: { url: string; sha256: string; userId: string },
   executionContext?: ToolExecutionContext,
   commandSource?: RequirementCommandSource,
+  decorateHostTools?: (tools: RoutedTool[]) => RoutedTool[],
 ) {
   const composioKey = await getComposioApiKeyForSite(siteId);
   const instanceTools = composioKey
@@ -554,5 +546,6 @@ export async function getInstanceAssistantTools(
     approvedImport,
     executionContext,
     commandSource,
+    decorateHostTools,
   );
 }

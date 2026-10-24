@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { createRequirementResearchTools } from '../requirement-research';
 import { createSession } from '../session';
 import { createMemorySessionStore } from '../memory-store';
-import { runSessionSlice } from '../engine';
+import { runSessionSlice } from './retired/engine';
 import { operationFingerprint } from '../security';
 import type { RequirementRun } from '../requirement-types';
 import type { RequirementClient } from '../requirement-context';

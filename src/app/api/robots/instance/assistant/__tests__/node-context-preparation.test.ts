@@ -65,6 +65,20 @@ beforeEach(() => {
 });
 afterEach(() => jest.restoreAllMocks());
 
+it('prepares an owned requirement through the same history/background pipeline without instructing a competing executor', async () => {
+  const assertActive = jest.fn(async () => {});
+  const context = await prepareAssistantContext(INSTANCE, 'Research objective', SITE, USER, [], false,
+    undefined, undefined, undefined, undefined, 1, undefined, undefined, undefined, undefined,
+    { requirementId: 'owned-requirement', assertActive });
+  expect(assertActive).toHaveBeenCalled();
+  expect(buildHistory).toHaveBeenCalledWith('Research objective', 'openrouter', 'test-model');
+  expect(generateAgentBackground).toHaveBeenCalledWith(SITE, USER);
+  expect(context.executionOptions.requirement_id).toBe('owned-requirement');
+  expect(context.systemPrompt).toContain('requirement_plan/requirement_progress');
+  expect(context.systemPrompt).not.toContain('MUST call instance_plan with action="create"');
+  expect(context.systemPrompt).toContain('SKILL DISCOVERY');
+});
+
 it('rejects direct workflow preparation on an archived instance before exposing tools or history', async () => {
   (supabaseAdmin.from as jest.Mock).mockImplementation(() => {
     const query: any = {};

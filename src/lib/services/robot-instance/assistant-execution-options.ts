@@ -1,6 +1,10 @@
 import type { AIProvider } from '@/lib/custom-automation/ai-agent-executor';
+import type { AssistantExecutionBoundary } from './assistant-execution-boundary';
 
 export interface AssistantExecutionOptions {
+  /** Host-only callbacks, not JSON configuration. */
+  executionBoundary?: AssistantExecutionBoundary;
+  maxOutputTokens?: number;
   use_sdk_tools?: boolean;
   provider?: AIProvider;
   system_prompt?: string;

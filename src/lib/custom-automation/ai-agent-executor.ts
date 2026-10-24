@@ -40,6 +40,43 @@ import {
 } from './azure-vision-message-sanitize';
 import { sanitizeMessagesForGemini } from './gemini-message-sanitize';
 import { coerceToolArgs } from './coerce-tool-args';
+import type { AssistantExecutionBoundary } from '@/lib/services/robot-instance/assistant-execution-boundary';
+
+/** Final host-approved numeric values; legacy callers retain their existing coercion. */
+function normalizeBoundaryNumbers(schema: any, value: any): any {
+  if ((schema?.type === 'integer' || schema?.type === 'number') && typeof value === 'string' &&
+      /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(value)) {
+    const number = Number(value);
+    if (Number.isFinite(number) && (schema.type !== 'integer' || Number.isSafeInteger(number))) return number;
+  }
+  if (schema?.type === 'array' && Array.isArray(value)) {
+    return value.map(item => normalizeBoundaryNumbers(schema.items, item));
+  }
+  if (schema?.type === 'object' && value && typeof value === 'object' && !Array.isArray(value)) {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) =>
+      [key, normalizeBoundaryNumbers(schema.properties?.[key], item)]));
+  }
+  return value;
+}
+
+async function runBoundaryHook<T>(hook: () => Promise<T>): Promise<T> {
+  try {
+    return await hook();
+  } catch {
+    // Do not retain arbitrary hook errors: they may contain arguments or credentials.
+    const { AssistantExecutionBoundaryError } = await import('@/lib/services/robot-instance/assistant-execution-boundary');
+    throw new AssistantExecutionBoundaryError();
+  }
+}
+
+async function runBoundaryBillingHook(hook: () => Promise<void>): Promise<void> {
+  try {
+    await hook();
+  } catch (error: any) {
+    if (['OpenRouterBillingError', 'RecoveryError'].includes(error?.name)) throw error;
+    await runBoundaryHook(async () => { throw error; });
+  }
+}
 
 /** Never allow billing failures to be converted into a success or another model turn. */
 class OpenRouterBillingError extends Error {
@@ -249,6 +286,8 @@ export interface Tool {
 }
 
 export interface ActOptions {
+  /** Host-only callbacks, never deserialized from JSON. */
+  executionBoundary?: AssistantExecutionBoundary;
   model?: string;
   siteId?: string;
   tools: Tool[];
@@ -537,6 +576,22 @@ export class AIAgentExecutor {
     return { cleanedResult: result, base64Image: null };
   }
 
+  /** Admit every actual provider attempt only after the host accepts its final payload. */
+  private async createModelCompletion(request: Record<string, any>, boundary?: AssistantExecutionBoundary, system = '',
+    beforeDispatch?: (request: Record<string, any>) => Promise<void>): Promise<any> {
+    if (boundary) {
+      await runBoundaryHook(async () => {
+        boundary.signal?.throwIfAborted();
+        await boundary.beforeModel({ system, messages: request.messages,
+          tools: request.tools || [], maxOutputTokens: request.max_tokens });
+        boundary.signal?.throwIfAborted();
+      });
+    }
+    if (beforeDispatch) await beforeDispatch(request);
+    return this.client.chat.completions.create(request as any,
+      boundary?.signal ? { signal: boundary.signal } : undefined);
+  }
+
   /**
    * Run streaming completion: iterate over chunks, accumulate message, call onStreamChunk.
    * Supports reasoning/thinking via delta.reasoning_content or delta.reasoning (o-series, etc).
@@ -560,6 +615,8 @@ export class AIAgentExecutor {
       onReasoningTokensUsed?: (count: number) => Promise<void>;
     },
     billing: { siteId?: string; eventId: string },
+    boundary?: AssistantExecutionBoundary,
+    system = '',
   ): Promise<{
     message: any;
     generationId?: string;
@@ -574,8 +631,9 @@ export class AIAgentExecutor {
       stream_options: { include_usage: true },
     };
     const stream = await observeCompletedTextRequest(completionOptions.model,
-      () => requestOpenRouterChat(opts, request => this.client.chat.completions.create(request as any)),
-      { apiKey: this.observationApiKey }).catch(async err => {
+      () => requestOpenRouterChat(opts, request => this.createModelCompletion(request, boundary, system)),
+      { apiKey: this.observationApiKey, signal: boundary?.signal }).catch(async err => {
+      if (err?.name === 'RecoveryError') throw err;
       console.error(`[AI STREAM INIT ERROR][${this.provider}] Provider stream unavailable`);
       if (err.status) console.error(`   Status: ${err.status}`);
       await settleUncertainRequest(billing.siteId, billing.eventId, err, completionOptions.model);
@@ -782,6 +840,7 @@ export class AIAgentExecutor {
       toolOverrides,
       onContextUsage,
       enforceContextBudget = false,
+      executionBoundary,
     } = options;
 
     const modelName = model ? resolveOpenRouterModel(model) : this.model;
@@ -1016,15 +1075,16 @@ export class AIAgentExecutor {
             await onContextUsage({ system: system || '', messages, tools: completionOptions.tools || [],
               provider, model: capacityModel, responseFormat: completionOptions.response_format });
           } catch (error) {
-            console.warn('[AI EXECUTOR] Context usage checkpoint unavailable:', error);
+            console.warn('[AI EXECUTOR] Context usage checkpoint unavailable:', executionBoundary ? { redacted: true } : error);
           }
         }
 
-        const useStreamingPath = useStreaming && onStreamStart && onStreamChunk && !schema;
+        // Boundary turns persist only through strict, redacted canonical onStep logs.
+        const useStreamingPath = !executionBoundary && useStreaming && onStreamStart && onStreamChunk && !schema;
         const useThinkingStream = useStreamingPath && onThinkingStreamStart && onThinkingStreamChunk;
 
         const optsForLog = { ...completionOptions, stream: useStreamingPath, stream_options: undefined, messages: `[${messages.length} messages omitted]` };
-        console.log(`🔍 [DEBUG][${provider}] API Payload Options:`, JSON.stringify(optsForLog, null, 2));
+        if (!executionBoundary) console.log(`🔍 [DEBUG][${provider}] API Payload Options:`, JSON.stringify(optsForLog, null, 2));
 
         let response: { message: any; usage?: any; finish_reason?: string; generationId?: string; model?: string };
         const eventId = randomUUID();
@@ -1045,6 +1105,8 @@ export class AIAgentExecutor {
               completionOptions,
               streamCallbacks,
               { siteId: billingSiteId, eventId },
+              executionBoundary,
+              system || '',
             );
           } catch (streamError: any) {
             logChatCompletionFailure(streamError, {
@@ -1065,16 +1127,40 @@ export class AIAgentExecutor {
           console.log(`⏱️ [TIMING] Calling ${provider.toUpperCase()} API...`);
           const apiStartTime = Date.now();
           let completion;
+          const boundaryBilling = executionBoundary?.billing;
+          let dispatched = false;
+          let dispatchFailure: unknown;
+          const beforeDispatch = boundaryBilling ? async (request: Record<string, any>) => {
+            if (!dispatched) {
+              try {
+                await runBoundaryBillingHook(() => boundaryBilling.beforeDispatch({ eventId,
+                  inputBytes: Buffer.byteLength(JSON.stringify(request), 'utf8'), maxOutputTokens: request.max_tokens }));
+              } catch (error) {
+                dispatchFailure = error;
+                // A terminal billing error may carry status=503. Never let the
+                // provider admission retrier interpret a host rejection as retryable.
+                await runBoundaryHook(async () => { throw error; });
+              }
+              dispatched = true;
+            }
+          } : undefined;
           try {
             completion = await observeCompletedTextRequest(modelName,
-              () => requestOpenRouterChat(completionOptions, request => this.client.chat.completions.create(request as any)),
-              { apiKey: this.observationApiKey });
+              () => requestOpenRouterChat(completionOptions, request => this.createModelCompletion(request, executionBoundary, system || '', beforeDispatch)),
+              { apiKey: this.observationApiKey, signal: executionBoundary?.signal });
           } catch (apiErr: any) {
-            await settleUncertainRequest(billingSiteId, eventId, apiErr, modelName);
+            if (dispatchFailure) throw dispatchFailure;
+            if (boundaryBilling && dispatched) {
+              await runBoundaryBillingHook(() => boundaryBilling.failed({ eventId, error: apiErr, model: modelName }));
+            }
+            if (apiErr?.name === 'RecoveryError') throw apiErr;
+            if (apiErr?.name === 'OpenRouterBillingError') throw apiErr;
+            if (!boundaryBilling) await settleUncertainRequest(billingSiteId, eventId, apiErr, modelName);
             if (provider === 'azure' && isAzureInvalidImageError(apiErr)) {
               sanitizeMessagesForAzureVisionImages(messages);
               completion = await observeCompletedTextRequest(modelName,
-                () => this.client.chat.completions.create(completionOptions), { apiKey: this.observationApiKey });
+                () => this.createModelCompletion(completionOptions, executionBoundary, system || ''),
+                { apiKey: this.observationApiKey, signal: executionBoundary?.signal });
             } else {
               logChatCompletionFailure(apiErr, {
                 provider,
@@ -1092,7 +1178,12 @@ export class AIAgentExecutor {
           const apiDuration = apiEndTime - apiStartTime;
           console.log(`⏱️ [TIMING][${provider}] Response received in ${apiDuration}ms (${(apiDuration/1000).toFixed(1)}s)`);
 
-          await settleCompletion(billingSiteId, eventId, completion?.usage, completion?.id, completion?.model || modelName);
+          if (boundaryBilling) {
+            await runBoundaryBillingHook(() => boundaryBilling.settle({ eventId, usage: completion?.usage,
+              generationId: completion?.id, model: completion?.model || modelName }));
+          } else {
+            await settleCompletion(billingSiteId, eventId, completion?.usage, completion?.id, completion?.model || modelName);
+          }
           const choice = completion?.choices?.[0];
           if ((completion as any)?.error || (choice as any)?.finish_reason === 'error') {
             throw new Error('OpenRouter completion failed after acceptance');
@@ -1117,7 +1208,7 @@ export class AIAgentExecutor {
                 providerOutputTokens: response.usage.completion_tokens,
                 responseFormat: completionOptions.response_format });
             } catch (error) {
-              console.warn('[AI EXECUTOR] Provider usage checkpoint unavailable:', error);
+              console.warn('[AI EXECUTOR] Provider usage checkpoint unavailable:', executionBoundary ? { redacted: true } : error);
             }
           }
           totalUsage.promptTokens += response.usage.prompt_tokens || 0;
@@ -1158,9 +1249,15 @@ export class AIAgentExecutor {
           // A partial call is not an executed call and must not become a dangling
           // tool_call_id in the continuation transcript.
           delete message.tool_calls;
+          if (executionBoundary) await runBoundaryHook(() => executionBoundary.onModelMessage(message));
           steps.push(step);
           if (onStep) await onStep(step);
+          if (executionBoundary) await runBoundaryHook(() => executionBoundary.afterTurn(messages));
           break;
+        }
+
+        if (executionBoundary && !message.tool_calls?.length) {
+          await runBoundaryHook(() => executionBoundary.onModelMessage(message));
         }
 
         if (schema && message.content) {
@@ -1171,12 +1268,12 @@ export class AIAgentExecutor {
             step.output = validated;
             finalOutput = validated;
             iterationsWithoutOutput = 0;
-            console.log(`₍ᐢ•(ܫ)•ᐢ₎ [SCHEMA] ✅ Structured output validated:`, validated);
+            if (!executionBoundary) console.log(`₍ᐢ•(ܫ)•ᐢ₎ [SCHEMA] ✅ Structured output validated:`, validated);
           } catch (error) {
             iterationsWithoutOutput++;
             console.log(`⚠️ [SCHEMA] Iterations without output: ${iterationsWithoutOutput}/${MAX_ITERATIONS_WITHOUT_OUTPUT}`);
-            console.error('❌ [SCHEMA] Failed to parse structured output:', error);
-            console.error('❌ [SCHEMA] Message content:', message.content?.substring(0, 200));
+            console.error('❌ [SCHEMA] Failed to parse structured output:', executionBoundary ? { redacted: true } : error);
+            if (!executionBoundary) console.error('❌ [SCHEMA] Message content:', message.content?.substring(0, 200));
           }
         } else {
           if (schema && !message.content) {
@@ -1214,12 +1311,29 @@ export class AIAgentExecutor {
               let finalArgs = parsed.value;
               if (toolDef && toolDef.parameters) {
                 finalArgs = coerceToolArgs(toolDef.parameters, finalArgs);
+                if (executionBoundary) finalArgs = normalizeBoundaryNumbers(toolDef.parameters, finalArgs);
                 
                 // Re-serialize back to arguments to keep history consistent with coerced state
                 const stringified = JSON.stringify(finalArgs);
                 if (tc.function.arguments !== stringified) {
                   tc.function.arguments = stringified;
                 }
+              }
+
+              if (executionBoundary) {
+                // Finalize effective arguments before the host persists/approves
+                // the model message. No later override may change this intent.
+                if (tc.function.name === 'tools' && finalArgs.action === 'call') {
+                  const overrides = toolOverrides?.[finalArgs.name];
+                  if (overrides) {
+                    await runBoundaryHook(async () => {
+                      const innerArgs = typeof finalArgs.args === 'string' ? JSON.parse(finalArgs.args) : (finalArgs.args || {});
+                      finalArgs.args = JSON.stringify({ ...innerArgs, ...overrides });
+                    });
+                  }
+                }
+                tc.function.arguments = JSON.stringify(finalArgs);
+                finalArgs = JSON.parse(tc.function.arguments);
               }
 
               toolCalls.push({
@@ -1229,17 +1343,22 @@ export class AIAgentExecutor {
               });
             } else {
               console.error(
-                `₍ᐢ•(ܫ)•ᐢ₎ [TOOL_PARSE] ❌ Unrecoverable arguments for ${tc.function.name} (${tc.id}): ${parsed.error}`
+                `₍ᐢ•(ܫ)•ᐢ₎ [TOOL_PARSE] ❌ Unrecoverable arguments for ${tc.function.name} (${tc.id})`
               );
               unparseable.push({
                 id: tc.id,
                 name: tc.function.name,
                 error: parsed.error || 'invalid JSON',
               });
+              if (executionBoundary) {
+                toolCalls.push({ toolCallId: tc.id, toolName: tc.function.name, args: JSON.parse(parsed.sanitized) });
+              }
             }
           }
 
-          if (unparseable.length > 0) {
+          if (executionBoundary) await runBoundaryHook(() => executionBoundary.onModelMessage(message));
+
+          if (unparseable.length > 0 && !executionBoundary) {
             // Reply to the unparseable calls with an error tool message so the
             // model can self-correct on the next iteration. The assistant
             // message already has its arguments sanitized to "{}" above.
@@ -1259,7 +1378,7 @@ export class AIAgentExecutor {
             // let the next iteration retry. Otherwise, proceed to execute the
             // ones that did parse — the unparseable ones already have their
             // tool message above.
-            if (toolCalls.length === 0 && !enforceSingleTurn) {
+            if (toolCalls.length === 0 && !enforceSingleTurn && !executionBoundary) {
               console.warn(
                 `₍ᐢ•(ܫ)•ᐢ₎ [TOOLS] All ${unparseable.length} tool call(s) had invalid arguments; continuing to next iteration after sanitizing history.`
               );
@@ -1273,7 +1392,7 @@ export class AIAgentExecutor {
 
           console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOLS] Executing ${toolCalls.length} tool call(s):`);
           toolCalls.forEach((tc, idx) => {
-            console.log(`  ${idx + 1}. ${tc.toolName} (${tc.toolCallId}) - Args:`, JSON.stringify(tc.args).substring(0, 100));
+            console.log(`  ${idx + 1}. ${tc.toolName} (${tc.toolCallId})`);
           });
 
           const toolResults: ToolResult[] = [];
@@ -1287,6 +1406,25 @@ export class AIAgentExecutor {
             const toolStartTime = Date.now();
             console.log(`⏱️ [TOOL_START] ${toolCall.toolName} (${toolCall.toolCallId}) - Starting execution...`);
             const tool = finalTools.find(t => t.name === toolCall.toolName);
+
+            if (executionBoundary) {
+              const invalidArgs = unparseable.some(call => call.id === toolCall.toolCallId);
+              const skipped = enforceSingleTurn && toolExecutionStarted;
+              if (invalidArgs || !tool || skipped) {
+                // Every approved provider ID goes through host receipt handling,
+                // even when no actual tool effect is possible or allowed.
+                const synthetic = { success: false, executed: false,
+                  ...(skipped && !invalidArgs && tool ? { status: 'skipped' } : {}),
+                  error: invalidArgs ? 'invalid_tool_arguments' : !tool ? 'tool_not_found' : 'single_turn_tool_limit' };
+                const result = await runBoundaryHook(() => executionBoundary.executeTool({
+                  id: toolCall.toolCallId, name: toolCall.toolName, args: toolCall.args,
+                }, async () => synthetic));
+                toolResults.push({ toolCallId: toolCall.toolCallId, toolName: toolCall.toolName, result, isError: true });
+                messages.push({ role: 'tool', tool_call_id: toolCall.toolCallId, name: toolCall.toolName,
+                  content: JSON.stringify(result) });
+                continue;
+              }
+            }
 
             if (!tool) {
               const errorMsg = `Error: Tool ${toolCall.toolName} not found`;
@@ -1343,7 +1481,7 @@ export class AIAgentExecutor {
               let result: any;
 
               // Execute wait actions locally instead of round-trip to Scrapybara.
-              if (!preserveToolExecution && toolCall.toolName === 'computer' && toolCall.args.action === 'wait') {
+              if (!executionBoundary && !preserveToolExecution && toolCall.toolName === 'computer' && toolCall.args.action === 'wait') {
                 const duration = toolCall.args.duration || 1000;
                 console.log(`⚡ [WAIT_LOCAL] Executing wait locally for ${duration}ms instead of calling Scrapybara`);
 
@@ -1361,25 +1499,33 @@ export class AIAgentExecutor {
                 }
                 
                 // --- FORCE OVERRIDES FOR TOOLS ROUTER ---
-                if (toolCall.toolName === 'tools' && toolCall.args.action === 'call') {
+                if (!executionBoundary && toolCall.toolName === 'tools' && toolCall.args.action === 'call') {
                   const targetToolName = toolCall.args.name;
                   if (targetToolName && toolOverrides?.[targetToolName]) {
                     try {
                       const innerArgs = typeof toolCall.args.args === 'string' ? JSON.parse(toolCall.args.args) : (toolCall.args.args || {});
                       const mergedArgs = { ...innerArgs, ...toolOverrides[targetToolName] };
                       toolCall.args.args = JSON.stringify(mergedArgs);
-                      console.log(`[AI EXECUTOR] Force-injected overrides for ${targetToolName}`, toolOverrides[targetToolName]);
+                      console.log(`[AI EXECUTOR] Force-injected tool overrides`);
                     } catch (e) {
-                      console.warn(`[AI EXECUTOR] Could not inject overrides for ${targetToolName}`, e);
+                      console.warn(`[AI EXECUTOR] Could not inject tool overrides`);
                     }
                   }
                 }
 
                 let executeAttempts = 0;
-                const maxExecuteAttempts = enforceSingleTurn || preserveToolExecution ? 1 : 2;
+                const maxExecuteAttempts = executionBoundary || enforceSingleTurn || preserveToolExecution ? 1 : 2;
                 while (executeAttempts < maxExecuteAttempts) {
                   try {
-                    result = await tool.execute(toolCall.args);
+                    if (executionBoundary) {
+                      // Even a wrapper invoking execute twice cannot repeat an effect.
+                      let execution: Promise<any> | undefined;
+                      result = await runBoundaryHook(() => executionBoundary.executeTool({
+                        id: toolCall.toolCallId, name: toolCall.toolName, args: toolCall.args,
+                      }, () => execution ??= Promise.resolve().then(() => tool.execute(toolCall.args))));
+                    } else {
+                      result = await tool.execute(toolCall.args);
+                    }
                     break;
                   } catch (e: any) {
                     if (e?.name === 'OpenRouterBillingError') throw e;
@@ -1404,7 +1550,7 @@ export class AIAgentExecutor {
                   const logPrefix = isScrapybaraTool ? '[SCRAPYBARA]' : '[LOCAL]';
                   console.log(`₍ᐢ•(ܫ)•ᐢ₎ ${logPrefix} Result is object with keys: [${keys.join(', ')}]`);
 
-                  if (isScrapybaraTool) {
+                  if (isScrapybaraTool && !executionBoundary) {
                     if (result.error && result.error.length > 0) {
                       console.error(`⚠️ [SCRAPYBARA] Error field contains: "${result.error}"`);
                     }
@@ -1641,6 +1787,7 @@ export class AIAgentExecutor {
           const streamingLogId = (response as any).streamingLogId;
           await onStep(step, streamingLogId ? { streamingLogId } : undefined);
         }
+        if (executionBoundary) await runBoundaryHook(() => executionBoundary.afterTurn(messages));
 
         const hasToolCalls = !!(message.tool_calls && message.tool_calls.length > 0);
         const shouldStop = (schema && finalOutput !== undefined) ||
@@ -1687,7 +1834,7 @@ export class AIAgentExecutor {
           };
         }
 
-        if (error.message && error.message.includes('tool_call_id')) {
+        if (!executionBoundary && error.message && error.message.includes('tool_call_id')) {
           console.error('⚠️ Tool call mismatch detected. Messages state:', JSON.stringify(messages.slice(-5), null, 2));
         }
 

@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createMemorySessionStore } from '../memory-store';
-import { runSessionSlice } from '../engine';
+import { runSessionSlice } from './retired/engine';
 import type { RequirementRun } from '../requirement-types';
 import type { Workspace } from '../types';
 
@@ -19,13 +19,13 @@ jest.mock('../requirement-scheduler', () => ({ assertRequirementRun: (...args: u
 jest.mock('../requirement-context', () => ({ ...jest.requireActual('../requirement-context'), loadRequirementContext: (...args: unknown[]) => loadContext(...args), formatRequirementContext: () => 'Existing backlog: add tests. Existing plan: implement addition. Failure history: previous test failed.' }));
 jest.mock('../requirement-profile', () => ({ buildRequirementProfile: (...args: unknown[]) => buildProfile(...args) }));
 jest.mock('../requirement-tools', () => ({ createRequirementTools: (...args: unknown[]) => makeTools(...args) }));
-jest.mock('../requirement-model', () => ({ createRequirementModel: () => ({}) }));
-jest.mock('../review-tools', () => ({ createReviewTools: () => [] }));
+jest.mock('./retired/requirement-model', () => ({ createRequirementModel: () => ({}) }));
+jest.mock('./retired/review-tools', () => ({ createReviewTools: () => [] }));
 jest.mock('../requirement-provisioning', () => ({ createRequirementProvisioningTools: () => [] }));
-jest.mock('../runtime', () => ({ executeSessionSlice: (...args: unknown[]) => executeSlice(...args) }));
+jest.mock('./retired/runtime', () => ({ executeSessionSlice: (...args: unknown[]) => executeSlice(...args) }));
 jest.mock('../workspace', () => ({ shellQuote: (value: string) => `'${value}'`, openWorkspace: jest.fn(), adoptRequirementWorkspace: jest.fn() }));
-import { runRequirementCycle } from '../requirement-runtime';
-import { GET } from '@/app/api/cron/requirements-apps/route';
+import { runRequirementCycle } from './retired/requirement-runtime';
+import { GET } from './retired/route';
 
 const run: RequirementRun = { requirementId: randomUUID(), siteId: randomUUID(), userId: randomUUID(), instanceId: randomUUID(), sessionId: randomUUID(), runId: 'cron-cycle', executionGeneration: 0 };
 beforeEach(() => {

@@ -19,13 +19,13 @@ jest.mock('../artifact-store', () => ({ ...jest.requireActual('../artifact-store
 jest.mock('../workspace', () => ({ openWorkspace: (...args: unknown[]) => open(...args), replaceWorkspaceEnvironment: (...args: unknown[]) => replace(...args),
   suspendWorkspaceForCleanup: (...args: unknown[]) => suspendCleanup(...args) }));
 jest.mock('../workspace-tools', () => ({ createWorkspaceTools: () => [] }));
-jest.mock('../engine', () => ({ runSessionSlice: (...args: unknown[]) => engine(...args) }));
-jest.mock('../model', () => ({ createHarnessModel: () => ({}) }));
+jest.mock('./retired/engine', () => ({ runSessionSlice: (...args: unknown[]) => engine(...args) }));
+jest.mock('./retired/model', () => ({ createHarnessModel: () => ({}) }));
 jest.mock('../capabilities', () => ({ createCapabilityTools: (...args: unknown[]) => capability(...args), refreshTenantEnvironment: (...args: unknown[]) => refresh(...args) }));
 jest.mock('../delivery-tools', () => ({ createDeliveryTools: () => [] }));
 jest.mock('../archive-tool', () => ({ createArchiveTool: () => [] }));
 jest.mock('../profile', () => ({ resolveHostProfile: (...args: unknown[]) => profile(...args) }));
-import { executeSessionSlice } from '../runtime';
+import { executeSessionSlice } from './retired/runtime';
 
 it.each(['WORKSPACE_AUTHORIZATION_REQUIRED', 'WORKSPACE_PROVIDER_BILLING_REQUIRED', 'WORKSPACE_AUTH_CONFIGURATION_REQUIRED'])('pauses %s before model dispatch and does not auto-retry the same session', async code => {
   open.mockRejectedValue(Object.assign(new Error('Sandbox access requires operator attention.'), { name: 'WorkspaceError', code }));
@@ -155,7 +155,7 @@ it('restores encrypted configuration through independent host-store instances wi
 });
 
 it('runs the actual engine across a provisioning slice and the next execution without reprovisioning', async () => {
-  const actualEngine = jest.requireActual('../engine').runSessionSlice;
+  const actualEngine = jest.requireActual('./retired/engine').runSessionSlice;
   const token = randomBytes(24).toString('hex');
   let time = Date.now(); jest.spyOn(Date, 'now').mockImplementation(() => time);
   let provisionCalls = 0; let modelCalls = 0;

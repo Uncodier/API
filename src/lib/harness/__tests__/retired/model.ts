@@ -1,6 +1,7 @@
+// Historical regression fixture only. Never import from production.
 import { createOpenRouterClient, getOpenRouterChatModel } from '@/lib/services/ai/openrouter';
-import type { HarnessModel, Json, Message, ModelBillingEvidence, ModelReply } from './types';
-import { retryModelAdmission } from './model-admission';
+import type { HarnessModel, Json, Message, ModelBillingEvidence, ModelReply } from '../../types';
+import { retryModelAdmission } from '../../model-admission';
 import { observeCompletedTextRequest } from '@/lib/status/text-execution-observation';
 
 export function createHarnessModel(): HarnessModel {

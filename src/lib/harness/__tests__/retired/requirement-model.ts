@@ -1,8 +1,9 @@
+// Historical regression fixture only. Never import from production.
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { createHarnessModel } from './model';
 import { calculateOpenRouterCreditCharge, OPENROUTER_COST_MULTIPLIER } from '@/lib/services/billing/agent-pricing';
-import type { HarnessModel, ModelBillingEvidence } from './types';
-import type { RequirementRun } from './requirement-types';
+import type { HarnessModel, ModelBillingEvidence } from '../../types';
+import type { RequirementRun } from '../../requirement-types';
 
 /** Retry ledger transport ONLY, always using the same durable event identity. */
 async function ledger(name: string, args: Record<string, unknown>): Promise<Record<string, any>> {

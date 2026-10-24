@@ -30,7 +30,7 @@ import { getTextObservationKey } from '../handlers/ai/passive-probes';
 import { recordTelemetry } from '../telemetry';
 import { createOpenRouterClient, getOpenRouterChatModel, OpenRouterConfigurationError } from '@/lib/services/ai/openrouter';
 import { requestOpenRouterChat } from '@/lib/services/ai/openrouter-chat-request';
-import { createHarnessModel } from '@/lib/harness/model';
+import { createHarnessModel } from '@/lib/harness/__tests__/retired/model';
 import { AIAgentExecutor } from '@/lib/custom-automation/ai-agent-executor';
 import { chargeOpenRouterUsage } from '@/lib/services/billing/openrouter-usage-billing';
 import { enforceRequestRateLimit } from '@/lib/security/request-rate-limit';

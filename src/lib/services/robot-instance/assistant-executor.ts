@@ -54,11 +54,13 @@ export async function executeAssistantStep(
         siteId: site_id,
       });
       
-      const streamingCallbacks = instance_id && site_id
+      const logOptions = options.executionBoundary ? { strict: true,
+        redact: options.executionBoundary.redact?.bind(options.executionBoundary) } : undefined;
+      const streamingCallbacks = !options.executionBoundary && instance_id && site_id
           ? createStreamingLogCallbacks(instance_id, site_id, user_id, provider, options.plan_id, options.step_id, options.requirement_id)
           : undefined;
       
-      const thinkingStreamCallbacks = instance_id && site_id
+      const thinkingStreamCallbacks = !options.executionBoundary && instance_id && site_id
         ? createThinkingStreamLogCallbacks(instance_id, site_id, user_id, provider, options.plan_id, options.step_id, options.requirement_id)
         : undefined;
 
@@ -104,13 +106,15 @@ export async function executeAssistantStep(
               tools: prepared.tools,
               system: activeSystemPrompt,
               messages: [...hydratedMessages],
-              onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider, options?.plan_id, options?.step_id, options?.requirement_id, instance_node_id),
-              stream: true,
+              onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider, options?.plan_id, options?.step_id, options?.requirement_id, instance_node_id, logOptions),
+              stream: !options.executionBoundary,
               onStreamStart: async () => {
                 return `node-stream-${nodeId}`;
               },
               onStreamChunk: async (_logId: string, text: string, final = false) => writer.onChunk(text, final),
               maxIterations: nodeMaxIterations,
+              executionBoundary: options.executionBoundary,
+              maxOutputTokens: options.maxOutputTokens,
               enforceSingleTurn: options.enforceSingleTurn,
               toolOverrides: options.tool_overrides,
               enforceContextBudget: Boolean(instance_id && site_id),
@@ -119,8 +123,8 @@ export async function executeAssistantStep(
             await writer.finish(result);
             return result;
           } catch (err: any) {
-            if (err?.name === 'OpenRouterBillingError') {
-              // Failure telemetry must not replace the terminal billing identity.
+            if (err?.name === 'OpenRouterBillingError' || err?.name === 'RecoveryError') {
+              // Failure telemetry must not replace terminal billing/boundary identity.
               await writer.fail(err.message).catch(() => {});
               throw err;
             }
@@ -132,10 +136,10 @@ export async function executeAssistantStep(
 
         // Use Promise.allSettled so we don't abort all if one fails
         const resultsSettled = await Promise.allSettled(parallelPromises);
-        const billingFailure = resultsSettled.find((r): r is PromiseRejectedResult =>
-          r.status === 'rejected' && r.reason?.name === 'OpenRouterBillingError');
-        // Partial fan-out success must not hide uncertain billing or permit a continuation turn.
-        if (billingFailure) throw billingFailure.reason;
+        const fatalFailure = resultsSettled.find((r): r is PromiseRejectedResult =>
+          r.status === 'rejected' && ['OpenRouterBillingError', 'RecoveryError'].includes(r.reason?.name));
+        // Partial fan-out success must not hide uncertain billing or a rejected boundary.
+        if (fatalFailure) throw fatalFailure.reason;
         const successfulResults = resultsSettled
           .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled')
           .map(r => r.value);
@@ -209,14 +213,16 @@ export async function executeAssistantStep(
                 tools: prepared.tools,
                 system: activeSystemPrompt,
                 messages: hydratedMessages,
-                onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider, options?.plan_id, options?.step_id, options?.requirement_id, instance_node_id),
-                stream: !!streamingCallbacks || !!nodeWriter,
+                onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider, options?.plan_id, options?.step_id, options?.requirement_id, instance_node_id, logOptions),
+                stream: !options.executionBoundary && (!!streamingCallbacks || !!nodeWriter),
                 onStreamStart: wrappedOnStreamStart,
                 onStreamChunk: wrappedOnStreamChunk,
                 onThinkingStreamStart: thinkingStreamCallbacks?.onThinkingStreamStart,
                 onThinkingStreamChunk: thinkingStreamCallbacks?.onThinkingStreamChunk,
                 onReasoningTokensUsed: thinkingStreamCallbacks?.onReasoningTokensUsed,
                 maxIterations: nodeMaxIterations,
+                executionBoundary: options.executionBoundary,
+                maxOutputTokens: options.maxOutputTokens,
                 enforceSingleTurn: options?.enforceSingleTurn,
                 toolOverrides: options?.tool_overrides,
                 enforceContextBudget: Boolean(instance_id && site_id),

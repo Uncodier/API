@@ -15,7 +15,7 @@ export default {
     '<rootDir>/src/app/api/agents/tools/instance_plan/__tests__/update-step-contract.test.ts',
     '<rootDir>/src/lib/services/__tests__/requirement-execution-visibility.test.ts',
     '<rootDir>/src/app/api/agents/tools/activate_coding_agents/__tests__/**/*.test.ts',
-    '<rootDir>/src/app/api/robots/instance/assistant/__tests__/requirement-context.test.ts',
+    '<rootDir>/src/app/api/robots/instance/assistant/__tests__/requirement-*.test.ts',
     '<rootDir>/src/app/api/robots/instance/assistant/__tests__/plan-exhaustion.test.ts',
     '<rootDir>/src/app/api/robots/instance/assistant/__tests__/plan-ownership.test.ts',
     '<rootDir>/src/lib/services/robot-instance/__tests__/instance-history-reader.test.ts',

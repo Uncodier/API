@@ -148,8 +148,9 @@ describe('assistant private execution context wiring', () => {
 
   function turn(creditExhausted = false) {
     const getTools = jest.fn(async (..._args: any[]) => []);
-    const run = loadRuntimeModule<typeof import('../assistant-turn')>(
-      'src/app/api/robots/instance/assistant/assistant-turn.ts', {
+    const run = loadRuntimeModule<typeof import('../assistant-turn-core')>(
+      'src/app/api/robots/instance/assistant/assistant-turn-core.ts', {
+        './requirement-host': { readRequirementAssistantHost: () => undefined },
         '@/lib/services/billing/credit-exhaustion-message': { isInsufficientCreditsError },
         './utils': { getInstanceAssistantTools: getTools },
         './publish-node-binding': { resolvePublishNodeBinding: async () => null },
@@ -172,6 +173,20 @@ describe('assistant private execution context wiring', () => {
       executionOptions: { site_id: siteId, instance_id: instanceId } };
     return { getTools, run, context };
   }
+
+  it('keeps the durable wrapper non-replaying while forwarding to the shared core', async () => {
+    const processTurn = jest.fn(async (..._args: any[]) => ({ isDone: false, messages: [] }));
+    const { processAssistantTurn } = loadRuntimeModule<typeof import('../assistant-turn')>(
+      'src/app/api/robots/instance/assistant/assistant-turn.ts', {
+        './assistant-turn-core': { processAssistantTurn: processTurn },
+      });
+    const context = {} as Parameters<typeof processAssistantTurn>[0];
+    const messages: Parameters<typeof processAssistantTurn>[1] = [];
+    expect(processAssistantTurn.maxRetries).toBe(0);
+    await expect(processAssistantTurn(context, messages)).resolves.toEqual({ isDone: false, messages: [] });
+    expect(processTurn).toHaveBeenCalledTimes(1);
+    expect(processTurn).toHaveBeenCalledWith(context, messages);
+  });
 
   it('uses initial request and selected instance/node IDs, not prompt/history/overrides', async () => {
     const { getTools, run, context } = turn();
