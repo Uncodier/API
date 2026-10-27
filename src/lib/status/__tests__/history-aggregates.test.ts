@@ -19,91 +19,120 @@ const daily = (overrides: Partial<DailyStatusCounts> = {}): DailyStatusCounts =>
   up_check_count: 6, degraded_check_count: 1, down_check_count: 1, skipped_check_count: 2, ...overrides,
 });
 
-function mockPages(rows: unknown[], cap = 500) {
-  const queries: Array<{ order: jest.Mock; range: jest.Mock }> = [];
-  mockRpc.mockImplementation(() => {
-    const query = {
-      order: jest.fn().mockReturnThis(),
-      range: jest.fn(async (start: number, end: number) => ({ data: rows.slice(start, Math.min(end + 1, start + cap)), error: null })),
-    };
-    queries.push(query);
-    return query;
-  });
-  return queries;
+const sla = () => ({ system_key: 'ai_text', total_24h: 10, up_24h: 8, total_7d: 20, up_7d: 18, total_30d: 30, up_30d: 28 });
+
+function mockSnapshot(data: unknown, error: unknown = null) {
+  const query = {
+    order: jest.fn().mockReturnThis(),
+    range: jest.fn().mockReturnThis(),
+    abortSignal: jest.fn().mockResolvedValue({ data, error }),
+  };
+  mockRpc.mockReturnValue(query);
+  return query;
 }
 
 describe('compact status history loaders', () => {
   beforeEach(() => {
     jest.resetAllMocks();
     jest.useFakeTimers().setSystemTime(new Date(UNTIL));
-    mockPages([]);
+    mockSnapshot([]);
   });
   afterEach(() => jest.useRealTimers());
 
-  it('exhausts daily counts despite a short server cap, using fixed bounds and deterministic order', async () => {
-    const rows = Array.from({ length: 1101 }, (_, i) => daily({ system_key: `system_${i}` }));
-    const queries = mockPages(rows, 137);
-    expect(await getDailyStatusCounts(SINCE, UNTIL)).toEqual(rows);
-    expect(queries.map((query) => query.range.mock.calls[0][0])).toEqual([0, 137, 274, 411, 548, 685, 822, 959, 1096, 1101]);
-    for (const query of queries) {
-      expect(query.order.mock.calls).toEqual([['day', { ascending: true }], ['system_key', { ascending: true }]]);
-      const [start, end] = query.range.mock.calls[0];
-      expect(end - start + 1).toBe(500);
-    }
-    for (const [name, args] of mockRpc.mock.calls) {
-      expect(name).toBe('get_system_status_daily');
-      expect(args).toEqual({ p_since: SINCE, p_until: UNTIL });
+  it.each([
+    [941, 'get_system_status_daily_snapshot', getDailyStatusCounts, daily],
+    [1101, 'get_system_status_daily_snapshot', getDailyStatusCounts, daily],
+    [941, 'get_system_status_observed_sla_snapshot', getObservedSlaCounts, sla],
+    [1101, 'get_system_status_observed_sla_snapshot', getObservedSlaCounts, sla],
+  ] as const)('returns all %i counts from one %s RPC without pagination', async (length, name, load, row) => {
+    const rows = Array.from({ length }, (_, i) => ({ ...row(), system_key: `system_${i}` })).reverse();
+    const query = mockSnapshot(rows);
+    const timeout = jest.spyOn(AbortSignal, 'timeout');
+    try {
+      expect(await load(SINCE, UNTIL)).toEqual(rows);
+      expect(mockRpc).toHaveBeenCalledTimes(1);
+      expect(mockRpc).toHaveBeenCalledWith(name, { p_since: SINCE, p_until: UNTIL });
+      expect(query.order).not.toHaveBeenCalled();
+      expect(query.range).not.toHaveBeenCalled();
+      expect(timeout).toHaveBeenCalledTimes(1);
+      expect(timeout).toHaveBeenCalledWith(7000);
+      expect(query.abortSignal).toHaveBeenCalledTimes(1);
+      expect(query.abortSignal).toHaveBeenCalledWith(timeout.mock.results[0].value);
+      expect(query.abortSignal.mock.calls[0][0]).toBeInstanceOf(AbortSignal);
+    } finally {
+      timeout.mockRestore();
     }
   });
 
   it('loads SLA counts with numeric conversion for JSON bigint strings', async () => {
-    mockPages([{ system_key: 'ai_text', total_24h: '10', up_24h: '8', total_7d: '20', up_7d: '18', total_30d: '30', up_30d: '28' }], 1);
+    mockSnapshot([{ system_key: 'ai_text', total_24h: '10', up_24h: '8', total_7d: '20', up_7d: '18', total_30d: '30', up_30d: '28' }]);
     expect(await getObservedSlaCounts(SINCE, UNTIL)).toEqual([
       { system_key: 'ai_text', total_24h: 10, up_24h: 8, total_7d: 20, up_7d: 18, total_30d: 30, up_30d: 28 },
     ]);
-    expect(mockRpc).toHaveBeenCalledWith('get_system_status_observed_sla', { p_since: SINCE, p_until: UNTIL });
+    expect(mockRpc).toHaveBeenCalledWith('get_system_status_observed_sla_snapshot', { p_since: SINCE, p_until: UNTIL });
   });
 
   it.each(['PGRST202', '42883'])('returns null only for missing RPC code %s', async (code) => {
-    mockRpc.mockReturnValue({ order: jest.fn().mockReturnThis(), range: jest.fn().mockResolvedValue({ data: null, error: { code, message: 'function missing' } }) });
+    mockSnapshot(null, { code, message: 'function missing' });
     expect(await getDailyStatusCounts(SINCE, UNTIL)).toBeNull();
     expect(await getObservedSlaCounts(SINCE, UNTIL)).toBeNull();
   });
 
-  it.each(['42501', 'PGRST301', 'XX000'])('propagates non-missing database failure %s', async (code) => {
-    mockRpc.mockReturnValue({ order: jest.fn().mockReturnThis(), range: jest.fn().mockResolvedValue({ data: null, error: { code, message: 'query failed' } }) });
-    await expect(getDailyStatusCounts(SINCE, UNTIL)).rejects.toThrow('query failed');
+  it.each(['42501', 'PGRST301', 'XX000', '57014'])('propagates non-missing database failure %s without raw fallback', async (code) => {
+    const error = { code, message: 'query failed' };
+    mockSnapshot(null, error);
+    await expect(getDailyStatusCounts(SINCE, UNTIL)).rejects.toMatchObject({ cause: error });
     await expect(getObservedSlaCounts(SINCE, UNTIL)).rejects.toThrow('query failed');
+    await expect(getSystemTimelines(1)).rejects.toThrow('query failed');
+    expect(mockFrom).not.toHaveBeenCalled();
   });
 
-  it('rejects later-page failure rather than returning partial aggregates', async () => {
-    mockPages([daily()], 1);
-    mockRpc.mockImplementationOnce(() => ({ order: jest.fn().mockReturnThis(), range: jest.fn().mockResolvedValue({ data: [daily()], error: null }) }));
-    mockRpc.mockImplementationOnce(() => ({ order: jest.fn().mockReturnThis(), range: jest.fn().mockResolvedValue({ data: null, error: { code: 'XX000', message: 'later failure' } }) }));
-    await expect(getDailyStatusCounts(SINCE, UNTIL)).rejects.toThrow('later failure');
-  });
-
-  it.each([-1, 1.5, null, 'bad', '9007199254740992'])('rejects invalid/unsafe count %s', async (count) => {
-    mockPages([{ ...daily(), check_count: count }]);
+  it.each([-1, 1.5, null, 'bad', '9007199254740992'])('rejects invalid/unsafe count %s without raw fallback', async (count) => {
+    mockSnapshot([{ ...daily(), check_count: count }]);
     await expect(getDailyStatusCounts(SINCE, UNTIL)).rejects.toThrow('invalid check_count');
+    await expect(getSystemTimelines(1)).rejects.toThrow('invalid check_count');
+    mockSnapshot([{ ...sla(), total_24h: count }]);
+    await expect(getObservedSlaCounts(SINCE, UNTIL)).rejects.toThrow('invalid total_24h');
+    expect(mockFrom).not.toHaveBeenCalled();
   });
 
-  it('does not treat null data or transport failures as unavailable migration', async () => {
-    mockRpc.mockReturnValue({ order: jest.fn().mockReturnThis(), range: jest.fn().mockResolvedValue({ data: null, error: null }) });
+  it.each([null, {}, '[]'])('rejects non-array snapshot %s without raw fallback', async (data) => {
+    mockSnapshot(data);
     await expect(getDailyStatusCounts(SINCE, UNTIL)).rejects.toThrow('returned no data');
-    mockRpc.mockImplementation(() => { throw new Error('network failure'); });
-    await expect(getObservedSlaCounts(SINCE, UNTIL)).rejects.toThrow('network failure');
+    await expect(getObservedSlaCounts(SINCE, UNTIL)).rejects.toThrow('returned no data');
+    await expect(getSystemTimelines(1)).rejects.toThrow('returned no data');
+    expect(mockFrom).not.toHaveBeenCalled();
+  });
+
+  it('propagates transport rejection without raw fallback', async () => {
+    const error = new Error('network failure');
+    mockSnapshot(null).abortSignal.mockRejectedValue(error);
+    await expect(getDailyStatusCounts(SINCE, UNTIL)).rejects.toBe(error);
+    await expect(getObservedSlaCounts(SINCE, UNTIL)).rejects.toBe(error);
+    await expect(getSystemTimelines(1)).rejects.toBe(error);
+    expect(mockFrom).not.toHaveBeenCalled();
+  });
+
+  it.each([null, [], 'bad'])('validates the entire snapshot, including malformed last row %s', async (row) => {
+    mockSnapshot([...Array.from({ length: 1101 }, () => daily()), row]);
+    await expect(getDailyStatusCounts(SINCE, UNTIL)).rejects.toThrow('invalid row');
+    await expect(getSystemTimelines(1)).rejects.toThrow('invalid row');
+    mockSnapshot([...Array.from({ length: 1101 }, sla), row]);
+    await expect(getObservedSlaCounts(SINCE, UNTIL)).rejects.toThrow('invalid row');
+    expect(mockFrom).not.toHaveBeenCalled();
   });
 
   it('rejects contradictory aggregate counts instead of displaying invalid uptime', async () => {
-    mockPages([daily({ observed_check_count: 1 })]);
+    mockSnapshot([daily({ observed_check_count: 1 })]);
     await expect(getDailyStatusCounts(SINCE, UNTIL)).rejects.toThrow('inconsistent counts');
-    mockPages([{ system_key: 'ai_text', total_24h: 1, up_24h: 2, total_7d: 2, up_7d: 2, total_30d: 2, up_30d: 2 }]);
+    await expect(getSystemTimelines(1)).rejects.toThrow('inconsistent counts');
+    mockSnapshot([{ ...sla(), total_24h: 1, up_24h: 2 }]);
     await expect(getObservedSlaCounts(SINCE, UNTIL)).rejects.toThrow('inconsistent counts');
+    expect(mockFrom).not.toHaveBeenCalled();
   });
 
   it('builds the same worst-day/check-weighted timeline directly from compact counts', async () => {
-    mockPages([daily(), daily({ day: '2026-10-19', check_count: 2, observed_check_count: 2, up_check_count: 2, degraded_check_count: 0, down_check_count: 0, skipped_check_count: 0 })], 1);
+    mockSnapshot([daily(), daily({ day: '2026-10-19', check_count: 2, observed_check_count: 2, up_check_count: 2, degraded_check_count: 0, down_check_count: 0, skipped_check_count: 0 })]);
     const [timeline, empty] = await getSystemTimelines(2);
     expect(timeline.days).toEqual([
       { date: '2026-10-19', status: 'up', checkCount: 2, observedCheckCount: 2, upCheckCount: 2 },
@@ -117,7 +146,7 @@ describe('compact status history loaders', () => {
   it.each([
     [0, 1, 0, 1, 'degraded'], [0, 0, 1, 1, 'up'], [0, 0, 0, 2, 'skipped'],
   ])('resolves compact worst status from counts', async (down, degraded, up, skipped, status) => {
-    mockPages([daily({ check_count: down + degraded + up + skipped, observed_check_count: down + degraded + up,
+    mockSnapshot([daily({ check_count: down + degraded + up + skipped, observed_check_count: down + degraded + up,
       down_check_count: down, degraded_check_count: degraded, up_check_count: up, skipped_check_count: skipped })]);
     const [timeline] = await getSystemTimelines(1);
     expect(timeline.days[0].status).toBe(status);
@@ -125,15 +154,15 @@ describe('compact status history loaders', () => {
   });
 
   it('uses raw history only when the RPC is missing, not when counts are empty or fail', async () => {
-    mockRpc.mockReturnValue({ order: jest.fn().mockReturnThis(), range: jest.fn().mockResolvedValue({ data: null, error: { code: 'PGRST202', message: 'not installed' } }) });
-    mockFrom.mockReturnValue({ select: jest.fn().mockReturnThis(), gte: jest.fn().mockReturnThis(), lte: jest.fn().mockReturnThis(), order: jest.fn().mockReturnThis(), range: jest.fn().mockResolvedValue({ data: [], error: null }) });
+    mockSnapshot(null, { code: 'PGRST202', message: 'not installed' });
+    mockFrom.mockReturnValue({ select: jest.fn().mockReturnThis(), gte: jest.fn().mockReturnThis(), lte: jest.fn().mockReturnThis(), order: jest.fn().mockReturnThis(), range: jest.fn().mockReturnThis(), abortSignal: jest.fn().mockResolvedValue({ data: [], error: null }) });
     expect(await getSystemTimelines(1)).toHaveLength(2);
     expect(mockFrom).toHaveBeenCalledTimes(1);
     mockFrom.mockClear();
-    mockPages([]);
+    mockSnapshot([]);
     expect(await getSystemTimelines(1)).toHaveLength(2);
     expect(mockFrom).not.toHaveBeenCalled();
-    mockRpc.mockReturnValue({ order: jest.fn().mockReturnThis(), range: jest.fn().mockResolvedValue({ data: null, error: { code: '42501', message: 'denied' } }) });
+    mockSnapshot(null, { code: '42501', message: 'denied' });
     await expect(getSystemTimelines(1)).rejects.toThrow('denied');
     expect(mockFrom).not.toHaveBeenCalled();
   });

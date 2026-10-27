@@ -42,6 +42,7 @@ function mockHistory(rows: StatusHistoryRow[], serverCap = 500, onPage?: () => v
     lte: jest.Mock;
     order: jest.Mock;
     range: jest.Mock;
+    abortSignal: jest.Mock;
   }> = [];
   mockFrom.mockImplementation(() => {
     const query = {
@@ -49,7 +50,9 @@ function mockHistory(rows: StatusHistoryRow[], serverCap = 500, onPage?: () => v
       gte: jest.fn().mockReturnThis(),
       lte: jest.fn().mockReturnThis(),
       order: jest.fn().mockReturnThis(),
-      range: jest.fn(async (start: number, end: number) => {
+      range: jest.fn().mockReturnThis(),
+      abortSignal: jest.fn(async () => {
+        const [start, end] = query.range.mock.calls[0] as [number, number];
         onPage?.();
         const since = query.gte.mock.calls[0][1] as string;
         const until = query.lte.mock.calls[0][1] as string;
@@ -194,6 +197,28 @@ describe('get-system-timelines', () => {
     expect(new Set(loaded.map((row) => row.id)).size).toBe(rows.length);
   });
 
+  it('shares one 20-second abort signal across all raw history pages, including the terminal page', async () => {
+    const rows = Array.from({ length: 1101 }, (_, i) => historyRow(String(i)));
+    const queries = mockHistory(rows, 137);
+    const timeout = jest.spyOn(AbortSignal, 'timeout');
+    try {
+      expect(await loadStatusHistory('2026-10-19T00:00:00.000Z', NOW)).toHaveLength(rows.length);
+      expect(queries.length).toBeGreaterThan(2);
+      expect(timeout).toHaveBeenCalledTimes(1);
+      expect(timeout).toHaveBeenCalledWith(20000);
+      const signal = timeout.mock.results[0].value;
+      expect(signal).toBeInstanceOf(AbortSignal);
+      for (const query of queries) {
+        expect(query.range).toHaveBeenCalledTimes(1);
+        expect(query.abortSignal).toHaveBeenCalledTimes(1);
+        expect(query.abortSignal).toHaveBeenCalledWith(signal);
+        expect(query.range.mock.invocationCallOrder[0]).toBeLessThan(query.abortSignal.mock.invocationCallOrder[0]);
+      }
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
   it('uses one fixed upper timestamp and UTC day range across every page', async () => {
     const queries = mockHistory([
       historyRow('too-old', { created_at: '2026-10-18T23:59:59.999Z' }),
@@ -234,7 +259,8 @@ describe('get-system-timelines', () => {
       const query = {
         select: jest.fn().mockReturnThis(), gte: jest.fn().mockReturnThis(),
         lte: jest.fn().mockReturnThis(), order: jest.fn().mockReturnThis(),
-        range: jest.fn().mockResolvedValue(page ? { data: [historyRow('one')], error: null } : { data: null, error }),
+        range: jest.fn().mockReturnThis(),
+        abortSignal: jest.fn().mockResolvedValue(page ? { data: [historyRow('one')], error: null } : { data: null, error }),
       };
       queries.push(query);
       return query;
@@ -242,14 +268,20 @@ describe('get-system-timelines', () => {
     if (page) mockFrom.mockImplementationOnce(() => ({
       select: jest.fn().mockReturnThis(), gte: jest.fn().mockReturnThis(),
       lte: jest.fn().mockReturnThis(), order: jest.fn().mockReturnThis(),
-      range: jest.fn().mockResolvedValue({ data: null, error }),
+      range: jest.fn().mockReturnThis(),
+      abortSignal: jest.fn().mockResolvedValue({ data: null, error }),
     }));
     await expect(getSystemTimelines(2)).rejects.toThrow('database unavailable');
     expect(mockGetHandlerSystemKeys).not.toHaveBeenCalled();
   });
 
   it('does not reinterpret a transport rejection as an empty history', async () => {
-    mockFrom.mockImplementation(() => { throw new Error('network unavailable'); });
+    const getQuery = mockFrom.getMockImplementation()!;
+    mockFrom.mockImplementation(() => {
+      const query = getQuery();
+      query.abortSignal.mockRejectedValue(new Error('network unavailable'));
+      return query;
+    });
     await expect(getSystemTimelines()).rejects.toThrow('network unavailable');
   });
 
@@ -258,7 +290,7 @@ describe('get-system-timelines', () => {
     const getQuery = mockFrom.getMockImplementation()!;
     mockFrom.mockImplementation(() => {
       const query = getQuery();
-      query.range.mockResolvedValue({ data: null, error: null });
+      query.abortSignal.mockResolvedValue({ data: null, error: null });
       return query;
     });
     await expect(getSystemTimelines()).rejects.toThrow('returned no data');

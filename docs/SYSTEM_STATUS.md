@@ -50,9 +50,37 @@ load error is displayed as unavailable, not as an empty history.
   raw history. Other RPC errors propagate. The migration is not required for
   correctness but avoids fetching all raw rows for every cache refresh.
 
-Raw and aggregate reads are bounded by a fixed upper timestamp, ordered
-deterministically and exhausted even when PostgREST caps pages below the requested
-size. Daily results have a 60-second cache; summary cache is 30 seconds.
+### History timeout repair
+
+Apply `supabase/migrations/20261027020000_status_history_snapshots.sql` after
+`20261020195500_status_observed_history.sql`, through the approved migration
+process, before deploying the snapshot consumer. This forward migration adds
+service-role-only, security-invoker JSONB snapshot RPCs for daily and 30-day
+aggregates. It does not rewrite historical data or change normalization.
+
+Each snapshot returns the complete ordered array in one scalar result, including
+more than 500 groups, so PostgREST row caps do not truncate it. The application
+does not paginate aggregates or make an extra empty-page aggregate call. Snapshot
+requests have a seven-second abort deadline. Missing snapshot functions fall back
+only for `PGRST202`/`42883` to raw history; permissions, timeouts and malformed
+results never trigger fallback or fabricate empty history. Raw history uses fixed
+time bounds, deterministic pagination and one shared 20-second abort deadline.
+
+Daily results have a 60-second Redis cache and a bounded process-local copy;
+summary cache remains 30 seconds. Daily refreshes require an owner-token Redis
+lease shared between instances, with a 60-second expiry. Contenders wait at most
+eight 250ms intervals (plus bounded Redis operations), then show history as
+unavailable instead of starting another scan. Failed loads create a 30-second
+shared/local retry cooldown, not a cached empty result. Failed result/cooldown
+publication retains the lease until expiry instead of immediately admitting
+another scan. Redis admission failure or missing configuration serves only an
+unexpired local result; otherwise history is unavailable, preventing database
+fan-out during a Redis outage. The existing page labels unavailable history.
+
+This repair reduces duplicate computation; it does not precompute historical
+states. A single snapshot still runs the existing JSON normalizer. After approved
+rollout, check RPC request counts, latency and timeout logs before considering
+persisted observed states or daily summaries. No timeout increase is required.
 
 ## Passive evidence
 
