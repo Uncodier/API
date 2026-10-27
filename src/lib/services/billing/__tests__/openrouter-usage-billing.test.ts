@@ -2,8 +2,16 @@ import { randomBytes, randomUUID } from 'node:crypto';
 const rpc = jest.fn();
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { rpc } }));
 import { chargeOpenRouterUsage } from '../openrouter-usage-billing';
+import { withRequirementChargeContext } from '../requirement-charge-context';
 
 beforeEach(() => { jest.resetAllMocks(); rpc.mockResolvedValue({ data: { success: true }, error: null }); });
+
+it('attributes nested model charges using private host context, not caller metadata', async () => {
+  const context = { siteId: randomUUID(), requirementId: randomUUID(), sessionId: randomUUID() };
+  await withRequirementChargeContext(context, () => chargeOpenRouterUsage({ siteId: context.siteId,
+    eventId: randomUUID(), usage: { cost: 0.1 }, metadata: { requirement_id: randomUUID(), session_id: randomUUID() } }));
+  expect(rpc.mock.calls[0][1].p_metadata).toMatchObject({ requirement_id: context.requirementId, session_id: context.sessionId });
+});
 
 it('submits only reported cost and a stable generation identity to the idempotent ledger', async () => {
   const siteId = randomUUID(), eventId = randomUUID();

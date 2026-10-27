@@ -45,3 +45,12 @@ test('lost ownership after reservation cancels before inference', async () => {
   await expect(f.billing.beforeDispatch({ eventId: f.eventId, inputBytes: 100, maxOutputTokens: 1024 })).rejects.toThrow('Owner changed');
   expect(rpc.mock.calls.map(call => call[0])).toEqual(['reserve_agent_requirement_credits', 'cancel_harness_model_reservation']);
 });
+
+test('account credit rejection still prevents dispatch', async () => {
+  const f = fixture();
+  rpc.mockImplementation(async name => ({ data: name === 'reserve_agent_requirement_credits'
+    ? { success: false, state: 'insufficient_credits' } : { success: true }, error: null }));
+  await expect(f.billing.beforeDispatch({ eventId: f.eventId, inputBytes: 100, maxOutputTokens: 4096 }))
+    .rejects.toMatchObject({ name: 'OpenRouterBillingError' });
+  expect(rpc.mock.calls.map(call => call[0])).toEqual(['reserve_agent_requirement_credits', 'cancel_harness_model_reservation']);
+});

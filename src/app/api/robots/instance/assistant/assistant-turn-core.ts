@@ -116,7 +116,6 @@ export async function processAssistantTurn(
     node_continuation: context.nodeContinuation,
     ...(requirementHost ? {
       executionBoundary: requirementHost.boundary,
-      maxOutputTokens: requirementHost.maxOutputTokens,
     } : {}),
   };
   if (requirementHost) {

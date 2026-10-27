@@ -51,7 +51,6 @@ export async function runRequirementAssistantSlice(input: RequirementAssistantSl
     { requirementId: run.requirementId, assertActive: input.assertExecution });
   attachRequirementAssistantHost(context, {
     assertActive: input.assertExecution, boundary: adapter.boundary,
-    maxOutputTokens: session.request.limits.maxOutputTokens,
     tools: [...tools, ...adapter.controlTools],
     refreshContext: async () => input.redact([
       input.context || '',

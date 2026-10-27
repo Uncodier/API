@@ -14,6 +14,7 @@ import type { RequirementRun } from '@/lib/harness/requirement-types';
 import type { HarnessSession } from '@/lib/harness/types';
 import { assertToolScreenAccess } from '@/app/api/agents/tools/router/screen-access';
 import { writeRequirementInstanceLog } from './requirement-instance-log';
+import { evaluateRequirementCycleBudget } from './requirement-budget';
 
 function summary(session: HarnessSession | null): string {
   const finish = session?.status === 'completed' && session.messages.findLast(message => message.role === 'tool' && message.toolCallId &&
@@ -39,6 +40,9 @@ export async function runRequirementCycle(run: RequirementRun) {
   let repoUrl: string | undefined;
   try {
     await assertActive();
+    if (await evaluateRequirementCycleBudget(run)) {
+      return { reqId: run.requirementId, sessionId: run.sessionId, status: 'paused' };
+    }
     await writeRequirementInstanceLog(run, { key: `cycle-start:${run.runId}`, log_type: 'system',
       message: 'Requirement admitted to the canonical instance assistant.' });
     const context = await loadRequirementContext(run);
@@ -54,7 +58,8 @@ export async function runRequirementCycle(run: RequirementRun) {
       const initial = createSession(sessionRequestSchema.parse({
         objective: [context.requirement.title, context.requirement.instructions, context.requirement.description].filter(Boolean).join('\n\n').slice(0, 24000),
         repository: configured.repository,
-        limits: { maxTurns: 500, maxOutputTokens: 4096, maxTotalTokens: 10000000, maxActiveMs: 14400000 },
+        // Legacy snapshot fields are supplied by the schema for compatibility;
+        // canonical execution uses credits and the per-cycle monetary budget check.
       }), run.sessionId);
       initial.request.requirementId = run.requirementId;
       await assertActive();

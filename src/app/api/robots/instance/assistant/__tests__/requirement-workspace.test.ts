@@ -25,13 +25,19 @@ jest.mock('../requirement-session', () => ({ runRequirementAssistantSlice: (...a
 jest.mock('../requirement-instance-log', () => ({ writeRequirementInstanceLog: async () => {} }));
 import { executeRequirementAssistantWorkspace } from '../requirement-workspace';
 
-async function fixture() {
+async function fixture(activeMs = 0) {
   const scope = { siteId: randomUUID(), userId: randomUUID() };
   const session = createSession(sessionRequestSchema.parse({ objective: 'Offline cleanup',
     repository: { url: 'https://example.test/repo.git' } }));
   const run = { ...scope, sessionId: session.id, requirementId: randomUUID(), instanceId: randomUUID(), runId: randomUUID(), executionGeneration: 1 };
   session.request.requirementId = run.requirementId;
   await store.create(session, scope);
+  if (activeMs) {
+    const owner = randomUUID();
+    const claimed = (await store.claim(session.id, scope.siteId, owner, 300))!;
+    await store.save({ ...claimed, activeMs }, scope.siteId, owner);
+    await store.release(session.id, scope.siteId, owner);
+  }
   const assertExecution = jest.fn(async () => {
     const current = await store.load(session.id, scope.siteId);
     if (current && !['queued', 'running'].includes(current.status)) throw new Error('Active execution rejected terminal state');
@@ -71,4 +77,20 @@ test('permission failure prevents workspace provisioning and model execution', a
   permission.mockRejectedValue(new Error('Permission denied'));
   await executeRequirementAssistantWorkspace(f.session.id, f.scope, f.options);
   expect(open).not.toHaveBeenCalled(); expect(runSlice).not.toHaveBeenCalled();
+});
+
+test('historical active time cap does not prevent workspace execution', async () => {
+  const f = await fixture(14400001);
+  runSlice.mockImplementation(async input => store.save({ ...input.session, status: 'completed' }, f.scope.siteId, input.owner));
+  expect(await executeRequirementAssistantWorkspace(f.session.id, f.scope, f.options)).toEqual({ status: 'completed', continue: false });
+  expect(open).toHaveBeenCalledTimes(1);
+  expect(runSlice).toHaveBeenCalledTimes(1);
+  expect((await store.load(f.session.id, f.scope.siteId))?.activeMs).toBeGreaterThanOrEqual(14400001);
+});
+
+test('transient failure after the historical time cap remains retryable', async () => {
+  const f = await fixture(14400001);
+  open.mockRejectedValue(new Error('Synthetic transient setup failure'));
+  expect(await executeRequirementAssistantWorkspace(f.session.id, f.scope, f.options)).toEqual({ status: 'waiting', continue: false });
+  expect((await store.load(f.session.id, f.scope.siteId))?.reason).not.toBe('active_time_budget_exhausted');
 });

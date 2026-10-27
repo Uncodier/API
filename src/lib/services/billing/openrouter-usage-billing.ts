@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { calculateOpenRouterCreditCharge } from './agent-pricing';
 import { openRouterCostEvidence } from './openrouter-cost-evidence';
+import { requirementChargeMetadata } from './requirement-charge-context';
 
 export interface OpenRouterUsageCharge {
   siteId: string;
@@ -36,7 +37,7 @@ export async function chargeOpenRouterUsage(input: OpenRouterUsageCharge): Promi
         'message_id', 'attempt', 'retry_count', 'model', 'context'].includes(key) &&
       ((typeof value === 'string' && value.length <= 256) ||
         (typeof value === 'number' && Number.isFinite(value)))),
-    ), ...openRouterCostEvidence(input.usage) },
+    ), ...openRouterCostEvidence(input.usage), ...requirementChargeMetadata(input.siteId) },
   }); } catch { throw new OpenRouterBillingError(); }
   if (result.error || result.data?.success !== true || cost === null) {
     // An uncertain response may already have committed. Stop; never re-run inference.

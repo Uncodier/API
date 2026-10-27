@@ -6,6 +6,7 @@ import { platformT } from '@/lib/i18n/email-messages/platform';
 import { EmailSendService } from '@/lib/services/email/EmailSendService';
 import { formatCreditExhaustionNotice, InsufficientCreditsError } from './credit-exhaustion-message';
 import type { CreditExhaustionNotice } from './credit-exhaustion-message';
+import { requirementChargeMetadata } from './requirement-charge-context';
 
 // Preserve the existing import path and error identity without coupling pure helpers to I/O.
 export { InsufficientCreditsError } from './credit-exhaustion-message';
@@ -357,7 +358,7 @@ export class CreditService {
       p_amount: amount,
       p_type: transactionType,
       p_description: description,
-      p_metadata: metadata
+      p_metadata: { ...metadata, ...requirementChargeMetadata(siteId) }
     });
 
     if (error) {

@@ -45,6 +45,7 @@ test('cron uses canonical context and turns, durable logs and the same session; 
     expect(context).toBe(input.assistantContext);
     const host = readRequirementAssistantHost(context)!;
     expect(host).toBeDefined();
+    expect(host).not.toHaveProperty('maxOutputTokens');
     expect(await host.refreshContext()).toContain('Current authorized requirement snapshot');
     await host.boundary.beforeModel({ system: context.systemPrompt, messages, tools: host.tools, maxOutputTokens: 4096 });
     const args = { summary: 'No external publication performed.', outcome: 'partial' };

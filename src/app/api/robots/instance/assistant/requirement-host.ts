@@ -6,7 +6,6 @@ import type { RoutedTool } from '@/app/api/agents/tools/router/assistantProtocol
 export interface RequirementAssistantHost {
   assertActive(): Promise<void>;
   boundary: AssistantExecutionBoundary;
-  maxOutputTokens: number;
   tools: any[];
   refreshContext(): Promise<string>;
 }

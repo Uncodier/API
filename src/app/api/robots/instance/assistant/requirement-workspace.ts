@@ -50,13 +50,8 @@ export async function executeRequirementAssistantWorkspace(id: string, scope: Se
   const knownSecrets = new Set<string>();
   let currentHost: Awaited<ReturnType<typeof loadSessionConfiguration>> | undefined;
   const redact = (text: string) => createRedactor([...knownSecrets, ...(currentHost?.configuration.redactionValues || [])])(text);
-  const remaining = session.request.limits.maxActiveMs - session.activeMs;
-  if (remaining <= 0) {
-    try { session.status = 'paused'; session.reason = 'active_time_budget_exhausted'; await store.save(session, scope.siteId, owner); }
-    finally { await store.release(id, scope.siteId, owner); }
-    return { status: 'paused', continue: false };
-  }
-  const deadline = AbortSignal.timeout(Math.min(210000, remaining));
+  // Bound each transport slice, not the cumulative lifetime of the session.
+  const deadline = AbortSignal.timeout(210000);
   let workspace;
   let ownedHandle: Sandbox | undefined;
   const setupStarted = Date.now();
@@ -161,11 +156,10 @@ export async function executeRequirementAssistantWorkspace(id: string, scope: Se
     if (current?.status === 'running') {
       try {
         await store.assertOwner(id, scope.siteId, owner, 180);
-        const budgetExhausted = current.activeMs >= current.request.limits.maxActiveMs;
         const operatorRequired = workspaceOpenRequiresOperator(error);
         const boundaryFailure = error instanceof Error && (error.name === 'RecoveryError' || error.name === 'OpenRouterBillingError');
-        current.status = budgetExhausted || operatorRequired || boundaryFailure ? 'paused' : 'waiting';
-        current.reason = budgetExhausted ? 'active_time_budget_exhausted' : operatorRequired
+        current.status = operatorRequired || boundaryFailure ? 'paused' : 'waiting';
+        current.reason = operatorRequired
           ? `workspace_access_requires_operator: ${safeError(error, redact)}` : boundaryFailure
           ? 'assistant_execution_requires_reconciliation' : `runtime_unavailable: ${safeError(error, redact)}`;
         await store.save(current, scope.siteId, owner);

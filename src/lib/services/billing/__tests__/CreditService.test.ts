@@ -26,6 +26,7 @@ import { CreditService, InsufficientCreditsError } from '../CreditService';
 import { formatCreditExhaustionNotice, isInsufficientCreditsError } from '../credit-exhaustion-message';
 import { resolveEmailLocale } from '@/lib/i18n/email-locale';
 import { platformT } from '@/lib/i18n/email-messages/platform';
+import { withRequirementChargeContext } from '../requirement-charge-context';
 
 const notifier = CreditService as unknown as {
   notifyInsufficientCredits(siteId: string, required: number, available: number): Promise<void>;
@@ -42,6 +43,19 @@ describe('CreditService classified balance checks', () => {
     mockSingle.mockResolvedValue({ data: { credits_available: 10 }, error: null });
   });
   afterEach(() => jest.restoreAllMocks());
+
+  it('attributes one existing tool debit to the host requirement without a second charge', async () => {
+    const context = { siteId: randomUUID(), requirementId: randomUUID(), sessionId: randomUUID() };
+    await withRequirementChargeContext(context, () => CreditService.deductCredits(context.siteId, 0.1,
+      'web_search', 'Synthetic search', { requirement_id: randomUUID() }));
+    expect(mockRpc).toHaveBeenCalledTimes(1);
+    expect(mockRpc).toHaveBeenCalledWith('deduct_credits', expect.objectContaining({ p_amount: 0.1,
+      p_metadata: { requirement_id: context.requirementId, session_id: context.sessionId } }));
+    mockRpc.mockClear();
+    await expect(withRequirementChargeContext(context, () => CreditService.deductCredits(randomUUID(), 0.1,
+      'web_search', 'Synthetic mismatch'))).rejects.toThrow('tenant mismatch');
+    expect(mockRpc).not.toHaveBeenCalled();
+  });
 
   it('refreshes the included period before reading usable credits', async () => {
     expect(await CreditService.validateCredits('synthetic-site', 3)).toBe(true);

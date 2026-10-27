@@ -7,6 +7,7 @@ import { sameJson } from '@/lib/harness/store';
 import type { RequirementRun } from '@/lib/harness/requirement-types';
 import type { ArtifactStore, HarnessSession, HarnessTool, Message, SessionStore, ToolCall, ToolContext, ToolResult } from '@/lib/harness/types';
 import { requirementOperationFingerprint, requirementOperationResult } from './requirement-operation';
+import { withRequirementChargeContext } from '@/lib/services/billing/requirement-charge-context';
 
 type LogEvent = { key: string; log_type: string; message: string; tool_name?: string; tool_call_id?: string;
   tool_args?: any; tool_result?: any; is_error?: boolean; details?: Record<string, unknown> };
@@ -88,9 +89,6 @@ export function createRequirementExecutionBoundary(input: Input): {
   const ready = async () => {
     if (!initialized || session.status !== 'running') return fatal();
     await active();
-    if (session.activeMs + Math.max(0, Date.now() - measuredAt) >= session.request.limits.maxActiveMs) {
-      await pause('active_time_budget_exhausted');
-    }
   };
   const effectArgs = (args: any) => {
     const { thought_process: _thoughtProcess, ...rest } = z.record(z.unknown()).parse(args);
@@ -299,14 +297,12 @@ export function createRequirementExecutionBoundary(input: Input): {
     beforeModel: request => guard(async () => {
       await ready();
       if (executing || session.pending || outstanding().length || finishOutcome) return fatal();
-      if (session.turns >= session.request.limits.maxTurns) return pause('turn_budget_exhausted');
       if (serializedBytes(session) > 2400000) return pause('transcript_storage_budget_exhausted');
-      if (!Number.isSafeInteger(request.maxOutputTokens) || request.maxOutputTokens < 1 ||
-        request.maxOutputTokens > session.request.limits.maxOutputTokens) return pause('output_token_budget_exhausted');
+      if (!Number.isSafeInteger(request.maxOutputTokens) || request.maxOutputTokens < 1) return fatal();
+      // Historical counters are telemetry, not a second consumption budget.
+      // The shared executor reserves account credits before provider dispatch.
       const allocation = Buffer.byteLength(JSON.stringify(request)) + request.maxOutputTokens;
-      if (!Number.isSafeInteger(allocation + session.allocatedTokens) || allocation + session.allocatedTokens > session.request.limits.maxTotalTokens) {
-        return pause('token_budget_exhausted');
-      }
+      if (!Number.isSafeInteger(session.turns + 1) || !Number.isSafeInteger(allocation + session.allocatedTokens)) return fatal();
       session.assistantExecutionVersion = 1;
       session.turns++; session.allocatedTokens += allocation;
       await save();
@@ -370,7 +366,9 @@ export function createRequirementExecutionBoundary(input: Input): {
       } else {
         executing = { call, args, adapterUsed: false };
         try {
-          output = await execute(); // Exact canonical callback: preserve its router/permission/wrapper semantics.
+          // Preserve the exact callback and attribute in-process tool charges to
+          // this host-owned requirement, never to model-selected metadata.
+          output = await withRequirementChargeContext(input.run, execute);
         } catch (error: any) {
           if (input.signal.aborted || /(?:Recovery|Ownership|SessionStore|ArtifactStore|HostStateStore|Database|Billing)Error$/.test(error?.name || '')) return fatal();
           output = { ok: false, error: { code: 'TOOL_ERROR', message: safeError(error, input.redact),

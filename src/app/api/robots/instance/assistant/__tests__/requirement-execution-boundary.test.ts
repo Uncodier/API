@@ -244,16 +244,25 @@ describe('canonical requirement execution durability boundary (offline)', () => 
     expect(f.adapter.getSession().reconciledOperations?.[operationFingerprint('write', {})]).toBeUndefined();
   });
 
-  test.each(['turns', 'tokens', 'time', 'output'])('%s limit blocks inference with durable reason', async kind => {
+  test.each(['turns', 'tokens', 'time', 'output'])('historical %s limit does not block credit-funded inference', async kind => {
     const f = fixture();
     if (kind === 'turns') f.input.session.turns = f.input.session.request.limits.maxTurns;
     if (kind === 'tokens') f.input.session.allocatedTokens = f.input.session.request.limits.maxTotalTokens;
     if (kind === 'time') f.input.session.activeMs = f.input.session.request.limits.maxActiveMs;
     if (kind === 'output') f.input.session.request.limits.maxOutputTokens = 1;
     const adapter = createRequirementExecutionBoundary(f.input); await adapter.initialize();
-    await expect(adapter.boundary.beforeModel({ system: '', messages: [], tools: [], maxOutputTokens: 100 })).rejects.toMatchObject({ name: 'RecoveryError' });
-    expect(adapter.getSession().status).toBe('paused');
-    expect(f.logs.filter(log => log.message.includes('allocation reserved'))).toEqual([]);
+    await expect(adapter.boundary.beforeModel({ system: '', messages: [], tools: [], maxOutputTokens: 100 })).resolves.toBeUndefined();
+    expect(adapter.getSession().status).toBe('running');
+    expect(adapter.getSession().turns).toBe(f.input.session.turns + 1);
+    expect(adapter.getSession().allocatedTokens).toBeGreaterThan(f.input.session.allocatedTokens);
+    expect(adapter.getSession().activeMs).toBeGreaterThanOrEqual(f.input.session.activeMs);
+    expect(f.logs.filter(log => log.message.includes('allocation reserved'))).toHaveLength(1);
+  });
+
+  test.each([0, -1, NaN])('invalid output allowance %s still blocks dispatch', async maxOutputTokens => {
+    const f = fixture(); await f.adapter.initialize();
+    await expect(f.adapter.boundary.beforeModel({ system: '', messages: [], tools: [], maxOutputTokens })).rejects.toMatchObject({ name: 'RecoveryError' });
+    expect(f.adapter.getSession().turns).toBe(0);
   });
 
   test('aborted signal blocks inference before reservations', async () => {

@@ -276,9 +276,88 @@ its budget/history. Local tests alone do not demonstrate a production repair.
 - Host runtime configuration is encrypted separately from transcripts. Credentials
   are redacted before persistence/results; control-plane secrets never enter command
   environments. Runtime commands explicitly opt into scoped application environment.
-- Session limits are monotonic: 500 model turns, 10M allocated tokens, four active
-  hours per occurrence. Model output allowance is 4096 tokens per request. Deployment
-  operators should review these cost limits before enabling cron.
+- Account-credit admission remains the per-operation consumption gate for canonical requirements.
+  Historical `request.limits` fields remain in persisted snapshots for compatibility
+  but no longer cap turns, cumulative allocation, active time or model output.
+  Counters remain monotonic telemetry; `allocatedTokens` is a legacy byte-based
+  allocation counter, not provider token usage. Output configuration uses the shared
+  executor's existing request settings and provider safeguards. Transport deadlines,
+  storage bounds, ownership, explicit pauses and uncertain-effect fences still apply.
+  Counters are never reset. Most existing pauses require authorized recovery;
+  the narrowly scoped economic reevaluation below can resume verified
+  `token_budget_exhausted` pauses without a new user message.
+- At the start of each cron cycle, before profile/workspace/model work,
+  `evaluate_requirement_cycle_budget` sums existing customer charges attributable
+  to the requirement across its sessions. `budget` is USD-equivalent credits
+  (1 credit = 1 USD); null disables this additional check, zero permits no spend.
+  Settled model charges come from their reservation ledger, tool debits/refunds
+  are netted once, and registered requirement VM charges come from reconciled
+  provider-session billing. Model holds/refunds and sandbox ledger entries are
+  excluded from the tool sum to avoid double counting.
+  If charged spend is at least the budget, the existing cycle-finishing RPC blocks
+  the requirement with `token_budget_exhausted` and an explicitly monetary summary.
+  This is NOT a reservation or hard spending cap: a cycle can overshoot, pending
+  model costs and not-yet-reconciled VM time are not settled spend. Existing account
+  billing/uncertain-effect protections still apply. Raising the budget does not
+  authorize clearing unrelated pauses or holds.
+  Apply `20261026010000_requirement_cycle_budget.sql` before deploying this API;
+  missing/failed accounting prevents cycle execution rather than assuming zero.
+  Deploy `20261026020000_requirement_economic_recovery.sql` after the cycle-budget
+  migration and its indexes to enable economic reevaluation in the existing claim
+  RPC. Before command draining and normal admission, a rotating batch of at most
+  100 recorded economic pauses is checked (at most once per minute per pause).
+  A requirement must have both remaining monetary budget (or null/unlimited)
+  and positive usable account credits after the existing credit-period renewal.
+  This is a preflight, not a reservation or a guarantee that the next model hold
+  fits; normal pre-dispatch credit admission still applies. Buying credits cannot
+  bypass an exhausted requirement budget, and raising its budget creates no credits.
+  Recovery preserves the session, generation, transcript, workspace and counters
+  and writes an `economic-recovery:` status receipt. It does not fabricate a user
+  action. Direct budget-only edits are recognized; arbitrary edits, later status
+  writes (even blocked-to-blocked), session controls/version changes, holds,
+  paused runners/plans, live leases, pending model charges and uncertain or
+  unfinished tool effects prevent recovery. Sandbox cleanup fences (including
+  other sessions referencing the same requirement/resource) also prevent recovery.
+  Each recovery runs inside a database subtransaction: a late lifecycle guard or
+  failed audit write rolls back the session, requirement and run changes together
+  without aborting unrelated cron admission. A private `last_error_code` stores
+  only SQLSTATE for failed attempts, never provider error text or credentials.
+  Historical import requires matching
+  same-transaction cycle/status provenance; edited/unverifiable historical rows
+  still need explicit operator recovery. Queued assistant budget commands are not
+  themselves applied through a paused-session guard: the persisted requirement
+  budget must change through an authorized path before this check can pass.
+  Ambiguous billing errors, reconciliation pauses, provider authorization failures,
+  user pauses and other exhausted limits are deliberately not auto-recovered.
+  In-process tool charges through CreditService/OpenRouter inherit private host
+  requirement attribution. Historical untagged charges and separate HTTP media
+  billing without requirement attribution cannot be safely assigned to this total;
+  they are not guessed from shared site/instance activity. No retrospective charge
+  or production migration is performed by the offline tests.
+- Cycle aggregation uses disjoint `UNION ALL` branches for explicit requirement
+  and session attribution, preserving duplicate-valued transactions while counting
+  dual-attributed transactions once. Session IDs remain text on the ledger side;
+  an explicit requirement ID takes precedence over legacy session attribution,
+  including conflicting IDs, so one charge cannot belong to two requirements.
+  malformed historical metadata cannot fail a UUID cast. The cost remains linear
+  in the requirement's own history, not constant-time or a cached balance.
+  Apply `20261026010100_requirement_budget_indexes.sql` before enabling the cycle
+  check on large datasets. The migration uses transaction-safe `CREATE INDEX` and
+  can run as one SQL Editor batch or inside a migration transaction. It does not
+  rewrite tables, but blocks writes on affected tables until the transaction ends;
+  schedule a maintenance window. For an online rollout, prebuild the same indexes
+  by changing each `CREATE INDEX IF NOT EXISTS` to
+  `CREATE INDEX CONCURRENTLY IF NOT EXISTS` and executing each statement separately
+  outside transactions (one autocommit request per index, never the entire batch).
+  Verify all six indexes are valid and ready before applying the migration, which
+  then skips existing indexes. `IF NOT EXISTS` does not repair an invalid index
+  left by a failed concurrent build. These indexes
+  cover requirement model charges, both ledger attribution paths, requirement
+  sessions and sandbox ownership/charges. Ownership locks remain unchanged.
+  Offline tests run the real aggregation expressions with `EXPLAIN ANALYZE` on
+  synthetic same-site history, assert indexed access without global sequential
+  scans and verify unchanged totals/refunds. Timings are diagnostic, not brittle
+  test thresholds or production performance claims.
 - Canonical requirement model calls retain the existing idempotent
   hold/dispatch/settle ledger. A conservative pre-dispatch credit hold is settled
   against validated actual provider `usage.cost` using the existing pricing
