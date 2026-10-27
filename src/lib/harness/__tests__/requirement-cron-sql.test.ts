@@ -541,12 +541,55 @@ it('claims and fences agent cron without product gates, preserves pauses, resume
         assert.deepEqual((await one('SELECT snapshot FROM harness_sessions')).snapshot,before,'diagnostics are read-only');
         if(obstruction==='audit-failure') await db.exec('DROP TRIGGER reject_command_recovery_audit ON requirement_status; DROP FUNCTION reject_command_recovery_audit()');
       }
+      // Pre-install command admission changes requirement xmin, but does not
+      // alter the original mapping/status finish transaction. Reproduce the
+      // production shape with missing capture and several real trusted commands.
+      const importCommandPauses=()=>db.exec(readFileSync('supabase/migrations/20261027010000_requirement_command_pause_import.sql','utf8'));
+      for(const obstruction of ['none','later-row-write','forged-revision','status-edit','mapping-edit',
+        'manual-pause','wrong-user','missing-session','cancelled-action','running-action','no-credits','pending-model']) {
+        econ=await economicFixture();
+        await db.exec('DELETE FROM requirement_economic_pauses; UPDATE billing SET credits_available=20');
+        await queueReopen(econ,{budget:10});
+        const newest=await queueReopen(econ,{status:'in-progress'},obstruction==='running-action'?'running':'completed');
+        if(obstruction==='later-row-write') await db.exec("UPDATE requirements SET title='Operator edit'");
+        if(obstruction==='forged-revision') await db.exec('UPDATE requirements SET external_user_action_revision=external_user_action_revision+1');
+        if(obstruction==='status-edit') await db.exec("UPDATE requirement_status SET message='Operator edit'");
+        if(obstruction==='mapping-edit') await db.exec("UPDATE harness_requirement_runs SET workspace_id='other'");
+        if(obstruction==='manual-pause') await db.query("SELECT control_harness_session($1,$2,'pause')",[econ.run.sessionId,site]);
+        if(obstruction==='wrong-user') {
+          const otherUser=randomUUID();await db.query('INSERT INTO auth.users VALUES($1)',[otherUser]);
+          await db.exec('DELETE FROM harness_sessions');
+          await db.query('INSERT INTO harness_sessions(id,site_id,user_id,snapshot) VALUES($1,$2,$3,$4)',[econ.run.sessionId,site,otherUser,initial(econ.run.sessionId)]);
+          const owned=(await one('SELECT claim_harness_session($1,$2,$3,300) value',[econ.run.sessionId,site,'other-user'])).value;
+          await db.query('SELECT save_harness_session($1,$2,$3,$4)',[econ.run.sessionId,site,'other-user',{...owned,status:'paused',reason:'token_budget_exhausted'}]);
+          await db.query('SELECT release_harness_session($1,$2,$3)',[econ.run.sessionId,site,'other-user']);
+        }
+        if(obstruction==='missing-session') await db.exec('DELETE FROM harness_sessions');
+        if(obstruction==='cancelled-action') await db.query("UPDATE instance_logs SET details='{\"status\":\"cancelled\"}' WHERE id=$1",[newest]);
+        if(obstruction==='no-credits') await db.exec('UPDATE billing SET credits_available=0');
+        if(obstruction==='pending-model') await db.query("INSERT INTO harness_model_credit_reservations VALUES($1,$2,$3,'pending',NULL)",[econ.id,site,econ.run.sessionId]);
+        const before=(await one('SELECT snapshot FROM harness_sessions'))?.snapshot;
+        await importCommandPauses();await importCommandPauses();
+        assert.deepEqual((await one('SELECT snapshot FROM harness_sessions'))?.snapshot,before,'import does not resume or reset');
+        assert.equal((await one('SELECT count(*)::int n FROM requirement_commands WHERE applied_at IS NOT NULL')).n,0,'import does not apply commands');
+        const expectedImport=['none','no-credits','pending-model'].includes(obstruction);
+        assert.equal((await one('SELECT count(*)::int n FROM requirement_economic_pauses')).n,expectedImport?1:0,obstruction+' import eligibility');
+        const resumed=await claim();
+        if(obstruction==='none') {
+          assert.equal(resumed.run.sessionId,econ.run.sessionId);
+          assert.equal(resumed.run.executionGeneration,econ.run.executionGeneration+1);
+          assert.equal((await one('SELECT budget::float8 AS budget FROM requirements')).budget,10);
+          const after=(await one('SELECT snapshot FROM harness_sessions')).snapshot;
+          for(const key of ['messages','request','turns','allocatedTokens','activeMs']) assert.deepEqual(after[key],before[key],key+' preserved after legacy import');
+        } else assert.equal(resumed,null,obstruction+' cannot start');
+      }
       // Ambiguous billing and explicit manual controls never gain economic provenance.
       for(const reason of ['assistant_execution_requires_reconciliation','billing_unavailable_or_exhausted','user_pause','provider_admission_requires_operator']) {
         await reset();await db.exec('DELETE FROM harness_model_credit_reservations; UPDATE billing SET credits_available=20');
         const id=await req(),run=(await claim()).run;
         await session(run,'paused',reason);await finish(run,'paused',reason);
         await queueReopen({id,run});
+        await importCommandPauses();
         assert.equal((await one('SELECT count(*)::int n FROM requirement_economic_pauses')).n,0);
         assert.equal(await claim(),null,reason+' requires diagnosis, not blind retry');
       }

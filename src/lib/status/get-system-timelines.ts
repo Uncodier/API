@@ -120,6 +120,7 @@ export function buildSystemTimeline(
 export async function loadStatusHistory(since: string, until: string): Promise<StatusHistoryRow[]> {
   const history: StatusHistoryRow[] = [];
   let offset = 0;
+  const signal = AbortSignal.timeout(20_000);
   while (true) {
     const { data: rows, error } = await supabaseAdmin
       .from('system_status')
@@ -128,7 +129,8 @@ export async function loadStatusHistory(since: string, until: string): Promise<S
       .lte('created_at', until)
       .order('created_at', { ascending: true })
       .order('id', { ascending: true })
-      .range(offset, offset + HISTORY_PAGE_SIZE - 1);
+      .range(offset, offset + HISTORY_PAGE_SIZE - 1)
+      .abortSignal(signal);
 
     if (error) {
       throw new Error(`Failed to load system status history: ${error.message}`, { cause: error });

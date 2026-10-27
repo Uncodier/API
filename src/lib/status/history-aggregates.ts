@@ -21,29 +21,26 @@ export interface ObservedSlaCounts {
   up_30d: number;
 }
 
-const PAGE_SIZE = 500;
-
 async function loadCounts<T>(
   rpc: string,
   since: string,
   until: string,
-  orderColumns: string[],
   countColumns: string[],
 ): Promise<T[] | null> {
-  const counts: T[] = [];
-  let offset = 0;
-  while (true) {
-    let query = supabaseAdmin.rpc(rpc, { p_since: since, p_until: until });
-    for (const column of orderColumns) query = query.order(column, { ascending: true });
-    const { data, error } = await query.range(offset, offset + PAGE_SIZE - 1);
+    // Scalar JSONB is not truncated by PostgREST's row cap. Paginating an
+    // aggregate would recompute the entire history for every page.
+    const { data, error } = await supabaseAdmin.rpc(rpc, { p_since: since, p_until: until })
+      .abortSignal(AbortSignal.timeout(7_000));
     if (error) {
       // Deploy-safe fallback only when this optional migration is not installed.
       if (error.code === 'PGRST202' || error.code === '42883') return null;
       throw new Error(`Failed to load ${rpc}: ${error.message}`, { cause: error });
     }
     if (!Array.isArray(data)) throw new Error(`${rpc} returned no data`);
-    if (data.length === 0) return counts;
-    for (const raw of data) {
+    return data.map((raw) => {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+        throw new Error(`${rpc} returned an invalid row`);
+      }
       const row = { ...raw };
       for (const column of countColumns) {
         const value = raw[column];
@@ -54,7 +51,7 @@ async function loadCounts<T>(
         }
         row[column] = count;
       }
-      if (rpc === 'get_system_status_daily') {
+      if (rpc === 'get_system_status_daily_snapshot') {
         const observed = row.up_check_count + row.degraded_check_count + row.down_check_count;
         if (row.observed_check_count !== observed || row.check_count !== observed + row.skipped_check_count) {
           throw new Error(`${rpc} returned inconsistent counts`);
@@ -62,21 +59,18 @@ async function loadCounts<T>(
       } else if (['24h', '7d', '30d'].some((window) => row[`up_${window}`] > row[`total_${window}`])) {
         throw new Error(`${rpc} returned inconsistent counts`);
       }
-      counts.push(row as T);
-    }
-    // PostgREST may enforce a cap below the requested size.
-    offset += data.length;
-  }
+      return row as T;
+    });
 }
 
 export function getDailyStatusCounts(since: string, until: string): Promise<DailyStatusCounts[] | null> {
-  return loadCounts<DailyStatusCounts>('get_system_status_daily', since, until, ['day', 'system_key'], [
+  return loadCounts<DailyStatusCounts>('get_system_status_daily_snapshot', since, until, [
     'check_count', 'observed_check_count', 'up_check_count', 'degraded_check_count', 'down_check_count', 'skipped_check_count',
   ]);
 }
 
 export function getObservedSlaCounts(since: string, until: string): Promise<ObservedSlaCounts[] | null> {
-  return loadCounts<ObservedSlaCounts>('get_system_status_observed_sla', since, until, ['system_key'], [
+  return loadCounts<ObservedSlaCounts>('get_system_status_observed_sla_snapshot', since, until, [
     'total_24h', 'up_24h', 'total_7d', 'up_7d', 'total_30d', 'up_30d',
   ]);
 }

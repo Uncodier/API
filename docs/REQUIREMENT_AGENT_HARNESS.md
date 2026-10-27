@@ -348,8 +348,18 @@ its budget/history. Local tests alone do not demonstrate a production repair.
   mapping pause reason; commands alone never clear an active manual pause.
   A command queued before installation may have changed the requirement's row
   transaction identity, preventing historical import. Such unverifiable historical
-  rows report `economic_provenance_unavailable` and need operator review; another
-  queued message cannot reconstruct the missing historical evidence.
+  rows report `economic_provenance_unavailable`; another queued message alone
+  cannot reconstruct the missing historical evidence. The forward migration
+  `20261027010000_requirement_command_pause_import.sql` provides a one-time bridge
+  for completed trusted command chains after such a historical pause. It requires
+  matching original mapping/status transaction identities, a current requirement
+  row written in the newest pending command transaction, contiguous admitted
+  revisions with authorization receipts, and a matching paused same-user session.
+  It captures current state as a new recovery baseline, not as proof that every
+  earlier requirement row was unchanged. It never resumes or applies commands:
+  normal recovery still checks manual pauses, leases, effects, accounting and
+  credits. Rows without this evidence still require operator review. Deploy after
+  the two October 26 command/recovery migrations; existing provenance is not replaced.
   Ambiguous billing errors, reconciliation pauses, provider authorization failures,
   user pauses and other exhausted limits are deliberately not auto-recovered.
   `20261026030100_requirement_command_diagnostics.sql` adds service-only, tenant-
