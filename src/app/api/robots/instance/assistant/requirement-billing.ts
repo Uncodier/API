@@ -1,6 +1,6 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { calculateOpenRouterCreditCharge, OPENROUTER_COST_MULTIPLIER } from '@/lib/services/billing/agent-pricing';
-import { OpenRouterBillingError } from '@/lib/services/billing/openrouter-usage-billing';
+import { OpenRouterBillingError, RequirementCreditsExhaustedError } from '@/lib/services/billing/openrouter-usage-billing';
 import type { RequirementRun } from '@/lib/harness/requirement-types';
 
 /** Accounting adapter only. Inference remains exclusively in AIAgentExecutor. */
@@ -10,6 +10,10 @@ export function createRequirementAssistantBilling(run: RequirementRun, assertAct
       try {
         const { data, error } = await supabaseAdmin.rpc(name, args);
         if (!error && data?.success === true) return data;
+        if (!error && name === 'reserve_agent_requirement_credits' &&
+          data?.success === false && data.error === 'Insufficient credits') {
+          throw new RequirementCreditsExhaustedError(args.p_amount as number);
+        }
         if (!error && data) throw new OpenRouterBillingError();
       } catch (error) {
         if (error instanceof OpenRouterBillingError) throw error;

@@ -4,6 +4,7 @@ import { createMemoryArtifactStore } from '@/lib/harness/artifact-store';
 import { createSession, sessionRequestSchema } from '@/lib/harness/session';
 import { createRedactor } from '@/lib/harness/security';
 import { readRequirementAssistantHost } from '../requirement-host';
+import { OpenRouterBillingError, RequirementCreditsExhaustedError } from '@/lib/services/billing/openrouter-usage-billing';
 
 const prepare = jest.fn();
 const processTurn = jest.fn();
@@ -83,4 +84,20 @@ test('legacy pending effects stop before context/model/tools, without erasing co
   expect(saved?.status).toBe('paused');
   expect(saved?.turns).toBe(5);
   expect(saved?.messages.some(message => message.toolCalls?.[0]?.id === 'old-send')).toBe(true);
+});
+
+test.each([new RequirementCreditsExhaustedError(0.4), new OpenRouterBillingError()])('preserves terminal billing instance through the session: %s', async error => {
+  const input = await fixture();
+  processTurn.mockRejectedValueOnce(error);
+  await expect(runRequirementAssistantSlice(input)).rejects.toBe(error);
+  expect(processTurn).toHaveBeenCalledTimes(1);
+});
+
+test('bare creditExhausted result cannot establish reservation provenance', async () => {
+  const input = await fixture();
+  processTurn.mockResolvedValueOnce({ creditExhausted: true });
+  const error = await runRequirementAssistantSlice(input).catch(error => error);
+  expect(error.name).toBe('OpenRouterBillingError');
+  expect(error).not.toBeInstanceOf(RequirementCreditsExhaustedError);
+  expect(processTurn).toHaveBeenCalledTimes(1);
 });

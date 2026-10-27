@@ -351,6 +351,9 @@ it('claims and fences agent cron without product gates, preserves pauses, resume
       await session(legacyRun,'paused','token_budget_exhausted');
       await finish(legacyRun,'paused','token_budget_exhausted');
       await db.exec(readFileSync('supabase/migrations/20261026020000_requirement_economic_recovery.sql','utf8'));
+      await db.exec(readFileSync('supabase/migrations/20261026030000_requirement_pause_recovery_commands.sql','utf8'));
+      await db.exec(readFileSync('supabase/migrations/20261026030100_requirement_command_diagnostics.sql','utf8'));
+      const diagnose=async id=>(await one('SELECT inspect_requirement_commands($1::uuid[],$2) value',[[id],site])).value[id];
       assert.equal((await one('SELECT count(*)::int n FROM requirement_economic_pauses')).n,1,'intact historical token pause imported');
       assert.equal(await claim(),null,'zero account credits keeps legacy pause');
       await db.query('UPDATE billing SET credits_available=20 WHERE site_id=$1',[site]);
@@ -362,14 +365,14 @@ it('claims and fences agent cron without product gates, preserves pauses, resume
       assert.equal(legacyResume.run.executionGeneration,legacyRun.executionGeneration);
       assert.equal((await one('SELECT snapshot FROM harness_sessions WHERE id=$1',[legacyRun.sessionId])).snapshot.allocatedTokens,100);
       assert.equal((await one('SELECT count(*)::int n FROM requirement_status WHERE cycle LIKE \'economic-recovery:%\'')).n,1);
-      const economicFixture=async(extra={})=>{
+      const economicFixture=async(extra={},reason='token_budget_exhausted') => {
         await reset();
         await db.exec('DELETE FROM harness_model_credit_reservations; DELETE FROM credit_transactions; DELETE FROM sandbox_billing_resources; DELETE FROM sandbox_billing_sessions; UPDATE billing SET credits_available=0');
         const id=await req(),run=(await claim()).run;
         await db.query('UPDATE requirements SET budget=5 WHERE id=$1',[id]);
-        await session(run,'paused','token_budget_exhausted',extra);
+        await session(run,'paused',reason,{...(reason==='account_credits_exhausted'?{creditRecoveryMinimum:0.4}:{}),...extra});
         await db.query("INSERT INTO harness_model_credit_reservations VALUES($1,$2,$3,'settled',5)",[id,site,run.sessionId]);
-        await finish(run,'paused','token_budget_exhausted');
+        await finish(run,'paused',reason);
         assert.equal((await one('SELECT count(*)::int n FROM requirement_economic_pauses')).n,1);
         return {id,run};
       };
@@ -451,7 +454,149 @@ it('claims and fences agent cron without product gates, preserves pauses, resume
       assert.equal((await one('SELECT snapshot FROM harness_sessions')).snapshot.reason,'user_pause','manual controls cannot inherit an exhausted reason');
       await finish(econ.run,'paused','token_budget_exhausted');
       assert.equal(await claim(),null,'stale economic finish cannot recapture a manual pause');
+      // Real trusted command admission must not invalidate a recoverable pause.
+      await db.exec("ALTER TABLE instance_logs ADD COLUMN user_id uuid; ALTER TABLE requirements ADD COLUMN completion_status text DEFAULT 'pending'; CREATE FUNCTION site_user_has_effective_access(uuid,uuid) RETURNS boolean LANGUAGE sql AS $$ SELECT true $$;");
+      const queueReopen=async(fixture,patch={status:'in-progress'},status='completed') => {
+        const actionId=randomUUID();
+        await db.query("INSERT INTO instance_logs(id,site_id,user_id,instance_id,log_type,trusted_user_action,details,created_at) VALUES($1,$2,$3,$4,'user_action',true,$5,clock_timestamp())",
+          [actionId,site,user,fixture.run.instanceId,{status}]);
+        await db.query('SELECT submit_requirement_command($1,$2,$3,$4,$5,$6)',[fixture.id,site,user,fixture.run.instanceId,actionId,patch]);
+        return actionId;
+      };
+      for(const reason of ['token_budget_exhausted','account_credits_exhausted','turn_budget_exhausted','active_time_budget_exhausted']) {
+        econ=await economicFixture({},reason);
+        await db.exec('UPDATE requirements SET budget=NULL; UPDATE billing SET credits_available=20');
+        if(reason==='turn_budget_exhausted'||reason==='active_time_budget_exhausted') {
+          assert.equal(await claim(),null,'retired limits require explicit authorization');await retryEconomic();
+        }
+        const before=(await one('SELECT snapshot FROM harness_sessions')).snapshot;
+        await queueReopen(econ);
+        const diagnosticBefore=await diagnose(econ.id);
+        assert.equal(diagnosticBefore.state,'queued',JSON.stringify(diagnosticBefore));
+        assert.equal(diagnosticBefore.reason,'waiting_scheduler');
+        const resumed=await claim();
+        assert.equal(resumed.run.sessionId,econ.run.sessionId,reason+' retains session');
+        assert.equal(resumed.run.executionGeneration,econ.run.executionGeneration+1,reason+' command increments generation once');
+        assert.equal((await one('SELECT count(*)::int n FROM requirement_commands WHERE applied_at IS NULL')).n,0);
+        assert.equal((await diagnose(econ.id)).state,'applied','applied receipt does not claim delivery');
+        const after=(await one('SELECT snapshot FROM harness_sessions')).snapshot;
+        for(const key of ['messages','turns','allocatedTokens','activeMs','request','uncertainOperations']) assert.deepEqual(after[key],before[key],reason+' retains '+key);
+      }
+      econ=await economicFixture({},'account_credits_exhausted');
+      await db.exec('UPDATE requirements SET budget=NULL; UPDATE billing SET credits_available=20');
+      assert.equal((await claim()).run.sessionId,econ.run.sessionId,'proven predispatch credit rejection recovers without another message');
+      econ=await economicFixture({},'account_credits_exhausted');
+      await db.exec('UPDATE requirements SET budget=NULL; UPDATE billing SET credits_available=0.01');
+      await queueReopen(econ);
+      const underfundedSnapshot=(await one('SELECT snapshot FROM harness_sessions')).snapshot;
+      for(let retry=0;retry<2;retry++) {
+        await retryEconomic();assert.equal(await claim(),null,'positive but inadequate unchanged balance cannot restart workspace');
+        assert.equal((await diagnose(econ.id)).reason,'credits_insufficient_for_reservation');
+        assert.deepEqual((await one('SELECT snapshot FROM harness_sessions')).snapshot,underfundedSnapshot);
+      }
+      await db.exec('UPDATE billing SET credits_available=0.4');await retryEconomic();
+      assert.equal((await claim()).run.sessionId,econ.run.sessionId,'exact rejected reservation amount permits recovery');
+      for(const creditRecoveryMinimum of [null,0,-1,'0.4']) {
+        econ=await economicFixture({creditRecoveryMinimum},'account_credits_exhausted');
+        await db.exec('UPDATE requirements SET budget=NULL; UPDATE billing SET credits_available=20');
+        await queueReopen(econ);
+        assert.equal(await claim(),null,'invalid admission evidence cannot authorize recovery');
+        assert.equal((await diagnose(econ.id)).reason,'credit_admission_evidence_unavailable');
+      }
+      for(const patch of [{budget:10},{budget:null}]) {
+        econ=await economicFixture();await db.exec('UPDATE billing SET credits_available=20');
+        await queueReopen(econ,patch);
+        assert.equal((await claim()).run.sessionId,econ.run.sessionId,'queued budget repair applies atomically with resume');
+        assert.equal((await one('SELECT budget::float8 AS budget FROM requirements')).budget,patch.budget);
+      }
+      for(const obstruction of ['zero-budget','no-credits','running-action','cancelled-action','manual-pause','unrelated-edit',
+        'forged-revision','pending-model','uncertain','pending-call','cleanup','audit-failure']) {
+        econ=await economicFixture(obstruction==='uncertain'?{uncertainOperations:['offline-unknown']}:
+          obstruction==='pending-call'?{pending:{call:{id:'offline-pending',name:'exec',arguments:'{}'},fingerprint:'offline-fingerprint',effect:'write'}}:{});
+        await db.exec('UPDATE billing SET credits_available=20');
+        const actionId=await queueReopen(econ,{budget:obstruction==='zero-budget'?0:10},obstruction==='running-action'?'running':'completed');
+        if(obstruction==='cancelled-action') await db.query("UPDATE instance_logs SET details='{\"status\":\"cancelled\"}' WHERE id=$1",[actionId]);
+        if(obstruction==='no-credits') await db.exec('UPDATE billing SET credits_available=0');
+        if(obstruction==='manual-pause') await db.query("SELECT control_harness_session($1,$2,'pause')",[econ.run.sessionId,site]);
+        if(obstruction==='unrelated-edit') await db.exec("UPDATE requirements SET title='Operator hold'");
+        if(obstruction==='forged-revision') await db.exec('UPDATE requirements SET external_user_action_revision=external_user_action_revision+1');
+        if(obstruction==='pending-model') await db.query("INSERT INTO harness_model_credit_reservations VALUES($1,$2,$3,'pending',NULL)",[econ.id,site,econ.run.sessionId]);
+        if(obstruction==='cleanup') await db.exec("UPDATE harness_sessions SET sandbox_cleanup_token=gen_random_uuid(),sandbox_cleanup_resource='offline-vm',sandbox_cleanup_started_at=clock_timestamp()");
+        if(obstruction==='audit-failure') await db.exec("CREATE FUNCTION reject_command_recovery_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.cycle LIKE 'economic-recovery:%' THEN RAISE EXCEPTION 'offline audit unavailable'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_command_recovery_audit BEFORE INSERT ON requirement_status FOR EACH ROW EXECUTE FUNCTION reject_command_recovery_audit();");
+        const before=(await one('SELECT snapshot FROM harness_sessions')).snapshot;
+        assert.equal(await claim(),null,obstruction+' stays safely blocked');
+        assert.equal((await one('SELECT status FROM requirements')).status,'blocked');
+        assert.equal((await one('SELECT applied_at FROM requirement_commands')).applied_at,null);
+        assert.equal((await one('SELECT budget::float8 AS budget FROM requirements')).budget,5,'no partial budget mutation');
+        assert.deepEqual((await one('SELECT snapshot FROM harness_sessions')).snapshot,before,'no partial session resume');
+        const expectedReason={
+          'zero-budget':'budget_exhausted','no-credits':'credits_exhausted','running-action':'action_unfinished',
+          'cancelled-action':'action_cancelled','manual-pause':'session_paused','unrelated-edit':'economic_provenance_mismatch',
+          'forged-revision':'economic_provenance_mismatch','pending-model':'model_reservation_pending','uncertain':'effects_pending',
+          'pending-call':'effects_pending','cleanup':'cleanup_pending','audit-failure':'recovery_failed',
+        }[obstruction];
+        const diagnostic=await diagnose(econ.id);
+        assert.equal(diagnostic.state,'blocked',obstruction+JSON.stringify(diagnostic));
+        assert.equal(diagnostic.reason,expectedReason,obstruction+JSON.stringify(diagnostic));
+        assert.deepEqual((await one('SELECT snapshot FROM harness_sessions')).snapshot,before,'diagnostics are read-only');
+        if(obstruction==='audit-failure') await db.exec('DROP TRIGGER reject_command_recovery_audit ON requirement_status; DROP FUNCTION reject_command_recovery_audit()');
+      }
+      // Ambiguous billing and explicit manual controls never gain economic provenance.
+      for(const reason of ['assistant_execution_requires_reconciliation','billing_unavailable_or_exhausted','user_pause','provider_admission_requires_operator']) {
+        await reset();await db.exec('DELETE FROM harness_model_credit_reservations; UPDATE billing SET credits_available=20');
+        const id=await req(),run=(await claim()).run;
+        await session(run,'paused',reason);await finish(run,'paused',reason);
+        await queueReopen({id,run});
+        assert.equal((await one('SELECT count(*)::int n FROM requirement_economic_pauses')).n,0);
+        assert.equal(await claim(),null,reason+' requires diagnosis, not blind retry');
+      }
+      // A real authorized session resume must not remain blocked by its old
+      // non-economic mapping reason. An active/manual pause is still excluded.
+      for(const reason of ['WORKSPACE_AUTHORIZATION_REQUIRED','user_pause']) {
+        await reset();await db.exec('DELETE FROM harness_model_credit_reservations; UPDATE billing SET credits_available=20');
+        const id=await req(),run=(await claim()).run;
+        await session(run,'paused',reason);await finish(run,'paused',reason);
+        await queueReopen({id,run});
+        assert.equal(await claim(),null,'command alone cannot clear '+reason);
+        await db.query("SELECT control_harness_session($1,$2,'resume')",[run.sessionId,site]);
+        assert.equal((await diagnose(id)).reason,'waiting_scheduler','old mapping reason is not an active pause');
+        assert.equal((await claim()).run.sessionId,run.sessionId,'explicitly resumed session accepts queued command');
+      }
       // Fresh budget check can block before ANY session/workspace exists.
+      for(const manual of [false,true]) {
+        await reset();await db.exec('DELETE FROM harness_model_credit_reservations; UPDATE billing SET credits_available=20');
+        const id=await req(),run=(await claim()).run;
+        await db.exec('UPDATE requirements SET budget=0');
+        await db.query('SELECT evaluate_requirement_cycle_budget($1,$2,$3,$4)',[id,run.runId,run.executionGeneration,run.sessionId]);
+        if(manual) await db.exec("UPDATE requirements SET status='blocked'");
+        await queueReopen({id,run},{budget:10});
+        const resumed=await claim();
+        if(manual) {
+          assert.equal(resumed,null,'ordinary command drain cannot bypass invalidated pre-session pause');
+          assert.equal((await diagnose(id)).reason,'economic_provenance_unavailable');
+        } else assert.equal(resumed.run.sessionId,run.sessionId,'pre-session command recovery retains mapping');
+      }
+      // An older unfinished revision cannot be leapfrogged by a newer budget fix.
+      econ=await economicFixture({},'turn_budget_exhausted');
+      await db.exec('UPDATE billing SET credits_available=20');
+      const olderAction=await queueReopen(econ,{budget:10},'running');
+      const newestAction=await queueReopen(econ,{budget:12});
+      assert.equal(await claim(),null);
+      assert.equal((await one('SELECT count(*)::int n FROM requirement_commands WHERE applied_at IS NULL')).n,2);
+      await db.query("UPDATE instance_logs SET details='{\"status\":\"completed\"}' WHERE id=$1",[olderAction]);
+      await retryEconomic();
+      assert.equal((await claim()).run.executionGeneration,econ.run.executionGeneration+1);
+      assert.equal((await one('SELECT budget::float8 AS budget FROM requirements')).budget,12);
+      const duplicate=await one('SELECT submit_requirement_command($1,$2,$3,$4,$5,$6) value',
+        [econ.id,site,user,econ.run.instanceId,newestAction,{budget:999}]);
+      assert.equal(duplicate.value.state,'duplicate');
+      assert.equal((await one('SELECT budget::float8 AS budget FROM requirements')).budget,12,'replay cannot overwrite applied recovery');
+      // Unpaused ordinary commands still use their ready-prefix contract.
+      await reset();await db.exec('DELETE FROM harness_model_credit_reservations');
+      const ordinaryId=await req(),ordinaryRun=(await claim()).run;
+      await session(ordinaryRun,'completed','implemented');await finish(ordinaryRun,'completed');
+      await queueReopen({id:ordinaryId,run:ordinaryRun},{budget:null});
+      assert.equal((await claim()).run.requirementId,ordinaryId,'ordinary terminal command remains eligible');
       await reset();await db.exec('DELETE FROM harness_model_credit_reservations; UPDATE billing SET credits_available=20');
       const noSessionId=await req(),noSessionRun=(await claim()).run;
       await db.exec('UPDATE requirements SET budget=0');
@@ -471,7 +616,13 @@ it('claims and fences agent cron without product gates, preserves pauses, resume
       for(const role of ['anon','authenticated','service_role']) {
         assert.equal((await one("SELECT has_table_privilege($1,'requirement_economic_pauses','SELECT') ok",[role])).ok,false);
         assert.equal((await one("SELECT has_function_privilege($1,'recheck_requirement_economic_pauses(uuid[])','EXECUTE') ok",[role])).ok,false);
+        assert.equal((await one("SELECT has_function_privilege($1,'apply_recovered_requirement_commands(uuid,jsonb)','EXECUTE') ok",[role])).ok,false);
+        assert.equal((await one("SELECT has_function_privilege($1,'requirement_pause_command_guard(uuid,jsonb)','EXECUTE') ok",[role])).ok,false);
+        assert.equal((await one("SELECT has_function_privilege($1,'inspect_requirement_commands(uuid[],uuid)','EXECUTE') ok",[role])).ok,role==='service_role');
       }
+      assert.deepEqual((await one('SELECT inspect_requirement_commands($1::uuid[],$2) value',[[noSessionId,randomUUID()],randomUUID()])).value,{},'other tenant and missing rows are omitted');
+      assert.equal((await diagnose(noSessionId)).state,'none');
+      await assert.rejects(()=>db.query('SELECT inspect_requirement_commands($1::uuid[],$2)',[Array(501).fill(noSessionId),site]),/Invalid requirement diagnostic scope/);
       }
       console.log('passed');
     } finally { await db.close(); }

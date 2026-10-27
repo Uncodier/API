@@ -122,6 +122,8 @@ export interface HarnessSession {
   reconciledOperations?: Record<string, { operationId: string; proof: string;
     state: 'applied' | 'not_applied' | 'retry_safe'; result?: ToolResult }>;
   reason?: string;
+  /** Host-recorded rejected model hold; positive balance alone cannot resume it. */
+  creditRecoveryMinimum?: number;
   createdAt: string;
   updatedAt: string;
 }

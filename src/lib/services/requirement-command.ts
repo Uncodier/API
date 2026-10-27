@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { inspectRequirementCommands } from './requirement-command-diagnostics';
 
 /** Captured by the assistant host, never read from model arguments or prose. */
 export type RequirementCommandSource = {
@@ -22,7 +23,7 @@ const patchSchema = z.object({
   status: z.enum(['backlog', 'in-progress']).optional(),
   completion_status: z.literal('pending').optional(),
   type: z.string().min(1).max(100).optional(),
-  budget: z.number().finite().nonnegative().optional(),
+  budget: z.number().finite().nonnegative().nullable().optional(),
   cron: z.string().max(200).optional(),
   cycle: z.string().max(200).optional(),
 }).strict().refine(patch => Object.values(patch).some(value => value !== undefined), 'Include the requested changes.');
@@ -47,6 +48,7 @@ export async function submitRequirementCommand(
       data.requirement?.id !== requirementId || data.requirement?.site_id !== identity.siteId) {
     throw new Error('Requirement command returned an unverifiable receipt. Execution was not started.');
   }
+  const diagnostics = await inspectRequirementCommands([requirementId], identity.siteId);
   return {
     success: true,
     requirement: data.requirement,
@@ -55,7 +57,8 @@ export async function submitRequirementCommand(
       authorization_action_id: identity.actionId,
       runner_instance_id: data.runner_instance_id ?? null,
       execution_started: false,
-      message: 'This command and its authorization receipt are already persisted. Changes are queued for the existing requirement runner after this user action finishes and its current cycle releases ownership. No second executor was started. Do not call requirement_status create to register this receipt or resubmit the command.',
+      diagnostic: diagnostics[requirementId],
+      message: 'This command and its authorization receipt are already persisted. This receipt does not guarantee execution or a start time. Read diagnostic for the current applied, queued, blocked, none or unavailable snapshot and report its reason; unavailable means eligibility could not be checked. No second executor was started. Do not call requirement_status create to register this receipt or resubmit the command. Use requirements list to check again; retryable is not permission to resubmit.',
     },
   };
 }

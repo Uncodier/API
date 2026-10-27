@@ -1,10 +1,13 @@
 import { randomBytes } from 'node:crypto';
 import { AIAgentExecutor } from '../ai-agent-executor';
 import { AssistantExecutionBoundaryError, type AssistantExecutionBoundary } from '@/lib/services/robot-instance/assistant-execution-boundary';
-import { chargeOpenRouterUsage } from '@/lib/services/billing/openrouter-usage-billing';
+import { chargeOpenRouterUsage, RequirementCreditsExhaustedError } from '@/lib/services/billing/openrouter-usage-billing';
 
 jest.mock('@/lib/status/telemetry', () => ({ recordTelemetry: jest.fn().mockResolvedValue(undefined) }));
-jest.mock('@/lib/services/billing/openrouter-usage-billing', () => ({ chargeOpenRouterUsage: jest.fn().mockResolvedValue(undefined) }));
+jest.mock('@/lib/services/billing/openrouter-usage-billing', () => ({
+  ...jest.requireActual('@/lib/services/billing/openrouter-usage-billing'),
+  chargeOpenRouterUsage: jest.fn().mockResolvedValue(undefined),
+}));
 const originalEnv = process.env;
 beforeEach(() => {
   jest.clearAllMocks();
@@ -132,4 +135,16 @@ it('preserves a retry-shaped terminal dispatch error without admission retry', a
   expect(billing.beforeDispatch).toHaveBeenCalledTimes(1);
   expect(billing.failed).not.toHaveBeenCalled();
   expect(create).not.toHaveBeenCalled();
+});
+
+it('preserves typed predispatch shortage without provider calls, settlement or replay', async () => {
+  const { executor, boundary, billing, create } = setup();
+  const error = new RequirementCreditsExhaustedError(0.4);
+  billing.beforeDispatch.mockRejectedValueOnce(error);
+  await expect(executor.act({ prompt: 'Run', tools: [], executionBoundary: boundary })).rejects.toBe(error);
+  expect(billing.beforeDispatch).toHaveBeenCalledTimes(1);
+  expect(create).not.toHaveBeenCalled();
+  expect(billing.failed).not.toHaveBeenCalled();
+  expect(billing.settle).not.toHaveBeenCalled();
+  expect(chargeOpenRouterUsage).not.toHaveBeenCalled();
 });

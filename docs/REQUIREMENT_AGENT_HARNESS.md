@@ -285,7 +285,8 @@ its budget/history. Local tests alone do not demonstrate a production repair.
   storage bounds, ownership, explicit pauses and uncertain-effect fences still apply.
   Counters are never reset. Most existing pauses require authorized recovery;
   the narrowly scoped economic reevaluation below can resume verified
-  `token_budget_exhausted` pauses without a new user message.
+  `token_budget_exhausted` and classified pre-dispatch `account_credits_exhausted`
+  pauses without a new user message.
 - At the start of each cron cycle, before profile/workspace/model work,
   `evaluate_requirement_cycle_budget` sums existing customer charges attributable
   to the requirement across its sessions. `budget` is USD-equivalent credits
@@ -311,7 +312,12 @@ its budget/history. Local tests alone do not demonstrate a production repair.
   This is a preflight, not a reservation or a guarantee that the next model hold
   fits; normal pre-dispatch credit admission still applies. Buying credits cannot
   bypass an exhausted requirement budget, and raising its budget creates no credits.
-  Recovery preserves the session, generation, transcript, workspace and counters
+  Classified `account_credits_exhausted` pauses additionally retain the rejected
+  reservation amount in the trusted session snapshot. Recovery requires enough
+  usable credits for that amount, not merely a positive balance; missing or invalid
+  admission evidence stays blocked. This prevents repeated workspace restarts on
+  an unchanged insufficient balance. The next dispatch still reserves normally.
+  Automatic economic recovery preserves the session, generation, transcript, workspace and counters
   and writes an `economic-recovery:` status receipt. It does not fabricate a user
   action. Direct budget-only edits are recognized; arbitrary edits, later status
   writes (even blocked-to-blocked), session controls/version changes, holds,
@@ -324,11 +330,36 @@ its budget/history. Local tests alone do not demonstrate a production repair.
   only SQLSTATE for failed attempts, never provider error text or credentials.
   Historical import requires matching
   same-transaction cycle/status provenance; edited/unverifiable historical rows
-  still need explicit operator recovery. Queued assistant budget commands are not
-  themselves applied through a paused-session guard: the persisted requirement
-  budget must change through an authorized path before this check can pass.
+  still need explicit operator recovery. With
+  `20261026030000_requirement_pause_recovery_commands.sql`, queued assistant
+  commands no longer invalidate provenance merely by advancing authorization:
+  every intervening revision must match an unapplied trusted command receipt.
+  All pending actions must finish before recovery. Their consolidated budget
+  (including an explicitly requested null/unlimited budget) is evaluated and the
+  command is applied atomically with recovery; a failed status/audit write rolls
+  back the budget, command receipt and session together. Other row edits remain
+  fenced. Retired `turn_budget_exhausted` and `active_time_budget_exhausted` pauses
+  require a new trusted command after the pause, plus all economic/effect checks;
+  counters and history are retained. Historical import is restricted to intact
+  same-transaction provenance, not inferred from free-form error messages.
+  Applying a queued command increments the execution generation once, as ordinary
+  command application does. A non-economic session explicitly resumed through
+  the authorized session control may accept its queued command despite an old
+  mapping pause reason; commands alone never clear an active manual pause.
+  A command queued before installation may have changed the requirement's row
+  transaction identity, preventing historical import. Such unverifiable historical
+  rows report `economic_provenance_unavailable` and need operator review; another
+  queued message cannot reconstruct the missing historical evidence.
   Ambiguous billing errors, reconciliation pauses, provider authorization failures,
   user pauses and other exhausted limits are deliberately not auto-recovered.
+  `20261026030100_requirement_command_diagnostics.sql` adds service-only, tenant-
+  scoped read-only diagnostics to requirement update receipts and list results.
+  A command can be applied without execution having started; queued/blocked
+  responses explain the observed prerequisite rather than promising a restart.
+  Missing diagnostics deployments report unavailable, not successful execution.
+  Deploy the cycle-budget/index/economic-recovery migrations first, then these
+  two forward migrations, and then the API. No production data is changed by
+  the offline regression suite.
   In-process tool charges through CreditService/OpenRouter inherit private host
   requirement attribution. Historical untagged charges and separate HTTP media
   billing without requirement attribution cannot be safely assigned to this total;

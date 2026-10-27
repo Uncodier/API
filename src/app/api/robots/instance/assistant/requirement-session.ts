@@ -63,6 +63,8 @@ export async function runRequirementAssistantSlice(input: RequirementAssistantSl
     await input.assertExecution();
     const result = await processAssistantTurn(context, adapter.getMessages());
     if (result.creditExhausted) {
+      // This legacy flag can originate outside the reservation path (including tools).
+      // Only the typed predispatch billing error, propagated unchanged, proves shortage.
       const error = new Error('Assistant requirement billing requires reconciliation');
       error.name = 'OpenRouterBillingError';
       throw error;

@@ -101,3 +101,29 @@ it('a read-only status query does not register a command', async () => {
   await requirementsTool(siteId, userId, instanceId, source).execute({ action: 'list', search: 'Research' });
   expect(rpc).not.toHaveBeenCalled(); expect(reset).not.toHaveBeenCalled();
 });
+
+it('instructs the assistant to report diagnostics without promising starts or resubmitting blindly', () => {
+  const { description } = requirementsTool(siteId, userId, instanceId, source);
+  expect(description).toContain('command.diagnostic');
+  expect(description).toContain('command_diagnostic');
+  expect(description).toContain('never promise queued work will start');
+  expect(description).toContain('Never blindly resubmit a persisted command, even when retryable is true');
+  expect(description).toContain('unavailable means diagnosis could not be checked');
+});
+
+it('allows explicitly requested budget cap removal and preserves the diagnostic receipt', async () => {
+  const diagnostic = { state: 'queued', reason: 'runner_busy', retryable: true, checked_at: new Date().toISOString() };
+  rpc.mockResolvedValueOnce({ data: { state: 'queued', requirement, authorization_action_id: actionId, runner_instance_id: runner } });
+  rpc.mockResolvedValueOnce({ data: { [requirementId]: diagnostic } });
+  const tool = requirementsTool(siteId, userId, instanceId, source);
+  expect(tool.parameters.properties.budget.type).toEqual(['number', 'null']);
+  expect(tool.parameters.properties.budget.description).toContain('only when the user explicitly requests');
+  const result = await tool.execute({ action: 'update', requirement_id: requirementId, budget: null });
+  expect(rpc).toHaveBeenNthCalledWith(1, 'submit_requirement_command', expect.objectContaining({ p_patch: { budget: null } }));
+  expect(result).toMatchObject({ success: true, command: { execution_started: false, diagnostic } });
+});
+
+it.each([-1, NaN, Infinity, -Infinity])('rejects invalid budget %p before persistence or inspection', async budget => {
+  await expect(submitRequirementCommand(requirementId, { budget }, source)).rejects.toThrow();
+  expect(rpc).not.toHaveBeenCalled();
+});

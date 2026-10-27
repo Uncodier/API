@@ -4,6 +4,7 @@ import { runRequirementAssistantSlice } from './requirement-session';
 import { createSessionStore } from '@/lib/harness/store';
 import { openWorkspace, replaceWorkspaceEnvironment, suspendWorkspaceForCleanup } from '@/lib/harness/workspace';
 import { claimSandboxCleanup } from '@/lib/services/billing/sandbox-cleanup-fence';
+import { RequirementCreditsExhaustedError } from '@/lib/services/billing/openrouter-usage-billing';
 import { createWorkspaceTools } from '@/lib/harness/workspace-tools';
 import { createCapabilityTools, refreshTenantEnvironment } from '@/lib/harness/capabilities';
 import { createDeliveryTools } from '@/lib/harness/delivery-tools';
@@ -157,9 +158,11 @@ export async function executeRequirementAssistantWorkspace(id: string, scope: Se
       try {
         await store.assertOwner(id, scope.siteId, owner, 180);
         const operatorRequired = workspaceOpenRequiresOperator(error);
+        const creditsExhausted = error instanceof RequirementCreditsExhaustedError;
+        if (creditsExhausted) current.creditRecoveryMinimum = error.requiredCredits;
         const boundaryFailure = error instanceof Error && (error.name === 'RecoveryError' || error.name === 'OpenRouterBillingError');
         current.status = operatorRequired || boundaryFailure ? 'paused' : 'waiting';
-        current.reason = operatorRequired
+        current.reason = creditsExhausted ? 'account_credits_exhausted' : operatorRequired
           ? `workspace_access_requires_operator: ${safeError(error, redact)}` : boundaryFailure
           ? 'assistant_execution_requires_reconciliation' : `runtime_unavailable: ${safeError(error, redact)}`;
         await store.save(current, scope.siteId, owner);

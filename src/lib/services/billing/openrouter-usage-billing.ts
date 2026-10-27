@@ -20,6 +20,17 @@ export class OpenRouterBillingError extends Error {
   }
 }
 
+/** Only a confirmed predispatch requirement reservation shortage, never settlement uncertainty. */
+export class RequirementCreditsExhaustedError extends OpenRouterBillingError {
+  constructor(readonly requiredCredits: number) {
+    super();
+    if (!Number.isFinite(requiredCredits) || requiredCredits <= 0) throw new OpenRouterBillingError();
+    // Retain the terminal billing name used by executor catches; classify by instance,
+    // not a serializable name/message or an unproven creditExhausted result.
+    this.message = 'Requirement account credits exhausted before dispatch';
+  }
+}
+
 /** One ledger event per accepted generation, even after a lost RPC response. */
 export async function chargeOpenRouterUsage(input: OpenRouterUsageCharge): Promise<void> {
   if (!input.siteId || !input.eventId) throw new Error('Missing OpenRouter billing ownership');

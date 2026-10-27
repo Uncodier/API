@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { getRequirements } from '@/lib/database/requirement-db';
+import { inspectRequirementCommands } from '@/lib/services/requirement-command-diagnostics';
 import { shouldUseRemoteApi, invokeRemoteTool } from '@/lib/mcp/remote-client';
 import {
   DATE_PERIODS,
@@ -103,10 +104,18 @@ export async function getRequirementsCore(filters: Record<string, unknown>) {
     updated_at_to,
   });
 
+  const diagnostics = await inspectRequirementCommands(
+    requirements.map(requirement => requirement.id),
+    validatedFilters.site_id,
+  );
+
   return {
     success: true,
     data: {
-      requirements,
+      requirements: requirements.map(requirement => ({
+        ...requirement,
+        command_diagnostic: diagnostics[requirement.id],
+      })),
       pagination: {
         total,
         count: requirements.length,

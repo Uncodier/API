@@ -6,6 +6,7 @@ import { loadRuntimeModule } from '@/lib/custom-automation/test-helpers/load-run
 import * as contextModule from '@/lib/services/tool-execution-context';
 import { SILENT_CONTINUE_PROMPT } from '@/lib/services/robot-instance/assistant-respawn-policy';
 import { isInsufficientCreditsError } from '@/lib/services/billing/credit-exhaustion-message';
+import { OpenRouterBillingError, RequirementCreditsExhaustedError } from '@/lib/services/billing/openrouter-usage-billing';
 
 const siteId = randomUUID();
 const instanceId = randomUUID();
@@ -146,7 +147,7 @@ describe('assistant private execution context wiring', () => {
     expect(privateContext.source).toEqual({});
   });
 
-  function turn(creditExhausted = false) {
+  function turn(creditExhausted = false, failure?: Error) {
     const getTools = jest.fn(async (..._args: any[]) => []);
     const run = loadRuntimeModule<typeof import('../assistant-turn-core')>(
       'src/app/api/robots/instance/assistant/assistant-turn-core.ts', {
@@ -161,6 +162,7 @@ describe('assistant private execution context wiring', () => {
         '@/lib/services/robot-instance/assistant-recovery': { assertAssistantRecoveryActive: async () => undefined },
         '@/lib/services/workflow-robot/execution-tracker': {},
         '@/lib/services/robot-instance/assistant-executor': { executeAssistantStep: async () => {
+          if (failure) throw failure;
           if (creditExhausted) throw Object.assign(new Error('Not enough credits'), { name: 'InsufficientCreditsError' });
           return { messages: [] };
         } },
@@ -206,6 +208,12 @@ describe('assistant private execution context wiring', () => {
     const messages = [{ role: 'user', content: 'Continue' }];
     await expect(run(context, messages)).resolves.toMatchObject({ creditExhausted: true, isDone: false, messages });
   });
+
+  it.each([new RequirementCreditsExhaustedError(0.4), new OpenRouterBillingError()])(
+    'preserves terminal reservation/settlement identity rather than emitting an ambiguous flag: %s', async error => {
+      const { run, context } = turn(false, error);
+      await expect(run(context, [])).rejects.toBe(error);
+    });
 
   it('passes the persisted user-action identity separately from model provenance and request text', async () => {
     const { getTools, run, context } = turn();

@@ -25,7 +25,7 @@ const UpdateRequirementSchema = z.object({
   status: z.enum(['backlog', 'validated', 'in-progress', 'on-review', 'done', 'canceled']).optional(),
   completion_status: z.enum(['pending', 'completed', 'rejected']).optional(),
   type: z.string().optional(),
-  budget: z.number().optional(),
+  budget: z.number().finite().nonnegative().nullable().optional(),
   cron: z.string().optional(),
   cycle: z.string().optional(),
   metadata: PartialRequirementMetadataSchema.optional(),

@@ -83,7 +83,7 @@ export interface UpdateRequirementParams {
   status?: string;
   completion_status?: string;
   type?: string;
-  budget?: number;
+  budget?: number | null;
   cron?: string;
   cycle?: string;
   /**

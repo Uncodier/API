@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 const rpc = jest.fn();
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { rpc: (...args: any[]) => rpc(...args) } }));
 import { createRequirementAssistantBilling } from '../requirement-billing';
+import { OpenRouterBillingError, RequirementCreditsExhaustedError } from '@/lib/services/billing/openrouter-usage-billing';
 
 function fixture() {
   const run = { requirementId: randomUUID(), siteId: randomUUID(), userId: randomUUID(), instanceId: randomUUID(),
@@ -54,3 +55,64 @@ test('account credit rejection still prevents dispatch', async () => {
     .rejects.toMatchObject({ name: 'OpenRouterBillingError' });
   expect(rpc.mock.calls.map(call => call[0])).toEqual(['reserve_agent_requirement_credits', 'cancel_harness_model_reservation']);
 });
+
+test('only explicit reserve shortage is typed and stops before dispatch without retrying', async () => {
+  const f = fixture();
+  rpc.mockResolvedValueOnce({ data: { success: false, error: 'Insufficient credits' }, error: null });
+  const error = await f.billing.beforeDispatch({ eventId: f.eventId, inputBytes: 100, maxOutputTokens: 4096 }).catch(error => error);
+  expect(error).toBeInstanceOf(RequirementCreditsExhaustedError);
+  expect(error).toBeInstanceOf(OpenRouterBillingError);
+  expect(error.name).toBe('OpenRouterBillingError');
+  expect(error.requiredCredits).toBe(rpc.mock.calls[0][1].p_amount);
+  expect(rpc.mock.calls.map(call => call[0])).toEqual(['reserve_agent_requirement_credits', 'cancel_harness_model_reservation']);
+});
+
+test.each([0, -1, NaN, Infinity])('invalid rejected reservation amount %s remains reconciliation', amount => {
+  try {
+    new RequirementCreditsExhaustedError(amount);
+    throw new Error('Expected invalid admission evidence to be rejected');
+  } catch (error) {
+    expect(error).toBeInstanceOf(OpenRouterBillingError);
+    expect(error).not.toBeInstanceOf(RequirementCreditsExhaustedError);
+  }
+});
+
+test.each([
+  { data: { success: false, error: 'insufficient credits' }, error: null },
+  { data: { success: false, error: 'Insufficient credits ' }, error: null },
+  { data: { success: false, state: 'insufficient_credits' }, error: null },
+  { data: { error: 'Insufficient credits' }, error: null },
+  { data: null, error: { message: 'Insufficient credits' } },
+  { data: { success: false, error: 'Insufficient credits' }, error: { message: 'RPC unavailable' } },
+  { data: null, error: null },
+])('ambiguous reserve response stays reconciliation: %j', async response => {
+  const f = fixture();
+  rpc.mockResolvedValue(response);
+  const error = await f.billing.beforeDispatch({ eventId: f.eventId, inputBytes: 100, maxOutputTokens: 4096 }).catch(error => error);
+  expect(error).toBeInstanceOf(OpenRouterBillingError);
+  expect(error).not.toBeInstanceOf(RequirementCreditsExhaustedError);
+  expect(rpc.mock.calls.some(call => call[0] === 'dispatch_harness_model_reservation')).toBe(false);
+});
+
+test('thrown RPC shortage text is not proof of account exhaustion', async () => {
+  const f = fixture();
+  rpc.mockRejectedValue(new Error('Insufficient credits'));
+  const error = await f.billing.beforeDispatch({ eventId: f.eventId, inputBytes: 100, maxOutputTokens: 4096 }).catch(error => error);
+  expect(error).toBeInstanceOf(OpenRouterBillingError);
+  expect(error).not.toBeInstanceOf(RequirementCreditsExhaustedError);
+});
+
+test.each(['dispatch_harness_model_reservation', 'settle_harness_model_reservation', 'cancel_harness_model_reservation'])(
+  '%s shortage response is still reconciliation', async name => {
+    const f = fixture();
+    rpc.mockImplementation(async rpcName => ({ data: rpcName === name
+      ? { success: false, error: 'Insufficient credits' } : { success: true, state: 'reserved' }, error: null }));
+    const operation = name === 'dispatch_harness_model_reservation'
+      ? f.billing.beforeDispatch({ eventId: f.eventId, inputBytes: 100, maxOutputTokens: 4096 })
+      : name === 'settle_harness_model_reservation'
+      ? f.billing.settle({ eventId: f.eventId, usage: { cost: 0.01 } })
+      : f.billing.failed({ eventId: f.eventId, error: { status: 402 } });
+    const error = await operation.catch(error => error);
+    expect(error).toBeInstanceOf(OpenRouterBillingError);
+    expect(error).not.toBeInstanceOf(RequirementCreditsExhaustedError);
+  });

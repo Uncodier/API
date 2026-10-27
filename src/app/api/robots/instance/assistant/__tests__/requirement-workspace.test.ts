@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { createMemorySessionStore } from '@/lib/harness/memory-store';
 import { createSession, sessionRequestSchema } from '@/lib/harness/session';
+import { OpenRouterBillingError, RequirementCreditsExhaustedError } from '@/lib/services/billing/openrouter-usage-billing';
 let store = createMemorySessionStore();
 const runSlice = jest.fn();
 const open = jest.fn();
@@ -93,4 +94,29 @@ test('transient failure after the historical time cap remains retryable', async 
   open.mockRejectedValue(new Error('Synthetic transient setup failure'));
   expect(await executeRequirementAssistantWorkspace(f.session.id, f.scope, f.options)).toEqual({ status: 'waiting', continue: false });
   expect((await store.load(f.session.id, f.scope.siteId))?.reason).not.toBe('active_time_budget_exhausted');
+});
+
+test.each([
+  [new RequirementCreditsExhaustedError(0.4), 'account_credits_exhausted'],
+  [new OpenRouterBillingError(), 'assistant_execution_requires_reconciliation'],
+  [Object.assign(new Error('Insufficient credits'), { name: 'OpenRouterBillingError' }), 'assistant_execution_requires_reconciliation'],
+  [Object.assign(new Error('Boundary rejected'), { name: 'RecoveryError' }), 'assistant_execution_requires_reconciliation'],
+] as const)('persists trusted pause reason for %s', async (error, reason) => {
+  const f = await fixture();
+  runSlice.mockRejectedValueOnce(error);
+  expect(await executeRequirementAssistantWorkspace(f.session.id, f.scope, f.options)).toEqual({ status: 'paused', continue: false });
+  expect(await store.load(f.session.id, f.scope.siteId)).toMatchObject({ status: 'paused', reason });
+  expect((await store.load(f.session.id, f.scope.siteId))?.creditRecoveryMinimum)
+    .toBe(error instanceof RequirementCreditsExhaustedError ? 0.4 : undefined);
+  expect(suspend).toHaveBeenCalledTimes(1);
+});
+
+test('typed shortage does not overwrite a concurrent user pause', async () => {
+  const f = await fixture();
+  runSlice.mockImplementationOnce(async input => {
+    await store.save({ ...input.session, status: 'paused', reason: 'user_pause' }, f.scope.siteId, input.owner);
+    throw new RequirementCreditsExhaustedError(0.4);
+  });
+  expect(await executeRequirementAssistantWorkspace(f.session.id, f.scope, f.options)).toEqual({ status: 'paused', continue: false });
+  expect(await store.load(f.session.id, f.scope.siteId)).toMatchObject({ status: 'paused', reason: 'user_pause' });
 });
