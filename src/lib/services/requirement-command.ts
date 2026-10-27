@@ -58,7 +58,7 @@ export async function submitRequirementCommand(
       runner_instance_id: data.runner_instance_id ?? null,
       execution_started: false,
       diagnostic: diagnostics[requirementId],
-      message: 'This command and its authorization receipt are already persisted. This receipt does not guarantee execution or a start time. Read diagnostic for the current applied, queued, blocked, none or unavailable snapshot and report its reason; unavailable means eligibility could not be checked. No second executor was started. Do not call requirement_status create to register this receipt or resubmit the command. Use requirements list to check again; retryable is not permission to resubmit.',
+      message: 'This command and its authorization receipt are already persisted. This receipt does not guarantee execution or a start time. Read diagnostic for the current applied, queued, blocked, none or unavailable snapshot and report its reason; unavailable means eligibility could not be checked. action_unfinished or runner_action_unfinished can refer to this very conversation turn, which must finish before cron can apply the command; do not describe that snapshot as a confirmed persistent blocker or request another retry. No second executor was started. Do not call requirement_status create to register this receipt or resubmit the command. Use requirements list to check again; retryable is not permission to resubmit.',
     },
   };
 }

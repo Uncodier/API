@@ -158,10 +158,13 @@ export async function executeRequirementAssistantWorkspace(id: string, scope: Se
         const creditsExhausted = error instanceof RequirementCreditsExhaustedError;
         if (creditsExhausted) current.creditRecoveryMinimum = error.requiredCredits;
         const boundaryFailure = error instanceof Error && (error.name === 'RecoveryError' || error.name === 'OpenRouterBillingError');
+        const sliceExpired = deadline.aborted && error === deadline.reason &&
+          error instanceof DOMException && error.name === 'TimeoutError';
         current.status = operatorRequired || boundaryFailure ? 'paused' : 'waiting';
         current.reason = creditsExhausted ? 'account_credits_exhausted' : operatorRequired
           ? `workspace_access_requires_operator: ${safeError(error, redact)}` : boundaryFailure
-          ? 'assistant_execution_requires_reconciliation' : `runtime_unavailable: ${safeError(error, redact)}`;
+          ? 'assistant_execution_requires_reconciliation' : sliceExpired
+          ? 'runtime_slice_expired' : `runtime_unavailable: ${safeError(error, redact)}`;
         await store.save(current, scope.siteId, owner);
       } catch {
         // Lease loss or persistence outage: no effects are retried. Explicit resume reconciles pending.

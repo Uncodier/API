@@ -76,6 +76,18 @@ it('accepts an idempotent duplicate without claiming a second execution', async 
     .toMatchObject({ command: { state: 'duplicate', execution_started: false } });
 });
 
+it('explains that unfinished action diagnostics may be the submitting turn, without changing the diagnosis', async () => {
+  const diagnostic = { state: 'blocked', reason: 'action_unfinished', retryable: true, checked_at: new Date().toISOString() };
+  rpc.mockResolvedValueOnce({ data: { state: 'queued', requirement, authorization_action_id: actionId, runner_instance_id: runner } });
+  rpc.mockResolvedValueOnce({ data: { [requirementId]: diagnostic } });
+  const result = await submitRequirementCommand(requirementId, { status: 'in-progress' }, source);
+  expect(result.command.diagnostic).toEqual(diagnostic);
+  expect(result.command.message).toContain('this very conversation turn');
+  expect(result.command.message).toContain('do not describe that snapshot as a confirmed persistent blocker');
+  expect(result.command.execution_started).toBe(false);
+  expect(rpc).toHaveBeenCalledTimes(2);
+});
+
 it.each([
   { error: { message: 'Permission denied' } },
   { data: { state: 'queued', requirement, authorization_action_id: randomUUID() } },

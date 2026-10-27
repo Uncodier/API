@@ -605,6 +605,93 @@ it('claims and fences agent cron without product gates, preserves pauses, resume
         assert.equal((await diagnose(id)).reason,'waiting_scheduler','old mapping reason is not an active pause');
         assert.equal((await claim()).run.sessionId,run.sessionId,'explicitly resumed session accepts queued command');
       }
+      // Run the actual one-time operator SQL, substituting only incident IDs and
+      // the fixture's exact session version. No production connection or writes.
+      {
+        const repairSource=readFileSync('scripts/repair-aed8167c-reconciliation-pause.sql','utf8');
+        const repairFixture=async(extra={}) => {
+          await reset();await db.exec('DELETE FROM harness_model_credit_reservations; UPDATE billing SET credits_available=20');
+          const id=await req('backlog',{requirement_execution_generation:2}),run=(await claim()).run;
+          const snapshot=initial(run.sessionId);snapshot.request.requirementId=id;
+          await db.query('INSERT INTO harness_sessions(id,site_id,user_id,snapshot) VALUES($1,$2,$3,$4)',[run.sessionId,site,user,snapshot]);
+          const leased=(await one('SELECT claim_harness_session($1,$2,$3,300) value',[run.sessionId,site,'offline-owner'])).value;
+          await db.query('SELECT save_harness_session($1,$2,$3,$4)',[run.sessionId,site,'offline-owner',{
+            ...leased,status:'paused',reason:'assistant_execution_requires_reconciliation',turns:3,allocatedTokens:100,activeMs:20,
+            messages:[{role:'assistant',content:'Historical tool',toolCalls:[{id:'historical',name:'read',arguments:'{}'}]},
+              {role:'tool',toolCallId:'historical',content:'Historical result'}],...extra}]);
+          await db.query('SELECT release_harness_session($1,$2,$3)',[run.sessionId,site,'offline-owner']);
+          await finish(run,'paused','assistant_execution_requires_reconciliation');
+          await db.query('UPDATE requirements SET external_user_action_revision=6 WHERE id=$1',[id]);
+          const action=await queueReopen({id,run},{budget:10,status:'in-progress'});
+          const version=(await one('SELECT version FROM harness_sessions WHERE id=$1',[run.sessionId])).version;
+          const sql=repairSource.replaceAll('aed8167c-a4fc-43ed-824d-832c9163cd1b',id)
+            .replaceAll('96d3d132-7ad7-4f36-8a41-440f44dc7d50',run.sessionId)
+            .replaceAll('9be0a6a2-5567-41bf-ad06-cb4014f0faf2',site)
+            .replace('expected_session_version CONSTANT bigint := 587','expected_session_version CONSTANT bigint := '+version);
+          return {id,run,action,sql};
+        };
+        const repairEvidence=async()=> (await one("SELECT jsonb_build_object("+
+          "'sessions',(SELECT jsonb_agg(to_jsonb(s)) FROM harness_sessions s),"+
+          "'requirements',(SELECT jsonb_agg(to_jsonb(r)) FROM requirements r),"+
+          "'mappings',(SELECT jsonb_agg(to_jsonb(h)) FROM harness_requirement_runs h),"+
+          "'commands',(SELECT jsonb_agg(to_jsonb(c)) FROM requirement_commands c),"+
+          "'statuses',(SELECT jsonb_agg(to_jsonb(st)) FROM requirement_status st)) value")).value;
+        const rejectedRepair=async(f,pattern=/Incident repair refused/) => {
+          const before=await repairEvidence();
+          await assert.rejects(()=>db.exec(f.sql),pattern);await db.exec('ROLLBACK');
+          assert.deepEqual(await repairEvidence(),before,'refusal is atomic');
+        };
+        for(const obstruction of ['version','generation','reason','assistantExecutionVersion','assistantAuditCursor','auditCursor',
+          'pending','uncertain','unmatched','reservation','session-lease','cron-lease','cleanup','user-pause','paused-owner',
+          'paused-origin','paused-plan','untrusted','running-action','old-action','revision','missing-command','late-error']) {
+          const extra={};
+          if(['assistantExecutionVersion','assistantAuditCursor','auditCursor'].includes(obstruction)) extra[obstruction]=0;
+          if(obstruction==='pending') extra.pending={call:{id:'pending',name:'read',arguments:'{}'},fingerprint:'offline',effect:'read'};
+          if(obstruction==='uncertain') extra.uncertainOperations=['offline'];
+          if(obstruction==='unmatched') extra.messages=[{role:'assistant',content:'',toolCalls:[{id:'unmatched',name:'read',arguments:'{}'}]}];
+          const f=await repairFixture(extra);
+          if(obstruction==='version') f.sql=f.sql.replace(/expected_session_version CONSTANT bigint := [0-9]+/,'expected_session_version CONSTANT bigint := 587');
+          if(obstruction==='generation') await db.exec('UPDATE harness_requirement_runs SET generation=3');
+          if(obstruction==='reason') await db.exec("UPDATE harness_requirement_runs SET pause_reason='user_pause'");
+          if(obstruction==='reservation') await db.query("INSERT INTO harness_model_credit_reservations VALUES($1,$2,$3,'pending',NULL)",[f.id,site,f.run.sessionId]);
+          if(obstruction==='session-lease') await db.exec("UPDATE harness_sessions SET lease_owner='offline-live',lease_expires_at=now()+interval '1 hour'");
+          if(obstruction==='cron-lease') await db.exec("UPDATE requirements SET cron_lock_expires_at=now()+interval '1 hour'");
+          if(obstruction==='cleanup') await db.exec("UPDATE harness_sessions SET sandbox_cleanup_token=gen_random_uuid(),sandbox_cleanup_resource='offline-vm',sandbox_cleanup_started_at=clock_timestamp()");
+          if(obstruction==='user-pause') await db.exec("UPDATE requirements SET metadata=metadata||'{\"user_paused\":true}'");
+          if(obstruction==='paused-owner') await db.exec("UPDATE remote_instances SET status='paused'");
+          if(obstruction==='paused-origin') {
+            const origin=randomUUID();
+            await db.query("INSERT INTO remote_instances(id,site_id,user_id,created_by,name,instance_type,status) VALUES($1,$2,$3,$3,'offline-origin','ubuntu','paused')",[origin,site,user]);
+            await db.query("UPDATE requirements SET metadata=metadata||jsonb_build_object('assistant_origin_instance_id',$1::text)",[origin]);
+          }
+          if(obstruction==='paused-plan') await db.query("INSERT INTO instance_plans(site_id,instance_id,status) VALUES($1,$2,'paused')",[site,f.run.instanceId]);
+          if(obstruction==='untrusted') await db.query('UPDATE instance_logs SET trusted_user_action=false WHERE id=$1',[f.action]);
+          if(obstruction==='running-action') await db.query("UPDATE instance_logs SET details='{\"status\":\"running\"}' WHERE id=$1",[f.action]);
+          if(obstruction==='old-action') await db.query("UPDATE instance_logs SET created_at='2000-01-01' WHERE id=$1",[f.action]);
+          if(obstruction==='revision') await db.exec('UPDATE requirements SET external_user_action_revision=8');
+          if(obstruction==='missing-command') await db.exec('DELETE FROM requirement_commands');
+          if(obstruction==='late-error') await db.exec("CREATE FUNCTION reject_operator_resume() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.snapshot->>'status'='queued' THEN RAISE EXCEPTION 'offline resume unavailable'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_operator_resume AFTER UPDATE ON harness_sessions FOR EACH ROW EXECUTE FUNCTION reject_operator_resume();");
+          await rejectedRepair(f,obstruction==='late-error'?/offline resume unavailable/:/Incident repair refused/);
+          if(obstruction==='late-error') await db.exec('DROP TRIGGER reject_operator_resume ON harness_sessions; DROP FUNCTION reject_operator_resume()');
+        }
+        const f=await repairFixture();
+        assert.equal(await claim(),null,'queued command alone cannot clear reconciliation pause');
+        const before=await repairEvidence();await db.exec(f.sql);const after=await repairEvidence();
+        for(const key of ['requirements','mappings','commands','statuses']) assert.deepEqual(after[key],before[key],'repair does not mutate '+key);
+        const old=before.sessions[0].snapshot,current=after.sessions[0].snapshot;
+        assert.equal(current.status,'queued');assert.equal(current.version,old.version+1);
+        assert.deepEqual({...current,status:old.status,version:old.version,updatedAt:old.updatedAt},old,'control preserves all historical evidence and counters');
+        await rejectedRepair(f);
+        const resumed=await claim();assert.equal(resumed.run.sessionId,f.run.sessionId);
+        assert.equal(resumed.run.executionGeneration,3,'existing drainer increments generation exactly once');
+        assert.equal((await one('SELECT budget::float8 budget FROM requirements WHERE id=$1',[f.id])).budget,10);
+        assert.equal((await one('SELECT count(*)::int n FROM requirement_commands WHERE applied_at IS NULL')).n,0);
+        const admitted=(await one('SELECT evaluate_requirement_cycle_budget($1,$2,$3,$4) value',[f.id,resumed.run.runId,3,f.run.sessionId])).value;
+        assert.equal(admitted.state,'available','normal budget admission remains in control');
+        await db.query('UPDATE requirements SET budget=0 WHERE id=$1',[f.id]);
+        assert.equal((await one('SELECT evaluate_requirement_cycle_budget($1,$2,$3,$4) value',
+          [f.id,resumed.run.runId,3,f.run.sessionId])).value.state,'exhausted','operator resume does not bypass monetary budget');
+      }
       // Fresh budget check can block before ANY session/workspace exists.
       for(const manual of [false,true]) {
         await reset();await db.exec('DELETE FROM harness_model_credit_reservations; UPDATE billing SET credits_available=20');

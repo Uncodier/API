@@ -41,6 +41,25 @@ deleted or rewritten. Routine cycle/workspace admission stays in runtime diagnos
 model allocation stays in the durable session counters rather than a system log.
 Current assistant/tool receipts and actionable execution errors remain audited.
 
+An idle host `TimeoutError` ends the slice as `waiting` (`runtime_slice_expired`)
+and uses the existing cron backoff, not a permanent reconciliation pause. This
+only applies to the exact host abort reason with no model in flight, unfinished
+tool calls, pending/uncertain effects or unpersisted transcript changes. Storage,
+ownership, billing and in-flight operation failures remain fenced. No additional
+recovery table, scheduler or retry loop is involved.
+
+Command diagnostics read during the submitting conversation can observe that
+same action as unfinished. This is an admission wait until the turn completes,
+not proof of a permanent blockage and not a reason to submit duplicate commands.
+
+For the already-paused October 27 incident only, the operator script
+`scripts/repair-aed8167c-reconciliation-pause.sql` uses the existing session resume
+control. Deploy this API first. The script requires the exact reviewed session
+version/generation and completed pending command, rejects uncertain effects and
+active/manual fences, and leaves command application and budget admission to cron.
+It takes brief table write locks: run in a quiet operator window. It is not a
+migration or an automatic recovery policy; any changed evidence aborts the repair.
+
 Incomplete pending tool batches from the retired engine **pause for trusted
 reconciliation, not replay**. An absent result is not proof that a remote effect
 failed. Do not blindly redispatch old calls, clear uncertain-effect fences or reset

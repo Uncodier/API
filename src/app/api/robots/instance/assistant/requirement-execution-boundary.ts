@@ -55,9 +55,18 @@ export function createRequirementExecutionBoundary(input: Input): {
   // Once a persistence/ownership boundary fails, this instance cannot dispatch again.
   const guard = async <T>(fn: () => Promise<T>): Promise<T> => {
     if (poisoned) return fatal();
-    try { return await fn(); } catch {
+    try { return await fn(); } catch (error) {
+      // An idle transport deadline is a slice boundary, not an uncertain effect.
+      // Preserve only the actual host timeout; storage/ownership failures and
+      // interruptions during inference or tools must still fail closed.
+      const idleTimeout = input.signal.aborted && error === input.signal.reason &&
+        error instanceof DOMException && error.name === 'TimeoutError' &&
+        !awaitingModel && !executing && !session.pending && !outstanding().length &&
+        !session.uncertainOperations.length && !confirmedSession.pending &&
+        sameJson(session.messages, confirmedSession.messages);
       poisoned = true;
       session = structuredClone(confirmedSession);
+      if (idleTimeout) throw error;
       return fatal();
     }
   };
@@ -108,7 +117,12 @@ export function createRequirementExecutionBoundary(input: Input): {
     await active();
     // Infrastructure backup is best effort, but ownership loss remains fatal.
     try { await input.onCheckpoint({ owner: input.owner, assertActive: () => guard(active), signal: input.signal }); }
-    catch { if (poisoned) return fatal(); }
+    catch (error) {
+      // Preserve the original failure through nested guards; the outer guard
+      // alone decides whether the host timeout is a safe idle slice boundary.
+      if (poisoned || error === input.signal.reason) throw error;
+      if (error instanceof Error && /(?:Recovery|Ownership|SessionStore|ArtifactStore|HostStateStore|Database|Billing)Error$/.test(error.name)) return fatal();
+    }
     await active();
   };
 

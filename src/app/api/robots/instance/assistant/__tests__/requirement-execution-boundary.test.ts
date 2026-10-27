@@ -277,6 +277,65 @@ describe('canonical requirement execution durability boundary (offline)', () => 
     expect(f.store.save).not.toHaveBeenCalled();
   });
 
+  test('idle host timeout yields without changing the checkpoint or dispatching', async () => {
+    const f = fixture(); await f.adapter.initialize();
+    const before = structuredClone(f.session);
+    const timeout = new DOMException('Offline slice expired', 'TimeoutError');
+    f.controller.abort(timeout);
+    await expect(f.model()).rejects.toBe(timeout);
+    expect(f.adapter.getSession()).toEqual(before);
+    expect(f.store.save).not.toHaveBeenCalled();
+    expect(f.artifacts.reserve).not.toHaveBeenCalled();
+    // A failed adapter is never reused in this slice, even for a benign timeout.
+    await expect(f.model()).rejects.toMatchObject({ name: 'RecoveryError' });
+  });
+
+  test.each(['model', 'tool', 'uncertain'])('timeout with %s work still requires reconciliation', async kind => {
+    const f = fixture(); await f.adapter.initialize();
+    if (kind === 'model') await f.adapter.boundary.beforeModel({ system: '', messages: [], tools: [], maxOutputTokens: 100 });
+    if (kind === 'tool') await f.model([{ id: 'pending', name: 'write' }]);
+    if (kind === 'uncertain') {
+      await f.model([{ id: 'uncertain', name: 'write' }]);
+      await f.execute('write', 'uncertain', {}, async () => { throw new Error('Unknown effect'); });
+      await f.adapter.boundary.afterTurn([]);
+    }
+    f.controller.abort(new DOMException('Offline slice expired', 'TimeoutError'));
+    await expect(f.model()).rejects.toMatchObject({ name: 'RecoveryError' });
+  });
+
+  test('a storage failure concurrent with timeout is not reclassified as an idle yield', async () => {
+    const f = fixture(); await f.adapter.initialize();
+    jest.mocked(f.store.save).mockImplementationOnce(async () => {
+      f.controller.abort(new DOMException('Offline slice expired', 'TimeoutError'));
+      throw new SessionStoreError('storage');
+    });
+    await expect(f.model()).rejects.toMatchObject({ name: 'RecoveryError' });
+  });
+
+  test.each(['guarded-owner-check', 'direct-timeout'])('checkpoint %s preserves the idle host timeout', async kind => {
+    const f = fixture();
+    const timeout = new DOMException('Offline checkpoint deadline', 'TimeoutError');
+    const adapter = createRequirementExecutionBoundary({ ...f.input, onCheckpoint: async context => {
+      f.controller.abort(timeout);
+      if (kind === 'guarded-owner-check') await context.assertActive();
+      else throw timeout;
+    } });
+    await adapter.initialize();
+    await expect(adapter.finish()).rejects.toBe(timeout);
+    expect(adapter.getSession()).toMatchObject({ status: 'running', messages: [], turns: 0 });
+    expect(f.artifacts.reserve).not.toHaveBeenCalled();
+  });
+
+  test.each(['RecoveryError', 'SessionStoreError'])('checkpoint %s concurrent with timeout remains fatal', async name => {
+    const f = fixture();
+    const adapter = createRequirementExecutionBoundary({ ...f.input, onCheckpoint: async () => {
+      f.controller.abort(new DOMException('Offline checkpoint deadline', 'TimeoutError'));
+      throw Object.assign(new Error('Offline checkpoint failure'), { name });
+    } });
+    await adapter.initialize();
+    await expect(adapter.finish()).rejects.toMatchObject({ name: 'RecoveryError' });
+  });
+
   test('thought_process is not part of operation identity or strict control arguments', async () => {
     const host = jest.fn(async () => ({ ok: true }));
     const f = fixture({ tools: [{ name: 'host', effect: 'write', description: '', parameters: {}, execute: host }] });
