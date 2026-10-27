@@ -42,6 +42,11 @@ beforeEach(() => { jest.clearAllMocks(); });
 test('cron uses canonical context and turns, durable logs and the same session; finish is not prose', async () => {
   const input = await fixture();
   const getContext = jest.fn(async () => 'Current authorized requirement snapshot');
+  const checkpointStatuses: Array<string | undefined> = [];
+  const onCheckpoint = jest.fn(async (context: any) => {
+    await context.assertActive();
+    checkpointStatuses.push((await input.store.load(input.run.sessionId, input.run.siteId))?.status);
+  });
   processTurn.mockImplementation(async (context, messages) => {
     expect(context).toBe(input.assistantContext);
     const host = readRequirementAssistantHost(context)!;
@@ -58,7 +63,7 @@ test('cron uses canonical context and turns, durable logs and the same session; 
     await host.boundary.afterTurn([]);
     return { messages, isDone: true };
   });
-  const result = await runRequirementAssistantSlice({ ...input, getContext });
+  const result = await runRequirementAssistantSlice({ ...input, getContext, onCheckpoint });
   expect(result.status).toBe('completed');
   expect(result.id).toBe(input.run.sessionId);
   expect(result.turns).toBe(1);
@@ -68,6 +73,28 @@ test('cron uses canonical context and turns, durable logs and the same session; 
     expect.objectContaining({ requirementId: input.run.requirementId, assertActive: input.assertExecution }));
   expect(writeLog).toHaveBeenCalled();
   expect(processTurn).toHaveBeenCalledTimes(1);
+  expect(onCheckpoint).toHaveBeenCalledTimes(1);
+  expect(checkpointStatuses).toEqual(['running']);
+});
+
+test('a slice break with a long legacy transcript reaches the source checkpoint without copying history to logs', async () => {
+  const input = await fixture();
+  input.session.messages = Array.from({ length: 242 }, (_, index) => ({
+    role: 'assistant' as const, content: `Historical observation ${index}`,
+  }));
+  input.session = await input.store.save(input.session, input.run.siteId, input.owner);
+  const onCheckpoint = jest.fn(async (context: any) => { await context.assertActive(); });
+  const result = await runRequirementAssistantSlice({ ...input, sliceMs: 0, onCheckpoint });
+  expect(result.status).toBe('running');
+  expect(result.messages).toEqual(input.session.messages);
+  const saved = await input.store.load(input.run.sessionId, input.run.siteId);
+  expect(saved).toMatchObject({ messages: input.session.messages, assistantAuditCursor: 242,
+    turns: input.session.turns, allocatedTokens: input.session.allocatedTokens });
+  expect(saved!.activeMs).toBeGreaterThanOrEqual(input.session.activeMs);
+  expect(processTurn).not.toHaveBeenCalled();
+  expect(writeLog).not.toHaveBeenCalled();
+  expect(onCheckpoint).toHaveBeenCalledTimes(1);
+  expect(onCheckpoint).toHaveBeenCalledWith(expect.objectContaining({ owner: input.owner, signal: input.signal }));
 });
 
 test('legacy pending effects stop before context/model/tools, without erasing counters or receipts', async () => {

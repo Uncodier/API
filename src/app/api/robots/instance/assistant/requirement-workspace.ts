@@ -73,10 +73,7 @@ export async function executeRequirementAssistantWorkspace(id: string, scope: Se
   };
   try {
     await assertToolScreenAccess('read_files', { siteId: scope.siteId, userId: scope.userId });
-    await writeRequirementInstanceLog(options.cronRun, {
-      key: `workspace:${options.cronRun.runId}`, log_type: 'infrastructure',
-      message: 'Assistant requirement cycle admitted; preparing its owned workspace.',
-    });
+    console.info('[Requirement assistant] Preparing owned workspace.');
     const host = await loadSessionConfiguration(createHostStateStore(), { id, siteId: scope.siteId, owner });
     currentHost = host;
     host.configuration.redactionValues.forEach(value => knownSecrets.add(value));

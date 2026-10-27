@@ -31,15 +31,15 @@ cannot be supplied by a user or model as an execution override.
 The canonical adapter retains the existing session tables, requirement ownership,
 workspace identity, transcript and monotonic usage counters. Retirement is not a
 new session, a budget reset or a reason to fabricate user actions. Current assistant
-activity is written to `instance_logs`. Historical transcript entries imported for
-continuity are explicitly labeled **imported**: they are not newly executed tool
-receipts, newly billed model calls or new user messages.
-The bounded import includes the most recent 100 entries (up to 6,000 characters
-each), marks them `historical_import: true` and points to older full session
-history. Stable session/message/call identities prevent a new cron run from
-inventing a second historical event; missing original timestamps are not fabricated.
-A persisted audit cursor skips already imported and canonically logged messages
-on later slices rather than importing them again.
+activity is written to `instance_logs`. Historical transcript entries remain in the
+durable session and are available through `read_session_history`; initialization
+does not copy them into the user timeline as system logs. This avoids spending the
+cycle deadline on sequential historical audit writes before any work or source
+checkpoint can run. The persisted audit cursor advances without changing the
+transcript, counters or dispatch-version marker. Previously imported logs are not
+deleted or rewritten. Routine cycle/workspace admission stays in runtime diagnostics;
+model allocation stays in the durable session counters rather than a system log.
+Current assistant/tool receipts and actionable execution errors remain audited.
 
 Incomplete pending tool batches from the retired engine **pause for trusted
 reconciliation, not replay**. An absent result is not proof that a remote effect
@@ -137,6 +137,10 @@ runtime automatically attempts a bounded source checkpoint with the current sess
 and requirement leases. It is not a model tool and the prompt is unchanged.
 Pending tool batches, cancellation and lost ownership do not authorize a checkpoint.
 The hook runs before sandbox cleanup; it does not require tests/build/review success.
+An initialization/execution failure is not a safe slice boundary: it does not force
+publication from the error handler. Sessions already paused for reconciliation must
+be reviewed and explicitly resumed through the existing authorized flow after deploy;
+this change neither clears their pause nor retroactively publishes their workspace.
 
 The host reads permitted source from the workspace, checks it with the existing
 export policy, and creates a GitHub tree/commit on the host-bound requirement branch.

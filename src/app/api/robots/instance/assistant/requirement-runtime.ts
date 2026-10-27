@@ -43,8 +43,8 @@ export async function runRequirementCycle(run: RequirementRun) {
     if (await evaluateRequirementCycleBudget(run)) {
       return { reqId: run.requirementId, sessionId: run.sessionId, status: 'paused' };
     }
-    await writeRequirementInstanceLog(run, { key: `cycle-start:${run.runId}`, log_type: 'system',
-      message: 'Requirement admitted to the canonical instance assistant.' });
+    // Routine admission belongs to runtime diagnostics, not the user timeline.
+    console.info('[Requirement assistant] Cycle admitted.');
     const context = await loadRequirementContext(run);
     // Private configuration is loaded separately; the agent context deliberately omits raw metadata.
     const { data: privateRequirement, error: privateError } = await supabaseAdmin.from('requirements').select('metadata,type,cron')

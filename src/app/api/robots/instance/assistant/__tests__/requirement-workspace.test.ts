@@ -8,6 +8,7 @@ const open = jest.fn();
 const suspend = jest.fn();
 const cleanup = jest.fn();
 const permission = jest.fn();
+const writeLog = jest.fn(async (..._args: any[]) => {});
 jest.mock('@/lib/harness/store', () => ({ ...jest.requireActual('@/lib/harness/store'), createSessionStore: () => store }));
 jest.mock('@/lib/harness/host-state-store', () => ({ createHostStateStore: () => ({}) }));
 jest.mock('@/lib/harness/host-configuration', () => ({ loadSessionConfiguration: async () => ({
@@ -23,7 +24,7 @@ jest.mock('@/lib/harness/artifact-store', () => ({ createArtifactStore: () => ({
 jest.mock('@/lib/harness/profile', () => ({ resolveHostProfile: () => undefined }));
 jest.mock('@/app/api/agents/tools/router/screen-access', () => ({ assertToolScreenAccess: (...args: any[]) => permission(...args) }));
 jest.mock('../requirement-session', () => ({ runRequirementAssistantSlice: (...args: any[]) => runSlice(...args) }));
-jest.mock('../requirement-instance-log', () => ({ writeRequirementInstanceLog: async () => {} }));
+jest.mock('../requirement-instance-log', () => ({ writeRequirementInstanceLog: (...args: any[]) => writeLog(...args) }));
 import { executeRequirementAssistantWorkspace } from '../requirement-workspace';
 
 async function fixture(activeMs = 0) {
@@ -86,6 +87,7 @@ test('historical active time cap does not prevent workspace execution', async ()
   expect(await executeRequirementAssistantWorkspace(f.session.id, f.scope, f.options)).toEqual({ status: 'completed', continue: false });
   expect(open).toHaveBeenCalledTimes(1);
   expect(runSlice).toHaveBeenCalledTimes(1);
+  expect(writeLog).not.toHaveBeenCalled();
   expect((await store.load(f.session.id, f.scope.siteId))?.activeMs).toBeGreaterThanOrEqual(14400001);
 });
 
@@ -108,6 +110,10 @@ test.each([
   expect(await store.load(f.session.id, f.scope.siteId)).toMatchObject({ status: 'paused', reason });
   expect((await store.load(f.session.id, f.scope.siteId))?.creditRecoveryMinimum)
     .toBe(error instanceof RequirementCreditsExhaustedError ? 0.4 : undefined);
+  expect(writeLog).toHaveBeenCalledTimes(1);
+  expect(writeLog).toHaveBeenCalledWith(f.options.cronRun, expect.objectContaining({
+    log_type: 'error', is_error: true,
+  }));
   expect(suspend).toHaveBeenCalledTimes(1);
 });
 

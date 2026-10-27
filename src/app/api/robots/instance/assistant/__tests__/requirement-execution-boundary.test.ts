@@ -32,7 +32,7 @@ function fixture(options: { session?: Partial<HarnessSession>; tools?: HarnessTo
     read: jest.fn(async () => ({ text: 'Synthetic result page', totalChars: 21, nextOffset: null })),
   };
   const writeLog = jest.fn(async event => {
-    expect(['system', 'agent_action', 'tool_call', 'tool_result']).toContain(event.log_type);
+    expect(['error', 'agent_action', 'tool_call', 'tool_result']).toContain(event.log_type);
     events.push(`log:${event.log_type}`); logs.push(structuredClone(event));
   });
   const assertActive = jest.fn(async () => {});
@@ -51,12 +51,13 @@ function fixture(options: { session?: Partial<HarnessSession>; tools?: HarnessTo
 }
 
 describe('canonical requirement execution durability boundary (offline)', () => {
-  test('reserves model allocation and mandatory log before inference; prose does not complete', async () => {
+  test('persists model allocation before inference without a system log; prose does not complete', async () => {
     const f = fixture(); await f.adapter.initialize();
     await f.model([], 'Everything is done.');
     expect(f.snapshots[0]).toMatchObject({ turns: 1, status: 'running' });
     expect(f.snapshots[0].allocatedTokens).toBeGreaterThan(100);
-    expect(f.events.indexOf('save')).toBeLessThan(f.events.indexOf('log:system'));
+    expect(f.events.indexOf('save')).toBeLessThan(f.events.indexOf('log:agent_action'));
+    expect(f.logs.every(log => log.log_type !== 'system')).toBe(true);
     await f.adapter.boundary.afterTurn([{ role: 'assistant', content: 'not authoritative' }]);
     await f.adapter.finish();
     expect(f.adapter.getSession().status).toBe('running');
@@ -93,12 +94,13 @@ describe('canonical requirement execution durability boundary (offline)', () => 
     expect(host).toHaveBeenCalledWith({}, expect.objectContaining({ sessionId: f.session.id, operationId: 'host-call', signal: f.controller.signal }));
   });
 
-  test.each(['model-log', 'tool-log', 'pending-save', 'artifact-reserve'])('failure at %s blocks dispatch without retry', async failure => {
+  test.each(['assistant-log', 'tool-log', 'pending-save', 'artifact-reserve'])('failure at %s blocks dispatch without retry', async failure => {
     const f = fixture(); await f.adapter.initialize(); const callback = jest.fn(async () => ({ ok: true }));
-    if (failure === 'model-log') {
+    if (failure === 'assistant-log') {
       f.writeLog.mockRejectedValueOnce(new Error('Synthetic log unavailable'));
-      await expect(f.model()).rejects.toMatchObject({ name: 'RecoveryError' });
+      await expect(f.model([{ id: 'call', name: 'unknown_write' }])).rejects.toMatchObject({ name: 'RecoveryError' });
       expect(f.adapter.getSession().turns).toBe(1);
+      expect(f.adapter.getSession().messages.at(-1)?.toolCalls?.[0].id).toBe('call');
     } else {
       await f.model([{ id: 'call', name: 'unknown_write' }]);
       if (failure === 'tool-log') f.writeLog.mockRejectedValueOnce(new Error('Synthetic log unavailable'));
@@ -185,7 +187,7 @@ describe('canonical requirement execution durability boundary (offline)', () => 
     expect(serializedBytes(f.adapter.getSession())).toBeLessThan(SNAPSHOT_MAX_BYTES);
   });
 
-  test('legacy pending and outstanding batches pause without replay; imports are bounded and idempotent across runs', async () => {
+  test('legacy pending and outstanding batches pause without replay; reconciliation errors are idempotent across runs', async () => {
     const call = { id: 'legacy', name: 'write', arguments: '{}' };
     const pending = { call, fingerprint: operationFingerprint('write', {}), effect: 'write' as const };
     const history = [{ role: 'user' as const, content: 'Historical objective' }, { role: 'assistant' as const, content: '', toolCalls: [call] }];
@@ -197,8 +199,10 @@ describe('canonical requirement execution durability boundary (offline)', () => 
     const again = createRequirementExecutionBoundary({ ...f.input, session: f.adapter.getSession(), run: { ...f.run, runId: randomUUID() } });
     const oldKeys = f.logs.map(log => log.key); await again.initialize();
     expect(f.logs.slice(oldKeys.length).map(log => log.key)).toEqual([oldKeys.at(-1)]);
-    expect(f.logs[0].details).toMatchObject({ historical_import: true, message_index: 0 });
-    expect(f.logs[0].details).not.toHaveProperty('timestamp');
+    expect(f.logs[0]).toMatchObject({ log_type: 'error', is_error: true });
+    expect(f.adapter.getSession()).toMatchObject({ assistantExecutionVersion: 0,
+      uncertainOperations: [pending.fingerprint] });
+    expect(f.logs.some(log => log.details?.historical_import)).toBe(false);
     await expect(f.model()).rejects.toMatchObject({ name: 'RecoveryError' });
   });
 
@@ -256,7 +260,9 @@ describe('canonical requirement execution durability boundary (offline)', () => 
     expect(adapter.getSession().turns).toBe(f.input.session.turns + 1);
     expect(adapter.getSession().allocatedTokens).toBeGreaterThan(f.input.session.allocatedTokens);
     expect(adapter.getSession().activeMs).toBeGreaterThanOrEqual(f.input.session.activeMs);
-    expect(f.logs.filter(log => log.message.includes('allocation reserved'))).toHaveLength(1);
+    expect(f.writeLog).not.toHaveBeenCalled();
+    expect(f.snapshots.at(-1)).toMatchObject({ turns: adapter.getSession().turns,
+      allocatedTokens: adapter.getSession().allocatedTokens });
   });
 
   test.each([0, -1, NaN])('invalid output allowance %s still blocks dispatch', async maxOutputTokens => {
@@ -345,14 +351,19 @@ describe('canonical requirement execution durability boundary (offline)', () => 
     expect(assertActive).toHaveBeenCalledTimes(checks);
   });
 
-  test('canonical audit cursor avoids historical reimport on the next slice', async () => {
+  test('canonical audit cursor preserves history without copying it to logs on either slice', async () => {
     const f = fixture({ session: { messages: [{ role: 'user', content: 'Historical objective' }] } });
     await f.adapter.initialize(); await f.model([], 'Canonical response'); await f.adapter.finish();
     const imported = f.logs.filter(log => log.details?.historical_import);
-    expect(imported).toHaveLength(1);
+    expect(imported).toHaveLength(0);
     const next = createRequirementExecutionBoundary({ ...f.input, session: f.adapter.getSession(), run: { ...f.run, runId: randomUUID() } });
     await next.initialize();
     expect(f.logs.filter(log => log.details?.historical_import)).toEqual(imported);
+    expect(f.logs).toHaveLength(1);
+    expect(f.logs[0]).toMatchObject({ log_type: 'agent_action', message: 'Canonical response' });
+    expect(next.getSession()).toMatchObject({ assistantAuditCursor: 2, messages: [
+      { role: 'user', content: 'Historical objective' }, { role: 'assistant', content: 'Canonical response' },
+    ] });
     expect((next.boundary as any).redact).toBe(f.input.redact);
   });
 

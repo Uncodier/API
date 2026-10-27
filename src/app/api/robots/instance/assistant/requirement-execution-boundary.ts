@@ -156,25 +156,13 @@ export function createRequirementExecutionBoundary(input: Input): {
       tools.size !== input.tools.length || input.tools.some(tool => controlNames.has(tool.name))) return fatal();
     if (![session.turns, session.allocatedTokens, session.activeMs].every(value => Number.isSafeInteger(value) && value >= 0) ||
       !Object.values(session.request.limits).every(value => Number.isSafeInteger(value) && value > 0)) return fatal();
-    // Imported history is explicitly historical, not fabricated current execution evidence.
-    // Bound each event and the number of imports; the complete transcript remains readable.
+    // History is already durable and readable through read_session_history. Do not
+    // copy it to the timeline or spend the slice deadline on historical log writes.
     const canonicalCheckpoint = session.assistantExecutionVersion === 1 ||
       (session.assistantExecutionVersion === undefined && Number.isSafeInteger(session.assistantAuditCursor) && session.assistantAuditCursor! >= 0 &&
         session.reason !== 'migration_pending_operation_requires_reconciliation');
     const cursor = Number.isSafeInteger(session.assistantAuditCursor) && session.assistantAuditCursor! >= 0
       ? Math.min(session.assistantAuditCursor!, session.messages.length) : 0;
-    const offset = Math.max(cursor, session.messages.length - 100);
-    if (offset > cursor) await log({ key: key('history-prefix', offset), log_type: 'system',
-      message: 'Earlier session history remains available through read_session_history.',
-      details: { historical_import: true, omitted_messages: offset } });
-    for (let index = offset; index < session.messages.length; index++) {
-      const message = session.messages[index];
-      await log({ key: key('history', index, message.toolCallId || ''), log_type: 'system',
-        message: input.redact(message.content).slice(0, 6000),
-        ...(message.toolCallId ? { tool_call_id: message.toolCallId } : {}),
-        details: { historical_import: true, message_index: index, role: message.role,
-          tool_calls: message.toolCalls?.slice(0, 32).map(call => ({ id: input.redact(call.id).slice(0, 200), name: call.name.slice(0, 64) })) || [] } });
-    }
     const migrationPending = !canonicalCheckpoint && (!!session.pending || outstanding().length > 0);
     if (migrationPending) {
       // Unlike the old engine, NEVER replay even a read or an undispatched legacy call.
@@ -182,7 +170,7 @@ export function createRequirementExecutionBoundary(input: Input): {
       if (session.pending?.effect === 'write' && !session.uncertainOperations.includes(session.pending.fingerprint)) {
         session.uncertainOperations.push(session.pending.fingerprint);
       }
-      await log({ key: key('migration-pending', session.messages.length, session.pending?.call.id), log_type: 'system',
+      await log({ key: key('migration-pending', session.messages.length, session.pending?.call.id), log_type: 'error',
         message: 'Imported unfinished operation requires trusted reconciliation. No operation was replayed.', is_error: true });
       session.status = 'paused'; session.reason = 'migration_pending_operation_requires_reconciliation';
     }
@@ -306,8 +294,6 @@ export function createRequirementExecutionBoundary(input: Input): {
       session.assistantExecutionVersion = 1;
       session.turns++; session.allocatedTokens += allocation;
       await save();
-      await log({ key: key('model-start', session.messages.length, String(session.turns)), log_type: 'system',
-        message: 'Canonical assistant inference allocation reserved.', details: { turn: session.turns, allocated_tokens: session.allocatedTokens } });
       await active();
       awaitingModel = true;
     }),
