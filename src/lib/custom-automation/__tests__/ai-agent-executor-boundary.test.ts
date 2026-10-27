@@ -95,6 +95,19 @@ it.each(['beforeModel', 'onModelMessage', 'executeTool', 'afterTurn'] as const)(
   expect(failure.message).not.toContain(sensitive);
 });
 
+it('preserves the exact host timeout from the completed turn hook without another request', async () => {
+  const executionBoundary = boundary([]);
+  const controller = new AbortController();
+  executionBoundary.signal = controller.signal;
+  const timeout = new DOMException('Offline host deadline', 'TimeoutError');
+  executionBoundary.afterTurn = async () => { controller.abort(timeout); throw timeout; };
+  const executor = new AIAgentExecutor();
+  const create = jest.fn().mockResolvedValue(provider({ role: 'assistant', content: 'Saved response' }, false, 'stop'));
+  (executor as any).client.chat.completions.create = create;
+  await expect(executor.act({ prompt: 'Run', tools: [], executionBoundary, maxIterations: 3 })).rejects.toBe(timeout);
+  expect(create).toHaveBeenCalledTimes(1);
+});
+
 it.each(['tool failure', 'receipt failure'])('never retries an effect or runs remaining tools after %s', async failurePoint => {
   const executionBoundary = boundary([]);
   let transcript: any[] = [];

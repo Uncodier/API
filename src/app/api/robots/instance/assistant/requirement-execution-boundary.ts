@@ -67,13 +67,18 @@ export function createRequirementExecutionBoundary(input: Input): {
       poisoned = true;
       session = structuredClone(confirmedSession);
       if (idleTimeout) throw error;
+      if (error instanceof AssistantExecutionBoundaryError) throw error;
       return fatal();
     }
   };
   const active = async () => {
     input.signal.throwIfAborted();
-    await input.assertActive();
-    await input.store.assertOwner(session.id, input.run.siteId, input.owner, 180);
+    try { await input.assertActive(); } catch (error) {
+      if (error === input.signal.reason) throw error;
+      throw new AssistantExecutionBoundaryError('execution_check_failed');
+    }
+    try { await input.store.assertOwner(session.id, input.run.siteId, input.owner, 180); }
+    catch { throw new AssistantExecutionBoundaryError('session_lease_failed'); }
   };
   const key = (phase: string, index: number, id = '') => `requirement-assistant:${createHash('sha256')
     .update(JSON.stringify([session.id, phase, index, id])).digest('hex')}`;
@@ -84,7 +89,8 @@ export function createRequirementExecutionBoundary(input: Input): {
     const next = redactData({ ...session, activeMs: session.activeMs + Math.max(0, now - measuredAt),
       updatedAt: new Date(now).toISOString() }, input.redact);
     if (serializedBytes(next) > SNAPSHOT_MAX_BYTES) return fatal();
-    session = structuredClone(await input.store.save(next, input.run.siteId, input.owner));
+    try { session = structuredClone(await input.store.save(next, input.run.siteId, input.owner)); }
+    catch { throw new AssistantExecutionBoundaryError('session_save_failed'); }
     confirmedSession = structuredClone(session);
     measuredAt = now;
   };

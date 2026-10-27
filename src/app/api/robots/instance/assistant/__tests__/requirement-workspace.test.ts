@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { createMemorySessionStore } from '@/lib/harness/memory-store';
 import { createSession, sessionRequestSchema } from '@/lib/harness/session';
 import { OpenRouterBillingError, RequirementCreditsExhaustedError } from '@/lib/services/billing/openrouter-usage-billing';
+import { AssistantExecutionBoundaryError } from '@/lib/services/robot-instance/assistant-execution-boundary';
 let store = createMemorySessionStore();
 const runSlice = jest.fn();
 const open = jest.fn();
@@ -140,4 +141,13 @@ test('typed shortage does not overwrite a concurrent user pause', async () => {
   });
   expect(await executeRequirementAssistantWorkspace(f.session.id, f.scope, f.options)).toEqual({ status: 'paused', continue: false });
   expect(await store.load(f.session.id, f.scope.siteId)).toMatchObject({ status: 'paused', reason: 'user_pause' });
+});
+
+test('logs a safe boundary stage code rather than losing the failed execution check', async () => {
+  const f = await fixture();
+  runSlice.mockRejectedValueOnce(new AssistantExecutionBoundaryError('execution_check_failed'));
+  await executeRequirementAssistantWorkspace(f.session.id, f.scope, f.options);
+  expect(writeLog).toHaveBeenCalledWith(f.options.cronRun, expect.objectContaining({
+    details: { error: 'Assistant execution boundary failed', boundary_code: 'execution_check_failed' },
+  }));
 });

@@ -15,6 +15,43 @@ beforeEach(() => {
 });
 afterEach(() => { process.env = originalEnv; jest.restoreAllMocks(); });
 
+it.each(['deadline', 'execution-check', 'lease', 'save'])('preserves %s through the real executor and durability adapter before provider dispatch', async failure => {
+  const id = randomUUID(), requirementId = randomUUID(), owner = randomUUID();
+  const run = { requirementId, sessionId: id, siteId: randomUUID(), userId: randomUUID(), instanceId: randomUUID(), runId: randomUUID(), executionGeneration: 1 };
+  const store = new MemorySessionStore();
+  const session: HarnessSession = { id, version: 0, status: 'queued',
+    request: { objective: 'Offline failure', repository: { url: 'https://example.test/repo' }, requirementId,
+      limits: { maxTurns: 10, maxOutputTokens: 2000, maxTotalTokens: 2000000, maxActiveMs: 600000 } },
+    turns: 0, allocatedTokens: 0, activeMs: 0, messages: [], uncertainOperations: [],
+    createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+  await store.create(session, run);
+  const claimed = (await store.claim(id, run.siteId, owner, 60))!;
+  const controller = new AbortController();
+  const assertActive = jest.fn(async () => {});
+  const adapter = createRequirementExecutionBoundary({ session: claimed, run, store, owner,
+    artifacts: createMemoryArtifactStore(store), tools: [], redact: createRedactor(),
+    assertActive, signal: controller.signal, writeLog: async () => {} });
+  await adapter.initialize();
+  const timeout = new DOMException('Offline host deadline', 'TimeoutError');
+  adapter.boundary.billing = { beforeDispatch: jest.fn(async () => {}), settle: jest.fn(async () => {}), failed: jest.fn(async () => {}) };
+  if (failure === 'deadline') assertActive.mockImplementationOnce(async () => { controller.abort(timeout); throw timeout; });
+  if (failure === 'execution-check') assertActive.mockRejectedValueOnce(new Error('Private ownership details'));
+  if (failure === 'lease') jest.spyOn(store, 'assertOwner').mockRejectedValueOnce(new Error('Private lease details'));
+  if (failure === 'save') jest.spyOn(store, 'save').mockRejectedValueOnce(new Error('Private snapshot details'));
+  const executor = new AIAgentExecutor({ siteId: run.siteId });
+  const create = jest.fn(); (executor as any).client.chat.completions.create = create;
+  const error = await executor.act({ prompt: 'Run', tools: [], executionBoundary: adapter.boundary, maxIterations: 1 }).catch(error => error);
+  if (failure === 'deadline') expect(error).toBe(timeout);
+  else expect(error).toMatchObject({ name: 'RecoveryError', code: {
+    'execution-check': 'execution_check_failed', lease: 'session_lease_failed', save: 'session_save_failed',
+  }[failure], message: 'Assistant execution boundary failed' });
+  expect(create).not.toHaveBeenCalled();
+  expect(adapter.boundary.billing.beforeDispatch).not.toHaveBeenCalled();
+  expect(adapter.boundary.billing.failed).not.toHaveBeenCalled();
+  expect((await store.load(id, run.siteId))?.pending).toBeUndefined();
+  expect(globalThis.fetch).not.toHaveBeenCalled();
+});
+
 it('connects canonical normalized control calls and unknown receipts to real durable boundary and finishes', async () => {
   const id = randomUUID();
   const requirementId = randomUUID();

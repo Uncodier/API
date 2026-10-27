@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Sandbox } from '@vercel/sandbox';
 import { runRequirementAssistantSlice } from './requirement-session';
+import { AssistantExecutionBoundaryError } from '@/lib/services/robot-instance/assistant-execution-boundary';
 import { createSessionStore } from '@/lib/harness/store';
 import { openWorkspace, replaceWorkspaceEnvironment, suspendWorkspaceForCleanup } from '@/lib/harness/workspace';
 import { claimSandboxCleanup } from '@/lib/services/billing/sandbox-cleanup-fence';
@@ -146,7 +147,8 @@ export async function executeRequirementAssistantWorkspace(id: string, scope: Se
     await writeRequirementInstanceLog(options.cronRun, {
       key: `cycle-error:${options.cronRun.runId}`, log_type: 'error', is_error: true,
       message: 'Assistant requirement cycle stopped. Inspect its durable checkpoint before retrying.',
-      details: { error: safeError(error, redact) },
+      details: { error: safeError(error, redact),
+        ...(error instanceof AssistantExecutionBoundaryError ? { boundary_code: error.code } : {}) },
     }).catch(() => undefined);
     await accountSetup().catch(() => undefined);
     // Load CURRENT snapshot: never overwrite a newer receipt or a user pause with an old local copy.

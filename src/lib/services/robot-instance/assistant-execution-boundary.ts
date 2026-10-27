@@ -27,7 +27,7 @@ export interface AssistantExecutionBoundary {
 
 /** Fatal to existing recovery-aware catches; never expose hook payloads in the message. */
 export class AssistantExecutionBoundaryError extends Error {
-  constructor() {
+  constructor(public readonly code: 'boundary_failed' | 'execution_check_failed' | 'session_lease_failed' | 'session_save_failed' = 'boundary_failed') {
     super('Assistant execution boundary failed');
     this.name = 'RecoveryError';
     Object.setPrototypeOf(this, new.target.prototype);

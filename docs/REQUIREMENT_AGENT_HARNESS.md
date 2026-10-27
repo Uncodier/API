@@ -48,6 +48,15 @@ tool calls, pending/uncertain effects or unpersisted transcript changes. Storage
 ownership, billing and in-flight operation failures remain fenced. No additional
 recovery table, scheduler or retry loop is involved.
 
+The canonical executor must preserve that exact host timeout at model admission
+and completed-turn hooks too; wrapping it back into `RecoveryError` would undo
+the idle-slice behavior. Connected executor/adapter tests cover this path with
+the requirement billing boundary attached and verify zero provider dispatch or
+credit reservations. Boundary failures carry only fixed diagnostic codes
+(`execution_check_failed`, `session_lease_failed`, `session_save_failed`, or
+`boundary_failed`) into the cycle error's `boundary_code`; raw ownership/storage
+exceptions are never retained. These codes do not authorize automatic recovery.
+
 Command diagnostics read during the submitting conversation can observe that
 same action as unfinished. This is an admission wait until the turn completes,
 not proof of a permanent blockage and not a reason to submit duplicate commands.

@@ -59,12 +59,16 @@ function normalizeBoundaryNumbers(schema: any, value: any): any {
   return value;
 }
 
-async function runBoundaryHook<T>(hook: () => Promise<T>): Promise<T> {
+async function runBoundaryHook<T>(hook: () => Promise<T>, signal?: AbortSignal): Promise<T> {
   try {
     return await hook();
-  } catch {
+  } catch (error) {
+    // Only the exact host deadline may cross this wrapper. The durability
+    // adapter has already rejected timeouts with unfinished effects.
+    if (signal?.aborted && error === signal.reason && error instanceof DOMException && error.name === 'TimeoutError') throw error;
     // Do not retain arbitrary hook errors: they may contain arguments or credentials.
     const { AssistantExecutionBoundaryError } = await import('@/lib/services/robot-instance/assistant-execution-boundary');
+    if (error instanceof AssistantExecutionBoundaryError) throw error;
     throw new AssistantExecutionBoundaryError();
   }
 }
@@ -585,7 +589,7 @@ export class AIAgentExecutor {
         await boundary.beforeModel({ system, messages: request.messages,
           tools: request.tools || [], maxOutputTokens: request.max_tokens });
         boundary.signal?.throwIfAborted();
-      });
+      }, boundary.signal);
     }
     if (beforeDispatch) await beforeDispatch(request);
     return this.client.chat.completions.create(request as any,
@@ -1252,7 +1256,7 @@ export class AIAgentExecutor {
           if (executionBoundary) await runBoundaryHook(() => executionBoundary.onModelMessage(message));
           steps.push(step);
           if (onStep) await onStep(step);
-          if (executionBoundary) await runBoundaryHook(() => executionBoundary.afterTurn(messages));
+          if (executionBoundary) await runBoundaryHook(() => executionBoundary.afterTurn(messages), executionBoundary.signal);
           break;
         }
 
@@ -1787,7 +1791,7 @@ export class AIAgentExecutor {
           const streamingLogId = (response as any).streamingLogId;
           await onStep(step, streamingLogId ? { streamingLogId } : undefined);
         }
-        if (executionBoundary) await runBoundaryHook(() => executionBoundary.afterTurn(messages));
+        if (executionBoundary) await runBoundaryHook(() => executionBoundary.afterTurn(messages), executionBoundary.signal);
 
         const hasToolCalls = !!(message.tool_calls && message.tool_calls.length > 0);
         const shouldStop = (schema && finalOutput !== undefined) ||
