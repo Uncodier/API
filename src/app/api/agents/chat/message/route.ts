@@ -3,7 +3,8 @@ import { CommandFactory, ProcessorInitializer } from '@/lib/agentbase';
 import { DatabaseAdapter } from '@/lib/agentbase/adapters/DatabaseAdapter';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { v4 as uuidv4 } from 'uuid';
-import { skillLookupTool } from '@/app/api/agents/tools/sandbox/skill-lookup-tool';
+import { getCommerceReservationsPolicy } from '@/app/api/agents/customerSupport/support-policies';
+import { buildChatMessageTools } from './tools';
 
 // Función para validar UUIDs
 function isValidUUID(uuid: string): boolean {
@@ -709,12 +710,8 @@ export async function POST(request: Request) {
       }
     }
     
-    // Define default tools in case agent doesn't have any - empty array as per specification
+    // Retain legacy chat lookups alongside the shared Customer Support baseline.
     const defaultTools: any[] = [
-      {
-        "type": "function",
-        "function": skillLookupTool({ siteId: site_id })
-      },
       {
         "type": "function",
         "function": {
@@ -818,31 +815,18 @@ export async function POST(request: Request) {
       }
     ];
     
-    // Use agent tools if available, otherwise use default tools
-    let tools = agentInfo.tools && Array.isArray(agentInfo.tools) && agentInfo.tools.length > 0 
+    // Agent configuration may add tools, but must not remove the support baseline.
+    const additionalTools = agentInfo.tools && Array.isArray(agentInfo.tools) && agentInfo.tools.length > 0
       ? agentInfo.tools 
       : defaultTools;
-      
-    // Always inject skill_lookup if it's not present, so the agent can discover skills
-    const hasSkillLookup = tools.some(t => {
-      if (t.type === 'function') {
-        return t.function?.name === 'skill_lookup';
-      }
-      return t.name === 'skill_lookup';
-    });
-    
-    if (!hasSkillLookup) {
-      tools = [...tools, {
-        type: "function",
-        function: skillLookupTool({ siteId: site_id })
-      }];
-    }
+    const tools = buildChatMessageTools(site_id, additionalTools);
+    contextMessage += getCommerceReservationsPolicy();
       
     // Check if agent has activities
     const hasActivities = agentInfo.activities && Array.isArray(agentInfo.activities) && agentInfo.activities.length > 0;
     const activities = agentInfo.activities || [];
     
-    console.log(`🔧 Using ${tools.length} tools ${tools.length > 0 ? 'from agent configuration' : '(empty array)'}`);
+    console.log(`🔧 Using ${tools.length} tools from the support baseline and chat/agent configuration`);
     if (hasActivities) {
       console.log(`🔧 Including ${activities.length} activities from agent configuration`);
     }
@@ -868,7 +852,7 @@ export async function POST(request: Request) {
          }
         }        
       ],
-      // Use agent tools or default tools
+      // Shared support baseline plus additional chat/agent tools
       tools,
       // Add any activities as additional tools if they exist
       ...(hasActivities ? { activities } : {}),
