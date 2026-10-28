@@ -9,6 +9,9 @@ export async function POST(request: NextRequest) {
     if (!action) {
       return NextResponse.json({ success: false, error: 'Missing action' }, { status: 400 });
     }
+    if (typeof site_id !== 'string' || !site_id.trim()) {
+      return NextResponse.json({ success: false, error: 'Missing site_id' }, { status: 400 });
+    }
 
     if (action === 'upsert') {
       if (!site_id) throw new Error('Missing site_id');

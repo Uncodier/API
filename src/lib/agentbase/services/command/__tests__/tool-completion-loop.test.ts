@@ -24,6 +24,27 @@ function commandFixture(functions: any[] = []): DbCommand {
 }
 
 describe('tool-completion-loop', () => {
+  it.each([
+    { auto_retry: false },
+    { write_state: 'unknown' },
+    { auto_retry: false, write_state: 'unknown' },
+  ])('stops automatic retries for recovery %p and preserves it for the final response', async recovery => {
+    const failedFn = { id: 'call-1', name: 'scheduling', status: 'failed',
+      arguments: '{"action":"schedule"}', result: { success: false, recovery } };
+    let storedFunctions: any[] = [];
+    const executeCommand = jest.fn(async (current: DbCommand): Promise<CommandExecutionResult> => {
+      storedFunctions = [failedFn];
+      return { status: 'completed', updatedCommand: { ...current, functions: storedFunctions } };
+    });
+    const result = await runToolCompletionLoop({ command: commandFixture(),
+      toolEvaluator: { executeCommand },
+      commandService: { getCommandById: async () => commandFixture(storedFunctions) } });
+    expect(executeCommand).toHaveBeenCalledTimes(1);
+    expect(result.updatedCommand?.functions).toEqual([failedFn]);
+    expect(result.updatedCommand?.context).toContain(JSON.stringify(recovery));
+    expect(result.updatedCommand?.context).not.toContain('Call that tool again NOW');
+  });
+
   it('caps at 8 turns', () => {
     expect(MAX_TOOL_TURNS).toBe(8);
     expect(

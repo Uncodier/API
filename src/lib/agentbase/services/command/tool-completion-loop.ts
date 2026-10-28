@@ -6,7 +6,7 @@ export const DEFAULT_TOOL_LOOP_BUDGET_MS = 90_000;
 
 export const TOOL_COMPLETION_TURN_INSTRUCTION = `
 === TOOL COMPLETION TURN ===
-Previous tools in this command already ran. Their outputs are under "Tool Results and Information".
+Previous tools in this command already ran. Their outputs are under "TOOL RESULTS SUMMARY".
 This command continues until you return [] or only possible_match. There is no background worker after the user-facing reply.
 Return the NEXT tool(s) needed to finish the request, or [] if existing outputs already suffice or you must ask the user.
 Do not repeat a tool that succeeded with the same arguments.
@@ -84,6 +84,22 @@ export function turnHadFailedTool(before: ToolFn[] = [], after: ToolFn[] = []): 
     }
   }
   return false;
+}
+
+/** A timeout may have committed a write. Do not ask the evaluator to retry it. */
+export function turnNeedsReconciliation(before: ToolFn[] = [], after: ToolFn[] = []): boolean {
+  const beforeMap = new Map(before.map(fn => [functionKey(fn), fn]));
+  return after.some(fn => {
+    if (fn.status !== 'failed') return false;
+    const prev = beforeMap.get(functionKey(fn));
+    if (prev?.status === 'failed' && resultSignature(prev) === resultSignature(fn)) return false;
+    let result = fn.result;
+    if (typeof result === 'string') {
+      try { result = JSON.parse(result); } catch { return false; }
+    }
+    const recovery = (result as { recovery?: { auto_retry?: boolean; write_state?: string } } | null)?.recovery;
+    return recovery?.auto_retry === false || recovery?.write_state === 'unknown';
+  });
 }
 
 export function shouldContinueToolCompletion(params: {
@@ -176,6 +192,13 @@ export async function runToolCompletionLoop(params: {
     const afterFunctions = current.functions || [];
     previousTurnFailed = turnHadFailedTool(beforeFunctions, afterFunctions);
 
+    if (turnNeedsReconciliation(beforeFunctions, afterFunctions)) {
+      console.log(`[ToolCompletion] stop (reconciliation required) for command ${command.id}`);
+      // Return the preserved failure/recovery to TargetProcessor. No automatic
+      // correction turn is safe until the actual write state has been verified.
+      break;
+    }
+
     // A failed evaluator still continues if a tool failed — ask the model for better params.
     if (lastResult.status === 'failed' && !previousTurnFailed) {
       break;
@@ -201,6 +224,9 @@ export async function runToolCompletionLoop(params: {
     outputTokens,
     updatedCommand: {
       ...(lastResult.updatedCommand || current),
+      // TargetProcessor must see the latest results even when the loop hits a cap
+      // or ToolEvaluator returns only its original (pre-execution) context.
+      context: buildToolTurnContext({ originalContext, instruction: '', functions: current.functions }),
       functions: current.functions,
       tools: originalTools,
       input_tokens: inputTokens,

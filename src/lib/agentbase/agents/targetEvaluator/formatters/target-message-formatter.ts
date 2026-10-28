@@ -2,6 +2,7 @@
  * Formateador de mensajes para el TargetProcessor
  */
 import { DbCommand } from '../../../models/types';
+import { summarizeFunctions } from '../../../services/command/tool-loop-context';
 
 /**
  * Prepara los mensajes para el target processing
@@ -63,6 +64,15 @@ export function prepareMessagesForTarget(command: DbCommand, systemPrompt: strin
     role: 'user',
     content: userContext
   });
+
+  // Also support callers outside the completion loop. Persisted function results
+  // are authoritative; a completed status alone is not the tool's output.
+  if (command.functions?.length) {
+    const results = summarizeFunctions(command.functions);
+    if (!userContext.includes(results)) {
+      messages.push({ role: 'user', content: `TOOL RESULTS SUMMARY:\n${results}` });
+    }
+  }
 
   console.log(`[TargetProcessor] Mensajes preparados: ${messages.length}`);
   return messages;

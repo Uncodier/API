@@ -288,13 +288,14 @@ export const customTools: Record<string, ApiResponseConfig> = {
       requiresAuth: false
     },
     responseMapping: {
-      // Todas estas propiedades están en el nivel raíz de la respuesta
-      intervention_id: 'intervention_id',  // ID único de la intervención creada
-      status: 'status',                    // Estado de la intervención (pending, etc.)
-      requested_at: 'requested_at',        // Timestamp de la solicitud
+      // The endpoint returns the intervention inside data.
+      intervention_id: 'data.intervention_id',
+      status: 'data.status',
+      requested_at: 'data.created_at',
       success: 'success',                  // Indicador de éxito de la operación
-      conversation_id: 'conversation_id',  // ID de la conversación que solicitó la intervención
-      agent_id: 'agent_id'                 // ID del agente que solicitó la intervención
+      conversation_id: 'data.conversation_id',
+      team_notification: 'data.team_notification',
+      channel_response: 'data.channel_response'
     },
     errors: {
       400: {

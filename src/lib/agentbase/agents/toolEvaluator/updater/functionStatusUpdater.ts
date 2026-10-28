@@ -59,23 +59,15 @@ export async function updateFunctionStatuses(
         const status = result.status === 'success' ? 'completed' : 'failed';
         console.log(`[ToolExecutor] 🔄 Actualizando función ${result.id}/${result.function_name} a estado: ${status}`);
         
-        // Buscar primero por el nombre de la función, que es más confiable
-        let functionIndex = -1;
-        if (result.function_name) {
-          console.log(`[ToolExecutor] 🔍 Buscando función por nombre: ${result.function_name}`);
-          functionIndex = updatedFunctions.findIndex(func => func.name === result.function_name);
-        }
-        
-        // Si no se encontró por nombre, intentar buscar por ID
-        if (functionIndex < 0 && result.id) {
-          console.log(`[ToolExecutor] 🔍 Buscando función por ID: ${result.id}`);
-          functionIndex = updatedFunctions.findIndex(func => func.id === result.id);
-        }
-        
-        // Si aún no hay coincidencia y hay una sola función, asumimos que es la correcta
-        if (functionIndex < 0 && updatedFunctions.length === 1) {
-          console.log(`[ToolExecutor] ⚠️ Ninguna coincidencia encontrada, pero solo hay una función. Asumiendo que es la correcta.`);
-          functionIndex = 0;
+        // Each call ID is unique; repeated tool names must not overwrite older calls.
+        let functionIndex = result.id
+          ? updatedFunctions.findIndex(func => func.id === result.id) : -1;
+        if (functionIndex < 0 && result.function_name) {
+          const matches = updatedFunctions.filter(func => func.name === result.function_name
+            && (!result.id || !func.id));
+          if (matches.length === 1) {
+            functionIndex = updatedFunctions.indexOf(matches[0]);
+          }
         }
         
         if (functionIndex >= 0) {
@@ -87,8 +79,10 @@ export async function updateFunctionStatuses(
           // Actualizar el estado de la función en el array
           updatedFunctions[functionIndex] = {
             ...updatedFunctions[functionIndex],
+            ...(result.id ? { id: result.id } : {}),
+            ...(result.arguments !== undefined ? { arguments: result.arguments } : {}),
             status,
-            result: result.output || null,
+            result: result.output ?? null,
             error: result.error || null
           };
           functionsUpdated = true;
@@ -107,7 +101,7 @@ export async function updateFunctionStatuses(
             status: status, // Usar el estado calculado (failed o completed)
             name: result.function_name || 'unknown_function',
             arguments: result.arguments || '{}',
-            result: result.output || null,
+            result: result.output ?? null,
             error: result.error || null
           };
           
@@ -198,7 +192,7 @@ export async function updateFunctionStatuses(
           status: status,
           name: result.function_name || 'unknown_function',
           arguments: result.arguments || '{}',
-          result: result.output || null,
+          result: result.output ?? null,
           error: result.error || null
         };
       });

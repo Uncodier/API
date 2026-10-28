@@ -61,7 +61,7 @@ export async function updateCommandContext(
         updatedFunctions[functionIndex] = {
           ...updatedFunctions[functionIndex],
           status: result.status === 'success' ? 'completed' : 'failed',
-          result: result.output || null,
+          result: result.output ?? null,
           error: result.error || null
         };
         functionsModified = true;
@@ -77,12 +77,14 @@ export async function updateCommandContext(
         
         if (result.status === 'success') {
           // Para resultados exitosos, mostrar la salida directamente
-          output = result.output ? 
+          output = result.output !== undefined ?
             (typeof result.output === 'string' ? result.output : JSON.stringify(result.output)) : 
             'No output';
         } else {
           // Para errores, utilizar el campo de error en lugar de output
-          output = 'Failed to execute function';
+          output = result.output !== undefined
+            ? (typeof result.output === 'string' ? result.output : JSON.stringify(result.output))
+            : 'Failed to execute function';
           errorInfo = result.error ? 
             `\nError: ${result.error}` : 
             '\nError: Unknown execution error';
@@ -114,12 +116,14 @@ export async function updateCommandContext(
         
         if (result.status === 'success') {
           // Para resultados exitosos, mostrar la salida directamente
-          output = result.output ? 
+          output = result.output !== undefined ?
             (typeof result.output === 'string' ? result.output : JSON.stringify(result.output)) : 
             'No output';
         } else {
           // Para errores, utilizar el campo de error en lugar de output
-          output = 'Failed to execute function';
+          output = result.output !== undefined
+            ? (typeof result.output === 'string' ? result.output : JSON.stringify(result.output))
+            : 'Failed to execute function';
           errorInfo = result.error ? 
             `\nError: ${result.error}` : 
             '\nError: Unknown execution error';

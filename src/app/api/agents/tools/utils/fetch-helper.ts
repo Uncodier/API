@@ -1,3 +1,18 @@
+export class ToolApiError extends Error {
+  constructor(message: string, readonly result: unknown, readonly status: number) {
+    super(message);
+    this.name = 'ToolApiError';
+  }
+}
+
+function assertToolResponse(data: any, res: Response, fallback: string): void {
+  if (!res.ok || data?.success === false || data?.ok === false) {
+    const message = typeof data?.error === 'string' ? data.error
+      : typeof data?.error?.message === 'string' ? data.error.message : fallback;
+    throw new ToolApiError(message, data, res.status);
+  }
+}
+
 export function getApiBaseUrl(): string {
   // Try to use the API URL, fallback to API SERVER URL, then APP URL, and finally localhost:3001
   const url = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_SERVER_URL || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3001';
@@ -29,9 +44,7 @@ export async function fetchApiTool(endpoint: string, body: any, errorMessage: st
       throw new Error(`Invalid JSON response from ${endpoint} (Status: ${res.status}): ${text.slice(0, 150)}...`);
     }
 
-    if (!res.ok) {
-      throw new Error(data.error?.message || data.error || errorMessage);
-    }
+    assertToolResponse(data, res, errorMessage);
 
     return data;
   } catch (error) {
@@ -66,9 +79,7 @@ export async function fetchApiToolGet(endpoint: string, errorMessage: string) {
       throw new Error(`Invalid JSON response from ${endpoint} (Status: ${res.status}): ${text.slice(0, 150)}...`);
     }
 
-    if (!res.ok) {
-      throw new Error(data.error?.message || data.error || errorMessage);
-    }
+    assertToolResponse(data, res, errorMessage);
 
     return data;
   } catch (error) {

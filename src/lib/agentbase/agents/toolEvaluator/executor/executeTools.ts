@@ -123,7 +123,7 @@ function safeStringify(obj: any, maxLength: number = 10000): string {
  * Helper function to validate and clean response data
  */
 function validateAndCleanResponse(data: any, toolName: string): any {
-  if (!data) {
+  if (data === undefined || data === null) {
     return null;
   }
 
@@ -202,8 +202,9 @@ async function executeCustomApiTool(toolName: string, args: any): Promise<any> {
     };
     
     // Create a timeout promise
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => {
+      timeout = setTimeout(() => {
         reject(new Error(`Workflow timeout after ${workflowTimeout}ms for ${toolName}`));
       }, workflowTimeout);
     });
@@ -215,18 +216,23 @@ async function executeCustomApiTool(toolName: string, args: any): Promise<any> {
       workflowOptions
     );
     
-    const result = await Promise.race([workflowPromise, timeoutPromise]);
+    let result;
+    try {
+      result = await Promise.race([workflowPromise, timeoutPromise]);
+    } finally {
+      clearTimeout(timeout);
+    }
     const executionTime = Date.now() - startTime;
     
     // Verificar si el workflow fue exitoso
     if (result.success) {
       // Extraer los datos del resultado del workflow
       // El resultado puede tener diferentes estructuras dependiendo del tipo de respuesta
-      if (result.data) {
+      if (result.data !== undefined && result.data !== null) {
         // Validate and clean the response
         const cleanedData = validateAndCleanResponse(result.data, toolName);
         
-        if (cleanedData) {
+        if (cleanedData !== undefined && cleanedData !== null) {
           return cleanedData;
         } else {
           console.warn(`[ToolExecutor] Response data validation failed for ${toolName}`);
@@ -359,6 +365,9 @@ export async function executeTools(
       if (context?.command_id && !parsedArgs.command_id) {
         parsedArgs.command_id = context.command_id;
       }
+      if (context?.site_id && !parsedArgs.site_id) {
+        parsedArgs.site_id = context.site_id;
+      }
       
       // --- FORCE OVERRIDES FOR TOOLS ROUTER ---
       if (functionName === 'tools' && parsedArgs.action === 'call') {
@@ -421,13 +430,17 @@ export async function executeTools(
         
         // Registrar resultado exitoso
         if (success) {
+          const failed = output && typeof output === 'object'
+            && (output.success === false || output.ok === false);
+          const failureMessage = typeof output?.error === 'string' ? output.error
+            : output?.error?.message || output?.code || `Tool ${functionName} reported failure`;
           results.push({
             id: callId,
             function_name: functionName,
             arguments: functionArgs,
-            status: 'success',
-            error: null,
-            output: output || `Executed ${functionName} successfully`
+            status: failed ? 'error' : 'success',
+            error: failed ? failureMessage : null,
+            output: output === undefined ? null : output
           });
         }
       } catch (execError: any) {
@@ -439,7 +452,7 @@ export async function executeTools(
           arguments: functionArgs,
           status: 'error',
           error: execError.message || errorMessage || `Error executing ${functionName}`,
-          output: null
+          output: execError.result ?? null
         });
       }
       

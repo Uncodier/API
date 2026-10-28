@@ -10,9 +10,26 @@ type ToolFn = {
   id?: string;
   name?: string;
   status?: string;
+  arguments?: unknown;
   error?: unknown;
   result?: unknown;
 };
+
+/** Remove redundant catalog columns, never candidates or search provenance. */
+function compactToolResult(fn: ToolFn): unknown {
+  const result = fn.result;
+  if (fn.name !== 'catalog_commerce' || !result || typeof result !== 'object') return result;
+  const catalog = result as Record<string, unknown>;
+  if (!Array.isArray(catalog.items)) return result;
+  const redundantFields = new Set(['site_id', 'image_url', 'is_marketplace_listed', 'is_pos_available']);
+  return {
+    ...catalog,
+    items: catalog.items.map(item => {
+      if (!item || typeof item !== 'object') return item;
+      return Object.fromEntries(Object.entries(item).filter(([key]) => !redundantFields.has(key)));
+    }),
+  };
+}
 
 export function stripToolTurnBlocks(context: string): string {
   if (!context) return '';
@@ -42,7 +59,14 @@ export function summarizeFunctions(functions: ToolFn[] = []): string {
       const name = String(fn?.name || fn?.id || 'unknown');
       const status = String(fn?.status || 'unknown');
       const error = toolErrorText(fn);
-      return error ? `- ${name}: ${status} Error: ${error}` : `- ${name}: ${status}`;
+      const lines = [error ? `- ${name}: ${status} Error: ${error}` : `- ${name}: ${status}`];
+      if (fn.arguments !== undefined) {
+        lines.push(`Arguments: ${typeof fn.arguments === 'string' ? fn.arguments : JSON.stringify(fn.arguments)}`);
+      }
+      if (fn.result !== undefined) {
+        lines.push(`Result: ${JSON.stringify(compactToolResult(fn))}`);
+      }
+      return lines.join('\n');
     })
     .join('\n');
 }
