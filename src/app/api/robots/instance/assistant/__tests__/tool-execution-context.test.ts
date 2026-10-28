@@ -9,6 +9,8 @@ import { isInsufficientCreditsError } from '@/lib/services/billing/credit-exhaus
 import { OpenRouterBillingError, RequirementCreditsExhaustedError } from '@/lib/services/billing/openrouter-usage-billing';
 import { attachAssistantStepResult, readAssistantStepResult } from '../requirement-host';
 import { createAssistantStepResult } from '../step-result';
+import { createAssistantWorkspaceTools } from '../workspace-tools';
+jest.mock('@vercel/sandbox', () => ({ Sandbox: {} }));
 
 const siteId = randomUUID();
 const instanceId = randomUUID();
@@ -159,6 +161,7 @@ describe('assistant private execution context wiring', () => {
     const run = loadRuntimeModule<typeof import('../assistant-turn-core')>(
       'src/app/api/robots/instance/assistant/assistant-turn-core.ts', {
         './requirement-host': { readRequirementAssistantHost: () => undefined, readAssistantStepResult },
+        './workspace-tools': { createAssistantWorkspaceTools },
         '@/lib/services/billing/credit-exhaustion-message': { isInsufficientCreditsError },
         './utils': { getInstanceAssistantTools: getTools },
         './publish-node-binding': { resolvePublishNodeBinding: async () => null },
@@ -248,10 +251,14 @@ describe('assistant private execution context wiring', () => {
     context.recoveryScope = { siteId, instanceId, userId, userMessageLogId: actionId };
     await run(context, []);
     expect(getTools.mock.calls[0][10]).toEqual({ siteId, instanceId, userId, actionId });
+    expect(getTools.mock.calls[0][3].map((tool: any) => tool.name)).toEqual(expect.arrayContaining([
+      'list_files', 'read_files', 'search', 'apply_patch', 'exec',
+    ]));
     expect(getTools.mock.calls[0][9]).not.toHaveProperty('actionId');
     delete context.recoveryScope;
     await run(context, []);
     expect(getTools.mock.calls[1][10]).toBeUndefined();
+    expect(getTools.mock.calls[1][3]).toEqual([]);
   });
 
   it('recovery skips sentinels and uses the most recent real user text, including multipart', async () => {

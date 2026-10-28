@@ -4,7 +4,7 @@ export const SANDBOX_CREDITS_PER_HOUR = 0.5;
 export class SandboxBillingError extends Error {
   constructor() { super('Sandbox billing could not be reconciled. Active usage remains pending.'); this.name = 'SandboxBillingError'; }
 }
-export type SandboxBillingOwner = { kind: 'harness' | 'requirement' | 'workflow'; id: string; siteId?: string };
+export type SandboxBillingOwner = { kind: 'harness' | 'requirement' | 'workflow' | 'instance'; id: string; siteId?: string };
 type BillingClient = { rpc(name: string, params: Record<string, unknown>): PromiseLike<{ data: unknown; error: unknown }> };
 async function client(): Promise<BillingClient> {
   // Lazy: offline workspace-only callers need neither a DB nor host credentials.

@@ -8,6 +8,7 @@ import { stopSandboxQuiet } from '@/lib/services/sandbox-stop';
 import { deleteSnapshotQuiet } from '@/lib/services/sandbox-persisted-snapshot';
 import { isSandboxNotFoundError } from '@/lib/services/sandbox-missing-snapshot';
 import { claimSandboxCleanup } from '../sandbox-cleanup-fence';
+import { deleteSandboxAndOrphans } from '@/lib/services/sandbox-lifecycle';
 jest.mock('../sandbox-cleanup-fence',()=>({claimSandboxCleanup:jest.fn()}));
 jest.mock('@/lib/status/telemetry',()=>({recordTelemetry:jest.fn().mockResolvedValue(undefined)}));
 jest.mock('@vercel/sandbox',()=>({Sandbox:{get:jest.fn()}}));
@@ -46,6 +47,29 @@ it('reconciles stopped/name-only tracked VM and preserves harness reference and 
   expect(reconcileSandboxBilling).toHaveBeenCalledWith(sandbox);expect(stopSandboxQuiet).not.toHaveBeenCalled();expect(deleteSnapshotQuiet).not.toHaveBeenCalled();
   expect(Sandbox.get).toHaveBeenCalledWith(expect.objectContaining({name,resume:false}));
   expect(housekeepingRows).toHaveBeenCalledWith('sandbox_billing_resources','sandbox_name,deletion_requested_at','sandbox_name',undefined,true);
+});
+
+it('does not stop a live leased assistant inspection as an orphan', async () => {
+  const name = `ai-${randomBytes(20).toString('hex')}`;
+  jest.mocked(housekeepingRows).mockImplementation(async table => table === 'assistant_workspaces'
+    ? [{ instance_id: randomUUID(), sandbox_name: `a-${randomUUID()}`, active_sandbox_name: name,
+      lease_expires_at: new Date(Date.now()+300000).toISOString() }]
+    : table === 'sandbox_billing_resources' ? [{ sandbox_name: name }] : []);
+  jest.mocked(listHousekeepingSandboxes).mockResolvedValue([{ id: name, name, createdAt: Date.now()-3600000 }]);
+  jest.mocked(Sandbox.get).mockResolvedValue({ name, status: 'running', currentSnapshotId: randomUUID() } as never);
+  expect((await GET(request())).status).toBe(200);
+  expect(stopSandboxQuiet).not.toHaveBeenCalled();
+  expect(reconcileSandboxBilling).toHaveBeenCalled();
+});
+
+it('routes deleted instance workspaces through billing-first cleanup rather than forgiving unpaid history', async () => {
+  const name = `a-${randomUUID()}`;
+  jest.mocked(housekeepingRows).mockImplementation(async table => table === 'assistant_workspace_deletions'
+    ? [{ sandbox_name: name }] : table === 'sandbox_billing_resources' ? [{ sandbox_name: name }] : []);
+  jest.mocked(Sandbox.get).mockResolvedValue({ name, status: 'stopped', currentSnapshotId: randomUUID() } as never);
+  expect((await GET(request())).status).toBe(200);
+  expect(deleteSandboxAndOrphans).toHaveBeenCalledWith(name);
+  expect(retireSandboxBilling).not.toHaveBeenCalledWith(name, 'finish');
 });
 it('rejects missing cron secret rather than authorizing Bearer undefined',async()=>{
   delete process.env.CRON_SECRET;

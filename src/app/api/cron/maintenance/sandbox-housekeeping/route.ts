@@ -77,6 +77,16 @@ async function runCron(request: Request) {
     for (const row of workflowRows) {
       if (!['completed','cancelled','failed'].includes(row.status) && row.metadata?.active_sandbox_id) activeSandboxIds.add(row.metadata.active_sandbox_id);
     }
+    const assistantWorkspaces = await housekeepingRows('assistant_workspaces',
+      'instance_id,sandbox_name,active_sandbox_name,lease_expires_at', 'instance_id');
+    for (const row of assistantWorkspaces) {
+      // Idle instance VMs may stop; a live operation/inspection lease is not an orphan.
+      if (Date.parse(row.lease_expires_at || '') > Date.now()) {
+        activeSandboxIds.add(row.active_sandbox_name || row.sandbox_name);
+      }
+    }
+    const assistantDeletions = new Set((await housekeepingRows('assistant_workspace_deletions', 'sandbox_name', 'sandbox_name'))
+      .map(row => row.sandbox_name));
 
     // 2. Fetch all running sandboxes
     console.log(`[SandboxHousekeeping] Fetched ${activeSandboxIds.size} active sandbox IDs and ${activeSnapshotIds.size} active snapshot IDs from DB.`);
@@ -112,7 +122,7 @@ async function runCron(request: Request) {
             await fence.finish();
             results.terminalSandboxesDeleted++;
           }
-        } else if (row.deletion_requested_at) await deleteSandboxAndOrphans(row.sandbox_name);
+        } else if (row.deletion_requested_at || assistantDeletions.has(row.sandbox_name)) await deleteSandboxAndOrphans(row.sandbox_name);
         results.sandboxesBilled++;
       } catch (error) {
         if (!sandbox && isSandboxNotFoundError(error)) {

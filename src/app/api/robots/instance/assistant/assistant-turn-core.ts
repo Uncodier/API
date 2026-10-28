@@ -49,6 +49,14 @@ export async function processAssistantTurn(
     siteId: context.executionOptions.site_id,
     toolOverrides: context.toolOverrides,
   }) : null;
+  // Trusted action scope, not a model flag or the presence of a requirement.
+  // Requirement runners and workflow/node hosts already own their environments.
+  const workspaceTools = !requirementHost && context.recoveryScope && !context.instanceNodeId &&
+    !context.preResponseOnly && !context.conversationRecoveryOnly &&
+    !context.customTools.some(tool => ['list_files', 'read_files', 'sandbox_list_files', 'sandbox_read_file'].includes(tool?.name))
+    ? (await import('./workspace-tools')).createAssistantWorkspaceTools({ instanceId: context.executionOptions.instance_id,
+      siteId: context.executionOptions.site_id, userId: context.executionOptions.user_id },
+    () => assertAssistantRecoveryActive(context.recoveryScope!)) : [];
 
   // Filtering an already routed `tools` function is unsafe: its closure still
   // contains sends/writes. Expose only plan_result; no dynamic MCP/sandbox.
@@ -60,7 +68,7 @@ export async function processAssistantTurn(
         context.executionOptions.site_id,
         context.executionOptions.user_id,
         context.executionOptions.instance_id,
-        requirementHost ? [...context.customTools, ...requirementHost.tools] : context.customTools,
+        requirementHost ? [...context.customTools, ...requirementHost.tools] : [...context.customTools, ...workspaceTools],
         context.agentType,
         context.userPhone,
         context.executionOptions.requirement_id,

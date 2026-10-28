@@ -12,6 +12,8 @@ Documents are ordered below by relevance and freshness. A dated checkpoint recor
 
 ## Current architecture
 
+- [Assistant workspace tools — 2026-10-28](/Users/prado/Desktop/Proyectos/Uncodie/Code/API/docs/ASSISTANT_WORKSPACE_TOOLS_2026-10-28.md) — fixes missing filesystem tools in ordinary assistant turns: lazy private workspaces, isolated saved-snapshot inspection of managed work, scoped resource leases and billing. Requires the accompanying migration and deployment; no live execution implied.
+
 Read these first when changing the code-agent harness:
 
 - [Requirement agent harness](./REQUIREMENT_AGENT_HARNESS.md) — replacement executor for the existing requirement cron, continuous sessions, optional tools, migration and rollout requirements. Not deployed by this change.

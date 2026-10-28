@@ -407,6 +407,7 @@ Follow the loaded SKILL.md playbooks before calling tools via \`tools\`. \`skill
     instanceContext,
     reinforcedNodeModeInstruction,
     baseSystemPrompt,
+    !instanceNodeId && !requirementExecution ? 'WORKSPACE FILES: The host supplies list_files, read_files and search on demand. Use them to inspect existing files; a missing provider_instance_id is not evidence that files are absent. For requirement-owned work they inspect a saved snapshot without starting or reopening its runner. Their workspace_source identifies that snapshot and its limitations. New standalone instances use a private persistent workspace on first use, not by default. Do not ask for uploads merely because a browser is unavailable. Use apply_patch/exec only where the tool confirms a private writable workspace; requirement changes stay with their owner.' : '',
     toolsContext,
     systemPrompt || '',
     toolsRouterInstruction,

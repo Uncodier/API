@@ -12,6 +12,7 @@ const change = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('create'), path, content: z.string().max(16000) }).strict(),
   z.object({ operation: z.literal('replace'), path, oldText: z.string().min(1).max(16000), newText: z.string().max(16000) }).strict(),
 ]);
+const toolSchemas = new WeakMap<HarnessTool, z.ZodTypeAny>();
 
 function errorResult(error: unknown, effect: HarnessTool['effect'] = 'read'): ToolResult {
   if (error instanceof WorkspaceError) {
@@ -35,7 +36,8 @@ export function createWorkspaceTools(workspace: Workspace): HarnessTool[] {
     context.signal.throwIfAborted();
   };
   const tool = <S extends z.ZodTypeAny>(name: string, description: string, effect: HarnessTool['effect'],
-    schema: S, execute: (args: z.infer<S>, context: ToolContext) => Promise<Json>): HarnessTool => ({
+    schema: S, execute: (args: z.infer<S>, context: ToolContext) => Promise<Json>): HarnessTool => {
+    const definition: HarnessTool = {
     name, description, effect,
     parameters: zodToJsonSchema(schema, { target: 'jsonSchema7', $refStrategy: 'none' }) as Record<string, unknown>,
     async execute(input, context) {
@@ -60,7 +62,10 @@ export function createWorkspaceTools(workspace: Workspace): HarnessTool[] {
         return errorResult(error, effect);
       }
     },
-  });
+    };
+    toolSchemas.set(definition, schema);
+    return definition;
+  };
 
   const fileOperation = async (input: Record<string, unknown>, context: ToolContext): Promise<Record<string, unknown>> => {
     await active(context);
@@ -171,4 +176,13 @@ export function createWorkspaceTools(workspace: Workspace): HarnessTool[] {
     return { state: 'unknown' };
   };
   return tools;
+}
+
+/** Validate lazy conversation calls before paying for a workspace. This is not
+ * HarnessTool.normalizeArguments: existing durable operation identities stay unchanged.
+ */
+export function validateWorkspaceToolArguments(tool: HarnessTool, args: Record<string, unknown>): void {
+  const schema = toolSchemas.get(tool);
+  if (!schema) throw new WorkspaceError('INVALID_TOOL', 'Unknown workspace tool.', false);
+  schema.parse(args);
 }

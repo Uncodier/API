@@ -85,13 +85,13 @@ export interface WorkspaceHostOptions {
   git?: { username: string; password: string; allowPush?: boolean };
 }
 
-export function workspaceNetworkPolicy(url: URL, git?: WorkspaceHostOptions['git']): NetworkPolicy {
+export function workspaceNetworkPolicy(url?: URL, git?: WorkspaceHostOptions['git']): NetworkPolicy {
   const allow: Record<string, NetworkPolicyRule[]> = { '*': [] };
   if (git) {
     // L7 credentials are injected outside the guest's socket filter. Restrict
     // that upstream to the platform's supported public GitHub origin, never an
     // arbitrary user-controlled DNS name or proxy. Uncredentialed HTTPS remains generic.
-    if (url.hostname !== 'github.com') return fail('UNSUPPORTED_GIT_BROKER_HOST', 'Credential brokering requires the public GitHub origin.');
+    if (!url || url.hostname !== 'github.com') return fail('UNSUPPORTED_GIT_BROKER_HOST', 'Credential brokering requires the public GitHub origin.');
     if (!git.username || !git.password || git.username.includes(':') ||
         /[\r\n\x00]/.test(git.username + git.password) || git.username.length + git.password.length > 8192) {
       return fail('INVALID_GIT_AUTH', 'Host git credentials are invalid.');
@@ -297,6 +297,17 @@ export function parseWorkspaceFileResult(stdout: string): Record<string, unknown
 
 const adapters = new WeakMap<Workspace, VercelWorkspace>();
 
+/** Host-only adapter for a scoped instance workspace or private inspection copy.
+ * The caller owns creation, billing registration, isolation checks and leases.
+ * This does not initialize files, change origin, configure secrets or resume a requirement.
+ */
+export function adaptAssistantWorkspace(sandbox: Sandbox, assertActive: () => Promise<void>, signal?: AbortSignal, readOnly = false,
+  assertCleanup?: () => Promise<void>): Workspace {
+  const workspace = new VercelWorkspace(sandbox, [], {}, assertActive, signal, true, readOnly, assertCleanup);
+  adapters.set(workspace, workspace);
+  return workspace;
+}
+
 /** Internal adapter file operations preserve JSON before redacting string values. */
 export async function workspaceFileOperation(workspace: Workspace, input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
   const adapter = adapters.get(workspace);
@@ -435,11 +446,13 @@ class VercelWorkspace implements Workspace {
   readonly ref: WorkspaceRef;
   private environment: Record<string, string>;
   constructor(private sandbox: Sandbox, private sensitive: string[], environment: Record<string, string>,
-    private assertActive: AssertActive, private openingSignal?: AbortSignal, private billed = false) {
+    private assertActive: AssertActive, private openingSignal?: AbortSignal, private billed = false, private readOnly = false,
+    private assertCleanup?: () => Promise<void>) {
     this.ref = { provider: 'vercel', id: sandbox.name, root: WORKSPACE_ROOT };
     this.environment = environment;
   }
   async configure(values: Record<string, string>, replace = false, redactionValues: string[] = []) {
+    if (this.readOnly) throw new WorkspaceError('WORKSPACE_READ_ONLY', 'Inspection copies cannot configure execution.', false);
     await this.active();
     this.environment = runtimeEnvironment(replace ? values : { ...this.environment, ...values });
     // Keep old values redacted too: existing process logs may contain them.
@@ -520,6 +533,7 @@ class VercelWorkspace implements Workspace {
     } catch (error) {
       // No cleanup effect from a cancelled/stale owner. The original remote timeout remains enforced.
       if (error instanceof SandboxBillingError) {
+        if (this.assertCleanup) await this.assertCleanup();
         await this.sandbox.stop({ signal: AbortSignal.timeout(60_000) }).catch(() => undefined);
         await reconcileSandboxBillingQuiet(this.sandbox);
         return fail('WORKSPACE_BILLING_UNAVAILABLE', 'Sandbox billing must reconcile before further commands.');
@@ -531,6 +545,9 @@ class VercelWorkspace implements Workspace {
   }
 
   async file(input: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    if (this.readOnly && !['read', 'list', 'search'].includes(String(input.op))) {
+      throw new WorkspaceError('WORKSPACE_READ_ONLY', 'Inspection copies only support file reads, listing and search.', false);
+    }
     workspacePath(String(input.path ?? '.'));
     const payload = JSON.stringify({ ...input, root: WORKSPACE_ROOT });
     const output = await this.run('python3', ['-I', '-S', '-c', WORKSPACE_FILE_PROGRAM,
@@ -556,6 +573,7 @@ class VercelWorkspace implements Workspace {
     catch (error) { if (error instanceof WorkspaceError) error.effectStarted = true; throw error; }
   }
   async exec(input: CommandInput, signal?: AbortSignal): Promise<CommandOutput> {
+    if (this.readOnly) throw new WorkspaceError('WORKSPACE_READ_ONLY', 'Inspection copies cannot run arbitrary commands.', false);
     if (typeof input.command !== 'string' || !input.command.trim() || input.command.length > 64 * 1024 || input.command.includes('\0')) {
       return fail('INVALID_COMMAND', 'A nonempty bounded shell command is required.');
     }
@@ -574,6 +592,7 @@ class VercelWorkspace implements Workspace {
     return id.slice(this.ref.id.length + 1);
   }
   async processStatus(id: string, signal?: AbortSignal): Promise<CommandOutput> {
+    if (this.readOnly) throw new WorkspaceError('WORKSPACE_READ_ONLY', 'Source processes are not available in an inspection copy.', false);
     signal = this.signal(signal);
     const cmdId = this.commandId(id);
     try {
@@ -589,6 +608,7 @@ class VercelWorkspace implements Workspace {
     }
   }
   async stopProcess(id: string, signal?: AbortSignal): Promise<void> {
+    if (this.readOnly) throw new WorkspaceError('WORKSPACE_READ_ONLY', 'Inspection copies cannot control source processes.', false);
     signal = this.signal(signal);
     const cmdId = this.commandId(id);
     let dispatched = false;
