@@ -261,3 +261,41 @@ export function runWorkflowResultGate(
       : {}),
   };
 }
+
+/**
+ * V2 keeps declared output/actions separate from workflow-generated advice.
+ * This pure assessment has no callbacks or state authority. A supplied-context
+ * answer need not manufacture a tool call to satisfy a generic execution hint.
+ * Explicit browser and action contracts retain their existing validation.
+ */
+export function assessWorkflowResult(input: WorkflowResultGateInput): {
+  contract: WorkflowResultGateResult;
+  observations: WorkflowResultGateSignal[];
+} {
+  const explicitlyRequiresInteraction = (input.step.browser_interaction_required ??
+    input.step.metadata?.browser_interaction_required) === true;
+  const explicitlyRequiresBrowser = input.step.requires_browser === true ||
+    input.step.metadata?.requires_browser === true ||
+    explicitlyRequiresInteraction;
+  const declaredInput = {
+    ...input,
+    // Do not turn words such as "select" in a general instruction into an
+    // additional required click/type sequence. Explicit flags remain binding.
+    step: { ...input.step, browser_interaction_required: explicitlyRequiresInteraction },
+    requireToolExecution: false,
+    requiresBrowser: explicitlyRequiresBrowser,
+  };
+  const signals = [
+    ...outputSignals(declaredInput.step, declaredInput.data),
+    ...executionSignals(declaredInput).filter(entry => entry.name === 'required-tools'),
+    ...browserSignals(declaredInput),
+  ];
+  const failures = signals.filter(entry => !entry.ok && entry.severity === 'error');
+  const contract: WorkflowResultGateResult = { ok: failures.length === 0, signals,
+    ...(failures.length ? { reason: `Workflow output contract failed: ${failures.map(entry => `${entry.name}: ${entry.detail}`).join('; ')}` } : {}) };
+  const observations = [
+    ...executionSignals({ ...input, requiredToolExecutions: [] }),
+    ...(!explicitlyRequiresInteraction ? browserSignals(input) : []),
+  ].map(entry => ({ ...entry, severity: 'warning' as const }));
+  return { contract, observations };
+}

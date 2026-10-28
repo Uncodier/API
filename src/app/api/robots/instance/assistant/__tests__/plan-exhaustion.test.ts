@@ -3,6 +3,9 @@ import { loadRuntimeModule } from '@/lib/custom-automation/test-helpers/load-run
 import { buildAssistantUserContent } from '@/lib/services/robot-instance/assistant-image-content';
 import { isInsufficientCreditsError } from '@/lib/services/billing/credit-exhaustion-message';
 import type { AssistantContext } from '../types';
+import { buildStepExecutionPrompt } from '../step-execution-prompt';
+import { createAssistantStepResult } from '../step-result';
+import { attachAssistantStepResult } from '../requirement-host';
 
 type AsyncMock = (...args: any[]) => Promise<any>;
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -45,6 +48,9 @@ function harness() {
       '@/lib/database/supabase-client': { supabaseAdmin: { from: () => query } },
       '@/app/api/agents/tools/instance_plan/update/core': { updateInstancePlanCore },
       './assistant-turn': { processAssistantTurn },
+      './step-execution-prompt': { buildStepExecutionPrompt },
+      './step-result': { createAssistantStepResult },
+      './requirement-host': { attachAssistantStepResult },
       '@/lib/services/billing/credit-exhaustion-message': { isInsufficientCreditsError },
       '@/lib/services/skills-service': { SkillsService: { getSkillBySlugForSite: async () => null } },
       './skill-selection': { requiredSkillsPrompt: () => '' },
@@ -64,6 +70,7 @@ function harness() {
   const prepareAssistantContext = jest.fn<AsyncMock>().mockResolvedValue(context);
   const countRecentRespawnsStep = jest.fn<AsyncMock>().mockResolvedValue(0);
   const spawnSilentContinueStep = jest.fn<AsyncMock>().mockResolvedValue(true);
+  const prepareRecoveryStep = jest.fn<AsyncMock>().mockResolvedValue({ ok: true });
   const workflow = loadRuntimeModule<typeof import('../workflow')>(
     'src/app/api/robots/instance/assistant/workflow.ts', {
       '@/lib/services/robot-instance/assistant-image-content': { buildAssistantUserContent },
@@ -80,7 +87,7 @@ function harness() {
       },
       './assistant-respawn-steps': { countRecentRespawnsStep, spawnSilentContinueStep },
       './assistant-recovery-steps': {
-        prepareRecoveryStep: async () => ({ ok: true }),
+        prepareRecoveryStep,
         guardRecoveryStep: async () => true,
         checkpointRecoveryStep: async () => true,
       },
@@ -97,12 +104,12 @@ function harness() {
       { id: `call-${effects}`, type: 'function', function: { name: 'write', arguments: '{}' } },
     ] }, { role: 'tool', tool_call_id: `call-${effects}`, content: `Effect ${effects} already applied` }]);
   };
-  const run = (options?: { userMessageLogId?: string }, message = 'Implement plan') => workflow.runAssistantWorkflow('instance', message, 'site', 'user', [], false,
+  const run = (options?: { userMessageLogId?: string; executionMode?: 'direct' | 'harness'; silentContinue?: boolean; resumeToken?: string }, message = 'Implement plan') => workflow.runAssistantWorkflow('instance', message, 'site', 'user', [], false,
     undefined, undefined, undefined, undefined, undefined, undefined, undefined, options);
   return { context, persisted, result, doTurn, effects: () => effects, run,
     resolveAssistantPlanOwnership,
     processAssistantTurn, updateInstancePlanCore, planSteps, redis, maybeSingle, query,
-    completeUserMessageStep, pauseUserMessageStep, markAssistantFailedStep, pauseAssistantForCreditsStep, persistUserMessageStep, prepareAssistantContext, countRecentRespawnsStep, spawnSilentContinueStep };
+    completeUserMessageStep, pauseUserMessageStep, markAssistantFailedStep, pauseAssistantForCreditsStep, persistUserMessageStep, prepareAssistantContext, prepareRecoveryStep, countRecentRespawnsStep, spawnSilentContinueStep };
 }
 
 describe('interactive plan exhaustion and safe resumption', () => {
@@ -112,6 +119,97 @@ describe('interactive plan exhaustion and safe resumption', () => {
     jest.spyOn(console, 'error').mockImplementation(() => {});
   });
   afterEach(() => jest.restoreAllMocks());
+
+  it('direct requests finish without looking up or executing an existing pending plan', async () => {
+    const h = harness();
+    h.processAssistantTurn.mockImplementation(async (_context, messages) => h.result(messages, true, 'Review delivered'));
+    const response = await h.run({ executionMode: 'direct' }, 'Review the existing work');
+    expect(response.assistant_response).toBe('Review delivered');
+    expect(h.processAssistantTurn).toHaveBeenCalledTimes(1);
+    expect(h.prepareAssistantContext.mock.calls[0][16]).toBe('direct');
+    expect(h.prepareRecoveryStep.mock.calls[0][1]).toMatchObject({ executionMode: 'direct' });
+    expect(h.maybeSingle).not.toHaveBeenCalled();
+    expect(h.redis.set).not.toHaveBeenCalled();
+    expect(h.updateInstancePlanCore).not.toHaveBeenCalled();
+    expect(h.completeUserMessageStep).toHaveBeenCalled();
+  });
+
+  it('explicit harness intent retains the existing standalone plan executor', async () => {
+    const h = harness();
+    h.processAssistantTurn.mockImplementation(async (context, messages) => {
+      await context.customTools.find((tool: any) => tool.name === 'plan_result')?.execute({ status: 'completed', summary: 'Step delivered' });
+      return h.result(messages, true, 'Step delivered');
+    });
+    const response = await h.run({ executionMode: 'harness' });
+    expect(response).toMatchObject({ plan_id: 'plan' });
+    expect(h.persisted.steps.every((step: any) => step.status === 'completed')).toBe(true);
+    expect(h.redis.set).toHaveBeenCalled();
+  });
+
+  it('keeps an essential question pending and does not execute later steps', async () => {
+    const h = harness();
+    h.processAssistantTurn.mockImplementation(async (context, messages) => {
+      const resultTool = context.customTools.find((tool: any) => tool.name === 'plan_result');
+      if (resultTool) await resultTool.execute({ status: 'needs_input', question: 'Which account should receive the report?' });
+      return h.result(messages, true, 'Which account should receive the report?');
+    });
+    const response = await h.run({ executionMode: 'harness' });
+    expect(response).toMatchObject({ execution_status: 'needs_input', plan_step_id: 'step-1' });
+    expect(h.persisted.steps[0]).toMatchObject({ status: 'in_progress', completed_at: null,
+      result: { assistant_execution: { state: 'exhausted', awaitingInput: true, resultContractVersion: 2 } } });
+    expect(h.persisted.steps[1].status).toBe('pending');
+    expect(h.processAssistantTurn).toHaveBeenCalledTimes(2);
+    expect(h.completeUserMessageStep).toHaveBeenCalledTimes(1);
+    expect(h.spawnSilentContinueStep).not.toHaveBeenCalled();
+
+    let followUpSeen = false;
+    h.processAssistantTurn.mockImplementation(async (context, messages) => {
+      const resultTool = context.customTools.find((tool: any) => tool.name === 'plan_result');
+      if (resultTool) {
+        followUpSeen ||= messages.some((message: any) => String(message.content).includes('Use the finance account'));
+        await resultTool.execute({ status: 'completed', summary: 'Requested result delivered.' });
+      }
+      return h.result(messages, true, 'Requested result delivered.');
+    });
+    h.context.initialMessage = 'Use the finance account';
+    await h.run({ executionMode: 'harness' }, 'Use the finance account');
+    expect(followUpSeen).toBe(true);
+    expect(h.persisted.steps.every((step: any) => step.status === 'completed')).toBe(true);
+  });
+
+  it('does not complete an explicit step from question-shaped or other prose alone', async () => {
+    const h = harness();
+    h.processAssistantTurn.mockImplementation(async (_context, messages) => h.result(messages, true, 'Which destination?'));
+    const response = await h.run({ executionMode: 'harness' });
+    expect(response).toMatchObject({ execution_status: 'exhausted', plan_step_id: 'step-1' });
+    expect(h.persisted.steps.map((step: any) => step.status)).toEqual(['in_progress', 'pending']);
+  });
+
+  it('preserves an explicit negative step result without running the next step or retrying', async () => {
+    const h = harness();
+    h.processAssistantTurn.mockImplementation(async (context, messages) => {
+      await context.customTools.find((tool: any) => tool.name === 'plan_result')?.execute({ status: 'failed', summary: 'Required data was not available.' });
+      return h.result(messages, true, 'Required data was not available.');
+    });
+    expect(await h.run({ executionMode: 'harness' })).toMatchObject({ execution_status: 'failed', plan_step_id: 'step-1' });
+    expect(h.persisted.steps.map((step: any) => step.status)).toEqual(['failed', 'pending']);
+    expect(h.processAssistantTurn).toHaveBeenCalledTimes(2);
+    expect(h.spawnSilentContinueStep).not.toHaveBeenCalled();
+  });
+
+  it('a resumed direct snapshot cannot be upgraded to plan execution by request options', async () => {
+    const h = harness();
+    h.prepareRecoveryStep.mockResolvedValue({ ok: true, snapshot: {
+      execution: { customTools: [], useSdkTools: false, executionMode: 'direct' },
+      messages: [{ role: 'user', content: 'Original review' }], respawnCount: 1,
+    } });
+    h.processAssistantTurn.mockImplementation(async (_context, messages) => h.result(messages, true, 'Review completed'));
+    const response = await h.run({ executionMode: 'harness', silentContinue: true, userMessageLogId: 'user-log', resumeToken: 'resume' });
+    expect(response.assistant_response).toBe('Review completed');
+    expect(h.prepareAssistantContext.mock.calls[0][16]).toBe('direct');
+    expect(h.maybeSingle).not.toHaveBeenCalled();
+    expect(h.updateInstancePlanCore).not.toHaveBeenCalled();
+  });
 
   it('settles the owned action with a free credit notice and reset date without restarting', async () => {
     const h = harness();

@@ -1,4 +1,4 @@
-import { guardRequirementAssistantTools, attachRequirementAssistantHost, readRequirementAssistantHost } from '../requirement-host';
+import { guardRequirementAssistantTools, attachRequirementAssistantHost, readRequirementAssistantHost, attachAssistantStepResult, readAssistantStepResult } from '../requirement-host';
 
 test('host authority cannot survive JSON serialization or be forged by context properties', () => {
   const context = {} as any;
@@ -7,6 +7,14 @@ test('host authority cannot survive JSON serialization or be forged by context p
   expect(readRequirementAssistantHost(context)).toBe(host);
   expect(readRequirementAssistantHost(JSON.parse(JSON.stringify(context)))).toBeUndefined();
   expect(readRequirementAssistantHost({ requirementHost: host } as any)).toBeUndefined();
+});
+
+test('step result authority is process local and not request metadata', () => {
+  const context = {} as any;
+  attachAssistantStepResult(context, () => ({ status: 'needs_input' }));
+  expect(readAssistantStepResult(context)).toEqual({ status: 'needs_input' });
+  expect(readAssistantStepResult(JSON.parse(JSON.stringify(context)))).toBeUndefined();
+  expect(readAssistantStepResult({ stepResult: { status: 'completed' } } as any)).toBeUndefined();
 });
 
 test.each([

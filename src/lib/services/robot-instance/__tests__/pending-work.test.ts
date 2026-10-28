@@ -1,6 +1,8 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { start } from 'workflow/api';
 import { assertNodeContextHasNode } from '@/app/api/robots/instance/assistant/node-context-boundary';
+import { insertUserActionLog } from '@/app/api/robots/instance/assistant/user-message-log';
+import { resetRequirementOnUserAction } from '@/lib/services/requirement-cron-reset';
 import {
   groupOldestPendingByInstance,
   isInstanceIdleFromLogs,
@@ -189,5 +191,26 @@ describe('queued conversational output preferences', () => {
     expect(args[9]).toBeUndefined();
     expect(args[10]).toBe(3);
     expect(JSON.parse(args[11])).toEqual(context);
+    expect(args[13]).toEqual({ userMessageLogId: 'log-1', executionMode: 'direct' });
+    expect(insertUserActionLog).toHaveBeenCalledTimes(1);
+    expect(resetRequirementOnUserAction).not.toHaveBeenCalled();
+  });
+
+  it('rejects a pending row whose site differs from its instance before persisting or starting', async () => {
+    (supabaseAdmin.from as jest.Mock).mockReturnValueOnce(createChain({
+      data: { site_id: 'other-site', user_id: pendingRow.user_id, status: 'running' }, error: null,
+    }));
+    await expect(startPendingAssistant(pendingRow)).rejects.toThrow('scope mismatch');
+    expect(insertUserActionLog).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it('preserves the legacy explicit Plan action without resetting its requirement', async () => {
+    (supabaseAdmin.from as jest.Mock).mockReturnValueOnce(createChain({
+      data: { site_id: pendingRow.site_id, user_id: pendingRow.user_id, status: 'running' }, error: null,
+    }));
+    await startPendingAssistant({ ...pendingRow, activity: 'plan', system_prompt: 'plan' });
+    expect((start as jest.Mock).mock.calls[0][1][13]).toEqual({ userMessageLogId: 'log-1', executionMode: 'harness' });
+    expect(resetRequirementOnUserAction).not.toHaveBeenCalled();
   });
 });

@@ -17,6 +17,7 @@ describe('lossless recovery serialization', () => {
       toolOverrides: { tool: { enabled: false } },
       selectedSkills: { skill_mode: 'required', skills: [{ slug: 'test', content: 'Skill', version: '1' }] },
       approvedImport: { url: 'https://example.com', sha256: 'a'.repeat(64), userId: 'user' },
+      executionMode: 'direct',
     };
     const frozen = parseRecoveryExecution(value);
     expect(frozen).toEqual(value);
@@ -113,8 +114,14 @@ describe('lossless recovery serialization', () => {
     { ...execution, selectedSkills: { content: undefined } },
     { ...execution, customTools: [{ execute: () => null }] },
     { ...execution, unknownOption: true },
+    { ...execution, executionMode: 'automatic' }, { ...execution, executionMode: null },
   ])('rejects malformed execution %j', value => {
     expect(() => parseRecoveryExecution(value)).toThrow(RecoveryError);
+  });
+
+  it('preserves explicit plan intent and leaves legacy snapshots unmodified', () => {
+    expect(parseRecoveryExecution({ ...execution, executionMode: 'harness' })).toEqual({ ...execution, executionMode: 'harness' });
+    expect(parseRecoveryExecution(execution)).not.toHaveProperty('executionMode');
   });
 
   it.each([

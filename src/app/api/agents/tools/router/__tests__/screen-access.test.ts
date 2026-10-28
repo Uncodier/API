@@ -171,7 +171,9 @@ it.each(['owner', 'admin', 'ownership'])('honors %s exemption only with current 
 
 it.each(['sites', 'site_ownership', 'site_members'])('fails closed on %s query error', async table => {
   failTable = table;
-  expect(await loadToolScreenAccess(scope)).toBeNull();
+  await expect(loadToolScreenAccess(scope)).rejects.toMatchObject({
+    code: 'TOOL_SCREEN_ACCESS_UNAVAILABLE', status: 503, recoverable: true,
+  });
 });
 
 it('fails closed for missing membership, malformed data or missing scope; legacy null is unrestricted', async () => {
@@ -286,7 +288,9 @@ it('captures scope independently of later host-object mutation and model metadat
 it('does not execute protected tools on thrown database errors, and unknown tools remain denied for admins', async () => {
   const transactions = tool('transactions');
   (supabaseAdmin.rpc as jest.Mock).mockImplementation(() => { throw new Error('unavailable'); });
-  expect(await toolsRouterTool([transactions], scope).execute({ action: 'call', name: 'transactions' })).toMatchObject({ status: 403 });
+  expect(await toolsRouterTool([transactions], scope).execute({ action: 'call', name: 'transactions' })).toMatchObject({
+    status: 503, recoverable: true, executed: false, error: { effectStarted: false },
+  });
   expect(transactions.execute).not.toHaveBeenCalled();
   (supabaseAdmin.rpc as jest.Mock).mockImplementation(() => ({ abortSignal: async () => ({ data: true, error: null }) }));
   role = 'admin';

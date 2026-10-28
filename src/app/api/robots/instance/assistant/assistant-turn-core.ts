@@ -13,7 +13,7 @@ import { assertPublishNodeToolAllowed, enforcePublishDestinationArgs } from '@/l
 import { buildToolExecutionContext } from '@/lib/services/tool-execution-context';
 import { SILENT_CONTINUE_PROMPT } from '@/lib/services/robot-instance/assistant-respawn-policy';
 import { CONVERSATION_RECOVERY_INSTRUCTION, getConversationRecoveryTools } from './conversation-recovery-tools';
-import { readRequirementAssistantHost, guardRequirementAssistantTools } from './requirement-host';
+import { readRequirementAssistantHost, guardRequirementAssistantTools, readAssistantStepResult } from './requirement-host';
 
 function selectExecutionIntent(initialMessage: string, messages: any[]): string | undefined {
   const usable = (text: unknown): text is string => typeof text === 'string'
@@ -85,9 +85,11 @@ export async function processAssistantTurn(
   const trackedTools = context.toolExecutionTracker && !context.conversationRecoveryOnly
     ? instrumentWorkflowTools(availableTools, context.toolExecutionTracker)
     : availableTools;
-  const fullTools = context.recoveryScope || binding ? trackedTools.map((tool) => ({
+  const fullTools = trackedTools.map((tool) => ({
     ...tool,
     execute: async (...args: any[]) => {
+      if (readAssistantStepResult(context)) return { success: false, executed: false,
+        error: { code: 'STEP_RESULT_ALREADY_REPORTED', message: 'The step result was reported; no further tools were executed.', effectStarted: false } };
       if (context.recoveryScope) await assertAssistantRecoveryActive(context.recoveryScope);
       if (binding && tool.name === 'tools' && args[0]?.action === 'call') assertPublishNodeToolAllowed(args[0]?.name);
       if (binding && tool.name !== 'tools') assertPublishNodeToolAllowed(tool.name);
@@ -104,7 +106,7 @@ export async function processAssistantTurn(
         ? runAssistantRecoveryTool(context.recoveryScope, tool.name, args[0], () => tool.execute(...args))
         : tool.execute(...args);
     },
-  })) : trackedTools;
+  }));
   const options = {
     ...context.executionOptions,
     system_prompt: context.conversationRecoveryOnly ? `${context.systemPrompt}\n\n${CONVERSATION_RECOVERY_INSTRUCTION}`

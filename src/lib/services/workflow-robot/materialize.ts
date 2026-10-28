@@ -7,6 +7,7 @@ import type {
 } from './types';
 import { WF_NODE_TYPES } from './types';
 import { buildRunSteps, channelTriggerBranch } from './graph';
+import { CURRENT_WORKFLOW_RESULT_CONTRACT_VERSION } from './result-contract';
 
 export { buildRunSteps };
 
@@ -320,6 +321,8 @@ export async function materializeRunFromGraph(
       progress_percentage: 0,
       metadata: {
         workflow_run: true,
+        // The bounded channel runner keeps its separate legacy contract.
+        ...(!preResponseOnly ? { result_contract_version: CURRENT_WORKFLOW_RESULT_CONTRACT_VERSION } : {}),
         dry_run: dryRun,
         trigger_payload: input.trigger_payload || {},
         ...(preResponseOnly ? { pre_response_only: true } : {}),

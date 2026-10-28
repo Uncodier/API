@@ -81,7 +81,8 @@ export async function spawnSilentContinueWorkflow(
     execution.toolOverrides,
     { silentContinue: true, selectedSkills: execution.selectedSkills as AssistantSkillSelection | undefined,
       approvedImport: execution.approvedImport as { url: string; sha256: string; userId: string } | undefined,
-      userMessageLogId: scope.userMessageLogId, resumeToken },
+      userMessageLogId: scope.userMessageLogId, resumeToken,
+      ...(execution.executionMode ? { executionMode: execution.executionMode } : {}) },
   ];
   try {
     await start(runAssistantWorkflow, workflowArgs);

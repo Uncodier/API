@@ -7,6 +7,7 @@ import { sameJson } from '@/lib/harness/store';
 import type { RequirementRun } from '@/lib/harness/requirement-types';
 import type { ArtifactStore, HarnessSession, HarnessTool, Message, SessionStore, ToolCall, ToolContext, ToolResult } from '@/lib/harness/types';
 import { requirementOperationFingerprint, requirementOperationResult } from './requirement-operation';
+import { HISTORY_RECEIPT_BUDGET, readRequirementHistory } from './requirement-history';
 import { withRequirementChargeContext } from '@/lib/services/billing/requirement-charge-context';
 
 type LogEvent = { key: string; log_type: string; message: string; tool_name?: string; tool_call_id?: string;
@@ -21,7 +22,10 @@ type AssistantSession = HarnessSession & { assistantAuditCursor?: number; assist
 const callSchema = z.object({ id: z.string().min(1).max(200), name: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
   arguments: z.string().max(100000) });
 const finishSchema = z.object({ summary: z.string().min(1).max(24000), outcome: z.enum(['implemented', 'partial', 'unable']) }).strict();
-const historySchema = z.object({ offset: z.number().int().min(0), limit: z.number().int().min(1).max(10).default(5) }).strict();
+const historySchema = z.object({ offset: z.number().int().min(0).safe(),
+  limit: z.number().int().min(1).max(10).optional(), contentOffset: z.number().int().min(0).safe().optional() }).strict()
+  .transform(page => ({ ...page, limit: page.limit ?? (page.contentOffset === undefined ? 5 : 1) }))
+  .refine(page => page.contentOffset === undefined || page.limit === 1, 'contentOffset requires limit 1.');
 const artifactSchema = z.object({ id: z.string().min(1).max(200), offset: z.number().int().min(0).default(0),
   limit: z.number().int().min(1).max(8000).default(4000) }).strict();
 const reconcileSchema = z.object({ operationId: z.string().min(1).max(200) }).strict();
@@ -258,13 +262,7 @@ export function createRequirementExecutionBoundary(input: Input): {
     }
     if (name === 'read_session_history') {
       const page = historySchema.parse(args);
-      const messages: Message[] = [];
-      for (const message of session.messages.slice(page.offset, page.offset + page.limit)) {
-        if (serializedBytes([...messages, message]) > 300000) break;
-        messages.push(message);
-      }
-      return { ok: true, output: { offset: page.offset, total: session.messages.length,
-        messages: messages as any, nextOffset: page.offset + messages.length < session.messages.length ? page.offset + messages.length : null } };
+      return readRequirementHistory({ ...page, messages: session.messages, callId: executing.call.id, redact: input.redact });
     }
     if (name === 'read_result_artifact') {
       const page = artifactSchema.parse(args);
@@ -291,8 +289,9 @@ export function createRequirementExecutionBoundary(input: Input): {
   const controlTools = [
     { name: 'finish_task', description: 'Finish honestly after all operations return. Prose alone does not complete the task.',
       parameters: { type: 'object', properties: { summary: { type: 'string' }, outcome: { type: 'string', enum: ['implemented', 'partial', 'unable'] } }, required: ['summary', 'outcome'], additionalProperties: false } },
-    { name: 'read_session_history', description: 'Read earlier durable session history by zero-based message offset.',
-      parameters: { type: 'object', properties: { offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 10 } }, required: ['offset'], additionalProperties: false } },
+    { name: 'read_session_history', description: 'Read bounded durable history by zero-based message offset. No raw reasoning; tool calls show identity only. History results are messages-index references, never expanded. Oversized content is an excerpt: nextOffset advances messages; to continue content use the same index as offset, limit 1 and nextContentOffset as contentOffset (UTF-16 units of redacted content). Artifact references still use read_result_artifact.',
+      parameters: { type: 'object', properties: { offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 10 },
+        contentOffset: { type: 'integer', minimum: 0, description: 'Read one message content page; limit must be 1 if supplied. Not available for history-result references.' } }, required: ['offset'], additionalProperties: false } },
     { name: 'read_result_artifact', description: 'Read complete redacted results using artifact ID and character offsets.',
       parameters: { type: 'object', properties: { id: { type: 'string' }, offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 8000 } }, required: ['id'], additionalProperties: false } },
     { name: 'reconcile_operation', description: 'Request trusted adapter proof for an uncertain operation. Never uses model claims as evidence.',
@@ -352,7 +351,7 @@ export function createRequirementExecutionBoundary(input: Input): {
       // Controls have bounded output and use snapshot capacity, never the artifact
       // quota they are needed to inspect/recover. Reserve before invoking a control.
       const receiptBudget = !inlineControl ? RECEIPT_MAX_BYTES
-        : call.name === 'read_session_history' ? 350000
+        : call.name === 'read_session_history' ? HISTORY_RECEIPT_BUDGET
         : call.name === 'finish_task' ? 180000 : 100000;
       if (serializedBytes({ ...session, pending }) + receiptBudget + 4000 > SNAPSHOT_MAX_BYTES) return pause('transcript_storage_budget_exhausted');
       if (!inlineControl) await input.artifacts.reserve(session.id, input.run.siteId, input.owner, call.id, RESULT_MAX_BYTES);

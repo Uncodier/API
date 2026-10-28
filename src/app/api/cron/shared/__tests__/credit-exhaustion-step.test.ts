@@ -1,4 +1,5 @@
 import { loadRuntimeModule } from '@/lib/custom-automation/test-helpers/load-runtime-module';
+import { isAssistantExecutionMode } from '@/app/api/robots/instance/assistant/execution-mode';
 import type { CronExecutionOwnership } from '../cron-execution-ownership';
 
 const billingNotice = {
@@ -22,6 +23,7 @@ const billingErrors = loadRuntimeModule<typeof import('@/lib/services/billing/cr
 const { RecoveryError } = loadRuntimeModule<typeof import('@/lib/services/robot-instance/assistant-recovery-schema')>(
   'src/lib/services/robot-instance/assistant-recovery-schema.ts', {
     './assistant-respawn-policy': { MAX_RESPAWNS: 3 },
+    '@/app/api/robots/instance/assistant/execution-mode': { isAssistantExecutionMode },
   },
 );
 

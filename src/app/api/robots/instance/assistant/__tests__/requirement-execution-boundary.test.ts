@@ -5,7 +5,8 @@ import { SessionStoreError } from '@/lib/harness/store';
 import { MemorySessionStore } from '@/lib/harness/memory-store';
 import { createMemoryArtifactStore } from '@/lib/harness/artifact-store';
 import { RESULT_MAX_BYTES, SNAPSHOT_MAX_BYTES, serializedBytes } from '@/lib/harness/engine-results';
-import type { ArtifactStore, HarnessSession, HarnessTool, SessionStore } from '@/lib/harness/types';
+import type { ArtifactStore, HarnessSession, HarnessTool, Message, SessionStore } from '@/lib/harness/types';
+import { HISTORY_RECEIPT_BUDGET } from '../requirement-history';
 
 function fixture(options: { session?: Partial<HarnessSession>; tools?: HarnessTool[]; secrets?: string[] } = {}) {
   const events: string[] = [];
@@ -365,6 +366,135 @@ describe('canonical requirement execution durability boundary (offline)', () => 
     expect(f.artifacts.read).toHaveBeenCalledWith(f.session.id, f.run.siteId, f.input.owner, 'synthetic-artifact', 2, 10);
   });
 
+  test('repeated reads of 242 nested historical messages preserve canonical reasoning without recursive receipts', async () => {
+    const reasoning = randomBytes(24).toString('hex');
+    let nested: Message = { role: 'assistant', content: 'Original observation', reasoningDetails: [{ text: reasoning }] };
+    for (let depth = 0; depth < 8; depth++) nested = { role: 'tool', toolCallId: 'old-history',
+      content: JSON.stringify({ ok: true, output: { offset: 0, total: 1, messages: [nested], nextOffset: null } }) };
+    const messages: Message[] = [
+      ...Array.from({ length: 240 }, (_, index): Message => ({ role: 'assistant', content: `Historical observation ${index}`,
+        reasoningDetails: [{ text: reasoning }] })),
+      { role: 'assistant', content: '', toolCalls: [{ id: 'old-history', name: 'read_session_history', arguments: '{"offset":0}' }] },
+      nested,
+    ];
+    const original = structuredClone(messages);
+    const f = fixture({ session: { messages, turns: 12, allocatedTokens: 5000, activeMs: 1000 } });
+    await f.adapter.initialize();
+    expect(f.logs).toHaveLength(0);
+    for (let turn = 0; turn < 4; turn++) {
+      const id = `history-${turn}`;
+      const args = { offset: 239, limit: 10 };
+      await f.model([{ id, name: 'read_session_history', args }]);
+      const result = await f.control('read_session_history', id, args);
+      const receipt = f.adapter.getSession().messages.at(-1)!;
+      expect(serializedBytes(receipt)).toBeLessThanOrEqual(HISTORY_RECEIPT_BUDGET);
+      expect(serializedBytes(receipt)).toBeLessThan(5000);
+      expect(JSON.parse(receipt.content)).toEqual(result);
+      expect(result.output.messages.find((entry: any) => entry.index === 241)).toMatchObject({
+        reference: { source: 'messages', index: 241 }, omitted: 'history_result' });
+      for (const entry of result.output.messages.filter((entry: any) => entry.role === 'tool')) {
+        expect(entry.omitted).toBe('history_result');
+        expect(entry).not.toHaveProperty('content');
+      }
+      expect(JSON.stringify([result, f.logs])).not.toContain(reasoning);
+      await f.adapter.boundary.afterTurn([]);
+      const saved = f.adapter.getSession();
+      expect(saved.pending).toBeUndefined();
+      expect(saved.uncertainOperations).toEqual([]);
+      expect(saved.turns).toBe(13 + turn);
+      expect(saved.allocatedTokens).toBeGreaterThan(5000);
+      expect(saved.activeMs).toBeGreaterThanOrEqual(1000);
+      expect(saved.messages.slice(0, 242)).toEqual(original);
+      expect(f.adapter.getMessages()[0].reasoning_details).toEqual(original[0].reasoningDetails);
+    }
+    expect(messages).toEqual(original);
+    expect(f.artifacts.reserve).not.toHaveBeenCalled();
+    expect(f.artifacts.put).not.toHaveBeenCalled();
+    const resumed = createRequirementExecutionBoundary({ ...f.input, session: f.adapter.getSession(),
+      run: { ...f.run, runId: randomUUID(), executionGeneration: 2 } });
+    await resumed.initialize();
+    expect(resumed.getSession()).toMatchObject({ status: 'running', assistantExecutionVersion: 1,
+      assistantAuditCursor: 250, messages: f.adapter.getSession().messages });
+  });
+
+  test.each(['x'.repeat(360000), '\\"\n'.repeat(35000), '🧪漢é'.repeat(60000)])(
+    'oversized history survives final receipt escaping, can be read completely, and does not poison finish (%#)', async content => {
+      const f = fixture({ session: { messages: [{ role: 'user', content }, { role: 'assistant', content: 'Next observation' }] } });
+      await f.adapter.initialize();
+      let contentOffset: number | undefined;
+      let complete = '';
+      let page = 0;
+      do {
+        const args = { offset: 0, limit: 1, ...(contentOffset !== undefined ? { contentOffset } : {}) };
+        const id = `history-${page++}`;
+        await f.model([{ id, name: 'read_session_history', args }]);
+        const result = await f.control('read_session_history', id, args);
+        const receipt = f.adapter.getSession().messages.at(-1)!;
+        expect(serializedBytes(receipt)).toBeLessThanOrEqual(HISTORY_RECEIPT_BUDGET);
+        expect(JSON.parse(receipt.content)).toEqual(result);
+        expect(result.output.nextOffset).toBe(1);
+        const entry = result.output.messages[0];
+        expect(entry.content.length).toBeGreaterThan(0);
+        expect(entry.contentOffset).toBe(contentOffset ?? 0);
+        complete += entry.content;
+        if (entry.nextContentOffset !== null) expect(entry.nextContentOffset).toBeGreaterThan(contentOffset ?? 0);
+        contentOffset = entry.nextContentOffset ?? undefined;
+        await f.adapter.boundary.afterTurn([]);
+      } while (contentOffset !== undefined);
+      expect(complete).toBe(content);
+      expect(f.adapter.getSession().messages[0]).toEqual({ role: 'user', content });
+      const finish = { summary: 'History safely inspected', outcome: 'partial' };
+      await f.model([{ id: 'finish', name: 'finish_task', args: finish }]);
+      await f.control('finish_task', 'finish', finish);
+      await f.adapter.boundary.afterTurn([]);
+      expect(f.adapter.getSession()).toMatchObject({ status: 'completed', reason: 'partial', uncertainOperations: [] });
+      expect(f.artifacts.reserve).not.toHaveBeenCalled();
+    });
+
+  test('contentOffset defaults to one message and invalid pagination remains a durable read error', async () => {
+    const f = fixture({ session: { messages: [{ role: 'user', content: 'Synthetic observation' }] } });
+    await f.adapter.initialize();
+    const args = { offset: 0, contentOffset: 10 };
+    await f.model([{ id: 'page', name: 'read_session_history', args }]);
+    expect(await f.control('read_session_history', 'page', args)).toMatchObject({ ok: true,
+      output: { messages: [{ content: 'observation', contentOffset: 10, nextContentOffset: null }] } });
+    for (const [index, invalid] of [
+      { offset: -1 }, { offset: Number.MAX_SAFE_INTEGER + 1 }, { offset: 0, limit: 11 },
+      { offset: 0, contentOffset: -1 }, { offset: 0, contentOffset: 1.5 },
+      { offset: 0, contentOffset: 0, limit: 2 }, { offset: 0, extra: true },
+    ].entries()) {
+      const id = `invalid-${index}`;
+      await f.model([{ id, name: 'read_session_history', args: invalid }]);
+      expect(await f.control('read_session_history', id, invalid)).toMatchObject({ ok: false, error: { code: 'TOOL_ERROR' } });
+      expect(f.adapter.getSession().pending).toBeUndefined();
+      expect(f.adapter.getSession().uncertainOperations).toEqual([]);
+    }
+    expect(f.adapter.controlTools.find(tool => tool.name === 'read_session_history').parameters.properties.contentOffset)
+      .toMatchObject({ type: 'integer', minimum: 0 });
+  });
+
+  test('history admission still reserves its receipt budget before dispatch', async () => {
+    const f = fixture({ session: { messages: [{ role: 'user', content: 'x'.repeat(3550000) },
+      { role: 'assistant', content: '', toolCalls: [{ id: 'history', name: 'read_session_history', arguments: '{"offset":0}' }] }],
+      assistantExecutionVersion: 1 } as any });
+    // Start a legitimate batch below admission limits, then simulate a near-full
+    // snapshot returned by the store before tool dispatch (no history deletion).
+    const adapter = createRequirementExecutionBoundary({ ...f.input, session: { ...f.session, messages: [] } });
+    await adapter.initialize();
+    await adapter.boundary.beforeModel({ system: '', messages: [], tools: [], maxOutputTokens: 100 });
+    jest.mocked(f.store.save).mockImplementationOnce(async value => ({ ...value,
+      messages: [f.session.messages[0], ...value.messages] }));
+    await adapter.boundary.onModelMessage({ role: 'assistant', content: '', tool_calls: [
+      { id: 'history', type: 'function', function: { name: 'read_session_history', arguments: '{"offset":0}' } },
+    ] });
+    const callback = jest.fn(async () => ({ ok: true }));
+    await expect(adapter.boundary.executeTool({ id: 'history', name: 'read_session_history', args: { offset: 0 } }, callback))
+      .rejects.toMatchObject({ name: 'RecoveryError' });
+    expect(callback).not.toHaveBeenCalled();
+    expect(adapter.getSession()).toMatchObject({ status: 'paused', reason: 'transcript_storage_budget_exhausted' });
+    expect(adapter.getSession().messages[0]).toEqual(f.session.messages[0]);
+  });
+
   test('model-provided reconciliation claims never authorize another effect', async () => {
     const f = fixture(); await f.adapter.initialize(); await f.model([{ id: 'first', name: 'write' }]);
     await f.execute('write', 'first', {}, async () => ({ success: false, error: 'Synthetic lost receipt' }));
@@ -613,11 +743,17 @@ describe('canonical requirement execution durability boundary (offline)', () => 
     expect(f.snapshots.at(-1)?.uncertainOperations).toEqual(resumed.getSession().uncertainOperations);
   });
 
-  test('a routed rejection proven not executed stays retryable, without erasing real uncertainty', async () => {
+  test.each([
+    { success: true, result: { success: false, executed: false, error: 'Validation rejected' } },
+    { success: false, code: 'TOOL_SCREEN_ACCESS_UNAVAILABLE', status: 503, recoverable: true, executed: false,
+      error: { code: 'TOOL_SCREEN_ACCESS_UNAVAILABLE', message: 'Tool screen permissions are temporarily unavailable.', effectStarted: false } },
+    { success: false, code: 'TOOL_SCREEN_ACCESS_DENIED', status: 403, executed: false,
+      error: { code: 'TOOL_SCREEN_ACCESS_DENIED', message: 'Tool access denied by screen permissions.', effectStarted: false } },
+  ])('a routed rejection proven not executed stays retryable, without erasing real uncertainty: %j', async rejection => {
     const f = fixture(); await f.adapter.initialize();
     const args = { action: 'call', name: 'sendEmail', args: '{"to":"recipient@example.test"}' };
     await f.model([{ id: 'denied', name: 'tools', args }]);
-    await f.execute('tools', 'denied', args, async () => ({ success: true, result: { success: false, executed: false, error: 'Validation rejected' } }));
+    await f.execute('tools', 'denied', args, async () => rejection);
     expect(f.adapter.getSession().uncertainOperations).toEqual([]);
     expect(JSON.parse(f.adapter.getSession().messages.at(-1)!.content)).toMatchObject({ ok: false, error: { effectStarted: false } });
   });

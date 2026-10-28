@@ -26,6 +26,7 @@ import { workflowStepStringList } from './step-config';
 import { parseWorkflowExpectedOutputContract } from './result-shape';
 import { shouldRunWorkflowStep, workflowRelationPrompt } from './relation-routing';
 import { buildWorkflowStepPrompt } from './step-prompt';
+import { readWorkflowResultContractVersion } from './result-contract';
 
 const MAX_WORKFLOW_STEP_TURNS = 10;
 class WorkflowStepResultError extends Error {
@@ -144,6 +145,7 @@ export async function runWorkflowPlan(runPlanId: string, options?: { deadline?: 
   if ((plan.metadata as any)?.pre_response_only === true) {
     throw new Error('Channel message runs require bounded execution');
   }
+  const resultContractVersion = readWorkflowResultContractVersion(plan.metadata);
 
   const claimed = await claimWorkflowRunExecution(runPlanId);
   if (!claimed) {
@@ -271,6 +273,7 @@ export async function runWorkflowPlan(runPlanId: string, options?: { deadline?: 
         const executionTracker = createWorkflowToolExecutionTracker();
         step.expected_output = parseWorkflowExpectedOutputContract(step.expected_output, step).suggestion || step.expected_output;
         const resultCapture = createWorkflowPlanResultCapture(step, {
+          resultContractVersion,
           executionTracker,
           requireToolExecution: !preResponseOnly && step.type !== 'condition',
           requiresBrowser: needsBrowser,
@@ -290,6 +293,7 @@ export async function runWorkflowPlan(runPlanId: string, options?: { deadline?: 
           browserReady: needsBrowser && browserReady,
           preResponseOnly,
           relationPrompt: workflowRelationPrompt(step, steps),
+          resultContractVersion,
         });
 
         const context = await prepareAssistantContext(

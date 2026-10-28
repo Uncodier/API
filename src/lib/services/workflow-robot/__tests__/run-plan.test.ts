@@ -193,6 +193,28 @@ describe('runWorkflowPlan claim recovery', () => {
     }));
   });
 
+  it('uses the materialized v2 contract in the real runner without requiring a dummy tool call', async () => {
+    mockPlan.metadata.result_contract_version = 2;
+    mockPlan.steps = [{ id: 'step-1', order: 1, title: 'Summarize supplied records', type: 'task',
+      status: 'pending', instructions: 'Summarize the supplied input.', expected_output: '{ summary: "" }', max_retries: 0 }];
+    mockPrepareAssistantContext.mockImplementation(async (_id, _message, _site, _user, customTools) => ({ customTools, executionOptions: {} }));
+    mockProcessAssistantTurn.mockImplementation(async context => {
+      const response = await context.customTools.find((tool: any) => tool.name === 'plan_result').execute({
+        status: 'completed', summary: 'Input summarized.', data: { summary: 'Three supplied records.' },
+        evidence: [], criteria: [], validation: [],
+      });
+      expect(response.accepted).toBe(true);
+      return { messages: [], isDone: true, text: 'Input summarized.' };
+    });
+    await expect(runWorkflowPlan('plan-1')).resolves.toMatchObject({ status: 'completed', steps_completed: 1 });
+    expect(mockProcessAssistantTurn).toHaveBeenCalledTimes(1);
+    expect(mockUpdatePlan).toHaveBeenCalledWith(expect.objectContaining({ steps: [expect.objectContaining({
+      status: 'completed', result: expect.objectContaining({ observations: expect.arrayContaining([
+        expect.objectContaining({ name: 'tool-execution', severity: 'warning' }),
+      ]) }),
+    })] }));
+  });
+
   it('restores structured outputs from completed steps when a run resumes', async () => {
     mockPlan.steps = [
       {

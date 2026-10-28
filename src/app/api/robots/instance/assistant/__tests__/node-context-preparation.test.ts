@@ -79,6 +79,18 @@ it('prepares an owned requirement through the same history/background pipeline w
   expect(context.systemPrompt).toContain('SKILL DISCOVERY');
 });
 
+it('prepares direct work without imposing a plan, skill lookup or environment', async () => {
+  const context = await prepareAssistantContext(INSTANCE, 'Review this report', SITE, USER, [], false,
+    undefined, undefined, undefined, undefined, 1, undefined, undefined, undefined, undefined, undefined, 'direct');
+  expect(context.executionMode).toBe('direct');
+  expect(context.systemPrompt).toContain('DIRECT ASSISTANT EXECUTION');
+  expect(context.systemPrompt).toContain('Ask a focused question');
+  expect(context.systemPrompt).not.toContain('MUST call instance_plan with action="create"');
+  expect(context.systemPrompt).not.toContain('For any non-trivial request');
+  expect(context.systemPrompt).not.toContain('You can only provide text-based assistance');
+  expect(context.systemPrompt).toContain('actually provided');
+});
+
 it('rejects direct workflow preparation on an archived instance before exposing tools or history', async () => {
   (supabaseAdmin.from as jest.Mock).mockImplementation(() => {
     const query: any = {};

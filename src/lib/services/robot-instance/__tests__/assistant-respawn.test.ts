@@ -144,7 +144,7 @@ describe('Assistant Respawn', () => {
 
   it('passes silentContinue in the workflow options slot', async () => {
     (claimAssistantRecovery as jest.Mock).mockResolvedValue({ resumeToken: 'resume-token', snapshot: {
-      respawnCount: 1, execution: { customTools: [], useSdkTools: false, instanceNodeId: 'original-node',
+      respawnCount: 1, execution: { customTools: [], useSdkTools: false, instanceNodeId: 'original-node', executionMode: 'direct',
         contextString: '{"publish_destinations":["tiktok"]}',
         toolOverrides: { publish: { social_accounts: ['tt-only'], media_urls: ['https://example.com/original.mp4'] } } },
     } });
@@ -163,6 +163,7 @@ describe('Assistant Respawn', () => {
     expect(args[11]).toBe('{"publish_destinations":["tiktok"]}');
     expect(args[12]).toEqual({ publish: { social_accounts: ['tt-only'], media_urls: ['https://example.com/original.mp4'] } });
     expect(args[13]).toMatchObject({ silentContinue: true, userMessageLogId: 'user-log', resumeToken: 'resume-token' });
+    expect(args[13]).toMatchObject({ executionMode: 'direct' });
     expect(mockedStart.mock.calls[0][0]).toBe(runAssistantWorkflow);
   });
 });

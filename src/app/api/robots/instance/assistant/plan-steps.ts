@@ -5,7 +5,9 @@ import { isInsufficientCreditsError } from '@/lib/services/billing/credit-exhaus
 import type { AssistantContext } from './types';
 import { SkillsService } from '@/lib/services/skills-service';
 import { requiredSkillsPrompt } from './skill-selection';
-import { getStepCheckpointPromptFragment, getFileFreshnessPromptFragment } from '@/app/api/cron/shared/step-git-prompts';
+import { buildStepExecutionPrompt } from './step-execution-prompt';
+import { createAssistantStepResult } from './step-result';
+import { attachAssistantStepResult } from './requirement-host';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import { getRedisClient } from '@/lib/utils/redis-client';
 import { resolveAssistantPlanOwnership, type AssistantPlanOwnership } from './plan-ownership';
@@ -32,6 +34,7 @@ export type PlanStepExecutionResult = {
 } & (
   | { executionStatus: 'completed'; isDone: true }
   | { executionStatus: 'exhausted'; isDone: false; resumeFromStepId: string; creditExhausted?: boolean }
+  | { executionStatus: 'needs_input' | 'failed'; isDone: false; resumeFromStepId: string }
   | { executionStatus: 'deferred'; isDone: false; ownership: Exclude<AssistantPlanOwnership, { state: 'standalone' }> }
 );
 
@@ -182,6 +185,7 @@ export async function executePlanStep(
     throw new Error(`Plan step ${step.id} has an interrupted execution with uncertain effects; reconcile it before resuming.`);
   }
   const resuming = checkpoint?.state === 'exhausted';
+  const explicitResult = context.executionMode === 'harness' || checkpoint?.resultContractVersion === 2;
   if (resuming && (checkpoint.version !== 1 || !Array.isArray(checkpoint.messages) || checkpoint.messages.length === 0)) {
     throw new Error(`Plan step ${step.id} has no valid continuation history; refusing to replay it.`);
   }
@@ -202,97 +206,56 @@ export async function executePlanStep(
         error_message: null,
         // Consume the checkpoint before any effects. If the process dies or a
         // write fails after a tool ran, a new run must not reuse stale history.
-        result: { ...step.result, assistant_execution: { version: 1, state: 'running' } },
+        result: { ...step.result, assistant_execution: { version: 1, state: 'running',
+          ...(explicitResult ? { resultContractVersion: 2 } : {}) } },
         ...(step.started_at ? {} : { started_at: cycleBaselineAt }),
       }]
     }, 'start checkpoint');
 
   // 2. Load skill content for this step (if declared)
-  let skillContext = '';
+  let skill: { name: string; content: string } | undefined;
   const skillName = step.skill || (step.role && ROLE_TO_SKILL[step.role]);
   if (skillName) {
     const matched = await SkillsService.getSkillBySlugForSite(context.executionOptions.site_id, skillName);
     if (matched) {
       console.log(`[PlanSteps] Injecting skill "${skillName}" for step ${step.order}`);
-      skillContext = `\n\n--- SKILL INSTRUCTIONS: ${matched.name} ---\n${matched.content}\n--- END SKILL ---\n`;
+      skill = { name: matched.name, content: matched.content };
     } else {
       console.warn(`[PlanSteps] Skill "${skillName}" not found, continuing without it`);
     }
   }
 
-  let skillPromptText = '';
-  if (skillContext) {
-    skillPromptText = `\nIMPORTANT — You MUST follow the skill instructions below. They define your procedures, validations, and deliverables for this role. Do NOT skip any step in the skill.\n${skillContext}`;
-  } else {
-    skillPromptText = `\n🚨 MISSING SKILL INSTRUCTIONS: No specific skill or role was assigned to this step.
-BEFORE starting to code or execute any commands, you MUST:
-1. Call \`skill_lookup\` tool with \`action="list"\` to see all available skills.
-2. Choose the appropriate skill based on this step's objective, instructions, and the current backlog item.
-3. Call \`skill_lookup\` tool with \`action="get"\` and the chosen \`skill_name\` to load its instructions.
-4. Follow those instructions strictly.`;
-  }
-
   // 3. Build a dedicated system prompt for this sub-agent step
-  const { instance_id, site_id } = context.executionOptions;
+  const { instance_id, site_id, user_id } = context.executionOptions;
+  const workspaceToolsAvailable = context.customTools.some(tool => tool?.name?.startsWith('sandbox_'));
+  const stepSystemPrompt = buildStepExecutionPrompt({
+    plan,
+    step,
+    instanceId: instance_id,
+    siteId: site_id,
+    userId: user_id,
+    initialMessage: context.initialMessage,
+    skill,
+    unavailableSkill: skillName && !skill ? skillName : undefined,
+    requiredSkillsContext: requiredSkillsPrompt(context.selectedSkills),
+    workspace: workspaceToolsAvailable ? {
+      workingDirectory: SandboxService.WORK_DIR,
+      cycleBaselineAt,
+      checkpointAvailable: context.customTools.some(tool => tool?.name === 'sandbox_push_checkpoint'),
+    } : undefined,
+  });
 
-  const stepSystemPrompt = `You are an EXECUTOR agent running inside a Vercel Sandbox.
-Your job is to complete ONE specific step by writing code, running commands, and making real changes.
-Working directory: ${SandboxService.WORK_DIR}
-
-CONTEXT:
-- instance_id: ${instance_id}
-- site_id: ${site_id}
-${plan.id ? `- instance_plan_id: ${plan.id}` : ''}
-
-PLAN: "${plan.title}"
-
-CURRENT STEP (Step ${step.order}):
-Title: ${step.title}
-Role: ${step.role || 'general'}
-Instructions: ${step.instructions}
-Expected Output: ${step.expected_output || 'Complete the step successfully.'}
-
-Cycle baseline: ${cycleBaselineAt || 'unknown'}
-File freshness: sandbox_list_files / sandbox_read_file report updated_this_cycle vs this baseline.
-
-${skillPromptText}
-${requiredSkillsPrompt(context.selectedSkills)}
-${getFileFreshnessPromptFragment(cycleBaselineAt)}
-${getStepCheckpointPromptFragment('', instance_id)}
-
-RULES:
-- Focus ONLY on completing this specific step. Do not plan — EXECUTE.
-- CRITICAL EXECUTION RULES:
-  1. ALWAYS THINK OUT LOUD: You MUST explain your reasoning and plan inside the \`thought_process\` parameter of every tool call.
-  2. MAXIMIZE PARALLELISM: If you need to read multiple files, list multiple directories, or run independent commands, you MUST call multiple tools in parallel in a single response. Do not do things sequentially if they can be batched.
-  3. AVOID LOOPS: If you find yourself reading the same files or running the same commands without making progress, STOP. Re-evaluate your approach and use a different tool (like sandbox_code_search instead of reading files blindly).
-  4. GENERIC STEP CANCELLATION: If the step title or instructions are generic or not clear enough without any concrete actionable context or objective, you MUST CANCEL the current plan immediately using the \`instance_plan\` tool with action='update', plan_id='${plan.id}', and status='cancelled'.
-  5. DATABASE CRUDS AND MIGRATIONS ON APPS (CRITICAL):
-     - Never muck up data, always create a table first, then add data to it.
-     - ALL database migrations MUST be written as plain \`.sql\` scripts located in \`migrations/*.sql\` (or \`supabase/migrations/\` / \`src/db/migrations/\`). NEVER create TypeScript classes, TypeORM models, or Prisma schemas.
-     - Row Level Security (RLS) is MANDATORY for all new tables. You must include the \`ALTER TABLE ... ENABLE ROW LEVEL SECURITY;\` and the corresponding \`CREATE POLICY\` in the same SQL file.
-     - When using the Supabase client, you MUST explicitly specify the schema before calling \`.from()\` to prevent 'public.table_name not found' errors. Example: \`supabase.schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || 'public').from('my_table')\`.
-- Next.js App Router in this repo: pages only under src/app/ (e.g. src/app/prd/page.tsx). Never create a root folder named "app/" or "app/src/app/" — the GitHub repo may be called "apps" but that is not a path to mirror in the filesystem.
-- Never use a top-level app/ folder for routes (e.g. app/src/app/prd breaks Vercel).
-- Use skill_lookup (search → get) for playbooks matching this step's objective before large edits; follow loaded SKILL.md together with any injected skill block above.
-- Use sandbox_write_file to create new files, sandbox_edit_file to replace specific strings in existing files (prefer this over overwriting large files), sandbox_run_command, and sandbox_read_file to write and test code. You MUST call sandbox_push_checkpoint before stopping when you changed files (title_hint = step title; see CHECKPOINTS in prompt). Use sandbox_restore_checkpoint only if you need to rewind locally. Use sandbox_read_logs to read server and console logs.
-- After implementing, validate your work (run build, run tests if applicable). If writing tests, ALL test files MUST be placed inside the top-level \`tests/\` directory (e.g., \`tests/api\`, \`tests/components\`) to keep the repo clean.
-- When reporting status, use instance_id="${instance_id}". This is a standalone plan, not requirement-owned work.
-- The preview URL comes from the GitHub Deployments API post-push. Do NOT construct or guess it.
-- Be efficient — the sandbox has a limited lifetime.
-  6. USE MAKINARI SKILLS TOOLS FOR HEAVY LIFTING: Use skill_lookup (search → get) for playbooks matching this step's objective before large edits; follow loaded SKILL.md together with any injected skill block above.
-  7. INTEGRATE MAKINARI API WHENEVER POSSIBLE TO A PROJECT:
-    - Use the https://docs.makinari.com/mcp-server and https://docs.makinari.com/rest-api API documentation to integrate the APIs and tools avialble into the project.
-`;
-
+  const resultCapture = explicitResult ? createAssistantStepResult() : undefined;
   const modifiedContext = {
     ...context,
-    systemPrompt: stepSystemPrompt,
+    systemPrompt: stepSystemPrompt + (resultCapture ? '\nSTEP TERMINAL PROTOCOL: use plan_result with completed/failed and summary, or needs_input and question. Plain text, a plan proposal or a question is not completion. Ask for missing essential input using needs_input; do not complete unfinished work.' : ''),
+    customTools: resultCapture ? [...context.customTools.filter(tool => tool?.name !== 'plan_result'), resultCapture.tool] : context.customTools,
     executionOptions: {
       ...context.executionOptions,
       cycle_baseline_at: cycleBaselineAt,
     },
   };
+  if (resultCapture) attachAssistantStepResult(modifiedContext, resultCapture.getResult);
 
   let userContent: any = `Execute step ${step.order}: ${step.title}. ${step.instructions}`;
   
@@ -332,6 +295,9 @@ RULES:
   
   let stepResult;
   let currentMessages = resuming ? [...checkpoint.messages] : [...messages];
+  if (resuming && checkpoint.awaitingInput === true) {
+    currentMessages.push({ role: 'user', content: `Follow-up instruction for the pending step:\n${context.initialMessage}` });
+  }
   let isStepDone = false;
   let turns = 0;
   const MAX_STEP_TURNS = 10; // Avoid infinite loops within a step
@@ -349,7 +315,13 @@ RULES:
       
       // Update state
       currentMessages = stepResult.messages;
-      isStepDone = stepResult.isDone;
+      if (resultCapture) {
+        const reported = resultCapture.getResult();
+        isStepDone = reported?.status === 'completed';
+        if (reported?.status === 'needs_input' || reported?.status === 'failed') break;
+        if (!reported && stepResult.isDone) currentMessages.push({ role: 'user', content:
+          'The step has no explicit result yet. If essential information is missing, use plan_result needs_input with your question. Otherwise report completed/failed honestly; prose alone does not complete the step.' });
+      } else isStepDone = stepResult.isDone;
 
     }
     
@@ -379,8 +351,17 @@ RULES:
       throw error;
   }
 
+  const reported = resultCapture?.getResult();
+  if (reported?.status === 'failed') {
+    await persistPlanStepUpdate({ plan_id: plan.id, instance_id: context.executionOptions.instance_id,
+      site_id: context.executionOptions.site_id, status: 'failed', steps: [{ id: step.id, status: 'failed', actual_output: reported.summary,
+        error_message: reported.summary, completed_at: new Date().toISOString(),
+        result: { ...step.result, assistant_execution: null } }] }, 'reported failure');
+    return { ...stepResult, text: reported.summary, isDone: false, executionStatus: 'failed', turns, resumeFromStepId: step.id };
+  }
   if (!isStepDone) {
-    const reason = `Turn limit reached (${MAX_STEP_TURNS}); this step is incomplete and can be resumed from its saved history.`;
+    const question = reported?.status === 'needs_input' ? reported.question : undefined;
+    const reason = question || `Turn limit reached (${MAX_STEP_TURNS}); this step is incomplete and can be resumed from its saved history.`;
     await persistPlanStepUpdate({
       plan_id: plan.id,
       instance_id: context.executionOptions.instance_id,
@@ -396,6 +377,8 @@ RULES:
           assistant_execution: {
             version: 1,
             state: 'exhausted',
+            ...(explicitResult ? { resultContractVersion: 2 } : {}),
+            ...(question ? { awaitingInput: true } : {}),
             turns: (resuming ? Number(checkpoint.turns) || 0 : 0) + turns,
             // processAssistantTurn already dehydrates images for persistence.
             messages: currentMessages,
@@ -403,7 +386,8 @@ RULES:
         },
       }],
     }, 'exhaustion checkpoint');
-    return { ...stepResult, isDone: false, executionStatus: 'exhausted', turns, resumeFromStepId: step.id };
+    return { ...stepResult, ...(question ? { text: question } : {}), isDone: false,
+      executionStatus: question ? 'needs_input' : 'exhausted', turns, resumeFromStepId: step.id };
   }
 
   // 4. Only an actually finished assistant turn may complete the step.
@@ -415,14 +399,14 @@ RULES:
     steps: [{
       id: step.id,
       status: 'completed',
-      actual_output: stepResult.text,
+      actual_output: reported?.status === 'completed' ? reported.summary : stepResult.text,
       completed_at: new Date().toISOString(),
       error_message: null,
       result: { ...step.result, assistant_execution: null },
     }]
   }, 'completion');
 
-  return { ...stepResult, isDone: true, executionStatus: 'completed', turns };
+  return { ...stepResult, ...(reported?.status === 'completed' ? { text: reported.summary } : {}), isDone: true, executionStatus: 'completed', turns };
 }
 
 // This durable step contains multiple non-idempotent tool calls. The SDK's

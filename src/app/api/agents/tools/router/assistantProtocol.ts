@@ -19,7 +19,10 @@
  */
 
 import { EmbeddingsService } from '@/lib/services/embeddings-service';
-import { assertToolScopeArgs, canUseToolScreen, guardToolScreen, loadToolScreenAccess, type ToolScreenScope } from './screen-access';
+import {
+  assertToolScopeArgs, canUseToolScreen, guardToolScreen, loadToolScreenAccess,
+  ToolScreenAccessDenied, ToolScreenAccessUnavailable, type ToolScreenAccess, type ToolScreenScope,
+} from './screen-access';
 
 export type RoutedTool = {
   name: string;
@@ -164,6 +167,19 @@ function isValidationErrorMessage(msg: string | undefined): boolean {
   );
 }
 
+/** Use only constant public errors here; never serialize the lookup failure. */
+function screenAccessFailure(error: ToolScreenAccessDenied | ToolScreenAccessUnavailable, beforeDispatch: boolean) {
+  return {
+    success: false, code: error.code, status: error.status,
+    ...(error instanceof ToolScreenAccessUnavailable ? { recoverable: error.recoverable } : {}),
+    ...(beforeDispatch ? { executed: false } : {}),
+    error: {
+      code: error.code, message: error.message,
+      ...(beforeDispatch ? { effectStarted: false } : {}),
+    },
+  };
+}
+
 /**
  * Builds the single `tools` tool that proxies to a set of routed tools.
  *
@@ -238,13 +254,22 @@ export function toolsRouterTool(routedTools: RoutedTool[], scope?: ToolScreenSco
     },
     execute: async (args: { action: 'list' | 'search' | 'describe' | 'call'; name?: string; args?: any; category?: string; query?: string }) => {
       const { action } = args;
-      const access = await loadToolScreenAccess(scope);
+      const denied = () => screenAccessFailure(new ToolScreenAccessDenied(), true);
+      const target = (action === 'describe' || action === 'call') && args.name ? byName.get(args.name) : undefined;
+      // Unmapped tools cannot be allowed even for admins, regardless of DB health.
+      if (target && !canUseToolScreen(target.name, { isAdmin: true, blockedScreens: [] })) return denied();
+      let access: ToolScreenAccess | null;
+      try {
+        // A screen-independent target does not need a permission lookup.
+        access = target && canUseToolScreen(target.name, null) ? null : await loadToolScreenAccess(scope);
+      } catch (error) {
+        if (error instanceof ToolScreenAccessUnavailable) {
+          return screenAccessFailure(new ToolScreenAccessUnavailable(), true);
+        }
+        throw error;
+      }
       const toolIndex = unfilteredToolIndex.filter(tool => canUseToolScreen(tool.name, access));
       const categoriesAvailable = Array.from(new Set(toolIndex.map(tool => tool.category))).sort();
-      const denied = () => ({
-        success: false, code: 'TOOL_SCREEN_ACCESS_DENIED', status: 403,
-        error: 'Tool access denied by screen permissions.',
-      });
 
       // `args.args` is declared as a JSON-encoded string (see schema note).
       // Accept both string (Gemini-friendly) and object (OpenAI/Azure direct
@@ -437,6 +462,11 @@ export function toolsRouterTool(routedTools: RoutedTool[], scope?: ToolScreenSco
         const callArgs = parsed.value;
         try {
           assertToolScopeArgs(tool.name, callArgs, scope);
+        } catch (error) {
+          if (error instanceof ToolScreenAccessDenied) return denied();
+          throw error;
+        }
+        try {
           const result = await tool.execute(callArgs);
           return {
             success: true,
@@ -447,7 +477,13 @@ export function toolsRouterTool(routedTools: RoutedTool[], scope?: ToolScreenSco
         } catch (err: any) {
           // Fatal host failures must escape the router, not become retryable tool prose.
           if (err?.name === 'RecoveryError' || err?.name === 'OpenRouterBillingError') throw err;
-          if (err?.code === 'TOOL_SCREEN_ACCESS_DENIED') return denied();
+          // Once dispatched, a permission code alone is not no-effect proof.
+          if (err?.code === 'TOOL_SCREEN_ACCESS_DENIED') {
+            return screenAccessFailure(new ToolScreenAccessDenied(), err?.effectStarted === false);
+          }
+          if (err?.code === 'TOOL_SCREEN_ACCESS_UNAVAILABLE') {
+            return screenAccessFailure(new ToolScreenAccessUnavailable(), err?.effectStarted === false);
+          }
           const message: string = err?.message || String(err);
           const includeSchema = isValidationErrorMessage(message);
           return {

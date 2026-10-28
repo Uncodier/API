@@ -106,6 +106,8 @@ describe('assistant lifecycle SSE', () => {
     ['completed', { assistant_response: 'Answer' }, 'completed'],
     ['completed', { success: false, execution_status: 'exhausted' }, 'error'],
     ['completed', { success: false, execution_status: 'continuing' }, 'error'],
+    ['completed', { success: false, execution_status: 'needs_input', assistant_response: 'Which account?' }, 'completed'],
+    ['completed', { success: false, execution_status: 'failed', assistant_response: 'No authorized source was available.' }, 'completed'],
     ['failed', null, 'error'],
     ['cancelled', null, 'error'],
   ])('reaches actual EOF and releases observation resources for %s / %j', async (status, result, terminal) => {
@@ -123,7 +125,13 @@ describe('assistant lifecycle SSE', () => {
     };
     const reader = assistantResponseStream(run, 'instance', 'log', { signal: abort.signal }).body!.getReader();
     expect(decode((await reader.read()).value)).toContain('event: accepted');
-    expect(decode((await reader.read()).value)).toContain(`event: ${terminal}`);
+    const terminalText = decode((await reader.read()).value);
+    expect(terminalText).toContain(`event: ${terminal}`);
+    if (result && 'execution_status' in result && 'assistant_response' in result &&
+        (result.execution_status === 'needs_input' || result.execution_status === 'failed')) {
+      expect(terminalText).toContain(result.assistant_response);
+      expect(terminalText).toContain('"success":false');
+    }
     expect(await reader.read()).toEqual({ done: true, value: undefined });
     await expect(reader.closed).resolves.toBeUndefined();
     expect(jest.getTimerCount()).toBe(0);

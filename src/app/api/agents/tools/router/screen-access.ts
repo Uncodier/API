@@ -17,6 +17,15 @@ export class ToolScreenAccessDenied extends Error {
   constructor() { super('Tool access denied by screen permissions.'); }
 }
 
+/** Lookup failure, not an authorization decision. Never retain DB details/cause. */
+export class ToolScreenAccessUnavailable extends Error {
+  readonly name = 'ToolScreenAccessUnavailable';
+  readonly code = 'TOOL_SCREEN_ACCESS_UNAVAILABLE';
+  readonly status = 503;
+  readonly recoverable = true;
+  constructor() { super('Tool screen permissions are temporarily unavailable.'); }
+}
+
 export function canUseToolScreen(name: string, access: ToolScreenAccess | null): boolean {
   const rule = Object.hasOwn(rules, name) ? rules[name] : undefined;
   if (!rule) return false;
@@ -60,7 +69,11 @@ export function guardFinalToolCatalog<T extends { name?: string; execute?: (...a
   });
 }
 
-/** No positive cache: revocation and blocked_screens changes apply on the next call. */
+/**
+ * No positive cache: revocation and blocked_screens changes apply on the next call.
+ * Null is a denied/missing/invalid principal or permission record. Lookup errors
+ * and timeouts reject with ToolScreenAccessUnavailable; neither grants access.
+ */
 export async function loadToolScreenAccess(scope?: ToolScreenScope): Promise<ToolScreenAccess | null> {
   if (!scope || !UUID.test(scope.siteId) || !scope.userId || !UUID.test(scope.userId)) return null;
   try {
@@ -70,7 +83,8 @@ export async function loadToolScreenAccess(scope?: ToolScreenScope): Promise<Too
     const effective = await supabaseAdmin.rpc('site_user_has_effective_access', {
       p_site_id: scope.siteId, p_user_id: scope.userId,
     }).abortSignal(signal);
-    if (signal.aborted || effective.error || effective.data !== true) return null;
+    if (signal.aborted || effective.error) throw new ToolScreenAccessUnavailable();
+    if (effective.data !== true) return null;
     const [site, ownership, membership] = await Promise.all([
       supabaseAdmin.from('sites').select('user_id').eq('id', scope.siteId).abortSignal(signal).maybeSingle(),
       supabaseAdmin.from('site_ownership').select('site_id').eq('site_id', scope.siteId)
@@ -78,7 +92,8 @@ export async function loadToolScreenAccess(scope?: ToolScreenScope): Promise<Too
       supabaseAdmin.from('site_members').select('role, blocked_screens').eq('site_id', scope.siteId)
         .eq('user_id', scope.userId).eq('status', 'active').abortSignal(signal).maybeSingle(),
     ]);
-    if (signal.aborted || site.error || ownership.error || membership.error || !site.data) return null;
+    if (signal.aborted || site.error || ownership.error || membership.error) throw new ToolScreenAccessUnavailable();
+    if (!site.data) return null;
     const isAdmin = site.data.user_id === scope.userId || Boolean(ownership.data)
       || ['owner', 'admin'].includes(membership.data?.role);
     if (isAdmin) return { isAdmin: true, blockedScreens: [] };
@@ -88,11 +103,12 @@ export async function loadToolScreenAccess(scope?: ToolScreenScope): Promise<Too
     if (blocked != null && (!Array.isArray(blocked) || blocked.some(screen => typeof screen !== 'string'))) return null;
     return { isAdmin: false, blockedScreens: blocked ?? [] };
   } catch {
-    return null;
+    throw new ToolScreenAccessUnavailable();
   }
 }
 
 export async function assertToolScreenAccess(name: string, scope?: ToolScreenScope): Promise<void> {
+  if (!Object.hasOwn(rules, name)) throw new ToolScreenAccessDenied();
   if (canUseToolScreen(name, null)) return;
   if (!canUseToolScreen(name, await loadToolScreenAccess(scope))) throw new ToolScreenAccessDenied();
 }
@@ -104,8 +120,17 @@ export function guardToolScreen<T extends { name: string; execute: (...args: any
   return {
     ...tool,
     execute: async (...args: any[]) => {
-      await assertToolScreenAccess(tool.name, scope);
-      assertToolScopeArgs(tool.name, args[0], scope);
+      try {
+        await assertToolScreenAccess(tool.name, scope);
+        assertToolScopeArgs(tool.name, args[0], scope);
+      } catch (error) {
+        // Only this predispatch region proves the underlying execute never ran.
+        // The error classes alone (or a matching code) do not establish that.
+        if (error instanceof ToolScreenAccessDenied || error instanceof ToolScreenAccessUnavailable) {
+          Object.assign(error, { executed: false, effectStarted: false });
+        }
+        throw error;
+      }
       return tool.execute(...args);
     },
   };

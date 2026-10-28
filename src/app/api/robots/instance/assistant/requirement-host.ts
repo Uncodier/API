@@ -10,6 +10,16 @@ export interface RequirementAssistantHost {
   refreshContext(): Promise<string>;
 }
 const hosts = new WeakMap<AssistantContext, RequirementAssistantHost>();
+const stepResults = new WeakMap<AssistantContext, () => unknown>();
+
+/** In-process only: a host result must stop later tools in the same model batch. */
+export function attachAssistantStepResult(context: AssistantContext, getResult: () => unknown): void {
+  stepResults.set(context, getResult);
+}
+
+export function readAssistantStepResult(context: AssistantContext): unknown {
+  return stepResults.get(context)?.();
+}
 
 export function attachRequirementAssistantHost(context: AssistantContext, host: RequirementAssistantHost): void {
   hosts.set(context, host);

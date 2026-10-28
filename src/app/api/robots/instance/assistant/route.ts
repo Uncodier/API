@@ -12,6 +12,7 @@ import { canAccessSite } from '@/lib/security/site-access';
 import { isSiteSkillManager } from '@/lib/services/site-skill-access';
 import { isNodeSpecificContext, NODE_CONTEXT_REQUIRES_NODE, NODE_CONTEXT_REQUIRES_NODE_MESSAGE } from './node-context-boundary';
 import { canToolPrincipalAccessSite, resolveToolRequestPrincipal } from '@/lib/security/tool-request-principal';
+import { resolveAssistantRequestMode } from './execution-mode';
 
 // ------------------------------------------------------------------------------------
 // POST /api/robots/instance/assistant
@@ -33,6 +34,7 @@ const AssistantSchema = z.object({
   context: z.string().optional(),
   tool_overrides: z.record(z.any()).optional(),
   request_id: z.string().min(1).max(200).optional(),
+  execution_mode: z.enum(['direct', 'harness']).optional(),
   ...assistantSkillSelectionSchema.shape,
 });
 
@@ -89,6 +91,7 @@ export async function POST(request: NextRequest) {
       use_sdk_tools,
       system_prompt,
     } = parsedBody;
+    const executionMode = resolveAssistantRequestMode(parsedBody.execution_mode, system_prompt);
     // Legacy node callers may send only shared output preferences in context.
     // Node execution is selected by the request-level node ID, not those fields.
     const normalizedToolOverrides = providedNodeId ? normalizePublishToolOverrides(
@@ -178,7 +181,8 @@ export async function POST(request: NextRequest) {
         siteId: providedSiteId,
         userId,
         message,
-        details: { is_creation: true, request_id: parsedBody.request_id, status: 'running', instance_node_id: providedNodeId },
+        details: { is_creation: true, request_id: parsedBody.request_id, status: 'running', instance_node_id: providedNodeId,
+          execution_mode: executionMode },
       }));
       failureContext.userMessageLogId = userAction.id;
 
@@ -196,7 +200,7 @@ export async function POST(request: NextRequest) {
         expectedResults,
         parsedBody.context,
         normalizedToolOverrides,
-        { selectedSkills, approvedImport, userMessageLogId: userAction.id }
+        { selectedSkills, approvedImport, userMessageLogId: userAction.id, executionMode }
       ]);
 
       return assistantResponseStream(workflowRun, newInstance.id, userAction.id, { signal: request.signal });
@@ -231,7 +235,8 @@ export async function POST(request: NextRequest) {
       userId: user_id,
       message,
       skipDuplicateCheck: true,
-      details: { instance_status: instance.status || 'running', request_id: parsedBody.request_id, status: 'running', instance_node_id: providedNodeId },
+      details: { instance_status: instance.status || 'running', request_id: parsedBody.request_id, status: 'running', instance_node_id: providedNodeId,
+        execution_mode: executionMode },
     }));
     failureContext.userMessageLogId = userAction.id;
     
@@ -253,7 +258,7 @@ export async function POST(request: NextRequest) {
       expectedResults,
       parsedBody.context,
       normalizedToolOverrides,
-      { selectedSkills, approvedImport, userMessageLogId: userAction.id }
+      { selectedSkills, approvedImport, userMessageLogId: userAction.id, executionMode }
     ]);
 
     return assistantResponseStream(workflowRun, providedInstanceId, userAction.id, { signal: request.signal });

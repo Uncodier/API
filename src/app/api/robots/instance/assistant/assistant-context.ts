@@ -21,6 +21,7 @@ import { requiredSkillsPrompt, type AssistantSkillSelection } from './skill-sele
 import { resolvePublishNodeBinding } from './publish-node-binding';
 import { resolveAssistantHistoryModel } from './history-model';
 import { assertNodeContextHasNode } from './node-context-boundary';
+import { DIRECT_EXECUTION_INSTRUCTION, type AssistantExecutionMode } from './execution-mode';
 
 export async function prepareAssistantContext(
   instanceId: string,
@@ -39,6 +40,7 @@ export async function prepareAssistantContext(
     selectedSkills?: AssistantSkillSelection,
     approvedImport?: { url: string; sha256: string; userId: string },
     requirementExecution?: { requirementId: string; assertActive: () => Promise<void> },
+    executionMode?: AssistantExecutionMode,
   ): Promise<AssistantContext> {
   if (requirementExecution) await requirementExecution.assertActive();
   // Direct workflow starts and recovery snapshots also cross this boundary.
@@ -119,6 +121,7 @@ export async function prepareAssistantContext(
     backlogContext,
   } = await loadAssistantRequirementContext(instanceId);
   const activeRequirementId = requirementExecution?.requirementId ?? linkedRequirementId;
+  const directExecution = executionMode === 'direct' && !instanceNodeId && !requirementExecution;
 
   // Fetch active instance plan context
   const { data: lastPlans } = await supabaseAdmin
@@ -180,6 +183,13 @@ export async function prepareAssistantContext(
     activeStepContext = `\nRequirement execution is owned by this host run. Inspect requirement_context, preserve existing plans and acceptance, and use requirement_plan/requirement_progress for owned planning and progress. Never use instance_plan execute_step to launch another executor.`;
     baseSystemPrompt = 'You are the instance assistant executing its authorized requirement. Follow the same site instructions, skills, permissions and tool protocols.';
     toolsContext = '\nCapabilities are the tools actually supplied by the host. An owned workspace is optional task context, not an instruction to create an app or deploy.';
+  }
+  if (directExecution) {
+    baseSystemPrompt = 'You are the instance assistant resolving the current authorized request.';
+    toolsContext = 'Use the supplied tool catalog as the source of available capabilities. A missing browser or sandbox does not prevent using other authorized tools. Do not claim an environment exists before a tool confirms it.';
+    activeStepContext = activePlan && !allStepsContext
+      ? '\nThe associated plan is historical context. Reviewing it does not resume execution.'
+      : '\nPlan and step information is context only in this direct request. Planning is optional and does not start a plan cycle; do not report unexecuted steps as completed.';
   }
 
   // Fetch last completed plan title
@@ -320,7 +330,7 @@ CRITICAL: Your primary task is to CREATE a persistent audience.
 
   // When system prompt is "plan", instruct the assistant to always use instance_plan (indication only, not deterministic code)
   const planModeInstruction =
-    systemPrompt?.toLowerCase().trim() === 'plan' && !hasLinkedRequirement
+    !directExecution && systemPrompt?.toLowerCase().trim() === 'plan' && !hasLinkedRequirement
       ? `\n\n📋 PLAN MODE: Your system prompt is set to "plan". You MUST always use the instance_plan tool: create or list the execution plan (action "create" or "list") as appropriate, then execute steps with action "execute_step" when carrying out the plan. Do not skip using instance_plan when the user asks for planning or task execution.
 
 BREAKING DOWN THE PLAN:
@@ -335,7 +345,7 @@ EXECUTION:
       : '';
 
   const activePlanInstruction = 
-    systemPrompt?.toLowerCase().trim() === 'plan' && hasLinkedRequirement
+    !directExecution && systemPrompt?.toLowerCase().trim() === 'plan' && hasLinkedRequirement
       ? `\n\n⚠️ IMPORTANT PLAN CONTEXT: There is an active plan in progress, but it is assigned to another agent. You can monitor or update its status using the \`requirement_status\` and \`requirements\` tools, but do NOT execute the plan steps directly.`
       : '';
 
@@ -367,7 +377,8 @@ Most capabilities (media, messaging, CRM, commerce, social, content, infra, rese
 - To find people, working hours, team calendars, or reservable services: \`tools\` → \`calendars\` \`action="list"\`. Do not guess tool names for horarios.
 - Core tools like instance_plan, requirement_status, requirements, and skill_lookup are directly available and NOT routed.`;
 
-  const skillLookupInstruction = `
+  const skillLookupInstruction = directExecution ? `
+SKILL DISCOVERY (skill_lookup): Use relevant skills when their guidance helps the task. Skills explicitly selected for this request remain required. Do not block an unrelated task on a skill search or invent missing instructions.` : `
 🧠 SKILL DISCOVERY (skill_lookup):
 For any non-trivial request (especially catalog, commerce, products, quotes, checkout, reservations, slots, expenses, salaries), you MUST call \`skill_lookup\` with \`action="search"\` using English keywords (e.g. "catalog products marketplace commerce reservations slots checkout" or "expense salary payroll transactions"), then \`action="get"\` for matches such as "makinari-commerce" or "makinari-expenses".
 Follow the loaded SKILL.md playbooks before calling tools via \`tools\`. \`skill_lookup\` is directly available (not routed).`;
@@ -413,7 +424,7 @@ Follow the loaded SKILL.md playbooks before calling tools via \`tools\`. \`skill
     backlogContext,
     requirementExecution
       ? 'This turn is executing the host-claimed requirement on its sole runner. Use requirement_plan and requirement_progress for this requirement; do not start another runner. Preserve all user restrictions. Finish with finish_task only after returning the actual result and limitations. A conversational reply is not requirement completion.'
-      : getRequirementWorkflowInstruction(hasLinkedRequirement),
+      : directExecution ? DIRECT_EXECUTION_INSTRUCTION : getRequirementWorkflowInstruction(hasLinkedRequirement),
     instanceNodeId ? '' : assetsContext,
     ICP_CATEGORY_IDS_INSTRUCTION,
     BOOKING_ROUTING_INSTRUCTION,
@@ -431,6 +442,7 @@ Follow the loaded SKILL.md playbooks before calling tools via \`tools\`. \`skill
   }
 
   return {
+    ...(executionMode ? { executionMode } : {}),
     instance,
     systemPrompt: publishBinding ? `${finalSystemPrompt}\n${publishBinding.instruction}` : finalSystemPrompt,
     customTools, // Pass definitions, not instantiated tools

@@ -1,5 +1,6 @@
 import type { RecoveryToolObservation } from './assistant-recovery-context';
 import { MAX_RESPAWNS } from './assistant-respawn-policy';
+import { isAssistantExecutionMode, type AssistantExecutionMode } from '@/app/api/robots/instance/assistant/execution-mode';
 
 export type AssistantRecoveryScope = {
   instanceId: string;
@@ -22,6 +23,8 @@ export type AssistantRecoveryExecution = {
   toolOverrides?: Record<string, unknown>;
   selectedSkills?: unknown;
   approvedImport?: unknown;
+  /** Missing only on legacy snapshots; resume must not infer a new intent. */
+  executionMode?: AssistantExecutionMode;
 };
 
 export type AssistantRecoverySnapshot = {
@@ -148,7 +151,7 @@ export function assertRecoveryScope(scope: AssistantRecoveryScope): void {
 export function parseRecoveryExecution(value: unknown): AssistantRecoveryExecution {
   if (!isRecord(value)) throw new RecoveryError('invalid_state');
   const stringKeys = ['systemPrompt', 'agentType', 'userPhone', 'instanceNodeId', 'contextString'];
-  const optionalKeys = [...stringKeys, 'expectedResultsAmount', 'toolOverrides', 'selectedSkills', 'approvedImport'];
+  const optionalKeys = [...stringKeys, 'expectedResultsAmount', 'toolOverrides', 'selectedSkills', 'approvedImport', 'executionMode'];
   onlyKeys(value, ['customTools', 'useSdkTools', ...optionalKeys]);
   // Absent optional arguments are common at the workflow boundary. Only this top-level
   // omission is permitted; nested undefined values could erase a tool receipt.
@@ -162,6 +165,7 @@ export function parseRecoveryExecution(value: unknown): AssistantRecoveryExecuti
   }
   const result = cloneRecoveryJson(present, MAX_RECOVERY_EXECUTION_BYTES);
   if (!Array.isArray(result.customTools) || typeof result.useSdkTools !== 'boolean' ||
+      ('executionMode' in result && !isAssistantExecutionMode(result.executionMode)) ||
       stringKeys.some(key => key in result && typeof result[key] !== 'string') ||
       ('instanceNodeId' in result && !(result.instanceNodeId as string).trim()) ||
       ('toolOverrides' in result && !isRecord(result.toolOverrides)) ||

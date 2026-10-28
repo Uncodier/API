@@ -68,7 +68,14 @@ export function assistantResponseStream(
               const result = await run.returnValue;
               if (closed) return;
               if (result && typeof result === 'object' && (result as { success?: boolean }).success === false) {
-                if ((result as { code?: string }).code === 'INSUFFICIENT_CREDITS') {
+                const executionStatus = (result as { execution_status?: string }).execution_status;
+                if (executionStatus === 'needs_input' || executionStatus === 'failed') {
+                  // The conversation was delivered even though the logical work
+                  // is not successful. Preserve its actual question/conclusion;
+                  // the nested execution status must not become a generic error.
+                  event('completed', { success: true, data: result });
+                  finish();
+                } else if ((result as { code?: string }).code === 'INSUFFICIENT_CREDITS') {
                   const creditResult = result as { message?: unknown; next_credit_reset_at?: unknown };
                   fail('INSUFFICIENT_CREDITS', typeof creditResult.message === 'string' ? creditResult.message
                     : 'Tus créditos se han agotado para continuar este ciclo.', {

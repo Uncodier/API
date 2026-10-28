@@ -14,6 +14,7 @@ import type { AssistantSkillSelection } from './skill-selection';
 import { prepareRecoveryStep, guardRecoveryStep, checkpointRecoveryStep } from './assistant-recovery-steps';
 import type { AssistantRecoveryScope } from '@/lib/services/robot-instance/assistant-recovery';
 import { buildAssistantUserContent } from '@/lib/services/robot-instance/assistant-image-content';
+import type { AssistantExecutionMode } from './execution-mode';
 
 // Define the workflow step
 export async function runAssistantWorkflow(
@@ -30,7 +31,7 @@ export async function runAssistantWorkflow(
   expectedResultsAmount?: number,
   contextString?: string,
   toolOverrides?: Record<string, any>,
-   options?: { silentContinue?: boolean; selectedSkills?: AssistantSkillSelection; approvedImport?: { url: string; sha256: string; userId: string }; userMessageLogId?: string; resumeToken?: string }
+   options?: { silentContinue?: boolean; selectedSkills?: AssistantSkillSelection; approvedImport?: { url: string; sha256: string; userId: string }; userMessageLogId?: string; resumeToken?: string; executionMode?: AssistantExecutionMode }
 ) {
   'use workflow';
 
@@ -52,6 +53,7 @@ export async function runAssistantWorkflow(
         prompt_source: 'assistant_workflow',
         selected_skills: options?.selectedSkills?.skills.map(({ slug, version }) => ({ slug, version })) ?? [],
         status: 'running', instance_node_id: instanceNodeId,
+        ...(options?.executionMode ? { execution_mode: options.executionMode } : {}),
       });
       userMessageLogId = logResult.id;
     }
@@ -61,6 +63,7 @@ export async function runAssistantWorkflow(
       customTools, useSdkTools, systemPrompt, agentType, userPhone, instanceNodeId,
       expectedResultsAmount, contextString, toolOverrides, selectedSkills: options?.selectedSkills,
       approvedImport: options?.approvedImport,
+      ...(options?.executionMode ? { executionMode: options.executionMode } : {}),
     }, options?.resumeToken);
     if (!recovery.ok) return blockedResult;
     if (recovery.snapshot) {
@@ -75,7 +78,9 @@ export async function runAssistantWorkflow(
       contextString = execution.contextString;
       toolOverrides = execution.toolOverrides;
       options = { ...options, selectedSkills: execution.selectedSkills as AssistantSkillSelection | undefined,
-        approvedImport: execution.approvedImport as { url: string; sha256: string; userId: string } | undefined };
+        approvedImport: execution.approvedImport as { url: string; sha256: string; userId: string } | undefined,
+        // The claimed snapshot, not the new request, owns continuation intent.
+        executionMode: execution.executionMode };
       recoveryScope.generation = recovery.snapshot.respawnCount;
     }
 
@@ -97,8 +102,11 @@ export async function runAssistantWorkflow(
     toolOverrides,
     options?.selectedSkills,
     options?.approvedImport,
+    undefined,
+    options?.executionMode,
   );
   context.recoveryScope = recoveryScope;
+  context.executionMode = options?.executionMode;
   context.nodeContinuation = recovery.snapshot?.continuation;
   context.conversationRecoveryOnly = recovery.snapshot?.conversationOnly === true;
   if (recovery.snapshot?.interruptionContext) {
@@ -190,7 +198,10 @@ export async function runAssistantWorkflow(
   // If instanceNodeId is present, we SKIP auto-executing plans because Node (Imprenta) executions are single-shot and should not spawn ghost nodes.
   // A resumed status conversation must never fall through to plan execution,
   // even if requirement linkage disappears while preparing its context.
-  const activePlan = context.conversationRecoveryOnly ? null : await getActiveInstancePlan(instanceId, siteId);
+  // Legacy internal callers/checkpoints retain their plan behavior. New direct
+  // requests never fall through into an unrelated pending plan after replying.
+  const activePlan = context.conversationRecoveryOnly || options?.executionMode === 'direct'
+    ? null : await getActiveInstancePlan(instanceId, siteId);
   // The initial context predates tool-created requirements. Only inspect here
   // for ordinary conversation plans; node/recovery-only execution stays isolated.
   const ownership = activePlan && !context.conversationRecoveryOnly && !instanceNodeId
@@ -257,6 +268,15 @@ export async function runAssistantWorkflow(
               managed_work_resumed: false, requirement_id: stepResult.ownership.requirementId,
               message: 'Conversation completed; the requirement runner retains plan ownership',
               assistant_response: finalResult.text, output: finalResult.output, usage: finalResult.usage };
+          }
+          if (stepResult.executionStatus === 'needs_input' || stepResult.executionStatus === 'failed') {
+            // The question/failure is a completed conversation, not a completed
+            // plan step. A later explicit instruction can resume its checkpoint.
+            if (!await guardRecoveryStep(recoveryScope)) return blockedResult;
+            await completeUserMessageStep(userMessageLogId, recoveryScope.generation ?? 0);
+            return { instance_id: instanceId, success: false, execution_status: stepResult.executionStatus,
+              assistant_response: stepResult.text, plan_id: activePlan.id, plan_step_id: stepResult.resumeFromStepId,
+              usage: stepResult.usage, resumable: stepResult.executionStatus === 'needs_input' };
           }
           if (stepResult.executionStatus === 'exhausted' && stepResult.creditExhausted) {
             if (!await guardRecoveryStep(recoveryScope)) return blockedResult;

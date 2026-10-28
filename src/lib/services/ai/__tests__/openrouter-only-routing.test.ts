@@ -53,8 +53,11 @@ describe('capability-specific runtime boundary', () => {
   });
 
   it('does not use old provider selectors or deployments for history preparation', () => {
-    const source = readFileSync(resolve(process.cwd(), 'src/app/api/robots/instance/assistant/steps.ts'), 'utf8');
-    expect(source).not.toMatch(/process\.env\.(?:AI_MODEL|MICROSOFT_AZURE_OPENAI_DEPLOYMENT)/);
-    expect(source).toContain('resolveAssistantHistoryModel');
+    const wrapper = readFileSync(resolve(process.cwd(), 'src/app/api/robots/instance/assistant/steps.ts'), 'utf8');
+    const core = readFileSync(resolve(process.cwd(), 'src/app/api/robots/instance/assistant/assistant-context.ts'), 'utf8');
+    expect(wrapper).toContain("from './assistant-context'");
+    expect(wrapper).toContain('return prepareContext(...args)');
+    expect(wrapper + core).not.toMatch(/process\.env\.(?:AI_MODEL|MICROSOFT_AZURE_OPENAI_DEPLOYMENT)/);
+    expect(core).toContain('resolveAssistantHistoryModel()');
   });
 });

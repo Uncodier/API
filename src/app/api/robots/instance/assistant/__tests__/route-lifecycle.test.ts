@@ -69,8 +69,34 @@ it('persists a fresh turn before workflow start and sends its ID through the SSE
   expect((insertUserActionLog as jest.Mock).mock.invocationCallOrder[0]).toBeLessThan((start as jest.Mock).mock.invocationCallOrder[0]);
   expect(resetRequirementOnUserAction).not.toHaveBeenCalled();
   expect((start as jest.Mock).mock.calls[0][1][13]).toMatchObject({ userMessageLogId: LOG });
+  expect((start as jest.Mock).mock.calls[0][1][13].executionMode).toBe('direct');
+  expect(insertUserActionLog).toHaveBeenCalledWith(expect.objectContaining({ details: expect.objectContaining({ execution_mode: 'direct' }) }));
   expect(body).toContain(`"user_log_id":"${LOG}"`);
   expect(body).toContain('event: completed');
+});
+
+it('persists an explicit harness request without bypassing the existing workflow admission', async () => {
+  const response = await POST(request({ ...payload, execution_mode: 'harness' }));
+  await response.text();
+  expect((start as jest.Mock).mock.calls[0][1][13]).toMatchObject({ userMessageLogId: LOG, executionMode: 'harness' });
+  expect(insertUserActionLog).toHaveBeenCalledWith(expect.objectContaining({ details: expect.objectContaining({ execution_mode: 'harness' }) }));
+  expect(resetRequirementOnUserAction).not.toHaveBeenCalled();
+});
+
+it('rejects unknown execution modes before admitting an action', async () => {
+  const response = await POST(request({ ...payload, execution_mode: 'unrestricted' }));
+  expect(response.status).toBe(400);
+  expect(start).not.toHaveBeenCalled();
+  expect(insertUserActionLog).not.toHaveBeenCalled();
+});
+
+it.each([
+  [{ system_prompt: 'plan' }, 'harness'],
+  [{ system_prompt: 'plan', execution_mode: 'direct' }, 'direct'],
+])('preserves explicit legacy plan intent unless a direct mode is supplied: %j', async (extra, mode) => {
+  const response = await POST(request({ ...payload, ...extra }));
+  await response.text();
+  expect((start as jest.Mock).mock.calls[0][1][13].executionMode).toBe(mode);
 });
 
 it('uses the same lifecycle for a newly created session', async () => {

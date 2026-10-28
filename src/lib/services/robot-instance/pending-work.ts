@@ -2,7 +2,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { start } from 'workflow/api';
 import { runAssistantWorkflow } from '@/app/api/robots/instance/assistant/workflow';
 import { insertUserActionLog, withRetries } from '@/app/api/robots/instance/assistant/user-message-log';
-import { resetRequirementOnUserAction } from '@/lib/services/requirement-cron-reset';
+import { resolveAssistantRequestMode } from '@/app/api/robots/instance/assistant/execution-mode';
 
 export type PendingWorkStatus = 'pending' | 'claimed' | 'sent' | 'cancelled';
 
@@ -165,9 +165,11 @@ export async function startPendingAssistant(row: PendingWorkRow): Promise<void> 
   }
 
   const siteId = row.site_id || instance.site_id;
+  if (siteId !== instance.site_id) throw new Error('Pending work instance scope mismatch');
   const userId = row.user_id || instance.user_id;
   const activity = row.activity || 'ask';
   const contextString = stringifyPendingContext(row.context);
+  const executionMode = resolveAssistantRequestMode(undefined, row.system_prompt ?? undefined);
 
   const userAction = await withRetries(() => insertUserActionLog({
     instanceId: row.instance_id,
@@ -181,13 +183,9 @@ export async function startPendingAssistant(row: PendingWorkRow): Promise<void> 
       request_type: activity,
       context: row.context || undefined,
       prompt_source: 'pending_work',
+      execution_mode: executionMode,
     },
   }));
-
-  await resetRequirementOnUserAction(
-    row.instance_id,
-    userAction.id,
-  );
 
   await start(runAssistantWorkflow, [
     row.instance_id,
@@ -202,6 +200,8 @@ export async function startPendingAssistant(row: PendingWorkRow): Promise<void> 
     undefined,
     expectedResultsFromContext(row.context),
     contextString,
+    undefined,
+    { userMessageLogId: userAction.id, executionMode },
   ]);
 }
 

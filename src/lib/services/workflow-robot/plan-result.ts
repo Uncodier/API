@@ -5,8 +5,10 @@ import type {
 import { relationContext } from './relation-routing';
 import {
   runWorkflowResultGate,
+  assessWorkflowResult,
   type WorkflowResultGateSignal,
 } from './result-gate';
+import type { WorkflowResultContractVersion } from './result-contract';
 
 export type WorkflowPlanResultStatus = 'completed' | 'failed' | 'skipped';
 
@@ -41,6 +43,8 @@ export interface WorkflowPlanResult {
     retryable: boolean;
   };
   submitted_at: string;
+  /** Advisory findings are not part of gate.passed or the terminal decision. */
+  observations?: WorkflowResultGateSignal[];
 }
 
 export interface WorkflowPlanResultCapture {
@@ -54,6 +58,7 @@ export interface WorkflowPlanResultCapture {
 }
 
 export interface WorkflowPlanResultCaptureOptions {
+  resultContractVersion?: WorkflowResultContractVersion;
   executionTracker?: WorkflowToolExecutionTracker;
   requireToolExecution?: boolean;
   requiresBrowser?: boolean;
@@ -145,6 +150,7 @@ export function createWorkflowPlanResultCapture(step: {
   let submitted: WorkflowPlanResult | null = null;
   const criteriaCount = meaningfulCriteriaCount(step.success_criteria);
   const validationCount = meaningfulValidationCount(step.validation_rules);
+  const advisoryExecution = options.resultContractVersion === 2;
 
   const tool = {
     name: 'plan_result',
@@ -153,7 +159,9 @@ export function createWorkflowPlanResultCapture(step: {
       'This is the only valid way to complete, fail, or skip a workflow step. ' +
       'Call it once after the required actions finish. Never include passwords, tokens, cookies, or other secret values. ' +
       'For completed results, report every success criterion and validation rule by its 1-based index. ' +
-      'The runner independently attaches tool receipts and gates output shape, required actions, and browser state transitions.',
+      (advisoryExecution
+        ? 'The runner attaches tool receipts and validates declared output, actions and explicit browser requirements. Generic execution hints are advisory; do not manufacture tool calls or claim unverified work.'
+        : 'The runner independently attaches tool receipts and gates output shape, required actions, and browser state transitions.'),
     parameters: {
       type: 'object',
       properties: {
@@ -283,6 +291,7 @@ export function createWorkflowPlanResultCapture(step: {
           verified: true,
         }));
       let completedGate: ReturnType<typeof runWorkflowResultGate> | undefined;
+      let observations: WorkflowResultGateSignal[] = [];
       if (status === 'completed') {
         const missingCriteria = missingOrFailedIndexes(criteriaCount, criteria);
         const missingValidation = missingOrFailedIndexes(validationCount, validation);
@@ -306,14 +315,21 @@ export function createWorkflowPlanResultCapture(step: {
             error: 'Completed results with declared checks require at least one evidence entry.',
           };
         }
-        completedGate = runWorkflowResultGate({
+        const assessmentInput = {
           step,
           data,
           executions,
           requireToolExecution: options.requireToolExecution,
           requiresBrowser: options.requiresBrowser,
           requiredToolExecutions: options.requiredToolExecutions,
-        });
+        };
+        if (advisoryExecution) {
+          const assessment = assessWorkflowResult(assessmentInput);
+          completedGate = assessment.contract;
+          observations = assessment.observations;
+        } else {
+          completedGate = runWorkflowResultGate(assessmentInput);
+        }
         if (!completedGate.ok) {
           return {
             accepted: false,
@@ -359,6 +375,7 @@ export function createWorkflowPlanResultCapture(step: {
         criteria,
         validation,
         executions,
+        ...(observations.length ? { observations } : {}),
         ...(completedGate ? {
           gate: {
             passed: completedGate.ok,

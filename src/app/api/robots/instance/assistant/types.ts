@@ -3,8 +3,10 @@ import type { WorkflowToolExecutionTracker } from '@/lib/services/workflow-robot
 import type { AssistantSkillSelection } from './skill-selection';
 import type { AssistantRecoveryScope } from '@/lib/services/robot-instance/assistant-recovery';
 import type { AssistantImageAsset } from '@/lib/services/robot-instance/assistant-image-content';
+import type { AssistantExecutionMode } from './execution-mode';
 
 export interface AssistantContext {
+  executionMode?: AssistantExecutionMode;
   instance: any;
   systemPrompt: string;
   customTools: any[];

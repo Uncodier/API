@@ -1,5 +1,8 @@
 import { loadRuntimeModule } from '@/lib/custom-automation/test-helpers/load-runtime-module';
 import { buildAssistantUserContent } from '@/lib/services/robot-instance/assistant-image-content';
+import { buildStepExecutionPrompt } from '../step-execution-prompt';
+import { createAssistantStepResult } from '../step-result';
+import { attachAssistantStepResult } from '../requirement-host';
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const scope = { siteId: id(1), instanceId: id(2) };
@@ -116,6 +119,9 @@ describe('post-conversation plan ownership', () => {
       './plan-ownership': f.ownership,
       '@/app/api/agents/tools/instance_plan/update/core': { updateInstancePlanCore: writes },
       './assistant-turn': { processAssistantTurn: effects },
+      './step-execution-prompt': { buildStepExecutionPrompt },
+      './step-result': { createAssistantStepResult },
+      './requirement-host': { attachAssistantStepResult },
       '@/lib/services/billing/credit-exhaustion-message': { isInsufficientCreditsError: () => false },
       '@/lib/services/skills-service': { SkillsService: {} }, './skill-selection': {},
       '@/app/api/cron/shared/step-git-prompts': {}, '@/lib/services/sandbox-service': {},

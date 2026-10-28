@@ -7,6 +7,8 @@ import * as contextModule from '@/lib/services/tool-execution-context';
 import { SILENT_CONTINUE_PROMPT } from '@/lib/services/robot-instance/assistant-respawn-policy';
 import { isInsufficientCreditsError } from '@/lib/services/billing/credit-exhaustion-message';
 import { OpenRouterBillingError, RequirementCreditsExhaustedError } from '@/lib/services/billing/openrouter-usage-billing';
+import { attachAssistantStepResult, readAssistantStepResult } from '../requirement-host';
+import { createAssistantStepResult } from '../step-result';
 
 const siteId = randomUUID();
 const instanceId = randomUUID();
@@ -148,10 +150,15 @@ describe('assistant private execution context wiring', () => {
   });
 
   function turn(creditExhausted = false, failure?: Error) {
-    const getTools = jest.fn(async (..._args: any[]) => []);
+    const getTools = jest.fn<Promise<any[]>, any[]>(async (..._args: any[]) => []);
+    const executor = jest.fn(async (_messages: any, _instance: any, _options: any) => {
+      if (failure) throw failure;
+      if (creditExhausted) throw Object.assign(new Error('Not enough credits'), { name: 'InsufficientCreditsError' });
+      return { messages: [] };
+    });
     const run = loadRuntimeModule<typeof import('../assistant-turn-core')>(
       'src/app/api/robots/instance/assistant/assistant-turn-core.ts', {
-        './requirement-host': { readRequirementAssistantHost: () => undefined },
+        './requirement-host': { readRequirementAssistantHost: () => undefined, readAssistantStepResult },
         '@/lib/services/billing/credit-exhaustion-message': { isInsufficientCreditsError },
         './utils': { getInstanceAssistantTools: getTools },
         './publish-node-binding': { resolvePublishNodeBinding: async () => null },
@@ -161,11 +168,7 @@ describe('assistant private execution context wiring', () => {
         '@/lib/services/robot-instance/assistant-respawn-policy': { SILENT_CONTINUE_PROMPT },
         '@/lib/services/robot-instance/assistant-recovery': { assertAssistantRecoveryActive: async () => undefined },
         '@/lib/services/workflow-robot/execution-tracker': {},
-        '@/lib/services/robot-instance/assistant-executor': { executeAssistantStep: async () => {
-          if (failure) throw failure;
-          if (creditExhausted) throw Object.assign(new Error('Not enough credits'), { name: 'InsufficientCreditsError' });
-          return { messages: [] };
-        } },
+        '@/lib/services/robot-instance/assistant-executor': { executeAssistantStep: executor },
         '@/lib/services/robot-instance/vision-message-images': {
           hydrateMessageImages: async (messages: unknown) => messages, dehydrateMessageImages: (messages: unknown) => messages,
         },
@@ -173,7 +176,7 @@ describe('assistant private execution context wiring', () => {
     const context: any = { initialMessage: 'Call to confirm availability', systemPrompt: 'DO NOT COPY SYSTEM',
       toolOverrides: { private: 'DO NOT COPY OVERRIDES' }, customTools: [], instance: {}, instanceNodeId: nodeId,
       executionOptions: { site_id: siteId, instance_id: instanceId } };
-    return { getTools, run, context };
+    return { getTools, run, context, executor };
   }
 
   it('keeps the durable wrapper non-replaying while forwarding to the shared core', async () => {
@@ -188,6 +191,28 @@ describe('assistant private execution context wiring', () => {
     await expect(processAssistantTurn(context, messages)).resolves.toEqual({ isDone: false, messages: [] });
     expect(processTurn).toHaveBeenCalledTimes(1);
     expect(processTurn).toHaveBeenCalledWith(context, messages);
+  });
+
+  it.each(['completed', 'failed', 'needs_input'] as const)('fences every later tool in the same batch after %s is captured', async status => {
+    const h = turn();
+    h.context.instanceNodeId = undefined;
+    const capture = createAssistantStepResult();
+    attachAssistantStepResult(h.context, capture.getResult);
+    const execute = jest.fn(async () => ({ success: true }));
+    h.getTools.mockResolvedValue([capture.tool, { name: 'tools', execute }, { name: 'sandbox_execute', execute }]);
+    h.executor.mockImplementation(async (_messages, _instance, options) => {
+      const resultTool = options.custom_tools.find((tool: any) => tool.name === 'plan_result');
+      await resultTool.execute(status === 'needs_input' ? { status, question: 'Which account?' } : { status, summary: 'Actual result.' });
+      for (const tool of options.custom_tools) {
+        expect(await tool.execute({ action: 'call', name: 'sendEmail', args: '{}' })).toMatchObject({
+          success: false, executed: false, error: { code: 'STEP_RESULT_ALREADY_REPORTED', effectStarted: false },
+        });
+      }
+      return { messages: [] };
+    });
+    await h.run(h.context, []);
+    expect(execute).not.toHaveBeenCalled();
+    expect(capture.getResult()?.status).toBe(status);
   });
 
   it('uses initial request and selected instance/node IDs, not prompt/history/overrides', async () => {

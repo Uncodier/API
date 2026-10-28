@@ -15,12 +15,16 @@ export function buildWorkflowStepPrompt(params: {
   browserReady?: boolean;
   preResponseOnly?: boolean;
   relationPrompt?: string;
+  /** Host-selected contract; absent/legacy keeps its existing tool-use obligation. */
+  resultContractVersion?: number;
 }): string {
   const skillName = params.step.skill || 'makinari-rol-workflow-step';
   const matched = SkillsService.getSkillBySlugOrName(skillName);
   const skillBlock = matched
     ? `\n\n--- SKILL: ${matched.name} ---\n${matched.content}\n--- END SKILL ---\n`
-    : '';
+    : params.step.skill
+      ? `\nAssigned skill unavailable: ${skillName}. Report that it could not be loaded; do not invent its instructions or create a replacement workflow. If its guidance is essential, report the missing dependency through plan_result.\n`
+      : '';
   const mcpHints = (params.preResponseOnly ? [] : params.step.metadata?.mcp_actions || [])
     .map((a: { tool: string; action?: string; hint?: string }) =>
       `- ${a.tool}${a.action ? ` action=${a.action}` : ''}${a.hint ? `: ${a.hint}` : ''}`)
@@ -61,6 +65,9 @@ Analyze the incoming message and provide useful context for Customer Support. On
     : params.dryRun
     ? `EXECUTION MODE: DRY RUN (test)
 This is a simulation. Read with tools if needed, but do NOT persist CRM/data writes or send messages. Simulate those side effects and include "execution_mode": "dry_run" in plan_result.data.`
+    : params.resultContractVersion === 2
+    ? `EXECUTION MODE: LIVE (real)
+This is a real production run, not a test. Execute real side effects only when authorized and required by the step (CRM writes, notifications, messages). Do not simulate or merely describe required actions as if they happened. Use the supplied context directly when it satisfies the step without external actions.`
     : `EXECUTION MODE: LIVE (real)
 This is a real production run, not a test. Call tools via tools and apply real side effects when the step instructions require them (CRM writes, notifications, messages). Do NOT simulate, mock, skip tools, or treat this as a dry run.`;
 
@@ -68,9 +75,19 @@ This is a real production run, not a test. Call tools via tools and apply real s
     ? 'Do not call business tools. Submit a factual structured plan_result using the message and context given.'
     : params.dryRun
     ? 'Use tools for reads. For writes/sends, describe the simulated outcome instead of executing them.'
+    : params.resultContractVersion === 2
+    ? 'Use tools when needed to fulfill the step, including every explicitly required action and evidence check. Tool activity alone is not a success criterion. A result based on the supplied context is valid when it satisfies the explicit contract; never fabricate tool results or skip required effects.'
     : 'For steps that match their incoming relation you MUST call tools to fulfill the step. Do not only describe what you would do and never fabricate tool results.';
 
-  return `⚠️ WORKFLOW MODE: You are executing ONE predefined workflow step. Do NOT create or update instance_plan or requirements. Do NOT plan new work.
+  return `⚠️ WORKFLOW MODE: You are executing ONE predefined workflow step. Do NOT create or update instance_plan or requirements. Do NOT plan work outside this step.
+
+APPROACH WITHIN THIS STEP:
+- Plan proportionally within the assigned instructions and expected output; a broad step may include research, execution and verification without changing the workflow graph. No coding, framework or file layout is assumed.
+- Before substantive actions, check for essential missing information. Use the given context or authorized reads where possible; otherwise report the precise missing input through plan_result rather than guessing or sending an unauthorized clarification message. A generic title is not a reason to cancel the plan.
+- Choose an effective approach among the tools permitted by this run and the explicit step contract. Additional skill discovery is optional, not a prerequisite. Loaded skills remain applicable but cannot override permissions, execution mode or the terminal protocol below.
+- When useful or requested, review the result and relevant integrations, compare a candidate improvement to the baseline, and verify useful changes within the same scope and host resource limits. Review is advisory, not a veto or a new gate; no reviewer, score or minimum number of rounds is required. Explicit criteria and validation rules remain binding.
+- Improvement does not reset retries, reopen completed steps or authorize repeating sends, payments, publications or migrations. Preserve the last valid result; do not repeat a review without changes or new evidence. Stop when no useful improvement is justified or limits require delivery.
+- Report the result, evidence and limitations with concise progress updates, not private internal reasoning. Distinguish failed, not verified and not applicable checks; never fabricate compliance with a required check.
 
 ${executionModeBlock}
 
@@ -79,7 +96,7 @@ ${toolInstruction}
 Instance ID: ${params.instanceId}
 Site ID: ${params.siteId}
 Plan ID: ${params.plan.id}
-Step: ${params.step.order} — ${params.step.title}
+${params.step.id ? `Step ID: ${params.step.id}\n` : ''}Step: ${params.step.order} — ${params.step.title}
 
 ${interpolateWorkflowText(params.relationPrompt || '', ctx)}
 
