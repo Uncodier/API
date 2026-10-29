@@ -49,3 +49,17 @@ No incluye `edit_cloud_file`, escritura concurrente sobre el requerimiento, revi
 - Billing/housekeeping focalizado: **2 suites, 21 pruebas**. La nueva migración se ejecutó en PostgreSQL PGlite desechable con casos de scope, tokens competidores, initialized sticky, revocación, borrado de instancia, ledger y denegación de roles públicos.
 - TypeScript completo con `--noEmit --incremental false`: **exit 0**. `git diff --check` y links locales correctos.
 - El acceso al proveedor no se probó live: no se inició una VM ni se cambió la base remota para validar esta corrección.
+
+## Corrección posterior: indisponibilidad de permisos (503)
+
+Base revisada: `527e0238`. El fallo observado de `list_files` ocurrió antes de la lectura. Las consultas de diagnóstico de sólo lectura confirmaron propietario, acceso efectivo y migración instalada. En el intervalo del incidente hubo una llamada a `site_user_has_effective_access` de **4857 ms**; el código anterior compartía **5000 ms** entre esa RPC y las consultas posteriores. Esto evidencia falta de margen, pero los logs antiguos no identifican de forma concluyente qué subconsulta agotó el plazo de ese turno.
+
+La corrección local asigna **10 s por fase** (acceso efectivo, sitio, roles), con un solo reintento de la secuencia completa exclusivamente ante timeouts, errores de transporte o códigos transitorios conocidos. Si falla la comprobación de roles, el reintento vuelve a verificar acceso efectivo; no reutiliza autorizaciones parciales. No hay caché positiva ni fallback que permita acceso sin verificar.
+
+Un propietario confirmado por la RPC y `sites.user_id` no consulta `site_members`/`site_ownership`: un error ajeno de membresía no puede vetarlo. Los demás actores conservan sus restricciones. Denegaciones, errores de esquema/privilegios y cardinalidad no se reintentan. Un transporte que ignore el abort también queda limitado por `Promise.race`.
+
+Los logs nuevos sólo incluyen fase, categoría, código conocido, intento y duración, sin IDs de actores, credenciales, URL ni mensajes crudos de DB. La herramienta, su provisión y sus efectos están fuera del bloque de reintento.
+
+Se verificó el código real corregido contra la base mediante una llamada de permisos de sólo lectura: propietario confirmado en **1914 ms**. No se abrió ni leyó un sandbox como parte de esa prueba. Esta corrección **no requiere otra migración**, pero sí desplegar el código; no se aplicó SQL remoto ni se hizo commit/push en esta tarea.
+
+Regresiones finales de esta corrección: `test:ai` **76 suites / 1176 pruebas**, `test:assistant-runtime` **49 suites / 768 pruebas** (585 CJS + 183 ESM), `test:harness` **227 suites / 3598 pruebas**, TypeScript completo **exit 0** y `git diff --check` correctos. Se incluyen caída persistente, respuestas tardías, propietario con membresía inaccesible, revocación entre intentos, reglas de pantalla cambiadas, redacción de diagnósticos y `read_files` real con provider simulado, confirmando una única lectura y ninguna provisión ante permisos fallidos. Las suites se solapan; no sustituyen la prueba E2E después del despliegue.

@@ -1,4 +1,5 @@
 import toolScreenMap from './tool-screen-map.json';
+import { readScreenAccess, ScreenAccessReadError } from './screen-access-read';
 
 /** Host-owned scope captured in a closure; never read from model/tool arguments. */
 export type ToolScreenScope = { siteId: string; userId?: string };
@@ -76,32 +77,51 @@ export function guardFinalToolCatalog<T extends { name?: string; execute?: (...a
  */
 export async function loadToolScreenAccess(scope?: ToolScreenScope): Promise<ToolScreenAccess | null> {
   if (!scope || !UUID.test(scope.siteId) || !scope.userId || !UUID.test(scope.userId)) return null;
+  const { siteId, userId } = scope;
   try {
     // Lazy import also keeps screen-independent offline tools free of DB/env initialization.
     const { supabaseAdmin } = await import('@/lib/database/supabase-client');
-    const signal = AbortSignal.timeout(5_000);
-    const effective = await supabaseAdmin.rpc('site_user_has_effective_access', {
-      p_site_id: scope.siteId, p_user_id: scope.userId,
-    }).abortSignal(signal);
-    if (signal.aborted || effective.error) throw new ToolScreenAccessUnavailable();
-    if (effective.data !== true) return null;
-    const [site, ownership, membership] = await Promise.all([
-      supabaseAdmin.from('sites').select('user_id').eq('id', scope.siteId).abortSignal(signal).maybeSingle(),
-      supabaseAdmin.from('site_ownership').select('site_id').eq('site_id', scope.siteId)
-        .eq('user_id', scope.userId).abortSignal(signal).maybeSingle(),
-      supabaseAdmin.from('site_members').select('role, blocked_screens').eq('site_id', scope.siteId)
-        .eq('user_id', scope.userId).eq('status', 'active').abortSignal(signal).maybeSingle(),
-    ]);
-    if (signal.aborted || site.error || ownership.error || membership.error) throw new ToolScreenAccessUnavailable();
-    if (!site.data) return null;
-    const isAdmin = site.data.user_id === scope.userId || Boolean(ownership.data)
-      || ['owner', 'admin'].includes(membership.data?.role);
-    if (isAdmin) return { isAdmin: true, blockedScreens: [] };
-    if (!membership.data) return null;
-    const blocked = membership.data.blocked_screens;
-    // Legacy null means no blocked screens. Malformed permission data never grants access.
-    if (blocked != null && (!Array.isArray(blocked) || blocked.some(screen => typeof screen !== 'string'))) return null;
-    return { isAdmin: false, blockedScreens: blocked ?? [] };
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const started = Date.now();
+      try {
+        // A retry re-evaluates effective access from scratch. No cached success
+        // survives revocation, trial expiry, a deleted site or a failed attempt.
+        const effective = await readScreenAccess('effective_access', signal =>
+          supabaseAdmin.rpc('site_user_has_effective_access', { p_site_id: siteId, p_user_id: userId }).abortSignal(signal));
+        if (effective !== true) return null;
+        const site = await readScreenAccess('site', signal =>
+          supabaseAdmin.from('sites').select('user_id').eq('id', siteId).abortSignal(signal).maybeSingle());
+        if (!site) return null;
+        // Effective access + canonical ownership are sufficient. An unrelated
+        // membership-table outage must not veto a verified site owner.
+        if (site.user_id === userId) return { isAdmin: true, blockedScreens: [] };
+        const roleData = await readScreenAccess('roles', async signal => {
+          const [ownership, membership] = await Promise.all([
+            supabaseAdmin.from('site_ownership').select('site_id').eq('site_id', siteId)
+              .eq('user_id', userId).abortSignal(signal).maybeSingle(),
+            supabaseAdmin.from('site_members').select('role, blocked_screens').eq('site_id', siteId)
+              .eq('user_id', userId).eq('status', 'active').abortSignal(signal).maybeSingle(),
+          ]);
+          const failed = [ownership, membership].find(result => result.error);
+          return { data: { ownership: ownership.data, membership: membership.data }, error: failed?.error, status: failed?.status };
+        });
+        if (roleData.ownership || ['owner', 'admin'].includes(roleData.membership?.role)) return { isAdmin: true, blockedScreens: [] };
+        if (!roleData.membership) return null;
+        const blocked = roleData.membership.blocked_screens;
+        if (blocked != null && (!Array.isArray(blocked) || blocked.some(screen => typeof screen !== 'string'))) return null;
+        return { isAdmin: false, blockedScreens: blocked ?? [] };
+      } catch (error) {
+        const retrying = attempt === 1 && error instanceof ScreenAccessReadError && error.retryable;
+        console.warn('[ToolScreenAccess] Permission read unavailable', {
+          phase: error instanceof ScreenAccessReadError ? error.phase : 'initialization',
+          reason: error instanceof ScreenAccessReadError ? error.reason : 'backend',
+          ...(error instanceof ScreenAccessReadError && error.backendCode ? { code: error.backendCode } : {}),
+          attempt, retrying, elapsed_ms: Date.now() - started,
+        });
+        if (!retrying) throw new ToolScreenAccessUnavailable();
+      }
+    }
+    throw new ToolScreenAccessUnavailable();
   } catch {
     throw new ToolScreenAccessUnavailable();
   }

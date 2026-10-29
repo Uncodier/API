@@ -6,6 +6,7 @@ import {
   assertToolScreenAccess, guardFinalToolCatalog, guardToolScreen, loadToolScreenAccess,
   ToolScreenAccessDenied, ToolScreenAccessUnavailable,
 } from '../screen-access';
+import { SCREEN_ACCESS_READ_TIMEOUT_MS } from '../screen-access-read';
 
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn(), rpc: jest.fn() } }));
 jest.mock('@/lib/services/embeddings-service', () => ({ EmbeddingsService: { generateEmbeddings: jest.fn() } }));
@@ -48,6 +49,7 @@ function expectNoPrivateDetails(value: unknown) {
 
 beforeEach(() => {
   jest.resetAllMocks();
+  jest.spyOn(console, 'warn').mockImplementation(() => {});
   effective = { data: true, error: null };
   records = {
     sites: { data: { user_id: otherUser }, error: null },
@@ -77,6 +79,7 @@ it.each(['rpc', 'sites', 'site_ownership', 'site_members'])('classifies %s respo
   expect(error).not.toHaveProperty('cause');
   expect(error).not.toHaveProperty('effectStarted');
   expectNoPrivateDetails({ ...error, message: error.message, stack: error.stack });
+  expectNoPrivateDetails(jest.mocked(console.warn).mock.calls);
 });
 
 it.each(['rpc throw', 'rpc rejection', 'query throw', 'query rejection'])('sanitizes %s as unavailable', async failure => {
@@ -147,22 +150,25 @@ it.each(['missing site', 'missing member', 'malformed blocked screens', 'malform
   expect(target.execute).not.toHaveBeenCalled();
 });
 
-it('shares the bounded abort signal and binds every membership lookup to the trusted scope', async () => {
-  const signal = new AbortController().signal;
-  const timeout = jest.spyOn(AbortSignal, 'timeout').mockReturnValue(signal);
+it('gives dependent phases separate deadlines and binds every role lookup to the trusted scope', async () => {
+  const signals = Array.from({ length: 3 }, () => new AbortController().signal);
+  const timeout = jest.spyOn(AbortSignal, 'timeout')
+    .mockReturnValueOnce(signals[0]).mockReturnValueOnce(signals[1]).mockReturnValueOnce(signals[2]);
   const abortSignal = jest.fn(async () => effective);
   (supabaseAdmin.rpc as jest.Mock).mockReturnValue({ abortSignal });
   await expect(loadToolScreenAccess(scope)).resolves.toEqual({ isAdmin: false, blockedScreens: [] });
-  expect(timeout).toHaveBeenCalledWith(5_000);
+  expect(timeout).toHaveBeenCalledTimes(3);
+  expect(timeout.mock.calls).toEqual(Array(3).fill([SCREEN_ACCESS_READ_TIMEOUT_MS]));
   expect(supabaseAdmin.rpc).toHaveBeenCalledWith('site_user_has_effective_access', { p_site_id: scope.siteId, p_user_id: scope.userId });
-  expect(abortSignal).toHaveBeenCalledWith(signal);
+  expect(abortSignal).toHaveBeenCalledWith(signals[0]);
+  expect(queries.sites.abortSignal).toHaveBeenCalledWith(signals[1]);
   expect(queries.sites.eq).toHaveBeenCalledWith('id', scope.siteId);
   for (const table of ['site_ownership', 'site_members']) {
     expect(queries[table].eq).toHaveBeenCalledWith('site_id', scope.siteId);
     expect(queries[table].eq).toHaveBeenCalledWith('user_id', scope.userId);
+    expect(queries[table].abortSignal).toHaveBeenCalledWith(signals[2]);
   }
   expect(queries.site_members.eq).toHaveBeenCalledWith('status', 'active');
-  for (const query of Object.values(queries)) expect(query.abortSignal).toHaveBeenCalledWith(signal);
 });
 
 it.each(['rpc', 'membership'])('does not grant admin access when the signal times out during %s even if DB returns success', async phase => {
