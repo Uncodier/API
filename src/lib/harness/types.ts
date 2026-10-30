@@ -92,7 +92,11 @@ export interface SessionLimits {
 
 export interface SessionRequest {
   objective: string;
-  repository: { url: string; ref?: string };
+  repository?: { url: string; ref?: string };
+  /** Immutable host-selected resource family; legacy sessions are workspace. */
+  executionEnvironment?: 'cloud' | 'workspace';
+  /** Cloud document scope stays pinned if a runner is archived/replaced. */
+  cloudInstanceId?: string;
   limits: SessionLimits;
   /** Server-configured capabilities/credentials profile identifier; not credentials. */
   profile?: string;

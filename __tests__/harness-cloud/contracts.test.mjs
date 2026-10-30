@@ -14,7 +14,7 @@ test('covers search, writes, reads, replacement, patching and stale-version conf
     assert.equal(spec.requiresRequirement, false);
     assert.equal(spec.requiresRepository, false);
     for (const assertion of ['zero_sandbox_provider_calls', 'no_workspace_fallback', 'trusted_actor_scope']) assert.ok(spec.assertions.includes(assertion));
-    assert.ok(spec.blocker.endsWith('NOT_IMPLEMENTED'));
+    assert.equal(spec.blocker, 'CLOUD_LIVE_VERIFICATION_REQUIRED');
   }
 });
 
@@ -27,7 +27,7 @@ test('read-after-write contracts demand exact independent UTF-8 hashes and byte 
   }
 });
 
-test('unimplemented capabilities are blocked, not skipped, executed or passed', () => {
+test('unverified production capabilities are blocked, not skipped, executed or passed', () => {
   const report = cloudContractReport();
   assert.equal(report.state, 'blocked');
   assert.equal(report.healthGreen, false);

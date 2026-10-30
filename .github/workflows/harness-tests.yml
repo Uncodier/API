@@ -29,3 +29,4 @@ jobs:
       - run: npm run test:harness
       - run: npm run test:harness:agent
       - run: npm run test:harness:cloud:unit
+      - run: npm run test:harness:cloud

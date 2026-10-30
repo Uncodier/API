@@ -7,6 +7,7 @@ export interface RequirementAssistantHost {
   assertActive(): Promise<void>;
   boundary: AssistantExecutionBoundary;
   tools: any[];
+  environment?: 'cloud' | 'workspace';
   refreshContext(): Promise<string>;
 }
 const hosts = new WeakMap<AssistantContext, RequirementAssistantHost>();
@@ -30,8 +31,19 @@ export function readRequirementAssistantHost(context: AssistantContext): Require
 }
 
 /** Apply before router closures capture tools. Do not let a runner create a competing owner. */
+export function filterRequirementEnvironmentTools(environment: RequirementAssistantHost['environment'], tools: RoutedTool[]): RoutedTool[] {
+  const workspaceNames = new Set(['read_files', 'list_files', 'search', 'apply_patch', 'exec', 'process_status', 'process_stop',
+    'source_archive', 'deployment_create', 'deployment_environment_sync', 'deployment_status', 'tracking_install', 'platform_key_provision']);
+  // Filter before the router captures the catalog: the wrong resource family is
+  // not searchable or callable, rather than relying on a prompt to avoid it.
+  return tools.filter(tool => environment === 'cloud'
+    ? !workspaceNames.has(tool.name) && !tool.name.startsWith('sandbox_') && !['activate_coding_agents', 'update_repo'].includes(tool.name)
+    : environment === 'workspace' ? !['read_cloud_file', 'list_cloud_files', 'write_cloud_file'].includes(tool.name) : true);
+}
+
 export function guardRequirementAssistantTools(host: RequirementAssistantHost, tools: RoutedTool[]): RoutedTool[] {
-  return tools.map(tool => ({ ...tool, execute: async (args: any) => {
+  const selected = filterRequirementEnvironmentTools(host.environment, tools);
+  return selected.map(tool => ({ ...tool, execute: async (args: any) => {
     await host.assertActive();
     if (['activate_coding_agents', 'update_repo'].includes(tool.name) ||
       (tool.name === 'instance_plan' && args?.action !== 'list') ||

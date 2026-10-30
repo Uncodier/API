@@ -162,6 +162,8 @@ describe('assistant private execution context wiring', () => {
       'src/app/api/robots/instance/assistant/assistant-turn-core.ts', {
         './requirement-host': { readRequirementAssistantHost: () => undefined, readAssistantStepResult },
         './workspace-tools': { createAssistantWorkspaceTools },
+        './cloud-context': { resolveAssistantFileEnvironment: jest.fn(async () => ({})) },
+        '@/lib/cloud-files/tools': { createCloudFileTools: jest.fn(() => []) },
         '@/lib/services/billing/credit-exhaustion-message': { isInsufficientCreditsError },
         './utils': { getInstanceAssistantTools: getTools },
         './publish-node-binding': { resolvePublishNodeBinding: async () => null },

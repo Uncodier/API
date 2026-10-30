@@ -13,7 +13,7 @@ import { assertPublishNodeToolAllowed, enforcePublishDestinationArgs } from '@/l
 import { buildToolExecutionContext } from '@/lib/services/tool-execution-context';
 import { SILENT_CONTINUE_PROMPT } from '@/lib/services/robot-instance/assistant-respawn-policy';
 import { CONVERSATION_RECOVERY_INSTRUCTION, getConversationRecoveryTools } from './conversation-recovery-tools';
-import { readRequirementAssistantHost, guardRequirementAssistantTools, readAssistantStepResult } from './requirement-host';
+import { readRequirementAssistantHost, guardRequirementAssistantTools, filterRequirementEnvironmentTools, readAssistantStepResult } from './requirement-host';
 
 function selectExecutionIntent(initialMessage: string, messages: any[]): string | undefined {
   const usable = (text: unknown): text is string => typeof text === 'string'
@@ -51,8 +51,24 @@ export async function processAssistantTurn(
   }) : null;
   // Trusted action scope, not a model flag or the presence of a requirement.
   // Requirement runners and workflow/node hosts already own their environments.
+  const standaloneFiles = !requirementHost && context.recoveryScope && !context.instanceNodeId &&
+    !context.preResponseOnly && !context.conversationRecoveryOnly;
+  const fileScope = { instanceId: context.executionOptions.instance_id, siteId: context.executionOptions.site_id,
+    userId: context.executionOptions.user_id, requirementId: context.executionOptions.requirement_id };
+  const fileContext = standaloneFiles ? await (await import('./cloud-context')).resolveAssistantFileEnvironment(fileScope) : {};
+  const assertFileContext = async () => {
+    await assertAssistantRecoveryActive(context.recoveryScope!);
+    const current = await (await import('./cloud-context')).resolveAssistantFileEnvironment(fileScope);
+    if (current.environment !== fileContext.environment || current.requirementId !== fileContext.requirementId) {
+      throw new Error('Requirement file binding changed; refresh the conversation before file operations');
+    }
+  };
+  const cloudTools = standaloneFiles && fileContext.environment !== 'workspace'
+    ? (await import('@/lib/cloud-files/tools')).createCloudFileTools({ ...fileScope, requirementId: fileContext.requirementId },
+      assertFileContext) : [];
   const workspaceTools = !requirementHost && context.recoveryScope && !context.instanceNodeId &&
     !context.preResponseOnly && !context.conversationRecoveryOnly &&
+    fileContext.environment !== 'cloud' &&
     !context.customTools.some(tool => ['list_files', 'read_files', 'sandbox_list_files', 'sandbox_read_file'].includes(tool?.name))
     ? (await import('./workspace-tools')).createAssistantWorkspaceTools({ instanceId: context.executionOptions.instance_id,
       siteId: context.executionOptions.site_id, userId: context.executionOptions.user_id },
@@ -68,7 +84,7 @@ export async function processAssistantTurn(
         context.executionOptions.site_id,
         context.executionOptions.user_id,
         context.executionOptions.instance_id,
-        requirementHost ? [...context.customTools, ...requirementHost.tools] : [...context.customTools, ...workspaceTools],
+        requirementHost ? [...context.customTools, ...requirementHost.tools] : [...context.customTools, ...workspaceTools, ...cloudTools],
         context.agentType,
         context.userPhone,
         context.executionOptions.requirement_id,
@@ -88,7 +104,8 @@ export async function processAssistantTurn(
           instanceId: context.executionOptions.instance_id,
           actionId: context.recoveryScope.userMessageLogId,
         } : undefined,
-        requirementHost ? tools => guardRequirementAssistantTools(requirementHost, tools) : undefined,
+        requirementHost ? tools => guardRequirementAssistantTools(requirementHost, tools) : fileContext.environment
+          ? tools => filterRequirementEnvironmentTools(fileContext.environment, tools) : undefined,
       );
   const trackedTools = context.toolExecutionTracker && !context.conversationRecoveryOnly
     ? instrumentWorkflowTools(availableTools, context.toolExecutionTracker)
@@ -131,6 +148,10 @@ export async function processAssistantTurn(
   if (requirementHost) {
     options.system_prompt += `\n\nCURRENT REQUIREMENT EXECUTION CONTEXT\n${await requirementHost.refreshContext()}`;
   }
+  if (standaloneFiles) options.system_prompt += fileContext.environment === 'cloud'
+    ? '\nThis requirement produces private cloud documents and Git evidence, not an app. Use cloud file tools scoped to its requirement_id; do not start or search a sandbox.'
+    : fileContext.environment === 'workspace' ? '\nThis requirement uses its workspace. Do not search cloud files for its repository files.'
+      : '\nCloud file tools manage private documents without a VM. Workspace tools explicitly request an executable filesystem. Choose the source requested by the user; never search both by default.';
   if (context.conversationRecoveryOnly) {
     // A conversation outcome must not be logged or billed as progress on a plan step.
     delete options.plan_id;

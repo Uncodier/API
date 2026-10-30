@@ -587,6 +587,7 @@ export function hoistRoutedToolResult(result: unknown): { results?: unknown; ans
 export const DEFAULT_ALWAYS_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
   // Host-bound requirement capabilities share the same routing/permission guards.
   'read_files', 'list_files', 'search', 'apply_patch', 'exec', 'process_status', 'process_stop',
+  'read_cloud_file', 'list_cloud_files', 'write_cloud_file',
   'tracking_install', 'source_archive', 'deployment_trigger', 'deployment_status',
   'deployment_create', 'deployment_environment_sync', 'platform_key_provision',
   'capability_manifest', 'requirement_context', 'requirement_progress', 'requirement_plan',

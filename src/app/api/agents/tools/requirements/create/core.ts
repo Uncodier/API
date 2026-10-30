@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { createRequirement } from '@/lib/database/requirement-db';
 import { shouldUseRemoteApi, invokeRemoteTool } from '@/lib/mcp/remote-client';
+import { RequirementEnvironmentError, resolveRequirementEnvironmentInput } from '@/lib/services/requirement-environment';
 import {
   normalizeGitBindingInput,
   resolveDefaultGitBinding,
@@ -9,6 +10,7 @@ import {
 } from '@/lib/services/requirement-git-binding';
 import {
   PartialRequirementMetadataSchema,
+  RequirementEnvironmentSchema,
   verifyGitBindingReachable,
 } from '../git-binding-schema';
 
@@ -19,6 +21,7 @@ const CreateRequirementSchema = z.object({
   priority: z.enum(['high', 'medium', 'low']).optional().default('medium'),
   status: z.enum(['backlog', 'validated', 'in-progress', 'on-review', 'done', 'canceled']).optional().default('backlog'),
   type: z.string().optional().default('task'),
+  execution_environment: RequirementEnvironmentSchema.optional(),
   budget: z.number().optional(),
   cron: z.string().optional(),
   cycle: z.string().optional(),
@@ -54,6 +57,10 @@ export async function createRequirementCore(params: any, originatingInstanceId?:
   }
 
   const validated = CreateRequirementSchema.parse(params);
+  const executionEnvironment = resolveRequirementEnvironmentInput(validated.metadata, validated.execution_environment);
+  if (executionEnvironment === 'cloud' && validated.metadata && Object.prototype.hasOwnProperty.call(validated.metadata, 'git')) {
+    throw new RequirementEnvironmentError('metadata.git is workspace-only; cloud document Git persistence is host-managed');
+  }
   const effectiveUserId = await resolveUserId(validated.site_id, validated.user_id);
 
   if (originatingInstanceId) {
@@ -69,21 +76,23 @@ export async function createRequirementCore(params: any, originatingInstanceId?:
     }
   }
 
-  // Auto-seed metadata.git when the caller did not provide a full binding,
-  // so every new requirement has an explicit repo target that the sync
-  // pipeline can validate without re-reading env vars.
+  // Workspace app bindings are not cloud document persistence. Cloud must not
+  // resolve an applications repository or run its Git reachability check.
   const incomingMetadata = (validated.metadata ?? {}) as Record<string, unknown>;
-  const incomingGit = (incomingMetadata.git ?? {}) as Partial<GitBinding>;
-  const defaultBinding = resolveDefaultGitBinding(validated.type);
-  const seededBinding =
-    normalizeGitBindingInput(incomingGit, defaultBinding) ?? defaultBinding;
-  const reachErr = await verifyGitBindingReachable(seededBinding);
-  if (reachErr && process.env.REQUIREMENT_GIT_STRICT === 'true') {
-    throw new Error(`metadata.git not reachable: ${reachErr}`);
+  let seededBinding: GitBinding | undefined;
+  if (executionEnvironment === 'workspace') {
+    const incomingGit = (incomingMetadata.git ?? {}) as Partial<GitBinding>;
+    const defaultBinding = resolveDefaultGitBinding(validated.type);
+    seededBinding = normalizeGitBindingInput(incomingGit, defaultBinding) ?? defaultBinding;
+    const reachErr = await verifyGitBindingReachable(seededBinding);
+    if (reachErr && process.env.REQUIREMENT_GIT_STRICT === 'true') {
+      throw new Error(`metadata.git not reachable: ${reachErr}`);
+    }
   }
   const seededMetadata: Record<string, unknown> = {
     ...incomingMetadata,
-    git: seededBinding,
+    execution_environment: executionEnvironment,
+    ...(seededBinding ? { git: seededBinding } : {}),
     // Persist ownership in the INSERT itself. A later update leaves a window
     // in which the scheduler sees an unassigned requirement and creates a runner.
     ...(originatingInstanceId ? {

@@ -19,7 +19,11 @@ export function validateSession(session: HarnessSession): void {
       !integer(limits.maxTurns, 1, 1000) || !integer(limits.maxOutputTokens, 1, 131072) ||
       !integer(limits.maxTotalTokens, 1, 100_000_000) || !integer(limits.maxActiveMs, 1, 86_400_000) ||
       typeof session.request.objective !== 'string' || !session.request.objective.length || session.request.objective.length > 24_000 ||
-      typeof session.request.repository?.url !== 'string' || !session.request.repository.url.length || session.request.repository.url.length > 4000 ||
+      (session.request.executionEnvironment === 'cloud'
+        ? session.request.repository !== undefined || session.workspace !== undefined
+        : typeof session.request.repository?.url !== 'string' || !session.request.repository.url.length || session.request.repository.url.length > 4000) ||
+      (session.request.executionEnvironment !== undefined && !['cloud', 'workspace'].includes(session.request.executionEnvironment)) ||
+      (session.request.cloudInstanceId !== undefined && !/^[0-9a-fA-F-]{36}$/.test(session.request.cloudInstanceId)) ||
       typeof session.createdAt !== 'string' || typeof session.updatedAt !== 'string' ||
       !Array.isArray(session.messages) || session.messages.length > 10_000 ||
       !Array.isArray(session.uncertainOperations) || session.uncertainOperations.length > 10_000 ||

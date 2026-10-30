@@ -1,5 +1,9 @@
 # Herramientas de archivos en el asistente normal
 
+Actualización posterior: [Cloud files](CLOUD_FILES.md) añade documentos privados,
+versiones y evidencia Git sin sandbox. Este documento describe el filesystem del
+workspace; no confundir esas herramientas con las nuevas herramientas cloud.
+
 Estado: corrección local sobre `4779e6e9`; **requiere migración y despliegue**. No se han aplicado cambios de producción en esta tarea.
 
 ## Diagnóstico

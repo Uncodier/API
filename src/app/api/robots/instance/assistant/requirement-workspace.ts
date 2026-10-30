@@ -49,6 +49,10 @@ export async function executeRequirementAssistantWorkspace(id: string, scope: Se
   const owner = randomUUID();
   let session = await store.claim(id, scope.siteId, owner, 300);
   if (!session) return { status: 'not_claimed', continue: false };
+  if (!session.request.repository || session.request.executionEnvironment === 'cloud') {
+    await store.release(id, scope.siteId, owner);
+    throw new Error('Workspace execution requires a workspace-bound session');
+  }
   const knownSecrets = new Set<string>();
   let currentHost: Awaited<ReturnType<typeof loadSessionConfiguration>> | undefined;
   const redact = (text: string) => createRedactor([...knownSecrets, ...(currentHost?.configuration.redactionValues || [])])(text);
@@ -78,7 +82,7 @@ export async function executeRequirementAssistantWorkspace(id: string, scope: Se
     const host = await loadSessionConfiguration(createHostStateStore(), { id, siteId: scope.siteId, owner });
     currentHost = host;
     host.configuration.redactionValues.forEach(value => knownSecrets.add(value));
-    const profile = options.profile || resolveHostProfile(session.request.profile, scope.siteId, session.request.repository.url);
+    const profile = options.profile || resolveHostProfile(session.request.profile, scope.siteId, session.request.repository!.url);
     if (profile && profile.userId !== scope.userId) throw new Error('Profile owner changed');
     if (profile?.git) knownSecrets.add(profile.git.password);
     if (profile?.deployment) {
@@ -105,7 +109,7 @@ export async function executeRequirementAssistantWorkspace(id: string, scope: Se
       }
     }
     host.configuration.redactionValues.forEach(value => knownSecrets.add(value));
-    workspace = await withinDeadline(deadline, () => (options.openWorkspace || openWorkspace)({ sessionId: id, siteId: scope.siteId, repository: session!.request.repository,
+    workspace = await withinDeadline(deadline, () => (options.openWorkspace || openWorkspace)({ sessionId: id, siteId: scope.siteId, repository: session!.request.repository!,
       existing: session!.workspace, signal: deadline, assertActive,
       onOwnedHandle: sandbox => { ownedHandle = sandbox; },
       cleanupCreated: async (sandbox) => {

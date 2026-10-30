@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { updateRequirement, getRequirementById } from '@/lib/database/requirement-db';
 import { shouldUseRemoteApi, invokeRemoteTool } from '@/lib/mcp/remote-client';
+import { RequirementEnvironmentError, resolveRequirementEnvironment, resolveRequirementEnvironmentInput } from '@/lib/services/requirement-environment';
 import {
   parseGitBindingFromMetadata,
   normalizeGitBindingInput,
@@ -9,6 +10,7 @@ import {
 import { canCloseRequirement } from '@/lib/services/requirement-flow-engine';
 import {
   PartialRequirementMetadataSchema,
+  RequirementEnvironmentSchema,
   verifyGitBindingReachable,
 } from '../git-binding-schema';
 import { checkAndResetCronAttempts } from '@/lib/services/requirement-cron-reset';
@@ -25,6 +27,7 @@ const UpdateRequirementSchema = z.object({
   status: z.enum(['backlog', 'validated', 'in-progress', 'on-review', 'done', 'canceled']).optional(),
   completion_status: z.enum(['pending', 'completed', 'rejected']).optional(),
   type: z.string().optional(),
+  execution_environment: RequirementEnvironmentSchema.optional(),
   budget: z.number().finite().nonnegative().nullable().optional(),
   cron: z.string().optional(),
   cycle: z.string().optional(),
@@ -44,7 +47,7 @@ export async function updateRequirementCore(params: any, commandSource?: Require
   const validated = UpdateRequirementSchema.parse(params);
 
 
-  const { requirement_id, site_id, ...validatedUpdateFields } = validated;
+  const { requirement_id, site_id, execution_environment, ...validatedUpdateFields } = validated;
   const updateFields = { ...validatedUpdateFields };
 
   const existing = await getRequirementById(requirement_id);
@@ -54,6 +57,24 @@ export async function updateRequirementCore(params: any, commandSource?: Require
 
   if (existing.site_id !== site_id) {
     throw new Error('No tienes permiso para actualizar este requerimiento');
+  }
+
+  // Commands cannot safely propagate a mode switch to an existing session.
+  // Make the mode immutable from creation, including metadata-only patches.
+  const currentEnvironment = resolveRequirementEnvironment(existing.metadata);
+  if (currentEnvironment === 'cloud' && validated.metadata && Object.prototype.hasOwnProperty.call(validated.metadata, 'git')) {
+    throw new RequirementEnvironmentError('metadata.git is workspace-only; cloud document Git persistence is host-managed');
+  }
+  const hasMetadataEnvironment = validated.metadata != null &&
+    Object.prototype.hasOwnProperty.call(validated.metadata, 'execution_environment');
+  const requestedEnvironment = resolveRequirementEnvironmentInput(validated.metadata, execution_environment);
+  if ((execution_environment !== undefined || hasMetadataEnvironment) && requestedEnvironment !== currentEnvironment) {
+    throw new RequirementEnvironmentError('execution_environment is immutable after requirement creation; create a new requirement', 409);
+  }
+  // A same-mode assertion is not a persisted mutation or a command patch field.
+  // Interactive metadata remains disallowed by the command schema as before.
+  if (!commandSource && hasMetadataEnvironment && updateFields.metadata) {
+    delete updateFields.metadata.execution_environment;
   }
 
   if (commandSource) {

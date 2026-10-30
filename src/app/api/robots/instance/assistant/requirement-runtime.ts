@@ -2,6 +2,8 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { createSession, sessionRequestSchema } from '@/lib/harness/session';
 import { createSessionStore } from '@/lib/harness/store';
 import { executeRequirementAssistantWorkspace } from './requirement-workspace';
+import { resolveRequirementEnvironment } from '@/lib/services/requirement-environment';
+import { runCloudRequirementCycle } from './requirement-cloud';
 import { openWorkspace, adoptRequirementWorkspace, shellQuote } from '@/lib/harness/workspace';
 import { assertRequirementRun, finishRequirementCycle } from '@/lib/harness/requirement-scheduler';
 import { loadRequirementContext, formatRequirementContext, loadRequirementSnapshot, formatRequirementSnapshot } from '@/lib/harness/requirement-context';
@@ -51,6 +53,13 @@ export async function runRequirementCycle(run: RequirementRun) {
       .eq('id', run.requirementId).eq('site_id', run.siteId).eq('user_id', run.userId).single();
     if (privateError || !privateRequirement) throw new Error('Requirement execution configuration unavailable');
     const hostContext = { ...context, requirement: { ...context.requirement, metadata: privateRequirement.metadata, type: privateRequirement.type } };
+    if (resolveRequirementEnvironment(privateRequirement.metadata) === 'cloud') {
+      const result = await runCloudRequirementCycle(run,
+        [context.requirement.title, context.requirement.instructions, context.requirement.description].filter(Boolean).join('\n\n'),
+        assertActive, async () => formatRequirementSnapshot(await loadRequirementSnapshot(run)));
+      await finishRequirementCycle(run, result.status, result.session?.reason || '', summary(result.session));
+      return { reqId: run.requirementId, sessionId: run.sessionId, status: result.status };
+    }
     const configured = await buildRequirementProfile(run, hostContext);
     repoUrl = configured.repository.url.replace(/\.git$/, '') + `/tree/${configured.branch}`;
     let session = await store.load(run.sessionId, run.siteId);
@@ -66,10 +75,10 @@ export async function runRequirementCycle(run: RequirementRun) {
       await store.create(initial, { siteId: run.siteId, userId: run.userId });
       session = initial;
     }
-    if (session.request.requirementId !== run.requirementId || session.request.repository.url !== configured.repository.url) {
+    if (session.request.executionEnvironment === 'cloud' || session.request.requirementId !== run.requirementId || session.request.repository?.url !== configured.repository.url) {
       throw new Error('Requirement session binding changed');
     }
-    const persistedRepository = session.request.repository;
+    const persistedRepository = session.request.repository!;
     // Prefer the saved VM, including uncommitted files, over cloning origin again.
     const { data: previous, error } = await supabaseAdmin.from('requirement_status').select('active_sandbox_id')
       .eq('requirement_id', run.requirementId).eq('site_id', run.siteId).eq('instance_id', run.instanceId)

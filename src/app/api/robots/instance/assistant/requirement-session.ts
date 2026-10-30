@@ -12,7 +12,7 @@ export interface RequirementAssistantSliceInput {
   store: SessionStore;
   owner: string;
   run: RequirementRun;
-  workspace: Workspace;
+  workspace?: Workspace;
   tools: HarnessTool[];
   artifacts: ArtifactStore;
   redact: (value: string) => string;
@@ -31,7 +31,10 @@ export async function runRequirementAssistantSlice(input: RequirementAssistantSl
   if (input.session.id !== run.sessionId || input.session.request.requirementId !== run.requirementId) {
     throw new Error('Assistant requirement checkpoint scope mismatch');
   }
-  const session = { ...input.session, workspace: input.workspace.ref };
+  const session = { ...input.session, ...(input.workspace ? { workspace: input.workspace.ref } : {}) };
+  const environment = session.request.executionEnvironment ?? 'workspace';
+  if ((environment === 'cloud' && (input.workspace || session.workspace)) ||
+      (environment === 'workspace' && !input.workspace)) throw new Error('Requirement environment mismatch');
   const adapter = createRequirementExecutionBoundary({
     session, store: input.store, owner: input.owner, run, artifacts: input.artifacts,
     redact: input.redact, assertActive: input.assertExecution, signal: input.signal, tools: input.tools,
@@ -51,10 +54,11 @@ export async function runRequirementAssistantSlice(input: RequirementAssistantSl
     { requirementId: run.requirementId, assertActive: input.assertExecution });
   attachRequirementAssistantHost(context, {
     assertActive: input.assertExecution, boundary: adapter.boundary,
-    tools: [...tools, ...adapter.controlTools],
+    tools: [...tools, ...adapter.controlTools], environment,
     refreshContext: async () => input.redact([
       input.context || '',
-      `Owned workspace: ${input.workspace.ref.root}. Its existence does not require repository changes or deployment.`,
+      input.workspace ? `Owned workspace: ${input.workspace.ref.root}. Its existence does not require repository changes or deployment.`
+        : 'Document requirement: use list_cloud_files, read_cloud_file and write_cloud_file. Default scope is this requirement. No app, checkout, shell or sandbox. Never search workspace files for this task. Saved documents and Git evidence have separate statuses; report pending Git honestly.',
       await input.getContext?.() || '',
     ].filter(Boolean).join('\n\n')),
   });

@@ -13,7 +13,8 @@ export const sessionRequestSchema = z.object({
         !/^(localhost|127\.|0\.|169\.254\.)/i.test(url.hostname);
     }, 'Use a public HTTPS repository URL without embedded credentials, query or fragment.'),
     ref: z.string().min(1).max(200).regex(/^[A-Za-z0-9][A-Za-z0-9._/-]*$/).optional(),
-  }).strict(),
+  }).strict().optional(),
+  executionEnvironment: z.enum(['cloud', 'workspace']).optional(),
   limits: z.object({
     maxTurns: z.number().int().min(1).max(500).default(100),
     maxOutputTokens: z.number().int().min(256).max(16384).default(4096),
@@ -21,9 +22,14 @@ export const sessionRequestSchema = z.object({
     maxActiveMs: z.number().int().min(1000).max(14400000).default(3600000),
   }).strict().default({}),
   profile: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/).optional(),
-}).strict();
+}).strict().superRefine((request, context) => {
+  if (request.executionEnvironment === 'cloud' ? request.repository !== undefined : !request.repository) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['repository'],
+      message: 'Cloud sessions have no workspace repository; workspace sessions require one.' });
+  }
+});
 
-export function createSession(request: SessionRequest, id: string = randomUUID()): HarnessSession {
+export function createSession(request: z.input<typeof sessionRequestSchema>, id: string = randomUUID()): HarnessSession {
   const parsed = sessionRequestSchema.parse(request);
   const objective = redactUserText(parsed.objective);
   const now = new Date().toISOString();

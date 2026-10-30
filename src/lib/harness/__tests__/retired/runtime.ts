@@ -71,6 +71,7 @@ export async function executeSessionSlice(id: string, scope: SessionScope, optio
     setupAccounted = true;
   };
   try {
+    if (!session.request.repository) throw new Error('Retired workspace runtime requires a repository');
     const host = await loadSessionConfiguration(createHostStateStore(), { id, siteId: scope.siteId, owner });
     currentHost = host;
     host.configuration.redactionValues.forEach(value => knownSecrets.add(value));
@@ -101,7 +102,7 @@ export async function executeSessionSlice(id: string, scope: SessionScope, optio
       }
     }
     host.configuration.redactionValues.forEach(value => knownSecrets.add(value));
-    workspace = await withinDeadline(deadline, () => (options.openWorkspace || openWorkspace)({ sessionId: id, siteId: scope.siteId, repository: session!.request.repository,
+    workspace = await withinDeadline(deadline, () => (options.openWorkspace || openWorkspace)({ sessionId: id, siteId: scope.siteId, repository: session!.request.repository!,
       existing: session!.workspace, signal: deadline, assertActive,
       onOwnedHandle: sandbox => { ownedHandle = sandbox; },
       cleanupCreated: async (sandbox) => {

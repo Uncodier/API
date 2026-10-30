@@ -4,6 +4,7 @@ import { runCronAppsWorkflow } from './workflow';
 import { getMaxConcurrentRequirementRuns, getRequirementEvaluationLimit } from './scheduler-config';
 import { claimRequirementRun, dueScheduledRequirements, finishRequirementCycle } from '@/lib/harness/requirement-scheduler';
 import { withCronObservation } from '@/lib/status/cron-observation';
+import { retryPendingCloudGit } from '@/lib/cloud-files/retry';
 
 export const maxDuration = 60;
 export const dynamic = 'force-dynamic';
@@ -15,6 +16,9 @@ async function runCron(request: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   try {
+    // Runs independently of model admission; a completed document can still have
+    // pending Git evidence. Keep the existing cron and bound the retry workload.
+    const evidence = retryPendingCloudGit().catch(() => ({ attempted: 0, committed: 0 }));
     const scheduledIds = await dueScheduledRequirements();
     const excluded: string[] = [];
     const results: Array<Record<string, unknown>> = [];
@@ -35,7 +39,8 @@ async function runCron(request: Request) {
         results.push({ reqId: claim.run.requirementId, sessionId: claim.run.sessionId, started: false });
       }
     }
-    return NextResponse.json({ results, capacityReached, evaluatedRequirements: excluded.length });
+    const cloudGit = await evidence;
+    return NextResponse.json({ results, capacityReached, evaluatedRequirements: excluded.length, cloudGit });
   } catch {
     return NextResponse.json({ error: 'Requirement scheduler unavailable; no legacy executor fallback was started' }, { status: 503 });
   }

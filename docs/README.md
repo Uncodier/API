@@ -6,6 +6,8 @@ Documents are ordered below by relevance and freshness. A dated checkpoint recor
 
 ## Implementation plans
 
+- [Cloud deliverables and requirement execution environments](CLOUD_FILES.md) — implemented cloud tools, private versioning/Git, requirement filters, no-sandbox routing, authenticated downloads and rollout prerequisites.
+
 - [Assistant harness simplification plan — 2026-10-28](/Users/prado/Desktop/Proyectos/Uncodie/Code/API/docs/ASSISTANT_HARNESS_SIMPLIFICATION_PLAN_2026-10-28.md) — partially started locally: direct and plan-driven execution within `instance/assistant`, shared tools, broad steps and improvement cycles, workflow compatibility, requirement/70% fallback budgets, cloud files, on-demand environments and required Git evidence at work completion. Includes migration, acceptance criteria, pending decisions and verified baseline; not deployed functionality.
 - [First local harness implementation increment — 2026-10-28](/Users/prado/Desktop/Proyectos/Uncodie/Code/API/docs/ASSISTANT_HARNESS_IMPLEMENTATION_2026-10-28.md) — direct-mode admission, explicit standalone step outcomes, bounded history projection, permission outage classification and versioned advisory workflow observations. Includes compatibility inventory, rollout limits and rollback caveats; F0–F6 are not complete.
 - [Harness plan validation and consistency review — 2026-10-28](/Users/prado/Desktop/Proyectos/Uncodie/Code/API/docs/ASSISTANT_HARNESS_VALIDATION_2026-10-28.md) — normative companion: corrected design risks, root-work boundaries, improvement versus retry contracts, advisory reviews without quality-gate veto, pending product policies, engineering checks and 47 acceptance scenarios. Not evidence of implemented recovery or production readiness.

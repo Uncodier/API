@@ -271,11 +271,17 @@ export function createRequirementExecutionBoundary(input: Input): {
     }
     const { operationId } = reconcileSchema.parse(args);
     const original = session.messages.flatMap(message => message.toolCalls || []).find(call => call.id === operationId);
-    const adapter = original && tools.get(original.name);
+    let adapterName = original?.name;
+    let originalArgs = original ? argsFor(original) : {};
+    if (adapterName === 'tools' && originalArgs.action === 'call' && typeof originalArgs.name === 'string') {
+      adapterName = originalArgs.name;
+      const nested = typeof originalArgs.args === 'string' ? JSON.parse(originalArgs.args) : originalArgs.args;
+      originalArgs = effectArgs(z.record(z.unknown()).parse(nested));
+    }
+    const adapter = adapterName ? tools.get(adapterName) : undefined;
     if (!original || !adapter?.reconcile) return { ok: false, error: { code: 'RECONCILIATION_UNAVAILABLE',
       message: 'Trusted provider/operator reconciliation is required. Model claims do not authorize replay.' } };
-    const originalArgs = argsFor(original);
-    const fingerprint = requirementOperationFingerprint(original.name, originalArgs);
+    const fingerprint = requirementOperationFingerprint(original.name, argsFor(original));
     const proof = await adapter.reconcile(originalArgs, context(original.id));
     await guard(active);
     if (!session.uncertainOperations.includes(fingerprint) || proof.state === 'unknown' || !proof.proof ||

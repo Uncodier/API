@@ -1,5 +1,9 @@
 # Harness: primer incremento local de implementación
 
+Actualización posterior: las herramientas cloud y la separación documental de entorno
+se implementan en [Cloud files](CLOUD_FILES.md). Este documento conserva el alcance
+histórico del primer incremento; sus pendientes F4 no describen esa implementación nueva.
+
 Fecha: 2026-10-28. Base: API `2545ee69a811379dbf7496b802e3a0857b5a9d34`.
 Estado: **implementación parcial local; sin commit, despliegue, migración ni reinicio de instancias**.
 Referencia normativa: [plan](/Users/prado/Desktop/Proyectos/Uncodie/Code/API/docs/ASSISTANT_HARNESS_SIMPLIFICATION_PLAN_2026-10-28.md) y [validación](/Users/prado/Desktop/Proyectos/Uncodie/Code/API/docs/ASSISTANT_HARNESS_VALIDATION_2026-10-28.md).

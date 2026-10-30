@@ -3,6 +3,9 @@
   "description": "Screen keys from market-fit/app/config/navigation-areas.ts. All listed screens are required. null explicitly marks a screen-independent utility. Unmapped tools are denied.",
   "tools": {
     "read_files": { "screens": ["applicationsRepositories"] },
+    "read_cloud_file": { "screens": ["assets"], "requiresUser": true, "bindActor": true },
+    "list_cloud_files": { "screens": ["assets"], "requiresUser": true, "bindActor": true },
+    "write_cloud_file": { "screens": ["assets"], "requiresUser": true, "bindActor": true },
     "list_files": { "screens": ["applicationsRepositories"] },
     "search": { "screens": ["applicationsRepositories"] },
     "apply_patch": { "screens": ["applicationsRepositories"] },

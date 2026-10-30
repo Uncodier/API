@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { RemoteToolError } from '@/lib/mcp/remote-client';
 import { updateRequirementCore } from './core';
+import { RequirementEnvironmentError } from '@/lib/services/requirement-environment';
 
 export async function POST(request: NextRequest) {
   try {
@@ -9,6 +10,9 @@ export async function POST(request: NextRequest) {
     const result = await updateRequirementCore(body);
     return NextResponse.json(result);
   } catch (error) {
+    if (error instanceof RequirementEnvironmentError) {
+      return NextResponse.json({ success: false, error: error.message }, { status: error.status });
+    }
     if (error instanceof z.ZodError) {
       return NextResponse.json({
         success: false,

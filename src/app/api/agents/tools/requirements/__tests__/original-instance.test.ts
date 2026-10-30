@@ -24,7 +24,7 @@ describe('requirement originating instance binding', () => {
   });
 
   it('persists the trusted original owner in the initial INSERT before the scheduler can see it', async () => {
-    const result = await requirementsTool(site, user, original).execute({ action: 'create', title: 'Crowdrage' });
+    const result = await requirementsTool(site, user, original).execute({ action: 'create', title: 'Crowdrage', execution_environment: 'workspace' });
     expect(result.requirement.metadata).toMatchObject({ runner_instance_id: original, assistant_origin_instance_id: original });
     expect(mockCreate).toHaveBeenCalledTimes(1);
     expect(query.eq).toHaveBeenCalledWith('id', original);
@@ -39,17 +39,17 @@ describe('requirement originating instance binding', () => {
 
   it.each([null, { id: original, status: 'paused' }, { id: original, is_archived: true }])('rejects missing, cross-site or inactive instances', async instance => {
     mockSingle.mockResolvedValue({ data: instance });
-    await expect(requirementsTool(site, user, original).execute({ action: 'create', title: 'Crowdrage' })).rejects.toThrow('unavailable instance');
+    await expect(requirementsTool(site, user, original).execute({ action: 'create', title: 'Crowdrage', execution_environment: 'workspace' })).rejects.toThrow('unavailable instance');
     expect(mockCreate).not.toHaveBeenCalled();
   });
 
   it('does not allow the model to forge origin ownership metadata', async () => {
-    await expect(requirementsTool(site, user, original).execute({ action: 'create', title: 'Crowdrage', metadata: { assistant_origin_instance_id: 'other' } })).rejects.toThrow('runner-owned');
+    await expect(requirementsTool(site, user, original).execute({ action: 'create', title: 'Crowdrage', execution_environment: 'workspace', metadata: { assistant_origin_instance_id: 'other' } })).rejects.toThrow('runner-owned');
     expect(mockCreate).not.toHaveBeenCalled();
   });
 
   it('persists only the closure actor for delegated work', async () => {
-    const result = await requirementsTool(site, user, original).execute({ action: 'create', title: 'Owned work', user_id: user });
+    const result = await requirementsTool(site, user, original).execute({ action: 'create', title: 'Owned work', execution_environment: 'workspace', user_id: user });
     expect(result.requirement.user_id).toBe(user);
     expect(mockCreate.mock.calls[0][0]).toMatchObject({ site_id: site, user_id: user });
   });

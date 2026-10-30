@@ -336,6 +336,41 @@ describe('canonical requirement execution durability boundary (offline)', () => 
     expect(f.adapter.getSession().reconciledOperations?.[operationFingerprint('write', {})]).toBeUndefined();
   });
 
+  test.each(['applied', 'unknown'] as const)('interrupted routed cloud write reconciles original nested adapter and call ID without replay: %s', async state => {
+    const originalId = randomUUID();
+    const args = { action: 'create', name: 'notes.md', content: 'Durable offline source' };
+    const routed = { action: 'call', name: 'write_cloud_file', args: JSON.stringify(args) };
+    const call = { id: originalId, name: 'tools', arguments: JSON.stringify(routed) };
+    const applied = { ok: true, output: { file_id: randomUUID(), version: 1 } };
+    const reconcile = jest.fn(async () => state === 'applied'
+      ? { state: 'applied' as const, proof: 'Atomic cloud journal receipt', result: applied }
+      : { state: 'unknown' as const });
+    const execute = jest.fn(async () => applied);
+    const f = fixture({ tools: [{ name: 'write_cloud_file', effect: 'write', description: '', parameters: {}, execute, reconcile }],
+      session: { messages: [{ role: 'assistant', content: '', toolCalls: [call] }],
+        pending: { call, effect: 'write', fingerprint: operationFingerprint('tools', routed) },
+        ...{ assistantExecutionVersion: 1 as const } } });
+    await f.adapter.initialize();
+    expect(execute).not.toHaveBeenCalled();
+    expect(reconcile).not.toHaveBeenCalled();
+    expect(f.adapter.getSession().pending).toBeUndefined();
+    expect(f.adapter.getSession().messages.find(message => message.toolCallId === originalId)?.content).toContain('OPERATION_OUTCOME_UNKNOWN');
+    await f.model([{ id: 'lookup', name: 'reconcile_operation', args: { operationId: originalId } }]);
+    expect(await f.control('reconcile_operation', 'lookup', { operationId: originalId }))
+      .toMatchObject({ ok: state === 'applied', output: { state } });
+    expect(reconcile).toHaveBeenCalledWith(args, expect.objectContaining({ operationId: originalId, sessionId: f.session.id }));
+    await f.adapter.boundary.afterTurn([]);
+    // A new transport ID and object-form routed arguments cannot evade the original effect fingerprint.
+    const retryArgs = { ...routed, args };
+    await f.model([{ id: 'retry-new-id', name: 'tools', args: retryArgs }]);
+    const replay = jest.fn(async () => applied);
+    const result = await f.execute('tools', 'retry-new-id', retryArgs, replay);
+    expect(result).toMatchObject(state === 'applied' ? applied : { ok: false, error: { code: 'RECONCILIATION_REQUIRED' } });
+    expect(replay).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+    expect(reconcile).toHaveBeenCalledTimes(1);
+  });
+
   test.each(['turns', 'tokens', 'time', 'output'])('historical %s limit does not block credit-funded inference', async kind => {
     const f = fixture();
     if (kind === 'turns') f.input.session.turns = f.input.session.request.limits.maxTurns;

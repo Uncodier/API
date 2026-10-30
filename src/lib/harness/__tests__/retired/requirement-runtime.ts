@@ -58,10 +58,10 @@ export async function runRequirementCycle(run: RequirementRun) {
       await store.create(initial, { siteId: run.siteId, userId: run.userId });
       session = initial;
     }
-    if (session.request.requirementId !== run.requirementId || session.request.repository.url !== configured.repository.url) {
+    if (session.request.requirementId !== run.requirementId || session.request.repository?.url !== configured.repository.url) {
       throw new Error('Requirement session binding changed');
     }
-    const persistedRepository = session.request.repository;
+    const persistedRepository = session.request.repository!;
     // Prefer the saved VM, including uncommitted files, over cloning origin again.
     const { data: previous, error } = await supabaseAdmin.from('requirement_status').select('active_sandbox_id')
       .eq('requirement_id', run.requirementId).eq('site_id', run.siteId).eq('instance_id', run.instanceId)

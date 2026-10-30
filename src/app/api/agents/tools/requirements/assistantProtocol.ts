@@ -8,6 +8,7 @@ import { createRequirementCore } from './create/core';
 import { updateRequirementCore } from './update/core';
 import { assertToolScopeArgs, ToolScreenAccessDenied } from '../router/screen-access';
 import type { RequirementCommandSource } from '@/lib/services/requirement-command';
+import type { RequirementEnvironment } from '@/lib/services/requirement-environment';
 
 export interface RequirementsToolParams {
   action: 'create' | 'list' | 'update';
@@ -21,6 +22,7 @@ export interface RequirementsToolParams {
   status?: 'backlog' | 'validated' | 'in-progress' | 'on-review' | 'done' | 'canceled';
   completion_status?: 'pending' | 'completed' | 'rejected';
   type?: string;
+  execution_environment?: RequirementEnvironment;
   budget?: number | null;
   cron?: string;
   cycle?: string;
@@ -51,10 +53,15 @@ export function requirementsTool(site_id: string, user_id?: string, instanceId?:
   return {
     name: 'requirements',
     description:
+      'For create, explicitly choose execution_environment: cloud for documents with private Git persistence and no app, or workspace for actual code execution, browser interaction and commands. Never guess the environment from title or requirement type. The environment is immutable after creation; create a new requirement to change it. ' +
       'Manage requirements. Use action="create" to create a new requirement (requires title). Use action="update" to submit requested changes to an existing requirement (requires requirement_id). Interactive updates are authorized by the current real user message and persisted for the existing runner, even from a different session. Submit one consolidated update per requirement per user message; retries do not overwrite it. Preserve existing scope and include the new request in instructions. Do not create an execution plan in this session for another runner. Read command.diagnostic on update receipts and command_diagnostic on each list result: report the current state, reason and checked_at snapshot. A queued receipt is not execution or delivery; never promise queued work will start. Applied means the command was applied, not that execution or delivery completed. Blocked means report the blocker; unavailable means diagnosis could not be checked, not that work is eligible. None means no command diagnosis to report, not proof of execution. Never blindly resubmit a persisted command, even when retryable is true; use action="list" to inspect again without mutating work. Use action="list" for status questions; a question alone must not reopen work. Interactive updates do not accept ownership metadata, completion or cancellation; they preserve explicit pauses. For relative dates ("hoy", "esta semana", "el mes pasado") pass period or date_from/date_to as YYYY-MM-DD in the client timezone — do not invent UTC ISO bounds. Cron expressions fire in Server UTC: convert the client local hour to UTC before writing cron (e.g. 09:00 America/Mexico_City = 15:00 UTC). CRITICAL: requirement.instructions is the LIVING README of the project — it persists across ephemeral sandbox sessions. When creating a requirement, instructions MUST specify if it will be done as an "external deliverable" or "using Makinari tools".',
     parameters: {
       type: 'object',
       properties: {
+        execution_environment: {
+          type: 'string', enum: ['cloud', 'workspace'],
+          description: 'Required for create: cloud = documents with private Git, no app; workspace = actual code/browser/command execution. Choose explicitly, never infer from title/type. Immutable after creation; update may only assert the current value.',
+        },
         action: {
           type: 'string',
           enum: ['create', 'list', 'update'],
@@ -73,7 +80,7 @@ export function requirementsTool(site_id: string, user_id?: string, instanceId?:
         cron: { type: 'string', description: 'Valid Cron expression evaluated in Server UTC (Vercel), e.g. "0 15 * * *" for 09:00 America/Mexico_City. Convert the client local hour to UTC before writing. Only set this if the user explicitly asks for periodic, recurring, or continuous updates.' },
         cycle: { type: 'string', description: 'Specify the source of the work cycle. Set this to ensure an entire development cycle is performed for the requirement (can be null or a new numeric or text value)' },
         campaign_id: { type: 'string', description: 'Campaign UUID to link requirement' },
-        metadata: { type: 'object', description: 'Additional metadata (json object)' },
+        metadata: { type: 'object', description: 'Additional metadata (json object). metadata.git is workspace-only; cloud document Git persistence is host-managed. Cannot override execution_environment.' },
         
         // List specific filters
         site_id: { type: 'string', description: 'Filter by site UUID' },
@@ -138,6 +145,9 @@ export function requirementsTool(site_id: string, user_id?: string, instanceId?:
         }
         if (!params.site_id) {
           throw new Error('Missing required fields for create requirement: site_id');
+        }
+        if (params.execution_environment === undefined) {
+          throw new Error('Missing required field for create requirement: execution_environment (cloud for documents with private Git and no app; workspace for code/browser/commands)');
         }
 
         // Execution identity comes from the server closure, never model metadata.

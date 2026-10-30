@@ -26,9 +26,9 @@ describe('portable session request and initial durable snapshot', () => {
     const input = sessionRequestSchema.parse(request());
     const id = randomUUID();
     const session = createSession(input, id);
-    input.repository.url = 'https://example.test/other.git'; input.limits.maxTurns = 1;
+    input.repository!.url = 'https://example.test/other.git'; input.limits.maxTurns = 1;
     expect(session.id).toBe(id);
-    expect(session.request.repository.url).toBe(request().repository.url);
+    expect(session.request.repository?.url).toBe(request().repository.url);
     expect(session.request.limits.maxTurns).toBe(100);
     expect(() => createSession({ ...input, objective: ' ' })).toThrow();
   });

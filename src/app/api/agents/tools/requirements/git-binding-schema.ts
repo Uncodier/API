@@ -7,6 +7,8 @@
 
 import { z } from 'zod';
 
+export const RequirementEnvironmentSchema = z.enum(['cloud', 'workspace']);
+
 export const GitBindingKindSchema = z.enum(['applications', 'automation', 'custom']);
 
 export const GitBindingSchema = z.object({
@@ -27,6 +29,7 @@ export const PartialGitBindingSchema = GitBindingSchema.partial();
 export const RequirementMetadataSchema = z
   .object({
     git: GitBindingSchema.optional(),
+    execution_environment: RequirementEnvironmentSchema.optional(),
   })
   .catchall(z.unknown());
 
@@ -52,6 +55,7 @@ const RUNNER_OWNED_METADATA_KEYS = [
 export const PartialRequirementMetadataSchema = z
   .object({
     git: PartialGitBindingSchema.optional(),
+    execution_environment: RequirementEnvironmentSchema.optional(),
   })
   .catchall(z.unknown())
   .superRefine((metadata, context) => {
