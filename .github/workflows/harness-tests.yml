@@ -28,3 +28,4 @@ jobs:
       - run: npm run test:transactional-email
       - run: npm run test:harness
       - run: npm run test:harness:agent
+      - run: npm run test:harness:cloud:unit

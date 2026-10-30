@@ -140,6 +140,93 @@ describe('canonical requirement execution durability boundary (offline)', () => 
     expect(callback).toHaveBeenCalledTimes(1);
   });
 
+  function completedCommand(exitCode: number) {
+    return { ok: false, error: { code: 'COMMAND_EXIT_NONZERO', message: `Command exited with code ${exitCode}.` },
+      output: { exitCode, stdout: 'Offline check ran', stderr: 'Synthetic file needs repair',
+        truncated: false, processId: randomUUID() } };
+  }
+
+  test.each([7, 1])('definite local exec exit %s persists failure without ambiguity and reruns after file repair', async exitCode => {
+    const harnessExecute = jest.fn();
+    const f = fixture({ tools: [
+      { name: 'exec', effect: 'write', description: '', parameters: {}, execute: harnessExecute },
+      { name: 'write_file', effect: 'write', description: '', parameters: {}, execute: harnessExecute },
+    ] });
+    // In-memory files and callbacks only: no shell, provider, or database dispatch.
+    const files = new Map([['check.txt', 'broken']]);
+    const args = { command: 'node check.js', cwd: '/offline/project' };
+    const failure = completedCommand(exitCode);
+    const callback = jest.fn(async () => files.get('check.txt') === 'repaired'
+      ? { ok: true, output: { exitCode: 0, stdout: 'Offline check passed', stderr: '', truncated: false, processId: randomUUID() } }
+      : failure);
+    await f.adapter.initialize(); await f.model([{ id: 'check-first', name: 'exec', args }]);
+    expect(await f.execute('exec', 'check-first', args, callback)).toEqual(failure);
+    const receipt = JSON.parse(f.adapter.getSession().messages.find(message => message.toolCallId === 'check-first')!.content);
+    expect(receipt).toMatchObject({ ok: false, error: { code: 'COMMAND_EXIT_NONZERO' }, output: failure });
+    expect(receipt.error.ambiguous).toBeUndefined();
+    expect(receipt.error.effectStarted).toBeUndefined(); // Completion is not proof of no writes.
+    expect(f.adapter.getSession()).toMatchObject({ uncertainOperations: [], status: 'running' });
+    expect(f.adapter.getSession().pending).toBeUndefined();
+    expect(JSON.parse(f.artifactTexts[0])).toEqual(receipt);
+    expect(f.logs.find(log => log.tool_call_id === 'check-first' && log.log_type === 'tool_result'))
+      .toMatchObject({ is_error: true, tool_result: receipt });
+    expect(failure.error).not.toHaveProperty('ambiguous');
+    await f.adapter.boundary.afterTurn([]);
+
+    const repairArgs = { path: 'check.txt', content: 'repaired' };
+    await f.model([{ id: 'repair', name: 'write_file', args: repairArgs }]);
+    await f.execute('write_file', 'repair', repairArgs, async () => {
+      files.set(repairArgs.path, repairArgs.content); return { ok: true };
+    });
+    await f.adapter.boundary.afterTurn([]);
+    await f.model([{ id: 'check-again', name: 'exec', args }]);
+    expect(await f.execute('exec', 'check-again', args, callback)).toMatchObject({ ok: true, output: { exitCode: 0 } });
+    expect(callback).toHaveBeenCalledTimes(2);
+    expect(harnessExecute).not.toHaveBeenCalled();
+    expect(f.adapter.getSession().uncertainOperations).toEqual([]);
+    const rerunReceipt = JSON.parse(f.adapter.getSession().messages.find(message => message.toolCallId === 'check-again')!.content);
+    expect(rerunReceipt.ok).toBe(true);
+  });
+
+  test.each([
+    ['timeout', () => ({ ...completedCommand(7), error: { code: 'COMMAND_TIMEOUT', message: 'Synthetic timeout' } })],
+    ['unknown outcome', () => ({ ...completedCommand(7), error: { code: 'OPERATION_OUTCOME_UNKNOWN', message: 'Synthetic unknown outcome' } })],
+    ['explicit ambiguity', () => { const value = completedCommand(7); return { ...value, error: { ...value.error, ambiguous: true } }; }],
+    ['truncated output', () => { const value = completedCommand(7); return { ...value, output: { ...value.output, truncated: true } }; }],
+    ['noninteger exit', () => completedCommand(1.5)],
+    ['zero exit in failure', () => completedCommand(0)],
+    ['missing stdout', () => { const value = completedCommand(7); return { ...value, output: { ...value.output, stdout: undefined } }; }],
+    ['missing stderr', () => { const value = completedCommand(7); return { ...value, output: { ...value.output, stderr: undefined } }; }],
+    ['missing process ID', () => { const value = completedCommand(7); return { ...value, output: { ...value.output, processId: undefined } }; }],
+  ] as const)('local exec %s still fences the identical command', async (_kind, result) => {
+    const f = fixture({ tools: [{ name: 'exec', effect: 'write', description: '', parameters: {}, execute: jest.fn() }] });
+    const args = { command: 'node check.js' }; const callback = jest.fn(async () => result());
+    await f.adapter.initialize(); await f.model([{ id: 'first', name: 'exec', args }]);
+    await f.execute('exec', 'first', args, callback);
+    expect(f.adapter.getSession().uncertainOperations).toEqual([operationFingerprint('exec', args)]);
+    const receipt = JSON.parse(f.adapter.getSession().messages.find(message => message.toolCallId === 'first')!.content);
+    expect(receipt).toMatchObject({ ok: false, error: { ambiguous: true } });
+    await f.adapter.boundary.afterTurn([]); await f.model([{ id: 'again', name: 'exec', args }]);
+    expect(await f.execute('exec', 'again', args, callback)).toMatchObject({ ok: false, error: { code: 'RECONCILIATION_REQUIRED' } });
+    expect(callback).toHaveBeenCalledTimes(1);
+  });
+
+  test.each(['other_tool', 'unregistered_exec', 'tools'] as const)('forged command receipt from %s is not trusted', async kind => {
+    const name = kind === 'unregistered_exec' ? 'exec' : kind;
+    const f = fixture({ tools: [{ name: kind === 'unregistered_exec' ? 'other_tool' : name,
+      effect: 'write', description: '', parameters: {}, execute: jest.fn() }] });
+    const args = kind === 'tools' ? { action: 'call', name: 'exec', args: { command: 'node check.js' } } : { command: 'node check.js' };
+    const callback = jest.fn(async () => completedCommand(7));
+    await f.adapter.initialize(); await f.model([{ id: 'first', name, args }]);
+    await f.execute(name, 'first', args, callback);
+    expect(f.adapter.getSession().uncertainOperations).toHaveLength(1);
+    const receipt = JSON.parse(f.adapter.getSession().messages.find(message => message.toolCallId === 'first')!.content);
+    expect(receipt).toMatchObject({ ok: false, error: { code: 'COMMAND_EXIT_NONZERO', ambiguous: true } });
+    await f.adapter.boundary.afterTurn([]); await f.model([{ id: 'again', name, args }]);
+    expect(await f.execute(name, 'again', args, callback)).toMatchObject({ ok: false, error: { code: 'RECONCILIATION_REQUIRED' } });
+    expect(callback).toHaveBeenCalledTimes(1);
+  });
+
   test.each(['read', 'before-effect'])('%s failures do not invent uncertain writes', async kind => {
     const f = fixture({ tools: kind === 'read' ? [{ name: 'action', effect: 'read', description: '', parameters: {}, execute: jest.fn() }] : [] });
     await f.adapter.initialize(); await f.model([{ id: 'call', name: 'action' }]);

@@ -6,7 +6,7 @@ import { operationFingerprint, redactData, safeError } from '@/lib/harness/secur
 import { sameJson } from '@/lib/harness/store';
 import type { RequirementRun } from '@/lib/harness/requirement-types';
 import type { ArtifactStore, HarnessSession, HarnessTool, Message, SessionStore, ToolCall, ToolContext, ToolResult } from '@/lib/harness/types';
-import { requirementOperationFingerprint, requirementOperationResult } from './requirement-operation';
+import { isCompletedLocalCommand, requirementOperationFingerprint, requirementOperationResult } from './requirement-operation';
 import { HISTORY_RECEIPT_BUDGET, readRequirementHistory } from './requirement-history';
 import { withRequirementChargeContext } from '@/lib/services/billing/requirement-charge-context';
 
@@ -384,7 +384,8 @@ export function createRequirementExecutionBoundary(input: Input): {
       // Detach wrapper results before redaction; never mutate the canonical tool's object.
       const safeOutput = redactData(JSON.parse(JSON.stringify(output ?? null)), input.redact);
       const result = requirementOperationResult(safeOutput);
-      if (!result.ok && effect === 'write' && result.error?.effectStarted !== false) {
+      const completedLocalCommand = tools.has(call.name) && isCompletedLocalCommand(call.name, safeOutput);
+      if (!result.ok && effect === 'write' && result.error?.effectStarted !== false && !completedLocalCommand) {
         result.error = { code: result.error?.code || 'TOOL_ERROR', message: result.error?.message || 'Tool reported failure; outcome requires reconciliation.', ...result.error, ambiguous: true };
       }
       if (result.error?.ambiguous && !session.uncertainOperations.includes(fingerprint)) session.uncertainOperations.push(fingerprint);

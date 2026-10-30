@@ -2,6 +2,16 @@ import { operationFingerprint } from '@/lib/harness/security';
 import { normalizeToolOperationResult } from '@/lib/services/tool-operation-result';
 import type { ToolResult } from '@/lib/harness/types';
 
+/** A local command's known nonzero exit is failure, not an unknown dispatch outcome.
+ * It does not claim the command made no writes; only its completed result is known.
+ */
+export function isCompletedLocalCommand(name: string, value: any): boolean {
+  return name === 'exec' && value?.ok === false && value?.error?.code === 'COMMAND_EXIT_NONZERO' &&
+    value.error.ambiguous !== true && Number.isInteger(value.output?.exitCode) && value.output.exitCode !== 0 &&
+    value.output.truncated === false && typeof value.output.stdout === 'string' &&
+    typeof value.output.stderr === 'string' && typeof value.output.processId === 'string' && value.output.processId.length > 0;
+}
+
 /** Router transport syntax and reasoning metadata are not part of the effect. */
 export function requirementOperationFingerprint(name: string, args: Record<string, unknown>): string {
   const { thought_process: _reasoning, ...effect } = args;

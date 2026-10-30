@@ -96,6 +96,13 @@ write fingerprints bind the actual routed tool name and parsed argument object,
 not JSON whitespace, key order or either tool-level `thought_process` field.
 Existing transport fingerprints remain stored and acquire equivalent canonical
 fences during continuation; this does not reset or replay historical operations.
+Completed local `exec` failures with a full command receipt and known nonzero exit
+remain failures but are not classified as unknown dispatch outcomes. This lets a
+new model-directed invocation rerun the same test after repairing its source. It
+does not assert that the failed command made no writes or automatically retry it.
+Timeouts, truncated/ambiguous receipts, routed lookalikes and interrupted writes
+remain fenced. Existing uncertain-operation fingerprints are not cleared by this
+change and still require trusted reconciliation.
 Completion is deferred until the full `afterTurn` boundary has resolved the batch.
 The host checkpoint runs while ownership is still active, before the terminal
 session save; saving completion must not invalidate its own checkpoint lease.
