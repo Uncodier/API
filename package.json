@@ -47,6 +47,7 @@
     "test:chat-message": "jest --verbose src/tests/api/agents-chat-message.test.ts",
     "status:probe": "tsx scripts/run-system-probes.ts",
     "test:status": "node ./node_modules/jest/bin/jest.js --config jest.status.config.js --runInBand && node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config jest.status-cron.config.js --runInBand",
+    "test:mcp": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config jest.mcp.config.js --runInBand && node ./node_modules/jest/bin/jest.js --config jest.mcp-security.config.js --runInBand && npm run test:procurement",
     "mcp": "tsx mcp-server/index.ts"
   },
   "dependencies": {

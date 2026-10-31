@@ -24,6 +24,7 @@ jobs:
       # No production credentials, database migrations, or live probes in this job.
       - run: npm run test:dependencies
       - run: npm run test:upgrade-regressions
+      - run: npm run test:mcp
       - run: npm run test:voice
       - run: npm run test:transactional-email
       - run: npm run test:harness

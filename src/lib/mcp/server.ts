@@ -8,7 +8,13 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import {
   ListToolsRequestSchema,
   CallToolRequestSchema,
+  CallToolResultSchema,
+  ListToolsResultSchema,
+  McpError,
+  ErrorCode,
 } from '@modelcontextprotocol/sdk/types.js';
+import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv';
+import { redactRuntimeSecrets } from '@/app/api/cron/shared/runtime-log-context';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { shouldUseRemoteApi } from '@/lib/mcp/remote-client';
@@ -183,7 +189,7 @@ function validateToolArgs(
   }
 
   for (const key of Object.keys(args)) {
-    if (!(key in schema.properties)) {
+    if (!Object.prototype.hasOwnProperty.call(schema.properties, key)) {
       const suggestion = suggestParam(key, validNames);
       issues.push({
         type: 'unknown_param',
@@ -281,11 +287,37 @@ export function getInputSchema(tool: {
     typeof params === 'object' && params !== null && '_def' in params;
   if (isZod) {
     return zodToJsonSchema(params as z.ZodType<unknown>, {
-      target: 'openApi3',
+      target: 'jsonSchema7',
       $refStrategy: 'none',
     }) as Record<string, unknown>;
   }
   return (params as Record<string, unknown>) ?? { type: 'object', properties: {} };
+}
+
+// Stateless HTTP proxy: never substitute a local catalog after remote admission fails.
+async function proxyMcpRequest(siteId: string, userId: string | undefined, instanceId: string,
+  method: 'tools/list' | 'tools/call', params: Record<string, unknown>) {
+  const apiUrl = process.env.API_URL?.replace(/\/$/, '');
+  if (!apiUrl) throw new Error('Remote MCP configuration unavailable.');
+  const apiKey = process.env.REST_API_KEY;
+  const response = await fetch(`${apiUrl}/api/mcp`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream',
+      'x-mcp-site-id': siteId, 'x-mcp-instance-id': instanceId,
+      ...(userId ? { 'x-mcp-user-id': userId } : {}),
+      ...(apiKey ? { 'x-api-key': apiKey, Authorization: `Bearer ${apiKey}` } : {}),
+    },
+    body: JSON.stringify({ jsonrpc: '2.0', id: method === 'tools/list' ? 1 : 2, method, params }),
+    signal: AbortSignal.timeout(55_000),
+    redirect: 'error',
+  });
+  if (!response.ok) throw new Error(`Remote MCP unavailable (HTTP ${response.status}).`);
+  const body = await response.json();
+  if (body?.jsonrpc !== '2.0' || body.id !== (method === 'tools/list' ? 1 : 2) || body.error) {
+    throw new Error('Invalid remote MCP response.');
+  }
+  return (method === 'tools/list' ? ListToolsResultSchema : CallToolResultSchema).parse(body.result);
 }
 
 /**
@@ -303,6 +335,7 @@ export function createMcpServer(
   }
   ({ siteId, instanceId } = context.data);
   const tools = getAssistantTools(siteId, userId, instanceId, customTools);
+  const validator = new AjvJsonSchemaValidator();
 
   const server = new Server(
     {
@@ -317,49 +350,11 @@ export function createMcpServer(
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    // 🌐 PROXY MODO REMOTO PARA LISTA DE HERRAMIENTAS
     if (shouldUseRemoteApi()) {
       try {
-        const apiUrl = process.env.API_URL?.replace(/\/$/, '');
-        if (!apiUrl) throw new Error('API_URL is missing but remote mode is enabled');
-        
-        const apiKey = process.env.REST_API_KEY;
-        const url = `${apiUrl}/api/mcp`;
-        
-        console.error(`[MCP Remote] Proxying tools/list to ${url}`);
-        
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json, text/event-stream',
-            'x-mcp-site-id': siteId,
-            ...(userId ? { 'x-mcp-user-id': userId } : {}),
-            'x-mcp-instance-id': instanceId,
-            ...(apiKey ? { 
-              'x-api-key': apiKey,
-              'Authorization': `Bearer ${apiKey}`
-            } : {})
-          },
-          body: JSON.stringify({
-            jsonrpc: "2.0",
-            id: 1,
-            method: "tools/list",
-            params: {}
-          })
-        });
-        
-        if (response.ok) {
-          const text = await response.text();
-          try {
-            const json = JSON.parse(text);
-            if (json.result) return json.result;
-          } catch (e) {
-            console.error(`[MCP Remote] Invalid JSON from remote for tools/list:`, text.substring(0, 200));
-          }
-        }
-      } catch (err) {
-        console.error(`[MCP Remote] Failed to proxy tools/list, falling back to local list:`, err);
+        return await proxyMcpRequest(siteId, userId, instanceId, 'tools/list', {});
+      } catch {
+        throw new McpError(ErrorCode.InternalError, 'Remote MCP catalog unavailable.');
       }
     }
 
@@ -375,72 +370,12 @@ export function createMcpServer(
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
     
-    // 🌐 PROXY MODO REMOTO PARA EJECUCIÓN DE HERRAMIENTAS
     if (shouldUseRemoteApi()) {
       try {
-        const apiUrl = process.env.API_URL?.replace(/\/$/, '');
-        if (!apiUrl) throw new Error('API_URL is missing but remote mode is enabled');
-        
-        const apiKey = process.env.REST_API_KEY;
-        const url = `${apiUrl}/api/mcp`;
-        
-        console.error(`[MCP Remote] Proxying execution of tool "${name}" to ${url}`);
-        
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json, text/event-stream',
-            'x-mcp-site-id': siteId,
-            ...(userId ? { 'x-mcp-user-id': userId } : {}),
-            'x-mcp-instance-id': instanceId,
-            ...(apiKey ? { 
-              'x-api-key': apiKey,
-              'Authorization': `Bearer ${apiKey}`
-            } : {})
-          },
-          body: JSON.stringify({
-            jsonrpc: "2.0",
-            id: 2,
-            method: "tools/call",
-            params: {
-              name,
-              arguments: args
-            }
-          })
-        });
-        
-        if (!response.ok) {
-           const errorText = await response.text();
-           return {
-             content: [{ type: 'text', text: `Remote MCP Error: ${response.status} ${response.statusText} - ${errorText}` }],
-             isError: true
-           };
-        }
-        
-        const responseText = await response.text();
-        let json;
-        try {
-          json = JSON.parse(responseText);
-        } catch (e) {
-          return {
-            content: [{ type: 'text', text: `Remote MCP returned invalid JSON (Status: ${response.status} ${response.statusText}):\n\n${responseText.substring(0, 500)}` }],
-            isError: true
-          };
-        }
-        
-        if (json.error) {
-           return {
-             content: [{ type: 'text', text: json.error.message || JSON.stringify(json.error) }],
-             isError: true
-           };
-        }
-        
-        return json.result;
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        return await proxyMcpRequest(siteId, userId, instanceId, 'tools/call', { name, arguments: args ?? {} });
+      } catch {
         return {
-          content: [{ type: 'text', text: `Failed to execute remote tool ${name}: ${message}` }],
+          content: [{ type: 'text', text: 'Remote MCP execution unavailable; outcome may be unknown. Reconcile before retrying writes.' }],
           isError: true,
         };
       }
@@ -455,8 +390,15 @@ export function createMcpServer(
     }
 
     const schema = extractSchemaInfo(tool);
-    const safeArgs = args ?? {};
-    const issues = validateToolArgs(safeArgs as Record<string, unknown>, schema);
+    let safeArgs: unknown = args ?? {};
+    // The shared router advertises JSON-encoded args for provider compatibility,
+    // but explicitly accepts inline objects from existing MCP/OpenAI callers.
+    if (name === 'tools' && schema.properties.args?.type === 'string' && args?.args
+      && typeof args.args === 'object' && !Array.isArray(args.args)) {
+      safeArgs = { ...args, args: JSON.stringify(args.args) };
+    }
+    const isZod = tool.parameters && typeof tool.parameters === 'object' && '_def' in tool.parameters;
+    const issues = isZod ? [] : validateToolArgs(safeArgs as Record<string, unknown>, schema);
 
     if (issues.length > 0) {
       return {
@@ -466,19 +408,32 @@ export function createMcpServer(
     }
 
     try {
+      if (isZod) {
+        const parsed = tool.parameters.safeParse(safeArgs);
+        if (!parsed.success) {
+          return { content: [{ type: 'text', text: `Tool "${name}" was called with invalid parameters.` }], isError: true };
+        }
+        safeArgs = parsed.data;
+      } else if (!validator.getValidator(getInputSchema(tool))(safeArgs).valid) {
+        return { content: [{ type: 'text', text: `Tool "${name}" was called with invalid parameters.` }], isError: true };
+      }
       const result = await tool.execute(safeArgs);
       return {
         content: [
           {
             type: 'text',
             text:
-              typeof result === 'string' ? result : JSON.stringify(result),
+              typeof result === 'string' ? result : JSON.stringify(result ?? null),
           },
         ],
         isError: false,
       };
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      let message = redactRuntimeSecrets(err instanceof Error ? err.message : String(err));
+      for (const key of ['REST_API_KEY', 'SERVICE_API_KEY', 'SUPABASE_SERVICE_ROLE_KEY']) {
+        const secret = process.env[key];
+        if (secret) message = message.split(secret).join('[REDACTED]');
+      }
       return {
         content: [{ type: 'text', text: formatExecutionError(name, message, schema) }],
         isError: true,

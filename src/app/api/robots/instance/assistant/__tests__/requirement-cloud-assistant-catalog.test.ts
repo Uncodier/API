@@ -26,6 +26,8 @@ function catalog() {
     dependencies[(statement.moduleSpecifier as ts.StringLiteral).text] = exports;
   }
   dependencies['@/lib/services/tool-execution-context'] = toolContext;
+  // Procurement contributes a catalog fragment rather than one descriptor.
+  dependencies['@/lib/procurement/tools'] = { createProcurementTools: () => [] };
   dependencies['./command-plan-guard'] = { assertStandaloneCommandPlan: async () => {} };
   dependencies['@/lib/services/composio-service'] = { getComposioApiKeyForSite: async () => undefined };
   dependencies['@/lib/services/harness-diagnostics/tools'] = {

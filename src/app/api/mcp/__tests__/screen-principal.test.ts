@@ -4,7 +4,8 @@ import { createMcpServer } from '@/lib/mcp/server';
 import { canToolPrincipalAccessSite, resolveToolRequestPrincipal } from '@/lib/security/tool-request-principal';
 import { POST } from '../route';
 
-jest.mock('@/lib/mcp/server', () => ({ createMcpServer: jest.fn(() => ({ connect: jest.fn() })) }));
+jest.mock('../../../../../cors.config.js', () => ({ getAllowedOrigins: () => ['https://example.invalid'] }));
+jest.mock('@/lib/mcp/server', () => ({ createMcpServer: jest.fn(() => ({ connect: jest.fn(), close: jest.fn() })) }));
 jest.mock('@/lib/security/tool-request-principal', () => ({ canToolPrincipalAccessSite: jest.fn(), resolveToolRequestPrincipal: jest.fn() }));
 jest.mock('@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js', () => ({
   WebStandardStreamableHTTPServerTransport: jest.fn(() => ({ handleRequest: async () => new Response('{}') })),

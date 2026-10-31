@@ -5,6 +5,8 @@
 
 export class RemoteToolError extends Error {
   status: number;
+  // Upstream response data is deliberately preserved for HTTP route consumers.
+  // It is not safe diagnostic text and must not be logged.
   data: any;
 
   constructor(message: string, status: number, data: any) {
@@ -35,8 +37,8 @@ export async function invokeRemoteTool(path: string, payload: any) {
   }
   
   // Normalize URL
-  const baseUrl = apiUrl.replace(/\/$/, '');
-  const endpoint = path.startsWith('/') ? path : `/${path}`;
+  const baseUrl = apiUrl.replace(/\/+$/, '');
+  const endpoint = `/${path.replace(/^\/+/, '')}`;
   const url = `${baseUrl}${endpoint}`;
   
   const headers: HeadersInit = {
@@ -53,7 +55,9 @@ export async function invokeRemoteTool(path: string, payload: any) {
     headers['Authorization'] = `Bearer ${apiKey}`;
   }
   
-  console.log(`[RemoteTool] Invoking ${url} (Remote Mode)`);
+  // MCP stdio reserves stdout for protocol messages. Never log URLs, headers,
+  // payloads, or upstream diagnostics (any of them may contain credentials).
+  console.error('[RemoteTool] Invoking remote tool');
   
   try {
     const response = await fetch(url, {
@@ -64,17 +68,14 @@ export async function invokeRemoteTool(path: string, payload: any) {
     
     if (!response.ok) {
       let errorData: any;
-      let errorMessage: string;
-      
+      const errorMessage = `Remote error ${response.status}`;
+      // Read once: json() consumes the body even when parsing fails.
+      const text = await response.text();
       try {
-        errorData = await response.json();
-        // Try to extract a meaningful message from common error formats
-        errorMessage = errorData.error || errorData.message || `Remote error ${response.status}`;
-      } catch (e) {
+        errorData = JSON.parse(text);
+      } catch {
         // Fallback for non-JSON errors
-        const text = await response.text();
-        errorMessage = text || `Remote error ${response.status}`;
-        errorData = { error: errorMessage };
+        errorData = { error: text || errorMessage };
       }
 
       console.error(`[RemoteTool] Error ${response.status}: ${errorMessage}`);
@@ -86,7 +87,9 @@ export async function invokeRemoteTool(path: string, payload: any) {
     if (error instanceof RemoteToolError) {
       throw error;
     }
-    console.error(`[RemoteTool] Fetch error:`, error);
-    throw error;
+    console.error('[RemoteTool] Remote invocation failed');
+    // Do not attach the original error as a cause: fetch/JSON/serialization
+    // errors can embed authenticated URLs or request/response content.
+    throw new Error('Remote tool invocation failed');
   }
 }

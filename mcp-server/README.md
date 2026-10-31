@@ -1,5 +1,12 @@
 # MCP Server (Uncodie tools)
 
+## Offline verification
+
+Run `npm run test:mcp` from the repository root for Jest SDK contracts over HTTP
+and stdio, remote-client regressions, security/routing and procurement boundaries.
+No live credentials, providers or database are required. See
+[MCP testing strategy](../docs/MCP_TESTING.md) for coverage and explicit limits.
+
 MCP (Model Context Protocol) server that exposes the same agent tools used by the assistant (`getAssistantTools`). Two ways to run:
 
 - **stdio** (this folder): run `npm run mcp`; Cursor or other clients spawn the process and talk over stdin/stdout.

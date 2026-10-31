@@ -37,6 +37,8 @@ function catalog(loadScreenAccess = async (_scope: unknown) => ({ isAdmin: true,
     dependencies[specifier] = exports;
   }
   dependencies['@/lib/services/tool-execution-context'] = contextModule;
+  // Catalog fragment factory, not a single tool; domain behavior has its own suite.
+  dependencies['@/lib/procurement/tools'] = { createProcurementTools: () => [] };
   dependencies['@/app/api/agents/tools/requirement_status/assistantProtocol'] = loadRuntimeModule(
     'src/app/api/agents/tools/requirement_status/assistantProtocol.ts', {
       '@/lib/tools/requirement-status-core': {

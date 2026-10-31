@@ -9,10 +9,15 @@ import { createMcpServer } from '@/lib/mcp/server';
 import { mcpContextSchema } from '@/lib/mcp/context';
 import { canToolPrincipalAccessSite, resolveToolRequestPrincipal } from '@/lib/security/tool-request-principal';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
+import { getAllowedOrigins } from '../../../../cors.config.js';
 
 export const maxDuration = 60;
 
 export async function POST(request: NextRequest) {
+  const origin = request.headers.get('origin');
+  if (origin && !getAllowedOrigins().includes(origin)) {
+    return NextResponse.json({ error: 'Origin not allowed' }, { status: 403 });
+  }
   const principal = await resolveToolRequestPrincipal(request);
   if (!principal) {
     return NextResponse.json(
@@ -62,20 +67,25 @@ export async function POST(request: NextRequest) {
     enableJsonResponse: true,
   });
 
-  await server.connect(transport);
-
-  const response = await transport.handleRequest(request, {
-    parsedBody,
-  });
-
-  return response;
+  try {
+    await server.connect(transport);
+    // JSON mode resolves only after the response is complete; there is no SSE
+    // stream or session to retain after this request.
+    return await transport.handleRequest(request, { parsedBody });
+  } finally {
+    await server.close();
+  }
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const origin = request.headers.get('origin');
+  if (origin && !getAllowedOrigins().includes(origin)) {
+    return NextResponse.json({ error: 'Origin not allowed' }, { status: 403 });
+  }
   return NextResponse.json(
     {
       message: 'MCP endpoint. Use POST with JSON-RPC body. Send API key via Authorization: Bearer <key> or X-API-Key.',
     },
-    { status: 200 }
+    { status: 405, headers: { Allow: 'POST' } }
   );
 }

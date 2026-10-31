@@ -28,6 +28,10 @@ export async function validateMcpApiKey(request: Request): Promise<boolean> {
   const serviceApiKey = process.env.SERVICE_API_KEY;
   if (serviceApiKey && apiKey === serviceApiKey) return true;
 
-  const { isValid } = await ApiKeyService.validateApiKey(apiKey);
-  return isValid;
+  try {
+    const { isValid } = await ApiKeyService.validateApiKey(apiKey);
+    return isValid;
+  } catch {
+    return false;
+  }
 }
