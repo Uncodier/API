@@ -39,6 +39,7 @@ import { quotationItemsTool } from '@/app/api/agents/tools/quotation_items/assis
 import { quotationsTool } from '@/app/api/agents/tools/quotations/assistantProtocol';
 import { purchasesTool } from '@/app/api/agents/tools/purchases/assistantProtocol';
 import { purchaseItemsTool } from '@/app/api/agents/tools/purchase_items/assistantProtocol';
+import { createProcurementTools } from '@/lib/procurement/tools';
 import { subscriptionPlanItemsTool } from '@/app/api/agents/tools/subscription_plan_items/assistantProtocol';
 import { subscriptionsTool } from '@/app/api/agents/tools/subscriptions/assistantProtocol';
 import { contentTool } from '@/app/api/agents/tools/content/assistantProtocol';
@@ -218,7 +219,8 @@ When the user asks to register a salary ("salario") or a general expense, you MU
 To differentiate:
 - Use the \`transactions\` tool with \`type: "fixed"\` or \`type: "variable"\`.
 - Include an appropriate \`description\` and \`category\`.
-- Only use \`purchases\` for vendor bills, purchase orders, or buying goods.`;
+- Only use \`purchases\` for legacy vendor bills / accounts payable.
+- For governed compras, requisitions, licitaciones, supplier invitations, adjudicaciones or approved purchase orders, load \`makinari-procurement\` via \`skill_lookup\` and discover \`procurement_*\` tools. Never substitute legacy bills for approval-controlled procurement.`;
 
 /**
  * Primes the assistant to tie sandbox-backed deliverables to requirements + status,
@@ -385,6 +387,7 @@ export const getAssistantToolDefinitions = (
     quotationItemsTool(siteId),
     purchasesTool(siteId),
     purchaseItemsTool(siteId),
+    ...createProcurementTools({ siteId, userId }),
     subscriptionPlanItemsTool(siteId),
     subscriptionsTool(siteId),
     schedulingTool(siteId, instanceId),

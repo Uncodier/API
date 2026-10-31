@@ -22,7 +22,7 @@ export function quotationItemsTool(current_site_id?: string) {
   return {
     name: 'quotation_items',
     description:
-      'Manage lines (items) inside a quotation. Use action="create" to add an item. Use action="update" to change quantity/price. Use action="delete" to remove an item. These actions automatically recalculate the quotation totals.',
+      'Manage lines (items) inside a customer SALES quotation only. Procurement supplier proposals are immutable through this tool; use procurement_quotations instead. Use action="create" to add an item. Use action="update" to change quantity/price. Use action="delete" to remove an item. These actions automatically recalculate the quotation totals.',
     parameters: {
       type: 'object',
       properties: {

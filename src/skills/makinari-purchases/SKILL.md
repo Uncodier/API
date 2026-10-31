@@ -13,6 +13,7 @@ Equip the agent to create and manage site-owned accounts payable: vendor bill he
 ## Instructions
 
 1. **Do not confuse “purchase” domains**
+   - **Governed procurement:** requisitions, tenders/licitaciones, supplier invitations, adjudicaciones and approved procurement orders use `makinari-procurement` and the `procurement_*` tools. Do not substitute legacy bills for these approval-controlled transitions.
    - **Vendor purchase (this skill):** money the site owes or paid to a supplier (`purchases` AP / PO).
    - **Expense / salary / gasto:** operating costs with no supplier bill. Use `makinari-expenses` (`transactions`) — never these tools.
    - **Buyer purchase (commerce):** a customer buying from us via `checkout` / entitlements `source_type=purchase`. Use `makinari-commerce` for that — never these tools.

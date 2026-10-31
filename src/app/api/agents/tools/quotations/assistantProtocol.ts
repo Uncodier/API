@@ -25,7 +25,7 @@ export function quotationsTool(current_site_id?: string) {
   return {
     name: 'quotations',
     description:
-      'Manage commercial quotations. Use action="create" to start a draft quotation (requires lead_id). Use action="update" to change status (draft, sent, rejected, expired). Use action="list" or "get" to read. Use action="delete" to remove.',
+      'Manage customer SALES quotations only. For procurement supplier proposals, sealed bids and adjudicaciones use procurement_quotations and procurement_approvals instead. Use action="create" to start a draft quotation (requires lead_id). Use action="update" to change status (draft, sent, rejected, expired). Use action="list" or "get" to read. Use action="delete" to remove.',
     parameters: {
       type: 'object',
       properties: {

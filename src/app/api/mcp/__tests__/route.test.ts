@@ -46,6 +46,8 @@ function catalog() {
       '@/lib/services/robot-instance/instance-history-reader': reader,
     });
   dependencies['@/lib/services/tool-execution-context'] = { readToolExecutionContext: () => undefined };
+  // This factory returns a catalog fragment rather than one tool definition.
+  dependencies['@/lib/procurement/tools'] = { createProcurementTools: () => [] };
   dependencies['@/lib/services/harness-diagnostics/tools'] = { refreshHarnessToolManifest: (tools: unknown) => tools };
   dependencies['@/app/api/agents/tools/router/assistantProtocol'] = loadRuntimeModule(
     'src/app/api/agents/tools/router/assistantProtocol.ts', {

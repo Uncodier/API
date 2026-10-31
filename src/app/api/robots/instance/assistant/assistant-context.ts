@@ -383,13 +383,17 @@ SKILL DISCOVERY (skill_lookup): Use relevant skills when their guidance helps th
 For any non-trivial request (especially catalog, commerce, products, quotes, checkout, reservations, slots, expenses, salaries), you MUST call \`skill_lookup\` with \`action="search"\` using English keywords (e.g. "catalog products marketplace commerce reservations slots checkout" or "expense salary payroll transactions"), then \`action="get"\` for matches such as "makinari-commerce" or "makinari-expenses".
 Follow the loaded SKILL.md playbooks before calling tools via \`tools\`. \`skill_lookup\` is directly available (not routed).`;
 
+  const procurementSkillInstruction = `
+PROCUREMENT SKILL ROUTING:
+For compras with requisitions, licitaciones/tenders, supplier invitations, adjudicaciones/awards or approval-controlled purchase orders, load \`skill_lookup\` with action="get", skill_name="makinari-procurement" (or search "procurement tenders invitations awards"). Then use \`tools\` search/describe/call for the corresponding \`procurement_*\` tool. Legacy \`purchases\`/\`purchase_items\` are accounts payable, and \`quotations\` are customer sales; neither substitutes for procurement approvals. Skill guidance never overrides screen permissions or database authorization.`;
+
   const commerceInstruction = `
 🛒 COMMERCE & CATALOG:
 - Create/update catalog items via \`tools\` → \`catalog_commerce\` (not free-text product lists).
 - Prefer skill \`makinari-commerce\` for the full protocol, including catalog capacity slots (reservations).
 - Purchasable flows use \`checkout\`, not legacy \`sales\` / \`sales_order\`.
 - Subscriptions: Use \`tools\` → \`subscriptions\` to read, list, create or update a user's active subscriptions. You CAN manually create a subscription if the user paid outside of Stripe.
-- General expenses, salaries, and payroll use \`tools\` → \`transactions\` (skill \`makinari-expenses\`). Vendor bills / PO use \`purchases\` (skill \`makinari-purchases\`). Do not mix them.
+- General expenses, salaries, and payroll use \`tools\` → \`transactions\` (skill \`makinari-expenses\`). Legacy vendor bills / AP use \`purchases\` (skill \`makinari-purchases\`). Governed procurement orders use \`procurement_*\` (skill \`makinari-procurement\`). Do not mix them.
 - When an uploaded image is attached, use the HTTP URLs from the CRITICAL list as product image fields / references.`;
 
   const isWorkflowMode = (systemPrompt || '').includes('WORKFLOW MODE');
@@ -400,6 +404,7 @@ Follow the loaded SKILL.md playbooks before calling tools via \`tools\`. \`skill
         instanceContext,
         toolsRouterInstruction,
         skillLookupInstruction,
+        procurementSkillInstruction,
         requiredSkillsPrompt(selectedSkills),
       ].filter(Boolean).join('\n')
     : [
@@ -412,6 +417,7 @@ Follow the loaded SKILL.md playbooks before calling tools via \`tools\`. \`skill
     systemPrompt || '',
     toolsRouterInstruction,
     skillLookupInstruction,
+    procurementSkillInstruction,
     requiredSkillsPrompt(selectedSkills),
     commerceInstruction,
     planModeInstruction,

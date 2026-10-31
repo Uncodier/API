@@ -1,16 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 
-async function recalculateTotals(quotationId: string) {
-  const { data: items } = await supabaseAdmin.from('quotation_items').select('subtotal').eq('quotation_id', quotationId);
+async function recalculateTotals(quotationId: string, siteId: string) {
+  const { data: items, error } = await supabaseAdmin.from('quotation_items')
+    .select('subtotal, quotations!inner(site_id, purpose)')
+    .eq('quotation_id', quotationId)
+    .eq('quotations.site_id', siteId)
+    .eq('quotations.purpose', 'sales');
+  if (error) throw new Error(error.message);
   const total = (items || []).reduce((acc: number, item: any) => acc + (Number(item.subtotal) || 0), 0);
   
-  await supabaseAdmin.from('quotations').update({
+  const { data: quotation, error: updateError } = await supabaseAdmin.from('quotations').update({
     subtotal: total,
     total: total,
     tax_total: 0,
     discount_total: 0
-  }).eq('id', quotationId);
+  }).eq('id', quotationId).eq('site_id', siteId).eq('purpose', 'sales').select('id').single();
+  if (updateError) throw new Error(updateError.message);
+  if (!quotation) throw new Error('Quotation not found during totals recalculation');
 }
 
 export async function POST(request: NextRequest) {
@@ -22,46 +29,75 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Missing action' }, { status: 400 });
     }
 
-    // Helper to verify site ownership
+    if (typeof site_id !== 'string' || !site_id.trim()) {
+      return NextResponse.json({ success: false, error: 'site_id required' }, { status: 400 });
+    }
+
+    if (['get', 'update', 'delete'].includes(action) && (typeof id !== 'string' || !id.trim())) {
+      return NextResponse.json({ success: false, error: 'id required' }, { status: 400 });
+    }
+    if (['create', 'list'].includes(action) &&
+      (typeof updates.quotation_id !== 'string' || !updates.quotation_id.trim())) {
+      return NextResponse.json({ success: false, error: 'quotation_id required' }, { status: 400 });
+    }
+    if (action === 'list' && (!Number.isSafeInteger(limit) || limit < 1 ||
+      !Number.isSafeInteger(offset) || offset < 0 || limit - 1 > Number.MAX_SAFE_INTEGER - offset)) {
+      return NextResponse.json({ success: false, error: 'Invalid pagination' }, { status: 400 });
+    }
+
+    // Service-role reads must exclude procurement before any row is returned.
     async function verifyQuotationOwnership(quotationId: string) {
-      if (!site_id) return true;
-      const { data } = await supabaseAdmin.from('quotations').select('site_id').eq('id', quotationId).single();
-      if (!data || data.site_id !== site_id) {
+      if (!quotationId) throw new Error('quotation_id required');
+      const { data, error } = await supabaseAdmin.from('quotations')
+        .select('id, site_id, price_list_id')
+        .eq('id', quotationId).eq('site_id', site_id).eq('purpose', 'sales').single();
+      if (error || !data) {
         throw new Error('Unauthorized or quotation not found');
       }
-      return true;
+      return data;
+    }
+
+    async function getSalesItem() {
+      const { data, error } = await supabaseAdmin.from('quotation_items')
+        .select('*, quotations!inner(site_id, purpose)')
+        .eq('id', id).eq('quotations.site_id', site_id).eq('quotations.purpose', 'sales').single();
+      if (error || !data) throw new Error('Item not found');
+      const { quotations: _parent, ...item } = data;
+      return item;
     }
 
     if (action === 'create') {
-      await verifyQuotationOwnership(updates.quotation_id);
+      const quote = await verifyQuotationOwnership(updates.quotation_id);
       
       let finalName = updates.name;
       let finalPrice = updates.unit_price;
 
-      // Hydrate name/price from catalog if catalog_item_id is provided but name/price are missing
-      if (updates.catalog_item_id && (!finalName || finalPrice === undefined)) {
-        // Find if quotation has a price_list_id
-        const { data: quote } = await supabaseAdmin.from('quotations').select('price_list_id').eq('id', updates.quotation_id).single();
+      // Validate catalog ownership even when the caller supplies name and price.
+      if (updates.catalog_item_id != null) {
+        if (typeof updates.catalog_item_id !== 'string' || !updates.catalog_item_id.trim()) {
+          return NextResponse.json({ success: false, error: 'Invalid catalog_item_id' }, { status: 400 });
+        }
+        const { data: cat, error: catalogError } = await supabaseAdmin.from('catalog_items')
+          .select('name, target_sale_price')
+          .eq('id', updates.catalog_item_id)
+          .eq('site_id', site_id)
+          .single();
+        if (catalogError || !cat) throw new Error('Catalog item not found');
         
         let customPrice: number | undefined;
-        if (quote?.price_list_id) {
-          const { data: pli } = await supabaseAdmin.from('price_list_items')
-            .select('unit_price')
+        if (quote.price_list_id && finalPrice === undefined) {
+          const { data: pli, error: priceError } = await supabaseAdmin.from('price_list_items')
+            .select('unit_price, price_lists!inner(site_id)')
             .eq('price_list_id', quote.price_list_id)
             .eq('catalog_item_id', updates.catalog_item_id)
+            .eq('price_lists.site_id', site_id)
             .maybeSingle();
+          if (priceError) throw new Error(priceError.message);
           if (pli) customPrice = Number(pli.unit_price);
         }
 
-        const { data: cat } = await supabaseAdmin.from('catalog_items')
-          .select('name, target_sale_price')
-          .eq('id', updates.catalog_item_id)
-          .single();
-          
-        if (cat) {
-          if (!finalName) finalName = cat.name;
-          if (finalPrice === undefined) finalPrice = customPrice !== undefined ? customPrice : (cat.target_sale_price || 0);
-        }
+        if (!finalName) finalName = cat.name;
+        if (finalPrice === undefined) finalPrice = customPrice !== undefined ? customPrice : (cat.target_sale_price || 0);
       }
 
       if (!finalName) throw new Error('Missing required field: name (could not be inferred)');
@@ -85,13 +121,13 @@ export async function POST(request: NextRequest) {
         .single();
 
       if (error) throw new Error(error.message);
-      await recalculateTotals(updates.quotation_id);
+      if (!data) throw new Error('Item was not created');
+      await recalculateTotals(updates.quotation_id, site_id);
       return NextResponse.json({ success: true, item: data });
     }
 
     if (action === 'update') {
-      const { data: current } = await supabaseAdmin.from('quotation_items').select('*').eq('id', id).single();
-      if (!current) throw new Error('Item not found');
+      const current = await getSalesItem();
       await verifyQuotationOwnership(current.quotation_id);
 
       const quantity = updates.quantity ?? current.quantity;
@@ -107,12 +143,19 @@ export async function POST(request: NextRequest) {
           metadata: updates.metadata
         })
         .eq('id', id)
+        .eq('quotation_id', current.quotation_id)
         .select()
         .single();
 
       if (error) throw new Error(error.message);
-      await recalculateTotals(data.quotation_id);
+      if (!data) throw new Error('Item not found');
+      await recalculateTotals(current.quotation_id, site_id);
       return NextResponse.json({ success: true, item: data });
+    }
+
+    if (action === 'get') {
+      const item = await getSalesItem();
+      return NextResponse.json({ success: true, item });
     }
 
     if (action === 'list') {
@@ -121,26 +164,32 @@ export async function POST(request: NextRequest) {
       
       const { data, error, count } = await supabaseAdmin
         .from('quotation_items')
-        .select('*', { count: 'exact' })
+        .select('*, quotations!inner(site_id, purpose)', { count: 'exact' })
         .eq('quotation_id', updates.quotation_id)
-        .range(offset, offset + limit - 1);
+        .eq('quotations.site_id', site_id)
+        .eq('quotations.purpose', 'sales')
+        .range(offset, offset + (limit - 1));
 
       if (error) throw new Error(error.message);
-      return NextResponse.json({ success: true, items: data, count });
+      const salesItems = data?.map(({ quotations: _parent, ...item }) => item);
+      return NextResponse.json({ success: true, items: salesItems, count });
     }
 
     if (action === 'delete') {
-      const { data: current } = await supabaseAdmin.from('quotation_items').select('quotation_id').eq('id', id).single();
-      if (!current) throw new Error('Item not found');
+      const current = await getSalesItem();
       await verifyQuotationOwnership(current.quotation_id);
 
-      const { error } = await supabaseAdmin
+      const { data, error } = await supabaseAdmin
         .from('quotation_items')
         .delete()
-        .eq('id', id);
+        .eq('id', id)
+        .eq('quotation_id', current.quotation_id)
+        .select('id')
+        .maybeSingle();
 
       if (error) throw new Error(error.message);
-      await recalculateTotals(current.quotation_id);
+      if (!data) throw new Error('Item not found');
+      await recalculateTotals(current.quotation_id, site_id);
       return NextResponse.json({ success: true });
     }
 

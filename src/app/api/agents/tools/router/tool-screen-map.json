@@ -2,6 +2,12 @@
   "version": 1,
   "description": "Screen keys from market-fit/app/config/navigation-areas.ts. All listed screens are required. null explicitly marks a screen-independent utility. Unmapped tools are denied.",
   "tools": {
+    "procurement_requests": { "screens": ["purchaseRequests"], "requiresUser": true, "bindActor": true },
+    "procurement_tenders": { "screens": ["procurementTenders"], "requiresUser": true, "bindActor": true },
+    "procurement_quotations": { "screens": ["purchasesQuotes"], "requiresUser": true, "bindActor": true },
+    "procurement_orders": { "screens": ["purchasesOrders"], "requiresUser": true, "bindActor": true },
+    "procurement_approvals": { "screens": ["procurementApprovals"], "requiresUser": true, "bindActor": true },
+    "procurement_policy": { "screens": ["procurementRules"], "requiresUser": true, "bindActor": true },
     "read_files": { "screens": ["applicationsRepositories"] },
     "read_cloud_file": { "screens": ["assets"], "requiresUser": true, "bindActor": true },
     "list_cloud_files": { "screens": ["assets"], "requiresUser": true, "bindActor": true },

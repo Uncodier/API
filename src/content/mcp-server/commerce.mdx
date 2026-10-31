@@ -2,6 +2,41 @@
 
 MCP names: `checkout`, `reservations`, `quotations`, `sales`, `purchases`, `catalog_commerce`.
 
+## Procurement: purchasing, tenders and awards
+
+The `procurement_*` tools operate the procurement module, **not** legacy vendor
+bills, customer checkout or sales quotations. Discover their action-specific
+schemas through `tools` (`describe`). Tools are filtered by their respective screen
+permissions in discovery and execution, following the shared administrator exemption.
+The canonical database operations additionally require a verified owner/admin actor
+with unrestricted workspace access; configured approval eligibility is also enforced.
+
+| Tool | Actions |
+| :--- | :--- |
+| `procurement_requests` | `list`, `get`, `save`, `submit`, `revalidate`, `decide` |
+| `procurement_tenders` | `list`, `get`, `save`, `publish`, `transition`, `participant`, `portal` |
+| `procurement_quotations` | `list`, `get`, `options`, `record` |
+| `procurement_approvals` | `list`, `get`, `create`, `decide` |
+| `procurement_orders` | `list`, `receive` |
+| `procurement_policy` | `get` |
+
+`save` creates a full draft with no ID and version/revision zero; updates require
+the current ID and version/revision. Amounts are integer minor units. Invitations
+record supplier eligibility, not email delivery. Publication, award and order
+requests may remain pending approval. Read the resulting state before claiming
+completion. Sealed proposals remain sealed until the module permits opening.
+
+Quotation imports and receipts require stable idempotency UUIDs. Reuse the same
+key and payload on retries. Other creates are not generally idempotent; inspect
+state after a lost response rather than blindly retrying. Receipts are non-stock
+acceptance, not inventory movement, accounting posting or payment.
+
+Request/tender/approval lists support bounded `limit`/`offset`. Canonical quotation
+and order lists are limited to the latest 100. Supplier onboarding, policy editing,
+supplier-side submission and evidence uploads remain in the procurement UI.
+The backend procurement migrations and service-only MCP bridge must be deployed
+before execution; tool discovery alone does not prove backend availability.
+
 ## `checkout`
 
 Actions: `create_order` · `create_payment_link` · `get_order`.
