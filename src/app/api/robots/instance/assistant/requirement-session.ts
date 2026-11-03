@@ -4,6 +4,7 @@ import { attachRequirementAssistantHost } from './requirement-host';
 import { createRequirementExecutionBoundary } from './requirement-execution-boundary';
 import { writeRequirementInstanceLog } from './requirement-instance-log';
 import { createRequirementAssistantBilling } from './requirement-billing';
+import { REQUIREMENT_RECOVERY_GUIDANCE } from './requirement-recovery-policy';
 import type { RequirementRun } from '@/lib/harness/requirement-types';
 import type { ArtifactStore, HarnessSession, HarnessTool, SessionStore, Workspace } from '@/lib/harness/types';
 
@@ -57,6 +58,7 @@ export async function runRequirementAssistantSlice(input: RequirementAssistantSl
     tools: [...tools, ...adapter.controlTools], environment,
     refreshContext: async () => input.redact([
       input.context || '',
+      REQUIREMENT_RECOVERY_GUIDANCE,
       input.workspace ? `Owned workspace: ${input.workspace.ref.root}. Its existence does not require repository changes or deployment.`
         : 'Document requirement: use list_cloud_files, read_cloud_file and write_cloud_file. Default scope is this requirement. No app, checkout, shell or sandbox. Never search workspace files for this task. Saved documents and Git evidence have separate statuses; report pending Git honestly.',
       await input.getContext?.() || '',

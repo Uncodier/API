@@ -6,9 +6,10 @@ import { operationFingerprint, redactData, safeError } from '@/lib/harness/secur
 import { sameJson } from '@/lib/harness/store';
 import type { RequirementRun } from '@/lib/harness/requirement-types';
 import type { ArtifactStore, HarnessSession, HarnessTool, Message, SessionStore, ToolCall, ToolContext, ToolResult } from '@/lib/harness/types';
-import { isCompletedLocalCommand, requirementOperationFingerprint, requirementOperationResult } from './requirement-operation';
+import { isCompletedLocalCommand, isRequirementDiagnosticRead, requirementOperationFingerprint, requirementOperationResult } from './requirement-operation';
 import { HISTORY_RECEIPT_BUDGET, readRequirementHistory } from './requirement-history';
 import { withRequirementChargeContext } from '@/lib/services/billing/requirement-charge-context';
+import { requirementRecoveryPolicy } from './requirement-recovery-policy';
 
 type LogEvent = { key: string; log_type: string; message: string; tool_name?: string; tool_call_id?: string;
   tool_args?: any; tool_result?: any; is_error?: boolean; details?: Record<string, unknown> };
@@ -28,7 +29,6 @@ const historySchema = z.object({ offset: z.number().int().min(0).safe(),
   .refine(page => page.contentOffset === undefined || page.limit === 1, 'contentOffset requires limit 1.');
 const artifactSchema = z.object({ id: z.string().min(1).max(200), offset: z.number().int().min(0).default(0),
   limit: z.number().int().min(1).max(8000).default(4000) }).strict();
-const reconcileSchema = z.object({ operationId: z.string().min(1).max(200) }).strict();
 
 function canonical(message: Message): any {
   return { role: message.role, content: message.content,
@@ -49,33 +49,57 @@ export function createRequirementExecutionBoundary(input: Input): {
   let measuredAt = Date.now();
   let initialized = false;
   let poisoned = false;
+  // Sanitized first boundary outcome, never arbitrary adapter error payloads.
+  let firstBoundaryFailure: Error | undefined;
   let awaitingModel = false;
   let executing: { call: ToolCall; args: Record<string, unknown>; adapterUsed: boolean } | undefined;
   let finishOutcome: string | undefined;
   let checkpointAttempted = false;
   const tools = new Map(input.tools.map(tool => [tool.name, tool]));
+  // Retired name stays reserved only to absorb historical calls without dispatch.
   const controlNames = new Set(['finish_task', 'read_session_history', 'read_result_artifact', 'reconcile_operation']);
   const fatal = (): never => { throw new AssistantExecutionBoundaryError(); };
   // Once a persistence/ownership boundary fails, this instance cannot dispatch again.
   const guard = async <T>(fn: () => Promise<T>): Promise<T> => {
-    if (poisoned) return fatal();
-    try { return await fn(); } catch (error) {
+    if (poisoned) {
+      if (firstBoundaryFailure instanceof AssistantExecutionBoundaryError) throw firstBoundaryFailure;
+      return fatal();
+    }
+    try {
+      const result = await fn();
+      // Adapters may turn a nested guard exception into tool-result data.
+      // That must not authorize further persistence or hide the original failure.
+      if (poisoned) throw firstBoundaryFailure;
+      return result;
+    } catch (error) {
+      if (poisoned) throw firstBoundaryFailure;
       // An idle transport deadline is a slice boundary, not an uncertain effect.
-      // Preserve only the actual host timeout; storage/ownership failures and
-      // interruptions during inference or tools must still fail closed.
-      const idleTimeout = input.signal.aborted && error === input.signal.reason &&
-        error instanceof DOMException && error.name === 'TimeoutError' &&
+      // Preserve only the actual host timeout. Storage/ownership and inference
+      // failures stay fatal; canonical tool interruptions recover without replay.
+      const hostTimeout = input.signal.aborted && error === input.signal.reason &&
+        error instanceof DOMException && error.name === 'TimeoutError';
+      const confirmed = sameJson(session.messages, confirmedSession.messages) &&
+        sameJson(session.uncertainOperations, confirmedSession.uncertainOperations) &&
+        sameJson(session.reconciledOperations, confirmedSession.reconciledOperations);
+      const idleTimeout = hostTimeout &&
         !awaitingModel && !executing && !session.pending && !outstanding().length &&
-        !session.uncertainOperations.length && !confirmedSession.pending &&
-        sameJson(session.messages, confirmedSession.messages);
+        !confirmedSession.pending && confirmed;
+      // Only the exact transport timeout with a durable canonical batch may yield.
+      // Next initialization closes interrupted calls without replay. In-flight
+      // inference/billing and unconfirmed persistence remain fail-closed.
+      const interruptedBatch = hostTimeout && !awaitingModel && confirmed &&
+        confirmedSession.assistantExecutionVersion === 1 &&
+        sameJson(session.pending, confirmedSession.pending) && outstanding().length > 0;
       poisoned = true;
       session = structuredClone(confirmedSession);
-      if (idleTimeout) throw error;
-      if (error instanceof AssistantExecutionBoundaryError) throw error;
-      return fatal();
+      firstBoundaryFailure = idleTimeout ? error as DOMException
+        : interruptedBatch ? new AssistantExecutionBoundaryError('canonical_slice_interrupted')
+        : error instanceof AssistantExecutionBoundaryError ? error : new AssistantExecutionBoundaryError();
+      throw firstBoundaryFailure;
     }
   };
   const active = async () => {
+    if (poisoned) throw firstBoundaryFailure;
     input.signal.throwIfAborted();
     try { await input.assertActive(); } catch (error) {
       if (error === input.signal.reason) throw error;
@@ -269,27 +293,8 @@ export function createRequirementExecutionBoundary(input: Input): {
       const result = await guard(() => input.artifacts.read(session.id, input.run.siteId, input.owner, page.id, page.offset, page.limit));
       return result ? { ok: true, output: result } : { ok: false, error: { code: 'ARTIFACT_NOT_FOUND', message: 'No artifact in this session.' } };
     }
-    const { operationId } = reconcileSchema.parse(args);
-    const original = session.messages.flatMap(message => message.toolCalls || []).find(call => call.id === operationId);
-    let adapterName = original?.name;
-    let originalArgs = original ? argsFor(original) : {};
-    if (adapterName === 'tools' && originalArgs.action === 'call' && typeof originalArgs.name === 'string') {
-      adapterName = originalArgs.name;
-      const nested = typeof originalArgs.args === 'string' ? JSON.parse(originalArgs.args) : originalArgs.args;
-      originalArgs = effectArgs(z.record(z.unknown()).parse(nested));
-    }
-    const adapter = adapterName ? tools.get(adapterName) : undefined;
-    if (!original || !adapter?.reconcile) return { ok: false, error: { code: 'RECONCILIATION_UNAVAILABLE',
-      message: 'Trusted provider/operator reconciliation is required. Model claims do not authorize replay.' } };
-    const fingerprint = requirementOperationFingerprint(original.name, argsFor(original));
-    const proof = await adapter.reconcile(originalArgs, context(original.id));
-    await guard(active);
-    if (!session.uncertainOperations.includes(fingerprint) || proof.state === 'unknown' || !proof.proof ||
-      proof.proof.length > 1000 || serializedBytes(proof) > RECEIPT_MAX_BYTES) return { ok: false, output: { state: 'unknown' } };
-    session.reconciledOperations ||= {};
-    session.reconciledOperations[fingerprint] = { operationId, proof: input.redact(proof.proof), state: proof.state,
-      ...(proof.state === 'applied' ? { result: redactData(proof.result, input.redact) } : {}) };
-    return { ok: true, output: { state: proof.state } };
+    return { ok: false, error: { code: 'TOOL_RETIRED', effectStarted: false,
+      message: 'Use ordinary history and state inspection tools. Recovery is governed by the host operation policy, not a reconciliation command.' } };
   };
 
   const controlTools = [
@@ -300,8 +305,6 @@ export function createRequirementExecutionBoundary(input: Input): {
         contentOffset: { type: 'integer', minimum: 0, description: 'Read one message content page; limit must be 1 if supplied. Not available for history-result references.' } }, required: ['offset'], additionalProperties: false } },
     { name: 'read_result_artifact', description: 'Read complete redacted results using artifact ID and character offsets.',
       parameters: { type: 'object', properties: { id: { type: 'string' }, offset: { type: 'integer', minimum: 0 }, limit: { type: 'integer', minimum: 1, maximum: 8000 } }, required: ['id'], additionalProperties: false } },
-    { name: 'reconcile_operation', description: 'Request trusted adapter proof for an uncertain operation. Never uses model claims as evidence.',
-      parameters: { type: 'object', properties: { operationId: { type: 'string' } }, required: ['operationId'], additionalProperties: false } },
   ].map(tool => ({ ...tool, execute: (args: any) => executeControl(tool.name, args) }));
 
   const boundary: AssistantExecutionBoundary & { redact: (text: string) => string } = {
@@ -349,8 +352,9 @@ export function createRequirementExecutionBoundary(input: Input): {
       const call = outstanding()[0];
       if (!call || incoming.id !== call.id || incoming.name !== call.name || !sameJson(incoming.args, JSON.parse(call.arguments))) return fatal();
       const args = argsFor(call);
-      const effect = controlNames.has(call.name) || (call.name === 'tools' && ['list', 'describe'].includes(String(args.action)))
-        ? 'read' : tools.get(call.name)?.effect ?? 'write';
+      const diagnosticRead = isRequirementDiagnosticRead(call.name, args);
+      const policy = controlNames.has(call.name) ? 'read' : requirementRecoveryPolicy(call.name, args, tools);
+      const effect: HarnessTool['effect'] = policy === 'read' ? 'read' : 'write';
       const fingerprint = requirementOperationFingerprint(call.name, args);
       const pending = { call, fingerprint, effect };
       const inlineControl = controlNames.has(call.name);
@@ -365,15 +369,15 @@ export function createRequirementExecutionBoundary(input: Input): {
       await log({ key: key('tool-start', index, call.id), log_type: 'tool_call', message: 'Tool execution checkpoint.',
         tool_name: call.name, tool_call_id: call.id, tool_args: { preview: input.redact(call.arguments).slice(0, 6000) } });
       session.pending = pending;
-      const resolution = session.reconciledOperations?.[fingerprint];
-      if (resolution && resolution.state !== 'applied') delete session.reconciledOperations![fingerprint];
       await save();
       await active();
       let output: any;
-      if (effect === 'write' && session.uncertainOperations.includes(fingerprint) && !resolution) {
-        output = { ok: false, error: { code: 'RECONCILIATION_REQUIRED', ambiguous: true, message: 'Operation outcome unknown; automatic replay disabled.' } };
-      } else if (resolution?.state === 'applied') {
-        output = resolution.result || { ok: true, output: { reconciled: true, proof: resolution.proof } };
+      if (call.name === 'reconcile_operation') {
+        output = { ok: false, error: { code: 'TOOL_RETIRED', effectStarted: false,
+          message: 'Reconciliation is retired. Inspect history/current state and continue under the operation recovery policy.' } };
+      } else if (policy === 'verify_external' && session.uncertainOperations.includes(fingerprint)) {
+        output = { ok: false, error: { code: 'OPERATION_RETRY_UNSAFE', effectStarted: false,
+          message: 'This external or unclassified write has an unknown outcome and no safe retry contract. Inspect provider/process state, continue independent work, and report unresolved effects. Do not change arguments to bypass duplicate-effect protection.' } };
       } else {
         executing = { call, args, adapterUsed: false };
         try {
@@ -381,6 +385,8 @@ export function createRequirementExecutionBoundary(input: Input): {
           // this host-owned requirement, never to model-selected metadata.
           output = await withRequirementChargeContext(input.run, execute);
         } catch (error: any) {
+          if (error instanceof AssistantExecutionBoundaryError) throw error;
+          if (input.signal.aborted && error === input.signal.reason) throw error;
           if (input.signal.aborted || /(?:Recovery|Ownership|SessionStore|ArtifactStore|HostStateStore|Database|Billing)Error$/.test(error?.name || '')) return fatal();
           output = { ok: false, error: { code: 'TOOL_ERROR', message: safeError(error, input.redact),
             ...(effect === 'write' && error?.effectStarted !== false ? { ambiguous: true } : { effectStarted: false }) } };
@@ -389,12 +395,12 @@ export function createRequirementExecutionBoundary(input: Input): {
       await active();
       // Detach wrapper results before redaction; never mutate the canonical tool's object.
       const safeOutput = redactData(JSON.parse(JSON.stringify(output ?? null)), input.redact);
-      const result = requirementOperationResult(safeOutput);
+      const result = requirementOperationResult(safeOutput, diagnosticRead);
       const completedLocalCommand = tools.has(call.name) && isCompletedLocalCommand(call.name, safeOutput);
       if (!result.ok && effect === 'write' && result.error?.effectStarted !== false && !completedLocalCommand) {
-        result.error = { code: result.error?.code || 'TOOL_ERROR', message: result.error?.message || 'Tool reported failure; outcome requires reconciliation.', ...result.error, ambiguous: true };
+        result.error = { code: result.error?.code || 'TOOL_ERROR', message: result.error?.message || 'Tool reported failure; inspect its effects under the recovery policy.', ...result.error, ambiguous: true };
       }
-      if (result.error?.ambiguous && !session.uncertainOperations.includes(fingerprint)) session.uncertainOperations.push(fingerprint);
+      if (effect === 'write' && result.error?.ambiguous && !session.uncertainOperations.includes(fingerprint)) session.uncertainOperations.push(fingerprint);
       const receipt: Message = inlineControl
         ? { role: 'tool', toolCallId: call.id, content: JSON.stringify(result) }
         : await persistResult({ artifacts: input.artifacts, sessionId: session.id, siteId: input.run.siteId,
@@ -407,7 +413,7 @@ export function createRequirementExecutionBoundary(input: Input): {
       session.assistantAuditCursor = session.messages.length;
       if (call.name === 'finish_task' && !result.ok) finishOutcome = undefined;
       await save();
-      return safeOutput;
+      return diagnosticRead ? result : safeOutput;
     }),
     afterTurn: _messages => guard(async () => {
       if (!initialized || executing || session.pending || outstanding().length || awaitingModel) return fatal();

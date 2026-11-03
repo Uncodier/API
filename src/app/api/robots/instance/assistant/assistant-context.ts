@@ -22,6 +22,7 @@ import { resolvePublishNodeBinding } from './publish-node-binding';
 import { resolveAssistantHistoryModel } from './history-model';
 import { assertNodeContextHasNode } from './node-context-boundary';
 import { DIRECT_EXECUTION_INSTRUCTION, type AssistantExecutionMode } from './execution-mode';
+import { canReadProcurementWorkflowInstanceAsActor } from '@/lib/services/workflow-robot/procurement-access';
 
 export async function prepareAssistantContext(
   instanceId: string,
@@ -53,6 +54,7 @@ export async function prepareAssistantContext(
     .select('*')
     .eq('id', instanceId)
     .single();
+  const isRemoteInstance = !instanceResult.error && Boolean(instanceResult.data);
   // Fallback to robot_instances
   if (instanceResult.error || !instanceResult.data) {
     console.log(`[Workflow] Instance not found in remote_instances, checking robot_instances: ${instanceId}`);
@@ -73,6 +75,9 @@ export async function prepareAssistantContext(
   }
   if (instance.site_id !== siteId || (requirementExecution && instance.user_id !== userId)) {
     throw new Error('Assistant instance scope mismatch');
+  }
+  if (isRemoteInstance && !await canReadProcurementWorkflowInstanceAsActor(siteId, instanceId, userId)) {
+    throw new Error('Assistant instance access denied');
   }
 
   // Log execution start

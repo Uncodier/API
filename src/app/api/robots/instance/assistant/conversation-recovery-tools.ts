@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { summarizeRecoveryTool } from '@/lib/services/robot-instance/assistant-recovery-context';
 import type { AssistantRecoveryScope } from '@/lib/services/robot-instance/assistant-recovery-schema';
 import type { Tool } from '@/lib/custom-automation/ai-agent-executor';
+import { canReadProcurementWorkflowInstanceAsActor } from '@/lib/services/workflow-robot/procurement-access';
 
 export const CONVERSATION_RECOVERY_INSTRUCTION = [
   'CONVERSATION-ONLY RECOVERY: finish the interrupted user conversation, not the managed task.',
@@ -30,6 +31,9 @@ export function getConversationRecoveryTools(scope: AssistantRecoveryScope): Too
     execute: async (input: unknown) => {
       if (!inputSchema.safeParse(input).success) {
         return { success: false, error: 'Only action=status with no additional arguments is supported.' };
+      }
+      if (!await canReadProcurementWorkflowInstanceAsActor(scope.siteId, scope.instanceId, scope.userId)) {
+        return { success: false, error: 'Conversation status is unavailable.' };
       }
       const { data: plans, error } = await supabaseAdmin.from('instance_plans')
         .select('id,title,status,metadata,steps_completed,steps_total,updated_at')

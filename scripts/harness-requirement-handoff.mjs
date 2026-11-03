@@ -51,7 +51,9 @@ export async function sampleHandoff(client, scope, now = new Date()) {
     throw new Error('Requirement scope unavailable');
   }
   const command = await read(client.from('requirement_commands').select('action_id,revision,created_at,applied_at')
-    .eq('requirement_id', scope.requirementId).eq('site_id', scope.siteId)
+    // Commands inherit tenant scope from the requirement verified above; this
+    // table has no site_id column. Never query arbitrary unverified IDs here.
+    .eq('requirement_id', requirement.id)
     .order('revision', { ascending: false }).limit(1).maybeSingle());
   const action = command && await read(client.from('instance_logs').select('id,details,created_at,trusted_user_action,log_type')
     .eq('id', command.action_id).eq('site_id', scope.siteId).maybeSingle());

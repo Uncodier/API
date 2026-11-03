@@ -41,11 +41,16 @@ export interface HarnessTool {
   description: string;
   parameters: Record<string, unknown>;
   effect: 'read' | 'write';
+  /** Host-only recovery decision for NEW agent requests, never automatic replay.
+   * inspect: bounded inspectable edits; retry_safe: adapter guarantees idempotency
+   * across call IDs; verify_external (default): ambiguous effects cannot repeat. */
+  recoveryPolicy?: 'inspect' | 'retry_safe' | 'verify_external' |
+    ((args: Record<string, unknown>) => 'inspect' | 'retry_safe' | 'verify_external');
   /** Pure host adapter validation/canonicalization, before identity and dispatch.
    * Must preserve the meaning of the effect; never perform I/O here. */
   normalizeArguments?(args: Record<string, unknown>): Record<string, unknown>;
   execute(args: Record<string, unknown>, context: ToolContext): Promise<ToolResult>;
-  /** Trusted adapter only: model prose/inspection claims never authorize a replay. */
+  /** Legacy runtimes only. The canonical requirement runner does not invoke this. */
   reconcile?(args: Record<string, unknown>, context: ToolContext): Promise<Reconciliation>;
 }
 

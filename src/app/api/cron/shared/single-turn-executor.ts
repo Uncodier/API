@@ -459,7 +459,7 @@ export async function executeSingleTurnStep(params: {
         undefined,
         requirementId,
       ),
-    ), siteId, instanceId);
+    ), siteId, instanceId, userId ?? null);
     const evidenceCollectionOnly = isEvidenceCollectionRetry(
       persistedStep.error_message,
       activeRepairRun,

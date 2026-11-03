@@ -8,6 +8,7 @@ import type {
 import { WF_NODE_TYPES } from './types';
 import { buildRunSteps, channelTriggerBranch } from './graph';
 import { CURRENT_WORKFLOW_RESULT_CONTRACT_VERSION } from './result-contract';
+import { assertProcurementWorkflowActorAccess, isProcurementWorkflowTable } from './procurement-access';
 
 export { buildRunSteps };
 
@@ -207,6 +208,13 @@ export async function materializeRunFromGraph(
     .single();
   if (instErr || !instance) throw new Error('Instance not found');
 
+  if (isProcurementWorkflowTable(input.trigger_payload?.table)) {
+    await assertProcurementWorkflowActorAccess(instance.site_id, instance.user_id);
+    const { data: protectedInstance, error: protectionError } = await supabaseAdmin.rpc('procurement_workflow_protect_instance', {
+      p_site: instance.site_id, p_instance: instance.id,
+    });
+    if (protectionError || protectedInstance !== true) throw new Error('Procurement workflow protection failed');
+  }
   let nodes = await loadGraph(input.instance_id);
   let preResponseTrigger: { template_plan_id: string | null; node_id: string | null } | null = null;
   if (preResponseOnly) {

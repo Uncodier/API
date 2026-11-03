@@ -35,7 +35,7 @@ type DeletePayload<T = any> = {
   old_record: TableRecord<T>;
 };
 
-type DbChangePayload = InsertPayload | UpdatePayload | DeletePayload;
+type DbChangePayload = (InsertPayload | UpdatePayload | DeletePayload) & { event_id?: string };
 
 function toEventType(changeType: DbChangePayload['type']): WebhookMutationEvent {
   switch (changeType) {
@@ -94,6 +94,7 @@ export async function POST(request: NextRequest) {
         op,
         row: currentRecord as Record<string, unknown>,
         site_id,
+        ...(typeof body.event_id === 'string' && body.event_id.trim() ? { event_id: body.event_id } : {}),
       });
     }
 

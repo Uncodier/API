@@ -7,11 +7,13 @@ const hasAuthenticatedPrincipal = jest.fn();
 const canAccessSite = jest.fn();
 const readRedisJson = jest.fn();
 const writeRedisJson = jest.fn();
+const authorizeProcurementWorkflowInstanceRead = jest.fn();
 
 jest.unstable_mockModule('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from } }));
 jest.unstable_mockModule('@/lib/security/request-rate-limit', () => ({ hasAuthenticatedPrincipal }));
 jest.unstable_mockModule('@/lib/security/site-access', () => ({ canAccessSite }));
 jest.unstable_mockModule('@/lib/services/redis-json-cache', () => ({ readRedisJson, writeRedisJson }));
+jest.unstable_mockModule('@/lib/services/workflow-robot/procurement-access', () => ({ authorizeProcurementWorkflowInstanceRead }));
 
 const { GET } = await import('../route');
 const instanceId = '11111111-1111-4111-8111-111111111111';
@@ -22,6 +24,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   hasAuthenticatedPrincipal.mockReturnValue(true);
   canAccessSite.mockResolvedValue(true);
+  authorizeProcurementWorkflowInstanceRead.mockResolvedValue(true);
   readRedisJson.mockResolvedValue({ success: true, runs: [{ payload: { message: 'private' } }] });
   from.mockImplementation((table: string) => {
     if (table !== 'remote_instances') throw new Error('Unexpected DB read');
@@ -31,6 +34,13 @@ beforeEach(() => {
     query.maybeSingle = jest.fn().mockResolvedValue({ data: { site_id: 'site-1' }, error: null });
     return query;
   });
+});
+
+it('denies procurement-restricted readers before reading shared cached payloads', async () => {
+  authorizeProcurementWorkflowInstanceRead.mockResolvedValue(false);
+  expect((await GET(request(), context)).status).toBe(403);
+  expect(readRedisJson).not.toHaveBeenCalled();
+  expect(writeRedisJson).not.toHaveBeenCalled();
 });
 
 it('denies unauthenticated and cross-tenant readers before reading cached message payloads', async () => {

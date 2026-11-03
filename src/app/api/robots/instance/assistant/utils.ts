@@ -419,7 +419,7 @@ export const getAssistantToolDefinitions = (
     instanceLogsTool(siteId, userId ?? '', instanceId),
     // MCP's legacy "default" and schema-only catalogs have no real instance.
     // Do not construct a reader (or broaden its scope) in those contexts.
-    ...(hasInstanceHistoryScope(siteId, instanceId) ? [instanceHistoryTool(siteId, instanceId)] : []),
+    ...(hasInstanceHistoryScope(siteId, instanceId) ? [instanceHistoryTool(siteId, instanceId, userId)] : []),
     transactionsTool(siteId, userId ?? ''),
     createProjectTool(userId ?? ''),
     audioToTextTool(siteId),
@@ -459,7 +459,7 @@ export const getAssistantToolDefinitions = (
 
   if (requirementId) {
     const diagnosticContext = {
-      siteId, instanceId, requirementId,
+      siteId, instanceId, requirementId, userId,
       runtime: customTools.some(tool => tool?.name?.startsWith('sandbox_')) ? 'sandbox_executor' : 'assistant',
       toolNames: tools.map(tool => tool.name),
     };

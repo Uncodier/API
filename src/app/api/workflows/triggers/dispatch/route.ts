@@ -27,6 +27,7 @@ export async function POST(request: NextRequest) {
       row: body.row,
       site_id: body.site_id,
       instance_id: body.instance_id,
+      ...(typeof body.event_id === 'string' && body.event_id.trim() ? { event_id: body.event_id } : {}),
     });
     return NextResponse.json({ success: true, ...result });
   } catch (error: any) {

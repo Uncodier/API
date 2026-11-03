@@ -58,9 +58,10 @@ test('observer reads applied develop command with no mapping without inventing e
   assert.equal(sample.sessionId, null);
   assert.deepEqual(sample.receiptFingerprints, []);
   assert.equal(trace.some(([table]) => table === 'harness_sessions'), false);
-  for (const table of ['requirements', 'requirement_commands', 'instance_logs', 'harness_requirement_runs']) {
+  for (const table of ['requirements', 'instance_logs', 'harness_requirement_runs']) {
     assert.ok(trace.some(item => item[0] === table && item[1] === 'site_id' && item[2] === scope.siteId));
   }
+  assert.ok(trace.some(item => item[0] === 'requirement_commands' && item[1] === 'requirement_id' && item[2] === scope.requirementId));
   const report = evaluateHandoff(samples().baseline, sample);
   assert.equal(report.state, 'timed_out');
   assert.equal(report.passed, false);

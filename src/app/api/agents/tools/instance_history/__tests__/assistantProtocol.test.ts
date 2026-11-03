@@ -9,6 +9,9 @@ import { routeTools } from '../../router/assistantProtocol';
 jest.mock('@/lib/database/supabase-client', () => ({
   supabaseAdmin: { from: jest.fn(), rpc: jest.fn() },
 }));
+jest.mock('@/lib/services/workflow-robot/procurement-access', () => ({
+  canReadProcurementWorkflowInstanceAsActor: async () => true,
+}));
 jest.mock('@/lib/services/embeddings-service', () => ({
   EmbeddingsService: { generateEmbeddings: jest.fn() },
 }));

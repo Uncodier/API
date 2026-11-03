@@ -597,7 +597,7 @@ export const DEFAULT_ALWAYS_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
   'tracking_install', 'source_archive', 'deployment_trigger', 'deployment_status',
   'deployment_create', 'deployment_environment_sync', 'platform_key_provision',
   'capability_manifest', 'requirement_context', 'requirement_progress', 'requirement_plan',
-  'finish_task', 'read_session_history', 'read_result_artifact', 'reconcile_operation',
+  'finish_task', 'read_session_history', 'read_result_artifact',
   // sandbox surface — every agent uses these every turn
   'webSearch',
   'skill_lookup',

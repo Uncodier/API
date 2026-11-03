@@ -3,6 +3,7 @@ import { createInstancePlanCore } from '../create/core';
 import { instancePlanTool } from '../assistantProtocol';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { requirementStepExecutionBlock } from '@/lib/services/requirement-execution-visibility';
+import { getInstancePlansCore } from '../get/core';
 jest.mock('@/lib/services/requirement-execution-visibility', () => ({ requirementStepExecutionBlock: jest.fn() }));
 
 const workflowQuery: Record<string, jest.Mock> = {};
@@ -38,6 +39,17 @@ describe('instance plan requirement context', () => {
     mockedUpdateInstancePlanCore.mockResolvedValue({ success: true } as any);
     mockedCreateInstancePlanCore.mockResolvedValue({ success: true } as any);
     (requirementStepExecutionBlock as jest.Mock).mockResolvedValue(null);
+  });
+
+  it('binds list authorization to the host actor and tenant, not model params', async () => {
+    (getInstancePlansCore as jest.Mock).mockResolvedValue({ success: true, data: { plans: [] } });
+    await instancePlanTool('site-1', 'instance-1', 'user-1').execute({
+      action: 'list', site_id: 'other-site', instance_id: 'other-instance', user_id: 'privileged-user',
+    });
+    expect(getInstancePlansCore).toHaveBeenCalledWith(
+      expect.objectContaining({ site_id: 'site-1', instance_id: 'instance-1' }),
+      { userId: 'user-1', internal: false },
+    );
   });
 
   it('binds updates to the captured requirement instead of caller input', async () => {

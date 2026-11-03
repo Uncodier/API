@@ -44,7 +44,8 @@ Current assistant/tool receipts and actionable execution errors remain audited.
 An idle host `TimeoutError` ends the slice as `waiting` (`runtime_slice_expired`)
 and uses the existing cron backoff, not a permanent reconciliation pause. This
 only applies to the exact host abort reason with no model in flight, unfinished
-tool calls, pending/uncertain effects or unpersisted transcript changes. Storage,
+tool calls, pending effects or unpersisted transcript changes. Already-saved
+uncertain writes retain their individual replay fences, not a global pause. Storage,
 ownership, billing and in-flight operation failures remain fenced. No additional
 recovery table, scheduler or retry loop is involved.
 
@@ -56,6 +57,11 @@ credit reservations. Boundary failures carry only fixed diagnostic codes
 (`execution_check_failed`, `session_lease_failed`, `session_save_failed`, or
 `boundary_failed`) into the cycle error's `boundary_code`; raw ownership/storage
 exceptions are never retained. These codes do not authorize automatic recovery.
+
+The separate `canonical_slice_interrupted` code permits next-cycle recovery of a
+durably saved tool batch after an exact host timeout, without replaying its calls.
+See [operation-scoped recovery](REQUIREMENT_OPERATION_RECOVERY.md) for the diagnostic
+read fix, continued agent work and limits on resuming historical paused sessions.
 
 Command diagnostics read during the submitting conversation can observe that
 same action as unfinished. This is an admission wait until the turn completes,
@@ -77,9 +83,9 @@ per-effect boundary for current execution; it does not rely on replaying an enti
 cron slice to recover effects.
 Current canonical checkpoints have a separate execution-version marker: interrupted
 undispatched calls receive explicit not-executed receipts, while dispatched calls
-receive unknown-outcome receipts and write fingerprints remain fenced. Neither is
-replayed automatically. This closes the outstanding batch so trusted reconciliation
-is reachable on continuation. A saved successful `finish_task` receipt recovers its
+receive unknown-outcome receipts and write fingerprints remain recorded. Neither is
+replayed automatically. This closes the outstanding batch so the agent can inspect
+state and continue under the host recovery policy. A saved successful `finish_task` receipt recovers its
 completion intent without another model call. An import cursor alone is not a
 permission to replay legacy work.
 Only an explicit `finish_task` with resolved calls completes the session; a prose
@@ -101,8 +107,9 @@ remain failures but are not classified as unknown dispatch outcomes. This lets a
 new model-directed invocation rerun the same test after repairing its source. It
 does not assert that the failed command made no writes or automatically retry it.
 Timeouts, truncated/ambiguous receipts, routed lookalikes and interrupted writes
-remain fenced. Existing uncertain-operation fingerprints are not cleared by this
-change and still require trusted reconciliation.
+remain recorded. Existing uncertain-operation fingerprints are not cleared by this
+change. New requests use the recovery policy: inspectable edits need no reconciler,
+while external/unclassified uncertain writes retain duplicate-effect protection.
 Completion is deferred until the full `afterTurn` boundary has resolved the batch.
 The host checkpoint runs while ownership is still active, before the terminal
 session save; saving completion must not invalidate its own checkpoint lease.

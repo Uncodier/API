@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { hasAuthenticatedPrincipal } from '@/lib/security/request-rate-limit';
 import { canAccessSite } from '@/lib/security/site-access';
+import { authorizeProcurementWorkflowInstanceRead } from '@/lib/services/workflow-robot/procurement-access';
 import {
   readRedisJson,
   writeRedisJson,
@@ -25,6 +26,9 @@ export async function GET(
       .select('site_id').eq('id', instanceId).maybeSingle();
     if (instanceError) throw instanceError;
     if (!instance || !await canAccessSite(request, instance.site_id)) {
+      return NextResponse.json({ error: 'Workflow is not accessible' }, { status: 403 });
+    }
+    if (!await authorizeProcurementWorkflowInstanceRead(request, instanceId, instance.site_id)) {
       return NextResponse.json({ error: 'Workflow is not accessible' }, { status: 403 });
     }
     const cacheKey = `cache:workflow-runs:${instanceId}`;

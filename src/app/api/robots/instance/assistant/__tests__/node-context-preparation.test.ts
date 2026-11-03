@@ -1,4 +1,7 @@
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn() } }));
+jest.mock('@/lib/services/workflow-robot/procurement-access', () => ({
+  canReadProcurementWorkflowInstanceAsActor: jest.fn(),
+}));
 jest.mock('@/lib/services/robot-instance/InstanceContextManager', () => ({
   InstanceContextManager: jest.fn(),
 }));
@@ -27,6 +30,7 @@ import { InstanceContextManager } from '@/lib/services/robot-instance/InstanceCo
 import { InstanceAssetsService } from '@/lib/services/robot-instance/InstanceAssetsService';
 import { getInstanceAssistantTools, generateAgentBackground } from '../utils';
 import { prepareAssistantContext } from '../steps';
+import { canReadProcurementWorkflowInstanceAsActor } from '@/lib/services/workflow-robot/procurement-access';
 
 const INSTANCE = 'instance-1';
 const SITE = 'site-1';
@@ -42,6 +46,7 @@ function prepare(contextString?: string, nodeId?: string) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  (canReadProcurementWorkflowInstanceAsActor as jest.Mock).mockResolvedValue(true);
   nodeAvailable = true;
   jest.spyOn(console, 'log').mockImplementation(() => {});
   (InstanceContextManager as jest.Mock).mockImplementation(() => ({ buildHistory }));
@@ -64,6 +69,13 @@ beforeEach(() => {
   });
 });
 afterEach(() => jest.restoreAllMocks());
+
+it('denies private purchasing instance access before building history or tools', async () => {
+  (canReadProcurementWorkflowInstanceAsActor as jest.Mock).mockResolvedValue(false);
+  await expect(prepare()).rejects.toThrow('Assistant instance access denied');
+  expect(buildHistory).not.toHaveBeenCalled();
+  expect(getInstanceAssistantTools).not.toHaveBeenCalled();
+});
 
 it('prepares an owned requirement through the same history/background pipeline without instructing a competing executor', async () => {
   const assertActive = jest.fn(async () => {});

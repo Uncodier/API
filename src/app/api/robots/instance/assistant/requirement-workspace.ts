@@ -163,13 +163,14 @@ export async function executeRequirementAssistantWorkspace(id: string, scope: Se
         const operatorRequired = workspaceOpenRequiresOperator(error);
         const creditsExhausted = error instanceof RequirementCreditsExhaustedError;
         if (creditsExhausted) current.creditRecoveryMinimum = error.requiredCredits;
-        const boundaryFailure = error instanceof Error && (error.name === 'RecoveryError' || error.name === 'OpenRouterBillingError');
+        const interruptedBatch = error instanceof AssistantExecutionBoundaryError && error.code === 'canonical_slice_interrupted';
+        const boundaryFailure = !interruptedBatch && error instanceof Error && (error.name === 'RecoveryError' || error.name === 'OpenRouterBillingError');
         const sliceExpired = deadline.aborted && error === deadline.reason &&
           error instanceof DOMException && error.name === 'TimeoutError';
         current.status = operatorRequired || boundaryFailure ? 'paused' : 'waiting';
         current.reason = creditsExhausted ? 'account_credits_exhausted' : operatorRequired
           ? `workspace_access_requires_operator: ${safeError(error, redact)}` : boundaryFailure
-          ? 'assistant_execution_requires_reconciliation' : sliceExpired
+          ? 'assistant_execution_requires_reconciliation' : interruptedBatch ? 'canonical_slice_interrupted' : sliceExpired
           ? 'runtime_slice_expired' : `runtime_unavailable: ${safeError(error, redact)}`;
         await store.save(current, scope.siteId, owner);
       } catch {

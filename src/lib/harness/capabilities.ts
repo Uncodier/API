@@ -238,7 +238,7 @@ const descriptions: Record<CapabilityName, string> = {
   sandbox_db_provision: 'Idempotently provision tenant DB/auth/storage and configure 15-minute app credentials host-side. Returns names/metadata, never credentials. Runtime exec must explicitly opt in.',
   sandbox_db_capabilities: 'Read verified tenant DB/auth/storage capability metadata; no provisioning.',
   sandbox_db_inspect: 'Inspect tenant table accessibility. Returns only a receipt; no row values or credentials.',
-  sandbox_db_migrate: 'Apply pending static tenant migrations with the existing constrained applier. Preserves migration holds; no plan mutations or automatic QA.',
+  sandbox_db_migrate: 'Apply pending static tenant migrations with the existing constrained applier. Preserves migration holds; no plan mutations or automatic QA. An ambiguous batch requires external verification: per-file receipts do not make a changed, rediscovered batch safe to repeat.',
   sandbox_storage_ensure: 'Ensure the bound tenant private bucket using verified registry/policy configuration. Does not provision a missing tenant.',
   sandbox_storage_verify: 'Read-only verification of the bound tenant private bucket and policies.',
   sandbox_probe_routes: 'On-demand Next runtime route probe; no gate or evidence persistence. Raw legacy process has no host runtime credentials.',
@@ -254,6 +254,20 @@ const descriptions: Record<CapabilityName, string> = {
 };
 const requiresBinding = (name: string) => /^sandbox_(db_|storage_|capture_screenshots$|visual_critique$)/.test(name);
 const readOnly = new Set(['sandbox_db_capabilities', 'sandbox_db_inspect', 'sandbox_storage_verify', 'sandbox_tail_server_log', 'sandbox_tail_api_log']);
+
+// Host-only policies, not model arguments or I/O-based reconciliation.
+const recoveryPolicies: Partial<Record<CapabilityName, HarnessTool['recoveryPolicy']>> = {
+  // apps_ensure_tenant serializes by requirement and preserves an existing bootstrap;
+  // the provider revalidates registry ownership before Storage or credential issuance.
+  sandbox_db_provision: 'retry_safe',
+  // Policy preflight, deterministic private bucket, conflict/read-back verification.
+  // Existing bucket configuration is never silently widened by ensureTenantStorage.
+  sandbox_storage_ensure: 'retry_safe',
+  // Per-file atomic checksum receipts do NOT freeze this parameterless batch.
+  // A fresh discovery can include different SQL/new files after partial application.
+  // Keep ambiguous batches fenced until externally verified, not broadly retryable.
+  sandbox_db_migrate: 'verify_external',
+};
 
 /** Honest parity manifest: availability means dispatch exists, not that dependencies are installed. */
 export const CAPABILITY_MANIFEST = {
@@ -293,7 +307,8 @@ export async function createCapabilityTools(options: CapabilityOptions,
   overrides: Partial<CapabilityDependencies> = {}): Promise<HarnessTool[]> {
   const deps = { ...defaults, ...overrides };
   // Copy the host contract: caller/model mutation cannot widen the allowlist or retarget identity.
-  options = { ...options, scope: { ...options.scope }, allowed: [...options.allowed] };
+  options = { ...options, scope: { ...options.scope }, allowed: [...options.allowed],
+    ...(options.cronRun ? { cronRun: { ...options.cronRun } } : {}) };
   const allowed = new Set(options.allowed);
   const secrets = new Set<string>();
   const redact = (text: string) => createRedactor([...secrets])(text);
@@ -372,6 +387,7 @@ export async function createCapabilityTools(options: CapabilityOptions,
     if (!allowed.has(name)) continue;
     // zod schemas validate runtime arguments too; JSON schema exposes only our fixed capability inputs.
     tools.push({ name, description: descriptions[name], effect: readOnly.has(name) ? 'read' : 'write',
+      ...(recoveryPolicies[name] ? { recoveryPolicy: recoveryPolicies[name] } : {}),
       parameters: zodToJsonSchema(schemas[name]) as Record<string, unknown>,
       async execute(rawArgs, context) {
         let started = false;
@@ -390,6 +406,10 @@ export async function createCapabilityTools(options: CapabilityOptions,
               const tenant = await deps.ensureTenant({ requirement_id: id, site_id: options.scope.siteId, user_id: options.scope.userId });
               secrets.add(tenant.jwt); // ensureTenant's legacy 7-day token is discarded, never configured.
               await assertCurrent();
+              if (tenant.capabilities.requirement_id !== id || tenant.capabilities.tenant_id !== tenant.tenant_id ||
+                tenant.capabilities.schema !== tenant.schema) {
+                return unavailable('TENANT_UNAVAILABLE', 'Tenant receipt does not match the host binding.');
+              }
               const token = await deps.issueTenantJWT({ tenant_id: tenant.tenant_id, schema: tenant.schema, user_id: options.scope.userId, expiresInSec: 900 });
               secrets.add(token.token);
               const config = await deps.publicConfig();
@@ -421,6 +441,9 @@ export async function createCapabilityTools(options: CapabilityOptions,
             case 'sandbox_storage_verify': {
               const binding = await deps.storageBinding(id, options.scope);
               await assertCurrent();
+              if (binding.requirementId !== id || binding.siteId !== options.scope.siteId || binding.userId !== options.scope.userId) {
+                return unavailable('TENANT_UNAVAILABLE', 'Storage binding does not match the host identity.');
+              }
               if (name === 'sandbox_storage_ensure') result = await deps.ensureStorage(binding);
               else { await deps.verifyStorage(binding); result = { verified: true, bucket: binding.bucket }; }
               break;
@@ -445,23 +468,6 @@ export async function createCapabilityTools(options: CapabilityOptions,
         }
       },
     });
-    // These are idempotent provider operations scoped to the same verified tenant.
-    // Reconciliation rechecks ownership and the provider's current registry, not model claims.
-    if (['sandbox_db_provision', 'sandbox_storage_ensure', 'sandbox_db_migrate'].includes(name)) {
-      tools[tools.length - 1].reconcile = async (_args, context) => {
-        await verify(context, true);
-        try {
-          const capabilities = await deps.tenantCapabilities(options.requirementId!);
-          if (capabilities.requirement_id !== options.requirementId) return { state: 'unknown' };
-          return { state: 'retry_safe', proof: `tenant:${capabilities.tenant_id}:idempotent:${name}` };
-        } catch {
-          // Provisioning has an atomic provider upsert by requirement ID. Missing
-          // lookup never proves absence, but retrying that same operation is idempotent.
-          if (name === 'sandbox_db_provision') return { state: 'retry_safe', proof: `apps_ensure_tenant:requirement:${options.requirementId}` };
-          return { state: 'unknown' };
-        }
-      };
-    }
   }
   return tools;
 }

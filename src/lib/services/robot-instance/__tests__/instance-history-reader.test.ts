@@ -11,6 +11,9 @@ import {
 jest.mock('@/lib/database/supabase-client', () => ({
   supabaseAdmin: { from: jest.fn(), rpc: jest.fn() },
 }));
+jest.mock('@/lib/services/workflow-robot/procurement-access', () => ({
+  canReadProcurementWorkflowInstanceAsActor: async () => true,
+}));
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const SITE = id(1001);

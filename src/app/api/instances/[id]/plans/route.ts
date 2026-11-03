@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { canAccessSite } from '@/lib/security/site-access';
+import { authorizeProcurementWorkflowInstanceRead } from '@/lib/services/workflow-robot/procurement-access';
 
 // ------------------------------------------------------------------------------------
 // GET /api/instances/[id]/plans
@@ -29,7 +31,7 @@ export async function GET(
     // Verify instance exists
     const { data: instance, error: instanceError } = await supabaseAdmin
       .from('remote_instances')
-      .select('id')
+      .select('id, site_id')
       .eq('id', id)
       .single();
 
@@ -38,6 +40,11 @@ export async function GET(
         { error: 'Instancia no encontrada' },
         { status: 404 }
       );
+    }
+
+    if (!await canAccessSite(request, instance.site_id)
+      || !await authorizeProcurementWorkflowInstanceRead(request, id, instance.site_id)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     // Query plans

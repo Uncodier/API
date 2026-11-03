@@ -220,7 +220,7 @@ export async function emitCycleWrapUpStep(params: CycleWrapUpParams): Promise<Cy
       }
     }
 
-    const diagnosticContext = { siteId, instanceId, requirementId, runtime: 'cycle_wrapup', toolNames: ['requirement_status'] };
+    const diagnosticContext = { siteId, instanceId, requirementId, userId, runtime: 'cycle_wrapup', toolNames: ['requirement_status'] };
     const assertCurrent = ownership
       ? () => assertCronExecutionOwnership({ ...ownership, allowTerminal: true }) : undefined;
     // A hold is not support eligibility. Only the host policy may record a ticket;

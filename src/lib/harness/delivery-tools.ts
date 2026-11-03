@@ -10,7 +10,8 @@ export const DELIVERY_CAPABILITIES = ['tracking_install', 'deployment_trigger', 
 /** Optional delivery. No requirement status writes, hidden builds, retries, or completion gates. */
 export function createDeliveryTools(options: { workspace: Workspace; scope: SessionScope; profile?: HostProfile;
   request?: typeof fetch }): HarnessTool[] {
-  const { workspace, scope, profile } = options;
+  const { workspace, profile } = options;
+  const scope = { ...options.scope };
   const request = options.request || fetch;
   const redact = createRedactor([profile?.deployment?.token || '', profile?.deployment?.deployHookUrl || '']);
   const tools: HarnessTool[] = [];
@@ -18,6 +19,8 @@ export function createDeliveryTools(options: { workspace: Workspace; scope: Sess
     execute: (args: z.infer<T>, signal: AbortSignal) => Promise<ToolResult>) => {
     if (!profile?.allowed.includes(name)) return;
     tools.push({ name, description, effect,
+      // Re-read and transform current source on a NEW request; no automatic replay.
+      ...(name === 'tracking_install' ? { recoveryPolicy: 'inspect' as const } : {}),
       parameters: zodToJsonSchema(schema, { $refStrategy: 'none' }) as Record<string, unknown>,
       async execute(input, context) {
         const args = schema.safeParse(input);
@@ -75,15 +78,5 @@ export function createDeliveryTools(options: { workspace: Workspace; scope: Sess
       }));
       return { ok: true, output: deployments as Json };
     });
-  const tracking = tools.find(tool => tool.name === 'tracking_install');
-  if (tracking) tracking.reconcile = async (args, context) => {
-    await context.assertActive();
-    const parsed = z.object({ path: z.string().min(1).max(4096) }).strict().safeParse(args);
-    if (!parsed.success) return { state: 'unknown' };
-    const source = await workspace.readFile(parsed.data.path, context.signal);
-    const transformation = transformHarnessTrackingScript(source, scope.siteId);
-    return transformation.changed ? { state: 'retry_safe', proof: 'tracking-transform:idempotent-current-source' }
-      : { state: 'applied', proof: 'tracking-transform:verified-current-source', result: { ok: true, output: { path: parsed.data.path, changed: false } } };
-  };
   return tools;
 }

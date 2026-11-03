@@ -4,6 +4,9 @@ import { missingTestEvidenceResult } from '../judge-test-repair';
 import { planJudgeRepair } from '../judge-repair-controller';
 
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn() } }));
+jest.mock('@/lib/services/workflow-robot/procurement-access', () => ({
+  canReadProcurementWorkflowInstanceAsActor: async () => true,
+}));
 const site = '11111111-1111-4111-8111-111111111111';
 const instance = '22222222-2222-4222-8222-222222222222';
 const log = '33333333-3333-4333-8333-333333333333';

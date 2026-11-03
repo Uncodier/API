@@ -99,19 +99,34 @@ test('transient failure after the historical time cap remains retryable', async 
   expect((await store.load(f.session.id, f.scope.siteId))?.reason).not.toBe('active_time_budget_exhausted');
 });
 
-test('host slice deadline waits for the next cron instead of a permanent pause', async () => {
+test.each([false, true])('host slice deadline waits for the next cron with saved uncertainty=%s', async uncertain => {
   const f = await fixture();
   const controller = new AbortController();
   const timeout = new DOMException('Offline slice expired', 'TimeoutError');
   const timeoutSpy = jest.spyOn(AbortSignal, 'timeout').mockReturnValue(controller.signal);
-  runSlice.mockImplementationOnce(async () => { controller.abort(timeout); throw timeout; });
+  const fences = uncertain ? ['synthetic-operation-fingerprint'] : [];
+  runSlice.mockImplementationOnce(async input => {
+    await store.save({ ...input.session, uncertainOperations: fences }, f.scope.siteId, input.owner);
+    controller.abort(timeout); throw timeout;
+  });
   try {
     expect(await executeRequirementAssistantWorkspace(f.session.id, f.scope, f.options))
       .toEqual({ status: 'waiting', continue: false });
     expect(await store.load(f.session.id, f.scope.siteId))
-      .toMatchObject({ status: 'waiting', reason: 'runtime_slice_expired', turns: 0, messages: f.session.messages });
+      .toMatchObject({ status: 'waiting', reason: 'runtime_slice_expired', turns: 0, messages: f.session.messages, uncertainOperations: fences });
     expect(suspend).toHaveBeenCalledTimes(1);
   } finally { timeoutSpy.mockRestore(); }
+});
+
+test('typed canonical interruption yields with the pending dispatch checkpoint intact', async () => {
+  const f = await fixture();
+  const pending = { call: { id: 'original', name: 'write', arguments: '{}' }, effect: 'write' as const, fingerprint: 'synthetic-write' };
+  runSlice.mockImplementationOnce(async input => {
+    await store.save({ ...input.session, pending }, f.scope.siteId, input.owner);
+    throw new AssistantExecutionBoundaryError('canonical_slice_interrupted');
+  });
+  expect(await executeRequirementAssistantWorkspace(f.session.id, f.scope, f.options)).toEqual({ status: 'waiting', continue: false });
+  expect(await store.load(f.session.id, f.scope.siteId)).toMatchObject({ status: 'waiting', reason: 'canonical_slice_interrupted', pending });
 });
 
 test.each([

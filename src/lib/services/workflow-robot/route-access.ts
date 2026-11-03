@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { hasAuthenticatedPrincipal, isInternalServiceRequest } from '@/lib/security/request-rate-limit';
 import { canAccessSite, getRequestSitePrincipal } from '@/lib/security/site-access';
 import { isSiteSkillManager } from '@/lib/services/site-skill-access';
+import { authorizeProcurementWorkflowInstanceRead } from './procurement-access';
 
 const UUID = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i;
 
@@ -38,7 +39,12 @@ export async function authorizeWorkflowInstanceWrite(
   if (!instance) {
     return NextResponse.json({ error: 'Workflow is not accessible' }, { status: 403 });
   }
-  return authorizeWorkflowSiteWrite(request, instance.site_id);
+  const denied = await authorizeWorkflowSiteWrite(request, instance.site_id);
+  if (denied) return denied;
+  if (!await authorizeProcurementWorkflowInstanceRead(request, instanceId, instance.site_id)) {
+    return NextResponse.json({ error: 'Workflow is not accessible' }, { status: 403 });
+  }
+  return null;
 }
 
 export async function authorizeWorkflowRunWrite(request: Request, runPlanId: string): Promise<NextResponse | null> {
@@ -60,5 +66,10 @@ export async function authorizeWorkflowRunWrite(request: Request, runPlanId: str
   if (!instance || instance.site_id !== run.site_id) {
     return NextResponse.json({ error: 'Workflow is not accessible' }, { status: 403 });
   }
-  return authorizeWorkflowSiteWrite(request, instance.site_id);
+  const denied = await authorizeWorkflowSiteWrite(request, instance.site_id);
+  if (denied) return denied;
+  if (!await authorizeProcurementWorkflowInstanceRead(request, run.instance_id, instance.site_id)) {
+    return NextResponse.json({ error: 'Workflow is not accessible' }, { status: 403 });
+  }
+  return null;
 }

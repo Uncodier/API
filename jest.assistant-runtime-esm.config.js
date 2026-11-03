@@ -13,5 +13,10 @@ export default {
     '<rootDir>/src/lib/services/robot-instance/__tests__/assistant-stale-recovery.test.ts',
     '<rootDir>/src/lib/services/workflow-robot/__tests__/run-plan-relations.test.ts',
     '<rootDir>/src/lib/services/workflow-robot/__tests__/trigger-sync.test.ts',
+    '<rootDir>/src/lib/services/workflow-robot/__tests__/procurement-triggers.test.ts',
+    '<rootDir>/src/lib/services/workflow-robot/__tests__/procurement-access.test.ts',
+    '<rootDir>/src/lib/services/workflow-robot/__tests__/procurement-history-access.test.ts',
+    '<rootDir>/src/lib/services/workflow-robot/__tests__/dispatch-idempotency.test.ts',
+    '<rootDir>/src/app/api/workflows/[instanceId]/runs/__tests__/route.test.ts',
   ],
 };

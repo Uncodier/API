@@ -12,7 +12,8 @@ import { buildRequirementProfile } from '@/lib/harness/requirement-profile';
 import type { HarnessTool, ToolContext } from '@/lib/harness/types';
 import { createRequirementExecutionBoundary } from '../requirement-execution-boundary';
 import { loadRuntimeModule } from '@/lib/custom-automation/test-helpers/load-runtime-module';
-import { assertToolScreenAccess } from '@/app/api/agents/tools/router/screen-access';
+import { assertToolScreenAccess, ToolScreenAccessDenied } from '@/app/api/agents/tools/router/screen-access';
+import { AssistantExecutionBoundaryError } from '@/lib/services/robot-instance/assistant-execution-boundary';
 
 jest.mock('../requirement-session', () => ({ runRequirementAssistantSlice: jest.fn() }));
 jest.mock('../requirement-instance-log', () => ({ writeRequirementInstanceLog: jest.fn(async () => {}) }));
@@ -21,7 +22,9 @@ jest.mock('@/lib/harness/artifact-store', () => ({ createArtifactStore: jest.fn(
 jest.mock('@/lib/harness/requirement-tools', () => ({ createRequirementTools: jest.fn(async () => []) }));
 jest.mock('@/lib/cloud-files/tools', () => ({ createCloudFileTools: jest.fn() }));
 jest.mock('@/lib/cloud-files/store', () => ({ createCloudFileStore: jest.fn() }));
-jest.mock('@/app/api/agents/tools/router/screen-access', () => ({ assertToolScreenAccess: jest.fn(async () => {}) }));
+jest.mock('@/app/api/agents/tools/router/screen-access', () => ({
+  ...jest.requireActual('@/app/api/agents/tools/router/screen-access'), assertToolScreenAccess: jest.fn(async () => {}),
+}));
 jest.mock('@/lib/harness/workspace', () => ({ openWorkspace: jest.fn(), adoptRequirementWorkspace: jest.fn() }));
 jest.mock('@/lib/harness/requirement-profile', () => ({ buildRequirementProfile: jest.fn() }));
 
@@ -45,6 +48,30 @@ function fixture() {
 }
 
 beforeEach(() => jest.clearAllMocks());
+
+test.each(['idle', 'interrupted', 'boundary', 'billing'] as const)('cloud %s preserves operation fences without turning ordinary uncertainty into a global pause', async kind => {
+  const f = fixture();
+  const controller = new AbortController();
+  const timeoutSpy = jest.spyOn(AbortSignal, 'timeout').mockReturnValue(controller.signal);
+  const pending = { call: { id: 'original', name: 'write_cloud_file', arguments: '{}' }, effect: 'write' as const, fingerprint: 'synthetic-write' };
+  jest.mocked(runRequirementAssistantSlice).mockImplementationOnce(async input => {
+    await input.store.save({ ...input.session, uncertainOperations: ['previous-uncertain-write'],
+      ...(kind === 'interrupted' ? { pending } : {}) }, f.run.siteId, input.owner);
+    if (kind === 'idle') { const timeout = new DOMException('Offline timeout', 'TimeoutError'); controller.abort(timeout); throw timeout; }
+    if (kind === 'interrupted') throw new AssistantExecutionBoundaryError('canonical_slice_interrupted');
+    if (kind === 'boundary') throw new AssistantExecutionBoundaryError('session_save_failed');
+    throw Object.assign(new Error('Offline accounting failure'), { name: 'OpenRouterBillingError' });
+  });
+  try {
+    const retryable = kind === 'idle' || kind === 'interrupted';
+    expect((await f.cycle()).status).toBe(retryable ? 'waiting' : 'paused');
+    expect(await f.store.load(f.run.sessionId, f.run.siteId)).toMatchObject({
+      uncertainOperations: ['previous-uncertain-write'],
+      reason: kind === 'idle' ? 'runtime_slice_expired' : kind === 'interrupted' ? 'canonical_slice_interrupted' : 'assistant_execution_requires_reconciliation',
+      ...(kind === 'interrupted' ? { pending } : {}),
+    });
+  } finally { timeoutSpy.mockRestore(); }
+});
 
 test('cloud cycle creates a repository-free session and delegates to the canonical assistant without a workspace/profile', async () => {
   const f = fixture();
@@ -136,58 +163,73 @@ test('archived runner replacement cannot adopt a cloud session pinned to the pre
   expect(await f.store.load(f.run.sessionId, f.run.siteId)).toEqual(original);
 });
 
-test.each(['applied', 'unknown', 'conflict'] as const)('cloud reconciliation uses the original operation journal identity: %s', async state => {
+test('canonical cloud adapters expose action-specific recovery policy, never reconciliation', async () => {
   const f = fixture();
-  const content = 'Durable document body omitted from recovery receipts';
-  const receipt = { state: state === 'conflict' ? 'conflict' : 'created', file_id: randomUUID(), version: 3, content };
-  const readOperation = jest.fn(async () => state === 'unknown' ? null : receipt);
-  jest.mocked(createCloudFileStore).mockReturnValue({ readOperation } as any);
-  let result: unknown;
-  let operationId: string | undefined;
-  // Execute and reconcile while the canonical runner still owns the lease.
-  jest.mocked(runRequirementAssistantSlice).mockImplementation(async input => {
-    const tool = input.tools.find(tool => tool.name === 'write_cloud_file')!;
-    const context: ToolContext = { sessionId: f.run.sessionId, operationId: randomUUID(), signal: input.signal,
-      assertActive: f.assertActive };
-    await tool.execute({ content: 'Draft' }, context);
-    operationId = jest.mocked(createCloudFileTools).mock.calls.at(-1)![2]!.operationId!();
-    const dispatchCount = jest.mocked(createCloudFileTools).mock.calls.length;
-    result = await tool.reconcile!({ operation_id: randomUUID(), content: 'Draft' }, context);
-    expect(createCloudFileTools).toHaveBeenCalledTimes(dispatchCount);
-    return input.session;
-  });
+  const realTools = jest.requireActual<typeof import('@/lib/cloud-files/tools')>('@/lib/cloud-files/tools');
+  jest.mocked(createCloudFileTools).mockImplementation(realTools.createCloudFileTools);
   await f.cycle();
-  expect(readOperation).toHaveBeenCalledWith({ siteId: f.run.siteId, userId: f.run.userId,
-    instanceId: f.run.instanceId, requirementId: f.run.requirementId }, operationId);
-  expect(assertToolScreenAccess).toHaveBeenCalledTimes(2);
-  expect(assertToolScreenAccess).toHaveBeenCalledWith('read_cloud_file', { siteId: f.run.siteId, userId: f.run.userId,
-    instanceId: f.run.instanceId, requirementId: f.run.requirementId });
-  expect(result).toEqual(state === 'unknown' ? { state: 'unknown' } : expect.objectContaining({
-    state: 'applied', proof: `cloud-operation:${operationId}`, result: expect.objectContaining({ ok: state !== 'conflict' }),
-  }));
-  expect(JSON.stringify(result)).not.toContain(content);
-  if (state === 'conflict') expect(result).toMatchObject({ result: { error: { effectStarted: false, code: 'conflict' } } });
+  const tools = jest.mocked(runRequirementAssistantSlice).mock.calls[0][0].tools;
+  expect(tools.map(tool => tool.name)).toEqual(['read_cloud_file', 'list_cloud_files', 'write_cloud_file']);
+  for (const tool of tools) expect(tool).not.toHaveProperty('reconcile');
+  const policy = tools.find(tool => tool.name === 'write_cloud_file')!.recoveryPolicy;
+  expect(typeof policy).toBe('function');
+  if (typeof policy !== 'function') throw new Error('Expected host-owned policy function');
+  const replace = { action: 'replace', file_id: randomUUID(), expected_version: 1, content: 'Updated' };
+  const patch = { action: 'patch', file_id: randomUUID(), expected_version: 2, changes: [{ old_text: 'Old', new_text: 'New' }] };
+  expect(policy(replace)).toBe('inspect');
+  expect(policy(patch)).toBe('inspect');
+  for (const args of [
+    { action: 'create', name: 'notes.md', content: 'Draft' },
+    { ...replace, action: 'create', recoveryPolicy: 'retry_safe' },
+    { ...replace, file_id: 'not-a-file-id' }, { ...replace, expected_version: undefined },
+    ...[0, -1, 1.5, '1', 2147483648].map(expected_version => ({ ...replace, expected_version })),
+    { ...replace, content: undefined }, { ...patch, changes: [] },
+    { ...patch, changes: [{ old_text: '', new_text: 'New' }] },
+  ]) expect(policy(args)).toBe('verify_external');
+  expect(createCloudFileStore).not.toHaveBeenCalled();
 });
 
-test.each(['before', 'after'] as const)('reconciliation permission denied %s journal lookup never returns metadata or dispatches another write', async phase => {
+test.each([
+  ['read_cloud_file', 'before'], ['read_cloud_file', 'after'],
+  ['list_cloud_files', 'before'], ['list_cloud_files', 'after'],
+] as const)('%s permission denied %s inspection never returns private content or metadata', async (name, phase) => {
   const f = fixture();
-  const readOperation = jest.fn(async () => ({ state: 'created', file_id: randomUUID(), version: 1, content: 'Private source' }));
-  jest.mocked(createCloudFileStore).mockReturnValue({ readOperation } as any);
-  const denied = Object.assign(new Error('Offline assets permission denied'), { status: 403 });
-  if (phase === 'before') jest.mocked(assertToolScreenAccess).mockRejectedValueOnce(denied);
-  else jest.mocked(assertToolScreenAccess).mockResolvedValueOnce(undefined).mockRejectedValueOnce(denied);
+  const content = randomBytes(32).toString('hex');
+  const revision = { file_id: randomUUID(), version: 1, name: `${randomUUID()}.md`, content,
+    mime: 'text/markdown', bytes: Buffer.byteLength(content), sha256: createHash('sha256').update(content).digest('hex'),
+    instance_id: f.run.instanceId, requirement_id: f.run.requirementId, git_status: 'committed' };
+  const denied = new ToolScreenAccessDenied();
+  const revoke = () => jest.mocked(assertToolScreenAccess).mockRejectedValue(denied);
+  const read = jest.fn(async () => { if (phase === 'after') revoke(); return revision; });
+  const list = jest.fn(async () => { if (phase === 'after') revoke(); return { files: [revision], next_offset: null }; });
+  const write = jest.fn();
+  const readOperation = jest.fn();
+  const cloudStore = { read, list, write, readOperation };
+  const realTools = jest.requireActual<typeof import('@/lib/cloud-files/tools')>('@/lib/cloud-files/tools');
+  jest.mocked(createCloudFileTools).mockImplementation((scope, active, options) =>
+    realTools.createCloudFileTools(scope, active, { ...options, store: cloudStore as any }));
+  if (phase === 'before') revoke();
   let rejection: unknown;
+  let result: unknown;
   jest.mocked(runRequirementAssistantSlice).mockImplementation(async input => {
-    const tool = input.tools.find(tool => tool.name === 'write_cloud_file')!;
+    const tool = input.tools.find(tool => tool.name === name)!;
     try {
-      await tool.reconcile!({}, { sessionId: input.session.id, operationId: randomUUID(), signal: input.signal, assertActive: f.assertActive });
+      result = await tool.execute(name === 'read_cloud_file' ? { file_id: revision.file_id } : {},
+        { sessionId: input.session.id, operationId: randomUUID(), signal: input.signal, assertActive: f.assertActive });
     } catch (error) { rejection = error; }
     return input.session;
   });
-  await f.cycle();
+  expect((await f.cycle()).status).toBe('running');
   expect(rejection).toBe(denied);
-  expect(readOperation).toHaveBeenCalledTimes(phase === 'before' ? 0 : 1);
-  expect(createCloudFileTools).toHaveBeenCalledTimes(1); // catalog only; no write dispatch
+  expect(result).toBeUndefined();
+  expect(name === 'read_cloud_file' ? read : list).toHaveBeenCalledTimes(phase === 'before' ? 0 : 1);
+  expect(assertToolScreenAccess).toHaveBeenLastCalledWith(name, { siteId: f.run.siteId, userId: f.run.userId,
+    instanceId: f.run.instanceId, requirementId: f.run.requirementId });
+  expect(write).not.toHaveBeenCalled();
+  expect(readOperation).not.toHaveBeenCalled();
+  const exposed = JSON.stringify({ result, rejection, session: await f.store.load(f.run.sessionId, f.run.siteId),
+    logs: jest.mocked(writeRequirementInstanceLog).mock.calls });
+  for (const value of [content, revision.file_id, revision.name, revision.sha256]) expect(exposed).not.toContain(value);
 });
 
 test('canonical execution failure preserves the session, releases ownership and never logs credential details', async () => {
@@ -205,17 +247,14 @@ test('direct cloud catalog descriptors dispatch through the canonical boundary e
   const f = fixture();
   const originalCallId = randomUUID();
   const args = { action: 'create', name: 'notes.md', content: 'Private offline document' };
-  const receipt = { ok: true, output: { file_id: randomUUID(), version: 1 } };
-  const write = jest.fn(async (_scope: unknown, _input: unknown) => receipt);
+  const revision = { file_id: randomUUID(), version: 1, name: args.name, content: args.content,
+    mime: 'text/markdown', bytes: Buffer.byteLength(args.content), sha256: createHash('sha256').update(args.content).digest('hex'),
+    instance_id: f.run.instanceId, requirement_id: f.run.requirementId, git_status: 'committed', state: 'created' };
+  const write = jest.fn(async (_scope: unknown, _input: unknown) => revision);
   jest.mocked(createCloudFileStore).mockReturnValue({ write } as any);
+  const realTools = jest.requireActual<typeof import('@/lib/cloud-files/tools')>('@/lib/cloud-files/tools');
   jest.mocked(createCloudFileTools).mockImplementation((scope, assertActive, options) =>
-    ['read_cloud_file', 'list_cloud_files', 'write_cloud_file'].map(name => ({ name, description: name, parameters: {},
-      execute: async (input: any) => {
-        await assertActive();
-        if (name !== 'write_cloud_file') throw new Error('Unexpected cloud read');
-        return createCloudFileStore().write(scope, { ...input, operation_id: options!.operationId!() });
-      },
-    })) as any);
+    realTools.createCloudFileTools(scope, assertActive, { ...options, store: { write } as any }));
   const { routeTools } = loadRuntimeModule<typeof import('@/app/api/agents/tools/router/assistantProtocol')>(
     'src/app/api/agents/tools/router/assistantProtocol.ts', {
       '@/lib/services/embeddings-service': {},
@@ -249,7 +288,8 @@ test('direct cloud catalog descriptors dispatch through the canonical boundary e
       function: { name: 'write_cloud_file', arguments: JSON.stringify(args) } }] });
     const direct = routed.find(tool => tool.name === 'write_cloud_file')!;
     const callback = jest.fn(() => direct.execute(args));
-    expect(await adapter.boundary.executeTool({ id: originalCallId, name: 'write_cloud_file', args }, callback)).toEqual(receipt);
+    expect(await adapter.boundary.executeTool({ id: originalCallId, name: 'write_cloud_file', args }, callback))
+      .toMatchObject({ ok: true, output: { file_id: revision.file_id, version: 1, saved: true, state: 'created' } });
     expect(callback).toHaveBeenCalledTimes(1);
     expect(adapter.getSession().pending).toBeUndefined();
     expect(adapter.getSession().messages.at(-1)).toMatchObject({ role: 'tool', toolCallId: originalCallId });

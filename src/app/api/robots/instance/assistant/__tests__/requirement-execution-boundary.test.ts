@@ -7,6 +7,10 @@ import { createMemoryArtifactStore } from '@/lib/harness/artifact-store';
 import { RESULT_MAX_BYTES, SNAPSHOT_MAX_BYTES, serializedBytes } from '@/lib/harness/engine-results';
 import type { ArtifactStore, HarnessSession, HarnessTool, Message, SessionStore } from '@/lib/harness/types';
 import { HISTORY_RECEIPT_BUDGET } from '../requirement-history';
+import { createWorkspaceTools } from '@/lib/harness/workspace-tools';
+import type { Workspace } from '@/lib/harness/types';
+
+jest.mock('@vercel/sandbox', () => ({ Sandbox: {} }));
 
 function fixture(options: { session?: Partial<HarnessSession>; tools?: HarnessTool[]; secrets?: string[] } = {}) {
   const events: string[] = [];
@@ -136,7 +140,7 @@ describe('canonical requirement execution durability boundary (offline)', () => 
     expect(f.adapter.getSession().uncertainOperations).toContain(operationFingerprint('unknown_write', {}));
     await f.adapter.boundary.afterTurn([]);
     await f.model([{ id: 'second', name: 'unknown_write' }]);
-    expect(await f.execute('unknown_write', 'second', {}, callback)).toMatchObject({ ok: false, error: { code: 'RECONCILIATION_REQUIRED' } });
+    expect(await f.execute('unknown_write', 'second', {}, callback)).toMatchObject({ ok: false, error: { code: 'OPERATION_RETRY_UNSAFE', effectStarted: false } });
     expect(callback).toHaveBeenCalledTimes(1);
   });
 
@@ -207,7 +211,7 @@ describe('canonical requirement execution durability boundary (offline)', () => 
     const receipt = JSON.parse(f.adapter.getSession().messages.find(message => message.toolCallId === 'first')!.content);
     expect(receipt).toMatchObject({ ok: false, error: { ambiguous: true } });
     await f.adapter.boundary.afterTurn([]); await f.model([{ id: 'again', name: 'exec', args }]);
-    expect(await f.execute('exec', 'again', args, callback)).toMatchObject({ ok: false, error: { code: 'RECONCILIATION_REQUIRED' } });
+    expect(await f.execute('exec', 'again', args, callback)).toMatchObject({ ok: false, error: { code: 'OPERATION_RETRY_UNSAFE', effectStarted: false } });
     expect(callback).toHaveBeenCalledTimes(1);
   });
 
@@ -223,7 +227,7 @@ describe('canonical requirement execution durability boundary (offline)', () => 
     const receipt = JSON.parse(f.adapter.getSession().messages.find(message => message.toolCallId === 'first')!.content);
     expect(receipt).toMatchObject({ ok: false, error: { code: 'COMMAND_EXIT_NONZERO', ambiguous: true } });
     await f.adapter.boundary.afterTurn([]); await f.model([{ id: 'again', name, args }]);
-    expect(await f.execute(name, 'again', args, callback)).toMatchObject({ ok: false, error: { code: 'RECONCILIATION_REQUIRED' } });
+    expect(await f.execute(name, 'again', args, callback)).toMatchObject({ ok: false, error: { code: 'OPERATION_RETRY_UNSAFE', effectStarted: false } });
     expect(callback).toHaveBeenCalledTimes(1);
   });
 
@@ -321,22 +325,123 @@ describe('canonical requirement execution durability boundary (offline)', () => 
     expect(f.adapter.getSession()).toMatchObject({ status: 'completed', reason: 'partial' });
   });
 
-  test('only trusted reconciliation proof can unblock an uncertain operation', async () => {
+  test('retired reconciliation is not advertised, never calls callbacks, and cannot unblock an uncertain write', async () => {
     const reconcile = jest.fn(async () => ({ state: 'retry_safe' as const, proof: 'Synthetic provider documented idempotency' }));
     const f = fixture({ tools: [{ name: 'write', effect: 'write', description: '', parameters: {}, execute: jest.fn(), reconcile }] });
     await f.adapter.initialize(); await f.model([{ id: 'first', name: 'write' }]);
     const callback = jest.fn(async () => { throw new Error('Synthetic interrupted write'); });
     await f.execute('write', 'first', {}, callback); await f.adapter.boundary.afterTurn([]);
+    expect(f.adapter.controlTools.map(tool => tool.name)).not.toContain('reconcile_operation');
+    const uncertainty = [...f.adapter.getSession().uncertainOperations];
+    const retiredCallback = jest.fn(async () => ({ ok: true }));
+    jest.mocked(f.artifacts.reserve).mockClear(); jest.mocked(f.artifacts.put).mockClear();
     await f.model([{ id: 'reconcile', name: 'reconcile_operation', args: { operationId: 'first' } }]);
-    expect(await f.control('reconcile_operation', 'reconcile', { operationId: 'first' })).toEqual({ ok: true, output: { state: 'retry_safe' } });
-    expect(reconcile).toHaveBeenCalledWith({}, expect.objectContaining({ operationId: 'first' }));
+    expect(await f.execute('reconcile_operation', 'reconcile', { operationId: 'first' }, retiredCallback))
+      .toMatchObject({ ok: false, error: { code: 'TOOL_RETIRED', effectStarted: false } });
+    expect(retiredCallback).not.toHaveBeenCalled();
+    expect(reconcile).not.toHaveBeenCalled();
+    expect(f.artifacts.reserve).not.toHaveBeenCalled(); expect(f.artifacts.put).not.toHaveBeenCalled();
+    expect(f.adapter.getSession().pending).toBeUndefined();
+    expect(f.adapter.getSession().uncertainOperations).toEqual(uncertainty);
+    expect(JSON.parse(f.adapter.getSession().messages.at(-1)!.content))
+      .toMatchObject({ ok: false, error: { code: 'TOOL_RETIRED', effectStarted: false } });
     await f.adapter.boundary.afterTurn([]); await f.model([{ id: 'second', name: 'write' }]);
-    await f.execute('write', 'second', {}, callback);
-    expect(callback).toHaveBeenCalledTimes(2);
+    expect(await f.execute('write', 'second', {}, callback))
+      .toMatchObject({ ok: false, error: { code: 'OPERATION_RETRY_UNSAFE', effectStarted: false } });
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(reconcile).not.toHaveBeenCalled();
     expect(f.adapter.getSession().reconciledOperations?.[operationFingerprint('write', {})]).toBeUndefined();
   });
 
-  test.each(['applied', 'unknown'] as const)('interrupted routed cloud write reconciles original nested adapter and call ID without replay: %s', async state => {
+  describe.each(['direct', 'routed'] as const)('%s host recovery policy', transport => {
+    test.each([
+      ['write', undefined, false],
+      ['write', 'verify_external', false],
+      ['write', 'inspect', true],
+      ['write', 'retry_safe', true],
+      ['read', undefined, true],
+      ['read', 'verify_external', true],
+      ['read', 'inspect', true],
+      ['read', 'retry_safe', true],
+    ] as const)('%s / %s permits a fresh same-argument attempt only when safe: %s', async (effect, recoveryPolicy, allowed) => {
+      const harnessExecute = jest.fn();
+      const reconcile = jest.fn(async () => ({ state: 'retry_safe' as const, proof: 'Unused legacy proof' }));
+      const f = fixture({ tools: [{ name: 'operation', effect, recoveryPolicy, description: '', parameters: {}, execute: harnessExecute, reconcile }] });
+      const inner = { path: 'notes.txt', content: 'Offline synthetic content' };
+      const name = transport === 'direct' ? 'operation' : 'tools';
+      const args = transport === 'direct' ? inner : { action: 'call', name: 'operation', args: JSON.stringify(inner) };
+      const fingerprint = operationFingerprint('operation', inner);
+      await f.adapter.initialize(); await f.model([{ id: 'first', name, args }]);
+      const first = jest.fn(async () => { throw new Error('Synthetic lost response'); });
+      await f.execute(name, 'first', args, first); await f.adapter.boundary.afterTurn([]);
+      const saved = f.adapter.getSession();
+      const history = structuredClone(saved.messages);
+      expect(saved.uncertainOperations).toEqual(effect === 'write' ? [fingerprint] : []);
+      expect(JSON.parse(saved.messages.at(-1)!.content)).toMatchObject({ ok: false,
+        error: effect === 'write' ? { ambiguous: true } : { effectStarted: false } });
+
+      const next = createRequirementExecutionBoundary({ ...f.input, session: saved,
+        run: { ...f.run, runId: randomUUID(), executionGeneration: 2 } });
+      await next.initialize();
+      expect(first).toHaveBeenCalledTimes(1);
+      expect(harnessExecute).not.toHaveBeenCalled(); expect(reconcile).not.toHaveBeenCalled();
+      expect(next.getSession().messages).toEqual(history); // Recovery never auto replays even opt-in tools.
+      const callback = jest.fn(async () => ({ ok: true, output: { freshAttempt: true } }));
+      await next.boundary.beforeModel({ system: '', messages: next.getMessages(), tools: [], maxOutputTokens: 100 });
+      await next.boundary.onModelMessage({ role: 'assistant', content: 'Request a new attempt after inspection.', tool_calls: [
+        { id: 'fresh', type: 'function', function: { name, arguments: JSON.stringify(args) } },
+      ] });
+      const result = await next.boundary.executeTool({ id: 'fresh', name, args }, callback);
+      expect(result).toMatchObject(allowed ? { ok: true, output: { freshAttempt: true } }
+        : { ok: false, error: { code: 'OPERATION_RETRY_UNSAFE', effectStarted: false } });
+      expect(callback).toHaveBeenCalledTimes(allowed ? 1 : 0);
+      expect(reconcile).not.toHaveBeenCalled(); expect(harnessExecute).not.toHaveBeenCalled();
+      await next.boundary.afterTurn([]);
+      expect(next.getSession().uncertainOperations).toEqual(saved.uncertainOperations);
+      expect(next.getSession().messages.slice(0, history.length)).toEqual(history);
+      expect(next.getSession().messages.filter(message => message.toolCallId === 'first')).toHaveLength(1);
+      expect(next.getSession().messages.filter(message => message.toolCallId === 'fresh')).toHaveLength(1);
+      // An opt-in policy permits new requests, not dispatching the same durable call twice.
+      await expect(next.boundary.executeTool({ id: 'fresh', name, args }, callback)).rejects.toMatchObject({ name: 'RecoveryError' });
+      expect(callback).toHaveBeenCalledTimes(allowed ? 1 : 0);
+    });
+  });
+
+  test.each(['applied', 'not_applied', 'retry_safe'] as const)('legacy persisted %s reconciliation never grants replay or a cached success', async state => {
+    const fingerprint = operationFingerprint('write', {});
+    const legacy = { [fingerprint]: { operationId: 'original', state, proof: 'Historical adapter claim',
+      ...(state === 'applied' ? { result: { ok: true, output: { legacyReceipt: true } } } : {}) } };
+    const reconcile = jest.fn(async () => ({ state: 'retry_safe' as const, proof: 'Unused legacy proof' }));
+    const callback = jest.fn(async () => ({ ok: true }));
+    const f = fixture({ tools: [{ name: 'write', effect: 'write', description: '', parameters: {}, execute: callback, reconcile }],
+      session: { uncertainOperations: [fingerprint], reconciledOperations: legacy, messages: [
+        { role: 'assistant', content: '', toolCalls: [{ id: 'original', name: 'write', arguments: '{}' }] },
+        { role: 'tool', toolCallId: 'original', content: JSON.stringify({ ok: false, error: { ambiguous: true } }) },
+      ] } });
+    await f.adapter.initialize();
+    expect(callback).not.toHaveBeenCalled(); expect(reconcile).not.toHaveBeenCalled();
+    await f.model([{ id: 'fresh', name: 'write' }]);
+    expect(await f.execute('write', 'fresh', {}, callback))
+      .toMatchObject({ ok: false, error: { code: 'OPERATION_RETRY_UNSAFE', effectStarted: false } });
+    expect(callback).not.toHaveBeenCalled(); expect(reconcile).not.toHaveBeenCalled();
+    expect(f.adapter.getSession().uncertainOperations).toEqual([fingerprint]);
+    expect(JSON.parse(f.adapter.getSession().messages.at(-1)!.content).ok).toBe(false);
+  });
+
+  test.each(['inspect', 'retry_safe'] as const)('model argument recoveryPolicy=%s does not opt an unknown write into retries', async recoveryPolicy => {
+    const f = fixture(); await f.adapter.initialize();
+    const args = { recoveryPolicy, effect: 'read', path: 'notes.txt' };
+    const callback = jest.fn(async () => { throw new Error('Synthetic unknown write outcome'); });
+    await f.model([{ id: 'first', name: 'unknown_write', args }]);
+    await f.execute('unknown_write', 'first', args, callback); await f.adapter.boundary.afterTurn([]);
+    await f.model([{ id: 'fresh', name: 'unknown_write', args }]);
+    expect(await f.execute('unknown_write', 'fresh', args, callback))
+      .toMatchObject({ ok: false, error: { code: 'OPERATION_RETRY_UNSAFE', effectStarted: false } });
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(f.adapter.getSession().uncertainOperations).toEqual([operationFingerprint('unknown_write', args)]);
+  });
+
+  test.each(['applied', 'unknown'] as const)('interrupted routed cloud write never invokes the legacy reconciler or replays: %s', async state => {
     const originalId = randomUUID();
     const args = { action: 'create', name: 'notes.md', content: 'Durable offline source' };
     const routed = { action: 'call', name: 'write_cloud_file', args: JSON.stringify(args) };
@@ -357,18 +462,19 @@ describe('canonical requirement execution durability boundary (offline)', () => 
     expect(f.adapter.getSession().messages.find(message => message.toolCallId === originalId)?.content).toContain('OPERATION_OUTCOME_UNKNOWN');
     await f.model([{ id: 'lookup', name: 'reconcile_operation', args: { operationId: originalId } }]);
     expect(await f.control('reconcile_operation', 'lookup', { operationId: originalId }))
-      .toMatchObject({ ok: state === 'applied', output: { state } });
-    expect(reconcile).toHaveBeenCalledWith(args, expect.objectContaining({ operationId: originalId, sessionId: f.session.id }));
+      .toMatchObject({ ok: false, error: { code: 'TOOL_RETIRED', effectStarted: false } });
+    expect(reconcile).not.toHaveBeenCalled();
     await f.adapter.boundary.afterTurn([]);
     // A new transport ID and object-form routed arguments cannot evade the original effect fingerprint.
     const retryArgs = { ...routed, args };
     await f.model([{ id: 'retry-new-id', name: 'tools', args: retryArgs }]);
     const replay = jest.fn(async () => applied);
     const result = await f.execute('tools', 'retry-new-id', retryArgs, replay);
-    expect(result).toMatchObject(state === 'applied' ? applied : { ok: false, error: { code: 'RECONCILIATION_REQUIRED' } });
+    expect(result).toMatchObject({ ok: false, error: { code: 'OPERATION_RETRY_UNSAFE', effectStarted: false } });
     expect(replay).not.toHaveBeenCalled();
     expect(execute).not.toHaveBeenCalled();
-    expect(reconcile).toHaveBeenCalledTimes(1);
+    expect(reconcile).not.toHaveBeenCalled();
+    expect(f.adapter.getSession().uncertainOperations).toContain(operationFingerprint('write_cloud_file', args));
   });
 
   test.each(['turns', 'tokens', 'time', 'output'])('historical %s limit does not block credit-funded inference', async kind => {
@@ -413,17 +519,70 @@ describe('canonical requirement execution durability boundary (offline)', () => 
     await expect(f.model()).rejects.toMatchObject({ name: 'RecoveryError' });
   });
 
-  test.each(['model', 'tool', 'uncertain'])('timeout with %s work still requires reconciliation', async kind => {
+  test('timeout with an in-flight model still requires reconciliation', async () => {
     const f = fixture(); await f.adapter.initialize();
-    if (kind === 'model') await f.adapter.boundary.beforeModel({ system: '', messages: [], tools: [], maxOutputTokens: 100 });
-    if (kind === 'tool') await f.model([{ id: 'pending', name: 'write' }]);
-    if (kind === 'uncertain') {
-      await f.model([{ id: 'uncertain', name: 'write' }]);
-      await f.execute('write', 'uncertain', {}, async () => { throw new Error('Unknown effect'); });
-      await f.adapter.boundary.afterTurn([]);
-    }
+    await f.adapter.boundary.beforeModel({ system: '', messages: [], tools: [], maxOutputTokens: 100 });
     f.controller.abort(new DOMException('Offline slice expired', 'TimeoutError'));
     await expect(f.model()).rejects.toMatchObject({ name: 'RecoveryError' });
+  });
+
+  test('saved uncertainty survives an idle deadline while the next agent can read but not replay', async () => {
+    const f = fixture(); await f.adapter.initialize();
+    await f.model([{ id: 'uncertain', name: 'write' }]);
+    await f.execute('write', 'uncertain', {}, async () => { throw new Error('Unknown effect'); });
+    await f.adapter.boundary.afterTurn([]);
+    const saved = f.adapter.getSession();
+    const timeout = new DOMException('Offline slice expired', 'TimeoutError');
+    f.controller.abort(timeout);
+    await expect(f.model()).rejects.toBe(timeout);
+    expect(f.adapter.getSession()).toEqual(saved);
+    const next = createRequirementExecutionBoundary({ ...f.input, session: saved, signal: new AbortController().signal });
+    await next.initialize();
+    await next.boundary.beforeModel({ system: '', messages: next.getMessages(), tools: [], maxOutputTokens: 100 });
+    await next.boundary.onModelMessage({ role: 'assistant', content: '', tool_calls: [
+      { id: 'inspect', function: { name: 'harness_inspect', arguments: '{}' } },
+      { id: 'retry', function: { name: 'write', arguments: '{}' } },
+    ] });
+    expect(await next.boundary.executeTool({ id: 'inspect', name: 'harness_inspect', args: {} }, async () => ({ snapshot_stable: true })))
+      .toEqual({ ok: true, output: { snapshot_stable: true } });
+    const retry = jest.fn();
+    expect(await next.boundary.executeTool({ id: 'retry', name: 'write', args: {} }, retry))
+      .toMatchObject({ ok: false, error: { code: 'OPERATION_RETRY_UNSAFE', effectStarted: false } });
+    expect(retry).not.toHaveBeenCalled();
+    expect(next.getSession().uncertainOperations).toEqual(saved.uncertainOperations);
+    await next.boundary.afterTurn([]);
+    expect(next.getSession().status).toBe('running');
+  });
+
+  test.each(['before-dispatch', 'read', 'write'] as const)('canonical %s interruption continues without replaying the old batch', async effect => {
+    const f = fixture({ tools: effect === 'read' ? [{ name: 'operation', effect: 'read', description: '', parameters: {}, execute: jest.fn() }] : [] });
+    await f.adapter.initialize(); await f.model([{ id: 'interrupted', name: 'operation' }, { id: 'unstarted', name: 'other_write' }]);
+    const timeout = new DOMException('Offline transport deadline', 'TimeoutError');
+    const callback = jest.fn(async () => { f.controller.abort(timeout); throw timeout; });
+    if (effect === 'before-dispatch') f.controller.abort(timeout);
+    await expect(f.execute('operation', 'interrupted', {}, callback))
+      .rejects.toMatchObject({ code: 'canonical_slice_interrupted' });
+    const next = createRequirementExecutionBoundary({ ...f.input, session: f.adapter.getSession(), signal: new AbortController().signal });
+    await next.initialize();
+    expect(callback).toHaveBeenCalledTimes(effect === 'before-dispatch' ? 0 : 1);
+    expect(next.getSession().pending).toBeUndefined();
+    expect(next.getSession().uncertainOperations).toEqual(effect === 'write' ? [operationFingerprint('operation', {})] : []);
+    const receipts = next.getSession().messages.filter(message => message.role === 'tool').map(message => JSON.parse(message.content));
+    expect(receipts[0].error.code).toBe(effect === 'before-dispatch' ? 'OPERATION_NOT_EXECUTED' : 'OPERATION_OUTCOME_UNKNOWN');
+    expect(receipts[1]).toMatchObject({ error: { code: 'OPERATION_NOT_EXECUTED', effectStarted: false } });
+    await expect(next.boundary.beforeModel({ system: '', messages: next.getMessages(), tools: [], maxOutputTokens: 100 })).resolves.toBeUndefined();
+  });
+
+  test.each(['harness_inspect', 'harness_events', 'harness_reference', 'harness_source', 'tools'])('%s diagnostic observations never invent uncertain writes', async name => {
+    const f = fixture(); await f.adapter.initialize();
+    const args = name === 'tools' ? { action: 'call', name: 'harness_inspect', args: '{}' } : {};
+    for (const [index, output] of [{ available: false, response_truncated: true }, { success: false, error: 'Inspection unavailable' }].entries()) {
+      const id = `read-${index}`;
+      await f.model([{ id, name, args }]);
+      expect(await f.execute(name, id, args, async () => output)).toMatchObject({ ok: index === 0 });
+      await f.adapter.boundary.afterTurn([]);
+      expect(f.adapter.getSession()).toMatchObject({ status: 'running', uncertainOperations: [] });
+    }
   });
 
   test('a storage failure concurrent with timeout is not reclassified as an idle yield', async () => {
@@ -433,6 +592,51 @@ describe('canonical requirement execution durability boundary (offline)', () => 
       throw new SessionStoreError('storage');
     });
     await expect(f.model()).rejects.toMatchObject({ name: 'RecoveryError' });
+  });
+
+  test.each([
+    ['execution', false, false], ['execution', true, false], ['execution', true, true],
+    ['lease', false, false], ['lease', true, false], ['lease', true, true],
+  ] as const)('real workspace preserves swallowed %s failure (timeout=%s, dispatched=%s)', async (stage, expire, dispatched) => {
+    const workspace = { ref: { provider: 'vercel', id: 'offline', root: '/workspace' }, exec: jest.fn() } as unknown as Workspace;
+    let armFailure: () => void;
+    const realTool = createWorkspaceTools(workspace).find(tool => tool.name === 'exec')!;
+    const f = fixture({ tools: [{ ...realTool, execute: async (args, context) => {
+      if (!dispatched) armFailure();
+      return realTool.execute(args, context);
+    } }] });
+    const secret = randomBytes(24).toString('hex');
+    const timeout = new DOMException('Offline host deadline', 'TimeoutError');
+    const fail = async () => {
+      if (expire) f.controller.abort(timeout);
+      throw new Error(`Private ownership detail ${secret}`);
+    };
+    armFailure = () => {
+      if (stage === 'execution') f.assertActive.mockImplementationOnce(fail);
+      else jest.mocked(f.store.assertOwner).mockImplementationOnce(fail);
+    };
+    jest.mocked(workspace.exec).mockImplementation(async () => {
+      armFailure();
+      return { stdout: '', stderr: '', exitCode: 0 };
+    });
+    await f.adapter.initialize();
+    const args = { command: 'true' };
+    await f.model([{ id: 'original', name: 'exec', args }]);
+    const callback = jest.fn(async () => {
+      return f.adapter.executeHarnessTool('exec', args);
+    });
+    const error = await f.execute('exec', 'original', args, callback).catch(error => error);
+    expect(error).toMatchObject({ name: 'RecoveryError', code: stage === 'execution' ? 'execution_check_failed' : 'session_lease_failed' });
+    expect(error.message).not.toContain(secret);
+    expect(workspace.exec).toHaveBeenCalledTimes(dispatched ? 1 : 0);
+    const saved = f.adapter.getSession();
+    expect(saved.pending?.call.id).toBe('original');
+    expect(saved.messages.filter(message => message.role === 'tool')).toHaveLength(0);
+    expect(JSON.stringify(saved)).not.toContain(secret);
+    const saves = jest.mocked(f.store.save).mock.calls.length;
+    await expect(f.adapter.boundary.afterTurn([])).rejects.toBe(error);
+    expect(f.store.save).toHaveBeenCalledTimes(saves);
+    expect(f.adapter.getSession()).toEqual(saved);
   });
 
   test.each(['guarded-owner-check', 'direct-timeout'])('checkpoint %s preserves the idle host timeout', async kind => {
@@ -617,14 +821,24 @@ describe('canonical requirement execution durability boundary (offline)', () => 
     expect(adapter.getSession().messages[0]).toEqual(f.session.messages[0]);
   });
 
-  test('model-provided reconciliation claims never authorize another effect', async () => {
+  test.each(['not_applied', 'retry_safe', 'applied'] as const)('model-provided %s reconciliation claims never authorize another effect', async state => {
     const f = fixture(); await f.adapter.initialize(); await f.model([{ id: 'first', name: 'write' }]);
     await f.execute('write', 'first', {}, async () => ({ success: false, error: 'Synthetic lost receipt' }));
     await f.adapter.boundary.afterTurn([]);
-    const args = { operationId: 'first', state: 'not_applied', proof: 'Model says safe' };
-    await f.model([{ id: 'reconcile', name: 'reconcile_operation', args }]);
-    expect(await f.control('reconcile_operation', 'reconcile', args)).toMatchObject({ ok: false });
+    const args = { operationId: 'first', state, proof: 'Model says safe', recoveryPolicy: 'retry_safe' };
+    const retiredCallback = jest.fn(async () => ({ ok: true }));
+    await f.model([{ id: 'reconcile', name: 'reconcile_operation', args }], 'I verified the effect externally; retry is safe.');
+    expect(await f.execute('reconcile_operation', 'reconcile', args, retiredCallback))
+      .toMatchObject({ ok: false, error: { code: 'TOOL_RETIRED', effectStarted: false } });
+    expect(retiredCallback).not.toHaveBeenCalled();
     expect(f.adapter.getSession().reconciledOperations).toBeUndefined();
+    expect(f.adapter.getSession().uncertainOperations).toContain(operationFingerprint('write', {}));
+    await f.adapter.boundary.afterTurn([]);
+    await f.model([{ id: 'retry', name: 'write' }], 'Host policy is now retry_safe; this is a new authorized attempt.');
+    const retry = jest.fn(async () => ({ ok: true }));
+    expect(await f.execute('write', 'retry', {}, retry))
+      .toMatchObject({ ok: false, error: { code: 'OPERATION_RETRY_UNSAFE', effectStarted: false } });
+    expect(retry).not.toHaveBeenCalled();
     expect(f.adapter.getSession().uncertainOperations).toContain(operationFingerprint('write', {}));
   });
 
@@ -717,7 +931,39 @@ describe('canonical requirement execution durability boundary (offline)', () => 
     expect(again.getSession().turns).toBe(before.turns + 1);
   });
 
-  test.each(['write', 'read'] as const)('canonical pending %s is never replayed and write reconciliation is reachable', async effect => {
+  test.each(['inspect', 'retry_safe'] as const)('pending %s writes are closed without replay; only a fresh agent request can dispatch', async recoveryPolicy => {
+    const execute = jest.fn(async () => ({ ok: true }));
+    const f = await crashFixture([{ name: 'action', effect: 'write', recoveryPolicy, description: '', parameters: {}, execute }]);
+    await f.batch([{ id: 'pending', name: 'action' }, { id: 'undispatched', name: 'action' }]);
+    const original = f.adapter.getSession(); const call = original.messages[0].toolCalls![0];
+    const fingerprint = operationFingerprint('action', {});
+    await f.store.save({ ...original, pending: { call, effect: 'write', fingerprint } }, f.run.siteId, f.input.owner);
+    const next = await f.resume();
+    const recovered = structuredClone(next.getSession().messages);
+    expect(execute).not.toHaveBeenCalled();
+    expect(next.getSession().pending).toBeUndefined();
+    expect(next.getSession().uncertainOperations).toEqual([fingerprint]);
+    const receipts = recovered.filter(message => message.role === 'tool');
+    expect(receipts.map(message => message.toolCallId)).toEqual(['pending', 'undispatched']);
+    expect(JSON.parse(receipts[0].content)).toMatchObject({ ok: false, error: { code: 'OPERATION_OUTCOME_UNKNOWN', ambiguous: true } });
+    expect(JSON.parse(receipts[1].content)).toMatchObject({ ok: false, error: { code: 'OPERATION_NOT_EXECUTED', effectStarted: false } });
+    await next.boundary.beforeModel({ system: '', messages: next.getMessages(), tools: [], maxOutputTokens: 100 });
+    await next.boundary.onModelMessage({ role: 'assistant', content: 'New attempt after inspection.', tool_calls: [
+      { id: 'fresh', type: 'function', function: { name: 'action', arguments: '{}' } },
+    ] });
+    expect(await next.boundary.executeTool({ id: 'fresh', name: 'action', args: {} }, () => next.executeHarnessTool('action', {})))
+      .toEqual({ ok: true });
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledWith({}, expect.objectContaining({ operationId: 'fresh' }));
+    await next.boundary.afterTurn([]);
+    expect(next.getSession().messages.slice(0, recovered.length)).toEqual(recovered);
+    expect(next.getSession().uncertainOperations).toEqual([fingerprint]);
+    const again = await f.resume();
+    expect(again.getSession().messages).toEqual(next.getSession().messages);
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  test.each(['write', 'read'] as const)('canonical pending %s is never replayed and retired reconciliation preserves uncertainty', async effect => {
     const execute = jest.fn(async () => ({ ok: true }));
     const reconcile = jest.fn(async () => ({ state: 'not_applied' as const, proof: 'Synthetic trusted provider proof' }));
     const f = await crashFixture([{ name: 'action', effect, description: '', parameters: {}, execute, reconcile }]);
@@ -731,14 +977,16 @@ describe('canonical requirement execution durability boundary (offline)', () => 
     expect(JSON.parse(receipts[1].content)).toMatchObject({ ok: false, error: { code: 'OPERATION_NOT_EXECUTED' } });
     expect(next.getSession().uncertainOperations).toEqual(effect === 'write' ? [operationFingerprint('action', {})] : []);
     expect(execute).not.toHaveBeenCalled();
+    expect(reconcile).not.toHaveBeenCalled();
     if (effect === 'write') {
       const args = { operationId: 'pending' };
       await next.boundary.beforeModel({ system: '', messages: next.getMessages(), tools: [], maxOutputTokens: 100 });
       await next.boundary.onModelMessage({ role: 'assistant', content: '', tool_calls: [{ id: 'reconcile', type: 'function',
         function: { name: 'reconcile_operation', arguments: JSON.stringify(args) } }] });
-      expect(await next.boundary.executeTool({ id: 'reconcile', name: 'reconcile_operation', args },
-        () => next.controlTools.find(tool => tool.name === 'reconcile_operation').execute(args))).toMatchObject({ ok: true });
-      expect(reconcile).toHaveBeenCalledTimes(1);
+      const retiredCallback = jest.fn(async () => ({ ok: true }));
+      expect(await next.boundary.executeTool({ id: 'reconcile', name: 'reconcile_operation', args }, retiredCallback))
+        .toMatchObject({ ok: false, error: { code: 'TOOL_RETIRED', effectStarted: false } });
+      expect(retiredCallback).not.toHaveBeenCalled(); expect(reconcile).not.toHaveBeenCalled();
       expect(next.getSession().uncertainOperations).toEqual([operationFingerprint('action', {})]);
     }
   });

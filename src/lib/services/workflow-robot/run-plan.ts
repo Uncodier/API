@@ -27,6 +27,7 @@ import { parseWorkflowExpectedOutputContract } from './result-shape';
 import { shouldRunWorkflowStep, workflowRelationPrompt } from './relation-routing';
 import { buildWorkflowStepPrompt } from './step-prompt';
 import { readWorkflowResultContractVersion } from './result-contract';
+import { assertProcurementWorkflowActorAccess, isProcurementWorkflowTable } from './procurement-access';
 
 const MAX_WORKFLOW_STEP_TURNS = 10;
 class WorkflowStepResultError extends Error {
@@ -146,6 +147,15 @@ export async function runWorkflowPlan(runPlanId: string, options?: { deadline?: 
     throw new Error('Channel message runs require bounded execution');
   }
   const resultContractVersion = readWorkflowResultContractVersion(plan.metadata);
+
+  if (isProcurementWorkflowTable(plan.metadata?.trigger_payload?.table)) {
+    const { data: instance, error: instanceError } = await supabaseAdmin.from('remote_instances')
+      .select('site_id, user_id').eq('id', plan.instance_id).maybeSingle();
+    if (instanceError || !instance || instance.site_id !== plan.site_id || instance.user_id !== plan.user_id) {
+      throw new Error('Procurement workflow instance is not accessible');
+    }
+    await assertProcurementWorkflowActorAccess(instance.site_id, instance.user_id);
+  }
 
   const claimed = await claimWorkflowRunExecution(runPlanId);
   if (!claimed) {

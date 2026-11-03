@@ -6,6 +6,9 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 jest.mock('@/lib/database/supabase-client', () => ({
   supabaseAdmin: { from: jest.fn() },
 }));
+jest.mock('@/lib/services/workflow-robot/procurement-access', () => ({
+  canReadProcurementWorkflowInstanceAsActor: async () => true,
+}));
 
 describe('formatStepLogHistory', () => {
   it('injects sanitized runtime evidence for the next repair turn', () => {

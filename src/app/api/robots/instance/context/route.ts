@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { canAccessSite } from '@/lib/security/site-access';
 import { InstanceContextManager } from '@/lib/services/robot-instance/InstanceContextManager';
+import { authorizeProcurementWorkflowInstanceRead } from '@/lib/services/workflow-robot/procurement-access';
 
 export async function GET(request: NextRequest) {
   const id = z.string().uuid().safeParse(request.nextUrl.searchParams.get('instance_id'));
@@ -12,6 +13,9 @@ export async function GET(request: NextRequest) {
   if (error) return NextResponse.json({ error: 'Instance lookup failed' }, { status: 503 });
   if (!instance) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   if (!await canAccessSite(request, instance.site_id)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+  if (!await authorizeProcurementWorkflowInstanceRead(request, id.data, instance.site_id)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
   return NextResponse.json({ context: await new InstanceContextManager(id.data, instance.site_id).status() });

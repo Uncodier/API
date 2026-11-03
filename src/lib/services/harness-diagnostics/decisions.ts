@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { loadHarnessScope, logBelongsToRequirement, sanitizeHarnessData, type HarnessDiagnosticContext } from './context';
+import { canReadProcurementWorkflowInstanceAsActor } from '@/lib/services/workflow-robot/procurement-access';
 
 const text = (max: number) => z.string().trim().min(1).max(max);
 const base = {
@@ -25,10 +26,15 @@ export async function decideHarness(context: HarnessDiagnosticContext, raw: unkn
   if (new Set(args.evidence_log_ids).size !== args.evidence_log_ids.length) throw new Error('Evidence IDs must be unique.');
   if (!args.evidence_log_ids.length) throw new Error('Read supporting requirement events before deciding.');
   if (args.evidence_log_ids.length) {
-    const { data, error } = await supabaseAdmin.from('instance_logs').select('id,details,tool_args')
+    const { data, error } = await supabaseAdmin.from('instance_logs').select('id,instance_id,details,tool_args')
       .eq('site_id', context.siteId).in('id', args.evidence_log_ids);
     if (error || data?.length !== args.evidence_log_ids.length || data.some(log => !logBelongsToRequirement(log, requirement.id))) {
       throw new Error('Decision cites missing or out-of-scope evidence.');
+    }
+    for (const log of data) {
+      if (!await canReadProcurementWorkflowInstanceAsActor(context.siteId, log.instance_id, context.userId ?? null)) {
+        throw new Error('Decision cites missing or out-of-scope evidence.');
+      }
     }
   }
   // Validate only model-authored content. Canonical acceptance is resolved on the

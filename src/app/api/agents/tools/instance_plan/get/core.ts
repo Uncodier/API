@@ -1,5 +1,9 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { z } from 'zod';
+import {
+  canReadProcurementWorkflowInstanceAsActor,
+  filterAccessibleProcurementWorkflowInstances,
+} from '@/lib/services/workflow-robot/procurement-access';
 
 const GetInstancePlansSchema = z.object({
   instance_id: z.string().uuid('Invalid instance_id').optional(),
@@ -11,8 +15,52 @@ const GetInstancePlansSchema = z.object({
   offset: z.number().int().min(0).optional().default(0),
 });
 
-export async function getInstancePlansCore(filters: Record<string, unknown>) {
+export class InstancePlansReadForbiddenError extends Error {
+  constructor() { super('Forbidden'); }
+}
+
+/** Scope is supplied by the authenticated route or host closure, never tool filters. */
+export async function getInstancePlansCore(
+  filters: Record<string, unknown>,
+  scope?: { userId: string | null; internal: boolean },
+) {
   const validatedFilters = GetInstancePlansSchema.parse(filters);
+
+  let accessibleInstanceIds: string[] | undefined;
+  if (!scope?.internal) {
+    const userId = scope?.userId ?? null;
+    if (validatedFilters.instance_id) {
+      if (!await canReadProcurementWorkflowInstanceAsActor(
+        validatedFilters.site_id, validatedFilters.instance_id, userId,
+      )) throw new InstancePlansReadForbiddenError();
+    } else {
+      // Authorize metadata-only candidates before reading payloads or counting plans.
+      // Page the candidates so the database's default row cap cannot hide accessible plans.
+      const instanceIds: string[] = [];
+      for (let offset = 0; ; offset += 1000) {
+        const { data: instances, error } = await supabaseAdmin.from('remote_instances')
+          .select('id').eq('site_id', validatedFilters.site_id)
+          .order('id', { ascending: true }).range(offset, offset + 999);
+        if (error) throw new Error('Cannot verify instance plan access');
+        instanceIds.push(...(instances || []).map(instance => instance.id));
+        if (!instances || instances.length < 1000) break;
+      }
+      accessibleInstanceIds = Array.from(await filterAccessibleProcurementWorkflowInstances(
+        validatedFilters.site_id, userId, instanceIds,
+      ));
+      if (accessibleInstanceIds.length === 0) {
+        return {
+          success: true,
+          data: {
+            plans: [],
+            pagination: { total: 0, count: 0, offset: validatedFilters.offset,
+              limit: validatedFilters.limit, has_more: false },
+            filters_applied: validatedFilters,
+          },
+        };
+      }
+    }
+  }
 
   let query = supabaseAdmin
     .from('instance_plans')
@@ -20,6 +68,9 @@ export async function getInstancePlansCore(filters: Record<string, unknown>) {
 
   if (validatedFilters.instance_id) {
     query = query.eq('instance_id', validatedFilters.instance_id);
+  }
+  if (accessibleInstanceIds) {
+    query = query.in('instance_id', accessibleInstanceIds);
   }
   if (validatedFilters.site_id) {
     query = query.eq('site_id', validatedFilters.site_id);

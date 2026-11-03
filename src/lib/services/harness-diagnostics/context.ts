@@ -2,11 +2,14 @@ import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { sanitizeMigrationRepairContext } from '../apps-platform/migration-repair-policy';
 import { redactRuntimeSecrets } from '@/app/api/cron/shared/runtime-log-context';
+import { canReadProcurementWorkflowInstanceAsActor } from '@/lib/services/workflow-robot/procurement-access';
 
 export interface HarnessDiagnosticContext {
   siteId: string;
   instanceId: string;
   requirementId?: string;
+  /** Bound by the host invocation, never by diagnostic tool arguments. */
+  userId?: string | null;
   /** Describes this invocation, never the capabilities of a different worker. */
   runtime: string;
   toolNames: string[];
@@ -33,6 +36,9 @@ export const REQUIREMENT_DIAGNOSTIC_COLUMNS = 'id,site_id,status,title,instructi
 export async function loadHarnessScope(context: HarnessDiagnosticContext) {
   z.string().uuid().parse(context.siteId);
   z.string().uuid().parse(context.instanceId);
+  if (!await canReadProcurementWorkflowInstanceAsActor(context.siteId, context.instanceId, context.userId ?? null)) {
+    throw new Error('Diagnostic instance scope is unavailable.');
+  }
   const { data: instance, error: instanceError } = await supabaseAdmin.from('remote_instances')
     .select('id,site_id,status,is_archived').eq('id', context.instanceId).eq('site_id', context.siteId).maybeSingle();
   if (instanceError || !instance || instance.is_archived) throw new Error('Diagnostic instance scope is unavailable.');
@@ -52,11 +58,23 @@ export async function loadHarnessScope(context: HarnessDiagnosticContext) {
   if (error || !requirement) throw new Error('Diagnostic requirement scope is unavailable.');
   const owner = requirement.metadata?.runner_instance_id;
   const origin = requirement.metadata?.assistant_origin_instance_id;
+  // Requirement metadata and plan history can link another, restricted instance.
+  // Fail the entire diagnostic scope rather than return partial private derivatives.
+  for (const id of new Set([owner, origin].filter((id): id is string => typeof id === 'string'))) {
+    if (!await canReadProcurementWorkflowInstanceAsActor(context.siteId, id, context.userId ?? null)) {
+      throw new Error('Diagnostic requirement scope is unavailable.');
+    }
+  }
   const { data: plans, error: planError } = await supabaseAdmin.from('instance_plans')
     .select('id,instance_id,site_id,status,title,metadata,steps,updated_at,created_at')
     .eq('site_id', context.siteId).contains('metadata', { requirement_id: requirementId })
     .order('created_at', { ascending: false }).limit(51);
   if (planError) throw new Error('Cannot verify requirement-linked plans.');
+  for (const id of new Set((plans || []).map(plan => plan.instance_id))) {
+    if (!await canReadProcurementWorkflowInstanceAsActor(context.siteId, id, context.userId ?? null)) {
+      throw new Error('Cannot verify requirement-linked plans.');
+    }
+  }
   let linked = (plans || []).some(plan => plan.instance_id === context.instanceId);
   if (!linked && owner !== context.instanceId && origin !== context.instanceId) {
     // The caller's historical association may be older than the bounded display page.

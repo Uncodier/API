@@ -7,11 +7,20 @@ const mockPrepareAssistantContext = jest.fn();
 const mockProcessAssistantTurn = jest.fn();
 const mockEnsureWorkflowSandbox = jest.fn();
 const mockStopWorkflowSandbox = jest.fn();
+const mockProcurementAccess = jest.fn();
+jest.mock('../procurement-access', () => ({
+  isProcurementWorkflowTable: (table: unknown) => table === 'procurement_requests',
+  assertProcurementWorkflowActorAccess: mockProcurementAccess,
+}));
 let mockPlan: Record<string, any>;
 
 jest.mock('@/lib/database/supabase-client', () => ({
   supabaseAdmin: {
     from: jest.fn((table: string) => {
+      if (table === 'remote_instances') return {
+        select: jest.fn().mockReturnThis(), eq: jest.fn().mockReturnThis(),
+        maybeSingle: jest.fn().mockResolvedValue({ data: { site_id: mockPlan.site_id, user_id: mockPlan.user_id }, error: null }),
+      };
       if (table !== 'instance_plans') {
         throw new Error(`Unexpected table ${table}`);
       }
@@ -76,6 +85,15 @@ describe('runWorkflowPlan claim recovery', () => {
     mockRenewClaim.mockResolvedValue(true);
     mockFinishClaim.mockResolvedValue(true);
     mockUpdateEq.mockResolvedValue({ error: null });
+    mockProcurementAccess.mockResolvedValue(undefined);
+  });
+
+  it('rechecks purchasing actor permission before claiming or resuming execution', async () => {
+    mockPlan.metadata = { workflow_run: true, trigger_payload: { table: 'procurement_requests' } };
+    mockProcurementAccess.mockRejectedValue(new Error('Procurement workflow access denied'));
+    await expect(runWorkflowPlan('plan-1')).rejects.toThrow('access denied');
+    expect(mockClaim).not.toHaveBeenCalled();
+    expect(mockProcessAssistantTurn).not.toHaveBeenCalled();
   });
 
   it('releases the workflow claim when execution throws', async () => {

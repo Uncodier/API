@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { loadHarnessScope, logBelongsToRequirement, sanitizeHarnessData, type HarnessDiagnosticContext } from './context';
+import { canReadProcurementWorkflowInstanceAsActor } from '@/lib/services/workflow-robot/procurement-access';
 
 const cursor = z.object({ created_at: z.string().datetime({ offset: true }).max(40), id: z.string().uuid() }).strict();
 export const harnessEventsSchema = z.discriminatedUnion('action', [
@@ -24,6 +25,9 @@ export async function readHarnessEvents(context: HarnessDiagnosticContext, raw: 
   if (args.action === 'read') {
     const { data, error } = await query.eq('id', args.log_id).maybeSingle();
     if (error || !data || !logBelongsToRequirement(data, requirement.id)) throw new Error('Event unavailable in this requirement scope.');
+    if (!await canReadProcurementWorkflowInstanceAsActor(context.siteId, data.instance_id, context.userId ?? null)) {
+      throw new Error('Event unavailable in this requirement scope.');
+    }
     const text = JSON.stringify(sanitizeHarnessData(data));
     if (text.length > 1_000_000) return { available: false, reason: 'Event exceeds diagnostic size limit. Use a narrower persisted receipt.' };
     const content = text.slice(args.offset, args.offset + args.limit);
@@ -39,6 +43,12 @@ export async function readHarnessEvents(context: HarnessDiagnosticContext, raw: 
   if (args.before) query = query.or(`created_at.lt.${args.before.created_at},and(created_at.eq.${args.before.created_at},id.lt.${args.before.id})`);
   const { data, error } = await query.order('created_at', { ascending: false }).order('id', { ascending: false }).limit(args.limit + 1);
   if (error || !Array.isArray(data)) throw new Error('Requirement event lookup unavailable.');
+  // Include the extra cursor candidate: pagination metadata is also private data.
+  for (const id of new Set(data.map(log => log.instance_id))) {
+    if (!await canReadProcurementWorkflowInstanceAsActor(context.siteId, id, context.userId ?? null)) {
+      throw new Error('Requirement event lookup unavailable.');
+    }
+  }
   const scanned = data.slice(0, args.limit);
   const last = scanned[scanned.length - 1];
   return sanitizeHarnessData({ events: scanned.filter(log => logBelongsToRequirement(log, requirement.id)).map(log => ({

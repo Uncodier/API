@@ -3,10 +3,13 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@j
 import { recoveryDatabase, scope } from '@/lib/services/robot-instance/test-support/assistant-recovery-fixture';
 
 let db: ReturnType<typeof recoveryDatabase>;
+const canReadProcurementWorkflowInstanceAsActor = jest.fn<(...args: unknown[]) => Promise<boolean>>();
+jest.unstable_mockModule('@/lib/services/workflow-robot/procurement-access', () => ({ canReadProcurementWorkflowInstanceAsActor }));
 jest.unstable_mockModule('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: (table: string) => db.from(table) } }));
 let tools: typeof import('../conversation-recovery-tools');
 beforeAll(async () => { tools = await import('../conversation-recovery-tools'); });
 beforeEach(() => {
+  canReadProcurementWorkflowInstanceAsActor.mockResolvedValue(true);
   db = recoveryDatabase();
   db.tables.instance_plans = [{ id: 'plan-1', instance_id: scope.instanceId, site_id: scope.siteId,
     title: 'Repair storage', status: 'pending', metadata: { requirement_id: 'req-1' }, steps_completed: 0, steps_total: 2 }];
@@ -17,6 +20,12 @@ beforeEach(() => {
 afterEach(() => { jest.restoreAllMocks(); });
 
 describe('conversation-only status capability', () => {
+  it('denies private purchasing conversation history before querying plans', async () => {
+    canReadProcurementWorkflowInstanceAsActor.mockResolvedValue(false);
+    expect(await tools.getConversationRecoveryTools(scope)[0].execute({ action: 'status' }))
+      .toMatchObject({ success: false });
+    expect(db.queries).toHaveLength(0);
+  });
   it('returns current blocked state without exposing any executable or routed tool', async () => {
     const before = JSON.stringify(db.tables);
     const available = tools.getConversationRecoveryTools(scope);

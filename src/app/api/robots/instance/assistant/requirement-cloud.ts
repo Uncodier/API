@@ -11,6 +11,7 @@ import type { HarnessTool } from '@/lib/harness/types';
 import { runRequirementAssistantSlice } from './requirement-session';
 import { writeRequirementInstanceLog } from './requirement-instance-log';
 import { assertToolScreenAccess } from '@/app/api/agents/tools/router/screen-access';
+import { AssistantExecutionBoundaryError } from '@/lib/services/robot-instance/assistant-execution-boundary';
 
 /** Canonical session/turn executor with no workspace, Git checkout or VM lease. */
 export async function runCloudRequirementCycle(run: RequirementRun, objective: string,
@@ -42,29 +43,32 @@ export async function runCloudRequirementCycle(run: RequirementRun, objective: s
   const cloudTools: HarnessTool[] = descriptors.map(tool => ({
     name: tool.name, description: tool.description, parameters: tool.parameters,
     effect: tool.name === 'write_cloud_file' ? 'write' : 'read',
+    ...(tool.name === 'write_cloud_file' ? { recoveryPolicy: (args: Record<string, unknown>) => {
+      // A fresh create call gets a different journal identity and can duplicate a
+      // document. Only version-fenced edits are eligible for agent inspection.
+      const versioned = typeof args.file_id === 'string'
+        && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(args.file_id)
+        && typeof args.expected_version === 'number' && Number.isInteger(args.expected_version)
+        && args.expected_version >= 1 && args.expected_version <= 2147483647;
+      const edit = args.action === 'replace' ? typeof args.content === 'string' && args.changes === undefined
+        : args.action === 'patch' && args.content === undefined && Array.isArray(args.changes)
+          && args.changes.length > 0 && args.changes.length <= 100 && args.changes.every(change =>
+            change && typeof change.old_text === 'string' && change.old_text.length > 0 && typeof change.new_text === 'string');
+      // Execution still enforces the complete cloud schema and ownership checks.
+      return versioned && edit ? 'inspect' as const : 'verify_external' as const;
+    } } : {}),
     execute: async (args, context) => {
       // Durable tool-call identity, never a model argument. Retries retain it.
       const operationId = operationIdentity(context.operationId);
       const result = await createCloudFileTools(scope, active, { operationId: () => operationId, allowRequirementWrite: true })
         .find(candidate => candidate.name === tool.name)!.execute(args as any);
+      if (tool.name !== 'write_cloud_file') {
+        // Inspection must not disclose content or metadata after revocation.
+        await active();
+        await assertToolScreenAccess(tool.name, scope);
+      }
       return JSON.parse(JSON.stringify(result));
     },
-    ...(tool.name === 'write_cloud_file' ? { reconcile: async (_args: Record<string, unknown>, context: { operationId: string }) => {
-      await active();
-      await assertToolScreenAccess('read_cloud_file', scope);
-      const operationId = operationIdentity(context.operationId);
-      const result = await createCloudFileStore().readOperation(scope, operationId);
-      await active();
-      await assertToolScreenAccess('read_cloud_file', scope);
-      if (!result) return { state: 'unknown' as const };
-      // The atomic journal proves precisely this committed operation. Omit full
-      // content from the recovery receipt; read_cloud_file supplies bounded pages.
-      const { content: _content, ...receipt } = result;
-      return { state: 'applied' as const, proof: `cloud-operation:${operationId}`, result: {
-        ok: result.state !== 'conflict', output: JSON.parse(JSON.stringify(receipt)),
-        ...(result.state === 'conflict' ? { error: { code: 'conflict', message: 'Version conflict; no write applied.', effectStarted: false } } : {}),
-      } };
-    } } : {}),
   }));
   try {
     const result = await runRequirementAssistantSlice({ session, store, owner, run, tools: [
@@ -86,10 +90,13 @@ export async function runCloudRequirementCycle(run: RequirementRun, objective: s
   } catch (error) {
     const current = await store.load(run.sessionId, run.siteId);
     if (current?.status === 'running') {
-      const uncertain = current.pending || current.uncertainOperations.length > 0 ||
-        (error instanceof Error && /Recovery|Billing/.test(error.name));
+      const interruptedBatch = error instanceof AssistantExecutionBoundaryError && error.code === 'canonical_slice_interrupted';
+      const uncertain = !interruptedBatch && (current.pending ||
+        (error instanceof Error && /Recovery|Billing/.test(error.name)));
+      const sliceExpired = signal.aborted && error === signal.reason && error instanceof DOMException && error.name === 'TimeoutError';
       current.status = uncertain ? 'paused' : 'waiting';
-      current.reason = uncertain ? 'assistant_execution_requires_reconciliation' : 'cloud_runtime_unavailable';
+      current.reason = uncertain ? 'assistant_execution_requires_reconciliation' : interruptedBatch
+        ? 'canonical_slice_interrupted' : sliceExpired ? 'runtime_slice_expired' : 'cloud_runtime_unavailable';
       await store.save(current, run.siteId, owner);
     }
     await writeRequirementInstanceLog(run, { key: `cloud-cycle-error:${run.runId}`, log_type: 'error', is_error: true,

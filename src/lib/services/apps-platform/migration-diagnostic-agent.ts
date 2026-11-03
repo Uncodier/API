@@ -87,7 +87,8 @@ export async function diagnoseMigration(params: {
     },
   }];
   const harnessContext = { siteId: context.instance.site_id, instanceId: context.instance.id || '',
-    requirementId: context.requirementId, runtime: 'migration_diagnostic', toolNames: tools.map(tool => tool.name) };
+    requirementId: context.requirementId, userId: context.instance.user_id,
+    runtime: 'migration_diagnostic', toolNames: tools.map(tool => tool.name) };
   const harnessTools = createHarnessDiagnosticTools(harnessContext);
   harnessContext.toolNames.push(...harnessTools.map(tool => tool.name));
   let harnessReads = 0;

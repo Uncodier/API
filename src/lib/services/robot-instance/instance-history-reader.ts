@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { canReadProcurementWorkflowInstanceAsActor } from '@/lib/services/workflow-robot/procurement-access';
 
 export const INSTANCE_HISTORY_LIMITS = {
   list: 20,
@@ -281,7 +282,7 @@ export function hasInstanceHistoryScope(siteId: unknown, instanceId: unknown): b
 }
 
 /** Server-side only. The caller must supply an already-authorized scope. */
-export function createInstanceHistoryReader(siteId: string, instanceId: string) {
+export function createInstanceHistoryReader(siteId: string, instanceId: string, userId: string | null = null) {
   if (!hasInstanceHistoryScope(siteId, instanceId)) {
     throw new Error('instance_history requires trusted siteId and instanceId UUIDs.');
   }
@@ -305,6 +306,9 @@ export function createInstanceHistoryReader(siteId: string, instanceId: string) 
     const parsed = argsSchema.safeParse(args);
     if (!parsed.success) {
       throw invalidArguments(parsed.error, rawArgs);
+    }
+    if (!await canReadProcurementWorkflowInstanceAsActor(siteId, instanceId, userId)) {
+      throw new Error('Instance history is not accessible');
     }
     return parsed.data.action === 'list'
       ? listHistory(siteId, instanceId, parsed.data)

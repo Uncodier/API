@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { createInstanceLogCore } from '@/lib/tools/instance-log-core';
 import { readLiveInstanceLogSnapshots } from '@/lib/services/robot-instance/assistant-streaming-logs';
 import { canAccessSite } from '@/lib/security/site-access';
+import { authorizeProcurementWorkflowInstanceRead } from '@/lib/services/workflow-robot/procurement-access';
 import {
   readRedisJson,
   writeRedisJson,
@@ -57,6 +58,9 @@ export async function GET(
       );
     }
     if (!await canAccessSite(request, instance.site_id)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+    if (!await authorizeProcurementWorkflowInstanceRead(request, id, instance.site_id)) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 

@@ -44,9 +44,9 @@ const EVIDENCE_COLLECTION_TOOLS = new Set([
 
 /** Retrieve the current scoped history even when repair removes the generic
  * router. This adds no other routed capability. */
-export function withDiagnosticHistoryTool<T extends { name?: string }>(tools: T[], siteId: string, instanceId: string) {
+export function withDiagnosticHistoryTool<T extends { name?: string }>(tools: T[], siteId: string, instanceId: string, userId: string | null = null) {
   return tools.some(tool => tool.name === 'instance_history')
-    ? tools : [...tools, instanceHistoryTool(siteId, instanceId)];
+    ? tools : [...tools, instanceHistoryTool(siteId, instanceId, userId)];
 }
 const PROGRESS_FINGERPRINT_SCRIPT = String.raw`
 const crypto = require('node:crypto');

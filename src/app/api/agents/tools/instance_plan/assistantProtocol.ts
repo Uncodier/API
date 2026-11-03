@@ -475,9 +475,10 @@ export function instancePlanTool(
       if (action === 'list') {
         const filters = {
           ...params,
-          instance_id: params.instance_id || instance_id,
+          site_id,
+          instance_id: instance_id || params.instance_id,
         };
-        const raw = await getInstancePlansCore(filters);
+        const raw = await getInstancePlansCore(filters, { userId: user_id ?? null, internal: false });
         return slimListResponse(raw);
       }
 

@@ -12,8 +12,12 @@ import { routeTools } from '@/app/api/agents/tools/router/assistantProtocol';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { HARNESS_SOURCE_ALLOWLIST } from '@/lib/services/harness-diagnostics/reference';
+import { canReadProcurementWorkflowInstanceAsActor } from '@/lib/services/workflow-robot/procurement-access';
 
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn(), rpc: jest.fn() } }));
+jest.mock('@/lib/services/workflow-robot/procurement-access', () => ({
+  canReadProcurementWorkflowInstanceAsActor: jest.fn(),
+}));
 jest.mock('@/lib/services/harness-diagnostics/support', () => ({ deliverHarnessSupportTicket: jest.fn() }));
 jest.mock('@/lib/services/embeddings-service', () => ({ EmbeddingsService: {} }));
 // Diagnostic execution/repair contracts are independent from screen admission.
@@ -62,7 +66,33 @@ function fixture(overrides: Record<string, any> = {}) {
   });
   return { calls, queues };
 }
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+  (canReadProcurementWorkflowInstanceAsActor as jest.Mock).mockResolvedValue(true);
+});
+
+it('denies a restricted diagnostic instance before reading payloads with a missing actor', async () => {
+  fixture();
+  (canReadProcurementWorkflowInstanceAsActor as jest.Mock).mockResolvedValue(false);
+  await expect(loadHarnessScope(context())).rejects.toThrow('scope is unavailable');
+  expect(canReadProcurementWorkflowInstanceAsActor).toHaveBeenCalledWith(site, instance, null);
+  expect(supabaseAdmin.from).not.toHaveBeenCalled();
+});
+
+it('denies restricted linked plans rather than returning derived diagnostic data', async () => {
+  fixture({ instance_plans: [{ id: event, instance_id: other, metadata: { requirement_id: req } }] });
+  (canReadProcurementWorkflowInstanceAsActor as jest.Mock).mockImplementation(async (_site, id) => id !== other);
+  await expect(loadHarnessScope(context())).rejects.toThrow('requirement-linked plans');
+});
+
+it.each(['list', 'read'])('denies restricted cross-instance events for %s without payload or cursor', async action => {
+  const log = { id: event, instance_id: other, created_at: time, details: { requirement_id: req }, message: 'private' };
+  fixture({ instance_logs: action === 'list' ? [log] : log });
+  (canReadProcurementWorkflowInstanceAsActor as jest.Mock).mockImplementation(async (_site, id) => id !== other);
+  await expect(readHarnessEvents({ ...context(), userId: instance },
+    action === 'list' ? { action, limit: 2 } : { action, log_id: event })).rejects.toThrow('unavailable');
+  expect(canReadProcurementWorkflowInstanceAsActor).toHaveBeenCalledWith(site, other, instance);
+});
 
 it('allows diagnostics of blocked work without requiring a runnable lease; binds site and instance', async () => {
   const h = fixture();

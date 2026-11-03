@@ -52,6 +52,43 @@ it.each(['deadline', 'execution-check', 'lease', 'save'])('preserves %s through 
   expect(globalThis.fetch).not.toHaveBeenCalled();
 });
 
+it('preserves canonical interrupted-tool continuation through the real executor without another provider dispatch', async () => {
+  const id = randomUUID(), requirementId = randomUUID(), owner = randomUUID();
+  const run = { requirementId, sessionId: id, siteId: randomUUID(), userId: randomUUID(), instanceId: randomUUID(), runId: randomUUID(), executionGeneration: 1 };
+  const session: HarnessSession = { id, version: 0, status: 'queued',
+    request: { objective: 'Offline interruption', repository: { url: 'https://example.test/repository' }, requirementId,
+      limits: { maxTurns: 10, maxOutputTokens: 2000, maxTotalTokens: 2000000, maxActiveMs: 600000 } },
+    turns: 0, allocatedTokens: 0, activeMs: 0, messages: [], uncertainOperations: [],
+    createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+  const store = new MemorySessionStore(); await store.create(session, run);
+  const claimed = (await store.claim(id, run.siteId, owner, 60))!;
+  const controller = new AbortController();
+  const execute = jest.fn(async (_args, context) => {
+    controller.abort(new DOMException('Offline tool deadline', 'TimeoutError'));
+    // Exercises nested guard propagation, not only a raw throw from the tool.
+    await context.assertActive();
+    return { ok: true };
+  });
+  const tool = { name: 'write', effect: 'write' as const, description: 'Offline write', parameters: { type: 'object', properties: {} }, execute };
+  const adapter = createRequirementExecutionBoundary({ session: claimed, run, store, owner,
+    artifacts: createMemoryArtifactStore(store), tools: [tool], redact: createRedactor(),
+    assertActive: async () => {}, signal: controller.signal, writeLog: async () => {} });
+  adapter.boundary.billing = { beforeDispatch: jest.fn(async () => {}), settle: jest.fn(async () => {}), failed: jest.fn(async () => {}) };
+  await adapter.initialize();
+  const executor = new AIAgentExecutor({ siteId: run.siteId });
+  const create = jest.fn().mockResolvedValue({ choices: [{ message: { role: 'assistant', content: '', tool_calls: [
+    { id: 'original', type: 'function', function: { name: 'write', arguments: '{}' } },
+  ] }, finish_reason: 'tool_calls' }] });
+  (executor as any).client.chat.completions.create = create;
+  await expect(executor.act({ tools: [{ ...tool, execute: args => adapter.executeHarnessTool('write', args) }],
+    messages: adapter.getMessages(), executionBoundary: adapter.boundary, maxOutputTokens: 1000, maxIterations: 1 }))
+    .rejects.toMatchObject({ code: 'canonical_slice_interrupted' });
+  expect(execute).toHaveBeenCalledTimes(1);
+  expect(create).toHaveBeenCalledTimes(1);
+  expect(await store.load(id, run.siteId)).toMatchObject({ pending: { call: { id: 'original' }, effect: 'write' } });
+  expect(globalThis.fetch).not.toHaveBeenCalled();
+});
+
 it('connects canonical normalized control calls and unknown receipts to real durable boundary and finishes', async () => {
   const id = randomUUID();
   const requirementId = randomUUID();

@@ -1,6 +1,12 @@
 import { operationFingerprint } from '@/lib/harness/security';
 import { normalizeToolOperationResult } from '@/lib/services/tool-operation-result';
 import type { ToolResult } from '@/lib/harness/types';
+import { isHarnessDiagnosticRead } from '@/lib/services/harness-diagnostics/read-contract';
+
+export function isRequirementDiagnosticRead(name: string, args: Record<string, unknown>): boolean {
+  return isHarnessDiagnosticRead(name) ||
+    (name === 'tools' && args.action === 'call' && typeof args.name === 'string' && isHarnessDiagnosticRead(args.name));
+}
 
 /** A local command's known nonzero exit is failure, not an unknown dispatch outcome.
  * It does not claim the command made no writes; only its completed result is known.
@@ -27,11 +33,15 @@ export function requirementOperationFingerprint(name: string, args: Record<strin
 }
 
 /** Use the same envelope semantics as assistant; transport success is not effect success. */
-export function requirementOperationResult(value: any): ToolResult {
+export function requirementOperationResult(value: any, diagnosticRead = false): ToolResult {
   const normalized = normalizeToolOperationResult(value, {
     transportError: typeof value?.status === 'number' && value.status >= 400,
   });
   if (normalized.outcome === 'passed') return typeof value?.ok === 'boolean' ? value : { ok: true, output: value };
+  // A returned diagnostic observation is not a mutation receipt or a health verdict.
+  // Preserve explicit failures and unavailable fields; absence of a success flag
+  // in a read-only observation does not make a remote write uncertain.
+  if (diagnosticRead && normalized.outcome === 'unknown' && value !== null && typeof value === 'object') return { ok: true, output: value };
   let payload = normalized.payload as any;
   if (typeof payload === 'string') {
     try { payload = JSON.parse(payload); } catch { /* Unstructured failures carry no pre-effect proof. */ }

@@ -146,15 +146,18 @@ it('does not consult a broken DB binding for local QA or browser capabilities', 
   expect(s.deps.loadRunner).not.toHaveBeenCalled();
 });
 
-it('parameterless provisioning can reconcile by the provider idempotency contract without trusting model claims', async () => {
+it('declares pure per-provider recovery policies without calling dependencies or retaining reconcilers', async () => {
   const s = setup();
   const tools = await s.build();
-  const provision = tools.find(tool => tool.name === 'sandbox_db_provision')!;
-  const result = await provision.reconcile!({}, s.context);
-  expect(result.state).toBe('retry_safe');
-  expect(s.deps.ensureTenant).not.toHaveBeenCalled();
+  for (const [name, policy] of Object.entries({ sandbox_db_provision: 'retry_safe', sandbox_storage_ensure: 'retry_safe', sandbox_db_migrate: 'verify_external' })) {
+    const tool = tools.find(tool => tool.name === name)!;
+    expect(tool.recoveryPolicy).toBe(policy);
+    expect(tool.reconcile).toBeUndefined();
+  }
+  Object.values(s.deps).forEach(fn => expect(fn).not.toHaveBeenCalled());
   s.runner.status = 'running';
-  await expect(provision.reconcile!({}, s.context)).rejects.toThrow();
+  expect(await s.invoke('sandbox_db_provision', {}, tools)).toMatchObject({ ok: false, error: { code: 'LEGACY_RUNNER_NOT_DRAINED' } });
+  expect(s.deps.ensureTenant).not.toHaveBeenCalled();
 });
 
 it('rejects model identity arguments and malformed table paths before touching a dependency', async () => {
@@ -162,6 +165,14 @@ it('rejects model identity arguments and malformed table paths before touching a
   expect(await s.invoke('sandbox_db_provision', { requirementId: randomUUID() })).toMatchObject({ ok: false, error: { code: 'INVALID_ARGUMENTS' } });
   expect(await s.invoke('sandbox_db_inspect', { table_name: 'public.users' })).toMatchObject({ ok: false, error: { code: 'INVALID_ARGUMENTS' } });
   expect(s.deps.loadRequirement).not.toHaveBeenCalled();
+});
+
+it('validates provisioning receipt tenant identity in execution, not a retired verifier', async () => {
+  const s = setup();
+  s.capabilities.requirement_id = randomUUID();
+  expect(await s.invoke('sandbox_db_provision')).toMatchObject({ ok: false, error: { code: 'TENANT_UNAVAILABLE' } });
+  expect(s.deps.issueTenantJWT).not.toHaveBeenCalled();
+  expect(s.options.configureEnvironment).not.toHaveBeenCalled();
 });
 
 it('drops the entire DB row sample, not merely recognizable secret field names', async () => {

@@ -39,6 +39,7 @@ export function createWorkspaceTools(workspace: Workspace): HarnessTool[] {
     schema: S, execute: (args: z.infer<S>, context: ToolContext) => Promise<Json>): HarnessTool => {
     const definition: HarnessTool = {
     name, description, effect,
+    ...(name === 'apply_patch' ? { recoveryPolicy: 'inspect' as const } : {}),
     parameters: zodToJsonSchema(schema, { target: 'jsonSchema7', $refStrategy: 'none' }) as Record<string, unknown>,
     async execute(input, context) {
       const result = schema.safeParse(input);
@@ -146,35 +147,6 @@ export function createWorkspaceTools(workspace: Workspace): HarnessTool[] {
         return { stopped: true, processId: args.processId };
       }),
   ];
-  const patch = tools.find(tool => tool.name === 'apply_patch');
-  if (patch) patch.reconcile = async (args, context) => {
-    const parsed = z.object({ changes: z.array(change).min(1).max(20) }).strict().safeParse(args);
-    if (!parsed.success) return { state: 'unknown' };
-    let allApplied = true;
-    let allOriginal = true;
-    for (const item of parsed.data.changes) {
-      await active(context);
-      let content: string;
-      try { content = await workspace.readFile(item.path, context.signal); }
-      catch (error) {
-        if (item.operation === 'create' && error instanceof WorkspaceError && error.code === 'FILE_NOT_FOUND') { allApplied = false; continue; }
-        return { state: 'unknown' };
-      }
-      if (item.operation === 'create') {
-        allOriginal = false;
-        if (content !== item.content) return { state: 'unknown' };
-      } else {
-        const matches = (value: string) => value.length ? content.split(value).length - 1 : 0;
-        if (matches(item.oldText) === 1 && (!item.newText || matches(item.newText) === 0)) allApplied = false;
-        else if (item.newText && matches(item.newText) === 1 && matches(item.oldText) === 0) allOriginal = false;
-        else return { state: 'unknown' };
-      }
-    }
-    // Never replay a partially applied batch; the agent can make a new patch for the remainder.
-    if (allApplied) return { state: 'applied', proof: 'workspace:exact-target-content', result: { ok: true, output: { reconciled: true } } };
-    if (allOriginal) return { state: 'not_applied', proof: 'workspace:exact-original-content' };
-    return { state: 'unknown' };
-  };
   return tools;
 }
 

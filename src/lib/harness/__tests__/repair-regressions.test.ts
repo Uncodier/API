@@ -73,19 +73,27 @@ it('does not quarantine a trusted pre-dispatch failure', async () => {
   expect(result.uncertainOperations).toEqual([]); expect(execute).toHaveBeenCalledTimes(2);
 });
 
-it('reconciles exact workspace patches without replaying a partially applied batch', async () => {
+it('workspace patch recovery uses ordinary reads of unapplied, partial and applied state without a reconciler', async () => {
   const files: Record<string, string> = { 'a.txt': 'original' };
   const workspace = { ref: { provider: 'vercel', id: 'w', root: '/vercel/sandbox' },
     readFile: async (path: string) => { if (!(path in files)) throw new WorkspaceError('FILE_NOT_FOUND', 'missing'); return files[path]; },
   } as unknown as Workspace;
   const tool = createWorkspaceTools(workspace).find(tool => tool.name === 'apply_patch')!;
+  const read = createWorkspaceTools(workspace).find(tool => tool.name === 'read_files')!;
   const context = { sessionId: randomUUID(), operationId: 'patch', signal: new AbortController().signal, assertActive: async () => {} };
-  const args = { changes: [{ operation: 'replace', path: 'a.txt', oldText: 'original', newText: 'updated' }, { operation: 'create', path: 'b.txt', content: 'new' }] };
-  expect((await tool.reconcile!(args, context)).state).toBe('not_applied');
+  expect(tool.recoveryPolicy).toBe('inspect');
+  expect(tool.reconcile).toBeUndefined();
+  const inspect = () => read.execute({ files: [{ path: 'a.txt' }, { path: 'b.txt' }] }, context);
+  expect(await inspect()).toMatchObject({ ok: true, output: { files: [
+    { content: 'original' }, { error: { code: 'FILE_NOT_FOUND' } },
+  ] } });
   files['a.txt'] = 'updated';
-  expect((await tool.reconcile!(args, context)).state).toBe('unknown');
+  expect(await inspect()).toMatchObject({ ok: true, output: { files: [
+    { content: 'updated' }, { error: { code: 'FILE_NOT_FOUND' } },
+  ] } });
   files['b.txt'] = 'new';
-  expect((await tool.reconcile!(args, context)).state).toBe('applied');
+  expect(await inspect()).toMatchObject({ ok: true, output: { files: [{ content: 'updated' }, { content: 'new' }] } });
+  expect(files).toEqual({ 'a.txt': 'updated', 'b.txt': 'new' });
 });
 
 it('retains the complete large escaped result and reads its tail from another artifact-store instance', async () => {

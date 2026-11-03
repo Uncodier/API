@@ -10,6 +10,9 @@ const getPlan = jest.fn<(...args: any[]) => Promise<any>>();
 const complete = jest.fn<(...args: any[]) => Promise<void>>();
 const getTools = jest.fn<(...args: any[]) => Promise<any>>();
 jest.unstable_mockModule('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: (table: string) => db.from(table) } }));
+jest.unstable_mockModule('@/lib/services/workflow-robot/procurement-access', () => ({
+  canReadProcurementWorkflowInstanceAsActor: async () => true,
+}));
 jest.unstable_mockModule('@/lib/services/robot-instance/assistant-executor', () => ({ executeAssistantStep: model }));
 jest.unstable_mockModule('../utils', () => ({ getInstanceAssistantTools: getTools }));
 jest.unstable_mockModule('../steps', () => ({ prepareAssistantContext: async () => ({
