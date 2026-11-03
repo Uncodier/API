@@ -21,12 +21,21 @@ export async function buildRequirementProfile(run: RequirementRun, context: Requ
     .eq('requirement_id', run.requirementId).eq('site_id', run.siteId).eq('instance_id', run.instanceId)
     .not('repo_url', 'is', null).order('created_at', { ascending: false }).limit(10);
   if (historyError) throw new Error('Requirement branch history unavailable');
-  const prior = (previousStatuses || []).find(row => typeof row.repo_url === 'string' && row.repo_url.includes('/tree/'));
-  if (prior) {
-    const previous = new URL(prior.repo_url);
-    const previousBranch = previous.pathname.split('/tree/')[1];
-    const repoPath = parsed.pathname.replace(/\.git$/, '');
-    if (previous.origin === parsed.origin && previous.pathname.split('/tree/')[0] === repoPath && branchBelongsToRequirement(previousBranch, req.id)) branch = previousBranch;
+  const repoPath = parsed.pathname.replace(/\.git$/, '');
+  for (const prior of previousStatuses || []) {
+    if (typeof prior.repo_url !== 'string') continue;
+    try {
+      const previous = new URL(prior.repo_url);
+      if (previous.username || previous.password || previous.search || previous.hash || previous.origin !== parsed.origin) continue;
+      const tree = previous.pathname.indexOf('/tree/');
+      if (tree < 0 || previous.pathname.slice(0, tree) !== repoPath) continue;
+      const previousBranch = decodeURIComponent(previous.pathname.slice(tree + '/tree/'.length));
+      // Checkpoints point to a commit, not a work branch. Keep looking for the
+      // existing app branch instead of silently starting again from main.
+      if (!branchBelongsToRequirement(previousBranch, req.id) || /[\s\x00-\x1f\x7f\\]/.test(previousBranch)) continue;
+      branch = previousBranch;
+      break;
+    } catch { /* Malformed historical links cannot replace the repository binding. */ }
   }
   const environment: Record<string, string> = {};
   const { data: secrets, error } = await supabaseAdmin.from('site_secrets').select('name,encrypted_value')

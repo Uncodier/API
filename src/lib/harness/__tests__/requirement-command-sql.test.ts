@@ -126,6 +126,11 @@ it('queues trusted cross-instance requirement commands and drains only quiescent
       // Existing develop app, not a newly seeded task: reception/application must
       // remain distinct from scheduler admission after the interactive turn ends.
       const existingApp = await req('in-progress'), appAction = await action('running',{instance:existingApp.runner});
+      // PGlite's host clock can give adjacent inserts the same timestamp. The
+      // production query then sorts by random UUID, not insertion order. Keep
+      // the historical completed action strictly older than this user action.
+      await db.query("UPDATE instance_logs SET created_at=(SELECT created_at FROM instance_logs WHERE id=$1)-interval '1 second' WHERE instance_id=$2 AND id<>$1",[appAction,existingApp.runner]);
+      assert.equal((await one("SELECT id FROM instance_logs WHERE instance_id=$1 AND log_type='user_action' AND trusted_user_action IS TRUE ORDER BY created_at DESC,id DESC LIMIT 1",[existingApp.runner])).id,appAction,'running user action is deterministically latest');
       await db.query("UPDATE requirements SET type='develop',instructions='Existing landing; preserve branding and reservation routes' WHERE id=$1", [existingApp.id]);
       const appCommand = await submit(existingApp.id,appAction,{instructions:'Polish the existing landing spacing; preserve branding and reservation routes'},{instance:existingApp.runner});
       assert.equal(appCommand.state,'queued');

@@ -22,6 +22,8 @@ Read these first when changing the code-agent harness:
 
 - [Existing-requirement E2E verification](/Users/prado/Desktop/Proyectos/Uncodie/Code/API/docs/HARNESS_REQUIREMENT_E2E.md) — read-only command-to-session liveness, realistic app-change acceptance and strict separation of request reception from execution and delivery.
 
+- [Existing-app branch continuity](/Users/prado/Desktop/Proyectos/Uncodie/Code/API/docs/HARNESS_EXISTING_APP_BRANCH_RECOVERY.md) — recover encoded historical work branches rather than mistaking a scaffold or checkpoint for the customer's existing app; offline regression and live-repair boundaries.
+
 - [Technical verification escalation — 2026-10-01](./HARNESS_TECHNICAL_ESCALATION_2026-10-01.md) — technical holds, canonical customer decisions and host-owned support tickets.
 
 - [Evidence-based migration diagnosis and bounded handoff](./MIGRATION_DIAGNOSTIC_HANDOFF.md) — exhaustion is not irreparability; one independent diagnosis and a verified follow-up.
