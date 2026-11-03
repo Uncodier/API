@@ -154,6 +154,29 @@ it('claims and fences agent cron without product gates, preserves pauses, resume
         await db.exec('RESET ROLE');
       }
       await req('backlog',{}, {created:'2026-08-31'});assert.equal(await claim(),null);await reset();
+      const scopeMigration=readFileSync('supabase/migrations/20261103210000_requirement_created_or_updated_scope.sql','utf8');
+      const functionMetadata=async()=>(await db.query("SELECT oid,proname,proowner,proacl::text,prosecdef,proconfig FROM pg_proc WHERE proname IN ('claim_agent_requirement_run','claim_agent_requirement_run_before_commands') ORDER BY proname")).rows;
+      const metadataBefore=await functionMetadata();
+      const wrapperBefore=(await one("SELECT pg_get_functiondef('claim_agent_requirement_run(uuid[],integer,integer,uuid[])'::regprocedure) value")).value;
+      await db.exec(scopeMigration);
+      await db.exec(scopeMigration);
+      assert.deepEqual(await functionMetadata(),metadataBefore,'date repair preserves identity, owner, ACLs and security configuration');
+      assert.equal((await one("SELECT pg_get_functiondef('claim_agent_requirement_run(uuid[],integer,integer,uuid[])'::regprocedure) value")).value,wrapperBefore,'command-draining wrapper stays unchanged');
+      const cutoff='2026-09-01T00:00:00Z',old='2026-08-31T23:59:59.999999Z';
+      for(const [created,updated,eligible] of [[old,old,false],[old,cutoff,true],[cutoff,old,true],[cutoff,cutoff,true],['2026-04-28T19:38:15Z','2026-11-03T20:29:50Z',true]]) {
+        const dated=await req('backlog',{}, {created});
+        await db.query('UPDATE requirements SET updated_at=$2 WHERE id=$1',[dated,updated]);
+        const admitted=await claim();
+        assert.equal(admitted?.run.requirementId??null,eligible?dated:null,'created OR updated date scope');
+        assert.equal((await one('SELECT created_at=$2::timestamptz value FROM requirements WHERE id=$1',[dated,created])).value,true,'creation date is never rewritten');
+        await reset();
+      }
+      for(const [status,metadata] of [['cancelled',{}],['backlog',{execution_hold:{kind:'security'}}],['backlog',{user_paused:true}]]) {
+        const dated=await req(status,metadata,{created:'2026-04-28'});
+        await db.query('UPDATE requirements SET updated_at=$2 WHERE id=$1',[dated,cutoff]);
+        assert.equal(await claim(),null,'date widening must not bypass status, hold or pause guards');
+        await reset();
+      }
       const id=await req('blocked',{cron_blocker_provenance:'product_no_progress_circuit',no_progress_cycles:999,requirement_execution_generation:7});
       await db.query("UPDATE requirements SET backlog=$2 WHERE id=$1",[id,{items:[{id:'item',status:'failed',attempts:999,acceptance:{approved:false}}]}]);
       const a=await claim();assert.equal(a.run.requirementId,id);assert.equal(a.run.executionGeneration,7);assert.equal(a.requirement.status,'in-progress');

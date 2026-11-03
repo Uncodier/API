@@ -20,6 +20,8 @@ Read these first when changing the code-agent harness:
 
 - [Requirement agent harness](./REQUIREMENT_AGENT_HARNESS.md) — replacement executor for the existing requirement cron, continuous sessions, optional tools, migration and rollout requirements. Not deployed by this change.
 
+- [Existing-requirement E2E verification](/Users/prado/Desktop/Proyectos/Uncodie/Code/API/docs/HARNESS_REQUIREMENT_E2E.md) — read-only command-to-session liveness, realistic app-change acceptance and strict separation of request reception from execution and delivery.
+
 - [Technical verification escalation — 2026-10-01](./HARNESS_TECHNICAL_ESCALATION_2026-10-01.md) — technical holds, canonical customer decisions and host-owned support tickets.
 
 - [Evidence-based migration diagnosis and bounded handoff](./MIGRATION_DIAGNOSTIC_HANDOFF.md) — exhaustion is not irreparability; one independent diagnosis and a verified follow-up.

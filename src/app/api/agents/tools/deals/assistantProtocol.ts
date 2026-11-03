@@ -4,10 +4,8 @@
  */
 
 import { getDealsCore } from '@/app/api/agents/tools/deals/get/core';
-import { fetchApiTool } from '@/app/api/agents/tools/utils/fetch-helper';
-
-
-
+import { fetchApiTool, ToolApiError } from '@/app/api/agents/tools/utils/fetch-helper';
+import { DEAL_STAGES, DEAL_STATUSES, DealPipelineSchema, dealValidationFeedback } from './contract';
 export interface DealsToolParams {
   action: 'create' | 'list' | 'update' | 'delete';
   
@@ -40,7 +38,7 @@ export function dealsTool(current_site_id?: string) {
   return {
     name: 'deals',
     description:
-      'Manage sales deals and opportunities. Use action="create" to record a new deal. Use action="update" to modify a deal. Use action="list" to search deals. Use action="delete" to remove a deal record.',
+      'Manage sales deals and opportunities. Use action="create" to record a new deal. Use action="update" to modify a deal. Use action="list" to search deals. Use action="delete" to remove a deal record. Use only the advertised stage/status identifiers. For Qualified, use stage="qualification", never "qualified". Invalid stage/status values fail before any changes; use the returned allowed values to correct the arguments and retry. Do not report creation or update as successful after a validation failure.',
     parameters: {
       type: 'object',
       properties: {
@@ -56,11 +54,13 @@ export function dealsTool(current_site_id?: string) {
         currency: { type: 'string', description: 'Currency code (e.g. USD)' },
         stage: { 
           type: 'string', 
-          description: 'Deal stage in the sales pipeline (e.g. prospecting, proposal, negotiation, closed_won)'
+          enum: [...DEAL_STAGES],
+          description: 'Sales pipeline stage. For Qualified, send qualification (not qualified). Defaults to prospecting on create; omitted on update leaves the stage unchanged.'
         },
         status: {
           type: 'string',
-          description: 'Overall deal status (e.g. open, won, lost)'
+          enum: [...DEAL_STATUSES],
+          description: 'Overall deal status, separate from stage. Defaults to open on create; omitted on update leaves the status unchanged.'
         },
         company_id: { type: 'string', description: 'Company UUID' },
         expected_close_date: { type: 'string', description: 'Date string for expected close (YYYY-MM-DD)' },
@@ -83,6 +83,14 @@ export function dealsTool(current_site_id?: string) {
     },
     execute: async (args: DealsToolParams) => {
       const { action, ...params } = args;
+
+      if (action === 'create' || action === 'update' || action === 'list') {
+        const validation = DealPipelineSchema.safeParse(params);
+        if (!validation.success) {
+          const feedback = dealValidationFeedback(validation.error);
+          throw new ToolApiError(feedback.error, feedback, 400);
+        }
+      }
 
       if (action === 'create') {
         if (!params.name) {

@@ -57,7 +57,7 @@ it('queues trusted cross-instance requirement commands and drains only quiescent
       // Deliberately permissive defaults exercise explicit service-only revokes.
       await db.exec('ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon,authenticated,service_role; ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO anon,authenticated,service_role;');
       await db.exec(
-        "CREATE TYPE requirement_type AS ENUM ('task','project');" +
+        "CREATE TYPE requirement_type AS ENUM ('task','project','develop','design','testing');" +
         "CREATE TABLE requirements(id uuid PRIMARY KEY,site_id uuid NOT NULL,user_id uuid NOT NULL,title text NOT NULL DEFAULT 'Offline',description text,instructions text,priority text NOT NULL DEFAULT 'medium' CHECK(priority IN ('high','medium','low')),status text NOT NULL CHECK(status IN ('backlog','in-progress','blocked','on-review','done','cancelled','canceled')),completion_status text NOT NULL DEFAULT 'pending' CHECK(completion_status IN ('pending','completed','rejected')),type requirement_type DEFAULT 'task',budget numeric DEFAULT 50 CHECK(budget>=0),cron text,cycle text,created_at timestamptz DEFAULT '2026-09-15',updated_at timestamptz DEFAULT '2026-09-15',metadata jsonb,backlog jsonb DEFAULT '{}',backlog_revision bigint DEFAULT 0,cron_lock_run_id text,cron_lock_expires_at timestamptz,cron_lock_active boolean DEFAULT false);" +
         "CREATE TABLE remote_instances(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),site_id uuid NOT NULL,user_id uuid NOT NULL,created_by uuid NOT NULL,name text NOT NULL,instance_type text CHECK(instance_type IN ('browser','ubuntu','windows')),status text CHECK(status IN ('pending','starting','running','paused','stopping','stopped','error')),is_archived boolean DEFAULT false,created_at timestamptz DEFAULT now());" +
         "CREATE TABLE instance_plans(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),instance_id uuid REFERENCES remote_instances(id),site_id uuid,status text CHECK(status IN ('pending','in_progress','active','paused','completed','failed','cancelled','blocked')),metadata jsonb,steps jsonb,created_at timestamptz DEFAULT now(),updated_at timestamptz DEFAULT now());" +
@@ -121,6 +121,26 @@ it('queues trusted cross-instance requirement commands and drains only quiescent
       // An effective site member can command a requirement owned by another user.
       const memberAction = await action('completed',{user:member,instance:siblingSource});
       assert.equal((await submit(scoped.id,memberAction,{description:'Member-authorized'},{user:member,instance:siblingSource})).state,'queued');
+      await reset();
+
+      // Existing develop app, not a newly seeded task: reception/application must
+      // remain distinct from scheduler admission after the interactive turn ends.
+      const existingApp = await req('in-progress'), appAction = await action('running',{instance:existingApp.runner});
+      await db.query("UPDATE requirements SET type='develop',instructions='Existing landing; preserve branding and reservation routes' WHERE id=$1", [existingApp.id]);
+      const appCommand = await submit(existingApp.id,appAction,{instructions:'Polish the existing landing spacing; preserve branding and reservation routes'},{instance:existingApp.runner});
+      assert.equal(appCommand.state,'queued');
+      await apply();
+      assert.equal((await row(existingApp.id)).instructions,'Existing landing; preserve branding and reservation routes');
+      assert.equal(await claim(),null,'unfinished interactive action cannot dispatch the app change');
+      assert.equal((await one('SELECT count(*)::int n FROM harness_requirement_runs')).n,0,'request receipt is not execution');
+      await db.query("UPDATE instance_logs SET details=jsonb_set(details,'{status}','\"completed\"') WHERE id=$1",[appAction]);
+      const appClaim = await claim();
+      assert.ok(appClaim?.run?.sessionId,'next scheduler claim must admit the authorized develop change');
+      assert.equal(appClaim.run.requirementId,existingApp.id);
+      assert.equal(appClaim.run.instanceId,existingApp.runner,'keep original app runner');
+      assert.equal(appClaim.requirement.type,'develop','do not downgrade realistic app requirement to task');
+      assert.equal(appClaim.requirement.instructions,'Polish the existing landing spacing; preserve branding and reservation routes');
+      assert.equal((await one('SELECT applied_at IS NOT NULL applied FROM requirement_commands WHERE requirement_id=$1',[existingApp.id])).applied,true);
       await reset();
 
       const active = await req(), firstRun = (await claim()).run;

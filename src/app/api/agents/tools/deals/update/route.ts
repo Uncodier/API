@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { z } from 'zod';
+import { DEAL_STAGES, DEAL_STATUSES, dealValidationFeedback } from '../contract';
 
 const UpdateDealSchema = z.object({
   deal_id: z.string().uuid(),
@@ -8,8 +9,8 @@ const UpdateDealSchema = z.object({
   name: z.string().optional(),
   amount: z.number().optional(),
   currency: z.string().optional(),
-  stage: z.string().optional(),
-  status: z.string().optional(),
+  stage: z.enum(DEAL_STAGES).optional(),
+  status: z.enum(DEAL_STATUSES).optional(),
   company_id: z.string().uuid().optional(),
   expected_close_date: z.string().optional(),
   notes: z.string().optional(),
@@ -79,7 +80,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('[UpdateDeal] Error:', error);
     if (error instanceof z.ZodError) {
-      return NextResponse.json({ success: false, error: 'Invalid data', details: error.errors }, { status: 400 });
+      return NextResponse.json(dealValidationFeedback(error), { status: 400 });
     }
     return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 });
   }
