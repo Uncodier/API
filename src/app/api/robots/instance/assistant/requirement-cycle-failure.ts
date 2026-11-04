@@ -3,7 +3,7 @@ import { AssistantExecutionBoundaryError } from '@/lib/services/robot-instance/a
 /** Only host-classified safe boundaries yield; unknown storage/accounting stays fenced. */
 export function requirementCycleFailure(error: unknown): { status: 'waiting' | 'paused'; reason: string } | undefined {
   if (error instanceof AssistantExecutionBoundaryError) {
-    if (error.code === 'canonical_slice_interrupted' || error.code === 'canonical_audit_unavailable') {
+    if (error.code === 'canonical_slice_interrupted' || error.code === 'canonical_audit_unavailable' || error.code === 'model_predispatch_cancelled') {
       return { status: 'waiting', reason: error.code };
     }
     return { status: 'paused', reason: `assistant_execution_${error.code}` };

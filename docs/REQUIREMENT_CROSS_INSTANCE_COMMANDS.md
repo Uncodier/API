@@ -85,6 +85,24 @@ with existing tenant checks and redaction.
 
 ## Rollout and validation
 
+### Confirmed predispatch infrastructure interruptions
+
+The billing adapter emits `model_predispatch_cancelled` only when the provider
+has not been invoked and the original event's cancellation receipt explicitly
+reports `state="cancelled"`. The cycle yields as `waiting` for the existing cron;
+it does not require another user message or replay a completed tool. A lost
+cancellation response, unknown ledger outcome, primary snapshot/lease failure,
+or actual credit shortage is not this recovery class. Counters and budget checks
+are retained. Secondary audit failures continue to use the separately verified
+`canonical_audit_unavailable` closed-turn path.
+
+Historical `assistant_execution_requires_reconciliation` pauses do not prove this
+condition by name alone. Inspect the original per-event ledger and transcript;
+empty tool uncertainty is insufficient if a later model request was dispatched.
+Historical incident recovery is a separate manual operator action using verified
+evidence and existing session controls, without clearing billing/history or
+reassigning the runner. The predispatch prevention fix requires no schema migration.
+
 Apply the forward migration at
 `/Users/prado/Desktop/Proyectos/Uncodie/Code/API/supabase/migrations/20261020200000_requirement_cross_instance_commands.sql`
 before deploying this API. Its RPCs and queue are service-role only. No production

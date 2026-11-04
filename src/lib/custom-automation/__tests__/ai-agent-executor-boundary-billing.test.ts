@@ -148,3 +148,15 @@ it('preserves typed predispatch shortage without provider calls, settlement or r
   expect(billing.settle).not.toHaveBeenCalled();
   expect(chargeOpenRouterUsage).not.toHaveBeenCalled();
 });
+
+it('preserves confirmed predispatch cancellation for scheduler recovery without retrying the provider', async () => {
+  const { executor, boundary, billing, create } = setup();
+  const error = new AssistantExecutionBoundaryError('model_predispatch_cancelled');
+  billing.beforeDispatch.mockRejectedValueOnce(error);
+  await expect(executor.act({ prompt: 'Run', tools: [], executionBoundary: boundary })).rejects.toBe(error);
+  expect(billing.beforeDispatch).toHaveBeenCalledTimes(1);
+  expect(create).not.toHaveBeenCalled();
+  expect(billing.failed).not.toHaveBeenCalled();
+  expect(billing.settle).not.toHaveBeenCalled();
+  expect(chargeOpenRouterUsage).not.toHaveBeenCalled();
+});

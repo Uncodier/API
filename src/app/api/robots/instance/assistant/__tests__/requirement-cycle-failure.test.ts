@@ -1,7 +1,7 @@
 import { requirementCycleFailure } from '../requirement-cycle-failure';
 import { AssistantExecutionBoundaryError } from '@/lib/services/robot-instance/assistant-execution-boundary';
 
-test.each(['canonical_slice_interrupted', 'canonical_audit_unavailable'] as const)('only trusted %s yields', code => {
+test.each(['canonical_slice_interrupted', 'canonical_audit_unavailable', 'model_predispatch_cancelled'] as const)('only trusted %s yields', code => {
   expect(requirementCycleFailure(new AssistantExecutionBoundaryError(code))).toEqual({ status: 'waiting', reason: code });
   expect(requirementCycleFailure(Object.assign(new Error('Untrusted code'), { name: 'RecoveryError', code })))
     .toEqual({ status: 'paused', reason: 'assistant_execution_boundary_failed' });

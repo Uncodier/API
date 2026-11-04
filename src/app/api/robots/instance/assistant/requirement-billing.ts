@@ -2,6 +2,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { calculateOpenRouterCreditCharge, OPENROUTER_COST_MULTIPLIER } from '@/lib/services/billing/agent-pricing';
 import { OpenRouterBillingError, RequirementCreditsExhaustedError } from '@/lib/services/billing/openrouter-usage-billing';
 import type { RequirementRun } from '@/lib/harness/requirement-types';
+import { AssistantExecutionBoundaryError } from '@/lib/services/robot-instance/assistant-execution-boundary';
 
 /** Accounting adapter only. Inference remains exclusively in AIAgentExecutor. */
 export function createRequirementAssistantBilling(run: RequirementRun, assertActive: () => Promise<void>) {
@@ -50,7 +51,16 @@ export function createRequirementAssistantBilling(run: RequirementRun, assertAct
         await ledger('dispatch_harness_model_reservation', identity(eventId));
       } catch (error) {
         // The caller has not invoked the provider. Never rerun inference to recover a hold.
-        await cancel(eventId, 'predispatch').catch(() => undefined);
+        const cancellation = await cancel(eventId, 'predispatch').catch(() => undefined);
+        // A confirmed cancellation is positive evidence, not an inference from
+        // an empty pending-tools list. Yield to the scheduler instead of creating
+        // an indefinite reconciliation pause. Preserve actual credit shortage
+        // and primary storage failures; never soften uncertain accounting.
+        const storageFailure = error instanceof AssistantExecutionBoundaryError &&
+          ['session_save_failed', 'session_lease_failed'].includes(error.code);
+        if (cancellation?.state === 'cancelled' && !(error instanceof RequirementCreditsExhaustedError) && !storageFailure) {
+          throw new AssistantExecutionBoundaryError('model_predispatch_cancelled');
+        }
         throw error;
       }
     },

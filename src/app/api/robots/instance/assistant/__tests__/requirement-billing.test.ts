@@ -3,6 +3,8 @@ const rpc = jest.fn();
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { rpc: (...args: any[]) => rpc(...args) } }));
 import { createRequirementAssistantBilling } from '../requirement-billing';
 import { OpenRouterBillingError, RequirementCreditsExhaustedError } from '@/lib/services/billing/openrouter-usage-billing';
+import { AssistantExecutionBoundaryError } from '@/lib/services/robot-instance/assistant-execution-boundary';
+import { requirementCycleFailure } from '../requirement-cycle-failure';
 
 function fixture() {
   const run = { requirementId: randomUUID(), siteId: randomUUID(), userId: randomUUID(), instanceId: randomUUID(),
@@ -45,6 +47,47 @@ test('lost ownership after reservation cancels before inference', async () => {
   f.assertActive.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('Owner changed'));
   await expect(f.billing.beforeDispatch({ eventId: f.eventId, inputBytes: 100, maxOutputTokens: 1024 })).rejects.toThrow('Owner changed');
   expect(rpc.mock.calls.map(call => call[0])).toEqual(['reserve_agent_requirement_credits', 'cancel_harness_model_reservation']);
+});
+
+test('confirmed predispatch cancellation yields rather than permanently blocking a settled previous turn', async () => {
+  const f = fixture();
+  f.assertActive.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new AssistantExecutionBoundaryError());
+  rpc.mockImplementation(async name => ({ data: { success: true,
+    state: name === 'cancel_harness_model_reservation' ? 'cancelled' : 'reserved' }, error: null }));
+  const error = await f.billing.beforeDispatch({ eventId: f.eventId, inputBytes: 100, maxOutputTokens: 1024 }).catch(error => error);
+  expect(error).toBeInstanceOf(AssistantExecutionBoundaryError);
+  expect(requirementCycleFailure(error)).toEqual({ status: 'waiting', reason: 'model_predispatch_cancelled' });
+  expect(rpc.mock.calls.map(call => call[0])).toEqual(['reserve_agent_requirement_credits', 'cancel_harness_model_reservation']);
+  expect(rpc.mock.calls[1][1]).toEqual({ p_session_id: f.run.sessionId, p_event_id: f.eventId, p_reason: 'predispatch' });
+});
+
+test.each(['reserved', 'dispatched', 'settled', 'uncertain', undefined])('cancellation state %s is not evidence of safe predispatch recovery', async state => {
+  const f = fixture();
+  f.assertActive.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new AssistantExecutionBoundaryError());
+  rpc.mockImplementation(async name => ({ data: { success: true,
+    state: name === 'cancel_harness_model_reservation' ? state : 'reserved' }, error: null }));
+  const error = await f.billing.beforeDispatch({ eventId: f.eventId, inputBytes: 100, maxOutputTokens: 1024 }).catch(error => error);
+  expect(requirementCycleFailure(error)).toEqual({ status: 'paused', reason: 'assistant_execution_boundary_failed' });
+});
+
+test.each(['session_save_failed', 'session_lease_failed'] as const)('confirmed cancellation does not hide %s', async code => {
+  const f = fixture();
+  f.assertActive.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new AssistantExecutionBoundaryError(code));
+  rpc.mockImplementation(async name => ({ data: { success: true,
+    state: name === 'cancel_harness_model_reservation' ? 'cancelled' : 'reserved' }, error: null }));
+  const error = await f.billing.beforeDispatch({ eventId: f.eventId, inputBytes: 100, maxOutputTokens: 1024 }).catch(error => error);
+  expect(requirementCycleFailure(error)).toEqual({ status: 'paused', reason: `assistant_execution_${code}` });
+});
+
+test('failed cancellation cannot authorize a safe yield', async () => {
+  const f = fixture();
+  f.assertActive.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new AssistantExecutionBoundaryError());
+  rpc.mockImplementation(async name => {
+    if (name === 'cancel_harness_model_reservation') throw new Error('Offline cancellation unavailable');
+    return { data: { success: true, state: 'reserved' }, error: null };
+  });
+  const error = await f.billing.beforeDispatch({ eventId: f.eventId, inputBytes: 100, maxOutputTokens: 1024 }).catch(error => error);
+  expect(requirementCycleFailure(error)?.status).toBe('paused');
 });
 
 test('account credit rejection still prevents dispatch', async () => {
