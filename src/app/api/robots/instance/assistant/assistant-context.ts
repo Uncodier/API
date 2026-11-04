@@ -403,6 +403,7 @@ For compras with requisitions, licitaciones/tenders, supplier invitations, adjud
 
   const isWorkflowMode = (systemPrompt || '').includes('WORKFLOW MODE');
 
+  const fileDeliveryInstruction = 'For downloadable presentations, documents, reports or sheets, load skill_lookup action="get" skill_name="file-delivery", then discover deliver_file through tools. Every agent role can deliver private UTF-8 documents with Git receipts without a sandbox. This is not application deployment; do not promise a public preview or native Office binaries.';
   const combinedSystemPrompt = isWorkflowMode
     ? [
         systemPrompt || '',
@@ -410,6 +411,7 @@ For compras with requisitions, licitaciones/tenders, supplier invitations, adjud
         toolsRouterInstruction,
         skillLookupInstruction,
         procurementSkillInstruction,
+        fileDeliveryInstruction,
         requiredSkillsPrompt(selectedSkills),
       ].filter(Boolean).join('\n')
     : [
@@ -423,6 +425,7 @@ For compras with requisitions, licitaciones/tenders, supplier invitations, adjud
     toolsRouterInstruction,
     skillLookupInstruction,
     procurementSkillInstruction,
+    fileDeliveryInstruction,
     requiredSkillsPrompt(selectedSkills),
     commerceInstruction,
     planModeInstruction,

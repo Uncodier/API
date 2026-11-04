@@ -100,6 +100,7 @@ import { showArtifactTool } from '@/app/api/agents/tools/show_artifact/assistant
 import { composioActionTool } from '@/app/api/agents/tools/composio/assistantProtocol';
 import { readDocumentTool } from '@/app/api/agents/tools/read_document/assistantProtocol';
 import type { UiMediaOutputType } from './ui-media-contract';
+import { deliverFileTool } from './deliver-file-tool';
 
 /**
  * Fetch relevant memories for assistant context (site_id, user_id, instance_id)
@@ -439,6 +440,7 @@ export const getAssistantToolDefinitions = (
     updateRepoTool(siteId, instanceId, userId),
     showArtifactTool(siteId, instanceId, userId ?? ''),
     readDocumentTool(),
+    deliverFileTool(siteId, userId, instanceId, requirementId),
   ];
 
   if (agentType === 'gear') {

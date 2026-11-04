@@ -77,6 +77,21 @@ it('uses exact navigation keys and all required screens, not category or role st
   expect(canUseToolScreen('webSearch', null)).toBe(true);
 });
 
+it('routes document delivery with assets permission, independent of repository or agent configuration screens', async () => {
+  blocked = ['applicationsRepositories', 'agentsConfiguration'];
+  const delivery = tool('deliver_file');
+  const router = toolsRouterTool([delivery], scope);
+  expect(await router.execute({ action: 'describe', name: 'deliver_file' })).toMatchObject({ success: true });
+  expect(await router.execute({ action: 'call', name: 'deliver_file', args: '{"action":"list"}' }))
+    .toMatchObject({ success: true });
+  expect(delivery.execute).toHaveBeenCalledTimes(1);
+  blocked = ['assets'];
+  expect(await router.execute({ action: 'list' })).toMatchObject({ count: 0 });
+  expect(await router.execute({ action: 'call', name: 'deliver_file', args: '{"action":"create"}' }))
+    .toMatchObject({ success: false });
+  expect(delivery.execute).toHaveBeenCalledTimes(1);
+});
+
 it('allows an editor to discover and create CRM tasks when AI Activities is blocked', async () => {
   blocked = ['activities', 'requirements', 'agentsConfiguration'];
   expect(mapping.tools.tasks.screens).toEqual(['controlCenter']);

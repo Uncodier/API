@@ -63,7 +63,7 @@ export interface CloudFileToolOptions {
   operationId?: () => string;
   store?: CloudFileStore;
   publish?: typeof publishCloudRevision;
-  /** Only the durable requirement execution owner may set this. */
+  /** Host-only authority: requirement runner or explicit document delivery capability. */
   allowRequirementWrite?: boolean;
 }
 const messages = {

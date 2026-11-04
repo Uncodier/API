@@ -120,6 +120,7 @@ Each skill documents the artifacts it reads from or writes to. This lets the orc
 | `INVESTIGATION.md` (repo root, optional) | `makinari-fase-investigacion` | Findings handed off to planning. |
 | `instance_plan` (DB record) | `makinari-fase-planeacion` / `makinari-rol-orchestrator` / `makinari-obj-workflow-designer` | Ordered execution steps with assigned skills, or a repeatable workflow template. |
 | `requirement_status` (DB record) | `makinari-fase-reporteado` | Client-facing delivery report with URLs. |
+| Private document revision and Git receipt | `file-delivery` | Any agent can discover `deliver_file` through `tools` to save HTML presentations, Markdown documents and CSV sheets without a workspace or deployment. Native Office binaries are not supported. |
 
 **Rules**
 - Never collide artifact names. If the semantics differ, rename.

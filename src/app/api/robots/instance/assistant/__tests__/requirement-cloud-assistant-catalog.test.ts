@@ -26,6 +26,7 @@ function catalog() {
     dependencies[(statement.moduleSpecifier as ts.StringLiteral).text] = exports;
   }
   dependencies['@/lib/services/tool-execution-context'] = toolContext;
+  dependencies['./deliver-file-tool'] = { deliverFileTool: () => descriptor('deliver_file') };
   // Procurement contributes a catalog fragment rather than one descriptor.
   dependencies['@/lib/procurement/tools'] = { createProcurementTools: () => [] };
   dependencies['./command-plan-guard'] = { assertStandaloneCommandPlan: async () => {} };
@@ -57,6 +58,7 @@ function fixture(environment?: 'cloud' | 'workspace') {
     'src/app/api/robots/instance/assistant/assistant-turn-core.ts', {
       './requirement-host': host,
       './workspace-tools': { createAssistantWorkspaceTools },
+      './deployment-tools': { createAssistantDeploymentTools: () => [] },
       './cloud-context': { resolveAssistantFileEnvironment },
       '@/lib/cloud-files/tools': { createCloudFileTools },
       '@/lib/services/billing/credit-exhaustion-message': { isInsufficientCreditsError: () => false },
@@ -95,6 +97,8 @@ test.each(['cloud', 'workspace', undefined] as const)('canonical assistant wires
   await f.run(f.context, []);
   expect(f.resolveAssistantFileEnvironment).toHaveBeenCalledWith({ ...f.scope, requirementId: f.requirementId });
   const { names, router } = await f.exposedNames();
+  expect(names).toContain('deliver_file');
+  expect(await router.execute({ action: 'describe', name: 'deliver_file' })).toMatchObject({ success: true });
   if (environment === 'cloud') {
     expect(f.createAssistantWorkspaceTools).not.toHaveBeenCalled();
     expect(f.createCloudFileTools).toHaveBeenCalledWith({ ...f.scope, requirementId: f.requirementId }, expect.any(Function));
@@ -128,6 +132,21 @@ test('environment binding lookup failure stops before file factories, routing, o
   expect(f.createAssistantWorkspaceTools).not.toHaveBeenCalled();
   expect(f.getTools).not.toHaveBeenCalled();
   expect(f.executor).not.toHaveBeenCalled();
+});
+
+test.each(['gear', 'sales', 'content', 'developer'])('workflow agent %s discovers delivery without standalone file factories', async agentType => {
+  const f = fixture();
+  f.context.agentType = agentType;
+  f.context.instanceNodeId = randomUUID();
+  delete f.context.recoveryScope;
+  await f.run(f.context, []);
+  const { router, names, tools } = await f.exposedNames();
+  expect(names).toContain('deliver_file');
+  expect(tools.map((tool: any) => tool.name)).not.toContain('deliver_file');
+  expect(await router.execute({ action: 'call', name: 'deliver_file', args: JSON.stringify({ action: 'list' }) }))
+    .toMatchObject({ success: true, result: { success: true } });
+  expect(f.createCloudFileTools).not.toHaveBeenCalled();
+  expect(f.createAssistantWorkspaceTools).not.toHaveBeenCalled();
 });
 
 test('requirement host reuses its owned tools and never opens standalone cloud/workspace factories', async () => {
