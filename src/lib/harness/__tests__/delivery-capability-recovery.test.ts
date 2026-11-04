@@ -211,7 +211,7 @@ test('tracking: real transform reads current source after ambiguous write and ad
   (f.workspace.readFile as jest.Mock).mockImplementation(async () => source);
   (f.workspace.writeFile as jest.Mock).mockImplementation(async (_path, text) => { source = text; throw new Error('Lost write acknowledgement'); });
   const tools = createDeliveryTools({ workspace: f.workspace, scope: f.scope,
-    profile: { ...f.scope, repositoryUrl: 'https://example.invalid/repo', environment: {}, allowed: ['tracking_install'] } });
+    profile: { allowed: ['tracking_install'] } });
   expect(tools[0].recoveryPolicy).toBe('inspect');
   expect(tools[0].reconcile).toBeUndefined();
   const b = await f.boundary(tools);
@@ -230,7 +230,7 @@ test('tracking recovery refuses unsupported current source without overwriting i
   (f.workspace.readFile as jest.Mock).mockImplementation(async () => source);
   (f.workspace.writeFile as jest.Mock).mockImplementation(async (_path, text) => { source = text; throw new Error('Lost acknowledgement'); });
   const b = await f.boundary(createDeliveryTools({ workspace: f.workspace, scope: f.scope,
-    profile: { ...f.scope, repositoryUrl: 'https://example.invalid/repo', environment: {}, allowed: ['tracking_install'] } }));
+    profile: { allowed: ['tracking_install'] } }));
   expect(await b.call('tracking_install', { path: 'layout.tsx' })).toMatchObject({ ok: false });
   source = 'export default function Layout(){return <main>Changed layout</main>}';
   expect(await b.call('tracking_install', { path: 'layout.tsx' })).toMatchObject({ ok: false, error: { effectStarted: false } });

@@ -10,13 +10,13 @@ const token = randomBytes(24).toString('hex');
 
 it('injects existing deploy tools without workspace/provider I/O', () => {
   const request = jest.fn();
-  expect(createAssistantDeploymentTools(scope, instanceId, active, { env: {}, request }).map(tool => tool.name))
+  expect(createAssistantDeploymentTools(scope, instanceId, active, { env: { NODE_ENV: 'test' }, request }).map(tool => tool.name))
     .toEqual(['deployment_trigger', 'deployment_status']);
   expect(request).not.toHaveBeenCalled();
 });
 
 it('preserves existing configuration errors', async () => {
-  const tools = createAssistantDeploymentTools(scope, instanceId, active, { env: {} });
+  const tools = createAssistantDeploymentTools(scope, instanceId, active, { env: { NODE_ENV: 'test' } });
   expect(await tools[0].execute({ thought_process: 'Deploy' })).toMatchObject({ ok: false,
     error: { code: 'DEPLOYMENT_NOT_CONFIGURED' } });
 });
@@ -24,7 +24,7 @@ it('preserves existing configuration errors', async () => {
 it('uses the existing status implementation with host credentials', async () => {
   const request = jest.fn().mockResolvedValue(Response.json({ deployments: [{ uid: 'dpl_test', state: 'READY', url: 'actual.vercel.app' }] }));
   const tools = createAssistantDeploymentTools(scope, instanceId, active,
-    { env: { APPS_VERCEL_PROJECT_ID: 'project', VERCEL_TOKEN: token }, request });
+    { env: { NODE_ENV: 'test', APPS_VERCEL_PROJECT_ID: 'project', VERCEL_TOKEN: token }, request });
   const result = await tools[1].execute({});
   expect(result).toMatchObject({ ok: true, output: [{ state: 'READY' }] });
   expect(JSON.stringify(result)).not.toContain(token);
@@ -35,7 +35,7 @@ it('reuses a scoped profile hook and its existing grants', async () => {
   const hook = new URL('https://api.vercel.com');
   hook.pathname = `/v1/integrations/deploy/${randomBytes(24).toString('hex')}`;
   const request = jest.fn().mockResolvedValue(Response.json({ job: { id: 'job' } }));
-  const env = { HARNESS_V2_PROFILES: JSON.stringify({ scoped: { ...scope,
+  const env: NodeJS.ProcessEnv = { NODE_ENV: 'test', HARNESS_V2_PROFILES: JSON.stringify({ scoped: { ...scope,
     repositoryUrl: 'https://github.com/example/repo.git', allowed: ['deployment_trigger'], environment: {},
     deployment: { projectId: 'project', token, deployHookUrl: hook.href } } }) };
   const tools = createAssistantDeploymentTools(scope, instanceId, active, { env, request });
@@ -49,7 +49,7 @@ it('reuses a scoped profile hook and its existing grants', async () => {
 it('does not adopt another site profile or a requirement-owned profile', () => {
   const profile = { ...scope, repositoryUrl: 'https://github.com/example/repo.git',
     allowed: ['deployment_trigger'], environment: {}, deployment: { projectId: 'foreign', token } };
-  const env = { HARNESS_V2_PROFILES: JSON.stringify({ foreign: { ...profile, siteId: randomUUID() },
+  const env: NodeJS.ProcessEnv = { NODE_ENV: 'test', HARNESS_V2_PROFILES: JSON.stringify({ foreign: { ...profile, siteId: randomUUID() },
     managed: { ...profile, requirementId: randomUUID() } }) };
   expect(createAssistantDeploymentTools(scope, instanceId, active, { env }).map(tool => tool.name))
     .toEqual(['deployment_trigger', 'deployment_status']);
