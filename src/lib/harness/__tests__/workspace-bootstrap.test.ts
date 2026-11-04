@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Sandbox } from '@vercel/sandbox';
 import { openWorkspace, WORKSPACE_BOOTSTRAP_PROGRAM } from '../workspace';
+import { openRequirementWorkspace, selectRequirementBranch } from '../requirement-workspace-recovery';
+import type { Workspace } from '../types';
 
 jest.mock('@vercel/sandbox', () => ({ Sandbox: { get: jest.fn(), create: jest.fn() } }));
 
@@ -48,6 +50,46 @@ describe('bootstrap recovery with real offline Git checkout and preserved user d
     chmodSync(join(bin, 'git'), 0o700);
   });
   afterEach(() => rmSync(base, { recursive: true, force: true }));
+
+  test('missing requirement VM is reprovisioned with real Git source and never executes repository hooks', async () => {
+    git(source, 'checkout', '-b', 'requirement/saved');
+    writeFileSync(join(source, 'saved.txt'), 'persisted requirement work\n');
+    git(source, 'add', 'saved.txt');
+    git(source, '-c', 'user.name=Offline', '-c', 'user.email=offline@example.invalid', 'commit', '-m', 'saved work');
+    git(source, 'update-ref', 'refs/remotes/origin/requirement/saved', 'HEAD');
+    git(source, 'checkout', 'main');
+    git(source, 'branch', '-D', 'requirement/saved');
+    rmSync(join(base, 'hook-ran'), { force: true });
+    const sandbox = { name: `h-${sessionId}`, persistent: true, status: 'running', stop: jest.fn(),
+      tags: {} as Record<string, string>,
+      update: jest.fn(async (input: { tags?: Record<string, string> }) => { if (input.tags) sandbox.tags = input.tags; }),
+      runCommand: jest.fn(async (input: { args: string[] }) => {
+        if (input.args.includes(WORKSPACE_ROOT_INIT)) return { exitCode: 0 };
+        const result = helper();
+        return { cmdId: 'cmd_recovery', exitCode: result.status, wait: async () => ({ exitCode: result.status }),
+          logs: () => Object.assign((async function* () {})(), { close() {} }) };
+      }) };
+    (Sandbox.get as jest.Mock).mockRejectedValue({ response: { status: 404 } });
+    (Sandbox.create as jest.Mock).mockResolvedValue(sandbox);
+    const opened = await openRequirementWorkspace({ sessionId, repository, existingWorkspace: 'req-missing', assertActive: async () => {} });
+    expect(opened.recoveredFrom).toBe('req-missing');
+    expect(opened.selectBranch).toBe(true);
+    expect(opened.workspace.ref.id).toBe(`h-${sessionId}`);
+    expect(Sandbox.create).toHaveBeenCalledTimes(1);
+    expect(readFileSync(join(root, 'app.txt'), 'utf8')).toBe('original\n');
+    expect(git(root, 'rev-parse', 'HEAD')).toBe(git(source, 'rev-parse', 'HEAD'));
+    expect(existsSync(join(base, 'hook-ran'))).toBe(false);
+    expect(sandbox.tags.harnessReady).toBe('true');
+    expect(sandbox.stop).not.toHaveBeenCalled();
+    const branchWorkspace = { exec: async ({ command }: { command: string }) => {
+      const result = spawnSync('/bin/bash', ['-c', command], { cwd: root, env: cleanEnv, encoding: 'utf8' });
+      return { exitCode: result.status, stdout: result.stdout, stderr: result.stderr };
+    } } as Workspace;
+    await selectRequirementBranch(branchWorkspace, 'requirement/saved');
+    expect(git(root, 'branch', '--show-current')).toBe('requirement/saved');
+    expect(readFileSync(join(root, 'saved.txt'), 'utf8')).toBe('persisted requirement work\n');
+    expect(existsSync(join(base, 'hook-ran'))).toBe(false);
+  });
 
   test('first clone exits 128, second open reuses owned VM and quarantines partial data without running hooks', async () => {
     writeFileSync(join(base, 'fail-once'), '');

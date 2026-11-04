@@ -49,6 +49,7 @@ it('redacts detached serialized step, reasoning, arguments, results, and console
 it.each(['agent_action', 'thinking', 'tool_call', 'missing-parent', 'throw'])('fails closed on %s persistence failure', async mode => {
   failAt = mode;
   await expect(handler()(step())).rejects.toBeInstanceOf(AssistantExecutionBoundaryError);
+  await expect(handler()(step())).rejects.toMatchObject({ code: mode === 'throw' ? 'boundary_failed' : 'assistant_log_failed' });
 });
 
 it('fails closed on streaming update errors and unavailable instance identity', async () => {

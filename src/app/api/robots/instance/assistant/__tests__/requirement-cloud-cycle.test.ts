@@ -14,6 +14,7 @@ import { createRequirementExecutionBoundary } from '../requirement-execution-bou
 import { loadRuntimeModule } from '@/lib/custom-automation/test-helpers/load-runtime-module';
 import { assertToolScreenAccess, ToolScreenAccessDenied } from '@/app/api/agents/tools/router/screen-access';
 import { AssistantExecutionBoundaryError } from '@/lib/services/robot-instance/assistant-execution-boundary';
+import { cycleRuntime } from './helpers/requirement-cycle-runtime';
 
 jest.mock('../requirement-session', () => ({ runRequirementAssistantSlice: jest.fn() }));
 jest.mock('../requirement-instance-log', () => ({ writeRequirementInstanceLog: jest.fn(async () => {}) }));
@@ -49,7 +50,7 @@ function fixture() {
 
 beforeEach(() => jest.clearAllMocks());
 
-test.each(['idle', 'interrupted', 'boundary', 'billing'] as const)('cloud %s preserves operation fences without turning ordinary uncertainty into a global pause', async kind => {
+test.each(['idle', 'interrupted', 'audit', 'boundary', 'billing'] as const)('cloud %s preserves operation fences without turning ordinary uncertainty into a global pause', async kind => {
   const f = fixture();
   const controller = new AbortController();
   const timeoutSpy = jest.spyOn(AbortSignal, 'timeout').mockReturnValue(controller.signal);
@@ -59,15 +60,17 @@ test.each(['idle', 'interrupted', 'boundary', 'billing'] as const)('cloud %s pre
       ...(kind === 'interrupted' ? { pending } : {}) }, f.run.siteId, input.owner);
     if (kind === 'idle') { const timeout = new DOMException('Offline timeout', 'TimeoutError'); controller.abort(timeout); throw timeout; }
     if (kind === 'interrupted') throw new AssistantExecutionBoundaryError('canonical_slice_interrupted');
+    if (kind === 'audit') throw new AssistantExecutionBoundaryError('canonical_audit_unavailable');
     if (kind === 'boundary') throw new AssistantExecutionBoundaryError('session_save_failed');
     throw Object.assign(new Error('Offline accounting failure'), { name: 'OpenRouterBillingError' });
   });
   try {
-    const retryable = kind === 'idle' || kind === 'interrupted';
+    const retryable = kind === 'idle' || kind === 'interrupted' || kind === 'audit';
     expect((await f.cycle()).status).toBe(retryable ? 'waiting' : 'paused');
     expect(await f.store.load(f.run.sessionId, f.run.siteId)).toMatchObject({
       uncertainOperations: ['previous-uncertain-write'],
-      reason: kind === 'idle' ? 'runtime_slice_expired' : kind === 'interrupted' ? 'canonical_slice_interrupted' : 'assistant_execution_requires_reconciliation',
+      reason: { idle: 'runtime_slice_expired', interrupted: 'canonical_slice_interrupted', audit: 'canonical_audit_unavailable',
+        boundary: 'assistant_execution_session_save_failed', billing: 'assistant_billing_unconfirmed' }[kind],
       ...(kind === 'interrupted' ? { pending } : {}),
     });
   } finally { timeoutSpy.mockRestore(); }
@@ -93,6 +96,25 @@ test('cloud cycle creates a repository-free session and delegates to the canonic
   expect(adoptRequirementWorkspace).not.toHaveBeenCalled();
   expect(buildRequirementProfile).not.toHaveBeenCalled();
 });
+
+test.each(['canonical_audit_unavailable', 'session_save_failed'] as const)(
+  'diagnostic log failure cannot replace the persisted cloud outcome for %s', async code => {
+    const f = fixture();
+    jest.mocked(runRequirementAssistantSlice).mockRejectedValueOnce(new AssistantExecutionBoundaryError(code));
+    jest.mocked(writeRequirementInstanceLog).mockRejectedValueOnce(
+      Object.assign(new Error('Offline diagnostic log outage'), { name: 'RecoveryError' }));
+    const expected = code === 'canonical_audit_unavailable'
+      ? { status: 'waiting', reason: code }
+      : { status: 'paused', reason: 'assistant_execution_session_save_failed' };
+    const runtime = cycleRuntime({ store: f.store, environment: 'cloud', execute: runCloudRequirementCycle });
+    const result = await runtime.run(f.run);
+    expect(result).toMatchObject({ status: expected.status });
+    expect(runtime.finish).toHaveBeenCalledTimes(1);
+    expect(runtime.finish).toHaveBeenCalledWith(f.run, expected.status, expected.reason, expected.reason);
+    expect(await f.store.load(f.run.sessionId, f.run.siteId)).toMatchObject(expected);
+    expect(f.store.release).toHaveBeenCalledTimes(1);
+    expect(runRequirementAssistantSlice).toHaveBeenCalledTimes(1);
+  });
 
 test('continuation retains the same session, requirement binding and durable transcript', async () => {
   const f = fixture();

@@ -661,6 +661,12 @@ export async function adoptRequirementWorkspace(input: {
   try { sandbox = await Sandbox.get({ ...resolveSandboxAuth(), name: input.workspaceId, resume: false, signal: input.signal }); }
   catch (error) {
     await active();
+    // Only a provider-confirmed missing resource permits requirement reprovisioning.
+    // Keep this distinct from generic opening failures and never infer it from text.
+    const missing = error as { response?: { status?: number; statusCode?: number }; status?: number } | null;
+    if ((missing?.response?.status ?? missing?.response?.statusCode ?? missing?.status) === 404) {
+      return fail('WORKSPACE_NOT_FOUND', 'The saved requirement sandbox was not found by the configured provider.');
+    }
     const failure = workspaceOpenFailure(error, 'get');
     return fail(failure.code, failure.message);
   }
@@ -715,6 +721,9 @@ export async function openWorkspace(input: {
   cleanupCreated?: (sandbox: Sandbox) => Promise<void>;
   /** Host-only identity capture for fenced cleanup when opening never returns. */
   onOwnedHandle?: (sandbox: Sandbox) => void;
+  /** Requirement host only: retire a confirmed-missing snapshot ref under its lease
+   * before replacement, so existing bootstrap cleanup fencing remains valid. */
+  onMissingWorkspace?: (resource: string) => Promise<void>;
 }): Promise<Workspace> {
   if (!uuid.test(input.sessionId)) return fail('INVALID_SESSION_ID', 'Workspace session ID must be a UUID.');
   const name = `h-${input.sessionId.toLowerCase()}`;
@@ -741,8 +750,8 @@ export async function openWorkspace(input: {
     try { await active(); sandbox = await Sandbox.get({ ...sandboxAuth, name, resume: false, signal: input.signal }); await active(); }
     catch (error) {
       await active();
-      const missing = error && typeof error === 'object' && 'response' in error &&
-        (error.response as { status?: number })?.status === 404;
+      const candidate = error as { response?: { status?: number; statusCode?: number }; status?: number } | null;
+      const missing = (candidate?.response?.status ?? candidate?.response?.statusCode ?? candidate?.status) === 404;
       if (input.existing || !missing) throw error;
       // No getOrCreate with setup callbacks: an existing/incomplete VM is NEVER reset.
       await active();

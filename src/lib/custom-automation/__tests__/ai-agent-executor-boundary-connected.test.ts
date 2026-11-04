@@ -5,8 +5,11 @@ import { MemorySessionStore } from '@/lib/harness/memory-store';
 import { createMemoryArtifactStore } from '@/lib/harness/artifact-store';
 import { createRedactor } from '@/lib/harness/security';
 import type { HarnessSession } from '@/lib/harness/types';
+import { createAssistantOnStepHandler } from '@/lib/services/robot-instance/assistant-logging';
+import { supabaseAdmin } from '@/lib/database/supabase-client';
 
 jest.mock('@/lib/status/telemetry', () => ({ recordTelemetry: jest.fn().mockResolvedValue(undefined) }));
+jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn() } }));
 const originalEnv = process.env;
 beforeEach(() => {
   process.env = { NODE_ENV: 'test', OPENROUTER_API_KEY: randomBytes(24).toString('hex') };
@@ -89,7 +92,7 @@ it('preserves canonical interrupted-tool continuation through the real executor 
   expect(globalThis.fetch).not.toHaveBeenCalled();
 });
 
-it('connects canonical normalized control calls and unknown receipts to real durable boundary and finishes', async () => {
+it.each([false, true])('connects durable receipts and finishes on a fresh adapter after secondary audit failure=%s', async auditFailure => {
   const id = randomUUID();
   const requirementId = randomUUID();
   const owner = randomUUID();
@@ -121,22 +124,39 @@ it('connects canonical normalized control calls and unknown receipts to real dur
     call('finish', 'finish_task', { summary: 'Offline checks completed', outcome: 'partial' }),
   ]));
   (executor as any).client.chat.completions.create = create;
-  const onStep = jest.fn(async () => {});
+  const onStep = jest.fn(async (_step: any, _meta?: { streamingLogId?: string }) => {});
+  if (auditFailure) {
+    jest.mocked(supabaseAdmin.from).mockReturnValue({ insert: () => ({ select: () => ({ single: async () => ({
+      data: null, error: { message: 'Offline timeline unavailable' },
+    }) }) }) } as any);
+    const logStep = createAssistantOnStepHandler(run.instanceId, run.siteId, run.userId, 'openrouter',
+      undefined, undefined, requirementId, undefined, { strict: true, redact: createRedactor() });
+    onStep.mockImplementationOnce(logStep);
+  }
   const first = await executor.act({ tools: adapter.controlTools, messages: adapter.getMessages(),
-    executionBoundary: adapter.boundary, maxOutputTokens: 1000, maxIterations: 1, onStep });
+    executionBoundary: adapter.boundary, maxOutputTokens: 1000, maxIterations: 1, onStep }).catch(error => {
+      if (!auditFailure) throw error;
+      expect(error).toMatchObject({ code: 'canonical_audit_unavailable' });
+      return undefined;
+    });
   const stored = await store.load(id, run.siteId);
   const approved = stored!.messages.find(message => message.toolCalls)?.toolCalls!;
   expect(JSON.parse(approved[0].arguments)).toEqual({ offset: 0, limit: 1 });
-  expect(first.steps[0].toolCalls?.[0].args).toEqual({ offset: 0, limit: 1 });
+  if (!auditFailure) expect(first!.steps[0].toolCalls?.[0].args).toEqual({ offset: 0, limit: 1 });
   const receipts = stored!.messages.filter(message => message.role === 'tool');
   expect(receipts.map(message => message.toolCallId)).toEqual(['history', 'unknown']);
   expect(JSON.parse(receipts[0].content)).toMatchObject({ ok: true });
   expect(JSON.parse(receipts[1].content)).toMatchObject({ ok: false, output: { success: false, executed: false, error: 'tool_not_found' } });
   expect(stored!.pending).toBeUndefined();
   expect(logs.filter(event => event.log_type === 'tool_result').map(event => event.tool_call_id)).toEqual(['history', 'unknown']);
-  await executor.act({ tools: adapter.controlTools, messages: adapter.getMessages(), executionBoundary: adapter.boundary,
+  const next = createRequirementExecutionBoundary({ session: stored!, run, store, owner,
+    artifacts: createMemoryArtifactStore(store), tools: [], redact: createRedactor(),
+    assertActive: async () => {}, signal: new AbortController().signal, writeLog: async () => {} });
+  next.boundary.billing = adapter.boundary.billing;
+  await next.initialize();
+  await executor.act({ tools: next.controlTools, messages: next.getMessages(), executionBoundary: next.boundary,
     maxOutputTokens: 1000, maxIterations: 1, onStep });
-  await adapter.finish();
+  await next.finish();
   const finished = await store.load(id, run.siteId);
   expect(finished).toMatchObject({ status: 'completed', reason: 'partial' });
   expect(finished!.pending).toBeUndefined();

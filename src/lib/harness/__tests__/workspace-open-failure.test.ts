@@ -24,6 +24,13 @@ it('handles the SDK alternate response shape without inferring status from untru
   expect(workspaceOpenFailure({ response: { statusCode: 403 } }).code).toBe('WORKSPACE_AUTHORIZATION_REQUIRED');
   expect(workspaceOpenFailure(new Error('403')).operatorRequired).toBe(false);
 });
+it.each([{ response: { status: 404 } }, { response: { statusCode: 404 } }, { status: 404 }])('exposes a typed missing adoption receipt only for a provider 404', async failure => {
+  (Sandbox.get as jest.Mock).mockRejectedValue(failure);
+  await expect(adoptRequirementWorkspace({ sessionId: randomUUID(), workspaceId: 'req-legacy',
+    repository: { url: 'https://repo.example.invalid/project.git' }, assertActive: async () => {} }))
+    .rejects.toMatchObject({ code: 'WORKSPACE_NOT_FOUND' });
+  expect(Sandbox.create).not.toHaveBeenCalled();
+});
 it('classifies provider billing rejection during creation after a confirmed missing VM', async () => {
   (Sandbox.get as jest.Mock).mockRejectedValue({ response: { status: 404 } });
   (Sandbox.create as jest.Mock).mockRejectedValue({ response: { status: 402 } });

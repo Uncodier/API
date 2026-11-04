@@ -8,7 +8,7 @@ import type { HarnessTool, Json, SessionScope, ToolResult, Workspace } from './t
 export const DELIVERY_CAPABILITIES = ['tracking_install', 'deployment_trigger', 'deployment_status'] as const;
 
 /** Optional delivery. No requirement status writes, hidden builds, retries, or completion gates. */
-export function createDeliveryTools(options: { workspace: Workspace; scope: SessionScope; profile?: HostProfile;
+export function createDeliveryTools(options: { workspace: Workspace; scope: SessionScope; profile?: Pick<HostProfile, 'allowed' | 'deployment'>;
   request?: typeof fetch }): HarnessTool[] {
   const { workspace, profile } = options;
   const scope = { ...options.scope };

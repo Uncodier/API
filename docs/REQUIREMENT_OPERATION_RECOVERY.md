@@ -15,6 +15,28 @@ The canonical requirement boundary now distinguishes:
 - In-flight model/accounting, ownership, storage and other generic boundary
   failures: existing fail-closed handling remains. Merely having a canonical
   checkpoint or a simultaneously expired timer does not make these retryable.
+- A secondary canonical `onStep` timeline write rejected after the entire turn
+  was durably recorded: `canonical_audit_unavailable` yields to the existing cron.
+  Only the typed `assistant_log_failed` write rejection qualifies, after checking
+  active ownership, no outstanding model/tools, no pending dispatch, and equality
+  with the confirmed snapshot. The primary dispatch/result journal is still
+  mandatory. The next adapter reads saved receipts; it does not repeat the tool
+  or replay the secondary log callback. The cycle error reports the audit gap.
+  If that diagnostic log also fails, it cannot replace the already-persisted
+  cycle outcome. Primary dispatch/result journal writes remain mandatory.
+
+Workspace error handling must confirm its state transition before returning an
+outcome. A failed snapshot read, owner check, or pause save propagates the original
+hard boundary/billing failure to the scheduler, rather than returning a stale
+`running` snapshot. If a safe yield cannot be saved, it becomes a hard
+`session_save_failed` boundary. These paths release the lease in `finally` and
+do not redispatch tools; concurrent user pauses remain authoritative.
+
+Active cycle handlers no longer emit `assistant_execution_requires_reconciliation`.
+Hard failures remain paused under `assistant_execution_<boundary_code>` or
+`assistant_billing_unconfirmed`; changing the label does not authorize a retry.
+Legacy snapshots/reasons remain readable. A generic historical `boundary_failed`
+does not prove that a secondary timeline write was the cause.
 
 The first classified boundary failure is retained in host memory. If a tool
 adapter catches an ownership/lease exception and returns ordinary error data,
@@ -22,6 +44,8 @@ the outer boundary still throws that original sanitized failure. A later timeout
 cannot downgrade it to `canonical_slice_interrupted`; no result/checkpoint save
 or additional dispatch is authorized on that poisoned adapter. Normal idle
 timeouts and verified canonical interruptions retain their existing continuation.
+Re-entering an adapter after an already-classified idle timeout preserves that
+same timeout instead of converting it back into a generic boundary failure.
 
 Workspace and cloud handlers preserve pending calls/fences when yielding. A
 concurrent user pause is not overwritten. The existing cron and session are reused;

@@ -4,7 +4,7 @@ import { createSessionStore } from '@/lib/harness/store';
 import { executeRequirementAssistantWorkspace } from './requirement-workspace';
 import { resolveRequirementEnvironment } from '@/lib/services/requirement-environment';
 import { runCloudRequirementCycle } from './requirement-cloud';
-import { openWorkspace, adoptRequirementWorkspace, shellQuote } from '@/lib/harness/workspace';
+import { openRequirementWorkspace, selectRequirementBranch } from '@/lib/harness/requirement-workspace-recovery';
 import { assertRequirementRun, finishRequirementCycle } from '@/lib/harness/requirement-scheduler';
 import { loadRequirementContext, formatRequirementContext, loadRequirementSnapshot, formatRequirementSnapshot } from '@/lib/harness/requirement-context';
 import { createRequirementTools } from '@/lib/harness/requirement-tools';
@@ -17,6 +17,7 @@ import type { HarnessSession } from '@/lib/harness/types';
 import { assertToolScreenAccess } from '@/app/api/agents/tools/router/screen-access';
 import { writeRequirementInstanceLog } from './requirement-instance-log';
 import { evaluateRequirementCycleBudget } from './requirement-budget';
+import { requirementCycleFailure } from './requirement-cycle-failure';
 
 function summary(session: HarnessSession | null): string {
   const finish = session?.status === 'completed' && session.messages.findLast(message => message.role === 'tool' && message.toolCallId &&
@@ -95,31 +96,31 @@ export async function runRequirementCycle(run: RequirementRun) {
         previousSessionId = priorSession.id;
       }
     }
+    let recoveryNotice = '';
     const outcomeResult = await executeRequirementAssistantWorkspace(run.sessionId, { siteId: run.siteId, userId: run.userId }, {
       profile: configured.profile, cronRun: run, assertExecution: assertActive,
       assertCleanup: () => assertRequirementRun(run, true),
       context: `${formatRequirementContext(context)}\nIntended work branch: ${configured.branch}. Preserve existing uncommitted changes and all user restrictions.`,
-      getContext: async () => formatRequirementSnapshot(await loadRequirementSnapshot(run)),
+      getContext: async () => [formatRequirementSnapshot(await loadRequirementSnapshot(run)), recoveryNotice].filter(Boolean).join('\n\n'),
       checkpoint: requirementCheckpointHook({ run, repositoryUrl: configured.repository.url,
         branch: configured.branch, baseRef: configured.repository.ref, profile: configured.profile, client: supabaseAdmin }),
       tools: async (workspace, host) => [...await createRequirementTools({ run }),
         ...createRequirementProvisioningTools({ run, profile: configured.profile, branch: configured.branch, host, workspace, assertActive })],
       openWorkspace: async input => {
-        const workspace = existingWorkspace
-          ? await adoptRequirementWorkspace({ ...input, repository: persistedRepository, workspaceId: existingWorkspace, previousSessionId, assertActive: input.assertActive! })
-          : await openWorkspace(input);
+        const opened = await openRequirementWorkspace({ ...input, repository: persistedRepository,
+          existingWorkspace, previousSessionId, assertActive: input.assertActive! });
+        const { workspace } = opened;
+        if (opened.recoveredFrom) recoveryNotice = 'The previous sandbox was not found. This workspace was reprovisioned from the authorized Git repository. Only remotely persisted source can be recovered; prior uncommitted sandbox files and processes are not restored. Inspect current files before continuing and do not claim those changes survived.';
         await assertActive();
         // Non-destructive branch switch only at initial clone. Adopted working trees
         // keep their branch/dirty content; agent receives the intended branch in context.
-        if (!existingWorkspace) {
-          const command = `if git show-ref --verify --quiet ${shellQuote(`refs/heads/${configured.branch}`)}; then git switch ${shellQuote(configured.branch)}; elif git show-ref --verify --quiet ${shellQuote(`refs/remotes/origin/${configured.branch}`)}; then git switch --track ${shellQuote(`origin/${configured.branch}`)}; else git switch -c ${shellQuote(configured.branch)}; fi`;
-          const branch = await workspace.exec({ command, timeoutMs: 10000 }, input.signal);
-          if (branch.exitCode !== 0) throw new Error('Could not select requirement work branch without overwriting work');
+        if (opened.selectBranch) {
+          await selectRequirementBranch(workspace, configured.branch, input.signal);
         }
         await assertActive();
         const { error: recordError } = await supabaseAdmin.from('requirement_status').insert({
           requirement_id: run.requirementId, site_id: run.siteId, instance_id: run.instanceId, stage: 'in-progress',
-          message: 'Agent workspace attached; validation and provisioning are available as tools.',
+          message: recoveryNotice || 'Agent workspace attached; validation and provisioning are available as tools.',
           active_sandbox_id: workspace.ref.id, repo_url: repoUrl,
         });
         if (recordError) throw new Error('Workspace reference could not be saved');
@@ -140,9 +141,10 @@ export async function runRequirementCycle(run: RequirementRun) {
     await writeRequirementInstanceLog(run, { key: `admission-error:${run.runId}`, log_type: 'error',
       message: 'Requirement assistant could not complete this cycle.', is_error: true,
       details: { error: detail } }).catch(() => undefined);
-    if (error instanceof Error && (error.name === 'RecoveryError' || error.name === 'OpenRouterBillingError')) {
-      outcome = 'paused';
-      reason = 'assistant_execution_requires_reconciliation';
+    const failure = requirementCycleFailure(error);
+    if (failure) {
+      outcome = failure.status;
+      reason = failure.reason;
     }
     await finishRequirementCycle(run, outcome, reason, detail, repoUrl).catch(() => undefined);
     return { reqId: run.requirementId, sessionId: run.sessionId, status: outcome };

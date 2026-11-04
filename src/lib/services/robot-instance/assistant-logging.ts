@@ -93,7 +93,7 @@ export function createAssistantOnStepHandler(
         .eq('id', meta.streamingLogId);
 
       if (updateError) {
-        if (options?.strict) throw new AssistantExecutionBoundaryError();
+        if (options?.strict) throw new AssistantExecutionBoundaryError('assistant_log_failed');
         console.error('❌ Error updating streaming assistant step log:', updateError);
         return;
       }
@@ -114,12 +114,12 @@ export function createAssistantOnStepHandler(
         .single();
 
       if (parentLogError) {
-        if (options?.strict) throw new AssistantExecutionBoundaryError();
+        if (options?.strict) throw new AssistantExecutionBoundaryError('assistant_log_failed');
         console.error('❌ Error saving assistant step log:', parentLogError);
         return;
       }
       parentLogId = parentLogData?.id;
-      if (!parentLogId && options?.strict) throw new AssistantExecutionBoundaryError();
+      if (!parentLogId && options?.strict) throw new AssistantExecutionBoundaryError('assistant_log_failed');
     }
 
     // Log individual tool calls if any
@@ -150,7 +150,7 @@ export function createAssistantOnStepHandler(
           });
 
           if (thinkingLogError) {
-            if (options?.strict) throw new AssistantExecutionBoundaryError();
+            if (options?.strict) throw new AssistantExecutionBoundaryError('assistant_log_failed');
             console.error(`❌ Error saving thought_process log for ${toolCall.toolName}:`, thinkingLogError);
           } else {
             console.log(`₍ᐢ•(ܫ)•ᐢ₎ [THINKING] Saved thought_process for ${toolCall.toolName}`);
@@ -235,7 +235,7 @@ export function createAssistantOnStepHandler(
         });
 
         if (toolLogError) {
-          if (options?.strict) throw new AssistantExecutionBoundaryError();
+          if (options?.strict) throw new AssistantExecutionBoundaryError('assistant_log_failed');
           console.error(`❌ Error saving tool log for ${toolCall.toolName}:`, toolLogError);
           failedToolCalls++;
         } else {
@@ -248,6 +248,7 @@ export function createAssistantOnStepHandler(
       }
     }
     } catch (error) {
+      if (options?.strict && error instanceof AssistantExecutionBoundaryError) throw error;
       if (options?.strict) throw new AssistantExecutionBoundaryError();
       throw error;
     }

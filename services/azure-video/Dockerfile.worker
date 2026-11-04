@@ -1,0 +1,9 @@
+# Pinned official SGLang NVIDIA runtime. No model weights are included in the image.
+FROM node:24.14.0-bookworm-slim@sha256:d8e448a56fc63242f70026718378bd4b00f8c82e78d20eefb199224a4d8e33d8 AS node
+FROM lmsysorg/sglang:dev@sha256:b4323a896f349d43a267c419c0267538b06c64a73110a0d0fd87496234df5dcd
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+WORKDIR /app
+COPY worker.mjs jobs.mjs azure-store.mjs start-worker.sh ./
+RUN node --version && command -v hf && command -v sglang && command -v curl && command -v setsid && command -v timeout
+ENV H3_GPU_COUNT=4
+CMD ["bash", "/app/start-worker.sh"]

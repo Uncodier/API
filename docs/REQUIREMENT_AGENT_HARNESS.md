@@ -54,9 +54,12 @@ and completed-turn hooks too; wrapping it back into `RecoveryError` would undo
 the idle-slice behavior. Connected executor/adapter tests cover this path with
 the requirement billing boundary attached and verify zero provider dispatch or
 credit reservations. Boundary failures carry only fixed diagnostic codes
-(`execution_check_failed`, `session_lease_failed`, `session_save_failed`, or
-`boundary_failed`) into the cycle error's `boundary_code`; raw ownership/storage
-exceptions are never retained. These codes do not authorize automatic recovery.
+(`execution_check_failed`, `session_lease_failed`, `session_save_failed`,
+`assistant_log_failed`, or `boundary_failed`) into the cycle error's `boundary_code`;
+raw ownership/storage exceptions are never retained. These codes do not authorize
+automatic recovery. The host separately verifies closed durable turns before
+classifying a secondary timeline failure as `canonical_audit_unavailable`, which
+yields without replay. See `REQUIREMENT_OPERATION_RECOVERY.md` for the exact policy.
 
 The separate `canonical_slice_interrupted` code permits next-cycle recovery of a
 durably saved tool batch after an exact host timeout, without replaying its calls.

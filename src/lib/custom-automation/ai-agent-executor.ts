@@ -82,6 +82,16 @@ async function runBoundaryBillingHook(hook: () => Promise<void>): Promise<void> 
   }
 }
 
+async function runStepHook(hook: () => Promise<void> | void, boundary?: AssistantExecutionBoundary): Promise<void> {
+  try { await hook(); }
+  catch (error) {
+    if (boundary?.onStepError) {
+      await runBoundaryHook(() => boundary.onStepError!(error), boundary.signal);
+    }
+    throw error;
+  }
+}
+
 /** Never allow billing failures to be converted into a success or another model turn. */
 class OpenRouterBillingError extends Error {
   constructor() {
@@ -1083,7 +1093,7 @@ export class AIAgentExecutor {
           }
         }
 
-        // Boundary turns persist only through strict, redacted canonical onStep logs.
+        // Boundary turns use durable host receipts and strict redacted onStep logs.
         const useStreamingPath = !executionBoundary && useStreaming && onStreamStart && onStreamChunk && !schema;
         const useThinkingStream = useStreamingPath && onThinkingStreamStart && onThinkingStreamChunk;
 
@@ -1255,7 +1265,7 @@ export class AIAgentExecutor {
           delete message.tool_calls;
           if (executionBoundary) await runBoundaryHook(() => executionBoundary.onModelMessage(message));
           steps.push(step);
-          if (onStep) await onStep(step);
+          if (onStep) await runStepHook(() => onStep(step), executionBoundary);
           if (executionBoundary) await runBoundaryHook(() => executionBoundary.afterTurn(messages), executionBoundary.signal);
           break;
         }
@@ -1789,7 +1799,7 @@ export class AIAgentExecutor {
 
         if (onStep) {
           const streamingLogId = (response as any).streamingLogId;
-          await onStep(step, streamingLogId ? { streamingLogId } : undefined);
+          await runStepHook(() => onStep(step, streamingLogId ? { streamingLogId } : undefined), executionBoundary);
         }
         if (executionBoundary) await runBoundaryHook(() => executionBoundary.afterTurn(messages), executionBoundary.signal);
 

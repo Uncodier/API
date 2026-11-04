@@ -22,6 +22,8 @@ import type { RequirementRun } from '@/lib/harness/requirement-types';
 import { writeRequirementInstanceLog } from './requirement-instance-log';
 import { assertToolScreenAccess } from '@/app/api/agents/tools/router/screen-access';
 import type { HostProfile } from '@/lib/harness/profile';
+import { requirementCycleFailure } from './requirement-cycle-failure';
+import { retireMissingWorkspace } from '@/lib/harness/retire-missing-workspace';
 
 export interface SessionRuntimeOptions {
   /** Trusted cron adapter, never deserialized from model arguments or public request JSON. */
@@ -112,6 +114,22 @@ export async function executeRequirementAssistantWorkspace(id: string, scope: Se
     workspace = await withinDeadline(deadline, () => (options.openWorkspace || openWorkspace)({ sessionId: id, siteId: scope.siteId, repository: session!.request.repository!,
       existing: session!.workspace, signal: deadline, assertActive,
       onOwnedHandle: sandbox => { ownedHandle = sandbox; },
+      onMissingWorkspace: async resource => {
+        await assertActive();
+        const current = await store.load(id, scope.siteId);
+        if (!current || (current.workspace && current.workspace.id !== resource)) {
+          throw new Error('Missing workspace reference changed; recovery was not authorized.');
+        }
+        if (current.workspace) {
+          // A confirmed provider 404, not a reset. Keep transcript, pending calls,
+          // budgets and host configuration. Historical status retains the old ID.
+          await retireMissingWorkspace({ sessionId: id, siteId: scope.siteId, owner,
+            version: current.version, resource });
+          await assertActive();
+          session = await store.load(id, scope.siteId);
+          if (!session || session.workspace) throw new Error('Missing workspace retirement was not confirmed.');
+        }
+      },
       cleanupCreated: async (sandbox) => {
         await options.assertCleanup?.();
         const fence = await claimSandboxCleanup({ sessionId: id, siteId: scope.siteId, owner, resource: sandbox.name, bootstrap: true });
@@ -156,28 +174,33 @@ export async function executeRequirementAssistantWorkspace(id: string, scope: Se
     }).catch(() => undefined);
     await accountSetup().catch(() => undefined);
     // Load CURRENT snapshot: never overwrite a newer receipt or a user pause with an old local copy.
-    const current = await store.load(id, scope.siteId);
-    if (current?.status === 'running') {
-      try {
+    const failure = requirementCycleFailure(error);
+    try {
+      const current = await store.load(id, scope.siteId);
+      if (!current) throw new AssistantExecutionBoundaryError('session_save_failed');
+      if (current.status === 'running') {
         await store.assertOwner(id, scope.siteId, owner, 180);
         const operatorRequired = workspaceOpenRequiresOperator(error);
         const creditsExhausted = error instanceof RequirementCreditsExhaustedError;
         if (creditsExhausted) current.creditRecoveryMinimum = error.requiredCredits;
-        const interruptedBatch = error instanceof AssistantExecutionBoundaryError && error.code === 'canonical_slice_interrupted';
-        const boundaryFailure = !interruptedBatch && error instanceof Error && (error.name === 'RecoveryError' || error.name === 'OpenRouterBillingError');
         const sliceExpired = deadline.aborted && error === deadline.reason &&
           error instanceof DOMException && error.name === 'TimeoutError';
-        current.status = operatorRequired || boundaryFailure ? 'paused' : 'waiting';
+        current.status = operatorRequired ? 'paused' : failure?.status ?? 'waiting';
         current.reason = creditsExhausted ? 'account_credits_exhausted' : operatorRequired
-          ? `workspace_access_requires_operator: ${safeError(error, redact)}` : boundaryFailure
-          ? 'assistant_execution_requires_reconciliation' : interruptedBatch ? 'canonical_slice_interrupted' : sliceExpired
+          ? `workspace_access_requires_operator: ${safeError(error, redact)}` : failure ? failure.reason : sliceExpired
           ? 'runtime_slice_expired' : `runtime_unavailable: ${safeError(error, redact)}`;
         await store.save(current, scope.siteId, owner);
-      } catch {
-        // Lease loss or persistence outage: no effects are retried. Explicit resume reconciles pending.
       }
+      const confirmed = await store.load(id, scope.siteId);
+      if (!confirmed || confirmed.status === 'running') throw new AssistantExecutionBoundaryError('session_save_failed');
+      return { status: confirmed.status, continue: false };
+    } catch {
+      // Never project a stale running snapshot after an unconfirmed transition.
+      // Preserve the original hard failure for the scheduler; a failed safe yield
+      // is now a storage boundary failure, not permission to continue.
+      if (failure?.status === 'paused') throw error;
+      throw new AssistantExecutionBoundaryError('session_save_failed');
     }
-    return { status: (await store.load(id, scope.siteId))?.status || 'waiting', continue: false };
   } finally {
     try {
       if (workspace || ownedHandle) {

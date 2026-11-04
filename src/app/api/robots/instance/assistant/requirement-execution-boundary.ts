@@ -62,8 +62,7 @@ export function createRequirementExecutionBoundary(input: Input): {
   // Once a persistence/ownership boundary fails, this instance cannot dispatch again.
   const guard = async <T>(fn: () => Promise<T>): Promise<T> => {
     if (poisoned) {
-      if (firstBoundaryFailure instanceof AssistantExecutionBoundaryError) throw firstBoundaryFailure;
-      return fatal();
+      throw firstBoundaryFailure;
     }
     try {
       const result = await fn();
@@ -426,6 +425,15 @@ export function createRequirementExecutionBoundary(input: Input): {
       }
       await save();
       finishOutcome = undefined;
+    }),
+    onStepError: error => guard(async () => {
+      // This is the secondary canonical timeline, not the dispatch/result journal.
+      // A closed durable turn can yield without replaying its completed tools.
+      if (!(error instanceof AssistantExecutionBoundaryError) || error.code !== 'assistant_log_failed') throw error;
+      await ready();
+      if (awaitingModel || executing || session.pending || confirmedSession.pending || outstanding().length ||
+          !sameJson(session, confirmedSession)) return fatal();
+      throw new AssistantExecutionBoundaryError('canonical_audit_unavailable');
     }),
   };
   return { boundary, getSession: () => structuredClone(session),

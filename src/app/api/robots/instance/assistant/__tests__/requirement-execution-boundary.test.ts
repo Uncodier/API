@@ -7,6 +7,7 @@ import { createMemoryArtifactStore } from '@/lib/harness/artifact-store';
 import { RESULT_MAX_BYTES, SNAPSHOT_MAX_BYTES, serializedBytes } from '@/lib/harness/engine-results';
 import type { ArtifactStore, HarnessSession, HarnessTool, Message, SessionStore } from '@/lib/harness/types';
 import { HISTORY_RECEIPT_BUDGET } from '../requirement-history';
+import { AssistantExecutionBoundaryError } from '@/lib/services/robot-instance/assistant-execution-boundary';
 import { createWorkspaceTools } from '@/lib/harness/workspace-tools';
 import type { Workspace } from '@/lib/harness/types';
 
@@ -516,7 +517,7 @@ describe('canonical requirement execution durability boundary (offline)', () => 
     expect(f.store.save).not.toHaveBeenCalled();
     expect(f.artifacts.reserve).not.toHaveBeenCalled();
     // A failed adapter is never reused in this slice, even for a benign timeout.
-    await expect(f.model()).rejects.toMatchObject({ name: 'RecoveryError' });
+    await expect(f.model()).rejects.toBe(timeout);
   });
 
   test('timeout with an in-flight model still requires reconciliation', async () => {
@@ -524,6 +525,62 @@ describe('canonical requirement execution durability boundary (offline)', () => 
     await f.adapter.boundary.beforeModel({ system: '', messages: [], tools: [], maxOutputTokens: 100 });
     f.controller.abort(new DOMException('Offline slice expired', 'TimeoutError'));
     await expect(f.model()).rejects.toMatchObject({ name: 'RecoveryError' });
+  });
+
+  test('secondary timeline failure yields only after a closed durable skill lookup', async () => {
+    const f = fixture(); await f.adapter.initialize();
+    await f.model([{ id: 'lookup', name: 'skill_lookup' }]);
+    const execute = jest.fn(async () => ({ success: true, skills: [] }));
+    await f.execute('skill_lookup', 'lookup', {}, execute);
+    const saved = f.adapter.getSession();
+    await expect(f.adapter.boundary.onStepError!(new AssistantExecutionBoundaryError('assistant_log_failed')))
+      .rejects.toMatchObject({ code: 'canonical_audit_unavailable' });
+    expect(f.adapter.getSession()).toEqual(saved);
+    expect(saved.pending).toBeUndefined();
+    expect(saved.messages.at(-1)?.toolCallId).toBe('lookup');
+    await expect(f.model()).rejects.toMatchObject({ code: 'canonical_audit_unavailable' });
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  test.each(['pending', 'model', 'lease', 'unknown'] as const)('secondary timeline failure cannot bypass %s boundary', async kind => {
+    const f = fixture(); await f.adapter.initialize();
+    if (kind === 'pending') await f.model([{ id: 'unfinished', name: 'unknown_write' }]);
+    if (kind === 'model') await f.adapter.boundary.beforeModel({ system: '', messages: [], tools: [], maxOutputTokens: 100 });
+    if (kind === 'lease') (f.store.assertOwner as jest.Mock).mockRejectedValueOnce(new Error('Offline lease loss'));
+    const error = kind === 'unknown' ? new Error('Offline callback failure') : new AssistantExecutionBoundaryError('assistant_log_failed');
+    const failure = await f.adapter.boundary.onStepError!(error).catch(error => error);
+    expect(failure).toMatchObject({ name: 'RecoveryError' });
+    expect(failure.code).not.toBe('canonical_audit_unavailable');
+  });
+
+  test('saved finish survives secondary audit failure and completes on initialization without replay', async () => {
+    const f = fixture(); await f.adapter.initialize();
+    const args = { summary: 'Offline task delivered', outcome: 'implemented' };
+    await f.model([{ id: 'finish', name: 'finish_task', args }]);
+    const finish = f.adapter.controlTools.find(tool => tool.name === 'finish_task')!;
+    await f.execute('finish_task', 'finish', args, () => finish.execute(args));
+    await expect(f.adapter.boundary.onStepError!(new AssistantExecutionBoundaryError('assistant_log_failed')))
+      .rejects.toMatchObject({ code: 'canonical_audit_unavailable' });
+    const checkpoint = jest.fn(async () => {});
+    const next = createRequirementExecutionBoundary({ ...f.input, session: f.adapter.getSession(), onCheckpoint: checkpoint });
+    await next.initialize();
+    expect(next.getSession()).toMatchObject({ status: 'completed', reason: 'implemented', turns: 1 });
+    expect(next.getSession().messages.filter(message => message.toolCallId === 'finish')).toHaveLength(1);
+    expect(checkpoint).toHaveBeenCalledTimes(1);
+  });
+
+  test('a failed primary result save cannot be downgraded by a later secondary audit failure', async () => {
+    const f = fixture(); await f.adapter.initialize();
+    await f.model([{ id: 'lookup', name: 'skill_lookup' }]);
+    const execute = jest.fn(async () => {
+      (f.store.save as jest.Mock).mockRejectedValueOnce(new SessionStoreError('storage'));
+      return { success: true };
+    });
+    await expect(f.execute('skill_lookup', 'lookup', {}, execute)).rejects.toMatchObject({ code: 'session_save_failed' });
+    await expect(f.adapter.boundary.onStepError!(new AssistantExecutionBoundaryError('assistant_log_failed')))
+      .rejects.toMatchObject({ code: 'session_save_failed' });
+    expect(f.adapter.getSession().pending?.call.id).toBe('lookup');
+    expect(execute).toHaveBeenCalledTimes(1);
   });
 
   test('saved uncertainty survives an idle deadline while the next agent can read but not replay', async () => {

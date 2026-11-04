@@ -76,6 +76,9 @@ export async function processAssistantTurn(
 
   // Filtering an already routed `tools` function is unsafe: its closure still
   // contains sends/writes. Expose only plan_result; no dynamic MCP/sandbox.
+  const deploymentTools = standaloneFiles && !fileContext.environment
+    ? (await import('./deployment-tools')).createAssistantDeploymentTools({ siteId: fileScope.siteId,
+      userId: fileScope.userId }, fileScope.instanceId, assertFileContext) : [];
   const availableTools = context.conversationRecoveryOnly
     ? getConversationRecoveryTools(context.recoveryScope!)
     : context.preResponseOnly
@@ -84,7 +87,7 @@ export async function processAssistantTurn(
         context.executionOptions.site_id,
         context.executionOptions.user_id,
         context.executionOptions.instance_id,
-        requirementHost ? [...context.customTools, ...requirementHost.tools] : [...context.customTools, ...workspaceTools, ...cloudTools],
+        requirementHost ? [...context.customTools, ...requirementHost.tools] : [...context.customTools, ...workspaceTools, ...cloudTools, ...deploymentTools],
         context.agentType,
         context.userPhone,
         context.executionOptions.requirement_id,

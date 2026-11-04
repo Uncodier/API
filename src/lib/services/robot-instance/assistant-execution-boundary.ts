@@ -20,6 +20,8 @@ export interface AssistantExecutionBoundary {
   executeTool(call: { id: string; name: string; args: any }, execute: () => Promise<any>): Promise<any>;
   /** Complete turn transcript after tool processing and awaited canonical onStep. */
   afterTurn(messages: any[]): Promise<void>;
+  /** Host may classify a failed secondary timeline write against its durable checkpoint. */
+  onStepError?(error: unknown): Promise<never>;
   signal?: AbortSignal;
   redact?(value: string): string;
   billing?: AssistantExecutionBoundaryBilling;
@@ -27,7 +29,7 @@ export interface AssistantExecutionBoundary {
 
 /** Fatal to existing recovery-aware catches; never expose hook payloads in the message. */
 export class AssistantExecutionBoundaryError extends Error {
-  constructor(public readonly code: 'boundary_failed' | 'execution_check_failed' | 'session_lease_failed' | 'session_save_failed' | 'canonical_slice_interrupted' = 'boundary_failed') {
+  constructor(public readonly code: 'boundary_failed' | 'execution_check_failed' | 'session_lease_failed' | 'session_save_failed' | 'assistant_log_failed' | 'canonical_audit_unavailable' | 'canonical_slice_interrupted' = 'boundary_failed') {
     super('Assistant execution boundary failed');
     this.name = 'RecoveryError';
     Object.setPrototypeOf(this, new.target.prototype);

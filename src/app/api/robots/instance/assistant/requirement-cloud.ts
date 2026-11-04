@@ -12,6 +12,7 @@ import { runRequirementAssistantSlice } from './requirement-session';
 import { writeRequirementInstanceLog } from './requirement-instance-log';
 import { assertToolScreenAccess } from '@/app/api/agents/tools/router/screen-access';
 import { AssistantExecutionBoundaryError } from '@/lib/services/robot-instance/assistant-execution-boundary';
+import { requirementCycleFailure } from './requirement-cycle-failure';
 
 /** Canonical session/turn executor with no workspace, Git checkout or VM lease. */
 export async function runCloudRequirementCycle(run: RequirementRun, objective: string,
@@ -90,17 +91,18 @@ export async function runCloudRequirementCycle(run: RequirementRun, objective: s
   } catch (error) {
     const current = await store.load(run.sessionId, run.siteId);
     if (current?.status === 'running') {
-      const interruptedBatch = error instanceof AssistantExecutionBoundaryError && error.code === 'canonical_slice_interrupted';
-      const uncertain = !interruptedBatch && (current.pending ||
-        (error instanceof Error && /Recovery|Billing/.test(error.name)));
+      const failure = requirementCycleFailure(error);
+      const uncertain = current.pending || (error instanceof Error && /Recovery|Billing/.test(error.name));
       const sliceExpired = signal.aborted && error === signal.reason && error instanceof DOMException && error.name === 'TimeoutError';
-      current.status = uncertain ? 'paused' : 'waiting';
-      current.reason = uncertain ? 'assistant_execution_requires_reconciliation' : interruptedBatch
-        ? 'canonical_slice_interrupted' : sliceExpired ? 'runtime_slice_expired' : 'cloud_runtime_unavailable';
+      current.status = failure?.status ?? (uncertain ? 'paused' : 'waiting');
+      current.reason = failure?.reason ?? (uncertain ? 'assistant_execution_boundary_failed'
+        : sliceExpired ? 'runtime_slice_expired' : 'cloud_runtime_unavailable');
       await store.save(current, run.siteId, owner);
     }
     await writeRequirementInstanceLog(run, { key: `cloud-cycle-error:${run.runId}`, log_type: 'error', is_error: true,
-      message: 'Cloud requirement cycle stopped. Saved revisions remain available; no workspace was started.' });
+      message: 'Cloud requirement cycle stopped. Saved revisions remain available; no workspace was started.',
+      // Diagnostic only: the authoritative transition above has already succeeded.
+      details: { ...(error instanceof AssistantExecutionBoundaryError ? { boundary_code: error.code } : {}) } }).catch(() => undefined);
     return { status: current?.status ?? 'waiting', session: current };
   } finally {
     await store.release(run.sessionId, run.siteId, owner);

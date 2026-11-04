@@ -1,0 +1,9 @@
+*
+!server.mjs
+!Dockerfile
+!Dockerfile.worker
+!jobs.mjs
+!azure-store.mjs
+!dispatcher.mjs
+!worker.mjs
+!start-worker.sh

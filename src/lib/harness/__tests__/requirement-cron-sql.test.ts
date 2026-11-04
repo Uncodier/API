@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 
-it('claims and fences agent cron without product gates, preserves pauses, resumes safely and records review progress offline', () => {
+it('claims and fences agent cron, filters site admission, preserves pauses and records review progress offline', () => {
   // Real forward SQL in ephemeral PGlite only. This tests serial interleavings,
   // not multi-connection advisory lock contention or a production deployment.
   const script = String.raw`
@@ -777,6 +777,35 @@ it('claims and fences agent cron without product gates, preserves pauses, resume
       assert.equal((await diagnose(noSessionId)).state,'none');
       await assert.rejects(()=>db.query('SELECT inspect_requirement_commands($1::uuid[],$2)',[Array(501).fill(noSessionId),site]),/Invalid requirement diagnostic scope/);
       }
+      // Admission is a read-only eligibility gate, never a permanent pause.
+      await reset();await db.exec('DELETE FROM harness_model_credit_reservations; ALTER TABLE sites ADD COLUMN archived_at timestamptz; UPDATE billing SET credits_available=20');
+      const admissionMigration=readFileSync('supabase/migrations/20261104110000_requirement_site_credit_admission.sql','utf8');
+      const admissionMetadata=await functionMetadata();
+      const admissionWrapper=(await one("SELECT pg_get_functiondef('claim_agent_requirement_run(uuid[],integer,integer,uuid[])'::regprocedure) value")).value;
+      await db.exec(admissionMigration);await db.exec(admissionMigration);
+      assert.deepEqual(await functionMetadata(),admissionMetadata);
+      assert.equal((await one("SELECT pg_get_functiondef('claim_agent_requirement_run(uuid[],integer,integer,uuid[])'::regprocedure) value")).value,admissionWrapper);
+      for(const obstruction of ['archived','missing','null','zero','negative']) {
+        await reset();await db.exec('UPDATE sites SET archived_at=NULL; DELETE FROM billing');
+        if(obstruction!=='missing') await db.query('INSERT INTO billing VALUES($1,$2)',[site,obstruction==='null'?null:obstruction==='negative'?-1:obstruction==='zero'?0:20]);
+        if(obstruction==='archived') await db.exec('UPDATE sites SET archived_at=now()');
+        const id=await req();
+        const before=(await one('SELECT to_jsonb(r) value FROM requirements r WHERE id=$1',[id])).value;
+        assert.equal(await claim(),null,obstruction);
+        assert.deepEqual((await one('SELECT to_jsonb(r) value FROM requirements r WHERE id=$1',[id])).value,before);
+        assert.equal((await one('SELECT count(*)::int n FROM remote_instances')).n,0);
+        assert.equal((await one('SELECT count(*)::int n FROM harness_requirement_runs')).n,0);
+        await db.exec('UPDATE sites SET archived_at=NULL');
+        await db.query('INSERT INTO billing VALUES($1,0.0001) ON CONFLICT(site_id) DO UPDATE SET credits_available=EXCLUDED.credits_available',[site]);
+        assert.equal((await claim()).run.requirementId,id,'recharge/unarchive restores admission without editing requirement');
+      }
+      for(const guard of ['execution_hold','user_paused','customer_paused','cron_paused']) {
+        await reset();await req('backlog',{[guard]:guard==='execution_hold'?{kind:'security'}:true});
+        assert.equal(await claim(),null,'credit eligibility does not override '+guard);
+      }
+      await reset();const recurring=await req('done',{}, {cron:'* * * * *'});
+      assert.equal(await claim(),null);
+      assert.equal((await claim([],10,[recurring])).run.requirementId,recurring);
       console.log('passed');
     } finally { await db.close(); }
   `;
