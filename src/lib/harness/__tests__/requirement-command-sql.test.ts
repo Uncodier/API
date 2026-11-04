@@ -77,6 +77,23 @@ it('queues trusted cross-instance requirement commands and drains only quiescent
       await db.query('INSERT INTO auth.users VALUES($1),($2),($3)', [user,member,stranger]);
       await db.query('INSERT INTO offline_site_access VALUES($1,$2,true),($1,$3,true),($1,$4,false)', [site,user,member,stranger]);
       source = await instance();
+      // Chat retry regression: the exact current owner action has no legacy
+      // details.requirement_id. Queue admission binds it without changing logs
+      // or advancing execution while the conversation is still running.
+      const retry = await req('blocked', {}, source);
+      const retryAction = await action();
+      const retryPatch = {status:'in-progress',completion_status:'pending'};
+      assert.equal((await submit(retry.id,retryAction,retryPatch)).state,'queued');
+      assert.equal((await submit(retry.id,retryAction,retryPatch)).state,'duplicate');
+      assert.equal((await one('SELECT details FROM instance_logs WHERE id=$1',[retryAction])).details.requirement_id,undefined);
+      await apply();
+      assert.equal((await row(retry.id)).status,'blocked');
+      await db.query("UPDATE instance_logs SET details=details || '{\"status\":\"completed\"}' WHERE id=$1",[retryAction]);
+      await apply();
+      assert.equal((await row(retry.id)).status,'in-progress');
+      assert.equal((await row(retry.id)).metadata.runner_instance_id,source);
+      assert.ok((await one('SELECT applied_at FROM requirement_commands WHERE requirement_id=$1',[retry.id])).applied_at);
+      await reset();
       for (const role of ['anon','authenticated','service_role']) {
         for (const fn of ['submit_requirement_command(uuid,uuid,uuid,uuid,uuid,jsonb)',
           'has_requirement_scope_authorization(uuid,timestamp with time zone)',

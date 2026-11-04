@@ -436,7 +436,7 @@ export const getAssistantToolDefinitions = (
     publishTool(siteId, userId ?? '', instanceId),
     skillLookupTool({ siteId }),
     externalSkillLookupTool(siteId, approvedImport?.userId, approvedImport),
-    activateCodingAgentsTool(siteId, instanceId),
+    activateCodingAgentsTool(siteId, instanceId, commandSource),
     updateRepoTool(siteId, instanceId, userId),
     showArtifactTool(siteId, instanceId, userId ?? ''),
     readDocumentTool(),

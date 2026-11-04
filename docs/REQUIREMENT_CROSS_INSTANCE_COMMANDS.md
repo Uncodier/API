@@ -42,6 +42,19 @@ action defaults to reading all requirement history, not filtering by the request
 session. A successful command receipt needs no additional status write. Blocking
 an unnecessary status write does not cancel or replay the saved command.
 
+`activate_coding_agents` uses this same command queue for explicit retries from
+the assigned owner instance. Its factory captures the current host-owned
+`RequirementCommandSource`; it never looks up the latest user log or requires
+`details.requirement_id` on a conversational message. The existing admission RPC
+validates the exact action and creates the requirement-scoped receipt atomically.
+It submits only nonterminal start/pending intent, preserving scope and ownership.
+Without host identity it fails closed; model-supplied action IDs are not authority.
+Its receipt reports zero activated plans/instances and `execution_started: false`.
+Paused work, review holds and active leases still follow the queue's eligibility
+rules; this tool is not an administrative pause-release operation. If scope also
+changes, use one consolidated `requirements action="update"` instead. Calling both
+for the same requirement/message returns the original command, not a second patch.
+
 Backlog expansion checks requirement-scoped user-action receipts, not the source
 instance's equality with the runner. For feedback received during an active cycle,
 the command's applied timestamp allows new scope after the old work completes.

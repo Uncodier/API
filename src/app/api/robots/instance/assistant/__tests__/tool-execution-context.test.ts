@@ -19,7 +19,8 @@ const utilsPath = 'src/app/api/robots/instance/assistant/utils.ts';
 
 // Execute the actual catalog and router with fail-closed I/O. All unrelated
 // catalog factories are inert, so this never imports provider clients or .env.
-function catalog(loadScreenAccess = async (_scope: unknown) => ({ isAdmin: true, blockedScreens: [] })) {
+function catalog(loadScreenAccess = async (_scope: unknown) => ({ isAdmin: true, blockedScreens: [] }),
+  overrides: Record<string, unknown> = {}) {
   const dependencies: Record<string, unknown> = {};
   const source = ts.createSourceFile(utilsPath, readFileSync(path.resolve(utilsPath), 'utf8'), ts.ScriptTarget.Latest, true);
   for (const statement of source.statements) {
@@ -62,7 +63,7 @@ function catalog(loadScreenAccess = async (_scope: unknown) => ({ isAdmin: true,
         canUseToolScreen: () => true, assertToolScopeArgs: () => {}, guardToolScreen: (tool: unknown) => tool,
       },
     });
-  return loadRuntimeModule<typeof import('../utils')>(utilsPath, dependencies);
+  return loadRuntimeModule<typeof import('../utils')>(utilsPath, { ...dependencies, ...overrides });
 }
 
 describe('assistant private execution context wiring', () => {
@@ -174,7 +175,8 @@ describe('assistant private execution context wiring', () => {
         './conversation-recovery-tools': { CONVERSATION_RECOVERY_INSTRUCTION: '', getConversationRecoveryTools: () => [] },
         '@/lib/services/tool-execution-context': contextModule,
         '@/lib/services/robot-instance/assistant-respawn-policy': { SILENT_CONTINUE_PROMPT },
-        '@/lib/services/robot-instance/assistant-recovery': { assertAssistantRecoveryActive: async () => undefined },
+        '@/lib/services/robot-instance/assistant-recovery': { assertAssistantRecoveryActive: async () => undefined,
+          runAssistantRecoveryTool: async (_scope: unknown, _name: string, _args: unknown, execute: () => Promise<unknown>) => execute() },
         '@/lib/services/workflow-robot/execution-tracker': {},
         '@/lib/services/robot-instance/assistant-executor': { executeAssistantStep: executor },
         '@/lib/services/robot-instance/vision-message-images': {
@@ -264,6 +266,54 @@ describe('assistant private execution context wiring', () => {
     await run(context, []);
     expect(getTools.mock.calls[1][10]).toBeUndefined();
     expect(getTools.mock.calls[1][3]).toEqual([]);
+  });
+
+  it('routes chat activation through the real command service using this exact unscoped user message', async () => {
+    const { getTools, run, context, executor } = turn();
+    const userId = randomUUID(), actionId = randomUUID(), requirementId = randomUUID();
+    const action = { id: actionId, instance_id: instanceId, site_id: siteId, user_id: userId,
+      log_type: 'user_action', trusted_user_action: true, details: { status: 'running', prompt_source: 'assistant_route' } };
+    const requirement = { id: requirementId, site_id: siteId, status: 'blocked', metadata: { runner_instance_id: instanceId } };
+    const rpc = jest.fn(async (name: string, args: any) => {
+      expect(name).toBe('submit_requirement_command');
+      expect(args).toEqual({ p_requirement_id: requirementId, p_site_id: action.site_id, p_user_id: action.user_id,
+        p_instance_id: action.instance_id, p_action_id: action.id, p_patch: { status: 'in-progress', completion_status: 'pending' } });
+      return { data: { state: 'queued', requirement, authorization_action_id: action.id, runner_instance_id: instanceId }, error: null };
+    });
+    const from = jest.fn((table: string) => {
+      if (!['requirements', 'remote_instances'].includes(table)) throw new Error('Unexpected latest-log lookup');
+      const query: any = { maybeSingle: async () => ({ data: table === 'requirements' ? requirement : { id: instanceId, is_archived: false } }) };
+      query.select = query.eq = () => query;
+      return query;
+    });
+    const commandService = loadRuntimeModule('src/lib/services/requirement-command.ts', {
+      zod: jest.requireActual('zod'), '@/lib/database/supabase-client': { supabaseAdmin: { rpc } },
+      './requirement-command-diagnostics': { inspectRequirementCommands: async () => ({
+        [requirementId]: { state: 'queued', reason: 'action_unfinished', retryable: true, checked_at: new Date().toISOString() },
+      }) },
+    });
+    const activation = loadRuntimeModule('src/app/api/agents/tools/activate_coding_agents/assistantProtocol.ts', {
+      '@/lib/database/supabase-client': { supabaseAdmin: { from } },
+      '@/lib/services/requirement-command': commandService,
+      '@/lib/services/apps-platform/migration-lifecycle': { listMigrationLifecycle: async () => [] },
+    });
+    const utils = catalog(undefined, { '@/app/api/agents/tools/activate_coding_agents/assistantProtocol': activation });
+    getTools.mockImplementation((...args) => (utils.getInstanceAssistantTools as (...values: any[]) => Promise<any[]>)(...args));
+    context.instanceNodeId = undefined;
+    context.executionOptions.user_id = userId;
+    context.recoveryScope = { siteId, instanceId, userId, userMessageLogId: actionId };
+    executor.mockImplementation(async (_messages, _instance, options) => {
+      const router = options.custom_tools.find((tool: any) => tool.name === 'tools');
+      expect(await router.execute({ action: 'describe', name: 'activate_coding_agents' })).toMatchObject({ success: true });
+      expect(await router.execute({ action: 'call', name: 'activate_coding_agents', args: JSON.stringify({
+        requirement_id: requirementId, action_id: randomUUID(), thought_process: 'Retry the existing work',
+      }) })).toMatchObject({ success: true, result: { success: true, execution_started: false,
+        activated_plans: 0, command: { state: 'queued', authorization_action_id: actionId } } });
+      return { messages: [] };
+    });
+    await run(context, []);
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(action.details).not.toHaveProperty('requirement_id');
   });
 
   it('recovery skips sentinels and uses the most recent real user text, including multipart', async () => {
