@@ -9,17 +9,19 @@ export function deliverFileTool(siteId: string, userId: string | undefined, inst
   const schema = (name: string) => descriptors.find(tool => tool.name === name)!.parameters as {
     properties: Record<string, unknown>;
   };
+  // Preserve dynamically composed schema keys in the public inferred type.
+  const properties: Record<string, unknown> = {
+    ...schema('write_cloud_file').properties,
+    ...schema('list_cloud_files').properties,
+    ...schema('read_cloud_file').properties,
+    action: { type: 'string', enum: ['list', 'read', 'create', 'replace', 'patch'] },
+  };
   return {
     name: 'deliver_file',
     description: 'Save and push a private document to the configured non-deploy Git repository, or list/read its versions. Available to every agent role, including workspace and workflow agents; no sandbox or coding agent needed. Load skill_lookup skill_name="file-delivery" for presentations (HTML), documents (Markdown/HTML), and sheets (CSV). UTF-8 text only, maximum 262144 bytes. Does not edit the app branch, deploy a preview, or accept binary Office files. Returns saved/download receipts and actual Git status. Do not ask for a repository.',
     parameters: {
       type: 'object',
-      properties: {
-        ...schema('write_cloud_file').properties,
-        ...schema('list_cloud_files').properties,
-        ...schema('read_cloud_file').properties,
-        action: { type: 'string', enum: ['list', 'read', 'create', 'replace', 'patch'] },
-      },
+      properties,
       required: ['action'],
       additionalProperties: false,
     },
