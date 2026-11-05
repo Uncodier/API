@@ -1,83 +1,54 @@
 import { usableSupportContent } from './response-content';
 
+type RecordValue = Record<string, any>;
+const object = (value: unknown): value is RecordValue =>
+  !!value && typeof value === 'object' && !Array.isArray(value);
+
+function responseRow(row: unknown): row is RecordValue {
+  return object(row)
+    && (row.type === undefined || row.type === 'message' || row.type === 'text')
+    && !('tool' in row) && !('tool_call_id' in row) && !('tool_calls' in row)
+    && !('function_call' in row)
+    && (row.role === undefined || row.role === 'assistant');
+}
+
 export function extractSupportResults(executedCommand: any) {
-    const rows: any[] = Array.isArray(executedCommand?.results) ? executedCommand.results : [];
-    let assistantMessage: string | undefined;
-    let conversationTitle: string | undefined;
+  const rows: unknown[] = Array.isArray(executedCommand?.results) ? executedCommand.results : [];
+  const responses = rows.filter(responseRow);
+  const conversations = rows.filter((row): row is RecordValue => object(row)
+    && (row.type === undefined || row.type === 'conversation')
+    && !('tool' in row) && !('tool_call_id' in row));
+  const conversationTargets = conversations.flatMap(row => [
+    row.conversation, row.content?.conversation,
+    ...(row.type === 'conversation' ? [row.content] : []),
+  ]).filter(object);
+  const conversationTitle = conversationTargets.find(target =>
+    typeof target.title === 'string' && target.title.trim())?.title as string | undefined;
 
-    for (const row of rows) {
-      const title = row?.conversation?.title || row?.content?.conversation?.title
-        || (row?.type === 'conversation' ? row?.content?.title : undefined);
-      if (typeof title === 'string' && title.trim()) {
-        conversationTitle = title;
-        break;
-      }
-    }
-
-    // Preserve message-target priority. Never stringify tool results, metadata,
-    // or conversation targets as a substitute for an assistant response.
-    const candidates: unknown[] = rows.map(row => row?.message?.content);
-    for (const row of rows) {
-      if (row?.type === 'message' || row?.type === 'text') {
-        candidates.push(row.content, row.content?.message?.content, row.content?.content);
-      }
-    }
-    for (const row of rows) {
-      if (typeof row === 'string') candidates.push(row);
-      else if (row && !row.type && !row.conversation && !row.tool && !row.tool_call_id) {
-        candidates.push(row.content, row.content?.message?.content, row.content?.content, row.text);
-      }
-    }
-    for (const candidate of candidates) {
-      assistantMessage = usableSupportContent(candidate);
-      if (assistantMessage) break;
-    }
-
-    // Extraer flags is_robot, is_transactional_message e is_erratic de los resultados
-    let isRobot: boolean | undefined = undefined;
-    let isTransactionalMessage: boolean | undefined = undefined;
-    let isErratic: boolean | undefined = undefined;
-
-    if (rows.length > 0) {
-      // Buscar flags en message target
-      const messageResult = rows.find((r: any) =>
-        r?.message && typeof r.message === 'object'
-      );
-      if (messageResult && messageResult.message) {
-        if (typeof messageResult.message.is_robot === 'boolean') {
-          isRobot = messageResult.message.is_robot;
-          console.log(`🤖 Flag is_robot encontrado en message: ${isRobot}`);
-        }
-        if (typeof messageResult.message.is_transactional_message === 'boolean') {
-          isTransactionalMessage = messageResult.message.is_transactional_message;
-          console.log(`📧 Flag is_transactional_message encontrado en message: ${isTransactionalMessage}`);
-        }
-        if (typeof messageResult.message.is_erratic === 'boolean') {
-          isErratic = messageResult.message.is_erratic;
-          console.log(`⚠️ Flag is_erratic encontrado en message: ${isErratic}`);
-        }
-      }
-
-      // Buscar flags en conversation target
-      const conversationResult = rows.find((r: any) =>
-        r?.conversation && typeof r.conversation === 'object'
-      );
-      if (conversationResult && conversationResult.conversation) {
-        if (typeof conversationResult.conversation.is_robot === 'boolean') {
-          isRobot = conversationResult.conversation.is_robot;
-          console.log(`🤖 Flag is_robot encontrado en conversation: ${isRobot}`);
-        }
-        if (typeof conversationResult.conversation.is_transactional_message === 'boolean') {
-          isTransactionalMessage = conversationResult.conversation.is_transactional_message;
-          console.log(`📧 Flag is_transactional_message encontrado en conversation: ${isTransactionalMessage}`);
-        }
-        if (typeof conversationResult.conversation.is_erratic === 'boolean') {
-          isErratic = conversationResult.conversation.is_erratic;
-          console.log(`⚠️ Flag is_erratic encontrado en conversation: ${isErratic}`);
-        }
-      }
-    }
-
-
-return { assistantMessage, conversationTitle, isRobot, isTransactionalMessage, isErratic };
+  // Keep flags attached to the selected message, not another result.
+  const candidates: { value: unknown; flags: RecordValue[] }[] = [];
+  const add = (value: unknown, ...flags: unknown[]) => {
+    candidates.push({ value, flags: flags.filter(object) });
+  };
+  for (const row of responses) add(row.message?.content, row, row.message);
+  for (const row of responses) {
+    // Explicit wrappers and supported legacy shapes only. Never stringify.
+    if (row.conversation && row.type === undefined) continue;
+    add(row.content, row);
+    add(row.content?.message?.content, row, row.content, row.content?.message);
+    add(row.content?.content, row, row.content);
+    if (row.type === undefined) add(row.text, row);
+  }
+  for (const row of rows) if (typeof row === 'string') add(row);
+  const selected = candidates.find(candidate => usableSupportContent(candidate.value));
+  const assistantMessage = usableSupportContent(selected?.value);
+  const sources = [...(selected?.flags || []), ...conversationTargets];
+  // Any explicit suppression wins over a false conversation flag.
+  const flag = (key: string): boolean | undefined => {
+    const values = sources.map(source => source[key]);
+    return values.includes(true) ? true : values.includes(false) ? false : undefined;
+  };
+  return { assistantMessage, conversationTitle,
+    isRobot: flag('is_robot'), isTransactionalMessage: flag('is_transactional_message'),
+    isErratic: flag('is_erratic') };
 }

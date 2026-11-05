@@ -76,10 +76,15 @@ async function reconcile(sandbox: Sandbox, db?: BillingClient): Promise<void> {
     // Classify only the trusted RPC's exact rejection, not provider messages or
     // arbitrary P0001 failures. Keep SQL rollback/atomic settlement unchanged.
     const billingError = billed.error as { code?: string; message?: string } | null;
+    const outcome = billed.data as { success?: boolean; outcome?: string } | null;
+    if (!billed.error && outcome?.success === false && outcome.outcome === 'insufficient_credits') {
+      throw new SandboxBillingError('insufficient_credits');
+    }
+    // Compatibility with databases awaiting the forward migration.
     if (billingError?.code === 'P0001' && billingError.message === 'Sandbox billing requires available credits') {
       throw new SandboxBillingError('insufficient_credits');
     }
-    if (billed.error || !(billed.data as { success?: boolean } | null)?.success) throw new SandboxBillingError();
+    if (billed.error || outcome?.success !== true) throw new SandboxBillingError();
     const next = result.pagination.next;
     if (!next) {
       const completed=await (db ?? await client()).rpc('complete_sandbox_billing_observation',{p_sandbox_name:sandbox.name});

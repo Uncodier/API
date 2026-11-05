@@ -9,7 +9,13 @@ export async function resolveSupportResults(
   if (results.assistantMessage) return results;
   for (let attempt = 0; attempt < 3; attempt++) {
     if (attempt > 0) await new Promise(resolve => setTimeout(resolve, 200));
-    const fresh = await readSameCommand();
+    let fresh;
+    try {
+      fresh = await readSameCommand();
+    } catch {
+      // Read failures stay inside the bounded recovery path.
+      continue;
+    }
     if (fresh?.status !== 'completed') continue;
     results = extractSupportResults(fresh);
     if (results.assistantMessage) return results;

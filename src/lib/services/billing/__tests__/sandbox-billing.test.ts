@@ -7,7 +7,7 @@ import { billableSession, reconcileSandboxBilling, registerSandboxBilling, SANDB
 it('executes actual sandbox SQL offline in disposable PostgreSQL', () => {
   const output = execFileSync(process.execPath, [resolve(process.cwd(),'src/lib/services/billing/__tests__/sandbox-billing-sql-runner.mjs')],
     { encoding:'utf8', timeout:120000, env:{ PATH:process.env.PATH, NODE_ENV:'test' } });
-  expect(output).toContain('Sandbox SQL: 11 checks passed');
+  expect(output).toContain('Sandbox SQL: 12 checks passed');
 });
 it('uses actual session starts, terminal stop/abort/duration endpoints, never sandbox creation', () => {
   expect(SANDBOX_CREDITS_PER_HOUR).toBe(0.5);
@@ -70,4 +70,19 @@ it('preserves rejected registration funding classification without treating prov
   await expect(registerSandboxBilling('synthetic',{kind:'requirement',id:randomUUID()},db)).rejects.toMatchObject({code:'insufficient_credits'});
   const sandbox={name:'synthetic',listSessions:jest.fn().mockRejectedValue({code:'P0001',message:'Sandbox billing requires available credits'})};
   await expect(reconcileSandboxBilling(sandbox as unknown as Sandbox,db)).rejects.toMatchObject({code:'reconciliation_pending'});
+});
+
+it.each([
+  [{success:false,outcome:'insufficient_credits'},null,'insufficient_credits'],
+  [{success:false,outcome:'unknown'},null,'reconciliation_pending'],
+  [{outcome:'insufficient_credits'},null,'reconciliation_pending'],
+  [{success:false,outcome:'insufficient_credits'},{code:'XX000',message:'technical failure'},'reconciliation_pending'],
+] as const)('handles structured later-page rejection without completing history %#',async(data,error,code)=>{
+  const listSessions=jest.fn()
+    .mockResolvedValueOnce({sessions:[],pagination:{next:'page-2'}})
+    .mockResolvedValueOnce({sessions:[],pagination:{next:null}});
+  const db={rpc:jest.fn().mockResolvedValueOnce({data:{success:true},error:null}).mockResolvedValueOnce({data,error})};
+  await expect(reconcileSandboxBilling({name:'synthetic',listSessions} as unknown as Sandbox,db)).rejects.toMatchObject({code});
+  expect(db.rpc).toHaveBeenCalledTimes(2);
+  expect(db.rpc).not.toHaveBeenCalledWith('complete_sandbox_billing_observation',expect.anything());
 });

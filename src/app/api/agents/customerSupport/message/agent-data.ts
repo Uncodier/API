@@ -29,7 +29,7 @@ async function findActiveAgentByRole(siteId: string, role: string): Promise<{age
     
     if (error) {
       console.error(`Error al buscar agente con role "${role}":`, error);
-      return null;
+      throw error;
     }
     
     if (!data || data.length === 0) {
@@ -44,7 +44,7 @@ async function findActiveAgentByRole(siteId: string, role: string): Promise<{age
     };
   } catch (error) {
     console.error(`Error al buscar agente con role "${role}":`, error);
-    return null;
+    throw error;
   }
 }
 
@@ -53,7 +53,7 @@ export async function findActiveCustomerSupportAgent(siteId: string): Promise<{a
 }
 
 // Función para obtener información completa del agente
-export async function getAgentInfo(agentId: string): Promise<{ user_id: string, site_id?: string } | null> {
+export async function getAgentInfo(agentId: string): Promise<{ user_id: string, site_id?: string, status?: string } | null> {
   try {
     if (!isValidUUID(agentId)) {
       console.error(`ID de agente no válido: ${agentId}`);
@@ -65,13 +65,13 @@ export async function getAgentInfo(agentId: string): Promise<{ user_id: string, 
     const { data, error } = await supabaseAdmin
       .schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')
       .from('agents')
-      .select('id, user_id, site_id')
+      .select('id, user_id, site_id, status')
       .eq('id', agentId)
       .single();
     
     if (error) {
       console.error('Error al obtener información del agente:', error);
-      return null;
+      throw error;
     }
     
     if (!data) {
@@ -83,11 +83,12 @@ export async function getAgentInfo(agentId: string): Promise<{ user_id: string, 
     
     return {
       user_id: data.user_id,
-      site_id: data.site_id
+      site_id: data.site_id,
+      status: data.status
     };
   } catch (error) {
     console.error('Error al obtener información del agente:', error);
-    return null;
+    throw error;
   }
 }
 

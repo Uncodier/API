@@ -1,65 +1,19 @@
 import { ProcessorInitializer } from '@/lib/agentbase';
-import { getCommandById as dbGetCommandById } from '@/lib/database/command-db';
-import { DatabaseAdapter } from '@/lib/agentbase/adapters/DatabaseAdapter';
 import { isValidUUID } from './agent-data';
-import { supabaseAdmin } from '@/lib/database/supabase-client';
 // Inicializar el agente y obtener el servicio de comandos
 const processorInitializer = ProcessorInitializer.getInstance();
 processorInitializer.initialize();
 export const commandService = processorInitializer.getCommandService();
 
-// Función para obtener el UUID de la base de datos para un comando
+// Only explicit identities resolved by CommandService are admissible. Never
+// infer identity from task/user/status or the most recently created command.
 export async function getCommandDbUuid(internalId: string): Promise<string | null> {
+  if (isValidUUID(internalId)) return internalId;
   try {
-    // Intentar obtener el comando
-    const command = await commandService.getCommandById(internalId);
-    
-    // Verificar metadata
-    if (command && command.metadata && command.metadata.dbUuid) {
-      if (isValidUUID(command.metadata.dbUuid)) {
-        console.log(`🔑 UUID encontrado en metadata: ${command.metadata.dbUuid}`);
-        return command.metadata.dbUuid;
-      }
-    }
-    
-    // Buscar en el mapa de traducción interno del CommandService
-    // (esta es una solución de respaldo)
-    try {
-      // Esto es un hack para acceder al mapa de traducción interno
-      // @ts-ignore - Accediendo a propiedades internas
-      const idMap = (commandService as any).idTranslationMap;
-      if (idMap && idMap.get && idMap.get(internalId)) {
-        const mappedId = idMap.get(internalId);
-        if (isValidUUID(mappedId)) {
-          console.log(`🔑 UUID encontrado en mapa interno: ${mappedId}`);
-          return mappedId;
-        }
-      }
-    } catch (err) {
-      console.log('No se pudo acceder al mapa de traducción interno');
-    }
-    
-    // Buscar en la base de datos directamente por algún campo que pueda relacionarse
-    if (command) {
-      const { data, error } = await supabaseAdmin
-        .schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')
-        .from('commands')
-        .select('id')
-        .eq('task', command.task)
-        .eq('user_id', command.user_id)
-        .eq('status', command.status)
-        .order('created_at', { ascending: false })
-        .limit(1);
-      
-      if (!error && data && data.length > 0) {
-        console.log(`🔑 UUID encontrado en búsqueda directa: ${data[0].id}`);
-        return data[0].id;
-      }
-    }
-    
-    return null;
-  } catch (error) {
-    console.error('Error al obtener UUID de base de datos:', error);
+    const command = await commandService.getCommandById(internalId, { fresh: true });
+    const dbUuid = command?.metadata?.dbUuid;
+    return typeof dbUuid === 'string' && isValidUUID(dbUuid) ? dbUuid : null;
+  } catch {
     return null;
   }
 }

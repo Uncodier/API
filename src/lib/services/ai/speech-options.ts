@@ -29,5 +29,15 @@ export function normalizeSpeechVoice(value: unknown): TTSVoice | undefined {
 
 /** Language guides the agent's text, not an unsupported Azure synthesis parameter. */
 export function normalizeSpeechLanguage(value: unknown): TTSLanguage | undefined {
+  // Stored site/lead preferences use BCP-47 locales. Preserve the locale at
+  // the caller for text preparation, but use the supported base language here.
+  if (typeof value === 'string' && value.trim().includes('-')) {
+    try {
+      const [locale] = Intl.getCanonicalLocales(value.trim());
+      return normalizeSelection(locale.split('-')[0], TTS_LANGUAGES, 'language');
+    } catch {
+      throw new TTSServiceError('Unsupported speech language; choose auto or a listed language', 400);
+    }
+  }
   return normalizeSelection(value, TTS_LANGUAGES, 'language');
 }

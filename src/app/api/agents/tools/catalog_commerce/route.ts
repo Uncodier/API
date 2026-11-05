@@ -36,6 +36,10 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { action, resource = 'item' } = body;
 
+    if (action === 'batch_update') {
+      return NextResponse.json({ success: false, error: 'Catalog batch is only available through the owner/admin-scoped administrative router' }, { status: 403 });
+    }
+
     if (!action) {
       return NextResponse.json({ success: false, error: 'Missing action' }, { status: 400 });
     }

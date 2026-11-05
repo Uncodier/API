@@ -28,6 +28,7 @@ try {
   await migration('20261003230002_classified_credit_operations.sql');
   await migration('20261005230000_exact_credit_accounting_precision.sql');
   await migration('20261014230002_sandbox_session_billing.sql');
+  await migration('20261106104500_sandbox_insufficient_funding_outcome.sql');
   await check('registration trusts persisted owner, rejects forged sites and name collision', async () => {
     await assert.rejects(() => rpc('register_sandbox_billing',[sandbox,'harness',owner,other]), /ownership mismatch/);
     await assert.rejects(() => rpc('register_sandbox_billing',[sandbox,'harness',randomUUID(),site]), /ownership mismatch/);
@@ -63,11 +64,17 @@ try {
     close((await bill([ticking],floor+4*3600000+7000)).credits_charged,0);
   });
   await check('insufficient credits leaves all intervals retryable, no partial ledger or watermark', async () => {
-    await db.query('UPDATE billing SET legacy_credits_available=0,plan_credits_available=0,purchased_credits_available=0,credits_available=0 WHERE site_id=$1',[site]);
+    await db.query('UPDATE billing SET legacy_credits_available=0.5,plan_credits_available=0,purchased_credits_available=0,credits_available=0.5 WHERE site_id=$1',[site]);
+    const earlier = session(randomUUID(),floor,floor+3600000);
     const unpaid = session(randomUUID(),floor+3600000,floor+2*3600000);
     const before = await one('select count(*)::int n from credit_transactions');
-    await assert.rejects(() => bill([unpaid]),/requires available credits/);
+    const balance = await one('select * from billing where site_id=$1',[site]);
+    const resource = await one('select * from sandbox_billing_resources where sandbox_name=$1',[sandbox]);
+    assert.deepEqual(await bill([earlier,unpaid]),{success:false,outcome:'insufficient_credits',credits_charged:0});
+    assert.deepEqual(await one('select * from billing where site_id=$1',[site]),balance);
+    assert.deepEqual(await one('select * from sandbox_billing_resources where sandbox_name=$1',[sandbox]),resource);
     assert.equal((await one('select count(*)::int n from credit_transactions')).n,before.n);
+    assert.equal((await one('select count(*)::int n from sandbox_billing_sessions where session_id=$1',[earlier.id])).n,0);
     assert.equal((await one('select count(*)::int n from sandbox_billing_sessions where session_id=$1',[unpaid.id])).n,0);
     await rpc('add_credits',[site,1,'credit_restore','Synthetic replenishment',{}]);
     close((await bill([unpaid])).credits_charged,0.5);
@@ -87,6 +94,11 @@ try {
     assert.equal((await rpc('register_sandbox_billing',['requirement-vm','harness',nextOwner,site])).registered_at,r.registered_at);
   });
   await check('RLS and RPC execution are service-only', async () => {
+    const acl = await one(`select count(*)::int n from pg_proc p,
+      lateral aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a
+      where p.oid='public.bill_sandbox_sessions(text,jsonb,timestamptz)'::regprocedure
+      and a.grantee=0 and a.privilege_type='EXECUTE'`);
+    assert.equal(acl.n,0);
     for (const role of ['anon','authenticated']) {
       await db.exec(`SET ROLE ${role}`);
       await assert.rejects(() => bill([first]),/permission denied/);
@@ -117,6 +129,23 @@ try {
     assert.equal((await one('select count(*)::int n from sandbox_billing_sessions where session_id=$1',[interval.id])).n,0);
     await db.exec('DROP TRIGGER fail_ledger ON credit_transactions');
     close((await bill([interval])).credits_charged,0.5/3600);
+  });
+  await check('unknown deduction failures and downstream sentinel collisions propagate',async()=>{
+    const interval=session(randomUUID(),floor,floor+1000);
+    for (const body of [
+      `RETURN jsonb_build_object('success',false,'error','Billing record not found');`,
+      `RETURN NULL;`,
+      `RAISE EXCEPTION 'sandbox_batch_insufficient_funding' USING ERRCODE='SB001';`,
+      `RAISE EXCEPTION 'Sandbox billing requires available credits' USING ERRCODE='P0001';`,
+    ]) {
+      await db.exec('BEGIN');
+      try {
+        await db.exec(`CREATE OR REPLACE FUNCTION public.deduct_credits(p_site_id uuid,p_amount numeric,p_type text,p_description text,p_metadata jsonb DEFAULT '{}'::jsonb)
+          RETURNS jsonb LANGUAGE plpgsql AS $$ BEGIN ${body} END $$;`);
+        await assert.rejects(()=>bill([interval]),/Sandbox credit deduction failed|sandbox_batch_insufficient_funding|Sandbox billing requires available credits/);
+      } finally { await db.exec('ROLLBACK'); }
+      assert.equal((await one('select count(*)::int n from sandbox_billing_sessions where session_id=$1',[interval.id])).n,0);
+    }
   });
   await check('retirement requires full settled observation, survives delete response loss and reactivates safely',async()=>{
     const name='retire-vm';

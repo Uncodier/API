@@ -23,6 +23,9 @@ again, so an activation that succeeded remotely but timed out locally can recove
   the same channel reuses it. Provider activation must succeed before connected.
 - Email: sender setup activates when its matching domain is verified. DNS
   verification, channel activation, and receiving remain separate states.
+  Setup requires an existing email connection with the exact domain association
+  established by the site-authorized domain flow. Arbitrary client domain IDs
+  cannot create a sender. The association is pinned through subsequent writes.
 - Instagram: activation/recovery works for an already persisted, sender-backed
   Instagram connection. Zavu's partner invitation API supports only
   `whatsapp_waba` and `messenger`; this change does not add Instagram onboarding.
@@ -60,8 +63,23 @@ suspension are not cleared by activation recovery.
 Missing webhook-secret initialization uses the existing durable provider-event
 claim RPCs to serialize webhook/polling workers. Those RPCs must already be
 deployed (they are also required by the current webhook receiver).
+Direct email, Telegram, and SMS setup and explicit email activation use the same
+initializer before declaring readiness; an active provider channel alone does
+not prove that inbound webhook verification is configured.
 An ambiguous webhook-secret rotation is held for reconciliation, not automatically
 repeated: aborting a timed-out request does not prove that the provider cancelled it.
+
+Sender creation offers an awaited `onCreated` callback immediately after the
+provider POST succeeds, before the follow-up webhook PATCH. Email, Telegram, and
+SMS persist the sender identity and any one-time signing secret there. A later
+webhook failure can therefore retry the same saved sender. This does not provide
+a distributed transaction: a provider POST timeout without a returned identity,
+or a database failure while saving that identity, still requires reconciliation.
+
+Domain webhook writes also compare the entire channels snapshot and retry at
+most three times. They preserve concurrent sender/secret/status changes and do
+not recreate deleted connections or transfer updates to replaced associations.
+Activation resumes only from the canonical saved connection state.
 
 ## Offline validation
 

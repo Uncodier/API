@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createSender, connectTelegram, attachSenderToAgent, upsertChannelConnection, ensureSenderWebhook, getChannelConnection, requireZavuSiteManager, ensureSenderChannelActive, isChannelActivationBlocked } from "@/lib/services/zavu";
+import { prepareActivationWebhookSecret } from "@/lib/services/zavu/activation-webhook-secret";
 import { encryptToken } from "@/lib/utils/token-encryption";
 import { patchActivationConnection, requireActivationLicense } from "@/lib/services/zavu/activation-persistence";
 
@@ -40,30 +41,28 @@ export async function POST(request: NextRequest) {
     if (existing) await requireActivationLicense(siteId, existingChannelId!, {
       type: "telegram", senderId: existing.zavu_sender_id || null,
     });
+    const saveCreated = async (created: Awaited<ReturnType<typeof createSender>>) => {
+      if (!created?.id) throw new Error("Invalid sender");
+      senderId = created.id;
+      const pending = {
+        type: "telegram", name: name || existing?.name || "Telegram Channel",
+        status: existing?.status === "connected" ? "connected" : "in_progress",
+        zavu_sender_id: created.id, metadata: { activation_pending: true, ...(created.webhook?.secret ? { zavu_webhook_secret: encryptToken(created.webhook.secret) } : {}) },
+      };
+      if (existing) {
+        channelId = existingChannelId!;
+        await patchActivationConnection(siteId, channelId, pending, {
+          type: "telegram", senderId: existing.zavu_sender_id || null,
+        });
+      } else {
+        ({ channelId } = await upsertChannelConnection(siteId, existingChannelId, pending));
+      }
+    };
     let sender = existing?.zavu_sender_id
       ? { id: existing.zavu_sender_id } as Awaited<ReturnType<typeof createSender>>
-      : await createSender({ name: name || `Telegram ${siteId}`, enableSmsOneway: true });
-    if (!sender?.id) throw new Error("Invalid sender");
-    senderId = sender.id;
-    // Save the remote identity before further provider operations so retries reuse it.
-    const pending = {
-      type: "telegram",
-      name: name || existing?.name || "Telegram Channel",
-      status: existing?.status === "connected" ? "connected" : "in_progress",
-      zavu_sender_id: sender.id,
-      metadata: {
-        activation_pending: true,
-        ...(sender.webhook?.secret ? { zavu_webhook_secret: encryptToken(sender.webhook.secret) } : {}),
-      },
-    };
-    if (existing) {
-      channelId = existingChannelId!;
-      await patchActivationConnection(siteId, channelId, pending, {
-        type: "telegram", senderId: existing.zavu_sender_id || null,
-      });
-    } else {
-      ({ channelId } = await upsertChannelConnection(siteId, existingChannelId, pending));
-    }
+      : await createSender({ name: name || `Telegram ${siteId}`, enableSmsOneway: true }, { onCreated: saveCreated });
+    if (!sender?.id || (senderId && sender.id !== senderId)) throw new Error("Invalid sender");
+    if (existing?.zavu_sender_id) await saveCreated(sender);
     const expected = { senderId: sender.id, type: "telegram" };
     if (existing?.zavu_sender_id) {
       sender = await ensureSenderWebhook(sender.id);
@@ -79,8 +78,10 @@ export async function POST(request: NextRequest) {
         zavu_webhook_events: sender.webhook?.events || [],
       },
     }, expected);
+    await prepareActivationWebhookSecret(siteId, channelId!, expected, sender.webhook?.secret);
     await requireActivationLicense(siteId, channelId!, expected);
-    await ensureSenderChannelActive(sender.id, "telegram");
+    const activation = await ensureSenderChannelActive(senderId!, "telegram");
+    if (activation?.sender?.id !== senderId || !activation.sender.channels?.includes("telegram")) throw new Error("Invalid activation sender");
     try {
       await attachSenderToAgent(sender.id);
     } catch {

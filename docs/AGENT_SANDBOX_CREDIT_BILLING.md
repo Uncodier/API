@@ -110,11 +110,34 @@ intent, but cannot forgive an unexplained disappearance or unpaid VM time.
 
 ## Deployment
 
-Apply the forward migrations in order before deploying runtime code:
+The original accounting prerequisites are these migrations, in order:
 
 1. `20261014230000_openrouter_actual_cost_ledger.sql`
 2. `20261014230001_agent_actual_cost_settlement.sql`
 3. `20261014230002_sandbox_session_billing.sql`
+
+For the expected-result update, **deploy the updated API first**, then have an
+authorized operator apply `20261106104500_sandbox_insufficient_funding_outcome.sql`.
+The API accepts both the legacy exact P0001 rejection and the new structured
+result. Applying SQL first leaves older API instances classifying the structured
+funding result as generic reconciliation pending instead of insufficient credits.
+
+This new migration is required to stop expected insufficient funding from
+surfacing as PostgreSQL P0001. It has **not been applied live** by this change.
+It replaces only the service-only billing function; it does not change balances,
+tariffs, or historical records. The caller remains compatible with the old exact
+P0001 rejection during rollout. Deployed SQL must be checked against the local
+definition before an operator applies the migration; offline tests do not verify
+deployment state.
+
+The function returns `success:false, outcome:'insufficient_credits'` only after
+rolling back the **entire RPC batch** in a subtransaction, including earlier
+session deductions, ledger inserts, terminal markers, and watermarks. Technical,
+identity, and unknown deduction failures still raise. Provider pages are separate
+RPC transactions: earlier successful pages remain committed and idempotent;
+a later-page failure never records full-history completion or authorizes retirement.
+Expected funding pending remains degraded and unpaid; this result does not mark
+reconciliation healthy, replenish credits, or automatically resume paused work.
 
 Historical reservation charges are not automatically refunded: their original
 bucket/actual-cost evidence was not recorded. Audit them separately; do not infer

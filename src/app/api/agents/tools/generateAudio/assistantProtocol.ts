@@ -32,7 +32,7 @@ export function generateAudioTool(
 ) {
   return {
     name: 'generate_audio',
-    description: 'Convert written text into speech or a voiceover through Azure directly. Choose a listed voice and language to suit the request unless the user selected them. Write the spoken text in the selected language before calling this tool; Azure detects language from that text and does not translate it. Auto leaves the choice to the request/context (voice falls back to the configured voice if omitted). Returns a URL to the generated audio file. This is speech synthesis, not a music-generation tool.',
+    description: 'Convert written text into speech or a voiceover through Azure directly. Resolve spoken language in this order: explicit customer request, current customer conversation (including available audio transcripts), lead language preference, site language. Never infer customer language from HTTP Accept-Language or internal instructions. Preserve the requested regional wording in the text. Write the complete spoken text in that language BEFORE calling this tool; Azure detects language from text and does not translate it or force an accent. Pass only intended spoken content, with natural punctuation, not markdown or language instructions. Honor an explicit voice selection; otherwise keep the previous conversation voice when known, or omit voice to use the configured voice. Returns a URL to the generated audio file. This is speech synthesis, not a music-generation tool.',
     parameters: {
       type: 'object',
       properties: {
@@ -49,7 +49,7 @@ export function generateAudioTool(
           type: 'string',
           enum: ['auto', ...TTS_VOICES],
           default: 'auto',
-          description: 'Select an Azure multilingual voice: alloy, echo, fable, onyx, nova or shimmer. Honor an explicit user choice; otherwise choose one appropriate for the request. Auto or omission uses the configured voice if no choice is made.'
+          description: 'Select an Azure multilingual voice: alloy, echo, fable, onyx, nova or shimmer. Honor an explicit user choice; otherwise keep the previous conversation voice when known. Auto or omission uses the configured voice. Do not change voices simply because the language changes.'
         },
         language: {
           type: 'string',
@@ -100,6 +100,13 @@ export function generateAudioTool(
         console.log(`[GenerateAudioTool] 📝 Text: ${args.text.substring(0, 100)}...`);
         console.log(`[GenerateAudioTool] 🏢 Site ID: ${site_id}`);
         console.log(`[GenerateAudioTool] 🤖 Provider: ${provider}`);
+        console.log('[GenerateAudioTool] Speech selection', {
+          language: speechOptions.language ?? 'auto',
+          requested_language: args.language ?? 'auto',
+          language_source: speechOptions.language ? 'tool_argument' : 'text_autodetection',
+          voice: speechOptions.voice,
+          model: speechOptions.deployment,
+        });
 
         const apiUrl = `${process.env.NEXT_PUBLIC_API_SERVER_URL || 'http://localhost:3000'}/api/ai/audio`;
         
@@ -195,6 +202,9 @@ export function generateAudioTool(
             format: fileExt,
             voice: speechOptions.voice,
             language: speechOptions.language ?? 'auto',
+            requested_language: args.language ?? 'auto',
+            language_source: speechOptions.language ? 'tool_argument' : 'text_autodetection',
+            model: speechOptions.deployment,
             generated_at: new Date().toISOString()
           },
           message: `Successfully generated audio using ${provider}. Audio is saved and ready to use. URL: ${publicUrl}`

@@ -1,3 +1,6 @@
+import { normalizeSupportAttachments, supportAttachmentContext } from '@/lib/services/customer-support-attachments';
+import { supportAudioContext } from '@/lib/services/customer-support-audio';
+import { supportHistoricalAudioContext } from '@/lib/services/customer-support-audio-history';
 import { ConversationService } from '@/lib/services/conversation-service';
 import { getLeadInfo, isValidUUID } from './agent-data';
 import { appendLeadRecordToContext } from '@/app/api/agents/customerSupport/lead-record';
@@ -5,17 +8,26 @@ import { appendActivePromotionsToContext } from '@/lib/promotions/context';
 import { getCompletedChannelMessageGuidance } from '@/lib/services/workflow-robot/channel-message';
 import { isInternalServiceRequest } from '@/lib/security/request-rate-limit';
 import { getCustomerSupportPolicies } from '@/app/api/agents/customerSupport/support-policies';
+import { getSupportLanguagePolicy } from './support-language';
 export async function buildSupportContext(input: any) {
-const { request, message, name, email, phone, requestTimestamp, clientIP, userAgent, acceptLanguage, effectiveOrigin, effectiveLeadId, effectiveConversationId, effectiveSiteId, origin_message_id, channel_guidance_run_plan_ids, website_chat_origin } = input;
+let leadLanguage: unknown;
+const { request, message, name, email, phone, requestTimestamp, clientIP, userAgent, effectiveOrigin, effectiveLeadId, effectiveConversationId, effectiveSiteId, origin_message_id, channel_guidance_run_plan_ids, website_chat_origin } = input;
     // Retrieve conversation history if a conversation ID is provided
-    let contextMessage = `${message}`;
+    let contextMessage = `${message}` + supportAttachmentContext(input.attachments);
+    contextMessage += await supportAudioContext({
+      attachments: normalizeSupportAttachments(input.attachments), siteId: effectiveSiteId,
+      conversationId: effectiveConversationId, messageId: origin_message_id,
+    });
+    if (/^\[(audio|voice|voice_note)\]$/i.test(message.trim()) && !normalizeSupportAttachments(input.attachments).length) {
+      contextMessage += '\nAudio transcription unavailable: no downloadable audio reference. Ask for a resend or text; never invent its contents.\n';
+    }
     
     // Agregar información del request al contexto
     contextMessage += `\n\nRequest Information:`;
     contextMessage += `\nTimestamp: ${requestTimestamp}`;
     contextMessage += `\nClient IP: ${clientIP}`;
     contextMessage += `\nUser Agent: ${userAgent}`;
-    contextMessage += `\nLanguage: ${acceptLanguage}`;
+    // HTTP Accept-Language is not customer conversation language evidence.
     if (effectiveOrigin) {
       contextMessage += `\nChannel: ${effectiveOrigin}`;
     }
@@ -26,6 +38,7 @@ const { request, message, name, email, phone, requestTimestamp, clientIP, userAg
       const leadInfo = await getLeadInfo(effectiveLeadId);
       
       if (leadInfo) {
+        leadLanguage = leadInfo.language;
         contextMessage += "\n\nLead Information:";
         contextMessage += `\nLead ID: ${leadInfo.id}`;
         contextMessage += `\nName: ${leadInfo.name || 'N/A'}`;
@@ -122,6 +135,15 @@ const { request, message, name, email, phone, requestTimestamp, clientIP, userAg
         });
         
         if (filteredMessages.length > 0) {
+          // History is read-only: never re-download or charge for older notes.
+          // Bound lookups across the whole history, retaining message association.
+          let historyAttachmentBudget = 10;
+          for (const historical of [...filteredMessages].reverse()) {
+            if (!['user', 'visitor'].includes(historical.role)) continue;
+            const attachments = (historical.attachments || []).slice(0, historyAttachmentBudget);
+            historyAttachmentBudget -= attachments.length;
+            historical.content += await supportHistoricalAudioContext({ siteId: effectiveSiteId, attachments });
+          }
           const conversationHistory = ConversationService.formatConversationHistoryForContext(filteredMessages);
           contextMessage = `${contextMessage}\n\nConversation History:\n${conversationHistory}\n\nConversation ID: ${effectiveConversationId}`;
           console.log(`📜 Historial de conversación recuperado con ${filteredMessages.length} mensajes`);
@@ -156,6 +178,7 @@ const { request, message, name, email, phone, requestTimestamp, clientIP, userAg
       }
     }
     contextMessage += getCustomerSupportPolicies();
+    contextMessage += await getSupportLanguagePolicy({ siteId: effectiveSiteId, leadLanguage });
 
 
 return contextMessage;

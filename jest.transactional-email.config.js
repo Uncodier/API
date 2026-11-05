@@ -3,6 +3,7 @@ export default {
   testEnvironment: 'node',
   testMatch: [
     '<rootDir>/src/lib/services/email/__tests__/transactional-email*.test.ts',
+    '<rootDir>/src/lib/services/email/__tests__/agentmail-tracking-parent.test.ts',
     '<rootDir>/src/app/api/auth/send-email-hook/__tests__/*.test.ts',
     '<rootDir>/src/app/api/agents/tools/system_notification/__tests__/*.test.ts',
     '<rootDir>/src/app/api/cron/shared/__tests__/harness-support.test.ts',

@@ -11,6 +11,7 @@ import { generateSupportReply } from './generate';
 import { resolveSupportResults } from './resolve-results';
 import { getCommandById } from '@/lib/database/command-db';
 import { saveMessages } from './save-messages';
+import { disabledSupportNote } from './disabled-support';
 import { corsHeaders } from './cors';
 import { ensureCommentConversation, bindCommentAgent } from '@/lib/services/social-comments/conversations';
 import { SocialCommentError } from '@/lib/services/social-comments/metadata';
@@ -228,6 +229,7 @@ export async function POST(request: Request) {
     // Buscar agente de soporte al cliente activo si no se proporciona un agent_id
     let effectiveAgentId = agentId;
     let agentUserId: string | null = null;
+    let agentDisabled = false;
     
     if (!effectiveAgentId) {
       if (effectiveSiteId) {
@@ -240,6 +242,7 @@ export async function POST(request: Request) {
         } else {
           // Usar un valor predeterminado como último recurso
           effectiveAgentId = 'default_customer_support_agent';
+          agentDisabled = true;
           console.log(`⚠️ No se encontró un agente activo, usando valor predeterminado: ${effectiveAgentId}`);
         }
       } else {
@@ -252,6 +255,7 @@ export async function POST(request: Request) {
       const agentInfo = await getAgentInfo(effectiveAgentId);
       if (agentInfo) {
         agentUserId = agentInfo.user_id;
+        agentDisabled = !!agentInfo.status && agentInfo.status !== 'active';
         // Si no tenemos site_id, usamos el del agente
         if (!effectiveSiteId && agentInfo.site_id) {
           effectiveSiteId = agentInfo.site_id;
@@ -277,10 +281,31 @@ export async function POST(request: Request) {
     
     console.log(`Creando comando para agente: ${effectiveAgentId}, usuario: ${effectiveUserId}, site: ${effectiveSiteId || 'N/A'}`);
     
-    const contextMessage = await buildSupportContext({ request, message, name, email, phone, requestTimestamp, clientIP, userAgent, acceptLanguage, effectiveOrigin, effectiveLeadId, effectiveConversationId, effectiveSiteId, origin_message_id, channel_guidance_run_plan_ids, website_chat_origin });
+    if (agentDisabled) {
+      const denied = await checkZavuSupportAdmission(request, body);
+      if (denied) return denied;
+      const note = await disabledSupportNote(effectiveSiteId);
+      const saved = await saveMessages(effectiveUserId, message, note, effectiveConversationId,
+        undefined, effectiveLeadId || undefined, visitor_id,
+        isValidUUID(effectiveAgentId) ? effectiveAgentId : undefined, effectiveSiteId,
+        undefined, effectiveOrigin || leadOrigin, false, false, false, origin_message_id,
+        channel_delivery, false, inboundCustomData, true);
+      if (!saved) throw new Error('CUSTOMER_SUPPORT_DISABLED_PERSISTENCE_FAILED');
+      return NextResponse.json({ success: true, data: {
+        agent_disabled: true, response_skipped: true,
+        conversation_id: saved.conversationId, lead_id: effectiveLeadId || null, task_id: taskId || null,
+        messages: { user: { content: message, message_id: saved.userMessageId } },
+      } }, { status: 200, headers: corsHeaders(request) });
+    }
+
+    const contextMessage = await buildSupportContext({ attachments: inboundCustomData?.attachments, request, message, name, email, phone, requestTimestamp, clientIP, userAgent, acceptLanguage, effectiveOrigin, effectiveLeadId, effectiveConversationId, effectiveSiteId, origin_message_id, channel_guidance_run_plan_ids, website_chat_origin });
     const deniedZavu = await checkZavuSupportAdmission(request, body);
     if (deniedZavu) return deniedZavu;
-    const generated = await generateSupportReply({ effectiveUserId, effectiveAgentId, effectiveSiteId, effectiveLeadId, contextMessage, agentUserId, request });
+    const generated = await generateSupportReply({ effectiveUserId, effectiveAgentId, effectiveSiteId, effectiveLeadId, contextMessage, agentUserId, request,
+      ...(inboundCustomData?.source === 'zavu_inbound_message' ? {
+        originMessageId: origin_message_id, connectionId: inboundCustomData.connection_id,
+      } : {}),
+    });
     if (generated instanceof Response) return generated;
     const { executedCommand, effectiveDbUuid } = generated;
     const resolved = await resolveSupportResults(executedCommand, async () => {

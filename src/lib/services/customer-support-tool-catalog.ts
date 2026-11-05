@@ -1,3 +1,4 @@
+import { readDocumentTool } from '@/app/api/agents/tools/read_document/assistantProtocol';
 import { calendarBlocksTool } from "@/app/api/agents/tools/calendar_blocks/assistantProtocol";
 import { calendarsTool } from "@/app/api/agents/tools/calendars/assistantProtocol";
 import { catalogCommerceTool } from "@/app/api/agents/tools/catalog_commerce/assistantProtocol";
@@ -434,6 +435,7 @@ export function buildCustomerSupportTools(
   const scopedSiteId = siteId || undefined;
   const nativeTools = [
     skillLookupDefinition(scopedSiteId),
+    readDocumentTool(),
     catalogCommerceTool(scopedSiteId),
     promotionsTool(scopedSiteId),
     reservationsTool(scopedSiteId),

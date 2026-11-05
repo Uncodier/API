@@ -19,6 +19,7 @@
  */
 
 import { EmbeddingsService } from '@/lib/services/embeddings-service';
+import { bindCatalogBatchActor } from '../catalog_commerce/batch-admin-tool';
 import {
   assertToolScopeArgs, canUseToolScreen, guardToolScreen, loadToolScreenAccess,
   ToolScreenAccessDenied, ToolScreenAccessUnavailable, type ToolScreenAccess, type ToolScreenScope,
@@ -195,6 +196,7 @@ function screenAccessFailure(error: ToolScreenAccessDenied | ToolScreenAccessUna
  */
 export function toolsRouterTool(routedTools: RoutedTool[], scope?: ToolScreenScope) {
   scope = scope ? { siteId: scope.siteId, userId: scope.userId } : undefined;
+  routedTools = routedTools.map(tool => bindCatalogBatchActor(tool, scope));
   // Catalog-local cache: one user's filtered catalog must not poison another's
   // semantic search. Only permitted toolIndex entries are returned below.
   let cachedToolEmbeddings: Map<string, number[]> | null = null;
@@ -475,7 +477,7 @@ export function toolsRouterTool(routedTools: RoutedTool[], scope?: ToolScreenSco
         try {
           const result = await tool.execute(callArgs);
           return {
-            success: true,
+            success: result?.success !== false,
             name: tool.name,
             result,
             ...hoistRoutedToolResult(result),

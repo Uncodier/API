@@ -2,6 +2,7 @@
  * Assistant Protocol Wrapper for Catalog Commerce Tool
  */
 import { fetchApiTool } from '@/app/api/agents/tools/utils/fetch-helper';
+import type { BatchUpdateInput } from './handlers/batch-schema';
 
 export type CatalogCommerceResource =
   | 'item'
@@ -14,8 +15,8 @@ export type CatalogCommerceResource =
   | 'item_spec'
   | 'catalog_item_spec';
 
-export interface CatalogCommerceToolParams {
-  action: 'create' | 'list' | 'get' | 'update' | 'delete';
+export interface CatalogCommerceToolParams extends Partial<Pick<BatchUpdateInput, 'item_ids' | 'all_items' | 'changes' | 'taxes' | 'inventory' | 'dry_run' | 'expected_count'>> {
+  action: 'create' | 'list' | 'get' | 'update' | 'delete' | 'batch_update';
   resource?: CatalogCommerceResource;
 
   id?: string;
@@ -209,6 +210,10 @@ export function catalogCommerceTool(current_site_id?: string) {
         throw new Error('Catalog site_id does not match the current site context');
       }
       const site_id = current_site_id || params.site_id;
+
+      if (action === 'batch_update') {
+        throw new Error('Catalog batch requires the administrative router and authenticated owner/admin context');
+      }
 
       if (resource === 'item') {
         if (action === 'list' && !site_id) {

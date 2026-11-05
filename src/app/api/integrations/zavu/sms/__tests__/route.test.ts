@@ -4,6 +4,12 @@ import { POST } from "../route";
 import * as zavu from "@/lib/services/zavu";
 import { patchActivationConnection, requireActivationLicense } from "@/lib/services/zavu/activation-persistence";
 
+import { prepareActivationWebhookSecret } from "@/lib/services/zavu/activation-webhook-secret";
+import { encryptToken } from "@/lib/utils/token-encryption";
+
+jest.mock("@/lib/services/zavu/activation-webhook-secret", () => ({ prepareActivationWebhookSecret: jest.fn() }));
+jest.mock("@/lib/utils/token-encryption", () => ({ encryptToken: jest.fn() }));
+
 jest.mock("@/lib/services/zavu/activation-persistence", () => ({
   patchActivationConnection: jest.fn(), requireActivationLicense: jest.fn(),
 }));
@@ -13,7 +19,6 @@ jest.mock("@/lib/services/zavu", () => ({
   assignNumberToSender: jest.fn(),
   attachSenderToAgent: jest.fn(),
   createSender: jest.fn(),
-  ensureEncryptedSenderWebhookSecret: jest.fn(),
   ensureProjectWebhook: jest.fn(),
   ensureSenderWebhook: jest.fn(),
   getChannelConnection: jest.fn(),
@@ -48,9 +53,13 @@ beforeEach(() => {
   saved = null;
   secret = randomBytes(24).toString("hex");
   mock(zavu.getChannelConnection).mockImplementation(async () => saved);
-  mock(zavu.createSender).mockResolvedValue({ id: senderId, webhook: { secret, events: ["message.inbound"] } });
+  mock(zavu.createSender).mockImplementation(async (_params, options) => {
+    const created = { id: senderId, webhook: { secret, events: ["message.inbound"] } };
+    await options.onCreated(created);
+    return created;
+  });
   mock(zavu.ensureSenderWebhook).mockResolvedValue({ id: senderId, webhook: { events: ["message.inbound"] } });
-  mock(zavu.ensureEncryptedSenderWebhookSecret).mockResolvedValue("encrypted-value");
+  mock(encryptToken).mockReturnValue("encrypted-value");
   mock(zavu.upsertChannelConnection).mockImplementation(async (_site, id, patch) => {
     saved = { ...saved, ...patch, id: id || channelId, metadata: { ...saved?.metadata, ...patch.metadata } };
     return { channelId: saved.id, connection: saved };
@@ -87,7 +96,7 @@ it.each(["sms", "sms_oneway"])("only connects after readback confirms %s members
   expect(await response.json()).toEqual({
     success: true, channelId, senderId, status: "connected", activationPending: false, providerChannelActive: true,
   });
-  expect(zavu.createSender).toHaveBeenCalledWith(expect.objectContaining({ enableSmsOneway: true }));
+  expect(zavu.createSender).toHaveBeenCalledWith(expect.objectContaining({ enableSmsOneway: true }), { onCreated: expect.any(Function) });
   expect(zavu.zavuFetch).toHaveBeenCalledWith("/senders/sender%2F1");
   expect(saved).toMatchObject({ status: "connected", metadata: { activation_pending: false, provider_channel_active: true } });
 });
@@ -156,7 +165,7 @@ it.each([
 });
 
 it.each([
-  "ensureSenderWebhook", "ensureEncryptedSenderWebhookSecret", "updateSender",
+  "ensureSenderWebhook", "updateSender",
   "getOwnedNumbers", "purchaseNumber", "assignNumberToSender", "attachSenderToAgent", "zavuFetch",
 ] as const)("does not connect or leak provider errors when %s fails", async (operation) => {
   saved = { id: channelId, type: "sms", zavu_sender_id: senderId, status: "pending" };
@@ -241,4 +250,55 @@ it("rejects malformed JSON", async () => {
   const response = await POST(new NextRequest("http://localhost/api/integrations/zavu/sms", { method: "POST", body: "{" }));
   expect(response.status).toBe(400);
   expect(zavu.requireZavuSiteManager).not.toHaveBeenCalled();
+});
+it("saves the raw creation secret before webhook PATCH fails and reuses the sender on retry", async () => {
+  mock(zavu.createSender).mockImplementationOnce(async (_params, options) => {
+    await options.onCreated({ id: senderId, webhook: { secret } });
+    expect(saved).toMatchObject({ zavu_sender_id: senderId, status: "in_progress", metadata: { zavu_webhook_secret: "encrypted-value" } });
+    throw new Error(secret);
+  });
+  const failed = await POST(request());
+  expect(failed.status).toBe(502);
+  expect(await failed.json()).toEqual({ error: "Zavu could not complete SMS setup", channelId, senderId });
+  expect(zavu.upsertChannelConnection).toHaveBeenCalledTimes(1);
+  expect(encryptToken).toHaveBeenCalledWith(secret);
+  expect(prepareActivationWebhookSecret).not.toHaveBeenCalled();
+  expect((await POST(request())).status).toBe(200);
+  expect(zavu.createSender).toHaveBeenCalledTimes(1);
+  expect(encryptToken).toHaveBeenCalledTimes(1);
+  expect(prepareActivationWebhookSecret).toHaveBeenCalledWith(siteId, channelId, { type: "sms", senderId }, undefined);
+});
+
+it.each(["encryption", "persistence"])("fails closed when the creation callback fails at %s", async (failure) => {
+  if (failure === "encryption") mock(encryptToken).mockImplementation(() => { throw new Error(secret); });
+  else mock(zavu.upsertChannelConnection).mockRejectedValue(new Error(secret));
+  const response = await POST(request());
+  expect(response.status).toBe(502);
+  expect(await response.text()).not.toContain(secret);
+  expect(saved).toBeNull();
+  expect(zavu.ensureProjectWebhook).not.toHaveBeenCalled();
+  expect(prepareActivationWebhookSecret).not.toHaveBeenCalled();
+  expect(zavu.zavuFetch).not.toHaveBeenCalled();
+});
+
+it("uses compare-and-swap exactly once to attach a created sender to an existing draft", async () => {
+  saved = { id: channelId, type: "sms", status: "pending", zavu_sender_id: null };
+  expect((await POST(request())).status).toBe(200);
+  expect(zavu.upsertChannelConnection).not.toHaveBeenCalled();
+  const identityWrites = mock(patchActivationConnection).mock.calls.filter(([, , patch]) => patch.zavu_sender_id);
+  expect(identityWrites).toHaveLength(1);
+  expect(identityWrites[0]).toEqual([siteId, channelId, expect.objectContaining({ zavu_sender_id: senderId }), { type: "sms", senderId: null }]);
+});
+
+it("does not enable or confirm SMS if missing-secret initialization fails", async () => {
+  saved = { id: channelId, type: "sms", status: "pending", zavu_sender_id: senderId };
+  mock(prepareActivationWebhookSecret).mockRejectedValue(new Error(secret));
+  const response = await POST(request());
+  expect(response.status).toBe(502);
+  expect(await response.text()).not.toContain(secret);
+  expect(zavu.ensureSenderWebhook).toHaveBeenCalledWith(senderId);
+  expect(prepareActivationWebhookSecret).toHaveBeenCalledWith(siteId, channelId, { type: "sms", senderId }, undefined);
+  expect(zavu.updateSender).not.toHaveBeenCalled();
+  expect(zavu.zavuFetch).not.toHaveBeenCalled();
+  expect(saved.status).toBe("in_progress");
 });

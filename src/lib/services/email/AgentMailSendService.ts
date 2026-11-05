@@ -76,8 +76,10 @@ export class AgentMailSendService {
           .eq('id', trackingId);
           
         htmlContent = EmailTrackingService.injectTracking(htmlContent, trackingId);
-      } else {
-        // Si no hay trackingId, creamos uno nuevo (comportamiento original)
+      } else if (conversation_id?.trim()) {
+        // Tracking messages are children of conversations. Standalone email is
+        // supported, but must not manufacture an orphan messages row. It still
+        // has the provider receipt and synced_objects record below (like SMTP).
         const { data: newMessage, error: msgError } = await supabaseAdmin
           .from('messages')
           .insert([{

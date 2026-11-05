@@ -16,12 +16,15 @@ const zavu = {
 };
 
 jest.unstable_mockModule("@/lib/services/zavu", () => zavu);
+const prepareActivationWebhookSecret = mockFunction();
+jest.unstable_mockModule("@/lib/services/zavu/activation-webhook-secret", () => ({ prepareActivationWebhookSecret }));
 const patchActivationConnection = mockFunction();
 const requireActivationLicense = mockFunction();
 jest.unstable_mockModule("@/lib/services/zavu/activation-persistence", () => ({
   patchActivationConnection, requireActivationLicense,
 }));
 beforeEach(() => {
+  prepareActivationWebhookSecret.mockReset().mockResolvedValue(undefined);
   patchActivationConnection.mockReset();
   requireActivationLicense.mockReset();
   patchActivationConnection.mockImplementation(async (site, id, patch) => {
@@ -46,8 +49,8 @@ describe("POST /api/integrations/zavu/channels/email", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     zavu.requireZavuSiteManager.mockResolvedValue(undefined);
-    zavu.getChannelConnection.mockResolvedValue(null);
-    zavu.createSender.mockResolvedValue({
+    zavu.getChannelConnection.mockResolvedValue({ type: "email", metadata: { email_domain_id: "domain_1" } });
+    zavu.createSender.mockImplementation(async (_params, options) => { const created = {
       id: "snd_1",
       channels: [],
       webhook: {
@@ -56,7 +59,7 @@ describe("POST /api/integrations/zavu/channels/email", () => {
         active: true,
         secret: "whsec_1",
       },
-    });
+    }; await options?.onCreated(created); return created; });
     zavu.attachSenderToAgent.mockResolvedValue(null);
     zavu.upsertChannelConnection.mockResolvedValue({
       channelId: "channel_1",
@@ -350,7 +353,7 @@ describe("Email setup automatic activation", () => {
     saved = { type: "email", metadata: { email_domain_id: "domain_1", domain_status: "verified" } };
     zavu.requireZavuSiteManager.mockResolvedValue(undefined);
     zavu.getChannelConnection.mockImplementation(async () => saved);
-    zavu.createSender.mockResolvedValue({ id: "snd_1", channels: [] });
+    zavu.createSender.mockImplementation(async (_params, options) => { const created = { id: "snd_1", channels: [] }; await options?.onCreated(created); return created; });
     zavu.updateSender.mockResolvedValue({ id: "snd_1", channels: [] });
     zavu.ensureSenderWebhook.mockResolvedValue({ id: "snd_1" });
     zavu.ensureSenderChannelActive.mockResolvedValue({ sender: { id: "snd_1", channels: ["email"] } });
@@ -421,8 +424,8 @@ describe("Email setup automatic activation", () => {
 
   it("uses existing-only CAS for the initial sender identity and preserves concurrent deletion", async () => {
     patchActivationConnection.mockRejectedValueOnce(new Error("Deleted"));
-    expect((await POST(setupRequest())).status).toBe(500);
-    expect(patchActivationConnection).toHaveBeenCalledWith("site_1", "channel_1", expect.objectContaining({ zavu_sender_id: "snd_1" }), { type: "email", senderId: null });
+    expect((await POST(setupRequest())).status).toBe(502);
+    expect(patchActivationConnection).toHaveBeenCalledWith("site_1", "channel_1", expect.objectContaining({ zavu_sender_id: "snd_1" }), { type: "email", emailDomainId: "domain_1", senderId: null });
     expect(zavu.upsertChannelConnection).not.toHaveBeenCalled();
     expect(zavu.ensureSenderChannelActive).not.toHaveBeenCalled();
   });
@@ -452,4 +455,43 @@ describe("Email setup automatic activation", () => {
     expect(saved.status).toBe("connected");
     expect(patchActivationConnection.mock.calls.some((call) => call[2].status === "in_progress")).toBe(false);
   });
+  it.each([null, {}, { email_domain_id: "" }, { email_domain_id: " " }, { email_domain_id: "foreign" }])("rejects untrusted domain mapping %j before writes", async (metadata) => {
+    saved = metadata === null ? null : { type: "email", metadata };
+    expect((await POST(setupRequest())).status).toBe(metadata === null ? 404 : 409);
+    expect(zavu.createSender).not.toHaveBeenCalled(); expect(zavu.updateSender).not.toHaveBeenCalled();
+    expect(zavu.ensureSenderChannelActive).not.toHaveBeenCalled();
+  });
+  it.each([false, true])("initializes missing webhook secret and fails closed: %s", async (fail) => {
+    saved.zavu_sender_id = "snd_1";
+    if (fail) prepareActivationWebhookSecret.mockRejectedValueOnce(new Error("initializer failed"));
+    expect((await POST(setupRequest())).status).toBe(fail ? 502 : 200);
+    expect(prepareActivationWebhookSecret).toHaveBeenCalledWith("site_1", "channel_1", { type: "email", emailDomainId: "domain_1", senderId: "snd_1" }, undefined);
+    expect(zavu.ensureSenderWebhook.mock.invocationCallOrder[0]).toBeLessThan(prepareActivationWebhookSecret.mock.invocationCallOrder[0]);
+    expect(zavu.ensureSenderChannelActive).toHaveBeenCalledTimes(fail ? 0 : 1);
+  });
+  it("persists raw creation before webhook failure so retry reuses sender", async () => {
+    zavu.createSender.mockImplementationOnce(async (_params, options) => { await options.onCreated({ id: "snd_1" }); throw new Error("Webhook failed"); });
+    expect((await POST(setupRequest())).status).toBe(502);
+    expect(saved.zavu_sender_id).toBe("snd_1");
+    expect((await POST(setupRequest())).status).toBe(200);
+    expect(zavu.createSender).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["creation", "activation"])("fences concurrent domain replacement during %s", async (stage) => {
+    const checkDomain = async (_site: any, _id: any, expected: any) => {
+      expect(expected.emailDomainId).toBe("domain_1");
+      if (saved.metadata.email_domain_id !== expected.emailDomainId) throw new Error("Domain changed");
+    };
+    requireActivationLicense.mockImplementation(checkDomain);
+    if (stage === "creation") zavu.createSender.mockImplementationOnce(async (_params, options) => {
+      saved.metadata.email_domain_id = "replacement";
+      patchActivationConnection.mockImplementationOnce(async (site, id, _patch, expected) => checkDomain(site, id, expected));
+      await options.onCreated({ id: "snd_1" }); return { id: "snd_1" };
+    });
+    else prepareActivationWebhookSecret.mockImplementationOnce(async () => { saved.metadata.email_domain_id = "replacement"; });
+    expect((await POST(setupRequest())).status).toBe(502);
+    expect(zavu.ensureSenderChannelActive).not.toHaveBeenCalled();
+    expect(saved.metadata.email_domain_id).toBe("replacement");
+  });
+
 });

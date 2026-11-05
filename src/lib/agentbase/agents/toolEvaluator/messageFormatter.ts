@@ -1,3 +1,5 @@
+import { supportModelContent } from '@/lib/services/customer-support-attachments';
+
 /**
  * Message formatting utilities for ToolEvaluator
  */
@@ -90,18 +92,20 @@ export function prepareMessagesFromCommand(command: DbCommand, systemPrompt?: st
     content: systemContent
   });
   
+  // Keep attachment images even when a Current message section is extracted.
+  const modelContent = supportModelContent(userContext);
   // 2. Añadir el mensaje actual del usuario como único mensaje de usuario
   if (currentMessage) {
     messages.push({
       role: 'user',
-      content: currentMessage
+      content: Array.isArray(modelContent) ? modelContent : currentMessage
     });
   } else {
     // Si no se pudo extraer el mensaje actual, usar el contexto completo como mensaje del usuario
     console.log(`[ToolEvaluator] Usando contexto completo como mensaje del usuario al no poder extraer el mensaje actual`);
     messages.push({
       role: 'user',
-      content: userContext
+      content: supportModelContent(userContext)
     });
   }
 

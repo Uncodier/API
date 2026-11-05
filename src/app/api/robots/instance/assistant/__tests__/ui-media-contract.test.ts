@@ -186,6 +186,25 @@ describe('buildUiMediaContract', () => {
     expect(result?.instruction).toContain('language guides text preparation, not a downstream synthesis field');
   });
 
+  it.each(['es-MX', 'es-ES', 'pt-BR'])('preserves %s in overrides and spoken-text instructions', language => {
+    const result = buildUiMediaContract({
+      node: { type: 'generate-audio', settings: { parameters: { language } } },
+    });
+    expect(result?.toolOverrides.generate_audio).toEqual({ language });
+    expect(result?.instruction).toContain(`selected language (${language})`);
+    expect(result?.instruction).toContain('Keep the previous conversation voice');
+  });
+
+  it('uses customer conversation before site fallback without random voice selection', () => {
+    const result = buildUiMediaContract({
+      node: { type: 'generate-audio', settings: { parameters: { language: 'auto', voice: 'auto' } } },
+    });
+    expect(result?.instruction).toContain('explicit customer request, then current customer conversation and transcripts, then lead preference, then site language');
+    expect(result?.instruction).toContain('Ignore HTTP Accept-Language');
+    expect(result?.instruction).toContain('otherwise omit voice to use the configured default');
+    expect(result?.toolOverrides.generate_audio).not.toHaveProperty('voice');
+  });
+
   it.each([{}, { voice: undefined, language: undefined }, { voice: 'auto', language: 'auto' }, { format: 'mp3' }])(
     'clears stale selections for saved default/auto parameters %j', (parameters) => {
       const result = buildUiMediaContract({
@@ -231,7 +250,7 @@ describe('buildUiMediaContract', () => {
     const result = buildUiMediaContract({ node: { type: 'generate-audio', settings: {} } });
     expect(result?.toolOverrides.generate_audio).toEqual({});
     expect(result?.instruction).toContain('infer the speech language from the user request and context');
-    expect(result?.instruction).toContain('Choose an appropriate voice');
+    expect(result?.instruction).toContain('Keep the previous conversation voice');
   });
 
   it('preserves concrete legacy selections only when there is no parameter object', () => {

@@ -3,7 +3,7 @@ import { refreshSiteConfigurationCaches } from "@/lib/services/site-configuratio
 import { getSiteLicensedResources, isChannelActiveStatus, type LicensedResources } from "@/lib/billing/licensed-resources";
 import { isChannelActivationBlocked } from "./channel-activation";
 
-export type ActivationExpected = { senderId?: string | null; invitationId?: string; type?: string; secretInitializationToken?: string };
+export type ActivationExpected = { senderId?: string | null; invitationId?: string; emailDomainId?: string; type?: string; secretInitializationToken?: string };
 type Expected = ActivationExpected;
 function conflict(): never {
   throw Object.assign(new Error("Channel changed, is unavailable, or is disabled"), { status: 409 });
@@ -12,6 +12,7 @@ function check(connection: any, expected: Expected) {
   if (!connection || isChannelActivationBlocked(connection)) conflict();
   if (expected.type && connection.type !== expected.type) conflict();
   if (expected.invitationId && connection.zavu_invitation_id !== expected.invitationId) conflict();
+  if (expected.emailDomainId && connection.metadata?.email_domain_id !== expected.emailDomainId) conflict();
   if (expected.senderId !== undefined && (connection.zavu_sender_id || null) !== expected.senderId) conflict();
   if (expected.secretInitializationToken && connection.metadata?.webhook_initialization_token !== expected.secretInitializationToken) conflict();
   return connection;

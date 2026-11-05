@@ -65,6 +65,12 @@ it("bounds conflict retries", async () => {
   await expect(patchActivationConnection("site", "channel", { status: "connected" }, expected)).rejects.toMatchObject({ status: 409 });
   expect(writes).toBe(3);
 });
+it("refuses an email domain association replaced during setup", async () => {
+  channels.connections[0].metadata.email_domain_id = "new-domain";
+  await expect(patchActivationConnection("site", "channel", { metadata: { email_domain_id: "old-domain" } }, { ...expected, emailDomainId: "old-domain" }))
+    .rejects.toMatchObject({ status: 409 });
+  expect(writes).toBe(0);
+});
 it("replaces an invitation using the old ID precondition and verifies the new canonical ID", async () => {
   channels.connections[0].zavu_invitation_id = "old";
   await expect(patchActivationConnection("site", "channel", { zavu_invitation_id: "new" }, { ...expected, invitationId: "old" }))

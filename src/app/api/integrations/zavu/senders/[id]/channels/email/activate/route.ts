@@ -1,7 +1,9 @@
+import { prepareActivationWebhookSecret } from "@/lib/services/zavu/activation-webhook-secret";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import {
   ensureSenderChannelActive,
+  ensureSenderWebhook,
   isChannelActivationBlocked,
   getChannelConnection,
   requireZavuSiteManager,
@@ -54,7 +56,10 @@ export async function POST(
       return NextResponse.json({ error: "Channel connection is disabled or license-suspended" }, { status: 409 });
     }
 
-    const expected = { type: "email", senderId };
+    const domainId = connection.metadata?.email_domain_id;
+    const expected = { type: "email", senderId,
+      ...(typeof domainId === "string" && domainId.trim() ? { emailDomainId: domainId } : {}),
+    };
     await requireActivationLicense(siteId, channelId, expected);
     await patchActivationConnection(siteId, channelId, {
       status: connection.status === "connected" ? "connected" : "in_progress",
@@ -63,6 +68,9 @@ export async function POST(
 
     let activation;
     try {
+      const sender = await ensureSenderWebhook(senderId);
+      if (sender?.id !== senderId) throw new Error("Invalid webhook sender");
+      await prepareActivationWebhookSecret(siteId, channelId, expected, sender.webhook?.secret);
       await requireActivationLicense(siteId, channelId, expected);
       activation = await ensureSenderChannelActive(senderId, "email");
     } catch (error) {

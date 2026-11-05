@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createSender, updateSender, attachSenderToAgent, upsertChannelConnection, ensureSenderWebhook, getChannelConnection, requireZavuSiteManager, verifyEmailDomain, ensureSenderChannelActive, isChannelActivationBlocked } from "@/lib/services/zavu";
+import { prepareActivationWebhookSecret } from "@/lib/services/zavu/activation-webhook-secret";
 import { encryptToken } from "@/lib/utils/token-encryption";
 import { patchActivationConnection, requireActivationLicense } from "@/lib/services/zavu/activation-persistence";
 
@@ -60,7 +61,8 @@ export async function POST(request: NextRequest) {
 
     let sender;
     const existingConnection = await getChannelConnection(siteId, existingChannelId);
-    if (existingConnection && existingConnection.type !== "email") {
+    if (!existingConnection) return NextResponse.json({ error: "Email channel connection was not found" }, { status: 404 });
+    if (existingConnection.type !== "email") {
       return NextResponse.json(
         { error: "Channel connection is not an email channel" },
         { status: 409 }
@@ -69,11 +71,11 @@ export async function POST(request: NextRequest) {
     if (isChannelActivationBlocked(existingConnection)) {
       return NextResponse.json({ error: "Channel connection is disabled or license-suspended" }, { status: 409 });
     }
-    if (existingConnection?.metadata?.email_domain_id && existingConnection.metadata.email_domain_id !== emailDomainId) {
+    if (typeof existingConnection.metadata?.email_domain_id !== "string" || !existingConnection.metadata.email_domain_id.trim() || existingConnection.metadata.email_domain_id !== emailDomainId) {
       return NextResponse.json({ error: "Domain does not match the email channel connection" }, { status: 409 });
     }
     if (existingConnection) await requireActivationLicense(siteId, existingChannelId, {
-      type: "email", senderId: existingConnection.zavu_sender_id || null,
+      type: "email", emailDomainId, senderId: existingConnection.zavu_sender_id || null,
     });
     if (existingConnection?.zavu_sender_id) {
       try {
@@ -89,6 +91,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    let createdSenderId: string | undefined;
     if (!sender) {
       try {
         sender = await createSender({
@@ -97,13 +100,20 @@ export async function POST(request: NextRequest) {
           emailFromName,
           emailDomainId,
           emailReceivingEnabled: false,
-        });
+        }, { onCreated: async (created) => {
+          if (!created?.id) throw new Error("Invalid sender");
+          createdSenderId = created.id;
+          await patchActivationConnection(siteId, existingChannelId, {
+            zavu_sender_id: created.id, status: existingConnection.status === "connected" ? "connected" : "in_progress",
+            metadata: { activation_pending: true, ...(created.webhook?.secret ? { zavu_webhook_secret: encryptToken(created.webhook.secret) } : {}) },
+          }, { type: "email", emailDomainId, senderId: null });
+        } });
       } catch (zavuError: any) {
         return zavuFailure("create the email sender", zavuError);
       }
     }
 
-    if (!sender?.id) {
+    if (!sender?.id || (createdSenderId && sender.id !== createdSenderId)) {
       return NextResponse.json({ error: "Zavu returned an invalid sender" }, { status: 502 });
     }
 
@@ -127,15 +137,11 @@ export async function POST(request: NextRequest) {
         zavu_webhook_events: sender.webhook?.events || [],
       },
     };
-    let channelId = existingChannelId;
-    if (existingConnection) {
-      await patchActivationConnection(siteId, channelId, pending, {
-        type: "email", senderId: existingConnection.zavu_sender_id || null,
-      });
-    } else {
-      ({ channelId } = await upsertChannelConnection(siteId, existingChannelId, pending));
-    }
-    const expected = { type: "email", senderId: sender.id };
+    const channelId = existingChannelId;
+    await patchActivationConnection(siteId, channelId, pending, {
+      type: "email", emailDomainId, senderId: existingConnection.zavu_sender_id || createdSenderId || null,
+    });
+    const expected = { type: "email", emailDomainId, senderId: sender.id };
 
     try {
       if (existingConnection?.zavu_sender_id) {
@@ -149,9 +155,11 @@ export async function POST(request: NextRequest) {
           },
         }, expected);
       }
+      await prepareActivationWebhookSecret(siteId, channelId, expected, sender.webhook?.secret);
       if (domainVerified) {
         await requireActivationLicense(siteId, channelId, expected);
         const activation = await ensureSenderChannelActive(sender.id, "email");
+        if (activation?.sender?.id !== sender.id || !activation.sender.channels?.includes("email")) throw new Error("Invalid activation sender");
         sender = { ...sender, channels: activation.sender.channels };
         await requireActivationLicense(siteId, channelId, expected);
         await patchActivationConnection(siteId, channelId, {
@@ -282,10 +290,11 @@ export async function PUT(request: NextRequest) {
 
     return NextResponse.json({ success: true, sender });
   } catch (error: any) {
-    console.error("[Zavu] Unhandled error in email patch:", error);
+    const status = error?.status === 401 || error?.status === 403 ? error.status : 500;
+    console.error("[Zavu] Could not update email receiving");
     return NextResponse.json(
-      { error: error.message || "Internal server error" },
-      { status: error.status || 500 }
+      { error: status === 401 ? "Unauthorized" : status === 403 ? "Forbidden" : "Could not update email receiving" },
+      { status }
     );
   }
 }

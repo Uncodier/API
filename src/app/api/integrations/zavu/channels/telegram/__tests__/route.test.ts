@@ -17,12 +17,15 @@ const zavu = {
   isChannelActivationBlocked: (c: any) => c?.enabled === false || c?.license_suspended === true || c?._license?.manually_disabled === true || ["disabled", "inactive", "suspended", "license_suspended"].includes(c?.status),
 };
 jest.unstable_mockModule("@/lib/services/zavu", () => zavu);
+const prepareActivationWebhookSecret = mockFunction();
+jest.unstable_mockModule("@/lib/services/zavu/activation-webhook-secret", () => ({ prepareActivationWebhookSecret }));
 const patchActivationConnection = mockFunction();
 const requireActivationLicense = mockFunction();
 jest.unstable_mockModule("@/lib/services/zavu/activation-persistence", () => ({
   patchActivationConnection, requireActivationLicense,
 }));
 beforeEach(() => {
+  prepareActivationWebhookSecret.mockReset().mockResolvedValue(undefined);
   patchActivationConnection.mockReset();
   requireActivationLicense.mockReset();
   patchActivationConnection.mockImplementation(async (site, id, patch) => {
@@ -86,11 +89,12 @@ describe("POST /api/integrations/zavu/channels/telegram", () => {
   });
 
   it("creates a sender when no existing zavu_sender_id is stored", async () => {
+    zavu.ensureSenderChannelActive.mockResolvedValue({ sender: { id: "snd_new", channels: ["telegram"] } });
     (zavu.getChannelConnection).mockResolvedValue(null);
-    (zavu.createSender).mockResolvedValue({
+    zavu.createSender.mockImplementation(async (_params, options) => { const created = {
       id: "snd_new",
       webhook: { events: ["message.inbound"], secret: webhookSecret, active: true, url: "https://x/webhook" },
-    });
+    }; await options?.onCreated(created); return created; });
 
     const req = new NextRequest("http://localhost/api/integrations/zavu/channels/telegram", {
       method: "POST",
@@ -124,7 +128,7 @@ describe("Telegram activation safety", () => {
     saved = null;
     zavu.requireZavuSiteManager.mockResolvedValue(undefined);
     zavu.getChannelConnection.mockImplementation(async () => saved);
-    zavu.createSender.mockResolvedValue({ id: "snd_1", channels: [], webhook: { secret: webhookSecret } });
+    zavu.createSender.mockImplementation(async (_params, options) => { const created = { id: "snd_1", channels: [], webhook: { secret: webhookSecret } }; await options?.onCreated(created); return created; });
     zavu.ensureSenderWebhook.mockResolvedValue({ id: "snd_1", webhook: { secret: webhookSecret } });
     zavu.connectTelegram.mockResolvedValue({ telegram: { botUsername: "example_bot", botId: "123", botToken } });
     zavu.ensureSenderChannelActive.mockResolvedValue({ sender: { id: "snd_1", channels: ["telegram"] } });
@@ -253,4 +257,21 @@ describe("Telegram activation safety", () => {
     expect(saved.status).toBe("connected");
     expect(patchActivationConnection.mock.calls.some((call) => call[2].status === "in_progress")).toBe(false);
   });
+  it.each([false, true])("initializes missing secret and fails closed: %s", async (fail) => {
+    saved = { type: "telegram", zavu_sender_id: "snd_1" };
+    zavu.ensureSenderWebhook.mockResolvedValue({ id: "snd_1" });
+    if (fail) prepareActivationWebhookSecret.mockRejectedValueOnce(new Error("initializer failed"));
+    expect((await POST(request())).status).toBe(fail ? 502 : 200);
+    expect(prepareActivationWebhookSecret).toHaveBeenCalledWith("site_1", "channel_1", { type: "telegram", senderId: "snd_1" }, undefined);
+    expect(zavu.ensureSenderWebhook.mock.invocationCallOrder[0]).toBeLessThan(prepareActivationWebhookSecret.mock.invocationCallOrder[0]);
+    expect(zavu.ensureSenderChannelActive).toHaveBeenCalledTimes(fail ? 0 : 1);
+  });
+  it("reuses raw creation after webhook configuration fails", async () => {
+    zavu.createSender.mockImplementationOnce(async (_params, options) => { await options.onCreated({ id: "snd_1" }); throw new Error("Webhook failed"); });
+    expect((await POST(request())).status).toBe(502);
+    expect(saved.zavu_sender_id).toBe("snd_1");
+    expect((await POST(request())).status).toBe(200);
+    expect(zavu.createSender).toHaveBeenCalledTimes(1);
+  });
+
 });

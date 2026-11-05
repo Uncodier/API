@@ -5,6 +5,7 @@ import { jest } from "@jest/globals";
 const mockFunction = () => jest.fn<(...args: any[]) => any>();
 const zavu = {
   ensureSenderChannelActive: mockFunction(),
+  ensureSenderWebhook: mockFunction(),
   getChannelConnection: mockFunction(),
   isChannelActivationBlocked: (c: any) => c?.enabled === false || c?.license_suspended === true || c?._license?.manually_disabled === true || ["disabled", "inactive", "suspended", "license_suspended"].includes(c?.status),
   requireZavuSiteManager: mockFunction(),
@@ -12,12 +13,15 @@ const zavu = {
 };
 
 jest.unstable_mockModule("@/lib/services/zavu", () => zavu);
+const prepareActivationWebhookSecret = mockFunction();
+jest.unstable_mockModule("@/lib/services/zavu/activation-webhook-secret", () => ({ prepareActivationWebhookSecret }));
 const patchActivationConnection = mockFunction();
 const requireActivationLicense = mockFunction();
 jest.unstable_mockModule("@/lib/services/zavu/activation-persistence", () => ({
   patchActivationConnection, requireActivationLicense,
 }));
 beforeEach(() => {
+  prepareActivationWebhookSecret.mockReset().mockResolvedValue(undefined);
   patchActivationConnection.mockReset();
   requireActivationLicense.mockReset();
   patchActivationConnection.mockImplementation(async (site, id, patch) => {
@@ -50,6 +54,7 @@ function activationRequest() {
 describe("POST /api/integrations/zavu/senders/:id/channels/email/activate", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    zavu.ensureSenderWebhook.mockResolvedValue({ id: "snd_1" });
     zavu.requireZavuSiteManager.mockResolvedValue(undefined);
     zavu.getChannelConnection.mockResolvedValue({
       id: "channel_1",
@@ -197,4 +202,26 @@ describe("POST /api/integrations/zavu/senders/:id/channels/email/activate", () =
     expect(patchActivationConnection).toHaveBeenCalledWith("site_1", "channel_1", expect.objectContaining({ status: "connected" }), { type: "email", senderId: "snd_1" });
     expect(patchActivationConnection.mock.calls.some((call) => call[2].status === "in_progress")).toBe(false);
   });
+  it.each([false, true])("initializes absent webhook secret before billing and fails closed: %s", async (fail) => {
+    zavu.ensureSenderChannelActive.mockResolvedValue({ sender: { id: "snd_1", channels: ["email"] } });
+    if (fail) prepareActivationWebhookSecret.mockRejectedValueOnce(new Error("initializer failed"));
+    expect((await POST(activationRequest(), { params: Promise.resolve({ id: "snd_1" }) })).status).toBe(fail ? 502 : 200);
+    expect(prepareActivationWebhookSecret).toHaveBeenCalledWith("site_1", "channel_1", { type: "email", senderId: "snd_1" }, undefined);
+    expect(zavu.ensureSenderWebhook.mock.invocationCallOrder[0]).toBeLessThan(prepareActivationWebhookSecret.mock.invocationCallOrder[0]);
+    expect(zavu.ensureSenderChannelActive).toHaveBeenCalledTimes(fail ? 0 : 1);
+  });
+
+  it("pins a trusted domain through activation and rejects concurrent replacement", async () => {
+    zavu.getChannelConnection.mockResolvedValue({ type: "email", zavu_sender_id: "snd_1", metadata: { email_domain_id: "domain_1" } });
+    prepareActivationWebhookSecret.mockImplementationOnce(async () => {
+      requireActivationLicense.mockImplementation(async (_site, _id, expected) => {
+        expect(expected.emailDomainId).toBe("domain_1");
+        throw new Error("Domain changed");
+      });
+    });
+    expect((await POST(activationRequest(), { params: Promise.resolve({ id: "snd_1" }) })).status).toBe(502);
+    expect(patchActivationConnection).toHaveBeenCalledWith("site_1", "channel_1", expect.anything(), { type: "email", senderId: "snd_1", emailDomainId: "domain_1" });
+    expect(zavu.ensureSenderChannelActive).not.toHaveBeenCalled();
+  });
+
 });

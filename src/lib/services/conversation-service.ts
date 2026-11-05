@@ -1,3 +1,5 @@
+import { normalizeSupportAttachments, supportAttachmentContext, type SupportAttachment } from './customer-support-attachments';
+
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 
 // Función para validar UUIDs
@@ -102,7 +104,7 @@ export class ConversationService {
    * @param conversationId - ID de la conversación
    * @returns Array de mensajes formateados o null si hay error
    */
-  static async getConversationHistory(conversationId: string): Promise<Array<{role: string, content: string}> | null> {
+  static async getConversationHistory(conversationId: string): Promise<Array<{role: string, content: string, attachments?: SupportAttachment[], id?: string}> | null> {
     try {
       if (!isValidUUID(conversationId)) {
         console.error(`ID de conversación no válido: ${conversationId}`);
@@ -158,7 +160,9 @@ export class ConversationService {
         
         return {
           role,
-          content: msg.content
+          id: msg.id,
+          attachments: normalizeSupportAttachments(msg.custom_data?.attachments),
+          content: (msg.content || '') + supportAttachmentContext(msg.custom_data?.attachments)
         };
       });
       

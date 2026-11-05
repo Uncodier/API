@@ -11,6 +11,6 @@ export async function activateVerifiedEmailConnections(siteId: string, domainId:
   const domain = await getEmailDomain(domainId);
   if (domain?.id !== domainId || domain?.status !== "verified") return;
   for (const connection of pending) {
-    await activateChannelConnection(siteId, connection.id, { senderId: connection.zavu_sender_id, type: "email" });
+    await activateChannelConnection(siteId, connection.id, { senderId: connection.zavu_sender_id, type: "email", emailDomainId: domainId });
   }
 }

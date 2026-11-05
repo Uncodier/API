@@ -1,3 +1,5 @@
+import { supportModelContent } from '@/lib/services/customer-support-attachments';
+
 /**
  * Formateador de mensajes para el TargetProcessor
  */
@@ -62,7 +64,7 @@ export function prepareMessagesForTarget(command: DbCommand, systemPrompt: strin
   // Si se ha pasado un formattedTargetPrompt como context, se usará sin modificar
   messages.push({
     role: 'user',
-    content: userContext
+    content: supportModelContent(userContext)
   });
 
   // Also support callers outside the completion loop. Persisted function results

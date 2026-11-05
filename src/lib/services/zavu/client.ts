@@ -319,7 +319,7 @@ export async function createSender(params: {
   emailDomainId?: string;
   emailReceivingEnabled?: boolean;
   setAsDefault?: boolean;
-}): Promise<any> {
+}, options?: { onCreated: (sender: any) => Promise<void> }): Promise<any> {
   const payload = await zavuFetch("/senders", {
     method: "POST",
     body: JSON.stringify({
@@ -329,6 +329,8 @@ export async function createSender(params: {
   });
   
   const created = unwrapSender(payload);
+  // Persist the remote identity and one-time secret before a later PATCH can fail.
+  await options?.onCreated(created);
   const patched = await ensureSenderWebhook(created.id, {
     includeVoiceEvents: params.enableVoice === true,
   });
@@ -483,50 +485,4 @@ export async function verifyEmailDomain(domainId: string): Promise<any> {
   }
 }
 
-export interface ZavuEmailAttachment {
-  filename: string;
-  content: string;
-  content_type?: string;
-  content_id?: string;
-}
-
-// MESSAGING
-export async function sendChannelMessage(params: {
-  to: string;
-  text?: string;
-  channel?: string;
-  senderId?: string;
-  subject?: string;
-  htmlBody?: string;
-  replyTo?: string;
-  metadata?: Record<string, string>;
-  idempotencyKey?: string;
-  attachments?: ZavuEmailAttachment[];
-  signal?: AbortSignal;
-  messageType?: "text" | "image" | "video" | "audio" | "document";
-  content?: { mediaUrl: string; mimeType?: string };
-}): Promise<any> {
-  const { senderId, to, text, channel, subject, htmlBody, messageType, content,
-    replyTo, metadata, idempotencyKey, attachments, signal } = params;
-
-  return zavuFetch("/messages", {
-    method: "POST",
-    ...(signal ? { signal } : {}),
-    headers: {
-      ...(senderId ? { "Zavu-Sender": senderId } : {}),
-    },
-    body: JSON.stringify({
-      to,
-      ...(text !== undefined ? { text } : {}),
-      ...(channel ? { channel } : {}),
-      ...(subject ? { subject } : {}),
-      ...(htmlBody ? { htmlBody } : {}),
-      ...(replyTo ? { replyTo } : {}),
-      ...(metadata ? { metadata } : {}),
-      ...(idempotencyKey ? { idempotencyKey } : {}),
-      ...(attachments ? { attachments } : {}),
-      ...(messageType ? { messageType } : {}),
-      ...(content ? { content } : {}),
-    }),
-  }, { acceptMessageReplay: Boolean(idempotencyKey) });
-}
+export { sendChannelMessage, type ZavuEmailAttachment } from "./message-client";

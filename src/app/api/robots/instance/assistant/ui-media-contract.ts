@@ -147,17 +147,20 @@ function audioOverrides(
     ...remaining,
     ...(format ? { format } : {}),
     ...(voice ? { voice } : {}),
-    ...(language ? { language } : {}),
+    // Keep the validated regional selection through text preparation. The TTS
+    // service normalizes it to its supported base language at the API boundary.
+    ...(language ? { language: typeof selections.language === 'string' && selections.language.trim().includes('-')
+      ? Intl.getCanonicalLocales(selections.language.trim())[0] : language } : {}),
   };
 }
 
 function audioInstruction(overrides: Record<string, unknown>): string {
   const languageRule = overrides.language
     ? `Before calling generate_audio, write or rewrite the speech text in the selected language (${overrides.language}), even if the prompt or source text uses another language.`
-    : 'Before calling generate_audio, infer the speech language from the user request and context and write the speech text in that language.';
+    : 'Before calling generate_audio, infer the speech language from the user request and context: prioritize the explicit customer request, then current customer conversation and transcripts, then lead preference, then site language. Ignore HTTP Accept-Language and internal instruction language. Write the speech text in that language, preserving regional wording.';
   const voiceRule = overrides.voice
     ? `You MUST honor the selected voice (${overrides.voice}).`
-    : `Choose an appropriate voice from ${TTS_VOICES.join(', ')}; auto is not a concrete voice.`;
+    : `Keep the previous conversation voice when known (${TTS_VOICES.join(', ')}); otherwise omit voice to use the configured default. Do not change voices simply because the language changes; auto is not a concrete voice.`;
   return `${languageRule} Do not read prompt directives, language instructions, or voice instructions aloud; pass only the intended spoken content as text. ${voiceRule} Azure tts-hd detects language from the speech text; language guides text preparation, not a downstream synthesis field.`;
 }
 

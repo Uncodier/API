@@ -1,29 +1,14 @@
 import { supabaseAdmin } from "@/lib/database/supabase-server";
 import { WorkflowService } from "@/lib/services/workflow-service";
 export { handleInvitationStatusChanged } from "./invitation-finalization";
-import { activateVerifiedEmailConnections } from "./email-domain-activation";
+export { handleDomainStatusChanged } from "./domain-status";
 import { getCachedJson, setCachedJson, sha256 } from "@/lib/security/upstash-rest";
-import { refreshSiteConfigurationCaches } from "@/lib/services/site-configuration-cache";
 import { admitZavuInboundAutomation } from './inbound-message-license';
+import { resolveInboundAudioMedia } from './inbound-audio-media';
 export {
   handleVoiceCallEvent,
   resolveVoiceCallWebhookStatus,
 } from "./voice-webhook-handler";
-
-async function findSettingsForDomain(domainId: string) {
-  const { data, error } = await supabaseAdmin
-    .from("settings")
-    .select("id, site_id, channels")
-    .contains("channels", {
-      connections: [{ metadata: { email_domain_id: domainId } }],
-    });
-
-  if (error) {
-    console.error("[Zavu Webhook] DB error finding domain:", error);
-    throw error;
-  }
-  return data || [];
-}
 
 export async function findSettingsForSender(
   senderId: string,
@@ -119,6 +104,11 @@ export async function handleInboundMessage(event: any) {
     originMessageId: typeof originMessageId === 'string' ? originMessageId : undefined,
   })) return;
 
+  const media = await resolveInboundAudioMedia(data, senderId);
+  if (media.audioUnavailable) {
+    messageText += '\n[Audio unavailable: the recording could not be retrieved. Ask for a resend or text; do not infer its contents.]';
+  }
+
   console.log(`[Zavu Webhook] Starting customerSupport workflow for ${channel} on site ${siteId}`);
 
   const workflowService = WorkflowService.getInstance();
@@ -135,6 +125,7 @@ export async function handleInboundMessage(event: any) {
       custom_data: {
         source: 'zavu_inbound_message', connection_id: connectionId,
         zavu_sender_id: senderId, zavu_from: rawFrom, channel,
+        attachments: media.attachments,
       },
       channel_delivery: true,
       website_chat_origin: false,
@@ -155,60 +146,5 @@ export async function handleInboundMessage(event: any) {
     throw new Error(
       `Zavu customer support workflow failed: ${String(workflowResult.error)}`,
     );
-  }
-}
-
-export async function handleDomainStatusChanged(data: any, eventType: string) {
-  const domainId = data.domainId || data.id;
-  const status = eventType === "domain.verified" ? "verified" : "failed";
-
-  if (!domainId) {
-    console.warn("[Zavu Webhook] domain event missing domainId");
-    return;
-  }
-
-  console.log(`[Zavu Webhook] Domain ${domainId} status changed to ${status}`);
-
-  const sites = await findSettingsForDomain(domainId);
-  if (sites.length === 0) {
-    console.warn(`[Zavu Webhook] No site found for domain ${domainId}`);
-    return;
-  }
-
-  for (const site of sites) {
-    const currentChannels = (site.channels as any) || {};
-    let connections = Array.isArray(currentChannels.connections)
-      ? [...currentChannels.connections]
-      : [];
-
-    let connectionUpdated = false;
-    connections = connections.map((conn: any) => {
-      if (conn.metadata?.email_domain_id !== domainId) return conn;
-      connectionUpdated = true;
-      return {
-        ...conn,
-        metadata: {
-          ...conn.metadata,
-          domain_status: status,
-        },
-        updated_at: new Date().toISOString(),
-      };
-    });
-
-    if (!connectionUpdated) continue;
-
-    const { error: updateError } = await supabaseAdmin
-      .from("settings")
-      .update({ channels: { ...currentChannels, connections } })
-      .eq("site_id", site.site_id);
-
-    if (updateError) {
-      console.error("[Zavu Webhook] Error updating domain status:", updateError);
-      throw updateError;
-    }
-    await refreshSiteConfigurationCaches(site.site_id);
-    if (status === "verified") {
-      await activateVerifiedEmailConnections(site.site_id, domainId, connections);
-    }
   }
 }

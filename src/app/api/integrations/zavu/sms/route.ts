@@ -5,7 +5,6 @@ import {
   assignNumberToSender,
   attachSenderToAgent,
   createSender,
-  ensureEncryptedSenderWebhookSecret,
   ensureProjectWebhook,
   ensureSenderWebhook,
   getChannelConnection,
@@ -18,6 +17,9 @@ import {
   zavuFetch,
 } from "@/lib/services/zavu";
 import { patchActivationConnection, requireActivationLicense } from "@/lib/services/zavu/activation-persistence";
+
+import { prepareActivationWebhookSecret } from "@/lib/services/zavu/activation-webhook-secret";
+import { encryptToken } from "@/lib/utils/token-encryption";
 
 export async function POST(request: NextRequest) {
   let persistedChannelId: string | undefined;
@@ -58,29 +60,40 @@ export async function POST(request: NextRequest) {
       await assertPhoneResourcesAvailable(siteId, { phoneNumber });
     }
 
-    let sender = existing?.zavu_sender_id
-      ? { id: existing.zavu_sender_id } as Awaited<ReturnType<typeof createSender>>
-      : await createSender({
+    // The provider returns its one-time secret before configuring the webhook.
+    // Save that identity in the creation callback so webhook failure is retryable.
+    const persistPending = async (created: Awaited<ReturnType<typeof createSender>>) => {
+      if (typeof created?.id !== "string" || !created.id) throw new Error("Invalid sender");
+      senderId = created.id;
+      const pending = {
+        type: "sms",
+        name: name || existing?.name || "SMS Channel",
+        // Verification retries must not release an established licensed slot.
+        status: existing?.status === "connected" ? "connected" : "in_progress",
+        zavu_sender_id: senderId,
+        metadata: {
+          phone_number: phoneNumber, activation_pending: true, activation_error: null, provider_channel_active: false,
+          ...(created.webhook?.secret ? { zavu_webhook_secret: encryptToken(created.webhook.secret) } : {}),
+        },
+      };
+      if (existing) {
+        await patchActivationConnection(siteId, channelId!, pending, { type: "sms", senderId: existing.zavu_sender_id || null });
+        persistedChannelId = channelId;
+      } else {
+        ({ channelId: persistedChannelId } = await upsertChannelConnection(siteId, channelId, pending));
+      }
+    };
+    let sender: Awaited<ReturnType<typeof createSender>>;
+    if (existing?.zavu_sender_id) {
+      sender = { id: existing.zavu_sender_id } as typeof sender;
+      await persistPending(sender);
+    } else {
+      sender = await createSender({
         name: name || `SMS Agent for Site ${siteId}`,
         enableSmsOneway: true,
-      });
-    if (typeof sender?.id !== "string" || !sender.id) throw new Error("Invalid sender");
-    senderId = sender.id;
-    // Persist the identity before any subsequent setup operation can fail.
-    const pending = {
-      type: "sms",
-      name: name || existing?.name || "SMS Channel",
-      // Verification retries must not release an established licensed slot.
-      status: existing?.status === "connected" ? "connected" : "in_progress",
-      zavu_sender_id: senderId,
-      metadata: { phone_number: phoneNumber, activation_pending: true, activation_error: null, provider_channel_active: false },
-    };
-    if (existing) {
-      await patchActivationConnection(siteId, channelId!, pending, { type: "sms", senderId: existing.zavu_sender_id || null });
-      persistedChannelId = channelId;
-    } else {
-      ({ channelId: persistedChannelId } = await upsertChannelConnection(siteId, channelId, pending));
+      }, { onCreated: persistPending });
     }
+    if (!persistedChannelId || sender?.id !== senderId) throw new Error("Invalid persisted sender");
     const expected = { type: "sms", senderId: senderId! };
     await requireActivationLicense(siteId, persistedChannelId!, expected);
 
@@ -89,14 +102,9 @@ export async function POST(request: NextRequest) {
       sender = await ensureSenderWebhook(senderId!);
       if (sender?.id !== senderId) throw new Error("Invalid webhook sender");
     }
-    const encryptedWebhookSecret = await ensureEncryptedSenderWebhookSecret({
-      senderId: senderId!,
-      returnedSecret: sender.webhook?.secret,
-      encryptedSecret: existing?.metadata?.zavu_webhook_secret,
-    });
+    await prepareActivationWebhookSecret(siteId, persistedChannelId!, expected, sender.webhook?.secret);
     await patchActivationConnection(siteId, persistedChannelId!, {
       metadata: {
-        zavu_webhook_secret: encryptedWebhookSecret,
         webhook_events: sender.webhook?.events || [],
       },
     }, expected);

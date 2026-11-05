@@ -70,3 +70,33 @@ consumption from collection are follow-up migrations, not part of this repair.
 
 Do not invoke housekeeping as a diagnostic probe: it can stop/delete resources.
 Provider inspection must use control-plane reads with resume disabled.
+
+## Follow-up: insufficient-funding SQL expected result
+
+The original runtime-only scope above remains historical context. This follow-up
+**does require** the forward migration
+`20261106104500_sandbox_insufficient_funding_outcome.sql`; it is prepared only and
+**has not been applied live**. No live operations or balance changes are part of
+this change.
+
+Deploy the updated API **before** applying the SQL migration. The new caller
+understands both the old exact P0001 funding rejection and the structured result
+`success:false, outcome:'insufficient_credits'`. Older API instances would treat
+that structured result as generic reconciliation pending. The read-only deployed
+contract review confirmed that the five-argument `deduct_credits` returns the
+exact `success:false, error:'Insufficient credits'` result used by this migration;
+different overload errors are not caught as funding outcomes.
+
+An internal, locally guarded sentinel rolls back the **entire RPC page/batch**
+before returning insufficient funding. Earlier session deductions, ledger writes,
+terminal markers, and watermarks within that batch are rolled back together.
+This is **not** a transaction across the whole paginated provider history:
+previously successful pages remain committed and idempotent. Any failed page
+prevents full-history completion and does not authorize retirement. Technical,
+identity, malformed-result, and downstream sentinel errors still propagate.
+
+Expected funding pending remains unpaid and **degraded**, not successful
+reconciliation: `fundingPending` and `billingErrors` remain visible, admission
+stays blocked/paused, and the existing authorized recovery requirements still
+apply. The migration removes expected PostgreSQL P0001 noise; it does not forgive
+usage, replenish credits, introduce automatic recovery, or stop cadence polling.

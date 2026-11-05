@@ -11,7 +11,7 @@ beforeEach(() => {
 });
 it("activates a pending sender after authoritative domain verification", async () => {
   await activateVerifiedEmailConnections("site", "domain", [pending]);
-  expect(activateChannelConnection).toHaveBeenCalledWith("site", "channel", { senderId: "sender", type: "email" });
+  expect(activateChannelConnection).toHaveBeenCalledWith("site", "channel", { senderId: "sender", type: "email", emailDomainId: "domain" });
 });
 it.each([{ id: "domain", status: "pending" }, { id: "other", status: "verified" }])("does not activate unverified/mismatched domains %j", async (domain) => {
   (getEmailDomain as jest.Mock).mockResolvedValue(domain);

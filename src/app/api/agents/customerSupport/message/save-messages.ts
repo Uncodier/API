@@ -3,12 +3,13 @@ import { ConversationService } from '@/lib/services/conversation-service';
 import { isValidUUID, validateLeadExists } from './agent-data';
 import { saveCommentMessages } from '@/lib/services/social-comments/persistence';
 import { usableSupportContent } from './response-content';
+import { saveZavuSupportMessages } from './save-zavu-messages';
 // Función para guardar mensajes en la base de datos
-export async function saveMessages(userId: string, userMessage: string, assistantMessage: string, conversationId?: string, conversationTitle?: string, leadId?: string, visitorId?: string, agentId?: string, siteId?: string, commandId?: string, origin?: string, isRobot?: boolean, isTransactionalMessage?: boolean, isErratic?: boolean, originMessageId?: string, channelDelivery?: boolean, requireApproval?: boolean, inboundCustomData?: Record<string, unknown>) {
+export async function saveMessages(userId: string, userMessage: string, assistantMessage: string, conversationId?: string, conversationTitle?: string, leadId?: string, visitorId?: string, agentId?: string, siteId?: string, commandId?: string, origin?: string, isRobot?: boolean, isTransactionalMessage?: boolean, isErratic?: boolean, originMessageId?: string, channelDelivery?: boolean, requireApproval?: boolean, inboundCustomData?: Record<string, unknown>, agentDisabled = false) {
   if (!usableSupportContent(assistantMessage)) {
     throw new Error('CUSTOMER_SUPPORT_EMPTY_RESPONSE');
   }
-  if (inboundCustomData?.source === 'comment' && siteId && conversationId) {
+  if (!agentDisabled && inboundCustomData?.source === 'comment' && siteId && conversationId) {
     return saveCommentMessages({ siteId, conversationId, userId, userMessage, assistantMessage,
       metadata: inboundCustomData, leadId, agentId: agentId && isValidUUID(agentId) ? agentId : undefined,
       commandId, conversationTitle });
@@ -43,6 +44,12 @@ export async function saveMessages(userId: string, userMessage: string, assistan
       }
     }
     
+    if (!agentDisabled && inboundCustomData?.source === 'zavu_inbound_message' && originMessageId && siteId) {
+      return await saveZavuSupportMessages({ siteId, userId, agentId, leadId: validatedLeadId,
+        conversationId, conversationTitle, commandId, userMessage, assistantMessage,
+        originMessageId, channel: origin || 'whatsapp', requireApproval, metadata: inboundCustomData });
+    }
+
     let effectiveConversationId: string | undefined = conversationId;
     
     // Verificar si tenemos un ID de conversación
@@ -249,15 +256,29 @@ export async function saveMessages(userId: string, userMessage: string, assistan
       }
     }
     
-    if (originMessageId || inboundCustomData) {
+    if (originMessageId || inboundCustomData || agentDisabled) {
       userMessageObj.custom_data = {
         ...(userMessageObj.custom_data || {}),
         ...(inboundCustomData || {}),
+        ...(agentDisabled ? { agent_disabled: true, response_skipped: true } : {}),
         ...(originMessageId ? { origin_message_id: originMessageId } : {}),
       };
     }
     
     console.log(`💬 Guardando mensaje de usuario para conversación: ${effectiveConversationId}`);
+
+    // A skipped reply is terminal too: retries must not create another inbound
+    // message or internal note. Scope the provider identifier to the conversation.
+    if (agentDisabled && originMessageId) {
+      const { data: previous, error } = await supabaseAdmin
+        .schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')
+        .from('messages').select('id').eq('conversation_id', effectiveConversationId)
+        .eq('role', 'user').filter('custom_data->>origin_message_id', 'eq', originMessageId)
+        .filter('custom_data->>response_skipped', 'eq', 'true').limit(1).maybeSingle();
+      if (error) throw error;
+      if (previous) return { conversationId: effectiveConversationId,
+        userMessageId: previous.id, assistantMessageId: undefined, conversationTitle };
+    }
     
     const { data: savedUserMessage, error: userMsgError } = await supabaseAdmin
       .schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')
@@ -278,7 +299,8 @@ export async function saveMessages(userId: string, userMessage: string, assistan
       conversation_id: effectiveConversationId,
       user_id: null, // Agente no es usuario
       content: assistantMessage,
-      role: 'assistant'
+      role: agentDisabled ? 'system' : 'assistant',
+      ...(agentDisabled ? { custom_data: { internal: true, agent_disabled: true, response_skipped: true } } : {})
     };
     
     if (requireApproval) {

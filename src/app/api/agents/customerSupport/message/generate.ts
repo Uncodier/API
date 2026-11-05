@@ -4,8 +4,25 @@ import { buildCustomerSupportTools } from '@/lib/services/customer-support-tool-
 import { commandService, getCommandDbUuid, waitForCommandCompletion } from './command-runtime';
 import { isValidUUID } from './agent-data';
 import { corsHeaders } from './cors';
+import { bindInboundCommand, claimInboundCommand, type InboundCommandKey } from './inbound-command-idempotency';
 export async function generateSupportReply(input: any) {
 const { effectiveUserId, effectiveAgentId, effectiveSiteId, effectiveLeadId, contextMessage, agentUserId, request } = input;
+    let inboundKey: InboundCommandKey | undefined;
+    let ownerToken: string | undefined;
+    let reusedCommandId: string | undefined;
+    const unavailable = () => NextResponse.json({ success: false, error: {
+      code: 'INBOUND_COMMAND_UNAVAILABLE', message: 'Inbound command is pending or requires reconciliation',
+    } }, { status: 503, headers: { ...corsHeaders(request), 'Retry-After': '5' } });
+    if (input.originMessageId) {
+      if (!effectiveSiteId || !input.connectionId) return unavailable();
+      inboundKey = { siteId: effectiveSiteId, connectionId: input.connectionId, originMessageId: input.originMessageId };
+      try {
+        const claim = await claimInboundCommand(inboundKey);
+        if (claim.state === 'busy') return unavailable();
+        if (claim.state === 'reuse') reusedCommandId = claim.commandId;
+        else ownerToken = claim.token;
+      } catch { return unavailable(); }
+    }
     const command = CommandFactory.createCommand({
       task: 'create message',
       userId: effectiveUserId,
@@ -58,7 +75,7 @@ const { effectiveUserId, effectiveAgentId, effectiveSiteId, effectiveLeadId, con
     });
     
     // Submit the command for processing
-    const internalCommandId = await commandService.submitCommand(command);
+    const internalCommandId = reusedCommandId || await commandService.submitCommand(command);
     console.log(`📝 Comando creado con ID interno: ${internalCommandId}`);
     console.log(`[CustomerSupport] Using the configured OpenRouter model for responses and tools`);
     
@@ -81,9 +98,20 @@ const { effectiveUserId, effectiveAgentId, effectiveSiteId, effectiveLeadId, con
         console.log(`✅ Retry successful: ${initialDbUuid}`);
       }
     }
+    if (inboundKey && ownerToken) {
+      if (!initialDbUuid || !isValidUUID(initialDbUuid)) return unavailable();
+      try { await bindInboundCommand(inboundKey, ownerToken, initialDbUuid); }
+      catch { return unavailable(); }
+    }
     
     // Esperar a que el comando se complete utilizando nuestra función
     const { command: executedCommand, dbUuid, completed } = await waitForCommandCompletion(internalCommandId);
+    if (reusedCommandId && executedCommand && (
+      (executedCommand.metadata?.dbUuid || executedCommand.id) !== reusedCommandId
+      || executedCommand.site_id !== effectiveSiteId
+      || executedCommand.agent_id !== effectiveAgentId
+      || executedCommand.user_id !== effectiveUserId
+    )) return unavailable();
     
     // CRITICAL: Verify command completed successfully BEFORE processing results
     // This check must run regardless of UUID validity

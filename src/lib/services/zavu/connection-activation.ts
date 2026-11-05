@@ -16,6 +16,7 @@ export async function activateChannelConnection(siteId: string, channelId: strin
   const senderId = connection.zavu_sender_id;
   if (identity && ((identity.senderId !== undefined && identity.senderId !== senderId)
     || (identity.type && identity.type !== connection.type)
+    || (identity.emailDomainId && identity.emailDomainId !== connection.metadata?.email_domain_id)
     || (identity.invitationId && identity.invitationId !== connection.zavu_invitation_id))) {
     throw Object.assign(new Error("Channel identity changed"), { status: 409 });
   }
