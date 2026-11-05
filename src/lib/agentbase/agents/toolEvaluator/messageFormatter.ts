@@ -1,4 +1,5 @@
 import { supportModelContent } from '@/lib/services/customer-support-attachments';
+import type { ChatCompletionContentPart } from 'openai/resources/chat/completions';
 
 /**
  * Message formatting utilities for ToolEvaluator
@@ -11,11 +12,11 @@ import { TOOL_EVALUATOR_SYSTEM_PROMPT, formatToolEvaluatorPrompt } from '../../p
  */
 export function prepareMessagesFromCommand(command: DbCommand, systemPrompt?: string): Array<{
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  content: string | ChatCompletionContentPart[];
 }> {
   const messages: Array<{
     role: 'system' | 'user' | 'assistant';
-    content: string;
+    content: string | ChatCompletionContentPart[];
   }> = [];
 
   // El agent_background es OBLIGATORIO
