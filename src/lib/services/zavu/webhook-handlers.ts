@@ -1,7 +1,7 @@
 import { supabaseAdmin } from "@/lib/database/supabase-server";
-import { encryptToken } from "@/lib/utils/token-encryption";
 import { WorkflowService } from "@/lib/services/workflow-service";
-import { ensureProjectWebhook, ensureSenderWebhook, mapInvitationStatus } from "./client";
+export { handleInvitationStatusChanged } from "./invitation-finalization";
+import { activateVerifiedEmailConnections } from "./email-domain-activation";
 import { getCachedJson, setCachedJson, sha256 } from "@/lib/security/upstash-rest";
 import { refreshSiteConfigurationCaches } from "@/lib/services/site-configuration-cache";
 import { admitZavuInboundAutomation } from './inbound-message-license';
@@ -20,21 +20,6 @@ async function findSettingsForDomain(domainId: string) {
 
   if (error) {
     console.error("[Zavu Webhook] DB error finding domain:", error);
-    throw error;
-  }
-  return data || [];
-}
-
-async function findSettingsForInvitation(invitationId: string) {
-  const { data, error } = await supabaseAdmin
-    .from("settings")
-    .select("id, site_id, channels")
-    .contains("channels", {
-      connections: [{ zavu_invitation_id: invitationId }],
-    });
-
-  if (error) {
-    console.error("[Zavu Webhook] DB error finding invitation:", error);
     throw error;
   }
   return data || [];
@@ -222,106 +207,8 @@ export async function handleDomainStatusChanged(data: any, eventType: string) {
       throw updateError;
     }
     await refreshSiteConfigurationCaches(site.site_id);
-  }
-}
-
-export async function handleInvitationStatusChanged(data: any) {
-  const invitationId = data.invitationId || data.id;
-  const currentStatus = data.currentStatus || data.status;
-  const senderId = data.senderId || data.newSenderId;
-  const connectedAccount = data.connectedAccount || data.wabaAccountId;
-
-  if (!invitationId) {
-    console.warn("[Zavu Webhook] invitation.status_changed missing invitationId");
-    return;
-  }
-
-  console.log(`[Zavu Webhook] Invitation ${invitationId} status changed to ${currentStatus}`);
-
-  const sites = await findSettingsForInvitation(invitationId);
-  if (sites.length === 0) {
-    console.warn(`[Zavu Webhook] No site found for invitation ${invitationId}`);
-    return;
-  }
-
-  const site = sites[0];
-  const currentChannels = (site.channels as any) || {};
-  let connections = Array.isArray(currentChannels.connections)
-    ? [...currentChannels.connections]
-    : [];
-
-  let connectionUpdated = false;
-  connections = connections.map((conn: any) => {
-    if (conn.zavu_invitation_id !== invitationId) return conn;
-    connectionUpdated = true;
-    return {
-      ...conn,
-      status: mapInvitationStatus(currentStatus),
-      zavu_sender_id: senderId || conn.zavu_sender_id,
-      connected_account: connectedAccount || conn.connected_account,
-      updated_at: new Date().toISOString(),
-    };
-  });
-
-  if (!connectionUpdated) {
-    console.warn(`[Zavu Webhook] Invitation ${invitationId} not found in connections array`);
-    return;
-  }
-
-  const { error: updateError } = await supabaseAdmin
-    .from("settings")
-    .update({ channels: { ...currentChannels, connections } })
-    .eq("site_id", site.site_id);
-
-  if (updateError) {
-    console.error("[Zavu Webhook] Error updating connection status:", updateError);
-    throw updateError;
-  }
-  await refreshSiteConfigurationCaches(site.site_id);
-
-  if (currentStatus === "completed" && senderId) {
-    try {
-      const updatedSender = await ensureSenderWebhook(senderId);
-      const webhook = updatedSender?.webhook;
-      if (webhook) {
-        const channelConn = connections.find((c: any) => c.zavu_sender_id === senderId || c.zavu_invitation_id === invitationId);
-        if (channelConn) {
-          const { error: webhookUpdateError } = await supabaseAdmin
-            .from("settings")
-            .update({
-              channels: {
-                ...currentChannels,
-                connections: connections.map((conn: any) =>
-                  conn.id === channelConn.id
-                    ? {
-                        ...conn,
-                        metadata: {
-                          ...(conn.metadata || {}),
-                          ...(webhook.secret ? { zavu_webhook_secret: encryptToken(webhook.secret) } : {}),
-                          zavu_webhook_events: webhook.events || [],
-                        },
-                      }
-                    : conn
-                ),
-              },
-            })
-            .eq("site_id", site.site_id);
-          if (webhookUpdateError) {
-            throw webhookUpdateError;
-          }
-          await refreshSiteConfigurationCaches(site.site_id);
-        }
-      }
-    } catch (senderError) {
-      console.error(`[Zavu Webhook] Failed to configure webhook for sender ${senderId}:`, senderError);
-      throw senderError;
-    }
-
-    try {
-      // For Voice we no longer automatically attach text agents since it's autonomous voice
-      // await attachSenderToAgent(senderId);
-    } catch (agentError) {
-      console.error(`[Zavu Webhook] Failed to attach sender ${senderId} to agent:`, agentError);
+    if (status === "verified") {
+      await activateVerifiedEmailConnections(site.site_id, domainId, connections);
     }
   }
 }

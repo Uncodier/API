@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createPartnerInvitation, ConnectionType, ensureProjectWebhook } from "@/lib/services/zavu";
+import { createPartnerInvitation, ConnectionType, ensureProjectWebhook, requireZavuSiteManager, getChannelConnection, isChannelActivationBlocked } from "@/lib/services/zavu";
+import { z } from "zod";
 import { supabaseAdmin } from "@/lib/database/supabase-server";
 import { refreshSiteConfigurationCaches } from "@/lib/services/site-configuration-cache";
 import { v4 as uuidv4 } from "uuid";
+import { patchActivationConnection } from "@/lib/services/zavu/activation-persistence";
 
 /**
  * POST /api/integrations/zavu/invitations
@@ -10,8 +12,21 @@ import { v4 as uuidv4 } from "uuid";
  */
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { siteId, connectionType, clientName, name, channelId: existingChannelId } = body;
+    const parsed = z.object({
+      siteId: z.string().min(1),
+      connectionType: z.enum(["whatsapp_waba", "messenger"]),
+      clientName: z.string().trim().min(1).optional(),
+      name: z.string().trim().min(1).optional(),
+      channelId: z.string().min(1).optional(),
+    }).strict().safeParse(await request.json().catch(() => null));
+    if (!parsed.success) return NextResponse.json({ error: "Invalid invitation request" }, { status: 400 });
+    const { siteId, connectionType, clientName, name, channelId: existingChannelId } = parsed.data;
+    await requireZavuSiteManager(request, siteId);
+    const existing = await getChannelConnection(siteId, existingChannelId);
+    const expectedType = connectionType === "whatsapp_waba" ? "whatsapp" : "messenger";
+    if (existing && (existing.type !== expectedType || isChannelActivationBlocked(existing) || existing.zavu_sender_id)) {
+      return NextResponse.json({ error: "Existing channel cannot be replaced by an invitation" }, { status: 409 });
+    }
 
     if (!siteId) {
       return NextResponse.json({ error: "siteId is required" }, { status: 400 });
@@ -40,7 +55,7 @@ export async function POST(request: NextRequest) {
     } catch (zavuError: any) {
       console.error("[Zavu] Error creating invitation:", zavuError);
       return NextResponse.json(
-        { error: `Zavu API Error: ${zavuError.message || "Unknown error"}` },
+        { error: "Zavu could not create the invitation" },
         { status: 502 }
       );
     }
@@ -83,6 +98,17 @@ export async function POST(request: NextRequest) {
       updated_at: now,
     };
 
+    if (existing) {
+      await patchActivationConnection(siteId, existing.id, {
+        name: nextConnection.name,
+        status: "pending",
+        zavu_invitation_id: invitation.id,
+        metadata: nextConnection.metadata,
+      }, { senderId: null, type: expectedType, ...(existing.zavu_invitation_id ? { invitationId: existing.zavu_invitation_id } : {}) });
+      return NextResponse.json({ success: true, channelId: existing.id,
+        invitation: { id: invitation.id, url: invitation.url, token: invitation.token } });
+    }
+
     if (existingIndex >= 0) {
       connections[existingIndex] = nextConnection;
     } else {
@@ -94,14 +120,17 @@ export async function POST(request: NextRequest) {
       connections,
     };
 
-    const { error: updateError } = settingsRow
-      ? await supabaseAdmin
-          .from("settings")
-          .update({ channels: updatedChannels })
-          .eq("site_id", siteId)
-      : await supabaseAdmin
-          .from("settings")
-          .insert({ site_id: siteId, channels: updatedChannels });
+    let updateError;
+    if (settingsRow) {
+      let query = supabaseAdmin.from("settings").update({ channels: updatedChannels }).eq("site_id", siteId);
+      query = settingsRow.channels === null ? query.is("channels", null) : query.eq("channels", JSON.stringify(settingsRow.channels));
+      const saved = await query.select("site_id").maybeSingle();
+      updateError = saved.error;
+      if (!saved.error && !saved.data) return NextResponse.json({ error: "Channel settings changed. Retry invitation creation." }, { status: 409 });
+    } else {
+      const saved = await supabaseAdmin.from("settings").insert({ site_id: siteId, channels: updatedChannels });
+      updateError = saved.error;
+    }
 
     if (updateError) {
       console.error("[Zavu] Error updating settings:", updateError);
@@ -121,8 +150,8 @@ export async function POST(request: NextRequest) {
   } catch (error: any) {
     console.error("[Zavu] Unhandled error in create invitation:", error);
     return NextResponse.json(
-      { error: error.message || "Internal server error" },
-      { status: 500 }
+      { error: error.status === 401 ? "Unauthorized" : error.status === 403 ? "Forbidden" : "Could not create invitation" },
+      { status: [401, 403].includes(error.status) ? error.status : 500 }
     );
   }
 }

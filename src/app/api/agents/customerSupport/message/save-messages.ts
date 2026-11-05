@@ -2,8 +2,12 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { ConversationService } from '@/lib/services/conversation-service';
 import { isValidUUID, validateLeadExists } from './agent-data';
 import { saveCommentMessages } from '@/lib/services/social-comments/persistence';
+import { usableSupportContent } from './response-content';
 // Función para guardar mensajes en la base de datos
 export async function saveMessages(userId: string, userMessage: string, assistantMessage: string, conversationId?: string, conversationTitle?: string, leadId?: string, visitorId?: string, agentId?: string, siteId?: string, commandId?: string, origin?: string, isRobot?: boolean, isTransactionalMessage?: boolean, isErratic?: boolean, originMessageId?: string, channelDelivery?: boolean, requireApproval?: boolean, inboundCustomData?: Record<string, unknown>) {
+  if (!usableSupportContent(assistantMessage)) {
+    throw new Error('CUSTOMER_SUPPORT_EMPTY_RESPONSE');
+  }
   if (inboundCustomData?.source === 'comment' && siteId && conversationId) {
     return saveCommentMessages({ siteId, conversationId, userId, userMessage, assistantMessage,
       metadata: inboundCustomData, leadId, agentId: agentId && isValidUUID(agentId) ? agentId : undefined,

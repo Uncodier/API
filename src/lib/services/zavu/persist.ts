@@ -13,8 +13,7 @@ export async function getChannelConnection(siteId: string, channelId: string | u
     .maybeSingle();
 
   if (error) {
-    console.error("[Zavu] Error fetching channel connection:", error);
-    return null;
+    throw new Error("Could not read channel settings");
   }
 
   const connections = (settingsRow?.channels as any)?.connections || [];

@@ -8,7 +8,8 @@ import { isValidUUID, findActiveCustomerSupportAgent, getAgentInfo } from './age
 import { readSupportRequest } from './request';
 import { buildSupportContext } from './context';
 import { generateSupportReply } from './generate';
-import { extractSupportResults } from './results';
+import { resolveSupportResults } from './resolve-results';
+import { getCommandById } from '@/lib/database/command-db';
 import { saveMessages } from './save-messages';
 import { corsHeaders } from './cors';
 import { ensureCommentConversation, bindCommentAgent } from '@/lib/services/social-comments/conversations';
@@ -282,7 +283,23 @@ export async function POST(request: Request) {
     const generated = await generateSupportReply({ effectiveUserId, effectiveAgentId, effectiveSiteId, effectiveLeadId, contextMessage, agentUserId, request });
     if (generated instanceof Response) return generated;
     const { executedCommand, effectiveDbUuid } = generated;
-    const { assistantMessage, conversationTitle, isRobot, isTransactionalMessage, isErratic } = extractSupportResults(executedCommand);
+    const resolved = await resolveSupportResults(executedCommand, async () => {
+      // Never use a task/user-based lookup to recover another command's reply.
+      const exactId = executedCommand.metadata?.dbUuid || executedCommand.id;
+      if (!exactId || !isValidUUID(exactId)) return null;
+      const fresh = await getCommandById(exactId);
+      if (!fresh || fresh.id !== exactId || fresh.site_id !== effectiveSiteId
+          || fresh.agent_id !== effectiveAgentId || fresh.user_id !== effectiveUserId) return null;
+      return fresh;
+    });
+    if (!resolved?.assistantMessage) {
+      return NextResponse.json(
+        { success: false, error: { code: 'CUSTOMER_SUPPORT_EMPTY_RESPONSE',
+          message: 'The support command has no usable assistant response' } },
+        { status: 503, headers: { ...corsHeaders(request), 'Retry-After': '5' } },
+      );
+    }
+    const { assistantMessage, conversationTitle, isRobot, isTransactionalMessage, isErratic } = resolved;
     // Usando lead_id efectivo al guardar los mensajes
     // Envolver en try-catch para manejar error SKIP_DATABASE
     let savedMessages;

@@ -1,4 +1,7 @@
 export * from "./client";
+export * from "./channel-activation";
+export * from "./connection-activation";
+export * from "./activation-persistence";
 export * from "./agent-client";
 export * from "./persist";
 export * from "./phone-ownership";

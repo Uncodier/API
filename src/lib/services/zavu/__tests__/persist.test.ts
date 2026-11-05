@@ -14,11 +14,19 @@ jest.mock("@/lib/database/supabase-server", () => ({
 }));
 
 import {
+  getChannelConnection,
   replaceChannelSenderReferences,
   restoreChannelConnections,
   updateAllVoiceConnectionPreferences,
   upsertChannelConnection,
 } from "../persist";
+
+describe("getChannelConnection", () => {
+  it("fails closed on database read failure rather than treating the connection as new", async () => {
+    mockMaybeSingle.mockResolvedValue({ data: null, error: { message: "private database detail" } });
+    await expect(getChannelConnection("site-1", "channel-1")).rejects.toThrow("Could not read channel settings");
+  });
+});
 
 describe("replaceChannelSenderReferences", () => {
   beforeEach(() => {
