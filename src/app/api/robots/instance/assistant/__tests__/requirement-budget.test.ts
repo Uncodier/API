@@ -63,6 +63,17 @@ test('rejected budget I/O remains safely fenced without exposing database detail
   expect(requirementCycleFailure(error)).toEqual({ status: 'paused', reason: 'requirement_budget_evaluation_unavailable' });
 });
 
+test.each(['cloud', 'workspace'] as const)('does not confirm a %s pause when its durable projection fails',async environment=>{
+  const execute=jest.fn();
+  const runtime=cycleRuntime({store:{} as SessionStore,environment,execute,
+    evaluateBudget:async()=>{throw new RequirementBudgetError('configuration_invalid');}});
+  const persistenceError=new Error('Requirement cycle outcome persistence unavailable');
+  runtime.finish.mockRejectedValue(persistenceError);
+  await expect(runtime.run(run)).rejects.toBe(persistenceError);
+  expect(runtime.finish).toHaveBeenCalledTimes(1);
+  expect(execute).not.toHaveBeenCalled();
+});
+
 test('check precedes workspace/profile/model execution in the only runtime', () => {
   const source = readFileSync(resolve(process.cwd(), 'src/app/api/robots/instance/assistant/requirement-runtime.ts'), 'utf8');
   const check = source.indexOf('await evaluateRequirementCycleBudget(run)');

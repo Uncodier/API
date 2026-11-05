@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { Sandbox } from '@vercel/sandbox';
-import { openWorkspace } from '@/lib/harness/workspace';
+import { openWorkspace, WorkspaceError } from '@/lib/harness/workspace';
 import { WORKSPACE_ISOLATION_VERSION } from '@/lib/harness/workspace-process-guard';
 import { registerSandboxBilling, reconcileSandboxBilling, reconcileSandboxBillingQuiet, SandboxBillingError } from '../sandbox-billing';
 jest.mock('@vercel/sandbox', () => ({ Sandbox:{get:jest.fn(),create:jest.fn()} }));
@@ -47,4 +47,39 @@ it('preserves insufficient credits through workspace opening and never resumes',
   await expect(openWorkspace(input)).rejects.toMatchObject({code:'WORKSPACE_CREDITS_REQUIRED'});
   expect(Sandbox.get).toHaveBeenCalledTimes(1);
   expect(Sandbox.create).not.toHaveBeenCalled();expect(sandbox.runCommand).not.toHaveBeenCalled();
+});
+
+it.each([
+  [401,'WORKSPACE_AUTHORIZATION_REQUIRED'],
+  [403,'WORKSPACE_AUTHORIZATION_REQUIRED'],
+  [402,'WORKSPACE_PROVIDER_BILLING_REQUIRED'],
+  [429,'WORKSPACE_OPEN_FAILED'],
+  [503,'WORKSPACE_OPEN_FAILED'],
+])('does not misclassify resume HTTP %s as site accounting',async(status,code)=>{
+  const sandbox=fixture();
+  jest.mocked(Sandbox.get).mockResolvedValueOnce(sandbox as never).mockRejectedValueOnce({response:{status}});
+  await expect(openWorkspace(input)).rejects.toMatchObject({code});
+  expect(Sandbox.get).toHaveBeenCalledTimes(2);
+  expect(Sandbox.create).not.toHaveBeenCalled();expect(sandbox.stop).not.toHaveBeenCalled();
+  expect(sandbox.runCommand).not.toHaveBeenCalled();
+});
+
+it('preserves cancellation during resume instead of pausing accounting',async()=>{
+  const sandbox=fixture(),controller=new AbortController();
+  jest.mocked(Sandbox.get).mockResolvedValueOnce(sandbox as never).mockImplementationOnce(async()=>{
+    controller.abort();throw controller.signal.reason;
+  });
+  await expect(openWorkspace({...input,signal:controller.signal})).rejects.toMatchObject({code:'ABORTED'});
+  expect(Sandbox.create).not.toHaveBeenCalled();expect(sandbox.stop).not.toHaveBeenCalled();
+});
+
+it('preserves ownership errors detected after billing and before resume',async()=>{
+  const sandbox=fixture(),ownership=new WorkspaceError('OWNERSHIP_LOST','Synthetic ownership changed');
+  jest.mocked(Sandbox.get).mockResolvedValue(sandbox as never);
+  jest.mocked(reconcileSandboxBilling).mockImplementation(async()=>{
+    input.assertActive.mockRejectedValue(ownership);
+  });
+  await expect(openWorkspace(input)).rejects.toMatchObject({code:'ABORTED',effectStarted:false});
+  expect(Sandbox.get).toHaveBeenCalledTimes(1);
+  expect(sandbox.stop).not.toHaveBeenCalled();expect(sandbox.runCommand).not.toHaveBeenCalled();
 });

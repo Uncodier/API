@@ -841,7 +841,10 @@ async function prepareBilledWorkspace(sandbox: Sandbox, active: () => Promise<vo
   } catch (error) {
     // Caller owns failure cleanup. A status/assert read does not fence a remote
     // stop against a concurrent pause/resume, especially for an adopted VM.
-    if (error instanceof SandboxBillingError && error.code === 'insufficient_credits') {
+    // Only accounting failures belong to the accounting pause policy. Provider,
+    // cancellation and ownership errors retain their original classification.
+    if (!(error instanceof SandboxBillingError)) throw error;
+    if (error.code === 'insufficient_credits') {
       return fail('WORKSPACE_CREDITS_REQUIRED', 'Sandbox usage requires sufficient site credits before workspace use.');
     }
     return fail('WORKSPACE_BILLING_UNAVAILABLE', 'Sandbox active-time billing requires reconciliation before workspace use.');

@@ -21,6 +21,12 @@ provider resources. Deploy the API to activate it; no database migration is requ
 - Existing finish-cycle projection blocks these paused runs. Existing ownership,
   generation, user-pause and cleanup fences still apply. A failed state write does
   not establish a confirmed pause.
+- Errors from provider resume, cancellation or ownership checks are not converted
+  into accounting failures. Their normal authorization/transient/cancellation
+  handling remains in effect.
+- If the outer runtime cannot persist its final cycle outcome, it rejects rather
+  than returning a successful `paused` receipt. The workflow step still has zero
+  automatic retries, avoiding replay of a multi-effect slice.
 
 These new reasons deliberately do **not** participate in automatic economic
 recovery. The current sandbox RPC does not return a trusted recovery amount.

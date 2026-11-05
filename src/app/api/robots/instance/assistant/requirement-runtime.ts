@@ -146,7 +146,9 @@ export async function runRequirementCycle(run: RequirementRun) {
       outcome = failure.status;
       reason = failure.reason;
     }
-    await finishRequirementCycle(run, outcome, reason, detail, repoUrl).catch(() => undefined);
+    // Never report an applied pause/outcome when its durable projection failed.
+    // The workflow step has maxRetries=0; surface failure without replaying work.
+    await finishRequirementCycle(run, outcome, reason, detail, repoUrl);
     return { reqId: run.requirementId, sessionId: run.sessionId, status: outcome };
   }
 }
