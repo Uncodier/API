@@ -32,7 +32,7 @@ export function checkoutTool(current_site_id?: string) {
         action: {
           type: 'string',
           enum: ['create_order', 'create_order_from_quotation', 'create_payment_link', 'get_order'],
-          description: 'Action to perform on checkout.',
+          description: 'Action to perform on checkout. Catalog prices and unitPriceOverride exclude tax: active associated taxes are added automatically for products and modifiers. Communicate returned subtotal, tax_total, discount_total and total; never add tax to an override manually. Payment links use the saved order totals.',
         },
         site_id: { type: 'string', description: 'Seller site UUID (defaults to current site)' },
         buyer_user_id: {

@@ -38,6 +38,9 @@ describe('Checkout Tool Route Handlers', () => {
       insert: jest.fn().mockReturnThis(),
       update: jest.fn().mockReturnThis(),
       eq: jest.fn().mockReturnThis(),
+      in: jest.fn().mockReturnThis(),
+      order: jest.fn().mockReturnThis(),
+      range: jest.fn().mockResolvedValue({ data: [], error: null }),
       single: jest.fn().mockResolvedValue({ data: overrides.singleData || {} }),
       maybeSingle: jest.fn().mockResolvedValue({ data: overrides.maybeSingleData || null }),
     };

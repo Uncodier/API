@@ -257,21 +257,14 @@ export async function POST(request: NextRequest) {
         throw new Error('Order has no line items to charge');
       }
 
-      const lineItems = lineSource.map((item: any) => ({
-        price_data: {
-          currency: (order.currency || 'usd').toLowerCase(),
-          product_data: {
-            name: item.name || 'Item',
-            description: item.description || undefined,
-          },
-          unit_amount: Math.round(Number(item.unit_price ?? item.unitPrice ?? 0) * 100),
-        },
-        quantity: Number(item.quantity || 1),
-      }));
+      const { buildPaymentAmounts } = await import('./payment-amounts');
+      // Validate persisted totals before creating a coupon or Checkout Session.
+      const { lineItems, discountCents, currency } = buildPaymentAmounts(order, lineSource);
 
       const sessionPayload: Record<string, unknown> = {
         payment_method_types: ['card'],
         line_items: lineItems,
+        automatic_tax: { enabled: false },
         mode: 'payment',
         success_url: `${returnUrl}?success=true&order_id=${order_id}`,
         cancel_url: `${returnUrl}?canceled=true`,
@@ -284,17 +277,10 @@ export async function POST(request: NextRequest) {
         },
       };
 
-      const discountTotal = Number(order.discount_total || 0);
-      const discountCents = Math.round(discountTotal * 100);
-      const lineCents = lineItems.reduce(
-        (sum: number, item: { price_data: { unit_amount: number }; quantity: number }) =>
-          sum + item.price_data.unit_amount * item.quantity,
-        0
-      );
-      if (discountCents > 0 && lineCents > 0) {
+      if (discountCents > 0) {
         const coupon = await stripe.coupons.create({
-          amount_off: Math.min(discountCents, lineCents),
-          currency: (order.currency || 'usd').toLowerCase(),
+          amount_off: discountCents,
+          currency,
           duration: 'once',
           name: 'Compatible promotion',
         });

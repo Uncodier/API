@@ -3,6 +3,7 @@ import { isItemBookable, loadParentForBookableCheck } from '@/lib/helpers/catalo
 import { assertReservationSlot } from '@/lib/reservations/availability';
 import { resolveRoundRobinCatalogItem } from '@/lib/reservations/round-robin-assign';
 import { resolveLineCurrency, resolveSiteCurrency } from './resolve-currency';
+import { roundMoney } from './taxes';
 
 export type CheckoutModifierLine = {
   catalogItemId: string;
@@ -108,7 +109,7 @@ export async function processCheckoutLines(params: {
 
   for (const line of lines) {
     if (!line?.catalogItemId) throw new Error('Each line requires catalogItemId');
-    const quantity = Number(line.quantity || 1);
+    const quantity = Number(line.quantity ?? 1);
     if (!Number.isFinite(quantity) || quantity <= 0) {
       throw new Error(`Invalid quantity for catalogItemId=${line.catalogItemId}`);
     }
@@ -150,13 +151,15 @@ export async function processCheckoutLines(params: {
       line.unitPriceOverride !== undefined
         ? Number(line.unitPriceOverride)
         : Number(catItem.target_sale_price || 0);
+    if (!Number.isFinite(unitPrice) || unitPrice < 0) throw new Error('Invalid checkout unit price');
     const lineSubtotal = unitPrice * quantity;
+    if (!Number.isFinite(lineSubtotal)) throw new Error('Invalid checkout subtotal');
     subtotal += lineSubtotal;
 
     const modifiers: ProcessedModifier[] = [];
     for (const mod of line.modifiers || []) {
       if (!mod?.catalogItemId) throw new Error('Each modifier requires catalogItemId');
-      const modQty = Number(mod.quantity || 1);
+      const modQty = Number(mod.quantity ?? 1);
       if (!Number.isFinite(modQty) || modQty <= 0) {
         throw new Error(`Invalid quantity for modifier catalogItemId=${mod.catalogItemId}`);
       }
@@ -167,7 +170,9 @@ export async function processCheckoutLines(params: {
         mod.unitPriceOverride !== undefined
           ? Number(mod.unitPriceOverride)
           : Number(modItem.target_sale_price || 0);
+      if (!Number.isFinite(modUnit) || modUnit < 0) throw new Error('Invalid modifier unit price');
       const modSubtotal = modUnit * modQty;
+      if (!Number.isFinite(modSubtotal)) throw new Error('Invalid modifier subtotal');
       subtotal += modSubtotal;
 
       modifiers.push({
@@ -197,7 +202,7 @@ export async function processCheckoutLines(params: {
     });
   }
 
-  return { processedLines, subtotal };
+  return { processedLines, subtotal: roundMoney(subtotal) };
 }
 
 export function buildOrderItemsJson(processedLines: ProcessedHostLine[]) {

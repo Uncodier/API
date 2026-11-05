@@ -85,7 +85,7 @@ export function catalogCommerceTool(current_site_id?: string) {
           type: 'string',
           enum: ['create', 'list', 'get', 'update', 'delete'],
           description:
-            'Action to perform. delete is for modifier resources (groups, options, attachments), taxes, and specs.',
+            'Action to perform. Item list/search/get return pricing: quote pricing.unit_price_with_tax for one unit including active taxes, not target_sale_price (base excluding tax). If pricing.status=unavailable, do not invent a final price. Unit preview excludes promotions, shipping and modifiers; checkout total is authoritative for quantities and rounding. Never add tax again to unit_price_with_tax or use it as unitPriceOverride. delete is for modifier resources, taxes, and specs.',
         },
         resource: {
           type: 'string',
@@ -117,7 +117,7 @@ export function catalogCommerceTool(current_site_id?: string) {
         image_url: { type: 'string', description: 'Public HTTP URL for the product image' },
         cost: { type: 'number', description: 'Cost / COGS' },
         lowest_sale_price: { type: 'number', description: 'Minimum allowed sale price' },
-        target_sale_price: { type: 'number', description: 'Default sale price used by checkout/quotes' },
+        target_sale_price: { type: 'number', description: 'Base unit price EXCLUDING taxes. On list/search/get, quote returned pricing.unit_price_with_tax instead. It includes active taxes for one unit, before promotions, shipping and modifiers. Never add IVA again. If pricing.status=unavailable, do not invent a final price; checkout total is authoritative.' },
         kind: {
           type: 'string',
           enum: ['product', 'service', 'digital_asset', 'variant'],

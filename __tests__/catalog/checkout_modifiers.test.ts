@@ -48,6 +48,7 @@ describe('checkout nested modifiers', () => {
       'cat-host': {
         id: 'cat-host',
         name: 'Cold Brew',
+        status: 'active', availability_status: 'available',
         description: null,
         target_sale_price: 45,
         site_id: siteId,
@@ -57,6 +58,7 @@ describe('checkout nested modifiers', () => {
       'cat-mod': {
         id: 'cat-mod',
         name: 'Oat milk',
+        status: 'active', availability_status: 'available',
         description: null,
         target_sale_price: 10,
         site_id: siteId,
@@ -72,11 +74,18 @@ describe('checkout nested modifiers', () => {
         update: jest.fn().mockReturnThis(),
         eq: jest.fn().mockReturnThis(),
         in: jest.fn().mockReturnThis(),
+        order: jest.fn().mockReturnThis(),
+        range: jest.fn().mockResolvedValue({ data: [], error: null }),
         maybeSingle: jest.fn().mockResolvedValue({ data: null }),
         single: jest.fn().mockResolvedValue({ data: {} }),
       };
 
-      if (table === 'sites') {
+      if (table === 'catalog_item_taxes') {
+        chain.range.mockResolvedValue({ data: ['cat-host', 'cat-mod'].map(catalog_item_id => ({
+          id: `tax-${catalog_item_id}`, catalog_item_id,
+          tax: { id: 'iva', site_id: siteId, rate: 16, is_active: true },
+        })), error: null });
+      } else if (table === 'sites') {
         chain.single.mockResolvedValue({ data: { user_id: userId } });
       } else if (table === 'leads') {
         chain.maybeSingle.mockResolvedValue({ data: null });
@@ -127,7 +136,8 @@ describe('checkout nested modifiers', () => {
     const json = await res.json();
 
     expect(json.success).toBe(true);
-    expect(salePayload.amount).toBe(65); // 45 + 10*2
+    expect(salePayload.amount).toBe(75.4); // (45 + 10*2) + IVA 16%
+    expect(json).toMatchObject({ subtotal: 65, tax_total: 10.4, total: 75.4 });
     expect(salePayload.currency).toBe('MXN');
     expect(hostInserts).toHaveLength(1);
     expect(hostInserts[0].catalog_item_id).toBe('cat-host');

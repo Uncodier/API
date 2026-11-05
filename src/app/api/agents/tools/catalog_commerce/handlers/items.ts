@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { withCatalogPricing } from './pricing';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { resolveSiteCurrency } from '@/app/api/agents/tools/checkout/resolve-currency';
 import { isItemBookable, loadParentForBookableCheck, loadUnbookableParentIds } from '@/lib/helpers/catalog-bookable';
@@ -256,9 +257,11 @@ export async function handleItemAction(body: Record<string, unknown>, principal?
     if (include_specs) extras.specs = await loadItemSpecs(data.id);
     if (include_taxes) extras.taxes = await loadItemTaxes(data.site_id, data.id);
 
+    const [pricedItem] = await withCatalogPricing(data.site_id, [scopeCatalogItemPromptImage(data)]);
+
     return NextResponse.json({
       success: true,
-      item: scopeCatalogItemPromptImage(data),
+      item: pricedItem,
       ...extras,
     });
   }
@@ -292,7 +295,7 @@ export async function handleItemAction(body: Record<string, unknown>, principal?
 
     return NextResponse.json({
       success: true,
-      items: compactCatalogListItems(data),
+      items: await withCatalogPricing(list.site_id, compactCatalogListItems(data)),
       count,
     });
   }

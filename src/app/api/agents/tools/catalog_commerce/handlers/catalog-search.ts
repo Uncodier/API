@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { isItemBookable, type BookableCatalogItem } from '@/lib/helpers/catalog-bookable';
 import { scopeCatalogItemPromptImage } from '@/lib/services/catalog-prompt-image-url';
 import { searchCatalog } from '@/lib/services/catalog-search/service';
+import { withCatalogPricing } from './pricing';
 import {
   catalogFiltersSchema, catalogSearchSchema,
   type CatalogPrincipal, type CatalogSearchInput,
@@ -97,5 +98,6 @@ export async function searchToolItems(body: Record<string, unknown>, principal?:
     && (!enforceBookable || isItemBookable({ ...row, parent: parents.get(row.parent_id!) })))
     .map(row => [row.id, row]));
   // SQL hydration need not return rank order. Missing/changed rows fail closed.
-  return { ...result, items: ids.flatMap(id => byId.has(id) ? [compactCatalogListItem(byId.get(id)!)] : []) };
+  return { ...result, items: await withCatalogPricing(siteId,
+    ids.flatMap(id => byId.has(id) ? [compactCatalogListItem(byId.get(id)!)] : [])) };
 }

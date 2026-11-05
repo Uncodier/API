@@ -13,6 +13,7 @@ import {
 } from './process-lines';
 import { findExistingCreatedOrder } from './order-idempotency';
 import { IDEMPOTENCY_KEY_FIELD, isUuid } from '@/lib/agentbase/utils/write-idempotency';
+import { calculateCheckoutTaxTotal, roundMoney } from './taxes';
 
 export type ReservationExtras = {
   entitlement_id?: string | null;
@@ -42,6 +43,7 @@ export type CreatedSaleOrder = {
   reservations: Record<string, any>[];
   subtotal: number;
   discount_total: number;
+  tax_total: number;
   total: number;
   applied_promotions: AppliedPromotion[];
   notification?: string;
@@ -51,6 +53,7 @@ export function discountFieldsForToolResult(result: CreatedSaleOrder) {
   return {
     subtotal: result.subtotal,
     discount_total: result.discount_total,
+    tax_total: result.tax_total,
     total: result.total,
     applied_promotions: result.applied_promotions,
     ...(result.notification ? { notification: result.notification } : {}),
@@ -105,6 +108,11 @@ export async function createSaleOrderFromLines(
 
   const saleDate = new Date().toISOString().split('T')[0];
   const primaryCurrency = processedLines[0]?.currency || 'USD';
+  const pricedLines = processedLines.flatMap(line => [line, ...line.modifiers]);
+  if (pricedLines.some(line => line.currency !== primaryCurrency)) {
+    throw new Error('Mixed-currency checkout is not supported; use a single order currency');
+  }
+  const taxTotal = await calculateCheckoutTaxTotal(site_id, pricedLines);
 
   const discountLines: DiscountLineItem[] = [];
   for (const pl of processedLines) {
@@ -123,7 +131,7 @@ export async function createSaleOrderFromLines(
   }
 
   const { discountAmount, appliedPromotions } = await calculateAutoDiscount(site_id, discountLines);
-  const amount_due = Math.max(0, subtotal - discountAmount);
+  const amount_due = roundMoney(Math.max(0, subtotal - discountAmount + taxTotal));
 
   const { data: sale, error: saleErr } = await supabaseAdmin
     .from('sales')
@@ -134,7 +142,7 @@ export async function createSaleOrderFromLines(
       owner_site_id: owner_site_id || null,
       title: `Order - ${saleDate}`,
       status: 'pending',
-      amount: subtotal,
+      amount: amount_due,
       amount_due: amount_due,
       currency: primaryCurrency,
       user_id: resolvedUserId,
@@ -166,6 +174,7 @@ export async function createSaleOrderFromLines(
       total: amount_due,
       subtotal,
       discount_total: discountAmount,
+      tax_total: taxTotal,
       currency: primaryCurrency,
       notes: order_notes || null,
       items: orderItemsJson,
@@ -224,6 +233,7 @@ export async function createSaleOrderFromLines(
     reservations,
     subtotal,
     discount_total: discountAmount,
+    tax_total: taxTotal,
     total: amount_due,
     applied_promotions: appliedPromotions,
     notification,

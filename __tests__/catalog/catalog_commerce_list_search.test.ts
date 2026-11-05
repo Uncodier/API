@@ -1,4 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { loadActiveCatalogTaxes } from '@/app/api/agents/tools/checkout/taxes';
+jest.mock('@/app/api/agents/tools/checkout/taxes', () => ({
+  ...jest.requireActual('@/app/api/agents/tools/checkout/taxes'), loadActiveCatalogTaxes: jest.fn(),
+}));
 import { NextRequest, NextResponse } from 'next/server';
 import { POST } from '@/app/api/agents/tools/catalog_commerce/route';
 import { handleItemAction } from '@/app/api/agents/tools/catalog_commerce/handlers/items';
@@ -59,6 +63,7 @@ function request(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   jest.resetAllMocks();
+  jest.mocked(loadActiveCatalogTaxes).mockResolvedValue(new Map());
   jest.mocked(authorizeCatalogRequest).mockResolvedValue(principal);
   jest.mocked(searchCatalog).mockResolvedValue(searchResult());
   jest.mocked(loadUnbookableParentIds).mockResolvedValue([]);

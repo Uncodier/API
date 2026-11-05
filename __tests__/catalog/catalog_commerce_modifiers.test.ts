@@ -1,3 +1,7 @@
+jest.mock('@/app/api/agents/tools/checkout/taxes', () => ({
+  ...jest.requireActual('@/app/api/agents/tools/checkout/taxes'),
+  loadActiveCatalogTaxes: async () => new Map(),
+}));
 import { NextRequest } from 'next/server';
 import { POST } from '../../src/app/api/agents/tools/catalog_commerce/route';
 import { supabaseAdmin } from '../../src/lib/database/supabase-client';

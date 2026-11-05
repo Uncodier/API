@@ -45,9 +45,10 @@ export async function loadCreatedOrderFromSale(sale: Record<string, any>): Promi
     order,
     lead_id: sale.lead_id || null,
     reservations,
-    subtotal: Number(order.subtotal || sale.amount || 0),
+    subtotal: Number(order.subtotal ?? sale.amount ?? 0),
     discount_total: Number(order.discount_total || 0),
-    total: Number(order.total || sale.amount_due || 0),
+    tax_total: Number(order.tax_total ?? 0),
+    total: Number(order.total ?? sale.amount_due ?? 0),
     applied_promotions: [],
   };
 }
