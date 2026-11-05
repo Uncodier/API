@@ -3,7 +3,7 @@ import { GET } from '@/app/api/cron/maintenance/sandbox-housekeeping/route';
 import { Sandbox } from '@vercel/sandbox';
 import { housekeepingRows } from '../sandbox-housekeeping-db';
 import { listHousekeepingSandboxes } from '../sandbox-housekeeping-list';
-import { reconcileSandboxBilling, retireSandboxBilling } from '../sandbox-billing';
+import { reconcileSandboxBilling, retireSandboxBilling, SandboxBillingError } from '../sandbox-billing';
 import { stopSandboxQuiet } from '@/lib/services/sandbox-stop';
 import { deleteSnapshotQuiet } from '@/lib/services/sandbox-persisted-snapshot';
 import { isSandboxNotFoundError } from '@/lib/services/sandbox-missing-snapshot';
@@ -14,7 +14,7 @@ jest.mock('@/lib/status/telemetry',()=>({recordTelemetry:jest.fn().mockResolvedV
 jest.mock('@vercel/sandbox',()=>({Sandbox:{get:jest.fn()}}));
 jest.mock('../sandbox-housekeeping-db',()=>({housekeepingRows:jest.fn()}));
 jest.mock('../sandbox-housekeeping-list',()=>({listHousekeepingSandboxes:jest.fn()}));
-jest.mock('../sandbox-billing',()=>({reconcileSandboxBilling:jest.fn(),retireSandboxBilling:jest.fn()}));
+jest.mock('../sandbox-billing',()=>({...jest.requireActual('../sandbox-billing'),reconcileSandboxBilling:jest.fn(),retireSandboxBilling:jest.fn()}));
 jest.mock('@/lib/services/sandbox-stop',()=>({stopSandboxQuiet:jest.fn()}));
 jest.mock('@/lib/services/sandbox-persisted-snapshot',()=>({deleteSnapshotQuiet:jest.fn()}));
 jest.mock('@/lib/services/sandbox-sdk',()=>({sandboxSdkMajor:()=>3}));
@@ -29,6 +29,7 @@ beforeEach(()=>{
   jest.mocked(housekeepingRows).mockResolvedValue([]);jest.mocked(listHousekeepingSandboxes).mockResolvedValue([]);
   jest.mocked(isSandboxNotFoundError).mockReturnValue(false);
   jest.mocked(retireSandboxBilling).mockReset().mockResolvedValue(undefined);
+  jest.mocked(reconcileSandboxBilling).mockReset().mockResolvedValue(undefined);
   jest.mocked(claimSandboxCleanup).mockReset().mockResolvedValue(null);
   jest.spyOn(globalThis,'fetch').mockRejectedValue(new Error('Live network forbidden'));
 });
@@ -158,6 +159,27 @@ it('four historical tracked 404s stay actionable pending, never false recovery',
   jest.mocked(housekeepingRows).mockImplementation(async table=>table==='sandbox_billing_resources'?rows:[]);
   const error={response:{status:404}};jest.mocked(Sandbox.get).mockRejectedValue(error);jest.mocked(isSandboxNotFoundError).mockReturnValue(true);
   const response=await GET(request());
-  expect((await response.json()).results).toMatchObject({billingErrors:4,sandboxesBilled:0});
+  expect((await response.json()).results).toMatchObject({billingErrors:4,missingResources:4,fundingPending:0,sandboxesBilled:0});
   expect(retireSandboxBilling).not.toHaveBeenCalled();expect(claimSandboxCleanup).not.toHaveBeenCalled();
+});
+
+it.each(['insufficient_credits','reconciliation_pending'] as const)('reports %s without retiring or forgiving usage',async code=>{
+  const name=`h-${randomUUID()}`;
+  jest.mocked(housekeepingRows).mockImplementation(async table=>table==='sandbox_billing_resources'?[{sandbox_name:name}]:[]);
+  jest.mocked(Sandbox.get).mockResolvedValue({name,status:'stopped'} as never);
+  jest.mocked(reconcileSandboxBilling).mockRejectedValue(new SandboxBillingError(code));
+  const response=await GET(request());
+  expect((await response.json()).results).toMatchObject({billingErrors:1,missingResources:0,
+    fundingPending:code==='insufficient_credits'?1:0,reconciliationPending:code==='reconciliation_pending'?1:0});
+  expect(retireSandboxBilling).not.toHaveBeenCalled();
+  expect(stopSandboxQuiet).not.toHaveBeenCalled();
+});
+
+it('does not count an already stopped orphan as newly stopped',async()=>{
+  const name=`h-${randomUUID()}`;
+  jest.mocked(listHousekeepingSandboxes).mockResolvedValue([{id:name,name,createdAt:Date.now()-3600000}]);
+  jest.mocked(Sandbox.get).mockResolvedValue({name,status:'stopped'} as never);
+  jest.mocked(stopSandboxQuiet).mockResolvedValue(true);
+  const response=await GET(request());
+  expect((await response.json()).results).toMatchObject({sandboxesStopped:0,sandboxesAlreadyStopped:1});
 });

@@ -1,0 +1,12 @@
+{
+  "overview": { "page": "/dashboard?tab=overview", "mode": "imprenta", "title": "Workspace overview" },
+  "leads": { "page": "/leads", "title": "Lead management" },
+  "lead": { "page": "/leads/lead-saas-1", "mode": "imprenta", "title": "Lead profile" },
+  "conversations": { "page": "/chats", "title": "Conversation inbox" },
+  "requirements": { "page": "/requirements", "title": "Requirements and AI goals" },
+  "robots": { "page": "/robots", "mode": "workflow", "title": "Agent workspace" },
+  "campaigns": { "page": "/campaigns", "mode": "imprenta", "title": "Campaign management" },
+  "content": { "page": "/content", "mode": "imprenta", "title": "Content workspace" },
+  "purchases": { "page": "/purchases/requests", "title": "Procurement requests" },
+  "tenders": { "page": "/purchases/tenders", "title": "Procurement tenders" }
+}

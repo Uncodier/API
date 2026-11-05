@@ -2,7 +2,12 @@ import type { Sandbox } from '@vercel/sandbox';
 
 export const SANDBOX_CREDITS_PER_HOUR = 0.5;
 export class SandboxBillingError extends Error {
-  constructor() { super('Sandbox billing could not be reconciled. Active usage remains pending.'); this.name = 'SandboxBillingError'; }
+  constructor(public readonly code: 'insufficient_credits' | 'reconciliation_pending' = 'reconciliation_pending') {
+    super(code === 'insufficient_credits'
+      ? 'Sandbox billing requires available credits. Active usage remains pending.'
+      : 'Sandbox billing could not be reconciled. Active usage remains pending.');
+    this.name = 'SandboxBillingError';
+  }
 }
 export type SandboxBillingOwner = { kind: 'harness' | 'requirement' | 'workflow' | 'instance'; id: string; siteId?: string };
 type BillingClient = { rpc(name: string, params: Record<string, unknown>): PromiseLike<{ data: unknown; error: unknown }> };
@@ -17,8 +22,12 @@ export async function registerSandboxBilling(name: string, owner: SandboxBilling
     const result = await (db ?? await client()).rpc('register_sandbox_billing', {
       p_sandbox_name: name, p_owner_kind: owner.kind, p_owner_id: owner.id, p_site_id: owner.siteId ?? null,
     });
-    if (result.error || !(result.data as { success?: boolean } | null)?.success) throw new SandboxBillingError();
-  } catch { throw new SandboxBillingError(); }
+    const data = result.data as { success?: boolean; error?: string } | null;
+    if (!result.error && data?.success === false && data.error === 'Sandbox requires available credits') {
+      throw new SandboxBillingError('insufficient_credits');
+    }
+    if (result.error || !data?.success) throw new SandboxBillingError();
+  } catch (error) { throw error instanceof SandboxBillingError ? error : new SandboxBillingError(); }
 }
 
 export type ProviderSession = { id: string; status: string; startedAt?: number | Date;
@@ -49,7 +58,8 @@ export function billableSession(session: ProviderSession): { id: string; started
 /** listSessions is control-plane only and DOES NOT implicitly resume a stopped VM.
  * Capture observation BEFORE the query so request latency cannot add stopped time. */
 export async function reconcileSandboxBilling(sandbox: Sandbox, db?: BillingClient): Promise<void> {
-  try { await reconcile(sandbox, db); } catch { throw new SandboxBillingError(); }
+  try { await reconcile(sandbox, db); }
+  catch (error) { throw error instanceof SandboxBillingError ? error : new SandboxBillingError(); }
 }
 
 async function reconcile(sandbox: Sandbox, db?: BillingClient): Promise<void> {
@@ -63,6 +73,12 @@ async function reconcile(sandbox: Sandbox, db?: BillingClient): Promise<void> {
     const billed = await (db ?? await client()).rpc('bill_sandbox_sessions', {
       p_sandbox_name: sandbox.name, p_sessions: intervals, p_observed_at: observedAt,
     });
+    // Classify only the trusted RPC's exact rejection, not provider messages or
+    // arbitrary P0001 failures. Keep SQL rollback/atomic settlement unchanged.
+    const billingError = billed.error as { code?: string; message?: string } | null;
+    if (billingError?.code === 'P0001' && billingError.message === 'Sandbox billing requires available credits') {
+      throw new SandboxBillingError('insufficient_credits');
+    }
     if (billed.error || !(billed.data as { success?: boolean } | null)?.success) throw new SandboxBillingError();
     const next = result.pagination.next;
     if (!next) {

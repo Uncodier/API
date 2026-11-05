@@ -4,8 +4,7 @@ import { openWorkspace } from '@/lib/harness/workspace';
 import { WORKSPACE_ISOLATION_VERSION } from '@/lib/harness/workspace-process-guard';
 import { registerSandboxBilling, reconcileSandboxBilling, reconcileSandboxBillingQuiet, SandboxBillingError } from '../sandbox-billing';
 jest.mock('@vercel/sandbox', () => ({ Sandbox:{get:jest.fn(),create:jest.fn()} }));
-jest.mock('../sandbox-billing', () => ({ registerSandboxBilling:jest.fn(), reconcileSandboxBilling:jest.fn(), reconcileSandboxBillingQuiet:jest.fn(),
-  SandboxBillingError:class extends Error {} }));
+jest.mock('../sandbox-billing', () => ({ ...jest.requireActual('../sandbox-billing'), registerSandboxBilling:jest.fn(), reconcileSandboxBilling:jest.fn(), reconcileSandboxBillingQuiet:jest.fn() }));
 
 const sessionId=randomUUID(),siteId=randomUUID(),name=`h-${sessionId}`;
 const repository={url:'https://repository.example.test/team/repo.git'};
@@ -40,4 +39,12 @@ it('suspend stops then reconciles final provider timestamps',async()=>{
   const sandbox=fixture();sandbox.status='running';jest.mocked(Sandbox.get).mockResolvedValue(sandbox as never);
   const workspace=await openWorkspace(input);await workspace.suspend();
   expect(jest.mocked(reconcileSandboxBillingQuiet).mock.invocationCallOrder[0]).toBeGreaterThan(sandbox.stop.mock.invocationCallOrder[0]);
+});
+
+it('preserves insufficient credits through workspace opening and never resumes',async()=>{
+  const sandbox=fixture();jest.mocked(Sandbox.get).mockResolvedValue(sandbox as never);
+  jest.mocked(reconcileSandboxBilling).mockRejectedValue(new SandboxBillingError('insufficient_credits'));
+  await expect(openWorkspace(input)).rejects.toMatchObject({code:'WORKSPACE_CREDITS_REQUIRED'});
+  expect(Sandbox.get).toHaveBeenCalledTimes(1);
+  expect(Sandbox.create).not.toHaveBeenCalled();expect(sandbox.runCommand).not.toHaveBeenCalled();
 });

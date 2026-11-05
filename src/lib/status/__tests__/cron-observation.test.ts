@@ -27,7 +27,7 @@ const mocks: Record<string, Record<string, unknown>> = {
   '@vercel/sandbox': { Sandbox: { list: businessCall } },
   '@/lib/services/sandbox-persisted-snapshot': { deleteSnapshotQuiet: businessCall },
   '@/lib/services/sandbox-stop': { stopSandboxQuiet: businessCall },
-  '@/lib/services/billing/sandbox-billing': { reconcileSandboxBilling: businessCall, retireSandboxBilling: businessCall },
+  '@/lib/services/billing/sandbox-billing': { reconcileSandboxBilling: businessCall, retireSandboxBilling: businessCall, SandboxBillingError: class extends Error {} },
   '@/lib/services/sandbox-missing-snapshot': { isSandboxNotFoundError: businessCall },
   '@/lib/services/billing/sandbox-housekeeping-list': { listHousekeepingSandboxes: businessCall },
   '@/lib/services/billing/sandbox-housekeeping-db': { housekeepingRows: businessCall },

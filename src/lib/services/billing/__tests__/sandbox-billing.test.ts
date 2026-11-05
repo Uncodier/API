@@ -53,3 +53,21 @@ it('never records full-history completion on later page failure or cursor repeti
   await expect(reconcileSandboxBilling({name:'synthetic',listSessions} as unknown as Sandbox,db)).rejects.toThrow('pending');
   expect(db.rpc).not.toHaveBeenCalledWith('complete_sandbox_billing_observation',expect.anything());
 });
+
+it.each([
+  [{code:'P0001',message:'Sandbox billing requires available credits'},'insufficient_credits'],
+  [{code:'P0001',message:'VM session billing identity conflict'},'reconciliation_pending'],
+  [{code:'42501',message:'Sandbox billing requires available credits'},'reconciliation_pending'],
+] as const)('classifies only the exact trusted settlement rejection %#',async(error,code)=>{
+  const sandbox={name:`h-${randomUUID()}`,listSessions:jest.fn().mockResolvedValue({sessions:[],pagination:{next:null}})};
+  const db={rpc:jest.fn().mockResolvedValue({data:null,error})};
+  await expect(reconcileSandboxBilling(sandbox as unknown as Sandbox,db)).rejects.toMatchObject({name:'SandboxBillingError',code});
+  expect(db.rpc).toHaveBeenCalledTimes(1);
+});
+
+it('preserves rejected registration funding classification without treating provider text as funding',async()=>{
+  const db={rpc:jest.fn().mockResolvedValue({data:{success:false,error:'Sandbox requires available credits'},error:null})};
+  await expect(registerSandboxBilling('synthetic',{kind:'requirement',id:randomUUID()},db)).rejects.toMatchObject({code:'insufficient_credits'});
+  const sandbox={name:'synthetic',listSessions:jest.fn().mockRejectedValue({code:'P0001',message:'Sandbox billing requires available credits'})};
+  await expect(reconcileSandboxBilling(sandbox as unknown as Sandbox,db)).rejects.toMatchObject({code:'reconciliation_pending'});
+});

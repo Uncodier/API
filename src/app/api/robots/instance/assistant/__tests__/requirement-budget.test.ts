@@ -4,7 +4,10 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 const rpc = jest.fn();
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { rpc } }));
-import { evaluateRequirementCycleBudget } from '../requirement-budget';
+import { evaluateRequirementCycleBudget, RequirementBudgetError } from '../requirement-budget';
+import { requirementCycleFailure } from '../requirement-cycle-failure';
+import { cycleRuntime } from './helpers/requirement-cycle-runtime';
+import type { SessionStore } from '@/lib/harness/types';
 import { requirementChargeMetadata, withRequirementChargeContext } from '@/lib/services/billing/requirement-charge-context';
 
 const run = { requirementId: randomUUID(), siteId: randomUUID(), userId: randomUUID(),
@@ -20,9 +23,44 @@ test.each(['unlimited', 'available', 'exhausted'])('cycle receipt %s', async sta
   });
 });
 
-test.each([{ error: {} }, { data: null }, { data: { state: 'unknown' } }])('unavailable accounting is not zero spend', async receipt => {
+test.each([null, undefined, { error: {} }, { data: null }, { data: { state: 'unknown' } }])('unavailable accounting is not zero spend', async receipt => {
   rpc.mockResolvedValue(receipt);
   await expect(evaluateRequirementCycleBudget(run)).rejects.toThrow('evaluation unavailable');
+});
+
+test.each([
+  [{ code: 'P0001', message: 'Invalid requirement monetary budget' }, 'configuration_invalid'],
+  [{ code: 'P0001', message: 'Other SQL failure' }, 'evaluation_unavailable'],
+  [{ code: '42501', message: 'Invalid requirement monetary budget' }, 'evaluation_unavailable'],
+  [{ message: 'Invalid requirement monetary budget' }, 'evaluation_unavailable'],
+  [{ code: 'P0001', message: 'Invalid requirement monetary budget: extra detail' }, 'evaluation_unavailable'],
+] as const)('only exact SQLSTATE and safe SQL message classify invalid configuration: %j', async (error, code) => {
+  rpc.mockResolvedValue({ error });
+  await expect(evaluateRequirementCycleBudget(run)).rejects.toMatchObject({ name: 'RequirementBudgetError', code });
+});
+
+test.each(['cloud', 'workspace'] as const)('budget failure before %s execution pauses in the real outer catch', async environment => {
+  const execute = jest.fn();
+  const store = {} as SessionStore; // Admission fails before any session I/O.
+  const runtime = cycleRuntime({ store, environment, execute, evaluateBudget: () => evaluateRequirementCycleBudget(run) });
+  for (const [receipt, reason] of [
+    [{ error: { code: 'P0001', message: 'Invalid requirement monetary budget' } }, 'requirement_budget_configuration_invalid'],
+    [{ data: null }, 'requirement_budget_evaluation_unavailable'],
+  ] as const) {
+    rpc.mockResolvedValue(receipt);
+    const result = await runtime.run(run);
+    expect(result.status).toBe('paused');
+    expect(runtime.finish).toHaveBeenLastCalledWith(run, 'paused', reason, expect.any(String), undefined);
+    expect(execute).not.toHaveBeenCalled();
+  }
+});
+
+test('rejected budget I/O remains safely fenced without exposing database detail', async () => {
+  rpc.mockRejectedValue(new Error('Offline database detail'));
+  const error = await evaluateRequirementCycleBudget(run).catch(error => error);
+  expect(error).toBeInstanceOf(RequirementBudgetError);
+  expect(error.message).not.toContain('Offline database detail');
+  expect(requirementCycleFailure(error)).toEqual({ status: 'paused', reason: 'requirement_budget_evaluation_unavailable' });
 });
 
 test('check precedes workspace/profile/model execution in the only runtime', () => {
@@ -32,6 +70,35 @@ test('check precedes workspace/profile/model execution in the only runtime', () 
   expect(check).toBeLessThan(source.indexOf('await buildRequirementProfile('));
   expect(check).toBeLessThan(source.indexOf('await executeRequirementAssistantWorkspace('));
 });
+
+test('real SQL finish freezes admission failures without changing budget or overriding user controls offline', () => {
+  const script = String.raw`
+    import { PGlite } from '@electric-sql/pglite';
+    import { randomUUID } from 'node:crypto';
+    import { readFileSync } from 'node:fs';
+    import assert from 'node:assert/strict';
+    const db=new PGlite(), rid=randomUUID(), site=randomUUID(), sid=randomUUID(), iid=randomUUID();
+    try {
+      await db.exec("CREATE TABLE requirements(id uuid,site_id uuid,budget numeric,status text,metadata jsonb,updated_at timestamptz,cron_lock_run_id text,cron_lock_expires_at timestamptz,cron_lock_active boolean); CREATE TABLE harness_sessions(id uuid,snapshot jsonb); CREATE TABLE harness_requirement_runs(requirement_id uuid,session_id uuid,generation integer,last_cycle_id text,pause_reason text,next_run_at timestamptz); CREATE TABLE requirement_status(requirement_id uuid,site_id uuid,instance_id uuid,stage text,cycle text,message text,repo_url text); CREATE FUNCTION assert_agent_requirement_run(uuid,text,integer,uuid,boolean,integer) RETURNS boolean LANGUAGE sql AS $$ SELECT true $$;");
+      const migration=readFileSync('supabase/migrations/20261023200000_agent_requirement_nonblocking_wait.sql','utf8');
+      await db.exec(migration.slice(migration.indexOf('CREATE OR REPLACE FUNCTION public.finish_agent_requirement_cycle('),migration.indexOf('REVOKE ALL ON FUNCTION public.claim_agent_requirement_run_before_commands')));
+      await db.query("INSERT INTO requirements(id,site_id,budget,status,metadata,cron_lock_run_id,cron_lock_active) VALUES($1,$2,-1,'in-progress',$3,'owned',true)",[rid,site,{runner_instance_id:iid,requirement_execution_generation:'2'}]);
+      await db.query("INSERT INTO harness_requirement_runs(requirement_id,session_id,generation,next_run_at) VALUES($1,$2,2,now())",[rid,sid]);
+      for (const reason of ['requirement_budget_configuration_invalid','requirement_budget_evaluation_unavailable','sandbox_credits_required','sandbox_reconciliation_required']) {
+        assert.equal((await db.query("SELECT finish_agent_requirement_cycle($1,'owned',2,$2,'paused',$3,'Safe failure') AS value",[rid,sid,reason])).rows[0].value,true);
+        const row=(await db.query('SELECT budget::text AS budget,status,cron_lock_run_id,cron_lock_active FROM requirements')).rows[0];
+        assert.deepEqual(row,{budget:'-1',status:'blocked',cron_lock_run_id:null,cron_lock_active:false});
+        const mapping=(await db.query('SELECT pause_reason,next_run_at FROM harness_requirement_runs')).rows[0];
+        assert.deepEqual(mapping,{pause_reason:reason,next_run_at:null});
+      }
+      await db.query('INSERT INTO harness_sessions VALUES($1,$2)',[sid,{status:'paused',reason:'user_pause'}]);
+      await db.query("SELECT finish_agent_requirement_cycle($1,'owned',2,$2,'paused','requirement_budget_configuration_invalid','Safe failure')",[rid,sid]);
+      assert.equal((await db.query('SELECT pause_reason FROM harness_requirement_runs')).rows[0].pause_reason,'user_pause');
+    } finally { await db.close(); }
+  `;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 30000 });
+  expect({ status: result.status, error: result.error?.message, stderr: result.stderr }).toEqual({ status: 0, error: undefined, stderr: '' });
+}, 35000);
 
 test('concurrent tool charge attribution is host-scoped and never crosses tenants', async () => {
   const other = { ...run, siteId: randomUUID(), requirementId: randomUUID(), sessionId: randomUUID() };
@@ -96,6 +163,11 @@ test('real cycle budget SQL sums attributed charges without holds/refund duplica
       assert.equal((await check()).spent_usd,11);
       await db.exec('UPDATE requirements SET budget=12');
       assert.equal((await check()).state,'available');
+      for (const invalid of ['-1','NaN','Infinity','-Infinity']) {
+        await db.query('UPDATE requirements SET budget=$1::numeric WHERE id=$2',[invalid,rid]);
+        await assert.rejects(check(),error=>error.code==='P0001' && error.message==='Invalid requirement monetary budget');
+        assert.equal((await db.query('SELECT budget::text AS budget FROM requirements WHERE id=$1',[rid])).rows[0].budget,invalid);
+      }
       await db.exec('UPDATE requirements SET budget=NULL');
       assert.equal((await check()).state,'unlimited');
       await db.exec('UPDATE requirements SET budget=0');

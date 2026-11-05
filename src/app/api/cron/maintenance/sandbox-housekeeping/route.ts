@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { Sandbox } from '@vercel/sandbox';
 import { deleteSnapshotQuiet } from '@/lib/services/sandbox-persisted-snapshot';
 import { stopSandboxQuiet } from '@/lib/services/sandbox-stop';
-import { reconcileSandboxBilling, retireSandboxBilling } from '@/lib/services/billing/sandbox-billing';
+import { reconcileSandboxBilling, retireSandboxBilling, SandboxBillingError } from '@/lib/services/billing/sandbox-billing';
 import { isSandboxNotFoundError } from '@/lib/services/sandbox-missing-snapshot';
 import { listHousekeepingSandboxes, type HousekeepingCredentials } from '@/lib/services/billing/sandbox-housekeeping-list';
 import { housekeepingRows } from '@/lib/services/billing/sandbox-housekeeping-db';
@@ -51,6 +51,10 @@ async function runCron(request: Request) {
       sandboxesBilled: 0,
       billingErrors: 0,
       terminalSandboxesDeleted: 0,
+      fundingPending: 0,
+      missingResources: 0,
+      reconciliationPending: 0,
+      sandboxesAlreadyStopped: 0,
     };
 
     console.log('[SandboxHousekeeping] Starting orphan cleanup...');
@@ -131,6 +135,12 @@ async function runCron(request: Request) {
           }
         }
         results.billingErrors++;
+        const reason = !sandbox && isSandboxNotFoundError(error) ? 'missing_resource'
+          : error instanceof SandboxBillingError && error.code === 'insufficient_credits'
+            ? 'insufficient_credits' : 'reconciliation_pending';
+        if (reason === 'missing_resource') results.missingResources++;
+        else if (reason === 'insufficient_credits') results.fundingPending++;
+        else results.reconciliationPending++;
         // A known unpaid/outage interval must not authorize more running time.
         if (sandbox && ['running', 'pending', 'snapshotting', 'stopping'].includes(sandbox.status)) await stopSandboxQuiet(sandbox);
       }
@@ -157,11 +167,13 @@ async function runCron(request: Request) {
       if (isActive) continue;
       const createdAt = sb.createdAt ? new Date(sb.createdAt).getTime() : 0;
       if (createdAt && createdAt >= thirtyMinutesAgo) continue;
-      console.log(`[SandboxHousekeeping] Stopping orphaned sandbox ${id} (created ${createdAt ? new Date(createdAt).toISOString() : 'unknown'})`);
       try {
         const sandboxInstance = await Sandbox.get({ ...credentials, name: id, resume: false });
+        const alreadyStopped = ['stopped', 'failed', 'aborted'].includes(sandboxInstance.status);
+        if (!alreadyStopped) console.log(`[SandboxHousekeeping] Stopping orphaned sandbox ${id}`);
         const stopped = await stopSandboxQuiet(sandboxInstance);
-        if (stopped) results.sandboxesStopped++;
+        if (stopped && alreadyStopped) results.sandboxesAlreadyStopped++;
+        else if (stopped) results.sandboxesStopped++;
         else results.sandboxErrors++;
       } catch (stopErr: unknown) {
         console.warn('[SandboxHousekeeping] Sandbox stop failed; cleanup remains pending.');
@@ -171,7 +183,12 @@ async function runCron(request: Request) {
 
     // v3 owns persistent restore snapshots via keepLastSnapshots. A global list
     // cannot reliably prove ownership, so do not delete paused/new stop snapshots.
-    if (sandboxSdkMajor() >= 3) return NextResponse.json({ success: true, results });
+    if (sandboxSdkMajor() >= 3) {
+      // Bounded aggregate facts only. Never log provider errors, payloads or credentials.
+      // Keep billingErrors: unresolved funding/history is not a false recovery.
+      console.log('[SandboxHousekeeping] Cleanup complete.', results);
+      return NextResponse.json({ success: true, results });
+    }
 
     // 3. Clean up legacy orphaned snapshots (SDK Snapshot.list when present, else REST)
     const twentyFourHoursAgo = Date.now() - 24 * 60 * 60 * 1000;

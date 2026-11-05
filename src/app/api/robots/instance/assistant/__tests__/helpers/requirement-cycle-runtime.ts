@@ -4,7 +4,8 @@ import { requirementCycleFailure } from '../../requirement-cycle-failure';
 import type { SessionStore } from '@/lib/harness/types';
 
 /** Real lifecycle module; all external I/O is explicitly replaced for offline tests. */
-export function cycleRuntime(input: { store: SessionStore; environment: 'cloud' | 'workspace'; execute: (...args: any[]) => Promise<any> }) {
+export function cycleRuntime(input: { store: SessionStore; environment: 'cloud' | 'workspace'; execute: (...args: any[]) => Promise<any>;
+  evaluateBudget?: () => Promise<boolean> }) {
   const finish = jest.fn(async () => {});
   const query = (table: string): any => ({
     select: () => query(table), eq: () => query(table), not: () => query(table),
@@ -33,7 +34,7 @@ export function cycleRuntime(input: { store: SessionStore; environment: 'cloud' 
       '@/lib/harness/security': { createRedactor },
       '@/app/api/agents/tools/router/screen-access': { assertToolScreenAccess: async () => {} },
       './requirement-instance-log': { writeRequirementInstanceLog: async () => {} },
-      './requirement-budget': { evaluateRequirementCycleBudget: async () => false },
+      './requirement-budget': { evaluateRequirementCycleBudget: input.evaluateBudget || (async () => false) },
       './requirement-cycle-failure': { requirementCycleFailure },
     });
   return { run: runtime.runRequirementCycle, finish };

@@ -536,7 +536,8 @@ class VercelWorkspace implements Workspace {
         if (this.assertCleanup) await this.assertCleanup();
         await this.sandbox.stop({ signal: AbortSignal.timeout(60_000) }).catch(() => undefined);
         await reconcileSandboxBillingQuiet(this.sandbox);
-        return fail('WORKSPACE_BILLING_UNAVAILABLE', 'Sandbox billing must reconcile before further commands.');
+        return fail(error.code === 'insufficient_credits' ? 'WORKSPACE_CREDITS_REQUIRED' : 'WORKSPACE_BILLING_UNAVAILABLE',
+          error.code === 'insufficient_credits' ? 'Sandbox usage requires sufficient site credits before further commands.' : 'Sandbox billing must reconcile before further commands.');
       }
       if (command) { try { await this.active(signal); await command.kill('SIGKILL', { abortSignal: signal }); } catch { /* Do not dispatch after cancellation. */ } }
       if (error instanceof WorkspaceError) { error.effectStarted = dispatched; throw error; }
@@ -817,7 +818,7 @@ export async function openWorkspace(input: {
       } catch { /* Ownership loss/unknown stop: preserve and reconcile, no retry. */ }
       if (input.siteId) await reconcileSandboxBillingQuiet(sandbox);
     }
-    if (error instanceof WorkspaceError) throw error;
+    if (error instanceof WorkspaceError || error instanceof SandboxBillingError) throw error;
     const failure = workspaceOpenFailure(error, operation);
     return fail(input.signal?.aborted ? 'ABORTED' : failure.code, input.signal?.aborted
       ? 'Workspace opening was cancelled.' : failure.message);
@@ -837,9 +838,12 @@ async function prepareBilledWorkspace(sandbox: Sandbox, active: () => Promise<vo
     await reconcileSandboxBilling(sandbox);
     await active();
     return sandbox;
-  } catch {
+  } catch (error) {
     // Caller owns failure cleanup. A status/assert read does not fence a remote
     // stop against a concurrent pause/resume, especially for an adopted VM.
+    if (error instanceof SandboxBillingError && error.code === 'insufficient_credits') {
+      return fail('WORKSPACE_CREDITS_REQUIRED', 'Sandbox usage requires sufficient site credits before workspace use.');
+    }
     return fail('WORKSPACE_BILLING_UNAVAILABLE', 'Sandbox active-time billing requires reconciliation before workspace use.');
   }
 }

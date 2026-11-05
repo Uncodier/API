@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { createMemorySessionStore } from '@/lib/harness/memory-store';
 import { createSession, sessionRequestSchema } from '@/lib/harness/session';
 import { OpenRouterBillingError, RequirementCreditsExhaustedError } from '@/lib/services/billing/openrouter-usage-billing';
+import { SandboxBillingError } from '@/lib/services/billing/sandbox-billing';
 import { AssistantExecutionBoundaryError } from '@/lib/services/robot-instance/assistant-execution-boundary';
 import { cycleRuntime } from './helpers/requirement-cycle-runtime';
 let store = createMemorySessionStore();
@@ -58,6 +59,21 @@ beforeEach(() => {
   open.mockResolvedValue({ ref: { provider: 'vercel', id: 'offline-workspace', root: '/workspace' } });
   cleanup.mockResolvedValue({ assert: async () => {}, finish: async () => {} });
   suspend.mockResolvedValue(undefined);
+});
+
+test.each([
+  [new SandboxBillingError('insufficient_credits'), 'sandbox_credits_required'],
+  [new SandboxBillingError(), 'sandbox_reconciliation_required'],
+  [Object.assign(new Error('safe funding failure'), { name: 'WorkspaceError', code: 'WORKSPACE_CREDITS_REQUIRED' }), 'sandbox_credits_required'],
+  [Object.assign(new Error('safe accounting failure'), { name: 'WorkspaceError', code: 'WORKSPACE_BILLING_UNAVAILABLE' }), 'sandbox_reconciliation_required'],
+])('persists a non-retrying accounting pause before model work (%#)', async (error, reason) => {
+  const f = await fixture();
+  open.mockRejectedValueOnce(error);
+  const result = await executeRequirementAssistantWorkspace(f.session.id, f.scope, f.options);
+  expect(result).toEqual({ status: 'paused', continue: false });
+  const saved = await store.load(f.session.id, f.scope.siteId);
+  expect(saved).toMatchObject({ status: 'paused', reason });
+  expect(runSlice).not.toHaveBeenCalled();
 });
 
 test.each(['completed', 'paused'] as const)('terminal %s uses cleanup authority, not active execution authority', async status => {
