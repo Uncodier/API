@@ -10,6 +10,8 @@ type McpToolFactory = (siteId?: string, instanceId?: string) => {
 };
 
 const MCP_NATIVE_TOOL_LOADERS: Record<string, () => Promise<McpToolFactory>> = {
+  read_document: async () =>
+    (await import('@/app/api/agents/tools/read_document/assistantProtocol')).readDocumentTool,
   calendars: async () => (await import('@/app/api/agents/tools/calendars/assistantProtocol')).calendarsTool,
   reservations: async () =>
     (await import('@/app/api/agents/tools/reservations/assistantProtocol')).reservationsTool,

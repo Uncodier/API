@@ -362,10 +362,10 @@ export async function executeTools(
         continue;
       }
 
-      if (context?.command_id && !parsedArgs.command_id) {
+      if (functionName !== 'read_document' && context?.command_id && !parsedArgs.command_id) {
         parsedArgs.command_id = context.command_id;
       }
-      if (context?.site_id && !parsedArgs.site_id) {
+      if (functionName !== 'read_document' && context?.site_id && !parsedArgs.site_id) {
         parsedArgs.site_id = context.site_id;
       }
       
@@ -407,10 +407,11 @@ export async function executeTools(
           const dotted = resolveDottedMcpCall(functionName, parsedArgs);
           const mcpName = dotted?.name || functionName;
           const mcpArgs = { ...(dotted?.args || parsedArgs as Record<string, any>) };
-          if (!mcpArgs.site_id && context?.site_id) {
+          // The shared document reader has a strict, context-free argument schema.
+          if (mcpName !== 'read_document' && !mcpArgs.site_id && context?.site_id) {
             mcpArgs.site_id = context.site_id;
           }
-          if (!mcpArgs.command_id && context?.command_id) {
+          if (mcpName !== 'read_document' && !mcpArgs.command_id && context?.command_id) {
             mcpArgs.command_id = context.command_id;
           }
           output = await executeMcpNativeTool(mcpName, mcpArgs);

@@ -19,7 +19,8 @@ BEGIN
       PRIMARY KEY (site_id, connection_id, origin_message_id)
     )', s, s);
     EXECUTE format('ALTER TABLE %I.customer_support_inbound_commands ENABLE ROW LEVEL SECURITY', s);
-    EXECUTE format('REVOKE ALL ON %I.customer_support_inbound_commands FROM PUBLIC, anon, authenticated', s);
+    -- GRANT is additive: remove default service_role DELETE/TRUNCATE privileges too.
+    EXECUTE format('REVOKE ALL ON %I.customer_support_inbound_commands FROM PUBLIC, anon, authenticated, service_role', s);
     EXECUTE format('GRANT SELECT, INSERT, UPDATE ON %I.customer_support_inbound_commands TO service_role', s);
   END LOOP;
 END
