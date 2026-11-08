@@ -16,7 +16,7 @@ export function freshPostgres() {
   const root = mkdtempSync('/tmp/procurement-pg-');
   const data = join(root, 'data');
   const bin = '/opt/homebrew/bin/';
-  const env = { PATH: process.env.PATH, HOME: root, LC_ALL: 'C' };
+  const env: NodeJS.ProcessEnv = { NODE_ENV: 'test', PATH: process.env.PATH, HOME: root, LC_ALL: 'C' };
   const stop = () => {
     try { execFileSync(`${bin}pg_ctl`, ['-D', data, '-m', 'immediate', '-w', 'stop'], { env, stdio: 'pipe' }); }
     finally { rmSync(root, { recursive: true, force: true }); }
