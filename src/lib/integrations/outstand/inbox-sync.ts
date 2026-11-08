@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { getOutstandClient } from './client';
+import { normalizeSupportAttachments } from '@/lib/services/customer-support-attachments';
 import { ensureOutstandDmLead } from '@/lib/services/leads/outstand-dm-identity';
 import { outstandParticipantIdentity, OutstandParticipantIdentityError } from './participant-identity';
 import type {
@@ -189,6 +190,7 @@ async function updateLocalOutstandMessage(
     source: 'outstand_dm',
     provider: 'outstand',
     channel: 'instagram',
+    attachments: normalizeSupportAttachments(message.mediaUrls?.map(url => ({ url }))),
     status: reconcileOutstandStatus(currentStatus, message.status),
     provider_message_id: message.id,
     outstand_message_id: message.id,
@@ -251,6 +253,7 @@ export async function recordOutstandMessage(
     source: 'outstand_dm',
     provider: 'outstand',
     channel: 'instagram',
+    attachments: normalizeSupportAttachments(message.mediaUrls?.map(url => ({ url }))),
     status: message.status,
     provider_message_id: message.id,
     outstand_message_id: message.id,

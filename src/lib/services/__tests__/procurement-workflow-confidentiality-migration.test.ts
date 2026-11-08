@@ -42,6 +42,7 @@ it('executes confidentiality policies and denies ordinary readers of derived wor
       END $$;
     `);
     await db.exec(sql);
+    await db.exec(readFileSync(resolve(process.cwd(), 'supabase/migrations/20261106110000_procurement_workflow_insert_returning.sql'), 'utf8'));
     const site = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
     const instance = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
     const manager = '11111111-1111-4111-8111-111111111111';

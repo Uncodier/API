@@ -31,6 +31,46 @@ In the workflow editor, select a Table trigger, choose a procurement table and
 operations, save/sync the workflow, and enable the trigger. Existing procurement
 tools remain responsible for authorized actions and mandatory human approvals.
 
+## INSERT RETURNING correction
+
+The forward-only API migration
+`20261106110000_procurement_workflow_insert_returning.sql` corrects the
+confidentiality guard installed above. PostgreSQL cannot see the candidate row
+through the read RPC while checking `remote_instances INSERT ... RETURNING`.
+The base-table restrictive policy now checks candidate-row membership and private
+classification without requiring that lookup for ordinary robots. Existing tenant
+and insert policies remain intact. Private robots, derived tables and read RPCs
+retain the existence-checking guard; direct read authorization also explicitly
+requires effective tenant membership. No service-role bypass is added.
+
+The private classification helper is not executable by PUBLIC, anon, authenticated
+or service_role. Only the caller-bound candidate helper is granted to authenticated;
+it checks membership internally without broadening the existing membership helper's
+ACL. It accepts no actor argument. Candidate checks intentionally do not establish
+existence for ordinary IDs and must never replace the existence-checking read RPC.
+They expose no payload, but can reveal a limited classification distinction for
+known IDs; foreign-site membership and null callers fail closed. Missing-ID and
+foreign-membership read RPCs still return false.
+
+The canonical correction lives here and byte-identically in the schema repository,
+not in a duplicate frontend migration. Applied with explicit authorization only to
+`rnjgeloamtszdjplmqxy` on 2026-11-08 at 01:32:29 UTC; independent read-only catalog
+and exact-source history verification passed at 01:32:37 UTC. No production robot
+insert or business-flow test was performed. See the schema repository's
+`supabase/validation/20261108_procurement_workflow_insert_returning.md` for evidence
+and TLS limitations. Bootstrap exclusion is unchanged.
+
+Run `PATH=/opt/homebrew/bin:$PATH npm run test:procurement -- --runTestsByPath
+src/lib/procurement/__tests__/workflow-insert-returning-postgres.test.ts` for the
+real PostgreSQL regression. It creates and destroys a socket-only local cluster,
+never reads a configured database URL, and fails if PostgreSQL binaries are
+unavailable at `/opt/homebrew/bin`. The
+fixture models tenant membership and procurement permission; it is not a full
+Supabase schema replay. It proves the original failure, corrected returning row,
+tenant/owner denials, private single/array triggers, sticky and derived privacy,
+and missing-ID RPC denials. The frontend robot lifecycle test is separately
+restricted to explicitly enabled disposable local/staging targets.
+
 ## Boundaries
 
 - No new raw quotation or sealed-submission events are enabled. Procurement
