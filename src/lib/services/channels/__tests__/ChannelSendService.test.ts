@@ -7,6 +7,9 @@ import { authorizeOutstandConversation } from '@/lib/integrations/outstand/conve
 import { deliverExplicitAudio } from '../explicit-audio-delivery';
 import { audioSenderIdentity } from '../audio-sender-identity';
 import { resolveAudioRouting } from '../audio-routing';
+import { deliverZavuTemplate } from '@/lib/services/whatsapp/zavu-template-delivery';
+import { WhatsAppTemplateService } from '@/lib/services/whatsapp/WhatsAppTemplateService';
+jest.mock('@/lib/services/whatsapp/zavu-template-delivery', () => ({ deliverZavuTemplate: jest.fn(), TemplateDeliveryError: class extends Error {} }));
 jest.mock('../audio-routing', () => ({ resolveAudioRouting: jest.fn() }));
 jest.mock('../explicit-audio-delivery', () => ({ deliverExplicitAudio: jest.fn(), markAudioPreflightFailed: jest.fn(), AudioDeliveryError: class extends Error {} }));
 jest.mock('@/lib/services/whatsapp/WhatsAppTemplateService', () => ({ WhatsAppTemplateService: {
@@ -49,6 +52,7 @@ describe('ChannelSendService', () => {
   
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.mocked(WhatsAppTemplateService.checkResponseWindow).mockResolvedValue({ withinWindow: true });
     mockedSupabase.maybeSingle.mockResolvedValue({ data: { custom_data: {} } });
     jest.mocked(resolveAudioRouting).mockImplementation(async input => ({ kind: 'zavu',
       connectionId: typeof input.connectionId === 'string' ? input.connectionId : 'connection-0', senderId: mockSenderId }));
@@ -180,6 +184,26 @@ describe('ChannelSendService', () => {
     const result = await ChannelSendService.sendMessage({ site_id: mockSiteId, channel: 'telegram', to: mockTo,
       message: 'Hi', response_format: 'audio', message_id: 'manual', conversation_id: 'conversation' });
     expect(result.success).toBe(false);
+    expect(deliverExplicitAudio).not.toHaveBeenCalled();
+    expect(zavuClient.sendChannelMessage).not.toHaveBeenCalled();
+  });
+  it.each([false, true])('uses the pinned template path when WhatsApp audio cannot use the window (already pending: %s)', async alreadyPending => {
+    mockedSupabase.single.mockResolvedValue({ data: { channels: { connections: [
+      { id: 'selected-wa', type: 'whatsapp', zavu_sender_id: 'selected-sender' },
+    ] } }, error: null });
+    mockedSupabase.maybeSingle.mockResolvedValue({ data: { custom_data: { connection_id: 'selected-wa',
+      ...(alreadyPending ? { template_delivery: { state: 'pending' } } : {}) } } });
+    jest.mocked(resolveAudioRouting).mockResolvedValueOnce({ kind: 'zavu', connectionId: 'selected-wa', senderId: 'selected-sender' });
+    jest.mocked(WhatsAppTemplateService.checkResponseWindow).mockResolvedValue({ withinWindow: alreadyPending });
+    const pending = { success: true as const, template_pending: true, template_used: false,
+      status: 'template_pending' as const, delivery_format: 'template' as const, requested_response_format: 'audio' as const,
+      template_id: 'template', message_id: 'saved' };
+    jest.mocked(deliverZavuTemplate).mockResolvedValueOnce(pending);
+    expect(await ChannelSendService.sendMessage({ site_id: mockSiteId, channel: 'whatsapp', to: mockTo,
+      message: 'Hola', response_format: 'audio', message_id: 'saved', conversation_id: 'conversation' }))
+      .toMatchObject({ success: true, templateDelivery: pending });
+    expect(deliverZavuTemplate).toHaveBeenCalledWith(expect.objectContaining({ connectionId: 'selected-wa',
+      senderId: 'selected-sender', messageId: 'saved', text: 'Hola' }));
     expect(deliverExplicitAudio).not.toHaveBeenCalled();
     expect(zavuClient.sendChannelMessage).not.toHaveBeenCalled();
   });

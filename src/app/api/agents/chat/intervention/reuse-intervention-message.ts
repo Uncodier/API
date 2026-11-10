@@ -41,6 +41,8 @@ export async function reuseInterventionMessage(
   }
 
   const customData = { ...((data.custom_data as Record<string, unknown>) || {}) };
+  // Template approval/dispatch is owned by its workflow, not the Retry button.
+  if (customData.template_delivery) return null;
   // A retry may omit the selection, but may never change the saved choice
   // (including the legacy, unspecified mode).
   let responseFormat: ResponseFormat | undefined;

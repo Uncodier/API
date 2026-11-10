@@ -51,6 +51,12 @@ describe('intervention retry ownership and atomic claim', () => {
     claimed = false;
     await expect(reuseInterventionMessage(messageId, conversationId, userId, 'Hello')).resolves.toBeNull();
   });
+  it.each(['creating', 'submitting', 'pending', 'ready', 'dispatching', 'sent', 'rejected', 'unknown'])('does not let manual retry take over template state %s', async state => {
+    Object.assign(customData, { response_format: 'audio', template_delivery: { state, template_id: 'template' } });
+    await expect(reuseInterventionMessage(messageId, conversationId, userId, 'Hello', { channel: 'whatsapp' })).resolves.toBeNull();
+    expect(updates).toBe(0);
+    expect(resolveAudioRouting).not.toHaveBeenCalled();
+  });
 
   it.each([
     { status: 'sent' }, { status: 'delivered' }, { status: 'placement_unknown' },

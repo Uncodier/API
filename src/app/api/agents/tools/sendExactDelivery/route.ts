@@ -43,7 +43,7 @@ export async function POST(request: Request) {
       const result = await sendExactAudioDelivery({ siteId: parsed.data.site_id, channel: parsed.data.channel,
         connectionId: context.connectionId, conversationId: context.conversationId!,
         messageId: parsed.data.message_id, text: context.message.content, recipient: recipient.recipient });
-      return NextResponse.json(result, { status: result.success ? 200 : 422 });
+      return NextResponse.json(result, { status: result.success ? ('template_pending' in result && result.template_pending ? 202 : 200) : 422 });
     }
     let attemptId: string | undefined;
     const result = await sendExactDelivery({ site_id: parsed.data.site_id, channel: parsed.data.channel,

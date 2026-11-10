@@ -6,6 +6,8 @@ jest.mock('@/lib/services/channels/explicit-audio-delivery', () => ({
 jest.mock('@/lib/services/zavu/client', () => ({ sendChannelMessage: jest.fn() }));
 jest.mock('@/lib/services/whatsapp/WhatsAppTemplateService', () => ({ WhatsAppTemplateService: { checkResponseWindow: jest.fn() } }));
 jest.mock('@/lib/services/whatsapp/twilio-whatsapp-transport', () => ({ sendTwilioWhatsAppMessage: jest.fn() }));
+jest.mock('@/lib/services/whatsapp/zavu-template-delivery', () => ({ deliverZavuTemplate: jest.fn(), TemplateDeliveryError: class extends Error {} }));
+jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn() } }));
 import { sendExactAudioDelivery } from '../exact-audio-delivery';
 import { loadExactAccount } from '../exact-delivery';
 import { exactWhatsAppConfig } from '../exact-whatsapp';
@@ -13,11 +15,15 @@ import { deliverExplicitAudio } from '@/lib/services/channels/explicit-audio-del
 import { sendChannelMessage } from '@/lib/services/zavu/client';
 import { WhatsAppTemplateService } from '@/lib/services/whatsapp/WhatsAppTemplateService';
 import { audioSenderIdentity } from '@/lib/services/channels/audio-sender-identity';
+import { deliverZavuTemplate } from '@/lib/services/whatsapp/zavu-template-delivery';
+import { supabaseAdmin } from '@/lib/database/supabase-client';
 
 const input = { siteId: 'site', channel: 'telegram' as const, connectionId: 'selected',
   conversationId: 'conversation', messageId: 'saved', text: 'Hello', recipient: 'recipient' };
 beforeEach(() => {
   jest.clearAllMocks();
+  const query: any = { select: () => query, eq: () => query, maybeSingle: async () => ({ data: { custom_data: {} } }) };
+  jest.mocked(supabaseAdmin.from).mockReturnValue(query);
   jest.mocked(loadExactAccount).mockResolvedValue({ id: 'selected', provider: 'zavu',
     config: { zavu_sender_id: 'sender' } } as any);
   jest.mocked(exactWhatsAppConfig).mockResolvedValue(null);
@@ -41,8 +47,11 @@ test('never switches accounts after preparation', async () => {
   expect(await sendExactAudioDelivery(input)).toMatchObject({ success: false });
   expect(sendChannelMessage).not.toHaveBeenCalled();
 });
-test('rejects WhatsApp audio outside its response window before synthesis', async () => {
+test('routes closed-window approved WhatsApp audio to its exact sender template before synthesis', async () => {
   jest.mocked(WhatsAppTemplateService.checkResponseWindow).mockResolvedValue({ withinWindow: false });
-  expect(await sendExactAudioDelivery({ ...input, channel: 'whatsapp' })).toMatchObject({ success: false });
+  jest.mocked(deliverZavuTemplate).mockResolvedValue({ success: true, delivery_format: 'template', requested_response_format: 'audio',
+    status: 'template_pending', template_pending: true, template_used: false, template_id: 'template', message_id: 'saved' });
+  expect(await sendExactAudioDelivery({ ...input, channel: 'whatsapp' })).toMatchObject({ success: true, template_pending: true });
+  expect(deliverZavuTemplate).toHaveBeenCalledWith(expect.objectContaining({ connectionId: 'selected', senderId: 'sender', messageId: 'saved' }));
   expect(deliverExplicitAudio).not.toHaveBeenCalled();
 });

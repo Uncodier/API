@@ -20,7 +20,7 @@ interface AudioDeliveryParams {
 
 /** Only mark a definitely unstarted audio request failed; never rewrite a receipt. */
 export async function markAudioPreflightFailed(params: {
-  siteId: string; conversationId?: string; messageId?: string;
+  siteId: string; conversationId?: string; messageId?: string; reason?: string;
 }): Promise<void> {
   if (!params.conversationId || !params.messageId) return;
   try {
@@ -29,12 +29,12 @@ export async function markAudioPreflightFailed(params: {
     if (scopeError || !conversation) return;
     const { data: row, error } = await supabaseAdmin.from('messages').select('custom_data, role')
       .eq('id', params.messageId).eq('conversation_id', params.conversationId).maybeSingle();
-    if (error || !row || !['assistant', 'team_member'].includes(row.role) || row.custom_data?.audio_delivery
+    if (error || !row || !['assistant', 'team_member'].includes(row.role) || row.custom_data?.audio_delivery || row.custom_data?.template_delivery
       || row.custom_data?.response_format === 'text'
       || ['sent', 'delivered', 'sending', 'placement_unknown'].includes(row.custom_data?.status)) return;
     let query = supabaseAdmin.from('messages').update({ custom_data: {
       ...(row.custom_data || {}), response_format: 'audio', status: 'failed', command_status: 'failed',
-      error_message: 'Audio preparation or eligibility failed; no message was dispatched.',
+      error_message: params.reason || 'Audio preparation or eligibility failed; no message was dispatched.',
     } }).eq('id', params.messageId).eq('conversation_id', params.conversationId);
     query = row.custom_data === null ? query.is('custom_data', null) : query.eq('custom_data', JSON.stringify(row.custom_data));
     await query;
@@ -67,6 +67,7 @@ export async function deliverExplicitAudio(params: AudioDeliveryParams): Promise
     text: params.text, channel: params.channel, to: params.recipient, sender: params.sender,
   })).digest('hex');
   let metadata = row.custom_data;
+  if (metadata?.template_delivery) throw new AudioDeliveryError('Template already owns delivery; no audio was sent');
   if (metadata?.response_format !== undefined && metadata.response_format !== 'audio') {
     throw new AudioDeliveryError('Audio delivery conflicts with the saved response format');
   }

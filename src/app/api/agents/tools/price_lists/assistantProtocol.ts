@@ -8,6 +8,7 @@ export interface PriceListsToolParams {
   is_default?: boolean;
   limit?: number;
   offset?: number;
+  thought_process?: string;
 }
 
 export function priceListsTool(current_site_id?: string) {
@@ -33,7 +34,11 @@ export function priceListsTool(current_site_id?: string) {
       required: ['action'],
     },
     execute: async (args: PriceListsToolParams) => {
-      const { action, ...params } = args;
+      const { action, thought_process: _thought, ...params } = args;
+
+      if (!['list', 'get'].includes(action)) {
+        throw new Error('Price-list writes require the owner/admin-scoped administrative router');
+      }
 
       if (action === 'get' && !params.id) {
         throw new Error('Missing required field id for action get');

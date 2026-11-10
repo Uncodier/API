@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyZavuSignature } from "@/lib/services/zavu";
 import { decryptToken } from "@/lib/utils/token-decryption";
+import { reconcileTemplateDeliveryEvent } from '@/lib/services/zavu/template-delivery-events';
 import { 
   findSettingsForSender, 
   handleDomainStatusChanged, 
@@ -61,7 +62,7 @@ export async function POST(request: NextRequest) {
     event.type = eventType;
     console.log(`[Zavu Webhook] Received event: ${eventType || "unknown"}`);
 
-    const providerEventId = event.id || event.eventId || event.data?.messageId;
+    const providerEventId = event.id || event.eventId || (event.data?.messageId ? `${eventType}:${event.data.messageId}` : undefined);
     const eventId = typeof providerEventId === "string"
       ? providerEventId
       : await sha256(rawBody);
@@ -139,9 +140,11 @@ async function processEventAsync(event: any) {
     case "message.sent":
     case "message.delivered":
     case "message.read":
+      await reconcileTemplateDeliveryEvent(event);
       console.log(`[Zavu Webhook] Delivery update: ${event.type} for message ${event.data?.messageId}`);
       break;
     case "message.failed":
+      await reconcileTemplateDeliveryEvent(event);
       console.error(`[Zavu Webhook] Message delivery failed for ${event.data?.messageId}: [${event.data?.errorCode}] ${event.data?.errorMessage}`);
       break;
     case "call.initiated":

@@ -8,6 +8,8 @@ import { WhatsAppTemplateService } from '@/lib/services/whatsapp/WhatsAppTemplat
 import { sendTwilioWhatsAppMessage } from '@/lib/services/whatsapp/twilio-whatsapp-transport';
 import type { DeliveryChannel } from './delivery-routing';
 import { audioSenderIdentity } from '@/lib/services/channels/audio-sender-identity';
+import { deliverZavuTemplate, TemplateDeliveryError } from '@/lib/services/whatsapp/zavu-template-delivery';
+import { supabaseAdmin } from '@/lib/database/supabase-client';
 
 /** Approved support messages keep their exact account; audio uses its own receipt. */
 export async function sendExactAudioDelivery(input: {
@@ -24,7 +26,15 @@ export async function sendExactAudioDelivery(input: {
       const window = await WhatsAppTemplateService.checkResponseWindow(input.conversationId, input.recipient, input.siteId);
       if (!window.withinWindow) throw new AudioDeliveryError('Audio requires an active WhatsApp response window');
     };
-    await checkWindow();
+    if (input.channel === 'whatsapp' && account.provider === 'zavu') {
+      const { data: saved, error } = await supabaseAdmin.from('messages').select('custom_data')
+        .eq('id', input.messageId).eq('conversation_id', input.conversationId).maybeSingle();
+      if (error || !saved) throw new AudioDeliveryError('Saved delivery is unavailable');
+      const window = await WhatsAppTemplateService.checkResponseWindow(input.conversationId, input.recipient, input.siteId);
+      if (saved.custom_data?.template_delivery || !window.withinWindow) {
+        return await deliverZavuTemplate({ ...input, senderId: account.config.zavu_sender_id });
+      }
+    } else await checkWindow();
     const messageId = await deliverExplicitAudio({ ...input,
       sender: account.provider === 'zavu'
         ? audioSenderIdentity({ provider: 'zavu', senderId: account.config.zavu_sender_id })
@@ -52,8 +62,9 @@ export async function sendExactAudioDelivery(input: {
       },
     });
     return { success: true, messageId, message_id: messageId, status: 'sent' };
-  } catch {
-    await markAudioPreflightFailed(input);
-    return { success: false, error: 'Audio delivery failed or is unconfirmed; check the saved message before retrying' };
+  } catch (error) {
+    await markAudioPreflightFailed({ ...input, ...(error instanceof TemplateDeliveryError ? { reason: error.message } : {}) });
+    return { success: false, error: error instanceof TemplateDeliveryError ? error.message
+      : 'Audio delivery failed or is unconfirmed; check the saved message before retrying' };
   }
 }

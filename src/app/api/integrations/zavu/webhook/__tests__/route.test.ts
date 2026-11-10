@@ -1,6 +1,8 @@
 import crypto from "crypto";
 import { NextRequest } from "next/server";
 import { POST } from "@/app/api/integrations/zavu/webhook/route";
+import { reconcileTemplateDeliveryEvent } from '@/lib/services/zavu/template-delivery-events';
+jest.mock('@/lib/services/zavu/template-delivery-events', () => ({ reconcileTemplateDeliveryEvent: jest.fn() }));
 import * as webhookHandlers from "@/lib/services/zavu/webhook-handlers";
 import * as webhookClaims from "@/lib/services/provider-webhook-claims";
 
@@ -192,7 +194,7 @@ describe("Zavu Webhook Dispatch", () => {
     expect(webhookHandlers.handleInboundMessage).not.toHaveBeenCalled();
   });
   
-  it("should ignore delivery events and log without throwing", async () => {
+  it("dispatches delivery events to template reconciliation", async () => {
     const payload = {
       type: "message.delivered",
       data: {
@@ -205,6 +207,23 @@ describe("Zavu Webhook Dispatch", () => {
 
     expect(res.status).toBe(200);
     expect(webhookHandlers.handleInboundMessage).not.toHaveBeenCalled();
+    expect(reconcileTemplateDeliveryEvent).toHaveBeenCalledWith(payload);
+  });
+
+  it('does not deduplicate distinct delivery transitions by the same message ID', async () => {
+    await POST(createRequest({ type: 'message.sent', senderId: 'sender', data: { messageId: 'provider', channel: 'whatsapp' } }));
+    await POST(createRequest({ type: 'message.failed', senderId: 'sender', data: { messageId: 'provider', channel: 'whatsapp' } }));
+    expect(webhookClaims.claimProviderWebhookEvent).toHaveBeenCalledWith('zavu', 'message.sent:provider', 'message.sent');
+    expect(webhookClaims.claimProviderWebhookEvent).toHaveBeenCalledWith('zavu', 'message.failed:provider', 'message.failed');
+    expect(reconcileTemplateDeliveryEvent).toHaveBeenCalledTimes(2);
+  });
+
+  it('asks the provider to retry a delivery event if its saved receipt is not yet available', async () => {
+    jest.mocked(reconcileTemplateDeliveryEvent).mockRejectedValueOnce(new Error('receipt not ready'));
+    const response = await POST(createRequest({ id: 'evt-delivery', type: 'message.failed', senderId: 'sender',
+      data: { messageId: 'provider', channel: 'whatsapp' } }));
+    expect(response.status).toBe(500);
+    expect(webhookClaims.finishProviderWebhookEvent).toHaveBeenCalledWith('zavu', 'evt-delivery', 'claim-token', 'failed', 'receipt not ready');
   });
 
   it("records a failed claim and requests a retry on processing errors", async () => {

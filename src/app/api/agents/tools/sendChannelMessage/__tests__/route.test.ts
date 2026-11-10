@@ -116,4 +116,17 @@ describe('sendChannelMessage Outstand reconciliation', () => {
     expect(response.status).toBe(400);
     expect(ChannelSendService.sendMessage).not.toHaveBeenCalled();
   });
+  it.each([true, false])('reports template lifecycle without an audio success or metadata rewrite (pending: %s)', async pending => {
+    const templateDelivery = { success: true, template_pending: pending, template_used: !pending,
+      status: pending ? 'template_pending' : 'sent', delivery_format: 'template', requested_response_format: 'audio',
+      template_id: 'template', message_id: pending ? 'saved' : 'provider', ...(pending ? {} : { messageId: 'provider' }) };
+    (ChannelSendService.sendMessage as jest.Mock).mockResolvedValue({ success: true, templateDelivery } as never);
+    const response = await POST(new NextRequest('https://api.example.test/send', {
+      method: 'POST', body: JSON.stringify({ channel: 'whatsapp', to: '+15555550100', message: 'Hola',
+        site_id: 'site', response_format: 'audio', message_id: 'saved', conversation_id: 'conversation' }),
+    }));
+    expect(response.status).toBe(pending ? 202 : 200);
+    expect(await response.json()).toMatchObject({ ...templateDelivery, delivered: false });
+    expect(supabaseAdmin.from).not.toHaveBeenCalled();
+  });
 });

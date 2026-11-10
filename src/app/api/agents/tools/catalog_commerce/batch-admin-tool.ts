@@ -2,9 +2,11 @@ import { z } from 'zod';
 import { batchToolProperties, batchUpdateSchema } from './handlers/batch-schema';
 import type { RoutedTool } from '../router/assistantProtocol';
 import type { ToolScreenScope } from '../router/screen-access';
+import { bindPriceListBatchActor } from '../price_lists/batch-admin-tool';
 
 /** Only the administrative router supplies this host-owned scope. Never derive it from tool args. */
 export function bindCatalogBatchActor(tool: RoutedTool, scope?: ToolScreenScope): RoutedTool {
+  if (tool.name === 'price_lists') return bindPriceListBatchActor(tool, scope);
   if (tool.name !== 'catalog_commerce' || !scope?.siteId || !scope.userId) return tool;
   const { siteId, userId } = scope;
   return {

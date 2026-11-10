@@ -33,8 +33,70 @@ Explicit audio requires a saved `message_id` and `conversation_id`. The API
 verifies site/conversation/message scope and the saved content, then synthesizes
 MP3 through Azure using the configured voice. Spoken text is limited to 4,000
 characters; unsupported/empty input fails rather than truncating or sending text.
-WhatsApp requires an active response window, rechecked before dispatch; the audio
-branch never creates a text template.
+WhatsApp audio requires an active response window, rechecked before dispatch.
+For Zavu WhatsApp with a closed window, the same saved response is delivered as
+a text template instead, subject to Meta approval. The legacy Twilio audio path
+still requires an active window; its existing non-audio template workflow is unchanged.
+
+### Zavu closed-window template fallback
+
+The template contains the exact prepared message, not an audio header, automatic
+summary or silently shortened version. It must contain 1–1024 characters with no
+unresolved `{{variables}}`. Unsupported content fails explicitly. The language is
+loaded from `settings.default_locale` and normalized to a supported WhatsApp code
+(for example `es-MX` -> `es_MX`, `pt-BR` -> `pt_BR`). Missing locale defaults to
+`en`; an invalid locale fails before submission. The field specifies the template
+language; it does not translate the message. Prepare content in the intended
+language before requesting delivery.
+
+Template creation uses Zavu `/v1/templates` (`whatsappCategory: UTILITY`), submission
+uses `/v1/templates/{id}/submit` with the selected `senderId`, and dispatch uses
+`/v1/messages` with `messageType: template`, `content.templateId`, `Zavu-Sender`
+and an idempotency key bound to the saved message. Meta can reject or recategorize
+the content; creation/submission does not imply approval or delivery.
+
+`custom_data.template_delivery` owns the saved message exclusively, using CAS
+updates. An audio receipt blocks template fallback and a template receipt blocks
+audio generation, including if the customer reopens the window during approval.
+Requested format remains `audio`, but `delivery_format` is `template`. Pending
+approval returns HTTP 202, `template_pending: true`, `status: template_pending`,
+the local message ID and template ID. The workflow polls that same operation with
+bounded waits through the approval deadline. Pending is never counted as sent.
+Approval dispatch revalidates body, language and selected sender. A confirmed
+provider acceptance sets `template_used: true`; no second audio is generated.
+
+Rejection and a 24-hour approval timeout persist specific errors. The final
+provider status is read before declaring timeout: an approved template discovered
+at that check is not discarded. Approval checks use short initial waits followed
+by hourly checks through the deadline. Creation,
+submission and dispatch uncertainty are never automatically replayed: the receipt
+remains for reconciliation. Manual Retry cannot take ownership from a template
+workflow. Provider acceptance is not proof of delivery to the handset.
+
+If an already-pending poll fails, Temporal reconciles through the authenticated,
+read-only `GET /api/agents/tools/templateDeliveryStatus` endpoint. Only a scoped
+`ready`/`pending` receipt permits a later dispatch attempt; `dispatching`, unknown,
+failed or rejected receipts never authorize a resend. Accepted receipts complete
+the operation without another POST to the provider. Failed status reads are
+retried within bounded limits. When recovery cannot continue, a separate
+idempotent control POST marks `needs_reconciliation` without changing receipt
+ownership. If the database is also unavailable for that control write, the
+workflow exposes `reconciliation_persisted: false`; an operator must reconcile
+the saved identifiers after service recovery.
+
+New template receipts persist `state: accepted`, `delivery_status: queued` on
+provider acceptance, not successful delivery. Signature-verified `message.sent`,
+`message.delivered`, `message.read` and `message.failed` webhooks reconcile the
+provider message ID, sender, recipient and tenant with compare-and-set updates.
+Late queued/sent events cannot overwrite failure; confirmed delivery/read is
+stronger than a delayed failure event. If the callback arrives before the HTTP
+response saves the provider ID, webhook processing asks Zavu to retry rather than
+guessing a recipient match. The UI distinguishes accepted, sent, delivered, read
+and failed and keeps all template receipts protected from manual resends.
+
+Provider reference: [Create template](https://docs.zavu.dev/api-reference/create-template),
+[Submit template](https://docs.zavu.dev/api-reference/submit-template-for-approval),
+[Send template](https://docs.zavu.dev/guides/whatsapp/templates/sending).
 
 `messages.custom_data.audio_delivery` is a compare-and-set receipt bound to text,
 channel, recipient and sender. States are `preparing`, `ready`, `dispatching`,

@@ -64,6 +64,10 @@ export async function POST(request: NextRequest) {
         { status: sendResult.status || 500 }
       );
     }
+    if (sendResult.templateDelivery) {
+      return NextResponse.json({ ...sendResult.templateDelivery, delivered: false,
+        timestamp: new Date().toISOString() }, { status: sendResult.templateDelivery.template_pending ? 202 : 200 });
+    }
 
     const normalizedChannel = String(channel).toLowerCase();
     // Comment delivery owns its compare-and-set receipt and must retain source/target metadata.

@@ -187,6 +187,13 @@ describe('explicit audio delivery', () => {
     await expect(deliverExplicitAudio(params)).rejects.toThrow('does not belong');
     expect(dispatch).not.toHaveBeenCalled();
   });
+  it('never generates audio after a template workflow owns the message', async () => {
+    row.custom_data.template_delivery = { state: 'pending', template_id: 'template' };
+    await expect(deliverExplicitAudio(params)).rejects.toThrow('Template already owns');
+    expect(CreditService.deductCredits).not.toHaveBeenCalled();
+    expect(synthesizeSpeech).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
+  });
   it('supports legacy null metadata without dropping receipt ownership', async () => {
     row.custom_data = null;
     expect(await deliverExplicitAudio(params)).toBe('provider-id');

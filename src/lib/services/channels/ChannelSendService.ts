@@ -8,6 +8,7 @@ import { validateResponseFormat, type ResponseFormat } from './response-format';
 import { audioSenderIdentity } from './audio-sender-identity';
 import { isAcceptedZavuMessage } from '@/lib/messaging/exact-zavu-response';
 import { resolveAudioRouting } from './audio-routing';
+import { deliverZavuTemplate, TemplateDeliveryError, type TemplateDeliveryResult } from '@/lib/services/whatsapp/zavu-template-delivery';
 import { sendCommentReply } from '@/lib/services/social-comments/delivery';
 import { getSiteLicensedResources, isLicensedChannelConnection, requireLicensedChannel } from '@/lib/billing/licensed-resources';
 
@@ -30,6 +31,7 @@ export interface SendChannelMessageResult {
   deliveryKind?: 'comment';
   status?: number;
   error?: string;
+  templateDelivery?: TemplateDeliveryResult;
 }
 
 /**
@@ -107,11 +109,13 @@ export class ChannelSendService {
       const connections = siteSettings.channels.connections;
       let selectedConnection: string | undefined;
       let selectedSender: string | undefined;
+      let templateStarted = false;
       if (params.response_format === 'audio' && params.message_id && params.conversation_id) {
         const { data: saved, error } = await supabaseAdmin.from('messages').select('custom_data')
           .eq('id', params.message_id).eq('conversation_id', params.conversation_id).maybeSingle();
         if (error || !saved) throw new AudioDeliveryError('Saved audio routing is unavailable');
         const id = saved.custom_data?.connection_id;
+        templateStarted = Boolean(saved.custom_data?.template_delivery);
         if (id !== undefined && (typeof id !== 'string' || !id.trim())) throw new AudioDeliveryError('Saved audio connection is invalid');
         const routing = await resolveAudioRouting({ siteId: params.site_id, conversationId: params.conversation_id,
           channel: params.channel, connectionId: id });
@@ -136,7 +140,16 @@ export class ChannelSendService {
           const window = await WhatsAppTemplateService.checkResponseWindow(params.conversation_id || null, params.to, params.site_id);
           if (!window.withinWindow) throw new AudioDeliveryError('Audio requires an active WhatsApp response window');
         };
-        await checkAudioWindow();
+        if (params.channel === 'whatsapp') {
+          const { WhatsAppTemplateService } = await import('@/lib/services/whatsapp/WhatsAppTemplateService');
+          const window = await WhatsAppTemplateService.checkResponseWindow(params.conversation_id || null, params.to, params.site_id);
+          if (templateStarted || !window.withinWindow) {
+            const templateDelivery = await deliverZavuTemplate({ siteId: params.site_id, conversationId: params.conversation_id,
+              messageId: params.message_id, text: params.message, recipient: params.to,
+              connectionId: connection.id, senderId: connection.zavu_sender_id });
+            return { success: true, messageId: templateDelivery.messageId, templateDelivery };
+          }
+        }
         const messageId = await deliverExplicitAudio({
           siteId: params.site_id, conversationId: params.conversation_id, messageId: params.message_id,
           channel: params.channel, text: params.message, recipient: params.to,
@@ -214,6 +227,7 @@ export class ChannelSendService {
     } catch (error: any) {
       if (params.response_format === 'audio') await markAudioPreflightFailed({
         siteId: params.site_id, conversationId: params.conversation_id, messageId: params.message_id,
+        ...(error instanceof TemplateDeliveryError ? { reason: error.message } : {}),
       });
       console.error(`[ChannelSendService] Error sending ${params.channel} message:`, error);
       return {
