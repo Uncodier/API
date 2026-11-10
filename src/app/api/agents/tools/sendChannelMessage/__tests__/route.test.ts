@@ -95,4 +95,25 @@ describe('sendChannelMessage Outstand reconciliation', () => {
     expect(response.status).toBe(403);
     expect(ChannelSendService.sendMessage).not.toHaveBeenCalled();
   });
+
+  it.each(['whatsapp', 'telegram', 'messenger'])('forwards %s audio without rewriting its durable receipt', async channel => {
+    const response = await POST(new NextRequest('https://api.example.test/send', {
+      method: 'POST', body: JSON.stringify({ channel, to: 'recipient', message: 'Hello', site_id: 'site',
+        conversation_id: 'conversation', message_id: 'saved', response_format: 'audio' }),
+    }));
+    expect(response.status).toBe(200);
+    expect(ChannelSendService.sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      channel, response_format: 'audio', message_id: 'saved', conversation_id: 'conversation',
+    }));
+    expect(supabaseAdmin.from).not.toHaveBeenCalled();
+  });
+
+  it('rejects unsupported audio before dispatch', async () => {
+    const response = await POST(new NextRequest('https://api.example.test/send', {
+      method: 'POST', body: JSON.stringify({ channel: 'instagram', to: 'recipient', message: 'Hello',
+        site_id: 'site', response_format: 'audio' }),
+    }));
+    expect(response.status).toBe(400);
+    expect(ChannelSendService.sendMessage).not.toHaveBeenCalled();
+  });
 });

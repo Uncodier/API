@@ -66,6 +66,7 @@ describe('tool result context regression', () => {
     const command = fixture([catalog]);
     const messages = prepareMessagesForTarget(command, 'Target instructions');
     expect(messages[2].content).toContain('"target_sale_price":81');
+    if (typeof messages[2].content !== 'string') throw new Error('Expected a text-only catalog summary');
     command.context = messages[2].content;
     expect(prepareMessagesForTarget(command, 'Target instructions')).toHaveLength(2);
   });

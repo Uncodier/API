@@ -6,6 +6,10 @@ import { decryptToken } from '@/lib/utils/token-decryption';
 import { formatMarkdownForWhatsApp } from '@/lib/utils/whatsapp-formatter';
 import { sendTwilioWhatsAppMessage } from './twilio-whatsapp-transport';
 import { tryPrepareLongReplyAudio } from '@/lib/services/channels/long-reply-audio';
+import { deliverExplicitAudio, AudioDeliveryError, markAudioPreflightFailed } from '@/lib/services/channels/explicit-audio-delivery';
+import { validateResponseFormat, type ResponseFormat } from '@/lib/services/channels/response-format';
+import { audioSenderIdentity } from '@/lib/services/channels/audio-sender-identity';
+import { requireLegacyAudioRouting } from '@/lib/services/channels/audio-message-routing';
 
 export interface SendWhatsAppParams {
   phone_number: string;
@@ -17,6 +21,8 @@ export interface SendWhatsAppParams {
   site_id: string;
   responseWindowEnabled?: boolean; // If true, assume response window active and skip template
   media_urls?: string[]; // Array de URLs de medios a adjuntar (imágenes, videos, documentos)
+  response_format?: ResponseFormat;
+  message_id?: string;
 }
 
 export interface SendWhatsAppResult {
@@ -60,6 +66,8 @@ export class WhatsAppSendService {
    * Envía un mensaje de WhatsApp usando la API de WhatsApp Business
    */
   static async sendMessage(params: SendWhatsAppParams): Promise<SendWhatsAppResult> {
+    validateResponseFormat(params.response_format, 'whatsapp');
+    const originalMessage = params.message;
     let { phone_number, message, from, agent_id, conversation_id, lead_id, site_id, responseWindowEnabled } = params;
     
     // Parse markdown for WhatsApp (Images -> URLs, Links -> Text: URL, Bold -> *bold*)
@@ -111,6 +119,7 @@ export class WhatsAppSendService {
       const siteInfo = await this.getSiteInfo(site_id);
       
       // Obtener configuración de WhatsApp para el sitio
+      if (params.response_format === 'audio') await requireLegacyAudioRouting(site_id, conversation_id, params.message_id);
       const whatsappConfig = await this.getWhatsAppConfig(site_id);
       
       // Validar formato del número de teléfono
@@ -147,7 +156,7 @@ export class WhatsAppSendService {
       console.log('🕐 [WhatsAppSendService] Verificando ventana de respuesta...');
       
       // If responseWindowEnabled comes true, force withinWindow=true to skip template creation
-      const windowCheck = responseWindowEnabled === true
+      const windowCheck = responseWindowEnabled === true && params.response_format !== 'audio'
         ? { withinWindow: true, hoursElapsed: 0 }
         : await WhatsAppTemplateService.checkResponseWindow(
             conversation_id || null,
@@ -161,6 +170,33 @@ export class WhatsAppSendService {
         requiresTemplate: !windowCheck.withinWindow
       });
 
+      if (params.response_format === 'audio') {
+        if (!windowCheck.withinWindow) throw new AudioDeliveryError('Audio requires an active WhatsApp response window; no text template was sent');
+        const messageId = await deliverExplicitAudio({
+          siteId: site_id, conversationId: conversation_id, messageId: params.message_id,
+          channel: 'whatsapp', text: originalMessage, recipient: normalizedPhone,
+          sender: audioSenderIdentity({ provider: 'twilio', accountSid: whatsappConfig.phoneNumberId, fromNumber: whatsappConfig.fromNumber }),
+          dispatch: async ({ audioUrl }) => {
+            await requireLegacyAudioRouting(site_id, conversation_id, params.message_id);
+            const liveConfig = await this.getWhatsAppConfig(site_id);
+            if (liveConfig.phoneNumberId !== whatsappConfig.phoneNumberId || liveConfig.fromNumber !== whatsappConfig.fromNumber
+              || liveConfig.messagingServiceSid !== whatsappConfig.messagingServiceSid) {
+              throw new AudioDeliveryError('Selected WhatsApp account changed during audio preparation');
+            }
+            const currentWindow = await WhatsAppTemplateService.checkResponseWindow(conversation_id || null, normalizedPhone, site_id);
+            if (!currentWindow.withinWindow) throw new AudioDeliveryError('WhatsApp response window closed during audio preparation');
+            const sent = await sendTwilioWhatsAppMessage({ phoneNumber: normalizedPhone, message: '',
+              accountSid: whatsappConfig.phoneNumberId, authToken: whatsappConfig.accessToken,
+              fromNumber: whatsappConfig.fromNumber, mediaUrls: [audioUrl],
+              messagingServiceSid: whatsappConfig.messagingServiceSid, strictSingleMessage: true, pinFromNumber: true });
+            if (!sent.success) throw new AudioDeliveryError('Audio provider did not confirm delivery');
+            return sent.messageId || '';
+          },
+        });
+        return { success: true, message_id: messageId, recipient: normalizedPhone, status: 'sent',
+          within_response_window: true, template_used: false, sent_at: new Date().toISOString() };
+      }
+
       let result: { success: boolean; messageId?: string; error?: string; errorCode?: number; errorType?: string; suggestion?: string } | undefined;
       let templateUsed = false;
       let templateSid: string | undefined;
@@ -170,7 +206,7 @@ export class WhatsAppSendService {
       // y la enviamos como un archivo multimedia adjunto.
       let finalMediaUrls = params.media_urls || [];
       const extractedUrlRegex = /(https?:\/\/[^\s]+?\/storage\/v1\/object\/public\/[^\s]+?\.(?:wav|mp3|ogg))/i;
-      const urlMatch = message.match(extractedUrlRegex);
+      const urlMatch = params.response_format === 'text' ? null : message.match(extractedUrlRegex);
       
       if (urlMatch && urlMatch[1]) {
         console.log(`🎵 [WhatsAppSendService] Se detectó URL de audio en el mensaje: ${urlMatch[1]}`);
@@ -221,7 +257,7 @@ export class WhatsAppSendService {
         // Verificar si es un mensaje largo que se debe enviar como audio
         let finalMessage = formattedMessage;
         
-        const audioReply = await tryPrepareLongReplyAudio({
+        const audioReply = params.response_format === 'text' ? null : await tryPrepareLongReplyAudio({
           siteId: site_id,
           channel: 'whatsapp',
           text: finalMessage, // Use finalMessage in case we already cleared it above
@@ -314,6 +350,9 @@ export class WhatsAppSendService {
       };
 
     } catch (error) {
+      if (params.response_format === 'audio') await markAudioPreflightFailed({
+        siteId: site_id, conversationId: conversation_id, messageId: params.message_id,
+      });
       console.error('Error enviando mensaje de WhatsApp:', error);
       
       const isConfigError = error instanceof Error && (
@@ -325,7 +364,7 @@ export class WhatsAppSendService {
       return {
         success: false,
         error: {
-          code: isConfigError ? 'WHATSAPP_CONFIG_NOT_FOUND' : 'WHATSAPP_SEND_FAILED',
+          code: error instanceof AudioDeliveryError ? 'AUDIO_DELIVERY_FAILED' : isConfigError ? 'WHATSAPP_CONFIG_NOT_FOUND' : 'WHATSAPP_SEND_FAILED',
           message: isConfigError 
             ? `WhatsApp configuration not found for site ${site_id}. Please configure WhatsApp settings in site settings.`
             : error instanceof Error ? error.message : 'Failed to send WhatsApp message'

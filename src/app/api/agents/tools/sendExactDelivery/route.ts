@@ -6,6 +6,7 @@ import { sendExactDelivery } from '@/lib/messaging/exact-delivery';
 import { resolveOutreachRecipient } from '@/lib/services/outreach/recipients';
 import { loadOutreachConversations } from '@/lib/services/outreach/recipient-repository';
 import { claimExactDelivery, finishExactDelivery } from '@/lib/messaging/exact-delivery-receipt';
+import { sendExactAudioDelivery } from '@/lib/messaging/exact-audio-delivery';
 
 const schema = z.object({
   site_id: z.string().uuid(), channel: z.enum(['email', 'whatsapp', 'sms', 'telegram', 'voice']),
@@ -38,6 +39,12 @@ export async function POST(request: Request) {
     const recipient = resolveOutreachRecipient({ siteId: parsed.data.site_id, channel: parsed.data.channel,
       lead: context.lead, conversations });
     if (!recipient || !context.message?.content) return NextResponse.json({ success: false, error: 'Stored recipient or content is unavailable' }, { status: 409 });
+    if (context.customData.response_format === 'audio') {
+      const result = await sendExactAudioDelivery({ siteId: parsed.data.site_id, channel: parsed.data.channel,
+        connectionId: context.connectionId, conversationId: context.conversationId!,
+        messageId: parsed.data.message_id, text: context.message.content, recipient: recipient.recipient });
+      return NextResponse.json(result, { status: result.success ? 200 : 422 });
+    }
     let attemptId: string | undefined;
     const result = await sendExactDelivery({ site_id: parsed.data.site_id, channel: parsed.data.channel,
       message_id: parsed.data.message_id, connection_id: context.connectionId, conversation_id: context.conversationId,

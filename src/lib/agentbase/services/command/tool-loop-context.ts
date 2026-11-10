@@ -3,6 +3,8 @@
  * Original user context is kept once; later turns do not append another copy of the instruction.
  */
 
+import { documentResultForText } from './document-image-content';
+
 const TURN_MARKERS = ['=== TOOL COMPLETION TURN ===', '=== TOOL CORRECTION TURN ==='];
 const MAX_ERROR_CHARS = 500;
 
@@ -18,6 +20,7 @@ type ToolFn = {
 /** Remove redundant catalog columns, never candidates or search provenance. */
 function compactToolResult(fn: ToolFn): unknown {
   const result = fn.result;
+  if (fn.name === 'read_document') return documentResultForText(result);
   if (fn.name !== 'catalog_commerce' || !result || typeof result !== 'object') return result;
   const catalog = result as Record<string, unknown>;
   if (!Array.isArray(catalog.items)) return result;

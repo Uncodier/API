@@ -46,6 +46,11 @@ const nextraConfig = withNextra({
   // `/.well-known/workflow/v1/step`) even when webpack bundles them locally. Including these modules via NFT
   // guarantees they are shipped inside the lambda filesystem regardless of bundling decisions.
   outputFileTracingIncludes: {
+    '/*': [
+      './src/app/api/agents/tools/read_document/*.cjs',
+      './node_modules/unpdf/package.json',
+      './node_modules/unpdf/dist/**/*',
+    ],
     '/api/robots/instance/assistant': harnessSourceFiles,
     '/api/cron/requirements-apps': [...harnessSourceFiles, ...migrationRecoveryFiles],
     '/api/skills/system': ['./src/skills/*/SKILL.md'],

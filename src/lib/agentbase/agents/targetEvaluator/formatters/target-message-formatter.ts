@@ -1,4 +1,6 @@
 import { supportModelContent } from '@/lib/services/customer-support-attachments';
+import type { ChatCompletionContentPart } from 'openai/resources/chat/completions';
+import { documentImageContent } from '../../../services/command/document-image-content';
 
 /**
  * Formateador de mensajes para el TargetProcessor
@@ -15,11 +17,11 @@ import { summarizeFunctions } from '../../../services/command/tool-loop-context'
  */
 export function prepareMessagesForTarget(command: DbCommand, systemPrompt: string, agentSystemPrompt?: string): Array<{
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  content: string | ChatCompletionContentPart[];
 }> {
   const messages: Array<{
     role: 'system' | 'user' | 'assistant';
-    content: string;
+    content: string | ChatCompletionContentPart[];
   }> = [];
 
   // El agent_background es OBLIGATORIO
@@ -64,7 +66,7 @@ export function prepareMessagesForTarget(command: DbCommand, systemPrompt: strin
   // Si se ha pasado un formattedTargetPrompt como context, se usará sin modificar
   messages.push({
     role: 'user',
-    content: supportModelContent(userContext)
+    content: documentImageContent(supportModelContent(userContext), command.functions)
   });
 
   // Also support callers outside the completion loop. Persisted function results

@@ -36,7 +36,7 @@ function validateArgs(value: unknown): ReadDocumentToolParams {
 export function readDocumentTool() {
   return {
     name: 'read_document',
-    description: 'Read a document from a public or signed HTTP(S) URL. Automatically detects PDF, PPTX presentations, XLSX spreadsheets, DOCX documents, CSV and text files. Returns normalized sections and preserves spreadsheet formulas, tables, slide notes and page/slide/sheet boundaries where available. Scanned PDFs need OCR and legacy PPT/XLS/DOC files must be converted first.',
+    description: 'Read a document from a public or signed HTTP(S) URL. Automatically detects PDF, PPTX presentations, XLSX spreadsheets, DOCX documents, CSV and text files. Returns normalized sections and preserves spreadsheet formulas, tables, slide notes and page/slide/sheet boundaries where available. When Linux resource isolation is available, textless selected PDF pages also return top-level images [{page, mime_type: "image/png", data_url}] for visual analysis, including 1-bit monochrome scans: at most 5 embedded images, 8 MiB total encoded data. Images up to 12 million decoded pixels are downsampled to at most 4 million output pixels (or smaller to fit the byte budget). Resource limits or unavailable isolation produce an incomplete-result warning, not an unsafe decoding retry. This is not OCR or full-page rendering; unsupported content may need external OCR. Legacy PPT/XLS/DOC files must be converted first.',
     parameters: {
       type: 'object',
       properties: {
@@ -45,7 +45,7 @@ export function readDocumentTool() {
         slides: { type: 'array', items: { type: 'integer', minimum: 1 }, description: 'Optional 1-based presentation slides to return.' },
         sheets: { type: 'array', items: { type: 'string' }, description: 'Optional exact spreadsheet sheet names to return.' },
         maxSections: { type: 'integer', minimum: 1, maximum: 100, description: 'Maximum sections returned. Default 50.' },
-        maxChars: { type: 'integer', minimum: 1000, maximum: 120000, description: 'Maximum serialized JSON characters returned, including text, tables and metadata. Default 60000.' },
+        maxChars: { type: 'integer', minimum: 1000, maximum: 120000, description: 'Maximum serialized text JSON characters returned, including text, tables and metadata but excluding the separately bounded images array. Image data URLs are never truncated. Default 60000.' },
       },
       required: ['url'],
       additionalProperties: false,

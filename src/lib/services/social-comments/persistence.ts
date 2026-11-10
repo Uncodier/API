@@ -25,6 +25,7 @@ export async function findCommentProposal(siteId: string, metadata: Record<strin
 export async function saveCommentMessages(input: {
   siteId: string; conversationId: string; userId: string; userMessage: string; assistantMessage: string;
   metadata: Record<string, any>; leadId?: string; agentId?: string; commandId?: string; conversationTitle?: string;
+  responseFormat?: 'text' | 'audio';
 }) {
   const { metadata, conversationId, siteId } = input;
   if (conversationId !== commentConversationId(siteId, metadata)) throw new SocialCommentError('Comment scope mismatch');
@@ -40,7 +41,8 @@ export async function saveCommentMessages(input: {
       content: input.userMessage, custom_data: metadata },
     { ...shared, id: ids.assistantMessageId, role: 'assistant', user_id: null,
       content: input.assistantMessage,
-      custom_data: { ...replyMetadata(metadata, ids.userMessageId), status: 'pending' } },
+      custom_data: { ...replyMetadata(metadata, ids.userMessageId), status: 'pending',
+        ...(input.responseFormat !== undefined ? { response_format: 'text' } : {}) } },
   ];
   for (const row of rows) {
     const { error } = await supabaseAdmin.from('messages').insert(row);

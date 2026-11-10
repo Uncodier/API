@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { WhatsAppSendService } from '@/lib/services/whatsapp/WhatsAppSendService';
 import { attemptPhoneRescue } from '@/lib/utils/phone-normalizer';
+import { validateResponseFormat } from '@/lib/services/channels/response-format';
+import { canAccessSite } from '@/lib/security/site-access';
 
 // Util function to validate UUIDs
 function isValidUUID(uuid: string): boolean {
@@ -117,8 +119,15 @@ export async function POST(request: NextRequest) {
       lead_id,
       site_id,
       responseWindowEnabled,
-      message_id // If present, this is the messages.id already created upstream (leadFollowUp/logs)
+      message_id, // If present, this is the messages.id already created upstream (leadFollowUp/logs)
+      response_format,
     } = body;
+
+    try { validateResponseFormat(response_format, 'whatsapp'); }
+    catch { return NextResponse.json({ success: false, error: { message: 'Invalid response format' } }, { status: 400 }); }
+    if (response_format !== undefined && !await canAccessSite(request, site_id)) {
+      return NextResponse.json({ success: false, error: { message: 'Site access denied' } }, { status: 403 });
+    }
     
     console.log('🔍 [SendWhatsApp] Parámetros recibidos:', {
       phone_number,
@@ -128,7 +137,9 @@ export async function POST(request: NextRequest) {
       conversation_id,
       lead_id,
       site_id,
-      responseWindowEnabled
+      responseWindowEnabled,
+      response_format,
+      message_id,
     });
     
     // Validar parámetros requeridos
@@ -292,7 +303,9 @@ export async function POST(request: NextRequest) {
       conversation_id,
       lead_id,
       site_id,
-      responseWindowEnabled
+      responseWindowEnabled,
+      response_format,
+      message_id,
     });
 
     console.log('📨 [SendWhatsApp] Resultado del envío:', {
@@ -345,7 +358,9 @@ export async function POST(request: NextRequest) {
       // Determinar código de estado basado en el tipo de error
       let statusCode = 500; // Default para errores internos
       
-      if (result.error?.code === 'WHATSAPP_CONFIG_NOT_FOUND') {
+      if (result.error?.code === 'AUDIO_DELIVERY_FAILED') {
+        statusCode = 422;
+      } else if (result.error?.code === 'WHATSAPP_CONFIG_NOT_FOUND') {
         statusCode = 404;
       } else if (result.errorType) {
         // Mapear tipos de error de Twilio a códigos HTTP apropiados

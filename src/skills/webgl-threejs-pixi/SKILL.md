@@ -10,6 +10,8 @@ types: ['develop', 'design']
 Develop and optimize advanced graphics, games, and simulations using WebGL libraries (Three.js, React Three Fiber, Pixi.js). Focus on performance, memory management, and efficient rendering for both web and mobile platforms.
 
 ## Instructions
+For code-authored 2D/3D explainers or video compositions, load `motion-design-html` through `skill_lookup` first. Apply the optimization guidance below, but drive exportable scenes from deterministic timeline time rather than an autonomous ticker or accumulating frame deltas.
+
 1. **Performance Optimization:** Minimize object creation during the game loop to reduce garbage collection pauses. Use **Object Pooling** for frequently created/destroyed objects (e.g., bullets, particles). Implement **Texture Atlases** (Sprite Sheets) to reduce draw calls. Use **InstancedMesh** (Three.js) or **ParticleContainer** (Pixi.js) for rendering many similar objects.
 2. **Scene & Memory Management:** Manage the scene graph properly by removing unused objects. Implement **Frustum Culling** for off-screen objects. Explicitly free resources (`dispose()`) for geometries, materials, and textures to prevent WebGL memory leaks. In React Three Fiber, use `useFrame` carefully and avoid updating React state inside it (mutate refs directly).
 3. **Specific Tools:**

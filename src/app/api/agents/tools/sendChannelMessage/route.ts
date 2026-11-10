@@ -4,6 +4,7 @@ import { ChannelSendService } from '@/lib/services/channels/ChannelSendService';
 import { assertVoiceCallAllowed } from '@/lib/services/zavu/voice-call-service';
 import { bindLocalOutstandMessage } from '@/lib/integrations/outstand/inbox-sync';
 import { canAccessSite } from '@/lib/security/site-access';
+import { validateResponseFormat } from '@/lib/services/channels/response-format';
 
 /**
  * Sends an outbound message on a connected channel (telegram, messenger).
@@ -21,7 +22,11 @@ export async function POST(request: NextRequest) {
       lead_id,
       message_id,
       subject,
+      response_format,
     } = payload;
+
+    try { validateResponseFormat(response_format, channel); }
+    catch { return NextResponse.json({ success: false, error: 'Invalid response format for this channel' }, { status: 400 }); }
 
     if (!channel || !to || !message || !site_id) {
       return NextResponse.json(
@@ -50,6 +55,7 @@ export async function POST(request: NextRequest) {
       conversation_id,
       lead_id,
       message_id,
+      response_format,
     });
 
     if (!sendResult.success) {
@@ -91,7 +97,7 @@ export async function POST(request: NextRequest) {
       } catch (error) {
         console.warn('[sendChannelMessage] Failed to bind Outstand message:', error);
       }
-    } else if (conversation_id && message_id) {
+    } else if (conversation_id && message_id && response_format !== 'audio') {
       try {
         const { data: existing } = await supabaseAdmin
           .from('messages')

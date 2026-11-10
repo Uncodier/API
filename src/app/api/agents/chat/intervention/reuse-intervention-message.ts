@@ -1,9 +1,13 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { validateResponseFormat, type ResponseFormat } from '@/lib/services/channels/response-format';
+import { resolveAudioRouting } from '@/lib/services/channels/audio-routing';
 
 export type SavedInterventionMessage = {
   conversationId: string;
   interventionMessageId: string;
   conversationTitle?: string;
+  responseFormat?: ResponseFormat;
+  channelDelivery?: boolean;
 };
 
 function isValidUUID(uuid: string): boolean {
@@ -16,6 +20,7 @@ export async function reuseInterventionMessage(
   conversationId: string,
   userId: string,
   content: string,
+  options: { responseFormat?: ResponseFormat; channel?: string; siteId?: string; allowLegacyWhatsApp?: boolean } = {},
 ): Promise<SavedInterventionMessage | null> {
   if (!isValidUUID(messageId) || !isValidUUID(conversationId)) {
     return null;
@@ -36,11 +41,30 @@ export async function reuseInterventionMessage(
   }
 
   const customData = { ...((data.custom_data as Record<string, unknown>) || {}) };
+  // A retry may omit the selection, but may never change the saved choice
+  // (including the legacy, unspecified mode).
+  let responseFormat: ResponseFormat | undefined;
+  try {
+    responseFormat = validateResponseFormat(customData.response_format, options.channel || '');
+  } catch { return null; }
+  if (responseFormat === 'audio' && content.length > 4000) return null;
+  if (options.responseFormat !== undefined && options.responseFormat !== responseFormat) return null;
+  // A generic workflow cleanup can mark a message failed while an audio send
+  // still owns it. Only a prepared, undispatched receipt is safe to resume.
+  const audioDelivery = customData.audio_delivery as Record<string, unknown> | undefined;
+  if (audioDelivery != null && (responseFormat !== 'audio' || audioDelivery.state !== 'ready')) return null;
   if (data.content !== content || customData.provider_call_id
     || ['sent', 'delivered', 'received', 'sending', 'queued', 'running', 'success', 'placement_unknown'].includes(String(customData.status))
     || ['success', 'completed', 'running', 'sending', 'queued'].includes(String(customData.command_status))
     || ['placement_unknown', 'placing', 'queued', 'ringing', 'in_progress', 'completed'].includes(String(customData.call_status))
     || (customData.status !== 'failed' && customData.command_status !== 'failed')) return null;
+  // Resolve before the atomic claim, preserving any saved binding. Old manual
+  // messages without one acquire it in the same CAS update as the retry claim.
+  const audioRouting = responseFormat === 'audio' && options.siteId ? await resolveAudioRouting({
+    siteId: options.siteId, conversationId, channel: options.channel || '',
+    connectionId: customData.connection_id, allowLegacyWhatsApp: options.allowLegacyWhatsApp,
+  }) : undefined;
+  if (audioRouting) customData.connection_id = audioRouting.connectionId;
   delete customData.error_message;
   customData.command_status = 'pending';
   customData.status = 'pending';
@@ -64,6 +88,8 @@ export async function reuseInterventionMessage(
   return {
     conversationId: data.conversation_id,
     interventionMessageId: data.id,
+    ...(responseFormat !== undefined ? { responseFormat } : {}),
+    ...(audioRouting ? { channelDelivery: audioRouting.kind === 'zavu' } : {}),
   };
 }
 

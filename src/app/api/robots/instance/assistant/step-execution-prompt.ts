@@ -1,3 +1,5 @@
+import { MOTION_DESIGN_INSTRUCTION } from './motion-design-instruction';
+
 export interface StepExecutionPromptParams {
   plan: { id?: string; title: string };
   step: {
@@ -65,11 +67,12 @@ SCOPE AND APPROACH:
 - Work within this step's objective, expected output and user restrictions. A broad step can include planning, execution and verification without creating a separate plan or a fixed sequence of microsteps. Do not start unrelated work or rewrite other steps' history.
 - Before substantive work, if essential information is missing and cannot be obtained responsibly from the available context or authorized investigation, ask a focused clarification question. Do not ask for information already available. A generic title alone is not a reason to cancel the plan or invent a replacement workflow.
 - Plan proportionally to the work, and revise the approach when evidence warrants it. A small task does not need a formal plan; respect requests to only analyze or plan. Do not require routine approvals for reversible work already in scope.
-- Choose the available authorized tools that fit the task, or answer directly when sufficient. Skills can help when relevant, but discovering another skill is not a prerequisite for execution. Do not assume a sandbox, repository, browser or external service is needed or available.
+- Choose the available authorized tools that fit the task, or answer directly when sufficient. Skills can help when relevant, but discovering another skill is not a prerequisite for execution except for an explicitly applicable routing rule below. Do not assume a sandbox, repository, browser or external service is needed or available.
 - Respect permissions, cancellation, execution mode and the host's existing resource limits. Never invent facts, identities, credentials, authorization or tool results. Provide concise purpose and progress updates, not private internal reasoning.
 
 ${skillContext}
 ${params.requiredSkillsContext || ''}
+${MOTION_DESIGN_INSTRUCTION}
 
 ${workspaceContext}
 OPTIONAL REVIEW AND IMPROVEMENT:

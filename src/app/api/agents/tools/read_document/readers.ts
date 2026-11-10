@@ -1,7 +1,7 @@
 import ExcelJS from 'exceljs';
 import { parse as parseCsv } from 'csv-parse/sync';
 import { XMLParser } from 'fast-xml-parser';
-import { extractText } from 'unpdf';
+export { readPdf } from './pdf';
 import { posix } from 'node:path';
 import type { DocumentReadOptions, DocumentSection } from './types';
 import { loadOfficeZip, type SafeOfficeZip } from './officeZip';
@@ -75,16 +75,6 @@ function resolvePackageTarget(sourcePath: string, target: string): string {
   const resolved = posix.normalize(posix.join(posix.dirname(sourcePath), target));
   if (resolved === '..' || resolved.startsWith('../')) throw new Error('OOXML relationship escapes the package root.');
   return resolved;
-}
-
-export async function readPdf(buffer: Buffer, options: DocumentReadOptions): Promise<{ sections: DocumentSection[]; metadata: Record<string, unknown>; warnings: string[] }> {
-  const extracted = await extractText(new Uint8Array(buffer), { mergePages: false });
-  const pages = Array.isArray(extracted.text) ? extracted.text : [extracted.text];
-  return {
-    sections: pages.flatMap((text, index) => selected(index + 1, options.pages) ? [{ id: `page-${index + 1}`, title: `Page ${index + 1}`, text }] : []),
-    metadata: { page_count: extracted.totalPages },
-    warnings: pages.every(page => !page.trim()) ? ['No embedded text was found. This PDF may require OCR.'] : [],
-  };
 }
 
 export async function readSpreadsheet(buffer: Buffer, options: DocumentReadOptions, loaded?: SafeOfficeZip) {

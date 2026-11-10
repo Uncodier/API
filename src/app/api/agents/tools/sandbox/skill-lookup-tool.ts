@@ -1,4 +1,5 @@
 import { SkillsService } from '@/lib/services/skills-service';
+import { searchSkillsByKeywords } from '@/lib/services/skill-keyword-search';
 import { deductSandboxToolCredits, type SandboxToolsContext } from '@/app/api/agents/tools/sandbox/assistantProtocol';
 
 export type SkillLookupToolContext = {
@@ -22,17 +23,6 @@ function summarizeForList(
   }));
 }
 
-/** Site catalog search uses the same keyword intent matching as bundled SkillsService. */
-function searchSiteSkills(skills: ReturnType<typeof SkillsService.matchSkillsForRequirement>, query: string) {
-  const words = query.toLowerCase().split(/[^a-z0-9_-]+/).filter(word => word.length > 2);
-  if (!words.length) return [];
-  return skills.map((skill) => {
-    const haystack = `${skill.name} ${skill.description} ${skill.slug} ${(skill.types ?? []).join(' ')}`.toLowerCase();
-    return { skill, score: words.reduce((score, word) => score + Number(haystack.includes(word)), 0) };
-  }).filter(({ score }) => score > 0)
-    .sort((a, b) => b.score - a.score).map(({ skill }) => skill);
-}
-
 /**
  * Single on-demand tool to list, search, or load full SKILL.md bodies (replaces many per-skill tools).
  */
@@ -50,12 +40,12 @@ export function skillLookupTool(ctx?: SkillLookupToolContext) {
           type: 'string',
           enum: ['list', 'search', 'get'],
           description:
-            'list: compact catalog (metadata only). search: find by intent/keywords (semantic vector search). get: full SKILL.md content for one skill.',
+            'list: compact catalog (metadata only). search: tenant-scoped keyword matching, or semantic search without a tenant scope. get: full SKILL.md content for one skill.',
         },
         query: {
           type: 'string',
           description:
-            'Required for search. Describe what you want to achieve or provide English keywords from objective + tech stack + domain + expected output (e.g. "I need to generate a nextjs seo landing page").',
+            'Required for search. Use concise keywords from objective + stack + output. English works across the catalog; bilingual descriptions also support Spanish, accents, 2D and 3D (e.g. "animación explicativo HTML 3D").',
         },
         skill_name: {
           type: 'string',
@@ -101,7 +91,7 @@ export function skillLookupTool(ctx?: SkillLookupToolContext) {
           return { ok: false, error: 'query is required for search (e.g. your objective or tech stack).' };
         }
         const matches = ctx?.siteId
-          ? searchSiteSkills(await SkillsService.listSkillsForSite(ctx.siteId, requirementType), q)
+          ? searchSkillsByKeywords(await SkillsService.listSkillsForSite(ctx.siteId, requirementType), q)
           : await SkillsService.searchSkillsVector(q, requirementType);
         return {
           ok: true,

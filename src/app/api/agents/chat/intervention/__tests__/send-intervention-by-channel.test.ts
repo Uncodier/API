@@ -15,6 +15,46 @@ jest.mock("@/lib/services/zavu/voice-call-service", () => ({
 
 import { sendMessageByChannel } from "../send-intervention-by-channel";
 import { VoicePlacementError } from '@/lib/services/zavu/voice-call-message-state';
+import { WorkflowService } from '@/lib/services/workflow-service';
+
+describe('Intervention response format dispatch', () => {
+  const sendWhatsapp = jest.fn();
+  const sendChannel = jest.fn();
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (WorkflowService.getInstance as jest.Mock).mockReturnValue({
+      sendWhatsappFromAgent: sendWhatsapp, sendChannelMessageFromAgent: sendChannel,
+    });
+    sendWhatsapp.mockResolvedValue({ success: true, workflowId: 'workflow' });
+    sendChannel.mockResolvedValue({ success: true, workflowId: 'workflow' });
+  });
+
+  it.each(['whatsapp', 'telegram', 'messenger'])('forwards explicit audio to %s workflow', async (channel) => {
+    const result = await sendMessageByChannel(channel, 'Hello', { leadPhone: '+15551234567' },
+      'site', null, 'conversation', 'lead', 'message', 'audio');
+    expect(result.success).toBe(true);
+    expect(channel === 'whatsapp' ? sendWhatsapp : sendChannel).toHaveBeenCalledWith(expect.objectContaining({
+      response_format: 'audio', message_id: 'message', conversation_id: 'conversation',
+    }));
+  });
+
+  it.each([undefined, 'text'] as const)('retains the choice %s without defaulting it', async (format) => {
+    await sendMessageByChannel('whatsapp', 'Hello', { leadPhone: '+15551234567' },
+      'site', null, 'conversation', 'lead', 'message', format);
+    const args = sendWhatsapp.mock.calls[0][0];
+    if (format === undefined) expect(args).not.toHaveProperty('response_format');
+    else expect(args.response_format).toBe('text');
+  });
+
+  it.each(['voice', 'email', 'web', 'instagram'])('never dispatches unsupported audio on %s', async (channel) => {
+    const result = await sendMessageByChannel(channel, 'Hello', { leadPhone: '+15551234567' },
+      'site', null, 'conversation', 'lead', 'message', 'audio');
+    expect(result.success).toBe(false);
+    expect(sendWhatsapp).not.toHaveBeenCalled();
+    expect(sendChannel).not.toHaveBeenCalled();
+    expect(mockPlaceTrackedVoiceCall).not.toHaveBeenCalled();
+  });
+});
 
 describe("Voice human intervention", () => {
   beforeEach(() => {

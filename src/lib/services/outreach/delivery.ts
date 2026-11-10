@@ -114,6 +114,8 @@ export function createOutreachDelivery(deps: {
       if (!snapshot) return { success: false, reason: 'message_not_found' };
       const { message, conversation, lead, settings } = snapshot;
       const data = message.custom_data || {};
+      // Chat audio is not a text outreach payload. Never silently downgrade it.
+      if (data.response_format === 'audio') return { success: false, reason: 'explicit_audio_unsupported' };
       const oldMarker = data.outreach_delivery;
       // Already-sent is checked before current eligibility: this only finalizes
       // a lost successful response and never starts a new provider delivery.

@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { EmbeddingsService } from './embeddings-service';
+import { searchSkillsByKeywords } from './skill-keyword-search';
 
 export interface SkillMetadata {
   /** Directory name under src/skills (e.g. makinari-rol-frontend). */
@@ -122,20 +123,7 @@ export class SkillsService {
     const q = query.trim().toLowerCase();
     if (!q) return pool;
 
-    const words = q.split(/\s+/).filter(Boolean);
-    const scored = pool.map((skill) => {
-      const hay = `${skill.name} ${skill.description} ${skill.slug} ${(skill.types || []).join(' ')}`.toLowerCase();
-      let score = 0;
-      for (const w of words) {
-        if (hay.includes(w)) score += 1;
-      }
-      return { skill, score };
-    });
-
-    return scored
-      .filter((x) => x.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .map((x) => x.skill);
+    return searchSkillsByKeywords(pool, q);
   }
 
   /**

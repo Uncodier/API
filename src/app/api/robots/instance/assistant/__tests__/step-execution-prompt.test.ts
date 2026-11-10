@@ -4,6 +4,7 @@ import { jest } from '@jest/globals';
 import { z } from 'zod';
 import { loadRuntimeModule } from '@/lib/custom-automation/test-helpers/load-runtime-module';
 import { buildStepExecutionPrompt, type StepExecutionPromptParams } from '../step-execution-prompt';
+import { MOTION_DESIGN_INSTRUCTION } from '../motion-design-instruction';
 
 const base: StepExecutionPromptParams = {
   plan: { id: 'plan-local', title: 'Research options' },
@@ -33,10 +34,12 @@ describe('buildStepExecutionPrompt (pure, offline)', () => {
     expect(prompt).toContain('answer directly when sufficient');
     expect(prompt).toContain('not a prerequisite');
     for (const legacy of ['MUST CANCEL', 'GENERIC STEP CANCELLATION', 'Do not plan — EXECUTE',
-      'skill_lookup', 'thought_process', 'ALWAYS THINK OUT LOUD', 'migrations/*.sql',
+      'thought_process', 'ALWAYS THINK OUT LOUD', 'migrations/*.sql',
       'top-level `tests/`', 'src/app/', 'npm run build', 'ANTI_ACCEPT_AS_IS', 'MISSING SKILL INSTRUCTIONS']) {
       expect(prompt).not.toContain(legacy);
     }
+    expect(prompt).toContain('Only when the current task is creating or editing');
+    expect(prompt).toContain('Do not apply this procedure to unrelated tasks');
   });
 
   it('keeps optional review advisory while respecting explicit checks and existing limits', () => {
@@ -67,7 +70,9 @@ describe('buildStepExecutionPrompt (pure, offline)', () => {
     expect(prompt).toContain('Inform the user');
     expect(prompt).toContain('Do not invent its instructions');
     expect(prompt).toContain('ask for the missing guidance if it is essential');
-    expect(prompt).not.toContain('skill_lookup');
+    // The conditional motion rule is not a substitute for a missing assigned skill.
+    expect(prompt.replace(MOTION_DESIGN_INSTRUCTION, '')).not.toContain('skill_lookup');
+    expect(prompt).toContain('or substitute a new workflow');
     expect(buildStepExecutionPrompt(base)).not.toContain('ASSIGNED SKILL UNAVAILABLE');
   });
 
@@ -85,7 +90,9 @@ describe('buildStepExecutionPrompt (pure, offline)', () => {
   it('is deterministic, has no runtime imports and does not mutate inputs', () => {
     const serialized = JSON.stringify(base);
     const isolated = loadRuntimeModule<typeof import('../step-execution-prompt')>(
-      'src/app/api/robots/instance/assistant/step-execution-prompt.ts', {},
+      'src/app/api/robots/instance/assistant/step-execution-prompt.ts', {
+        './motion-design-instruction': { MOTION_DESIGN_INSTRUCTION },
+      },
     );
     expect(isolated.buildStepExecutionPrompt(base)).toBe(buildStepExecutionPrompt(base));
     expect(JSON.stringify(base)).toBe(serialized);
@@ -160,6 +167,17 @@ describe('executePlanStep prompt wiring (all I/O mocked, no environment)', () =>
     expect(h.getSkillBySlugForSite).not.toHaveBeenCalled();
     expect(h.processAssistantTurn.mock.calls[0][0].systemPrompt).not.toContain('WORKSPACE CONTEXT');
     expect(h.processAssistantTurn.mock.calls[0][0].systemPrompt).not.toContain('ASSIGNED SKILL UNAVAILABLE');
+  });
+
+  it('retains motion routing in the actual turn context of an unassigned animation step', async () => {
+    const h = harness({ title: 'Animación HTML 3D', instructions: 'Create a code-authored explainer.' });
+    await h.run();
+    const turnContext = h.processAssistantTurn.mock.calls[0][0];
+    expect(turnContext.systemPrompt).toContain(MOTION_DESIGN_INSTRUCTION);
+    expect(turnContext.systemPrompt).toContain('Keep the approved glossary.');
+    expect(turnContext.systemPrompt).toContain('host UI OUTPUT CONTRACT');
+    expect(turnContext.systemPrompt).toContain('generate_video is not an HTML renderer');
+    expect(h.getSkillBySlugForSite).not.toHaveBeenCalled();
   });
 
   it('preserves existing role-to-skill loading', async () => {

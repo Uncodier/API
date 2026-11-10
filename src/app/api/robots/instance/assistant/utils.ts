@@ -237,10 +237,11 @@ export function getRequirementWorkflowInstruction(hasLinkedRequirement: boolean)
 Before you execute any command, you MUST determine if the user's request is simple or complex/strategic.
 
 1. DIRECT EXECUTION MODE (For isolated, simple tasks):
-- When the user asks for simple, one-off media generation (e.g., "crea un video así", "haz un audio", "genera una imagen").
+- When the user asks for simple, one-off generative media (e.g., "crea un video así", "haz un audio", "genera una imagen"), not an explicitly code-authored HTML/SVG/Canvas/Three.js animation or explainer.
 - Do NOT use the \`requirements\` tool.
 - Do NOT create an \`instance_plan\`.
 - Immediately use the appropriate generation tool (e.g., \`generate_video\`, \`generate_audio\`, \`generate_image\`) directly to fulfill the request.
+- For code-authored animations, follow motion-design-html and the existing workspace ownership/delivery rules instead. generate_video is not an HTML renderer. The host UI OUTPUT CONTRACT remains binding; never substitute footage for a requested coded composition.
 
 2. SPEC-DRIVEN MODE (For complex/strategic tasks):
 - When the user asks for broader, multi-step, or strategic initiatives (e.g., "genera una serie de videos para mejorar la reputación de mi marca", "build a new web app", "create a marketing campaign").

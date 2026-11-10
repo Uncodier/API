@@ -1,4 +1,5 @@
 import { POST } from '../route';
+import { buildSupportContext } from '../context';
 import { generateSupportReply } from '../generate';
 import { saveMessages } from '../save-messages';
 import { getCommandById } from '@/lib/database/command-db';
@@ -6,7 +7,7 @@ import { getAgentInfo, findActiveCustomerSupportAgent } from '../agent-data';
 
 jest.mock('../request', () => ({ readSupportRequest: async (r: Request) => ({ body: await r.json() }) }));
 jest.mock('../zavu-admission', () => ({ checkZavuSupportAdmission: async () => null }));
-jest.mock('../context', () => ({ buildSupportContext: async () => 'context' }));
+jest.mock('../context', () => ({ buildSupportContext: jest.fn(async () => 'context') }));
 jest.mock('../generate', () => ({ generateSupportReply: jest.fn() }));
 jest.mock('../save-messages', () => ({ saveMessages: jest.fn() }));
 jest.mock('../disabled-support', () => ({ disabledSupportNote: async () => 'Agente deshabilitado. No se generó respuesta.' }));
@@ -98,6 +99,75 @@ describe('support route persistence boundary', () => {
     expect(saveMessages).toHaveBeenCalledTimes(1);
     expect(jest.mocked(saveMessages).mock.calls[0][2]).toBe('Hola, bienvenido');
     expect((await response.json()).data.messages.assistant.content).toBe('Hola, bienvenido');
+  });
+
+  it('forwards current inbound routing metadata to the per-turn context and generator', async () => {
+    jest.mocked(getCommandById).mockResolvedValue(fresh as any);
+    const custom_data = { source: 'zavu_inbound_message', channel: 'telegram', zavu_from: '@customer',
+      connection_id: 'connection', zavu_sender_id: 'business' };
+    const response = await POST(new Request('https://example.test/api/agents/customerSupport/message', {
+      method: 'POST', body: JSON.stringify({ userId: 'user', agentId, site_id: 'site',
+        conversationId: 'conversation', message: 'Hello', origin: 'telegram', custom_data }),
+    }));
+    expect(response.status).toBe(200);
+    expect(buildSupportContext).toHaveBeenCalledWith(expect.objectContaining({
+      custom_data, effectiveOrigin: 'telegram', effectiveConversationId: 'conversation',
+    }));
+    expect(generateSupportReply).toHaveBeenCalledWith(expect.objectContaining({ contextMessage: 'context' }));
+  });
+
+  it.each([
+    ['whatsapp', undefined, 'audio', 'audio'],
+    ['telegram', undefined, 'audio', 'audio'],
+    ['messenger', undefined, 'audio', 'audio'],
+    ['whatsapp', 'text', 'audio', 'text'],
+    ['telegram', 'audio', 'text', 'audio'],
+    ['email', undefined, 'audio', 'text'],
+    ['website', 'text', 'audio', 'text'],
+    ['whatsapp', undefined, undefined, 'text'],
+  ])('returns and saves selected format on %s (explicit %s, model %s)', async (origin, explicit, model, expected) => {
+    jest.mocked(generateSupportReply).mockResolvedValue({ executedCommand: {
+      ...fresh, results: [{ message: { content: 'Spoken reply', response_format: model } }],
+    }, effectiveDbUuid: commandId } as any);
+    const response = await POST(new Request('https://example.test/api/agents/customerSupport/message', {
+      method: 'POST', body: JSON.stringify({ userId: 'user', agentId, site_id: 'site',
+        conversationId: 'conversation', message: 'Hola', origin, response_format: explicit }),
+    }));
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.data.response_format).toBe(expected);
+    expect(body.data.messages.assistant).toMatchObject({ content: 'Spoken reply', response_format: expected, message_id: 'out' });
+    expect(body.data.messages.assistant.audio_url).toBeUndefined();
+    expect(jest.mocked(saveMessages).mock.calls[0][19]).toBe(expected);
+    expect(buildSupportContext).toHaveBeenCalledWith(expect.objectContaining({ response_format: explicit }));
+    expect(generateSupportReply).toHaveBeenCalledWith(expect.objectContaining({ response_format: explicit }));
+  });
+
+  it.each([
+    ['whatsapp', 'video'], ['whatsapp', null], ['whatsapp', {}],
+    ['website', 'audio'], ['email', 'audio'], ['instagram', 'audio'],
+  ])('rejects explicit unsupported/invalid %s %s before generation', async (origin, response_format) => {
+    const response = await POST(new Request('https://example.test/api/agents/customerSupport/message', {
+      method: 'POST', body: JSON.stringify({ userId: 'user', agentId, site_id: 'site',
+        conversationId: 'conversation', message: 'Hola', origin, response_format }),
+    }));
+    expect(response.status).toBe(400);
+    expect(buildSupportContext).not.toHaveBeenCalled();
+    expect(generateSupportReply).not.toHaveBeenCalled();
+    expect(saveMessages).not.toHaveBeenCalled();
+  });
+
+  it('rejects oversized explicit audio without saving or returning sendable content', async () => {
+    jest.mocked(generateSupportReply).mockResolvedValue({ executedCommand: {
+      ...fresh, results: [{ message: { content: 'x'.repeat(4001), response_format: 'audio' } }],
+    }, effectiveDbUuid: commandId } as any);
+    const response = await POST(new Request('https://example.test/api/agents/customerSupport/message', {
+      method: 'POST', body: JSON.stringify({ userId: 'user', agentId, site_id: 'site',
+        conversationId: 'conversation', message: 'Hola', origin: 'telegram', response_format: 'audio' }),
+    }));
+    expect(response.status).toBe(422);
+    expect((await response.json()).data).toBeUndefined();
+    expect(saveMessages).not.toHaveBeenCalled();
   });
 
   it.each([

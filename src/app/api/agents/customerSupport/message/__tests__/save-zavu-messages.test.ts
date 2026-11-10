@@ -42,6 +42,21 @@ describe('durable Zavu message identity', () => {
     expect(id).not.toBe(supportRecordId(['other-scope', 'message']));
   });
 
+  it.each([true, false])('persists audio format separately from content (approval %s)', async requireApproval => {
+    const result = await saveZavuSupportMessages({ ...input, responseFormat: 'audio', requireApproval });
+    const assistant = tables.messages.get(result.assistantMessageId);
+    expect(assistant.content).toBe(input.assistantMessage);
+    expect(assistant.custom_data.response_format).toBe('audio');
+    expect(assistant.custom_data.status).toBe(requireApproval ? 'pending' : undefined);
+    expect(tables.messages.get(result.userMessageId).custom_data.response_format).toBeUndefined();
+    expect(await saveZavuSupportMessages({ ...input, responseFormat: 'audio', requireApproval })).toEqual(result);
+  });
+
+  it('fails closed if a retry attempts to change the persisted delivery format', async () => {
+    await saveZavuSupportMessages({ ...input, responseFormat: 'audio' });
+    await expect(saveZavuSupportMessages({ ...input, responseFormat: 'text' })).rejects.toThrow('SCOPE_CONFLICT');
+  });
+
   it('returns the same messages for a completed retry without overwriting delivery state', async () => {
     const first = await saveZavuSupportMessages(input);
     tables.messages.get(first.assistantMessageId).custom_data.status = 'sent';

@@ -85,6 +85,14 @@ function fixture(total = 1, sameLead = false) {
 }
 
 describe('central outreach delivery', () => {
+  test('refuses explicit chat audio instead of silently sending outreach text', async () => {
+    const f = fixture();
+    f.rows.get('m0')!.message.custom_data.response_format = 'audio';
+    expect(await f.deliver('site', 'm0')).toMatchObject({ success: false, reason: 'explicit_audio_unsupported' });
+    expect(f.prepare).not.toHaveBeenCalled();
+    expect(f.send).not.toHaveBeenCalled();
+    expect(f.repo.claim).not.toHaveBeenCalled();
+  });
   test.each([cold, follow])('defers %s until fixed cooldown expires before preparing delivery', async activity => {
     const f = fixture();
     f.rows.get('m0')!.message.custom_data.outreach_activity = activity;

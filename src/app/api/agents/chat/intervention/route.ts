@@ -9,6 +9,8 @@ import {
 import { getConversationChannel, sendMessageByChannel } from './send-intervention-by-channel';
 import { authorizeIntervention, InterventionRequestError } from './authorize-intervention';
 import { SocialCommentError } from '@/lib/services/social-comments/metadata';
+import { validateResponseFormat, type ResponseFormat } from '@/lib/services/channels/response-format';
+import { AudioRoutingError, resolveAudioRouting } from '@/lib/services/channels/audio-routing';
 
 const PENDING_CUSTOM_DATA = {
   command_status: 'pending',
@@ -24,6 +26,8 @@ async function saveMessages(
   conversationTitle?: string,
   agentId?: string,
   commentMetadata?: Record<string, unknown>,
+  responseFormat?: ResponseFormat,
+  connectionId?: string,
 ) {
   try {
     const interventionMessageData: any = {
@@ -31,7 +35,9 @@ async function saveMessages(
       user_id: userId,
       content: interventionMessage,
       role: 'team_member',
-      custom_data: { ...commentMetadata, ...PENDING_CUSTOM_DATA },
+      custom_data: { ...commentMetadata, ...PENDING_CUSTOM_DATA,
+        ...(connectionId !== undefined ? { connection_id: connectionId } : {}),
+        ...(responseFormat !== undefined ? { response_format: responseFormat } : {}) },
     };
 
     if (leadId) interventionMessageData.lead_id = leadId;
@@ -71,18 +77,42 @@ export async function POST(request: Request) {
       conversationId, message, agentId, userId: user_id,
       leadId: lead_id, visitorId: visitor_id, siteId: site_id,
       messageId: requestMessageId, title: conversationTitle,
-      commentMetadata,
+      commentMetadata, responseFormat: requestedResponseFormat,
     } = await authorizeIntervention(request, body);
 
+    // Resolve the stored conversation channel before any audio persistence or
+    // retry claim. Caller-supplied channel hints are not accepted by the schema.
+    const preflightChannel = requestedResponseFormat === 'audio' || requestMessageId
+      ? (commentMetadata
+        ? { channel: commentMetadata.network as string, channelDelivery: true, leadId: lead_id,
+          leadPhone: undefined, leadEmail: undefined, visitorPhone: undefined }
+        : await getConversationChannel(conversationId))
+      : undefined;
+    if (requestedResponseFormat === 'audio') {
+      try { validateResponseFormat(requestedResponseFormat, preflightChannel?.channel || ''); }
+      catch (error) { throw new InterventionRequestError((error as Error).message, 400); }
+    }
+    let responseFormat = requestedResponseFormat;
+
     if (requestMessageId && conversationId) {
-      savedMessages = await reuseInterventionMessage(requestMessageId, conversationId, user_id, message);
+      savedMessages = await reuseInterventionMessage(requestMessageId, conversationId, user_id, message, {
+        responseFormat: requestedResponseFormat, channel: preflightChannel?.channel,
+        siteId: site_id, allowLegacyWhatsApp: preflightChannel?.channelDelivery !== true,
+      });
       if (!savedMessages) {
         return NextResponse.json(
-          { success: false, error: { code: 'INVALID_REQUEST', message: 'message_id does not belong to this conversation' } },
+          { success: false, error: { code: 'INVALID_REQUEST', message: 'Message is not retryable or its saved response format does not match' } },
           { status: 400 }
         );
       }
+      responseFormat = savedMessages.responseFormat;
+      if (responseFormat === 'audio' && preflightChannel) preflightChannel.channelDelivery = savedMessages.channelDelivery;
     } else {
+      const audioRouting = responseFormat === 'audio' ? await resolveAudioRouting({
+        siteId: site_id, conversationId, channel: preflightChannel!.channel!,
+        allowLegacyWhatsApp: preflightChannel?.channelDelivery !== true,
+      }) : undefined;
+      if (audioRouting && preflightChannel) preflightChannel.channelDelivery = audioRouting.kind === 'zavu';
       savedMessages = await saveMessages(
         user_id,
         message,
@@ -91,7 +121,9 @@ export async function POST(request: Request) {
         visitor_id,
         conversationTitle,
         agentId,
-        commentMetadata
+        commentMetadata,
+        responseFormat,
+        audioRouting?.connectionId,
       );
     }
 
@@ -111,7 +143,7 @@ export async function POST(request: Request) {
     let channelSendResult = null;
 
     if (savedMessages.conversationId && site_id) {
-      const conversationInfo = commentMetadata
+      const conversationInfo = preflightChannel !== undefined ? preflightChannel : commentMetadata
         ? { channel: commentMetadata.network as string, channelDelivery: true, leadId: lead_id,
           leadPhone: undefined, leadEmail: undefined, visitorPhone: undefined }
         : await getConversationChannel(savedMessages.conversationId);
@@ -140,7 +172,8 @@ export async function POST(request: Request) {
           agentId,
           savedMessages.conversationId,
           lead_id,
-          savedMessages.interventionMessageId
+          savedMessages.interventionMessageId,
+          ...(responseFormat !== undefined ? [responseFormat] as const : [])
         );
 
         const needsWorkflow =
@@ -174,7 +207,8 @@ export async function POST(request: Request) {
         message_id: savedMessages.interventionMessageId,
         role: 'team_member',
         user_id: user_id,
-        custom_data: commentMetadata,
+        custom_data: responseFormat !== undefined
+          ? { ...commentMetadata, response_format: responseFormat } : commentMetadata,
       }
     };
 
@@ -194,7 +228,7 @@ export async function POST(request: Request) {
       { status: 200 }
     );
   } catch (error) {
-    if (error instanceof InterventionRequestError || error instanceof SocialCommentError) {
+    if (error instanceof InterventionRequestError || error instanceof SocialCommentError || error instanceof AudioRoutingError) {
       return NextResponse.json(
         { success: false, error: { code: 'INVALID_REQUEST', message: error.message } },
         { status: error.status },

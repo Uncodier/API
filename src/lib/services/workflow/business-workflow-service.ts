@@ -1,4 +1,5 @@
 import { BaseWorkflowService, WorkflowExecutionOptions, WorkflowExecutionResponse } from './base-workflow-service';
+import { validateResponseFormat } from '@/lib/services/channels/response-format';
 
 // Interfaces específicas para workflows de negocio (coinciden con Temporal externo)
 interface EmailWorkflowArgs {
@@ -13,6 +14,7 @@ interface EmailWorkflowArgs {
 }
 
 interface WhatsAppWorkflowArgs {
+  response_format?: 'text' | 'audio';
   phone_number: string;     // ✅ REQUERIDO - Número de teléfono destinatario
   message: string;          // ✅ REQUERIDO - Mensaje a enviar
   site_id: string;          // ✅ REQUERIDO - ID del sitio
@@ -24,6 +26,7 @@ interface WhatsAppWorkflowArgs {
 }
 
 interface ChannelMessageWorkflowArgs {
+  response_format?: 'text' | 'audio';
   channel: string;          // ✅ REQUERIDO - Canal de envío (telegram, messenger)
   to: string;               // ✅ REQUERIDO - Destinatario (Chat ID o número)
   message: string;          // ✅ REQUERIDO - Mensaje a enviar
@@ -234,6 +237,7 @@ export class BusinessWorkflowService extends BaseWorkflowService {
    */
   public async sendWhatsappFromAgent(args: WhatsAppWorkflowArgs, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
     try {
+      validateResponseFormat(args.response_format, 'whatsapp');
       if (!args.phone_number || !args.message || !args.site_id) {
         return {
           success: false,
@@ -301,6 +305,7 @@ export class BusinessWorkflowService extends BaseWorkflowService {
    */
   public async sendChannelMessageFromAgent(args: ChannelMessageWorkflowArgs, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
     try {
+      validateResponseFormat(args.response_format, args.channel);
       if (!args.channel || !args.to || !args.message || !args.site_id) {
         return {
           success: false,

@@ -17,6 +17,7 @@ const requestSchema = z.object({
   message_id: optionalId,
   reply_to_message_id: optionalId,
   message: z.string().trim().min(1).max(20_000),
+  response_format: z.enum(['text', 'audio']).optional(),
   conversation_title: z.string().trim().max(200).optional(),
 }).strict();
 
@@ -37,6 +38,11 @@ export async function authorizeIntervention(request: Request, body: unknown) {
   const parsed = requestSchema.safeParse(body);
   if (!parsed.success) throw new InterventionRequestError('Invalid intervention request', 400);
   const input = parsed.data;
+  // Conservatively cap the source text; delivery additionally validates the
+  // final spoken text after markdown removal.
+  if (input.response_format === 'audio' && input.message.length > 4000) {
+    throw new InterventionRequestError('Audio responses must contain at most 4000 characters', 400);
+  }
   const conversationId = input.conversationId || input.conversation_id;
   if (!conversationId || (input.conversationId && input.conversation_id
     && input.conversationId !== input.conversation_id)) {
@@ -99,6 +105,7 @@ export async function authorizeIntervention(request: Request, body: unknown) {
     visitorId: conversation.visitor_id as string | undefined,
     title: input.conversation_title || conversation.title || 'Intervention Conversation',
     message: input.message,
+    responseFormat: input.response_format,
     messageId: input.message_id || undefined,
   };
 }

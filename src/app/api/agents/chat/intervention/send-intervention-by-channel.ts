@@ -3,6 +3,7 @@ import { WorkflowService } from '@/lib/services/workflow-service';
 import { sanitizeZavuRecipient } from '@/lib/services/channels/ChannelSendService';
 import { placeTrackedVoiceCall } from '@/lib/services/zavu/voice-call-service';
 import { VoicePlacementError } from '@/lib/services/zavu/voice-call-message-state';
+import { validateResponseFormat, type ResponseFormat } from '@/lib/services/channels/response-format';
 
 function isValidUUID(uuid: string): boolean {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -159,9 +160,11 @@ export async function sendMessageByChannel(
   agentId: string | null | undefined,
   conversationId: string,
   leadId?: string,
-  messageId?: string
+  messageId?: string,
+  responseFormat?: ResponseFormat,
 ): Promise<ChannelSendResult> {
   try {
+    validateResponseFormat(responseFormat, channel);
     console.log(`📤 Starting Temporal send for channel: ${channel}`);
 
     const workflowService = WorkflowService.getInstance();
@@ -256,6 +259,7 @@ export async function sendMessageByChannel(
         conversation_id: conversationId,
         lead_id: leadId,
         message_id: effectiveMessageId,
+        ...(responseFormat !== undefined ? { response_format: responseFormat } : {}),
       });
 
       return {
@@ -288,7 +292,8 @@ export async function sendMessageByChannel(
         agent_id: agentId || undefined,
         conversation_id: conversationId,
         lead_id: leadId,
-        message_id: effectiveMessageId
+        message_id: effectiveMessageId,
+        ...(responseFormat !== undefined ? { response_format: responseFormat } : {}),
       });
 
       return {

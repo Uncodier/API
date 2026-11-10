@@ -38,6 +38,7 @@ const { effectiveUserId, effectiveAgentId, effectiveSiteId, effectiveLeadId, con
         {
           message: {
             content: "message example", // Will be filled by the agent
+            response_format: input.response_format || 'text', // Model selects text|audio according to context; explicit request wins.
             is_robot: false, // Set to true if this is a robot/automated interaction that should not be saved to DB
             is_transactional_message: false, // Set to true if this is a transactional/automatic message that should not be saved to DB
             is_erratic: false // Set to true if the message is nonsensical or makes no sense and should not be saved to DB

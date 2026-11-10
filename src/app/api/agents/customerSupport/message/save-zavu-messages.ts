@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { usableSupportContent } from './response-content';
+import type { ResponseFormat } from '@/lib/services/channels/response-format';
 
 export function supportRecordId(parts: string[]): string {
   const hex = createHash('sha256').update(JSON.stringify(parts)).digest('hex');
@@ -12,6 +13,7 @@ type Input = {
   conversationId?: string; conversationTitle?: string; commandId?: string;
   userMessage: string; assistantMessage: string; originMessageId: string;
   channel: string; requireApproval?: boolean; metadata: Record<string, unknown>;
+  responseFormat?: ResponseFormat;
 };
 
 /** Stable PKs make concurrent and partial writes recoverable without overwriting messages. */
@@ -75,6 +77,7 @@ export async function saveZavuSupportMessages(input: Input) {
       content: input.userMessage, custom_data: { ...input.metadata, origin_message_id: input.originMessageId } }] : []),
     { ...shared, id: assistantId, role: 'assistant', user_id: null, content: input.assistantMessage,
       custom_data: { connection_id: connection, origin_message_id: input.originMessageId,
+        response_format: input.responseFormat || 'text',
         reply_to_message_id: inboundId, ...(input.requireApproval ? { status: 'pending', channel: input.channel } : {}) } },
   ];
   for (const row of rows) {
@@ -85,7 +88,8 @@ export async function saveZavuSupportMessages(input: Input) {
       .select('id, role, conversation_id, content, custom_data').eq('id', row.id).maybeSingle();
     if (readError || !existing || existing.role !== row.role || existing.conversation_id !== conversationId
         || existing.content !== row.content || existing.custom_data?.connection_id !== connection
-        || existing.custom_data?.origin_message_id !== input.originMessageId) {
+        || existing.custom_data?.origin_message_id !== input.originMessageId
+        || (row.role === 'assistant' && (existing.custom_data?.response_format || 'text') !== (input.responseFormat || 'text'))) {
       throw new Error('CUSTOMER_SUPPORT_MESSAGE_SCOPE_CONFLICT');
     }
   }

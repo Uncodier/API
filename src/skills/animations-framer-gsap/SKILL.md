@@ -10,6 +10,8 @@ types: ['design', 'develop']
 Add fluid, purposeful animations and dynamic UI transitions using CSS, Framer Motion, or GSAP. Optimize for performance by avoiding reflows and respect user accessibility preferences for reduced motion.
 
 ## Instructions
+For multi-scene HTML animations, motion graphics or explanatory videos, load `motion-design-html` through `skill_lookup` first. Its narrative timing and export rules take precedence over the short UI-transition timings below; this skill remains focused on interface interactions.
+
 1. **Performance & Fluidity:** Animate **only** properties that do not trigger browser reflow or repaint: `transform` (translate, scale, rotate) and `opacity`. Avoid animating `width`, `height`, `top`, `left`, `margin`, or `padding`. Use `will-change` sparingly and only for complex animations. Prefer CSS animations over JavaScript for simple effects (hover, focus, loaders).
 2. **User Experience (UX):** Animations must have a purpose: guide attention, provide state feedback, or explain spatial relationships. Keep durations short (150ms - 300ms). Use natural easing functions (`ease-out` for entering, `ease-in` for exiting). Do not overuse animations to prevent visual fatigue.
 3. **Accessibility:** **Always** respect user preferences for reduced motion. In CSS, use `@media (prefers-reduced-motion: reduce)`. In Framer Motion, use the `useReducedMotion` hook to adapt behavior.

@@ -9,6 +9,8 @@ import { getCompletedChannelMessageGuidance } from '@/lib/services/workflow-robo
 import { isInternalServiceRequest } from '@/lib/security/request-rate-limit';
 import { getCustomerSupportPolicies } from '@/app/api/agents/customerSupport/support-policies';
 import { getSupportLanguagePolicy } from './support-language';
+import { supportChannelContext } from './channel-context';
+import { supportResponseFormatContext } from './response-format';
 export async function buildSupportContext(input: any) {
 let leadLanguage: unknown;
 const { request, message, name, email, phone, requestTimestamp, clientIP, userAgent, effectiveOrigin, effectiveLeadId, effectiveConversationId, effectiveSiteId, origin_message_id, channel_guidance_run_plan_ids, website_chat_origin } = input;
@@ -31,6 +33,11 @@ const { request, message, name, email, phone, requestTimestamp, clientIP, userAg
     if (effectiveOrigin) {
       contextMessage += `\nChannel: ${effectiveOrigin}`;
     }
+    contextMessage += supportChannelContext({
+      effectiveOrigin, effectiveConversationId, website_chat_origin, phone, email,
+      visitor_id: input.visitor_id,
+      custom_data: !input.browserIdentity && isInternalServiceRequest(request) ? input.custom_data : undefined,
+    });
     
     // Obtener y añadir información completa del lead al contexto si está disponible
     if (effectiveLeadId) {
@@ -179,6 +186,7 @@ const { request, message, name, email, phone, requestTimestamp, clientIP, userAg
     }
     contextMessage += getCustomerSupportPolicies();
     contextMessage += await getSupportLanguagePolicy({ siteId: effectiveSiteId, leadLanguage });
+    contextMessage += supportResponseFormatContext(effectiveOrigin, input.response_format);
 
 
 return contextMessage;

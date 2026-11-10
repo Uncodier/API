@@ -16,6 +16,8 @@ import { corsHeaders } from './cors';
 import { ensureCommentConversation, bindCommentAgent } from '@/lib/services/social-comments/conversations';
 import { SocialCommentError } from '@/lib/services/social-comments/metadata';
 import { checkZavuSupportAdmission } from './zavu-admission';
+import { validateResponseFormat, type ResponseFormat } from '@/lib/services/channels/response-format';
+import { selectSupportResponseFormat } from './response-format';
 
 export async function POST(request: Request) {
   try {
@@ -80,6 +82,15 @@ export async function POST(request: Request) {
         { success: false, error: { code: 'INVALID_REQUEST', message: 'message is required' } },
         { status: 400 }
       );
+    }
+
+    let explicitResponseFormat: ResponseFormat | undefined;
+    try {
+      explicitResponseFormat = validateResponseFormat(body.response_format, effectiveOrigin || 'chat');
+    } catch (error) {
+      return NextResponse.json({ success: false, error: {
+        code: 'INVALID_REQUEST', message: (error as Error).message,
+      } }, { status: 400, headers: corsHeaders(request) });
     }
     
     // Establecer el site_id efectivo
@@ -298,10 +309,16 @@ export async function POST(request: Request) {
       } }, { status: 200, headers: corsHeaders(request) });
     }
 
-    const contextMessage = await buildSupportContext({ attachments: inboundCustomData?.attachments, request, message, name, email, phone, requestTimestamp, clientIP, userAgent, acceptLanguage, effectiveOrigin, effectiveLeadId, effectiveConversationId, effectiveSiteId, origin_message_id, channel_guidance_run_plan_ids, website_chat_origin });
+    const contextMessage = await buildSupportContext({ attachments: inboundCustomData?.attachments,
+      response_format: explicitResponseFormat,
+      custom_data: inboundCustomData, visitor_id, browserIdentity,
+      request, message, name, email, phone, requestTimestamp, clientIP, userAgent, acceptLanguage,
+      effectiveOrigin, effectiveLeadId, effectiveConversationId, effectiveSiteId,
+      origin_message_id, channel_guidance_run_plan_ids, website_chat_origin });
     const deniedZavu = await checkZavuSupportAdmission(request, body);
     if (deniedZavu) return deniedZavu;
     const generated = await generateSupportReply({ effectiveUserId, effectiveAgentId, effectiveSiteId, effectiveLeadId, contextMessage, agentUserId, request,
+      response_format: explicitResponseFormat,
       ...(inboundCustomData?.source === 'zavu_inbound_message' ? {
         originMessageId: origin_message_id, connectionId: inboundCustomData.connection_id,
       } : {}),
@@ -325,6 +342,15 @@ export async function POST(request: Request) {
       );
     }
     const { assistantMessage, conversationTitle, isRobot, isTransactionalMessage, isErratic } = resolved;
+    let responseFormat: ResponseFormat;
+    try {
+      responseFormat = selectSupportResponseFormat({ channel: effectiveOrigin,
+        explicit: explicitResponseFormat, model: resolved.responseFormat, content: assistantMessage });
+    } catch {
+      return NextResponse.json({ success: false, error: {
+        code: 'CUSTOMER_SUPPORT_AUDIO_TOO_LONG', message: 'The generated audio script exceeds 4000 characters',
+      } }, { status: 422, headers: corsHeaders(request) });
+    }
     // Usando lead_id efectivo al guardar los mensajes
     // Envolver en try-catch para manejar error SKIP_DATABASE
     let savedMessages;
@@ -347,7 +373,9 @@ export async function POST(request: Request) {
         origin_message_id,
         channel_delivery === true,
         require_approval === true,
-        inboundCustomData && typeof inboundCustomData === 'object' ? inboundCustomData : undefined
+        inboundCustomData && typeof inboundCustomData === 'object' ? inboundCustomData : undefined,
+        false,
+        responseFormat
       );
     } catch (error: any) {
       // Si el error es SKIP_DATABASE, retornar respuesta sin crear objetos en DB
@@ -359,6 +387,7 @@ export async function POST(request: Request) {
             data: { 
               command_id: effectiveDbUuid,
               skip_database: true,
+              response_format: responseFormat,
               results: {
                 message: error.results.message || assistantMessage,
                 conversation_title: error.results.conversation_title || conversationTitle,
@@ -430,6 +459,7 @@ export async function POST(request: Request) {
           command_id: effectiveDbUuid,
           conversation_id: savedMessages.conversationId,
           conversation_title: savedMessages.conversationTitle,
+          response_format: responseFormat,
           lead_id: effectiveLeadId || null,
           task_id: taskId || null,
           messages: {
@@ -440,6 +470,7 @@ export async function POST(request: Request) {
             },
             assistant: {
               content: assistantMessage,
+              response_format: responseFormat,
               message_id: savedMessages.assistantMessageId,
               command_id: effectiveDbUuid
             }

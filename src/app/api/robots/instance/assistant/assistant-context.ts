@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { MOTION_DESIGN_INSTRUCTION } from './motion-design-instruction';
 import { InstanceContextManager } from '@/lib/services/robot-instance/InstanceContextManager';
 import { findAssistantManagedPlan } from '@/lib/services/workflow-robot/plan-ownership';
 import { InstanceAssetsService } from '@/lib/services/robot-instance/InstanceAssetsService';
@@ -368,7 +369,7 @@ EXECUTION:
 🎙️ MULTIMEDIA GENERATION:
 - When the user asks to generate AUDIO, a song, a rap, or a voiceover, you MUST call the \`generate_audio\` tool via tools to fulfill the request. If you are asked to write the lyrics/script, write them and immediately pass them into the \`generate_audio\` tool within the same response. Do NOT just output the text without calling the tool.
 - When generating IMAGES, you MUST use the \`generate_image\` tool via tools.
-- When generating VIDEO, you MUST use the \`generate_video\` tool via tools. If there are Image URLs for reference in the context or user messages, you MUST pass them to the \`reference_images\` parameter array.
+- For generative VIDEO footage, use the \`generate_video\` tool via tools and pass supplied reference Image URLs in \`reference_images\`. For explicitly code-authored HTML/SVG/Canvas/Three.js animations or explainers, follow motion-design-html instead; generate_video is not an HTML renderer. A host UI OUTPUT CONTRACT remains binding: never bypass a required media tool or a text-node media restriction.
 - CRITICAL: Never reply with just the lyrics or script if the user requested a song or audio. You MUST use the \`generate_audio\` tool and return the resulting URL.`;
 
   const toolsRouterInstruction = `
@@ -411,6 +412,7 @@ For compras with requisitions, licitaciones/tenders, supplier invitations, adjud
         toolsRouterInstruction,
         skillLookupInstruction,
         procurementSkillInstruction,
+        MOTION_DESIGN_INSTRUCTION,
         fileDeliveryInstruction,
         requiredSkillsPrompt(selectedSkills),
       ].filter(Boolean).join('\n')
@@ -425,6 +427,7 @@ For compras with requisitions, licitaciones/tenders, supplier invitations, adjud
     toolsRouterInstruction,
     skillLookupInstruction,
     procurementSkillInstruction,
+    MOTION_DESIGN_INSTRUCTION,
     fileDeliveryInstruction,
     requiredSkillsPrompt(selectedSkills),
     commerceInstruction,

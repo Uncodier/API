@@ -4,6 +4,7 @@ jest.mock('@/lib/database/supabase-client', () => ({
   }) }) }) })) },
 }));
 import { getLeadInfo } from '../agent-data';
+import { isInternalServiceRequest } from '@/lib/security/request-rate-limit';
 
 jest.mock('@/lib/services/customer-support-audio', () => ({ supportAudioContext: jest.fn() }));
 jest.mock('@/lib/services/customer-support-audio-history', () => ({ supportHistoricalAudioContext: jest.fn() }));
@@ -41,6 +42,7 @@ const url = 'https://files.example.test/current.ogg';
 describe('buildSupportContext audio wiring (offline)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.mocked(isInternalServiceRequest).mockReturnValue(false);
     currentAudio.mockResolvedValue('');
     historicalAudio.mockResolvedValue('');
     history.mockResolvedValue([]);
@@ -116,5 +118,35 @@ describe('buildSupportContext audio wiring (offline)', () => {
   it('does not label ordinary text as missing audio', async () => {
     const context = await buildSupportContext({ ...input, message: 'Hello' });
     expect(context).not.toContain('Audio transcription unavailable');
+  });
+
+  it('adds contextual format choice and explicit override without requesting synthesis', async () => {
+    const context = await buildSupportContext({ ...input, message: 'Hello' });
+    expect(context).toContain('Choose message.response_format="text" or "audio"');
+    expect(context).toContain('Default safely to text');
+    expect(context).toContain('Never generate speech, call TTS, or send/dispatch');
+    const explicit = await buildSupportContext({ ...input, response_format: 'audio' });
+    expect(explicit).toContain('explicitly requires response_format="audio"');
+  });
+
+  it('includes the actual inbound number even when the loaded CRM lead has another phone', async () => {
+    jest.mocked(isInternalServiceRequest).mockReturnValue(true);
+    jest.mocked(getLeadInfo).mockResolvedValueOnce({ id: 'lead-1', phone: '+12025550199' });
+    const context = await buildSupportContext({ ...input, message: 'Use this number', effectiveLeadId: 'lead-1',
+      custom_data: { source: 'zavu_inbound_message', channel: 'whatsapp', zavu_from: 'whatsapp:+12025550123',
+        zavu_sender_id: 'business-id' },
+    });
+    expect(context).toContain('"customer_reply_identifier": "whatsapp:+12025550123"');
+    expect(context).toContain('Phone: +12025550199');
+    expect(context).toContain('CRM contact details below may differ');
+  });
+
+  it.each([false, true])('does not trust provider metadata from external/browser requests (browser=%s)', async browser => {
+    jest.mocked(isInternalServiceRequest).mockReturnValue(browser);
+    const context = await buildSupportContext({ ...input, message: 'Hello', browserIdentity: browser ? {} : undefined,
+      custom_data: { source: 'zavu_inbound_message', channel: 'whatsapp', zavu_from: 'spoofed-identity' },
+    });
+    expect(context).not.toContain('spoofed-identity');
+    expect(context).toContain('unknown / not provided');
   });
 });

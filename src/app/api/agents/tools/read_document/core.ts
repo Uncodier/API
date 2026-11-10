@@ -51,7 +51,7 @@ function collectMutableStrings(value: unknown, locations: MutableLocation[]): vo
   for (const [key, child] of Object.entries(value)) {
     if (typeof child === 'string' && !['type', 'mime_type'].includes(key)) {
       locations.push({ value: child, set: replacement => { (value as Record<string, unknown>)[key] = replacement; } });
-    } else collectMutableStrings(child, locations);
+    } else if (key !== 'warnings') collectMutableStrings(child, locations);
   }
 }
 
@@ -81,10 +81,12 @@ function fitSerializedResult(result: DocumentReadResult, maxChars: number): Docu
 }
 
 function boundResult(result: DocumentReadResult, options: DocumentReadOptions): DocumentReadResult {
+  // Keep binary payloads entirely outside both JSON sizing and string mutation.
+  const { images, ...textResult } = result;
   const maxSections = options.maxSections ?? 50;
   const maxChars = options.maxChars ?? 60_000;
   let remaining = maxChars;
-  let truncated = result.sections.length > maxSections;
+  let truncated = result.truncated || result.sections.length > maxSections;
   const sections = result.sections.slice(0, maxSections).map(section => {
     const text = section.text || '';
     const bounded = text.slice(0, Math.max(remaining, 0));
@@ -108,7 +110,8 @@ function boundResult(result: DocumentReadResult, options: DocumentReadOptions): 
     }));
     return { ...section, ...(section.text !== undefined ? { text: bounded } : {}), ...(tables ? { tables } : {}) };
   });
-  return fitSerializedResult({ ...result, sections, truncated }, maxChars);
+  const bounded = fitSerializedResult({ ...textResult, sections, truncated }, maxChars);
+  return { ...bounded, ...(images?.length ? { images } : {}) };
 }
 
 async function readDocumentBufferInternal(file: LoadedDocument, options: DocumentReadOptions): Promise<DocumentReadResult> {
@@ -118,7 +121,7 @@ async function readDocumentBufferInternal(file: LoadedDocument, options: Documen
       : type === 'spreadsheet' ? await readSpreadsheet(file.buffer, options, officeZip)
         : type === 'document' ? await readWordDocument(file.buffer, officeZip)
           : type === 'csv' ? readCsv(file.buffer) : readText(file.buffer);
-  return boundResult({ success: true, type, filename: file.filename, mime_type: file.mimeType || MIME_BY_KIND[type], metadata: { byte_size: file.buffer.length, ...parsed.metadata }, sections: parsed.sections, truncated: false, warnings: parsed.warnings }, options);
+  return boundResult({ success: true, type, filename: file.filename, mime_type: file.mimeType || MIME_BY_KIND[type], metadata: { byte_size: file.buffer.length, ...parsed.metadata }, sections: parsed.sections, truncated: 'truncated' in parsed && parsed.truncated === true, warnings: parsed.warnings, ...('images' in parsed ? { images: parsed.images } : {}) }, options);
 }
 
 export async function readDocumentBuffer(file: LoadedDocument, options: DocumentReadOptions = {}): Promise<DocumentReadResult> {

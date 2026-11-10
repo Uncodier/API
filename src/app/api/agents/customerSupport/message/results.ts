@@ -42,6 +42,10 @@ export function extractSupportResults(executedCommand: any) {
   for (const row of rows) if (typeof row === 'string') add(row);
   const selected = candidates.find(candidate => usableSupportContent(candidate.value));
   const assistantMessage = usableSupportContent(selected?.value);
+  // Only the selected response may choose delivery format. Never borrow from
+  // tools, discarded candidates, or conversation flags. Innermost target wins.
+  const responseFormat = [...(selected?.flags || [])].reverse()
+    .find(source => Object.prototype.hasOwnProperty.call(source, 'response_format'))?.response_format;
   const sources = [...(selected?.flags || []), ...conversationTargets];
   // Any explicit suppression wins over a false conversation flag.
   const flag = (key: string): boolean | undefined => {
@@ -49,6 +53,7 @@ export function extractSupportResults(executedCommand: any) {
     return values.includes(true) ? true : values.includes(false) ? false : undefined;
   };
   return { assistantMessage, conversationTitle,
+    ...(responseFormat === 'text' || responseFormat === 'audio' ? { responseFormat } : {}),
     isRobot: flag('is_robot'), isTransactionalMessage: flag('is_transactional_message'),
     isErratic: flag('is_erratic') };
 }

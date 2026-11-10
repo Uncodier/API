@@ -1,5 +1,13 @@
 import { randomBytes } from 'node:crypto';
 import { decryptToken } from '@/lib/utils/token-decryption';
+import { requireLegacyAudioRouting } from '@/lib/services/channels/audio-message-routing';
+import { audioSenderIdentity } from '@/lib/services/channels/audio-sender-identity';
+jest.mock('@/lib/services/channels/audio-message-routing', () => ({ requireLegacyAudioRouting: jest.fn() }));
+import { deliverExplicitAudio } from '@/lib/services/channels/explicit-audio-delivery';
+import { tryPrepareLongReplyAudio } from '@/lib/services/channels/long-reply-audio';
+jest.mock('@/lib/services/channels/explicit-audio-delivery', () => ({
+  deliverExplicitAudio: jest.fn(), markAudioPreflightFailed: jest.fn(), AudioDeliveryError: class AudioDeliveryError extends Error {},
+}));
 
 const mockFrom = jest.fn<ReturnType<typeof query> | { insert: typeof mockInsert }, [string]>();
 
@@ -19,6 +27,7 @@ global.fetch = jest.fn();
 
 const mockInsert = jest.fn(async (_rows: unknown[]) => ({ error: null }));
 import { WhatsAppSendService } from '../WhatsAppSendService';
+import { WhatsAppTemplateService } from '../WhatsAppTemplateService';
 let authToken: string;
 let accountSid: string;
 
@@ -87,6 +96,65 @@ describe('WhatsAppSendService', () => {
       site_id: 'test-site-id',
       responseWindowEnabled: true,
     };
+
+    it('never converts explicitly selected text to audio', async () => {
+      jest.mocked(global.fetch).mockResolvedValueOnce({ ok: true, json: async () => ({ sid: 'sent' }) } as Response);
+      const result = await WhatsAppSendService.sendMessage({ ...mockParams, response_format: 'text', message: 'Hi '.repeat(200) });
+      expect(result.success).toBe(true);
+      expect(tryPrepareLongReplyAudio).not.toHaveBeenCalled();
+    });
+
+    it('blocks explicit audio outside the window even when a caller requests bypass', async () => {
+      jest.spyOn(WhatsAppTemplateService, 'checkResponseWindow').mockResolvedValue({ withinWindow: false });
+      const result = await WhatsAppSendService.sendMessage({ ...mockParams, response_format: 'audio',
+        message_id: 'saved', conversation_id: 'conversation' });
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('AUDIO_DELIVERY_FAILED');
+      expect(result.template_required).not.toBe(true);
+      expect(deliverExplicitAudio).not.toHaveBeenCalled();
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it('sends one audio-only message with the original persisted text as synthesis input', async () => {
+      jest.spyOn(WhatsAppTemplateService, 'checkResponseWindow').mockResolvedValue({ withinWindow: true });
+      jest.mocked(deliverExplicitAudio).mockImplementationOnce(async params => params.dispatch({
+        audioUrl: 'https://assets.example.test/reply.mp3', mimeType: 'audio/mpeg',
+      }));
+      jest.mocked(global.fetch).mockResolvedValueOnce({ ok: true, json: async () => ({ sid: 'audio-id' }) } as Response);
+      const result = await WhatsAppSendService.sendMessage({ ...mockParams, message: '**Hello**', response_format: 'audio',
+        message_id: 'saved', conversation_id: 'conversation' });
+      expect(result.message_id).toBe('audio-id');
+      expect(deliverExplicitAudio).toHaveBeenCalledWith(expect.objectContaining({ text: '**Hello**', messageId: 'saved' }));
+      expect(deliverExplicitAudio).toHaveBeenCalledWith(expect.objectContaining({
+        sender: audioSenderIdentity({ provider: 'twilio', accountSid, fromNumber: '+15555550123' }),
+      }));
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+      const body = new URLSearchParams(String(jest.mocked(global.fetch).mock.calls[0][1]?.body));
+      expect(body.get('MediaUrl')).toBe('https://assets.example.test/reply.mp3');
+      expect(body.get('Body') || '').toBe('');
+    });
+
+    it('does not send an audio bound to Zavu through the legacy Twilio adapter', async () => {
+      jest.mocked(requireLegacyAudioRouting).mockRejectedValueOnce(new Error('Saved audio requires its selected Zavu adapter'));
+      const result = await WhatsAppSendService.sendMessage({ ...mockParams, response_format: 'audio',
+        message_id: 'saved', conversation_id: 'conversation' });
+      expect(result.success).toBe(false);
+      expect(deliverExplicitAudio).not.toHaveBeenCalled();
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it('refuses a changed Twilio account after preparing audio', async () => {
+      jest.spyOn(WhatsAppTemplateService, 'checkResponseWindow').mockResolvedValue({ withinWindow: true });
+      jest.mocked(deliverExplicitAudio).mockImplementationOnce(async params => params.dispatch({
+        audioUrl: 'https://assets.example.test/reply.mp3', mimeType: 'audio/mpeg',
+      }));
+      jest.spyOn(WhatsAppSendService, 'getWhatsAppConfig')
+        .mockResolvedValueOnce({ phoneNumberId: accountSid, accessToken: authToken, fromNumber: '+15555550123' })
+        .mockResolvedValueOnce({ phoneNumberId: `AC${randomBytes(16).toString('hex')}`, accessToken: authToken, fromNumber: '+15555550123' });
+      expect(await WhatsAppSendService.sendMessage({ ...mockParams, response_format: 'audio',
+        message_id: 'saved', conversation_id: 'conversation' })).toMatchObject({ success: false });
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
 
     it('debería manejar números temporales', async () => {
       const result = await WhatsAppSendService.sendMessage({

@@ -1,4 +1,5 @@
 import { supportModelContent } from '@/lib/services/customer-support-attachments';
+import { documentImageContent } from '../../services/command/document-image-content';
 import type { ChatCompletionContentPart } from 'openai/resources/chat/completions';
 
 /**
@@ -94,7 +95,7 @@ export function prepareMessagesFromCommand(command: DbCommand, systemPrompt?: st
   });
   
   // Keep attachment images even when a Current message section is extracted.
-  const modelContent = supportModelContent(userContext);
+  const modelContent = documentImageContent(supportModelContent(userContext), command.functions);
   // 2. Añadir el mensaje actual del usuario como único mensaje de usuario
   if (currentMessage) {
     messages.push({
@@ -106,7 +107,7 @@ export function prepareMessagesFromCommand(command: DbCommand, systemPrompt?: st
     console.log(`[ToolEvaluator] Usando contexto completo como mensaje del usuario al no poder extraer el mensaje actual`);
     messages.push({
       role: 'user',
-      content: supportModelContent(userContext)
+      content: modelContent
     });
   }
 

@@ -3,6 +3,11 @@ import { sendChannelMessage } from '@/lib/services/zavu/client';
 import { getOutstandClient } from '@/lib/integrations/outstand/client';
 import { authorizeOutstandConversation } from '@/lib/integrations/outstand/conversation-access';
 import { tryPrepareLongReplyAudio } from './long-reply-audio';
+import { deliverExplicitAudio, AudioDeliveryError, markAudioPreflightFailed } from './explicit-audio-delivery';
+import { validateResponseFormat, type ResponseFormat } from './response-format';
+import { audioSenderIdentity } from './audio-sender-identity';
+import { isAcceptedZavuMessage } from '@/lib/messaging/exact-zavu-response';
+import { resolveAudioRouting } from './audio-routing';
 import { sendCommentReply } from '@/lib/services/social-comments/delivery';
 import { getSiteLicensedResources, isLicensedChannelConnection, requireLicensedChannel } from '@/lib/billing/licensed-resources';
 
@@ -16,6 +21,7 @@ export interface SendChannelMessageParams {
   conversation_id?: string;
   lead_id?: string;
   message_id?: string;
+  response_format?: ResponseFormat;
 }
 
 export interface SendChannelMessageResult {
@@ -50,6 +56,7 @@ export class ChannelSendService {
    */
   static async sendMessage(params: SendChannelMessageParams): Promise<SendChannelMessageResult> {
     try {
+      validateResponseFormat(params.response_format, params.channel);
       if (!params.site_id || !params.channel || !params.to || !params.message) {
         throw new Error('site_id, channel, to, and message are required');
       }
@@ -98,12 +105,53 @@ export class ChannelSendService {
       // 1. Get site channels connections to find the zavu_sender_id for this channel type
       const siteSettings = await getSiteLicensedResources(params.site_id);
       const connections = siteSettings.channels.connections;
+      let selectedConnection: string | undefined;
+      let selectedSender: string | undefined;
+      if (params.response_format === 'audio' && params.message_id && params.conversation_id) {
+        const { data: saved, error } = await supabaseAdmin.from('messages').select('custom_data')
+          .eq('id', params.message_id).eq('conversation_id', params.conversation_id).maybeSingle();
+        if (error || !saved) throw new AudioDeliveryError('Saved audio routing is unavailable');
+        const id = saved.custom_data?.connection_id;
+        if (id !== undefined && (typeof id !== 'string' || !id.trim())) throw new AudioDeliveryError('Saved audio connection is invalid');
+        const routing = await resolveAudioRouting({ siteId: params.site_id, conversationId: params.conversation_id,
+          channel: params.channel, connectionId: id });
+        if (routing.kind !== 'zavu') throw new AudioDeliveryError('Generic audio delivery requires a Zavu sender');
+        selectedConnection = routing.connectionId;
+        selectedSender = routing.senderId;
+      }
       // Preserve stored connection order for callers without an exact destination.
       const connection = connections.find(c => c.type === params.channel && c.zavu_sender_id
+        && (selectedConnection === undefined || c.id === selectedConnection)
+        && (selectedSender === undefined || c.zavu_sender_id === selectedSender)
         && isLicensedChannelConnection(params.channel, c));
 
       if (!connection?.zavu_sender_id) {
         throw new Error(`No sender configured for channel ${params.channel} on site ${params.site_id}`);
+      }
+
+      if (params.response_format === 'audio') {
+        const checkAudioWindow = async () => {
+          if (params.channel !== 'whatsapp') return;
+          const { WhatsAppTemplateService } = await import('@/lib/services/whatsapp/WhatsAppTemplateService');
+          const window = await WhatsAppTemplateService.checkResponseWindow(params.conversation_id || null, params.to, params.site_id);
+          if (!window.withinWindow) throw new AudioDeliveryError('Audio requires an active WhatsApp response window');
+        };
+        await checkAudioWindow();
+        const messageId = await deliverExplicitAudio({
+          siteId: params.site_id, conversationId: params.conversation_id, messageId: params.message_id,
+          channel: params.channel, text: params.message, recipient: params.to,
+          sender: audioSenderIdentity({ provider: 'zavu', senderId: connection.zavu_sender_id }),
+          dispatch: async ({ audioUrl, mimeType }) => {
+            await requireLicensedChannel(params.site_id, params.channel, connection.id, connection.zavu_sender_id);
+            await checkAudioWindow();
+            const result = await sendChannelMessage({ to: params.to, channel: params.channel,
+              senderId: connection.zavu_sender_id, messageType: 'audio', content: { mediaUrl: audioUrl, mimeType },
+              idempotencyKey: `audio-delivery:${params.site_id}:${params.message_id}` });
+            if (!isAcceptedZavuMessage(result)) throw new AudioDeliveryError('Audio provider did not confirm acceptance');
+            return result.message.id;
+          },
+        });
+        return { success: true, messageId };
       }
 
       // Check if we should send this long reply as audio
@@ -112,7 +160,7 @@ export class ChannelSendService {
 
       // Extract a storage URL for audio generated by the agent.
       const extractedUrlRegex = /(https?:\/\/[^\s]+?\/storage\/v1\/object\/public\/[^\s]+?\.(?:wav|mp3|ogg))/i;
-      const urlMatch = finalMessage.match(extractedUrlRegex);
+      const urlMatch = params.response_format === 'text' ? null : finalMessage.match(extractedUrlRegex);
       
       if (urlMatch && urlMatch[1]) {
         console.log(`[ChannelSendService] Detected an audio URL in the message`);
@@ -123,7 +171,7 @@ export class ChannelSendService {
         }
       }
 
-      const audioReply = await tryPrepareLongReplyAudio({
+      const audioReply = params.response_format === 'text' ? null : await tryPrepareLongReplyAudio({
         siteId: params.site_id,
         channel: params.channel,
         text: finalMessage,
@@ -164,6 +212,9 @@ export class ChannelSendService {
         messageId: result?.message?.id
       };
     } catch (error: any) {
+      if (params.response_format === 'audio') await markAudioPreflightFailed({
+        siteId: params.site_id, conversationId: params.conversation_id, messageId: params.message_id,
+      });
       console.error(`[ChannelSendService] Error sending ${params.channel} message:`, error);
       return {
         success: false,

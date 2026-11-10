@@ -121,6 +121,7 @@ Each skill documents the artifacts it reads from or writes to. This lets the orc
 | `instance_plan` (DB record) | `makinari-fase-planeacion` / `makinari-rol-orchestrator` / `makinari-obj-workflow-designer` | Ordered execution steps with assigned skills, or a repeatable workflow template. |
 | `requirement_status` (DB record) | `makinari-fase-reporteado` | Client-facing delivery report with URLs. |
 | Private document revision and Git receipt | `file-delivery` | Any agent can discover `deliver_file` through `tools` to save HTML presentations, Markdown documents and CSV sheets without a workspace or deployment. Native Office binaries are not supported. |
+| Motion composition and verification evidence | `motion-design-html` | Editable HTML/SVG/Canvas/Three.js source, local assets, storyboard/timing notes and visual/seek checks. MP4 requires a separately available renderer and authorized binary delivery; `deliver_file` is text-only. |
 
 **Rules**
 - Never collide artifact names. If the semantics differ, rename.
@@ -155,3 +156,5 @@ flowchart LR
 ```
 
 The agent typically (a) lists skills scoped to the requirement type, (b) searches by keywords from its objective, (c) loads the full body of the top match before implementing. Keep `description` and body keywords aligned with the likely search terms of the caller.
+
+Tenant-scoped keyword search and bundled keyword fallback share accent normalization and retain `2D`/`3D` terms. This is not automatic translation: add bilingual trigger words to descriptions where needed. The assistant explicitly routes code-authored animations and explainers to `motion-design-html`, without overriding user selections or host media contracts. See [motion design integration](../../docs/MOTION_DESIGN_HTML.md) for runtime boundaries and verification.

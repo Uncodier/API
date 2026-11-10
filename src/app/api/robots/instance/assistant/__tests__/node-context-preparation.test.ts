@@ -31,6 +31,7 @@ import { InstanceAssetsService } from '@/lib/services/robot-instance/InstanceAss
 import { getInstanceAssistantTools, generateAgentBackground } from '../utils';
 import { prepareAssistantContext } from '../steps';
 import { canReadProcurementWorkflowInstanceAsActor } from '@/lib/services/workflow-robot/procurement-access';
+import { MOTION_DESIGN_INSTRUCTION } from '../motion-design-instruction';
 
 const INSTANCE = 'instance-1';
 const SITE = 'site-1';
@@ -69,6 +70,27 @@ beforeEach(() => {
   });
 });
 afterEach(() => jest.restoreAllMocks());
+
+it('preserves motion routing in the prepared conversational context', async () => {
+  const context = await prepare();
+  expect(context.systemPrompt).toContain(MOTION_DESIGN_INSTRUCTION);
+  expect(context.systemPrompt).toContain('For explicitly code-authored HTML/SVG/Canvas/Three.js');
+  expect(context.systemPrompt).not.toContain('When generating VIDEO, you MUST use');
+});
+
+it('preserves motion routing in the prepared workflow context', async () => {
+  const context = await prepareAssistantContext(INSTANCE, 'Create an HTML explainer', SITE, USER, [], false,
+    'WORKFLOW MODE: Execute the assigned step only.');
+  expect(context.systemPrompt).toContain(MOTION_DESIGN_INSTRUCTION);
+  expect(context.systemPrompt).toContain('Execute the assigned step only.');
+});
+
+it('keeps the node media contract binding alongside motion routing', async () => {
+  const context = await prepare(JSON.stringify({ nodeType: 'generate-image' }), NODE);
+  expect(context.systemPrompt).toContain(MOTION_DESIGN_INSTRUCTION);
+  expect(context.systemPrompt).toContain('You MUST call generate_image');
+  expect(context.systemPrompt).toContain('no other media generation tool is allowed');
+});
 
 it('denies private purchasing instance access before building history or tools', async () => {
   (canReadProcurementWorkflowInstanceAsActor as jest.Mock).mockResolvedValue(false);

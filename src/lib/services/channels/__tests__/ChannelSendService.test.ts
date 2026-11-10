@@ -4,6 +4,14 @@ import * as zavuClient from '@/lib/services/zavu/client';
 import * as longReplyAudio from '../long-reply-audio';
 import { getOutstandClient } from '@/lib/integrations/outstand/client';
 import { authorizeOutstandConversation } from '@/lib/integrations/outstand/conversation-access';
+import { deliverExplicitAudio } from '../explicit-audio-delivery';
+import { audioSenderIdentity } from '../audio-sender-identity';
+import { resolveAudioRouting } from '../audio-routing';
+jest.mock('../audio-routing', () => ({ resolveAudioRouting: jest.fn() }));
+jest.mock('../explicit-audio-delivery', () => ({ deliverExplicitAudio: jest.fn(), markAudioPreflightFailed: jest.fn(), AudioDeliveryError: class extends Error {} }));
+jest.mock('@/lib/services/whatsapp/WhatsAppTemplateService', () => ({ WhatsAppTemplateService: {
+  checkResponseWindow: jest.fn(async () => ({ withinWindow: true })),
+} }));
 
 const mockedSupabase = supabaseAdmin as any;
 
@@ -14,6 +22,7 @@ jest.mock('@/lib/database/supabase-client', () => ({
     select: jest.fn().mockReturnThis(),
     eq: jest.fn().mockReturnThis(),
     single: jest.fn(),
+    maybeSingle: jest.fn(),
     rpc: jest.fn(),
   }
 }));
@@ -40,6 +49,9 @@ describe('ChannelSendService', () => {
   
   beforeEach(() => {
     jest.clearAllMocks();
+    mockedSupabase.maybeSingle.mockResolvedValue({ data: { custom_data: {} } });
+    jest.mocked(resolveAudioRouting).mockImplementation(async input => ({ kind: 'zavu',
+      connectionId: typeof input.connectionId === 'string' ? input.connectionId : 'connection-0', senderId: mockSenderId }));
     mockedSupabase.rpc.mockImplementation(() => ({ abortSignal: async () => {
       const result = await mockedSupabase.single();
       if (!result?.data) return result;
@@ -54,6 +66,133 @@ describe('ChannelSendService', () => {
         socialAccountId: 'account-1',
       },
     } as never);
+  });
+
+  it('keeps explicit text as text even when long or containing an audio URL', async () => {
+    mockedSupabase.single.mockResolvedValue({ data: { channels: { connections: [
+      { type: 'telegram', zavu_sender_id: mockSenderId },
+    ] } }, error: null });
+    jest.mocked(zavuClient.sendChannelMessage).mockResolvedValue({ message: { id: 'sent' } });
+    const message = 'Long reply '.repeat(100) + 'https://assets.example.test/storage/v1/object/public/a.mp3';
+    const result = await ChannelSendService.sendMessage({ site_id: mockSiteId, channel: 'telegram', to: mockTo,
+      message, response_format: 'text' });
+    expect(result.success).toBe(true);
+    expect(longReplyAudio.tryPrepareLongReplyAudio).not.toHaveBeenCalled();
+    expect(zavuClient.sendChannelMessage).toHaveBeenCalledWith(expect.objectContaining({ text: message }));
+  });
+
+  it.each(['telegram', 'messenger', 'whatsapp'])('routes explicit %s audio through the durable delivery owner', async channel => {
+    mockedSupabase.single.mockResolvedValue({ data: { channels: { connections: [
+      { type: channel, zavu_sender_id: mockSenderId },
+    ] } }, error: null });
+    jest.mocked(deliverExplicitAudio).mockImplementationOnce(async params => params.dispatch({
+      audioUrl: 'https://assets.example.test/reply.mp3', mimeType: 'audio/mpeg',
+    }));
+    jest.mocked(zavuClient.sendChannelMessage).mockResolvedValue({ message: { id: 'audio-sent', status: 'sent' } });
+    const result = await ChannelSendService.sendMessage({ site_id: mockSiteId, channel, to: mockTo,
+      message: 'Hi', response_format: 'audio', message_id: 'saved', conversation_id: 'conversation' });
+    expect(result.messageId).toBe('audio-sent');
+    expect(longReplyAudio.tryPrepareLongReplyAudio).not.toHaveBeenCalled();
+    expect(zavuClient.sendChannelMessage).toHaveBeenCalledTimes(1);
+    expect(zavuClient.sendChannelMessage).toHaveBeenCalledWith(expect.objectContaining({ messageType: 'audio',
+      content: { mediaUrl: 'https://assets.example.test/reply.mp3', mimeType: 'audio/mpeg' } }));
+  });
+
+  it('rejects Instagram audio without falling back to text', async () => {
+    const result = await ChannelSendService.sendMessage({ site_id: mockSiteId, channel: 'instagram', to: mockTo,
+      message: 'Hi', response_format: 'audio' });
+    expect(result.success).toBe(false);
+    expect(zavuClient.sendChannelMessage).not.toHaveBeenCalled();
+    expect(getOutstandClient).not.toHaveBeenCalled();
+  });
+  it('pins an approved audio message to its saved connection instead of the first sender', async () => {
+    mockedSupabase.maybeSingle.mockResolvedValue({ data: { custom_data: { connection_id: 'chosen' } } });
+    jest.mocked(resolveAudioRouting).mockResolvedValueOnce({ kind: 'zavu', connectionId: 'chosen', senderId: 'chosen-sender' });
+    mockedSupabase.single.mockResolvedValue({ data: { channels: { connections: [
+      { id: 'other', type: 'messenger', zavu_sender_id: 'other-sender' },
+      { id: 'chosen', type: 'messenger', zavu_sender_id: 'chosen-sender' },
+    ] } }, error: null });
+    jest.mocked(deliverExplicitAudio).mockResolvedValueOnce('audio-id');
+    expect(await ChannelSendService.sendMessage({ site_id: mockSiteId, channel: 'messenger', to: mockTo,
+      message: 'Hi', response_format: 'audio', message_id: 'saved', conversation_id: 'conversation' })).toMatchObject({ success: true });
+    expect(deliverExplicitAudio).toHaveBeenCalledWith(expect.objectContaining({
+      sender: audioSenderIdentity({ provider: 'zavu', senderId: 'chosen-sender' }),
+    }));
+  });
+
+  it.each([
+    { success: false, message: { id: 'failed-id', status: 'failed' } },
+    { message: { id: 'failed-id', status: 'failed' } },
+    { success: false, message: { id: 'rejected-id', status: 'queued' } },
+    { message: { id: 'unknown-id' } },
+    { message: { status: 'sent' } },
+  ])('never treats a rejected or unconfirmed audio response as sent: %j', async providerResult => {
+    mockedSupabase.single.mockResolvedValue({ data: { channels: { connections: [
+      { type: 'telegram', zavu_sender_id: mockSenderId },
+    ] } }, error: null });
+    jest.mocked(deliverExplicitAudio).mockImplementationOnce(async params => params.dispatch({
+      audioUrl: 'https://assets.example.test/reply.mp3', mimeType: 'audio/mpeg',
+    }));
+    jest.mocked(zavuClient.sendChannelMessage).mockResolvedValue(providerResult);
+    const result = await ChannelSendService.sendMessage({ site_id: mockSiteId, channel: 'telegram', to: mockTo,
+      message: 'Hi', response_format: 'audio', message_id: 'saved', conversation_id: 'conversation' });
+    expect(result.success).toBe(false);
+    expect(result.messageId).toBeUndefined();
+    expect(zavuClient.sendChannelMessage).toHaveBeenCalledTimes(1);
+    expect(zavuClient.sendChannelMessage).toHaveBeenCalledWith(expect.objectContaining({
+      idempotencyKey: `audio-delivery:${mockSiteId}:saved`, messageType: 'audio',
+    }));
+  });
+
+  it.each(['queued', 'sending', 'sent', 'delivered', 'read'])('recognizes provider acceptance for audio state %s', async status => {
+    mockedSupabase.single.mockResolvedValue({ data: { channels: { connections: [
+      { type: 'messenger', zavu_sender_id: mockSenderId },
+    ] } }, error: null });
+    jest.mocked(deliverExplicitAudio).mockImplementationOnce(async params => params.dispatch({
+      audioUrl: 'https://assets.example.test/reply.mp3', mimeType: 'audio/mpeg',
+    }));
+    jest.mocked(zavuClient.sendChannelMessage).mockResolvedValue({ message: { id: 'accepted-id', status } });
+    expect(await ChannelSendService.sendMessage({ site_id: mockSiteId, channel: 'messenger', to: mockTo,
+      message: 'Hi', response_format: 'audio', message_id: 'saved', conversation_id: 'conversation' }))
+      .toMatchObject({ success: true, messageId: 'accepted-id' });
+  });
+  it('resolves an unbound manual message to its conversation account instead of the first available sender', async () => {
+    mockedSupabase.single.mockResolvedValue({ data: { channels: { connections: [
+      { id: 'first', type: 'telegram', zavu_sender_id: 'first-sender' },
+      { id: 'conversation-account', type: 'telegram', zavu_sender_id: 'conversation-sender' },
+    ] } }, error: null });
+    jest.mocked(resolveAudioRouting).mockResolvedValueOnce({ kind: 'zavu', connectionId: 'conversation-account', senderId: 'conversation-sender' });
+    jest.mocked(deliverExplicitAudio).mockResolvedValueOnce('audio-id');
+    expect(await ChannelSendService.sendMessage({ site_id: mockSiteId, channel: 'telegram', to: mockTo,
+      message: 'Hi', response_format: 'audio', message_id: 'manual', conversation_id: 'conversation' })).toMatchObject({ success: true });
+    expect(resolveAudioRouting).toHaveBeenCalledWith({ siteId: mockSiteId, channel: 'telegram',
+      conversationId: 'conversation', connectionId: undefined });
+    expect(deliverExplicitAudio).toHaveBeenCalledWith(expect.objectContaining({
+      sender: audioSenderIdentity({ provider: 'zavu', senderId: 'conversation-sender' }),
+    }));
+  });
+  it('does not synthesize or default to another sender when audio routing is ambiguous', async () => {
+    mockedSupabase.single.mockResolvedValue({ data: { channels: { connections: [
+      { id: 'first', type: 'telegram', zavu_sender_id: 'first-sender' },
+      { id: 'second', type: 'telegram', zavu_sender_id: 'second-sender' },
+    ] } }, error: null });
+    jest.mocked(resolveAudioRouting).mockRejectedValueOnce(new Error('Audio sender is ambiguous'));
+    const result = await ChannelSendService.sendMessage({ site_id: mockSiteId, channel: 'telegram', to: mockTo,
+      message: 'Hi', response_format: 'audio', message_id: 'manual', conversation_id: 'conversation' });
+    expect(result.success).toBe(false);
+    expect(deliverExplicitAudio).not.toHaveBeenCalled();
+    expect(zavuClient.sendChannelMessage).not.toHaveBeenCalled();
+  });
+  it('rejects inconsistent sender snapshots rather than preparing for the stale account', async () => {
+    mockedSupabase.single.mockResolvedValue({ data: { channels: { connections: [
+      { id: 'same-connection', type: 'telegram', zavu_sender_id: 'previous-sender' },
+    ] } }, error: null });
+    jest.mocked(resolveAudioRouting).mockResolvedValueOnce({ kind: 'zavu', connectionId: 'same-connection', senderId: 'new-sender' });
+    const result = await ChannelSendService.sendMessage({ site_id: mockSiteId, channel: 'telegram', to: mockTo,
+      message: 'Hi', response_format: 'audio', message_id: 'manual', conversation_id: 'conversation' });
+    expect(result.success).toBe(false);
+    expect(deliverExplicitAudio).not.toHaveBeenCalled();
+    expect(zavuClient.sendChannelMessage).not.toHaveBeenCalled();
   });
 
   it('should successfully send a telegram message when settings exist', async () => {

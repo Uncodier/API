@@ -14,6 +14,12 @@ export type DocumentSection = {
   metadata?: Record<string, unknown>;
 };
 
+export type DocumentImage = {
+  page: number;
+  mime_type: 'image/png';
+  data_url: string;
+};
+
 export type DocumentReadResult = {
   success: true;
   type: DocumentKind;
@@ -23,6 +29,8 @@ export type DocumentReadResult = {
   sections: DocumentSection[];
   truncated: boolean;
   warnings: string[];
+  /** Complete encoded images, bounded separately from the text JSON budget. */
+  images?: DocumentImage[];
 };
 
 export type DocumentReadOptions = {
