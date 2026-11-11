@@ -1,3 +1,6 @@
+jest.mock('@/lib/services/channels/automation-send-guard', () => ({
+  ...jest.requireActual('@/lib/services/channels/automation-send-guard'), assertAutomationSendAllowed: jest.fn(async () => undefined),
+}));
 jest.mock('next/server', () => ({ NextResponse: { json: (body: unknown, init: any = {}) => ({ status: init.status || 200, body }) } }));
 jest.mock('@/lib/security/site-access', () => ({ canAccessSite: jest.fn() }));
 jest.mock('@/lib/messaging/exact-delivery-context', () => ({ loadExactDeliveryContext: jest.fn() }));

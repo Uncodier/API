@@ -89,7 +89,9 @@ const { visitor_id, lead_id, userId, site_id, origin_message_id, conversationId 
     }
     
     // Check for duplicate origin_message_id before processing
-    if (origin_message_id && body.custom_data?.source !== 'comment') {
+    // Zavu uses exact connection/origin command and message receipts; a later
+    // assistant in the thread may belong to a different overlapping input.
+    if (origin_message_id && !['comment', 'zavu_inbound_message'].includes(body.custom_data?.source)) {
       const duplicateCheck = await checkDuplicateOriginMessage(
         origin_message_id,
         conversationId,

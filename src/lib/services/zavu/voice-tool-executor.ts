@@ -353,13 +353,17 @@ export async function executeCustomerSupportVoiceTool(params: {
     context: params.context,
   });
   validateVoiceToolArguments(tool, scopedArguments);
-  const executionArguments = {
-    ...scopedArguments,
-    command_id: uuidv5(
+  // Task lists interpret command_id as a query filter. Keep supplied filters,
+  // but never restrict a lookup to this voice invocation's generated ID.
+  const isTaskList = tool.name === "GET_TASKS"
+    || (tool.name === "tasks" && scopedArguments.action === "list");
+  const executionArguments = { ...scopedArguments };
+  if (!isTaskList) {
+    executionArguments.command_id = uuidv5(
       `zavu-voice-tool:${params.siteId}:${params.toolName}:${params.rawPayload}`,
       uuidv5.URL
-    ),
-  };
+    );
+  }
   await recheckLicense();
   if (tool.execute) {
     return tool.execute(executionArguments);

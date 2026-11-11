@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { assertAutomationSendAllowed, AutomationSendSuppressed, automationSkippedResult } from '@/lib/services/channels/automation-send-guard';
 import { getLeadById } from '@/lib/database/lead-db';
 import {
   type ContentPlaceholderPolicy,
@@ -16,6 +17,7 @@ import {
 } from '@/lib/services/email/email-send-rate-limit';
 
 export interface SendEmailCoreParams {
+  message_id?: string;
   email: string;
   subject: string;
   message: string;
@@ -34,6 +36,9 @@ export interface SendEmailCoreParams {
 }
 
 export interface SendEmailCoreResult {
+  skipped?: boolean;
+  delivered?: boolean;
+  reason?: string;
   success: boolean;
   status?: string;
   envelope_id?: string;
@@ -66,6 +71,12 @@ export async function sendEmailCore(params: SendEmailCoreParams): Promise<SendEm
       success: false,
       error: { code: 'INVALID_REQUEST', message: 'email, subject, message, and site_id are required' },
     };
+  }
+
+  try { await assertAutomationSendAllowed(params); }
+  catch (error) {
+    if (error instanceof AutomationSendSuppressed) return automationSkippedResult(error);
+    throw error;
   }
 
   try {
@@ -178,6 +189,7 @@ export async function sendEmailCore(params: SendEmailCoreParams): Promise<SendEm
           : await EmailSignatureService.generateAgentSignature(site_id, from).catch(() => ({ formatted: '' }));
 
         const result = await AgentMailSendService.sendViaAgentMail({
+          automationIdentity: params,
           email,
           subject: effectiveSubject,
           message: effectiveMessage,
@@ -194,6 +206,10 @@ export async function sendEmailCore(params: SendEmailCoreParams): Promise<SendEm
 
         return { ...result, success: true };
       } catch (error: any) {
+        if (error instanceof AutomationSendSuppressed) {
+          await releaseEmailSendPermit(sendPermit);
+          return automationSkippedResult(error);
+        }
         console.error(`[SEND_EMAIL] AgentMail error:`, error);
         if (!configuredEmail || params.disable_provider_fallback) {
           await releaseEmailSendPermit(sendPermit);
@@ -238,6 +254,7 @@ export async function sendEmailCore(params: SendEmailCoreParams): Promise<SendEm
   }
 
   const emailParams: any = {
+    automationIdentity: params,
     email,
     from: from || '',
     fromEmail: configuredEmail,
@@ -261,6 +278,10 @@ export async function sendEmailCore(params: SendEmailCoreParams): Promise<SendEm
   if (!result.success) {
     await releaseEmailSendPermit(sendPermit);
     return { success: false, error: result.error };
+  }
+  if (result.skipped) {
+    await releaseEmailSendPermit(sendPermit);
+    return result;
   }
 
   const externalId = result.envelope_id || result.email_id;

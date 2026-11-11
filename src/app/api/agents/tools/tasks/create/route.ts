@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { createTask } from '@/lib/database/task-db';
+import { createTaskOnce } from './persistence';
 import { DEFAULT_TASK_STAGE, TASK_STAGES, TaskStageSchema } from '@/lib/database/task-stage';
 import { supabaseAdmin } from '@/lib/database/supabase-server';
 import { TeamNotificationService } from '@/lib/services/team-notification-service';
@@ -187,6 +187,7 @@ function preprocessTaskData(data: any) {
  * Esquema para validar los datos de entrada
  */
 const CreateTaskSchema = z.object({
+  deduplication_key: z.string().trim().min(1).max(200).optional(),
   title: z.string().min(1, 'Título es requerido'),
   description: z.string().optional(),
   type: z.string().min(1, 'Tipo de tarea es requerido'),
@@ -759,6 +760,7 @@ export async function POST(request: NextRequest) {
       user_id: validatedData.user_id || leadInfo.user_id, // Usar del lead si no se especifica
       site_id: validatedData.site_id || leadInfo.site_id, // Usar del lead si no se especifica
       lead_id: validatedData.lead_id,
+      conversation_id: validatedData.conversation_id,
       scheduled_date: validatedData.scheduled_date,
       amount: validatedData.amount,
       assignee: validatedData.assignee,
@@ -772,7 +774,19 @@ export async function POST(request: NextRequest) {
     // Crear la tarea
     console.log('[CreateTask] Llamando a createTask...');
     try {
-      const newTask = await createTask(taskData);
+      const result = await createTaskOnce(taskData, validatedData.deduplication_key, !!transformToISO8601(body.scheduled_date));
+      const newTask = result.task;
+      if (!result.created) {
+        return NextResponse.json({
+          success: true,
+          created: false,
+          deduplicated: true,
+          task: newTask,
+          message: 'Existing task reused. Use UPDATE_TASK with this task ID to add new information; no creation notifications were sent.',
+        }, { status: 200 });
+      }
+      const { fireWorkflowDispatch } = await import('@/lib/services/workflow-robot/dispatch');
+      fireWorkflowDispatch({ table: 'tasks', op: 'insert', row: newTask as unknown as Record<string, unknown>, site_id: newTask.site_id });
       console.log('[CreateTask] Tarea creada exitosamente:', newTask.id);
 
       // ========== NOTIFICACIONES ==========
@@ -927,6 +941,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         success: true,
         task: newTask,
+        created: true,
+        deduplicated: false,
         notifications: {
           team_notification: {
             success: teamNotificationResult.success,
@@ -995,6 +1011,7 @@ export async function GET() {
       "lead_id"
     ],
     optional_fields: [
+      "deduplication_key", // Stable issue identity, scoped to site + lead; reuse across retries and title changes
       "description",
       "status",
       "stage", 

@@ -1,8 +1,10 @@
-import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { getAvailableAgentProjects, canAccessAgentProject } from '@/lib/services/channels/agent-project-access';
+import { saveAgentProjectSession } from '@/lib/services/channels/agent-project-session';
 
 export interface InstanceProjectParams {
   action: 'list' | 'set';
   site_id?: string;
+  /** Legacy argument retained for compatibility; never used as session identity. */
   email?: string;
 }
 
@@ -24,7 +26,7 @@ export function instanceProjectTool(userId?: string | null, phone?: string) {
         },
         email: {
           type: 'string',
-          description: 'The email to set as active session (optional, used for email sessions).'
+          description: 'Legacy field; ignored. Session identity is provided by the authenticated channel.'
         }
       },
       required: ['action']
@@ -40,99 +42,29 @@ export function instanceProjectTool(userId?: string | null, phone?: string) {
         }
 
         if (action === 'list') {
-          // Obtener todos los sitios pertenecientes a este usuario (como owner)
-          const { data: userSites } = await supabaseAdmin
-            .from('sites')
-            .select('id, name')
-            .eq('user_id', userId);
-
-          // Obtener todos los sitios donde este usuario es miembro
-          const { data: memberSites } = await supabaseAdmin
-            .from('site_members')
-            .select('site_id, sites:site_id(id, name)')
-            .eq('user_id', userId);
-
-          // Combinar y deduplicar sitios
-          const allSites = new Map<string, { id: string, name: string }>();
-          
-          if (userSites) {
-            userSites.forEach(site => allSites.set(site.id, site));
-          }
-          
-          if (memberSites) {
-            memberSites.forEach(member => {
-              const siteData: any = member.sites;
-              if (siteData && siteData.id) {
-                allSites.set(siteData.id, { id: siteData.id, name: siteData.name });
-              }
-            });
-          }
-
-          const availableSites = Array.from(allSites.values());
+          const availableSites = await getAvailableAgentProjects(userId);
 
           return {
             success: true,
             projects: availableSites,
           };
         } else if (action === 'set' && site_id) {
-          // Verify user has access to this site
-          const { data: ownerAccess } = await supabaseAdmin
-            .from('sites')
-            .select('id')
-            .eq('id', site_id)
-            .eq('user_id', userId)
-            .maybeSingle();
-
-          const { data: memberAccess } = await supabaseAdmin
-            .from('site_members')
-            .select('site_id')
-            .eq('site_id', site_id)
-            .eq('user_id', userId)
-            .maybeSingle();
-
-          if (!ownerAccess && !memberAccess) {
+          if (!await canAccessAgentProject(userId, site_id)) {
             return {
               success: false,
-              error: 'You do not have access to this project.',
-            };
-        }
-
-        if (!phone && !args.email) {
-           return {
-            success: false,
-            error: 'Missing phone number or email to set active project session.',
-          };
-        }
-
-        // Upsert en remote_sessions
-        // Si cambian de proyecto, limpiamos el instance_id para que se genere uno nuevo con el contexto correcto
-        let upsertData: any = {
-          user_id: userId,
-          site_id: site_id,
-          instance_id: null
-        };
-        
-        let conflictKey = 'phone_number';
-        if (phone && phone.includes('@')) {
-          upsertData.email = phone;
-          conflictKey = 'email';
-        } else if (phone) {
-          upsertData.phone_number = phone;
-        } else if (args.email) {
-          upsertData.email = args.email;
-          conflictKey = 'email';
-        }
-
-        const { error } = await supabaseAdmin.from('remote_sessions').upsert(upsertData, { 
-          onConflict: conflictKey 
-        });
-
-          if (error) {
-            return {
-              success: false,
-              error: 'Failed to update active project in database.',
+              error: 'This project is unavailable or you do not have an active license for it.',
             };
           }
+
+          if (!phone) {
+            return {
+              success: false,
+              error: 'Missing authenticated channel identity to set active project session.',
+            };
+          }
+
+          // Never accept a model-supplied email as the session owner.
+          await saveAgentProjectSession(phone, userId, site_id, null);
 
           return {
             success: true,

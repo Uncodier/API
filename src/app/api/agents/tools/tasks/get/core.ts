@@ -1,9 +1,5 @@
 import { z } from 'zod';
 import { getTasks, getTaskStats } from '@/lib/database/task-db';
-import {
-  readRedisJson,
-  writeRedisJson,
-} from '@/lib/services/redis-json-cache';
 
 /**
  * Esquema para validar los filtros de búsqueda de tareas
@@ -16,7 +12,7 @@ const GetTasksSchema = z.object({
   assignee: z.string().uuid('ID de asignado debe ser un UUID válido').optional(),
   command_id: z.string().uuid('ID de comando debe ser un UUID válido').optional(),
   type: z.string().optional(),
-  status: z.enum(['active', 'inactive', 'archived']).optional(),
+  status: z.enum(['pending', 'in_progress', 'completed', 'failed', 'canceled', 'active', 'inactive', 'archived']).optional(),
   stage: z.string().optional(),
   priority: z.number().int().optional(),
   scheduled_date_from: z.string().datetime('Fecha debe ser ISO 8601').optional(),
@@ -40,20 +36,16 @@ const GetTasksSchema = z.object({
 export async function getTaskCore(filters: Record<string, unknown>) {
   const validatedFilters = GetTasksSchema.parse(filters);
   const filterObj = { ...validatedFilters };
-  const cacheKey = `cache:task-list:${Buffer.from(
-    JSON.stringify(filterObj),
-  ).toString('base64url')}`;
 
   if (!validatedFilters.include_archived && filterObj.status === 'archived') {
     throw new Error('No se pueden obtener tareas archivadas cuando include_archived es false');
   }
-  if (!validatedFilters.include_completed && filterObj.stage === 'completed') {
+  if (!validatedFilters.include_completed && filterObj.status === 'completed') {
     throw new Error('No se pueden obtener tareas completadas cuando include_completed es false');
   }
 
-  const cached = await readRedisJson<Record<string, unknown>>(cacheKey);
-  if (cached) return cached;
-
+  // This lookup authorizes the agent's create-or-update decision. Never serve a
+  // cached absence (or stale notes) after another command has written a task.
   const [tasksResult, stats] = await Promise.all([
     getTasks(filterObj),
     getTaskStats(filterObj),
@@ -62,6 +54,8 @@ export async function getTaskCore(filters: Record<string, unknown>) {
   const result = {
     success: true,
     data: {
+      // The local workflow transport unwraps data before response mapping.
+      success: true,
       tasks: tasksResult.tasks,
       pagination: {
         total: tasksResult.total,
@@ -93,6 +87,5 @@ export async function getTaskCore(filters: Record<string, unknown>) {
       },
     },
   };
-  await writeRedisJson(cacheKey, result, 5);
   return result;
 }

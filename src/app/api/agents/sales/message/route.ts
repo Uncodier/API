@@ -3,6 +3,7 @@ import { CommandFactory, ProcessorInitializer } from '@/lib/agentbase';
 import { getCommandById as dbGetCommandById } from '@/lib/database/command-db';
 import { DatabaseAdapter } from '@/lib/agentbase/adapters/DatabaseAdapter';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { getTaskDeduplicationPolicy, TASK_DEDUPLICATION_KEY_DESCRIPTION } from '@/app/api/agents/customerSupport/support-policies';
 
 // Función para validar UUIDs
 function isValidUUID(uuid: string): boolean {
@@ -653,6 +654,8 @@ export async function POST(request: Request) {
       }
     }
     
+    contextMessage += getTaskDeduplicationPolicy();
+
     // Create the command using CommandFactory with the conversation history in the context
     const command = CommandFactory.createCommand({
       task: 'create message',
@@ -804,13 +807,17 @@ export async function POST(request: Request) {
           async: true,
           function: {
             name: 'CREATE_TASK',
-            description: 'create a new task for lead follow-up, customer support activities, or other customer interactions',
+            description: 'Create a task only after a successful GET_TASKS lookup of every page for this lead without title/search or type filters, reviewing pending and in_progress. For the same need, even with a paraphrased title, use UPDATE_TASK preserving existing information. Never create after a failed lookup.',
             parameters: {
               type: 'object',
               properties: {
                 title: {
                   type: 'string',
                   description: 'Title of the task to be created'
+                },
+                deduplication_key: {
+                  type: 'string',
+                  description: TASK_DEDUPLICATION_KEY_DESCRIPTION
                 },
                 type: {
                   type: 'string',
@@ -871,7 +878,7 @@ export async function POST(request: Request) {
                   additionalProperties: true
                 }
               },
-              required: ['title', 'type', 'lead_id', "scheduled_date", "stage", "description"],
+              required: ['title', 'type', 'lead_id', 'deduplication_key', "scheduled_date", "stage", "description"],
               additionalProperties: false
             },
             strict: true
@@ -993,7 +1000,7 @@ export async function POST(request: Request) {
           async: true,
           function: {
             name: 'GET_TASKS',
-            description: 'retrieve tasks with filtering options to check order status, track deliveries, and review task progress',
+            description: 'Retrieve tasks. Before CREATE_TASK, list this lead without title/search or type filters; review pending and in_progress across all pages with limit/offset until pagination.has_more=false. Failed or incomplete lookups do not permit creation.',
             parameters: {
               type: 'object',
               properties: {
@@ -1042,6 +1049,15 @@ export async function POST(request: Request) {
                 include_completed: {
                   type: 'boolean',
                   description: 'Whether to include completed tasks in results'
+                },
+                include_archived: {
+                  type: 'boolean',
+                  description: 'Whether to include archived tasks (false for open-task deduplication)'
+                },
+                offset: {
+                  type: 'integer',
+                  minimum: 0,
+                  description: 'Pagination offset; advance by returned count while pagination.has_more is true'
                 }
               },
               required: ['lead_id'],

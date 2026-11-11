@@ -1,3 +1,6 @@
+jest.mock('@/lib/services/channels/automation-send-guard', () => ({
+  ...jest.requireActual('@/lib/services/channels/automation-send-guard'), assertAutomationSendAllowed: jest.fn(async () => undefined),
+}));
 import { randomBytes } from 'node:crypto';
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn(), rpc: jest.fn() } }));
 jest.mock('@/lib/services/zavu/client', () => ({ sendChannelMessage: jest.fn() }));

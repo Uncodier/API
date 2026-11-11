@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { assertAutomationSendAllowed } from '@/lib/services/channels/automation-send-guard';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { requireLicensedChannel } from '@/lib/billing/licensed-resources';
 import { loadSiteTemplateLanguage } from './template-language';
@@ -26,6 +27,9 @@ interface Input {
 
 /** The same saved row owns either audio or template, never two dispatches. */
 export async function deliverZavuTemplate(input: Input): Promise<TemplateDeliveryResult> {
+  const guard = () => assertAutomationSendAllowed({ site_id: input.siteId, conversation_id: input.conversationId,
+    message_id: input.messageId, message: input.text });
+  await guard();
   if (!input.messageId || !input.conversationId) throw new TemplateDeliveryError('Template fallback requires a saved message');
   const { data: conversation, error: scopeError } = await supabaseAdmin.from('conversations').select('id')
     .eq('id', input.conversationId).eq('site_id', input.siteId).maybeSingle();
@@ -116,6 +120,7 @@ export async function deliverZavuTemplate(input: Input): Promise<TemplateDeliver
   if (current.whatsapp?.status && current.whatsapp.status.toLowerCase() !== 'approved') return result(true);
   try { await requireLicensedChannel(input.siteId, 'whatsapp', input.connectionId, input.senderId); }
   catch { return fail('rejected', 'Selected WhatsApp sender changed before template dispatch'); }
+  await guard();
   await persist({ ...receipt, state: 'dispatching', sender_id: input.senderId, recipient: input.recipient,
     connection_id: input.connectionId }, { status: 'sending', command_status: 'pending' });
   let providerId: string;

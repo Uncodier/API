@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { AutomationSendSuppressed, automationSkippedResult } from '@/lib/services/channels/automation-send-guard';
 import { z } from "zod";
 import { isInternalServiceRequest } from "@/lib/security/request-rate-limit";
 import { placeTrackedVoiceCall } from "@/lib/services/zavu/voice-call-service";
@@ -62,6 +63,7 @@ export async function POST(request: NextRequest) {
       duplicate: result.duplicate,
     }, { status: result.duplicate ? 200 : 202 });
   } catch (error) {
+    if (error instanceof AutomationSendSuppressed) return NextResponse.json(automationSkippedResult(error));
     const status =
       error && typeof error === "object" && "status" in error
       && typeof error.status === "number"

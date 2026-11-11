@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { assertAutomationSendAllowed, AutomationSendSuppressed, automationSkippedResult } from './automation-send-guard';
 import { sendChannelMessage } from '@/lib/services/zavu/client';
 import { getOutstandClient } from '@/lib/integrations/outstand/client';
 import { authorizeOutstandConversation } from '@/lib/integrations/outstand/conversation-access';
@@ -26,6 +27,9 @@ export interface SendChannelMessageParams {
 }
 
 export interface SendChannelMessageResult {
+  skipped?: boolean;
+  reason?: string;
+  delivered?: boolean;
   success: boolean;
   messageId?: string;
   deliveryKind?: 'comment';
@@ -64,6 +68,7 @@ export class ChannelSendService {
       }
 
       console.log(`[ChannelSendService] Sending ${params.channel} message to ${params.to} for site ${params.site_id}`);
+      await assertAutomationSendAllowed(params);
 
       // Handle Outstand Comments channels
       if (OUTSTAND_CHANNELS.includes(params.channel)) {
@@ -89,6 +94,7 @@ export class ChannelSendService {
               outstandConversationId,
               params.site_id,
             );
+            await assertAutomationSendAllowed(params);
             const result = await client.sendConversationMessage(
               outstandConversationId,
               { content: params.message },
@@ -157,6 +163,7 @@ export class ChannelSendService {
           dispatch: async ({ audioUrl, mimeType }) => {
             await requireLicensedChannel(params.site_id, params.channel, connection.id, connection.zavu_sender_id);
             await checkAudioWindow();
+            await assertAutomationSendAllowed(params);
             const result = await sendChannelMessage({ to: params.to, channel: params.channel,
               senderId: connection.zavu_sender_id, messageType: 'audio', content: { mediaUrl: audioUrl, mimeType },
               idempotencyKey: `audio-delivery:${params.site_id}:${params.message_id}` });
@@ -196,6 +203,7 @@ export class ChannelSendService {
 
       // Audio preparation may outlive the trial. Recheck the exact sender at dispatch.
       await requireLicensedChannel(params.site_id, params.channel, connection.id, connection.zavu_sender_id);
+      await assertAutomationSendAllowed(params);
 
       let result;
       if (finalAudioUrl) {
@@ -225,6 +233,10 @@ export class ChannelSendService {
         messageId: result?.message?.id
       };
     } catch (error: any) {
+      if (error instanceof AutomationSendSuppressed) {
+        const { status: _status, ...skipped } = automationSkippedResult(error);
+        return skipped;
+      }
       if (params.response_format === 'audio') await markAudioPreflightFailed({
         siteId: params.site_id, conversationId: params.conversation_id, messageId: params.message_id,
         ...(error instanceof TemplateDeliveryError ? { reason: error.message } : {}),

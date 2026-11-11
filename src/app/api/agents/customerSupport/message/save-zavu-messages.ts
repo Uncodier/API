@@ -14,11 +14,21 @@ type Input = {
   userMessage: string; assistantMessage: string; originMessageId: string;
   channel: string; requireApproval?: boolean; metadata: Record<string, unknown>;
   responseFormat?: ResponseFormat;
+  inboundOnly?: boolean;
 };
 
 /** Stable PKs make concurrent and partial writes recoverable without overwriting messages. */
-export async function saveZavuSupportMessages(input: Input) {
-  if (!usableSupportContent(input.assistantMessage)) throw new Error('CUSTOMER_SUPPORT_EMPTY_RESPONSE');
+export function saveZavuSupportMessages(input: Input & { inboundOnly: true }): Promise<{
+  conversationId: string; userMessageId: string; assistantMessageId: undefined; conversationTitle?: string; automationStartedAt: string;
+}>;
+export function saveZavuSupportMessages(input: Input & { inboundOnly?: false }): Promise<{
+  conversationId: string; userMessageId: string; assistantMessageId: string; conversationTitle?: string;
+}>;
+export async function saveZavuSupportMessages(input: Input): Promise<{
+  conversationId: string; userMessageId: string; assistantMessageId: string | undefined; conversationTitle?: string; automationStartedAt?: string;
+}> {
+  const receivedAt = new Date().toISOString();
+  if (!input.inboundOnly && !usableSupportContent(input.assistantMessage)) throw new Error('CUSTOMER_SUPPORT_EMPTY_RESPONSE');
   const connection = input.metadata.connection_id;
   const sender = input.metadata.zavu_sender_id;
   const from = input.metadata.zavu_from;
@@ -33,7 +43,7 @@ export async function saveZavuSupportMessages(input: Input) {
   const assistantId = supportRecordId(['support-reply-v1', ...scope]);
   // Prefer a previously saved inbound (including pre-fix records) over a new conversation.
   const { data: previous, error: lookupError } = await db().from('messages')
-    .select('id, conversation_id, content, custom_data, conversations!inner(site_id)')
+    .select('id, conversation_id, content, created_at, custom_data, conversations!inner(site_id)')
     .eq('conversations.site_id', input.siteId).eq('role', 'user')
     .eq('custom_data->>connection_id', connection)
     .eq('custom_data->>origin_message_id', input.originMessageId)
@@ -67,32 +77,37 @@ export async function saveZavuSupportMessages(input: Input) {
     }
   }
   const inboundId = previous?.id || userId;
+  let automationStartedAt = previous?.created_at || receivedAt;
   const shared = { conversation_id: conversationId,
     ...(input.agentId ? { agent_id: input.agentId } : {}),
     ...(input.leadId ? { lead_id: input.leadId } : {}),
     ...(input.commandId ? { command_id: input.commandId } : {}),
   };
   const rows = [
-    ...(!previous ? [{ ...shared, id: userId, role: 'user', user_id: input.userId,
+    ...(!previous ? [{ ...shared, id: userId, role: 'user', user_id: input.userId, created_at: receivedAt,
       content: input.userMessage, custom_data: { ...input.metadata, origin_message_id: input.originMessageId } }] : []),
-    { ...shared, id: assistantId, role: 'assistant', user_id: null, content: input.assistantMessage,
+    ...(!input.inboundOnly ? [{ ...shared, id: assistantId, role: 'assistant', user_id: null, content: input.assistantMessage,
       custom_data: { connection_id: connection, origin_message_id: input.originMessageId,
+        ...(typeof input.metadata.automation_started_at === 'string'
+          ? { automation_started_at: input.metadata.automation_started_at } : {}),
         response_format: input.responseFormat || 'text',
-        reply_to_message_id: inboundId, ...(input.requireApproval ? { status: 'pending', channel: input.channel } : {}) } },
+        reply_to_message_id: inboundId, ...(input.requireApproval ? { status: 'pending', channel: input.channel } : {}) } }] : []),
   ];
   for (const row of rows) {
     const { error } = await db().from('messages').insert(row);
     if (!error) continue;
     if (error.code !== '23505') throw new Error('CUSTOMER_SUPPORT_MESSAGE_SAVE_FAILED');
     const { data: existing, error: readError } = await db().from('messages')
-      .select('id, role, conversation_id, content, custom_data').eq('id', row.id).maybeSingle();
+      .select('id, role, conversation_id, content, created_at, custom_data').eq('id', row.id).maybeSingle();
     if (readError || !existing || existing.role !== row.role || existing.conversation_id !== conversationId
         || existing.content !== row.content || existing.custom_data?.connection_id !== connection
         || existing.custom_data?.origin_message_id !== input.originMessageId
         || (row.role === 'assistant' && (existing.custom_data?.response_format || 'text') !== (input.responseFormat || 'text'))) {
       throw new Error('CUSTOMER_SUPPORT_MESSAGE_SCOPE_CONFLICT');
     }
+    if (row.role === 'user' && existing.created_at) automationStartedAt = existing.created_at;
   }
-  return { conversationId, userMessageId: inboundId, assistantMessageId: assistantId,
+  return { conversationId, userMessageId: inboundId, assistantMessageId: input.inboundOnly ? undefined : assistantId,
+    ...(input.inboundOnly ? { automationStartedAt } : {}),
     conversationTitle: input.conversationTitle };
 }

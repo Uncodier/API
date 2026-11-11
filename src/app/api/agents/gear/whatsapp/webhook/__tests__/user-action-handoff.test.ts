@@ -27,7 +27,7 @@ function setup() {
   const results: Record<string, unknown> = {
     sites: [{ id: 'site-1', name: 'Test site' }],
     site_members: [],
-    remote_sessions: { site_id: 'site-1', instance_id: 'instance-1' },
+    remote_sessions: { user_id: 'user-1', site_id: 'site-1', instance_id: 'instance-1' },
     remote_instances: { status: 'running' },
   };
   const supabaseAdmin = {
@@ -46,6 +46,10 @@ function setup() {
     'src/app/api/agents/gear/whatsapp/webhook/route.ts', {
       'next/server': { NextResponse },
       '@/lib/database/supabase-client': { supabaseAdmin },
+      '@/lib/services/channels/agent-project-access': {
+        getAvailableAgentProjects: async () => [{ id: 'site-1', name: 'Test site' }],
+        resolveAgentProjectSession: (_user: string, _sites: any[], session: any) => ({ siteId: session.site_id, instanceId: session.instance_id }),
+      },
       'workflow/api': { start },
       '../workflow': { runGearAgentWorkflow, runUnregisteredGearAgentWorkflow: jest.fn() },
       '@/lib/services/requirement-cron-reset': { resetRequirementOnUserAction },

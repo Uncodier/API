@@ -1,3 +1,6 @@
+jest.mock('@/lib/services/channels/automation-send-guard', () => ({
+  ...jest.requireActual('@/lib/services/channels/automation-send-guard'), assertAutomationSendAllowed: jest.fn(async () => undefined),
+}));
 import { ChannelSendService, sanitizeZavuRecipient } from '../ChannelSendService';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import * as zavuClient from '@/lib/services/zavu/client';

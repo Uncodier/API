@@ -767,6 +767,15 @@ export const customTools: Record<string, ApiResponseConfig> = {
       // Propiedades del objeto de respuesta
       success: 'success',                  // Indicador de éxito de la operación
       id: 'task.id',                      // ID único de la tarea creada
+      created: 'created',
+      deduplicated: 'deduplicated',
+      message: 'message',
+      description: 'task.description',
+      notes: 'task.notes',
+      assignee: 'task.assignee',
+      conversation_id: 'task.conversation_id',
+      updated_at: 'task.updated_at',
+      completed_date: 'task.completed_date',
       title: 'task.title',                // Título de la tarea
       type: 'task.type',                  // Tipo de tarea
       status: 'task.status',              // Estado de la tarea
@@ -852,12 +861,16 @@ export const customTools: Record<string, ApiResponseConfig> = {
     },
     responseMapping: {
       // Propiedades del objeto de respuesta
-      success: 'success',                 // Indicador de éxito de la operación
-      tasks: 'tasks',                     // Array de tareas encontradas
-      total_tasks: 'pagination.total',    // Total de tareas que coinciden con los filtros
-      limit: 'pagination.limit',          // Límite de resultados por página
-      offset: 'pagination.offset',        // Offset usado en la consulta
-      has_more: 'pagination.has_more'     // Indica si hay más resultados disponibles
+      // Local Workflows apiService unwraps the HTTP success/data envelope
+      // before processResponse receives it. Keep this aligned with get/core.
+      success: 'success',
+      tasks: 'tasks',
+      pagination: 'pagination',
+      total_tasks: 'pagination.total',
+      count: 'pagination.count',
+      limit: 'pagination.limit',
+      offset: 'pagination.offset',
+      has_more: 'pagination.has_more'
     },
     errors: {
       400: {

@@ -18,6 +18,8 @@ import { SocialCommentError } from '@/lib/services/social-comments/metadata';
 import { checkZavuSupportAdmission } from './zavu-admission';
 import { validateResponseFormat, type ResponseFormat } from '@/lib/services/channels/response-format';
 import { selectSupportResponseFormat } from './response-format';
+import { readSupportSnooze, resolveSnoozeConversation, saveSnoozedSupportInput } from './snooze';
+import { saveZavuSupportMessages } from './save-zavu-messages';
 
 export async function POST(request: Request) {
   try {
@@ -291,6 +293,39 @@ export async function POST(request: Request) {
     }
     
     console.log(`Creando comando para agente: ${effectiveAgentId}, usuario: ${effectiveUserId}, site: ${effectiveSiteId || 'N/A'}`);
+
+    effectiveConversationId = await resolveSnoozeConversation({
+      siteId: effectiveSiteId, conversationId: effectiveConversationId, metadata: inboundCustomData,
+    });
+    // Persist provider identity before running the model: a human may answer from
+    // the app while this first reply is generating, and its echo needs a thread.
+    let persistedInboundId: string | undefined;
+    let automationStartedAt = requestTimestamp;
+    if (!agentDisabled && inboundCustomData?.source === 'zavu_inbound_message' && origin_message_id) {
+      const inbound = await saveZavuSupportMessages({
+        siteId: effectiveSiteId, userId: effectiveUserId,
+        agentId: isValidUUID(effectiveAgentId) ? effectiveAgentId : undefined,
+        leadId: effectiveLeadId || undefined, conversationId: effectiveConversationId,
+        userMessage: message, assistantMessage: '', originMessageId: origin_message_id,
+        channel: effectiveOrigin, metadata: inboundCustomData, inboundOnly: true,
+      });
+      effectiveConversationId = inbound.conversationId;
+      persistedInboundId = inbound.userMessageId;
+      automationStartedAt = inbound.automationStartedAt || requestTimestamp;
+    }
+    const snoozeInput = {
+      siteId: effectiveSiteId, conversationId: effectiveConversationId,
+      userId: effectiveUserId, message, leadId: effectiveLeadId || undefined, visitorId: visitor_id,
+      agentId: isValidUUID(effectiveAgentId) ? effectiveAgentId : undefined,
+      originMessageId: origin_message_id, metadata: inboundCustomData, startedAt: automationStartedAt, persistedInboundId,
+    };
+    const snoozedResponse = async () => {
+      const state = await readSupportSnooze(snoozeInput);
+      return state ? NextResponse.json(await saveSnoozedSupportInput(snoozeInput, state),
+        { status: 200, headers: corsHeaders(request) }) : null;
+    };
+    const initialSnooze = await snoozedResponse();
+    if (initialSnooze) return initialSnooze;
     
     if (agentDisabled) {
       const denied = await checkZavuSupportAdmission(request, body);
@@ -342,6 +377,9 @@ export async function POST(request: Request) {
       );
     }
     const { assistantMessage, conversationTitle, isRobot, isTransactionalMessage, isErratic } = resolved;
+    // A human can intervene while the model is running. Discard that stale answer.
+    const lateSnooze = await snoozedResponse();
+    if (lateSnooze) return lateSnooze;
     let responseFormat: ResponseFormat;
     try {
       responseFormat = selectSupportResponseFormat({ channel: effectiveOrigin,
@@ -373,7 +411,8 @@ export async function POST(request: Request) {
         origin_message_id,
         channel_delivery === true,
         require_approval === true,
-        inboundCustomData && typeof inboundCustomData === 'object' ? inboundCustomData : undefined,
+        { ...(inboundCustomData && typeof inboundCustomData === 'object' ? inboundCustomData : {}),
+          automation_started_at: automationStartedAt },
         false,
         responseFormat
       );

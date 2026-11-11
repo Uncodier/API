@@ -1,3 +1,6 @@
+jest.mock('@/lib/services/channels/automation-send-guard', () => ({
+  ...jest.requireActual('@/lib/services/channels/automation-send-guard'), assertAutomationSendAllowed: jest.fn(async () => undefined),
+}));
 const mockFrom = jest.fn();
 const mockRpc = jest.fn();
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { rpc: mockRpc } }));

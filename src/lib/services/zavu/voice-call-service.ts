@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { assertAutomationSendAllowed, AutomationSendSuppressed } from '@/lib/services/channels/automation-send-guard';
 import { supabaseAdmin } from "@/lib/database/supabase-server";
 import { placeVoiceCall, type ZavuVoiceCall } from "./voice-call-client";
 import { getSiteLicensedResources, isLicensedChannelConnection, requireLicensedChannel } from '@/lib/billing/licensed-resources';
@@ -198,8 +199,11 @@ export async function placeTrackedVoiceCall(
 ): Promise<PlaceTrackedVoiceCallResult> {
   const attempt: PlacementAttempt = { status: 'placement_unknown', messageValidated: false };
   try {
+    await assertAutomationSendAllowed({ site_id: input.siteId, message_id: input.messageId,
+      conversation_id: input.conversationId, message: input.greeting ?? input.objective });
     return await placeTrackedVoiceCallAttempt(input, attempt);
   } catch (error) {
+    if (error instanceof AutomationSendSuppressed) throw error;
     // Provider acceptance remains acceptance even when a subsequent DB write fails.
     if (attempt.accepted) {
       console.error('[Zavu Voice] Accepted call state requires reconciliation');
@@ -374,6 +378,8 @@ async function placeTrackedVoiceCallAttempt(
       followUpContext: followUp.context,
     });
     await requireLicensedChannel(input.siteId, 'voice', connectionId, senderId);
+    await assertAutomationSendAllowed({ site_id: input.siteId, message_id: input.messageId,
+      conversation_id: input.conversationId, message: input.greeting ?? input.objective });
     callPlacementAttempted = true;
     attempt.status = 'placement_unknown';
     call = await placeVoiceCall({

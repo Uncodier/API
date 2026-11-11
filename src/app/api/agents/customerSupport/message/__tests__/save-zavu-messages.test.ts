@@ -42,6 +42,20 @@ describe('durable Zavu message identity', () => {
     expect(id).not.toBe(supportRecordId(['other-scope', 'message']));
   });
 
+  it('persists incoming identity before generation without an assistant placeholder', async () => {
+    const inbound = await saveZavuSupportMessages({ ...input, assistantMessage: '', inboundOnly: true });
+    expect(inbound.assistantMessageId).toBeUndefined();
+    expect(tables.conversations.size).toBe(1);
+    expect(tables.messages.size).toBe(1);
+    const replay = await saveZavuSupportMessages({ ...input, assistantMessage: '', inboundOnly: true });
+    expect(replay.automationStartedAt).toBe(inbound.automationStartedAt);
+    expect(replay.automationStartedAt).toBe(tables.messages.get(inbound.userMessageId).created_at);
+    const completed = await saveZavuSupportMessages(input);
+    expect(completed.userMessageId).toBe(inbound.userMessageId);
+    expect(completed.conversationId).toBe(inbound.conversationId);
+    expect(tables.messages.size).toBe(2);
+  });
+
   it.each([true, false])('persists audio format separately from content (approval %s)', async requireApproval => {
     const result = await saveZavuSupportMessages({ ...input, responseFormat: 'audio', requireApproval });
     const assistant = tables.messages.get(result.assistantMessageId);

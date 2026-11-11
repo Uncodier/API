@@ -4,12 +4,26 @@ import { generateSupportReply } from '../generate';
 import { saveMessages } from '../save-messages';
 import { getCommandById } from '@/lib/database/command-db';
 import { getAgentInfo, findActiveCustomerSupportAgent } from '../agent-data';
+import { readSupportSnooze, saveSnoozedSupportInput } from '../snooze';
+import { saveZavuSupportMessages } from '../save-zavu-messages';
 
 jest.mock('../request', () => ({ readSupportRequest: async (r: Request) => ({ body: await r.json() }) }));
 jest.mock('../zavu-admission', () => ({ checkZavuSupportAdmission: async () => null }));
 jest.mock('../context', () => ({ buildSupportContext: jest.fn(async () => 'context') }));
 jest.mock('../generate', () => ({ generateSupportReply: jest.fn() }));
 jest.mock('../save-messages', () => ({ saveMessages: jest.fn() }));
+jest.mock('../save-zavu-messages', () => ({ saveZavuSupportMessages: jest.fn(async (input) => ({
+  conversationId: input.conversationId, userMessageId: 'in',
+})) }));
+jest.mock('../snooze', () => ({
+  resolveSnoozeConversation: jest.fn(async (input) => input.conversationId),
+  readSupportSnooze: jest.fn(async () => null),
+  saveSnoozedSupportInput: jest.fn(async (input, state) => ({ success: true, data: {
+    automation_paused: true, skipped: true, response_skipped: true, reason: 'agent_snoozed',
+    automation_paused_until: state.pausedUntil, conversation_id: state.conversationId,
+    messages: { user: { content: input.message, message_id: 'in' } },
+  } })),
+}));
 jest.mock('../disabled-support', () => ({ disabledSupportNote: async () => 'Agente deshabilitado. No se generó respuesta.' }));
 jest.mock('../agent-data', () => ({
   isValidUUID: (id: string) => /^[0-9a-f-]{36}$/.test(id),
@@ -36,12 +50,37 @@ const fresh = { id: commandId, status: 'completed', site_id: 'site', agent_id: a
 describe('support route persistence boundary', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.mocked(readSupportSnooze).mockReset().mockResolvedValue(null);
     jest.mocked(getAgentInfo).mockResolvedValue({ user_id: 'user', status: 'active' });
     jest.mocked(findActiveCustomerSupportAgent).mockResolvedValue(null);
     jest.mocked(generateSupportReply).mockResolvedValue({
       executedCommand: { id: commandId, status: 'completed', results: [] }, effectiveDbUuid: commandId,
     } as any);
     jest.mocked(saveMessages).mockResolvedValue({ conversationId: 'conversation', userMessageId: 'in', assistantMessageId: 'out' } as any);
+  });
+
+  it('preserves inbound while snoozed without generating or returning an assistant reply', async () => {
+    jest.mocked(readSupportSnooze).mockResolvedValue({ conversationId: 'conversation', pausedUntil: '2030-01-01T12:00:00Z' });
+    const response = await POST(request());
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.data).toMatchObject({ automation_paused: true, skipped: true, reason: 'agent_snoozed' });
+    expect(body.data.messages.assistant).toBeUndefined();
+    expect(saveSnoozedSupportInput).toHaveBeenCalledTimes(1);
+    expect(buildSupportContext).not.toHaveBeenCalled();
+    expect(generateSupportReply).not.toHaveBeenCalled();
+    expect(saveMessages).not.toHaveBeenCalled();
+  });
+
+  it('discards a reply when a human intervenes during generation', async () => {
+    jest.mocked(getCommandById).mockResolvedValue(fresh as any);
+    jest.mocked(readSupportSnooze).mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ conversationId: 'conversation', pausedUntil: '2030-01-01T12:00:00Z' });
+    const response = await POST(request());
+    expect(response.status).toBe(200);
+    expect((await response.json()).data.messages.assistant).toBeUndefined();
+    expect(generateSupportReply).toHaveBeenCalledTimes(1);
+    expect(saveMessages).not.toHaveBeenCalled();
   });
 
   it('persists disabled inbound messages successfully without any sendable reply', async () => {
@@ -107,13 +146,17 @@ describe('support route persistence boundary', () => {
       connection_id: 'connection', zavu_sender_id: 'business' };
     const response = await POST(new Request('https://example.test/api/agents/customerSupport/message', {
       method: 'POST', body: JSON.stringify({ userId: 'user', agentId, site_id: 'site',
-        conversationId: 'conversation', message: 'Hello', origin: 'telegram', custom_data }),
+        conversationId: 'conversation', message: 'Hello', origin: 'telegram', origin_message_id: 'provider-in', custom_data }),
     }));
     expect(response.status).toBe(200);
     expect(buildSupportContext).toHaveBeenCalledWith(expect.objectContaining({
       custom_data, effectiveOrigin: 'telegram', effectiveConversationId: 'conversation',
     }));
     expect(generateSupportReply).toHaveBeenCalledWith(expect.objectContaining({ contextMessage: 'context' }));
+    expect(saveZavuSupportMessages).toHaveBeenCalledWith(expect.objectContaining({ inboundOnly: true,
+      originMessageId: 'provider-in', assistantMessage: '' }));
+    expect(jest.mocked(saveZavuSupportMessages).mock.invocationCallOrder[0])
+      .toBeLessThan(jest.mocked(generateSupportReply).mock.invocationCallOrder[0]);
   });
 
   it.each([

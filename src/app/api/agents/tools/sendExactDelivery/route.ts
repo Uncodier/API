@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { assertAutomationSendAllowed, AutomationSendSuppressed, automationSkippedResult } from '@/lib/services/channels/automation-send-guard';
 import { z } from 'zod';
 import { canAccessSite } from '@/lib/security/site-access';
 import { loadExactDeliveryContext } from '@/lib/messaging/exact-delivery-context';
@@ -27,6 +28,7 @@ export async function POST(request: Request) {
   if (!parsed.success) return NextResponse.json({ success: false, error: 'Invalid exact delivery' }, { status: 400 });
   if (!await canAccessSite(request, parsed.data.site_id)) return NextResponse.json({ success: false, error: 'Forbidden' }, { status: 403 });
   try {
+    await assertAutomationSendAllowed(parsed.data);
     const context = await loadExactDeliveryContext(parsed.data);
     if (!context.connectionId || !context.hasStoredConnection || context.message?.role !== 'assistant') {
       return NextResponse.json({ success: false, error: 'Exact stored assistant selection required' }, { status: 409 });
@@ -52,7 +54,8 @@ export async function POST(request: Request) {
       before_dispatch: async () => { attemptId = await claimExactDelivery(context.message, context.connectionId!); } });
     if (attemptId) await finishExactDelivery(parsed.data.message_id, attemptId, result);
     return NextResponse.json({ ...result, recipient: recipient.recipient }, { status: result.success ? 200 : 409 });
-  } catch {
+  } catch (error) {
+    if (error instanceof AutomationSendSuppressed) return NextResponse.json(automationSkippedResult(error));
     return NextResponse.json({ success: false, error: 'Stored delivery context is unavailable' }, { status: 409 });
   }
 }

@@ -146,6 +146,41 @@ describe("executeCustomerSupportVoiceTool", () => {
         body: expect.stringContaining(`"lead_id":"${LEAD}"`),
       })
     );
+    expect(JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body)).not.toHaveProperty('command_id');
+  });
+
+  it.each(['create', 'update'])('keeps deterministic command IDs for unified task %s', async action => {
+    const execute = jest.fn().mockResolvedValue({ success: true });
+    mockGetCustomerSupportVoiceToolDefinitions.mockReturnValue([{
+      name: 'tasks', description: 'Tasks',
+      parameters: { type: 'object', properties: { action: { type: 'string' } } }, execute,
+    }]);
+    const params = { toolName: 'tasks', arguments: { action }, siteId: 'site-1', rawPayload: '{"call":1}' };
+    await executeCustomerSupportVoiceTool(params);
+    await executeCustomerSupportVoiceTool(params);
+    await executeCustomerSupportVoiceTool({ ...params, rawPayload: '{"call":2}' });
+    const first = execute.mock.calls[0][0].command_id;
+    expect(first).toEqual(expect.any(String));
+    expect(execute.mock.calls[1][0].command_id).toBe(first);
+    expect(execute.mock.calls[2][0].command_id).not.toBe(first);
+  });
+
+  it('does not inject command_id with the strict source GET_TASKS catalog', async () => {
+    useSourceCatalog();
+    mockFindInboundVoiceLead.mockResolvedValue(LEAD);
+    mockGetCustomToolDefinition.mockReturnValue({ endpoint: {
+      url: '/api/agents/tools/tasks/get', method: 'POST',
+    } });
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true, text: async () => '{"success":true,"tasks":[]}',
+    });
+    await executeCustomerSupportVoiceTool({
+      toolName: 'GET_TASKS', arguments: { lead_id: LEAD, status: 'pending', offset: 1 },
+      siteId: 'site-1', context: { contactPhone: '+12025550100' }, rawPayload: '{}',
+    });
+    expect(JSON.parse((global.fetch as jest.Mock).mock.calls[0][1].body)).toEqual({
+      lead_id: LEAD, status: 'pending', offset: 1,
+    });
   });
 
   it("rejects tools outside the Customer Support catalog", async () => {

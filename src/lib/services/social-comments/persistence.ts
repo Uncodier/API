@@ -42,6 +42,8 @@ export async function saveCommentMessages(input: {
     { ...shared, id: ids.assistantMessageId, role: 'assistant', user_id: null,
       content: input.assistantMessage,
       custom_data: { ...replyMetadata(metadata, ids.userMessageId), status: 'pending',
+        ...(typeof metadata.automation_started_at === 'string'
+          ? { automation_started_at: metadata.automation_started_at } : {}),
         ...(input.responseFormat !== undefined ? { response_format: 'text' } : {}) } },
   ];
   for (const row of rows) {

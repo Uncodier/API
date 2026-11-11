@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { assertAutomationSendAllowed, AutomationSendSuppressed, automationSkippedResult } from '@/lib/services/channels/automation-send-guard';
 import { createHash } from 'crypto';
 import { createOutreachLedger, type OutreachLedger } from './redis-ledger';
 import { getOutreachPolicy, isOutreachChannel, localDay, nextLocalDay, outreachTimezone, resolveOutreachActivity, selectedOutreachAccounts, type OutreachActivityKey } from './policy';
@@ -261,6 +262,8 @@ export function createOutreachDelivery(deps: {
             return defer(blockedReason);
           }
         }
+        await assertAutomationSendAllowed({ site_id: siteId, message_id: messageId,
+          conversation_id: message.conversation_id, message: message.content });
         const sent = await prepared.send();
         if (!sent.success || !sent.messageId) return uncertain();
         const finalMarker = { ...marker, state: 'sent', provider_message_id: sent.messageId, sent_at: new Date().toISOString() };
@@ -269,7 +272,13 @@ export function createOutreachDelivery(deps: {
         try { await repo.mark(message, finalMarker); } catch (error) { console.error('[Outreach] Could not persist sent marker', error); }
         try { await ledger.sent(lease, sent.messageId); } catch (error) { console.error('[Outreach] Could not finalize Redis lease', error); }
         return { success: true, messageId: sent.messageId, channel, recipient: recipient.recipient };
-      } catch { return uncertain(); }
+      } catch (error) {
+        if (error instanceof AutomationSendSuppressed) {
+          await ledger.release(lease);
+          return automationSkippedResult(error);
+        }
+        return uncertain();
+      }
     } catch (error) {
       console.error('[Outreach] Delivery guard failed', error);
       return defer('delivery_guard_unavailable');

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { assertAutomationSendAllowed, AutomationSendSuppressed, automationSkippedResult } from '@/lib/services/channels/automation-send-guard';
 import { WhatsAppTemplateService } from '@/lib/services/whatsapp/WhatsAppTemplateService';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { WhatsAppSendService } from '@/lib/services/whatsapp/WhatsAppSendService';
@@ -22,6 +23,7 @@ import {
  */
 
 interface SendTemplateRequest {
+  conversation_id?: string;
   template_id: string;
   phone_number: string;
   site_id: string;
@@ -184,6 +186,9 @@ export async function POST(request: NextRequest) {
       } as SendTemplateResponse, { status: 400 });
     }
 
+    const guard = () => assertAutomationSendAllowed({ site_id, message_id,
+      conversation_id: body.conversation_id, message: original_message });
+    await guard();
     console.log(`📝 [SendTemplate] Enviando plantilla: ${template_id} a ${phone_number.substring(0, 6)}***`);
 
     const storedStatus = await getStoredWhatsAppTemplateStatus(template_id);
@@ -321,6 +326,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Enviar mensaje usando la plantilla
+    await guard();
     const sendResult = await WhatsAppTemplateService.sendMessageWithTemplate(
       normalizedPhone,
       template_id,
@@ -329,7 +335,8 @@ export async function POST(request: NextRequest) {
       config.fromNumber,
       original_message || 'Template message',
       messagingServiceSidOverride,
-      resolved.variables
+      resolved.variables,
+      guard
     );
 
     console.log(`📊 [SendTemplate] Resultado del envío:`, {
@@ -413,6 +420,7 @@ export async function POST(request: NextRequest) {
 
   } catch (error) {
     console.error('❌ [SendTemplate] Error general:', error);
+    if (error instanceof AutomationSendSuppressed) return NextResponse.json(automationSkippedResult(error));
     
     return NextResponse.json({
       success: false,

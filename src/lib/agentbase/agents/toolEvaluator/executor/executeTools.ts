@@ -362,7 +362,10 @@ export async function executeTools(
         continue;
       }
 
-      if (functionName !== 'read_document' && context?.command_id && !parsedArgs.command_id) {
+      // On task lists command_id is an explicit query filter, not execution metadata.
+      const isTaskList = functionName === 'GET_TASKS'
+        || (functionName === 'tasks' && parsedArgs.action === 'list');
+      if (functionName !== 'read_document' && !isTaskList && context?.command_id && !parsedArgs.command_id) {
         parsedArgs.command_id = context.command_id;
       }
       if (functionName !== 'read_document' && context?.site_id && !parsedArgs.site_id) {
@@ -411,7 +414,7 @@ export async function executeTools(
           if (mcpName !== 'read_document' && !mcpArgs.site_id && context?.site_id) {
             mcpArgs.site_id = context.site_id;
           }
-          if (mcpName !== 'read_document' && !mcpArgs.command_id && context?.command_id) {
+          if (mcpName !== 'read_document' && !isTaskList && !mcpArgs.command_id && context?.command_id) {
             mcpArgs.command_id = context.command_id;
           }
           output = await executeMcpNativeTool(mcpName, mcpArgs);

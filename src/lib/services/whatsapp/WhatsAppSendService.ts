@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { assertAutomationSendAllowed, AutomationSendSuppressed, automationSkippedResult } from '@/lib/services/channels/automation-send-guard';
 import { v4 as uuidv4 } from 'uuid';
 import { WhatsAppTemplateService } from './WhatsAppTemplateService';
 import { attemptPhoneRescue } from '@/lib/utils/phone-normalizer';
@@ -26,6 +27,8 @@ export interface SendWhatsAppParams {
 }
 
 export interface SendWhatsAppResult {
+  skipped?: boolean;
+  delivered?: boolean;
   success: boolean;
   message_id?: string;
   recipient?: string;
@@ -119,6 +122,7 @@ export class WhatsAppSendService {
       const siteInfo = await this.getSiteInfo(site_id);
       
       // Obtener configuración de WhatsApp para el sitio
+      await assertAutomationSendAllowed({ ...params, message: originalMessage });
       if (params.response_format === 'audio') await requireLegacyAudioRouting(site_id, conversation_id, params.message_id);
       const whatsappConfig = await this.getWhatsAppConfig(site_id);
       
@@ -185,6 +189,7 @@ export class WhatsAppSendService {
             }
             const currentWindow = await WhatsAppTemplateService.checkResponseWindow(conversation_id || null, normalizedPhone, site_id);
             if (!currentWindow.withinWindow) throw new AudioDeliveryError('WhatsApp response window closed during audio preparation');
+            await assertAutomationSendAllowed({ ...params, message: originalMessage });
             const sent = await sendTwilioWhatsAppMessage({ phoneNumber: normalizedPhone, message: '',
               accountSid: whatsappConfig.phoneNumberId, authToken: whatsappConfig.accessToken,
               fromNumber: whatsappConfig.fromNumber, mediaUrls: [audioUrl],
@@ -221,6 +226,7 @@ export class WhatsAppSendService {
       }
 
       if (!windowCheck.withinWindow) {
+        await assertAutomationSendAllowed({ ...params, message: originalMessage });
         // Fuera de ventana de respuesta - retornar que se requiere template
         console.log('📝 [WhatsAppSendService] Fuera de ventana de respuesta, se requiere template...');
         
@@ -269,6 +275,7 @@ export class WhatsAppSendService {
           finalMediaUrls = [audioReply.audioUrl];
         }
 
+        await assertAutomationSendAllowed({ ...params, message: originalMessage });
         const regularResult = await sendTwilioWhatsAppMessage({
           phoneNumber: normalizedPhone,
           message: finalMessage,
@@ -350,6 +357,7 @@ export class WhatsAppSendService {
       };
 
     } catch (error) {
+      if (error instanceof AutomationSendSuppressed) return automationSkippedResult(error);
       if (params.response_format === 'audio') await markAudioPreflightFailed({
         siteId: site_id, conversationId: conversation_id, messageId: params.message_id,
       });

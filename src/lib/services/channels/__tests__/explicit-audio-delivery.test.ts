@@ -1,3 +1,6 @@
+jest.mock('@/lib/services/channels/automation-send-guard', () => ({
+  ...jest.requireActual('@/lib/services/channels/automation-send-guard'), assertAutomationSendAllowed: jest.fn(async () => undefined),
+}));
 import { deliverExplicitAudio, markAudioPreflightFailed } from '../explicit-audio-delivery';
 import { validateResponseFormat } from '../response-format';
 import { supabaseAdmin } from '@/lib/database/supabase-client';

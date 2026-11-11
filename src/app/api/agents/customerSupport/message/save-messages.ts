@@ -304,6 +304,11 @@ export async function saveMessages(userId: string, userMessage: string, assistan
       custom_data: agentDisabled ? { internal: true, agent_disabled: true, response_skipped: true }
         : { response_format: responseFormat }
     };
+
+    if (!agentDisabled && typeof inboundCustomData?.automation_started_at === 'string') {
+      assistantMessageObj.custom_data = { ...assistantMessageObj.custom_data,
+        automation_started_at: inboundCustomData.automation_started_at };
+    }
     
     if (requireApproval) {
       assistantMessageObj.custom_data = {

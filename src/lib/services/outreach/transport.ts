@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { assertAutomationSendAllowed, AutomationSendSuppressed } from '@/lib/services/channels/automation-send-guard';
 import { sendChannelMessage } from '@/lib/services/zavu/client';
 import { EmailSendService } from '@/lib/services/email/EmailSendService';
 import { AgentMailSendService } from '@/lib/services/email/AgentMailSendService';
@@ -32,6 +33,8 @@ export async function prepareOutreachDelivery(ctx: DeliveryContext): Promise<Pre
         if (JSON.stringify(liveConfig) !== JSON.stringify(savedConfig)) throw new Error('Selected outreach connection changed');
       }
     }
+    await assertAutomationSendAllowed({ site_id: ctx.siteId, conversation_id: ctx.conversation.id,
+      message_id: ctx.message.id, message: ctx.message.content });
     return prepared.send();
   } };
 }
@@ -87,7 +90,8 @@ async function prepareDelivery(ctx: DeliveryContext): Promise<PreparedDelivery> 
   if (account.channel !== 'email' && account.channel !== 'whatsapp') return { reason: 'selected_account_unavailable' };
   if (account.channel === 'email') {
     const signature = await EmailSignatureService.generateAgentSignature(siteId).catch(() => ({ formatted: '' }));
-    const emailParams = { ...common, email: to, subject: merged.subject || subject, message: text, trackingId: message.id, signatureHtml: signature.formatted };
+    const emailParams = { ...common, email: to, subject: merged.subject || subject, message: text, trackingId: message.id, signatureHtml: signature.formatted,
+      automationIdentity: { site_id: siteId, conversation_id: conversation.id, message_id: message.id, message: message.content } };
     if (account.provider === 'agent_email') {
       if (!process.env.AGENTMAIL_API_KEY) return { reason: 'selected_account_unavailable' };
       const address = agentEmailAddress(c)!;
@@ -107,6 +111,7 @@ async function prepareDelivery(ctx: DeliveryContext): Promise<PreparedDelivery> 
       smtpPort: token.smtpPort || c.outgoingPort || 587 };
     return { send: async () => {
       const result = await EmailSendService.sendEmail({ ...emailParams, from: '', fromEmail: c.email, smtpConfig });
+      if (result.skipped) throw new AutomationSendSuppressed(result.reason === 'stale_automatic_reply' ? 'stale_automatic_reply' : 'agent_snoozed');
       return { success: result.success && result.status === 'sent' && !!(result.envelope_id || result.email_id), messageId: result.envelope_id || result.email_id };
     } };
   }

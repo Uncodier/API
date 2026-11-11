@@ -13,7 +13,7 @@ function database(rows: Row[] = []) {
   let beforeUpdate: (() => void) | undefined;
   const staticRows: Record<string, any> = {
     sites: [{ id: 'site', name: 'Test site' }], site_members: [],
-    remote_sessions: { site_id: 'site', instance_id: 'instance' }, remote_instances: { status: 'running' },
+    remote_sessions: { user_id: 'user', site_id: 'site', instance_id: 'instance' }, remote_instances: { status: 'running' },
   };
   const writes: Row[] = [];
   const filters: Array<[string, any]> = [];
@@ -126,6 +126,10 @@ describe('registered WhatsApp durable media admission', () => {
     });
     const route = loadRuntimeModule<typeof import('../route')>('src/app/api/agents/gear/whatsapp/webhook/route.ts', {
       'next/server': { NextResponse }, '@/lib/database/supabase-client': { supabaseAdmin: h.db },
+      '@/lib/services/channels/agent-project-access': {
+        getAvailableAgentProjects: async () => [{ id: 'site', name: 'Test site' }],
+        resolveAgentProjectSession: (_user: string, _sites: any[], session: any) => ({ siteId: session.site_id, instanceId: session.instance_id }),
+      },
       'workflow/api': { start }, '../workflow': { runGearAgentWorkflow: jest.fn(), runUnregisteredGearAgentWorkflow: jest.fn() },
       '@/lib/services/requirement-cron-reset': { resetRequirementOnUserAction: reset },
       '@/app/api/robots/instance/assistant/user-message-log': { ...userLogs, insertUserActionLog: async (params: any) => {

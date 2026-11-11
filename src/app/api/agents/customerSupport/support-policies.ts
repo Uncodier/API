@@ -2,14 +2,28 @@
  * Operational policies injected into every Customer Support command context.
  */
 export function getCustomerSupportPolicies(): string {
-  return `${getLeadRecordVerificationPolicy()}${getLeadQualificationPolicy()}${getCommerceReservationsPolicy()}${getPromotionsPolicy()}`;
+  return `${getLeadRecordVerificationPolicy()}${getTaskDeduplicationPolicy()}${getLeadQualificationPolicy()}${getCommerceReservationsPolicy()}${getPromotionsPolicy()}`;
+}
+
+export const TASK_DEDUPLICATION_KEY_DESCRIPTION =
+  'Stable key for this lead and underlying issue, reused across turns, retries and paraphrased titles. Include the order/study ID when available. Use different keys for legitimately distinct issues, not a generic per-lead key or a turn/command ID. The backend reuses an existing task without overwriting it; use UPDATE_TASK for new information. If omitted, only conservative content identity is used.';
+
+export function getTaskDeduplicationPolicy(): string {
+  return `
+=== TASK DEDUPLICATION ===
+1. BEFORE every CREATE_TASK, call GET_TASKS for this lead (tasks action="list" in the unified tool). Omit title/search and type filters, as well as assignee/user, stage and date filters: they can hide the same need under a different title or owner. Set include_completed=false and include_archived=false. Review BOTH pending and in_progress tasks, not just meetings; omit status or query both statuses separately.
+2. Paginate with limit/offset until pagination.has_more=false; advance offset by the returned count and review every page. An empty/incomplete page with has_more=true is not proof of absence. The Lead Record openTasks snapshot is only a hint, never a substitute for this successful complete lookup.
+3. Match the underlying need, requested outcome and order/study ID, not exact title or task type. If an open task covers the same need, use UPDATE_TASK with its task_id even if the title is paraphrased or the existing task has no deduplication_key. Preserve existing description, notes, commitments, dates, assignee and other useful information; merge new facts without erasing history, and only change fields the customer actually changed. If nothing changed, reuse the task without writing.
+4. If GET_TASKS fails, times out, or any page cannot be verified, do NOT CREATE_TASK. Retry the lookup or explain that verification is unavailable; never treat a failed lookup as an empty result.
+5. Only after verifying no existing task covers the need, CREATE_TASK with a deduplication_key. ${TASK_DEDUPLICATION_KEY_DESCRIPTION} Do not change the key merely because a title, date or wording changes. A retry returning an existing task is not an update: inspect it and use UPDATE_TASK to merge new information, never retry CREATE_TASK with a new key to bypass reuse. A completed task returned for the same key is still the same issue; a genuinely new issue needs its own key.
+`;
 }
 
 export function getLeadRecordVerificationPolicy(): string {
   return `
 === LEAD RECORD VERIFICATION ===
 Whenever a Lead ID is present, treat the Lead Record snapshot and live tool lookups as the source of truth.
-1. BEFORE offering times or booking, look up this lead's existing orders, appointments, reservations, and meeting tasks (scheduling.list, reservations.list with lead_id, GET_TASKS type=meeting, checkout/sales).
+1. BEFORE offering times or booking, look up this lead's existing orders, appointments, reservations, and meeting tasks (scheduling.list, reservations.list with lead_id, GET_TASKS without title/search or type filters to review all open tasks, checkout/sales).
 2. If the lead already has an active appointment or reservation, do NOT create another. Reschedule it: scheduling action="update" for team meetings, reservations.update for catalog capacity. Cancel the old slot only if you cannot update it.
 3. A later customer message like "yes, see you at 4" / "sí, ahí nos vemos" is confirmation of an existing booking — NEVER call scheduling.schedule or reservations.create again for that same slot.
 4. Do not tell the customer a time is booked unless the tool result for that exact record succeeded (id + start time returned).

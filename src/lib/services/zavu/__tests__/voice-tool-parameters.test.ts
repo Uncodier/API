@@ -92,7 +92,7 @@ describe("voice tool source validation", () => {
   it("validates nested required fields only when the optional parent is supplied", () => {
     const args = {
       title: "Call", type: "call", lead_id: "lead-1", description: "Follow up",
-      scheduled_date: "2026-01-01T09:00:00Z", stage: "awareness",
+      scheduled_date: "2026-01-01T09:00:00Z", stage: "awareness", deduplication_key: "study-42:results",
     };
     expect(() => validateVoiceToolArguments(tool("CREATE_TASK"), args)).not.toThrow();
     expect(validationError("CREATE_TASK", { ...args, address: { street: 12, city: "City" } }).fields)

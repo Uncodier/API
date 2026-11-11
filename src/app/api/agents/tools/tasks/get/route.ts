@@ -109,8 +109,13 @@ export async function GET() {
       "include_archived"
     ],
     valid_task_types: VALID_TASK_TYPES,
-    task_statuses: ["active", "inactive", "archived"],
-    task_stages: "String libre (etapas del customer_journey, ej: 'pending', 'in_progress', 'completed')",
+    task_statuses: ["pending", "in_progress", "completed", "failed", "canceled"],
+    legacy_task_statuses: ["active", "inactive", "archived"],
+    task_stages: "String libre (etapas del customer_journey, ej: 'awareness', 'consideration', 'decision')",
+    inclusion_filters: {
+      include_completed: "Por defecto true; false excluye status completed, no stage",
+      include_archived: "Por defecto false; true permite el status legacy archived"
+    },
     priority_levels: "Número entero (0 = más baja, números más altos = mayor prioridad)",
     sort_fields: ["created_at", "updated_at", "scheduled_date", "completed_date", "priority", "title", "type", "status"],
     sort_orders: ["asc", "desc"],
@@ -129,10 +134,10 @@ export async function GET() {
         }
       },
       {
-        name: "Obtener tareas activas de un lead",
+        name: "Obtener tareas en progreso de un lead",
         example: {
           lead_id: "abcdef12-3456-7890-abcd-ef1234567890",
-          status: "active",
+          status: "in_progress",
           include_completed: false
         }
       },
@@ -140,7 +145,7 @@ export async function GET() {
         name: "Obtener tareas pendientes de un lead",
         example: {
           lead_id: "abcdef12-3456-7890-abcd-ef1234567890",
-          stage: "pending",
+          status: "pending",
           sort_by: "priority",
           sort_order: "desc"
         }
@@ -148,7 +153,7 @@ export async function GET() {
     ],
     example_request: {
       lead_id: "abcdef12-3456-7890-abcd-ef1234567890",
-      status: "active",
+      status: "pending",
       sort_by: "scheduled_date",
       sort_order: "asc",
       limit: 20,
@@ -163,8 +168,8 @@ export async function GET() {
             title: "Seguimiento de lead",
             description: "Llamar al cliente para confirmar interés",
             type: "follow_up",
-            status: "active",
-            stage: "pending",
+            status: "pending",
+            stage: "awareness",
             priority: 10,
             user_id: "12345678-1234-1234-1234-123456789012",
             site_id: "87654321-4321-4321-4321-210987654321",
@@ -184,12 +189,12 @@ export async function GET() {
         },
         filters_applied: {
           lead_id: "abcdef12-3456-7890-abcd-ef1234567890",
-          status: "active"
+          status: "pending"
         },
         summary: {
           total_tasks: 42,
-          by_status: { active: 35, inactive: 5, archived: 2 },
-          by_stage: { pending: 20, in_progress: 12, completed: 10 },
+          by_status: { pending: 35, in_progress: 5, completed: 2 },
+          by_stage: { awareness: 20, consideration: 12, decision: 10 },
           by_priority: { "0": 8, "5": 22, "10": 10, "20": 2 },
           overdue_tasks: 3,
           due_today: 5,

@@ -3,6 +3,11 @@ import { whatsappTemplateLanguage } from '../template-language';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { createZavuTemplate, getZavuTemplate, submitZavuTemplate, sendZavuTemplate } from '@/lib/services/zavu/templates';
 import { requireLicensedChannel } from '@/lib/billing/licensed-resources';
+// These tests isolate provider/template receipts; focused guard tests own snooze admission.
+jest.mock('@/lib/services/channels/automation-send-guard', () => ({
+  ...jest.requireActual('@/lib/services/channels/automation-send-guard'),
+  assertAutomationSendAllowed: jest.fn().mockResolvedValue(undefined),
+}));
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn() } }));
 jest.mock('@/lib/billing/licensed-resources', () => ({ requireLicensedChannel: jest.fn() }));
 jest.mock('@/lib/services/zavu/templates', () => ({ createZavuTemplate: jest.fn(), getZavuTemplate: jest.fn(),

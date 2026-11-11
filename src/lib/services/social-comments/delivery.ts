@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { assertAutomationSendAllowed } from '@/lib/services/channels/automation-send-guard';
 import { authorizeCommentAccount } from './ownership';
 import { loadSavedCommentReply } from './reply-target';
 import { SocialCommentError } from './metadata';
@@ -26,6 +27,7 @@ export async function sendCommentReply(params: {
     .eq('custom_data', JSON.stringify(saved)).select('id').maybeSingle();
   if (error || !data) throw new SocialCommentError('Comment reply delivery could not be claimed');
   let result;
+  await assertAutomationSendAllowed(params);
   try {
     result = await client.publishComment(metadata.outstand_post_id, {
       content: outgoing.content, network: metadata.network, platform_post_id: platformPostId || undefined,

@@ -1,3 +1,6 @@
+jest.mock('@/lib/services/channels/automation-send-guard', () => ({
+  ...jest.requireActual('@/lib/services/channels/automation-send-guard'), assertAutomationSendAllowed: jest.fn(async () => undefined),
+}));
 import { randomBytes } from 'node:crypto';
 
 // Only infrastructure is replaced. The adapter, HTTP clients, email rendering,

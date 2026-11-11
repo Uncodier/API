@@ -19,6 +19,8 @@ export async function claimExactDelivery(message: any, connectionId: string) {
 
 /** Unknown acceptance is sticky: workers must never automatically retry another SMTP/Twilio send. */
 export async function finishExactDelivery(messageId: string, attemptId: string, result: ExactDeliveryResult) {
+  // The snooze guard owns its terminal skipped marker. Never turn success/skipped into sent.
+  if (result.skipped) return;
   const { data: message, error } = await supabaseAdmin.from('messages').select('custom_data').eq('id', messageId).maybeSingle();
   if (error || !message || message.custom_data?.exact_delivery_receipt?.attempt_id !== attemptId) {
     throw deliveryError('Delivery receipt requires reconciliation.');

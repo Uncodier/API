@@ -1,3 +1,6 @@
+jest.mock('@/lib/services/channels/automation-send-guard', () => ({
+  ...jest.requireActual('@/lib/services/channels/automation-send-guard'), assertAutomationSendAllowed: jest.fn(async () => undefined),
+}));
 jest.mock('@/lib/security/site-access', () => ({ canAccessSite: jest.fn() }));
 jest.mock('../delivery', () => ({ createOutreachDelivery: () => jest.fn(async () => ({ success: false, deferred: true, reason: 'daily_limit' })) }));
 import { POST } from '@/app/api/agents/tools/sendOutreachMessage/route';

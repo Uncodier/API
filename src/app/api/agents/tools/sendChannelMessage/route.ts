@@ -64,6 +64,7 @@ export async function POST(request: NextRequest) {
         { status: sendResult.status || 500 }
       );
     }
+    if (sendResult.skipped) return NextResponse.json({ ...sendResult, status: 'skipped', delivered: false });
     if (sendResult.templateDelivery) {
       return NextResponse.json({ ...sendResult.templateDelivery, delivered: false,
         timestamp: new Date().toISOString() }, { status: sendResult.templateDelivery.template_pending ? 202 : 200 });

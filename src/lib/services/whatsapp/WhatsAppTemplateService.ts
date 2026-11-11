@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { AutomationSendSuppressed } from '@/lib/services/channels/automation-send-guard';
 import { extractMergeTokens, sampleVariablesFromTokens } from '@/lib/messaging/lead-merge-fields';
 import {
   getStoredWhatsAppTemplateStatus,
@@ -308,7 +309,8 @@ export class WhatsAppTemplateService {
     fromNumber: string,
     originalMessage: string,
     messagingServiceSidOverride?: string,
-    contentVariables?: Record<string, string>
+    contentVariables?: Record<string, string>,
+    beforeDispatch?: () => Promise<void>
   ): Promise<{ success: boolean; messageId?: string; error?: string; errorCode?: number; errorType?: string; suggestion?: string }> {
     try {
       console.log(`📤 [WhatsAppTemplateService] Enviando mensaje con Content Template: ${templateSid}`);
@@ -457,7 +459,7 @@ export class WhatsAppTemplateService {
         templateApproved: approvalStatus.approved,
         usingMessagingService: !!messagingServiceSid
       });
-      
+      await beforeDispatch?.();
       const response = await fetch(apiUrl, {
         method: 'POST',
         headers: {
@@ -520,6 +522,7 @@ export class WhatsAppTemplateService {
       
     } catch (error) {
       console.error(`❌ [WhatsAppTemplateService] Error enviando con Content Template:`, error);
+      if (error instanceof AutomationSendSuppressed) throw error;
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error sending with Content Template'

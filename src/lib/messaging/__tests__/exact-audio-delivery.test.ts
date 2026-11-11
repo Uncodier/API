@@ -1,3 +1,6 @@
+jest.mock('@/lib/services/channels/automation-send-guard', () => ({
+  ...jest.requireActual('@/lib/services/channels/automation-send-guard'), assertAutomationSendAllowed: jest.fn(async () => undefined),
+}));
 jest.mock('../exact-delivery', () => ({ loadExactAccount: jest.fn() }));
 jest.mock('../exact-whatsapp', () => ({ exactWhatsAppConfig: jest.fn() }));
 jest.mock('@/lib/services/channels/explicit-audio-delivery', () => ({

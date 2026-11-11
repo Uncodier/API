@@ -149,6 +149,8 @@ export interface TaskFilters {
   offset?: number;
   sort_by?: string;
   sort_order?: 'asc' | 'desc';
+  include_completed?: boolean; // Default: true
+  include_archived?: boolean; // Default: false
 }
 
 /**
@@ -351,6 +353,12 @@ export async function getTasks(filters: TaskFilters = {}): Promise<{
       console.log('[getTasks] Aplicando filtro status:', filters.status);
       query = query.eq('status', filters.status);
     }
+    if (filters.include_completed === false) {
+      query = query.neq('status', 'completed');
+    }
+    if (filters.include_archived !== true) {
+      query = query.neq('status', 'archived');
+    }
     if (filters.stage) {
       console.log('[getTasks] Aplicando filtro stage:', filters.stage);
       query = query.eq('stage', filters.stage);
@@ -389,6 +397,8 @@ export async function getTasks(filters: TaskFilters = {}): Promise<{
     const sortBy = filters.sort_by || 'created_at';
     const sortOrder = filters.sort_order || 'desc';
     query = query.order(sortBy, { ascending: sortOrder === 'asc' });
+    // Stable ordering across pages when multiple tasks share the same sort value.
+    query = query.order('id', { ascending: sortOrder === 'asc' });
 
     // Paginación
     const limit = Math.min(filters.limit || 50, 500); // Máximo 500
@@ -440,7 +450,7 @@ export async function getTasks(filters: TaskFilters = {}): Promise<{
     }
 
     const total = count || 0;
-    const hasMore = (offset + limit) < total;
+    const hasMore = (offset + (data?.length || 0)) < total;
 
     // Limpiar valores null de las tareas
     const cleanedTasks = tasksWithComments
@@ -628,6 +638,12 @@ export async function getTaskStats(filters: Partial<TaskFilters> = {}): Promise<
     if (filters.status) {
       query = query.eq('status', filters.status);
     }
+    if (filters.include_completed === false) {
+      query = query.neq('status', 'completed');
+    }
+    if (filters.include_archived !== true) {
+      query = query.neq('status', 'archived');
+    }
     if (filters.stage) {
       query = query.eq('stage', filters.stage);
     }
@@ -679,7 +695,7 @@ export async function getTaskStats(filters: Partial<TaskFilters> = {}): Promise<
       if (task.scheduled_date) {
         const scheduledDate = new Date(task.scheduled_date);
         
-        if (scheduledDate < now && task.stage !== 'completed') {
+        if (scheduledDate < now && task.status !== 'completed') {
           stats.overdue++;
         } else if (scheduledDate >= today && scheduledDate < new Date(today.getTime() + 24 * 60 * 60 * 1000)) {
           stats.dueToday++;

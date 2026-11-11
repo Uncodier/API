@@ -1,4 +1,5 @@
 import { readDocumentTool } from '@/app/api/agents/tools/read_document/assistantProtocol';
+import { TASK_DEDUPLICATION_KEY_DESCRIPTION } from '@/app/api/agents/customerSupport/support-policies';
 import { calendarBlocksTool } from "@/app/api/agents/tools/calendar_blocks/assistantProtocol";
 import { calendarsTool } from "@/app/api/agents/tools/calendars/assistantProtocol";
 import { catalogCommerceTool } from "@/app/api/agents/tools/catalog_commerce/assistantProtocol";
@@ -225,11 +226,12 @@ function createTaskTool(): CustomerSupportToolDefinition {
   return {
     name: "CREATE_TASK",
     description:
-      "create a new task for lead follow-up, customer support activities, or other customer interactions",
+      "Create a task only after a successful GET_TASKS lookup of every page for this lead without title/search or type filters, reviewing pending and in_progress tasks. For the same need, even with a paraphrased title, use UPDATE_TASK preserving existing information. Never create after a failed lookup.",
     parameters: {
       type: "object",
       properties: {
         title: { type: "string", description: "Title of the task to be created" },
+        deduplication_key: { type: "string", description: TASK_DEDUPLICATION_KEY_DESCRIPTION },
         type: {
           type: "string",
           description:
@@ -283,6 +285,7 @@ function createTaskTool(): CustomerSupportToolDefinition {
         "title",
         "type",
         "lead_id",
+        "deduplication_key",
         "scheduled_date",
         "stage",
         "description",
@@ -297,7 +300,7 @@ function updateTaskTool(): CustomerSupportToolDefinition {
   return {
     name: "UPDATE_TASK",
     description:
-      "update an existing task with new information, status changes, or progress updates",
+      "Update an existing task for the same underlying need, even with a paraphrased title. Merge new information while preserving existing description, notes and commitments; send only changed fields.",
     parameters: {
       type: "object",
       properties: {
@@ -373,7 +376,7 @@ function getTasksTool(): CustomerSupportToolDefinition {
   return {
     name: "GET_TASKS",
     description:
-      "retrieve tasks with filtering options to check order status, track deliveries, and review task progress",
+      "Retrieve tasks. Before CREATE_TASK, list this lead without title/search or type filters; review pending and in_progress across all pages with limit/offset until pagination.has_more=false. Failed or incomplete lookups do not permit creation.",
     parameters: {
       type: "object",
       properties: {
@@ -420,6 +423,15 @@ function getTasksTool(): CustomerSupportToolDefinition {
         include_completed: {
           type: "boolean",
           description: "Whether completed tasks should be included",
+        },
+        include_archived: {
+          type: "boolean",
+          description: "Whether archived tasks should be included (false for open-task deduplication)",
+        },
+        offset: {
+          type: "integer",
+          minimum: 0,
+          description: "Pagination offset; advance by returned count while pagination.has_more is true",
         },
       },
       required: ["lead_id"],

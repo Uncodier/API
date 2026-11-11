@@ -1,4 +1,5 @@
 import { getSiteLicensedResources } from '@/lib/billing/licensed-resources';
+import { assertAutomationSendAllowed, AutomationSendSuppressed, automationSkippedResult } from '@/lib/services/channels/automation-send-guard';
 import { resolveDeliveryAccount, parseDeliveryRoutes, type DeliveryChannel } from './delivery-routing';
 import { loadExactDeliveryContext, deliveryError } from './exact-delivery-context';
 import { selectedToken } from './exact-credentials';
@@ -42,6 +43,9 @@ export interface ExactDeliveryInput {
 }
 
 export interface ExactDeliveryResult {
+  skipped?: boolean;
+  delivered?: boolean;
+  reason?: string;
   success: boolean;
   status?: string;
   messageId?: string;
@@ -82,9 +86,11 @@ export async function sendExactDelivery(input: ExactDeliveryInput): Promise<Exac
       throw deliveryError('Selected account changed during preparation.');
     }
     await input.before_dispatch?.();
+    await assertAutomationSendAllowed(input);
     attempted = true;
   };
   try {
+    await assertAutomationSendAllowed(input);
     parseDeliveryRoutes({ channel: input.channel, connection_id: input.connection_id,
       ...(input.voice_mode !== undefined ? { voice_mode: input.voice_mode } : {}) });
     if (!input.connection_id || typeof input.to !== 'string' || !input.to.trim()
@@ -144,6 +150,7 @@ export async function sendExactDelivery(input: ExactDeliveryInput): Promise<Exac
         ...(!sent.success ? { error: { code: 'EXACT_PROVIDER_FAILED', message: 'Selected WhatsApp provider failed.' } } : {}) };
     } else {
       const emailParams = { site_id: input.site_id, email: input.to, subject: merged.subject || subject, message: merged.message,
+        automationIdentity: input,
         agent_id: input.agent_id || context.message?.agent_id, conversation_id: context.conversationId,
         lead_id: context.leadId, trackingId: input.message_id, signatureHtml: signature.formatted };
       if (account.provider === 'agent_email') {
@@ -165,6 +172,7 @@ export async function sendExactDelivery(input: ExactDeliveryInput): Promise<Exac
         const sent = await EmailSendService.sendEmail({ ...emailParams, from: input.from || '', fromEmail: c.email,
           smtpConfig: { user: c.email, email: c.email, password, smtpHost: token.smtpHost || c.outgoingServer || 'smtp.gmail.com',
             smtpPort: token.smtpPort || c.outgoingPort || 587 } });
+        if (sent.skipped) return { ...sent, delivery_attempted: false };
         result = { ...sent, success: sent.success && sent.status === 'sent' && !!(sent.envelope_id || sent.email_id),
           messageId: sent.envelope_id || sent.email_id };
       } else throw deliveryError('Unsupported exact delivery provider.');
@@ -173,6 +181,7 @@ export async function sendExactDelivery(input: ExactDeliveryInput): Promise<Exac
       error: { code: 'EXACT_PROVIDER_FAILED', message: 'Selected provider did not accept delivery.' } };
     return { ...result, delivery_attempted: attempted, message_id: result.messageId, external_message_id: result.external_message_id || result.messageId };
   } catch (error) {
+    if (error instanceof AutomationSendSuppressed) return { ...automationSkippedResult(error), delivery_attempted: false };
     const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : 'EXACT_DELIVERY_FAILED';
     // Provider errors can echo credentials or content. Do not surface raw errors.
     return { success: false, delivery_attempted: attempted, error: { code, message: 'Exact delivery failed. Check the selected active connection and credentials before retrying.' } };

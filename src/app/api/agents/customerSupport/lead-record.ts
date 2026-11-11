@@ -2,7 +2,9 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { DEFAULT_TIMEZONE, formatInTimezone, resolveClientTimezone } from '@/lib/timezone';
 
 const INACTIVE_RESERVATION_STATUSES = ['cancelled', 'canceled', 'failed', 'expired'];
-const INACTIVE_TASK_STATUSES = ['completed', 'failed', 'cancelled', 'canceled'];
+const OPEN_TASK_STATUSES = ['pending', 'in_progress'];
+const TASK_PAGE_SIZE = 100;
+const TASK_SNAPSHOT_LIMIT = 200;
 const INACTIVE_APPOINTMENT_STATUSES = ['cancelled', 'canceled'];
 
 export interface LeadAppointmentRow {
@@ -30,6 +32,9 @@ export interface LeadMeetingTaskRow {
   scheduled_date?: string | null;
   status?: string | null;
   type?: string | null;
+  description?: string | null;
+  notes?: string | null;
+  assignee?: string | null;
 }
 
 export interface LeadOrderRow {
@@ -44,6 +49,9 @@ export interface LeadRecordSnapshot {
   appointments: LeadAppointmentRow[];
   reservations: LeadReservationRow[];
   meetingTasks: LeadMeetingTaskRow[];
+  // Optional for callers providing legacy meeting-only snapshots.
+  openTasks?: LeadMeetingTaskRow[];
+  openTasksComplete?: boolean;
   orders: LeadOrderRow[];
 }
 
@@ -104,25 +112,31 @@ async function loadReservations(leadId: string, siteId?: string | null): Promise
   });
 }
 
-async function loadMeetingTasks(leadId: string, siteId?: string | null): Promise<LeadMeetingTaskRow[]> {
+async function loadOpenTasks(leadId: string, siteId?: string | null): Promise<{ tasks: LeadMeetingTaskRow[]; complete: boolean }> {
   const schema = process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public';
-  let query = supabaseAdmin
-    .schema(schema)
-    .from('tasks')
-    .select('id, title, scheduled_date, status, type')
-    .eq('lead_id', leadId)
-    .eq('type', 'meeting')
-    .not('status', 'in', `(${INACTIVE_TASK_STATUSES.join(',')})`)
-    .order('scheduled_date', { ascending: true })
-    .limit(20);
+  const tasks: LeadMeetingTaskRow[] = [];
+  for (let offset = 0; ; offset += TASK_PAGE_SIZE) {
+    let query = supabaseAdmin
+      .schema(schema)
+      .from('tasks')
+      .select('id, title, description, notes, scheduled_date, status, type, assignee')
+      .eq('lead_id', leadId)
+      .in('status', OPEN_TASK_STATUSES)
+      .order('id', { ascending: true })
+      .range(offset, offset + TASK_PAGE_SIZE - 1);
 
-  if (siteId && isUuid(siteId)) {
-    query = query.eq('site_id', siteId);
+    if (siteId && isUuid(siteId)) {
+      query = query.eq('site_id', siteId);
+    }
+
+    const { data, error } = await query;
+    if (error) throw new Error(error.message);
+    if (!Array.isArray(data)) throw new Error('Invalid open tasks response');
+    tasks.push(...data as LeadMeetingTaskRow[]);
+    if (data.length < TASK_PAGE_SIZE) return { tasks, complete: true };
+    // Bound prompt size; a live paginated GET_TASKS lookup is still mandatory.
+    if (tasks.length >= TASK_SNAPSHOT_LIMIT) return { tasks, complete: false };
   }
-
-  const { data, error } = await query;
-  if (error) throw new Error(error.message);
-  return (data || []) as LeadMeetingTaskRow[];
 }
 
 async function loadOrders(leadId: string, siteId?: string | null): Promise<LeadOrderRow[]> {
@@ -149,17 +163,23 @@ export async function loadLeadRecordSnapshot(
   siteId?: string | null
 ): Promise<LeadRecordSnapshot> {
   if (!isUuid(leadId)) {
-    return { appointments: [], reservations: [], meetingTasks: [], orders: [] };
+    return { appointments: [], reservations: [], meetingTasks: [], openTasks: [], openTasksComplete: false, orders: [] };
   }
 
-  const [appointments, reservations, meetingTasks, orders] = await Promise.all([
+  let openTasksComplete = false;
+  const [appointments, reservations, openTasks, orders] = await Promise.all([
     safeQuery('appointments', () => loadAppointments(leadId, siteId)),
     safeQuery('reservations', () => loadReservations(leadId, siteId)),
-    safeQuery('meeting tasks', () => loadMeetingTasks(leadId, siteId)),
+    safeQuery('open tasks', async () => {
+      const result = await loadOpenTasks(leadId, siteId);
+      openTasksComplete = result.complete;
+      return result.tasks;
+    }),
     safeQuery('orders', () => loadOrders(leadId, siteId)),
   ]);
 
-  return { appointments, reservations, meetingTasks, orders };
+  const meetingTasks = openTasks.filter(task => task.type === 'meeting');
+  return { appointments, reservations, meetingTasks, openTasks, openTasksComplete, orders };
 }
 
 function catalogName(row: LeadReservationRow): string {
@@ -178,16 +198,21 @@ export function formatLeadRecordForContext(
   timezone: string = DEFAULT_TIMEZONE
 ): string {
   const tz = timezone || DEFAULT_TIMEZONE;
+  const tasks = snapshot.openTasks ?? snapshot.meetingTasks;
   const hasAny =
     snapshot.appointments.length > 0 ||
     snapshot.reservations.length > 0 ||
-    snapshot.meetingTasks.length > 0 ||
+    tasks.length > 0 ||
     snapshot.orders.length > 0;
 
   let text = `\n\n=== LEAD RECORD (source of truth) ===\n`;
   text += `Times below are client local (${tz}). Storage is UTC; speak local hours to the customer. Copy start_utc when calling schedule/update.\n`;
+  text += `Task snapshot is only a hint. Before CREATE_TASK, use GET_TASKS without title/search or type filters, review pending and in_progress and paginate all results. For the same need use UPDATE_TASK, preserving existing information.\n`;
+  if (snapshot.openTasksComplete === false) {
+    text += `Open task lookup unavailable or incomplete — do NOT CREATE_TASK until a full live lookup succeeds.\n`;
+  }
   if (!hasAny) {
-    text += `No active appointments, reservations, meeting tasks, or orders found for this lead.\n`;
+    text += `No active appointments, reservations, open tasks, or orders in this snapshot; absence here is not proof that none exist.\n`;
     text += `Still look them up with tools before booking if the user asks to schedule or change a time.\n`;
     return text;
   }
@@ -207,10 +232,10 @@ export function formatLeadRecordForContext(
     }
   }
 
-  if (snapshot.meetingTasks.length > 0) {
-    text += `Meeting tasks:\n`;
-    for (const task of snapshot.meetingTasks) {
-      text += `- id=${task.id} title="${task.title || 'N/A'}" local=${formatLocalInstant(task.scheduled_date, tz)} status=${task.status || 'N/A'}\n`;
+  if (tasks.length > 0) {
+    text += snapshot.openTasks ? `Open tasks:\n` : `Meeting tasks:\n`;
+    for (const task of tasks) {
+      text += `- id=${task.id} title="${task.title || 'N/A'}" type=${task.type || 'N/A'} local=${formatLocalInstant(task.scheduled_date, tz)} status=${task.status || 'N/A'} description=${JSON.stringify(task.description || '')} notes=${JSON.stringify(task.notes || '')} assignee=${task.assignee || 'N/A'}\n`;
     }
   }
 

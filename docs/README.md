@@ -14,6 +14,8 @@ Documents are ordered below by relevance and freshness. A dated checkpoint recor
 
 ## Current architecture
 
+- [OpenRouter image experiment and rollback](/Users/prado/Desktop/Proyectos/Uncodie/Code/API/docs/OPENROUTER_IMAGES.md) — Azure-only runtime restored; failed live evidence and mandatory successful-generation gate for any future customer OpenRouter image integration.
+
 - [Price-list batch creation and editing](PRICE_LIST_BATCH.md) — owner/admin-scoped administrative tools, list/item prices, previews, limits and partial-failure recovery; direct HTTP remains read-only.
 
 - [Zavu channel activation](./ZAVU_CHANNEL_ACTIVATION.md) — automatic setup activation, scoped recovery, retry semantics, provider fees, and rollout boundaries.

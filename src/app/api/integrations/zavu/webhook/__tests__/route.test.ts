@@ -5,6 +5,11 @@ import { reconcileTemplateDeliveryEvent } from '@/lib/services/zavu/template-del
 jest.mock('@/lib/services/zavu/template-delivery-events', () => ({ reconcileTemplateDeliveryEvent: jest.fn() }));
 import * as webhookHandlers from "@/lib/services/zavu/webhook-handlers";
 import * as webhookClaims from "@/lib/services/provider-webhook-claims";
+import { handleWhatsAppAppEcho } from '@/lib/services/zavu/whatsapp-app-echo';
+jest.mock('@/lib/services/zavu/whatsapp-app-echo', () => ({
+  isWhatsAppAppEcho: jest.requireActual('@/lib/services/zavu/whatsapp-app-echo').isWhatsAppAppEcho,
+  handleWhatsAppAppEcho: jest.fn(),
+}));
 
 jest.mock("@/lib/services/zavu", () => ({
   verifyZavuSignature: jest.requireActual(
@@ -30,10 +35,12 @@ jest.mock("@/lib/services/provider-webhook-claims", () => ({
 
 // Mock process.env
 const originalEnv = process.env;
+const projectSecret = crypto.randomBytes(32).toString('hex');
+const senderSecret = crypto.randomBytes(32).toString('hex');
 beforeAll(() => {
   process.env = {
     ...originalEnv,
-    ZAVUDEV_WEBHOOK_SECRET: "test-secret",
+    ZAVUDEV_WEBHOOK_SECRET: projectSecret,
   };
 });
 
@@ -53,7 +60,7 @@ describe("Zavu Webhook Dispatch", () => {
       .mockResolvedValue(true);
   });
 
-  const createRequest = (body: any, secret = "test-secret") => {
+  const createRequest = (body: any, secret = projectSecret) => {
     const rawBody = JSON.stringify(body);
     const timestamp = Math.floor(Date.now() / 1000);
     const signature = crypto
@@ -161,7 +168,7 @@ describe("Zavu Webhook Dispatch", () => {
           {
             type: "sms",
             zavu_sender_id: "snd_123",
-            metadata: { zavu_webhook_secret: "encrypted:sender-secret" },
+            metadata: { zavu_webhook_secret: `encrypted:${senderSecret}` },
           },
         ],
       },
@@ -173,7 +180,7 @@ describe("Zavu Webhook Dispatch", () => {
       data: { callId: "call_123" },
     };
 
-    const response = await POST(createRequest(payload, "sender-secret"));
+    const response = await POST(createRequest(payload, senderSecret));
 
     expect(response.status).toBe(200);
     expect(webhookHandlers.handleVoiceCallEvent).toHaveBeenCalledWith(payload);
@@ -216,6 +223,23 @@ describe("Zavu Webhook Dispatch", () => {
     expect(webhookClaims.claimProviderWebhookEvent).toHaveBeenCalledWith('zavu', 'message.sent:provider', 'message.sent');
     expect(webhookClaims.claimProviderWebhookEvent).toHaveBeenCalledWith('zavu', 'message.failed:provider', 'message.failed');
     expect(reconcileTemplateDeliveryEvent).toHaveBeenCalledTimes(2);
+  });
+
+  it('dispatches signed app echoes before delivery reconciliation', async () => {
+    const payload = { id: 'echo-event', type: 'message.sent', senderId: 'sender',
+      data: { source: 'whatsapp_business_app', channel: 'whatsapp', direction: 'outbound', messageId: 'provider' } };
+    expect((await POST(createRequest(payload))).status).toBe(200);
+    expect(handleWhatsAppAppEcho).toHaveBeenCalledWith(payload);
+    expect(reconcileTemplateDeliveryEvent).not.toHaveBeenCalled();
+    expect(webhookHandlers.handleInboundMessage).not.toHaveBeenCalled();
+  });
+
+  it('rejects unsigned echoes before claims and persistence', async () => {
+    const request = createRequest({ type: 'message.sent', data: { source: 'whatsapp_business_app' } });
+    request.headers.delete('x-zavu-signature');
+    expect((await POST(request)).status).toBe(401);
+    expect(handleWhatsAppAppEcho).not.toHaveBeenCalled();
+    expect(webhookClaims.claimProviderWebhookEvent).not.toHaveBeenCalled();
   });
 
   it('asks the provider to retry a delivery event if its saved receipt is not yet available', async () => {

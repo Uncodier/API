@@ -6,6 +6,7 @@
 import { getTaskCore } from './get/core';
 import { fetchApiTool } from '@/app/api/agents/tools/utils/fetch-helper';
 import { TASK_STAGES } from '@/lib/database/task-stage';
+import { getTaskDeduplicationPolicy, TASK_DEDUPLICATION_KEY_DESCRIPTION } from '../../customerSupport/support-policies';
 
 
 
@@ -18,6 +19,7 @@ export interface TasksToolParams {
   type?: string; // Required for create
   lead_id?: string; // Required for create
   description?: string;
+  deduplication_key?: string;
   status?: string;
   stage?: string;
   priority?: number;
@@ -41,13 +43,15 @@ export interface TasksToolParams {
   sort_order?: 'asc' | 'desc';
   limit?: number;
   offset?: number;
+  include_completed?: boolean;
+  include_archived?: boolean;
 }
 
 export function tasksTool(site_id: string, user_id?: string) {
   return {
     name: 'tasks',
     description:
-      'Manage CRM tasks. Use action="create" to create a new task (requires title, type, lead_id). Use action="update" to update an existing task (requires task_id). Use action="list" to get tasks with filters. Note that type: "meeting" is for CRM/team appointments, not catalog capacity reservations.',
+      'Manage CRM tasks. Use action="create" to create a new task (requires title, type, lead_id). Use action="update" to update an existing task (requires task_id). Use action="list" to get tasks with filters. Note that type: "meeting" is for CRM/team appointments, not catalog capacity reservations.' + getTaskDeduplicationPolicy(),
     parameters: {
       type: 'object',
       properties: {
@@ -62,6 +66,7 @@ export function tasksTool(site_id: string, user_id?: string) {
         type: { type: 'string', description: 'Task type: website_visit, demo, meeting, email, call, quote, contract, payment, referral, feedback (required for create)' },
         lead_id: { type: 'string', description: 'Lead UUID (required for create)' },
         description: { type: 'string', description: 'Task description' },
+        deduplication_key: { type: 'string', description: TASK_DEDUPLICATION_KEY_DESCRIPTION },
         status: { type: 'string', description: 'pending, in_progress, completed, failed' },
         stage: {
           type: 'string', enum: [...TASK_STAGES],
@@ -85,6 +90,8 @@ export function tasksTool(site_id: string, user_id?: string) {
         search: { type: 'string', description: 'Text search' },
         limit: { type: 'number', description: 'Max results (default 50)' },
         offset: { type: 'number', description: 'Pagination offset' },
+        include_completed: { type: 'boolean', description: 'Include completed tasks (false for open-task deduplication)' },
+        include_archived: { type: 'boolean', description: 'Include archived tasks (false for open-task deduplication)' },
       },
       required: ['action'],
     },
@@ -124,7 +131,9 @@ export function tasksTool(site_id: string, user_id?: string) {
         const filters = {
           ...params,
           site_id: params.site_id || site_id,
-          user_id: params.user_id || user_id,
+          // A lead's tasks may belong to another teammate. Only honor an explicit
+          // user filter for lead lookups; retain the default for personal lists.
+          user_id: params.user_id || (params.lead_id ? undefined : user_id),
         };
         return getTaskCore(filters);
       }

@@ -10,6 +10,7 @@ import type { DeliveryChannel } from './delivery-routing';
 import { audioSenderIdentity } from '@/lib/services/channels/audio-sender-identity';
 import { deliverZavuTemplate, TemplateDeliveryError } from '@/lib/services/whatsapp/zavu-template-delivery';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { assertAutomationSendAllowed, AutomationSendSuppressed, automationSkippedResult } from '@/lib/services/channels/automation-send-guard';
 
 /** Approved support messages keep their exact account; audio uses its own receipt. */
 export async function sendExactAudioDelivery(input: {
@@ -46,6 +47,8 @@ export async function sendExactAudioDelivery(input: {
           throw new AudioDeliveryError('Selected account changed during audio preparation');
         }
         await checkWindow();
+        await assertAutomationSendAllowed({ site_id: input.siteId, conversation_id: input.conversationId,
+          message_id: input.messageId, message: input.text });
         if (account.provider === 'zavu') {
           const sent = await sendChannelMessage({ to: input.recipient, channel: input.channel,
             senderId: account.config.zavu_sender_id, messageType: 'audio', content: { mediaUrl: audioUrl, mimeType },
@@ -63,6 +66,7 @@ export async function sendExactAudioDelivery(input: {
     });
     return { success: true, messageId, message_id: messageId, status: 'sent' };
   } catch (error) {
+    if (error instanceof AutomationSendSuppressed) return automationSkippedResult(error);
     await markAudioPreflightFailed({ ...input, ...(error instanceof TemplateDeliveryError ? { reason: error.message } : {}) });
     return { success: false, error: error instanceof TemplateDeliveryError ? error.message
       : 'Audio delivery failed or is unconfirmed; check the saved message before retrying' };

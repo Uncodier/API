@@ -1,10 +1,12 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { assertAutomationSendAllowed, type AutomationSendIdentity } from '@/lib/services/channels/automation-send-guard';
 import { sendMessage } from '@/lib/integrations/agentmail/agentmail-service';
 import { EmailTrackingService } from '@/lib/services/tracking/EmailTrackingService';
 import { SyncedObjectsService } from '@/lib/services/synced-objects/SyncedObjectsService';
 import { EmailSendService } from './EmailSendService';
 
 export interface AgentMailSendParams {
+  automationIdentity?: AutomationSendIdentity;
   email: string;
   subject: string;
   message: string;
@@ -115,6 +117,7 @@ export class AgentMailSendService {
       html: htmlContent,
     };
 
+    await assertAutomationSendAllowed(params.automationIdentity || params);
     const agentmailResponse = await sendMessage(inboxId, agentmailParams);
 
     // Update message tracking with AgentMail details

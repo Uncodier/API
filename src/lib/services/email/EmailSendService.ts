@@ -1,10 +1,12 @@
 import { EmailConfigService, type EmailConfig } from './EmailConfigService';
+import { assertAutomationSendAllowed, AutomationSendSuppressed, automationSkippedResult, type AutomationSendIdentity } from '@/lib/services/channels/automation-send-guard';
 import { SentEmailDuplicationService } from './SentEmailDuplicationService';
 import nodemailer, { type SendMailOptions } from 'nodemailer';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { EmailTrackingService } from '../tracking/EmailTrackingService';
 
 export interface SendEmailParams {
+  automationIdentity?: AutomationSendIdentity;
   email: string;
   from: string; // Nombre del remitente (opcional)
   fromEmail?: string; // Email del remitente desde configuración del sitio
@@ -21,6 +23,8 @@ export interface SendEmailParams {
 }
 
 export interface SendEmailResult {
+  skipped?: boolean;
+  delivered?: boolean;
   success: boolean;
   email_id?: string;
   envelope_id?: string; // 🆕 ID basado en envelope para correlación con sync
@@ -136,6 +140,7 @@ export class EmailSendService {
       };
 
       // Enviar el email
+      await assertAutomationSendAllowed(params.automationIdentity || params);
       const info = await transporter.sendMail(mailOptions);
       
       console.log('✅ Email enviado exitosamente:', {
@@ -183,6 +188,7 @@ export class EmailSendService {
       };
 
     } catch (configError) {
+      if (configError instanceof AutomationSendSuppressed) return automationSkippedResult(configError);
       console.error('Error obteniendo configuración de email o enviando email:', configError);
       
       const isConfigError = configError instanceof Error && (

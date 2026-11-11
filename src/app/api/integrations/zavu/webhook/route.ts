@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifyZavuSignature } from "@/lib/services/zavu";
 import { decryptToken } from "@/lib/utils/token-decryption";
 import { reconcileTemplateDeliveryEvent } from '@/lib/services/zavu/template-delivery-events';
+import { handleWhatsAppAppEcho, isWhatsAppAppEcho } from '@/lib/services/zavu/whatsapp-app-echo';
 import { 
   findSettingsForSender, 
   handleDomainStatusChanged, 
@@ -117,6 +118,11 @@ export async function POST(request: NextRequest) {
 }
 
 async function processEventAsync(event: any) {
+  // App-originated sends are human replies, not receipts for our own API sends.
+  if (isWhatsAppAppEcho(event)) {
+    await handleWhatsAppAppEcho(event);
+    return;
+  }
   switch (event.type) {
     case "invitation.status_changed":
       await handleInvitationStatusChanged(event.data || {});

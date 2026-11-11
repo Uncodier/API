@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { assertAutomationSendAllowed, AutomationSendSuppressed } from './automation-send-guard';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { stripMarkdownForSpeech } from './long-reply-audio';
 import { validateResponseFormat } from './response-format';
@@ -30,7 +31,7 @@ export async function markAudioPreflightFailed(params: {
     const { data: row, error } = await supabaseAdmin.from('messages').select('custom_data, role')
       .eq('id', params.messageId).eq('conversation_id', params.conversationId).maybeSingle();
     if (error || !row || !['assistant', 'team_member'].includes(row.role) || row.custom_data?.audio_delivery || row.custom_data?.template_delivery
-      || row.custom_data?.response_format === 'text'
+      || row.custom_data?.automation_skipped === true || row.custom_data?.response_format === 'text'
       || ['sent', 'delivered', 'sending', 'placement_unknown'].includes(row.custom_data?.status)) return;
     let query = supabaseAdmin.from('messages').update({ custom_data: {
       ...(row.custom_data || {}), response_format: 'audio', status: 'failed', command_status: 'failed',
@@ -47,6 +48,9 @@ export async function markAudioPreflightFailed(params: {
  * No leases expire into a new send: interrupted operations require reconciliation.
  */
 export async function deliverExplicitAudio(params: AudioDeliveryParams): Promise<string> {
+  const guard = () => assertAutomationSendAllowed({ site_id: params.siteId, conversation_id: params.conversationId,
+    message_id: params.messageId, message: params.text });
+  await guard();
   validateResponseFormat('audio', params.channel);
   if (!params.messageId || !params.conversationId) {
     throw new AudioDeliveryError('Audio delivery requires a saved message and conversation');
@@ -106,22 +110,26 @@ export async function deliverExplicitAudio(params: AudioDeliveryParams): Promise
       const { error: uploadError } = await supabaseAdmin.storage.from('assets').upload(path, audio, { contentType: mimeType });
       if (uploadError) throw new AudioDeliveryError('Audio upload failed');
       const { data: { publicUrl } } = supabaseAdmin.storage.from('assets').getPublicUrl(path);
+      await guard();
       await persist({ key, state: 'ready', audioUrl: publicUrl, mimeType }, {
         attachments: [...(Array.isArray(metadata?.attachments) ? metadata.attachments : []),
           { url: publicUrl, mimeType, type: 'audio', name: 'Audio response.mp3' }],
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof AutomationSendSuppressed) throw error;
       await persist({ key, state: 'preparation_failed' }, { status: 'failed', command_status: 'failed' });
       throw new AudioDeliveryError('Audio preparation failed; no text was sent');
     }
   }
   const prepared = { audioUrl: receipt.audioUrl as string, mimeType: receipt.mimeType as string };
+  await guard();
   await persist({ ...receipt, state: 'dispatching' }, { status: 'sending' });
   let providerMessageId: string;
   try {
     providerMessageId = await params.dispatch(prepared);
     if (!providerMessageId || providerMessageId === 'unknown') throw new Error('Missing provider receipt');
-  } catch {
+  } catch (error) {
+    if (error instanceof AutomationSendSuppressed) throw error;
     await persist({ ...receipt, state: 'unknown' }, { status: 'placement_unknown' });
     throw new AudioDeliveryError('Audio delivery is unconfirmed; check the conversation before retrying');
   }

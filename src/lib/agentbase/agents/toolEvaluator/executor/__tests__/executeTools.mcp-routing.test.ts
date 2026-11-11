@@ -20,6 +20,36 @@ describe('executeTools MCP routing', () => {
     (customToolsMap.hasCustomTool as jest.Mock).mockReturnValue(false);
   });
 
+  it.each([
+    ['GET_TASKS', {}, false],
+    ['tasks', { action: 'list' }, false],
+    ['tasks', { action: 'create' }, true],
+    ['tasks', { action: 'update' }, true],
+    ['CREATE_TASK', {}, true],
+    ['UPDATE_TASK', {}, true],
+    ['calendars', { action: 'list' }, true],
+  ])('keeps command metadata behavior scoped to task lists: %s %j', async (name, args, inject) => {
+    const handler = jest.fn().mockResolvedValue({ success: true });
+    const result = await executeTools([{
+      id: 'context-regression', type: 'function', status: FunctionCallStatus.INITIALIZED,
+      name, arguments: JSON.stringify(args),
+    }], { [name]: handler }, { command_id: 'execution-command', site_id: 'execution-site' });
+    expect(result[0].status).toBe('success');
+    const received = handler.mock.calls[0][0];
+    expect(received.site_id).toBe('execution-site');
+    if (inject) expect(received.command_id).toBe('execution-command');
+    else expect(received).not.toHaveProperty('command_id');
+  });
+
+  it.each(['GET_TASKS', 'tasks'])('preserves explicit query filters for %s', async name => {
+    const handler = jest.fn().mockResolvedValue({ success: true });
+    await executeTools([{
+      id: 'explicit-filter', type: 'function', status: FunctionCallStatus.INITIALIZED,
+      name, arguments: JSON.stringify({ action: 'list', command_id: 'requested-command' }),
+    }], { [name]: handler }, { command_id: 'execution-command' });
+    expect(handler).toHaveBeenCalledWith({ action: 'list', command_id: 'requested-command' });
+  });
+
   it('routes reservations to the MCP native tool instead of Composio', async () => {
     (mcpNativeTools.hasMcpNativeTool as jest.Mock).mockReturnValue(true);
     (mcpNativeTools.executeMcpNativeTool as jest.Mock).mockResolvedValue({

@@ -1,3 +1,4 @@
+import { getAvailableAgentProjects, resolveAgentProjectSession, AGENT_PROJECT_SELECTION_PROMPT, AGENT_NO_PROJECTS_PROMPT } from '@/lib/services/channels/agent-project-access';
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { start } from 'workflow/api';
@@ -102,58 +103,25 @@ export async function POST(request: NextRequest) {
     let systemPromptOverride: string | undefined = undefined;
     let needsProjectSelection = false;
 
-    if (user) {
-      userId = user.id;
+    if (user?.id) {
+      const authenticatedUserId: string = user.id;
+      userId = authenticatedUserId;
       
-      // Obtener todos los sitios pertenecientes a este usuario (como owner)
-      const { data: userSites } = await supabaseAdmin
-        .from('sites')
-        .select('id, name')
-        .eq('user_id', userId);
-
-      // Obtener todos los sitios donde este usuario es miembro
-      const { data: memberSites } = await supabaseAdmin
-        .from('site_members')
-        .select('site_id, sites:site_id(id, name)')
-        .eq('user_id', userId);
-
-      // Combinar y deduplicar sitios
-      const allSites = new Map<string, { id: string, name: string }>();
-      
-      if (userSites) {
-        userSites.forEach(site => allSites.set(site.id, site));
-      }
-      
-      if (memberSites) {
-        memberSites.forEach(member => {
-          const siteData: any = member.sites;
-          if (siteData && siteData.id) {
-            allSites.set(siteData.id, { id: siteData.id, name: siteData.name });
-          }
-        });
-      }
-
-      const availableSites = Array.from(allSites.values());
+      const availableSites = await getAvailableAgentProjects(authenticatedUserId);
 
       // Verificar tabla remote_sessions
-      const { data: session } = await supabaseAdmin
+      const { data: session, error: sessionError } = await supabaseAdmin
         .from('remote_sessions')
-        .select('site_id, instance_id')
+        .select('user_id, site_id, instance_id')
         .eq('phone_number', phoneNumber)
         .maybeSingle();
 
-      if (session && session.site_id) {
-        // Validamos que el sitio seleccionado aún sea de su propiedad o sea miembro
-        const hasAccess = availableSites.some(s => s.id === session.site_id);
-        if (hasAccess) {
-          siteId = session.site_id;
-          if (session.instance_id) {
-            instanceId = session.instance_id;
-          }
-          console.log(`✅ [Gear] Usando sitio activo de remote_sessions: ${siteId}`);
-        }
-      } 
-      
+      if (sessionError) throw new Error('Agent project session unavailable');
+      const resolvedSession = resolveAgentProjectSession(authenticatedUserId, availableSites, session);
+      siteId = resolvedSession.siteId;
+      instanceId = resolvedSession.instanceId;
+      if (resolvedSession.unavailableSession) console.log('[Gear] Previous project access unavailable; resolving another project');
+
       // Si no hay sesión remota, determinamos basado en sus sitios disponibles
       if (!siteId && availableSites.length > 0) {
         if (availableSites.length === 1) {
@@ -172,13 +140,13 @@ export async function POST(request: NextRequest) {
         } else if (availableSites.length > 1) {
           // El usuario tiene varios sitios, debe elegir uno.
           needsProjectSelection = true;
-          systemPromptOverride = "You are Makinari's Gear Assistant. The user has multiple projects but hasn't selected an active one. If you haven't showed them their projects yet, use the instance_project tool with action='list' to get their projects and ask which one they want to manage. If they reply indicating which project they want to use, use the instance_project tool with action='set' and the corresponding site_id to set it. Do not perform any other changes until they select a project.";
+          systemPromptOverride = AGENT_PROJECT_SELECTION_PROMPT;
           console.log(`⚠️ [Gear] Usuario con múltiples sitios sin seleccionar. Necesita elegir.`);
         }
       } else if (!siteId) {
-        // El usuario está registrado pero no tiene ningún sitio creado
+        // No project currently passes the effective access/license policy.
         needsProjectSelection = true;
-        systemPromptOverride = "You are Makinari's Gear Assistant. The user is registered but has no projects yet. Politely tell them they need to log in to the web app to create their first project. You cannot create a project for them from here.";
+        systemPromptOverride = AGENT_NO_PROJECTS_PROMPT;
         console.log(`⚠️ [Gear] Usuario registrado sin sitios.`);
       }
     } else {
@@ -187,22 +155,6 @@ export async function POST(request: NextRequest) {
       console.log(`❌ [Gear] Número no registrado: ${phoneNumber}. Solicitando registro o vinculación de cuenta.`);
     }
     
-    // 2. Fallback: Intentar encontrar site_id por account_sid en los ajustes
-    // SOLO si el usuario está registrado, permitimos el fallback de site
-    if (userId && !siteId && businessAccountId) {
-      const { data: siteBySettings } = await supabaseAdmin
-        .from('settings')
-        .select('site_id')
-        .contains('channels', { whatsapp: { account_sid: businessAccountId } })
-        .limit(1)
-        .maybeSingle();
-        
-      if (siteBySettings) {
-        siteId = siteBySettings.site_id;
-        console.log(`✅ [Gear] Encontrado site_id por account_sid: ${siteId}`);
-      }
-    }
-
     // Fallback: Makinari por defecto (entorno)
     // SOLO usamos el fallback si vamos a interactuar con alguien no registrado para ofrecerle el registro o alguien en lobby
     if (!siteId && process.env.GEAR_SITE_ID) {

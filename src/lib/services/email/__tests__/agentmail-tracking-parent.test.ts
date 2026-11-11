@@ -1,3 +1,6 @@
+jest.mock('@/lib/services/channels/automation-send-guard', () => ({
+  ...jest.requireActual('@/lib/services/channels/automation-send-guard'), assertAutomationSendAllowed: jest.fn(async () => undefined),
+}));
 import { randomUUID } from 'node:crypto';
 import { AgentMailSendService } from '../AgentMailSendService';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
