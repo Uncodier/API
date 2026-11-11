@@ -82,7 +82,7 @@ identify/store caller contact details, which remains required. Inbound linkage
 does not grant consent or clear opt-outs. The admission change requires no schema
 migration or consent backfill.
 
-Saved `message_type`, `media_url`, `mime_type` and voice guidance survive generation/logging. Explicit image/video/audio/document messages use Zavu `messageType` / `content.mediaUrl` on the exact selected messaging account; SMS media and generic voice media defer. URLs use the existing HTTPS/public-DNS `assertSafeRemoteUrl` validator; this path never fetches media, follows media redirects, or adds a dependency. Zavu still validates channel/provider media capabilities. No new automatic TTS generation or audio account type is introduced.
+Saved `message_type`, `media_url`, `mime_type` and voice guidance survive generation/logging. Explicit image/video/audio/document messages use Zavu `messageType` / `content.mediaUrl` on the exact selected messaging account; legacy WhatsApp sends one native media URL inside its response window. Selected SMTP/AgentMail accounts receive attachment bytes through the existing bounded DNS-pinned downloader. SMS media, public-comment media, unsupported Instagram types and generic voice media defer. Native provider URLs use HTTPS/public-DNS validation without downloading; only email attachment preparation fetches bytes (20 MiB, 20 seconds, four HTTPS-only redirects). Zavu still validates channel/provider media capabilities. Closed-window WhatsApp media defers rather than substituting a text template. No new automatic TTS generation or audio account type is introduced. See `OUTBOUND_MEDIA.md`.
 
 ## Atomic limits, recovery, and operational trade-offs
 

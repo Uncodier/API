@@ -48,6 +48,8 @@ GET /api/agents/customerSupport/conversations?site_id=YOUR_SITE_ID&channel=whats
 
 Required: `email`, `subject`, `message`. Optional: `from`, `lead_id`, `conversation_id`, `agent_id`, `placeholder_policy`.
 
+Attachments: use `message_type` (`image`, `video`, `audio`, `document`) with a public HTTPS `media_url` and optional `mime_type`, or `attachments: [{filename, content, content_type}]` where `content` is base64. Do not combine these forms. SMTP and AgentMail receive actual file bytes, not links. Downloads reject private/authenticated URLs and are bounded; base64 attachments are limited to 10 files and 20 MiB total. `response_format: "text"` is supported; generated audio responses are not supported for email.
+
 Merge fields (with `lead_id`): `{{lead.name}}`, `{{lead.first_name}}`, `{{lead.email}}`, `{{lead.phone}}`, `{{lead.position}}`, `{{lead.company}}`, `{{lead.notes}}`, `{{lead.metadata.<path>}}`, `{{site.name}}`. Unknown tokens: `strip_tokens` (default) or `skip_recipient`.
 
 ```
@@ -74,6 +76,29 @@ Required: `phone_number` (E.164, no spaces), `message`. Optional: `from`, `lead_
 
 Outside the 24-hour window the API returns `template_required: true`. Use `whatsappTemplate` instead.
 
+Existing media uses `message_type` plus `media_url` and optional `mime_type`; `message` may be an empty caption. `response_format: "audio"` generates speech from text, whereas `message_type: "audio"` sends an existing recording. Never combine existing media with generated audio. A text template cannot deliver an attachment; media outside the response window fails or requires a compatible media template, never a text/link fallback.
+
+## Generic channel sends (assistant and HTTP)
+
+The robot assistant registers `sendChannelMessage`. Its HTTP counterpart is `POST /api/agents/tools/sendChannelMessage` and requires site authorization. Required: `channel`, `to`, `site_id`; provide text `message` or canonical media. The assistant binds `site_id` and accepts an empty `message` for media-only delivery. Prefer `conversation_id` and `message_id` to pin saved routing/tracking.
+
+```json
+{
+  "site_id": "YOUR_SITE_ID",
+  "channel": "telegram",
+  "to": "CHANNEL_USER_ID",
+  "message": "Invoice attached",
+  "message_type": "document",
+  "media_url": "https://assets.example.test/invoice.pdf",
+  "mime_type": "application/pdf",
+  "response_format": "text"
+}
+```
+
+WhatsApp, Telegram and Messenger can request generated `response_format: "audio"` from text. Instagram direct messages support existing image/video; public social comment adapters, SMS and voice reject attachments explicitly. Other channel/provider capabilities are validated by the selected provider. Ordinary URLs in message text remain links, not attachments.
+
+Chat `POST /api/agents/chat/send-by-channel` and intervention requests carry the same canonical fields. Saved media metadata is retained on retries and cannot be replaced with another attachment. Exact worker delivery (`POST /api/agents/tools/sendExactDelivery`) uses stored assistant message metadata and its exact selected connection, not caller overrides.
+
 ```
 POST /api/agents/tools/sendWhatsApp
 ```
@@ -83,6 +108,8 @@ POST /api/agents/tools/sendWhatsApp
 Required: `audience_id`, `channel` (`whatsapp` | `email`), `message`. Email also needs `subject`. Safe to retry: already-sent leads are skipped.
 
 WhatsApp builds **one** Twilio content template with `{{1}}`, `{{2}}` mapped from your merge tokens. Response includes `template_sid`, `template_status`, `placeholder_map`.
+
+Bulk canonical media is retained on queued email/Telegram/Zavu WhatsApp messages and immediate email newsletters. Legacy WhatsApp bulk media templates and bulk generated audio are explicitly unsupported. `response_format` may only be `text`; existing recordings use `message_type: "audio"`. Queuing is not a delivered receipt.
 
 ```json
 {

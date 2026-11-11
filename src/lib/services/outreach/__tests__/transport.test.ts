@@ -1,10 +1,14 @@
 jest.mock('@/lib/services/channels/automation-send-guard', () => ({
   ...jest.requireActual('@/lib/services/channels/automation-send-guard'), assertAutomationSendAllowed: jest.fn(async () => undefined),
 }));
+import { randomBytes } from 'node:crypto';
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn(), rpc: jest.fn() } }));
 jest.mock('@/lib/services/zavu/client', () => ({ sendChannelMessage: jest.fn() }));
 jest.mock('@/lib/services/zavu/voice-call-service', () => ({ placeTrackedVoiceCall: jest.fn() }));
 jest.mock('@/lib/security/safe-remote-url', () => ({ assertSafeRemoteUrl: jest.fn(async (s: string) => new URL(s)) }));
+jest.mock('@/lib/services/channels/email-media', () => ({ resolveEmailMediaAttachment: jest.fn(async () => ({
+  filename: 'photo.png', content: Buffer.from('synthetic').toString('base64'), content_type: 'image/png',
+})) }));
 jest.mock('@/lib/services/email/EmailSendService', () => ({ EmailSendService: { isValidEmail: (s: string) => s.includes('@'), sendEmail: jest.fn() } }));
 jest.mock('@/lib/services/email/AgentMailSendService', () => ({ AgentMailSendService: { sendViaAgentMail: jest.fn() } }));
 jest.mock('@/lib/services/email/EmailSignatureService', () => ({ EmailSignatureService: { generateAgentSignature: jest.fn(async () => ({ formatted: '' })) } }));
@@ -26,6 +30,7 @@ import { WhatsAppTemplateService } from '@/lib/services/whatsapp/WhatsAppTemplat
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { placeTrackedVoiceCall } from '@/lib/services/zavu/voice-call-service';
 import { assertSafeRemoteUrl } from '@/lib/security/safe-remote-url';
+import { resolveEmailMediaAttachment } from '@/lib/services/channels/email-media';
 
 const context = (): DeliveryContext => ({
   siteId: 'site', lead: { id: 'lead', email: 'lead@example.com', phone: '+15551234567' },
@@ -108,6 +113,65 @@ test('saved audio format/media retained and URL validated without fetching', asy
   expect(sendChannelMessage).toHaveBeenCalledWith(expect.objectContaining({ channel: 'telegram', messageType: 'audio', content: { mediaUrl: 'https://cdn.example.com/audio.mp3', mimeType: 'audio/mpeg' } }));
   (assertSafeRemoteUrl as jest.Mock).mockRejectedValueOnce(new Error('private URL'));
   expect(await prepareOutreachDelivery(ctx)).toEqual({ reason: 'invalid_media_url' });
+});
+
+test.each(['whatsapp', 'telegram', 'messenger', 'instagram'])('outreach sends existing images/videos on %s with the selected sender', async channel => {
+  jest.mocked(WhatsAppTemplateService.checkResponseWindow).mockResolvedValue({ withinWindow: true });
+  for (const message_type of ['image', 'video']) {
+    const ctx = context(); ctx.account.channel = channel;
+    ctx.lead.social_networks = { [channel]: 'known-chat' };
+    ctx.message.content = '';
+    Object.assign(ctx.message.custom_data, { message_type, media_url: 'https://media.example.test/file' });
+    (sendChannelMessage as jest.Mock).mockResolvedValue({ message: { id: 'media-id' } });
+    const prepared = await prepareOutreachDelivery(ctx);
+    if (!('send' in prepared)) throw new Error(prepared.reason);
+    await prepared.send();
+    expect(sendChannelMessage).toHaveBeenLastCalledWith(expect.objectContaining({ senderId: 'exact-hi-sender', channel,
+      messageType: message_type, content: { mediaUrl: 'https://media.example.test/file' } }));
+  }
+});
+
+test('Zavu WhatsApp media cannot bypass the response window or use a text template', async () => {
+  const ctx = context(); ctx.account.channel = 'whatsapp';
+  Object.assign(ctx.message.custom_data, { message_type: 'video', media_url: 'https://media.example.test/file' });
+  jest.mocked(WhatsAppTemplateService.checkResponseWindow).mockResolvedValue({ withinWindow: false });
+  expect(await prepareOutreachDelivery(ctx)).toEqual({ reason: 'approved_media_template_required' });
+  expect(sendChannelMessage).not.toHaveBeenCalled();
+  expect(WhatsAppTemplateService.findExistingTemplate).not.toHaveBeenCalled();
+});
+
+test('legacy WhatsApp outreach delivers media inside window but never replaces it with a text template', async () => {
+  const ctx = context();
+  ctx.account = { id: 'legacy', channel: 'whatsapp', provider: 'whatsapp', config: {
+    account_sid: `AC${randomBytes(16).toString('hex')}`, access_token: randomBytes(32).toString('hex'), existingNumber: '+15555550100' } };
+  Object.assign(ctx.message.custom_data, { message_type: 'image', media_url: 'https://media.example.test/photo.png' });
+  jest.mocked(WhatsAppTemplateService.checkResponseWindow).mockResolvedValue({ withinWindow: true });
+  const prepared = await prepareOutreachDelivery(ctx);
+  if (!('send' in prepared)) throw new Error(prepared.reason);
+  await prepared.send();
+  expect(sendTwilioWhatsAppMessage).toHaveBeenCalledWith(expect.objectContaining({ mediaUrls: ['https://media.example.test/photo.png'], strictSingleMessage: true }));
+  jest.mocked(WhatsAppTemplateService.checkResponseWindow).mockResolvedValue({ withinWindow: false });
+  expect(await prepareOutreachDelivery(ctx)).toEqual({ reason: 'approved_media_template_required' });
+});
+
+test('selected AgentMail outreach sends actual attachment bytes without a link fallback', async () => {
+  const ctx = context();
+  ctx.account = { id: 'agent', channel: 'email', provider: 'agent_email', config: { username: 'agent', domain: 'example.test' } };
+  const previous = process.env.AGENTMAIL_API_KEY;
+  process.env.AGENTMAIL_API_KEY = randomBytes(32).toString('hex');
+  try {
+    Object.assign(ctx.message.custom_data, { message_type: 'image', media_url: 'https://media.example.test/photo.png' });
+    jest.mocked(AgentMailSendService.sendViaAgentMail).mockResolvedValue({ success: true, status: 'sent', external_message_id: 'provider' } as any);
+    const prepared = await prepareOutreachDelivery(ctx);
+    if (!('send' in prepared)) throw new Error(prepared.reason);
+    await prepared.send();
+    expect(resolveEmailMediaAttachment).toHaveBeenCalledWith({ messageType: 'image', content: { mediaUrl: 'https://media.example.test/photo.png' } });
+    expect(AgentMailSendService.sendViaAgentMail).toHaveBeenCalledWith(expect.objectContaining({ attachments: [{
+      filename: 'photo.png', content: Buffer.from('synthetic').toString('base64'), content_type: 'image/png',
+    }] }));
+  } finally {
+    if (previous === undefined) delete process.env.AGENTMAIL_API_KEY; else process.env.AGENTMAIL_API_KEY = previous;
+  }
 });
 
 test('selected Zavu hi email invokes exact sender and recipient, never implicit account lookup', async () => {

@@ -4,8 +4,10 @@ import { SentEmailDuplicationService } from './SentEmailDuplicationService';
 import nodemailer, { type SendMailOptions } from 'nodemailer';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { EmailTrackingService } from '../tracking/EmailTrackingService';
+import { validateEmailAttachments, type EmailAttachment } from './email-attachments';
 
 export interface SendEmailParams {
+  attachments?: EmailAttachment[];
   automationIdentity?: AutomationSendIdentity;
   email: string;
   from: string; // Nombre del remitente (opcional)
@@ -51,6 +53,7 @@ export class EmailSendService {
    * Envía un email usando la configuración SMTP del sitio
    */
   static async sendEmail(params: SendEmailParams): Promise<SendEmailResult> {
+    const attachments = validateEmailAttachments(params.attachments);
     const { 
       email, 
       from, 
@@ -135,6 +138,8 @@ export class EmailSendService {
         to: email,
         subject,
         html: htmlContent,
+        ...(attachments?.length ? { attachments: attachments.map(item => ({ filename: item.filename,
+          content: Buffer.from(item.content, 'base64'), contentType: item.content_type })) } : {}),
         text: message.replace(/<[^>]+>/g, ''), // Asegurar versión de texto plano limpia
         replyTo: fromAddress
       };

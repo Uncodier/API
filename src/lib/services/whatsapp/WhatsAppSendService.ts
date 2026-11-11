@@ -11,6 +11,9 @@ import { deliverExplicitAudio, AudioDeliveryError, markAudioPreflightFailed } fr
 import { validateResponseFormat, type ResponseFormat } from '@/lib/services/channels/response-format';
 import { audioSenderIdentity } from '@/lib/services/channels/audio-sender-identity';
 import { requireLegacyAudioRouting } from '@/lib/services/channels/audio-message-routing';
+import { validateWhatsAppMedia, validateOutboundMedia, type OutboundMediaType } from '@/lib/services/channels/outbound-media';
+import { requireSavedOutboundMedia } from '@/lib/services/channels/saved-outbound-media';
+import { dispatchNativeMedia } from '@/lib/services/channels/native-media-delivery';
 
 export interface SendWhatsAppParams {
   phone_number: string;
@@ -22,6 +25,9 @@ export interface SendWhatsAppParams {
   site_id: string;
   responseWindowEnabled?: boolean; // If true, assume response window active and skip template
   media_urls?: string[]; // Array de URLs de medios a adjuntar (imágenes, videos, documentos)
+  message_type?: 'text' | OutboundMediaType;
+  media_url?: string;
+  mime_type?: string;
   response_format?: ResponseFormat;
   message_id?: string;
 }
@@ -52,6 +58,10 @@ export interface SendWhatsAppResult {
   // Nuevos campos para template_required
   template_required?: boolean;
   formatted_message?: string;
+  media_urls?: string[];
+  message_type?: 'text' | OutboundMediaType;
+  media_url?: string;
+  mime_type?: string;
   whatsapp_config?: {
     phone_number_id: string;
     access_token: string;
@@ -70,6 +80,11 @@ export class WhatsAppSendService {
    */
   static async sendMessage(params: SendWhatsAppParams): Promise<SendWhatsAppResult> {
     validateResponseFormat(params.response_format, 'whatsapp');
+    const requestedMediaUrls = await validateWhatsAppMedia(params);
+    await requireSavedOutboundMedia(params, 'whatsapp', await validateOutboundMedia(params, 'whatsapp'));
+    if (typeof params.message !== 'string' || (!params.message.trim() && !requestedMediaUrls.length)) {
+      throw Object.assign(new Error('Message text or media is required'), { status: 400 });
+    }
     const originalMessage = params.message;
     let { phone_number, message, from, agent_id, conversation_id, lead_id, site_id, responseWindowEnabled } = params;
     
@@ -160,7 +175,7 @@ export class WhatsAppSendService {
       console.log('🕐 [WhatsAppSendService] Verificando ventana de respuesta...');
       
       // If responseWindowEnabled comes true, force withinWindow=true to skip template creation
-      const windowCheck = responseWindowEnabled === true && params.response_format !== 'audio'
+      const windowCheck = responseWindowEnabled === true && params.response_format !== 'audio' && !requestedMediaUrls.length
         ? { withinWindow: true, hoursElapsed: 0 }
         : await WhatsAppTemplateService.checkResponseWindow(
             conversation_id || null,
@@ -209,9 +224,9 @@ export class WhatsAppSendService {
       // EXTRACCIÓN DE URL PARA AUDIOS GENERADOS POR EL AGENTE
       // Si el agente incluyó directamente una URL de audio en el texto, extraemos la URL 
       // y la enviamos como un archivo multimedia adjunto.
-      let finalMediaUrls = params.media_urls || [];
+      let finalMediaUrls = [...requestedMediaUrls];
       const extractedUrlRegex = /(https?:\/\/[^\s]+?\/storage\/v1\/object\/public\/[^\s]+?\.(?:wav|mp3|ogg))/i;
-      const urlMatch = params.response_format === 'text' ? null : message.match(extractedUrlRegex);
+      const urlMatch = params.response_format === 'text' || finalMediaUrls.length ? null : message.match(extractedUrlRegex);
       
       if (urlMatch && urlMatch[1]) {
         console.log(`🎵 [WhatsAppSendService] Se detectó URL de audio en el mensaje: ${urlMatch[1]}`);
@@ -250,6 +265,10 @@ export class WhatsAppSendService {
           hours_elapsed: windowCheck.hoursElapsed,
           template_required: true,
           formatted_message: formattedMessage,
+          media_urls: finalMediaUrls,
+          message_type: params.message_type,
+          media_url: params.media_url,
+          mime_type: params.mime_type,
           whatsapp_config: {
             phone_number_id: whatsappConfig.phoneNumberId,
             access_token: whatsappConfig.accessToken,
@@ -263,7 +282,7 @@ export class WhatsAppSendService {
         // Verificar si es un mensaje largo que se debe enviar como audio
         let finalMessage = formattedMessage;
         
-        const audioReply = params.response_format === 'text' ? null : await tryPrepareLongReplyAudio({
+        const audioReply = params.response_format === 'text' || finalMediaUrls.length ? null : await tryPrepareLongReplyAudio({
           siteId: site_id,
           channel: 'whatsapp',
           text: finalMessage, // Use finalMessage in case we already cleared it above
@@ -276,7 +295,7 @@ export class WhatsAppSendService {
         }
 
         await assertAutomationSendAllowed({ ...params, message: originalMessage });
-        const regularResult = await sendTwilioWhatsAppMessage({
+        const dispatch = () => sendTwilioWhatsAppMessage({
           phoneNumber: normalizedPhone,
           message: finalMessage,
           accountSid: whatsappConfig.phoneNumberId,
@@ -285,6 +304,9 @@ export class WhatsAppSendService {
           mediaUrls: finalMediaUrls.length > 0 ? finalMediaUrls : undefined,
           messagingServiceSid: whatsappConfig.messagingServiceSid,
         });
+        const regularResult = requestedMediaUrls.length
+          ? await dispatchNativeMedia(params, 'twilio', dispatch, sent => ({ id: sent.success ? sent.messageId : undefined }))
+          : await dispatch();
         
         // Mapear resultado al formato esperado
         result = {

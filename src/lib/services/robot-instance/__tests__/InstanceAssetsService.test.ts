@@ -34,6 +34,13 @@ describe('InstanceAssetsService + vision-message-images', () => {
   });
 
   describe('processAssetContent / MIME detection', () => {
+    it('reads inline text without downloading the inline identifier', async () => {
+      // @ts-expect-error testing private method
+      const result = await InstanceAssetsService.processAssetContent({ id: 'inline', name: 'Notes.txt',
+        file_type: 'text/plain', file_path: 'inline:test', content: 'Stored note' });
+      expect(result?.content).toBe('Stored note');
+      expect(AgentService.getAgentFileContent).not.toHaveBeenCalled();
+    });
     it('does not claim that inventory images are visible when hydration or the vision budget can omit them', () => {
       // @ts-expect-error testing private method
       const context = InstanceAssetsService.buildAssetsContext([{ id: 'image', name: 'Photo',

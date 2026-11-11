@@ -4,8 +4,10 @@ import { sendMessage } from '@/lib/integrations/agentmail/agentmail-service';
 import { EmailTrackingService } from '@/lib/services/tracking/EmailTrackingService';
 import { SyncedObjectsService } from '@/lib/services/synced-objects/SyncedObjectsService';
 import { EmailSendService } from './EmailSendService';
+import { validateEmailAttachments, type EmailAttachment } from './email-attachments';
 
 export interface AgentMailSendParams {
+  attachments?: EmailAttachment[];
   automationIdentity?: AutomationSendIdentity;
   email: string;
   subject: string;
@@ -26,6 +28,7 @@ export interface AgentMailSendParams {
 
 export class AgentMailSendService {
   static async sendViaAgentMail(params: AgentMailSendParams) {
+    const attachments = validateEmailAttachments(params.attachments);
     const {
       email,
       subject,
@@ -115,6 +118,7 @@ export class AgentMailSendService {
       subject,
       text: message.replace(/<[^>]+>/g, ''), // Plain text version without HTML tags
       html: htmlContent,
+      ...(attachments?.length ? { attachments } : {}),
     };
 
     await assertAutomationSendAllowed(params.automationIdentity || params);

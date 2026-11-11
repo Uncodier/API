@@ -11,6 +11,7 @@ import {
   placeholderPolicyToMergePolicy,
 } from '@/lib/messaging/lead-merge-fields';
 import { WhatsAppSendService } from '@/lib/services/whatsapp/WhatsAppSendService';
+import { type OutboundMediaType } from '@/lib/services/channels/outbound-media';
 
 export interface SendWhatsAppToolParams {
   phone_number: string;
@@ -21,6 +22,9 @@ export interface SendWhatsAppToolParams {
   lead_id?: string;
   responseWindowEnabled?: boolean;
   media_urls?: string[];
+  message_type?: 'text' | OutboundMediaType;
+  media_url?: string;
+  mime_type?: string;
   /** Default strip_tokens when omitted. */
   placeholder_policy?: ContentPlaceholderPolicy;
 }
@@ -33,7 +37,7 @@ export function sendWhatsAppTool(siteId: string) {
   return {
     name: 'sendWhatsApp',
     description:
-      'Send a WhatsApp message to a phone number. Required: phone_number (international format e.g. +1234567890), message. Optional: from, lead_id (enables merge fields in message), placeholder_policy, conversation_id, media_urls. Merge tokens: {{lead.name}}, {{lead.first_name}}, {{lead.email}}, {{lead.phone}}, {{lead.position}}, {{lead.company}}, {{lead.notes}}, {{lead.metadata.<path>}}, {{site.name}} — double braces only. If template_required: true (outside 24h), use whatsappTemplate create_template then send_template.',
+      'Send a WhatsApp message or an existing media attachment to a phone number. Use message_type and media_url for images, videos, audio or documents; URLs inside message stay ordinary links. message can be empty for media-only sends. Optional: from, lead_id (enables merge fields), placeholder_policy, conversation_id. Merge tokens: {{lead.name}}, {{lead.first_name}}, {{lead.email}}, {{lead.phone}}, {{lead.position}}, {{lead.company}}, {{lead.notes}}, {{lead.metadata.<path>}}, {{site.name}} — double braces only. If template_required: true (outside 24h), use whatsappTemplate create_template then send_template; do not claim media was delivered.',
     parameters: {
       type: 'object',
       properties: {
@@ -49,8 +53,12 @@ export function sendWhatsAppTool(siteId: string) {
         media_urls: { 
           type: 'array', 
           items: { type: 'string' }, 
-          description: 'Array of valid public URLs linking to media (images, videos, audio, pdfs) to attach to the message (max 10).' 
+          maxItems: 1,
+          description: 'Legacy attachment field: one public HTTPS media URL. Prefer message_type + media_url; do not supply both.'
         },
+        message_type: { type: 'string', enum: ['text', 'image', 'video', 'audio', 'document'], description: 'Type of existing attachment; does not generate media.' },
+        media_url: { type: 'string', description: 'Public HTTPS URL of an existing file to deliver as media, not as a text link.' },
+        mime_type: { type: 'string', description: 'Optional MIME type matching the attachment.' },
         responseWindowEnabled: {
           type: 'boolean',
           description: 'If true, skip template check and send as within 24h window',
@@ -72,9 +80,12 @@ export function sendWhatsAppTool(siteId: string) {
         lead_id,
         responseWindowEnabled,
         media_urls,
+        message_type,
+        media_url,
+        mime_type,
         placeholder_policy,
       } = args;
-      let message = args.message;
+      let message = args.message ?? '';
       if (lead_id) {
         const lead = await getLeadById(lead_id);
         if (lead) {
@@ -99,6 +110,9 @@ export function sendWhatsAppTool(siteId: string) {
         lead_id,
         responseWindowEnabled,
         media_urls,
+        message_type,
+        media_url,
+        mime_type,
         site_id: siteId,
       });
       if (!result.success && result.error) {

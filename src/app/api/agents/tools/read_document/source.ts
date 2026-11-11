@@ -116,12 +116,13 @@ async function readBody(response: IncomingMessage): Promise<Buffer> {
   return Buffer.concat(chunks, size);
 }
 
-export async function downloadDocument(source: string): Promise<LoadedDocument> {
+export async function downloadDocument(source: string, options: { httpsOnly?: boolean } = {}): Promise<LoadedDocument> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(new Error('Document download timed out.')), TIMEOUT_MS);
   let url = parseUrl(source);
   try {
     for (let redirect = 0; redirect <= MAX_REDIRECTS; redirect += 1) {
+      if (options.httpsOnly && url.protocol !== 'https:') throw new Error('Media download requires HTTPS, including redirects.');
       const response = await requestPinned(url, await resolvePublic(url, controller.signal), controller.signal);
       if (response.statusCode && response.statusCode >= 300 && response.statusCode < 400) {
         const location = response.headers.location;

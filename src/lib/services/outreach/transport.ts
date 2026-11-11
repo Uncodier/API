@@ -14,6 +14,8 @@ import { getVoiceCallEligibility } from '@/lib/services/zavu/voice-call-consent'
 import { placeTrackedVoiceCall } from '@/lib/services/zavu/voice-call-service';
 import { assertSafeRemoteUrl } from '@/lib/security/safe-remote-url';
 import { requireLicensedChannel } from '@/lib/billing/licensed-resources';
+import { validateOutboundMedia } from '@/lib/services/channels/outbound-media';
+import { resolveEmailMediaAttachment } from '@/lib/services/channels/email-media';
 
 export interface DeliveryContext { siteId: string; message: any; conversation: any; lead: any; account: OutreachAccount; conversations?: any[] }
 export type PreparedDelivery = { reason: string } | { send: () => Promise<{ success: boolean; messageId?: string }> };
@@ -69,16 +71,25 @@ async function prepareDelivery(ctx: DeliveryContext): Promise<PreparedDelivery> 
   }
   let media: { messageType: 'image' | 'video' | 'audio' | 'document'; content: { mediaUrl: string; mimeType?: string } } | undefined;
   if (mediaUrl || (format && format !== 'text')) {
-    if (account.provider !== 'zavu' || !['image', 'video', 'audio', 'document'].includes(format)
+    if ((account.provider !== 'zavu' && !['whatsapp', 'email'].includes(account.channel)) || !['image', 'video', 'audio', 'document'].includes(format)
       || account.channel === 'sms' || typeof mediaUrl !== 'string') return { reason: 'unsupported_media' };
     // Validate, but never fetch untrusted media. Zavu performs media delivery.
     try { await assertSafeRemoteUrl(mediaUrl); } catch { return { reason: 'invalid_media_url' }; }
-    media = { messageType: format, content: { mediaUrl } };
     const mimeType = message.custom_data?.mime_type || message.mime_type;
-    if (typeof mimeType === 'string' && /^[a-z0-9.+-]+\/[a-z0-9.+-]+$/i.test(mimeType)) media.content.mimeType = mimeType;
+    try {
+      media = await validateOutboundMedia({ message_type: format, media_url: mediaUrl, mime_type: mimeType }, account.channel);
+    } catch { return { reason: 'unsupported_media' }; }
   }
   if (account.provider === 'zavu') {
+    if (media && account.channel === 'whatsapp') {
+      const window = await WhatsAppTemplateService.checkResponseWindow(conversation.id, to, siteId);
+      if (!window.withinWindow) return { reason: 'approved_media_template_required' };
+    }
     return { send: async () => {
+      if (media && account.channel === 'whatsapp') {
+        const window = await WhatsAppTemplateService.checkResponseWindow(conversation.id, to, siteId);
+        if (!window.withinWindow) throw new Error('Media requires an active WhatsApp response window');
+      }
       // Explicit sender is mandatory. Do not use ChannelSendService's implicit
       // "first connection" lookup, or fall through to SMTP/Twilio on failure.
       const result = await sendChannelMessage({ to, text, channel: account.channel, senderId: c.zavu_sender_id,
@@ -89,8 +100,10 @@ async function prepareDelivery(ctx: DeliveryContext): Promise<PreparedDelivery> 
   }
   if (account.channel !== 'email' && account.channel !== 'whatsapp') return { reason: 'selected_account_unavailable' };
   if (account.channel === 'email') {
+    const attachments = media ? [await resolveEmailMediaAttachment(media)] : undefined;
     const signature = await EmailSignatureService.generateAgentSignature(siteId).catch(() => ({ formatted: '' }));
     const emailParams = { ...common, email: to, subject: merged.subject || subject, message: text, trackingId: message.id, signatureHtml: signature.formatted,
+      ...(attachments ? { attachments } : {}),
       automationIdentity: { site_id: siteId, conversation_id: conversation.id, message_id: message.id, message: message.content } };
     if (account.provider === 'agent_email') {
       if (!process.env.AGENTMAIL_API_KEY) return { reason: 'selected_account_unavailable' };
@@ -126,6 +139,8 @@ async function prepareDelivery(ctx: DeliveryContext): Promise<PreparedDelivery> 
   let contentSid: string | undefined;
   let contentVariables: Record<string, string> | undefined;
   if (!window.withinWindow) {
+    // A text template cannot carry the requested media: defer rather than lose it.
+    if (media) return { reason: 'approved_media_template_required' };
     const template = await WhatsAppTemplateService.findExistingTemplate(message.content, siteId, c.account_sid,
       { approvedExactOnly: true, trackUsage: false });
     if (!template.templateSid) return { reason: 'approved_template_required' };
@@ -140,5 +155,6 @@ async function prepareDelivery(ctx: DeliveryContext): Promise<PreparedDelivery> 
   }
   return { send: () => sendTwilioWhatsAppMessage({ phoneNumber: to, message: text, accountSid: c.account_sid,
     authToken, fromNumber: c.existingNumber || c.from_number, messagingServiceSid: c.messaging_service_sid,
-    strictSingleMessage: true, contentSid, contentVariables }) };
+    strictSingleMessage: true, contentSid, contentVariables,
+    ...(media ? { mediaUrls: [media.content.mediaUrl] } : {}) }) };
 }

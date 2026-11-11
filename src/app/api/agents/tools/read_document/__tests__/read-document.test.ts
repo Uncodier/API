@@ -193,6 +193,7 @@ describe('read_document', () => {
 
   it('blocks local URLs before fetching', async () => {
     await expect(downloadDocument('http://127.0.0.1/private.pdf')).rejects.toThrow(/private|reserved|local/i);
+    await expect(downloadDocument('http://media.example.test/file', { httpsOnly: true })).rejects.toThrow(/HTTPS/i);
   });
 
   it.each(['0.0.0.0', '10.0.0.1', '100.64.0.1', '127.0.0.1', '169.254.169.254', '172.16.0.1', '192.168.1.1', '224.0.0.1', '::1', 'fe80::1', 'fc00::1', '2001:db8::1', '2002:7f00:1::', '::ffff:127.0.0.1'])(

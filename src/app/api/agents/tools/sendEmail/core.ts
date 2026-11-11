@@ -11,12 +11,19 @@ import { EmailSendService } from '@/lib/services/email/EmailSendService';
 import { EmailSignatureService } from '@/lib/services/email/EmailSignatureService';
 import { SyncedObjectsService } from '@/lib/services/synced-objects/SyncedObjectsService';
 import { AgentMailSendService } from '@/lib/services/email/AgentMailSendService';
+import { validateEmailAttachments, type EmailAttachment } from '@/lib/services/email/email-attachments';
+import { validateOutboundMedia, type OutboundMediaInput } from '@/lib/services/channels/outbound-media';
+import { validateResponseFormat } from '@/lib/services/channels/response-format';
+import { resolveEmailMediaAttachment } from '@/lib/services/channels/email-media';
+import { requireSavedOutboundMedia } from '@/lib/services/channels/saved-outbound-media';
+import { dispatchNativeMedia } from '@/lib/services/channels/native-media-delivery';
 import {
   acquireEmailSendPermit,
   releaseEmailSendPermit,
 } from '@/lib/services/email/email-send-rate-limit';
 
-export interface SendEmailCoreParams {
+export interface SendEmailCoreParams extends OutboundMediaInput {
+  attachments?: EmailAttachment[];
   message_id?: string;
   email: string;
   subject: string;
@@ -66,7 +73,18 @@ export async function sendEmailCore(params: SendEmailCoreParams): Promise<SendEm
     placeholder_policy,
   } = params;
 
-  if (!email || !subject || !message || !site_id) {
+  let attachments: EmailAttachment[] | undefined;
+  try {
+    attachments = validateEmailAttachments(params.attachments);
+    validateResponseFormat(params.response_format, 'email');
+    const media = await validateOutboundMedia(params, 'email');
+    await requireSavedOutboundMedia(params, 'email', media);
+    if (media && attachments?.length) throw new Error('Use media_url or attachments, not both');
+    if (media) attachments = validateEmailAttachments([await resolveEmailMediaAttachment(media)]);
+  } catch (error) {
+    return { success: false, error: { code: 'INVALID_REQUEST', message: (error as Error).message } };
+  }
+  if (!email || !subject || typeof message !== 'string' || (!message && !attachments?.length) || !site_id) {
     return {
       success: false,
       error: { code: 'INVALID_REQUEST', message: 'email, subject, message, and site_id are required' },
@@ -156,8 +174,9 @@ export async function sendEmailCore(params: SendEmailCoreParams): Promise<SendEm
     };
   }
 
-  let trackingId: string | undefined;
-  if (conversation_id) {
+  // Saved outbound messages already own their tracking and delivery metadata.
+  let trackingId: string | undefined = params.message_id;
+  if (!trackingId && conversation_id) {
     try {
       const { data: newMessage } = await supabaseAdmin
         .from('messages')
@@ -188,7 +207,8 @@ export async function sendEmailCore(params: SendEmailCoreParams): Promise<SendEm
           ? { formatted: '' as string }
           : await EmailSignatureService.generateAgentSignature(site_id, from).catch(() => ({ formatted: '' }));
 
-        const result = await AgentMailSendService.sendViaAgentMail({
+        const dispatch = () => AgentMailSendService.sendViaAgentMail({
+          attachments,
           automationIdentity: params,
           email,
           subject: effectiveSubject,
@@ -202,16 +222,20 @@ export async function sendEmailCore(params: SendEmailCoreParams): Promise<SendEm
           senderEmail: `${username}@${domain}`,
           signatureHtml: omit_signature ? undefined : signature.formatted,
           trackingId,
+          preserveMessageMetadata: Boolean(params.message_id),
         });
+        const result = attachments?.length ? await dispatchNativeMedia(params, 'agentmail', dispatch,
+          sent => ({ id: sent.success ? sent.external_message_id : undefined })) : await dispatch();
 
-        return { ...result, success: true };
+        return result;
       } catch (error: any) {
         if (error instanceof AutomationSendSuppressed) {
           await releaseEmailSendPermit(sendPermit);
           return automationSkippedResult(error);
         }
         console.error(`[SEND_EMAIL] AgentMail error:`, error);
-        if (!configuredEmail || params.disable_provider_fallback) {
+        // An ambiguous native attachment attempt must never resend via SMTP.
+        if (!configuredEmail || params.disable_provider_fallback || params.media_url || attachments?.length) {
           await releaseEmailSendPermit(sendPermit);
           return {
             success: false,
@@ -235,7 +259,7 @@ export async function sendEmailCore(params: SendEmailCoreParams): Promise<SendEm
     ? { formatted: '' as string }
     : await EmailSignatureService.generateAgentSignature(site_id, from).catch(() => ({ formatted: '' }));
 
-  if (trackingId) {
+  if (trackingId && !params.message_id) {
     try {
       await supabaseAdmin
         .from('messages')
@@ -254,6 +278,7 @@ export async function sendEmailCore(params: SendEmailCoreParams): Promise<SendEm
   }
 
   const emailParams: any = {
+    attachments,
     automationIdentity: params,
     email,
     from: from || '',
@@ -270,7 +295,9 @@ export async function sendEmailCore(params: SendEmailCoreParams): Promise<SendEm
 
   let result;
   try {
-    result = await EmailSendService.sendEmail(emailParams);
+    const dispatch = () => EmailSendService.sendEmail(emailParams);
+    result = attachments?.length ? await dispatchNativeMedia(params, 'smtp', dispatch,
+      sent => ({ id: sent.success ? sent.envelope_id || sent.email_id : undefined, skipped: sent.skipped })) : await dispatch();
   } catch (error) {
     await releaseEmailSendPermit(sendPermit);
     throw error;

@@ -68,6 +68,7 @@ import { recordTool } from '@/app/api/agents/tools/record/assistantProtocol';
 import { workflowsTool } from '@/app/api/agents/tools/workflows/assistantProtocol';
 import { copywritingTool } from '@/app/api/agents/tools/copywriting/assistantProtocol';
 import { sendWhatsAppTool } from '@/app/api/agents/tools/sendWhatsApp/assistantProtocol';
+import { sendChannelMessageTool } from '@/app/api/agents/tools/sendChannelMessage/assistantProtocol';
 import { whatsappTemplateTool } from '@/app/api/agents/tools/whatsappTemplate/assistantProtocol';
 import { conversationsTool } from '@/app/api/agents/tools/conversations/assistantProtocol';
 import { messagesTool } from '@/app/api/agents/tools/messages/assistantProtocol';
@@ -410,6 +411,7 @@ export const getAssistantToolDefinitions = (
     workflowsTool(siteId, userId),
     copywritingTool(siteId, userId),
     sendWhatsAppTool(siteId),
+    sendChannelMessageTool(siteId),
     whatsappTemplateTool(siteId),
     conversationsTool(siteId, userId),
     messagesTool(siteId),

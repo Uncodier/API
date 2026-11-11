@@ -8,8 +8,11 @@
 
 import type { ContentPlaceholderPolicy } from '@/lib/messaging/lead-merge-fields';
 import { sendEmailCore } from './core';
+import type { EmailAttachment } from '@/lib/services/email/email-attachments';
+import type { OutboundMediaInput } from '@/lib/services/channels/outbound-media';
 
-export interface SendEmailToolParams {
+export interface SendEmailToolParams extends OutboundMediaInput {
+  attachments?: EmailAttachment[];
   email: string;
   subject: string;
   message: string;
@@ -30,7 +33,7 @@ export interface SendEmailToolParams {
 export function sendEmailTool(site_id: string, instance_id?: string) {
   return {
     name: 'sendEmail',
-    description: `Send an email to a recipient. Required: email, subject, message. Optional: from, lead_id, conversation_id, agent_id, placeholder_policy.
+    description: `Send an email to a recipient. Required: email, subject, message. Optional: from, lead_id, conversation_id, agent_id, placeholder_policy. Attach an existing file using message_type + public HTTPS media_url + optional mime_type, or attachments containing base64 bytes (not both). message can be empty for attachment-only emails. Do not invent files or substitute a text link for a requested attachment.
 
 Merge fields (use exactly this syntax for best compatibility): {{lead.name}}, {{lead.first_name}}, {{lead.email}}, {{lead.phone}}, {{lead.position}}, {{lead.company}}, {{lead.notes}}, {{lead.metadata.<key>}} (dot path under lead.metadata), {{site.name}}. Common aliases (e.g. {{lead.full_name}}, {{lead.correo}}) are normalized to canonical keys. Do not use [Name], {name}, or single braces.
 
@@ -47,6 +50,13 @@ When lead_id is set, subject and message are personalized. Unknown tokens: strip
         lead_id: { type: 'string', description: 'Lead UUID for tracking and merge fields' },
         conversation_id: { type: 'string', description: 'Conversation UUID for tracking' },
         agent_id: { type: 'string', description: 'Agent UUID for tracking' },
+        message_type: { type: 'string', enum: ['text', 'image', 'video', 'audio', 'document'] },
+        media_url: { type: 'string', description: 'Public HTTPS attachment URL, never a link substitution' },
+        mime_type: { type: 'string' },
+        response_format: { type: 'string', enum: ['text'], description: 'Email does not support generated audio responses' },
+        attachments: { type: 'array', maxItems: 10, items: { type: 'object', additionalProperties: false,
+          properties: { filename: { type: 'string' }, content: { type: 'string', description: 'Base64 file bytes' },
+            content_type: { type: 'string' } }, required: ['filename', 'content'] } },
         placeholder_policy: {
           type: 'string',
           enum: ['strip_tokens', 'skip_recipient'],

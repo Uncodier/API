@@ -13,10 +13,15 @@ import { EmailSignatureService } from '@/lib/services/email/EmailSignatureServic
 import { readToolExecutionContext } from '@/lib/services/tool-execution-context';
 import { exactEmailContent } from './exact-email-content';
 import { isAcceptedZavuMessage } from './exact-zavu-response';
+import { validateOutboundMedia, OutboundMediaError, type OutboundMediaInput } from '@/lib/services/channels/outbound-media';
+import { resolveEmailMediaAttachment } from '@/lib/services/channels/email-media';
+import { validateEmailAttachments, type EmailAttachment } from '@/lib/services/email/email-attachments';
+import { WhatsAppTemplateService } from '@/lib/services/whatsapp/WhatsAppTemplateService';
 import { fetchSiteNameForMerge, personalizeMergeSubjectAndMessage, placeholderPolicyToMergePolicy,
   buildContentVariablesForLead, type ContentPlaceholderPolicy } from './lead-merge-fields';
 
-export interface ExactDeliveryInput {
+export interface ExactDeliveryInput extends OutboundMediaInput {
+  attachments?: EmailAttachment[];
   site_id: string;
   channel: DeliveryChannel;
   connection_id: string;
@@ -94,14 +99,29 @@ export async function sendExactDelivery(input: ExactDeliveryInput): Promise<Exac
     parseDeliveryRoutes({ channel: input.channel, connection_id: input.connection_id,
       ...(input.voice_mode !== undefined ? { voice_mode: input.voice_mode } : {}) });
     if (!input.connection_id || typeof input.to !== 'string' || !input.to.trim()
-      || typeof input.message !== 'string' || !input.message.trim()) throw deliveryError('Invalid exact delivery input.');
+      || typeof input.message !== 'string') throw deliveryError('Invalid exact delivery input.');
     if (input.channel === 'email' && !EmailSendService.isValidEmail(input.to)) throw deliveryError('Invalid email recipient.');
     if (['sms', 'whatsapp', 'voice'].includes(input.channel) && !/^\+[1-9]\d{6,14}$/.test(input.to)) {
       throw deliveryError('Invalid phone recipient.');
     }
     const context = await loadExactDeliveryContext(input);
     const data = context.customData;
+    // Durable metadata is authoritative; retries must not replace a saved attachment.
+    const storedMedia = ['message_type', 'media_url', 'mime_type'].some(key => data[key] !== undefined);
+    const media = await validateOutboundMedia(storedMedia ? {
+      message_type: data.message_type, media_url: data.media_url, mime_type: data.mime_type,
+      response_format: data.response_format ?? input.response_format,
+    } : input, input.channel);
+    // UI history may mirror the canonical URL as descriptive attachment metadata.
+    // It is not a second file and must not be interpreted as base64 bytes.
+    const descriptiveAttachments = media && Array.isArray(data.attachments) && data.attachments.length === 1
+      && data.attachments[0]?.url === media.content.mediaUrl && data.attachments[0]?.content === undefined;
+    const explicitAttachments = validateEmailAttachments(descriptiveAttachments ? input.attachments : (data.attachments ?? input.attachments));
+    if (explicitAttachments?.length && (input.channel !== 'email' || media)) {
+      throw deliveryError('Attachments require email and cannot be combined with media_url.', 'INVALID_MEDIA');
+    }
     const rawMessage = context.message?.content ?? input.message;
+    if (!rawMessage.trim() && !media && !explicitAttachments?.length) throw deliveryError('Message or media is required.');
     const subject = data.subject || data.title || input.subject || '';
     const siteName = await fetchSiteNameForMerge(input.site_id);
     const numberedVariables = Array.isArray(data.placeholder_map) && data.placeholder_map.length
@@ -120,6 +140,8 @@ export async function sendExactDelivery(input: ExactDeliveryInput): Promise<Exac
     const account = await loadExactAccount(input.site_id, input.channel, context.connectionId!);
     preparedAccount = account;
     const c = account.config;
+    const attachments = input.channel === 'email'
+      ? (media && account.provider !== 'zavu' ? validateEmailAttachments([await resolveEmailMediaAttachment(media)]) : explicitAttachments) : undefined;
     let result: ExactDeliveryResult;
     if (input.channel === 'voice' && voiceMode === 'agent_call') {
       if (!input.message_id) throw deliveryError('Agent calls require a tracked message.');
@@ -134,22 +156,29 @@ export async function sendExactDelivery(input: ExactDeliveryInput): Promise<Exac
       result = { success: !!call.call?.id, status: call.call?.status || 'queued', messageId: call.call?.id,
         callId: call.call?.id, deliveryId: call.deliveryId, duplicate: call.duplicate };
     } else if (account.provider === 'zavu') {
+      if (media && input.channel === 'whatsapp') {
+        const window = await WhatsAppTemplateService.checkResponseWindow(context.conversationId || null, input.to, input.site_id);
+        if (!window.withinWindow) throw deliveryError('Media requires an open WhatsApp response window.', 'MEDIA_TEMPLATE_REQUIRED');
+      }
       const emailContent = input.channel === 'email'
         ? exactEmailContent(merged.message, siteName || '', signature.formatted, input.message_id) : undefined;
       await beforeDispatch();
       const sent = await sendChannelMessage({ to: input.to, text: emailContent?.text ?? merged.message, channel: input.channel,
         senderId: c.zavu_sender_id, ...(input.channel === 'email' ? { subject: merged.subject } : {}),
         ...(emailContent ? { htmlBody: emailContent.htmlBody } : {}),
+        ...(media ? { messageType: media.messageType, content: media.content } : {}),
+        ...(attachments?.length ? { attachments } : {}),
         ...(input.message_id ? { idempotencyKey: `exact-delivery:${input.site_id}:${input.message_id}` } : {}) });
       result = { success: isAcceptedZavuMessage(sent), status: sent?.message?.status, messageId: sent?.message?.id };
     } else if (input.channel === 'whatsapp') {
       const sent = await sendExactTwilio({ siteId: input.site_id, account, to: input.to,
         message: merged.message, rawMessage, conversationId: context.conversationId, lead: context.lead, siteName: siteName || '', beforeDispatch,
-        templateSid: data.template_sid });
+        templateSid: data.template_sid, mediaUrls: media ? [media.content.mediaUrl] : undefined });
       result = { success: sent.success, status: 'sent', messageId: sent.messageId,
         ...(!sent.success ? { error: { code: 'EXACT_PROVIDER_FAILED', message: 'Selected WhatsApp provider failed.' } } : {}) };
     } else {
       const emailParams = { site_id: input.site_id, email: input.to, subject: merged.subject || subject, message: merged.message,
+        ...(attachments?.length ? { attachments } : {}),
         automationIdentity: input,
         agent_id: input.agent_id || context.message?.agent_id, conversation_id: context.conversationId,
         lead_id: context.leadId, trackingId: input.message_id, signatureHtml: signature.formatted };
@@ -182,6 +211,8 @@ export async function sendExactDelivery(input: ExactDeliveryInput): Promise<Exac
     return { ...result, delivery_attempted: attempted, message_id: result.messageId, external_message_id: result.external_message_id || result.messageId };
   } catch (error) {
     if (error instanceof AutomationSendSuppressed) return { ...automationSkippedResult(error), delivery_attempted: false };
+    if (error instanceof OutboundMediaError) return { success: false, delivery_attempted: attempted,
+      error: { code: 'INVALID_MEDIA', message: error.message } };
     const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : 'EXACT_DELIVERY_FAILED';
     // Provider errors can echo credentials or content. Do not surface raw errors.
     return { success: false, delivery_attempted: attempted, error: { code, message: 'Exact delivery failed. Check the selected active connection and credentials before retrying.' } };

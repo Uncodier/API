@@ -32,6 +32,7 @@ export async function sendExactTwilio(input: {
   rawMessage: string; conversationId?: string; lead: any; siteName: string;
   beforeDispatch: () => Promise<void>;
   templateSid?: string;
+  mediaUrls?: string[];
 }) {
   const config = await exactWhatsAppConfig(input.siteId, input.account);
   if (!config) throw deliveryError('Twilio selection required.');
@@ -39,6 +40,7 @@ export async function sendExactTwilio(input: {
   let contentSid: string | undefined;
   let contentVariables: Record<string, string> | undefined;
   if (!window.withinWindow) {
+    if (input.mediaUrls?.length) throw deliveryError('Media requires an open WhatsApp response window; text templates cannot deliver this attachment.', 'MEDIA_TEMPLATE_REQUIRED');
     const canonicalBody = canonicalExactTemplateBody(input.rawMessage);
     let template: { templateSid?: string; placeholderMap?: string[]; templatedBody?: string };
     if (input.templateSid) {
@@ -67,5 +69,6 @@ export async function sendExactTwilio(input: {
   return sendTwilioWhatsAppMessage({ phoneNumber: input.to, message: input.message,
     accountSid: config.phoneNumberId, authToken: config.accessToken, fromNumber: config.fromNumber,
     messagingServiceSid: config.messagingServiceSid, pinFromNumber: true,
-    strictSingleMessage: true, contentSid, contentVariables });
+    strictSingleMessage: true, contentSid, contentVariables,
+    ...(input.mediaUrls?.length ? { mediaUrls: input.mediaUrls } : {}) });
 }

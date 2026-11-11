@@ -247,7 +247,9 @@ export class InstanceAssetsService {
     try {
       console.log(`📝 [InstanceAssetsService] Reading text file: ${asset.name}`);
       
-      const content = await AgentService.getAgentFileContent(asset.file_path || asset.id);
+      const content = typeof asset.content === 'string'
+        ? asset.content
+        : await AgentService.getAgentFileContent(asset.file_path || asset.id);
       
       if (!content) {
         console.log(`⚠️ [InstanceAssetsService] No content found for text file: ${asset.name}`);

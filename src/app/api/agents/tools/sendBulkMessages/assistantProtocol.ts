@@ -29,6 +29,7 @@ import { executeBulkRoutes, recipientContextForBulk, type BulkExecutionIO } from
 import { getExactWhatsAppConfig, sendExactDelivery } from '@/lib/messaging/exact-delivery';
 import { canonicalExactTemplateBody } from '@/lib/messaging/exact-template-body';
 import { prepareExactWhatsAppTemplate } from './exact-whatsapp-template';
+import { validateOutboundMedia } from '@/lib/services/channels/outbound-media';
 
 export function sendBulkMessagesTool(siteId: string) {
   const executeSingle = async (args: SendBulkMessagesToolParams, executionContext: ToolExecutionContext | undefined, io: BulkExecutionIO) => {
@@ -46,11 +47,14 @@ export function sendBulkMessagesTool(siteId: string) {
       additional_context,
     } = args;
     const audience_email_mode = args.audience_email_mode ?? 'mail';
+    const media = await validateOutboundMedia(args, channel!);
+    const mediaFields = media ? { message_type: media.messageType, media_url: media.content.mediaUrl,
+      ...(media.content.mimeType ? { mime_type: media.content.mimeType } : {}) } : {};
     const recipientContext = recipientContextForBulk(siteId, args, executionContext);
 
     if (!audience_id) return { success: false, error: 'Missing required field: audience_id' };
     if (!channel) return { success: false, error: 'Missing required field: channel' };
-    if (!message) return { success: false, error: 'Missing required field: message' };
+    if (!message && !media) return { success: false, error: 'Missing required field: message or media' };
     if (channel === 'email' && !subject) {
       return { success: false, error: 'Missing required field for email: subject' };
     }
@@ -88,6 +92,7 @@ export function sendBulkMessagesTool(siteId: string) {
             }
 
             const result = await sendExactDelivery({
+              ...mediaFields,
               channel: 'email', connection_id: connection_id!, to: leadRow.email,
               site_id: siteId,
               email: leadRow.email,
@@ -285,6 +290,7 @@ export function sendBulkMessagesTool(siteId: string) {
               lead_id: leadId,
               custom_data: {
                 status: 'accepted',
+                ...mediaFields,
                 channel: channel,
                 connection_id,
                 audience_id,
@@ -412,6 +418,7 @@ export function sendBulkMessagesTool(siteId: string) {
             lead_id: leadId,
             custom_data: {
               status: 'accepted',
+              ...mediaFields,
               channel: 'email',
               connection_id,
               audience_id: audience_id,

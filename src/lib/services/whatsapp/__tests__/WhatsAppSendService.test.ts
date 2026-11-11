@@ -19,6 +19,7 @@ jest.mock('@/lib/services/channels/long-reply-audio', () => ({
 }));
 jest.mock('uuid', () => ({ v4: jest.fn(() => '00000000-0000-4000-8000-000000000001') }));
 jest.mock('@/lib/utils/token-decryption', () => ({ decryptToken: jest.fn() }));
+jest.mock('@/lib/security/safe-remote-url', () => ({ assertSafeRemoteUrl: jest.fn(async (url: string) => new URL(url)) }));
 
 // Mock de supabaseAdmin
 jest.mock('@/lib/database/supabase-client', () => ({
@@ -99,6 +100,35 @@ describe('WhatsAppSendService', () => {
       site_id: 'test-site-id',
       responseWindowEnabled: true,
     };
+
+    it.each(['image', 'video', 'audio', 'document'] as const)('sends existing %s as MediaUrl, without TTS or a text link', async message_type => {
+      jest.spyOn(WhatsAppTemplateService, 'checkResponseWindow').mockResolvedValue({ withinWindow: true });
+      jest.mocked(global.fetch).mockResolvedValueOnce({ ok: true, json: async () => ({ sid: 'media-sent' }) } as Response);
+      const media_url = 'https://media.example.test/existing-file';
+      const result = await WhatsAppSendService.sendMessage({ ...mockParams, message: '', message_type, media_url });
+      expect(result.success).toBe(true);
+      const form = new URLSearchParams(String(jest.mocked(global.fetch).mock.calls[0][1]?.body));
+      expect(form.get('MediaUrl')).toBe(media_url);
+      expect(form.get('Body') || '').toBe('');
+      expect(tryPrepareLongReplyAudio).not.toHaveBeenCalled();
+      expect(deliverExplicitAudio).not.toHaveBeenCalled();
+    });
+
+    it('retains media when WhatsApp requires an approved template', async () => {
+      jest.spyOn(WhatsAppTemplateService, 'checkResponseWindow').mockResolvedValue({ withinWindow: false });
+      const media_url = 'https://media.example.test/video.mp4';
+      const result = await WhatsAppSendService.sendMessage({ ...mockParams, responseWindowEnabled: false,
+        conversation_id: 'conversation', message_type: 'video', media_url });
+      expect(result).toMatchObject({ template_required: true, media_urls: [media_url], message_type: 'video', media_url });
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it('rejects media plus generated speech without sending or billing', async () => {
+      await expect(WhatsAppSendService.sendMessage({ ...mockParams, response_format: 'audio',
+        media_urls: ['https://media.example.test/photo.png'] })).rejects.toMatchObject({ status: 400 });
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(deliverExplicitAudio).not.toHaveBeenCalled();
+    });
 
     it('never converts explicitly selected text to audio', async () => {
       jest.mocked(global.fetch).mockResolvedValueOnce({ ok: true, json: async () => ({ sid: 'sent' }) } as Response);

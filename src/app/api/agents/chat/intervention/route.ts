@@ -11,6 +11,7 @@ import { authorizeIntervention, InterventionRequestError } from './authorize-int
 import { SocialCommentError } from '@/lib/services/social-comments/metadata';
 import { validateResponseFormat, type ResponseFormat } from '@/lib/services/channels/response-format';
 import { AudioRoutingError, resolveAudioRouting } from '@/lib/services/channels/audio-routing';
+import { validateOutboundMedia, type OutboundMediaInput } from '@/lib/services/channels/outbound-media';
 
 const PENDING_CUSTOM_DATA = {
   command_status: 'pending',
@@ -28,6 +29,7 @@ async function saveMessages(
   commentMetadata?: Record<string, unknown>,
   responseFormat?: ResponseFormat,
   connectionId?: string,
+  mediaInput?: OutboundMediaInput,
 ) {
   try {
     const interventionMessageData: any = {
@@ -36,6 +38,7 @@ async function saveMessages(
       content: interventionMessage,
       role: 'team_member',
       custom_data: { ...commentMetadata, ...PENDING_CUSTOM_DATA,
+        ...mediaInput,
         ...(connectionId !== undefined ? { connection_id: connectionId } : {}),
         ...(responseFormat !== undefined ? { response_format: responseFormat } : {}) },
     };
@@ -78,11 +81,12 @@ export async function POST(request: Request) {
       leadId: lead_id, visitorId: visitor_id, siteId: site_id,
       messageId: requestMessageId, title: conversationTitle,
       commentMetadata, responseFormat: requestedResponseFormat,
+      mediaInput: requestedMediaInput,
     } = await authorizeIntervention(request, body);
 
     // Resolve the stored conversation channel before any audio persistence or
     // retry claim. Caller-supplied channel hints are not accepted by the schema.
-    const preflightChannel = requestedResponseFormat === 'audio' || requestMessageId
+    const preflightChannel = requestedResponseFormat === 'audio' || requestMessageId || requestedMediaInput?.media_url
       ? (commentMetadata
         ? { channel: commentMetadata.network as string, channelDelivery: true, leadId: lead_id,
           leadPhone: undefined, leadEmail: undefined, visitorPhone: undefined }
@@ -93,11 +97,15 @@ export async function POST(request: Request) {
       catch (error) { throw new InterventionRequestError((error as Error).message, 400); }
     }
     let responseFormat = requestedResponseFormat;
+    let mediaInput: OutboundMediaInput | undefined = requestedMediaInput;
+    try { await validateOutboundMedia({ ...mediaInput, response_format: responseFormat }, preflightChannel?.channel || 'web'); }
+    catch (error) { throw new InterventionRequestError((error as Error).message, 400); }
 
     if (requestMessageId && conversationId) {
       savedMessages = await reuseInterventionMessage(requestMessageId, conversationId, user_id, message, {
         responseFormat: requestedResponseFormat, channel: preflightChannel?.channel,
         siteId: site_id, allowLegacyWhatsApp: preflightChannel?.channelDelivery !== true,
+        mediaInput,
       });
       if (!savedMessages) {
         return NextResponse.json(
@@ -106,6 +114,7 @@ export async function POST(request: Request) {
         );
       }
       responseFormat = savedMessages.responseFormat;
+      mediaInput = savedMessages.mediaInput;
       if (responseFormat === 'audio' && preflightChannel) preflightChannel.channelDelivery = savedMessages.channelDelivery;
     } else {
       const audioRouting = responseFormat === 'audio' ? await resolveAudioRouting({
@@ -124,6 +133,7 @@ export async function POST(request: Request) {
         commentMetadata,
         responseFormat,
         audioRouting?.connectionId,
+        mediaInput,
       );
     }
 
@@ -173,7 +183,8 @@ export async function POST(request: Request) {
           savedMessages.conversationId,
           lead_id,
           savedMessages.interventionMessageId,
-          ...(responseFormat !== undefined ? [responseFormat] as const : [])
+          responseFormat,
+          mediaInput,
         );
 
         const needsWorkflow =
@@ -207,8 +218,8 @@ export async function POST(request: Request) {
         message_id: savedMessages.interventionMessageId,
         role: 'team_member',
         user_id: user_id,
-        custom_data: responseFormat !== undefined
-          ? { ...commentMetadata, response_format: responseFormat } : commentMetadata,
+        custom_data: { ...commentMetadata, ...mediaInput,
+          ...(responseFormat !== undefined ? { response_format: responseFormat } : {}) },
       }
     };
 

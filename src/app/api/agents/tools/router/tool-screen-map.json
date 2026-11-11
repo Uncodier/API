@@ -100,6 +100,7 @@
     "sendBulkMessages": { "screens": ["chat"] },
     "sendEmail": { "screens": ["chat"] },
     "sendWhatsApp": { "screens": ["chat"] },
+    "sendChannelMessage": { "screens": ["chat"] },
     "site_settings": { "screens": ["settingsGeneral", "team", "channels", "calendar", "social"], "adminOnly": true },
     "social_media_accounts": { "screens": ["social"] },
     "social_media_analytics": { "screens": ["reportSocial", "social"] },

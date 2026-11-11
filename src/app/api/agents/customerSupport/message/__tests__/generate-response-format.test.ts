@@ -22,10 +22,12 @@ it.each([undefined, 'text', 'audio'] as const)('adds a message-only format targe
     request: new Request('https://example.test'), contextMessage, response_format: explicit });
   const command = jest.mocked(CommandFactory.createCommand).mock.calls[0][0];
   expect(command.targets).toEqual([
-    { message: expect.objectContaining({ content: 'message example', response_format: explicit || 'text' }) },
+    { message: expect.objectContaining({ content: 'message example', response_format: explicit || 'text',
+      message_type: 'text', media_url: '', mime_type: '' }) },
     { conversation: expect.not.objectContaining({ response_format: expect.anything() }) },
   ]);
   expect(command.context).toContain('downstream workflow owns synthesis and delivery');
+  expect(command.context).toContain('Never invent URLs or create/upload media');
   expect(command.tools).toEqual([]);
   expect(buildCustomerSupportTools).toHaveBeenCalledWith(id);
 });

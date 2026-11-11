@@ -1,4 +1,5 @@
 import { usableSupportContent } from './response-content';
+import { normalizeSupportMedia } from './response-media';
 
 type RecordValue = Record<string, any>;
 const object = (value: unknown): value is RecordValue =>
@@ -30,18 +31,31 @@ export function extractSupportResults(executedCommand: any) {
   const add = (value: unknown, ...flags: unknown[]) => {
     candidates.push({ value, flags: flags.filter(object) });
   };
-  for (const row of responses) add(row.message?.content, row, row.message);
+  for (const row of responses) if (object(row.message)) add(row.message.content, row, row.message);
   for (const row of responses) {
     // Explicit wrappers and supported legacy shapes only. Never stringify.
     if (row.conversation && row.type === undefined) continue;
     add(row.content, row);
-    add(row.content?.message?.content, row, row.content, row.content?.message);
-    add(row.content?.content, row, row.content);
+    if (object(row.content?.message)) add(row.content.message.content, row, row.content, row.content.message);
+    if (object(row.content) && Object.prototype.hasOwnProperty.call(row.content, 'content'))
+      add(row.content.content, row, row.content);
     if (row.type === undefined) add(row.text, row);
   }
   for (const row of rows) if (typeof row === 'string') add(row);
-  const selected = candidates.find(candidate => usableSupportContent(candidate.value));
-  const assistantMessage = usableSupportContent(selected?.value);
+  const mediaSource = (candidate: typeof candidates[number]) => [...candidate.flags].reverse()
+    .find(source => ['message_type', 'media_url', 'mime_type'].some(key =>
+      Object.prototype.hasOwnProperty.call(source, key)));
+  const hasMedia = (candidate: typeof candidates[number]) => {
+    const source = mediaSource(candidate);
+    return source && ((source.message_type !== undefined && source.message_type !== 'text')
+      || Boolean(source.media_url) || Boolean(source.mime_type));
+  };
+  const selected = candidates.find(candidate => usableSupportContent(candidate.value)
+    || (hasMedia(candidate) && (candidate.value === undefined || candidate.value === '')));
+  const assistantMessage = usableSupportContent(selected?.value) ?? (selected && hasMedia(selected) ? '' : undefined);
+  const source = selected && mediaSource(selected);
+  const responseMedia = source ? normalizeSupportMedia({ message_type: source.message_type,
+    media_url: source.media_url, mime_type: source.mime_type }) : undefined;
   // Only the selected response may choose delivery format. Never borrow from
   // tools, discarded candidates, or conversation flags. Innermost target wins.
   const responseFormat = [...(selected?.flags || [])].reverse()
@@ -53,6 +67,7 @@ export function extractSupportResults(executedCommand: any) {
     return values.includes(true) ? true : values.includes(false) ? false : undefined;
   };
   return { assistantMessage, conversationTitle,
+    ...(responseMedia ? { responseMedia } : {}),
     ...(responseFormat === 'text' || responseFormat === 'audio' ? { responseFormat } : {}),
     isRobot: flag('is_robot'), isTransactionalMessage: flag('is_transactional_message'),
     isErratic: flag('is_erratic') };

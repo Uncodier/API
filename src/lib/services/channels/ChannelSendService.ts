@@ -12,12 +12,18 @@ import { resolveAudioRouting } from './audio-routing';
 import { deliverZavuTemplate, TemplateDeliveryError, type TemplateDeliveryResult } from '@/lib/services/whatsapp/zavu-template-delivery';
 import { sendCommentReply } from '@/lib/services/social-comments/delivery';
 import { getSiteLicensedResources, isLicensedChannelConnection, requireLicensedChannel } from '@/lib/billing/licensed-resources';
+import { validateOutboundMedia } from './outbound-media';
+import { requireSavedOutboundMedia } from './saved-outbound-media';
+import { dispatchNativeMedia } from './native-media-delivery';
 
 export interface SendChannelMessageParams {
   site_id: string;
   channel: string; // e.g. "telegram", "messenger", "facebook", "instagram", "threads", "linkedin", "x", "youtube"
   to: string; // chat ID
-  message: string;
+  message?: string;
+  message_type?: 'text' | 'image' | 'video' | 'audio' | 'document';
+  media_url?: string;
+  mime_type?: string;
   subject?: string;
   agent_id?: string;
   conversation_id?: string;
@@ -33,6 +39,7 @@ export interface SendChannelMessageResult {
   success: boolean;
   messageId?: string;
   deliveryKind?: 'comment';
+  provider?: 'zavu' | 'outstand';
   status?: number;
   error?: string;
   templateDelivery?: TemplateDeliveryResult;
@@ -62,9 +69,20 @@ export class ChannelSendService {
    */
   static async sendMessage(params: SendChannelMessageParams): Promise<SendChannelMessageResult> {
     try {
+      if (typeof params.channel !== 'string' || (params.message !== undefined && typeof params.message !== 'string')) {
+        throw Object.assign(new Error('channel and message must be strings'), { status: 400 });
+      }
+      params = { ...params, channel: params.channel.toLowerCase() };
       validateResponseFormat(params.response_format, params.channel);
-      if (!params.site_id || !params.channel || !params.to || !params.message) {
-        throw new Error('site_id, channel, to, and message are required');
+      const media = await validateOutboundMedia(params, params.channel);
+      const message = params.message || '';
+      const savedMedia = await requireSavedOutboundMedia(params, params.channel, media);
+      const savedMediaConnection = savedMedia?.connection_id;
+      if (savedMediaConnection !== undefined && (typeof savedMediaConnection !== 'string' || !savedMediaConnection.trim())) {
+        throw Object.assign(new Error('Saved media connection is invalid'), { status: 400 });
+      }
+      if (!params.site_id || !params.channel || !params.to || (!message.trim() && !media)) {
+        throw Object.assign(new Error('site_id, channel, to, and message or media are required'), { status: 400 });
       }
 
       console.log(`[ChannelSendService] Sending ${params.channel} message to ${params.to} for site ${params.site_id}`);
@@ -72,10 +90,7 @@ export class ChannelSendService {
 
       // Handle Outstand Comments channels
       if (OUTSTAND_CHANNELS.includes(params.channel)) {
-        if (!params.message_id && !params.conversation_id) {
-          throw new Error(`Outstand replies require message_id or conversation_id to find the parent comment`);
-        }
-
+        let instagramMayUseZavu = params.channel === 'instagram' && !params.message_id && !params.conversation_id;
         if (params.channel === 'instagram' && params.conversation_id) {
           const { data: conversation, error: conversationError } = await supabaseAdmin
             .from('conversations')
@@ -87,7 +102,7 @@ export class ChannelSendService {
 
           const outstandConversationId =
             conversation?.custom_data?.outstand_conversation_id;
-          if (typeof outstandConversationId === 'string') {
+          if (typeof outstandConversationId === 'string' && savedMediaConnection === undefined) {
             const client = getOutstandClient();
             await authorizeOutstandConversation(
               client,
@@ -95,25 +110,45 @@ export class ChannelSendService {
               params.site_id,
             );
             await assertAutomationSendAllowed(params);
-            const result = await client.sendConversationMessage(
+            const dispatch = () => client.sendConversationMessage(
               outstandConversationId,
-              { content: params.message },
+              {
+                ...(message.trim() ? { content: message } : {}),
+                ...(media ? { media_urls: [media.content.mediaUrl] } : {}),
+              },
               params.site_id,
             );
-            return {
-              success: result.success !== false,
-              messageId: result.message?.id || `outstand-dm-${Date.now()}`,
-            };
+            const result = media ? await dispatchNativeMedia(params, 'outstand', dispatch,
+              sent => ({ id: sent.success === true ? sent.message?.id : undefined, status: 'pending' })) : await dispatch();
+            if (result.success !== true || !result.message?.id) {
+              throw new Error('Outstand provider did not confirm acceptance');
+            }
+            return { success: true, messageId: result.message.id, provider: 'outstand' };
           }
+          if (media && savedMedia && savedMediaConnection === undefined) {
+            throw Object.assign(new Error('Unbound saved Instagram media requires an authorized Outstand DM conversation'), { status: 400 });
+          }
+          // Only a saved non-comment conversation may use the site's Zavu Instagram connection.
+          // Never turn a public comment target into a DM by guessing from `to`.
+          const metadata = conversation?.custom_data || {};
+          instagramMayUseZavu = Boolean(conversation)
+            && !String(metadata.source || '').includes('comment')
+            && !metadata.outstand_comment_id && !metadata.social_comment;
         }
-        
-        return await sendCommentReply(params);
+
+        if (!instagramMayUseZavu) {
+          if (media) throw Object.assign(new Error('Media requires an existing Instagram DM conversation; comment replies do not support media'), { status: 400 });
+          if (!params.message_id && !params.conversation_id) {
+            throw new Error('Outstand replies require message_id or conversation_id to find the parent comment');
+          }
+          return await sendCommentReply({ ...params, message });
+        }
       }
 
       // 1. Get site channels connections to find the zavu_sender_id for this channel type
       const siteSettings = await getSiteLicensedResources(params.site_id);
       const connections = siteSettings.channels.connections;
-      let selectedConnection: string | undefined;
+      let selectedConnection: string | undefined = savedMediaConnection;
       let selectedSender: string | undefined;
       let templateStarted = false;
       if (params.response_format === 'audio' && params.message_id && params.conversation_id) {
@@ -139,6 +174,23 @@ export class ChannelSendService {
         throw new Error(`No sender configured for channel ${params.channel} on site ${params.site_id}`);
       }
 
+      if (media) {
+        await requireLicensedChannel(params.site_id, params.channel, connection.id, connection.zavu_sender_id);
+        if (params.channel === 'whatsapp') {
+          const { WhatsAppTemplateService } = await import('@/lib/services/whatsapp/WhatsAppTemplateService');
+          const window = await WhatsAppTemplateService.checkResponseWindow(params.conversation_id || null, params.to, params.site_id);
+          if (!window.withinWindow) throw Object.assign(new Error('Media requires an active WhatsApp response window'), { status: 400 });
+        }
+        await assertAutomationSendAllowed(params);
+        const result = await dispatchNativeMedia(params, 'zavu', () => sendChannelMessage({
+          to: params.to, channel: params.channel, senderId: connection.zavu_sender_id,
+          ...(message.trim() ? { text: message } : {}),
+          messageType: media.messageType, content: media.content, subject: params.subject,
+        }), sent => ({ id: isAcceptedZavuMessage(sent) ? sent.message.id : undefined }));
+        if (!isAcceptedZavuMessage(result)) throw new Error('Media provider did not confirm acceptance');
+        return { success: true, messageId: result.message.id, provider: 'zavu' };
+      }
+
       if (params.response_format === 'audio') {
         const checkAudioWindow = async () => {
           if (params.channel !== 'whatsapp') return;
@@ -151,14 +203,14 @@ export class ChannelSendService {
           const window = await WhatsAppTemplateService.checkResponseWindow(params.conversation_id || null, params.to, params.site_id);
           if (templateStarted || !window.withinWindow) {
             const templateDelivery = await deliverZavuTemplate({ siteId: params.site_id, conversationId: params.conversation_id,
-              messageId: params.message_id, text: params.message, recipient: params.to,
+              messageId: params.message_id, text: message, recipient: params.to,
               connectionId: connection.id, senderId: connection.zavu_sender_id });
             return { success: true, messageId: templateDelivery.messageId, templateDelivery };
           }
         }
         const messageId = await deliverExplicitAudio({
           siteId: params.site_id, conversationId: params.conversation_id, messageId: params.message_id,
-          channel: params.channel, text: params.message, recipient: params.to,
+          channel: params.channel, text: message, recipient: params.to,
           sender: audioSenderIdentity({ provider: 'zavu', senderId: connection.zavu_sender_id }),
           dispatch: async ({ audioUrl, mimeType }) => {
             await requireLicensedChannel(params.site_id, params.channel, connection.id, connection.zavu_sender_id);
@@ -171,11 +223,11 @@ export class ChannelSendService {
             return result.message.id;
           },
         });
-        return { success: true, messageId };
+        return { success: true, messageId, provider: 'zavu' };
       }
 
       // Check if we should send this long reply as audio
-      let finalMessage = params.message;
+      let finalMessage = message;
       let audioUrlToAttach: string | undefined = undefined;
 
       // Extract a storage URL for audio generated by the agent.
@@ -230,7 +282,8 @@ export class ChannelSendService {
 
       return {
         success: true,
-        messageId: result?.message?.id
+        messageId: result?.message?.id,
+        provider: 'zavu',
       };
     } catch (error: any) {
       if (error instanceof AutomationSendSuppressed) {

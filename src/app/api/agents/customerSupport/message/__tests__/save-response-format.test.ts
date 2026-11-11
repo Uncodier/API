@@ -15,6 +15,7 @@ jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: {
 jest.mock('../agent-data', () => ({ isValidUUID: () => true, validateLeadExists: async () => true }));
 jest.mock('@/lib/services/conversation-service', () => ({ ConversationService: {} }));
 jest.mock('@/lib/services/social-comments/persistence', () => ({ saveCommentMessages: jest.fn() }));
+jest.mock('@/lib/security/safe-remote-url', () => ({ assertSafeRemoteUrl: jest.fn(async () => undefined) }));
 
 beforeEach(() => { jest.clearAllMocks(); mockResults.length = 0; });
 
@@ -39,5 +40,26 @@ it('passes selected text into the delegated social-comment save path', async () 
   expect(saveCommentMessages).toHaveBeenCalledWith(expect.objectContaining({
     assistantMessage: 'Reply', responseFormat: 'text', metadata: { source: 'comment' },
   }));
+  expect(mockInsert).not.toHaveBeenCalled();
+});
+
+it.each(['image', 'video', 'audio', 'document'])('ordinary persistence keeps existing %s and optional caption', async message_type => {
+  mockResults.push({ data: { id: 'conv' } }, { data: { custom_data: {} } },
+    { data: { id: 'in' } }, { data: { id: 'out' } }, { data: { id: 'conv' } });
+  const media = { message_type, media_url: 'https://media.example.test/file',
+    mime_type: message_type === 'document' ? 'application/pdf' : `${message_type}/test` };
+  await saveMessages('user', 'Hello', '', 'conv', undefined,
+    undefined, undefined, undefined, undefined, undefined, 'whatsapp',
+    false, false, false, undefined, true, true, {}, false, 'text', media);
+  const records = mockInsert.mock.calls.map(call => call[0][0]);
+  expect(records[1]).toMatchObject({ content: '', custom_data: { ...media, response_format: 'text', status: 'pending' } });
+  expect(records[0].custom_data?.media_url).toBeUndefined();
+});
+
+it('rejects speech/media conflict before writes', async () => {
+  await expect(saveMessages('user', 'Hello', 'Reply', 'conv', undefined,
+    undefined, undefined, undefined, undefined, undefined, 'whatsapp',
+    false, false, false, undefined, true, true, {}, false, 'audio',
+    { message_type: 'image', media_url: 'https://media.example.test/file' })).rejects.toThrow('combined');
   expect(mockInsert).not.toHaveBeenCalled();
 });

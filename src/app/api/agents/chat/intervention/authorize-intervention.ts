@@ -16,7 +16,9 @@ const requestSchema = z.object({
   visitor_id: optionalId,
   message_id: optionalId,
   reply_to_message_id: optionalId,
-  message: z.string().trim().min(1).max(20_000),
+  message: z.string().trim().max(20_000),
+  message_type: z.enum(['text', 'image', 'video', 'audio', 'document']).optional(),
+  media_url: z.string().max(8192).optional(), mime_type: z.string().optional(),
   response_format: z.enum(['text', 'audio']).optional(),
   conversation_title: z.string().trim().max(200).optional(),
 }).strict();
@@ -38,6 +40,7 @@ export async function authorizeIntervention(request: Request, body: unknown) {
   const parsed = requestSchema.safeParse(body);
   if (!parsed.success) throw new InterventionRequestError('Invalid intervention request', 400);
   const input = parsed.data;
+  if (!input.message && !input.media_url) throw new InterventionRequestError('Message or media is required', 400);
   // Conservatively cap the source text; delivery additionally validates the
   // final spoken text after markdown removal.
   if (input.response_format === 'audio' && input.message.length > 4000) {
@@ -105,6 +108,7 @@ export async function authorizeIntervention(request: Request, body: unknown) {
     visitorId: conversation.visitor_id as string | undefined,
     title: input.conversation_title || conversation.title || 'Intervention Conversation',
     message: input.message,
+    mediaInput: { message_type: input.message_type, media_url: input.media_url, mime_type: input.mime_type },
     responseFormat: input.response_format,
     messageId: input.message_id || undefined,
   };

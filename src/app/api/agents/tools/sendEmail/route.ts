@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sendEmailCore } from './core';
+import { canAccessSite } from '@/lib/security/site-access';
 
 /**
  * HTTP endpoint for sending emails from agent
@@ -7,6 +8,9 @@ import { sendEmailCore } from './core';
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
+    if (typeof body?.site_id !== 'string' || !await canAccessSite(request, body.site_id)) {
+      return NextResponse.json({ success: false, error: 'Site access denied' }, { status: 403 });
+    }
     const result = await sendEmailCore(body);
 
     if (!result.success && result.error) {

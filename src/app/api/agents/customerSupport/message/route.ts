@@ -20,6 +20,9 @@ import { validateResponseFormat, type ResponseFormat } from '@/lib/services/chan
 import { selectSupportResponseFormat } from './response-format';
 import { readSupportSnooze, resolveSnoozeConversation, saveSnoozedSupportInput } from './snooze';
 import { saveZavuSupportMessages } from './save-zavu-messages';
+import { reconcileConversationHumanEvents } from '@/lib/services/zavu/conversation-automation-contact';
+import { validateSupportResponseMedia } from './response-media';
+import { OutboundMediaError } from '@/lib/services/channels/outbound-media';
 
 export async function POST(request: Request) {
   try {
@@ -295,7 +298,8 @@ export async function POST(request: Request) {
     console.log(`Creando comando para agente: ${effectiveAgentId}, usuario: ${effectiveUserId}, site: ${effectiveSiteId || 'N/A'}`);
 
     effectiveConversationId = await resolveSnoozeConversation({
-      siteId: effectiveSiteId, conversationId: effectiveConversationId, metadata: inboundCustomData,
+      siteId: effectiveSiteId, conversationId: effectiveConversationId,
+      metadata: inboundCustomData ? { ...inboundCustomData, channel: effectiveOrigin } : undefined,
     });
     // Persist provider identity before running the model: a human may answer from
     // the app while this first reply is generating, and its echo needs a thread.
@@ -312,6 +316,12 @@ export async function POST(request: Request) {
       effectiveConversationId = inbound.conversationId;
       persistedInboundId = inbound.userMessageId;
       automationStartedAt = inbound.automationStartedAt || requestTimestamp;
+      if (effectiveOrigin === 'whatsapp') {
+        // The business app can speak first: consume its durable human events now,
+        // not on a later provider retry after the assistant has already answered.
+        await reconcileConversationHumanEvents({ siteId: effectiveSiteId,
+          conversationId: effectiveConversationId, metadata: inboundCustomData });
+      }
     }
     const snoozeInput = {
       siteId: effectiveSiteId, conversationId: effectiveConversationId,
@@ -369,7 +379,7 @@ export async function POST(request: Request) {
           || fresh.agent_id !== effectiveAgentId || fresh.user_id !== effectiveUserId) return null;
       return fresh;
     });
-    if (!resolved?.assistantMessage) {
+    if (!resolved || resolved.assistantMessage === undefined) {
       return NextResponse.json(
         { success: false, error: { code: 'CUSTOMER_SUPPORT_EMPTY_RESPONSE',
           message: 'The support command has no usable assistant response' } },
@@ -389,6 +399,8 @@ export async function POST(request: Request) {
         code: 'CUSTOMER_SUPPORT_AUDIO_TOO_LONG', message: 'The generated audio script exceeds 4000 characters',
       } }, { status: 422, headers: corsHeaders(request) });
     }
+    const responseMedia = await validateSupportResponseMedia(resolved.responseMedia,
+      effectiveOrigin || 'chat', responseFormat, inboundCustomData?.source === 'comment');
     // Usando lead_id efectivo al guardar los mensajes
     // Envolver en try-catch para manejar error SKIP_DATABASE
     let savedMessages;
@@ -414,7 +426,8 @@ export async function POST(request: Request) {
         { ...(inboundCustomData && typeof inboundCustomData === 'object' ? inboundCustomData : {}),
           automation_started_at: automationStartedAt },
         false,
-        responseFormat
+        responseFormat,
+        responseMedia
       );
     } catch (error: any) {
       // Si el error es SKIP_DATABASE, retornar respuesta sin crear objetos en DB
@@ -427,8 +440,10 @@ export async function POST(request: Request) {
               command_id: effectiveDbUuid,
               skip_database: true,
               response_format: responseFormat,
+              ...responseMedia,
               results: {
                 message: error.results.message || assistantMessage,
+                ...responseMedia,
                 conversation_title: error.results.conversation_title || conversationTitle,
                 is_robot: error.results.is_robot || false,
                 is_transactional_message: error.results.is_transactional_message || false,
@@ -499,6 +514,7 @@ export async function POST(request: Request) {
           conversation_id: savedMessages.conversationId,
           conversation_title: savedMessages.conversationTitle,
           response_format: responseFormat,
+          ...responseMedia,
           lead_id: effectiveLeadId || null,
           task_id: taskId || null,
           messages: {
@@ -510,6 +526,7 @@ export async function POST(request: Request) {
             assistant: {
               content: assistantMessage,
               response_format: responseFormat,
+              ...responseMedia,
               message_id: savedMessages.assistantMessageId,
               command_id: effectiveDbUuid
             }
@@ -528,6 +545,11 @@ export async function POST(request: Request) {
       }
     );
   } catch (error) {
+    if (error instanceof OutboundMediaError || (error instanceof Error
+      && error.message === 'CUSTOMER_SUPPORT_COMMENT_MEDIA_UNSUPPORTED')) return NextResponse.json(
+      { success: false, error: { code: 'CUSTOMER_SUPPORT_INVALID_MEDIA', message: error.message } },
+      { status: 400, headers: corsHeaders(request) },
+    );
     if (error instanceof SocialCommentError) return NextResponse.json(
       { success: false, error: { code: 'SOCIAL_COMMENT_CONFLICT', message: error.message } },
       { status: error.status },

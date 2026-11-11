@@ -12,6 +12,12 @@ import { audioSenderIdentity } from '../audio-sender-identity';
 import { resolveAudioRouting } from '../audio-routing';
 import { deliverZavuTemplate } from '@/lib/services/whatsapp/zavu-template-delivery';
 import { WhatsAppTemplateService } from '@/lib/services/whatsapp/WhatsAppTemplateService';
+import { assertAutomationSendAllowed, AutomationSendSuppressed } from '../automation-send-guard';
+import { assertSafeRemoteUrl } from '@/lib/security/safe-remote-url';
+import { requireSavedOutboundMedia } from '../saved-outbound-media';
+jest.mock('../saved-outbound-media', () => ({ requireSavedOutboundMedia: jest.fn(async () => undefined) }));
+jest.mock('../native-media-delivery', () => ({ dispatchNativeMedia: jest.fn(async (_input: unknown, _provider: string, send: () => Promise<unknown>) => send()) }));
+jest.mock('@/lib/security/safe-remote-url', () => ({ assertSafeRemoteUrl: jest.fn(async () => undefined) }));
 jest.mock('@/lib/services/whatsapp/zavu-template-delivery', () => ({ deliverZavuTemplate: jest.fn(), TemplateDeliveryError: class extends Error {} }));
 jest.mock('../audio-routing', () => ({ resolveAudioRouting: jest.fn() }));
 jest.mock('../explicit-audio-delivery', () => ({ deliverExplicitAudio: jest.fn(), markAudioPreflightFailed: jest.fn(), AudioDeliveryError: class extends Error {} }));
@@ -55,6 +61,7 @@ describe('ChannelSendService', () => {
   
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.mocked(requireSavedOutboundMedia).mockResolvedValue(undefined);
     jest.mocked(WhatsAppTemplateService.checkResponseWindow).mockResolvedValue({ withinWindow: true });
     mockedSupabase.maybeSingle.mockResolvedValue({ data: { custom_data: {} } });
     jest.mocked(resolveAudioRouting).mockImplementation(async input => ({ kind: 'zavu',
@@ -73,6 +80,140 @@ describe('ChannelSendService', () => {
         socialAccountId: 'account-1',
       },
     } as never);
+  });
+
+  it('uses the saved media connection rather than first channel sender', async () => {
+    mockedSupabase.single.mockResolvedValue({ data: { channels: { connections: [
+      { type: 'telegram', zavu_sender_id: 'first' }, { type: 'telegram', zavu_sender_id: 'saved' },
+    ] } } });
+    jest.mocked(requireSavedOutboundMedia).mockResolvedValue({ connection_id: 'connection-1' });
+    jest.mocked(zavuClient.sendChannelMessage).mockResolvedValue({ message: { id: 'sent', status: 'sent' } } as any);
+    expect((await ChannelSendService.sendMessage({ site_id: mockSiteId, channel: 'telegram', to: mockTo,
+      message: '', conversation_id: 'conversation', message_id: 'message', message_type: 'image', media_url: 'https://assets.example.test/photo' })).success).toBe(true);
+    expect(zavuClient.sendChannelMessage).toHaveBeenCalledWith(expect.objectContaining({ senderId: 'saved' }));
+  });
+
+  it('saved approval or metadata mismatch rejects before any provider including Outstand', async () => {
+    jest.mocked(requireSavedOutboundMedia).mockRejectedValue(Object.assign(new Error('Unapproved media'), { status: 400 }));
+    expect(await ChannelSendService.sendMessage({ site_id: mockSiteId, channel: 'instagram', to: mockTo,
+      message: '', conversation_id: 'conversation', message_id: 'message', message_type: 'image', media_url: 'https://assets.example.test/photo' }))
+      .toMatchObject({ success: false, status: 400 });
+    expect(getOutstandClient).not.toHaveBeenCalled();
+    expect(zavuClient.sendChannelMessage).not.toHaveBeenCalled();
+  });
+
+  it('unbound saved Instagram media cannot fall through to an arbitrary Zavu connection', async () => {
+    jest.mocked(requireSavedOutboundMedia).mockResolvedValue({ message_type: 'image' });
+    mockedSupabase.maybeSingle.mockResolvedValue({ data: { custom_data: {} } });
+    expect(await ChannelSendService.sendMessage({ site_id: mockSiteId, channel: 'instagram', to: mockTo,
+      message: '', conversation_id: 'conversation', message_id: 'message', message_type: 'image', media_url: 'https://assets.example.test/photo' }))
+      .toMatchObject({ success: false, status: 400 });
+    expect(zavuClient.sendChannelMessage).not.toHaveBeenCalled();
+  });
+
+  it('bound saved Instagram media bypasses stale Outstand metadata and pins Zavu', async () => {
+    jest.mocked(requireSavedOutboundMedia).mockResolvedValue({ connection_id: 'connection-0' });
+    mockedSupabase.maybeSingle.mockResolvedValue({ data: { custom_data: { outstand_conversation_id: 'stale-outstand' } } });
+    mockedSupabase.single.mockResolvedValue({ data: { channels: { connections: [{ type: 'instagram', zavu_sender_id: 'bound-zavu' }] } } });
+    jest.mocked(zavuClient.sendChannelMessage).mockResolvedValue({ message: { id: 'sent', status: 'sent' } } as any);
+    expect((await ChannelSendService.sendMessage({ site_id: mockSiteId, channel: 'instagram', to: mockTo,
+      message: '', conversation_id: 'conversation', message_id: 'message', message_type: 'image', media_url: 'https://assets.example.test/photo' })).success).toBe(true);
+    expect(getOutstandClient).not.toHaveBeenCalled();
+    expect(zavuClient.sendChannelMessage).toHaveBeenCalledWith(expect.objectContaining({ senderId: 'bound-zavu' }));
+  });
+
+  it.each(['image', 'video', 'audio', 'document'] as const)('sends media-only %s using the exact selected Zavu sender and payload', async message_type => {
+    mockedSupabase.single.mockResolvedValue({ data: { channels: { connections: [
+      { type: 'messenger', zavu_sender_id: mockSenderId },
+    ] } }, error: null });
+    jest.mocked(zavuClient.sendChannelMessage).mockResolvedValue({ message: { id: 'media-sent', status: 'queued' } });
+    const mime_type = message_type === 'document' ? 'application/pdf' : `${message_type}/example`;
+    const media_url = 'https://assets.example.test/media';
+    expect(await ChannelSendService.sendMessage({ site_id: mockSiteId, channel: 'messenger', to: mockTo,
+      message_type, media_url, mime_type })).toEqual({ success: true, messageId: 'media-sent', provider: 'zavu' });
+    expect(zavuClient.sendChannelMessage).toHaveBeenCalledTimes(1);
+    expect(zavuClient.sendChannelMessage).toHaveBeenCalledWith({ to: mockTo, channel: 'messenger',
+      senderId: mockSenderId, messageType: message_type, content: { mediaUrl: media_url, mimeType: mime_type }, subject: undefined });
+    expect(assertSafeRemoteUrl).toHaveBeenCalledWith(media_url);
+    expect(assertAutomationSendAllowed).toHaveBeenCalledTimes(2);
+    expect(longReplyAudio.tryPrepareLongReplyAudio).not.toHaveBeenCalled();
+    expect(deliverExplicitAudio).not.toHaveBeenCalled();
+  });
+
+  it.each(['sms', 'voice', 'facebook', 'instagram'])('rejects unsupported %s document without any provider sends', async channel => {
+    expect(await ChannelSendService.sendMessage({ site_id: mockSiteId, channel, to: mockTo,
+      message: 'Do not downgrade', message_type: 'document', media_url: 'https://assets.example.test/file.pdf' }))
+      .toMatchObject({ success: false, status: 400 });
+    expect(zavuClient.sendChannelMessage).not.toHaveBeenCalled();
+    expect(getOutstandClient).not.toHaveBeenCalled();
+    expect(mockedSupabase.from).not.toHaveBeenCalled();
+  });
+
+  it('rejects generated speech combined with explicit media without dispatch or speech generation', async () => {
+    expect(await ChannelSendService.sendMessage({ site_id: mockSiteId, channel: 'telegram', to: mockTo,
+      message: 'Hello', message_type: 'audio', media_url: 'https://assets.example.test/a.mp3', response_format: 'audio' }))
+      .toMatchObject({ success: false, status: 400 });
+    expect(zavuClient.sendChannelMessage).not.toHaveBeenCalled();
+    expect(deliverExplicitAudio).not.toHaveBeenCalled();
+  });
+
+  it('requires public media DNS and never downgrades an unsafe attachment to text', async () => {
+    jest.mocked(assertSafeRemoteUrl).mockRejectedValueOnce(new Error('private address'));
+    expect(await ChannelSendService.sendMessage({ site_id: mockSiteId, channel: 'telegram', to: mockTo,
+      message: 'Hello', message_type: 'image', media_url: 'https://private.example.test/a.jpg' }))
+      .toMatchObject({ success: false, status: 400 });
+    expect(zavuClient.sendChannelMessage).not.toHaveBeenCalled();
+  });
+
+  it('blocks existing WhatsApp media outside the response window without text template substitution', async () => {
+    mockedSupabase.single.mockResolvedValue({ data: { channels: { connections: [
+      { type: 'whatsapp', zavu_sender_id: mockSenderId },
+    ] } }, error: null });
+    jest.mocked(WhatsAppTemplateService.checkResponseWindow).mockResolvedValueOnce({ withinWindow: false });
+    expect(await ChannelSendService.sendMessage({ site_id: mockSiteId, channel: 'whatsapp', to: mockTo,
+      message_type: 'image', media_url: 'https://assets.example.test/a.jpg' })).toMatchObject({ success: false, status: 400 });
+    expect(zavuClient.sendChannelMessage).not.toHaveBeenCalled();
+    expect(deliverZavuTemplate).not.toHaveBeenCalled();
+  });
+
+  it('uses a connected Zavu Instagram sender for a saved non-comment conversation with no Outstand metadata', async () => {
+    const query: Record<string, jest.Mock> = {};
+    query.select = jest.fn(() => query);
+    query.eq = jest.fn(() => query);
+    query.maybeSingle = jest.fn(async () => ({ data: { custom_data: { source: 'instagram' } }, error: null }));
+    mockedSupabase.from.mockReturnValueOnce(query);
+    mockedSupabase.single.mockResolvedValue({ data: { channels: { connections: [
+      { type: 'instagram', zavu_sender_id: mockSenderId },
+    ] } }, error: null });
+    jest.mocked(zavuClient.sendChannelMessage).mockResolvedValue({ message: { id: 'ig-zavu', status: 'queued' } });
+    expect(await ChannelSendService.sendMessage({ site_id: mockSiteId, channel: 'instagram', to: 'ig-user',
+      conversation_id: 'local-dm', message_type: 'image', media_url: 'https://assets.example.test/a.jpg' }))
+      .toEqual({ success: true, messageId: 'ig-zavu', provider: 'zavu' });
+    expect(zavuClient.sendChannelMessage).toHaveBeenCalledWith(expect.objectContaining({ channel: 'instagram',
+      senderId: mockSenderId, messageType: 'image', content: { mediaUrl: 'https://assets.example.test/a.jpg' } }));
+    expect(getOutstandClient).not.toHaveBeenCalled();
+  });
+
+  it.each([{ message: { id: 'failed', status: 'failed' } }, { message: { id: 'missing-status' } },
+    { success: false, message: { id: 'declined', status: 'sent' } }])('does not report media success without provider acceptance', async response => {
+    mockedSupabase.single.mockResolvedValue({ data: { channels: { connections: [
+      { type: 'telegram', zavu_sender_id: mockSenderId },
+    ] } }, error: null });
+    jest.mocked(zavuClient.sendChannelMessage).mockResolvedValue(response);
+    expect(await ChannelSendService.sendMessage({ site_id: mockSiteId, channel: 'telegram', to: mockTo,
+      message_type: 'image', media_url: 'https://assets.example.test/a.jpg' })).toMatchObject({ success: false });
+    expect(zavuClient.sendChannelMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('rechecks automation suppression immediately before media dispatch', async () => {
+    mockedSupabase.single.mockResolvedValue({ data: { channels: { connections: [
+      { type: 'telegram', zavu_sender_id: mockSenderId },
+    ] } }, error: null });
+    jest.mocked(assertAutomationSendAllowed).mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new AutomationSendSuppressed('agent_snoozed'));
+    expect(await ChannelSendService.sendMessage({ site_id: mockSiteId, channel: 'telegram', to: mockTo,
+      message_type: 'image', media_url: 'https://assets.example.test/a.jpg' })).toMatchObject({ skipped: true, delivered: false });
+    expect(zavuClient.sendChannelMessage).not.toHaveBeenCalled();
   });
 
   it('keeps explicit text as text even when long or containing an audio URL', async () => {
@@ -570,6 +711,38 @@ describe('ChannelSendService', () => {
     expect(result.error).toBe('Zavu API failed');
   });
 
+  it.each(['image', 'video'] as const)('sends Instagram media-only %s as native media_urls after authorization', async message_type => {
+    const query: Record<string, jest.Mock> = {};
+    query.select = jest.fn(() => query);
+    query.eq = jest.fn(() => query);
+    query.maybeSingle = jest.fn(async () => ({ data: { custom_data: { outstand_conversation_id: 'outstand-dm' } }, error: null }));
+    mockedSupabase.from.mockReturnValueOnce(query);
+    const sendConversationMessage = jest.fn(async () => ({ success: true, message: { id: 'media-dm' } }));
+    jest.mocked(getOutstandClient).mockReturnValue({ sendConversationMessage } as any);
+    expect(await ChannelSendService.sendMessage({ site_id: mockSiteId, channel: 'instagram', to: 'user',
+      conversation_id: 'local-dm', message_type, media_url: 'https://assets.example.test/media' }))
+      .toEqual({ success: true, messageId: 'media-dm', provider: 'outstand' });
+    expect(sendConversationMessage).toHaveBeenCalledWith('outstand-dm', { media_urls: ['https://assets.example.test/media'] }, mockSiteId);
+    expect(authorizeOutstandConversation).toHaveBeenCalled();
+    expect(query.eq).toHaveBeenCalledWith('site_id', mockSiteId);
+    expect(assertAutomationSendAllowed).toHaveBeenCalledTimes(2);
+    expect(zavuClient.sendChannelMessage).not.toHaveBeenCalled();
+  });
+
+  it('rejects Instagram media when the saved conversation is a comment, never falling back to a public reply', async () => {
+    const query: Record<string, jest.Mock> = {};
+    query.select = jest.fn(() => query);
+    query.eq = jest.fn(() => query);
+    query.maybeSingle = jest.fn(async () => ({ data: { custom_data: { source: 'outstand_comment' } }, error: null }));
+    mockedSupabase.from.mockReturnValueOnce(query);
+    expect(await ChannelSendService.sendMessage({ site_id: mockSiteId, channel: 'instagram', to: 'user',
+      message: 'Never send as a comment', conversation_id: 'local-comment', message_type: 'image', media_url: 'https://assets.example.test/a.jpg' }))
+      .toMatchObject({ success: false, status: 400 });
+    expect(getOutstandClient).not.toHaveBeenCalled();
+    expect(zavuClient.sendChannelMessage).not.toHaveBeenCalled();
+    expect(mockedSupabase.from).toHaveBeenCalledTimes(1);
+  });
+
   it('sends an Instagram DM when the conversation has Outstand DM metadata', async () => {
     const conversationQuery: Record<string, jest.Mock> = {};
     conversationQuery.select = jest.fn(() => conversationQuery);
@@ -602,6 +775,7 @@ describe('ChannelSendService', () => {
     expect(result).toEqual({
       success: true,
       messageId: 'outstand-message-1',
+      provider: 'outstand',
     });
     expect(sendConversationMessage).toHaveBeenCalledWith(
       'outstand-conversation-1',

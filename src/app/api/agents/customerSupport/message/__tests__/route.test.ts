@@ -6,12 +6,18 @@ import { getCommandById } from '@/lib/database/command-db';
 import { getAgentInfo, findActiveCustomerSupportAgent } from '../agent-data';
 import { readSupportSnooze, saveSnoozedSupportInput } from '../snooze';
 import { saveZavuSupportMessages } from '../save-zavu-messages';
+import { reconcileConversationHumanEvents } from '@/lib/services/zavu/conversation-automation-contact';
+import { assertSafeRemoteUrl } from '@/lib/security/safe-remote-url';
 
 jest.mock('../request', () => ({ readSupportRequest: async (r: Request) => ({ body: await r.json() }) }));
+jest.mock('@/lib/security/safe-remote-url', () => ({ assertSafeRemoteUrl: jest.fn(async () => undefined) }));
 jest.mock('../zavu-admission', () => ({ checkZavuSupportAdmission: async () => null }));
 jest.mock('../context', () => ({ buildSupportContext: jest.fn(async () => 'context') }));
 jest.mock('../generate', () => ({ generateSupportReply: jest.fn() }));
 jest.mock('../save-messages', () => ({ saveMessages: jest.fn() }));
+jest.mock('@/lib/services/zavu/conversation-automation-contact', () => ({
+  reconcileConversationHumanEvents: jest.fn(async () => undefined),
+}));
 jest.mock('../save-zavu-messages', () => ({ saveZavuSupportMessages: jest.fn(async (input) => ({
   conversationId: input.conversationId, userMessageId: 'in',
 })) }));
@@ -46,11 +52,21 @@ const request = () => new Request('https://example.test/api/agents/customerSuppo
 });
 const fresh = { id: commandId, status: 'completed', site_id: 'site', agent_id: agentId,
   user_id: 'user', results: [{ message: { content: 'Hola, bienvenido' } }] };
+// Jest otherwise selects the last (assistant-producing) overload. These mocks
+// represent only the route's initial inbound-only persistence boundary.
+type InboundSaver = (input: Omit<Parameters<typeof saveZavuSupportMessages>[0], 'inboundOnly'> & { inboundOnly: true }) => Promise<{
+  conversationId: string; userMessageId: string; assistantMessageId: undefined; automationStartedAt: string;
+}>;
+const saveInboundMock = saveZavuSupportMessages as unknown as jest.MockedFunction<InboundSaver>;
+const inboundResult = (conversationId: string) => ({ conversationId, userMessageId: 'in',
+  assistantMessageId: undefined, automationStartedAt: '2026-11-11T12:00:00Z' });
 
 describe('support route persistence boundary', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     jest.mocked(readSupportSnooze).mockReset().mockResolvedValue(null);
+    jest.mocked(reconcileConversationHumanEvents).mockReset().mockResolvedValue(undefined);
+    saveInboundMock.mockReset().mockImplementation(async input => inboundResult(input.conversationId!));
     jest.mocked(getAgentInfo).mockResolvedValue({ user_id: 'user', status: 'active' });
     jest.mocked(findActiveCustomerSupportAgent).mockResolvedValue(null);
     jest.mocked(generateSupportReply).mockResolvedValue({
@@ -140,6 +156,32 @@ describe('support route persistence boundary', () => {
     expect((await response.json()).data.messages.assistant.content).toBe('Hola, bienvenido');
   });
 
+  it.each(['image', 'video', 'audio', 'document'])('returns and saves the selected existing %s media without generation dispatch', async message_type => {
+    const media = { message_type, media_url: 'https://media.example.test/file',
+      mime_type: message_type === 'document' ? 'application/pdf' : `${message_type}/test` };
+    jest.mocked(generateSupportReply).mockResolvedValue({ effectiveDbUuid: commandId,
+      executedCommand: { results: [{ message: { content: '', response_format: 'text', ...media } }] } } as any);
+    const response = await POST(request());
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.data).toMatchObject({ ...media, response_format: 'text' });
+    expect(body.data.messages.assistant).toMatchObject({ ...media, response_format: 'text', content: '' });
+    expect(jest.mocked(saveMessages).mock.calls[0][20]).toEqual(media);
+    expect(assertSafeRemoteUrl).toHaveBeenCalledWith(media.media_url);
+    expect(getCommandById).not.toHaveBeenCalled();
+  });
+
+  it.each(['conflict', 'unsafe'])('does not persist invalid selected media (%s)', async reason => {
+    jest.mocked(generateSupportReply).mockResolvedValue({ effectiveDbUuid: commandId,
+      executedCommand: { results: [{ message: { content: 'Reply', message_type: 'image',
+        media_url: 'https://media.example.test/file', response_format: reason === 'conflict' ? 'audio' : 'text' } }] } } as any);
+    if (reason === 'unsafe') jest.mocked(assertSafeRemoteUrl).mockRejectedValueOnce(new Error('private address'));
+    const response = await POST(request());
+    expect(response.status).toBe(400);
+    expect((await response.json()).error.code).toBe('CUSTOMER_SUPPORT_INVALID_MEDIA');
+    expect(saveMessages).not.toHaveBeenCalled();
+  });
+
   it('forwards current inbound routing metadata to the per-turn context and generator', async () => {
     jest.mocked(getCommandById).mockResolvedValue(fresh as any);
     const custom_data = { source: 'zavu_inbound_message', channel: 'telegram', zavu_from: '@customer',
@@ -157,6 +199,61 @@ describe('support route persistence boundary', () => {
       originMessageId: 'provider-in', assistantMessage: '' }));
     expect(jest.mocked(saveZavuSupportMessages).mock.invocationCallOrder[0])
       .toBeLessThan(jest.mocked(generateSupportReply).mock.invocationCallOrder[0]);
+    expect(reconcileConversationHumanEvents).not.toHaveBeenCalled();
+  });
+
+  const whatsappMetadata = { source: 'zavu_inbound_message', channel: 'whatsapp',
+    connection_id: 'connection', zavu_sender_id: 'sender', zavu_from: 'whatsapp:+15555550123' };
+  const firstInbound = () => new Request('https://example.test/api/agents/customerSupport/message', {
+    method: 'POST', body: JSON.stringify({ userId: 'user', agentId, site_id: 'site',
+      message: 'Hello', origin: 'whatsapp', origin_message_id: 'provider-in', custom_data: whatsappMetadata }),
+  });
+
+  it('reconciles the first inbound after saving and before snooze read, suppressing all model work', async () => {
+    saveInboundMock.mockResolvedValue(inboundResult('new-conversation'));
+    let reconciled = false;
+    jest.mocked(reconcileConversationHumanEvents).mockImplementation(async () => { reconciled = true; });
+    jest.mocked(readSupportSnooze).mockImplementation(async () => reconciled
+      ? { conversationId: 'new-conversation', pausedUntil: '2030-01-01T12:00:00Z' } : null);
+    const response = await POST(firstInbound());
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.data).toMatchObject({ automation_paused: true, skipped: true, response_skipped: true,
+      conversation_id: 'new-conversation', reason: 'agent_snoozed' });
+    expect(body.data.messages.assistant).toBeUndefined();
+    expect(saveZavuSupportMessages).toHaveBeenCalledWith(expect.objectContaining({ inboundOnly: true, assistantMessage: '' }));
+    expect(reconcileConversationHumanEvents).toHaveBeenCalledWith({ siteId: 'site',
+      conversationId: 'new-conversation', metadata: whatsappMetadata });
+    expect(jest.mocked(saveZavuSupportMessages).mock.invocationCallOrder[0])
+      .toBeLessThan(jest.mocked(reconcileConversationHumanEvents).mock.invocationCallOrder[0]);
+    expect(jest.mocked(reconcileConversationHumanEvents).mock.invocationCallOrder[0])
+      .toBeLessThan(jest.mocked(readSupportSnooze).mock.invocationCallOrder[0]);
+    expect(saveSnoozedSupportInput).toHaveBeenCalledWith(expect.objectContaining({ persistedInboundId: 'in' }), expect.anything());
+    expect(buildSupportContext).not.toHaveBeenCalled();
+    expect(generateSupportReply).not.toHaveBeenCalled();
+    expect(saveMessages).not.toHaveBeenCalled();
+  });
+
+  it('fails closed before snooze/model work if first-contact reconciliation fails', async () => {
+    saveInboundMock.mockResolvedValue(inboundResult('new-conversation'));
+    jest.mocked(reconcileConversationHumanEvents).mockRejectedValue(new Error('CUSTOMER_SUPPORT_SNOOZE_RECONCILIATION_FAILED'));
+    const response = await POST(firstInbound());
+    expect(response.status).toBeGreaterThanOrEqual(500);
+    expect((await response.json()).data).toBeUndefined();
+    expect(saveZavuSupportMessages).toHaveBeenCalledTimes(1);
+    expect(readSupportSnooze).not.toHaveBeenCalled();
+    expect(buildSupportContext).not.toHaveBeenCalled();
+    expect(generateSupportReply).not.toHaveBeenCalled();
+    expect(saveMessages).not.toHaveBeenCalled();
+  });
+
+  it('does not reconcile if the inbound could not be durably saved', async () => {
+    jest.mocked(saveZavuSupportMessages).mockRejectedValue(new Error('inbound save unavailable'));
+    const response = await POST(firstInbound());
+    expect(response.status).toBeGreaterThanOrEqual(500);
+    expect(reconcileConversationHumanEvents).not.toHaveBeenCalled();
+    expect(readSupportSnooze).not.toHaveBeenCalled();
+    expect(generateSupportReply).not.toHaveBeenCalled();
   });
 
   it.each([

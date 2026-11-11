@@ -5,6 +5,7 @@ import {
   requireOutstandConversationSite,
 } from '@/lib/integrations/outstand/conversation-access';
 import { recordOutstandMessage } from '@/lib/integrations/outstand/inbox-sync';
+import { assertSafeRemoteUrl } from '@/lib/security/safe-remote-url';
 import type {
   ListConversationMessagesParams,
   OutstandMessageDirection,
@@ -67,6 +68,9 @@ export async function POST(
       : undefined;
     const mediaUrls = Array.isArray(body.media_urls) ? body.media_urls : undefined;
 
+    if (body.media_urls !== undefined && !Array.isArray(body.media_urls)) {
+      return NextResponse.json({ success: false, error: 'media_urls must be an array' }, { status: 400 });
+    }
     if (mediaUrls?.some((url: unknown) => typeof url !== 'string' || !url.trim())) {
       return NextResponse.json(
         { success: false, error: 'media_urls must contain non-empty strings' },
@@ -101,6 +105,10 @@ export async function POST(
     const client = getOutstandClient();
     const siteId = await requireOutstandConversationSite(request);
     const conversation = await authorizeOutstandConversation(client, id, siteId);
+    for (const url of mediaUrls || []) {
+      try { await assertSafeRemoteUrl(url); }
+      catch { return NextResponse.json({ success: false, error: 'media_urls must resolve to public HTTPS resources' }, { status: 400 }); }
+    }
     const result = await client.sendConversationMessage(
       id,
       params,

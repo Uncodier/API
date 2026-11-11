@@ -1,5 +1,8 @@
 # Conversation automation snooze
 
+For the human-first/no-conversation race and its additive fix, see
+[First-contact automation snooze](./FIRST_CONTACT_AUTOMATION_SNOOZE.md).
+
 ## Behavior
 
 - A persisted external `team_member` reply pauses automation on **that conversation**.

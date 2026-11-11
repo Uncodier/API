@@ -2,6 +2,8 @@ jest.mock('@/lib/services/channels/automation-send-guard', () => ({
   ...jest.requireActual('@/lib/services/channels/automation-send-guard'), assertAutomationSendAllowed: jest.fn(async () => undefined),
 }));
 import { randomBytes } from 'node:crypto';
+jest.mock('@/lib/security/safe-remote-url', () => ({ assertSafeRemoteUrl: jest.fn(async () => undefined) }));
+jest.mock('@/lib/services/channels/email-media', () => ({ resolveEmailMediaAttachment: jest.fn(async () => ({ filename: 'file.pdf', content: Buffer.from('synthetic file').toString('base64'), content_type: 'application/pdf' })) }));
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn(), rpc: jest.fn() } }));
 jest.mock('@/lib/services/zavu/client', () => ({ sendChannelMessage: jest.fn() }));
 jest.mock('@/lib/services/zavu/voice-call-service', () => ({ assertVoiceCallAllowed: jest.fn(), placeTrackedVoiceCall: jest.fn() }));
@@ -42,6 +44,55 @@ let lead: any;
 let templates: any[];
 const connected = (id: string, channel: string) => ({ id, type: channel, status: 'connected', zavu_sender_id: `${id}-sender` });
 const base = () => ({ site_id: siteId, channel: 'email' as const, connection_id: 'selected', to: 'ada@example.com', message: 'Hello' });
+
+test.each(['image', 'video', 'audio', 'document'] as const)('preserves explicit %s on exact Zavu media-only delivery', async message_type => {
+  channels.connections = [connected('selected', 'telegram')];
+  const result = await sendExactDelivery({ ...base(), channel: 'telegram', to: '123', message: '', message_type,
+    media_url: 'https://assets.example.test/file' });
+  expect(result.success).toBe(true);
+  expect(sendChannelMessage).toHaveBeenCalledWith(expect.objectContaining({ text: '', messageType: message_type,
+    content: { mediaUrl: 'https://assets.example.test/file' } }));
+});
+
+test.each(['messenger', 'instagram'] as const)('exact %s media selects only the bound Zavu connection', async channel => {
+  channels.connections = [connected('first', channel), connected('selected', channel)];
+  expect((await sendExactDelivery({ ...base(), channel, to: 'channel-user', message_type: 'image',
+    media_url: 'https://assets.example.test/photo.jpg' })).success).toBe(true);
+  expect(sendChannelMessage).toHaveBeenCalledWith(expect.objectContaining({ channel, senderId: 'selected-sender', messageType: 'image' }));
+});
+
+test('refuses unsupported SMS media before dispatch instead of dropping it', async () => {
+  channels.connections = [connected('selected', 'sms')];
+  expect(await sendExactDelivery({ ...base(), channel: 'sms', to: '+15555550100', message_type: 'image',
+    media_url: 'https://assets.example.test/file' })).toMatchObject({ success: false, delivery_attempted: false, error: { code: 'INVALID_MEDIA' } });
+  expect(sendChannelMessage).not.toHaveBeenCalled();
+});
+
+test('forwards Zavu email base64 attachments and rejects conflicting canonical media', async () => {
+  const attachments = [{ filename: 'file.txt', content: Buffer.from('synthetic').toString('base64') }];
+  expect((await sendExactDelivery({ ...base(), message: '', attachments })).success).toBe(true);
+  expect(sendChannelMessage).toHaveBeenCalledWith(expect.objectContaining({ attachments }));
+  jest.clearAllMocks();
+  expect((await sendExactDelivery({ ...base(), attachments, message_type: 'document', media_url: 'https://assets.example.test/file' })).success).toBe(false);
+  expect(sendChannelMessage).not.toHaveBeenCalled();
+});
+
+test('refuses exact Zavu WhatsApp media outside response window before dispatch', async () => {
+  channels.connections = [connected('selected', 'whatsapp')];
+  jest.mocked(WhatsAppTemplateService.checkResponseWindow).mockResolvedValue({ withinWindow: false } as any);
+  const result = await sendExactDelivery({ ...base(), channel: 'whatsapp', to: '+15555550100', message_type: 'image', media_url: 'https://assets.example.test/photo' });
+  expect(result).toMatchObject({ success: false, delivery_attempted: false, error: { code: 'MEDIA_TEMPLATE_REQUIRED' } });
+  expect(sendChannelMessage).not.toHaveBeenCalled();
+});
+
+test('stored canonical attachment wins over caller text or attachment', async () => {
+  storedMessage = { id: 'message', role: 'assistant', content: '', conversation_id: 'conversation', custom_data: {
+    connection_id: 'selected', channel: 'email', message_type: 'document', media_url: 'https://assets.example.test/saved.pdf',
+    attachments: [{ url: 'https://assets.example.test/saved.pdf', type: 'document' }] } };
+  conversation = { id: 'conversation', site_id: siteId, custom_data: { connection_id: 'selected' } };
+  expect((await sendExactDelivery({ ...base(), message_id: 'message', message_type: 'image', media_url: 'https://assets.example.test/other.jpg' })).success).toBe(true);
+  expect(sendChannelMessage).toHaveBeenCalledWith(expect.objectContaining({ messageType: 'document', content: { mediaUrl: 'https://assets.example.test/saved.pdf' } }));
+});
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -130,6 +181,22 @@ test('SMTP pins exact labelled credentials and rejects different-account tokens'
   tokens[0].identifier = 'foreign@example.com';
   expect((await sendExactDelivery({ ...base(), connection_id: 'legacy:email' })).success).toBe(false);
   expect(EmailSendService.sendEmail).toHaveBeenCalledTimes(1);
+});
+
+test.each(['email', 'agent_email'])('exact %s resolves canonical URL into native attachment bytes', async provider => {
+  if (provider === 'agent_email') {
+    process.env.AGENTMAIL_API_KEY = randomBytes(24).toString('hex');
+    channels.agent_email = { status: 'active', username: 'selected', domain: 'example.com' };
+  } else {
+    channels.email = { status: 'active', email: 'selected@example.com' };
+    tokens = [{ token_type: 'email', identifier: 'selected@example.com', value: JSON.stringify({ email: 'selected@example.com', password: randomBytes(24).toString('hex') }) }];
+  }
+  expect((await sendExactDelivery({ ...base(), connection_id: `legacy:${provider}`, message_type: 'document',
+    media_url: 'https://assets.example.test/file.pdf', mime_type: 'application/pdf' })).success).toBe(true);
+  const service = provider === 'agent_email' ? AgentMailSendService.sendViaAgentMail : EmailSendService.sendEmail;
+  expect(service).toHaveBeenCalledWith(expect.objectContaining({ attachments: [{ filename: 'file.pdf',
+    content: Buffer.from('synthetic file').toString('base64'), content_type: 'application/pdf' }] }));
+  delete process.env.AGENTMAIL_API_KEY;
 });
 
 test.each(['whatsapp', 'agent_whatsapp'])('Twilio %s pins account/sender and approved exact template', async provider => {

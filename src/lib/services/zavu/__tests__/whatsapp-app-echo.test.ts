@@ -9,127 +9,144 @@ const now = Date.parse('2026-11-10T12:00:00Z');
 const event = () => ({ type: 'message.sent', id: 'event-one', senderId: 'sender', timestamp: now,
   data: { messageId: 'provider-message', source: 'whatsapp_business_app', direction: 'outbound',
     channel: 'whatsapp', to: '+15555550123', text: 'I can help you' } });
-let rows: any[];
-let saved: any[];
-let queries: any[];
-let failInsert: boolean;
-let failLookup: boolean;
+const rpc = jest.fn();
+const from = jest.fn(() => { throw new Error('Echo must not look up or insert messages directly'); });
+const owner = (site = 'site', connection = 'connection', sender = 'sender') => [{ site_id: site, channels: {
+  connections: [{ id: connection, type: 'whatsapp', zavu_sender_id: sender }],
+} }];
+
 beforeEach(() => {
   jest.clearAllMocks();
-  rows = [{ conversation_id: 'conversation', custom_data: { zavu_from: 'whatsapp:+15555550123' } }];
-  saved = []; queries = []; failInsert = false; failLookup = false;
-  jest.mocked(findSettingsForSender).mockResolvedValue([{ site_id: 'site', channels: {
-    connections: [{ id: 'connection', type: 'whatsapp', zavu_sender_id: 'sender' }],
-  } }] as any);
-  (supabaseAdmin.schema as jest.Mock).mockImplementation(() => ({ from: (table: string) => {
-    expect(table).toBe('messages');
-    const filters: Record<string, any> = {};
-    const q: any = {
-      select: jest.fn(() => q), eq: jest.fn((key, value) => { filters[key] = value; return q; }),
-      order: jest.fn(() => q), limit: jest.fn(() => q),
-      maybeSingle: jest.fn(async () => {
-        queries.push(filters);
-        if (failLookup) return { error: { code: 'unavailable' } };
-        return { data: filters.id ? saved.find(row => row.id === filters.id) || null
-          : rows.find(row => row.custom_data.zavu_from === filters['custom_data->>zavu_from']) || null };
-      }),
-      insert: jest.fn(async row => {
-        if (failInsert) return { error: { code: 'unavailable' } };
-        if (saved.some(existing => existing.id === row.id)) return { error: { code: '23505' } };
-        saved.push(row); return { error: null };
-      }),
-    };
-    return q;
-  } }));
+  rpc.mockReset().mockResolvedValue({ data: { state: 'pending' }, error: null });
+  jest.mocked(findSettingsForSender).mockResolvedValue(owner() as any);
+  (supabaseAdmin.schema as jest.Mock).mockReturnValue({ rpc, from });
 });
 
-it('persists exact-scoped external human without assigning an owner or modifying a conversation', async () => {
-  await handleWhatsAppAppEcho(event(), now);
+it('durably registers a first-contact human event without any prior conversation lookup', async () => {
+  await expect(handleWhatsAppAppEcho(event(), now)).resolves.toBeUndefined();
   expect(findSettingsForSender).toHaveBeenCalledWith('sender', { skipCache: true });
-  expect(saved).toHaveLength(1);
-  expect(saved[0]).toMatchObject({ conversation_id: 'conversation', role: 'team_member', user_id: null,
-    created_at: new Date(now).toISOString(), custom_data: { external_human: true, origin: 'zavu',
+  expect(rpc).toHaveBeenCalledTimes(1);
+  expect(rpc).toHaveBeenCalledWith('register_conversation_human_event', {
+    p_site_id: 'site', p_connection_id: 'connection', p_sender_id: 'sender',
+    p_recipient: '+15555550123', p_provider_message_id: 'provider-message',
+    p_message_id: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-a[0-9a-f]{3}-[0-9a-f]{12}$/),
+    p_event_at: new Date(now).toISOString(), p_content: 'I can help you',
+    p_metadata: expect.objectContaining({ external_human: true, origin: 'zavu',
       source: 'whatsapp_business_app', external_message_id: 'provider-message',
-      connection_id: 'connection', zavu_sender_id: 'sender', zavu_from: 'whatsapp:+15555550123' } });
-  expect(saved[0]).not.toHaveProperty('agent_id');
-  expect(queries.filter(q => !q.id)).toEqual(expect.arrayContaining([
-    expect.objectContaining({ 'conversations.site_id': 'site', role: 'user',
-      'custom_data->>connection_id': 'connection', 'custom_data->>zavu_sender_id': 'sender' }),
-  ]));
+      origin_message_id: 'provider-message', connection_id: 'connection', zavu_sender_id: 'sender',
+      channel: 'whatsapp', direction: 'outbound', provider_event_at: new Date(now).toISOString() }),
+  });
+  expect(from).not.toHaveBeenCalled();
+  expect(rpc.mock.calls[0][1]).not.toHaveProperty('p_conversation_id');
+  expect(rpc.mock.calls[0][1].p_metadata).not.toHaveProperty('agent_id');
+  expect(rpc.mock.calls[0][1].p_metadata).not.toHaveProperty('user_id');
 });
 
-it('deduplicates a provider message across event IDs even when conversation lookup changes', async () => {
+it.each(['pending', 'applied', 'duplicate'])('accepts durable RPC state %s', async state => {
+  rpc.mockResolvedValue({ data: { state }, error: null });
+  await expect(handleWhatsAppAppEcho(event(), now)).resolves.toBeUndefined();
+});
+
+it.each([null, undefined, {}, [], [{ state: 'pending' }], { state: 'unknown' }, { state: 'reconciled' },
+  { state: true }, { status: 'pending' }])('fails closed on malformed registration result %p', async data => {
+  rpc.mockResolvedValue({ data, error: null });
+  await expect(handleWhatsAppAppEcho(event(), now)).rejects.toThrow('ZAVU_APP_ECHO_SAVE_FAILED');
+});
+
+it('fails closed even if an RPC error includes an apparently successful result', async () => {
+  rpc.mockResolvedValue({ data: { state: 'pending' }, error: { code: 'unavailable' } });
+  await expect(handleWhatsAppAppEcho(event(), now)).rejects.toThrow('ZAVU_APP_ECHO_SAVE_FAILED');
+});
+
+it('propagates RPC transport failures for durable webhook retry', async () => {
+  rpc.mockRejectedValue(new Error('database unavailable'));
+  await expect(handleWhatsAppAppEcho(event(), now)).rejects.toThrow();
+});
+
+it('keeps the deterministic message ID across delivery event IDs and concurrent retries', async () => {
+  await Promise.all([handleWhatsAppAppEcho(event(), now),
+    handleWhatsAppAppEcho({ ...event(), id: 'event-two' }, now + 1000)]);
+  expect(rpc).toHaveBeenCalledTimes(2);
+  expect(rpc.mock.calls[0][1]).toEqual(rpc.mock.calls[1][1]);
+});
+
+it.each(['site', 'connection', 'sender', 'provider'])('isolates deterministic IDs by %s', async scope => {
   await handleWhatsAppAppEcho(event(), now);
-  rows = [];
-  await handleWhatsAppAppEcho({ ...event(), id: 'event-two' }, now + 1000);
-  expect(saved).toHaveLength(1);
+  jest.mocked(findSettingsForSender).mockResolvedValue(owner(
+    scope === 'site' ? 'other-site' : 'site', scope === 'connection' ? 'other-connection' : 'connection',
+    scope === 'sender' ? 'other-sender' : 'sender') as any);
+  await handleWhatsAppAppEcho({ ...event(), senderId: scope === 'sender' ? 'other-sender' : 'sender',
+    data: { ...event().data, messageId: scope === 'provider' ? 'other-provider-id' : 'provider-message' } }, now);
+  expect(rpc.mock.calls[0][1].p_message_id).not.toBe(rpc.mock.calls[1][1].p_message_id);
 });
 
-it('handles concurrent inserts with the deterministic primary key', async () => {
-  await Promise.all([handleWhatsAppAppEcho(event(), now), handleWhatsAppAppEcho({ ...event(), id: 'two' }, now)]);
-  expect(saved).toHaveLength(1);
+it.each(['15555550123', '+15555550123', 'whatsapp:15555550123', 'whatsapp:+15555550123'])
+('canonicalizes only the WhatsApp prefix and plus for %s', async to => {
+  await handleWhatsAppAppEcho({ ...event(), data: { ...event().data, to } }, now);
+  expect(rpc.mock.calls[0][1].p_recipient).toBe('+15555550123');
 });
 
-it('rejects provider-ID reuse for a different recipient or content', async () => {
+it('passes content/recipient conflicts to the atomic RPC without changing their idempotency key', async () => {
   await handleWhatsAppAppEcho(event(), now);
-  await expect(handleWhatsAppAppEcho({ ...event(), data: { ...event().data, text: 'different' } }, now))
-    .rejects.toThrow('SCOPE_CONFLICT');
+  rpc.mockResolvedValue({ data: null, error: { message: 'scope conflict' } });
+  await expect(handleWhatsAppAppEcho({ ...event(), data: { ...event().data,
+    text: 'different', to: '+15555550124' } }, now)).rejects.toThrow('ZAVU_APP_ECHO_SAVE_FAILED');
+  expect(rpc.mock.calls[0][1].p_message_id).toBe(rpc.mock.calls[1][1].p_message_id);
+  expect(rpc.mock.calls[1][1]).toMatchObject({ p_content: 'different', p_recipient: '+15555550124' });
 });
 
 it.each([
   { source: 'api' }, { direction: 'inbound' }, { channel: 'sms' }, { messageId: '' },
-  { to: '5550123@g.us' }, { to: '' }, { senderId: 'other' }, { text: '' }, { isHistory: true },
+  { to: '5550123@g.us' }, { to: '' }, { to: '+1 (555) 555-0123' }, { to: '0015555550123' },
+  { senderId: 'other' }, { text: '' }, { isHistory: true }, { isHistorical: true }, { history: true },
 ])('ignores invalid or non-app echo data %p', async patch => {
   await handleWhatsAppAppEcho({ ...event(), data: { ...event().data, ...patch } }, now);
-  expect(saved).toHaveLength(0);
+  expect(rpc).not.toHaveBeenCalled();
 });
 
 it('does not accept undocumented echo event types', () => {
   expect(isWhatsAppAppEcho({ ...event(), type: 'whatsapp.message_echo' })).toBe(false);
 });
 
-it('requires existing conversation and rejects ambiguous normalized recipients', async () => {
-  rows = [];
-  await expect(handleWhatsAppAppEcho(event(), now)).rejects.toThrow('CONVERSATION_NOT_READY');
-  expect(saved).toHaveLength(0);
-  rows = ['+15555550123', 'whatsapp:+15555550123'].map((from, i) => ({
-    conversation_id: `conversation-${i}`, custom_data: { zavu_from: from },
-  }));
-  await handleWhatsAppAppEcho(event(), now);
-  expect(saved).toHaveLength(0);
-});
-
 it.each(['site', 'connection'])('rejects ambiguous %s ownership', async ambiguity => {
-  const settings: any = [{ site_id: 'site', channels: { connections: [
-    { id: 'one', type: 'whatsapp', zavu_sender_id: 'sender' },
-  ] } }];
+  const settings = owner();
   if (ambiguity === 'site') settings.push({ ...settings[0], site_id: 'other' });
   else settings[0].channels.connections.push({ id: 'two', type: 'whatsapp', zavu_sender_id: 'sender' });
-  jest.mocked(findSettingsForSender).mockResolvedValue(settings);
+  jest.mocked(findSettingsForSender).mockResolvedValue(settings as any);
   await handleWhatsAppAppEcho(event(), now);
-  expect(saved).toHaveLength(0);
+  expect(rpc).not.toHaveBeenCalled();
 });
 
-it('uses original provider time for delayed delivery, not retry time; clamps future time', async () => {
+it('uses original provider time for delayed delivery and clamps future event time', async () => {
   const past = now - 86400000;
   await handleWhatsAppAppEcho({ ...event(), data: { ...event().data, providerTimestamp: past / 1000 } }, now);
-  expect(saved[0].created_at).toBe(new Date(past).toISOString());
-  saved = [];
+  expect(rpc.mock.calls[0][1].p_event_at).toBe(new Date(past).toISOString());
   await handleWhatsAppAppEcho({ ...event(), timestamp: now + 60000 }, now);
-  expect(saved[0].created_at).toBe(new Date(now).toISOString());
+  expect(rpc.mock.calls[1][1].p_event_at).toBe(new Date(now).toISOString());
+  expect(rpc.mock.calls[1][1].p_metadata.provider_event_at).toBe(new Date(now + 60000).toISOString());
 });
 
-it.each([undefined, 'not-a-date', 0])('never substitutes receipt time for missing/invalid timestamp %p', async timestamp => {
+it.each([undefined, 'not-a-date', 0, Infinity])('never substitutes receipt time for invalid timestamp %p', async timestamp => {
   await handleWhatsAppAppEcho({ ...event(), timestamp }, now);
-  expect(saved).toHaveLength(0);
+  expect(rpc).not.toHaveBeenCalled();
 });
 
-it('stores media placeholders without downloading untrusted URLs', async () => {
-  await handleWhatsAppAppEcho({ ...event(), data: { ...event().data, text: '', messageType: 'audio' } }, now);
-  expect(saved[0].content).toBe('[audio]');
+it('stores media placeholders without downloading or persisting untrusted URLs/metadata', async () => {
+  await handleWhatsAppAppEcho({ ...event(), data: { ...event().data, text: '', messageType: 'audio',
+    mediaUrl: 'https://untrusted.invalid/media', metadata: { agent_id: 'attacker' } } }, now);
+  expect(rpc.mock.calls[0][1].p_content).toBe('[audio]');
+  expect(rpc.mock.calls[0][1].p_metadata).toMatchObject({ message_type: 'audio' });
+  expect(JSON.stringify(rpc.mock.calls[0][1])).not.toMatch(/untrusted|attacker/);
 });
 
-it.each(['lookup', 'insert'])('propagates %s failures for durable webhook retry', async kind => {
-  failLookup = kind === 'lookup'; failInsert = kind === 'insert';
-  await expect(handleWhatsAppAppEcho(event(), now)).rejects.toThrow('ZAVU_APP_ECHO_');
+it('selects the configured tenant schema', async () => {
+  const previous = process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA;
+  process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA = 'tenant_test';
+  try {
+    await handleWhatsAppAppEcho(event(), now);
+    expect(supabaseAdmin.schema).toHaveBeenCalledWith('tenant_test');
+  } finally {
+    if (previous === undefined) delete process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA;
+    else process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA = previous;
+  }
 });

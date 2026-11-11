@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { findSettingsForSender } from './webhook-handlers';
+import { normalizeWhatsAppAutomationRecipient } from './conversation-automation-contact';
 
 const db = () => supabaseAdmin.schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA
   || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public');
@@ -32,7 +33,7 @@ export async function handleWhatsAppAppEcho(event: any, now = Date.now()): Promi
   // No suffix matching, local-number guessing, group IDs or arbitrary provider conversation IDs.
   if (typeof data.to !== 'string' || !/^(whatsapp:)?\+?[1-9]\d{6,14}$/.test(data.to)) return;
   const digits = data.to.replace(/^whatsapp:/, '').replace(/^\+/, '');
-  const recipients = [digits, `+${digits}`, `whatsapp:${digits}`, `whatsapp:+${digits}`];
+  const recipient = normalizeWhatsAppAutomationRecipient(digits);
   const text = [data.text, data.body, data.caption].find(value => typeof value === 'string' && value.trim());
   const mediaTypes = ['image', 'video', 'audio', 'document', 'sticker', 'location', 'contact'];
   const content = text || (mediaTypes.includes(data.messageType) ? `[${data.messageType}]` : null);
@@ -50,49 +51,21 @@ export async function handleWhatsAppAppEcho(event: any, now = Date.now()): Promi
     'zavu-whatsapp-app-echo-v1', siteId, connectionId, senderId, providerId,
   ])).digest('hex');
   const id = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
-  const readExisting = async () => {
-    const { data: row, error } = await db().from('messages')
-      .select('id, role, user_id, content, custom_data, conversations!inner(site_id)')
-      .eq('id', id).eq('conversations.site_id', siteId).maybeSingle();
-    if (error) throw new Error('ZAVU_APP_ECHO_LOOKUP_FAILED');
-    if (row && (row.role !== 'team_member' || row.user_id !== null || row.content !== content
-        || row.custom_data?.external_message_id !== providerId || row.custom_data?.connection_id !== connectionId
-        || row.custom_data?.zavu_sender_id !== senderId || !recipients.includes(row.custom_data?.zavu_from)
-        || row.custom_data?.source !== 'whatsapp_business_app')) throw new Error('ZAVU_APP_ECHO_SCOPE_CONFLICT');
-    return row;
-  };
-  if (await readExisting()) return;
-
-  // Match the latest inbound for each exact representation; ambiguous conversations fail closed.
-  const candidates = [];
-  for (const from of recipients) {
-    const { data: row, error } = await db().from('messages')
-      .select('conversation_id, custom_data, conversations!inner(site_id)')
-      .eq('conversations.site_id', siteId).eq('role', 'user')
-      .eq('custom_data->>connection_id', connectionId).eq('custom_data->>zavu_sender_id', senderId)
-      .eq('custom_data->>zavu_from', from)
-      .order('created_at', { ascending: false }).limit(1).maybeSingle();
-    if (error) throw new Error('ZAVU_APP_ECHO_CONVERSATION_LOOKUP_FAILED');
-    if (row?.conversation_id) candidates.push(row);
-  }
-  // The first inbound workflow may still be saving its conversation. Let durable
-  // webhook retries resolve that race, never create a speculative conversation.
-  if (!candidates.length) throw new Error('ZAVU_APP_ECHO_CONVERSATION_NOT_READY');
-  if (new Set(candidates.map(row => row.conversation_id)).size !== 1) return;
-  const row = {
-    id, conversation_id: candidates[0].conversation_id, role: 'team_member', user_id: null,
-    content, created_at: createdAt,
-    custom_data: {
+  // Persist before acknowledging even without a conversation. The database binds
+  // and applies this under the same contact lock used by the first inbound.
+  const { data: result, error } = await db().rpc('register_conversation_human_event', {
+    p_site_id: siteId, p_connection_id: connectionId, p_sender_id: senderId,
+    p_recipient: recipient, p_message_id: id, p_provider_message_id: providerId,
+    p_event_at: createdAt, p_content: content,
+    p_metadata: {
       source: 'whatsapp_business_app', origin: 'zavu', external_human: true,
       external_message_id: providerId, origin_message_id: providerId,
-      connection_id: connectionId, zavu_sender_id: senderId, zavu_from: candidates[0].custom_data.zavu_from,
+      connection_id: connectionId, zavu_sender_id: senderId, zavu_from: recipient,
       channel: 'whatsapp', direction: 'outbound', provider_event_at: new Date(timestamp).toISOString(),
       ...(mediaTypes.includes(data.messageType) ? { message_type: data.messageType } : {}),
     },
-  };
-  // Insert, never upsert: duplicate events must not re-fire the human-reply snooze trigger.
-  const { error } = await db().from('messages').insert(row);
-  if (!error) return;
-  if (error.code !== '23505') throw new Error('ZAVU_APP_ECHO_SAVE_FAILED');
-  if (!await readExisting()) throw new Error('ZAVU_APP_ECHO_SCOPE_CONFLICT');
+  });
+  if (error || !['pending', 'applied', 'duplicate'].includes(result?.state)) {
+    throw new Error('ZAVU_APP_ECHO_SAVE_FAILED');
+  }
 }

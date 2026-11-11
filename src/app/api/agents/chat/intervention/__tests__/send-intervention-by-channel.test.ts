@@ -1,4 +1,5 @@
 const mockPlaceTrackedVoiceCall = jest.fn();
+jest.mock('@/lib/security/safe-remote-url', () => ({ assertSafeRemoteUrl: jest.fn(async () => undefined) }));
 
 jest.mock("@/lib/database/supabase-client", () => ({
   supabaseAdmin: { from: jest.fn() },
@@ -36,6 +37,19 @@ describe('Intervention response format dispatch', () => {
     expect(channel === 'whatsapp' ? sendWhatsapp : sendChannel).toHaveBeenCalledWith(expect.objectContaining({
       response_format: 'audio', message_id: 'message', conversation_id: 'conversation',
     }));
+  });
+
+  it.each(['whatsapp', 'telegram', 'messenger'])('forwards media-only canonical attachment to %s', async channel => {
+    const media = { message_type: 'document', media_url: 'https://assets.example.test/file.pdf', mime_type: 'application/pdf' };
+    expect((await sendMessageByChannel(channel, '', { leadPhone: '+15555550100' }, 'site', null,
+      'conversation', 'lead', 'message', 'text', media)).success).toBe(true);
+    expect((channel === 'whatsapp' ? sendWhatsapp : sendChannel).mock.calls[0][0]).toMatchObject(media);
+  });
+
+  it('refuses existing media combined with generated audio before starting workflow', async () => {
+    expect((await sendMessageByChannel('telegram', 'caption', { leadPhone: '123' }, 'site', null,
+      'conversation', 'lead', 'message', 'audio', { message_type: 'audio', media_url: 'https://assets.example.test/file.mp3' })).success).toBe(false);
+    expect(sendChannel).not.toHaveBeenCalled();
   });
 
   it.each([undefined, 'text'] as const)('retains the choice %s without defaulting it', async (format) => {

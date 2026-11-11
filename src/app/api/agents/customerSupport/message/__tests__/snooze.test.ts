@@ -1,4 +1,5 @@
 import { readSupportSnooze, resolveSnoozeConversation, saveSnoozedSupportInput } from '../snooze';
+import { supportRecordId } from '../save-zavu-messages';
 
 const query: any = {};
 let results: any[] = [];
@@ -8,7 +9,7 @@ jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: {
 
 beforeEach(() => {
   results = [];
-  for (const method of ['from', 'select', 'eq', 'order', 'limit', 'insert', 'update']) {
+  for (const method of ['from', 'select', 'eq', 'in', 'order', 'limit', 'insert', 'update']) {
     query[method] = jest.fn(() => query);
   }
   query.maybeSingle = jest.fn(async () => results.shift());
@@ -53,6 +54,88 @@ it('resolves provider history using exact sender, connection and recipient', asy
   expect(query.eq).toHaveBeenCalledWith('conversations.site_id', 'site');
   expect(query.eq).toHaveBeenCalledWith('custom_data->>zavu_sender_id', 'sender');
   expect(query.eq).toHaveBeenCalledWith('custom_data->>zavu_from', 'recipient');
+  expect(query.from).toHaveBeenCalledWith('messages');
+  expect(query.in).not.toHaveBeenCalled();
+});
+
+describe('WhatsApp canonical conversation resolution', () => {
+  const variants = ['+5215555550123', '5215555550123', 'whatsapp:+5215555550123', 'whatsapp:5215555550123'];
+  const contact = (from = variants[0]) => ({ siteId: 'site', conversationId: 'untrusted-request-conversation', metadata: {
+    source: 'zavu_inbound_message', channel: 'whatsapp', connection_id: 'connection',
+    zavu_sender_id: 'sender', zavu_from: from,
+  } });
+
+  it.each(variants)('resolves %s to the same existing conversation using all exact aliases', async from => {
+    results.push({ data: [{ id: 'existing-conversation' }], error: null });
+    await expect(resolveSnoozeConversation(contact(from))).resolves.toBe('existing-conversation');
+    expect(query.from).toHaveBeenCalledWith('conversations');
+    expect(query.select).toHaveBeenCalledWith('id, messages!inner()');
+    expect(query.eq).toHaveBeenCalledWith('site_id', 'site');
+    expect(query.eq).toHaveBeenCalledWith('messages.role', 'user');
+    expect(query.eq).toHaveBeenCalledWith('messages.custom_data->>connection_id', 'connection');
+    expect(query.eq).toHaveBeenCalledWith('messages.custom_data->>zavu_sender_id', 'sender');
+    expect(query.in).toHaveBeenCalledWith('messages.custom_data->>zavu_from', variants);
+    expect(query.limit).toHaveBeenCalledWith(2);
+    expect(query.order).not.toHaveBeenCalled();
+    expect(query.maybeSingle).not.toHaveBeenCalled();
+    expect(query.insert).not.toHaveBeenCalled();
+  });
+
+  it('uses one canonical deterministic fallback for all aliases, preserving every digit', async () => {
+    const ids = [];
+    for (const from of variants) {
+      results.push({ data: [], error: null });
+      ids.push(await resolveSnoozeConversation(contact(from)));
+    }
+    expect(new Set(ids).size).toBe(1);
+    expect(ids[0]).toBe(supportRecordId(['support-conversation-v1', 'site', 'connection', variants[0]]));
+    results.push({ data: [], error: null });
+    expect(await resolveSnoozeConversation(contact('+525555550123'))).not.toBe(ids[0]);
+  });
+
+  it('keeps long/multi-alias message histories scoped at the conversation root rather than limiting messages', async () => {
+    // PostgREST returns one root row even when many joined inbound messages match.
+    results.push({ data: [{ id: 'one-conversation' }], error: null });
+    await expect(resolveSnoozeConversation(contact())).resolves.toBe('one-conversation');
+    expect(query.from.mock.calls).toEqual([['conversations']]);
+    expect(query.limit.mock.calls).toEqual([[2]]);
+  });
+
+  it('fails closed on distinct matching conversations before any writes', async () => {
+    results.push({ data: [{ id: 'first' }, { id: 'second' }], error: null });
+    await expect(resolveSnoozeConversation(contact())).rejects.toThrow('CUSTOMER_SUPPORT_SNOOZE_SCOPE_CONFLICT');
+    expect(query.insert).not.toHaveBeenCalled();
+    expect(query.update).not.toHaveBeenCalled();
+  });
+
+  it.each([null, undefined, {}, { id: 'not-an-array' }, [null], [{}], [{ id: '' }], [{ id: 42 }]])
+  ('fails closed on malformed conversation results %p', async data => {
+    results.push({ data, error: null });
+    await expect(resolveSnoozeConversation(contact())).rejects.toThrow('CUSTOMER_SUPPORT_SNOOZE_LOOKUP_FAILED');
+    expect(query.insert).not.toHaveBeenCalled();
+  });
+
+  it('fails closed on database errors even with valid-looking results', async () => {
+    results.push({ data: [{ id: 'conversation' }], error: { message: 'database unavailable' } });
+    await expect(resolveSnoozeConversation(contact())).rejects.toThrow('CUSTOMER_SUPPORT_SNOOZE_LOOKUP_FAILED');
+  });
+
+  it.each(['+1 (555) 555-0123', '15555550123@g.us', '0015555550123', ''])
+  ('rejects malformed WhatsApp identity %s before querying', async from => {
+    await expect(resolveSnoozeConversation(contact(from))).rejects.toThrow('CUSTOMER_SUPPORT_SNOOZE_CONTACT_INVALID');
+    expect(query.from).not.toHaveBeenCalled();
+  });
+
+  it('retains exact raw-recipient fallback hashing for non-WhatsApp channels', async () => {
+    const request = contact('telegram:@customer');
+    request.metadata.channel = 'telegram';
+    results.push({ data: null, error: null });
+    await expect(resolveSnoozeConversation(request)).resolves.toBe(
+      supportRecordId(['support-conversation-v1', 'site', 'connection', 'telegram:@customer']));
+    expect(query.from).toHaveBeenCalledWith('messages');
+    expect(query.eq).toHaveBeenCalledWith('custom_data->>zavu_from', 'telegram:@customer');
+    expect(query.in).not.toHaveBeenCalled();
+  });
 });
 
 it('preserves only an inbound row with stable identity and no assignment writes', async () => {

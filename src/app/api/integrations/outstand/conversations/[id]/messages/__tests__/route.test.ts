@@ -6,6 +6,8 @@ import {
 } from '@/lib/integrations/outstand/conversation-access';
 import { recordOutstandMessage } from '@/lib/integrations/outstand/inbox-sync';
 import { POST } from '../route';
+import { assertSafeRemoteUrl } from '@/lib/security/safe-remote-url';
+jest.mock('@/lib/security/safe-remote-url', () => ({ assertSafeRemoteUrl: jest.fn(async () => undefined) }));
 
 jest.mock('@/lib/integrations/outstand/client', () => ({
   getOutstandClient: jest.fn(),
@@ -69,12 +71,36 @@ describe('Outstand conversation messages route', () => {
         media_urls: ['https://cdn.example.com/image.jpg'],
         scheduled_at: scheduledAt,
       },
+      SITE_ID,
     );
     expect(authorizeOutstandConversation).toHaveBeenCalledWith(
       expect.anything(),
       'conversation-1',
       SITE_ID,
     );
+  });
+
+  it('passes media-only native media_urls unchanged and retains pending acceptance', async () => {
+    const response = await POST(new Request('https://api.example.test/send', { method: 'POST', body: JSON.stringify({
+      media_urls: ['https://assets.example.test/image.jpg', 'https://assets.example.test/video.mp4'],
+    }) }), { params: Promise.resolve({ id: 'conversation-1' }) });
+    expect(response.status).toBe(202);
+    expect(sendConversationMessage).toHaveBeenCalledWith('conversation-1', {
+      content: undefined, media_urls: ['https://assets.example.test/image.jpg', 'https://assets.example.test/video.mp4'], scheduled_at: undefined,
+    }, SITE_ID);
+    expect(assertSafeRemoteUrl).toHaveBeenCalledTimes(2);
+    expect(recordOutstandMessage).toHaveBeenCalled();
+  });
+
+  it('rejects unsafe media after site and conversation authorization without sending or recording', async () => {
+    jest.mocked(assertSafeRemoteUrl).mockRejectedValueOnce(new Error('private address') as never);
+    const response = await POST(new Request('https://api.example.test/send', { method: 'POST', body: JSON.stringify({
+      content: 'Do not downgrade', media_urls: ['https://private.example.test/image.jpg'],
+    }) }), { params: Promise.resolve({ id: 'conversation-1' }) });
+    expect(response.status).toBe(400);
+    expect(authorizeOutstandConversation).toHaveBeenCalled();
+    expect(sendConversationMessage).not.toHaveBeenCalled();
+    expect(recordOutstandMessage).not.toHaveBeenCalled();
   });
 
   it('rejects a scheduled message whose delivery time has passed', async () => {

@@ -6,7 +6,7 @@ export async function resolveSupportResults(
   readSameCommand: () => Promise<any>,
 ) {
   let results = extractSupportResults(command);
-  if (results.assistantMessage) return results;
+  if (results.assistantMessage !== undefined) return results;
   for (let attempt = 0; attempt < 3; attempt++) {
     if (attempt > 0) await new Promise(resolve => setTimeout(resolve, 200));
     let fresh;
@@ -18,7 +18,7 @@ export async function resolveSupportResults(
     }
     if (fresh?.status !== 'completed') continue;
     results = extractSupportResults(fresh);
-    if (results.assistantMessage) return results;
+    if (results.assistantMessage !== undefined) return results;
   }
   return null;
 }

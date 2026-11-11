@@ -8,11 +8,16 @@ import { resolveOutreachRecipient } from '@/lib/services/outreach/recipients';
 import { loadOutreachConversations } from '@/lib/services/outreach/recipient-repository';
 import { claimExactDelivery, finishExactDelivery } from '@/lib/messaging/exact-delivery-receipt';
 import { sendExactAudioDelivery } from '@/lib/messaging/exact-audio-delivery';
+import { validateOutboundMedia } from '@/lib/services/channels/outbound-media';
+import { validateEmailAttachments } from '@/lib/services/email/email-attachments';
 
 const schema = z.object({
-  site_id: z.string().uuid(), channel: z.enum(['email', 'whatsapp', 'sms', 'telegram', 'voice']),
+  site_id: z.string().uuid(), channel: z.enum(['email', 'whatsapp', 'sms', 'telegram', 'messenger', 'instagram', 'voice']),
   connection_id: z.string().min(1).max(200).optional(),
-  to: z.string().trim().min(1).max(320).optional(), message: z.string().min(1).max(200_000).optional(),
+  to: z.string().trim().min(1).max(320).optional(), message: z.string().max(200_000).optional(),
+  message_type: z.enum(['text', 'image', 'video', 'audio', 'document']).optional(),
+  media_url: z.string().max(8192).optional(), mime_type: z.string().optional(),
+  response_format: z.enum(['text', 'audio']).optional(),
   subject: z.string().max(1000).optional(), message_id: z.string().uuid(),
   conversation_id: z.string().uuid().optional(), lead_id: z.string().uuid().optional(),
   agent_id: z.string().uuid().optional(), voice_mode: z.enum(['tts', 'agent_call']).optional(),
@@ -40,7 +45,9 @@ export async function POST(request: Request) {
     const conversations = context.leadId ? await loadOutreachConversations(parsed.data.site_id, context.leadId) : [];
     const recipient = resolveOutreachRecipient({ siteId: parsed.data.site_id, channel: parsed.data.channel,
       lead: context.lead, conversations });
-    if (!recipient || !context.message?.content) return NextResponse.json({ success: false, error: 'Stored recipient or content is unavailable' }, { status: 409 });
+    const media = await validateOutboundMedia(context.customData, parsed.data.channel);
+    const attachments = !media ? validateEmailAttachments(context.customData.attachments) : undefined;
+    if (!recipient || (!context.message?.content && !media && !attachments?.length)) return NextResponse.json({ success: false, error: 'Stored recipient or content is unavailable' }, { status: 409 });
     if (context.customData.response_format === 'audio') {
       const result = await sendExactAudioDelivery({ siteId: parsed.data.site_id, channel: parsed.data.channel,
         connectionId: context.connectionId, conversationId: context.conversationId!,
@@ -50,7 +57,7 @@ export async function POST(request: Request) {
     let attemptId: string | undefined;
     const result = await sendExactDelivery({ site_id: parsed.data.site_id, channel: parsed.data.channel,
       message_id: parsed.data.message_id, connection_id: context.connectionId, conversation_id: context.conversationId,
-      lead_id: context.leadId, to: recipient.recipient, message: context.message.content,
+      lead_id: context.leadId, to: recipient.recipient, message: context.message.content || '',
       before_dispatch: async () => { attemptId = await claimExactDelivery(context.message, context.connectionId!); } });
     if (attemptId) await finishExactDelivery(parsed.data.message_id, attemptId, result);
     return NextResponse.json({ ...result, recipient: recipient.recipient }, { status: result.success ? 200 : 409 });

@@ -5,6 +5,7 @@ import { assertVoiceCallAllowed } from '@/lib/services/zavu/voice-call-service';
 import { bindLocalOutstandMessage } from '@/lib/integrations/outstand/inbox-sync';
 import { canAccessSite } from '@/lib/security/site-access';
 import { validateResponseFormat } from '@/lib/services/channels/response-format';
+import { validateOutboundMedia } from '@/lib/services/channels/outbound-media';
 
 /**
  * Sends an outbound message on a connected channel (telegram, messenger).
@@ -23,14 +24,17 @@ export async function POST(request: NextRequest) {
       message_id,
       subject,
       response_format,
+      message_type,
+      media_url,
+      mime_type,
     } = payload;
 
     try { validateResponseFormat(response_format, channel); }
     catch { return NextResponse.json({ success: false, error: 'Invalid response format for this channel' }, { status: 400 }); }
 
-    if (!channel || !to || !message || !site_id) {
+    if (!channel || !to || !site_id) {
       return NextResponse.json(
-        { success: false, error: 'channel, to, message and site_id are required' },
+        { success: false, error: 'channel, to and site_id are required' },
         { status: 400 }
       );
     }
@@ -39,6 +43,11 @@ export async function POST(request: NextRequest) {
         { success: false, error: 'Site access denied' },
         { status: 403 },
       );
+    }
+
+    const media = await validateOutboundMedia({ message_type, media_url, mime_type, response_format }, channel);
+    if ((message !== undefined && typeof message !== 'string') || (!message?.trim() && !media)) {
+      return NextResponse.json({ success: false, error: 'message or media is required' }, { status: 400 });
     }
 
     if (String(channel).toLowerCase() === 'voice') {
@@ -56,6 +65,9 @@ export async function POST(request: NextRequest) {
       lead_id,
       message_id,
       response_format,
+      message_type,
+      media_url,
+      mime_type,
     });
 
     if (!sendResult.success) {
@@ -77,7 +89,7 @@ export async function POST(request: NextRequest) {
       timestamp: new Date().toISOString(),
     });
     if (
-      normalizedChannel === 'instagram'
+      sendResult.provider === 'outstand'
       && conversation_id
       && message_id
       && sendResult.messageId
@@ -102,7 +114,7 @@ export async function POST(request: NextRequest) {
       } catch (error) {
         console.warn('[sendChannelMessage] Failed to bind Outstand message:', error);
       }
-    } else if (conversation_id && message_id && response_format !== 'audio') {
+    } else if (conversation_id && message_id && response_format !== 'audio' && !media) {
       try {
         const { data: existing } = await supabaseAdmin
           .from('messages')
@@ -130,8 +142,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       messageId: sendResult.messageId,
-      delivered: normalizedChannel !== 'instagram',
-      status: normalizedChannel === 'instagram' ? 'pending' : 'sent',
+      delivered: sendResult.provider !== 'outstand',
+      status: sendResult.provider === 'outstand' ? 'pending' : 'sent',
       timestamp: new Date().toISOString(),
     });
   } catch (error) {

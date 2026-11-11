@@ -5,6 +5,7 @@ import { commandService, getCommandDbUuid, waitForCommandCompletion } from './co
 import { isValidUUID } from './agent-data';
 import { corsHeaders } from './cors';
 import { bindInboundCommand, claimInboundCommand, type InboundCommandKey } from './inbound-command-idempotency';
+import { supportMediaContext } from './response-media';
 export async function generateSupportReply(input: any) {
 const { effectiveUserId, effectiveAgentId, effectiveSiteId, effectiveLeadId, contextMessage, agentUserId, request } = input;
     let inboundKey: InboundCommandKey | undefined;
@@ -39,6 +40,9 @@ const { effectiveUserId, effectiveAgentId, effectiveSiteId, effectiveLeadId, con
           message: {
             content: "message example", // Will be filled by the agent
             response_format: input.response_format || 'text', // Model selects text|audio according to context; explicit request wins.
+            message_type: 'text',
+            media_url: '',
+            mime_type: '',
             is_robot: false, // Set to true if this is a robot/automated interaction that should not be saved to DB
             is_transactional_message: false, // Set to true if this is a transactional/automatic message that should not be saved to DB
             is_erratic: false // Set to true if the message is nonsensical or makes no sense and should not be saved to DB
@@ -56,7 +60,7 @@ const { effectiveUserId, effectiveAgentId, effectiveSiteId, effectiveLeadId, con
       // Define the tools as specified in the documentation
       tools: buildCustomerSupportTools(effectiveSiteId),
       // Context includes the current message and conversation history
-      context: contextMessage,
+      context: contextMessage + supportMediaContext(),
       // Add supervisors as specified in the documentation
       supervisor: [
         {

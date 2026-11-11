@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { supportRecordId } from './save-zavu-messages';
+import { normalizeWhatsAppAutomationRecipient } from '@/lib/services/zavu/conversation-automation-contact';
 
 const db = () => supabaseAdmin.schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA
   || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public');
@@ -21,6 +22,26 @@ export async function resolveSnoozeConversation(input: {
   if (!input.siteId || typeof metadata.connection_id !== 'string'
       || typeof metadata.zavu_sender_id !== 'string' || typeof metadata.zavu_from !== 'string') {
     throw new Error('CUSTOMER_SUPPORT_INBOUND_SCOPE_REQUIRED');
+  }
+  if (metadata.channel === 'whatsapp') {
+    const recipient = normalizeWhatsAppAutomationRecipient(metadata.zavu_from);
+    const digits = recipient.slice(1);
+    // Resolve conversations, not individual messages: a long history must not
+    // truncate away ambiguity or cause a duplicate thread for a formatting alias.
+    const { data, error } = await db().from('conversations')
+      .select('id, messages!inner()').eq('site_id', input.siteId)
+      .eq('messages.role', 'user')
+      .eq('messages.custom_data->>connection_id', metadata.connection_id)
+      .eq('messages.custom_data->>zavu_sender_id', metadata.zavu_sender_id)
+      .in('messages.custom_data->>zavu_from', [recipient, digits, `whatsapp:${recipient}`, `whatsapp:${digits}`])
+      .limit(2);
+    if (error || !Array.isArray(data) || data.some(row => typeof row?.id !== 'string' || !row.id)) {
+      throw new Error('CUSTOMER_SUPPORT_SNOOZE_LOOKUP_FAILED');
+    }
+    if (data.length > 1) throw new Error('CUSTOMER_SUPPORT_SNOOZE_SCOPE_CONFLICT');
+    return data[0]?.id || supportRecordId([
+      'support-conversation-v1', input.siteId, metadata.connection_id, recipient,
+    ]);
   }
   const { data, error } = await db().from('messages')
     .select('conversation_id, conversations!inner(site_id)')

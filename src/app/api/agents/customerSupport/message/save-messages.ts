@@ -5,9 +5,12 @@ import { saveCommentMessages } from '@/lib/services/social-comments/persistence'
 import { usableSupportContent } from './response-content';
 import { saveZavuSupportMessages } from './save-zavu-messages';
 import type { ResponseFormat } from '@/lib/services/channels/response-format';
+import { validateSupportResponseMedia, type SupportResponseMedia } from './response-media';
 // Función para guardar mensajes en la base de datos
-export async function saveMessages(userId: string, userMessage: string, assistantMessage: string, conversationId?: string, conversationTitle?: string, leadId?: string, visitorId?: string, agentId?: string, siteId?: string, commandId?: string, origin?: string, isRobot?: boolean, isTransactionalMessage?: boolean, isErratic?: boolean, originMessageId?: string, channelDelivery?: boolean, requireApproval?: boolean, inboundCustomData?: Record<string, unknown>, agentDisabled = false, responseFormat: ResponseFormat = 'text') {
-  if (!usableSupportContent(assistantMessage)) {
+export async function saveMessages(userId: string, userMessage: string, assistantMessage: string, conversationId?: string, conversationTitle?: string, leadId?: string, visitorId?: string, agentId?: string, siteId?: string, commandId?: string, origin?: string, isRobot?: boolean, isTransactionalMessage?: boolean, isErratic?: boolean, originMessageId?: string, channelDelivery?: boolean, requireApproval?: boolean, inboundCustomData?: Record<string, unknown>, agentDisabled = false, responseFormat: ResponseFormat = 'text', responseMedia?: SupportResponseMedia) {
+  const media = await validateSupportResponseMedia(responseMedia, origin || 'chat', responseFormat,
+    inboundCustomData?.source === 'comment');
+  if (!usableSupportContent(assistantMessage) && !(media && assistantMessage === '')) {
     throw new Error('CUSTOMER_SUPPORT_EMPTY_RESPONSE');
   }
   if (!agentDisabled && inboundCustomData?.source === 'comment' && siteId && conversationId) {
@@ -48,7 +51,7 @@ export async function saveMessages(userId: string, userMessage: string, assistan
     if (!agentDisabled && inboundCustomData?.source === 'zavu_inbound_message' && originMessageId && siteId) {
       return await saveZavuSupportMessages({ siteId, userId, agentId, leadId: validatedLeadId,
         conversationId, conversationTitle, commandId, userMessage, assistantMessage,
-        originMessageId, channel: origin || 'whatsapp', requireApproval, metadata: inboundCustomData, responseFormat });
+        originMessageId, channel: origin || 'whatsapp', requireApproval, metadata: inboundCustomData, responseFormat, responseMedia: media });
     }
 
     let effectiveConversationId: string | undefined = conversationId;
@@ -302,7 +305,7 @@ export async function saveMessages(userId: string, userMessage: string, assistan
       content: assistantMessage,
       role: agentDisabled ? 'system' : 'assistant',
       custom_data: agentDisabled ? { internal: true, agent_disabled: true, response_skipped: true }
-        : { response_format: responseFormat }
+        : { response_format: responseFormat, ...media }
     };
 
     if (!agentDisabled && typeof inboundCustomData?.automation_started_at === 'string') {

@@ -4,6 +4,7 @@ import { sanitizeZavuRecipient } from '@/lib/services/channels/ChannelSendServic
 import { placeTrackedVoiceCall } from '@/lib/services/zavu/voice-call-service';
 import { VoicePlacementError } from '@/lib/services/zavu/voice-call-message-state';
 import { validateResponseFormat, type ResponseFormat } from '@/lib/services/channels/response-format';
+import { validateOutboundMedia, type OutboundMediaInput } from '@/lib/services/channels/outbound-media';
 
 function isValidUUID(uuid: string): boolean {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -162,9 +163,13 @@ export async function sendMessageByChannel(
   leadId?: string,
   messageId?: string,
   responseFormat?: ResponseFormat,
+  mediaInput: OutboundMediaInput = {},
 ): Promise<ChannelSendResult> {
   try {
     validateResponseFormat(responseFormat, channel);
+    const media = await validateOutboundMedia({ ...mediaInput, response_format: responseFormat }, channel);
+    const mediaFields = media ? { message_type: media.messageType, media_url: media.content.mediaUrl,
+      ...(media.content.mimeType ? { mime_type: media.content.mimeType } : {}) } : {};
     console.log(`📤 Starting Temporal send for channel: ${channel}`);
 
     const workflowService = WorkflowService.getInstance();
@@ -250,6 +255,7 @@ export async function sendMessageByChannel(
       }
 
       const result = await workflowService.sendChannelMessageFromAgent({
+        ...mediaFields,
         channel,
         to: recipient,
         message,
@@ -285,6 +291,7 @@ export async function sendMessageByChannel(
       }
 
       const result = await workflowService.sendWhatsappFromAgent({
+        ...mediaFields,
         phone_number: phoneNumber,
         message,
         from: 'Equipo de Soporte',
@@ -319,6 +326,7 @@ export async function sendMessageByChannel(
       }
 
       const result = await workflowService.sendEmailFromAgent({
+        ...mediaFields,
         email,
         from: 'Equipo de Soporte',
         subject: 'Respuesta de nuestro equipo',
@@ -339,6 +347,7 @@ export async function sendMessageByChannel(
       };
     }
 
+    if (media) throw new Error(`Media delivery is not supported by the ${channel} adapter`);
     console.log(`ℹ️ Canal "${channel}" no requiere envío externo (web/chat)`);
     return {
       success: true,

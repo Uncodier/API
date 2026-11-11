@@ -1,4 +1,5 @@
 const mockFrom = jest.fn();
+jest.mock('@/lib/security/safe-remote-url', () => ({ assertSafeRemoteUrl: jest.fn(async () => undefined) }));
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: mockFrom } }));
 import { reuseInterventionMessage } from '../reuse-intervention-message';
 import { resolveAudioRouting } from '@/lib/services/channels/audio-routing';
@@ -34,6 +35,21 @@ describe('intervention retry ownership and atomic claim', () => {
       };
       return q;
     });
+  });
+
+  it('retains saved canonical media when retry omits it', async () => {
+    const mediaInput = { message_type: 'document', media_url: 'https://assets.example.test/saved.pdf', mime_type: 'application/pdf' };
+    Object.assign(customData, mediaInput);
+    expect(await reuseInterventionMessage(messageId, conversationId, userId, 'Hello', { channel: 'telegram' }))
+      .toMatchObject({ mediaInput });
+    expect(updatedMetadata).toMatchObject(mediaInput);
+  });
+
+  it('refuses replacing saved canonical media before retry claim', async () => {
+    Object.assign(customData, { message_type: 'document', media_url: 'https://assets.example.test/saved.pdf' });
+    expect(await reuseInterventionMessage(messageId, conversationId, userId, 'Hello', { channel: 'telegram',
+      mediaInput: { message_type: 'document', media_url: 'https://assets.example.test/other.pdf' } })).toBeNull();
+    expect(updates).toBe(0);
   });
 
   it('claims the unchanged failed message and scopes both reads and writes to its author', async () => {

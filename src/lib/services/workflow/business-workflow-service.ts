@@ -1,8 +1,9 @@
 import { BaseWorkflowService, WorkflowExecutionOptions, WorkflowExecutionResponse } from './base-workflow-service';
 import { validateResponseFormat } from '@/lib/services/channels/response-format';
+import { validateOutboundMedia, type OutboundMediaInput } from '@/lib/services/channels/outbound-media';
 
 // Interfaces específicas para workflows de negocio (coinciden con Temporal externo)
-interface EmailWorkflowArgs {
+interface EmailWorkflowArgs extends OutboundMediaInput {
   email: string;            // ✅ REQUERIDO - Email destinatario
   subject: string;          // ✅ REQUERIDO - Asunto del email
   message: string;          // ✅ REQUERIDO - Mensaje a enviar
@@ -13,7 +14,7 @@ interface EmailWorkflowArgs {
   message_id?: string;      // 🔸 OPCIONAL - ID del mensaje original
 }
 
-interface WhatsAppWorkflowArgs {
+interface WhatsAppWorkflowArgs extends OutboundMediaInput {
   response_format?: 'text' | 'audio';
   phone_number: string;     // ✅ REQUERIDO - Número de teléfono destinatario
   message: string;          // ✅ REQUERIDO - Mensaje a enviar
@@ -25,7 +26,7 @@ interface WhatsAppWorkflowArgs {
   message_id?: string;      // 🔸 OPCIONAL - ID del mensaje original
 }
 
-interface ChannelMessageWorkflowArgs {
+interface ChannelMessageWorkflowArgs extends OutboundMediaInput {
   response_format?: 'text' | 'audio';
   channel: string;          // ✅ REQUERIDO - Canal de envío (telegram, messenger)
   to: string;               // ✅ REQUERIDO - Destinatario (Chat ID o número)
@@ -170,7 +171,9 @@ export class BusinessWorkflowService extends BaseWorkflowService {
    */
   public async sendEmailFromAgent(args: EmailWorkflowArgs, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
     try {
-      if (!args.email || !args.subject || !args.message || !args.site_id) {
+      const media = await validateOutboundMedia(args, 'email');
+      validateResponseFormat(args.response_format, 'email');
+      if (!args.email || !args.subject || (!args.message && !media) || !args.site_id) {
         return {
           success: false,
           error: {
@@ -238,7 +241,8 @@ export class BusinessWorkflowService extends BaseWorkflowService {
   public async sendWhatsappFromAgent(args: WhatsAppWorkflowArgs, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
     try {
       validateResponseFormat(args.response_format, 'whatsapp');
-      if (!args.phone_number || !args.message || !args.site_id) {
+      const media = await validateOutboundMedia(args, 'whatsapp');
+      if (!args.phone_number || (!args.message && !media) || !args.site_id) {
         return {
           success: false,
           error: {
@@ -306,7 +310,8 @@ export class BusinessWorkflowService extends BaseWorkflowService {
   public async sendChannelMessageFromAgent(args: ChannelMessageWorkflowArgs, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
     try {
       validateResponseFormat(args.response_format, args.channel);
-      if (!args.channel || !args.to || !args.message || !args.site_id) {
+      const media = await validateOutboundMedia(args, args.channel);
+      if (!args.channel || !args.to || (!args.message && !media) || !args.site_id) {
         return {
           success: false,
           error: {

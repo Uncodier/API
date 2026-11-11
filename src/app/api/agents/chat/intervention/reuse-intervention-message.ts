@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { validateResponseFormat, type ResponseFormat } from '@/lib/services/channels/response-format';
 import { resolveAudioRouting } from '@/lib/services/channels/audio-routing';
+import { validateOutboundMedia, type OutboundMediaInput } from '@/lib/services/channels/outbound-media';
 
 export type SavedInterventionMessage = {
   conversationId: string;
@@ -8,6 +9,7 @@ export type SavedInterventionMessage = {
   conversationTitle?: string;
   responseFormat?: ResponseFormat;
   channelDelivery?: boolean;
+  mediaInput?: OutboundMediaInput;
 };
 
 function isValidUUID(uuid: string): boolean {
@@ -20,7 +22,7 @@ export async function reuseInterventionMessage(
   conversationId: string,
   userId: string,
   content: string,
-  options: { responseFormat?: ResponseFormat; channel?: string; siteId?: string; allowLegacyWhatsApp?: boolean } = {},
+  options: { responseFormat?: ResponseFormat; channel?: string; siteId?: string; allowLegacyWhatsApp?: boolean; mediaInput?: OutboundMediaInput } = {},
 ): Promise<SavedInterventionMessage | null> {
   if (!isValidUUID(messageId) || !isValidUUID(conversationId)) {
     return null;
@@ -41,6 +43,14 @@ export async function reuseInterventionMessage(
   }
 
   const customData = { ...((data.custom_data as Record<string, unknown>) || {}) };
+  let mediaInput: OutboundMediaInput | undefined;
+  try {
+    const media = await validateOutboundMedia(customData, options.channel || '');
+    const requested = await validateOutboundMedia(options.mediaInput || {}, options.channel || '');
+    if (requested && JSON.stringify(requested) !== JSON.stringify(media)) return null;
+    if (media) mediaInput = { message_type: media.messageType, media_url: media.content.mediaUrl,
+      ...(media.content.mimeType ? { mime_type: media.content.mimeType } : {}) };
+  } catch { return null; }
   // Template approval/dispatch is owned by its workflow, not the Retry button.
   if (customData.template_delivery) return null;
   // A retry may omit the selection, but may never change the saved choice
@@ -91,6 +101,7 @@ export async function reuseInterventionMessage(
     conversationId: data.conversation_id,
     interventionMessageId: data.id,
     ...(responseFormat !== undefined ? { responseFormat } : {}),
+    ...(mediaInput ? { mediaInput } : {}),
     ...(audioRouting ? { channelDelivery: audioRouting.kind === 'zavu' } : {}),
   };
 }

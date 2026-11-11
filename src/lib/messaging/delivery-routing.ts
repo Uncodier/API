@@ -1,7 +1,7 @@
 import { getSiteLicensedResources } from '@/lib/billing/licensed-resources';
 import { selectedOutreachAccounts, type OutreachAccount, type OutreachPolicy } from '@/lib/services/outreach/policy';
 
-export const DELIVERY_CHANNELS = ['whatsapp', 'email', 'telegram', 'sms', 'voice'] as const;
+export const DELIVERY_CHANNELS = ['whatsapp', 'email', 'telegram', 'messenger', 'instagram', 'sms', 'voice'] as const;
 export type DeliveryChannel = typeof DELIVERY_CHANNELS[number];
 export interface DeliveryRoute {
   channel: DeliveryChannel;

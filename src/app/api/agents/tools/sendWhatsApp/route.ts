@@ -4,6 +4,7 @@ import { WhatsAppSendService } from '@/lib/services/whatsapp/WhatsAppSendService
 import { attemptPhoneRescue } from '@/lib/utils/phone-normalizer';
 import { validateResponseFormat } from '@/lib/services/channels/response-format';
 import { canAccessSite } from '@/lib/security/site-access';
+import { validateWhatsAppMedia } from '@/lib/services/channels/outbound-media';
 
 // Util function to validate UUIDs
 function isValidUUID(uuid: string): boolean {
@@ -113,7 +114,7 @@ export async function POST(request: NextRequest) {
     const { 
       phone_number,
       from,
-      message,
+      message = '',
       agent_id,
       conversation_id,
       lead_id,
@@ -121,12 +122,24 @@ export async function POST(request: NextRequest) {
       responseWindowEnabled,
       message_id, // If present, this is the messages.id already created upstream (leadFollowUp/logs)
       response_format,
+      media_urls,
+      message_type,
+      media_url,
+      mime_type,
     } = body;
 
     try { validateResponseFormat(response_format, 'whatsapp'); }
     catch { return NextResponse.json({ success: false, error: { message: 'Invalid response format' } }, { status: 400 }); }
-    if (response_format !== undefined && !await canAccessSite(request, site_id)) {
+    if (!await canAccessSite(request, site_id)) {
       return NextResponse.json({ success: false, error: { message: 'Site access denied' } }, { status: 403 });
+    }
+    let mediaUrls: string[];
+    try { mediaUrls = await validateWhatsAppMedia({ response_format, media_urls, message_type, media_url, mime_type }); }
+    catch (error) {
+      return NextResponse.json({ success: false, error: { code: 'INVALID_MEDIA', message: error instanceof Error ? error.message : 'Invalid media' } }, { status: 400 });
+    }
+    if (typeof message !== 'string' || (!message.trim() && !mediaUrls.length)) {
+      return NextResponse.json({ success: false, error: { code: 'INVALID_REQUEST', message: 'Message text or media is required' } }, { status: 400 });
     }
     
     console.log('🔍 [SendWhatsApp] Parámetros recibidos:', {
@@ -145,7 +158,6 @@ export async function POST(request: NextRequest) {
     // Validar parámetros requeridos
     const requiredFields = [
       { field: 'phone_number', value: phone_number },
-      { field: 'message', value: message },
       { field: 'site_id', value: site_id }
     ];
 
@@ -306,6 +318,10 @@ export async function POST(request: NextRequest) {
       responseWindowEnabled,
       response_format,
       message_id,
+      media_urls,
+      message_type,
+      media_url,
+      mime_type,
     });
 
     console.log('📨 [SendWhatsApp] Resultado del envío:', {
@@ -441,7 +457,7 @@ export async function POST(request: NextRequest) {
           message: 'An internal server error occurred while sending the WhatsApp message' 
         } 
       },
-      { status: 500 }
+      { status: error && typeof error === 'object' && 'status' in error && typeof error.status === 'number' ? error.status : 500 }
     );
   }
 }

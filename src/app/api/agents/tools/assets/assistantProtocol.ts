@@ -6,6 +6,7 @@
 import { getAssetCore } from './get/core';
 import { createAssetCore } from './create/core';
 import { updateAssetCore } from './update/core';
+import { canToolPrincipalAccessSite } from '@/lib/security/tool-request-principal';
 
 export interface AssetsToolParams {
   action: 'create' | 'list' | 'update';
@@ -27,7 +28,7 @@ export function assetsTool(site_id: string, user_id?: string) {
   return {
     name: 'assets',
     description:
-      'Manage assets (e.g. text content, media metadata) linked to robot instances. Use action="create" to create a new asset. Use action="update" to update an existing asset. Use action="list" to get assets.',
+      'Manage assets linked to robot instances. Use action="create" with content and a text file_type to create an inline text asset; upload media through the media tools instead. Use action="update" to update an existing asset. Use action="list" to get assets.',
     parameters: {
       type: 'object',
       properties: {
@@ -52,6 +53,9 @@ export function assetsTool(site_id: string, user_id?: string) {
       const { action, ...params } = args;
 
       if (action === 'create') {
+        if (user_id && !await canToolPrincipalAccessSite({ internal: false, userId: user_id, siteId: site_id }, site_id)) {
+          throw new Error('Forbidden');
+        }
         if (!params.name || !params.file_type || !params.instance_id) {
            throw new Error('Missing required fields for create asset: name, file_type, instance_id');
         }

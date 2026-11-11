@@ -1,7 +1,8 @@
 import type { ContentPlaceholderPolicy } from '@/lib/messaging/lead-merge-fields';
 import { DELIVERY_ROUTING_PROPERTIES, type DeliveryRoutingInput } from '@/lib/messaging/delivery-routing';
+import type { OutboundMediaInput } from '@/lib/services/channels/outbound-media';
 
-export interface SendBulkMessagesToolParams extends DeliveryRoutingInput {
+export interface SendBulkMessagesToolParams extends DeliveryRoutingInput, OutboundMediaInput {
   audience_id: string;
   message: string;
   subject?: string;
@@ -55,6 +56,10 @@ export const SEND_BULK_MESSAGES_PARAMETERS = {
   type: 'object',
   properties: {
     ...DELIVERY_ROUTING_PROPERTIES,
+    message_type: { type: 'string', enum: ['text', 'image', 'video', 'audio', 'document'] },
+    media_url: { type: 'string', description: 'Public HTTPS media attachment; preserved with queued messages, never replaced by a link. Legacy WhatsApp bulk media templates are not supported.' },
+    mime_type: { type: 'string' },
+    response_format: { type: 'string', enum: ['text'], description: 'Bulk generated audio is unsupported; existing audio uses message_type audio.' },
     audience_id: { type: 'string', description: 'Audience UUID to send messages to.' },
     channel: {
       type: 'string',

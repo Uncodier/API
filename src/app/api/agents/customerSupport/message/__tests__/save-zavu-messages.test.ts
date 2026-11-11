@@ -2,6 +2,7 @@ import { saveZavuSupportMessages, supportRecordId } from '../save-zavu-messages'
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { schema: jest.fn() } }));
+jest.mock('@/lib/security/safe-remote-url', () => ({ assertSafeRemoteUrl: jest.fn(async () => undefined) }));
 
 describe('durable Zavu message identity', () => {
   let tables: Record<string, Map<string, any>>;
@@ -69,6 +70,22 @@ describe('durable Zavu message identity', () => {
   it('fails closed if a retry attempts to change the persisted delivery format', async () => {
     await saveZavuSupportMessages({ ...input, responseFormat: 'audio' });
     await expect(saveZavuSupportMessages({ ...input, responseFormat: 'text' })).rejects.toThrow('SCOPE_CONFLICT');
+  });
+
+  it.each(['image', 'video', 'audio', 'document'])('preserves existing %s media and protects it from retry changes', async message_type => {
+    const responseMedia = { message_type, media_url: 'https://media.example.test/file',
+      mime_type: message_type === 'document' ? 'application/pdf' : `${message_type}/test` };
+    const request = { ...input, assistantMessage: '', responseMedia, requireApproval: true };
+    const result = await saveZavuSupportMessages(request);
+    expect(tables.messages.get(result.assistantMessageId)).toMatchObject({ content: '',
+      custom_data: { ...responseMedia, response_format: 'text', status: 'pending' } });
+    expect(await saveZavuSupportMessages(request)).toEqual(result);
+    for (const change of [{ media_url: 'https://media.example.test/other' },
+      { mime_type: message_type === 'document' ? 'application/zip' : `${message_type}/other` }]) {
+      await expect(saveZavuSupportMessages({ ...request, responseMedia: { ...responseMedia, ...change } }))
+        .rejects.toThrow('SCOPE_CONFLICT');
+    }
+    await expect(saveZavuSupportMessages({ ...input })).rejects.toThrow('SCOPE_CONFLICT');
   });
 
   it('returns the same messages for a completed retry without overwriting delivery state', async () => {

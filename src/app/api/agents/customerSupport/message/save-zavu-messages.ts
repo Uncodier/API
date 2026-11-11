@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { usableSupportContent } from './response-content';
 import type { ResponseFormat } from '@/lib/services/channels/response-format';
+import { validateSupportResponseMedia, type SupportResponseMedia } from './response-media';
 
 export function supportRecordId(parts: string[]): string {
   const hex = createHash('sha256').update(JSON.stringify(parts)).digest('hex');
@@ -14,6 +15,7 @@ type Input = {
   userMessage: string; assistantMessage: string; originMessageId: string;
   channel: string; requireApproval?: boolean; metadata: Record<string, unknown>;
   responseFormat?: ResponseFormat;
+  responseMedia?: SupportResponseMedia;
   inboundOnly?: boolean;
 };
 
@@ -28,7 +30,10 @@ export async function saveZavuSupportMessages(input: Input): Promise<{
   conversationId: string; userMessageId: string; assistantMessageId: string | undefined; conversationTitle?: string; automationStartedAt?: string;
 }> {
   const receivedAt = new Date().toISOString();
-  if (!input.inboundOnly && !usableSupportContent(input.assistantMessage)) throw new Error('CUSTOMER_SUPPORT_EMPTY_RESPONSE');
+  const media = !input.inboundOnly
+    ? await validateSupportResponseMedia(input.responseMedia, input.channel, input.responseFormat || 'text') : undefined;
+  if (!input.inboundOnly && !usableSupportContent(input.assistantMessage)
+    && !(media && input.assistantMessage === '')) throw new Error('CUSTOMER_SUPPORT_EMPTY_RESPONSE');
   const connection = input.metadata.connection_id;
   const sender = input.metadata.zavu_sender_id;
   const from = input.metadata.zavu_from;
@@ -91,6 +96,7 @@ export async function saveZavuSupportMessages(input: Input): Promise<{
         ...(typeof input.metadata.automation_started_at === 'string'
           ? { automation_started_at: input.metadata.automation_started_at } : {}),
         response_format: input.responseFormat || 'text',
+        ...media,
         reply_to_message_id: inboundId, ...(input.requireApproval ? { status: 'pending', channel: input.channel } : {}) } }] : []),
   ];
   for (const row of rows) {
@@ -102,7 +108,9 @@ export async function saveZavuSupportMessages(input: Input): Promise<{
     if (readError || !existing || existing.role !== row.role || existing.conversation_id !== conversationId
         || existing.content !== row.content || existing.custom_data?.connection_id !== connection
         || existing.custom_data?.origin_message_id !== input.originMessageId
-        || (row.role === 'assistant' && (existing.custom_data?.response_format || 'text') !== (input.responseFormat || 'text'))) {
+        || (row.role === 'assistant' && ((existing.custom_data?.response_format || 'text') !== (input.responseFormat || 'text')
+          || (['message_type', 'media_url', 'mime_type'] as const)
+            .some(key => existing.custom_data?.[key] !== media?.[key])))) {
       throw new Error('CUSTOMER_SUPPORT_MESSAGE_SCOPE_CONFLICT');
     }
     if (row.role === 'user' && existing.created_at) automationStartedAt = existing.created_at;
