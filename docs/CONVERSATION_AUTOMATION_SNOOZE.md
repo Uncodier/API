@@ -5,8 +5,21 @@
 - A persisted external `team_member` reply pauses automation on **that conversation**.
 - **Default ON for both existing and new conversations**, without a per-account
   opt-in or a settings save. This takes effect once the migration and services are deployed.
-- Default: 4 hours. `automation_snooze_hours = NULL` uses the enabled default, `0` explicitly disables,
-  and positive values through 168 hours are supported, including fractions.
+- General configuration lives in **AI Activities → Automation Snooze**:
+  `settings.activities.conversation_automation_snooze = {status: 'default'|'inactive', hours: 4}`.
+  A missing entry means enabled for four hours. Active durations are positive and at most 168 hours.
+- **Leads → row options** and **Lead detail → options** hold the customer override:
+  `leads.automation_snooze_hours = NULL` inherits the general setting, `0` disables future
+  pauses for that customer, and positive values through 168 override the general setting.
+  An explicit positive customer override also takes precedence over a disabled general setting.
+- The signed human webhook activates the pause automatically when inserting its message;
+  opening a dialog or setting a customer override is not required. The duration is resolved
+  from lead → site → enabled four-hour default at insertion time.
+- Settings changes affect future human replies, not an existing expiry. Resume an existing
+  conversation explicitly from the customer's dialog. No assignment is changed.
+- `conversations.automation_snooze_hours` is deprecated by the new forward migration,
+  not a hidden third override. Existing values are retained for inspection, not silently
+  copied to leads where multiple conversations may disagree.
 - Each newer human reply extends the expiry from its event time. Assignment,
   agent, delegate, lead owner, moderation flags and conversation status are unchanged.
 - Pending human sends pause immediately to prevent a competing assistant reply.
@@ -22,6 +35,8 @@
 
 1. `supabase/migrations/20261110230000_conversation_automation_snooze.sql` adds the
    state and an atomic, schema-local, invoker-security human-message INSERT trigger.
+   `20261111040000_lead_site_automation_snooze.sql` adds the lead/site policy and
+   authorizes changes to it. This is a separate forward migration; the applied original is unchanged.
 2. `src/app/api/agents/customerSupport/message/snooze.ts` resolves exact Zavu
    connection/contact history, checks state, and persists terminal inbound-only skips.
    The route checks before context/model work and again after generation.
@@ -34,9 +49,10 @@
 5. The sibling Workflows repository treats snooze as a successful skip, checks
    persisted state before delivery attempts, and propagates terminal skips instead
    of marking messages delivered or sleeping until expiry.
-6. The sibling market-fit frontend provides configurable hours, paused-until
-   badges, last-human-reply time and compare-and-set Resume now, with authenticated
-   RLS-backed server actions and realtime refresh.
+6. The sibling market-fit frontend provides the general AI Activities card and
+   lead options dialog. Conversation lists/header retain read-only status, not duration
+   controls. Resume compares both observed expiry and latest human reply, with authenticated
+   RLS-backed server actions.
 7. `src/lib/services/channels/automation-send-guard.ts` enforces persisted state
    again at supported provider boundaries. See [dispatch coverage and limits](./AUTOMATION_SEND_GUARD.md).
 
@@ -79,6 +95,9 @@ Database update: the hardened migration was applied to Makinari public on
 2026-11-11 at 00:26:19 UTC and independently verified at 00:26:29 UTC.
 It adds authorization for snooze writes; the API/schema/bootstrap copies match.
 Application/worker deployment and remaining code-review corrections are still pending.
+The new `20261111040000_lead_site_automation_snooze.sql` was applied to Makinari public
+on 2026-11-11 at 04:00:03 UTC and independently verified at 04:00:04 UTC. The new
+lead controls and AI Activities card still require frontend deployment.
 
 Apply the reviewed schema migration before deploying readers in API, workers and
 frontend; without the new columns guards fail closed. Use the canonical schema
@@ -102,6 +121,7 @@ outside conversation snooze; billing/newsletters are not globally muted.
 ```sh
 node node_modules/jest/bin/jest.js --config jest.support-response.config.js --runInBand
 node --test __tests__/conversation-snooze-sql.test.mjs
+node --test __tests__/whatsapp-snooze-policy-integration.test.mjs
 node --test scripts/__tests__/zavu-reconcile-app-echo.test.mjs
 node node_modules/jest/bin/jest.js --config jest.automation-send.config.mjs --runInBand
 ```

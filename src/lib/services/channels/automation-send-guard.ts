@@ -30,7 +30,7 @@ export async function assertAutomationSendAllowed(input: AutomationSendIdentity)
   // Non-conversation sends (campaigns/setup) have no conversation snooze to inspect.
   if (!conversationId) return;
   const { data: conversation, error: scopeError } = await db.from('conversations')
-    .select('id, automation_paused_until, last_human_reply_at, automation_snooze_hours')
+    .select('id, automation_paused_until, last_human_reply_at')
     .eq('id', conversationId).eq('site_id', input.site_id).maybeSingle();
   if (scopeError || !conversation) throw new Error('Send conversation scope could not be verified');
   let message: any;
