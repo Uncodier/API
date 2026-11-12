@@ -17,6 +17,11 @@ import { MediaRequestError } from '@/lib/services/image/openrouter-media';
 import { prepareOpenRouterVideo } from './provider-openrouter';
 import { resumeVideoJob, startVideoJob } from './openrouter-jobs';
 import { mediaInstanceBelongsToSite } from '@/lib/services/ai/media-instance-access';
+import { authorizeInferenceRequest, withHttpExecutionRouting } from '@/lib/services/ai/customer-routing-http';
+import { CustomerRoutingError } from '@/lib/services/ai/customer-routing';
+import { resolveToolRequestPrincipal, canToolPrincipalAccessSite } from '@/lib/security/tool-request-principal';
+import { prepareCustomerVideo } from './customer-video';
+import { startCustomerVideoJob } from './customer-video-jobs';
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -73,6 +78,7 @@ export async function POST(request: NextRequest) {
     if (!await canAccessSite(request, body.site_id)) {
       return NextResponse.json({ error: 'Site access denied' }, { status: 403 });
     }
+    const { routing } = await authorizeInferenceRequest(request, body.site_id);
     if (!await mediaInstanceBelongsToSite(body.site_id, body.instance_id)) {
       return NextResponse.json({ error: 'Instance does not belong to the authorized site' }, { status: 403 });
     }
@@ -120,11 +126,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const prepared = await prepareOpenRouterVideo(body);
+    const operationId = request.headers.get('Idempotency-Key') ?? '';
+    if (routing?.payer === 'customer' && !/^[A-Za-z0-9:_-]{1,128}$/.test(operationId)) {
+      return NextResponse.json({ error: 'Customer videos require a stable Idempotency-Key' }, { status: 400 });
+    }
+    const prepared = routing?.payer === 'customer'
+      ? await withHttpExecutionRouting(request, routing, () => prepareCustomerVideo(body))
+      : await prepareOpenRouterVideo(body);
     const duration = prepared.duration;
     const requiredCredits =
       (duration / 60) * CreditService.PRICING.VIDEO_GENERATION_MINUTE;
-    if (!await CreditService.validateCredits(body.site_id, requiredCredits)) {
+    if (routing?.payer !== 'customer' && !await CreditService.validateCredits(body.site_id, requiredCredits)) {
       return NextResponse.json(
         {
           success: false,
@@ -153,15 +165,17 @@ export async function POST(request: NextRequest) {
     }
     generationLock = { key: lockKey, token: lock.token };
 
-    const result = await startVideoJob(body, prepared);
+    const result = routing?.payer === 'customer'
+      ? await withHttpExecutionRouting(request, routing, () => startCustomerVideoJob(body, prepared, operationId))
+      : await startVideoJob(body, prepared);
     return NextResponse.json(result, {
       status: result.status === 'completed' ? 200 : 202,
       headers: { 'Cache-Control': 'no-store', 'Retry-After': '30' },
     });
   } catch (error) {
     return NextResponse.json(
-      { error: error instanceof MediaRequestError ? error.message : 'Video generation failed' },
-      { status: error instanceof MediaRequestError ? error.status : 500 },
+      { error: error instanceof MediaRequestError || error instanceof CustomerRoutingError ? error.message : 'Video generation failed' },
+      { status: errorStatus(error, 500) },
     );
   } finally {
     if (generationLock) {
@@ -195,6 +209,11 @@ export async function GET(request: NextRequest) {
     if (!await canAccessSite(request, siteId)) {
       return NextResponse.json({ error: 'Site access denied' }, { status: 403 });
     }
+    // Do not resolve current selection: accepted jobs own their immutable payer pin.
+    const principal = await resolveToolRequestPrincipal(request);
+    if (!principal || !await canToolPrincipalAccessSite(principal, siteId)) {
+      return NextResponse.json({ error: 'Site access denied' }, { status: principal ? 403 : 401 });
+    }
     const key = `lock:ai-video:${await sha256(siteId)}`;
     const lock = await acquireLock(key, 11 * 60);
     if (lock.state !== 'acquired') {
@@ -212,8 +231,13 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       error: error instanceof MediaRequestError ? error.message : 'Video status unavailable; retry status only',
       job_id: params.get('job_id'),
-    }, { status: error instanceof MediaRequestError ? error.status : 503 });
+    }, { status: errorStatus(error, 503) });
   } finally {
     if (generationLock) await releaseLock(generationLock.key, generationLock.token);
   }
+}
+
+function errorStatus(error: unknown, fallback: number) {
+  const status = (error as { status?: number })?.status;
+  return status && [400, 401, 402, 403, 404, 409, 422, 503].includes(status) ? status : fallback;
 }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { CreditService } from '@/lib/services/billing/CreditService';
+import { admitAssistantRouting, validateAssistantInferenceAdmission } from './execution-routing';
 import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { start } from 'workflow/api';
@@ -70,8 +70,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Site access denied' }, { status: 403 });
     }
     
-    if (site_id_for_validation) {
-      const hasCredits = await CreditService.validateCredits(site_id_for_validation, 0.001);
+    const executionRouting = site_id_for_validation ? await admitAssistantRouting(site_id_for_validation) : undefined;
+    if (site_id_for_validation && executionRouting) {
+      const hasCredits = await validateAssistantInferenceAdmission(site_id_for_validation, executionRouting);
       if (!hasCredits) {
         return NextResponse.json(
           { success: false, error: 'Insufficient credits for assistant execution', code: 'INSUFFICIENT_CREDITS' },
@@ -200,7 +201,7 @@ export async function POST(request: NextRequest) {
         expectedResults,
         parsedBody.context,
         normalizedToolOverrides,
-        { selectedSkills, approvedImport, userMessageLogId: userAction.id, executionMode }
+        { selectedSkills, approvedImport, userMessageLogId: userAction.id, executionMode, executionRouting }
       ]);
 
       return assistantResponseStream(workflowRun, newInstance.id, userAction.id, { signal: request.signal });
@@ -258,7 +259,7 @@ export async function POST(request: NextRequest) {
       expectedResults,
       parsedBody.context,
       normalizedToolOverrides,
-      { selectedSkills, approvedImport, userMessageLogId: userAction.id, executionMode }
+      { selectedSkills, approvedImport, userMessageLogId: userAction.id, executionMode, executionRouting }
     ]);
 
     return assistantResponseStream(workflowRun, providedInstanceId, userAction.id, { signal: request.signal });

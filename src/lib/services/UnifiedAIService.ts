@@ -16,6 +16,7 @@ export interface TextRequestOptions {
   temperature?: number;
   maxTokens?: number;
   topP?: number;
+  site_id?: string;
 }
 
 export type ImageRequestOptions = ImageRequestBody;
@@ -26,6 +27,7 @@ export interface AudioRequestOptions {
   voice?: string;
   format?: 'mp3' | 'pcm';
   model?: string;
+  site_id?: string;
 }
 
 export interface VideoRequestOptions {
@@ -54,15 +56,28 @@ function isServer(): boolean {
 }
 
 async function doFetch(path: string, init: FetcherInit): Promise<Response> {
-  const url = isServer() ? path : path; // keep relative
+  const url = isServer() ? new URL(path, process.env.NEXT_PUBLIC_API_SERVER_URL || 'http://localhost:3000').toString() : path;
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(init.headers || {}),
   };
+  let body = init.body;
+  if (isServer()) {
+    const { getExecutionRouting } = await import('./ai/customer-routing');
+    const { executionRoutingHeaders } = await import('./ai/customer-routing-http');
+    const requestedSite = body?.site_id ?? new URL(url).searchParams.get('site_id') ?? undefined;
+    const routing = getExecutionRouting(requestedSite);
+    headers['x-api-key'] = process.env.SERVICE_API_KEY || '';
+    if (routing) {
+      Object.assign(headers, await executionRoutingHeaders(routing, { path: new URL(url).pathname }));
+      if (body) body = { ...body, site_id: routing.siteId };
+    }
+  }
   return fetch(url, {
     method: init.method || 'POST',
     headers,
-    body: init.body ? JSON.stringify(init.body) : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+    redirect: 'error',
   });
 }
 
@@ -89,11 +104,7 @@ export class UnifiedAIService {
 
   static async synthesizeAudio(opts: AudioRequestOptions): Promise<ArrayBuffer> {
     this.assertProvider(opts.provider);
-    const res = await fetch('/api/ai/audio', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(opts),
-    });
+    const res = await doFetch('/api/ai/audio', { body: opts });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       throw new Error(text || `Audio synthesis failed: ${res.status}`);

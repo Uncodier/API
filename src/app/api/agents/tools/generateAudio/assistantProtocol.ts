@@ -1,6 +1,9 @@
 import { CreditService } from '@/lib/services/billing/CreditService';
 import { validateSpeechOptions, ttsMimeType, TTSProvider, TTSAudioFormat } from '@/lib/services/ai/tts-service';
 import { TTS_VOICES, TTS_LANGUAGES } from '@/lib/services/ai/speech-options';
+import { getExecutionRouting, getCustomerOperationKey, requiresPlatformInferenceCredits } from '@/lib/services/ai/customer-routing';
+import { executionRoutingHeaders } from '@/lib/services/ai/customer-routing-http';
+import { createHash, randomUUID } from 'node:crypto';
 /**
  * Assistant Protocol Wrapper for Generate Audio Tool
  * Formats the tool for OpenAI/assistant compatibility
@@ -30,6 +33,7 @@ export function generateAudioTool(
   instance_id?: string,
   options: GenerateAudioToolOptions = {}
 ) {
+  const customerSpeech = getExecutionRouting(site_id)?.payer === 'customer';
   return {
     name: 'generate_audio',
     description: 'Convert written text into speech or a voiceover through Azure directly. Resolve spoken language in this order: explicit customer request, current customer conversation (including available audio transcripts), lead language preference, site language. Never infer customer language from HTTP Accept-Language or internal instructions. Preserve the requested regional wording in the text. Write the complete spoken text in that language BEFORE calling this tool; Azure detects language from text and does not translate it or force an accent. Pass only intended spoken content, with natural punctuation, not markdown or language instructions. Honor an explicit voice selection; otherwise keep the previous conversation voice when known, or omit voice to use the configured voice. Returns a URL to the generated audio file. This is speech synthesis, not a music-generation tool.',
@@ -42,8 +46,8 @@ export function generateAudioTool(
         },
         provider: {
           type: 'string',
-          enum: ['azure'],
-          description: 'Azure direct is the only supported speech provider; normally omit this field.'
+          enum: customerSpeech ? ['openrouter'] : ['azure'],
+          description: customerSpeech ? 'The shared customer OpenRouter account; normally omit this field.' : 'Azure direct is the only supported speech provider; normally omit this field.'
         },
         voice: {
           type: 'string',
@@ -59,7 +63,7 @@ export function generateAudioTool(
         },
         format: {
           type: 'string',
-          enum: ['mp3', 'pcm', 'wav', 'opus', 'aac', 'flac'],
+          enum: customerSpeech ? ['mp3', 'pcm'] : ['mp3', 'pcm', 'wav', 'opus', 'aac', 'flac'],
           description: 'The audio format. Defaults to mp3.'
         },
         model: {
@@ -86,7 +90,7 @@ export function generateAudioTool(
         const { provider, format } = speechOptions;
         
         console.log(`[GenerateAudioTool] 🎙️ Executing audio generation`);
-        if (site_id) {
+        if (site_id && requiresPlatformInferenceCredits(site_id)) {
           // Estimate duration based on text length (approx 1000 chars per minute)
           const estimatedMinutes = args.text.length / 1000;
           const requiredCredits = Math.max(0.01, estimatedMinutes * CreditService.PRICING.AUDIO_GENERATION_MINUTE);
@@ -111,6 +115,7 @@ export function generateAudioTool(
         const apiUrl = `${process.env.NEXT_PUBLIC_API_SERVER_URL || 'http://localhost:3000'}/api/ai/audio`;
         
         const requestBody = {
+          ...(getExecutionRouting(site_id) ? { site_id } : {}),
           text: args.text,
           provider: provider,
           voice: speechOptions.voice,
@@ -119,13 +124,23 @@ export function generateAudioTool(
           model: speechOptions.deployment
         };
 
+        const routing = getExecutionRouting(site_id);
+        // Consume the host ordinal once; the signed ticket and durable dispatch
+        // header must name the same operation, including long workflow IDs.
+        const operationId = routing?.payer === 'customer'
+          ? `speech:${createHash('sha256').update(getCustomerOperationKey() ?? randomUUID()).digest('hex')}` : undefined;
         const response = await fetch(apiUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'x-api-key': process.env.SERVICE_API_KEY || '',
+            ...(operationId ? { 'Idempotency-Key': operationId } : {}),
+            ...(routing ? await executionRoutingHeaders(routing, {
+              path: '/api/ai/audio', operationId,
+            }) : {}),
           },
-          body: JSON.stringify(requestBody)
+          body: JSON.stringify(requestBody),
+          redirect: 'error',
         });
 
         if (!response.ok) {

@@ -16,6 +16,7 @@ export default {
     '<rootDir>/src/lib/services/whatsapp/__tests__/zavu-template-delivery.test.ts',
     '<rootDir>/src/lib/services/zavu/__tests__/templates.test.ts',
     '<rootDir>/src/lib/services/zavu/__tests__/template-delivery-events.test.ts',
+    '<rootDir>/src/lib/services/zavu/__tests__/audio-delivery-events.test.ts',
     '<rootDir>/src/app/api/agents/tools/templateDeliveryStatus/__tests__/route.test.ts',
     '<rootDir>/src/app/api/agents/tools/sendWhatsApp/__tests__/response-format.test.ts',
     '<rootDir>/src/app/api/agents/tools/sendChannelMessage/__tests__/route.test.ts',

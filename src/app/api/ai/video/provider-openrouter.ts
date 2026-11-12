@@ -2,6 +2,7 @@ import { resolveOpenRouterModel } from '@/lib/services/ai/openrouter';
 import { MediaRequestError, openRouterMediaJson, openRouterMediaRequest } from '@/lib/services/image/openrouter-media';
 import { readResponseWithLimit } from '@/lib/security/limited-response';
 import type { VideoRequestBody } from './video-types';
+import { assertPlatformInference } from '@/lib/services/ai/customer-routing';
 
 interface VideoModel {
   id: string;
@@ -21,6 +22,7 @@ export interface PreparedVideo {
 }
 
 export async function prepareOpenRouterVideo(body: VideoRequestBody): Promise<PreparedVideo> {
+  assertPlatformInference('video');
   // Deliberately no default Sora 2 Pro substitution: operators must opt in to its pricing.
   const configured = process.env.OPENROUTER_VIDEO_MODEL?.trim();
   if (!configured) throw new MediaRequestError('Video generation requires explicit OPENROUTER_VIDEO_MODEL configuration', 503);

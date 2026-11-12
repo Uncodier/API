@@ -72,6 +72,7 @@ describe('Gear WhatsApp assistant recovery binding', () => {
     expect(prepare).toHaveBeenCalledWith(
       scope.instanceId, message, scope.siteId, scope.userId, [], false,
       undefined, 'gear', input.userPhone, undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, { payer: 'platform', siteId: scope.siteId },
     );
     expect(database.snapshot().execution).toMatchObject({ agentType: 'gear', userPhone: input.userPhone });
     expect(database.snapshot().messages).toContainEqual({ role: 'assistant', content: 'Estado consultado' });

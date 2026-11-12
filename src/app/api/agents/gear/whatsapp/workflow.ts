@@ -2,8 +2,10 @@
 
 import { runAssistantWorkflow } from '@/app/api/robots/instance/assistant/workflow';
 import { sendWhatsAppResponse, sendWhatsAppTypingIndicator } from './steps';
+import type { ExecutionRoutingReference } from '@/lib/services/ai/customer-routing';
 
 interface GearAgentWorkflowInput {
+  executionRouting?: ExecutionRoutingReference;
   instanceId: string;
   message: string;
   messageSid?: string;
@@ -18,6 +20,7 @@ interface GearAgentWorkflowInput {
 }
 
 export async function runGearAgentWorkflow({
+  executionRouting,
   instanceId,
   message,
   messageSid,
@@ -59,7 +62,8 @@ export async function runGearAgentWorkflow({
       undefined,
       // Never rediscover a webhook action by text: a repeated message may match
       // an older completed action instead of the one admitted for this workflow.
-      userMessageLogId ? { userMessageLogId } : undefined
+      { ...(userMessageLogId ? { userMessageLogId } : {}),
+        executionRouting: executionRouting ?? { payer: 'platform', siteId } }
     );
 
     console.log(`[GearAgent] Assistant execution completed. Response length: ${result.assistant_response?.length || 0}`);

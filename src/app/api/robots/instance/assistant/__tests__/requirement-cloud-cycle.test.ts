@@ -280,6 +280,7 @@ test('direct cloud catalog descriptors dispatch through the canonical boundary e
   const { routeTools } = loadRuntimeModule<typeof import('@/app/api/agents/tools/router/assistantProtocol')>(
     'src/app/api/agents/tools/router/assistantProtocol.ts', {
       '@/lib/services/embeddings-service': {},
+      '../catalog_commerce/batch-admin-tool': { bindCatalogBatchActor: (tool: unknown) => tool },
       './screen-access': { loadToolScreenAccess: async () => ({ isAdmin: true, blockedScreens: [] }),
         canUseToolScreen: () => true, assertToolScopeArgs: () => {}, guardToolScreen: (tool: unknown) => tool },
     });

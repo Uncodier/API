@@ -14,7 +14,7 @@ describe('capability-specific runtime boundary', () => {
     expect(source).not.toMatch(/synthesizeWithAzure|generateWithAzure|generateVideoWithGemini|generateWithVercelGateway/);
   });
 
-  it('routes speech exclusively through Azure without OpenRouter dependencies or credential redirects', () => {
+  it('preserves the Azure global speech implementation while customer routing is isolated', () => {
     const root = process.cwd();
     const route = readFileSync(resolve(root, 'src/app/api/ai/audio/route.ts'), 'utf8');
     const service = readFileSync(resolve(root, 'src/lib/services/ai/tts-service.ts'), 'utf8');
@@ -27,7 +27,7 @@ describe('capability-specific runtime boundary', () => {
     expect(service + config).not.toMatch(/from ['"]@google\/(?:genai|generative-ai)['"]|GEMINI_API_KEY|VERCEL_AI_GATEWAY/);
   });
 
-  it('routes transcription exclusively through Azure without gateway dependencies', () => {
+  it('preserves the Azure global transcription implementation without gateway credential fallback', () => {
     const root = process.cwd();
     const service = readFileSync(resolve(root, 'src/lib/services/ai/transcribeAudio.ts'), 'utf8');
     const config = readFileSync(resolve(root, 'src/lib/services/ai/azure-transcription-config.ts'), 'utf8');
@@ -38,13 +38,15 @@ describe('capability-specific runtime boundary', () => {
     expect(config).not.toMatch(/env\.MICROSOFT_AZURE_OPENAI_(?:DEPLOYMENT|API_VERSION)/);
   });
 
-  it('routes images exclusively through Azure without OpenRouter or Google fallback', () => {
+  it('defaults global images to Azure and keeps customer images in a separate no-fallback branch', () => {
     const root = process.cwd();
     const route = readFileSync(resolve(root, 'src/app/api/ai/image/route.ts'), 'utf8');
     const adapter = readFileSync(resolve(root, 'src/app/api/ai/image/provider-azure.ts'), 'utf8');
     const config = readFileSync(resolve(root, 'src/lib/services/image/azure-image-config.ts'), 'utf8');
     expect(route).toMatch(/import\s*\{[^}]*\bgenerateWithAzure\b[^}]*\}\s*from\s*['"]\.\/provider-azure['"]/);
-    expect(route).toContain("const provider = body.provider ?? 'azure'");
+    expect(route).toContain("const provider = body.provider ?? (routing.payer === 'customer' ? 'openrouter' : 'azure')");
+    expect(route).toContain("if (routing.payer === 'customer')");
+    expect(route).toContain('generateCustomerImageArtifacts');
     expect(route).toContain("if (provider !== 'azure')");
     expect(route + adapter + config).not.toMatch(/generateWithOpenRouter|openRouterMedia|OPENROUTER_API_KEY|OPENROUTER_IMAGE_/);
     expect(route + adapter + config).not.toMatch(/from ['"]@google\/(?:genai|generative-ai)['"]|generateWithGemini|generateWithVercelGateway/);

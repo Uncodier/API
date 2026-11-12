@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getUserSegments, DbSegment } from '@/lib/services/segment-service'
 import { analyzeWithConversationApi } from '@/lib/services/conversation-client'
 import { z } from 'zod'
+import { authorizeInferenceRequest, executionRoutingHeaders, withHttpExecutionRouting } from '@/lib/services/ai/customer-routing-http';
+import { getExecutionRouting } from '@/lib/services/ai/customer-routing';
 
 /**
  * API DE SEGMENTOS DE USUARIO (M2M)
@@ -10,7 +12,7 @@ import { z } from 'zod'
  * Opcionalmente puede recibir una URL de sitio para analizar y generar segmentos reales
  * utilizando modelos de IA a través de la API de conversación.
  * 
- * Esta es una API machine-to-machine (M2M) que no requiere autenticación.
+ * Service and user credentials are validated before tenant-scoped inference.
  * 
  * Documentación completa: /docs/api/analysis/segments
  */
@@ -95,6 +97,18 @@ const QueryParamsSchema = z.object({
  */
 export async function GET(request: NextRequest) {
   try {
+    const requestedSite = new URL(request.url).searchParams.get('site_id') ?? undefined;
+    const { principal, routing } = await authorizeInferenceRequest(request, requestedSite);
+    const run = () => handleSegments(request, principal.userId ?? 'system_m2m_user');
+    return routing ? await withHttpExecutionRouting(request, routing, run) : await run();
+  } catch (error: any) {
+    return NextResponse.json({ error: 'Segment request admission failed' },
+      { status: [400, 401, 403, 402, 422].includes(error?.status) ? error.status : 500 });
+  }
+}
+
+async function handleSegments(request: NextRequest, authorizedUserId: string) {
+  try {
     // Obtener y validar los parámetros de consulta
     const { searchParams } = new URL(request.url);
     const validationResult = QueryParamsSchema.safeParse(Object.fromEntries(searchParams.entries()));
@@ -110,6 +124,7 @@ export async function GET(request: NextRequest) {
     }
     
     const params = validationResult.data;
+    params.userId = authorizedUserId;
     
     // Usar segmentCount si está definido, de lo contrario usar segmentsToCreate
     const segmentCountToUse = params.segmentCount !== undefined ? params.segmentCount : params.segmentsToCreate;
@@ -204,15 +219,19 @@ IMPORTANTE: Este es un análisis real, NO devuelvas datos de ejemplo o simulados
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
+                'x-api-key': process.env.SERVICE_API_KEY || '',
+                ...(getExecutionRouting() ? await executionRoutingHeaders(getExecutionRouting()!, { path: '/api/ai' }) : {}),
               },
               body: JSON.stringify({
+                site_id: getExecutionRouting()?.siteId,
                 messages: [
                   { role: 'system', content: systemMessage },
                   { role: 'user', content: userMessage }
                 ],
                 modelType: params.modelType === 'anthropic' ? 'openai' : params.modelType, // Si es anthropic, usar openai como fallback
                 modelId: params.modelType === 'anthropic' ? 'gpt-5-mini' : params.modelId      // Si es anthropic, usar gpt-5-mini como fallback
-              })
+              }),
+              redirect: 'error',
             });
             
             if (aiResponse.ok) {

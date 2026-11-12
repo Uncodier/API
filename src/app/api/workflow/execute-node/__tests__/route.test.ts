@@ -3,10 +3,14 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import OpenAI from 'openai';
 import { NextRequest } from 'next/server';
 import { POST } from '../route';
+import { canToolPrincipalAccessSite, resolveToolRequestPrincipal } from '@/lib/security/tool-request-principal';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { batchCreateResponseNodes, fetchNodeContexts, updateNodeResult, failNode } from '@/lib/services/robot-instance/assistant-logging';
 
 jest.mock('openai', () => ({ __esModule: true, default: jest.fn() }));
+jest.mock('@/lib/security/tool-request-principal', () => ({
+  resolveToolRequestPrincipal: jest.fn(), canToolPrincipalAccessSite: jest.fn(),
+}));
 jest.mock('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from: jest.fn(), rpc: jest.fn() } }));
 jest.mock('@/lib/services/robot-instance/assistant-logging', () => ({
   batchCreateResponseNodes: jest.fn(), fetchNodeContexts: jest.fn(), updateNodeResult: jest.fn(), failNode: jest.fn(),
@@ -20,11 +24,13 @@ describe('workflow OpenRouter streaming accounting', () => {
   const env = { ...process.env };
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.mocked(resolveToolRequestPrincipal).mockResolvedValue({ userId: randomUUID() } as any);
+    jest.mocked(canToolPrincipalAccessSite).mockResolvedValue(true);
     process.env.OPENROUTER_API_KEY = randomBytes(24).toString('hex');
     delete process.env.OPENROUTER_CHAT_MODEL;
     jest.mocked(OpenAI).mockImplementation(() => ({ chat: { completions: { create: mockCreate } } }) as any);
     const query = { select: jest.fn().mockReturnThis(), eq: jest.fn().mockReturnThis(),
-      single: jest.fn().mockResolvedValue({ data: { settings: {} } }) };
+      single: jest.fn().mockResolvedValue({ data: { site_id: randomUUID(), settings: {} } }) };
     jest.mocked(supabaseAdmin.from).mockReturnValue(query as any);
     jest.mocked(supabaseAdmin.rpc).mockResolvedValue({ data: [] } as any);
     jest.mocked(batchCreateResponseNodes).mockResolvedValue(['response-node']);
@@ -33,6 +39,20 @@ describe('workflow OpenRouter streaming accounting', () => {
     jest.spyOn(console, 'error').mockImplementation(() => {});
   });
   afterEach(() => { process.env = { ...env }; jest.restoreAllMocks(); });
+
+  it('rejects unauthenticated callers before database or provider access', async () => {
+    jest.mocked(resolveToolRequestPrincipal).mockResolvedValue(null);
+    expect((await POST(request())).status).toBe(401);
+    expect(supabaseAdmin.from).not.toHaveBeenCalled();
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it('rejects cross-site execution before creating response nodes', async () => {
+    jest.mocked(canToolPrincipalAccessSite).mockResolvedValue(false);
+    expect((await POST(request())).status).toBe(403);
+    expect(batchCreateResponseNodes).not.toHaveBeenCalled();
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
 
   it('stores usage.cost and generation ID from the final empty-choices frame', async () => {
     const id = randomUUID();

@@ -1,3 +1,4 @@
+import { withAuthorizedCommandRequest } from '@/lib/services/ai/command-http-routing';
 import { NextResponse } from 'next/server';
 import { CommandFactory, ProcessorInitializer } from '@/lib/agentbase';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
@@ -214,7 +215,7 @@ const processorInitializer = ProcessorInitializer.getInstance();
 processorInitializer.initialize();
 const commandService = processorInitializer.getCommandService();
 
-export async function POST(request: Request) {
+async function handleCommandRequest(request: Request) {
   const startTime = Date.now();
   const GLOBAL_TIMEOUT = 120000; // 2 minutos timeout global
   
@@ -483,4 +484,5 @@ Please analyze these support aspects and provide a comprehensive summary focusin
       { status: 500 }
     );
   }
-} 
+}
+export async function POST(request: Request) { return withAuthorizedCommandRequest(request, handleCommandRequest); }

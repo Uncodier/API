@@ -1,5 +1,6 @@
 import { AIAgentExecutor } from '@/lib/custom-automation/ai-agent-executor';
 import { CreditService } from '@/lib/services/billing/CreditService';
+import { requiresPlatformInferenceCredits } from '@/lib/services/ai/customer-routing';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { createAssistantOnStepHandler } from './assistant-logging';
 import { createStreamingLogCallbacks, createThinkingStreamLogCallbacks } from './assistant-streaming-logs';
@@ -24,7 +25,7 @@ export async function executeAssistant(
   
   const provider = 'openrouter';
 
-  if (site_id) {
+  if (site_id && requiresPlatformInferenceCredits(site_id)) {
     try {
       await CreditService.requireCredits(site_id, 0.001);
     } catch (e: any) {

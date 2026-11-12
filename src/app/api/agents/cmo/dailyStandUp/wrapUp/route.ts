@@ -1,3 +1,4 @@
+import { withAuthorizedCommandRequest } from '@/lib/services/ai/command-http-routing';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { CommandFactory, ProcessorInitializer } from '@/lib/agentbase';
@@ -31,7 +32,7 @@ async function waitForCommandCompletion(commandService: any, commandId: string) 
   return null;
 }
 
-export async function POST(request: Request) {
+async function handleCommandRequest(request: Request) {
   let body: unknown;
   try { body = await request.json(); } catch {
     return failure('INVALID_REQUEST', 'Request body must be valid JSON', 400);
@@ -100,3 +101,4 @@ export async function POST(request: Request) {
     return failure('DATA_ERROR', 'Could not generate the selected Daily Standup report', 500);
   }
 }
+export async function POST(request: Request) { return withAuthorizedCommandRequest(request, handleCommandRequest); }

@@ -125,6 +125,7 @@ describe('registered WhatsApp durable media admission', () => {
       return { runId: 'run' };
     });
     const route = loadRuntimeModule<typeof import('../route')>('src/app/api/agents/gear/whatsapp/webhook/route.ts', {
+      '@/app/api/robots/instance/assistant/execution-routing': { admitAssistantRouting: async (siteId: string) => ({ payer: 'platform', siteId }) },
       'next/server': { NextResponse }, '@/lib/database/supabase-client': { supabaseAdmin: h.db },
       '@/lib/services/channels/agent-project-access': {
         getAvailableAgentProjects: async () => [{ id: 'site', name: 'Test site' }],

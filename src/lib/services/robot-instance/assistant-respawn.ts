@@ -82,6 +82,7 @@ export async function spawnSilentContinueWorkflow(
     { silentContinue: true, selectedSkills: execution.selectedSkills as AssistantSkillSelection | undefined,
       approvedImport: execution.approvedImport as { url: string; sha256: string; userId: string } | undefined,
       userMessageLogId: scope.userMessageLogId, resumeToken,
+      ...(execution.executionRouting ? { executionRouting: execution.executionRouting } : {}),
       ...(execution.executionMode ? { executionMode: execution.executionMode } : {}) },
   ];
   try {

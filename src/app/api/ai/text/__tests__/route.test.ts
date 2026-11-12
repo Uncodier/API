@@ -5,6 +5,10 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { NextRequest } from 'next/server';
 import { GET, POST } from '../route';
 import { enforceRequestRateLimit } from '@/lib/security/request-rate-limit';
+import { resolveToolRequestPrincipal } from '@/lib/security/tool-request-principal';
+jest.mock('@/lib/security/tool-request-principal', () => ({
+  resolveToolRequestPrincipal: jest.fn(), canToolPrincipalAccessSite: jest.fn(),
+}));
 
 jest.mock('openai', () => ({ __esModule: true, default: jest.fn() }));
 jest.mock('@google/generative-ai', () => ({ GoogleGenerativeAI: jest.fn() }));
@@ -22,6 +26,7 @@ describe('OpenRouter text route', () => {
   const env = { ...process.env };
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.mocked(resolveToolRequestPrincipal).mockResolvedValue({ internal: true, userId: null, siteId: null });
     process.env.OPENROUTER_API_KEY = randomBytes(24).toString('hex');
     delete process.env.OPENROUTER_CHAT_MODEL;
     jest.mocked(OpenAI).mockImplementation(() => ({ chat: { completions: { create: mockCreate } } }) as any);

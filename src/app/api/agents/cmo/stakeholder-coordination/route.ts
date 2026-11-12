@@ -1,3 +1,4 @@
+import { withAuthorizedCommandRequest } from '@/lib/services/ai/command-http-routing';
 import { NextResponse } from 'next/server';
 import { v4 as uuidv4 } from 'uuid';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
@@ -11,7 +12,7 @@ import {
 // Inicializar el sistema de agentes
 AgentService.initialize();
 
-export async function POST(request: Request) {
+async function handleCommandRequest(request: Request) {
   try {
     // Parse el cuerpo de la solicitud
     const requestData = await request.json();
@@ -415,4 +416,5 @@ After the meeting, be prepared to generate a comprehensive summary with key poin
       }
     }, { status: 500 });
   }
-} 
+}
+export async function POST(request: Request) { return withAuthorizedCommandRequest(request, handleCommandRequest); }

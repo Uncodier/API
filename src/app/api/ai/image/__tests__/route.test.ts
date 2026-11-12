@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { NextRequest } from 'next/server';
+jest.mock('@/lib/services/ai/customer-routing-http', () => ({
+  resolveHttpExecutionRouting: jest.fn(async (_request: unknown, siteId: string) => ({ payer: 'platform', siteId })),
+}));
 
 jest.mock('@/lib/security/request-rate-limit', () => ({
   enforceRequestRateLimit: jest.fn(async () => null),

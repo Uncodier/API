@@ -17,6 +17,14 @@ jest.mock('@/lib/security/request-rate-limit', () => ({
 jest.mock('@/lib/security/site-access', () => ({
   canAccessSite: mockCanAccessSite,
 }));
+jest.mock('@/lib/services/ai/customer-routing-http', () => ({
+  authorizeInferenceRequest: jest.fn(async (_request: Request, siteId: string) => ({ routing: { payer: 'platform', siteId } })),
+  withHttpExecutionRouting: jest.fn(async (_request: Request, _routing: unknown, run: () => Promise<unknown>) => run()),
+}));
+jest.mock('@/lib/security/tool-request-principal', () => ({
+  resolveToolRequestPrincipal: jest.fn(async () => ({ internal: true })),
+  canToolPrincipalAccessSite: jest.fn(async () => true),
+}));
 jest.mock('@/lib/services/ai/media-instance-access', () => ({ mediaInstanceBelongsToSite: jest.fn(async () => true) }));
 jest.mock('@/lib/security/safe-remote-url', () => ({
   assertSafeRemoteUrl: jest.fn(async (url: string) => new URL(url)),

@@ -2,8 +2,10 @@
 
 import { runAssistantWorkflow } from '@/app/api/robots/instance/assistant/workflow';
 import { sendEmailResponse, sendEmailError } from './steps';
+import type { ExecutionRoutingReference } from '@/lib/services/ai/customer-routing';
 
 interface GearEmailWorkflowInput {
+  executionRouting?: ExecutionRoutingReference;
   instanceId: string;
   message: string;
   messageSid?: string;
@@ -16,6 +18,7 @@ interface GearEmailWorkflowInput {
 }
 
 export async function runGearEmailWorkflow({
+  executionRouting,
   instanceId,
   message,
   messageSid,
@@ -41,7 +44,9 @@ export async function runGearEmailWorkflow({
       useSdkTools,
       systemPrompt,
       'gear',
-      userEmail // We pass userEmail instead of userPhone here
+      userEmail,
+      undefined, undefined, undefined, undefined,
+      { executionRouting: executionRouting ?? { payer: 'platform', siteId } }
     );
 
     console.log(`[GearAgent] Assistant execution completed. Response length: ${result.assistant_response?.length || 0}`);

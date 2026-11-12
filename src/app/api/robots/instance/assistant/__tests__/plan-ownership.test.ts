@@ -115,6 +115,8 @@ describe('post-conversation plan ownership', () => {
       imageAssets: [], customTools: [], systemPrompt: 'Research', hasLinkedRequirement: false,
       executionOptions: { instance_id: scope.instanceId, site_id: scope.siteId, user_id: id(5) } };
     const planSteps = loadRuntimeModule<typeof import('../plan-steps')>('src/app/api/robots/instance/assistant/plan-steps.ts', {
+      '@/lib/services/workflow-robot/plan-routing': { getPlanRouting: async (_id: string, siteId: string) => ({ payer: 'platform', siteId }) },
+      './execution-routing': { withAssistantRouting: async (_site: string, _ref: unknown, operation: () => Promise<unknown>) => operation() },
       '@/lib/database/supabase-client': { supabaseAdmin: { from: f.from } },
       './plan-ownership': f.ownership,
       '@/app/api/agents/tools/instance_plan/update/core': { updateInstancePlanCore: writes },

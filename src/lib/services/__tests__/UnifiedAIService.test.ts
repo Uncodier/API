@@ -29,7 +29,7 @@ describe('UnifiedAIService gateway selection', () => {
     } as const;
     fetchMock.mockResolvedValue(new Response(JSON.stringify(result)));
     expect(await UnifiedAIService.generateImage({ ...options, reference_images: [...options.reference_images] })).toEqual(result);
-    expect(fetchMock).toHaveBeenCalledWith('/api/ai/image', expect.objectContaining({ body: JSON.stringify({ ...options, provider: 'azure' }) }));
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringMatching(/\/api\/ai\/image$/), expect.objectContaining({ body: JSON.stringify({ ...options, provider: 'azure' }) }));
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -55,7 +55,7 @@ describe('UnifiedAIService gateway selection', () => {
     const pending = { job_id: 'job-test', status: 'pending', videos: [], error: 'Submission outcome uncertain' };
     fetchMock.mockResolvedValue(new Response(JSON.stringify(pending), { status: 202 }));
     expect(await UnifiedAIService.generateVideo({ prompt: 'A tree', site_id: 'site', job_id: 'job-test' })).toEqual(pending);
-    expect(fetchMock).toHaveBeenCalledWith('/api/ai/video?site_id=site&job_id=job-test', expect.objectContaining({ method: 'GET', body: undefined }));
+    expect(fetchMock).toHaveBeenCalledWith(expect.stringMatching(/\/api\/ai\/video\?site_id=site&job_id=job-test$/), expect.objectContaining({ method: 'GET', body: undefined }));
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 

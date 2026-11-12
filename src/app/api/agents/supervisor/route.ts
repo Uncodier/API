@@ -1,16 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { SupervisorService, SupervisorResult } from '@/lib/agentbase';
-import { CommandService } from '@/lib/agentbase';
 import { ProcessorInitializer } from '@/lib/agentbase';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-
-// Initialize command service
-const processorInitializer = ProcessorInitializer.getInstance();
-processorInitializer.initialize();
-const commandService = processorInitializer.getCommandService();
-
-// Initialize supervisor service
-const supervisorService = new SupervisorService();
+import { z } from 'zod';
+import { resolveToolRequestPrincipal, canToolPrincipalAccessSite } from '@/lib/security/tool-request-principal';
 
 /**
  * POST /api/agents/supervisor
@@ -18,26 +11,28 @@ const supervisorService = new SupervisorService();
  */
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { command_id, conversation_id } = body;
+    const principal = await resolveToolRequestPrincipal(request);
+    if (!principal) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    const body = z.object({ command_id: z.string().uuid(), conversation_id: z.string().uuid().optional() })
+      .safeParse(await request.json());
+    if (!body.success) return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
+    const { command_id } = body.data;
+    let { conversation_id } = body.data;
 
-    // Validate required parameters
-    if (!command_id) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: 'INVALID_REQUEST',
-            message: 'command_id is required'
-          }
-        },
-        { status: 400 }
-      );
+    // Read only the authorization envelope before loading command contents or its payer.
+    const { data: envelope, error: envelopeError } = await supabaseAdmin.from('commands')
+      .select('site_id').eq('id', command_id).maybeSingle();
+    if (envelopeError) return NextResponse.json({ error: 'Authorization unavailable' }, { status: 503 });
+    if (!envelope?.site_id || !await canToolPrincipalAccessSite(principal, envelope.site_id)) {
+      return NextResponse.json({ error: 'Command access denied' }, { status: 403 });
     }
 
     console.log(`[Supervisor] Analyzing command: ${command_id}${conversation_id ? `, conversation: ${conversation_id}` : ''}`);
 
     // Fetch command from database
+    const processorInitializer = ProcessorInitializer.getInstance();
+    processorInitializer.initialize();
+    const commandService = processorInitializer.getCommandService();
     const command = await commandService.getCommandById(command_id);
 
     if (!command) {
@@ -53,9 +48,27 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (command.site_id !== envelope.site_id) {
+      return NextResponse.json({ error: 'Command access denied' }, { status: 403 });
+    }
+    // Validate the fallback too: command context/results are not authorization.
+    conversation_id = conversation_id || extractConversationId(command) || undefined;
+    if (conversation_id) {
+      if (!z.string().uuid().safeParse(conversation_id).success) {
+        return NextResponse.json({ error: 'Invalid conversation' }, { status: 400 });
+      }
+      const { data: conversation, error } = await supabaseAdmin.from('conversations')
+        .select('site_id').eq('id', conversation_id).maybeSingle();
+      if (error) return NextResponse.json({ error: 'Authorization unavailable' }, { status: 503 });
+      if (!conversation || conversation.site_id !== envelope.site_id) {
+        return NextResponse.json({ error: 'Conversation access denied' }, { status: 403 });
+      }
+    }
+
     console.log(`[Supervisor] Command found: ${command.id}, Status: ${command.status}`);
 
     // Analyze command with GPT-6.1 Sol
+    const supervisorService = new SupervisorService();
     const analysisResult: SupervisorResult = await supervisorService.analyzeCommand(command, conversation_id);
 
     if (!analysisResult.success) {
@@ -109,10 +122,10 @@ export async function POST(request: NextRequest) {
         success: false,
         error: {
           code: 'INTERNAL_ERROR',
-          message: error.message || 'Internal server error'
+          message: 'Supervisor request failed'
         }
       },
-      { status: 500 }
+      { status: error instanceof SyntaxError ? 400 : 500 }
     );
   }
 }

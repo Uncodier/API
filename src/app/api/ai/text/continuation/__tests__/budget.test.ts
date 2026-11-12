@@ -3,6 +3,8 @@ import { NextRequest } from 'next/server';
 import { POST } from '../route';
 import { continueJsonGeneration } from '@/lib/services/continuation-service';
 import { analyzeWithConversationApi } from '@/lib/services/conversation-client';
+import { resolveToolRequestPrincipal } from '@/lib/security/tool-request-principal';
+jest.mock('@/lib/security/tool-request-principal', () => ({ resolveToolRequestPrincipal: jest.fn(), canToolPrincipalAccessSite: jest.fn() }));
 
 jest.mock('@/lib/services/conversation-client', () => ({ analyzeWithConversationApi: jest.fn() }));
 
@@ -11,6 +13,7 @@ const request = (options: Record<string, unknown>) => new NextRequest('https://a
 });
 beforeEach(() => {
   jest.resetAllMocks();
+  jest.mocked(resolveToolRequestPrincipal).mockResolvedValue({ internal: true, userId: null, siteId: null });
   jest.spyOn(console, 'log').mockImplementation(() => {});
   jest.spyOn(console, 'error').mockImplementation(() => {});
 });

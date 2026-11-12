@@ -3,6 +3,8 @@ import { calculateOpenRouterCreditCharge, OPENROUTER_COST_MULTIPLIER } from '@/l
 import { OpenRouterBillingError, RequirementCreditsExhaustedError } from '@/lib/services/billing/openrouter-usage-billing';
 import type { RequirementRun } from '@/lib/harness/requirement-types';
 import { AssistantExecutionBoundaryError } from '@/lib/services/robot-instance/assistant-execution-boundary';
+import { requiresPlatformInferenceCredits } from '@/lib/services/ai/customer-routing';
+import { hasCustomerInferenceReceipt, CustomerReceiptError } from '@/lib/services/billing/customer-inference-receipts';
 
 /** Accounting adapter only. Inference remains exclusively in AIAgentExecutor. */
 export function createRequirementAssistantBilling(run: RequirementRun, assertActive: () => Promise<void>) {
@@ -28,6 +30,7 @@ export function createRequirementAssistantBilling(run: RequirementRun, assertAct
   const settle = async ({ eventId, usage, generationId, model }: {
     eventId: string; usage: unknown; generationId?: string; model?: string;
   }) => {
+    if (hasCustomerInferenceReceipt(run.siteId, usage, generationId)) return;
     let cost: number | null = null;
     try { calculateOpenRouterCreditCharge(usage); cost = (usage as { cost: number }).cost; } catch { /* Unknown cost stays held. */ }
     // No ownership assertion: paid inference must settle even after a user pause.
@@ -41,6 +44,8 @@ export function createRequirementAssistantBilling(run: RequirementRun, assertAct
       if (!eventId || !Number.isSafeInteger(inputBytes) || inputBytes < 0 || !Number.isSafeInteger(maxOutputTokens) || maxOutputTokens < 1) {
         throw new OpenRouterBillingError();
       }
+      // Ownership/cancellation checks above remain mandatory; only monetary holds are exempt.
+      if (!requiresPlatformInferenceCredits(run.siteId)) return;
       try {
         const reservation = await ledger('reserve_agent_requirement_credits', {
           p_requirement_id: run.requirementId, p_run_id: run.runId, p_generation: run.executionGeneration,
@@ -66,6 +71,11 @@ export function createRequirementAssistantBilling(run: RequirementRun, assertAct
     },
     settle,
     async failed({ eventId, error, model }: { eventId: string; error: unknown; model?: string }) {
+      if (!requiresPlatformInferenceCredits(run.siteId)) {
+        // Customer dispatch adapter owns receipts. Never cancel a nonexistent platform hold.
+        if (error instanceof CustomerReceiptError) throw error;
+        return;
+      }
       const e = error as any;
       const usage = e?.usage || e?.error?.usage;
       const generationId = e?.generationId || e?.error?.generation_id || e?.error?.metadata?.generation_id;

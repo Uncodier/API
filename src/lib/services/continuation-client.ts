@@ -156,6 +156,18 @@ export class ContinuationClient {
       // Determinar si estamos en el cliente o en el servidor
       const isServer = typeof window === 'undefined';
       const apiUrl = this.buildUrl('/api/ai/text/continuation');
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      let siteId: string | undefined;
+      if (isServer) {
+        const { getExecutionRouting } = await import('./ai/customer-routing');
+        const { executionRoutingHeaders } = await import('./ai/customer-routing-http');
+        const routing = getExecutionRouting();
+        headers['x-api-key'] = process.env.SERVICE_API_KEY || '';
+        if (routing) {
+          siteId = routing.siteId;
+          Object.assign(headers, await executionRoutingHeaders(routing, { path: '/api/ai/text/continuation' }));
+        }
+      }
       
       if (this.debugMode) {
         console.log(`[Continuation Client] Sending request to ${apiUrl} (${isServer ? 'server' : 'client'})`);
@@ -170,10 +182,9 @@ export class ContinuationClient {
       try {
         const response = await fetch(apiUrl, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(apiRequest),
+          headers,
+          body: JSON.stringify({ ...apiRequest, site_id: siteId }),
+          redirect: 'error',
           signal: controller.signal
         });
         

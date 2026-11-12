@@ -14,6 +14,14 @@ Documents are ordered below by relevance and freshness. A dated checkpoint recor
 
 ## Current architecture
 
+- [Customer OpenRouter connections](OPENROUTER_CUSTOMER_CONNECTIONS.md) — private encrypted key connection, free catalog discovery, manual policies and forward migration; customer execution activation remains blocked pending full runtime coverage.
+- [Customer OpenRouter completion validation](OPENROUTER_COMPLETION_VALIDATION.md) — automatic setup, consented image verification, immutable dispatch/plan/command references and continuation acceptance evidence.
+- [Customer OpenRouter review repairs](OPENROUTER_REVIEW_REPAIRS.md) — supervisor authorization, complete plan pinning, audio caller compatibility, combined capability contracts and video receipt/concurrency recovery.
+- [Customer OpenRouter HTTP routing](OPENROUTER_HTTP_ROUTING.md) — per-route authorization, signed trusted routing and server-to-server caller propagation.
+- [Customer OpenRouter runtime coverage](OPENROUTER_RUNTIME_COVERAGE.md) — trusted routing, billing boundaries, durable propagation and explicit activation blockers.
+- [Customer OpenRouter assistant routing](OPENROUTER_ASSISTANT_ROUTING.md) — admission, pinned recovery and requirement-cron scope, with full-activation limitations.
+- [Customer OpenRouter media](OPENROUTER_CUSTOMER_MEDIA.md) — customer image/audio/embedding/video paths, durable attribution, preserved global media, and explicit budgeted verification gates.
+
 - [OpenRouter image experiment and rollback](/Users/prado/Desktop/Proyectos/Uncodie/Code/API/docs/OPENROUTER_IMAGES.md) — Azure-only runtime restored; failed live evidence and mandatory successful-generation gate for any future customer OpenRouter image integration.
 
 - [Price-list batch creation and editing](PRICE_LIST_BATCH.md) — owner/admin-scoped administrative tools, list/item prices, previews, limits and partial-failure recovery; direct HTTP remains read-only.

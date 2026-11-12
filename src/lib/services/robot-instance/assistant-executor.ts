@@ -1,6 +1,7 @@
 /** Bounded assistant execution, including resumable canvas node chunks. */
 import { AIAgentExecutor } from '@/lib/custom-automation/ai-agent-executor';
 import { CreditService } from '@/lib/services/billing/CreditService';
+import { requiresPlatformInferenceCredits } from '@/lib/services/ai/customer-routing';
 import { describeOpenRouterFailure } from '@/lib/services/ai/openrouter-chat-request';
 import { createAssistantOnStepHandler, batchCreateResponseNodes } from './assistant-logging';
 import { createNodeStreamingCallbacks, createStreamingLogCallbacks, createThinkingStreamLogCallbacks } from './assistant-streaming-logs';
@@ -31,7 +32,7 @@ export async function executeAssistantStep(
   
   const provider = 'openrouter';
 
-  if (site_id) {
+  if (site_id && requiresPlatformInferenceCredits(site_id)) {
     try {
       await CreditService.requireCredits(site_id, 0.001);
     } catch (e: any) {

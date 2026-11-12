@@ -2,6 +2,11 @@ import { jest } from '@jest/globals';
 import { NextRequest } from 'next/server';
 
 const from = jest.fn();
+jest.unstable_mockModule('@/lib/security/tool-request-principal', () => ({
+  resolveToolRequestPrincipal: async () => ({ internal: true, userId: null, siteId: null }),
+  canToolPrincipalAccessSite: async () => true,
+}));
+jest.unstable_mockModule('@/lib/services/ai/customer-routing-http', () => stubs('resolveHttpExecutionRouting', 'withHttpExecutionRouting'));
 jest.unstable_mockModule('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from } }));
 const stubs = (...names: string[]) => Object.fromEntries(names.map(name => [name, jest.fn()]));
 jest.unstable_mockModule('@/lib/services/robot-instance/robot-plan-service', () => stubs('addActivityToPlan'));
@@ -40,6 +45,6 @@ it.each(['instance/act', 'plan/act'])('returns 400 for JSON null at %s without r
   });
   const response = await (path === 'instance/act' ? instanceAct : planAct)(request);
   expect(response.status).toBe(400);
-  expect(await response.json()).toEqual({ error: 'Invalid request data' });
+  expect(await response.json()).toEqual({ error: path === 'instance/act' ? 'Invalid instance' : 'Invalid request data' });
   expect(from).not.toHaveBeenCalled();
 });

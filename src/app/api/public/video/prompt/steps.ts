@@ -6,13 +6,15 @@ import { VideoGenerationService } from '@/lib/services/video/VideoGenerationServ
 import { getCachedJson, setCachedJson } from '@/lib/security/upstash-rest';
 import { assertSafeRemoteUrl } from '@/lib/security/safe-remote-url';
 import { readResponseWithLimit } from '@/lib/security/limited-response';
+import type { ExecutionRoutingReference } from '@/lib/services/ai/customer-routing';
 
 export async function generateAndCacheVideoStep(
   prompt: string, 
   siteId: string, 
   durationSeconds: number,
   ratio: '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '3:2' | '2:3',
-  hash: string
+  hash: string,
+  executionRouting?: ExecutionRoutingReference,
 ) {
   'use step';
   
@@ -25,6 +27,7 @@ export async function generateAndCacheVideoStep(
     : await VideoGenerationService.generateVideo({
       prompt, site_id: siteId, duration_seconds: durationSeconds,
       aspect_ratio: ratio, provider: 'openrouter',
+      ...(executionRouting ? { executionRouting, operationId: `public-video:${hash}` } : {}),
     });
   if (result.job_id && !jobId) {
     if (!await setCachedJson(key, result.job_id, 7 * 24 * 60 * 60)

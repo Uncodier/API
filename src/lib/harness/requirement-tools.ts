@@ -6,6 +6,8 @@ import type { RequirementClient } from './requirement-context';
 import type { RequirementRun } from './requirement-types';
 import type { HarnessTool, Json, ToolContext, ToolResult } from './types';
 import { progressReceipt } from './requirement-progress-receipt';
+import { routingStorageEnabled } from '@/lib/integrations/openrouter/types';
+import { admitAssistantRouting } from '@/app/api/robots/instance/assistant/execution-routing';
 
 const itemId = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,199}$/);
 const status = z.enum(['pending', 'in_progress', 'completed', 'done', 'failed']);
@@ -143,6 +145,8 @@ export function createRequirementTools(options: { run: RequirementRun; client?: 
         if (step.itemId) await loadRequirementProgressTarget(run, { itemId: step.itemId }, db);
       }
       return mutate(db, 'patch_agent_requirement_plan', {
+        // Closed-over, validated host run; model arguments cannot supply a payer.
+        ...(routingStorageEnabled() ? { p_routing: await admitAssistantRouting(run.siteId) } : {}),
         p_expected_backlog_revision: revision, p_plan_id: args.planId ?? null,
         p_title: safeRequirementText(args.title, 300),
         p_steps: args.steps.map(step => ({ ...(step.id ? { id: step.id } : {}),

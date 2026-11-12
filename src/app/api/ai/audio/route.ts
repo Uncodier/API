@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { synthesizeSpeech, TTSServiceError, TTSProvider as Provider, TTSAudioFormat } from '@/lib/services/ai/tts-service';
 import { AZURE_TTS_MAX_CHARS, DEFAULT_AZURE_TTS_DEPLOYMENT, DEFAULT_AZURE_TTS_VOICE } from '@/lib/services/ai/azure-tts-config';
 import { TTS_VOICES, TTS_LANGUAGES } from '@/lib/services/ai/speech-options';
+import { canAccessSite } from '@/lib/security/site-access';
+import { resolveHttpExecutionRouting, withHttpExecutionRouting } from '@/lib/services/ai/customer-routing-http';
 import {
   enforceRequestRateLimit,
   getAuthenticatedRateIdentity,
@@ -9,6 +11,7 @@ import {
 } from '@/lib/security/request-rate-limit';
 
 interface AudioRequestBody {
+  site_id?: string;
   text: string;
   voice?: string;
   language?: string;
@@ -49,7 +52,22 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Audio options must be strings' }, { status: 400 });
       }
     }
-    const result = await synthesizeSpeech({ text, voice, language, format, provider, model, speed });
+    let routing;
+    if (!body.site_id && request.headers.has('x-host-inference-routing')) {
+      return NextResponse.json({ error: 'Site is required for pinned inference' }, { status: 400 });
+    }
+    if (body.site_id !== undefined) {
+      if (typeof body.site_id !== 'string' || !await canAccessSite(request, body.site_id)) {
+        return NextResponse.json({ error: 'Site access denied' }, { status: 403 });
+      }
+      routing = await resolveHttpExecutionRouting(request, body.site_id);
+    }
+    if (routing?.payer === 'customer' && !/^[A-Za-z0-9:_-]{1,128}$/.test(request.headers.get('Idempotency-Key') ?? '')) {
+      return NextResponse.json({ error: 'Customer speech requires a stable Idempotency-Key' }, { status: 400 });
+    }
+    const synthesize = () => synthesizeSpeech({ text, voice, language, format, provider, model, speed,
+      operationId: request.headers.get('Idempotency-Key') ?? undefined });
+    const result = routing ? await withHttpExecutionRouting(request, routing, synthesize) : await synthesize();
     return new NextResponse(new Uint8Array(result.audio), {
       status: 200,
       headers: {
@@ -57,6 +75,7 @@ export async function POST(request: NextRequest) {
         'Content-Length': String(result.audio.length),
         'X-TTS-Provider': result.provider,
         'X-TTS-Text-Language': result.language ?? 'auto',
+        ...(result.receiptEventId ? { 'X-Customer-Receipt-Event': result.receiptEventId } : {}),
         'Cache-Control': 'no-store',
       },
     });

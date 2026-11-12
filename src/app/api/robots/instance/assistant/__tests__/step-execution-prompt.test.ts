@@ -128,6 +128,8 @@ describe('executePlanStep prompt wiring (all I/O mocked, no environment)', () =>
     for (const name of ['select', 'eq']) query[name] = () => query;
     const runtime = loadRuntimeModule<typeof import('../plan-steps')>(
       'src/app/api/robots/instance/assistant/plan-steps.ts', {
+      '@/lib/services/workflow-robot/plan-routing': { getPlanRouting: async (_id: string, siteId: string) => ({ payer: 'platform', siteId }) },
+      './execution-routing': { withAssistantRouting: async (_site: string, _ref: unknown, operation: () => Promise<unknown>) => operation() },
         '@/lib/database/supabase-client': { supabaseAdmin: { from: () => query } },
         '@/app/api/agents/tools/instance_plan/update/core': { updateInstancePlanCore },
         './assistant-turn': { processAssistantTurn },

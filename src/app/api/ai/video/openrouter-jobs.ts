@@ -8,6 +8,10 @@ import type { VideoGenerationResult, VideoRequestBody } from './video-types';
 import { recordTelemetry } from '@/lib/status/telemetry';
 import { getVideoObservationKey } from '@/lib/status/handlers/ai/passive-probes';
 import { resolveOpenRouterModel } from '@/lib/services/ai/openrouter';
+import { assertPlatformInference } from '@/lib/services/ai/customer-routing';
+import { resumeCustomerVideoJob, type CustomerVideoJob } from './customer-video-jobs';
+import { loadCustomerVideoJob } from './customer-video-store';
+import { routingStorageEnabled } from '@/lib/integrations/openrouter/types';
 
 // Records survive request timeouts/restarts. All functions run under the site's
 // fail-closed distributed lock in route.ts. Never use process-local job ownership.
@@ -70,6 +74,7 @@ function result(job: Job): VideoGenerationResult {
 }
 
 export async function startVideoJob(body: VideoRequestBody, prepared: PreparedVideo): Promise<VideoGenerationResult> {
+  assertPlatformInference('video');
   const fingerprint = await sha256(JSON.stringify({ prepared, instance: body.instance_id }));
   const active = await getCachedJson<string>(activeKey(body.site_id));
   if (active) {
@@ -116,7 +121,13 @@ export async function startVideoJob(body: VideoRequestBody, prepared: PreparedVi
 
 export async function resumeVideoJob(siteId: string, id: string): Promise<VideoGenerationResult> {
   const start = Date.now();
-  const job = await getCachedJson<Job>(jobKey(id));
+  const cached = await getCachedJson<Job | CustomerVideoJob>(jobKey(id));
+  const stored = cached && !('routing' in cached) ? cached
+    : cached || routingStorageEnabled() ? await loadCustomerVideoJob(siteId, { id }) : null;
+  if (!stored || stored.siteId !== siteId) throw new MediaRequestError('Video job not found', 404);
+  if ('routing' in stored) return resumeCustomerVideoJob(stored);
+  assertPlatformInference('video');
+  const job = stored;
   if (!job || job.siteId !== siteId) throw new MediaRequestError('Video job not found', 404);
   if (job.status === 'completed' || job.status === 'failed' || !job.upstreamId) return result(job);
   if (job.billingStarted && !job.billed) {

@@ -4,6 +4,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { AIAgentExecutor, type Tool } from '@/lib/custom-automation/ai-agent-executor';
 import { createAccountTool, verifyAccountTool } from '../whatsapp/tools';
 import { instanceProjectTool } from '@/app/api/agents/tools/instance_project/assistantProtocol';
+import { withExecutionRouting } from '@/lib/services/ai/customer-routing';
 import { AgentMailSendService } from '@/lib/services/email/AgentMailSendService';
 
 export async function processUnregisteredUserEmailStep(
@@ -147,15 +148,19 @@ export async function processUnregisteredUserEmailStep(
     if (userId) {
       customTools.push(instanceProjectTool(userId, userEmail));
     }
-    const executor = new AIAgentExecutor({ siteId });
+
     
     console.log(`[GearAgent] Executing assistant for email unregistered user (history size: ${messages.length})`);
     
-    const executionResult = await executor.act({
+    const executionResult = await withExecutionRouting({ payer: 'platform', siteId }, siteId, async () => {
+      // Lobby identity does not authorize spending a customer connection.
+      const executor = new AIAgentExecutor({ siteId });
+      return executor.act({
       tools: customTools,
       system: systemPrompt,
       messages: messages as any[], // History included!
       maxIterations: 5, // Avoid long loops for unregistered users
+      });
     });
 
     const assistantResponse = executionResult.text;

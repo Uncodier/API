@@ -100,7 +100,7 @@ Provider reference: [Create template](https://docs.zavu.dev/api-reference/create
 
 `messages.custom_data.audio_delivery` is a compare-and-set receipt bound to text,
 channel, recipient and sender. States are `preparing`, `ready`, `dispatching`,
-`sent`, `unknown` and `preparation_failed`. The attachment is stored alongside
+`queued`, `sent`, `delivered`, `read`, `failed`, `unknown` and `preparation_failed`. The attachment is stored alongside
 the receipt for chat playback. Completed sends reuse the provider receipt;
 concurrent attempts cannot claim the same message. The audio activity uses one
 attempt. Neither an uncertain provider response nor an interrupted preparation
@@ -120,6 +120,42 @@ the receipt or create another message to retry. This favors avoiding duplicates
 over automatic recovery. There is no automatic refund or reconciliation worker
 in this change. A failed preflight without a receipt can be retried with the same
 saved format after resolving eligibility/configuration.
+
+### Audio receipt reconciliation (local repair, 2026-11-12)
+
+New explicit receipts persist the site, channel, recipient, versioned sender
+identity, provider, Zavu sender ID and saved connection ID when present. Signed,
+durably admitted Zavu queued/sent/delivered/read/failed callbacks now reconcile
+audio as well as templates. The configured sender resolves exactly one site;
+the saved conversation channel and receipt destination must match. Duplicate
+and out-of-order callbacks cannot regress a receipt: failure outranks sent/queued,
+while delivered/read outrank failure. Confirmations clear stale failure metadata.
+
+Legacy audio receipts without sender fields require an exact saved message or
+conversation connection in that site's settings and verification of the original
+raw-text/channel/recipient/versioned-sender hash. Unbound, stale, duplicate,
+Twilio-bound or unverifiable legacy receipts are not guessed or backfilled.
+
+A callback preceding provider-ID persistence fails its durable webhook claim so
+Zavu can retry after persistence. It never attaches the ID by recipient or resends.
+Dispatch completion uses CAS and reloads after a lost write, preserving any
+webhook-confirmed delivered/read/failure receipt and unrelated concurrent metadata.
+Completed delivered/read retries reuse the provider ID; failures stay blocked.
+
+`pending` without a receipt is a saved draft marker, not proof of dispatch. In
+contrast, `sending`, `sent`, `delivered`, `read`, `placement_unknown`, an existing
+provider ID or `needs_reconciliation` without a receipt blocks audio generation.
+Preflight failure marking also preserves these ambiguous states and all existing
+receipts. Database lookup/write failures do not prove that sending never started;
+the reported statement-timeout incident is not resolved by this code and its
+saved row is not changed here. Operators must reconcile ambiguous historical
+rows rather than clear a sending marker to authorize another attempt.
+
+Offline focused checks use the existing `jest.ai.config.js` (explicit audio and
+audio/template receipt suites) and `jest.voice.config.js` (webhook route suite).
+No live provider send, database migration, remote repair, deployment or worker
+change is included. Callback retries depend on the provider retry policy; there
+is no new reconciliation poller or recovery of receipts whose ID was never saved.
 
 Approved support audio preserves a saved exact connection: WhatsApp and Telegram
 use an explicit audio branch in the exact-delivery endpoint; Messenger uses the

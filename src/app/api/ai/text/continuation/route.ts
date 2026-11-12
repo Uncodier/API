@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { continueJsonGeneration, isIncompleteJson, attemptJsonRepair } from '@/lib/services/continuation-service';
 import { validContinuationBudget } from '@/lib/services/continuation-budget';
+import { authorizeInferenceRequest, withHttpExecutionRouting } from '@/lib/services/ai/customer-routing-http';
 
 /**
  * Endpoint para continuar la generación de un JSON incompleto
@@ -14,6 +15,7 @@ export async function POST(req: NextRequest) {
   try {
     // Obtener el cuerpo de la solicitud
     const body = await req.json();
+    const { routing } = await authorizeInferenceRequest(req, body?.site_id);
     const timeout = body?.timeout ?? 45000;
     const maxRetries = body?.maxRetries ?? 3;
     if (!validContinuationBudget(timeout, maxRetries)) {
@@ -84,7 +86,7 @@ export async function POST(req: NextRequest) {
     console.log('[API Continuation] Attempting to continue JSON generation with AI');
     
     // Continuar la generación del JSON con IA
-    const result = await continueJsonGeneration({
+    const generate = () => continueJsonGeneration({
       incompleteJson: body.incompleteJson,
       modelType: body.modelType,
       modelId: body.modelId,
@@ -94,6 +96,7 @@ export async function POST(req: NextRequest) {
       maxRetries,
       debugMode: body.debugMode || false
     });
+    const result = routing ? await withHttpExecutionRouting(req, routing, generate) : await generate();
     
     if (result.success) {
       console.log('[API Continuation] Successfully completed JSON generation');
@@ -115,11 +118,11 @@ export async function POST(req: NextRequest) {
         { status: 500 }
       );
     }
-  } catch {
+  } catch (error: any) {
     console.error('[API Continuation] Unexpected error');
     return NextResponse.json(
       { error: 'Continuation failed; generation outcome may require reconciliation' },
-      { status: 500 }
+      { status: error instanceof SyntaxError ? 400 : [400, 401, 403, 402, 422].includes(error?.status) ? error.status : 500 }
     );
   }
 }

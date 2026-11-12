@@ -40,5 +40,7 @@ export interface VideoGenerationResult {
     quality?: VideoQuality;
     resolution?: string;
     generated_at: string;
+    payer?: 'customer';
+    receipt_event_id?: string;
   };
 }

@@ -6,12 +6,14 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { assertSafeRemoteUrl } from '@/lib/security/safe-remote-url';
 import { readResponseWithLimit } from '@/lib/security/limited-response';
 import { getStepMetadata } from 'workflow';
+import type { ExecutionRoutingReference } from '@/lib/services/ai/customer-routing';
 
 export async function generateImageStep(
   prompt: string, 
   siteId: string, 
   size: '256x256' | '512x512' | '1024x1024',
-  ratio: '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '3:2' | '2:3' | undefined
+  ratio: '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '3:2' | '2:3' | undefined,
+  executionRouting?: ExecutionRoutingReference,
 ) {
   'use step';
   
@@ -36,9 +38,11 @@ export async function generateImageStep(
     // let its adapter map non-square ratios to supported landscape/portrait sizes.
     size: ratio && ratio !== '1:1' ? undefined : generationSize,
     ratio,
-    provider: 'azure' as const
+    provider: executionRouting?.payer === 'customer' ? 'openrouter' as const : 'azure' as const
   };
-  const result = operationId
+  const result = executionRouting
+    ? await ImageGenerationService.generateImage(params, { operationId, executionRouting })
+    : operationId
     ? await ImageGenerationService.generateImage(params, { operationId })
     : await ImageGenerationService.generateImage(params);
 

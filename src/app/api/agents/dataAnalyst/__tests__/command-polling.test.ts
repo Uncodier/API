@@ -5,6 +5,8 @@ import { POST as analysis } from '../analysis/route';
 import { POST as leadSegmentation } from '../leadSegmentation/route';
 import { POST as leadContactGeneration } from '../leadContactGeneration/route';
 import { POST as companyContactGeneration } from '../companyContactGeneration/route';
+import { resolveToolRequestPrincipal, canToolPrincipalAccessSite } from '@/lib/security/tool-request-principal';
+jest.mock('@/lib/security/tool-request-principal', () => ({ resolveToolRequestPrincipal: jest.fn(), canToolPrincipalAccessSite: jest.fn() }));
 
 jest.mock('@/lib/agentbase', () => {
   const service = { submitCommand: jest.fn(), getCommandById: jest.fn() };
@@ -54,6 +56,8 @@ describe.each(cases)('$name command polling', ({ name, post, body }) => {
   beforeEach(() => {
     jest.useFakeTimers();
     jest.clearAllMocks();
+    jest.mocked(resolveToolRequestPrincipal).mockResolvedValue({ internal: true, userId: null, siteId: null });
+    jest.mocked(canToolPrincipalAccessSite).mockResolvedValue(true);
     submit.mockReset().mockResolvedValue(commandId);
     read.mockReset().mockResolvedValue({ id: commandId, status: 'completed', results: [] });
     jest.spyOn(console, 'log').mockImplementation(() => {});

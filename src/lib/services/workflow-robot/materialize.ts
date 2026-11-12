@@ -1,4 +1,6 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { admitAssistantRouting } from '@/app/api/robots/instance/assistant/execution-routing';
+import { pinPlanRouting } from './plan-routing';
 import type {
   MaterializeRunInput,
   MaterializeRunResult,
@@ -75,6 +77,8 @@ async function upsertTemplatePlan(params: {
     .select('id, metadata')
     .single();
   if (error) throw new Error(`Failed to create workflow template: ${error.message}`);
+  // Templates stay inert; each run is admitted independently below.
+  await pinPlanRouting(data.id, params.site_id, await admitAssistantRouting(params.site_id));
   return data as { id: string; metadata: Record<string, unknown> };
 }
 
@@ -312,6 +316,7 @@ export async function materializeRunFromGraph(
     status: s.id === input.from_step_id || !input.from_step_id ? s.status : s.status,
   }));
 
+  const executionRouting = await admitAssistantRouting(instance.site_id);
   const { data: runPlan, error: runErr } = await supabaseAdmin
     .from('instance_plans')
     .insert({
@@ -321,7 +326,7 @@ export async function materializeRunFromGraph(
       title: preResponseOnly ? `${title} (pre-response)` : input.dry_run ? `${title} (test)` : title,
       description: 'Workflow run',
       plan_type: 'task',
-      status: 'pending',
+      status: 'blocked',
       parent_plan_id: templateId,
       steps: resetSteps,
       steps_total: resetSteps.length,
@@ -340,6 +345,11 @@ export async function materializeRunFromGraph(
     .single();
 
   if (runErr || !runPlan) throw new Error(`Failed to create run plan: ${runErr?.message}`);
+  await pinPlanRouting(runPlan.id, instance.site_id, executionRouting);
+  {
+    const { error } = await supabaseAdmin.from('instance_plans').update({ status: 'pending' }).eq('id', runPlan.id);
+    if (error) throw new Error('Failed to admit routed workflow plan');
+  }
 
   const { data: wfRun, error: wfErr } = await supabaseAdmin
     .from('workflow_runs')

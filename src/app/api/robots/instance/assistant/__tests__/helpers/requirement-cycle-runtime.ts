@@ -2,6 +2,8 @@ import { loadRuntimeModule } from '@/lib/custom-automation/test-helpers/load-run
 import { createRedactor } from '@/lib/harness/security';
 import { requirementCycleFailure } from '../../requirement-cycle-failure';
 import type { SessionStore } from '@/lib/harness/types';
+import { admitAssistantRouting, withAssistantRouting } from '../../execution-routing';
+import { getExecutionRouting } from '@/lib/services/ai/customer-routing';
 
 /** Real lifecycle module; all external I/O is explicitly replaced for offline tests. */
 export function cycleRuntime(input: { store: SessionStore; environment: 'cloud' | 'workspace'; execute: (...args: any[]) => Promise<any>;
@@ -36,6 +38,8 @@ export function cycleRuntime(input: { store: SessionStore; environment: 'cloud' 
       './requirement-instance-log': { writeRequirementInstanceLog: async () => {} },
       './requirement-budget': { evaluateRequirementCycleBudget: input.evaluateBudget || (async () => false) },
       './requirement-cycle-failure': { requirementCycleFailure },
+      './execution-routing': { admitAssistantRouting, withAssistantRouting },
+      '@/lib/services/ai/customer-routing': { getExecutionRouting },
     });
   return { run: runtime.runRequirementCycle, finish };
 }

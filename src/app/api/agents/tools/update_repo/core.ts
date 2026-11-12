@@ -5,6 +5,9 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { start } from 'workflow/api';
 import { runUpdateRepoWorkflow } from './workflow';
+import { randomUUID } from 'node:crypto';
+import { getExecutionRouting } from '@/lib/services/ai/customer-routing';
+import { admitAssistantRouting } from '@/app/api/robots/instance/assistant/execution-routing';
 
 export interface UpdateRepoParams {
   site_id: string;
@@ -48,6 +51,8 @@ export async function updateRepoCore(params: UpdateRepoParams) {
     // 3. Start the workflow
     // The workflow will handle creating the sandbox, running the agent, and pushing changes
     const workflowRun = await start(runUpdateRepoWorkflow, [{
+      executionRouting: getExecutionRouting(site_id) ?? await admitAssistantRouting(site_id),
+      inferenceOperationId: randomUUID(),
       reqId: requirement_id,
       title: requirement.title,
       instruction,

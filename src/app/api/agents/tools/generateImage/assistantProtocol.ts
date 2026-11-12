@@ -1,3 +1,4 @@
+import { getExecutionRouting, getCustomerOperationKey } from '@/lib/services/ai/customer-routing';
 /**
  * Assistant Protocol Wrapper for Generate Image Tool
  * Formats the tool for OpenAI/assistant compatibility
@@ -94,8 +95,8 @@ export function generateImageTool(site_id: string, instance_id?: string) {
           prompt: args.prompt,
           site_id: site_id,
           instance_id: instance_id,
-          provider: args.provider ?? 'azure',
-          model: args.model,
+          provider: getExecutionRouting(site_id)?.payer === 'customer' ? 'openrouter' : args.provider ?? 'azure',
+          model: getExecutionRouting(site_id)?.payer === 'customer' ? undefined : args.model,
           size: args.size,
           n: args.n,
           quality: args.quality,
@@ -106,7 +107,10 @@ export function generateImageTool(site_id: string, instance_id?: string) {
         
 
         // Call the image generation service
-        const result = await ImageGenerationService.generateImage(serviceParams);
+        const routing = getExecutionRouting(site_id);
+        const result = routing ? await ImageGenerationService.generateImage(serviceParams, {
+          executionRouting: getExecutionRouting(site_id), operationId: getCustomerOperationKey(),
+        }) : await ImageGenerationService.generateImage(serviceParams);
 
         if (result.success) {
           console.log(`[GenerateImageTool] ✅ Image generation successful`);
@@ -235,8 +239,8 @@ export function generateImageToolScrapybara(instance: UbuntuInstance, site_id: s
         const serviceParams: ImageGenerationParams = {
           prompt: args.prompt,
           site_id: site_id,
-          provider: args.provider ?? 'azure',
-          model: args.model,
+          provider: getExecutionRouting(site_id)?.payer === 'customer' ? 'openrouter' : args.provider ?? 'azure',
+          model: getExecutionRouting(site_id)?.payer === 'customer' ? undefined : args.model,
           size: args.size,
           n: args.n,
           quality: args.quality,
@@ -246,7 +250,10 @@ export function generateImageToolScrapybara(instance: UbuntuInstance, site_id: s
         };
 
         // Call the image generation service
-        const result = await ImageGenerationService.generateImage(serviceParams);
+        const routing = getExecutionRouting(site_id);
+        const result = routing ? await ImageGenerationService.generateImage(serviceParams, {
+          executionRouting: getExecutionRouting(site_id), operationId: getCustomerOperationKey(),
+        }) : await ImageGenerationService.generateImage(serviceParams);
 
         if (result.success) {
           console.log(`[GenerateImageTool-Scrapybara] ✅ Image generation successful`);

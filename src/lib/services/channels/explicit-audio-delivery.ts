@@ -3,6 +3,7 @@ import { assertAutomationSendAllowed, AutomationSendSuppressed } from './automat
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { stripMarkdownForSpeech } from './long-reply-audio';
 import { validateResponseFormat } from './response-format';
+import { requiresPlatformInferenceCredits, withCustomerOperation } from '@/lib/services/ai/customer-routing';
 
 export class AudioDeliveryError extends Error {
   readonly status = 422;
@@ -32,7 +33,8 @@ export async function markAudioPreflightFailed(params: {
       .eq('id', params.messageId).eq('conversation_id', params.conversationId).maybeSingle();
     if (error || !row || !['assistant', 'team_member'].includes(row.role) || row.custom_data?.audio_delivery || row.custom_data?.template_delivery
       || row.custom_data?.automation_skipped === true || row.custom_data?.response_format === 'text'
-      || ['sent', 'delivered', 'sending', 'placement_unknown'].includes(row.custom_data?.status)) return;
+      || row.custom_data?.provider_message_id || row.custom_data?.needs_reconciliation === true
+      || ['sent', 'delivered', 'read', 'sending', 'placement_unknown'].includes(row.custom_data?.status)) return;
     let query = supabaseAdmin.from('messages').update({ custom_data: {
       ...(row.custom_data || {}), response_format: 'audio', status: 'failed', command_status: 'failed',
       error_message: params.reason || 'Audio preparation or eligibility failed; no message was dispatched.',
@@ -76,20 +78,32 @@ export async function deliverExplicitAudio(params: AudioDeliveryParams): Promise
     throw new AudioDeliveryError('Audio delivery conflicts with the saved response format');
   }
   let receipt = metadata?.audio_delivery;
+  if (!receipt && (metadata?.provider_message_id || metadata?.needs_reconciliation === true
+    || ['sending', 'sent', 'delivered', 'read', 'placement_unknown'].includes(metadata?.status))) {
+    throw new AudioDeliveryError('Audio delivery may already have started; reconcile before retrying');
+  }
   if (receipt && receipt.key !== key) throw new AudioDeliveryError('Audio delivery content or destination changed');
-  if (receipt?.state === 'sent' && typeof receipt.provider_message_id === 'string') return receipt.provider_message_id;
+  if (['sent', 'delivered', 'read'].includes(receipt?.state) && typeof receipt.provider_message_id === 'string') return receipt.provider_message_id;
   if (receipt && receipt.state !== 'ready') {
     throw new AudioDeliveryError('Audio delivery is pending or unconfirmed; reconcile before retrying');
   }
   const persist = async (nextReceipt: Record<string, unknown>, extras: Record<string, unknown> = {}) => {
-    const next = { ...(metadata || {}), ...extras, response_format: 'audio', audio_delivery: nextReceipt };
+    let senderParts: unknown;
+    try { senderParts = JSON.parse(params.sender); } catch { /* Legacy identity remains key-bound. */ }
+    const identity = Array.isArray(senderParts) && senderParts[0] === 'audio-sender-v1' ? senderParts : [];
+    const next = { ...(metadata || {}), ...extras, response_format: 'audio', audio_delivery: {
+      ...nextReceipt, site_id: params.siteId, channel: params.channel, recipient: params.recipient,
+      sender_identity: params.sender, provider: identity[1],
+      ...(identity[1] === 'zavu' ? { sender_id: identity[2] } : {}),
+      ...(metadata?.connection_id ? { connection_id: metadata.connection_id } : {}),
+    } };
     let query = supabaseAdmin.from('messages').update({ custom_data: next })
       .eq('id', params.messageId!).eq('conversation_id', params.conversationId!).eq('content', row.content);
     query = metadata === null ? query.is('custom_data', null) : query.eq('custom_data', JSON.stringify(metadata));
     const { data: updated, error: updateError } = await query.select('id').maybeSingle();
     if (updateError || !updated) throw new AudioDeliveryError('Audio delivery ownership changed; check message status');
     metadata = next;
-    receipt = nextReceipt;
+    receipt = next.audio_delivery;
   };
   if (!receipt) {
     const { CreditService } = await import('@/lib/services/billing/CreditService');
@@ -98,14 +112,16 @@ export async function deliverExplicitAudio(params: AudioDeliveryParams): Promise
     // retried automatically after an ambiguous charged preparation attempt.
     const options = validateSpeechOptions({ text, format: 'mp3' });
     const credits = Math.max(0.01, text.length / 1000 * CreditService.PRICING.AUDIO_GENERATION_MINUTE);
-    if (!await CreditService.validateCredits(params.siteId, credits)) throw new AudioDeliveryError('Insufficient audio credits');
+    const platformInference = requiresPlatformInferenceCredits(params.siteId);
+    if (platformInference && !await CreditService.validateCredits(params.siteId, credits)) throw new AudioDeliveryError('Insufficient audio credits');
     await persist({ key, state: 'preparing' });
     try {
-      await CreditService.deductCredits(params.siteId, credits, 'audio_generation', 'Audio message response', {
+      if (platformInference) await CreditService.deductCredits(params.siteId, credits, 'audio_generation', 'Audio message response', {
         message_id: params.messageId, channel: params.channel, text_length: text.length,
       });
-      const { audio, mimeType } = await synthesizeSpeech({ text, provider: options.provider,
-        format: 'mp3', voice: options.voice, model: options.deployment });
+      const { audio, mimeType } = await withCustomerOperation(`channel-audio:${params.messageId}:${key}`, () =>
+        synthesizeSpeech({ text, provider: options.provider,
+          format: 'mp3', voice: options.voice, model: options.deployment }));
       const path = `${params.siteId}/message_audio_${params.messageId}_${key}.mp3`;
       const { error: uploadError } = await supabaseAdmin.storage.from('assets').upload(path, audio, { contentType: mimeType });
       if (uploadError) throw new AudioDeliveryError('Audio upload failed');
@@ -133,8 +149,27 @@ export async function deliverExplicitAudio(params: AudioDeliveryParams): Promise
     await persist({ ...receipt, state: 'unknown' }, { status: 'placement_unknown' });
     throw new AudioDeliveryError('Audio delivery is unconfirmed; check the conversation before retrying');
   }
-  await persist({ ...receipt, state: 'sent', provider_message_id: providerMessageId }, {
-    status: 'sent', command_status: 'completed', provider_message_id: providerMessageId,
-  });
-  return providerMessageId;
+  // A webhook can win the CAS after the provider response. Reload, never replace
+  // a stronger receipt with the stale dispatch snapshot or dispatch again.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await persist({ ...receipt, state: 'sent', provider_message_id: providerMessageId }, {
+        status: 'sent', command_status: 'completed', provider_message_id: providerMessageId,
+      });
+      return providerMessageId;
+    } catch (error) {
+      const { data: fresh, error: readError } = await supabaseAdmin.from('messages').select('custom_data')
+        .eq('id', params.messageId).eq('conversation_id', params.conversationId).eq('content', row.content).maybeSingle();
+      const current = fresh?.custom_data?.audio_delivery;
+      if (readError || !current || current.key !== key) throw error;
+      if (current.provider_message_id === providerMessageId && ['sent', 'delivered', 'read', 'failed'].includes(current.state)) {
+        if (current.state === 'failed') throw new AudioDeliveryError('Audio delivery failed at the provider; reconcile before retrying');
+        return providerMessageId;
+      }
+      if (current.state !== 'dispatching' || current.provider_message_id) throw error;
+      metadata = fresh.custom_data;
+      receipt = current;
+    }
+  }
+  throw new AudioDeliveryError('Audio receipt persistence is unconfirmed; reconcile before retrying');
 }

@@ -3,7 +3,7 @@ import { MediaRequestError } from '@/lib/services/image/media-request-error';
 /** Trusted adapter classification of a confirmed no-admission response. */
 export class ImageAdmissionRejectedError extends MediaRequestError {}
 
-export type ImageProvider = 'azure';
+export type ImageProvider = 'azure' | 'openrouter';
 export type ImageQuality = 'auto' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'standard' | 'hd';
 export type ImageRatio =
   | '1:1'

@@ -5,6 +5,7 @@ import { createOpenRouterClient, isOpenRouterReasoningModel, resolveOpenRouterMo
 import { recordTelemetry } from '@/lib/status/telemetry';
 import { getTextObservationKey } from '@/lib/status/handlers/ai/passive-probes';
 import { formatOpenAiNonStreamResponse, throwIfCompletionError } from './llm-fallback';
+import { getExecutionRouting } from '@/lib/services/ai/customer-routing';
 
 function hasGeneratedOutput(choices: any, streaming = false): boolean {
   return Array.isArray(choices) && choices.some(choice => {
@@ -60,7 +61,7 @@ export class OpenRouterConnector {
     const platformCredential = this.config.apiKey === undefined ||
       (!!process.env.OPENROUTER_API_KEY?.trim() && this.config.apiKey.trim() === process.env.OPENROUTER_API_KEY.trim());
     const observe = async (status: 'up' | 'down') => {
-      if (!platformCredential) return;
+      if (!platformCredential || getExecutionRouting()?.payer === 'customer') return;
       await recordTelemetry(getTextObservationKey(model), status,
         status === 'up' ? 'Text request completed with generated output' : 'Text request failed or returned no generated output',
         Date.now() - startedAt).catch(() => {});

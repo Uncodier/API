@@ -2,12 +2,16 @@ import { fetchTwilioMedia, isTwilioMediaUrl } from '@/lib/services/twilio/fetchT
 import { recordTelemetry } from '@/lib/status/telemetry';
 import { getTranscriptionObservationKey } from '@/lib/status/handlers/ai/passive-probes';
 import { getAzureTranscriptionConfig } from './azure-transcription-config';
+import { getExecutionRouting, withExecutionRouting, type ExecutionRoutingReference } from './customer-routing';
+import { transcribeCustomerAudio } from './customer-audio';
 
 const LOG_PREFIX = '[TranscribeAudio]';
 
 export type TranscriptionAttempt = { provider: 'azure-direct'; model: string };
 
 export interface TranscribeAudioInput {
+  executionRouting?: ExecutionRoutingReference;
+  operationId?: string;
   buffer: Buffer;
   contentType?: string;
 }
@@ -87,7 +91,10 @@ export async function transcribeAudioBuffer(
   input: TranscribeAudioInput,
   env: NodeJS.Dict<string> = process.env
 ): Promise<TranscribeAudioResult> {
+  if (input.executionRouting) return withExecutionRouting(input.executionRouting, input.executionRouting.siteId,
+    () => transcribeAudioBuffer({ ...input, executionRouting: undefined }, env));
   const mimeType = normalizeAudioMimeType(input.contentType);
+  if (getExecutionRouting()?.payer === 'customer') return transcribeCustomerAudio(input.buffer, mimeType, input.operationId);
   const plan = buildTranscriptionPlan(env);
 
   if (plan.length === 0) {

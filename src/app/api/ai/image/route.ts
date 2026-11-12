@@ -14,6 +14,9 @@ import { ImageAdmissionRejectedError, type ImageRequestBody, type GenerateImageO
 import { generateWithAzure, validateAzureImageOptions } from './provider-azure';
 import { MediaRequestError } from '@/lib/services/image/media-request-error';
 import { mediaInstanceBelongsToSite } from '@/lib/services/ai/media-instance-access';
+import { resolveHttpExecutionRouting, withHttpExecutionRouting } from '@/lib/services/ai/customer-routing-http';
+import { CustomerRoutingError } from '@/lib/services/ai/customer-routing';
+import { generateCustomerImageArtifacts } from '@/lib/services/ai/customer-images';
 
 const SYSTEM_SITE_ID = '00000000-0000-0000-0000-000000000000';
 const UUID_PATTERN =
@@ -88,7 +91,26 @@ export async function POST(request: NextRequest) {
     if (!Number.isInteger(count) || count < 1 || count > 4) {
       return NextResponse.json({ error: 'n must be an integer between 1 and 4' }, { status: 400 });
     }
-    const provider = body.provider ?? 'azure';
+    const routing = await resolveHttpExecutionRouting(request, body.site_id);
+    const provider = body.provider ?? (routing.payer === 'customer' ? 'openrouter' : 'azure');
+    if (routing.payer === 'customer') {
+      if (provider !== 'openrouter' || referenceImages?.length
+          || (body.quality && !['auto', 'low', 'medium', 'high'].includes(body.quality))) {
+        throw new CustomerRoutingError('CUSTOMER_IMAGE_OPTIONS_UNSUPPORTED');
+      }
+      const operationId = request.headers.get('Idempotency-Key');
+      if (!operationId || !/^[A-Za-z0-9:_-]{1,128}$/.test(operationId)) {
+        return NextResponse.json({ error: 'Customer images require a stable Idempotency-Key' }, { status: 400 });
+      }
+      const result = await withHttpExecutionRouting(request, routing, () => generateCustomerImageArtifacts({
+        siteId: body.site_id, prompt: body.prompt, count, size: body.size, ratio: body.aspect_ratio ?? body.ratio,
+        quality: body.quality as 'auto' | 'low' | 'medium' | 'high' | undefined, model: body.model,
+        persist: true, instanceId: body.instance_id, operationKey: `image:${operationId}`,
+      }));
+      return NextResponse.json({ provider: 'openrouter', images: result.images, metadata: {
+        model: result.model, generation_id: result.generationId, receipt_event_id: result.receiptEventId, payer: 'customer',
+      } });
+    }
     if (provider !== 'azure') {
       return NextResponse.json({ error: 'Unsupported image provider' }, { status: 400 });
     }

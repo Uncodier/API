@@ -1,4 +1,6 @@
 import { loadSourceText } from '@/lib/services/summary/loadSourceText';
+import { getExecutionRouting, withCustomerCapability } from '@/lib/services/ai/customer-routing';
+import { executionRoutingHeaders } from '@/lib/services/ai/customer-routing-http';
 
 export interface SummarizeParams {
   text: string;
@@ -28,14 +30,19 @@ async function callTextAPI(params: {
   site_id: string;
 }): Promise<string> {
   const apiUrl = `${process.env.NEXT_PUBLIC_API_SERVER_URL || 'http://localhost:3000'}/api/ai/text`;
+  const routing = getExecutionRouting(params.site_id);
+  const routingHeaders = routing ? await withCustomerCapability('summary', () =>
+    executionRoutingHeaders(routing, { path: '/api/ai/text' })) : {};
 
   const response = await fetch(apiUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'x-api-key': process.env.SERVICE_API_KEY || '',
+      ...routingHeaders,
     },
     body: JSON.stringify({
+      site_id: params.site_id,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: params.text },
@@ -43,6 +50,8 @@ async function callTextAPI(params: {
       temperature: 0.3,
       maxTokens: 150,
     }),
+    redirect: 'error',
+    signal: AbortSignal.timeout(120_000),
   });
 
   if (!response.ok) {

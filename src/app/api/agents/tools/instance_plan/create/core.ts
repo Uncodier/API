@@ -1,4 +1,6 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { admitAssistantRouting } from '@/app/api/robots/instance/assistant/execution-routing';
+import { pinPlanRouting } from '@/lib/services/workflow-robot/plan-routing';
 import { completeInProgressPlans } from '@/lib/helpers/plan-lifecycle';
 import { resolveBacklogContextForInstance } from '@/lib/services/requirement-backlog';
 import {
@@ -332,6 +334,7 @@ export async function createInstancePlanCore(params: any) {
     });
   }
 
+  const executionRouting = await admitAssistantRouting(validatedData.site_id);
   const planData = {
     instance_id: validatedData.instance_id,
     title: validatedData.title,
@@ -341,7 +344,7 @@ export async function createInstancePlanCore(params: any) {
     expected_output: validatedData.expected_output,
     success_criteria: validatedData.success_criteria,
     validation_rules: validatedData.validation_rules,
-    status: validatedData.is_template ? 'blocked' : 'pending',
+    status: 'blocked',
     site_id: validatedData.site_id,
     user_id: validatedData.user_id,
     agent_id: validatedData.agent_id,
@@ -365,6 +368,12 @@ export async function createInstancePlanCore(params: any) {
 
   if (error) {
     throw new Error(`Failed to create plan: ${error.message}`);
+  }
+  await pinPlanRouting(newPlan.id, validatedData.site_id, executionRouting);
+  if (!validatedData.is_template) {
+    const { error } = await supabaseAdmin.from('instance_plans').update({ status: 'pending' }).eq('id', newPlan.id);
+    if (error) throw new Error('Failed to admit routed plan');
+    newPlan.status = 'pending';
   }
 
   // Requirement-bound plans never replace active work. Re-check after insert

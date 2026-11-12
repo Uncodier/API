@@ -6,6 +6,7 @@ import { resolveSiteFromRequirementUrl } from '@/lib/services/image/resolveSiteF
 import { hasAuthenticatedPrincipal } from '@/lib/security/request-rate-limit';
 import { canAccessSite } from '@/lib/security/site-access';
 import { acquireLock, releaseLock } from '@/lib/security/upstash-rest';
+import { resolveHttpExecutionRouting } from '@/lib/services/ai/customer-routing-http';
 
 const NO_STORE_HEADERS = {
   'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
@@ -112,8 +113,12 @@ export async function GET(
       return jsonError('Site access denied', 403);
     }
 
+    const executionRouting = await resolveHttpExecutionRouting(request, siteId);
+    const namespace = executionRouting.payer === 'customer'
+      ? `v4:customer:${executionRouting.connectionId}:${executionRouting.policyVersion}:${executionRouting.credentialVersion}`
+      : `v3:openrouter:${process.env.OPENROUTER_VIDEO_MODEL || 'unconfigured'}`;
     const hash = getVideoPromptHash(
-      `v3:openrouter:${process.env.OPENROUTER_VIDEO_MODEL || 'unconfigured'}:${siteId}:${promptStr}`,
+      `${namespace}:${siteId}:${promptStr}`,
       durationSeconds,
       ratio,
     );
@@ -153,6 +158,7 @@ export async function GET(
         durationSeconds,
         ratio,
         hash,
+        executionRouting,
       };
       const run = await start(generatePromptVideoWorkflow, [workflowInput]);
       try {

@@ -2,6 +2,8 @@ import crypto from "crypto";
 import { NextRequest } from "next/server";
 import { POST } from "@/app/api/integrations/zavu/webhook/route";
 import { reconcileTemplateDeliveryEvent } from '@/lib/services/zavu/template-delivery-events';
+import { reconcileAudioDeliveryEvent } from '@/lib/services/zavu/audio-delivery-events';
+jest.mock('@/lib/services/zavu/audio-delivery-events', () => ({ reconcileAudioDeliveryEvent: jest.fn() }));
 jest.mock('@/lib/services/zavu/template-delivery-events', () => ({ reconcileTemplateDeliveryEvent: jest.fn() }));
 import * as webhookHandlers from "@/lib/services/zavu/webhook-handlers";
 import * as webhookClaims from "@/lib/services/provider-webhook-claims";
@@ -215,6 +217,7 @@ describe("Zavu Webhook Dispatch", () => {
     expect(res.status).toBe(200);
     expect(webhookHandlers.handleInboundMessage).not.toHaveBeenCalled();
     expect(reconcileTemplateDeliveryEvent).toHaveBeenCalledWith(payload);
+    expect(reconcileAudioDeliveryEvent).toHaveBeenCalledWith(payload);
   });
 
   it('does not deduplicate distinct delivery transitions by the same message ID', async () => {
@@ -223,6 +226,7 @@ describe("Zavu Webhook Dispatch", () => {
     expect(webhookClaims.claimProviderWebhookEvent).toHaveBeenCalledWith('zavu', 'message.sent:provider', 'message.sent');
     expect(webhookClaims.claimProviderWebhookEvent).toHaveBeenCalledWith('zavu', 'message.failed:provider', 'message.failed');
     expect(reconcileTemplateDeliveryEvent).toHaveBeenCalledTimes(2);
+    expect(reconcileAudioDeliveryEvent).toHaveBeenCalledTimes(2);
   });
 
   it('dispatches signed app echoes before delivery reconciliation', async () => {
@@ -231,6 +235,7 @@ describe("Zavu Webhook Dispatch", () => {
     expect((await POST(createRequest(payload))).status).toBe(200);
     expect(handleWhatsAppAppEcho).toHaveBeenCalledWith(payload);
     expect(reconcileTemplateDeliveryEvent).not.toHaveBeenCalled();
+    expect(reconcileAudioDeliveryEvent).not.toHaveBeenCalled();
     expect(webhookHandlers.handleInboundMessage).not.toHaveBeenCalled();
   });
 
@@ -248,6 +253,12 @@ describe("Zavu Webhook Dispatch", () => {
       data: { messageId: 'provider', channel: 'whatsapp' } }));
     expect(response.status).toBe(500);
     expect(webhookClaims.finishProviderWebhookEvent).toHaveBeenCalledWith('zavu', 'evt-delivery', 'claim-token', 'failed', 'receipt not ready');
+  });
+  it('fails the durable claim for an early audio callback so the provider can retry without resending', async () => {
+    jest.mocked(reconcileAudioDeliveryEvent).mockRejectedValueOnce(new Error('audio receipt not ready'));
+    expect((await POST(createRequest({ id: 'evt-audio', type: 'message.delivered', senderId: 'sender',
+      data: { messageId: 'provider', channel: 'telegram', to: 'recipient' } }))).status).toBe(500);
+    expect(webhookClaims.finishProviderWebhookEvent).toHaveBeenCalledWith('zavu', 'evt-audio', 'claim-token', 'failed', 'audio receipt not ready');
   });
 
   it("records a failed claim and requests a retry on processing errors", async () => {

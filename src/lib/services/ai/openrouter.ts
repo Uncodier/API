@@ -1,5 +1,7 @@
 import OpenAI from 'openai';
 import type { Fetch } from 'openai/core';
+import { getExecutionRouting, CustomerRoutingError } from './customer-routing';
+import { customerChatClient } from './customer-chat-client';
 
 export class OpenRouterConfigurationError extends Error {
   constructor() { super('OpenRouter is not configured: set OPENROUTER_API_KEY'); }
@@ -50,6 +52,15 @@ export interface OpenRouterClientOptions {
 
 /** No shared singleton: future workspace credentials cannot bleed into another request. */
 export function createOpenRouterClient(options: OpenRouterClientOptions = {}): OpenAI {
+  const routing = getExecutionRouting();
+  if (routing?.payer === 'customer') {
+    if (options.apiKey !== undefined) throw new CustomerRoutingError('CUSTOMER_CREDENTIAL_OVERRIDE_FORBIDDEN');
+    return customerChatClient(routing, apiKey => createClient({ ...options, apiKey }, routing));
+  }
+  return createClient(options);
+}
+
+function createClient(options: OpenRouterClientOptions, customerScope = undefined as ReturnType<typeof getExecutionRouting>): OpenAI {
   if (typeof window !== 'undefined') {
     throw new Error('OpenRouter credentials must only be used on the server');
   }
@@ -64,7 +75,13 @@ export function createOpenRouterClient(options: OpenRouterClientOptions = {}): O
     baseURL: OPENROUTER_BASE_URL,
     defaultHeaders: headers,
     // SDK v4 declares node-fetch-specific types; JSON/SSE use the Web fetch contract.
-    fetch: openRouterFetch as unknown as Fetch,
+    fetch: ((input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const active = getExecutionRouting();
+      if ((active?.payer === 'customer' || customerScope) && active !== customerScope) {
+        throw new CustomerRoutingError('CUSTOMER_CLIENT_SCOPE_MISMATCH');
+      }
+      return openRouterFetch(input, init);
+    }) as unknown as Fetch,
     timeout: options.timeout ?? 240_000,
     // Chat admission retries live in openrouter-chat-request, outside stream/tool
     // execution. Disable SDK retries to avoid multiplying attempts or replaying timeouts.

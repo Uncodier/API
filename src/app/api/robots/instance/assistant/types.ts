@@ -6,6 +6,7 @@ import type { AssistantImageAsset } from '@/lib/services/robot-instance/assistan
 import type { AssistantExecutionMode } from './execution-mode';
 
 export interface AssistantContext {
+  executionRouting?: import('@/lib/services/ai/customer-routing').ExecutionRoutingReference;
   executionMode?: AssistantExecutionMode;
   instance: any;
   systemPrompt: string;

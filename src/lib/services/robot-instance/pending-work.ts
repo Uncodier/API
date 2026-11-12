@@ -170,6 +170,8 @@ export async function startPendingAssistant(row: PendingWorkRow): Promise<void> 
   const activity = row.activity || 'ask';
   const contextString = stringifyPendingContext(row.context);
   const executionMode = resolveAssistantRequestMode(undefined, row.system_prompt ?? undefined);
+  const { admitAssistantRouting } = await import('@/app/api/robots/instance/assistant/execution-routing');
+  const executionRouting = await admitAssistantRouting(siteId);
 
   const userAction = await withRetries(() => insertUserActionLog({
     instanceId: row.instance_id,
@@ -201,7 +203,7 @@ export async function startPendingAssistant(row: PendingWorkRow): Promise<void> 
     expectedResultsFromContext(row.context),
     contextString,
     undefined,
-    { userMessageLogId: userAction.id, executionMode },
+    { userMessageLogId: userAction.id, executionMode, executionRouting },
   ]);
 }
 

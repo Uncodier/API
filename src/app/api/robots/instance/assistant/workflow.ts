@@ -31,7 +31,7 @@ export async function runAssistantWorkflow(
   expectedResultsAmount?: number,
   contextString?: string,
   toolOverrides?: Record<string, any>,
-   options?: { silentContinue?: boolean; selectedSkills?: AssistantSkillSelection; approvedImport?: { url: string; sha256: string; userId: string }; userMessageLogId?: string; resumeToken?: string; executionMode?: AssistantExecutionMode }
+   options?: { silentContinue?: boolean; selectedSkills?: AssistantSkillSelection; approvedImport?: { url: string; sha256: string; userId: string }; userMessageLogId?: string; resumeToken?: string; executionMode?: AssistantExecutionMode; executionRouting?: import('@/lib/services/ai/customer-routing').ExecutionRoutingReference }
 ) {
   'use workflow';
 
@@ -63,6 +63,7 @@ export async function runAssistantWorkflow(
       customTools, useSdkTools, systemPrompt, agentType, userPhone, instanceNodeId,
       expectedResultsAmount, contextString, toolOverrides, selectedSkills: options?.selectedSkills,
       approvedImport: options?.approvedImport,
+      executionRouting: options?.executionRouting,
       ...(options?.executionMode ? { executionMode: options.executionMode } : {}),
     }, options?.resumeToken);
     if (!recovery.ok) return blockedResult;
@@ -80,7 +81,7 @@ export async function runAssistantWorkflow(
       options = { ...options, selectedSkills: execution.selectedSkills as AssistantSkillSelection | undefined,
         approvedImport: execution.approvedImport as { url: string; sha256: string; userId: string } | undefined,
         // The claimed snapshot, not the new request, owns continuation intent.
-        executionMode: execution.executionMode };
+        executionMode: execution.executionMode, executionRouting: execution.executionRouting };
       recoveryScope.generation = recovery.snapshot.respawnCount;
     }
 
@@ -104,6 +105,7 @@ export async function runAssistantWorkflow(
     options?.approvedImport,
     undefined,
     options?.executionMode,
+    options?.executionRouting,
   );
   context.recoveryScope = recoveryScope;
   context.executionMode = options?.executionMode;

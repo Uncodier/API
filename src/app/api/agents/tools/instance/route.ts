@@ -1,13 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { instanceCore } from './core';
+import { authorizeInferenceRequest, withHttpExecutionRouting } from '@/lib/services/ai/customer-routing-http';
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const result = await instanceCore(body);
+    const { principal, routing } = await authorizeInferenceRequest(request, body?.site_id);
+    if (!routing || !body || !['create', 'read', 'update'].includes(body.action)) {
+      return NextResponse.json({ success: false, error: 'Valid site and action are required' }, { status: 400 });
+    }
+    const result = await withHttpExecutionRouting(request, routing, () => instanceCore({
+      ...body, site_id: routing.siteId, user_id: principal.userId ?? undefined,
+    }));
     return NextResponse.json(result, { status: 200 });
   } catch (error: any) {
-    return NextResponse.json({ success: false, error: error.message }, { status: 400 });
+    return NextResponse.json({ success: false, error: 'Instance request failed' },
+      { status: [401, 403, 402, 422].includes(error?.status) ? error.status : 400 });
   }
 }
 

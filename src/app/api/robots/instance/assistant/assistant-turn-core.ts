@@ -1,4 +1,7 @@
 import { executeAssistantStep } from '@/lib/services/robot-instance/assistant-executor';
+import { withAssistantRouting } from './execution-routing';
+import { createHash } from 'node:crypto';
+import { withCustomerOperation } from '@/lib/services/ai/customer-routing';
 import { isInsufficientCreditsError } from '@/lib/services/billing/credit-exhaustion-message';
 import {
   dehydrateMessageImages,
@@ -37,6 +40,18 @@ export async function processAssistantTurn(
   context: AssistantContext,
   messages: any[],
 ): Promise<any> {
+  return withAssistantRouting(context.executionOptions.site_id, context.executionRouting,
+    () => {
+      const scope = context.recoveryScope;
+      const identity = [scope?.userMessageLogId, scope?.generation,
+        context.executionOptions.plan_id, context.executionOptions.step_id, context.instanceNodeId, messages];
+      const digest = createHash('sha256').update(JSON.stringify(identity)).digest('hex');
+      return withCustomerOperation(`assistant-turn:${context.executionOptions.instance_id}:${digest}`,
+        () => processRoutedAssistantTurn(context, messages), { durableBoundary: true });
+    });
+}
+
+async function processRoutedAssistantTurn(context: AssistantContext, messages: any[]): Promise<any> {
   const requirementHost = readRequirementAssistantHost(context);
   if (requirementHost) await requirementHost.assertActive();
   if (context.recoveryScope) await assertAssistantRecoveryActive(context.recoveryScope);

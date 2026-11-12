@@ -18,6 +18,7 @@ import ProcessorConfigurationService from '../processor/ProcessorConfigurationSe
 import CommandProcessor from '../command/CommandProcessor';
 import { CommandCache } from '../command/CommandCache';
 import { AgentBackgroundService } from './AgentBackgroundService';
+import { withCommandRouting } from '../command/command-routing';
 
 // EDGE FUNCTIONS: Stateless initialization - no singleton pattern
 export class AgentInitializer {
@@ -69,6 +70,7 @@ export class AgentInitializer {
       console.log(`📥 Comando creado: ${command.id}, agente: ${command.agent_id}`);
       
       try {
+        await withCommandRouting(command, async () => {
         // PASO 1: Verificar y generar agent_background si es necesario
         if (command.agent_id && !command.agent_background) {
           console.log(`🔍 [AgentInitializer] Generando agent_background para agent_id: ${command.agent_id}`);
@@ -114,6 +116,7 @@ export class AgentInitializer {
         console.log(`▶️ [AgentInitializer] Procesando comando ${command.id}`);
         await this.commandProcessor.processCommand(command);
         console.log(`✅ [AgentInitializer] Procesamiento completado: ${command.id}`);
+        });
         
       } catch (error: any) {
         console.error(`❌ [AgentInitializer] Error al procesar comando ${command.id}:`, error);
@@ -130,6 +133,10 @@ export class AgentInitializer {
   
   // Ejecutar un comando de forma síncrona
   public async executeCommand(command: DbCommand): Promise<DbCommand> {
+    return withCommandRouting(command, () => this.executeRoutedCommand(command));
+  }
+
+  private async executeRoutedCommand(command: DbCommand): Promise<DbCommand> {
     console.log(`▶️ [AgentInitializer] Ejecutando comando: ${command.id || 'nuevo'}`);
     
     // PASO 1: Generar agent_background si es necesario

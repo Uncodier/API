@@ -4,6 +4,10 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { executeUnifiedRobotActivityPlanning, formatPlanSteps, addSessionSaveSteps, calculateEstimatedDuration } from '@/lib/helpers/robot-planning-core';
 import { findGrowthRobotAgent } from '@/lib/helpers/agent-finder';
 import { completeInProgressPlans } from '@/lib/helpers/plan-lifecycle';
+import { authorizeInferenceRequest, withHttpExecutionRouting } from '@/lib/services/ai/customer-routing-http';
+import { pinPlanRouting } from '@/lib/services/workflow-robot/plan-routing';
+import { getExecutionRouting } from '@/lib/services/ai/customer-routing';
+import { canReadProcurementWorkflowInstanceAsActor } from '@/lib/services/workflow-robot/procurement-access';
 
 // ------------------------------------------------------------------------------------
 // Growth Plan Specific Context (extends the core planning with previous plan context)
@@ -61,6 +65,22 @@ const CreatePlanSchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
+    const body = await request.clone().json();
+    const { principal, routing } = await authorizeInferenceRequest(request, body?.site_id);
+    if (!routing) return NextResponse.json({ error: 'Site required' }, { status: 400 });
+    if (!CreatePlanSchema.safeParse(body).success) return NextResponse.json({ error: 'Invalid plan' }, { status: 400 });
+    if ((!principal.internal && body.user_id !== principal.userId) || (!principal.internal &&
+      !await canReadProcurementWorkflowInstanceAsActor(routing.siteId, body.instance_id, principal.userId))) {
+      return NextResponse.json({ error: 'Instance access denied' }, { status: 403 });
+    }
+    return await withHttpExecutionRouting(request, routing, () => createGrowthPlan(request));
+  } catch (error: any) {
+    return NextResponse.json({ error: 'Plan admission failed' }, { status: error instanceof SyntaxError ? 400 : error?.status ?? 503 });
+  }
+}
+
+async function createGrowthPlan(request: NextRequest) {
+  try {
     // 1. Validar y parsear body -------------------------------------------------------
     const rawBody = await request.json();
     if ((rawBody.skill_mode !== undefined && rawBody.skill_mode !== 'auto') ||
@@ -107,7 +127,7 @@ export async function POST(request: NextRequest) {
         title: `Plan simple para actividad: ${activity}`,
         description: 'Plan simple y enfocado generado automáticamente para ejecución en 1-2 horas máximo',
         plan_type: 'objective',
-        status: 'pending',
+        status: 'blocked',
         instance_id,
         site_id,
         user_id,
@@ -119,6 +139,7 @@ export async function POST(request: NextRequest) {
       console.error('Error inserting plan:', planError);
       return NextResponse.json({ error: 'Error al registrar el plan' }, { status: 500 });
     }
+    await pinPlanRouting(newPlan.id, site_id, getExecutionRouting(site_id)!);
 
     // 6. Obtener contexto específico para el tipo de actividad con contexto de growth plan ------------------------
     console.log(`🎯 OBTENIENDO: Contexto específico para actividad: ${activity}`);

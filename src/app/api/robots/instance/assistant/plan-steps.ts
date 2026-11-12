@@ -1,6 +1,8 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/core';
 import { processAssistantTurn } from './assistant-turn';
+import { getPlanRouting } from '@/lib/services/workflow-robot/plan-routing';
+import { withAssistantRouting } from './execution-routing';
 import { isInsufficientCreditsError } from '@/lib/services/billing/credit-exhaustion-message';
 import type { AssistantContext } from './types';
 import { SkillsService } from '@/lib/services/skills-service';
@@ -140,6 +142,12 @@ export async function executePlanStep(
   step: any
 ): Promise<PlanStepExecutionResult> {
   'use step';
+  const executionRouting = await getPlanRouting(plan.id, context.executionOptions.site_id);
+  return withAssistantRouting(context.executionOptions.site_id, executionRouting,
+    () => executeRoutedPlanStep({ ...context, executionRouting }, plan, step));
+}
+
+async function executeRoutedPlanStep(context: AssistantContext, plan: any, step: any): Promise<PlanStepExecutionResult> {
   console.log(`[PlanSteps] Executing step ${step.order}: ${step.title}`);
   // Workflow inputs are snapshots. Never reuse their checkpoint after another
   // execution has consumed it or changed the step's lifecycle/definition.

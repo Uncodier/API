@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { EmbeddingsService } from '@/lib/services/embeddings-service';
+import { authorizeInferenceRequest, withHttpExecutionRouting } from '@/lib/services/ai/customer-routing-http';
 import {
   enforceRequestRateLimit,
   getAuthenticatedRateIdentity,
-  isInternalServiceRequest,
 } from '@/lib/security/request-rate-limit';
 
 const DEFAULT_MODEL = 'text-embedding-3-small';
@@ -20,16 +20,17 @@ function isValidInput(input: unknown): input is string | string[] {
 
 export async function POST(request: NextRequest) {
   try {
+    const body = await request.json();
+    const { principal, routing } = await authorizeInferenceRequest(request, body?.site_id);
     const limited = await enforceRequestRateLimit(request, {
       namespace: 'ai-embeddings-principal',
       identity: getAuthenticatedRateIdentity(request),
-      limit: isInternalServiceRequest(request) ? 300 : 60,
+      limit: principal.internal ? 300 : 60,
       windowSeconds: 60,
       failClosed: true,
     });
     if (limited) return limited;
 
-    const body = await request.json();
     const { input, modelId = DEFAULT_MODEL, dimensions = DEFAULT_DIMENSIONS } = body || {};
 
     if (!isValidInput(input)) {
@@ -63,7 +64,9 @@ export async function POST(request: NextRequest) {
     if (typeof modelId !== 'string' || !modelId.trim()) {
       return NextResponse.json({ error: 'Parameter "modelId" must be a non-empty string' }, { status: 400 });
     }
-    const { embeddings, usage, model } = await EmbeddingsService.generateEmbeddings(input, modelId, dimensions);
+    const generate = () => EmbeddingsService.generateEmbeddings(input, modelId, dimensions);
+    const { embeddings, usage, model } = routing
+      ? await withHttpExecutionRouting(request, routing, generate) : await generate();
 
     return NextResponse.json({
       success: true,
@@ -73,13 +76,13 @@ export async function POST(request: NextRequest) {
       embeddings,
       usage,
     });
-  } catch {
+  } catch (error: any) {
     console.error('[embeddings api] OpenRouter embeddings request failed');
     return NextResponse.json(
       {
         error: 'Failed to generate embedding',
       },
-      { status: 500 }
+      { status: error instanceof SyntaxError ? 400 : [400, 401, 403, 402, 422].includes(error?.status) ? error.status : 500 }
     );
   }
 }

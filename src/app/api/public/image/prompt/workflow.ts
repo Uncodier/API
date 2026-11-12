@@ -1,6 +1,7 @@
 'use workflow';
 
 import { generateImageStep, cacheGeneratedImageStep } from './steps';
+import type { ExecutionRoutingReference } from '@/lib/services/ai/customer-routing';
 
 export interface GeneratePromptImageInput {
   prompt: string;
@@ -8,6 +9,7 @@ export interface GeneratePromptImageInput {
   size: '256x256' | '512x512' | '1024x1024';
   ratio: '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '3:2' | '2:3' | undefined;
   hash: string;
+  executionRouting?: ExecutionRoutingReference;
 }
 
 export async function generatePromptImageWorkflow(input: GeneratePromptImageInput) {
@@ -17,7 +19,8 @@ export async function generatePromptImageWorkflow(input: GeneratePromptImageInpu
     input.prompt,
     input.siteId,
     input.size,
-    input.ratio
+    input.ratio,
+    input.executionRouting
   );
   await cacheGeneratedImageStep(generated, input.prompt, input.siteId, input.hash);
   

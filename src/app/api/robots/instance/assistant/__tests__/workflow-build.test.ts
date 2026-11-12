@@ -5,6 +5,27 @@ import { fileURLToPath } from 'node:url';
 const projectRoot = fileURLToPath(new URL('../../../../../../../', import.meta.url));
 
 describe('assistant workflow build boundary', () => {
+  it.each([
+    './src/app/api/cron/maintenance/workflow.ts',
+    './src/app/api/agents/tools/update_repo/workflow.ts',
+  ])('keeps trusted routing/storage outside the deterministic %s bundle', entry => {
+    const output = execFileSync(process.execPath, ['--input-type=module', '-e', `
+      import { build } from 'esbuild';
+      import { createNodeModuleErrorPlugin, createPseudoPackagePlugin, createSwcPlugin } from '@workflow/builders';
+      const result = await build({ entryPoints: [${JSON.stringify(entry)}], absWorkingDir: process.cwd(),
+        bundle: true, write: false, platform: 'neutral', format: 'cjs', target: 'es2022',
+        conditions: ['workflow'], mainFields: ['module', 'main'], tsconfig: './tsconfig.json',
+        treeShaking: true, metafile: true, logLevel: 'silent', plugins: [createPseudoPackagePlugin(),
+          createSwcPlugin({ mode: 'workflow', projectRoot: process.cwd() }), createNodeModuleErrorPlugin()] });
+      console.log(JSON.stringify({ inputs: Object.keys(result.metafile.inputs), code: result.outputFiles[0].text }));
+    `], { cwd: projectRoot, encoding: 'utf8', timeout: 30000 });
+    const { inputs, code } = JSON.parse(output) as { inputs: string[]; code: string };
+    expect(inputs).not.toContain('src/lib/services/ai/customer-routing.ts');
+    expect(inputs).not.toContain('src/lib/database/supabase-client.ts');
+    expect(code).toContain('executionRouting');
+    expect(code).not.toContain('node:async_hooks');
+  }, 35000);
+
   it('compiles with the real Workflow plugins without pulling recovery services into the workflow', () => {
     // Run the native compiler outside Jest's VM. No application modules are
     // executed, no .env is loaded, and no database/provider mocks hide imports.
@@ -52,6 +73,8 @@ describe('assistant workflow build boundary', () => {
       'src/lib/services/robot-instance/assistant-recovery.ts',
       'src/lib/services/robot-instance/assistant-recovery-fingerprint.ts',
       'src/lib/database/supabase-client.ts',
+      'src/lib/services/ai/customer-routing.ts',
+      'src/app/api/robots/instance/assistant/execution-routing.ts',
       'src/app/api/robots/instance/assistant/plan-ownership.ts',
     ]) {
       expect(inputs).not.toContain(serverModule);

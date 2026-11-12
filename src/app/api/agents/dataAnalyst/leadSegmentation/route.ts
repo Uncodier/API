@@ -1,3 +1,4 @@
+import { withAuthorizedCommandRequest } from '@/lib/services/ai/command-http-routing';
 import { NextResponse } from 'next/server';
 import { CommandFactory, ProcessorInitializer } from '@/lib/agentbase';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
@@ -132,7 +133,7 @@ const processorInitializer = ProcessorInitializer.getInstance();
 processorInitializer.initialize();
 const commandService = processorInitializer.getCommandService();
 
-export async function POST(request: Request) {
+async function handleCommandRequest(request: Request) {
   try {
     const body = await request.json();
     const { 
@@ -404,4 +405,5 @@ Please analyze the lead information against all available segments and determine
       { status: 500 }
     );
   }
-} 
+}
+export async function POST(request: Request) { return withAuthorizedCommandRequest(request, handleCommandRequest); }

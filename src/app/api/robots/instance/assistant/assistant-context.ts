@@ -1,4 +1,6 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { withAssistantRouting } from './execution-routing';
+import { getExecutionRouting, resolveCustomerDispatch, type ExecutionRoutingReference } from '@/lib/services/ai/customer-routing';
 import { MOTION_DESIGN_INSTRUCTION } from './motion-design-instruction';
 import { InstanceContextManager } from '@/lib/services/robot-instance/InstanceContextManager';
 import { findAssistantManagedPlan } from '@/lib/services/workflow-robot/plan-ownership';
@@ -25,7 +27,7 @@ import { assertNodeContextHasNode } from './node-context-boundary';
 import { DIRECT_EXECUTION_INSTRUCTION, type AssistantExecutionMode } from './execution-mode';
 import { canReadProcurementWorkflowInstanceAsActor } from '@/lib/services/workflow-robot/procurement-access';
 
-export async function prepareAssistantContext(
+async function prepareContext(
   instanceId: string,
   message: string,
   siteId: string,
@@ -43,20 +45,19 @@ export async function prepareAssistantContext(
     approvedImport?: { url: string; sha256: string; userId: string },
     requirementExecution?: { requirementId: string; assertActive: () => Promise<void> },
     executionMode?: AssistantExecutionMode,
+    executionRouting?: ExecutionRoutingReference,
   ): Promise<AssistantContext> {
   if (requirementExecution) await requirementExecution.assertActive();
   // Direct workflow starts and recovery snapshots also cross this boundary.
   // Reject before reading conversation history/assets or constructing tools.
   assertNodeContextHasNode(contextString, instanceNodeId);
 
-  // We need to fetch the instance data inside the workflow to ensure we have the latest state
   let instanceResult = await supabaseAdmin
     .from('remote_instances')
     .select('*')
     .eq('id', instanceId)
     .single();
   const isRemoteInstance = !instanceResult.error && Boolean(instanceResult.data);
-  // Fallback to robot_instances
   if (instanceResult.error || !instanceResult.data) {
     console.log(`[Workflow] Instance not found in remote_instances, checking robot_instances: ${instanceId}`);
     instanceResult = await supabaseAdmin
@@ -96,7 +97,10 @@ export async function prepareAssistantContext(
 
   let baseSystemPrompt = '';
   let toolsContext = '';
-  const { provider: finalProvider, model: finalModel } = resolveAssistantHistoryModel();
+  const routing = getExecutionRouting(siteId);
+  const { provider: finalProvider, model: finalModel } = routing?.payer === 'customer'
+    ? { provider: 'openrouter' as const, model: (await resolveCustomerDispatch(routing, 'tools')).modelId }
+    : resolveAssistantHistoryModel();
 
   if (useAssistantOnly) {
      baseSystemPrompt =
@@ -224,7 +228,6 @@ export async function prepareAssistantContext(
     toolOverrides: uiMediaContract?.toolOverrides ?? toolOverrides,
   }) : null;
 
-  // Generate prompts
   const agentBackground = await generateAgentBackground(siteId, userId);
   const memoriesContext = await fetchMemoriesContext(siteId, userId, instanceId);
   const historyContext = instanceNodeId || (systemPrompt || '').includes('WORKFLOW MODE')
@@ -461,6 +464,7 @@ For compras with requisitions, licitaciones/tenders, supplier invitations, adjud
   }
 
   return {
+    executionRouting: getExecutionRouting(siteId),
     ...(executionMode ? { executionMode } : {}),
     instance,
     systemPrompt: publishBinding ? `${finalSystemPrompt}\n${publishBinding.instruction}` : finalSystemPrompt,
@@ -487,4 +491,8 @@ For compras with requisitions, licitaciones/tenders, supplier invitations, adjud
     selectedSkills,
     approvedImport,
   };
+}
+
+export async function prepareAssistantContext(...args: Parameters<typeof prepareContext>): Promise<AssistantContext> {
+  return withAssistantRouting(args[2], args[17], () => prepareContext(...args));
 }

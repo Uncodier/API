@@ -13,6 +13,7 @@ import { writeRequirementInstanceLog } from './requirement-instance-log';
 import { assertToolScreenAccess } from '@/app/api/agents/tools/router/screen-access';
 import { AssistantExecutionBoundaryError } from '@/lib/services/robot-instance/assistant-execution-boundary';
 import { requirementCycleFailure } from './requirement-cycle-failure';
+import { getExecutionRouting } from '@/lib/services/ai/customer-routing';
 
 /** Canonical session/turn executor with no workspace, Git checkout or VM lease. */
 export async function runCloudRequirementCycle(run: RequirementRun, objective: string,
@@ -24,6 +25,7 @@ export async function runCloudRequirementCycle(run: RequirementRun, objective: s
     const initial = createSession({ objective: objective.slice(0, 24000), executionEnvironment: 'cloud',
       limits: { maxTurns: 100, maxOutputTokens: 4096, maxTotalTokens: 1000000, maxActiveMs: 3600000 } }, run.sessionId);
     initial.request.requirementId = run.requirementId;
+    initial.request.executionRouting = getExecutionRouting(run.siteId);
     initial.request.cloudInstanceId = run.instanceId;
     await store.create(initial, { siteId: run.siteId, userId: run.userId });
   } else if (session.request.executionEnvironment !== 'cloud' || session.request.requirementId !== run.requirementId ||

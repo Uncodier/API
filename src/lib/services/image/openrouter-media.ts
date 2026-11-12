@@ -1,5 +1,6 @@
 import { OPENROUTER_BASE_URL } from '@/lib/services/ai/openrouter';
 import { readResponseWithLimit } from '@/lib/security/limited-response';
+import { assertPlatformInference } from '@/lib/services/ai/customer-routing';
 
 import { MediaRequestError } from './media-request-error';
 export { MediaRequestError } from './media-request-error';
@@ -8,6 +9,7 @@ export async function openRouterMediaRequest(
   path: string,
   options: { body?: unknown; timeout?: number; apiKey?: string; env?: NodeJS.Dict<string> } = {},
 ): Promise<Response> {
+  assertPlatformInference('media');
   const env = options.env ?? process.env;
   const key = (options.apiKey !== undefined ? options.apiKey : env.OPENROUTER_API_KEY)?.trim();
   if (!key) throw new MediaRequestError('OpenRouter is not configured: set OPENROUTER_API_KEY', 503);

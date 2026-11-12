@@ -1,5 +1,7 @@
 'use step';
 
+import { withExecutionRouting, withCustomerOperation, type ExecutionRoutingReference } from '@/lib/services/ai/customer-routing';
+
 import { connectOrRecreateRequirementSandbox } from '@/lib/services/sandbox-recovery';
 import { runRuntimeAndVisualProbes, type ProbeSignals } from './step-gate-probes';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
@@ -12,6 +14,8 @@ import type {
 } from '@/lib/services/requirement-acceptance-contract';
 
 export async function runGateProbesStep(params: {
+  executionRouting?: ExecutionRoutingReference;
+  inferenceOperationId?: string;
   sandboxId: string;
   stepOrder: number;
   requirementId: string;
@@ -40,6 +44,8 @@ export async function runGateProbesStep(params: {
   changeBaselineSha: string | null;
 }> {
   'use step';
+  const routingSite = params.audit?.siteId;
+  const execute = async () => {
   const { sandboxId, requirementId, instanceType, title, audit } = params;
   
   const connected = await connectOrRecreateRequirementSandbox({
@@ -99,4 +105,11 @@ export async function runGateProbesStep(params: {
     effectiveSandboxId: connected.sandboxId,
     changeBaselineSha,
   };
+  };
+  if (!routingSite) {
+    if (params.executionRouting) throw new Error('Inference routing site is required');
+    return execute();
+  }
+  return withExecutionRouting(params.executionRouting ?? { payer: 'platform', siteId: routingSite }, routingSite,
+    () => withCustomerOperation(params.inferenceOperationId ?? `legacy:runGateProbesStep:${routingSite}`, execute, { durableBoundary: true }));
 }

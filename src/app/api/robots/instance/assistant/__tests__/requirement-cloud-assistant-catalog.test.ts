@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { withCustomerOperation } from '@/lib/services/ai/customer-routing';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -37,6 +39,7 @@ function catalog() {
   dependencies['@/app/api/agents/tools/router/assistantProtocol'] = loadRuntimeModule(
     'src/app/api/agents/tools/router/assistantProtocol.ts', {
       '@/lib/services/embeddings-service': {},
+      '../catalog_commerce/batch-admin-tool': { bindCatalogBatchActor: (tool: unknown) => tool },
       './screen-access': { loadToolScreenAccess: async () => ({ isAdmin: true, blockedScreens: [] }),
         canUseToolScreen: () => true, assertToolScopeArgs: () => {}, guardToolScreen: (tool: unknown) => tool },
     });
@@ -56,7 +59,10 @@ function fixture(environment?: 'cloud' | 'workspace') {
   const getTools = jest.fn(catalog().getInstanceAssistantTools);
   const run = loadRuntimeModule<typeof import('../assistant-turn-core')>(
     'src/app/api/robots/instance/assistant/assistant-turn-core.ts', {
+      'node:crypto': { createHash },
+      '@/lib/services/ai/customer-routing': { withCustomerOperation },
       './requirement-host': host,
+      './execution-routing': { withAssistantRouting: async (_site: string, _ref: unknown, operation: () => Promise<unknown>) => operation() },
       './workspace-tools': { createAssistantWorkspaceTools },
       './deployment-tools': { createAssistantDeploymentTools: () => [] },
       './cloud-context': { resolveAssistantFileEnvironment },

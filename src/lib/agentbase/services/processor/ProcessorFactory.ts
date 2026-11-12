@@ -36,7 +36,7 @@ export class ProcessorFactory {
    */
   private createPortkeyConnector(): PortkeyConnector {
     const portkeyConfig: PortkeyConfig = {
-      apiKey: process.env.OPENROUTER_API_KEY,
+      // Resolve credentials at dispatch, inside the trusted execution scope.
     };
     
     return new PortkeyConnector(portkeyConfig, {

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifyZavuSignature } from "@/lib/services/zavu";
 import { decryptToken } from "@/lib/utils/token-decryption";
 import { reconcileTemplateDeliveryEvent } from '@/lib/services/zavu/template-delivery-events';
+import { reconcileAudioDeliveryEvent } from '@/lib/services/zavu/audio-delivery-events';
 import { handleWhatsAppAppEcho, isWhatsAppAppEcho } from '@/lib/services/zavu/whatsapp-app-echo';
 import { 
   findSettingsForSender, 
@@ -147,10 +148,12 @@ async function processEventAsync(event: any) {
     case "message.delivered":
     case "message.read":
       await reconcileTemplateDeliveryEvent(event);
+      await reconcileAudioDeliveryEvent(event);
       console.log(`[Zavu Webhook] Delivery update: ${event.type} for message ${event.data?.messageId}`);
       break;
     case "message.failed":
       await reconcileTemplateDeliveryEvent(event);
+      await reconcileAudioDeliveryEvent(event);
       console.error(`[Zavu Webhook] Message delivery failed for ${event.data?.messageId}: [${event.data?.errorCode}] ${event.data?.errorMessage}`);
       break;
     case "call.initiated":

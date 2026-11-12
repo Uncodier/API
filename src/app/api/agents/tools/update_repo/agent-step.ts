@@ -1,5 +1,7 @@
 'use step';
 
+import { withExecutionRouting, withCustomerOperation, type ExecutionRoutingReference } from '@/lib/services/ai/customer-routing';
+
 import { getSandboxTools } from '@/app/api/agents/tools/sandbox/assistantProtocol';
 import { executeAssistantStep } from '@/lib/services/robot-instance/assistant-executor';
 import { connectOrRecreateRequirementSandbox } from '@/lib/services/sandbox-recovery';
@@ -11,6 +13,8 @@ import { SandboxService } from '@/lib/services/sandbox-service';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 
 export async function runUpdateRepoAgentStep(params: {
+  executionRouting?: ExecutionRoutingReference;
+  inferenceOperationId?: string;
   sandboxId: string;
   reqId: string;
   requirementType: string;
@@ -23,6 +27,8 @@ export async function runUpdateRepoAgentStep(params: {
   globalStartTime?: number;
 }) {
   'use step';
+  const routingSite = params.site_id;
+  const execute = async () => {
   const {
     sandboxId,
     reqId,
@@ -203,4 +209,11 @@ ${getStepCheckpointPromptFragment(reqId, instanceId)}`;
 
   console.log(`[UpdateRepoStep] Agent finished after ${turns} turn(s) (isDone=${isDone}, timedOut=${timedOut})`);
   return { turns, effectiveSandboxId, timedOut };
+  };
+  if (!routingSite) {
+    if (params.executionRouting) throw new Error('Inference routing site is required');
+    return execute();
+  }
+  return withExecutionRouting(params.executionRouting ?? { payer: 'platform', siteId: routingSite }, routingSite,
+    () => withCustomerOperation(params.inferenceOperationId ?? `legacy:runUpdateRepoAgentStep:${routingSite}`, execute, { durableBoundary: true }));
 }

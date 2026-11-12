@@ -212,4 +212,55 @@ describe('explicit audio delivery', () => {
     await markAudioPreflightFailed(params);
     expect(row.custom_data.status).toBe('sent');
   });
+  it.each(['sending', 'sent', 'delivered', 'read', 'placement_unknown'])('never retries or preflight-fails ambiguous no-receipt %s', async status => {
+    row.custom_data.status = status;
+    await markAudioPreflightFailed(params);
+    expect(row.custom_data.status).toBe(status);
+    await expect(deliverExplicitAudio(params)).rejects.toThrow('reconcile');
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(CreditService.deductCredits).not.toHaveBeenCalled();
+  });
+  it('allows no-receipt pending saved drafts, and persists provider identities before dispatch', async () => {
+    row.custom_data.status = 'pending';
+    row.custom_data.command_status = 'pending';
+    row.custom_data.connection_id = 'connection';
+    const sender = audioSenderIdentity({ provider: 'zavu', senderId: 'sender' });
+    dispatch.mockImplementation(async () => {
+      expect(row.custom_data.audio_delivery).toMatchObject({ state: 'dispatching', sender_id: 'sender',
+        sender_identity: sender, provider: 'zavu', site_id: 'site', channel: 'telegram', recipient: 'recipient', connection_id: 'connection' });
+      return 'provider-id';
+    });
+    await deliverExplicitAudio({ ...params, sender });
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+  it.each([{ provider_message_id: 'existing' }, { needs_reconciliation: true }])('preserves no-receipt dispatch evidence %j', async evidence => {
+    row.custom_data = { ...row.custom_data, ...evidence, status: 'pending' };
+    await markAudioPreflightFailed(params);
+    expect(row.custom_data.status).toBe('pending');
+    await expect(deliverExplicitAudio(params)).rejects.toThrow('reconcile');
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+  it.each(['delivered', 'read', 'failed'])('preserves a webhook %s winning dispatch completion', async state => {
+    dispatch.mockImplementation(async () => {
+      row.custom_data = { ...row.custom_data, status: state === 'read' ? 'delivered' : state,
+        command_status: state === 'failed' ? 'failed' : 'completed',
+        audio_delivery: { ...row.custom_data.audio_delivery, state, provider_message_id: 'provider-id' } };
+      return 'provider-id';
+    });
+    if (state === 'failed') await expect(deliverExplicitAudio(params)).rejects.toThrow('failed at the provider');
+    else expect(await deliverExplicitAudio(params)).toBe('provider-id');
+    expect(row.custom_data.audio_delivery.state).toBe(state);
+    if (state === 'failed') await expect(deliverExplicitAudio(params)).rejects.toThrow('reconcile');
+    else expect(await deliverExplicitAudio(params)).toBe('provider-id');
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+  it('retries receipt persistence after unrelated metadata changes without redispatch', async () => {
+    dispatch.mockImplementation(async () => {
+      row.custom_data = { ...row.custom_data, note: 'concurrent update' };
+      return 'provider-id';
+    });
+    expect(await deliverExplicitAudio(params)).toBe('provider-id');
+    expect(row.custom_data.note).toBe('concurrent update');
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
 });

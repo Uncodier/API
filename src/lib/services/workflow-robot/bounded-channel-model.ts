@@ -4,6 +4,7 @@ import { CreditService } from '@/lib/services/billing/CreditService';
 import { createOpenRouterClient, getOpenRouterChatModel } from '@/lib/services/ai/openrouter';
 import { observeCompletedTextRequest } from '@/lib/status/text-execution-observation';
 import type { WorkflowPlanResult, WorkflowPlanResultCapture } from './plan-result';
+import { requiresPlatformInferenceCredits } from '@/lib/services/ai/customer-routing';
 
 const MODEL_TIMEOUT_MS = 90_000;
 
@@ -58,7 +59,8 @@ export async function boundedChannelModelTurn(input: {
   billing: ChannelTurnBilling; provider?: string; beforeProvider?: () => Promise<void>;
 }): Promise<WorkflowPlanResult> {
   try {
-    if (input.billing.siteId && !await CreditService.validateCredits(input.billing.siteId, 0.001)) {
+    if (input.billing.siteId && requiresPlatformInferenceCredits(input.billing.siteId) &&
+        !await CreditService.validateCredits(input.billing.siteId, 0.001)) {
       throw new Error('Insufficient credits');
     }
   } catch {

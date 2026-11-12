@@ -1,4 +1,7 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { withAssistantRouting } from '@/app/api/robots/instance/assistant/execution-routing';
+import { getPlanRouting } from './plan-routing';
+import { getExecutionRouting } from '@/lib/services/ai/customer-routing';
 import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/core';
 import { processAssistantTurn } from '@/app/api/robots/instance/assistant/assistant-turn';
 import { prepareAssistantContext } from '@/app/api/robots/instance/assistant/steps';
@@ -146,6 +149,11 @@ export async function runWorkflowPlan(runPlanId: string, options?: { deadline?: 
   if ((plan.metadata as any)?.pre_response_only === true) {
     throw new Error('Channel message runs require bounded execution');
   }
+  const routing = await getPlanRouting(plan.id, plan.site_id);
+  return withAssistantRouting(plan.site_id, routing, () => runRoutedWorkflowPlan(runPlanId, plan, options));
+}
+
+async function runRoutedWorkflowPlan(runPlanId: string, plan: any, options?: { deadline?: number }) {
   const resultContractVersion = readWorkflowResultContractVersion(plan.metadata);
 
   if (isProcurementWorkflowTable(plan.metadata?.trigger_payload?.table)) {
@@ -317,6 +325,8 @@ export async function runWorkflowPlan(runPlanId: string, options?: { deadline?: 
           ],
           false,
           systemPrompt,
+          undefined, undefined, undefined, undefined, undefined, undefined,
+          undefined, undefined, undefined, undefined, getExecutionRouting(plan.site_id),
         );
         context.executionOptions.plan_id = plan.id;
         context.executionOptions.step_id = step.id;

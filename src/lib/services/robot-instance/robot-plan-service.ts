@@ -1,6 +1,8 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { WorkflowService } from '@/lib/services/workflow-service';
 import { completeInProgressPlans } from '@/lib/helpers/plan-lifecycle';
+import { admitAssistantRouting } from '@/app/api/robots/instance/assistant/execution-routing';
+import { pinPlanRouting } from '@/lib/services/workflow-robot/plan-routing';
 
 /**
  * Función auxiliar para agregar actividad al plan del robot
@@ -38,6 +40,7 @@ export async function addActivityToPlan(
       // Complete all in-progress plans before creating a new one
       await completeInProgressPlans(instance_id);
       
+      const routing = await admitAssistantRouting(instance.site_id);
       const { data: newPlan, error: createError } = await supabaseAdmin
         .from('instance_plans')
         .insert({
@@ -45,7 +48,7 @@ export async function addActivityToPlan(
           title: 'Robot Activity Log',
           description: 'Automatically generated plan to track robot activities',
           plan_type: 'task',
-          status: 'in_progress',
+          status: 'blocked',
           site_id: instance.site_id,
           user_id: instance.user_id,
           agent_id: instance.agent_id,
@@ -63,7 +66,11 @@ export async function addActivityToPlan(
         return { isPlanCompleted: false, planId: null };
       }
       
-      currentPlan = newPlan;
+      await pinPlanRouting(newPlan.id, instance.site_id, routing);
+      const { error: publishError } = await supabaseAdmin.from('instance_plans')
+        .update({ status: 'in_progress' }).eq('id', newPlan.id).eq('status', 'blocked');
+      if (publishError) throw new Error('Plan publication failed');
+      currentPlan = { ...newPlan, status: 'in_progress' };
       console.log(`₍ᐢ•(ܫ)•ᐢ₎ Created new plan with ID: ${newPlan.id}`);
     }
 

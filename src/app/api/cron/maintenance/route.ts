@@ -8,6 +8,7 @@ import {
 import { acquireRunLock, getSupabaseUrlHostForLogs, releaseRunLock } from '../shared/cron-run-lock';
 import { isBacklogComplete } from '@/lib/services/requirement-backlog';
 import { patchRequirementMetadataKeys } from '@/lib/services/requirement-metadata-patch';
+import { admitAssistantRouting } from '@/app/api/robots/instance/assistant/execution-routing';
 
 /** Instance type for maintenance runners to keep them separate from main builders */
 const REMOTE_INSTANCE_TYPE_MAINTENANCE = 'browser' as const;
@@ -240,6 +241,7 @@ export async function GET(req: Request) {
 
       try {
         const workflowInput: MaintenanceWorkflowInput = {
+          executionRouting: await admitAssistantRouting(site_id),
           reqId: reqId || '',
           title: title || 'Untitled requirement',
           instructions: instructions ?? null,

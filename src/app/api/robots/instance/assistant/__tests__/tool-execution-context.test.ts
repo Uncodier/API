@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { withCustomerOperation } from '@/lib/services/ai/customer-routing';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -10,6 +12,7 @@ import { OpenRouterBillingError, RequirementCreditsExhaustedError } from '@/lib/
 import { attachAssistantStepResult, readAssistantStepResult } from '../requirement-host';
 import { createAssistantStepResult } from '../step-result';
 import { createAssistantWorkspaceTools } from '../workspace-tools';
+import { withAssistantRouting } from '../execution-routing';
 jest.mock('@vercel/sandbox', () => ({ Sandbox: {} }));
 
 const siteId = randomUUID();
@@ -56,6 +59,7 @@ function catalog(loadScreenAccess = async (_scope: unknown) => ({ isAdmin: true,
   dependencies['@/app/api/agents/tools/router/assistantProtocol'] = loadRuntimeModule(
     'src/app/api/agents/tools/router/assistantProtocol.ts', {
       '@/lib/services/embeddings-service': {},
+      '../catalog_commerce/batch-admin-tool': { bindCatalogBatchActor: (tool: unknown) => tool },
       // Provenance is not authority. This suite isolates private context wiring;
       // the real screen policy is tested separately with denied/allowed actors.
       './screen-access': {
@@ -163,7 +167,10 @@ describe('assistant private execution context wiring', () => {
     });
     const run = loadRuntimeModule<typeof import('../assistant-turn-core')>(
       'src/app/api/robots/instance/assistant/assistant-turn-core.ts', {
+      'node:crypto': { createHash },
+      '@/lib/services/ai/customer-routing': { withCustomerOperation },
         './requirement-host': { readRequirementAssistantHost: () => undefined, readAssistantStepResult },
+        './execution-routing': { withAssistantRouting },
         './workspace-tools': { createAssistantWorkspaceTools },
         './deployment-tools': { createAssistantDeploymentTools: () => [] },
         './cloud-context': { resolveAssistantFileEnvironment: jest.fn(async () => ({})) },

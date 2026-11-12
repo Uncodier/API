@@ -8,6 +8,11 @@ import { readSupportSnooze, saveSnoozedSupportInput } from '../snooze';
 import { saveZavuSupportMessages } from '../save-zavu-messages';
 import { reconcileConversationHumanEvents } from '@/lib/services/zavu/conversation-automation-contact';
 import { assertSafeRemoteUrl } from '@/lib/security/safe-remote-url';
+// These persistence tests isolate admission; real credential/site/visitor checks
+// are covered in command-http-routing and the visitor request suites.
+jest.mock('@/lib/services/ai/command-http-routing', () => ({
+  withAuthorizedCommandRequest: (request: Request, handler: (request: Request) => Promise<Response>) => handler(request),
+}));
 
 jest.mock('../request', () => ({ readSupportRequest: async (r: Request) => ({ body: await r.json() }) }));
 jest.mock('@/lib/security/safe-remote-url', () => ({ assertSafeRemoteUrl: jest.fn(async () => undefined) }));

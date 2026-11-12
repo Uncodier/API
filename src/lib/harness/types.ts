@@ -96,6 +96,8 @@ export interface SessionLimits {
 }
 
 export interface SessionRequest {
+  /** Host-owned payer pin; never accepted by the public session request schema. */
+  executionRouting?: import('@/lib/services/ai/customer-routing').ExecutionRoutingReference;
   objective: string;
   repository?: { url: string; ref?: string };
   /** Immutable host-selected resource family; legacy sessions are workspace. */

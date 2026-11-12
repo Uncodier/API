@@ -1,8 +1,11 @@
 import type { VideoRequestBody, VideoGenerationResult as ApiResult, VideoAspectRatio } from '@/app/api/ai/video/video-types';
+import { randomUUID } from 'node:crypto';
+import { getExecutionRouting, getCustomerOperationKey, type ExecutionRoutingReference } from '@/lib/services/ai/customer-routing';
+import { executionRoutingHeaders } from '@/lib/services/ai/customer-routing-http';
 
 export type AspectRatio = VideoAspectRatio;
 export type VideoQuality = 'preview' | 'standard' | 'pro';
-export type VideoGenerationParams = VideoRequestBody;
+export type VideoGenerationParams = VideoRequestBody & { executionRouting?: ExecutionRoutingReference; operationId?: string };
 export interface VideoGenerationResult extends Omit<ApiResult, 'metadata'> {
   success: boolean;
   fallbackFrom?: string;
@@ -31,10 +34,19 @@ export class VideoGenerationService {
       url.searchParams.set('job_id', params.job_id);
     }
     try {
+      const routing = params.executionRouting ?? getExecutionRouting(params.site_id);
+      const stableOperation = params.operationId ?? getCustomerOperationKey();
+      if (routing?.payer === 'customer' && !params.job_id && !stableOperation) {
+        return { success: false, provider, videos: [], error: 'Customer video generation requires a stable operationId' };
+      }
+      const operationId = stableOperation ?? randomUUID();
+      const { executionRouting: _routing, operationId: _operation, ...body } = params;
       const response = await fetch(url, {
         method: params.job_id ? 'GET' : 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.SERVICE_API_KEY || '' },
-        body: params.job_id ? undefined : JSON.stringify(params),
+        headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.SERVICE_API_KEY || '',
+          'Idempotency-Key': operationId,
+          ...(routing ? await executionRoutingHeaders(routing, { path: url.pathname, operationId }) : {}) },
+        body: params.job_id ? undefined : JSON.stringify(body),
         redirect: 'error',
         signal: AbortSignal.timeout(120_000),
       });

@@ -1,5 +1,6 @@
 import { isIP } from 'node:net';
 import { z } from 'zod';
+import { assertPlatformInference } from '@/lib/services/ai/customer-routing';
 
 export const WEB_SEARCH_PROVIDER = 'azure_bing' as const;
 export const WEB_SEARCH_TIMEOUT_MS = 60000;
@@ -16,6 +17,7 @@ export interface WebSearchConfig { origin: string; apiKey: string; deployment: s
 
 /** Endpoint/key pairs never inherit credentials from a different resource or gateway. */
 export function getWebSearchConfig(env: NodeJS.Dict<string> = process.env): WebSearchConfig {
+  assertPlatformInference('azure_grounded_search');
   const pair = env.AZURE_OPENAI_SEARCH_ENDPOINT !== undefined || env.AZURE_OPENAI_SEARCH_API_KEY !== undefined
     ? [env.AZURE_OPENAI_SEARCH_ENDPOINT, env.AZURE_OPENAI_SEARCH_API_KEY]
     : env.MICROSOFT_AZURE_OPENAI_ENDPOINT !== undefined || env.MICROSOFT_AZURE_OPENAI_API_KEY !== undefined

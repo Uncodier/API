@@ -12,7 +12,7 @@ import {
 } from '../shared/cron-sandbox-lifecycle-steps';
 import { runMaintenanceAgentStep } from './agent-step';
 import { getRequirementFullContextStep, unblockRequirementStep, checkInstanceAndPlanStatusStep, incrementQaSuccessfulRunsStep, updateInstanceStatusStep } from '../shared/workflow-db-steps';
-import { buildMaintenancePromptForFlow } from './prompt';
+import { buildMaintenancePromptStep } from './prompt-step';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
 import { selectVisualFeedbackScreenshotUrl } from '../shared/step-visual-feedback';
 import {
@@ -21,6 +21,7 @@ import {
 } from '../shared/step-iteration-signals';
 import type { ProbeSignals } from '../shared/step-gate-probes';
 import { sleep } from 'workflow';
+import type { ExecutionRoutingReference } from '@/lib/services/ai/customer-routing';
 
 const MAX_POST_GATE_REPAIR_ATTEMPTS = 2;
 
@@ -41,6 +42,7 @@ function formatMaintenanceProbeFeedback(params: {
 }
 
 export interface MaintenanceWorkflowInput {
+  executionRouting?: ExecutionRoutingReference;
   reqId: string;
   title: string;
   instructions: string | null;
@@ -104,7 +106,7 @@ export async function runMaintenanceWorkflow(input: MaintenanceWorkflowInput) {
     const reqContext = await getRequirementFullContextStep(reqId, instanceId, site_id, user_id);
     const finalPreviousWorkContext = input.previousWorkContext || reqContext.previousWorkContext;
 
-    const maintenancePrompt = buildMaintenancePromptForFlow({
+    const maintenancePrompt = await buildMaintenancePromptStep({
       reqId, title, type, instanceId, site_id,
       workDir, branchName, backlog: reqContext.backlog,
       previousWorkContext: finalPreviousWorkContext,
@@ -121,6 +123,8 @@ export async function runMaintenanceWorkflow(input: MaintenanceWorkflowInput) {
     let probes;
     try {
       probes = await runGateProbesStep({
+        executionRouting: input.executionRouting,
+        inferenceOperationId: `maintenance:${cronLockRunId ?? instanceId}:initial-probe`,
         sandboxId: sandboxId!,
         stepOrder: 0,
         requirementId: reqId,
@@ -179,6 +183,8 @@ export async function runMaintenanceWorkflow(input: MaintenanceWorkflowInput) {
             )
           : undefined;
       agentRun = await runMaintenanceAgentStep({
+        executionRouting: input.executionRouting,
+        inferenceOperationId: `maintenance:${cronLockRunId ?? instanceId}:initial-agent`,
         sandboxId: sandboxId!,
         reqId,
         requirementType: type,
@@ -206,6 +212,8 @@ export async function runMaintenanceWorkflow(input: MaintenanceWorkflowInput) {
       let repairAttempts = 0;
       while (true) {
         const postGate = await runGateProbesStep({
+          executionRouting: input.executionRouting,
+          inferenceOperationId: `maintenance:${cronLockRunId ?? instanceId}:probe:${repairAttempts}`,
           sandboxId: sandboxId!,
           stepOrder: repairAttempts,
           requirementId: reqId,
@@ -242,6 +250,8 @@ export async function runMaintenanceWorkflow(input: MaintenanceWorkflowInput) {
               )
             : undefined;
         const repairRun = await runMaintenanceAgentStep({
+          executionRouting: input.executionRouting,
+          inferenceOperationId: `maintenance:${cronLockRunId ?? instanceId}:repair:${repairAttempts}`,
           sandboxId: sandboxId!,
           reqId,
           requirementType: type,

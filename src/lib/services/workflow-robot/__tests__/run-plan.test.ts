@@ -8,6 +8,10 @@ const mockProcessAssistantTurn = jest.fn();
 const mockEnsureWorkflowSandbox = jest.fn();
 const mockStopWorkflowSandbox = jest.fn();
 const mockProcurementAccess = jest.fn();
+const mockPlanRouting = jest.fn();
+const mockResolveCredential = jest.fn();
+jest.mock('../plan-routing', () => ({ getPlanRouting: (...args: unknown[]) => mockPlanRouting(...args) }));
+jest.mock('@/lib/integrations/openrouter/store', () => ({ resolveCustomerCredential: (...args: unknown[]) => mockResolveCredential(...args) }));
 jest.mock('../procurement-access', () => ({
   isProcurementWorkflowTable: (table: unknown) => table === 'procurement_requests',
   assertProcurementWorkflowActorAccess: mockProcurementAccess,
@@ -64,6 +68,7 @@ jest.mock('../execution-claim', () => ({
 }));
 
 import { runWorkflowPlan } from '../run-plan';
+import { getExecutionRouting } from '@/lib/services/ai/customer-routing';
 
 describe('runWorkflowPlan claim recovery', () => {
   beforeEach(() => {
@@ -86,6 +91,29 @@ describe('runWorkflowPlan claim recovery', () => {
     mockFinishClaim.mockResolvedValue(true);
     mockUpdateEq.mockResolvedValue({ error: null });
     mockProcurementAccess.mockResolvedValue(undefined);
+    mockPlanRouting.mockImplementation(async (_id, siteId) => ({ payer: 'platform', siteId }));
+    mockResolveCredential.mockResolvedValue({});
+  });
+
+  it('restores the private customer pin before claim, ignoring mutable metadata routing', async () => {
+    const routing = { payer: 'customer', siteId: 'site-1', connectionId: 'connection-1', policyVersion: 3, credentialVersion: 1 };
+    mockPlan.metadata.executionRouting = { payer: 'platform', siteId: 'site-1' };
+    mockPlanRouting.mockResolvedValue(routing);
+    mockClaim.mockImplementationOnce(async () => {
+      expect(getExecutionRouting()).toEqual(routing);
+      return { token: 'claim-token' };
+    });
+    await runWorkflowPlan(mockPlan.id);
+    expect(mockPlanRouting).toHaveBeenCalledWith(mockPlan.id, mockPlan.site_id);
+    expect(mockResolveCredential).toHaveBeenCalledWith(routing);
+    expect(getExecutionRouting()).toBeUndefined();
+  });
+
+  it('fails closed before claiming when a durable pin is missing or revoked', async () => {
+    mockPlanRouting.mockRejectedValue(new Error('PLAN_ROUTING_UNAVAILABLE'));
+    await expect(runWorkflowPlan(mockPlan.id)).rejects.toThrow('PLAN_ROUTING_UNAVAILABLE');
+    expect(mockClaim).not.toHaveBeenCalled();
+    expect(mockPrepareAssistantContext).not.toHaveBeenCalled();
   });
 
   it('rechecks purchasing actor permission before claiming or resuming execution', async () => {

@@ -45,6 +45,7 @@ function setup() {
   const route = loadRuntimeModule<typeof import('../route')>(
     'src/app/api/agents/gear/whatsapp/webhook/route.ts', {
       'next/server': { NextResponse },
+      '@/app/api/robots/instance/assistant/execution-routing': { admitAssistantRouting: async (siteId: string) => ({ payer: 'platform', siteId }) },
       '@/lib/database/supabase-client': { supabaseAdmin },
       '@/lib/services/channels/agent-project-access': {
         getAvailableAgentProjects: async () => [{ id: 'site-1', name: 'Test site' }],

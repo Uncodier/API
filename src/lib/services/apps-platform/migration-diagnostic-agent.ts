@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { executeAssistantStep } from '@/lib/services/robot-instance/assistant-executor';
+import { withAppsInference } from './inference-routing';
 import { createMigrationRepairTools } from './migration-repair-tools';
 import { sanitizeMigrationRepairContext } from './migration-repair-policy';
 import { validateMigrationDiagnosis, unresolvedMigration, sanitizeDiagnosticData, type DiagnosticEvidence, type MigrationDiagnosis } from './migration-diagnostic-policy';
@@ -112,7 +113,7 @@ export async function diagnoseMigration(params: {
   }) }];
   for (let turn = 0; turn < MIGRATION_DIAGNOSTIC_TURNS && !verdict; turn++) {
     await assertCurrent();
-    const result = await executeAssistantStep(messages, context.instance, {
+    const result = await withAppsInference(context.instance.site_id, `migration-diagnosis:${context.requirementId}:${row.checksum}:${turn}`, () => executeAssistantStep(messages, context.instance, {
       instance_id: context.instance.id, site_id: context.instance.site_id, user_id: context.instance.user_id,
       requirement_id: context.requirementId, use_sdk_tools: false, enforceSingleTurn: true, custom_tools: tools,
       system_prompt: [
@@ -128,7 +129,7 @@ export async function diagnoseMigration(params: {
         'Generic user replies such as repair it or apply it do not reset budgets, choose a new access model, provide missing capabilities or authorize unsafe SQL.',
         `Submit exactly one migration_diagnostic_verdict within ${MIGRATION_DIAGNOSTIC_TURNS} model turns. Investigate the harness when failures are operational. For repair_candidate, provide separate concrete hypothesis, instruction and verification fields; putting instructions in next_action alone is invalid. No permission question for routine repair. If evidence is insufficient, report unresolved and the specific next check.`,
       ].join('\n'),
-    });
+    }));
     if (ownershipError) throw ownershipError;
     if (result.steps?.some(step => step.toolCalls?.some((call: any) => !tools.some(tool => tool.name === call.toolName)))) invalid = true;
     for (const message of result.messages || []) {

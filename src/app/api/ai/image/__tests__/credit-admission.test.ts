@@ -1,3 +1,6 @@
+jest.mock('@/lib/services/ai/customer-routing-http', () => ({
+  resolveHttpExecutionRouting: jest.fn(async (_request: unknown, siteId: string) => ({ payer: 'platform', siteId })),
+}));
 jest.mock('@/lib/security/request-rate-limit', () => ({ enforceRequestRateLimit: jest.fn(async () => null),
   getAuthenticatedRateIdentity: jest.fn(() => 'internal'), isInternalServiceRequest: jest.fn(() => true) }));
 jest.mock('@/lib/security/site-access', () => ({ canAccessSite: jest.fn(async () => true) }));
@@ -15,6 +18,7 @@ import { isInternalServiceRequest } from '@/lib/security/request-rate-limit';
 import { canAccessSite } from '@/lib/security/site-access';
 import { mediaInstanceBelongsToSite } from '@/lib/services/ai/media-instance-access';
 import { enforceRequestRateLimit } from '@/lib/security/request-rate-limit';
+import { resolveHttpExecutionRouting } from '@/lib/services/ai/customer-routing-http';
 
 const site = randomUUID();
 const output = { provider: 'azure' as const, images: [{ url: 'https://example.invalid/image.png', b64_json: null }] };
@@ -25,6 +29,7 @@ const rpc = supabaseAdmin.rpc as unknown as jest.Mock<Promise<{ data: unknown; e
 const names = () => rpc.mock.calls.map(([name]) => name);
 beforeEach(() => {
   jest.resetAllMocks();
+  jest.mocked(resolveHttpExecutionRouting).mockImplementation(async (_request, siteId) => ({ payer: 'platform', siteId }));
   jest.mocked(isInternalServiceRequest).mockReturnValue(true);
   jest.mocked(canAccessSite).mockResolvedValue(true);
   jest.mocked(mediaInstanceBelongsToSite).mockResolvedValue(true);

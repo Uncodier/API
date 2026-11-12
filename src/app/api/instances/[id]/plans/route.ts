@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { canAccessSite } from '@/lib/security/site-access';
 import { authorizeProcurementWorkflowInstanceRead } from '@/lib/services/workflow-robot/procurement-access';
+import { createPlan } from './create';
 
 // ------------------------------------------------------------------------------------
 // GET /api/instances/[id]/plans
@@ -84,24 +85,5 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  try {
-    const { id } = await params;
-    if (!id) return NextResponse.json({ error: 'id requerido' }, { status: 400 });
-
-    const payload = await request.json();
-
-    const { data: plan, error } = await supabaseAdmin
-      .from('instance_plans')
-      .insert({ ...payload, instance_id: id })
-      .select()
-      .single();
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
-
-    return NextResponse.json({ plan, message: 'Plan creado correctamente' }, { status: 201 });
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 500 });
-  }
+  return createPlan(request, (await params).id);
 }

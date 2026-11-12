@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { createOpenRouterClient, resolveOpenRouterModel, isOpenRouterReasoningModel } from '@/lib/services/ai/openrouter';
 import { observeCompletedTextRequest } from '@/lib/status/text-execution-observation';
+import { z } from 'zod';
+import { canToolPrincipalAccessSite, resolveToolRequestPrincipal } from '@/lib/security/tool-request-principal';
+import { admitAssistantRouting, withAssistantRouting } from '@/app/api/robots/instance/assistant/execution-routing';
+import { withCustomerOperation } from '@/lib/services/ai/customer-routing';
 import {
   batchCreateResponseNodes,
   updateNodeResult,
@@ -192,11 +196,13 @@ export async function POST(request: NextRequest) {
   let responseNodeIds: string[] = [];
 
   try {
-    const { instance_node_id } = await request.json();
-
-    if (!instance_node_id) {
+    const principal = await resolveToolRequestPrincipal(request);
+    if (!principal) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    const parsed = z.object({ instance_node_id: z.string().uuid() }).safeParse(await request.json());
+    if (!parsed.success) {
       return NextResponse.json({ error: 'instance_node_id is required' }, { status: 400 });
     }
+    const { instance_node_id } = parsed.data;
 
     // 1. Fetch the prompt node
     const { data: promptNode, error: fetchError } = await supabaseAdmin
@@ -208,8 +214,12 @@ export async function POST(request: NextRequest) {
     if (fetchError || !promptNode) {
       return NextResponse.json({ error: 'instance_node_id not found' }, { status: 404 });
     }
-
-    const expectedResults = promptNode.settings?.expected_results_amount || 1;
+    if (!promptNode.site_id || !await canToolPrincipalAccessSite(principal, promptNode.site_id)) {
+      return NextResponse.json({ error: 'Site access denied' }, { status: 403 });
+    }
+    const routing = await admitAssistantRouting(promptNode.site_id);
+    return await withAssistantRouting(promptNode.site_id, routing, async () => {
+    const expectedResults = z.number().int().min(1).max(20).parse(promptNode.settings?.expected_results_amount ?? 1);
 
     // 2. Build messages (shared context for all response nodes)
     const messages = await buildMessagesForNode(instance_node_id, promptNode);
@@ -232,7 +242,8 @@ export async function POST(request: NextRequest) {
     const results = await Promise.all(
       responseNodeIds.map(async (nodeId, index) => {
         try {
-          const text = await streamLLMIntoNode([...messages], nodeId, promptNode);
+          const text = await withCustomerOperation(`node-execution:${nodeId}`,
+            () => streamLLMIntoNode([...messages], nodeId, promptNode));
           console.log(`[Node Executor] Response ${index + 1}/${expectedResults} done: ${nodeId}`);
           return { node_id: nodeId, status: 'completed', text };
         } catch (err: any) {
@@ -247,6 +258,7 @@ export async function POST(request: NextRequest) {
       success: true,
       instance_node_id,
       response_nodes: results
+    });
     });
 
   } catch (error: any) {

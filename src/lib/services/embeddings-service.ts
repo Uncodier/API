@@ -1,4 +1,5 @@
 import { createOpenRouterClient, resolveOpenRouterModel } from './ai/openrouter';
+import { getExecutionRouting } from './ai/customer-routing';
 
 const DEFAULT_MODEL = 'text-embedding-3-small';
 const DEFAULT_DIMENSIONS = 1536;
@@ -18,6 +19,10 @@ export class EmbeddingsService {
     options?: { timeout?: number; signal?: AbortSignal }
   ): Promise<{ embeddings: number[][]; usage?: any; model: string }> {
     const model = resolveOpenRouterModel(modelId);
+    if (getExecutionRouting()?.payer === 'customer') {
+      const { customerEmbeddings } = await import('./ai/customer-embeddings');
+      return customerEmbeddings(input, model, dimensions, options);
+    }
     const client = createOpenRouterClient(options?.timeout ? { timeout: options.timeout, maxRetries: 0 } : undefined);
     const request = {
       input,

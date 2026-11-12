@@ -7,6 +7,7 @@ import type { GenerateImageOptions, ImageGenerationResult, ImageRatio } from './
 import { ImageAdmissionRejectedError } from './image-types';
 import { recordTelemetry } from '@/lib/status/telemetry';
 import { getImageObservationKey } from '@/lib/status/handlers/ai/passive-probes';
+import { assertPlatformInference } from '@/lib/services/ai/customer-routing';
 
 const RATIO_SIZES: Record<ImageRatio, string> = {
   '1:1': '1024x1024', '4:3': '1536x1152', '3:4': '1152x1536',
@@ -65,6 +66,7 @@ async function referenceImage(value: string): Promise<Blob> {
 
 /** Configuration/parameter preflight; run before reserving credits. No network. */
 export function validateAzureImageOptions(options: GenerateImageOptions) {
+  assertPlatformInference('image');
   const config = getAzureImageConfig();
   const deployment = options.model ?? config.deployment;
   if (typeof deployment !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(deployment)) {

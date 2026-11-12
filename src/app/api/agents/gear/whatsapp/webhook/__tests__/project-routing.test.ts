@@ -65,7 +65,8 @@ function setup(allowed: string[], sessionSite = 'suspended', sessionUser = 'user
     }),
   };
   const access = loadRuntimeModule<typeof import('@/lib/services/channels/agent-project-access')>(
-    'src/lib/services/channels/agent-project-access.ts', { '@/lib/database/supabase-client': { supabaseAdmin: db } });
+    'src/lib/services/channels/agent-project-access.ts', {
+      '@/lib/database/supabase-client': { supabaseAdmin: db } });
   const sessionStore = loadRuntimeModule<typeof import('@/lib/services/channels/agent-project-session')>(
     'src/lib/services/channels/agent-project-session.ts', { '@/lib/database/supabase-client': { supabaseAdmin: db } });
   const start = jest.fn<AsyncMock>().mockResolvedValue({ runId: 'run' });
@@ -73,6 +74,7 @@ function setup(allowed: string[], sessionSite = 'suspended', sessionUser = 'user
   const lobby = jest.fn();
   const insert = jest.fn<AsyncMock>().mockResolvedValue({ id: 'action' });
   const common = {
+    '@/app/api/robots/instance/assistant/execution-routing': { admitAssistantRouting: async (siteId: string) => ({ payer: 'platform', siteId }) },
     '@/lib/database/supabase-client': { supabaseAdmin: db }, [accessPath]: access, [sessionPath]: sessionStore,
     'workflow/api': { start },
     '@/lib/services/requirement-cron-reset': { resetRequirementOnUserAction: jest.fn<AsyncMock>() },

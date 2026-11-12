@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { CommandFactory, ProcessorInitializer } from '@/lib/agentbase';
+import { authorizeInferenceRequest, withHttpExecutionRouting } from '@/lib/services/ai/customer-routing-http';
+import { resolveToolRequestPrincipal } from '@/lib/security/tool-request-principal';
 
 export const maxDuration = 300;
 
@@ -292,6 +294,7 @@ async function saveAndSendAgentResponse(
  */
 export async function POST(request: NextRequest) {
   try {
+    if (!await resolveToolRequestPrincipal(request)) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     // Parse request
     const body = await request.json();
     const { conversation_id, message_id } = body;
@@ -316,6 +319,7 @@ export async function POST(request: NextRequest) {
       .from('messages')
       .select('id, content, conversation_id, visitor_id')
       .eq('id', message_id)
+      .eq('conversation_id', conversation_id)
       .single();
     
     if (msgError || !message) {
@@ -344,13 +348,14 @@ export async function POST(request: NextRequest) {
     }
     
     // Process the message with the agent
-    const agentResponse = await processMessageWithAgent(
+    const { routing } = await authorizeInferenceRequest(request, metadata.siteId);
+    const agentResponse = await withHttpExecutionRouting(request, routing!, () => processMessageWithAgent(
       message.content,
       metadata.visitorId || '',
-      metadata.agentId,
-      metadata.siteId,
+      metadata.agentId!,
+      metadata.siteId!,
       conversation_id
-    );
+    ));
     
     if (!agentResponse) {
       return NextResponse.json({

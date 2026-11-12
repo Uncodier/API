@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { start } from 'workflow/api';
 import { runGearAgentWorkflow, runUnregisteredGearAgentWorkflow } from '../workflow';
+import { admitAssistantRouting } from '@/app/api/robots/instance/assistant/execution-routing';
 import { resetRequirementOnUserAction } from '@/lib/services/requirement-cron-reset';
 import { insertUserActionLog } from '@/app/api/robots/instance/assistant/user-message-log';
 
@@ -391,6 +392,7 @@ export async function POST(request: NextRequest) {
     console.log(`🚀 Iniciando workflow GearAgent normal para ${phoneNumber}...`);
     
     await start(runGearAgentWorkflow, [{
+      executionRouting: await admitAssistantRouting(siteId),
       instanceId,
       message: messageContent,
       messageSid,

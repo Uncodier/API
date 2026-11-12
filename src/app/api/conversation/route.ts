@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getOpenRouterChatModel } from '@/lib/services/ai/openrouter';
 import { processConversation } from './core';
+import { authorizeInferenceRequest, withHttpExecutionRouting } from '@/lib/services/ai/customer-routing-http';
 
 /**
  * Maneja las solicitudes POST al endpoint de conversación
@@ -30,6 +31,7 @@ export async function POST(request: NextRequest) {
   try {
     console.log('[API:conversation] Parsing request body');
     const body = await request.json();
+    const { routing, principal } = await authorizeInferenceRequest(request, body.site_id);
     
     const { 
       messages, 
@@ -41,12 +43,12 @@ export async function POST(request: NextRequest) {
       toJSON,
       timeout = 45000,
       conversationId,
-      userId
+      userId: ignoredUserId
     } = body;
     
     try {
       // Usar la función processConversation para procesar la solicitud
-      const result = await processConversation({
+      const execute = () => processConversation({
         messages,
         modelType,
         modelId,
@@ -55,9 +57,10 @@ export async function POST(request: NextRequest) {
         // Si responseFormat no está definido pero toJSON sí, usar toJSON para determinar el formato
         responseFormat: responseFormat || (toJSON !== undefined ? (toJSON ? 'json' : 'text') : undefined),
         timeout,
-        conversationId,
-        userId
+        userId: principal.userId ?? (routing ? `site:${routing.siteId}` : 'internal'),
+        conversationId: conversationId ? `${routing?.siteId ?? 'internal'}:${principal.userId ?? 'service'}:${conversationId}` : undefined,
       });
+      const result = routing ? await withHttpExecutionRouting(request, routing, execute) : await execute();
       
       // Devolver la respuesta
        return NextResponse.json(result, { status: result.error ? 500 : 200 });
@@ -87,7 +90,7 @@ export async function POST(request: NextRequest) {
           closed: true // Marcar como cerrada en caso de error de parseo
         }
       },
-      { status: 400 }
+      { status: error?.status ?? 400 }
     );
   }
 }

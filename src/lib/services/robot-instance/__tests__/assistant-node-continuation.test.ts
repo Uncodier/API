@@ -13,6 +13,7 @@ const deductCredits = jest.fn<(...args: any[]) => Promise<void>>();
 const streamChunk = jest.fn<(...args: any[]) => Promise<void>>();
 const createCallbacks = jest.fn<(...args: any[]) => any>(() => ({ onNodeStreamStart: createResponse }));
 const queries: { table: string; filters: Record<string, unknown>; payload?: any }[] = [];
+const resolveCustomerCredential = jest.fn<(...args: any[]) => Promise<any>>();
 let nodes: Record<string, any>;
 
 const from = jest.fn((table: string) => {
@@ -49,6 +50,7 @@ jest.unstable_mockModule('@/lib/custom-automation/ai-agent-executor', () => ({
   AIAgentExecutor: class { act = act; },
 }));
 jest.unstable_mockModule('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from } }));
+jest.unstable_mockModule('@/lib/integrations/openrouter/store', () => ({ resolveCustomerCredential }));
 jest.unstable_mockModule('@/lib/services/billing/CreditService', () => ({
   CreditService: {
     validateCredits, requireCredits, deductCredits,
@@ -127,6 +129,27 @@ beforeEach(() => {
 });
 
 describe('node executor chunk continuation', () => {
+  it('skips only platform inference admission under a revalidated customer scope', async () => {
+    const { withExecutionRouting } = await import('@/lib/services/ai/customer-routing');
+    resolveCustomerCredential.mockResolvedValue({});
+    requireCredits.mockRejectedValue(new Error('Platform balance unavailable'));
+    await withExecutionRouting({ payer:'customer',siteId:'site-1',connectionId:'connection-1',policyVersion:1,credentialVersion:1 },'site-1', async () => {
+      await executeAssistantStep([prompt],null,options);
+    });
+    expect(resolveCustomerCredential).toHaveBeenCalled();
+    expect(requireCredits).not.toHaveBeenCalled();
+    expect(act).toHaveBeenCalledTimes(1);
+    expect(deductCredits).not.toHaveBeenCalled();
+  });
+  it('preserves the legacy assistant contract without a customer platform-balance gate', async () => {
+    const { withExecutionRouting } = await import('@/lib/services/ai/customer-routing');
+    resolveCustomerCredential.mockResolvedValue({});
+    requireCredits.mockRejectedValue(new Error('Platform balance unavailable'));
+    await withExecutionRouting({payer:'customer',siteId:'site-1',connectionId:'connection-1',policyVersion:1,credentialVersion:1},'site-1',async()=>{
+      await executeAssistant('Offline request',null,{site_id:'site-1'});
+    });
+    expect(requireCredits).not.toHaveBeenCalled();expect(deductCredits).not.toHaveBeenCalled();expect(act).toHaveBeenCalledTimes(1);
+  });
   it('propagates a per-generation billing rejection instead of permitting another turn', async () => {
     const error = Object.assign(new Error('billing requires reconciliation'), { name: 'OpenRouterBillingError' });
     act.mockRejectedValueOnce(error);

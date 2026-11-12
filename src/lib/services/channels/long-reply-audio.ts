@@ -1,6 +1,7 @@
 import { CreditService } from '@/lib/services/billing/CreditService';
 import { synthesizeSpeech, validateSpeechOptions } from '@/lib/services/ai/tts-service';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { requiresPlatformInferenceCredits } from '@/lib/services/ai/customer-routing';
 
 export const AUDIO_REPLY_CHANNELS = ['whatsapp', 'telegram', 'messenger'];
 export const LONG_REPLY_AUDIO_THRESHOLD = 400;
@@ -85,14 +86,15 @@ export async function tryPrepareLongReplyAudio({
     const speechOptions = validateSpeechOptions({ text: cleanText, format: 'mp3' });
     const estimatedMinutes = cleanText.length / 1000;
     const requiredCredits = Math.max(0.01, estimatedMinutes * CreditService.PRICING.AUDIO_GENERATION_MINUTE);
-    const hasCredits = await CreditService.validateCredits(siteId, requiredCredits);
+    const platformInference = requiresPlatformInferenceCredits(siteId);
+    const hasCredits = !platformInference || await CreditService.validateCredits(siteId, requiredCredits);
 
     if (!hasCredits) {
       console.warn('[long-reply-audio] Insufficient credits for TTS. Falling back to text.');
       return null;
     }
 
-    await CreditService.deductCredits(
+    if (platformInference) await CreditService.deductCredits(
       siteId,
       requiredCredits,
       'audio_generation',

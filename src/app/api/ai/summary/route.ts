@@ -3,22 +3,23 @@ import { SummaryGenerationService } from '@/lib/services/summary/SummaryGenerati
 import {
   enforceRequestRateLimit,
   getAuthenticatedRateIdentity,
-  isInternalServiceRequest,
 } from '@/lib/security/request-rate-limit';
-import { canAccessSite } from '@/lib/security/site-access';
+import { authorizeInferenceRequest, withHttpExecutionRouting } from '@/lib/services/ai/customer-routing-http';
+import { withCustomerCapability } from '@/lib/services/ai/customer-routing';
 
 export async function POST(request: NextRequest) {
   try {
+    const body = await request.json();
+    const { principal, routing } = await authorizeInferenceRequest(request, body?.site_id);
     const limited = await enforceRequestRateLimit(request, {
       namespace: 'ai-summary-principal',
       identity: getAuthenticatedRateIdentity(request),
-      limit: isInternalServiceRequest(request) ? 300 : 30,
+      limit: principal.internal ? 300 : 30,
       windowSeconds: 60,
       failClosed: true,
     });
     if (limited) return limited;
 
-    const body = await request.json();
     const { text, source, site_id } = body || {};
 
     const hasText = typeof text === 'string' && text.trim().length > 0;
@@ -45,24 +46,17 @@ export async function POST(request: NextRequest) {
         { status: 413 },
       );
     }
-    if (
-      site_id === '00000000-0000-0000-0000-000000000000'
-      ? !isInternalServiceRequest(request)
-      : !await canAccessSite(request, site_id)
-    ) {
-      return NextResponse.json({ error: 'Site access denied' }, { status: 403 });
-    }
-
-    const result = hasSource
-      ? await SummaryGenerationService.summarizeSource({
+    const summarize = () => withCustomerCapability('summary', () => hasSource
+      ? SummaryGenerationService.summarizeSource({
           collection: source.collection,
           id: source.id,
           site_id,
         })
-      : await SummaryGenerationService.summarize({
+      : SummaryGenerationService.summarize({
           text,
           site_id,
-        });
+        }));
+    const result = routing ? await withHttpExecutionRouting(request, routing, summarize) : await summarize();
 
     if (!result.success) {
       return NextResponse.json(
@@ -76,10 +70,10 @@ export async function POST(request: NextRequest) {
       summary: result.summary,
     });
   } catch (error: any) {
-    console.error('[ai/summary] API error:', error);
+    console.error('[ai/summary] API error');
     return NextResponse.json(
-      { error: error?.message || 'Failed to process request' },
-      { status: 500 }
+      { error: 'Failed to process summary request' },
+      { status: error instanceof SyntaxError ? 400 : [400, 401, 403, 402, 422].includes(error?.status) ? error.status : 500 }
     );
   }
 }

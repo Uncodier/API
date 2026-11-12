@@ -3,12 +3,16 @@ import { readResponseWithLimit } from '@/lib/security/limited-response';
 import { normalizeSpeechVoice, normalizeSpeechLanguage } from './speech-options';
 import { recordTelemetry } from '@/lib/status/telemetry';
 import { getTtsObservationKey } from '@/lib/status/handlers/ai/passive-probes';
+import { assertPlatformInference, getExecutionRouting, withExecutionRouting, type ExecutionRoutingReference } from './customer-routing';
+import { synthesizeCustomerSpeech, validateCustomerSpeech } from './customer-audio';
 
 export { TTSServiceError } from './azure-tts-config';
-export type TTSProvider = 'azure';
+export type TTSProvider = 'azure' | 'openrouter';
 export type TTSAudioFormat = 'mp3' | 'pcm' | 'wav' | 'opus' | 'aac' | 'flac';
 
 export interface SpeechOptions {
+  executionRouting?: ExecutionRoutingReference;
+  operationId?: string;
   text: string; provider?: TTSProvider; voice?: string; language?: string; format?: TTSAudioFormat; model?: string; speed?: number;
 }
 
@@ -30,6 +34,12 @@ export function ttsMimeType(format: TTSAudioFormat): string {
 
 /** Shared validation lets tool callers reject bad input before charging credits. */
 export function validateSpeechOptions(options: SpeechOptions) {
+  if (getExecutionRouting()?.payer === 'customer') {
+    const format = validateCustomerSpeech(options);
+    return { provider: 'openrouter' as const, format, config: undefined as never,
+      deployment: options.model ?? '', voice: options.voice, language: normalizeSpeechLanguage(options.language) };
+  }
+  assertPlatformInference('speech');
   const provider = resolveTTSProvider(options.provider);
   const format = options.format ?? 'mp3';
   if (typeof options.text !== 'string' || !options.text.trim() || options.text.length > AZURE_TTS_MAX_CHARS) {
@@ -56,6 +66,7 @@ export function validateSpeechOptions(options: SpeechOptions) {
 export async function synthesizeWithAzure(
   text: string, voice?: string, format: TTSAudioFormat = 'mp3', model?: string, speed?: number, language?: string,
 ): Promise<Buffer> {
+  assertPlatformInference('speech');
   if (typeof window !== 'undefined') throw new TTSServiceError('Azure speech credentials are server-only', 503);
   const selected = validateSpeechOptions({ text, voice, format, model, speed, language });
   const url = new URL(`/openai/deployments/${encodeURIComponent(selected.deployment)}/audio/speech`, selected.config.origin);
@@ -99,7 +110,11 @@ export async function synthesizeWithAzure(
 
 export async function synthesizeSpeech(options: SpeechOptions): Promise<{
   audio: Buffer; provider: TTSProvider; format: TTSAudioFormat; mimeType: string; language?: string;
+  generationId?: string; receiptEventId?: string;
 }> {
+  if (options.executionRouting) return withExecutionRouting(options.executionRouting, options.executionRouting.siteId,
+    () => synthesizeSpeech({ ...options, executionRouting: undefined }));
+  if (getExecutionRouting()?.payer === 'customer') return synthesizeCustomerSpeech(options);
   const provider = resolveTTSProvider(options.provider);
   const format = options.format ?? 'mp3';
   const audio = await synthesizeWithAzure(options.text, options.voice, format, options.model, options.speed, options.language);

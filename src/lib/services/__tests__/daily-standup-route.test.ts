@@ -2,6 +2,8 @@ import { databaseFixture } from './daily-standup-db-mock';
 import { POST } from '@/app/api/agents/cmo/dailyStandUp/wrapUp/route';
 import { REPORT_SECTIONS } from '../dailyStandupReportSections';
 import { WRAP_UP_SCOPED_BACKGROUND } from '@/lib/prompts/dailyStandupWrapUpContext';
+import { resolveToolRequestPrincipal, canToolPrincipalAccessSite } from '@/lib/security/tool-request-principal';
+jest.mock('@/lib/security/tool-request-principal', () => ({ resolveToolRequestPrincipal: jest.fn(), canToolPrincipalAccessSite: jest.fn() }));
 
 const SITE = '11111111-1111-4111-8111-111111111111';
 let mockDb: ReturnType<typeof databaseFixture>;
@@ -22,6 +24,8 @@ function settings(sections: unknown = ['tasks']) {
 }
 beforeEach(() => {
   jest.clearAllMocks();
+  jest.mocked(resolveToolRequestPrincipal).mockResolvedValue({ internal: true, userId: null, siteId: null });
+  jest.mocked(canToolPrincipalAccessSite).mockResolvedValue(true);
   mockDb = databaseFixture();
   mockDb.rows.settings = [settings()];
   mockDb.rows.agents = [{ id: SITE, user_id: SITE }];

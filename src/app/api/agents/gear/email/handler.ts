@@ -5,6 +5,7 @@ import { runGearEmailWorkflow, runUnregisteredGearEmailWorkflow } from './workfl
 import { resetRequirementOnUserAction } from '@/lib/services/requirement-cron-reset';
 import { insertUserActionLog } from '@/app/api/robots/instance/assistant/user-message-log';
 import { agentProjectSessionKey, saveAgentProjectSession } from '@/lib/services/channels/agent-project-session';
+import { admitAssistantRouting } from '@/app/api/robots/instance/assistant/execution-routing';
 
 export async function handleGearEmailWebhook(message: any, userEmail: string, profileName?: string) {
   console.log(`📩 Webhook de Email (Gear) recibido para ${userEmail}`);
@@ -228,6 +229,7 @@ export async function handleGearEmailWebhook(message: any, userEmail: string, pr
   console.log(`🚀 Iniciando workflow GearAgent Email normal para ${userEmail}...`);
   
   await start(runGearEmailWorkflow, [{
+    executionRouting: await admitAssistantRouting(siteId),
     instanceId,
     message: messageContent,
     messageSid: messageId,

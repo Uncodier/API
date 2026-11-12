@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createOpenRouterClient, resolveOpenRouterModel, isOpenRouterReasoningModel } from '@/lib/services/ai/openrouter';
 import { observeCompletedTextRequest } from '@/lib/status/text-execution-observation';
+import { authorizeInferenceRequest, withHttpExecutionRouting } from '@/lib/services/ai/customer-routing-http';
 import {
   enforceRequestRateLimit,
   getAuthenticatedRateIdentity,
-  isInternalServiceRequest,
 } from '@/lib/security/request-rate-limit';
 
 type Provider = 'openrouter';
@@ -16,21 +16,23 @@ interface TextRequestBody {
   temperature?: number;
   maxTokens?: number;
   topP?: number;
+  site_id?: string;
 }
 
 export async function POST(request: NextRequest) {
   try {
+    const body = (await request.json()) as TextRequestBody;
+    const { principal, routing } = await authorizeInferenceRequest(request, body?.site_id);
     const identity = getAuthenticatedRateIdentity(request);
     const limited = await enforceRequestRateLimit(request, {
       namespace: 'ai-text-principal',
       identity,
-      limit: isInternalServiceRequest(request) ? 300 : 30,
+      limit: principal.internal ? 300 : 30,
       windowSeconds: 60,
       failClosed: true,
     });
     if (limited) return limited;
 
-    const body = (await request.json()) as TextRequestBody;
     const { messages, provider = 'openrouter', model, temperature, maxTokens, topP } = body || {};
     if (provider !== 'openrouter') {
       return NextResponse.json({ error: 'Only provider openrouter is supported' }, { status: 400 });
@@ -59,6 +61,10 @@ export async function POST(request: NextRequest) {
         { status: 413 },
       );
     }
+    if ([maxTokens, temperature, topP].some(value => value !== undefined &&
+      (typeof value !== 'number' || !Number.isFinite(value)))) {
+      return NextResponse.json({ error: 'Generation parameters must be finite numbers' }, { status: 400 });
+    }
     const safeMaxTokens = Math.min(8_192, Math.max(1, Math.trunc(maxTokens || 2_048)));
     const safeTemperature = temperature === undefined
       ? undefined
@@ -71,6 +77,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'model must be a string' }, { status: 400 });
     }
     const modelId = resolveOpenRouterModel(model);
+    const generate = async () => {
     const client = createOpenRouterClient();
     const data = await observeCompletedTextRequest(modelId, () => client.chat.completions.create({
       model: modelId, messages, max_tokens: safeMaxTokens, stream: false,
@@ -80,11 +87,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ...data, gateway: 'openrouter',
       provider: (data as any).provider || 'openrouter',
       content: data.choices?.[0]?.message?.content ?? '', raw: data });
+    };
+    return routing ? await withHttpExecutionRouting(request, routing, generate) : await generate();
   } catch (error: any) {
     console.error('[text api] Text generation failed');
     return NextResponse.json(
       { error: 'Failed to process text generation request' },
-      { status: 500 }
+      { status: error instanceof SyntaxError ? 400 : [400, 401, 403, 402, 422].includes(error?.status) ? error.status : 500 }
     );
   }
 }

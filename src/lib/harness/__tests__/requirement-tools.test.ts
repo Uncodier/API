@@ -2,6 +2,8 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { createRequirementTools } from '../requirement-tools';
 import type { RequirementRun } from '../requirement-types';
 import type { ToolContext } from '../types';
+import { withExecutionRouting } from '@/lib/services/ai/customer-routing';
+jest.mock('@/lib/integrations/openrouter/store', () => ({ resolveCustomerCredential: async () => ({}) }));
 
 function fixture() {
   const run: RequirementRun = { requirementId: randomUUID(), siteId: randomUUID(), userId: randomUUID(),
@@ -28,6 +30,25 @@ function fixture() {
   const execute = (name: string, args: Record<string, unknown>) => tools.find(tool => tool.name === name)!.execute(args, context);
   return { run, requirement, plan, client, context, execute, tools };
 }
+
+it('passes only closed-over host routing to the SQL overload when storage is enabled', async () => {
+  const prior = process.env.OPENROUTER_ROUTING_STORAGE_READY;
+  process.env.OPENROUTER_ROUTING_STORAGE_READY = 'true';
+  try {
+    const f = fixture();
+    const routing = { payer: 'customer' as const, siteId: f.run.siteId, connectionId: randomUUID(), policyVersion: 1, credentialVersion: 2 };
+    await withExecutionRouting(routing, f.run.siteId, async () => {
+      expect((await f.execute('requirement_plan', { title: 'Host plan' })).ok).toBe(true);
+      expect(f.client.rpc).toHaveBeenLastCalledWith('patch_agent_requirement_plan', expect.objectContaining({ p_routing: routing }));
+      f.client.rpc.mockClear();
+      expect((await f.execute('requirement_plan', { title: 'Forged', p_routing: { payer: 'platform' } })).ok).toBe(false);
+      expect(f.client.rpc).not.toHaveBeenCalled();
+    });
+  } finally {
+    if (prior === undefined) delete process.env.OPENROUTER_ROUTING_STORAGE_READY;
+    else process.env.OPENROUTER_ROUTING_STORAGE_READY = prior;
+  }
+});
 
 it('fences with host identity and atomic latest backlog revision; accepted failed checks never block recording', async () => {
   const f = fixture();

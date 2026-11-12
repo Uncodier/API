@@ -7,8 +7,11 @@ import {
 import { createSandboxStep, stopSandboxStep } from '@/app/api/cron/shared/cron-sandbox-lifecycle-steps';
 import { runUpdateRepoAgentStep } from './agent-step';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
+import type { ExecutionRoutingReference } from '@/lib/services/ai/customer-routing';
 
 export interface UpdateRepoWorkflowInput {
+  executionRouting?: ExecutionRoutingReference;
+  inferenceOperationId?: string;
   reqId: string;
   title: string;
   instruction: string;
@@ -48,6 +51,8 @@ export async function runUpdateRepoWorkflow(input: UpdateRepoWorkflowInput) {
     let agentRun;
     try {
       agentRun = await runUpdateRepoAgentStep({
+        executionRouting: input.executionRouting,
+        inferenceOperationId: input.inferenceOperationId ?? `legacy-update:${reqId}`,
         sandboxId: sandboxId!,
         reqId,
         requirementType: type,

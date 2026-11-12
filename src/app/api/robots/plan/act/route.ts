@@ -1,4 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { verifyActiveStatus } from './active-status';
+import { canToolPrincipalAccessSite, resolveToolRequestPrincipal } from '@/lib/security/tool-request-principal';
+import { withAssistantRouting } from '@/app/api/robots/instance/assistant/execution-routing';
+import { withCustomerOperation } from '@/lib/services/ai/customer-routing';
+import { getPlanRouting } from '@/lib/services/workflow-robot/plan-routing';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { AIAgentExecutor } from '@/lib/custom-automation';
 import { adaptPlanTools } from './plan-tools';
@@ -36,99 +41,9 @@ import {
   saveExecutionSummary,
 } from '@/lib/services/robot-plan-execution';
 import { resumePlan } from '@/lib/helpers/plan-lifecycle';
-import { provisionScrapybaraInstance, needsProvisioning } from '@/lib/services/robot-instance/instance-provisioner';
+import { preparePlanInstance } from './prepare-instance';
 
 export const maxDuration = 300;
-
-/**
- * Verifies that both the plan and instance remain active and in progress
- * Returns an error response if either has changed state
- */
-async function verifyActiveStatus(
-  instance_id: string,
-  plan_id: string
-): Promise<NextResponse | null> {
-  // Check instance status
-  const { data: instance, error: instanceError } = await supabaseAdmin
-    .from('remote_instances')
-    .select('status')
-    .eq('id', instance_id)
-    .single();
-
-  if (instanceError || !instance) {
-    return NextResponse.json(
-      { error: 'Instance not found during status check', instance_id },
-      { status: 404 }
-    );
-  }
-
-  if (instance.status !== 'running') {
-    return NextResponse.json(
-      { 
-        data: {
-          waiting_for_instructions: true,
-          instance_stopped: instance.status !== 'paused',
-          instance_paused: instance.status === 'paused',
-          message: `Instance is ${instance.status}`,
-          instance_id,
-          current_status: instance.status,
-          can_resume: instance.status === 'paused'
-        }
-      },
-      { status: 200 }
-    );
-  }
-
-  // Check plan status
-  const { data: planData, error: planError } = await supabaseAdmin
-    .from('instance_plans')
-    .select('status')
-    .eq('id', plan_id)
-    .single();
-
-  if (planError || !planData) {
-    return NextResponse.json(
-      { error: 'Plan not found during status check', plan_id },
-      { status: 404 }
-    );
-  }
-
-  // Handle paused status gracefully with 200 response
-  if (planData.status === 'paused') {
-    return NextResponse.json(
-      { 
-        data: {
-          waiting_for_instructions: true,
-          plan_paused: true,
-          message: 'Plan execution has been paused',
-          plan_id,
-          current_status: 'paused',
-          can_resume: true
-        }
-      },
-      { status: 200 }
-    );
-  }
-
-  // Only return error for truly inactive states (completed, failed, canceled)
-  if (planData.status !== 'in_progress' && planData.status !== 'pending') {
-    return NextResponse.json(
-      { 
-        data: {
-          waiting_for_instructions: true,
-          plan_completed: planData.status === 'completed',
-          plan_failed: planData.status === 'failed',
-          message: `Plan is ${planData.status}`,
-          plan_id,
-          current_status: planData.status
-        }
-      },
-      { status: 200 }
-    );
-  }
-
-  return null; // All good, continue execution
-}
 
 export async function POST(request: NextRequest) {
   let instance_id: string | undefined;
@@ -137,6 +52,8 @@ export async function POST(request: NextRequest) {
   let plan: any = null;
   
   try {
+    const principal = await resolveToolRequestPrincipal(request);
+    if (!principal) return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     const rawBody = await request.json();
     if (rawBody === null || typeof rawBody !== 'object' || Array.isArray(rawBody)) {
       return NextResponse.json({ error: 'Invalid request data' }, { status: 400 });
@@ -159,66 +76,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Instance not found' }, { status: 404 });
     }
 
+    if (!await canToolPrincipalAccessSite(principal, instance.site_id)) {
+      return NextResponse.json({ error: 'Site access denied' }, { status: 403 });
+    }
+
     if (rawBody.site_id && rawBody.site_id !== instance.site_id) {
       return NextResponse.json({ error: 'Instance does not belong to this site' }, { status: 400 });
     }
 
 
-    // 1.5. Check if instance is uninstantiated and needs provisioning
-    if (needsProvisioning(instance)) {
-      console.log(`₍ᐢ•(ܫ)•ᐢ₎ Instance is uninstantiated, provisioning Scrapybara instance...`);
-      try {
-        const provisionResult = await provisionScrapybaraInstance(
-          instance_id,
-          instance.site_id,
-          instance.timeout_hours || 1
-        );
-        
-        // Update local instance object with provisioned data
-        instance.provider_instance_id = provisionResult.provider_instance_id;
-        instance.cdp_url = provisionResult.cdp_url;
-        instance.status = 'running';
-        
-        console.log(`₍ᐢ•(ܫ)•ᐢ₎ ✅ Instance provisioned successfully: ${provisionResult.provider_instance_id}`);
-      } catch (provisionError: any) {
-        return NextResponse.json({
-          error: 'Failed to provision instance',
-          details: provisionError.message,
-          instance_id
-        }, { status: 500 });
-      }
-    }
-
-    // 2. If there's a new user instruction and instance is paused, resume it explicitly
-    if (user_instruction && user_instruction.trim() && instance.status === 'paused') {
-      try {
-        const providerId = instance.provider_instance_id || instance_id;
-        const apiKey = process.env.SCRAPYBARA_API_KEY || '';
-        const resumeResp = await fetch(`https://api.scrapybara.com/v1/instance/${providerId}/resume`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey,
-          },
-          body: JSON.stringify({ timeout_hours: instance.timeout_hours || 1 }),
-        });
-        if (!resumeResp.ok) {
-          const errText = await resumeResp.text();
-          throw new Error(`Resume failed: ${resumeResp.status} ${errText}`);
-        }
-        await supabaseAdmin
-          .from('remote_instances')
-          .update({ status: 'running', updated_at: new Date().toISOString() })
-          .eq('id', instance_id);
-        instance.status = 'running';
-      } catch (resumeError: any) {
-        return NextResponse.json({
-          error: 'Failed to resume paused instance',
-          details: resumeError instanceof Error ? resumeError.message : String(resumeError),
-          instance_id
-        }, { status: 500 });
-      }
-    }
+    const preparationError = await preparePlanInstance(instance, instance_id, user_instruction);
+    if (preparationError) return preparationError;
 
     // 3. Verify instance is running (no auto-resume by default)
     const instanceValidation = await verifyInstanceRunning(instance, instance_id, instance_plan_id);
@@ -238,6 +106,9 @@ export async function POST(request: NextRequest) {
       throw new Error('Plan ID is required for execution');
     }
 
+    return await withAssistantRouting(instance.site_id, await getPlanRouting(plan.id, instance.site_id), () =>
+      withCustomerOperation(`plan-act:${plan.id}:${getCurrentStep(Array.isArray(plan.steps) ? [...plan.steps].sort((a: any, b: any) => (a.order || 0) - (b.order || 0)) : [])?.id ?? 'next'}`, async () => {
+    const instance_id = parsedInstanceId, effective_plan_id = String(plan.id);
     // 4.1 If plan is paused and there is a new user instruction, resume it; else do not execute
     if (plan.status === 'paused' && user_instruction && user_instruction.trim()) {
       const resumeResult = await resumePlan(effective_plan_id);
@@ -268,7 +139,6 @@ export async function POST(request: NextRequest) {
     const statusCheck1 = await verifyActiveStatus(instance_id, effective_plan_id);
     if (statusCheck1) return statusCheck1;
 
-    // 4. Prepare plan steps
     console.log(`₍ᐢ•(ܫ)•ᐢ₎ Working directly with plan: "${plan.title}"`);
     
     let planSteps = [];
@@ -567,7 +437,6 @@ export async function POST(request: NextRequest) {
     const statusCheck10 = await verifyActiveStatus(instance_id, effective_plan_id);
     if (statusCheck10) return statusCheck10;
 
-    // 16. Handle special states
     await handleSpecialStates(
       stepStatus,
       finalResult,
@@ -581,7 +450,6 @@ export async function POST(request: NextRequest) {
     const statusCheck11 = await verifyActiveStatus(instance_id, effective_plan_id);
     if (statusCheck11) return statusCheck11;
 
-    // 17. Save execution summary
     await saveExecutionSummary(
       currentStep,
       finalResult,
@@ -612,7 +480,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // 19. Build and return response
     const response = buildSuccessResponse(
       stepStatus,
       currentStep,
@@ -624,8 +491,8 @@ export async function POST(request: NextRequest) {
       remoteInstance,
       user_instruction
     );
-
     return NextResponse.json(response, { status: 200 });
+    }));
   } catch (err: any) {
     return handlePlanExecutionError(err, currentStep, effective_plan_id, instance_id, plan);
   }

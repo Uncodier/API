@@ -6,6 +6,7 @@ import { CommandFactory } from './CommandFactory';
 import { DatabaseAdapter } from '../../adapters/DatabaseAdapter';
 import { CommandStore } from './CommandStore';
 import { EventEmitter } from 'events';
+import { admitCommandRouting, pinCommandRouting } from './command-routing';
 
 export class CommandSubmitService {
   private eventEmitter: EventEmitter;
@@ -21,6 +22,8 @@ export class CommandSubmitService {
    * @returns ID del comando creado
    */
   async submitCommand(command: CreateCommandParams): Promise<string> {
+    const routing = admitCommandRouting(command);
+    let persisted = false;
     try {
       console.log(`🔄 [CommandSubmitService] INICIO submitCommand para command task: ${command.task}, agent_id: ${command.agent_id || 'N/A'}`);
       console.log(`🔄 [CommandSubmitService] Command tiene agent_background: ${command.agent_background ? 'SÍ' : 'NO'}`);
@@ -33,6 +36,8 @@ export class CommandSubmitService {
       
       // Try to store command in database using the adapter
       const createdCommand = await DatabaseAdapter.createCommand(command);
+      persisted = true;
+      await pinCommandRouting(createdCommand, routing);
       console.log(`✅ [CommandSubmitService] Comando creado en base de datos con UUID: ${createdCommand.id}`);
       
       // Verificar que el agent_background se haya conservado en la BD
@@ -134,6 +139,8 @@ export class CommandSubmitService {
       
       return commandId;
     } catch (error) {
+      // A persisted job or customer admission must never escape into an unpinned local queue.
+      if (persisted || routing?.payer === 'customer') throw error;
       console.error('Error creating command in database:', error);
       
       // Fallback to in-memory storage if database fails

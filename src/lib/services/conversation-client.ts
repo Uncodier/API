@@ -101,12 +101,23 @@ export async function sendConversationRequest(options: ConversationOptions): Pro
       const startTime = Date.now();
       
       console.log(`[Conversation Client] Esperando respuesta (timeout: ${effectiveTimeout}ms)...`);
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      let siteId: string | undefined;
+      if (isServer) {
+        const { getExecutionRouting } = await import('./ai/customer-routing');
+        const { executionRoutingHeaders } = await import('./ai/customer-routing-http');
+        const routing = getExecutionRouting();
+        headers['x-api-key'] = process.env.SERVICE_API_KEY || '';
+        if (routing) {
+          siteId = routing.siteId;
+          Object.assign(headers, await executionRoutingHeaders(routing, { path: '/api/conversation' }));
+        }
+      }
       const response = await fetch(apiUrl, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(requestBody),
+        headers,
+        body: JSON.stringify({ ...requestBody, site_id: siteId }),
+        redirect: 'error',
         signal: controller.signal
       });
       

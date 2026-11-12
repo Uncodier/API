@@ -8,6 +8,10 @@ import * as conversationRoute from '../../conversation/route';
 import { callApiWithMessage, handleIncompleteJsonResponse, prepareApiMessage } from '@/lib/utils/api-utils';
 import { continueJsonGeneration, extractResponseContent, updateResponseContent } from '@/lib/services/continuation-service';
 import { analyzeWithConversationApi } from '@/lib/services/conversation-client';
+import { resolveToolRequestPrincipal } from '@/lib/security/tool-request-principal';
+jest.mock('@/lib/security/tool-request-principal', () => ({
+  resolveToolRequestPrincipal: jest.fn(), canToolPrincipalAccessSite: jest.fn(),
+}));
 
 const mockCreate = jest.fn();
 jest.mock('openai', () => ({ __esModule: true, default: jest.fn() }));
@@ -27,6 +31,7 @@ describe('legacy AI OpenRouter contracts', () => {
   const env = { ...process.env };
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.mocked(resolveToolRequestPrincipal).mockResolvedValue({ internal: true, userId: null, siteId: null });
     process.env.OPENROUTER_API_KEY = randomBytes(24).toString('hex');
     delete process.env.OPENROUTER_CHAT_MODEL;
     jest.mocked(OpenAI).mockImplementation(() => ({ chat: { completions: { create: mockCreate } } }) as any);
@@ -37,6 +42,13 @@ describe('legacy AI OpenRouter contracts', () => {
 
   it('exports only HTTP handlers from the conversation route', () => {
     expect(Object.keys(conversationRoute).sort()).toEqual(['GET', 'POST']);
+  });
+
+  it('requires authenticated credentials before either legacy HTTP model dispatch', async () => {
+    jest.mocked(resolveToolRequestPrincipal).mockResolvedValue(null);
+    expect((await POST(request({ messages: [{ role: 'user', content: 'hi' }] }))).status).toBe(401);
+    expect((await conversationRoute.POST(request({ messages: [{ role: 'user', content: 'hi' }] }))).status).toBe(401);
+    expect(mockCreate).not.toHaveBeenCalled();
   });
 
   it('preserves the HTTP conversation adapter after extracting its core', async () => {

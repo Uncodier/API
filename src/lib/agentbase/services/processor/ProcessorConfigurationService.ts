@@ -72,7 +72,7 @@ export class ProcessorConfigurationService {
   private createPortkeyConnector(): PortkeyConnector {
     // Configurar las opciones para Portkey
     const portkeyConfig: PortkeyConfig = {
-      apiKey: process.env.OPENROUTER_API_KEY,
+      // Resolve credentials at dispatch, inside the trusted execution scope.
     };
     
     // Opciones por defecto para el modelo con streaming habilitado

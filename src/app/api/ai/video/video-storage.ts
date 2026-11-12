@@ -12,6 +12,7 @@ export async function persistGeneratedVideo(input: {
   provider?: VideoProvider;
   instanceId?: string;
   metadata: Record<string, unknown>;
+  strict?: boolean;
 }): Promise<{ url: string; mimeType: string }> {
   const extension = input.mimeType.includes('webm')
     ? 'webm'
@@ -70,6 +71,7 @@ export async function persistGeneratedVideo(input: {
   if (input.instanceId) asset.instance_id = input.instanceId;
   const { error: assetError } = await supabaseAdmin.from('assets').insert(asset);
   if (assetError) {
+    if (input.strict) throw new Error('Customer video asset persistence failed');
     console.warn('[Video API] Unable to save asset record:', assetError.message);
   }
 

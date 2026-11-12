@@ -68,6 +68,8 @@ const { CommandProcessor } = loadRuntimeModule<typeof import('../CommandProcesso
     '../agent/AgentBackgroundService': { AgentBackgroundService: class {} },
     './tool-completion-loop': { runToolCompletionLoop },
     './initialize-agent': { initializeAgentCommand: async (command: unknown) => command },
+    './process-command-targets': { processCommandTargets: jest.fn() },
+    './command-routing': { withCommandRouting: async (_command: unknown, operation: () => unknown) => operation() },
     '../../utils/composioIntegration': { isComposioEnabled: () => false },
   },
 );

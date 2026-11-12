@@ -1,1191 +1,419 @@
+import { withAuthorizedCommandRequest } from '@/lib/services/ai/command-http-routing';
 import { NextResponse } from 'next/server';
 import { CommandFactory, ProcessorInitializer } from '@/lib/agentbase';
 import { getCommandById as dbGetCommandById } from '@/lib/database/command-db';
 import { DatabaseAdapter } from '@/lib/agentbase/adapters/DatabaseAdapter';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-
-// Función para validar UUIDs
-function isValidUUID(uuid: string): boolean {
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  return uuidRegex.test(uuid);
-}
-
-// Función para encontrar un agente de CMO activo para un sitio
-async function findActiveCmoAgent(siteId: string): Promise<{agentId: string, userId: string} | null> {
-  try {
-    if (!siteId || !isValidUUID(siteId)) {
-      console.error(`❌ Invalid site_id for agent search: ${siteId}`);
-      return null;
-    }
-    
-    console.log(`🔍 Buscando agente de CMO activo para el sitio: ${siteId}`);
-    
-    const { data, error } = await supabaseAdmin
-      .from('agents')
-      .select('id, user_id')
-      .eq('site_id', siteId)
-      .eq('role', 'CMO')
-      .eq('status', 'active')
-      .order('created_at', { ascending: false })
-      .limit(1);
-    
-    if (error) {
-      console.error('Error al buscar agente de CMO:', error);
-      return null;
-    }
-    
-    if (!data || data.length === 0) {
-      console.log(`⚠️ No se encontró ningún agente de CMO activo para el sitio: ${siteId}`);
-      return null;
-    }
-    
-    console.log(`✅ Agente de CMO encontrado: ${data[0].id} (user_id: ${data[0].user_id})`);
-    return {
-      agentId: data[0].id,
-      userId: data[0].user_id
-    };
-  } catch (error) {
-    console.error('Error al buscar agente de CMO:', error);
-    return null;
-  }
-}
-
-// Función para obtener información completa del agente
-async function getAgentInfo(agentId: string): Promise<{ user_id: string, site_id?: string } | null> {
-  try {
-    if (!isValidUUID(agentId)) {
-      console.error(`ID de agente no válido: ${agentId}`);
-      return null;
-    }
-    
-    console.log(`🔍 Obteniendo información del agente: ${agentId}`);
-    
-    const { data, error } = await supabaseAdmin
-      .from('agents')
-      .select('id, user_id, site_id')
-      .eq('id', agentId)
-      .single();
-    
-    if (error) {
-      console.error('Error al obtener información del agente:', error);
-      return null;
-    }
-    
-    if (!data) {
-      console.log(`⚠️ No se encontró el agente con ID: ${agentId}`);
-      return null;
-    }
-    
-    console.log(`✅ Información del agente recuperada: user_id=${data.user_id}, site_id=${data.site_id || 'N/A'}`);
-    
-    return {
-      user_id: data.user_id,
-      site_id: data.site_id
-    };
-  } catch (error) {
-    console.error('Error al obtener información del agente:', error);
-    return null;
-  }
-}
-
-// Inicializar el agente y obtener el servicio de comandos
-const processorInitializer = ProcessorInitializer.getInstance();
-processorInitializer.initialize();
-const commandService = processorInitializer.getCommandService();
-
-// Función para obtener el UUID de la base de datos para un comando
-async function getCommandDbUuid(internalId: string): Promise<string | null> {
-  try {
-    // Intentar obtener el comando
-    const command = await commandService.getCommandById(internalId);
-    
-    // Verificar metadata
-    if (command && command.metadata && command.metadata.dbUuid) {
-      if (isValidUUID(command.metadata.dbUuid)) {
-        console.log(`🔑 UUID encontrado en metadata: ${command.metadata.dbUuid}`);
-        return command.metadata.dbUuid;
-      }
-    }
-    
-    // Buscar en el mapa de traducción interno del CommandService
+import { commandTools } from './command-tools';
+import { isValidUUID, findActiveCmoAgent, getAgentInfo, commandService, getCommandDbUuid, waitForCommandCompletion, saveMessages } from './command-helpers-1';
+import { getConversationHistory, formatConversationHistoryForContext } from './command-helpers-2';
+async function handleCommandRequest(request: Request) {
     try {
-      // @ts-ignore - Accediendo a propiedades internas
-      const idMap = (commandService as any).idTranslationMap;
-      if (idMap && idMap.get && idMap.get(internalId)) {
-        const mappedId = idMap.get(internalId);
-        if (isValidUUID(mappedId)) {
-          console.log(`🔑 UUID encontrado en mapa interno: ${mappedId}`);
-          return mappedId;
+        const body = await request.json();
+        const { conversationId, userId, message, agentId, site_id, lead_id, visitor_id } = body;
+        if (!visitor_id && !lead_id && !userId && !site_id) {
+            return NextResponse.json({ success: false, error: { code: 'INVALID_REQUEST', message: 'At least one identification parameter (visitor_id, lead_id, userId, or site_id) is required' } }, { status: 400 });
         }
-      }
-    } catch (err) {
-      console.log('No se pudo acceder al mapa de traducción interno');
-    }
-    
-    // Buscar en la base de datos directamente
-    if (command) {
-      const { data, error } = await supabaseAdmin
-        .from('commands')
-        .select('id')
-        .eq('task', command.task)
-        .eq('user_id', command.user_id)
-        .eq('status', command.status)
-        .order('created_at', { ascending: false })
-        .limit(1);
-      
-      if (!error && data && data.length > 0) {
-        console.log(`🔑 UUID encontrado en búsqueda directa: ${data[0].id}`);
-        return data[0].id;
-      }
-    }
-    
-    return null;
-  } catch (error) {
-    console.error('Error al obtener UUID de base de datos:', error);
-    return null;
-  }
-}
-
-// Función para esperar a que un comando se complete
-async function waitForCommandCompletion(commandId: string, maxAttempts = 100, delayMs = 1000) {
-  let executedCommand = null;
-  let attempts = 0;
-  let dbUuid: string | null = null;
-  
-  console.log(`⏳ Esperando a que se complete el comando ${commandId}...`);
-  
-  // Crear una promesa que se resuelve cuando el comando se completa o se agota el tiempo
-  return new Promise<{command: any, dbUuid: string | null, completed: boolean}>((resolve) => {
-    const checkInterval = setInterval(async () => {
-      attempts++;
-      
-      try {
-        executedCommand = await commandService.getCommandById(commandId);
-        
-        if (!executedCommand) {
-          console.log(`⚠️ No se pudo encontrar el comando ${commandId}`);
-          clearInterval(checkInterval);
-          resolve({command: null, dbUuid: null, completed: false});
-          return;
+        if (userId && !isValidUUID(userId)) {
+            return NextResponse.json({ success: false, error: { code: 'INVALID_REQUEST', message: 'userId must be a valid UUID' } }, { status: 400 });
         }
-        
-        // Guardar el UUID de la base de datos si está disponible
-        if (executedCommand.metadata && executedCommand.metadata.dbUuid) {
-          dbUuid = executedCommand.metadata.dbUuid as string;
-          console.log(`🔑 UUID de base de datos encontrado en metadata: ${dbUuid}`);
+        if (visitor_id && !isValidUUID(visitor_id)) {
+            return NextResponse.json({ success: false, error: { code: 'INVALID_REQUEST', message: 'visitor_id must be a valid UUID' } }, { status: 400 });
         }
-        
-        if (executedCommand.status === 'completed' || executedCommand.status === 'failed') {
-          console.log(`✅ Comando ${commandId} completado con estado: ${executedCommand.status}`);
-          
-          // Intentar obtener el UUID de la base de datos si aún no lo tenemos
-          if (!dbUuid || !isValidUUID(dbUuid)) {
-            dbUuid = await getCommandDbUuid(commandId);
-            console.log(`🔍 UUID obtenido después de completar: ${dbUuid || 'No encontrado'}`);
-          }
-          
-          clearInterval(checkInterval);
-          resolve({command: executedCommand, dbUuid, completed: executedCommand.status === 'completed'});
-          return;
+        if (lead_id && !isValidUUID(lead_id)) {
+            return NextResponse.json({ success: false, error: { code: 'INVALID_REQUEST', message: 'lead_id must be a valid UUID' } }, { status: 400 });
         }
-        
-        console.log(`⏳ Comando ${commandId} aún en ejecución (estado: ${executedCommand.status}), intento ${attempts}/${maxAttempts}`);
-        
-        if (attempts >= maxAttempts) {
-          console.log(`⏰ Tiempo de espera agotado para el comando ${commandId}`);
-          
-          // Último intento de obtener el UUID
-          if (!dbUuid || !isValidUUID(dbUuid)) {
-            dbUuid = await getCommandDbUuid(commandId);
-            console.log(`🔍 UUID obtenido antes de timeout: ${dbUuid || 'No encontrado'}`);
-          }
-          
-          clearInterval(checkInterval);
-          resolve({command: executedCommand, dbUuid, completed: false});
+        if (site_id && !isValidUUID(site_id)) {
+            return NextResponse.json({ success: false, error: { code: 'INVALID_REQUEST', message: 'site_id must be a valid UUID' } }, { status: 400 });
         }
-      } catch (error) {
-        console.error(`Error al verificar estado del comando ${commandId}:`, error);
-        clearInterval(checkInterval);
-        resolve({command: null, dbUuid: null, completed: false});
-      }
-    }, delayMs);
-  });
-}
-
-// Función para guardar mensajes en la base de datos
-async function saveMessages(userId: string, userMessage: string, assistantMessage: string, conversationId?: string, conversationTitle?: string, leadId?: string, visitorId?: string, agentId?: string, siteId?: string, commandId?: string) {
-  try {
-    console.log(`💾 Guardando mensajes con: user_id=${userId}, agent_id=${agentId || 'N/A'}, site_id=${siteId || 'N/A'}, lead_id=${leadId || 'N/A'}, visitor_id=${visitorId || 'N/A'}, command_id=${commandId || 'N/A'}`);
-    
-    let effectiveConversationId: string | undefined = conversationId;
-    
-    // Verificar si tenemos un ID de conversación
-    if (conversationId) {
-      // Verificamos primero que la conversación realmente existe en la base de datos
-      console.log(`🔍 Verificando existencia de conversación: ${conversationId}`);
-      const { data: existingConversation, error: checkError } = await supabaseAdmin
-        .from('conversations')
-        .select('id, user_id, lead_id, visitor_id, agent_id, site_id')
-        .eq('id', conversationId)
-        .single();
-      
-      if (checkError || !existingConversation) {
-        console.log(`⚠️ Conversación no encontrada en la base de datos, creando nueva: ${conversationId}`);
-        // Si la conversación no existe aunque tengamos un ID, crearemos una nueva
-        effectiveConversationId = undefined;
-      } else {
-        console.log(`✅ Conversación existente confirmada: ${conversationId}`);
-        console.log(`📊 Datos de conversación existente:`, JSON.stringify(existingConversation));
-      }
-    }
-    
-    // Crear una nueva conversación si no existe
-    if (!effectiveConversationId) {
-      // Crear una nueva conversación
-      const conversationData: any = {
-        // Añadir user_id obligatoriamente
-        user_id: userId
-      };
-      
-      // Añadir visitor_id, agent_id y site_id si están presentes
-      if (visitorId) conversationData.visitor_id = visitorId;
-      if (agentId) conversationData.agent_id = agentId;
-      if (siteId) conversationData.site_id = siteId;
-      
-      // Solo añadir lead_id si está presente y es un dato requerido
-      if (leadId && !agentId) {
-        conversationData.lead_id = leadId;
-        console.log(`⚠️ Agregando lead_id a la conversación porque no hay agentId`);
-      }
-      
-      // Añadir el título si está presente
-      if (conversationTitle) conversationData.title = conversationTitle;
-      
-      console.log(`🗣️ Creando nueva conversación con datos:`, JSON.stringify(conversationData));
-      
-      const { data: conversation, error: convError } = await supabaseAdmin
-        .from('conversations')
-        .insert([conversationData])
-        .select()
-        .single();
-      
-      if (convError) {
-        console.error('Error al crear conversación:', convError);
-        return null;
-      }
-      
-      effectiveConversationId = conversation.id;
-      console.log(`🗣️ Nueva conversación creada con ID: ${effectiveConversationId}`);
-    } else if (conversationTitle || siteId) {
-      // Actualizar la conversación existente si se proporciona un nuevo título o site_id
-      const updateData: any = {};
-      if (conversationTitle) updateData.title = conversationTitle;
-      if (siteId) updateData.site_id = siteId;
-      
-      console.log(`✏️ Actualizando conversación: ${effectiveConversationId} con:`, JSON.stringify(updateData));
-      
-      const { error: updateError } = await supabaseAdmin
-        .from('conversations')
-        .update(updateData)
-        .eq('id', effectiveConversationId);
-      
-      if (updateError) {
-        console.error('Error al actualizar conversación:', updateError);
-        // No fallamos toda la operación si solo falla la actualización
-        console.log('Continuando con el guardado de mensajes...');
-      } else {
-        if (conversationTitle) {
-          console.log(`✏️ Título de conversación actualizado: "${conversationTitle}"`);
+        if (!message) {
+            return NextResponse.json({ success: false, error: { code: 'INVALID_REQUEST', message: 'message is required' } }, { status: 400 });
         }
-        if (siteId) {
-          console.log(`🔗 Site ID de conversación actualizado: "${siteId}"`);
+        let effectiveSiteId = site_id;
+        if (effectiveSiteId) {
+            console.log(`📍 Using provided site_id: ${effectiveSiteId}`);
         }
-      }
-    }
-    
-    // Guardar el mensaje del usuario
-    const userMessageObj: any = {
-      conversation_id: effectiveConversationId,
-      user_id: userId,
-      content: userMessage,
-      role: 'user'
-    };
-    
-    // Agregar visitor_id si está presente
-    if (visitorId) userMessageObj.visitor_id = visitorId;
-    
-    // Solo agregar lead_id si está presente y no hay un agente en la conversación
-    if (leadId && !agentId) {
-      userMessageObj.lead_id = leadId;
-    }
-    
-    // Agregar agent_id si está presente
-    if (agentId) userMessageObj.agent_id = agentId;
-    
-    // Agregar command_id si está presente y es un UUID válido
-    if (commandId && isValidUUID(commandId)) {
-      userMessageObj.command_id = commandId;
-    }
-    
-    console.log(`💬 Guardando mensaje de usuario para conversación: ${effectiveConversationId}`);
-    
-    const { data: savedUserMessage, error: userMsgError } = await supabaseAdmin
-      .from('messages')
-      .insert([userMessageObj])
-      .select()
-      .single();
-    
-    if (userMsgError) {
-      console.error('Error al guardar mensaje del usuario:', userMsgError);
-      return null;
-    }
-    
-    console.log(`💾 Mensaje del usuario guardado con ID: ${savedUserMessage.id}`);
-    
-    // Guardar el mensaje del asistente
-    const assistantMessageObj: any = {
-      conversation_id: effectiveConversationId,
-      user_id: null, // Agente no es usuario
-      content: assistantMessage,
-      role: 'assistant'
-    };
-    
-    // Agregar visitor_id si está presente
-    if (visitorId) assistantMessageObj.visitor_id = visitorId;
-    
-    // Solo agregar lead_id si está presente y no hay un agente en la conversación
-    if (leadId && !agentId) {
-      assistantMessageObj.lead_id = leadId;
-    }
-    
-    // Agregar agent_id si está presente
-    if (agentId) assistantMessageObj.agent_id = agentId;
-    
-    // Agregar command_id si está presente y es un UUID válido
-    if (commandId && isValidUUID(commandId)) {
-      assistantMessageObj.command_id = commandId;
-    }
-    
-    console.log(`💬 Guardando mensaje de asistente para conversación: ${effectiveConversationId}`);
-    
-    const { data: savedAssistantMessage, error: assistantMsgError } = await supabaseAdmin
-      .from('messages')
-      .insert([assistantMessageObj])
-      .select()
-      .single();
-    
-    if (assistantMsgError) {
-      console.error('Error al guardar mensaje del asistente:', assistantMsgError);
-      return null;
-    }
-    
-    console.log(`💾 Mensaje del asistente guardado con ID: ${savedAssistantMessage.id}`);
-    
-    // Verificamos que la conversación esté asociada correctamente
-    const { data: finalConversation, error: finalCheckError } = await supabaseAdmin
-      .from('conversations')
-      .select('id, user_id, lead_id, visitor_id, agent_id, site_id, title')
-      .eq('id', effectiveConversationId)
-      .single();
-      
-    if (!finalCheckError && finalConversation) {
-      console.log(`✅ Verificación final de conversación: ${JSON.stringify(finalConversation)}`);
-    } else {
-      console.error(`❌ Error al verificar conversación final:`, finalCheckError);
-    }
-    
-    return {
-      conversationId: effectiveConversationId,
-      userMessageId: savedUserMessage.id,
-      assistantMessageId: savedAssistantMessage.id,
-      conversationTitle
-    };
-  } catch (error) {
-    console.error('Error al guardar mensajes en la base de datos:', error);
-    return null;
-  }
-}
-
-// Función para obtener el historial de una conversación
-async function getConversationHistory(conversationId: string): Promise<Array<{role: string, content: string}> | null> {
-  try {
-    if (!isValidUUID(conversationId)) {
-      console.error(`ID de conversación no válido: ${conversationId}`);
-      return null;
-    }
-    
-    console.log(`🔍 Obteniendo historial de conversación: ${conversationId}`);
-    
-    // Consultar todos los mensajes de la conversación ordenados por fecha de creación
-    const { data, error } = await supabaseAdmin
-      .from('messages')
-      .select('*')
-      .eq('conversation_id', conversationId)
-      .order('created_at', { ascending: true });
-    
-    if (error) {
-      console.error('Error al obtener mensajes de la conversación:', error);
-      return null;
-    }
-    
-    if (!data || data.length === 0) {
-      console.log(`⚠️ No se encontraron mensajes para la conversación: ${conversationId}`);
-      return [];
-    }
-    
-    console.log(`✅ Se encontraron ${data.length} mensajes en la conversación`);
-    
-    // Log de roles encontrados para depuración
-    const rolesFound = data.map(msg => msg.role || msg.sender_type || 'undefined').join(', ');
-    console.log(`🔍 Roles encontrados en los mensajes: ${rolesFound}`);
-    
-    // Formatear los mensajes para el contexto del comando
-    const formattedMessages = data.map(msg => {
-      // Determinar el rol según los campos disponibles
-      let role = 'user';
-      
-      if (msg.role) {
-        // Si el campo role existe, usarlo directamente
-        role = msg.role;
-      } else if (msg.sender_type) {
-        // Si existe sender_type, usarlo directamente también
-        role = msg.sender_type;
-      } else if (msg.visitor_id) {
-        // Si hay visitor_id pero no role ni sender_type, asignar 'visitor'
-        role = 'visitor';
-      } else if (!msg.user_id) {
-        // Si no hay user_id, asumimos que es asistente
-        role = 'assistant';
-      }
-      
-      // Log detallado para depuración
-      console.log(`📝 Mensaje ${msg.id}: role=${role}, visitor_id=${msg.visitor_id || 'N/A'}, user_id=${msg.user_id || 'N/A'}`);
-      
-      return {
-        role,
-        content: msg.content
-      };
-    });
-    
-    return formattedMessages;
-  } catch (error) {
-    console.error('Error al obtener historial de conversación:', error);
-    return null;
-  }
-}
-
-// Función para formatear el historial de conversación como texto para el contexto
-function formatConversationHistoryForContext(messages: Array<{role: string, content: string}>): string {
-  if (!messages || messages.length === 0) {
-    return '';
-  }
-  
-  let formattedHistory = '```conversation\n';
-  
-  messages.forEach((msg, index) => {
-    // Mejorado para soportar múltiples tipos de roles
-    let roleDisplay = 'ASSISTANT';
-    
-    // Mapear diferentes roles a su visualización adecuada
-    if (msg.role === 'user' || msg.role === 'visitor') {
-      roleDisplay = 'USER';
-    } else if (msg.role === 'team_member') {
-      roleDisplay = 'TEAM';
-    } else if (msg.role === 'assistant' || msg.role === 'agent') {
-      roleDisplay = 'ASSISTANT';
-    } else if (msg.role === 'system') {
-      roleDisplay = 'SYSTEM';
-    }
-    
-    formattedHistory += `[${index + 1}] ${roleDisplay}: ${msg.content.trim()}\n`;
-    
-    // Add a separator between messages for better readability
-    if (index < messages.length - 1) {
-      formattedHistory += '---\n';
-    }
-  });
-  
-  formattedHistory += '```';
-  return formattedHistory;
-}
-
-export async function POST(request: Request) {
-  try {
-    const body = await request.json();
-    
-    // Extract required parameters from the request
-    const { conversationId, userId, message, agentId, site_id, lead_id, visitor_id } = body;
-    
-    // Verificamos si tenemos al menos un identificador de usuario o cliente
-    if (!visitor_id && !lead_id && !userId && !site_id) {
-      return NextResponse.json(
-        { success: false, error: { code: 'INVALID_REQUEST', message: 'At least one identification parameter (visitor_id, lead_id, userId, or site_id) is required' } },
-        { status: 400 }
-      );
-    }
-    
-    // Validar que cualquier ID proporcionado sea un UUID válido
-    if (userId && !isValidUUID(userId)) {
-      return NextResponse.json(
-        { success: false, error: { code: 'INVALID_REQUEST', message: 'userId must be a valid UUID' } },
-        { status: 400 }
-      );
-    }
-    
-    if (visitor_id && !isValidUUID(visitor_id)) {
-      return NextResponse.json(
-        { success: false, error: { code: 'INVALID_REQUEST', message: 'visitor_id must be a valid UUID' } },
-        { status: 400 }
-      );
-    }
-    
-    if (lead_id && !isValidUUID(lead_id)) {
-      return NextResponse.json(
-        { success: false, error: { code: 'INVALID_REQUEST', message: 'lead_id must be a valid UUID' } },
-        { status: 400 }
-      );
-    }
-    
-    if (site_id && !isValidUUID(site_id)) {
-      return NextResponse.json(
-        { success: false, error: { code: 'INVALID_REQUEST', message: 'site_id must be a valid UUID' } },
-        { status: 400 }
-      );
-    }
-    
-    if (!message) {
-      return NextResponse.json(
-        { success: false, error: { code: 'INVALID_REQUEST', message: 'message is required' } },
-        { status: 400 }
-      );
-    }
-    
-    // Establecer el site_id efectivo
-    let effectiveSiteId = site_id;
-    if (effectiveSiteId) {
-      console.log(`📍 Using provided site_id: ${effectiveSiteId}`);
-    } else {
-      console.log(`⚠️ No site_id provided for request`);
-    }
-    
-    // Buscar agente de CMO activo si no se proporciona un agent_id
-    let effectiveAgentId = agentId;
-    let agentUserId: string | null = null;
-    
-    if (!effectiveAgentId) {
-      if (effectiveSiteId) {
-        // Buscar un agente activo en la base de datos para el sitio
-        const foundAgent = await findActiveCmoAgent(effectiveSiteId);
-        if (foundAgent) {
-          effectiveAgentId = foundAgent.agentId;
-          agentUserId = foundAgent.userId;
-          console.log(`🤖 Usando agente de CMO encontrado: ${effectiveAgentId} (user_id: ${agentUserId})`);
-        } else {
-          // Usar un valor predeterminado como último recurso
-          effectiveAgentId = 'default_cmo_agent';
-          console.log(`⚠️ No se encontró un agente activo, usando valor predeterminado: ${effectiveAgentId}`);
+        else {
+            console.log(`⚠️ No site_id provided for request`);
         }
-      } else {
-        // No tenemos site_id, usamos valor predeterminado
-        effectiveAgentId = 'default_cmo_agent';
-        console.log(`⚠️ No se puede buscar un agente sin site_id, usando valor predeterminado: ${effectiveAgentId}`);
-      }
-    } else if (isValidUUID(effectiveAgentId)) {
-      // Si ya tenemos un agentId válido, obtenemos su información completa
-      const agentInfo = await getAgentInfo(effectiveAgentId);
-      if (agentInfo) {
-        agentUserId = agentInfo.user_id;
-        // Si no tenemos site_id, usamos el del agente
-        if (!effectiveSiteId && agentInfo.site_id) {
-          effectiveSiteId = agentInfo.site_id;
-          console.log(`📍 Usando site_id del agente: ${effectiveSiteId}`);
+        let effectiveAgentId = agentId;
+        let agentUserId: string | null = null;
+        if (!effectiveAgentId) {
+            if (effectiveSiteId) {
+                const foundAgent = await findActiveCmoAgent(effectiveSiteId);
+                if (foundAgent) {
+                    effectiveAgentId = foundAgent.agentId;
+                    agentUserId = foundAgent.userId;
+                    console.log(`🤖 Usando agente de CMO encontrado: ${effectiveAgentId} (user_id: ${agentUserId})`);
+                }
+                else {
+                    effectiveAgentId = 'default_cmo_agent';
+                    console.log(`⚠️ No se encontró un agente activo, usando valor predeterminado: ${effectiveAgentId}`);
+                }
+            }
+            else {
+                effectiveAgentId = 'default_cmo_agent';
+                console.log(`⚠️ No se puede buscar un agente sin site_id, usando valor predeterminado: ${effectiveAgentId}`);
+            }
         }
-      }
-    }
-    
-    // Determinamos qué ID usar para el comando (preferimos userId si está disponible)
-    const effectiveUserId = userId || agentUserId || visitor_id || lead_id;
-    
-    if (!effectiveUserId) {
-      console.error(`❌ No se pudo determinar un user_id válido para el comando`);
-      return NextResponse.json(
-        { success: false, error: { code: 'INVALID_REQUEST', message: 'Unable to determine a valid user_id for the command' } },
-        { status: 400 }
-      );
-    }
-    
-    console.log(`Creando comando para agente CMO: ${effectiveAgentId}, usuario: ${effectiveUserId}, site: ${effectiveSiteId || 'N/A'}`);
-    
-    // Retrieve conversation history if a conversation ID is provided
-    let contextMessage = `Current message: ${message}`;
-    
-    if (conversationId && isValidUUID(conversationId)) {
-      console.log(`🔄 Recuperando historial para la conversación: ${conversationId}`);
-      const historyMessages = await getConversationHistory(conversationId);
-      
-      if (historyMessages && historyMessages.length > 0) {
-        // Filter out any messages that might be duplicates of the current message
-        const filteredMessages = historyMessages.filter(msg => {
-          // No filtrar mensajes de asistente o team_member
-          if (msg.role === 'assistant' || msg.role === 'team_member' || msg.role === 'system') {
-            return true;
-          }
-          // Para mensajes de usuario o visitante, comparar el contenido
-          return msg.content.trim() !== message.trim();
+        else if (isValidUUID(effectiveAgentId)) {
+            const agentInfo = await getAgentInfo(effectiveAgentId);
+            if (agentInfo) {
+                agentUserId = agentInfo.user_id;
+                if (!effectiveSiteId && agentInfo.site_id) {
+                    effectiveSiteId = agentInfo.site_id;
+                    console.log(`📍 Usando site_id del agente: ${effectiveSiteId}`);
+                }
+            }
+        }
+        const effectiveUserId = userId || agentUserId || visitor_id || lead_id;
+        if (!effectiveUserId) {
+            console.error(`❌ No se pudo determinar un user_id válido para el comando`);
+            return NextResponse.json({ success: false, error: { code: 'INVALID_REQUEST', message: 'Unable to determine a valid user_id for the command' } }, { status: 400 });
+        }
+        console.log(`Creando comando para agente CMO: ${effectiveAgentId}, usuario: ${effectiveUserId}, site: ${effectiveSiteId || 'N/A'}`);
+        let contextMessage = `Current message: ${message}`;
+        if (conversationId && isValidUUID(conversationId)) {
+            console.log(`🔄 Recuperando historial para la conversación: ${conversationId}`);
+            const historyMessages = await getConversationHistory(conversationId);
+            if (historyMessages && historyMessages.length > 0) {
+                const filteredMessages = historyMessages.filter(msg => {
+                    if (msg.role === 'assistant' || msg.role === 'team_member' || msg.role === 'system') {
+                        return true;
+                    }
+                    return msg.content.trim() !== message.trim();
+                });
+                if (filteredMessages.length > 0) {
+                    const conversationHistory = formatConversationHistoryForContext(filteredMessages);
+                    contextMessage = `${contextMessage}\n\nConversation History:\n${conversationHistory}\n\nConversation ID: ${conversationId}`;
+                    console.log(`📜 Historial de conversación recuperado con ${filteredMessages.length} mensajes`);
+                }
+                else {
+                    contextMessage = `${contextMessage}\nConversation ID: ${conversationId}`;
+                }
+            }
+            else {
+                contextMessage = `${contextMessage}\nConversation ID: ${conversationId}`;
+                console.log(`⚠️ No se encontró historial para la conversación: ${conversationId}`);
+            }
+        }
+        const command = CommandFactory.createCommand({
+            task: 'create message',
+            userId: effectiveUserId,
+            agentId: effectiveAgentId,
+            agentRole: 'Growth Lead/Manager',
+            ...(effectiveSiteId ? { site_id: effectiveSiteId } : {}),
+            description: 'Engage with the marketing team, understand their strategic needs, provide relevant marketing insights, address campaign performance questions, and guide them toward developing effective marketing strategies.',
+            targets: [
+                {
+                    message: {
+                        content: "message example"
+                    }
+                },
+                {
+                    conversation: {
+                        title: "conversation title"
+                    }
+                }
+            ],
+            tools: commandTools(),
+            context: contextMessage,
+            supervisor: [
+                {
+                    agent_role: "marketing_director",
+                    status: "not_initialized"
+                },
+                {
+                    agent_role: "data_analyst",
+                    status: "not_initialized"
+                }
+            ]
         });
-        
-        if (filteredMessages.length > 0) {
-          const conversationHistory = formatConversationHistoryForContext(filteredMessages);
-          contextMessage = `${contextMessage}\n\nConversation History:\n${conversationHistory}\n\nConversation ID: ${conversationId}`;
-          console.log(`📜 Historial de conversación recuperado con ${filteredMessages.length} mensajes`);
-        } else {
-          contextMessage = `${contextMessage}\nConversation ID: ${conversationId}`;
+        const internalCommandId = await commandService.submitCommand(command);
+        console.log(`📝 Comando creado con ID interno: ${internalCommandId}`);
+        let initialDbUuid = await getCommandDbUuid(internalCommandId);
+        if (initialDbUuid) {
+            console.log(`📌 UUID de base de datos obtenido inicialmente: ${initialDbUuid}`);
         }
-      } else {
-        contextMessage = `${contextMessage}\nConversation ID: ${conversationId}`;
-        console.log(`⚠️ No se encontró historial para la conversación: ${conversationId}`);
-      }
-    }
-    
-    // Create the command using CommandFactory with the conversation history in the context
-    const command = CommandFactory.createCommand({
-      task: 'create message',
-      userId: effectiveUserId,
-      agentId: effectiveAgentId,
-      agentRole: 'Growth Lead/Manager',
-      // Add site_id as a basic property if it exists
-      ...(effectiveSiteId ? { site_id: effectiveSiteId } : {}),
-      description: 'Engage with the marketing team, understand their strategic needs, provide relevant marketing insights, address campaign performance questions, and guide them toward developing effective marketing strategies.',
-      // Set the target as a message with content
-      targets: [
-        {
-          message: {
-            content: "message example" // Will be filled by the agent
-          }
-        },
-        {
-          conversation: {
-            title: "conversation title" // Will be filled by the agent
-          }
+        const { command: executedCommand, dbUuid, completed } = await waitForCommandCompletion(internalCommandId);
+        const effectiveDbUuid = (dbUuid && isValidUUID(dbUuid)) ? dbUuid : initialDbUuid;
+        if (!effectiveDbUuid || !isValidUUID(effectiveDbUuid)) {
+            console.error(`❌ No se pudo obtener un UUID válido de la base de datos para el comando ${internalCommandId}`);
+            console.log(`⚠️ Continuando con el ID interno como respaldo: ${internalCommandId}`);
+            if (!completed || !executedCommand) {
+                let assistantMessage = "No response generated";
+                let conversationTitle = null;
+                if (executedCommand.results && Array.isArray(executedCommand.results)) {
+                    const conversationResults = executedCommand.results.find((r: any) => r.conversation && r.conversation.title);
+                    if (conversationResults) {
+                        conversationTitle = conversationResults.conversation.title;
+                        console.log(`🏷️ Título de conversación encontrado: "${conversationTitle}"`);
+                    }
+                    else {
+                        const altTitleResults = executedCommand.results.find((r: any) => (r.content && r.content.conversation && r.content.conversation.title) ||
+                            (r.type === 'conversation' && r.content && r.content.title));
+                        if (altTitleResults) {
+                            if (altTitleResults.content && altTitleResults.content.conversation) {
+                                conversationTitle = altTitleResults.content.conversation.title;
+                            }
+                            else if (altTitleResults.content && altTitleResults.content.title) {
+                                conversationTitle = altTitleResults.content.title;
+                            }
+                            console.log(`🏷️ Título de conversación encontrado (formato alternativo): "${conversationTitle}"`);
+                        }
+                    }
+                    console.log(`🔍 Buscando mensaje del asistente en los resultados...`);
+                    const messageObject = executedCommand.results.find((r: any) => r && r.message && r.message.content);
+                    if (messageObject) {
+                        assistantMessage = messageObject.message.content;
+                        console.log(`✅ Mensaje extraído de objeto con property message directa: ${assistantMessage.substring(0, 50)}...`);
+                    }
+                    else {
+                        const typeResults = executedCommand.results.filter((r: any) => r && (r.type === 'message' || r.type === 'text'));
+                        if (typeResults.length > 0) {
+                            const firstTypeResult = typeResults[0];
+                            if (typeof firstTypeResult.content === 'string') {
+                                assistantMessage = firstTypeResult.content;
+                            }
+                            else if (firstTypeResult.content && firstTypeResult.content.message && firstTypeResult.content.message.content) {
+                                assistantMessage = firstTypeResult.content.message.content;
+                            }
+                            else if (firstTypeResult.content && typeof firstTypeResult.content.content === 'string') {
+                                assistantMessage = firstTypeResult.content.content;
+                            }
+                            console.log(`✅ Mensaje extraído de resultado con type=${firstTypeResult.type}: ${assistantMessage.substring(0, 50)}...`);
+                        }
+                        if (assistantMessage === "No response generated") {
+                            const contentObject = executedCommand.results.find((r: any) => r && r.content !== undefined && (typeof r.content === 'string' ||
+                                (typeof r.content === 'object' && (r.content.content || r.content.message))));
+                            if (contentObject) {
+                                if (typeof contentObject.content === 'string') {
+                                    assistantMessage = contentObject.content;
+                                }
+                                else if (contentObject.content.message && contentObject.content.message.content) {
+                                    assistantMessage = contentObject.content.message.content;
+                                }
+                                else if (contentObject.content.content) {
+                                    assistantMessage = typeof contentObject.content.content === 'string'
+                                        ? contentObject.content.content
+                                        : JSON.stringify(contentObject.content.content);
+                                }
+                                console.log(`✅ Mensaje extraído de objeto con property content: ${assistantMessage.substring(0, 50)}...`);
+                            }
+                            else if (executedCommand.results.length > 0) {
+                                const firstResult = executedCommand.results[0];
+                                if (typeof firstResult === 'string') {
+                                    assistantMessage = firstResult;
+                                    console.log(`⚠️ Usando fallback para string directo: ${assistantMessage.substring(0, 50)}...`);
+                                }
+                                else if (typeof firstResult === 'object') {
+                                    const extractedContent = firstResult.content ||
+                                        firstResult.message?.content ||
+                                        firstResult.text ||
+                                        JSON.stringify(firstResult);
+                                    assistantMessage = typeof extractedContent === 'string'
+                                        ? extractedContent
+                                        : JSON.stringify(extractedContent);
+                                    console.log(`⚠️ Usando fallback para objeto genérico: ${assistantMessage.substring(0, 50)}...`);
+                                }
+                            }
+                            else {
+                                console.log(`❌ No se pudo extraer mensaje - no hay resultados o estructura no reconocida`);
+                                console.log(`📋 Estructura completa de results:`, JSON.stringify(executedCommand.results, null, 2));
+                            }
+                        }
+                    }
+                }
+                console.log(`💬 Mensaje del asistente: ${assistantMessage.substring(0, 50)}...`);
+                const savedMessages = await saveMessages(effectiveUserId, message, assistantMessage, conversationId, conversationTitle, lead_id, visitor_id, effectiveAgentId, effectiveSiteId, internalCommandId);
+                if (!savedMessages) {
+                    console.error(`❌ Error al guardar mensajes en la base de datos`);
+                    return NextResponse.json({
+                        success: false,
+                        error: {
+                            code: 'DATABASE_ERROR',
+                            message: 'The command completed but the messages could not be saved to the database'
+                        },
+                        data: {
+                            command_id: internalCommandId,
+                            message: assistantMessage,
+                            conversation_title: conversationTitle
+                        },
+                        debug: {
+                            agent_id: effectiveAgentId,
+                            user_id: effectiveUserId,
+                            agent_user_id: agentUserId,
+                            site_id: effectiveSiteId
+                        }
+                    }, { status: 500 });
+                }
+                return NextResponse.json({
+                    success: true,
+                    data: {
+                        command_id: internalCommandId,
+                        conversation_id: savedMessages?.conversationId,
+                        conversation_title: savedMessages?.conversationTitle,
+                        messages: {
+                            user: {
+                                content: message,
+                                message_id: savedMessages?.userMessageId,
+                                command_id: internalCommandId
+                            },
+                            assistant: {
+                                content: assistantMessage,
+                                message_id: savedMessages?.assistantMessageId,
+                                command_id: internalCommandId
+                            }
+                        }
+                    }
+                }, { status: 200 });
+            }
         }
-      ],
-      // Define the tools as specified in the documentation
-      tools: [
-        {
-          name: "analyze_campaign",
-          description: "analyze marketing campaign performance with metrics and insights",
-          status: "not_initialized",
-          type: "synchronous",
-          parameters: {
-            type: "object",
-            properties: {
-              campaign_id: {
-                type: "string",
-                description: "The ID of the campaign to analyze"
-              },
-              date_range: {
-                type: "string",
-                description: "The date range for analysis (e.g., 'last_30_days', 'last_quarter')"
-              },
-              metrics: {
-                type: "array",
-                items: {
-                  type: "string"
+        if (!completed || !executedCommand) {
+            return NextResponse.json({
+                success: false,
+                error: {
+                    code: 'COMMAND_EXECUTION_FAILED',
+                    message: 'The command did not complete successfully in the expected time'
                 },
-                description: "The specific metrics to analyze (e.g., 'conversion_rate', 'engagement')"
-              }
-            },
-            required: ["campaign_id"]
-          }
-        },
-        {
-          name: "generate_content_plan",
-          description: "create a content marketing plan or strategy",
-          status: "not_initialized",
-          type: "synchronous",
-          parameters: {
-            type: "object",
-            properties: {
-              business_vertical: {
-                type: "string",
-                description: "The industry or business vertical"
-              },
-              target_audience: {
-                type: "string",
-                description: "Description of the target audience"
-              },
-              goals: {
-                type: "array",
-                items: {
-                  type: "string"
-                },
-                description: "The goals for this content plan"
-              },
-              timeframe: {
-                type: "string",
-                description: "The timeframe for the content plan (e.g., 'quarterly', 'annual')"
-              }
-            },
-            required: ["business_vertical", "target_audience", "goals"]
-          }
-        },
-        {
-          name: "schedule_meeting",
-          description: "schedule a strategy session with a marketing specialist",
-          status: "not_initialized",
-          type: "asynchronous",
-          parameters: {
-            type: "object",
-            properties: {
-              contact_id: {
-                type: "string",
-                description: "The ID of the contact requesting the meeting"
-              },
-              date_time: {
-                type: "string",
-                description: "The proposed date and time for the meeting (ISO format)"
-              },
-              meeting_topic: {
-                type: "string",
-                description: "The topic for the strategy session",
-                enum: ["content_strategy", "campaign_analysis", "market_research", "brand_positioning"]
-              }
-            },
-            required: ["contact_id", "date_time", "meeting_topic"]
-          }
+                debug: {
+                    agent_id: effectiveAgentId,
+                    user_id: effectiveUserId,
+                    agent_user_id: agentUserId,
+                    site_id: effectiveSiteId
+                }
+            }, { status: 500 });
         }
-      ],
-      // Context includes the current message and conversation history
-      context: contextMessage,
-      // Add supervisors as specified in the documentation
-      supervisor: [
-        {
-          agent_role: "marketing_director",
-          status: "not_initialized"
-        },
-        {
-          agent_role: "data_analyst",
-          status: "not_initialized"
-        }
-      ]
-    });
-    
-    // Submit the command for processing
-    const internalCommandId = await commandService.submitCommand(command);
-    console.log(`📝 Comando creado con ID interno: ${internalCommandId}`);
-    
-    // Intentar obtener el UUID de la base de datos inmediatamente después de crear el comando
-    let initialDbUuid = await getCommandDbUuid(internalCommandId);
-    if (initialDbUuid) {
-      console.log(`📌 UUID de base de datos obtenido inicialmente: ${initialDbUuid}`);
-    }
-    
-    // Esperar a que el comando se complete utilizando nuestra función
-    const { command: executedCommand, dbUuid, completed } = await waitForCommandCompletion(internalCommandId);
-    
-    // Usar el UUID obtenido inicialmente si no tenemos uno válido después de la ejecución
-    const effectiveDbUuid = (dbUuid && isValidUUID(dbUuid)) ? dbUuid : initialDbUuid;
-    
-    // Verificar que tenemos un UUID de base de datos válido
-    if (!effectiveDbUuid || !isValidUUID(effectiveDbUuid)) {
-      console.error(`❌ No se pudo obtener un UUID válido de la base de datos para el comando ${internalCommandId}`);
-      
-      // En este caso, seguimos adelante con el ID interno en lugar de fallar
-      console.log(`⚠️ Continuando con el ID interno como respaldo: ${internalCommandId}`);
-      
-      if (!completed || !executedCommand) {
-        // Extraer la respuesta del asistente
         let assistantMessage = "No response generated";
         let conversationTitle = null;
-        
-        // Obtener resultados si existen
         if (executedCommand.results && Array.isArray(executedCommand.results)) {
-          // Extraer el título de la conversación de los resultados
-          const conversationResults = executedCommand.results.find((r: any) => 
-            r.conversation && r.conversation.title
-          );
-          
-          if (conversationResults) {
-            conversationTitle = conversationResults.conversation.title;
-            console.log(`🏷️ Título de conversación encontrado: "${conversationTitle}"`);
-          } else {
-            // Búsqueda alternativa del título en otras estructuras posibles
-            const altTitleResults = executedCommand.results.find((r: any) => 
-              (r.content && r.content.conversation && r.content.conversation.title) ||
-              (r.type === 'conversation' && r.content && r.content.title)
-            );
-            
-            if (altTitleResults) {
-              if (altTitleResults.content && altTitleResults.content.conversation) {
-                conversationTitle = altTitleResults.content.conversation.title;
-              } else if (altTitleResults.content && altTitleResults.content.title) {
-                conversationTitle = altTitleResults.content.title;
-              }
-              console.log(`🏷️ Título de conversación encontrado (formato alternativo): "${conversationTitle}"`);
+            const conversationResults = executedCommand.results.find((r: any) => r.conversation && r.conversation.title);
+            if (conversationResults) {
+                conversationTitle = conversationResults.conversation.title;
+                console.log(`🏷️ Título de conversación encontrado: "${conversationTitle}"`);
             }
-          }
-          
-          
-      // EXTRACCIÓN DEL MENSAJE PRINCIPAL - Lógica robusta
-      console.log(`🔍 Buscando mensaje del asistente en los resultados...`);
-      
-      // Prioridad 1: Buscar objetos con property message directamente
-      const messageObject = executedCommand.results.find((r: any) => r && r.message && r.message.content);
-      if (messageObject) {
-        assistantMessage = messageObject.message.content;
-        console.log(`✅ Mensaje extraído de objeto con property message directa: ${assistantMessage.substring(0, 50)}...`);
-      } 
-      // Prioridad 2: Buscar resultados con type 'message' o 'text'
-      else {
-        const typeResults = executedCommand.results.filter((r: any) => 
-          r && (r.type === 'message' || r.type === 'text')
-        );
-        
-        if (typeResults.length > 0) {
-          const firstTypeResult = typeResults[0];
-          
-          if (typeof firstTypeResult.content === 'string') {
-            assistantMessage = firstTypeResult.content;
-          } 
-          else if (firstTypeResult.content && firstTypeResult.content.message && firstTypeResult.content.message.content) {
-            assistantMessage = firstTypeResult.content.message.content;
-          } 
-          else if (firstTypeResult.content && typeof firstTypeResult.content.content === 'string') {
-            assistantMessage = firstTypeResult.content.content;
-          }
-          
-          console.log(`✅ Mensaje extraído de resultado con type=${firstTypeResult.type}: ${assistantMessage.substring(0, 50)}...`);
-        }
-        
-        // Prioridad 3: Cualquier objeto con propiedad content
-        if (assistantMessage === "No response generated") {
-          const contentObject = executedCommand.results.find((r: any) => 
-            r && r.content !== undefined && (
-              typeof r.content === 'string' || 
-              (typeof r.content === 'object' && (r.content.content || r.content.message))
-            )
-          );
-          
-          if (contentObject) {
-            if (typeof contentObject.content === 'string') {
-              assistantMessage = contentObject.content;
-            } 
-            else if (contentObject.content.message && contentObject.content.message.content) {
-              assistantMessage = contentObject.content.message.content;
-            } 
-            else if (contentObject.content.content) {
-              assistantMessage = typeof contentObject.content.content === 'string' 
-                ? contentObject.content.content 
-                : JSON.stringify(contentObject.content.content);
-            }
-            
-            console.log(`✅ Mensaje extraído de objeto con property content: ${assistantMessage.substring(0, 50)}...`);
-          }
-          
-          // Prioridad 4: Usar el primer resultado disponible
-          else if (executedCommand.results.length > 0) {
-            const firstResult = executedCommand.results[0];
-            
-            if (typeof firstResult === 'string') {
-              assistantMessage = firstResult;
-              console.log(`⚠️ Usando fallback para string directo: ${assistantMessage.substring(0, 50)}...`);
-            } 
-            else if (typeof firstResult === 'object') {
-              // Intentar extraer cualquier contenido que parezca texto
-              const extractedContent = 
-                firstResult.content || 
-                firstResult.message?.content || 
-                firstResult.text || 
-                JSON.stringify(firstResult);
-                
-              assistantMessage = typeof extractedContent === 'string' 
-                ? extractedContent 
-                : JSON.stringify(extractedContent);
-                
-              console.log(`⚠️ Usando fallback para objeto genérico: ${assistantMessage.substring(0, 50)}...`);
-            }
-          } else {
-            console.log(`❌ No se pudo extraer mensaje - no hay resultados o estructura no reconocida`);
-            console.log(`📋 Estructura completa de results:`, JSON.stringify(executedCommand.results, null, 2));
-          }
-        }
-      }
-    }
-    
-    console.log(`💬 Mensaje del asistente: ${assistantMessage.substring(0, 50)}...`);
-        
-        // Guardar los mensajes en la base de datos
-        const savedMessages = await saveMessages(
-          effectiveUserId, 
-          message, 
-          assistantMessage, 
-          conversationId, 
-          conversationTitle, 
-          lead_id, 
-          visitor_id, 
-          effectiveAgentId, 
-          effectiveSiteId, 
-          internalCommandId
-        );
-        
-        if (!savedMessages) {
-          console.error(`❌ Error al guardar mensajes en la base de datos`);
-          return NextResponse.json(
-            { 
-              success: false, 
-              error: { 
-                code: 'DATABASE_ERROR', 
-                message: 'The command completed but the messages could not be saved to the database' 
-              },
-              data: {
-                command_id: internalCommandId,
-                message: assistantMessage,
-                conversation_title: conversationTitle
-              },
-              debug: {
-                agent_id: effectiveAgentId,
-                user_id: effectiveUserId,
-                agent_user_id: agentUserId,
-                site_id: effectiveSiteId
-              }
-            },
-            { status: 500 }
-          );
-        }
-        
-        // Responder usando el ID interno como respaldo
-        return NextResponse.json(
-          { 
-            success: true, 
-            data: { 
-              command_id: internalCommandId, // Usamos el ID interno como respaldo
-              conversation_id: savedMessages?.conversationId,
-              conversation_title: savedMessages?.conversationTitle,
-              messages: {
-                user: {
-                  content: message,
-                  message_id: savedMessages?.userMessageId,
-                  command_id: internalCommandId
-                },
-                assistant: {
-                  content: assistantMessage,
-                  message_id: savedMessages?.assistantMessageId,
-                  command_id: internalCommandId
+            else {
+                const altTitleResults = executedCommand.results.find((r: any) => (r.content && r.content.conversation && r.content.conversation.title) ||
+                    (r.type === 'conversation' && r.content && r.content.title));
+                if (altTitleResults) {
+                    if (altTitleResults.content && altTitleResults.content.conversation) {
+                        conversationTitle = altTitleResults.content.conversation.title;
+                    }
+                    else if (altTitleResults.content && altTitleResults.content.title) {
+                        conversationTitle = altTitleResults.content.title;
+                    }
+                    console.log(`🏷️ Título de conversación encontrado (formato alternativo): "${conversationTitle}"`);
                 }
-              }
-            } 
-          },
-          { status: 200 }
-        );
-      }
-    }
-    
-    if (!completed || !executedCommand) {
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: { 
-            code: 'COMMAND_EXECUTION_FAILED', 
-            message: 'The command did not complete successfully in the expected time' 
-          },
-          debug: {
-            agent_id: effectiveAgentId,
-            user_id: effectiveUserId,
-            agent_user_id: agentUserId,
-            site_id: effectiveSiteId
-          }
-        },
-        { status: 500 }
-      );
-    }
-    
-    // Extraer la respuesta del asistente
-    let assistantMessage = "No response generated";
-    let conversationTitle = null;
-    
-    // Obtener resultados si existen
-    if (executedCommand.results && Array.isArray(executedCommand.results)) {
-      // Extraer el título de la conversación de los resultados
-      const conversationResults = executedCommand.results.find((r: any) => 
-        r.conversation && r.conversation.title
-      );
-      
-      if (conversationResults) {
-        conversationTitle = conversationResults.conversation.title;
-        console.log(`🏷️ Título de conversación encontrado: "${conversationTitle}"`);
-      } else {
-        // Búsqueda alternativa del título en otras estructuras posibles
-        const altTitleResults = executedCommand.results.find((r: any) => 
-          (r.content && r.content.conversation && r.content.conversation.title) ||
-          (r.type === 'conversation' && r.content && r.content.title)
-        );
-        
-        if (altTitleResults) {
-          if (altTitleResults.content && altTitleResults.content.conversation) {
-            conversationTitle = altTitleResults.content.conversation.title;
-          } else if (altTitleResults.content && altTitleResults.content.title) {
-            conversationTitle = altTitleResults.content.title;
-          }
-          console.log(`🏷️ Título de conversación encontrado (formato alternativo): "${conversationTitle}"`);
-        }
-      }
-      
-      
-      // EXTRACCIÓN DEL MENSAJE PRINCIPAL - Lógica robusta
-      console.log(`🔍 Buscando mensaje del asistente en los resultados...`);
-      
-      // Prioridad 1: Buscar objetos con property message directamente
-      const messageObject = executedCommand.results.find((r: any) => r && r.message && r.message.content);
-      if (messageObject) {
-        assistantMessage = messageObject.message.content;
-        console.log(`✅ Mensaje extraído de objeto con property message directa: ${assistantMessage.substring(0, 50)}...`);
-      } 
-      // Prioridad 2: Buscar resultados con type 'message' o 'text'
-      else {
-        const typeResults = executedCommand.results.filter((r: any) => 
-          r && (r.type === 'message' || r.type === 'text')
-        );
-        
-        if (typeResults.length > 0) {
-          const firstTypeResult = typeResults[0];
-          
-          if (typeof firstTypeResult.content === 'string') {
-            assistantMessage = firstTypeResult.content;
-          } 
-          else if (firstTypeResult.content && firstTypeResult.content.message && firstTypeResult.content.message.content) {
-            assistantMessage = firstTypeResult.content.message.content;
-          } 
-          else if (firstTypeResult.content && typeof firstTypeResult.content.content === 'string') {
-            assistantMessage = firstTypeResult.content.content;
-          }
-          
-          console.log(`✅ Mensaje extraído de resultado con type=${firstTypeResult.type}: ${assistantMessage.substring(0, 50)}...`);
-        }
-        
-        // Prioridad 3: Cualquier objeto con propiedad content
-        if (assistantMessage === "No response generated") {
-          const contentObject = executedCommand.results.find((r: any) => 
-            r && r.content !== undefined && (
-              typeof r.content === 'string' || 
-              (typeof r.content === 'object' && (r.content.content || r.content.message))
-            )
-          );
-          
-          if (contentObject) {
-            if (typeof contentObject.content === 'string') {
-              assistantMessage = contentObject.content;
-            } 
-            else if (contentObject.content.message && contentObject.content.message.content) {
-              assistantMessage = contentObject.content.message.content;
-            } 
-            else if (contentObject.content.content) {
-              assistantMessage = typeof contentObject.content.content === 'string' 
-                ? contentObject.content.content 
-                : JSON.stringify(contentObject.content.content);
             }
-            
-            console.log(`✅ Mensaje extraído de objeto con property content: ${assistantMessage.substring(0, 50)}...`);
-          }
-          
-          // Prioridad 4: Usar el primer resultado disponible
-          else if (executedCommand.results.length > 0) {
-            const firstResult = executedCommand.results[0];
-            
-            if (typeof firstResult === 'string') {
-              assistantMessage = firstResult;
-              console.log(`⚠️ Usando fallback para string directo: ${assistantMessage.substring(0, 50)}...`);
-            } 
-            else if (typeof firstResult === 'object') {
-              // Intentar extraer cualquier contenido que parezca texto
-              const extractedContent = 
-                firstResult.content || 
-                firstResult.message?.content || 
-                firstResult.text || 
-                JSON.stringify(firstResult);
-                
-              assistantMessage = typeof extractedContent === 'string' 
-                ? extractedContent 
-                : JSON.stringify(extractedContent);
-                
-              console.log(`⚠️ Usando fallback para objeto genérico: ${assistantMessage.substring(0, 50)}...`);
+            console.log(`🔍 Buscando mensaje del asistente en los resultados...`);
+            const messageObject = executedCommand.results.find((r: any) => r && r.message && r.message.content);
+            if (messageObject) {
+                assistantMessage = messageObject.message.content;
+                console.log(`✅ Mensaje extraído de objeto con property message directa: ${assistantMessage.substring(0, 50)}...`);
             }
-          } else {
-            console.log(`❌ No se pudo extraer mensaje - no hay resultados o estructura no reconocida`);
-            console.log(`📋 Estructura completa de results:`, JSON.stringify(executedCommand.results, null, 2));
-          }
+            else {
+                const typeResults = executedCommand.results.filter((r: any) => r && (r.type === 'message' || r.type === 'text'));
+                if (typeResults.length > 0) {
+                    const firstTypeResult = typeResults[0];
+                    if (typeof firstTypeResult.content === 'string') {
+                        assistantMessage = firstTypeResult.content;
+                    }
+                    else if (firstTypeResult.content && firstTypeResult.content.message && firstTypeResult.content.message.content) {
+                        assistantMessage = firstTypeResult.content.message.content;
+                    }
+                    else if (firstTypeResult.content && typeof firstTypeResult.content.content === 'string') {
+                        assistantMessage = firstTypeResult.content.content;
+                    }
+                    console.log(`✅ Mensaje extraído de resultado con type=${firstTypeResult.type}: ${assistantMessage.substring(0, 50)}...`);
+                }
+                if (assistantMessage === "No response generated") {
+                    const contentObject = executedCommand.results.find((r: any) => r && r.content !== undefined && (typeof r.content === 'string' ||
+                        (typeof r.content === 'object' && (r.content.content || r.content.message))));
+                    if (contentObject) {
+                        if (typeof contentObject.content === 'string') {
+                            assistantMessage = contentObject.content;
+                        }
+                        else if (contentObject.content.message && contentObject.content.message.content) {
+                            assistantMessage = contentObject.content.message.content;
+                        }
+                        else if (contentObject.content.content) {
+                            assistantMessage = typeof contentObject.content.content === 'string'
+                                ? contentObject.content.content
+                                : JSON.stringify(contentObject.content.content);
+                        }
+                        console.log(`✅ Mensaje extraído de objeto con property content: ${assistantMessage.substring(0, 50)}...`);
+                    }
+                    else if (executedCommand.results.length > 0) {
+                        const firstResult = executedCommand.results[0];
+                        if (typeof firstResult === 'string') {
+                            assistantMessage = firstResult;
+                            console.log(`⚠️ Usando fallback para string directo: ${assistantMessage.substring(0, 50)}...`);
+                        }
+                        else if (typeof firstResult === 'object') {
+                            const extractedContent = firstResult.content ||
+                                firstResult.message?.content ||
+                                firstResult.text ||
+                                JSON.stringify(firstResult);
+                            assistantMessage = typeof extractedContent === 'string'
+                                ? extractedContent
+                                : JSON.stringify(extractedContent);
+                            console.log(`⚠️ Usando fallback para objeto genérico: ${assistantMessage.substring(0, 50)}...`);
+                        }
+                    }
+                    else {
+                        console.log(`❌ No se pudo extraer mensaje - no hay resultados o estructura no reconocida`);
+                        console.log(`📋 Estructura completa de results:`, JSON.stringify(executedCommand.results, null, 2));
+                    }
+                }
+            }
         }
-      }
-    }
-    
-    console.log(`💬 Mensaje del asistente: ${assistantMessage.substring(0, 50)}...`);
-    
-    // Guardar los mensajes en la base de datos
-    const savedMessages = await saveMessages(
-      effectiveUserId, 
-      message, 
-      assistantMessage, 
-      conversationId, 
-      conversationTitle, 
-      lead_id, 
-      visitor_id, 
-      effectiveAgentId, 
-      effectiveSiteId, 
-      effectiveDbUuid || undefined
-    );
-    
-    if (!savedMessages) {
-      console.error(`❌ Error al guardar mensajes en la base de datos`);
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: { 
-            code: 'DATABASE_ERROR', 
-            message: 'The command completed but the messages could not be saved to the database' 
-          },
-          data: {
-            command_id: effectiveDbUuid,
-            message: assistantMessage,
-            conversation_title: conversationTitle
-          },
-          debug: {
-            agent_id: effectiveAgentId,
-            user_id: effectiveUserId,
-            agent_user_id: agentUserId,
-            site_id: effectiveSiteId
-          }
-        },
-        { status: 500 }
-      );
-    }
-    
-    return NextResponse.json(
-      { 
-        success: true, 
-        data: { 
-          command_id: effectiveDbUuid,
-          conversation_id: savedMessages.conversationId,
-          conversation_title: savedMessages.conversationTitle,
-          messages: {
-            user: {
-              content: message,
-              message_id: savedMessages.userMessageId,
-              command_id: effectiveDbUuid
-            },
-            assistant: {
-              content: assistantMessage,
-              message_id: savedMessages.assistantMessageId,
-              command_id: effectiveDbUuid
+        console.log(`💬 Mensaje del asistente: ${assistantMessage.substring(0, 50)}...`);
+        const savedMessages = await saveMessages(effectiveUserId, message, assistantMessage, conversationId, conversationTitle, lead_id, visitor_id, effectiveAgentId, effectiveSiteId, effectiveDbUuid || undefined);
+        if (!savedMessages) {
+            console.error(`❌ Error al guardar mensajes en la base de datos`);
+            return NextResponse.json({
+                success: false,
+                error: {
+                    code: 'DATABASE_ERROR',
+                    message: 'The command completed but the messages could not be saved to the database'
+                },
+                data: {
+                    command_id: effectiveDbUuid,
+                    message: assistantMessage,
+                    conversation_title: conversationTitle
+                },
+                debug: {
+                    agent_id: effectiveAgentId,
+                    user_id: effectiveUserId,
+                    agent_user_id: agentUserId,
+                    site_id: effectiveSiteId
+                }
+            }, { status: 500 });
+        }
+        return NextResponse.json({
+            success: true,
+            data: {
+                command_id: effectiveDbUuid,
+                conversation_id: savedMessages.conversationId,
+                conversation_title: savedMessages.conversationTitle,
+                messages: {
+                    user: {
+                        content: message,
+                        message_id: savedMessages.userMessageId,
+                        command_id: effectiveDbUuid
+                    },
+                    assistant: {
+                        content: assistantMessage,
+                        message_id: savedMessages.assistantMessageId,
+                        command_id: effectiveDbUuid
+                    }
+                }
             }
-          }
-        } 
-      },
-      { status: 200 }
-    );
-  } catch (error) {
-    console.error('Error al procesar la solicitud:', error);
-    return NextResponse.json(
-      { success: false, error: { code: 'INTERNAL_SERVER_ERROR', message: 'An error occurred while processing the request' } },
-      { status: 500 }
-    );
-  }
-} 
+        }, { status: 200 });
+    }
+    catch (error) {
+        console.error('Error al procesar la solicitud:', error);
+        return NextResponse.json({ success: false, error: { code: 'INTERNAL_SERVER_ERROR', message: 'An error occurred while processing the request' } }, { status: 500 });
+    }
+}
+export async function POST(request: Request) { return withAuthorizedCommandRequest(request, handleCommandRequest); }

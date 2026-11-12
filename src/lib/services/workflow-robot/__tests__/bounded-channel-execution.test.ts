@@ -10,10 +10,14 @@ const chatCreate = jest.fn();
 const capture = jest.fn();
 const validateCredits = jest.fn();
 const deductCredits = jest.fn();
+const getPlanRouting = jest.fn();
+const chargeOpenRouterUsage = jest.fn();
 let plan: any;
 
 jest.unstable_mockModule('@/lib/database/supabase-client', () => ({ supabaseAdmin: { from, rpc } }));
 jest.unstable_mockModule('../channel-message', () => ({ loadBoundChannelMessageRun }));
+jest.unstable_mockModule('../plan-routing', () => ({ getPlanRouting }));
+jest.unstable_mockModule('@/lib/services/billing/openrouter-usage-billing', () => ({ chargeOpenRouterUsage }));
 jest.unstable_mockModule('../step-prompt', () => ({ buildWorkflowStepPrompt }));
 jest.unstable_mockModule('../plan-result', () => ({ createWorkflowPlanResultCapture: capture }));
 jest.unstable_mockModule('@/lib/services/billing/CreditService', () => ({ CreditService: {
@@ -33,6 +37,8 @@ beforeEach(() => {
   jest.clearAllMocks();
   validateCredits.mockResolvedValue(true);
   deductCredits.mockResolvedValue({ success: true });
+  chargeOpenRouterUsage.mockResolvedValue({});
+  getPlanRouting.mockImplementation(async (_id, siteId) => ({ payer: 'platform', siteId }));
   plan = {
     id: runPlanId, site_id: siteId, instance_id: '33333333-3333-4333-8333-333333333333',
     status: 'pending', metadata: { trigger_payload: { source: 'channel_message', message_id: 'message-1', message: 'Hi' } },
@@ -71,6 +77,14 @@ it('fails closed on an interrupted model turn instead of replaying it', async ()
   expect(await advanceBoundedChannelMessageRun(input)).toBe('failed');
   expect(chatCreate).not.toHaveBeenCalled();
   expect(rpc).toHaveBeenCalledWith('finish_workflow_run_execution', expect.objectContaining({ p_status: 'failed' }));
+});
+
+it('does not dispatch a resumable channel plan with a missing private pin', async () => {
+  getPlanRouting.mockRejectedValueOnce(new Error('PLAN_ROUTING_UNAVAILABLE'));
+  expect(await advanceBoundedChannelMessageRun(input)).toBe('failed');
+  expect(getPlanRouting).toHaveBeenCalledWith(runPlanId, siteId);
+  expect(chatCreate).not.toHaveBeenCalled();
+  expect(chargeOpenRouterUsage).not.toHaveBeenCalled();
 });
 
 it('runs at most one tool-limited provider turn per advance and persists completed steps', async () => {

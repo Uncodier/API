@@ -1,3 +1,5 @@
+import { getExecutionRouting } from '@/lib/services/ai/customer-routing';
+
 export interface TextObservationOptions {
   signal?: AbortSignal;
   /** Omit for the platform credential; foreign credentials never establish platform health. */
@@ -51,6 +53,7 @@ export async function observeCompletedTextRequest<T>(
   request: () => PromiseLike<T>,
   options: TextObservationOptions = {},
 ): Promise<T> {
+  if (getExecutionRouting()?.payer === 'customer') return await request();
   const platform = options.apiKey === undefined || (!!process.env.OPENROUTER_API_KEY?.trim()
     && options.apiKey.trim() === process.env.OPENROUTER_API_KEY.trim());
   if (!platform) return await request();

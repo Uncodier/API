@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { getPlanRouting } from './plan-routing';
+import { withAssistantRouting } from '@/app/api/robots/instance/assistant/execution-routing';
+import { withCustomerOperation } from '@/lib/services/ai/customer-routing';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { createWorkflowPlanResultCapture } from './plan-result';
 import { buildWorkflowStepPrompt } from './step-prompt';
@@ -135,13 +138,16 @@ export async function advanceBoundedChannelMessageRun(input: {
             instanceId: plan.instance_id, siteId: plan.site_id,
             retryContext: channelStepRetryContext(next, triggerPayload, previousOutputs),
             preResponseOnly: true, relationPrompt: workflowRelationPrompt(next, steps) });
-          const result = await boundedChannelModelTurn({ prompt, capture,
+          const routing = await getPlanRouting(plan.id, plan.site_id);
+          const result = await withAssistantRouting(plan.site_id, routing, () =>
+            withCustomerOperation(`channel-plan:${plan.id}:${next.id}:${channelStepRetryCount(next)}`,
+              () => boundedChannelModelTurn({ prompt, capture,
             billing: { siteId: plan.site_id, instanceId: plan.instance_id, runPlanId: plan.id,
               stepId: next.id, messageId: input.messageId, attempt: channelStepRetryCount(next) + 1 },
             beforeProvider: () => renew(input.runPlanId, token),
             userContent: `[CHANNEL GUIDANCE — NO SENDS] Execute step ${next.order}: ${next.title}. ` +
               (channelStepRetryCount(next) ? `This is retry ${next.retry_count}; follow the recovery plan if provided.`
-                : next.instructions || '') });
+                : next.instructions || '') }), { durableBoundary: true }));
           next.result = { ...result, turns: 1 };
           next.actual_output = Object.keys(result.data).length ? JSON.stringify(result.data) : result.summary;
           if (result.status === 'failed') {

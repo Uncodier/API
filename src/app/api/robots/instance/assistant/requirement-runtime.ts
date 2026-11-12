@@ -18,6 +18,8 @@ import { assertToolScreenAccess } from '@/app/api/agents/tools/router/screen-acc
 import { writeRequirementInstanceLog } from './requirement-instance-log';
 import { evaluateRequirementCycleBudget } from './requirement-budget';
 import { requirementCycleFailure } from './requirement-cycle-failure';
+import { admitAssistantRouting, withAssistantRouting } from './execution-routing';
+import { getExecutionRouting } from '@/lib/services/ai/customer-routing';
 
 function summary(session: HarnessSession | null): string {
   const finish = session?.status === 'completed' && session.messages.findLast(message => message.role === 'tool' && message.toolCallId &&
@@ -46,6 +48,10 @@ export async function runRequirementCycle(run: RequirementRun) {
     if (await evaluateRequirementCycleBudget(run)) {
       return { reqId: run.requirementId, sessionId: run.sessionId, status: 'paused' };
     }
+    const existing = await store.load(run.sessionId, run.siteId);
+    const routing = existing ? existing.request.executionRouting ?? { payer: 'platform' as const, siteId: run.siteId }
+      : await admitAssistantRouting(run.siteId);
+    return await withAssistantRouting(run.siteId, routing, async () => {
     // Routine admission belongs to runtime diagnostics, not the user timeline.
     console.info('[Requirement assistant] Cycle admitted.');
     const context = await loadRequirementContext(run);
@@ -72,6 +78,7 @@ export async function runRequirementCycle(run: RequirementRun) {
         // canonical execution uses credits and the per-cycle monetary budget check.
       }), run.sessionId);
       initial.request.requirementId = run.requirementId;
+      initial.request.executionRouting = getExecutionRouting(run.siteId);
       await assertActive();
       await store.create(initial, { siteId: run.siteId, userId: run.userId });
       session = initial;
@@ -136,6 +143,7 @@ export async function runRequirementCycle(run: RequirementRun) {
     }
     await finishRequirementCycle(run, outcome, reason, summary(session), repoUrl);
     return { reqId: run.requirementId, sessionId: run.sessionId, status: outcome };
+    });
   } catch (error) {
     const detail = createRedactor()(error instanceof Error ? error.message : 'Execution unavailable').slice(0, 1000);
     await writeRequirementInstanceLog(run, { key: `admission-error:${run.runId}`, log_type: 'error',

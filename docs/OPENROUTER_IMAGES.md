@@ -86,3 +86,15 @@ regressions, and TypeScript. Broader unrelated working-tree changes are preserve
 No further paid generation, deployment, push, or remote migration is part of rollback.
 
 Related design: [customer OpenRouter integration](/Users/prado/Desktop/Proyectos/Uncodie/Code/market-fit/docs/OPENROUTER_INTEGRATION_DESIGN.md).
+
+## Optional customer adapter checkpoint — 2026-11-12
+
+A separate customer adapter implements the documented dedicated `POST /api/v1/images`
+protocol with bounded complete PNG validation, authorized route wiring, durable
+single-use dispatch and strict asset/receipt linkage. The public prompt workflow
+persists payer references across workers. It does not replace global Azure.
+An explicit-consent, budget-checked host verification runner is implemented;
+connection setup owns its single-use claim and verification publication. No
+successful connection-specific live verification exists and no paid probe was
+performed. Images remain gated on that evidence, not catalog visibility.
+See [customer media scope and offline evidence](OPENROUTER_CUSTOMER_MEDIA.md).

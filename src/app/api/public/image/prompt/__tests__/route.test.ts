@@ -1,3 +1,7 @@
+jest.mock('@/lib/services/ai/customer-routing', () => ({
+  resolveExecutionRouting: jest.fn(async (siteId: string) => ({ payer: 'platform', siteId })),
+}));
+jest.mock('@/lib/security/tool-request-principal', () => ({ resolveToolRequestPrincipal: jest.fn(), canToolPrincipalAccessSite: jest.fn() }));
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { NextRequest, NextResponse } from 'next/server';
 import { randomBytes } from 'node:crypto';
@@ -38,6 +42,7 @@ jest.mock('@/lib/security/upstash-rest', () => ({
 }));
 
 import { GET } from '../[...prompt]/route';
+import { resolveExecutionRouting } from '@/lib/services/ai/customer-routing';
 
 const context = {
   params: Promise.resolve({ prompt: ['a cat'] }),
@@ -68,6 +73,60 @@ describe('public prompt image route caching', () => {
     releaseLock.mockResolvedValue({ state: 'released' } as never);
     enforceRequestRateLimit.mockResolvedValue(null as never);
     verifyPublicImageSignature.mockReturnValue(false as never);
+  });
+
+  it.each([
+    ['pre-schema', undefined, undefined, false],
+    ['rollback', 'true', 'false', false],
+    ['enabled', 'true', 'true', true],
+  ])('uses rollout-aware authorized admission: %s', async (_label, storage, enabled, resolves) => {
+    const priorStorage = process.env.OPENROUTER_ROUTING_STORAGE_READY;
+    const priorEnabled = process.env.CUSTOMER_OPENROUTER_ENABLED;
+    if (storage) process.env.OPENROUTER_ROUTING_STORAGE_READY = storage as string;
+    else delete process.env.OPENROUTER_ROUTING_STORAGE_READY;
+    if (enabled) process.env.CUSTOMER_OPENROUTER_ENABLED = enabled as string;
+    else delete process.env.CUSTOMER_OPENROUTER_ENABLED;
+    try {
+      hasAuthenticatedPrincipal.mockReturnValue(true as never);
+      downloadFromCache.mockResolvedValue(null as never);
+      start.mockResolvedValue({ returnValue: Promise.resolve() } as never);
+      await GET(request('?site_id=site-id'), context);
+      expect(start).toHaveBeenCalledWith(expect.anything(), [expect.objectContaining({
+        executionRouting: { payer: 'platform', siteId: 'site-id' },
+      })]);
+      expect(resolveExecutionRouting).toHaveBeenCalledTimes(resolves ? 1 : 0);
+    } finally {
+      if (priorStorage === undefined) delete process.env.OPENROUTER_ROUTING_STORAGE_READY;
+      else process.env.OPENROUTER_ROUTING_STORAGE_READY = priorStorage;
+      if (priorEnabled === undefined) delete process.env.CUSTOMER_OPENROUTER_ENABLED;
+      else process.env.CUSTOMER_OPENROUTER_ENABLED = priorEnabled;
+    }
+  });
+
+  it('carries the admitted customer reference and never falls back after a selection failure', async () => {
+    const storage = process.env.OPENROUTER_ROUTING_STORAGE_READY;
+    const enabled = process.env.CUSTOMER_OPENROUTER_ENABLED;
+    process.env.OPENROUTER_ROUTING_STORAGE_READY = 'true';
+    process.env.CUSTOMER_OPENROUTER_ENABLED = 'true';
+    try {
+      const customer = { payer: 'customer' as const, siteId: 'site-id', connectionId: 'connection', policyVersion: 1, credentialVersion: 2 };
+      jest.mocked(resolveExecutionRouting).mockResolvedValueOnce(customer);
+      hasAuthenticatedPrincipal.mockReturnValue(true as never);
+      downloadFromCache.mockResolvedValue(null as never);
+      start.mockResolvedValue({ returnValue: Promise.resolve() } as never);
+      await GET(request('?site_id=site-id'), context);
+      expect(start).toHaveBeenCalledWith(expect.anything(), [expect.objectContaining({ executionRouting: customer })]);
+      start.mockClear();
+      jest.mocked(resolveExecutionRouting).mockRejectedValueOnce(new Error('selection unavailable'));
+      expect((await GET(request('?site_id=site-id'), context)).status).toBe(500);
+      expect(start).not.toHaveBeenCalled();
+      expect(releaseLock).toHaveBeenCalled();
+    } finally {
+      if (storage === undefined) delete process.env.OPENROUTER_ROUTING_STORAGE_READY;
+      else process.env.OPENROUTER_ROUTING_STORAGE_READY = storage;
+      if (enabled === undefined) delete process.env.CUSTOMER_OPENROUTER_ENABLED;
+      else process.env.CUSTOMER_OPENROUTER_ENABLED = enabled;
+    }
   });
 
   it.each(['openrouter', 'gemini', 'vercel'])('rejects non-Azure provider query %s without opening a workflow or alias', async provider => {

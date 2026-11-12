@@ -5,14 +5,20 @@ import {
   markAssistantRecoveryInFlight, checkpointAssistantRecovery,
   type AssistantRecoveryScope, type AssistantRecoveryExecution,
 } from '@/lib/services/robot-instance/assistant-recovery';
+import { withAssistantRouting } from './execution-routing';
 
 export async function prepareRecoveryStep(
   scope: AssistantRecoveryScope, execution: AssistantRecoveryExecution, resumeToken?: string,
 ) {
   'use step';
   try {
-    if (resumeToken) return { ok: true as const, snapshot: await loadAssistantRecovery(scope, resumeToken) };
-    await initializeAssistantRecovery(scope, execution);
+    if (resumeToken) {
+      const snapshot = await loadAssistantRecovery(scope, resumeToken);
+      return await withAssistantRouting(scope.siteId, snapshot.execution.executionRouting,
+        async () => ({ ok: true as const, snapshot }));
+    }
+    await withAssistantRouting(scope.siteId, execution.executionRouting,
+      () => initializeAssistantRecovery(scope, execution));
     return { ok: true as const, snapshot: undefined };
   } catch {
     return { ok: false as const };

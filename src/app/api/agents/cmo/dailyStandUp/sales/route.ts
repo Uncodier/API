@@ -1,3 +1,4 @@
+import { withAuthorizedCommandRequest } from '@/lib/services/ai/command-http-routing';
 import { NextResponse } from 'next/server';
 import { CommandFactory, ProcessorInitializer } from '@/lib/agentbase';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
@@ -253,7 +254,7 @@ const processorInitializer = ProcessorInitializer.getInstance();
 processorInitializer.initialize();
 const commandService = processorInitializer.getCommandService();
 
-export async function POST(request: Request) {
+async function handleCommandRequest(request: Request) {
   try {
     const body = await request.json();
     const { site_id, command_id } = body;
@@ -465,4 +466,5 @@ Additionally, include a brief summary of the newly added leads (status = new) an
       { status: 500 }
     );
   }
-} 
+}
+export async function POST(request: Request) { return withAuthorizedCommandRequest(request, handleCommandRequest); }

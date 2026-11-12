@@ -11,6 +11,7 @@ import {
 import { verifyPublicImageSignature } from '@/lib/security/public-image-signature';
 import { canAccessSite } from '@/lib/security/site-access';
 import { acquireLock, releaseLock } from '@/lib/security/upstash-rest';
+import { resolveHttpExecutionRouting } from '@/lib/services/ai/customer-routing-http';
 
 const PLATFORM_SITE_ID = '00000000-0000-0000-0000-000000000000';
 
@@ -241,6 +242,8 @@ export async function GET(
         size: sizeMap,
         ratio,
         hash,
+        // Principal/site or scoped signature admission above owns this site.
+        executionRouting: await resolveHttpExecutionRouting(request, siteId),
       };
       const run = await start(generatePromptImageWorkflow, [workflowInput]);
       try {

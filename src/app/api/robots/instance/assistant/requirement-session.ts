@@ -5,6 +5,7 @@ import { createRequirementExecutionBoundary } from './requirement-execution-boun
 import { writeRequirementInstanceLog } from './requirement-instance-log';
 import { createRequirementAssistantBilling } from './requirement-billing';
 import { REQUIREMENT_RECOVERY_GUIDANCE } from './requirement-recovery-policy';
+import { withAssistantRouting } from './execution-routing';
 import type { RequirementRun } from '@/lib/harness/requirement-types';
 import type { ArtifactStore, HarnessSession, HarnessTool, SessionStore, Workspace } from '@/lib/harness/types';
 
@@ -27,6 +28,11 @@ export interface RequirementAssistantSliceInput {
 
 /** Continuation scheduler, not an agent engine: every turn uses the canonical assistant core. */
 export async function runRequirementAssistantSlice(input: RequirementAssistantSliceInput): Promise<HarnessSession> {
+  return withAssistantRouting(input.run.siteId, input.session.request.executionRouting,
+    () => runRoutedRequirementAssistantSlice(input));
+}
+
+async function runRoutedRequirementAssistantSlice(input: RequirementAssistantSliceInput): Promise<HarnessSession> {
   const { run } = input;
   await input.assertExecution();
   if (input.session.id !== run.sessionId || input.session.request.requirementId !== run.requirementId) {

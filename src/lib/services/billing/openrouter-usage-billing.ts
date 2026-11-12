@@ -2,6 +2,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { calculateOpenRouterCreditCharge } from './agent-pricing';
 import { openRouterCostEvidence } from './openrouter-cost-evidence';
 import { requirementChargeMetadata } from './requirement-charge-context';
+import { hasCustomerInferenceReceipt } from './customer-inference-receipts';
 
 export interface OpenRouterUsageCharge {
   siteId: string;
@@ -34,6 +35,7 @@ export class RequirementCreditsExhaustedError extends OpenRouterBillingError {
 /** One ledger event per accepted generation, even after a lost RPC response. */
 export async function chargeOpenRouterUsage(input: OpenRouterUsageCharge): Promise<void> {
   if (!input.siteId || !input.eventId) throw new Error('Missing OpenRouter billing ownership');
+  if (hasCustomerInferenceReceipt(input.siteId, input.usage, input.generationId)) return;
   let cost: number | null = null;
   try { calculateOpenRouterCreditCharge(input.usage); cost = (input.usage as { cost: number }).cost; }
   catch { /* Persist accepted, unpriced work instead of estimating from token counts. */ }
