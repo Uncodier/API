@@ -19,6 +19,9 @@ jest.mock('@/lib/services/robot-instance/instance-context-budget', () => ({
   fitInstanceRequest: jest.fn(), resolveModelContextCapacity: jest.fn().mockResolvedValue(null),
 }));
 jest.mock('@/lib/utils/api-utils', () => ({ handleIncompleteJsonResponse: jest.fn(async value => value) }));
+jest.mock('@/lib/security/tool-request-principal', () => ({
+  resolveToolRequestPrincipal: jest.fn(), canToolPrincipalAccessSite: jest.fn(),
+}));
 jest.mock('@/lib/security/request-rate-limit', () => ({
   enforceRequestRateLimit: jest.fn(), getAuthenticatedRateIdentity: jest.fn(() => 'offline-principal'),
   isInternalServiceRequest: jest.fn(() => false),
@@ -34,6 +37,7 @@ import { createHarnessModel } from '@/lib/harness/__tests__/retired/model';
 import { AIAgentExecutor } from '@/lib/custom-automation/ai-agent-executor';
 import { chargeOpenRouterUsage } from '@/lib/services/billing/openrouter-usage-billing';
 import { enforceRequestRateLimit } from '@/lib/security/request-rate-limit';
+import { resolveToolRequestPrincipal } from '@/lib/security/tool-request-principal';
 import { handleIncompleteJsonResponse } from '@/lib/utils/api-utils';
 import { POST as aiPost, GET as aiGet } from '@/app/api/ai/route';
 import { POST as textPost, GET as textGet } from '@/app/api/ai/text/route';
@@ -59,6 +63,7 @@ let credentials: string[];
 let guards: jest.SpyInstance[];
 beforeEach(() => {
   jest.clearAllMocks();
+  jest.mocked(resolveToolRequestPrincipal).mockResolvedValue({ internal: true, userId: null, siteId: null });
   credentials = [synthetic(), synthetic(), synthetic()];
   process.env = { NODE_ENV: 'test', OPENROUTER_API_KEY: credentials[0], OPENROUTER_CHAT_MODEL: model };
   telemetry.mockReset().mockResolvedValue(undefined);
@@ -305,10 +310,10 @@ describe('real mainstream caller paths with only provider/persistence doubles', 
     expect(statuses()).toEqual(['up']);
   });
 
-  it.each([aiPost, textPost])('actual API provider failure writes a safe down receipt and keeps the existing HTTP failure', async post => {
+  it.each([[aiPost, 503], [textPost, 500]] as const)('actual API provider failure writes a safe down receipt and keeps the existing HTTP failure', async (post, expectedStatus) => {
     create.mockRejectedValueOnce(Object.assign(new Error(credentials[1]), { status: 503 }));
     const response = await post(request('/api/ai/text', { messages: [{ role: 'user', content: credentials[2] }] }));
-    expect(response.status).toBe(500);
+    expect(response.status).toBe(expectedStatus);
     for (const credential of credentials) expect(await response.clone().text()).not.toContain(credential);
     expect(statuses()).toEqual(['down']);
   });

@@ -15,6 +15,9 @@ const validateApiKey = jest.fn(async (_key: string) => ({ isValid: false }));
 const reader = loadRuntimeModule<typeof import('@/lib/services/robot-instance/instance-history-reader')>(
   'src/lib/services/robot-instance/instance-history-reader.ts', {
     zod: { z }, '@/lib/database/supabase-client': { supabaseAdmin: { from } },
+    '@/lib/services/workflow-robot/procurement-access': {
+      canReadProcurementWorkflowInstanceAsActor: async () => true,
+    },
   });
 
 // Run the actual catalog, history tool and router. Screen policy is isolated in
@@ -52,6 +55,7 @@ function catalog() {
   dependencies['@/app/api/agents/tools/router/assistantProtocol'] = loadRuntimeModule(
     'src/app/api/agents/tools/router/assistantProtocol.ts', {
       '@/lib/services/embeddings-service': {},
+      '../catalog_commerce/batch-admin-tool': { bindCatalogBatchActor: (tool: unknown) => tool },
       './screen-access': {
         loadToolScreenAccess: async () => ({ isAdmin: true, blockedScreens: [] }),
         canUseToolScreen: () => true, assertToolScopeArgs: () => {}, guardToolScreen: (tool: unknown) => tool,
