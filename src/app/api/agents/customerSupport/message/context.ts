@@ -13,6 +13,7 @@ import { supportChannelContext } from './channel-context';
 import { supportResponseFormatContext } from './response-format';
 export async function buildSupportContext(input: any) {
 let leadLanguage: unknown;
+let leadPhone: unknown;
 const { request, message, name, email, phone, requestTimestamp, clientIP, userAgent, effectiveOrigin, effectiveLeadId, effectiveConversationId, effectiveSiteId, origin_message_id, channel_guidance_run_plan_ids, website_chat_origin } = input;
     // Retrieve conversation history if a conversation ID is provided
     let contextMessage = `${message}` + supportAttachmentContext(input.attachments);
@@ -46,6 +47,7 @@ const { request, message, name, email, phone, requestTimestamp, clientIP, userAg
       
       if (leadInfo) {
         leadLanguage = leadInfo.language;
+        leadPhone = leadInfo.phone;
         contextMessage += "\n\nLead Information:";
         contextMessage += `\nLead ID: ${leadInfo.id}`;
         contextMessage += `\nName: ${leadInfo.name || 'N/A'}`;
@@ -185,7 +187,11 @@ const { request, message, name, email, phone, requestTimestamp, clientIP, userAg
       }
     }
     contextMessage += getCustomerSupportPolicies();
-    contextMessage += await getSupportLanguagePolicy({ siteId: effectiveSiteId, leadLanguage });
+    const inboundPhone = !input.browserIdentity && isInternalServiceRequest(request)
+      ? input.custom_data?.zavu_from : undefined;
+    contextMessage += await getSupportLanguagePolicy({
+      siteId: effectiveSiteId, leadLanguage, customerPhone: inboundPhone || phone || leadPhone,
+    });
     contextMessage += supportResponseFormatContext(effectiveOrigin, input.response_format);
 
 

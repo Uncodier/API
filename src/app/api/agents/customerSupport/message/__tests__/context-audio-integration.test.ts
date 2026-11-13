@@ -4,6 +4,7 @@ jest.mock('@/lib/database/supabase-client', () => ({
   }) }) }) })) },
 }));
 import { getLeadInfo } from '../agent-data';
+import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { isInternalServiceRequest } from '@/lib/security/request-rate-limit';
 
 jest.mock('@/lib/services/customer-support-audio', () => ({ supportAudioContext: jest.fn() }));
@@ -139,6 +140,22 @@ describe('buildSupportContext audio wiring (offline)', () => {
     expect(context).toContain('"customer_reply_identifier": "whatsapp:+12025550123"');
     expect(context).toContain('Phone: +12025550199');
     expect(context).toContain('CRM contact details below may differ');
+  });
+
+  it('resolves an image-only Mexico turn using current provider identity rather than a different CRM phone', async () => {
+    jest.mocked(supabaseAdmin.schema).mockReturnValueOnce({ from: () => ({ select: () => ({ eq: () => ({
+      maybeSingle: async () => ({ data: { default_locale: 'en', locations: [{ country: 'México' }] }, error: null }),
+    }) }) }) } as any);
+    jest.mocked(isInternalServiceRequest).mockReturnValue(true);
+    jest.mocked(getLeadInfo).mockResolvedValueOnce({ id: 'lead-1', language: null, phone: '+12025550199' });
+    const context = await buildSupportContext({ ...input, message: '[image]', effectiveLeadId: 'lead-1',
+      attachments: [{ url: 'https://files.example.test/order.jpg', mimeType: 'image/jpeg' }],
+      custom_data: { source: 'zavu_inbound_message', zavu_from: '+5214611317576' },
+    });
+    expect(context).toContain('Images are supplied as visual references');
+    expect(context).toContain('fallback language: "es-MX"; source: Mexico regional context');
+    expect(context).toContain('text visible in customer images and extracted from customer documents');
+    expect(context).toContain('Phone: +12025550199');
   });
 
   it.each([false, true])('does not trust provider metadata from external/browser requests (browser=%s)', async browser => {
