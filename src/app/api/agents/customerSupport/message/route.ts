@@ -278,7 +278,7 @@ async function handleSupportRequest(request: Request) {
         const deniedZavu = await checkZavuSupportAdmission(request, body);
         if (deniedZavu)
             return deniedZavu;
-        const generated = await generateSupportReply({ effectiveUserId, effectiveAgentId, effectiveSiteId, effectiveLeadId, contextMessage, agentUserId, request,
+        const generated = await generateSupportReply({ effectiveUserId, effectiveAgentId, effectiveSiteId, effectiveLeadId, effectiveConversationId, contextMessage, agentUserId, request,
             response_format: explicitResponseFormat,
             ...(inboundCustomData?.source === 'zavu_inbound_message' ? {
                 originMessageId: origin_message_id, connectionId: inboundCustomData.connection_id,

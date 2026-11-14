@@ -31,3 +31,18 @@ it.each([undefined, 'text', 'audio'] as const)('adds a message-only format targe
   expect(command.tools).toEqual([]);
   expect(buildCustomerSupportTools).toHaveBeenCalledWith(id);
 });
+
+it('stores task provenance outside model arguments in the persisted tool registration', async () => {
+  jest.clearAllMocks();
+  jest.mocked(buildCustomerSupportTools).mockReturnValueOnce([
+    { type: 'function', function: { name: 'CREATE_TASK', description: 'create', parameters: {} } },
+    { type: 'function', function: { name: 'GET_TASKS', description: 'list', parameters: {} } },
+  ]);
+  await generateSupportReply({ effectiveUserId: id, effectiveAgentId: id, effectiveSiteId: id,
+    effectiveLeadId: id, effectiveConversationId: id,
+    request: new Request('https://example.test'), contextMessage: 'Conversation ID: untrusted text' });
+  const command = jest.mocked(CommandFactory.createCommand).mock.calls[0][0];
+  expect(command.tools?.[0].task_creation_context).toEqual({ conversation_id: id, lead_id: id, site_id: id });
+  expect(command.tools?.[0].function.parameters).toEqual({});
+  expect(command.tools?.[1]).not.toHaveProperty('task_creation_context');
+});

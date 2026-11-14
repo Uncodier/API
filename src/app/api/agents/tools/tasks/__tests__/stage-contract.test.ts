@@ -12,6 +12,16 @@ import { getCustomToolDefinition } from '@/lib/agentbase/agents/toolEvaluator/ex
 import { TeamNotificationService } from '@/lib/services/team-notification-service';
 import { fireWorkflowDispatch } from '@/lib/services/workflow-robot/dispatch';
 import { taskCreationKey } from '../create/persistence';
+import { runToolExecution } from '@/lib/agentbase/agents/toolEvaluator/executor/runner';
+import { FunctionCallStatus } from '@/lib/agentbase/agents/toolEvaluator/types';
+import { WorkflowService } from '@/lib/services/workflow-service';
+import { executeTools } from '@/lib/agentbase/agents/toolEvaluator/executor/executeTools';
+
+jest.mock('@/lib/services/workflow-service', () => ({ WorkflowService: { getInstance: jest.fn() } }));
+jest.mock('@/lib/agentbase/agents/toolEvaluator/executor/mcpNativeTools', () => ({}));
+jest.mock('@/lib/agentbase/agents/toolEvaluator/updater/functionStatusUpdater', () => ({ updateFunctionStatuses: jest.fn() }));
+jest.mock('@/lib/agentbase/agents/toolEvaluator/updater/commandStatusUpdater', () => ({ updateCommandStatus: jest.fn() }));
+jest.mock('@/lib/agentbase/agents/toolEvaluator/updater/contextUpdater', () => ({ updateCommandContext: jest.fn() }));
 
 jest.mock('@/lib/database/supabase-server', () => ({
   supabaseAdmin: { from: jest.fn(), auth: { admin: { getUserById: jest.fn(async () => ({ data: null })) } } },
@@ -72,6 +82,7 @@ beforeEach(async () => {
       eq: jest.fn((field: string, value: string) => { id = value; filters[field] = value; return query; }),
       single: async () => {
         if (table === 'leads') return { data: { id: leadId, name: 'Test lead', site_id: siteId, user_id: userId }, error: null };
+        if (table === 'conversations') return { data: { id, site_id: siteId, lead_id: leadId }, error: null };
         try {
           let result;
           if (insertData) {
@@ -193,6 +204,71 @@ it('keeps different issues separate and preserves conversation association', asy
     expect((await response.json()).task.conversation_id).toBe(conversation_id);
   }
   expect((await db.query('SELECT * FROM tasks')).rows).toHaveLength(2);
+});
+
+it.each([undefined, randomUUID()])('uses persisted registration provenance rather than model conversation %s', async modelConversation => {
+  const conversationId = randomUUID(); const commandId = randomUUID();
+  // JSON round trip models persisted commands.tools (not process-local closures).
+  const registration = JSON.parse(JSON.stringify({ type: 'function', function: { name: 'CREATE_TASK' },
+    task_creation_context: { conversation_id: conversationId, lead_id: leadId, site_id: siteId } }));
+  const handler = jest.fn(async args => (await create(request('create', args))).json());
+  const results = await runToolExecution([{
+    id: randomUUID(), name: 'CREATE_TASK', type: 'function', status: FunctionCallStatus.INITIALIZED,
+    arguments: JSON.stringify({ ...params, conversation_id: modelConversation,
+      command_id: randomUUID(), lead_id: randomUUID(), site_id: randomUUID() }),
+  }], [{ ...registration, execute: handler }], commandId, undefined, { site_id: siteId });
+  expect(results[0].status).toBe('success');
+  expect(results[0].output.task).toMatchObject({ conversation_id: conversationId,
+    command_id: commandId, lead_id: leadId, site_id: siteId });
+  const stored = await db.query<any>('SELECT payload FROM tasks');
+  expect(stored.rows[0].payload.conversation_id).toBe(conversationId);
+});
+
+it('propagates trusted provenance through the custom API workflow path', async () => {
+  const conversationId = randomUUID(); const commandId = randomUUID();
+  const executeWorkflow = jest.fn(async (_name, input) => ({ success: true,
+    data: await (await create(request('create', input.args))).json() }));
+  jest.mocked(WorkflowService.getInstance).mockReturnValue({ executeWorkflow } as any);
+  const results = await runToolExecution([{
+    id: randomUUID(), name: 'CREATE_TASK', type: 'function', status: FunctionCallStatus.INITIALIZED,
+    arguments: JSON.stringify(params),
+  }], [{ type: 'function', function: { name: 'CREATE_TASK' }, task_creation_context: {
+    conversation_id: conversationId, lead_id: leadId, site_id: siteId,
+  } }], commandId, undefined, { site_id: siteId });
+  expect(results[0].output.task).toMatchObject({ conversation_id: conversationId, command_id: commandId });
+  expect(executeWorkflow.mock.calls[0][1].apiConfig.endpoint.url).toBe('/api/agents/tools/tasks/create');
+});
+
+it.each(['GET_TASKS', 'UPDATE_TASK', 'tasks'])('does not apply task creation provenance to %s', async name => {
+  const handler = jest.fn(async (_args: any) => ({}));
+  await executeTools([{
+    id: randomUUID(), name, type: 'function', status: FunctionCallStatus.INITIALIZED,
+    arguments: JSON.stringify({ action: 'list', lead_id: leadId }),
+  }], { [name]: handler }, { site_id: siteId, command_id: randomUUID(), metadata: {
+    task_creation_context: { conversation_id: randomUUID(), lead_id: randomUUID(), site_id: siteId },
+  } });
+  expect(handler.mock.calls[0][0]).not.toHaveProperty('conversation_id');
+  expect(handler.mock.calls[0][0].lead_id).toBe(leadId);
+  if (name !== 'UPDATE_TASK') expect(handler.mock.calls[0][0]).not.toHaveProperty('command_id');
+});
+
+it.each([
+  ['other site', { site_id: randomUUID(), lead_id: leadId }, null, 403],
+  ['other lead', { site_id: siteId, lead_id: randomUUID() }, null, 403],
+  ['unowned conversation', { site_id: siteId, lead_id: null }, null, 403],
+  ['missing conversation', null, null, 400],
+  ['lookup failure', null, { message: 'offline lookup failed' }, 400],
+])('rejects %s without inserting or notifying', async (_label, data, error, status) => {
+  const original = (supabaseAdmin.from as jest.Mock).getMockImplementation()!;
+  (supabaseAdmin.from as jest.Mock).mockImplementation(table => {
+    if (table !== 'conversations') return original(table);
+    const query: any = { select: () => query, eq: () => query, single: async () => ({ data, error }) };
+    return query;
+  });
+  const response = await create(request('create', { ...params, conversation_id: randomUUID() }));
+  expect(response.status).toBe(status);
+  expect((await db.query('SELECT * FROM tasks')).rows).toHaveLength(0);
+  expect(TeamNotificationService.notifyTeam).not.toHaveBeenCalled();
 });
 
 it('deduplicates legacy identical retries without dates or command IDs', async () => {

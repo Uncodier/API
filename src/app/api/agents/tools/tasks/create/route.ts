@@ -747,6 +747,26 @@ export async function POST(request: NextRequest) {
       }, { status: 403 });
     }
 
+    // A syntactically valid UUID is not sufficient: both explicit and
+    // command-propagated conversation IDs must belong to this site and lead.
+    if (validatedData.conversation_id) {
+      const { data: conversation, error } = await supabaseAdmin
+        .from('conversations')
+        .select('id, site_id, lead_id')
+        .eq('id', validatedData.conversation_id)
+        .single();
+      if (error || !conversation) {
+        return NextResponse.json({ success: false, error: {
+          code: 'CONVERSATION_UNAVAILABLE', message: 'Conversation could not be verified',
+        } }, { status: 400 });
+      }
+      if (conversation.site_id !== validatedData.site_id || conversation.lead_id !== validatedData.lead_id) {
+        return NextResponse.json({ success: false, error: {
+          code: 'CONVERSATION_SCOPE_MISMATCH', message: 'Conversation does not belong to this site and lead',
+        } }, { status: 403 });
+      }
+    }
+
     console.log('[CreateTask] Información del lead obtenida:', leadInfo);
 
     // Usar datos del lead si no se especificaron

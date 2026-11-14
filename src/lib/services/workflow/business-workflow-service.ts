@@ -1,6 +1,7 @@
 import { BaseWorkflowService, WorkflowExecutionOptions, WorkflowExecutionResponse } from './base-workflow-service';
 import { validateResponseFormat } from '@/lib/services/channels/response-format';
 import { validateOutboundMedia, type OutboundMediaInput } from '@/lib/services/channels/outbound-media';
+import { conversationIngressId, submitConversationMessage, conversationMessageResult } from './conversation-ingress';
 
 // Interfaces específicas para workflows de negocio (coinciden con Temporal externo)
 interface EmailWorkflowArgs extends OutboundMediaInput {
@@ -444,6 +445,23 @@ export class BusinessWorkflowService extends BaseWorkflowService {
 
       console.log(`📱 Iniciando workflow de WhatsApp: ${workflowId}`);
 
+      const ingressId = conversationIngressId({ siteId: args.siteId, conversationId: args.conversationId });
+      if (ingressId) {
+        await submitConversationMessage(client, ingressId, {
+          workflowId, workflowType: 'whatsappMessageWorkflow', args: [args], taskQueue,
+        });
+        // Preserve the legacy synchronous default for WhatsApp responses.
+        if (options?.async === true) return { success: true, workflowId, status: 'running' };
+        const result = await conversationMessageResult(client, workflowId);
+        return { success: true, workflowId, status: 'completed', data: result };
+      }
+
+      if (options?.async === true) {
+        const handle = await client.workflow.start('whatsappMessageWorkflow', { args: [args], taskQueue, workflowId });
+        return { success: true, workflowId: handle.workflowId, status: 'running',
+          executionId: handle.firstExecutionRunId, runId: handle.firstExecutionRunId };
+      }
+
       const result = await client.workflow.execute('whatsappMessageWorkflow', {
         args: [args],
         taskQueue,
@@ -586,6 +604,19 @@ export class BusinessWorkflowService extends BaseWorkflowService {
           agentId: args.agentId,
         },
       ];
+
+      const ingressId = conversationIngressId({
+        siteId: args.site_id, conversationId: args.conversationId,
+        origin: args.origin, channel_delivery: args.channel_delivery, custom_data: args.custom_data,
+      });
+      if (ingressId) {
+        await submitConversationMessage(client, ingressId, {
+          workflowId, workflowType: 'customerSupportMessageWorkflow', args: workflowArgs, taskQueue,
+        });
+        if (options?.async !== false) return { success: true, workflowId, status: 'running' };
+        const result = await conversationMessageResult(client, workflowId);
+        return { success: true, workflowId, status: 'completed', data: result };
+      }
 
       if (options?.async !== false) {
         const handle = await client.workflow.start('customerSupportMessageWorkflow', {

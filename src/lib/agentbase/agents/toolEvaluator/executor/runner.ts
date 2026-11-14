@@ -69,11 +69,17 @@ export async function runToolExecution(
 
   // Crear el mapa solo con las herramientas requeridas, no todas las disponibles
   const toolsMap = createToolsMap(tools, requiredToolNames);
+  // Registrations are persisted in commands.tools; command metadata is not
+  // persisted by CommandConverter. Keep provenance outside the model schema.
+  const taskCreationContext = tools?.find(tool => tool.function?.name === 'CREATE_TASK')?.task_creation_context;
   
   const executed = functionCalls.length > 0
     ? await executeTools(functionCalls, toolsMap, {
         ...context,
         command_id: commandId || context?.command_id,
+        metadata: { ...context?.metadata,
+          ...(taskCreationContext ? { task_creation_context: taskCreationContext } : {}),
+        },
       })
     : [];
   const results = [...executed, ...rejectedAsResults(context?.rejectedCalls)];

@@ -371,6 +371,22 @@ export async function executeTools(
       if (functionName !== 'read_document' && context?.site_id && !parsedArgs.site_id) {
         parsedArgs.site_id = context.site_id;
       }
+
+      // Task creation belongs to the initiating command/conversation, even if the
+      // model omits (or invents) provenance. Never inject this into list filters
+      // or updates, and never recover it by parsing arbitrary command prompt text.
+      const isTaskCreate = functionName === 'CREATE_TASK'
+        || (functionName === 'tasks' && parsedArgs.action === 'create');
+      if (isTaskCreate) {
+        if (context?.command_id) parsedArgs.command_id = context.command_id;
+        if (context?.site_id) parsedArgs.site_id = context.site_id;
+        const taskContext = context?.metadata?.task_creation_context;
+        if (taskContext?.conversation_id) {
+          parsedArgs.conversation_id = taskContext.conversation_id;
+          parsedArgs.lead_id = taskContext.lead_id;
+          parsedArgs.site_id = context?.site_id || taskContext.site_id;
+        }
+      }
       
       // --- FORCE OVERRIDES FOR TOOLS ROUTER ---
       if (functionName === 'tools' && parsedArgs.action === 'call') {

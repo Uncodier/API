@@ -57,8 +57,14 @@ const { effectiveUserId, effectiveAgentId, effectiveSiteId, effectiveLeadId, con
           }
         }
       ],
-      // Define the tools as specified in the documentation
-      tools: buildCustomerSupportTools(effectiveSiteId),
+      // Persist execution provenance outside the model-facing function schema.
+      // The task endpoint validates the conversation's site and lead before insertion.
+      tools: buildCustomerSupportTools(effectiveSiteId).map(tool => tool.function.name === 'CREATE_TASK'
+        && input.effectiveConversationId ? { ...tool, task_creation_context: {
+          conversation_id: input.effectiveConversationId,
+          lead_id: effectiveLeadId,
+          site_id: effectiveSiteId,
+        } } : tool),
       // Context includes the current message and conversation history
       context: contextMessage + supportMediaContext(),
       // Add supervisors as specified in the documentation
