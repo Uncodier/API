@@ -26,6 +26,12 @@ export async function GET(req: NextRequest, context: { params: Promise<{ categor
       );
     }
 
+    const accountId = process.env.FORAGER_ACCOUNT_ID;
+    const apiKey = process.env.FORAGER_API_KEY;
+    if (!accountId || !apiKey) {
+      return NextResponse.json({ error: 'Finder autocomplete is not configured' }, { status: 503 });
+    }
+
     const { searchParams } = new URL(req.url);
     const q = searchParams.get('q') || '';
     const pageRaw = searchParams.get('page');
@@ -40,37 +46,39 @@ export async function GET(req: NextRequest, context: { params: Promise<{ categor
       ['page', String(page)],
       ['q', q]
     ]).toString();
-    const upstreamUrl = `https://api-v2.forager.ai/api/datastorage/autocomplete/${encodeURIComponent(category)}/?${qs}`;
-    logInfo('API:finder-autocomplete', 'Upstream request', { upstreamUrl, params: { category, q, page } });
+    const upstreamUrl = `https://api-v2.forager.ai/api/${encodeURIComponent(accountId)}/datastorage/autocomplete/${encodeURIComponent(category)}/?${qs}`;
 
-    const resp = await fetch(upstreamUrl, { method: 'GET' });
+    const resp = await fetch(upstreamUrl, {
+      method: 'GET',
+      headers: { 'X-API-KEY': apiKey },
+      cache: 'no-store',
+      signal: AbortSignal.timeout(15000),
+    });
     const contentType = resp.headers.get('content-type') || '';
     const isJson = contentType.includes('application/json');
     
 
     if (!resp.ok) {
-      const errorPayload = isJson
-        ? await resp.json().catch(() => ({ message: 'Upstream error (invalid JSON)' }))
-        : { message: await resp.text().catch(() => 'Upstream error' as const) };
       logError('API:finder-autocomplete', 'Upstream error', {
         status: resp.status,
-        upstreamUrl,
         contentType,
         params: { category, q, page },
-        error: errorPayload
       });
       return NextResponse.json(
-        { error: 'Search service temporarily unavailable', details: errorPayload },
-        { status: resp.status }
+        { error: 'Search service temporarily unavailable' },
+        { status: 502 }
       );
     }
 
-    const data = isJson ? await resp.json() : await resp.text();
-    return NextResponse.json(typeof data === 'string' ? { data } : data);
+    if (!isJson) return NextResponse.json({ error: 'Invalid autocomplete response' }, { status: 502 });
+    const data = await resp.json();
+    if (!data || !Array.isArray(data.results)) {
+      return NextResponse.json({ error: 'Invalid autocomplete response' }, { status: 502 });
+    }
+    return NextResponse.json(data);
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    logError('API:finder-autocomplete', 'Handler exception', error instanceof Error ? { message: error.message, stack: error.stack } : error);
-    return NextResponse.json({ error: 'Internal error', message }, { status: 500 });
+    logError('API:finder-autocomplete', 'Handler exception', { type: error instanceof Error ? error.name : 'Unknown error' });
+    return NextResponse.json({ error: 'Finder autocomplete is temporarily unavailable' }, { status: 502 });
   }
 }
 
