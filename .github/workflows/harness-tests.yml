@@ -20,8 +20,13 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
-      # All providers, sandboxes, and DB calls are faked or use in-memory PGlite.
-      # No production credentials, database migrations, or live probes in this job.
+      - name: Install local PostgreSQL test binaries
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql postgresql-client libpq-dev
+          pg_config --bindir
+      # Providers and sandboxes are faked; DB tests use PGlite or isolated local PostgreSQL.
+      # Migrations run only on disposable test DBs, never production; no live probes or credentials.
       - run: npm run test:dependencies
       - run: npm run test:upgrade-regressions
       - run: npm run test:mcp

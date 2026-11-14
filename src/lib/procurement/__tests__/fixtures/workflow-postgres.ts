@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { accessSync, constants, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { delimiter, join, resolve } from 'node:path';
 
 export const ids = {
   site: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
@@ -11,21 +11,49 @@ export const ids = {
 };
 export const instanceId = (n: number) => `bbbbbbbb-bbbb-4bbb-8bbb-${String(n).padStart(12, '0')}`;
 
+/** Resolve one complete local installation, including Debian's versioned bin directory. */
+export function postgresBinDirectory(path = process.env.PATH ?? '') {
+  const candidates: string[] = [];
+  try {
+    candidates.push(execFileSync('pg_config', ['--bindir'], {
+      encoding: 'utf8', env: { PATH: path, LC_ALL: 'C' }, stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim());
+  } catch {
+    // Some installations expose the server binaries directly without pg_config.
+  }
+  candidates.push(...path.split(delimiter).filter(Boolean));
+  for (const candidate of candidates.filter(Boolean)) {
+    const bin = resolve(candidate);
+    try {
+      for (const executable of ['initdb', 'pg_ctl', 'psql']) {
+        accessSync(join(bin, executable), constants.X_OK);
+      }
+      return bin;
+    } catch {
+      // Do not mix client/server binaries from different PostgreSQL installations.
+    }
+  }
+  throw new Error('Local PostgreSQL binaries (initdb, pg_ctl, psql) are required. Install PostgreSQL and expose pg_config or its bin directory on PATH.');
+}
+
 /** Never consumes connection/environment credentials or opens a TCP listener. */
 export function freshPostgres() {
+  const bin = postgresBinDirectory();
   const root = mkdtempSync('/tmp/procurement-pg-');
   const data = join(root, 'data');
-  const bin = '/opt/homebrew/bin/';
   const env: NodeJS.ProcessEnv = { NODE_ENV: 'test', PATH: process.env.PATH, HOME: root, LC_ALL: 'C' };
   const stop = () => {
-    try { execFileSync(`${bin}pg_ctl`, ['-D', data, '-m', 'immediate', '-w', 'stop'], { env, stdio: 'pipe' }); }
+    try { execFileSync(join(bin, 'pg_ctl'), ['-D', data, '-m', 'immediate', '-w', 'stop'], { env, stdio: 'pipe' }); }
     finally { rmSync(root, { recursive: true, force: true }); }
   };
   try {
-    execFileSync(`${bin}initdb`, ['-D', data, '-A', 'trust', '-U', 'postgres', '--no-locale'], { env, stdio: 'pipe' });
-    execFileSync(`${bin}pg_ctl`, ['-D', data, '-l', join(root, 'postgres.log'), '-o', `-k ${root} -c listen_addresses='' -c unix_socket_permissions=0700`, '-w', 'start'], { env, stdio: 'pipe' });
-  } catch (error) { stop(); throw error; }
-  const result = (sql: string) => spawnSync(`${bin}psql`, [
+    execFileSync(join(bin, 'initdb'), ['-D', data, '-A', 'trust', '-U', 'postgres', '--no-locale'], { env, stdio: 'pipe' });
+    execFileSync(join(bin, 'pg_ctl'), ['-D', data, '-l', join(root, 'postgres.log'), '-o', `-k ${root} -c listen_addresses='' -c unix_socket_permissions=0700`, '-w', 'start'], { env, stdio: 'pipe' });
+  } catch (error) {
+    try { stop(); } catch { /* Preserve the startup error even if no server was started. */ }
+    throw error;
+  }
+  const result = (sql: string) => spawnSync(join(bin, 'psql'), [
     '-X', '-h', root, '-U', 'postgres', '-d', 'postgres', '-At',
     '-v', 'ON_ERROR_STOP=1', '-v', 'VERBOSITY=verbose',
   ], { input: sql, encoding: 'utf8', env });

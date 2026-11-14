@@ -48,3 +48,20 @@ limits, credential isolation, failure handling, timeouts and concurrency.
 Linux-only tests exercise actual subprocess limits; run them in the deployment
 image before release. Do not replace this check with a worker-thread heap limit:
 worker resource limits do not cover external ArrayBuffer memory.
+
+## Instance assistant continuation
+
+The assistant sends PDF images as separately bounded vision parts, not sampled
+screenshots. Explicit linked-node/reply/current image targets retain priority;
+PDF images outrank ordinary screenshots within the shared five-image budget.
+
+Before workflow message serialization, PDF image bytes become text references
+containing the original validated `read_document` arguments, output index, page,
+and a SHA-256 image digest. These references are not sent to the model as images.
+On continuation, the assistant re-reads each source once per hydration pass via
+the same URL validation, download and isolated decoder used by `read_document`.
+Only matching images are restored, bounded to five images and 8 MiB in total.
+Expired signed URLs, changed image content, decoder failures or exceeded budgets
+produce explicit unavailable-image notices; they never fall back to guessing.
+Restoration requires access to the original PDF and can incur another download
+and decode. This is not permanent storage of PDF image bytes.

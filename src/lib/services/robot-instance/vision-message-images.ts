@@ -4,6 +4,7 @@
  */
 
 import { fetchTwilioMedia, isTwilioMediaUrl } from '@/lib/services/twilio/fetchTwilioMedia';
+import { dehydrateDocumentImage, hydrateDocumentImages } from './document-vision-references';
 
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 // Symbols survive in-process object spreads but are never sent in JSON to the
@@ -79,6 +80,7 @@ function withImageUrl(part: any, dataUrl: string): any {
 export async function hydrateMessageImages(messages: any[]): Promise<any[]> {
   if (!Array.isArray(messages)) return messages;
 
+  await hydrateDocumentImages(messages);
   const cache = new Map<string, string>();
 
   for (const msg of messages) {
@@ -136,6 +138,11 @@ export function dehydrateMessageImages(messages: any[]): any[] {
       }
       const raw = imagePartUrl(part);
       if (typeof raw === 'string' && raw.startsWith('data:image/')) {
+        const documentReference = dehydrateDocumentImage(part);
+        if (documentReference) {
+          nextContent.push(documentReference);
+          continue;
+        }
         const replacement = part[SOURCE_URL];
         if (replacement) {
           const { [SOURCE_URL]: _source, ...cleanPart } = part;

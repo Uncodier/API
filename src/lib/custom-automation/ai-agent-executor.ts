@@ -31,6 +31,9 @@ import { observeCompletedTextRequest } from '@/lib/status/text-execution-observa
 import { fitInstanceRequest, resolveModelContextCapacity } from '@/lib/services/robot-instance/instance-context-budget';
 import { getVisionImageSourceUrl } from '@/lib/services/robot-instance/vision-message-images';
 import { normalizeToolOperationResult } from '@/lib/services/tool-operation-result';
+import { documentResultForText } from '@/lib/agentbase/services/command/document-image-content';
+import { documentVisionContent, isDocumentVisionImage } from '@/lib/services/robot-instance/document-vision-references';
+import type { ReadDocumentToolParams } from '@/app/api/agents/tools/read_document/assistantProtocol';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import {
@@ -166,7 +169,8 @@ function imageReferencePriority(content: any[], index: number, source: string, l
   const label = content[index - 1];
   const match = label?.type === 'text' && typeof label.text === 'string'
     ? label.text.match(/^Image reference: (\{[^\r\n]*\})\nSource URL: ([^\r\n]+)$/) : undefined;
-  if (!match || match[2] !== source) return 0;
+  // Document context outranks screenshots, but never explicit user/node targets.
+  if (!match || match[2] !== source) return isDocumentVisionImage(content[index]) ? 0.5 : 0;
   try {
     const reference = JSON.parse(match[1]);
     return reference.reply_target === true ? 2 : reference.current_attachment === true ? 1 : 0;
@@ -1414,6 +1418,7 @@ export class AIAgentExecutor {
 
           // Collect images first, then attach them as a single user message AFTER all tool messages.
           const collectedImages: string[] = [];
+          const documentFunctions: Array<{ id: string; name: string; status: string; args: ReadDocumentToolParams; result: unknown }> = [];
           let toolExecutionStarted = false;
 
           for (const toolCall of toolCalls) {
@@ -1605,7 +1610,20 @@ export class AIAgentExecutor {
               const toolDuration = toolEndTime - toolStartTime;
               console.log(`⏱️ [TOOL_END] ${toolCall.toolName} completed in ${toolDuration}ms (${(toolDuration/1000).toFixed(1)}s)`);
 
-              const { cleanedResult, base64Image: extractedImage } = this.extractBase64Image(result);
+              // The router wraps native results. PDF images are document context,
+              // not screenshots: preserve page labels and never sample them by iteration.
+              const routedDocument = toolCall.toolName === 'tools' && toolCall.args.action === 'call'
+                && toolCall.args.name === 'read_document' && result?.name === 'read_document';
+              const isDocument = toolCall.toolName === 'read_document' || routedDocument;
+              const documentResult = routedDocument ? result.result : result;
+              if (isDocument) documentFunctions.push({ id: toolCall.toolCallId, name: 'read_document',
+                status: 'completed', args: routedDocument
+                  ? (typeof toolCall.args.args === 'string' ? JSON.parse(toolCall.args.args) : toolCall.args.args)
+                  : toolCall.args, result: documentResult });
+              const { cleanedResult, base64Image: extractedImage } = isDocument
+                ? { cleanedResult: routedDocument ? { ...result, result: documentResultForText(documentResult) }
+                  : documentResultForText(documentResult), base64Image: null }
+                : this.extractBase64Image(result);
               // Azure-specific data URL coercion; skip for other providers since it
               // can drop otherwise-valid PNG/JPEG payloads.
               let base64Image: string | null;
@@ -1745,6 +1763,9 @@ export class AIAgentExecutor {
           } else {
             console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOLS] ✅ All ${toolCalls.length} tool_call_ids have corresponding tool messages`);
           }
+
+          const documentContent = documentVisionContent(documentFunctions);
+          if (Array.isArray(documentContent)) messages.push({ role: 'user', content: documentContent } as any);
 
           const shouldIncludeScreenshots = iterations <= 3 || iterations % 3 === 0;
 
