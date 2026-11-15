@@ -21,7 +21,16 @@ export async function claimRequirementRun(excluded: string[], maxConcurrent: num
   const { data, error } = await supabaseAdmin.rpc('claim_agent_requirement_run', {
     p_excluded_ids: excluded, p_max_concurrent: maxConcurrent, p_ttl_seconds: 300, p_scheduled_ids: scheduledIds,
   });
-  if (error) throw new Error('Agent cron admission unavailable; deploy its forward migration before the API');
+  if (error) {
+    // RPC installation is not inferred from unrelated database/transport failures.
+    // Never include database error bodies: they can contain tenant data or SQL.
+    if (error.code === 'PGRST202' || error.code === '42883') {
+      throw new Error('Agent cron admission RPC unavailable; verify installed functions and schema cache');
+    }
+    const category = error.code === '57014' ? 'database timeout'
+      : ['55P03', '40P01'].includes(error.code) ? 'database contention' : 'database request failed';
+    throw new Error(`Agent cron admission unavailable (${category})`);
+  }
   return data;
 }
 
