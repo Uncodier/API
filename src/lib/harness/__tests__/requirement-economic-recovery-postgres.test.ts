@@ -12,7 +12,7 @@ nativeTest('native PG skips busy recovery dependencies and revisits without bloc
   const data = path.join(root, 'data');
   const port = '55439';
   const blockers: ChildProcess[] = [];
-  const env = { PATH: process.env.PATH, LC_ALL: 'C', LANG: 'C' };
+  const env: NodeJS.ProcessEnv = { NODE_ENV: 'test', PATH: process.env.PATH, LC_ALL: 'C', LANG: 'C' };
   const run = (name: string, args: string[], input?: string) => {
     const result = spawnSync(`${bin}/${name}`, args, { encoding: 'utf8', input, timeout: 120_000, env });
     if (result.status !== 0) throw new Error(`${name}: ${result.stderr || result.error}\n${existsSync(path.join(root, 'server.log')) ? readFileSync(path.join(root, 'server.log'), 'utf8') : ''}`);

@@ -16,7 +16,7 @@ export function postgresBinDirectory(path = process.env.PATH ?? '') {
   const candidates: string[] = [];
   try {
     candidates.push(execFileSync('pg_config', ['--bindir'], {
-      encoding: 'utf8', env: { PATH: path, LC_ALL: 'C' }, stdio: ['ignore', 'pipe', 'pipe'],
+      encoding: 'utf8', env: { NODE_ENV: 'test', PATH: path, LC_ALL: 'C' }, stdio: ['ignore', 'pipe', 'pipe'],
     }).trim());
   } catch {
     // Some installations expose the server binaries directly without pg_config.

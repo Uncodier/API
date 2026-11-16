@@ -20,7 +20,7 @@ describe('local PostgreSQL binary resolution', () => {
 
       expect(postgresBinDirectory('/usr/bin')).toBe(bin);
       expect(config).toHaveBeenCalledWith('pg_config', ['--bindir'], expect.objectContaining({
-        env: { PATH: '/usr/bin', LC_ALL: 'C' },
+        env: { NODE_ENV: 'test', PATH: '/usr/bin', LC_ALL: 'C' },
       }));
       for (const executable of ['initdb', 'pg_ctl', 'psql']) {
         expect(access).toHaveBeenCalledWith(join(bin, executable), fs.constants.X_OK);
